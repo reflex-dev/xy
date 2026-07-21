@@ -5,9 +5,11 @@
   Reflex state; the only chart state is the token string.
 - Hover reads exact f64 rows through the data plane and lands in a normal
   Reflex event handler.
+- Click, box-select, and view-change handlers visibly record their v1 event
+  envelopes and force the source chart to republish behind its stable token.
 - Box-select cross-filters a histogram: bounded semantic rows arrive in a
-  small JSON event, complete rows can be re-resolved server-side, and the histogram's
-  figure var recomputes + republishes over the shared websocket.
+  small JSON event, complete rows can be re-resolved server-side, and both
+  figure vars recompute + republish over the shared websocket.
 - A live line streams from a background task via `reflex_xy.append`.
 
 Run:  uv pip install -e '.[dev]' && uv pip install -e python/reflex-xy
@@ -51,8 +53,14 @@ async def _magnitudes() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 class Demo(rx.State):
     """Charts are figure vars; everything else is ordinary app state."""
 
-    hovered: dict = {}
+    hover_note: str = "move the cursor over the cloud"
+    click_note: str = "click a point to inspect its canonical row"
     select_note: str = "box-select on the scatter to cross-filter"
+    view_note: str = "pan or zoom to emit a debounced view event"
+    click_events: int = 0
+    select_events: int = 0
+    view_events: int = 0
+    interaction_revision: int = 0
     sel_x0: float = 0.0
     sel_x1: float = 0.0
     sel_active: bool = False
@@ -67,7 +75,13 @@ class Demo(rx.State):
             xy.scatter(x, y, color=segment, opacity=0.8, density=True),
             xy.x_axis(label="feature A"),
             xy.y_axis(label="feature B"),
-            title=f"{POINTS // 1_000_000}M points, drillable",
+            # Click/select/view handlers bump this revision, deliberately
+            # republishing the source figure. The wrapper must preserve its
+            # viewport and selection without dispatching feedback events.
+            title=(
+                f"{POINTS // 1_000_000}M points, drillable · "
+                f"handler revision {self.interaction_revision}"
+            ),
             width="100%",
             height=460,
         )
@@ -102,10 +116,30 @@ class Demo(rx.State):
 
     @rx.event
     def on_hover(self, event: dict):
-        self.hovered = event
+        data = event.get("data", {})
+        self.hover_note = (
+            f"row {event.get('canonical_row_id')} · x={data.get('x')} y={data.get('y')}"
+        )
+
+    @rx.event
+    def on_click(self, event: dict):
+        self.click_events += 1
+        self.interaction_revision += 1
+        data = event.get("data", {})
+        screen = event.get("screen", {})
+        modifiers = event.get("modifiers", {})
+        active_modifiers = [name for name, active in modifiers.items() if active]
+        self.click_note = (
+            f"row {event.get('canonical_row_id')} · "
+            f"x={data.get('x')} y={data.get('y')} · "
+            f"canvas=({screen.get('x')}, {screen.get('y')}) · "
+            f"modifiers={','.join(active_modifiers) or 'none'}"
+        )
 
     @rx.event
     def on_select(self, event: dict):
+        self.select_events += 1
+        self.interaction_revision += 1
         selection = event.get("selection", {})
         total = int(selection.get("total_count") or 0)
         bounds = selection.get("data_bounds")
@@ -123,13 +157,25 @@ class Demo(rx.State):
             complete = reflex_xy.resolve_selection(event)
             complete_count = len(complete) if complete is not None else total
             self.select_note = (
-                f"{complete_count:,} points selected; segments: "
-                f"{', '.join(self.selected_segments) or 'none'}"
+                f"{total:,} selected · {len(selection.get('rows', [])):,} rows / "
+                f"{sum(len(group.get('ids', [])) for group in selection.get('canonical_row_ids', [])):,} ids in JSON · "
+                f"truncated={bool(selection.get('truncated'))} · "
+                f"{complete_count:,} resolved server-side · segments="
+                f"{','.join(self.selected_segments) or 'none'}"
             )
         else:
             self.sel_active = False
             self.selected_segments = []
             self.select_note = "selection cleared"
+
+    @rx.event
+    def on_view(self, event: dict):
+        self.view_events += 1
+        self.interaction_revision += 1
+        self.view_note = (
+            f"x={event.get('x_domain')} · y={event.get('y_domain')} · "
+            f"source={event.get('source')} · phase={event.get('phase')}"
+        )
 
     @rx.event(background=True)
     async def stream(self):
@@ -172,16 +218,23 @@ def hover_readout() -> rx.Component:
     return rx.hstack(
         rx.badge("hover"),
         rx.text(
-            rx.cond(
-                Demo.hovered.length() > 0,
-                f"x={Demo.hovered['data']['x']}  y={Demo.hovered['data']['y']}",
-                "move the cursor over the cloud",
-            ),
+            Demo.hover_note,
             font_family="monospace",
             font_size="13px",
         ),
         spacing="3",
         align="center",
+    )
+
+
+def event_readout(label: str, count: rx.Var[int], note: rx.Var[str]) -> rx.Component:
+    return rx.hstack(
+        rx.badge(label),
+        rx.badge(count, variant="soft", color_scheme="gray"),
+        rx.text(note, font_family="monospace", font_size="12px"),
+        spacing="3",
+        align="center",
+        width="100%",
     )
 
 
@@ -198,15 +251,19 @@ def index() -> rx.Component:
             reflex_xy.chart(
                 Demo.cloud,
                 on_point_hover=Demo.on_hover,
+                on_point_click=Demo.on_click,
                 on_select_end=Demo.on_select,
+                on_view_change=Demo.on_view,
                 height="460px",
                 id="cloud",
             ),
             hover_readout(),
+            event_readout("click", Demo.click_events, Demo.click_note),
+            event_readout("select", Demo.select_events, Demo.select_note),
+            event_readout("view", Demo.view_events, Demo.view_note),
             rx.hstack(
                 rx.vstack(
                     reflex_xy.chart(Demo.histogram, height="220px", id="hist"),
-                    rx.text(Demo.select_note, size="2", color_scheme="gray"),
                     width="50%",
                 ),
                 rx.vstack(

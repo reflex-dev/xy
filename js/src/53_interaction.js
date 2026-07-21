@@ -613,6 +613,11 @@ Object.assign(ChartView.prototype, {
     const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
     const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
     const range = { x0, x1, y0, y1 };
+    // Data-space brush geometry survives drill swaps (§34): a re-drill ships a
+    // new subset whose mask indices are unknown until the kernel replies, but
+    // the brush itself stays authoritative — 45_lod re-derives a provisional
+    // mask from it so the highlight never blinks out on pan/zoom.
+    this._lastBrush = { mode: "box", x0, x1, y0, y1 };
     this._broadcastLinkedSelection({ range });
     this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
     if (this.comm) {
@@ -627,6 +632,7 @@ Object.assign(ChartView.prototype, {
     const polygon = points.map((point) => [point[0], point[1]]);
     if (!polygon.every((point) => point.every(Number.isFinite))) return;
     this._lassoPolygon = polygon;
+    this._lastBrush = { mode: "poly", points: polygon }; // see _sendSelect
     this._broadcastLinkedSelection({ polygon });
     this._renderLassoSelection();
     this._dispatchChartEvent("brush", {
@@ -731,6 +737,7 @@ Object.assign(ChartView.prototype, {
       if (g.drill) g.drill.selActive = false;
     }
     this._selectionCount = 0;
+    this._lastBrush = null;
     if (opts.broadcast !== false) this._broadcastLinkedSelection({ clear: true });
     if (opts.dispatch !== false) {
       if (this._interactionFlag("select", true)) {
@@ -907,8 +914,12 @@ Object.assign(ChartView.prototype, {
       zoomTrigger.setAttribute("aria-haspopup", "menu");
       zoomTrigger.setAttribute("aria-expanded", "false");
     }
-    const canSelect = this._pickable
-      && this._interactionFlag("brush", true)
+    // Pickability is dynamic for density traces (§5: drill-in grants it,
+    // drill-out revokes it), so the Select trigger is built whenever the
+    // interaction flags allow selection and its *visibility* tracks
+    // `_pickable` via _syncModebarSelect below — the button must not freeze
+    // at whatever pickability held when the toolbar was first built.
+    const canSelect = this._interactionFlag("brush", true)
       && this._interactionFlag("select", true);
     let selectTrigger = null;
     let selectIndicator = null;
@@ -1187,6 +1198,20 @@ Object.assign(ChartView.prototype, {
       setSelectMenuOpen(false);
       setExportMenuOpen(false);
     };
+    // Show/hide the Select trigger to match live pickability. Losing the
+    // capability mid-session (drill-out) also closes the menu and drops any
+    // active select drag mode back to the default, so the cursor never
+    // advertises a selection gesture the chart can't honor.
+    this._syncModebarSelect = () => {
+      if (!selectTrigger) return;
+      const on = Boolean(this._pickable);
+      if (!on) {
+        setSelectMenuOpen(false);
+        if (this.dragMode.startsWith("select")) this._setDragMode("pan");
+      }
+      selectTrigger.style.display = on ? "flex" : "none";
+    };
+    this._syncModebarSelect();
     this._listen(document, "pointerdown", (e) => {
       if (this._zoomMenuOpen && !bar.contains(e.target)) setZoomMenuOpen(false);
       if (this._selectMenuOpen && !bar.contains(e.target)) setSelectMenuOpen(false);

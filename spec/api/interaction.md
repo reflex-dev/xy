@@ -57,6 +57,25 @@ off.
 Selection additionally requires a point-pickable trace: `canBrush` and the
 modebar Selection menu both test `this._pickable`, which is true only when
 some GPU trace has `pointPick` and is not an undrilled density tier.
+Selection visuals are continuous across drill swaps (§34): the client
+retains the last brush geometry in data space (`_lastBrush` — set on every
+box/lasso send, adopted from enriched kernel replies that echo
+`bounds`/`polygon`, cleared on `select_clear` and empty selections). When a
+re-drill ships a new subset, `lodRestoreBrushMask` re-derives the mask
+locally from the decoded window coordinates — the same containment test the
+kernel runs for range predicates — so the highlight never blinks out while
+the kernel's authoritative reply round-trips. Stale kernel masks (mismatched
+`drill_seq`) are still dropped, as before.
+
+Pickability is *dynamic* for density traces — drill-in to exact points grants
+it, drill-out revokes it — so the Selection trigger is built whenever the
+`brush`/`select` flags allow it and its visibility tracks `_pickable` live:
+every recompute funnels through `ChartView._updatePickable()` (initial build,
+kernel payload swaps, drill updates, and drill drop), which also calls
+`_syncModebarSelect`. Losing pickability hides the trigger, closes its menu,
+and reverts an active `select*` drag mode to `pan`; regaining it (including a
+re-drill) shows the trigger again. Regression coverage:
+`tests/test_modebar_select_drill.py`.
 
 ## 3. Event surface
 

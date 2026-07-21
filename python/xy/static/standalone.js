@@ -1462,10 +1462,12 @@ d = g.drill = { trace: g.trace, xBuf: gl.createBuffer(), yBuf: gl.createBuffer()
 d.trace = { ...g.trace, style: upd.style || g.trace.style || {} };
 d.xAxis = g.xAxis;
 d.yAxis = g.yAxis;
+const xs = view._asF32(buffers[upd.x.buf]);
+const ys = view._asF32(buffers[upd.y.buf]);
 gl.bindBuffer(gl.ARRAY_BUFFER, d.xBuf);
-gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.x.buf]), gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, xs, gl.STATIC_DRAW);
 gl.bindBuffer(gl.ARRAY_BUFFER, d.yBuf);
-gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.y.buf]), gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, ys, gl.STATIC_DRAW);
 d.xMeta = { offset: upd.x.offset, scale: upd.x.scale };
 d.yMeta = { offset: upd.y.offset, scale: upd.y.scale };
 d.win = { x0: upd.x_range[0], x1: upd.x_range[1], y0: upd.y_range[0], y1: upd.y_range[1] };
@@ -1473,6 +1475,7 @@ d.n = Math.min(upd.x.len, upd.y.len);
 d.visible = upd.visible ?? d.n;
 d.seq = upd.drill_seq;
 d.selActive = false;
+lodRestoreBrushMask(view, d, xs, ys);
 view._hoverId = -1;
 view._lastRow = null;
 d.colorMode = 0;
@@ -1567,6 +1570,33 @@ lodEnterDrillContinuous(view, g);
 g._drillDying = false;
 g._drillDiedInsideWin = false;
 }
+function lodRestoreBrushMask(view, d, xs, ys) {
+const b = view._lastBrush;
+if (!b || !d.n) return;
+const ox = d.xMeta.offset, sx = d.xMeta.scale || 1;
+const oy = d.yMeta.offset, sy = d.yMeta.scale || 1;
+const mask = new Float32Array(d.n);
+if (b.mode === "box") {
+for (let i = 0; i < d.n; i++) {
+const x = xs[i] / sx + ox, y = ys[i] / sy + oy;
+if (x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) mask[i] = 1;
+}
+} else if (b.mode === "poly" && Array.isArray(b.points) && b.points.length >= 3) {
+const pts = b.points;
+for (let i = 0; i < d.n; i++) {
+const x = xs[i] / sx + ox, y = ys[i] / sy + oy;
+let hit = false;
+for (let a = 0, z = pts.length - 1; a < pts.length; z = a++) {
+const [xa, ya] = pts[a], [xz, yz] = pts[z];
+if ((ya > y) !== (yz > y) && x < ((xz - xa) * (y - ya)) / (yz - ya) + xa) hit = !hit;
+}
+if (hit) mask[i] = 1;
+}
+} else {
+return;
+}
+view._applySelMask(d, mask);
+}
 function lodDropDrill(view, g) {
 const d = g.drill;
 if (!d) return;
@@ -1583,6 +1613,7 @@ g._drillDying = false;
 g._drillDiedInsideWin = false;
 view._hoverId = -1;
 view._lastRow = null;
+view._updatePickable();
 }
 function lodMarkDrillDying(view, g) {
 if (!g.drill) return;
@@ -3071,8 +3102,13 @@ gl.vertexAttribPointer(ATTR_SLOTS.a_corner, 2, gl.FLOAT, false, 0, 0);
 gl.vertexAttribDivisor(ATTR_SLOTS.a_corner, 0);
 gl.bindVertexArray(null);
 this.gpuTraces = this.spec.traces.map((t) => this._buildTrace(buffer, t));
-this._pickable = this.gpuTraces.some((g) => markOf(g.trace.kind).pointPick && g.tier !== "density");
-if (this._pickable) this._initPickTarget();
+this._updatePickable();
+}
+_updatePickable() {
+this._pickable = this.gpuTraces.some(
+(t) => markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill));
+if (this._pickable && !this.pickFbo) this._initPickTarget();
+this._syncModebarSelect?.();
 }
 _prog(key, vs, fs) {
 let p = this._progCache.get(key);
@@ -6818,6 +6854,7 @@ this._clearLassoOverlay();
 const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
 const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
 const range = { x0, x1, y0, y1 };
+this._lastBrush = { mode: "box", x0, x1, y0, y1 };
 this._broadcastLinkedSelection({ range });
 this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
 if (this.comm) {
@@ -6831,6 +6868,7 @@ if (!Array.isArray(points) || points.length < 3) return;
 const polygon = points.map((point) => [point[0], point[1]]);
 if (!polygon.every((point) => point.every(Number.isFinite))) return;
 this._lassoPolygon = polygon;
+this._lastBrush = { mode: "poly", points: polygon };
 this._broadcastLinkedSelection({ polygon });
 this._renderLassoSelection();
 this._dispatchChartEvent("brush", {
@@ -6929,6 +6967,7 @@ g.selActive = false;
 if (g.drill) g.drill.selActive = false;
 }
 this._selectionCount = 0;
+this._lastBrush = null;
 if (opts.broadcast !== false) this._broadcastLinkedSelection({ clear: true });
 if (opts.dispatch !== false) {
 if (this._interactionFlag("select", true)) {
@@ -7091,8 +7130,7 @@ this._zoomMenuLabel = zoomPercent;
 zoomTrigger.setAttribute("aria-haspopup", "menu");
 zoomTrigger.setAttribute("aria-expanded", "false");
 }
-const canSelect = this._pickable
-&& this._interactionFlag("brush", true)
+const canSelect = this._interactionFlag("brush", true)
 && this._interactionFlag("select", true);
 let selectTrigger = null;
 let selectIndicator = null;
@@ -7360,6 +7398,16 @@ setZoomMenuOpen(false);
 setSelectMenuOpen(false);
 setExportMenuOpen(false);
 };
+this._syncModebarSelect = () => {
+if (!selectTrigger) return;
+const on = Boolean(this._pickable);
+if (!on) {
+setSelectMenuOpen(false);
+if (this.dragMode.startsWith("select")) this._setDragMode("pan");
+}
+selectTrigger.style.display = on ? "flex" : "none";
+};
+this._syncModebarSelect();
 this._listen(document, "pointerdown", (e) => {
 if (this._zoomMenuOpen && !bar.contains(e.target)) setZoomMenuOpen(false);
 if (this._selectMenuOpen && !bar.contains(e.target)) setSelectMenuOpen(false);
@@ -8147,9 +8195,7 @@ if (i < 0 || !ts) continue;
 this._destroyTraceResources(this.gpuTraces[i], texSeen);
 this.gpuTraces[i] = this._buildTrace(blob, ts);
 }
-this._pickable = this.gpuTraces.some(
-(g) => markOf(g.trace.kind).pointPick && (g.tier !== "density" || g.drill));
-if (this._pickable && !this.pickFbo) this._initPickTarget();
+this._updatePickable();
 this._scheduleViewRequest(this.view, { delay: 0 });
 this.draw();
 },
@@ -8215,9 +8261,7 @@ clearPending(g);
 if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
 lodApplyDensityUpdate(this, g, upd, buffers);
 }
-this._pickable = this.gpuTraces.some(
-(t) => markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill));
-if (this._pickable && !this.pickFbo) this._initPickTarget();
+this._updatePickable();
 this.draw();
 } else if (msg.type === "append") {
 this._applyAppend(msg, buffers);
@@ -8246,7 +8290,10 @@ view: this._eventView("hover"),
 });
 }
 } else if (msg.type === "selection") {
+if (msg.bounds) this._lastBrush = { mode: "box", ...msg.bounds };
+else if (msg.polygon) this._lastBrush = { mode: "poly", points: msg.polygon };
 if (!msg.traces || !msg.traces.length) {
+this._lastBrush = null;
 for (const g of this.gpuTraces) {
 g.selActive = false;
 if (g.drill) g.drill.selActive = false;

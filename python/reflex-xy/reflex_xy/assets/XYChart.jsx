@@ -41,6 +41,10 @@ import { ChartView, decodeFrame, renderStandalone } from "./xy_client.js";
 const DEBUG = globalThis.localStorage?.getItem?.("xy_debug") === "1";
 const HOVER_THROTTLE_MS = 120;
 const VIEW_DEBOUNCE_MS = 200;
+// Upper bound on how long a republish keeps the outgoing view frozen on top
+// while the rebuilt one settles. Must exceed the view-request debounce plus a
+// kernel round-trip; past it the swap happens regardless, settled or not.
+const GHOST_SETTLE_TIMEOUT_MS = 1200;
 const dbg = (...args) =>
   DEBUG &&
   console.log(
@@ -187,6 +191,40 @@ export function XYChart(props) {
     let viewTimer = null;
     let pendingView = null;
     let restoringSelection = false;
+    // Keep the outgoing view visible while its replacement restores any
+    // selection and drilled density tier. The timer bounds lost replies.
+    let ghost = null;
+    const settleGhost = () => {
+      if (!ghost) return;
+      const g = ghost;
+      ghost = null;
+      clearTimeout(g.timer);
+      g.view.destroy();
+      g.div.remove();
+    };
+    // The ghost shows full-alpha marks; the rebuilt view re-runs the §5
+    // aggregate→marks entry fade from zero. Dropping the ghost mid-fade
+    // uncovers a mostly-density frame that then brightens — a visible color
+    // jump. Hold until the tier fades finish so the swap is pixel-steady.
+    const ghostFadesDone = () => {
+      if (!view || !view.gpuTraces) return true;
+      return view.gpuTraces.every(
+        (g) => g.tier !== "density"
+          || (g._drillFadeStart == null && g._densitySwitchFadeStart == null),
+      );
+    };
+    const settleGhostAfterDraw = () => {
+      const step = () => {
+        if (!ghost) return;
+        if (ghostFadesDone()) {
+          // One more frame so the settled state reaches the screen first.
+          requestAnimationFrame(settleGhost);
+          return;
+        }
+        requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    };
     const viewCallbacks = [];
 
     const subscribe = () => {
@@ -290,9 +328,30 @@ export function XYChart(props) {
       );
       const selectionToRestore = lastSelect;
       payloadVersion = Number.isInteger(data.version) ? data.version : null;
-      if (view) view.destroy();
+      settleGhost(); // a racing republish replaces the previous ghost
+      const hasDensity = (data.spec.traces || []).some((t) => t.tier === "density");
+      if (view) {
+        // Freeze the outgoing view on top; the rebuilt one settles under it.
+        // The ghost is inert (no comm subscription after the reset below, no
+        // pointer events) — it just keeps its last frame visible.
+        const div = document.createElement("div");
+        div.style.cssText =
+          "position:absolute;inset:0;z-index:2;pointer-events:none;";
+        div.dataset.xyRepublishGhost = "";
+        div.append(...el.childNodes);
+        el.appendChild(div);
+        if (!el.style.position) el.style.position = "relative";
+        ghost = {
+          div,
+          view,
+          selectionPending: Boolean(selectionToRestore),
+          densityPending: Boolean(hasDensity && viewChanged),
+          timer: setTimeout(settleGhost, GHOST_SETTLE_TIMEOUT_MS),
+        };
+      } else {
+        el.replaceChildren();
+      }
       viewCallbacks.length = 0;
-      el.replaceChildren();
       const spec = eventSpec(data.spec, cbRef.current);
       view = new ChartView(
         el,
@@ -310,6 +369,7 @@ export function XYChart(props) {
           : selectionToRestore;
         emitMessage(restore);
       }
+      if (ghost && !ghost.selectionPending && !ghost.densityPending) settleGhostAfterDraw();
       // Debug/e2e handle (same spirit as the standalone example's
       // window.xyLiveDrilldown): headless probes assert on live views.
       (window.__xy_views ||= new Map()).set(el.id || mid, view);
@@ -362,6 +422,11 @@ export function XYChart(props) {
         }
       }
       for (const cb of [...viewCallbacks]) cb(message, data.buffers || []);
+      if (ghost) {
+        if (message.type === "selection") ghost.selectionPending = false;
+        if (message.type === "density_update") ghost.densityPending = false;
+        if (!ghost.selectionPending && !ghost.densityPending) settleGhostAfterDraw();
+      }
     };
 
     const onErr = (data) => {
@@ -400,6 +465,7 @@ export function XYChart(props) {
 
     return () => {
       destroyed = true;
+      settleGhost();
       if (tracksClickInput) el.removeEventListener("click", rememberClick, true);
       if (hoverTimer !== null) clearTimeout(hoverTimer);
       if (viewTimer !== null) clearTimeout(viewTimer);

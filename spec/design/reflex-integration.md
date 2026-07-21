@@ -456,6 +456,13 @@ tokens. A restore is tagged `source: "republish"` and does not redispatch
 `on_select_end` or `on_view_change`, preventing feedback loops. Clearing the
 selection resets dependent filters through the same handler.
 
+During a republish, the outgoing view remains as a pointer-inert overlay until
+the replacement has restored any selection and drilled density tier. The
+overlay then waits for tier fades to finish before being removed; a 1200 ms
+timeout prevents a lost reply from leaving stale content visible. The client
+retains brush geometry, so points arriving in a re-drill can reconstruct their
+selection mask without a second selection request.
+
 One handler can route several charts by stable token:
 
 ```python
