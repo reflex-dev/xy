@@ -58,9 +58,9 @@ PRODUCTION_READINESS_MD = (
     "## Release-Blocking Gates\n\n"
     "`import xy` stays lightweight.\n"
     "Use `make check-artifacts` for exact artifact verification.\n"
-    "Use `make check-examples` for docs and Reflex app checks.\n"
-    "The sdist includes the Reflex example app, while wheels stay package-only. "
-    "Docs, tests, benchmarks, scripts, and examples/reflex are sdist-only.\n"
+    "Use `make check-examples` for docs and example-app checks.\n"
+    "The sdist includes the example apps' source, while wheels stay package-only. "
+    "Docs, tests, benchmarks, scripts, and the examples/ apps are sdist-only.\n"
     "Run scripts/verify_benchmark_report.py, scripts/verify_wheel.py, and "
     "scripts/verify_sdist.py before releases.\n" + ("production readiness padding\n" * 100)
 )
@@ -70,24 +70,19 @@ CONTRIBUTING_MD = (
     "Run make check-full, make check-sdist, make check-wheel, and "
     "make check-benchmark-report.\n"
     "Run make check-examples for README snippets, spec/api/api-examples.md, and "
-    "the Reflex example app.\n\n"
+    "the example apps.\n\n"
     "## Performance Claims\n\n"
     "Claims need benchmark context.\n" + ("contributing padding\n" * 100)
 )
 REFLEX_README_MD = (
-    "# xy Reflex Example\n\n"
-    "Run python scripts/build_charts.py before reflex run.\n\n"
-    "| Chart | File | What it shows |\n"
-    "|---|---|---|\n"
-    "| Business overview | `assets/charts/business_overview.html` | Small grouped columns |\n"
+    "# reflex-xy showcase\n\n"
+    "Wired with reflex_xy.XYPlugin() in rxconfig.py; run with reflex run.\n"
     + ("reflex readme padding\n" * 100)
 )
-BUSINESS_OVERVIEW_HTML = (
-    "<!doctype html><html><head><title>Small business overview</title></head>"
-    "<body><script>xy.renderStandalone({title: 'Small business overview'});</script>"
-    "<span>Revenue</span><span>Pipeline</span>"
-    + ("business html padding\n" * 100)
-    + "</body></html>"
+FASTAPI_README_MD = (
+    "# xy FastAPI example\n\n"
+    "A FastAPI app that generates charts with chart.to_html() and serves a "
+    "live drilldown via POST /api/xy/drilldown.\n" + ("fastapi readme padding\n" * 100)
 )
 CI_YML = (
     "name: CI\n"
@@ -195,8 +190,8 @@ def _write_sdist(
                 data = CONTRIBUTING_MD.encode("utf-8")
             elif name == "examples/reflex/README.md":
                 data = REFLEX_README_MD.encode("utf-8")
-            elif name == "examples/reflex/assets/charts/business_overview.html":
-                data = BUSINESS_OVERVIEW_HTML.encode("utf-8")
+            elif name == "examples/fastapi/README.md":
+                data = FASTAPI_README_MD.encode("utf-8")
             elif name == ".github/workflows/ci.yml":
                 data = CI_YML.encode("utf-8")
             elif name == ".github/workflows/codspeed.yml":
@@ -388,18 +383,18 @@ def test_verify_sdist_rejects_missing_docs_example_guard(tmp_path: Path) -> None
         verify_sdist.verify_sdist(str(sdist))
 
 
-def test_verify_sdist_rejects_missing_reflex_example_app_files(tmp_path: Path) -> None:
+def test_verify_sdist_rejects_missing_example_app_files(tmp_path: Path) -> None:
     sdist = tmp_path / "xy-0.0.1.tar.gz"
     _write_sdist(
         sdist,
         omit={
-            "examples/reflex/README.md",
-            "examples/reflex/assets/charts/business_overview.html",
-            "tests/test_reflex_example_assets.py",
+            "examples/fastapi/app.py",
+            "examples/reflex/xy_reflex_demo/xy_reflex_demo.py",
+            "tests/test_example_apps.py",
         },
     )
 
-    with pytest.raises(AssertionError, match="examples/reflex"):
+    with pytest.raises(AssertionError, match="examples/"):
         verify_sdist.verify_sdist(str(sdist))
 
 
@@ -468,18 +463,14 @@ def test_verify_sdist_rejects_stale_reflex_example_readme(tmp_path: Path) -> Non
         verify_sdist.verify_sdist(str(sdist))
 
 
-def test_verify_sdist_rejects_stale_business_example_asset(tmp_path: Path) -> None:
+def test_verify_sdist_rejects_stale_fastapi_example_readme(tmp_path: Path) -> None:
     sdist = tmp_path / "xy-0.0.1.tar.gz"
     _write_sdist(
         sdist,
-        replacements={
-            "examples/reflex/assets/charts/business_overview.html": (
-                "<html>" + ("padding\n" * 200) + "</html>"
-            )
-        },
+        replacements={"examples/fastapi/README.md": "# FastAPI\n" + ("padding\n" * 200)},
     )
 
-    with pytest.raises(AssertionError, match="business_overview"):
+    with pytest.raises(AssertionError, match="examples/fastapi/README"):
         verify_sdist.verify_sdist(str(sdist))
 
 
