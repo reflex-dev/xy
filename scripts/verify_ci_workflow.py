@@ -169,6 +169,47 @@ def _require_workflow_contains(
         errors.append(f"{workflow_label} workflow missing {description}: {missing}")
 
 
+def _require_docs_spec_pr_paths_ignored(errors: list[str], text: str, workflow_label: str) -> None:
+    """Require PR-only docs/spec changes to skip an expensive workflow."""
+    lines = text.splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if line == "  pull_request:")
+    except StopIteration:
+        errors.append(f"{workflow_label} workflow missing pull_request trigger")
+        return
+
+    paths_ignore: list[str] | None = None
+    collecting_paths_ignore = False
+    for line in lines[start + 1 :]:
+        indent = len(line) - len(line.lstrip())
+        if line.strip() and indent <= 2:
+            break
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if indent == 4:
+            collecting_paths_ignore = bool(re.fullmatch(r"paths-ignore:\s*(?:#.*)?", stripped))
+            if collecting_paths_ignore:
+                paths_ignore = []
+            continue
+        if not collecting_paths_ignore or indent <= 4:
+            continue
+        item = re.fullmatch(r"-\s+(.+?)\s*", stripped)
+        if item is None or paths_ignore is None:
+            continue
+        value = re.sub(r"\s+#.*$", "", item.group(1)).strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        paths_ignore.append(value)
+
+    required = {"docs/**", "spec/**"}
+    missing = sorted(required - set(paths_ignore or []))
+    if missing:
+        errors.append(
+            f"{workflow_label} pull_request trigger must skip docs/spec-only changes: {missing}"
+        )
+
+
 def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     try:
         text = path.read_text(encoding="utf-8")
@@ -177,6 +218,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
 
     jobs = _job_blocks(text)
     errors: list[str] = []
+    _require_docs_spec_pr_paths_ignored(errors, text, "CI")
     missing_jobs = sorted(REQUIRED_CI_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"CI workflow missing required jobs: {missing_jobs}")
@@ -539,6 +581,7 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
 
     jobs = _job_blocks(text)
     errors: list[str] = []
+    _require_docs_spec_pr_paths_ignored(errors, text, "CodSpeed")
     missing_jobs = sorted(REQUIRED_CODSPEED_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"CodSpeed workflow missing required jobs: {missing_jobs}")

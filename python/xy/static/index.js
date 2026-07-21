@@ -4188,6 +4188,7 @@ for (const g of this.gpuTraces) {
 drawTrace(g);
 }
 this._drawHoverState();
+this._repositionTooltip();
 if (!this._rafKeepPick) this._pickDirty = true;
 this._rafKeepPick = false;
 this._drawChrome();
@@ -5668,7 +5669,7 @@ this._hoverId = -1;
 this._hoverTarget = null;
 this._lastHoverXY = null;
 this._pickSeq = (this._pickSeq || 0) + 1;
-this.tooltip.style.display = "none";
+this._hideTooltip();
 if (hadHover) this.draw();
 return;
 }
@@ -5682,14 +5683,14 @@ this._hoverId = -1;
 this._hoverTarget = null;
 this._lastHoverXY = null;
 this._pickSeq = (this._pickSeq || 0) + 1;
-this.tooltip.style.display = "none";
+this._hideTooltip();
 if (hadHover) this._drawKeepPick();
 return;
 }
 const id = hit.trace * 1e9 + hit.index;
 this._lastHoverXY = { clientX: e.clientX, clientY: e.clientY };
 if (id === this._hoverId) {
-this._renderTooltip(this._lastRow, e.clientX, e.clientY);
+if (!this._tooltipAnchor) this._renderTooltip(this._lastRow, e.clientX, e.clientY);
 return;
 }
 this._hoverId = id;
@@ -6372,6 +6373,7 @@ Object.assign(ChartView.prototype, {
 _showTooltip(hit, clientX, clientY) {
 const row = this._localRow(hit);
 this._lastRow = row;
+this._setTooltipAnchor(hit, row, clientX, clientY);
 this._renderTooltip(row, clientX, clientY);
 if (this._interactionFlag("hover")) {
 this._dispatchChartEvent("hover", {
@@ -6566,14 +6568,66 @@ lines.push(`${field}: ${this._formatTooltipValue(value, kind, formats[field])}`)
 }
 return lines.length ? lines : this._defaultTooltipLines(row);
 },
-_renderTooltip(row, clientX, clientY, options = {}) {
-if (!row || this.spec.show_tooltip === false) {
+_setTooltipAnchor(hit, row, clientX, clientY) {
+const g = hit.g;
+if (!g) { this._tooltipAnchor = null; return; }
+const xAxis = g.xAxis || "x";
+const yAxis = g.yAxis || "y";
+let x = row.x;
+let y = row.y;
+if (!Number.isFinite(x) || !Number.isFinite(y)) {
+const rect = this.canvas.getBoundingClientRect();
+[x, y] = this._dataFromCanvas(clientX - rect.left, clientY - rect.top, xAxis, yAxis);
+}
+this._tooltipAnchor = Number.isFinite(x) && Number.isFinite(y)
+? { xAxis, yAxis, x, y }
+: null;
+if (this._tooltipAnchor && !this._tooltipAnchorPx()) this._tooltipAnchor = null;
+},
+_tooltipAnchorPx() {
+const a = this._tooltipAnchor;
+if (!a) return null;
+const lx = this._dataPx(a.xAxis, a.x);
+const ly = this._dataPx(a.yAxis, a.y);
+const p = this.plot;
+if (!Number.isFinite(lx) || !Number.isFinite(ly)
+|| lx < p.x || lx > p.x + p.w || ly < p.y || ly > p.y + p.h) {
+return null;
+}
+return { lx, ly };
+},
+_hideTooltip() {
+this.tooltip.style.display = "none";
+this._tooltipAnchor = null;
+},
+_repositionTooltip() {
+if (!this._tooltipAnchor) return;
+const pos = this._tooltipAnchorPx();
+if (!pos) {
 this.tooltip.style.display = "none";
 return;
 }
-const rect = this.root.getBoundingClientRect();
-const lx = clientX - rect.left;
-const ly = clientY - rect.top;
+this.tooltip.style.display = "block";
+this._placeTooltip(pos.lx, pos.ly);
+},
+_placeTooltip(lx, ly) {
+const tw = this.tooltip.offsetWidth;
+const th = this.tooltip.offsetHeight;
+const edge = 4;
+const gap = 12;
+const maxLeft = Math.max(edge, this.size.w - tw - edge);
+const left = Math.max(edge, Math.min(lx + gap, maxLeft));
+const below = ly + gap;
+const above = ly - th - gap;
+const top = below + th <= this.size.h - edge ? below : Math.max(edge, above);
+this.tooltip.style.left = left + "px";
+this.tooltip.style.top = top + "px";
+},
+_renderTooltip(row, clientX, clientY, options = {}) {
+if (!row || this.spec.show_tooltip === false) {
+this._hideTooltip();
+return;
+}
 const lines = this._tooltipLines(row);
 if (!this._customTooltip) {
 this.tooltip.textContent = "";
@@ -6591,17 +6645,15 @@ const announcement = prefix
 if (this.a11yLive.textContent !== announcement) this.a11yLive.textContent = announcement;
 }
 this.tooltip.style.display = "block";
-const tw = this.tooltip.offsetWidth;
-const th = this.tooltip.offsetHeight;
-const edge = 4;
-const gap = 12;
-const maxLeft = Math.max(edge, this.size.w - tw - edge);
-const left = Math.max(edge, Math.min(lx + gap, maxLeft));
-const below = ly + gap;
-const above = ly - th - gap;
-const top = below + th <= this.size.h - edge ? below : Math.max(edge, above);
-this.tooltip.style.left = left + "px";
-this.tooltip.style.top = top + "px";
+const pos = this._tooltipAnchorPx();
+if (pos) {
+this._placeTooltip(pos.lx, pos.ly);
+} else if (this._tooltipAnchor) {
+this.tooltip.style.display = "none";
+} else {
+const rect = this.root.getBoundingClientRect();
+this._placeTooltip(clientX - rect.left, clientY - rect.top);
+}
 },
 });
 Object.assign(ChartView.prototype, {
@@ -6649,7 +6701,7 @@ original: [...this._lassoPolygon[index]],
 handle,
 };
 handle.dataset.xyActive = "";
-this.tooltip.style.display = "none";
+this._hideTooltip();
 try { this.selLasso.setPointerCapture(e.pointerId); } catch (_err) {   }
 e.preventDefault();
 e.stopPropagation();
@@ -6723,7 +6775,7 @@ points: firstLassoPoint ? [firstLassoPoint] : null,
 previousLasso,
 };
 try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
-this.tooltip.style.display = "none";
+this._hideTooltip();
 return;
 }
 if (this.dragMode === "pan" && canNavigate && canPan) {
@@ -6740,7 +6792,7 @@ axes: [...new Set([
 changedAxes: [],
 };
 try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
-this.tooltip.style.display = "none";
+this._hideTooltip();
 }
 });
 this._listen(c, "pointermove", (e) => {
@@ -6827,7 +6879,7 @@ phase: "end",
 interactionId: drag.interactionId,
 });
 }
-if (drag && !drag.moved) this.tooltip.style.display = "none";
+if (drag && !drag.moved) this._hideTooltip();
 drag = null;
 };
 this._listen(c, "pointerup", end);
@@ -6848,7 +6900,7 @@ this._hoverTarget = null;
 this._lastHoverXY = null;
 this._a11yKeyboardReadout = null;
 this._pickSeq = (this._pickSeq || 0) + 1;
-this.tooltip.style.display = "none";
+this._hideTooltip();
 this._hideCrosshair();
 if (this._interactionFlag("hover")) {
 this._dispatchChartEvent("leave", { view: this._eventView("leave"), active: false });
@@ -6897,7 +6949,7 @@ return;
 if (e.key === "Escape") {
 e.preventDefault();
 const hadHover = this._hoverId !== -1;
-this.tooltip.style.display = "none";
+this._hideTooltip();
 this._hoverId = -1;
 this._hoverTarget = null;
 this._lastHoverXY = null;
@@ -8136,9 +8188,26 @@ if (f < 1) {
 const minSpan = Math.max(Math.abs(ca), 1e-30) * 1e-12;
 if (Math.abs((c1 - c0) * f) < minSpan) return null;
 }
+const next0 = ca - (ca - c0) * f;
+const next1 = ca + (c1 - ca) * f;
+if (f > 1 && this.view0) {
+const home = this._axisRange(axisId, this.view0);
+const home0 = this._axisCoord(axis, home[0]);
+const home1 = this._axisCoord(axis, home[1]);
+const homeSpan = Math.abs(home1 - home0);
+if ([home0, home1].every(Number.isFinite)
+&& homeSpan > 0
+&& Math.abs(next1 - next0) > homeSpan) {
+const signedHome = homeSpan * Math.sign(next1 - next0);
 return [
-this._axisValue(axis, ca - (ca - c0) * f),
-this._axisValue(axis, ca + (c1 - ca) * f),
+this._axisValue(axis, ca - anchorFrac * signedHome),
+this._axisValue(axis, ca + (1 - anchorFrac) * signedHome),
+];
+}
+}
+return [
+this._axisValue(axis, next0),
+this._axisValue(axis, next1),
 ];
 },
 _zoomAt(f, fx, fy, animate = false, duration = 120, opts = {}) {
@@ -8848,7 +8917,7 @@ this.draw();
 this._applyAppend(msg, buffers);
 } else if (msg.type === "pick_result") {
 if (msg.seq !== undefined && msg.seq !== this._pickSeq) return;
-if (!msg.row) { this.tooltip.style.display = "none"; return; }
+if (!msg.row) { this._hideTooltip(); return; }
 const local = this._lastRow;
 if (local && local.trace === msg.row.trace && local.index === msg.row.index) {
 for (const [key, value] of Object.entries(local)) {
@@ -8857,6 +8926,11 @@ if (msg.row[key] === undefined) msg.row[key] = value;
 }
 this._applySharedTooltipFields(msg.row);
 this._lastRow = msg.row;
+if (this._tooltipAnchor
+&& Number.isFinite(msg.row.x) && Number.isFinite(msg.row.y)) {
+this._tooltipAnchor.x = msg.row.x;
+this._tooltipAnchor.y = msg.row.y;
+}
 const xy = this._lastHoverXY;
 if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY, {
 announce: !this._a11yKeyboardReadout,

@@ -4,6 +4,9 @@ on:
   push:
     branches: ["main", "claude/**"]
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "spec/**"
   workflow_dispatch:
 
 # Multiple sessions push to two branches in bursts; without this the runner

@@ -276,6 +276,25 @@ on their own side (`y` left, `y2` right, top-side x axes on top), so scoping
 needs no modifier keys, and a band gesture is an ordinary interaction with a
 one-axis `axes` list — history and events see nothing new.
 
+**Zoom limits.** Every factor zoom — wheel, modebar Zoom In/Out — goes
+through `_zoomAxisRange` (`53_interaction.js:1661`) and stops at two
+boundaries:
+
+- *Zooming in* stops at the dossier §16 precision floor: if either axis's
+  next span would fall below ~1 part in 10¹² of the anchor's magnitude, the
+  whole step is ignored — neither axis moves.
+- *Zooming out* stops at the home view, per axis: when a factor-out step
+  would grow an axis's span to or past its home (`view0`) span, that axis
+  snaps exactly to home. The two axes clamp independently, so a view that
+  was box-zoomed anisotropically (X and Y narrowed by very different
+  factors) recovers the home aspect on zoom-out instead of the less-zoomed
+  axis overshooting far past home and flattening the point cloud. Factor
+  zoom-out therefore never takes the view beyond home; regions outside the
+  home view are reached by panning or box-zooming, subject to axis bounds.
+
+Box zoom is bounded separately: a drag whose data rectangle would collapse a
+span below f32 resolution is ignored as degenerate.
+
 The modebar exposes the same actions: Pan; Back/Forward view-history buttons
 (when `history` is on — enabled only when the corresponding stack side is
 non-empty); a zoom menu with Zoom In (×0.5),
@@ -302,7 +321,34 @@ to exactly `linked_dims`, so `link_select=True` with `link=None` produces an
 empty `link_axes` — panels share selections and nothing else. `link_select`
 is written straight into each panel's interaction dict.
 
-## 7. Unconditional behavior
+## 7. Tooltip anchoring
+
+The hover tooltip is anchored in data space, not at the cursor
+(matplotlib's data-coordinate-annotation contract;
+`js/src/52_tooltip.js`, `_setTooltipAnchor` / `_repositionTooltip`):
+
+- At pick time the hovered point's data coordinates are recorded against the
+  trace's own axis pair. Category rows carry labels rather than numbers, so
+  their numeric anchor is derived from the pick position instead. The
+  kernel's exact-pick reply sharpens the f32-decoded anchor to full f64
+  (dossier §16).
+- Every draw reprojects the anchor, so the tooltip rides its point through
+  pans, zooms, and reset animations — including view changes that happen
+  without a pointermove: modebar Reset View, dblclick home, wheel zoom, and
+  views applied from link-group peers. It never floats at a stale screen
+  position describing a point that is no longer there.
+- When the anchor's projection leaves the plot rect the tooltip hides,
+  rather than clamping to an edge that would misrepresent where the point
+  is. The retained anchor may bring it back if a later view change returns
+  the point to view — but every explicit hide path clears the anchor, so a
+  dismissed tooltip cannot resurrect on a subsequent draw.
+- Placement: 12 px gap beside the anchor, flipped above when below does not
+  fit, clamped to the canvas with a 4 px edge margin.
+- Keyboard traversal can focus a point outside the current view; its readout
+  keeps the edge-clamped placement (the anchor is dropped when its
+  projection starts outside the plot rect).
+
+## 8. Unconditional behavior
 
 Not configurable through any switch: tooltip rendering and the kernel `pick`
 round-trip on hover; keyboard point traversal and the live-region readout;
