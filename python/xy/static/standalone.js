@@ -9442,11 +9442,13 @@ this.interaction = spec.interaction || {};
 this.markStyle = spec.mark_style || {};
 this.axes = this._normalizeAxes(spec);
 this._payload = buffer;
-const target = this._clampView({
-x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
-y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
+this.view0 = undefined;
+this.view0 = this._clampView({
+ranges: Object.fromEntries(
+Object.entries(this.axes).map(([id, axis]) => [id, [...axis.range]]),
+),
 });
-this.view0 = { ...target };
+const target = { ...this.view0 };
 if (this._glLost || !this.gl) {
 this.view = { ...target };
 return true;

@@ -77,7 +77,10 @@ def test_wrapper_sizes_static_and_live_charts_to_the_reflex_mount():
     assert 'width: "100%"' in jsx
     assert 'height: "100%"' in jsx
     assert "renderStandalone(el, fitSpecToElement(frame.message)" in jsx
-    assert "fitSpecToElement(data.spec)," in jsx
+    # Live mode fits the incoming payload spec to the mount before rendering it
+    # (through the shared `nextSpec`, used by both updatePayload and a fresh
+    # ChartView), so a live chart never overflows its component either.
+    assert "const nextSpec = fitSpecToElement(data.spec);" in jsx
 
 
 def test_wrapper_discards_tailwind_scan_manifest_before_dom_props():
