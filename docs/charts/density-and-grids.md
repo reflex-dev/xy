@@ -31,29 +31,77 @@ def heatmap_chart_demo():
     return reflex_xy.chart(chart, height="360px")
 ~~~
 
-## Variants
+## Chart Types
+
+### Heatmap
+
+Use `heatmap` when values already form a two-dimensional matrix and color should
+encode each cell.
 
 ### Hexbin
 
-~~~python
+~~~python demo exec
+import numpy as np
+import reflex_xy
+import xy
+
 rng = np.random.default_rng(21)
 points_x = rng.normal(size=100_000)
 points_y = 0.65 * points_x + rng.normal(scale=0.55, size=points_x.size)
 
-chart = xy.hexbin_chart(
-    xy.hexbin(points_x, points_y, gridsize=72, mincnt=1),
+hexbin_detail_chart = xy.hexbin_chart(
+    xy.hexbin(
+        points_x,
+        points_y,
+        gridsize=72,
+        mincnt=1,
+        colormap="viridis",
+    ),
+    xy.x_axis(label="signal A"),
+    xy.y_axis(label="signal B"),
+    title="Correlated point density",
 )
+
+
+def hexbin_demo():
+    return reflex_xy.chart(hexbin_detail_chart, height="340px")
 ~~~
 
 Hexbin supports count bins or an additional `C` channel reduced per cell with
 `reduce_C_function`.
 
-### Contours
+### Contour
 
-~~~python
-chart = xy.contour_chart(
-    xy.contour(z, x=x, y=y, levels=12, filled=True, colormap="viridis"),
+~~~python demo exec
+import numpy as np
+import reflex_xy
+import xy
+
+contour_x = np.linspace(-3, 3, 100)
+contour_y = np.linspace(-2.5, 2.5, 90)
+contour_xx, contour_yy = np.meshgrid(contour_x, contour_y)
+contour_z = (
+    np.exp(-((contour_xx - 0.8) ** 2 + contour_yy**2))
+    + 0.7 * np.exp(-((contour_xx + 1.1) ** 2 + (contour_yy - 0.5) ** 2))
 )
+
+contour_detail_chart = xy.contour_chart(
+    xy.contour(
+        contour_z,
+        x=contour_x,
+        y=contour_y,
+        levels=14,
+        filled=True,
+        colormap="viridis",
+    ),
+    xy.x_axis(label="x"),
+    xy.y_axis(label="y"),
+    title="Density contours",
+)
+
+
+def contour_demo():
+    return reflex_xy.chart(contour_detail_chart, height="340px")
 ~~~
 
 ## Expected Data Shape

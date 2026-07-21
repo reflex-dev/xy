@@ -556,7 +556,7 @@ void main() {
   }
 }`;
 
-// Mark-fill gradients (docs/engineering/styling.md#styling-the-marks): up to 8 stops,
+// Mark-fill gradients (spec/api/styling.md#styling-the-marks): up to 8 stops,
 // interpolated in premultiplied alpha so a fade to `transparent` keeps the hue
 // (no dark fringe). u_gradMode: 0=off, 1=mark space (t runs along the mark's
 // value axis, 0 at the base, 1 at the tip/line), 2=plot space (screen axes —

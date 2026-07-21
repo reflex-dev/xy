@@ -6,9 +6,12 @@ import json
 
 import reflex as rx
 from reflex_docgen.markdown import HeadingBlock, parse_document
+from reflex_site_shared.components.blocks.demo import doccode
 from reflex_site_shared.docs.markdown import ReflexDocTransformer, _spans_to_plaintext
 from reflex_site_shared.docs.models import DocsPage
 from reflex_site_shared.views.hosting_banner import HostingBannerState
+
+from xy_docs.examples import chart_example_demo
 
 _HEADING_PRESENTATION = {
     1: ("h1", "4", "lg:text-4xl text-3xl font-semibold"),
@@ -65,6 +68,46 @@ class XyDocsMarkdownTransformer(ReflexDocTransformer):
     def heading(self, block: HeadingBlock) -> rx.Component:
         """Render one route-local Markdown heading."""
         return _heading_link(_spans_to_plaintext(block.children), block.level)
+
+    def _render_demo(self, content: str, flags: set[str]) -> rx.Component:
+        """Render styling demos on a consistent chart surface."""
+        component_id = next(
+            (flag.split("=", 1)[1] for flag in flags if flag.startswith("id=")),
+            None,
+        )
+
+        if "preview-code" not in flags:
+            normalized_path = "/" + self.virtual_filepath.replace("\\", "/").lstrip("/")
+            uses_plain_chart_surface = "/docs/styling/" in normalized_path
+            if not uses_plain_chart_surface:
+                return super()._render_demo(content, flags)
+
+        preview = (
+            self._exec_and_get_last_callable(content)
+            if "exec" in flags
+            else eval(content, self.env, self.env)
+        )
+
+        if "preview-code" not in flags:
+            return rx.el.div(
+                rx.el.div(
+                    preview,
+                    class_name=(
+                        "w-full overflow-hidden rounded-xl border border-secondary-4 "
+                        "bg-white [--chart-bg:#ffffff] "
+                        "dark:bg-black dark:[--chart-bg:#000000]"
+                    ),
+                ),
+                doccode(content),
+                id=component_id,
+                class_name="flex w-full flex-col gap-4 py-4",
+            )
+
+        return chart_example_demo(
+            content,
+            preview,
+            component_id=component_id,
+        )
 
 
 def render_xy_markdown_page(page: DocsPage) -> rx.Component:

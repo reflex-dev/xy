@@ -9,7 +9,7 @@ independent SVG in milliseconds — no browser, no extra dependencies.
 Layout, tick math, colormaps, and mark styling mirror the JS client
 (`30_ticks.js`, `10_colormaps.js`, `50_chartview.js`); tests assert the
 ported tables stay in sync with the JS parts. Known static-export
-approximations, documented in docs/engineering/styling.md: area mark-space gradients use
+approximations, documented in spec/api/styling.md: area mark-space gradients use
 the area's bounding box (SVG has no per-column gradient); complete chart color
 tokens resolve statically, while nested browser-only expressions remain
 browser-dependent in SVG and use the native PNG fallback.
@@ -618,17 +618,40 @@ def _px_size(value: Any, default: float) -> float:
     return default
 
 
+def apply_export_background(spec: dict[str, Any], background: Optional[str]) -> None:
+    """Apply the unified export API's `background=` override to a payload spec.
+
+    An explicit export background replaces the ENTIRE painted backdrop — the
+    canvas underlay, the theme figure patch (`theme(background=)`), and the
+    plot-rect fill (`--chart-bg`) — so the requested color (or transparency)
+    is what actually shows regardless of chart theme, instead of being buried
+    under the theme paints. The plot token becomes "transparent" rather than
+    the override color so translucent backgrounds composite exactly once.
+    Shared by the raster exporter and (via SVG) the PDF exporter."""
+    if background is None:
+        return
+    spec["canvas_background"] = background
+    dom = spec.setdefault("dom", {})
+    if isinstance(dom, dict):
+        style = dom.setdefault("style", {})
+        if isinstance(style, dict):
+            style.pop("background", None)
+            style["--chart-bg"] = "transparent"
+
+
 def _solid_paint(css: Any) -> Optional[str]:
     """A parseable solid CSS color string, or None when unset/unpaintable
     (var(), gradients) — for background rects that must be omitted rather
-    than fallback-painted."""
+    than fallback-painted. Fully transparent colors (alpha 0, e.g. the
+    export background override's plot token) are pure no-op fills and are
+    omitted as well."""
     from . import kernels
 
     s = _css(css, "")
     if not s:
         return None
     _status, rgba = kernels.css_check(kernels.CSS_COLOR, s)
-    if rgba is None:
+    if rgba is None or rgba[3] == 0:
         return None
     return s
 
@@ -1749,6 +1772,12 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     # the --chart-bg token over the plot rect only. Solid colors only —
     # gradients stay browser-only, and an unset token stays transparent.
     backgrounds = ""
+    # Export-time canvas override (unified export API `background=`): one
+    # backdrop rect behind the figure patch. "transparent"/"none" mean "no
+    # backdrop", which is already SVG's default — nothing to paint.
+    canvas_paint = spec.get("canvas_background")
+    if canvas_paint and canvas_paint not in ("transparent", "none"):
+        backgrounds += f'<rect width="{width}" height="{height}" fill="{escape(canvas_paint)}"/>'
     figure_background = _solid_paint(dom_style.get("background"))
     if figure_background is not None:
         backgrounds += (
@@ -2613,13 +2642,16 @@ def to_svg(
     width: Optional[int] = None,
     height: Optional[int] = None,
     id_prefix: str = "",
+    background: Optional[str] = None,
 ) -> str:
     """Render `fig` to a standalone SVG string (optionally saved to `path`).
 
     `width`/`height` override the figure's pixel size (useful for fluid "100%"
     figures). Decimation runs at the export width, so output stays
     screen-bounded no matter the source size. `id_prefix` namespaces generated
-    element ids for composers that inline several exports in one document."""
+    element ids for composers that inline several exports in one document.
+    `background` overrides the figure canvas color ("transparent" omits the
+    opaque backdrop, matching the raster exporters' alpha behavior)."""
     eff_w = (
         int(width)
         if width is not None
@@ -2630,6 +2662,7 @@ def to_svg(
         spec["width"] = int(width)
     if height is not None:
         spec["height"] = int(height)
+    apply_export_background(spec, background)
     out = render_svg(spec, blob, id_prefix=id_prefix)
     if path is not None:
         from .export import _atomic_write_text

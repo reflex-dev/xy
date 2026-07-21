@@ -522,6 +522,19 @@ def test_client_coalesces_wheel_zoom_without_animation_lag() -> None:
             assert marker in text, f"{path} no longer coalesces wheel zoom marker {marker!r}"
 
 
+def test_client_can_disable_navigation_without_disabling_hover() -> None:
+    required = (
+        'if (!this._interactionFlag("navigation", true)) return;',
+        'this._listen(c, "wheel", (e) => {',
+        'this._listen(c, "pointermove", (e) => {',
+        "this._hover(e);",
+    )
+
+    for path, text in CLIENT_FILES:
+        for marker in required:
+            assert marker in text, f"{path} no longer supports static interactive charts {marker!r}"
+
+
 def test_client_heatmap_hover_rows_use_axis_display_values() -> None:
     required = (
         'const [x, xKind] = this._sourceDisplayValue(g, "x", rawX, "float");',
@@ -533,6 +546,22 @@ def test_client_heatmap_hover_rows_use_axis_display_values() -> None:
     for path, text in CLIENT_FILES:
         for marker in required:
             assert marker in text, f"{path} no longer exposes heatmap display marker {marker!r}"
+
+
+def test_client_point_hover_rows_use_category_display_labels() -> None:
+    """Categorical tooltips expose labels instead of zero-based axis codes."""
+    required = (
+        'const [x, xKind] = this._sourceDisplayValue(g, "x", rawX, xMeta && xMeta.kind);',
+        'const [y, yKind] = this._sourceDisplayValue(g, "y", rawY, yMeta && yMeta.kind);',
+        "row.x = x;",
+        "row.y = y;",
+    )
+
+    for path, text in CLIENT_FILES:
+        for marker in required:
+            assert marker in text, (
+                f"{path} no longer maps categorical point tooltips to display labels"
+            )
 
 
 def test_client_exposes_axis_style_hooks() -> None:
@@ -658,7 +687,7 @@ def test_client_renders_mark_level_styling() -> None:
     """Gradient fills (premultiplied, currentColor-aware), rounded corners +
     stroke borders on both rect-family GPU programs, and curve:"smooth"
     monotone-cubic densification are first-class mark styling
-    (docs/engineering/styling.md#styling-the-marks)."""
+    (spec/api/styling.md#styling-the-marks)."""
     required = (
         "xyGradSample(",  # gradient sampler shared by area + rect shaders
         "u_gradMode",

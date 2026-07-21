@@ -12,6 +12,24 @@
       "sourceType": "github",
       "skillPath": "skills/codspeed-setup-harness/SKILL.md",
       "computedHash": "4ea2cc264339105bf12f70586acfefc85aec584de41caf9439e2ed9275dfee38"
+    },
+    "reflex-docs": {
+      "source": "reflex-dev/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/reflex-docs/SKILL.md",
+      "computedHash": "8a1802f2214e97e56d0548c660c7774b4ff9470b9e07ba3750b4918c864c0432"
+    },
+    "reflex-process-management": {
+      "source": "reflex-dev/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/reflex-process-management/SKILL.md",
+      "computedHash": "8c5d35cd59c139e1d552d9a960d197ee238b0d287b60de7a8294d6300916c9ba"
+    },
+    "setup-python-env": {
+      "source": "reflex-dev/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/setup-python-env/SKILL.md",
+      "computedHash": "321bd364ebdfe3f266c1df075cf2e758574fdcd2266f14cc94c0f323aeeab78a"
     }
   }
 }

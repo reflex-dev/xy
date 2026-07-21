@@ -72,7 +72,7 @@ xy_docs/                 # App entry point and XY-specific site composition
 scripts/                 # Post-build sitemap, Markdown, and HTML validators
 tests/                   # Docs, links, live-preview, and integration tests
 ../                      # Public Markdown sources
-../engineering/          # Internal project docs; never published
+../../spec/              # Internal project docs; never published
 ```
 
 ## Commands

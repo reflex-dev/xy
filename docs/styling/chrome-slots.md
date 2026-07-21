@@ -54,26 +54,58 @@ config = rx.Config(
 ~~~
 
 For a fixed `xy.Chart` or `xy.Figure` passed directly to `reflex_xy.chart(...)`,
-the adapter mirrors its chart, slot, mark, and annotation class strings into
-generated JSX. That JSX is already in the plugin's default scan paths, so the
-complete utility names below work without adding the original Python or
-Markdown file to Tailwind's source configuration.
+Reflex includes the chart's literal class strings in Tailwind's default scan
+paths. The complete utility names below therefore work without adding the
+original Python or Markdown file to Tailwind's source configuration.
 
 ~~~python demo exec
 import reflex_xy
 import xy
 
-chart = xy.line_chart(
-    xy.line([0, 1, 2, 3], [2, 5, 3, 8], name="Signal"),
+chart = xy.area_chart(
+    xy.area(
+        ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
+        [32, 45, 41, 58, 63, 74],
+        name="Signal",
+        color="#00b8db",
+        fill="linear-gradient(#00b8db4d 5%, #00b8db00 95%)",
+        opacity=1,
+        curve="smooth",
+        line_width=2,
+    ),
+    xy.x_axis(
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "grid_opacity": 0,
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
+    ),
+    xy.y_axis(
+        domain=(0, 80),
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "grid_color": "#e2e8f0",
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
+    ),
     xy.legend(),
     class_name="text-slate-900 dark:text-zinc-100",
     class_names={
-        "title": "text-base font-semibold",
         "legend": "bg-transparent text-xs text-slate-600 dark:text-slate-300",
         "tooltip": "rounded-lg bg-zinc-950/90 px-3 py-2 text-white shadow-xl",
         "modebar_button": "hover:bg-zinc-100 focus:ring-2 dark:hover:bg-zinc-800",
     },
-    title="Tailwind chrome",
+    width="100%",
+    height=320,
+    padding=(24, 24, 44, 32),
 )
 
 
@@ -85,12 +117,10 @@ Keep each utility name complete and literal, such as `bg-zinc-950/90`. Tailwind
 cannot discover a name assembled at runtime from fragments such as
 `f"bg-{tone}-950"`; map dynamic state to complete class strings instead.
 
-Live token/Var charts are different: their figure is produced at runtime, after
-Tailwind has compiled the app, so the adapter cannot mirror those class names
-ahead of time. Put every complete utility name used by a live chart literally
-in a normal Reflex component (or safelist it in the host app). The same rule
-applies when application logic chooses classes that were not present on the
-fixed figure at compile time.
+For charts produced from a token or `Var`, Tailwind still needs to see every
+possible utility at build time. Put each complete utility name in a normal
+Reflex component or safelist it in the host app. The same rule applies when
+application logic chooses classes dynamically.
 
 Without `TailwindV4Plugin`, XY still places the names in the DOM but no Tailwind
 utilities are generated, so the chart renders without those styles. An XY
@@ -227,4 +257,5 @@ replace those defaults. Completed lasso polygons are canvas chrome and use the
 
 Annotation **labels** use `annotation_label`; canvas-painted arrow shafts,
 markers, rules, and zones do not. Style those through their annotation props as
-described in [Mark styles](/docs/xy/styling/mark-styles/#what-css-cannot-reach).
+described in
+[Customize Each Part](/docs/xy/styling/customize/#fill,-stroke,-opacity,-and-gradients).

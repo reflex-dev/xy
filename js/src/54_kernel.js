@@ -90,15 +90,24 @@ Object.assign(ChartView.prototype, {
 
   _requestSampleRebin(g, view, seq) {
     if (!g._homeDensity) g._homeDensity = g.density;
-    // At (or beyond) the home view the full overview grid — binned from every
-    // source point kernel-side — beats any re-bin of the sample: restore it.
+    // The full overview grid — binned kernel-side from every source point at
+    // export — has enough resolution for any view that is not zoomed in
+    // *tighter* than the home extent. Re-binning the retained §28 sample only
+    // adds resolution once the user zooms in; doing it on a mere pan (or a
+    // zoom-out) would swap the full-data grid for a noisier sample-derived
+    // grid that normalizes against a different, much smaller maximum, so the
+    // density visibly jumps between the overview and the sample on the
+    // slightest drag. Gate on view *span*, not position: keep (and restore)
+    // the overview for pans and zoom-outs; only a real zoom-in re-bins.
     const v0 = this.view0;
-    const ex = Math.max(Math.abs(v0.x1 - v0.x0), 1e-300) * 1e-9;
-    const ey = Math.max(Math.abs(v0.y1 - v0.y0), 1e-300) * 1e-9;
-    const atHome =
-      Math.min(view.x0, view.x1) <= v0.x0 + ex && Math.max(view.x0, view.x1) >= v0.x1 - ex &&
-      Math.min(view.y0, view.y1) <= v0.y0 + ey && Math.max(view.y0, view.y1) >= v0.y1 - ey;
-    if (atHome) {
+    const homeSpanX = Math.max(Math.abs(v0.x1 - v0.x0), 1e-300);
+    const homeSpanY = Math.max(Math.abs(v0.y1 - v0.y0), 1e-300);
+    const viewSpanX = Math.abs(view.x1 - view.x0);
+    const viewSpanY = Math.abs(view.y1 - view.y0);
+    // 1e-6 slack absorbs float drift so a pan at home zoom never trips a re-bin.
+    const notZoomedIn =
+      viewSpanX >= homeSpanX * (1 - 1e-6) && viewSpanY >= homeSpanY * (1 - 1e-6);
+    if (notZoomedIn) {
       if (g.density !== g._homeDensity) {
         const hd = g._homeDensity;
         this._applySampleRebinGrid(g, {
@@ -405,6 +414,20 @@ Object.assign(ChartView.prototype, {
     const wx0 = Math.min(win.x0, win.x1), wx1 = Math.max(win.x0, win.x1);
     const wy0 = Math.min(win.y0, win.y1), wy1 = Math.max(win.y0, win.y1);
     return vx0 >= wx0 - ex && vx1 <= wx1 + ex && vy0 >= wy0 - ey && vy1 <= wy1 + ey;
+  },
+
+  // Does the current view overlap `win` at all (as opposed to sit fully inside
+  // it)? Used to keep the retained density sample on screen through pans and
+  // zoom-outs — the points are positioned in data space and the GPU clips the
+  // off-screen ones, so overlap is the right test, not containment.
+  _viewOverlaps(win) {
+    if (!win) return false;
+    const { x0, x1, y0, y1 } = this.view;
+    const vx0 = Math.min(x0, x1), vx1 = Math.max(x0, x1);
+    const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
+    const wx0 = Math.min(win.x0, win.x1), wx1 = Math.max(win.x0, win.x1);
+    const wy0 = Math.min(win.y0, win.y1), wy1 = Math.max(win.y0, win.y1);
+    return vx0 <= wx1 && vx1 >= wx0 && vy0 <= wy1 && vy1 >= wy0;
   },
 
   _viewInsideRange(xRange, yRange) {

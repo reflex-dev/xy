@@ -61,17 +61,25 @@ Object.assign(ChartView.prototype, {
       const x1 = this._decodeValue(r.x1, r.x1Meta, hit.index);
       const y0 = this._decodeValue(r.y0, r.y0Meta, hit.index);
       const y1 = this._decodeValue(r.y1, r.y1Meta, hit.index);
-      row.x = x0 + (x1 - x0) / 2;
-      row.y = y1;
-      row.x_kind = r.x0Meta.kind;
-      row.y_kind = r.y1Meta.kind;
+      const [x, xKind] = this._sourceDisplayValue(
+        g, "x", x0 + (x1 - x0) / 2, r.x0Meta.kind,
+      );
+      const [y, yKind] = this._sourceDisplayValue(g, "y", y1, r.y1Meta.kind);
+      row.x = x;
+      row.y = y;
+      if (xKind !== undefined) row.x_kind = xKind;
+      if (yKind !== undefined) row.y_kind = yKind;
     } else if (cpu) {
       const xMeta = cpu.xMeta || g.xMeta;
       const yMeta = cpu.yMeta || g.yMeta;
-      row.x = this._decodeValue(cpu.x, xMeta, hit.index);
-      row.y = this._decodeValue(cpu.y, yMeta, hit.index);
-      row.x_kind = xMeta && xMeta.kind;
-      row.y_kind = yMeta && yMeta.kind;
+      const rawX = this._decodeValue(cpu.x, xMeta, hit.index);
+      const rawY = this._decodeValue(cpu.y, yMeta, hit.index);
+      const [x, xKind] = this._sourceDisplayValue(g, "x", rawX, xMeta && xMeta.kind);
+      const [y, yKind] = this._sourceDisplayValue(g, "y", rawY, yMeta && yMeta.kind);
+      row.x = x;
+      row.y = y;
+      if (xKind !== undefined) row.x_kind = xKind;
+      if (yKind !== undefined) row.y_kind = yKind;
       const color = g.trace.color;
       if (cpu.color && color) {
         if (color.mode === "categorical" && Array.isArray(color.categories)) {
