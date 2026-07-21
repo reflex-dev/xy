@@ -1825,7 +1825,12 @@ class ChartView {
 
   _drawDensitySample(g, x0, x1, y0, y1, opacityScale = 1) {
     const s = g && g.sampleOverlay;
-    if (!s || !s.n || !this._viewInside(s.win)) return;
+    // Draw the retained sample whenever it overlaps the view, not only when the
+    // view sits fully inside the sample window: a pan or zoom-out must keep the
+    // same "density + points" look instead of dropping the points the instant
+    // the view crosses the sample's home extent (the density grid stays, so the
+    // points have to as well). Off-screen points are clipped by the GPU.
+    if (!s || !s.n || !this._viewOverlaps(s.win)) return;
     this._drawPoints(
       s,
       this._map(s.xMeta, x0, x1, s.xAxis),
