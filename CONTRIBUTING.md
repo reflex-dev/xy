@@ -2,7 +2,7 @@
 
 The full contributor guide — PR checklist, local gate commands, and the
 chart-type contribution walkthrough — lives at
-[`spec/contributing.md`](spec/contributing.md).
+[`spec/process/contributing.md`](spec/process/contributing.md).
 
 Quick start:
 

@@ -15,12 +15,21 @@ reduces to a few GPU primitives on top of the shared infrastructure.
 |---|---|---|
 | Points | built (`scatter`) | scatter, bubble |
 | Lines | built (`line`) | line, spline, step/stairs, ECDF, error-band outlines |
-| Segments | built (`errorbar`/`stem`/`contour`) | error bars, stems, box whiskers, contour isolines |
-| Rectangles | built (`histogram`; compact-bar variant for `bar`/`column`) | bar, histogram, box, violin, candlestick/OHLC, waterfall |
-| Filled polygons | built (`area`) | area fill, confidence bands, stacked area |
-| Grid texture | built (`density` tier, `heatmap`) | heatmap, image, 2D histogram, hexbin, filled contour |
+| Segments | built (`errorbar`/`stem`/`contour`/`segments`/`box_whisker`/`box_median`) | error bars, stems, box whiskers, contour isolines |
+| Rectangles | built (`histogram`/`box`/`violin`; compact-bar variant for `bar`/`column`) | bar, histogram, box, violin, candlestick/OHLC, waterfall |
+| Filled polygons | built (`area`/`error_band`) | area fill, confidence bands, stacked area |
+| Grid texture | built (`density` tier, `heatmap`) | heatmap, image, 2D histogram, filled contour |
+| Triangle mesh | built (`triangle_mesh`, `hexbin`) | hexbin, arbitrary polygon fills, quiver/vector glyphs |
 
 Establish the primitive once; the charts sharing it are mostly wiring.
+
+The registry is the authority on what exists. `MARK_KINDS` (`js/src/55_marks.js`)
+holds eighteen kinds today — `area`, `bar`, `box`, `box_median`, `box_whisker`,
+`column`, `contour`, `error_band`, `errorbar`, `heatmap`, `hexbin`, `histogram`,
+`line`, `scatter`, `segments`, `stem`, `triangle_mesh`, `violin` — each with a
+matching `_emit_<K>` in `_payload.py`. `density` is a *tier* of `scatter`, not a
+kind. Public builders that reuse an existing kind add no registry entry:
+`hist` → `histogram`, and `step`/`stairs`/`ecdf` → `line`.
 
 ## The two seams (and the dispatch that ties them)
 
@@ -41,9 +50,93 @@ by the string `K` on the wire (`trace.kind`).
   into the `ColumnStore` and appends a `Trace`. Reuse `_ingest_xy` for the
   equal-length (x,y) contract; a non-xy mark ingests its own columns.
 - **Channels** (optional): if the mark has per-mark color/size, reuse
-  `channels.ship_channels(trace, sel, ship_scalar, palette)` — the same wire
-  shape scatter and heatmap use, so continuous/categorical color and size come
-  from one path.
+  `channels.ship_channels(trace, sel, ship_scalar, ship_u8, palette)` — the same
+  wire shape scatter and heatmap use, so continuous/categorical color and size
+  come from one path. Most kernels should call the `Figure._ship_channels(t, sel,
+  pw.ship_scalar, pw.ship_u8)` wrapper in `_payload.py`, which supplies
+  `DEFAULT_PALETTE`.
+
+#### Shared-geometry marks: the hexbin centers-only contract
+
+A mark whose cells all share one geometry ships **centers plus channels**, not
+expanded vertices. `_emit_hexbin` (`python/xy/_payload.py:420-447`) ships one
+(x, y) center and one scalar color value per cell; the hexagon itself is a style
+constant (`hex_dx`/`hex_dy`). Each renderer expands the six-triangle fan locally,
+so the wire cost stays O(cells) instead of O(cells × vertices × channels).
+
+Three renderers expand it today and must agree exactly: `_buildHexbinMark`
+(`js/src/50_chartview.js:2038`, WebGL), `HEX_RING`/`hexbin_ring()`
+(`python/xy/_svg.py:2074`, the reference ring), and `_emit_hexbin`
+(`python/xy/_raster.py:1413`, raster export, consuming `hexbin_ring`). Only code
+comments bind them; changing one without the others silently desynchronizes
+exports from the live chart, which has already produced a CI-red payload
+regression once. The rest of this section is normative — a fourth renderer
+implements it without reading the other three.
+
+**On the wire.** The trace entry carries this and nothing else the geometry
+needs:
+
+| Field | Meaning |
+| --- | --- |
+| `kind` | `"hexbin"` |
+| `tier` | always `"direct"`; hexbin aggregates at build time and is never re-tiered, decimated, or view-updated — `Trace.use_density()` returns `False` for every non-`scatter` kind (`_trace.py:74-77`), and the view-update path returns no traces without it (`interaction.py:456`) |
+| `x`, `y` | column indices for the cell centers, one entry per occupied cell, offset-encoded f32 (§4/§16). Shipped via `pw.ship_values`, not `pw.ship` — the centers are derived geometry with no canonical `Column` behind them, so the offset is the midpoint of their own bounds |
+| `n_marks` | occupied cell count — the length of `x`/`y` |
+| `n_points` | input row count before binning; reporting only |
+| `color` | channel record from `_ship_channels`: `constant`, `continuous` (`buf` + `colormap`), or `categorical` (`buf` + `palette`), one value per **cell** |
+| `style.hex_dx`, `style.hex_dy` | data-space cell pitch — the x/y range divided by `gridsize` (`python/xy/marks.py`) |
+
+There is no size channel (`_emit_hexbin` resolves one and discards it), and no
+vertex, index, or per-triangle column ever ships.
+
+**What each renderer reconstructs.** For cell `i`, a hexagon centered on
+`(x[i], y[i])` with six vertices at `center + (rx_k · hex_dx, ry_k · hex_dy)`,
+where the ring fractions are `HEX_RING`:
+
+```
+k:    0       1       2       3       4       5
+rx:   0     +1/2    +1/2      0     -1/2    -1/2
+ry: -1/3    -1/6    +1/6    +1/3    +1/6    -1/6
+```
+
+The ring is closed — vertex 5 connects back to vertex 0 — and runs
+counter-clockwise in data space (y up).
+
+**Geometry convention.** Pointy-top hexagons: one vertex directly above and one
+directly below the center, and two vertical sides at `x = center ± hex_dx/2`.
+Full width is `hex_dx`; full height is `2·hex_dy/3`. Centers lie on two
+interleaved lattices of pitch (`hex_dx`, `hex_dy`) offset by half a pitch on both
+axes (the matplotlib hexbin lattice), but centers ship as absolute coordinates,
+so a renderer never reconstructs the lattice or needs to know which of the two a
+cell came from.
+
+**Fill.** One color per cell, applied to the whole hexagon, with fill alpha
+`style.opacity × style.fill_opacity` — the same product in all three
+(`_svg._fill_opacity`, `_raster._fill_opacity`, `50_chartview.js:1880`).
+
+Cells are unstroked, but the three renderers reach that outcome differently and
+only the style keeps them agreeing: `marks.hexbin` builds its style from
+`color`/`opacity`/`hex_dx`/`hex_dy` plus `styles._opacity_channels(css)`, which
+whitelists `fill_opacity` and `stroke_opacity` only — so `stroke` and
+`stroke_width` can never reach a hexbin trace. The exporters hardcode that
+(`_raster._emit_hexbin` passes width `0.0` and a transparent stroke;
+`_svg._hexbin_marks` emits no stroke attribute at all), while
+`_buildHexbinMark` reads `style.stroke_width`/`style.stroke` and *would* stroke
+if either appeared. Widening the style whitelist therefore diverges the live
+chart from both exports; adding a stroke to hexbin means teaching the two
+exporters first. A triangle renderer emits six triangles
+per cell — `(center, v_k, v_(k+1 mod 6))` — replicating the cell's color across
+all six; a path renderer may emit the six vertices as one closed polygon instead
+(what `_svg.py` does). The coverage is identical.
+
+**Coordinate space.** The two exporters expand in data space and then apply the
+axis scale. The WebGL client instead expands in the centers' *encoded* space:
+stored = `(value − offset) × scale`, so a data-space delta scales by the column's
+`scale` alone (the offset cancels) and the center columns' metas serve every
+derived vertex — the vertices inherit the centers' precision center (§16).
+
+A new shared-geometry mark should follow the same split: constant geometry in the
+style, per-cell data on the wire, one ring definition the other renderers cite.
 
 ### 2. Client — `js/src/`
 
@@ -77,6 +170,10 @@ benchmark tracks this as part of the core 2D payload budget.
 
 - **Interaction**: pan, wheel zoom (cursor-anchored), box-zoom, modebar, reset,
   dblclick — all operate on the view rectangle and `_map` uniforms, mark-blind.
+  A new kind inherits them without writing any interaction code, but they are
+  not unconditional: `navigation`/`pan`/`zoom` default to on and can be turned
+  off per figure. [interaction.md](interaction.md) is the authority on the
+  switches, defaults, gesture map, and event payloads.
 - **Responsive sizing**: `width/height:"100%"` + ResizeObserver.
 - **Precision**: canonical f64 CPU-side; f32 upload offset-encoded and
   re-centered on deep zoom (§16). Never send f64 through the GPU path.

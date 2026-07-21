@@ -5,11 +5,11 @@ restyle the whole chart with plain CSS, attribute selectors, Tailwind, or
 per-slot inline styles — and your styles always win, without `!important`.
 
 This engineering guide explains the implementation contract. The public,
-task-oriented references are [Styling](../docs/styling/index.md),
-[Component Variations](../docs/styling/component-variations.md), and
-[Mark Styles](../docs/styling/mark-styles.md). For the API shapes see
-[reflex-shaped-api.md](design/reflex-shaped-api.md); for the render internals
-see [renderer-architecture.md](design/renderer-architecture.md).
+task-oriented references are [Styling](../../docs/styling/index.md),
+[Component Variations](../../docs/styling/component-variations.md), and
+[Mark Styles](../../docs/styling/mark-styles.md). For the API shapes see
+[reflex-shaped-api.md](../design/reflex-shaped-api.md); for the render internals
+see [renderer-architecture.md](../design/renderer-architecture.md).
 
 ## The five ways to style
 
@@ -47,7 +47,7 @@ through untouched.
 In Reflex, Tailwind utilities require `rx.plugins.TailwindV4Plugin()`. Complete
 literal classes emitted into Reflex's generated JSX work with the plugin's
 normal scan paths; the original Python or Markdown path does not need to be
-added. See the public [Chrome Slots](../docs/styling/chrome-slots.md) guide for the
+added. See the public [Chrome Slots](../../docs/styling/chrome-slots.md) guide for the
 standalone-export and dynamic-class boundaries.
 
 ## Rendered marks: standard CSS vocabulary
@@ -148,6 +148,43 @@ xy.x_axis(
 )
 ```
 
+### Axis ticks and label formatting
+
+Tick placement is computed in f64 on the CPU (§16), never through f32, and is
+selected per scale kind with a target of 6 ticks. Every generator caps its
+output at 200 ticks.
+
+| Scale kind | Rule |
+| --- | --- |
+| linear | Step is the nice step for `(hi - lo) / target` — the smallest of `1, 2, 2.5, 5, 10` times the decade magnitude that covers the rough step. Ticks start at the first multiple of the step at or above `lo`. |
+| log | Decade ticks from `floor(log10(lo))` to `ceil(log10(hi))`; multipliers `1, 2, 5` when the decade span is small, `1` alone otherwise. Only powers of ten are labeled, thinned so roughly `target` labels remain. Non-positive bounds yield no ticks. |
+| category | Every `ceil(visible / target)`-th category index in view. |
+| time | The smallest step in a fixed ladder from 1 ms through 14 days that covers the rough step. Above 14 days per tick, calendar ticks land on UTC month boundaries with a month step from `1, 2, 3, 6, 12, 24, 60, 120`. |
+
+`xy.x_axis(format=...)` and `xy.y_axis(format=...)` take a format string whose
+grammar depends on the axis kind. Both are deliberately small subsets, not full
+d3-format or strftime, and neither raises on a spec it does not understand —
+but they fail differently, and only the numeric grammar falls back.
+
+- **Numeric axes** accept `.Nf` (fixed decimals), `,.Nf` (fixed decimals with
+  locale group separators, via the runtime's default locale), and either form
+  with a trailing `%`, which multiplies the value by 100 and appends the sign —
+  for example `.2f`, `,.0f`, `.1%`. The trailing `f` is optional. Any other
+  string **falls back**: `fmtNumberSpec` returns `null`
+  (`js/src/30_ticks.js:168`) and `fmtAxis` takes its `|| fmtLinear(...)` branch
+  (`:209`), so the axis silently reverts to the automatic formatter. On a log
+  axis, a value in `(0, 1)` that the spec would render as `"0"` falls back the
+  same way.
+- **Time axes** accept a strftime subset of exactly `%Y %m %d %H %M %S %b %B`.
+  All fields are **UTC**; `%b`/`%B` are English month names. A time spec
+  **never** falls back: `fmtTimeSpec` (`js/src/30_ticks.js:180-200`)
+  substitutes the tokens it knows and copies every other character through
+  verbatim, so it always returns a string and the `|| fmtTime(...)` branch at
+  `:204` is unreachable. An unrecognized `%` token such as `%y` therefore
+  renders literally as `%y`. The automatic time formatter is reached only when
+  `format` is absent or not a string.
+- **Category axes** ignore `format=` and render the category label.
+
 ## Slot reference
 
 Every element below is rendered with `data-xy-slot="<slot>"`, so
@@ -233,18 +270,26 @@ Set them on `.xy` or any ancestor:
 | Token | Themes | Default |
 | --- | --- | --- |
 | `--chart-bg` | Plot-rect background only (`theme(plot_background=)`, mpl `axes.facecolor`) | transparent |
-| `--chart-text` | Title, tick/axis titles, legend, annotation labels | inherited text (canvas labels: `currentColor` @ 85%) |
+| `--chart-text` | Title, tick/axis titles, legend, annotation labels, modebar glyphs | inherited text (canvas labels: `currentColor` @ 85%) |
 | `--chart-grid` | Grid lines (canvas) | `currentColor` @ 14% |
-| `--chart-axis` | Axis lines (canvas), modebar glyphs | `currentColor` @ 55% |
+| `--chart-axis` | Axis lines (canvas) | `currentColor` @ 55% |
 | `--chart-tooltip-bg` / `--chart-tooltip-text` | Tooltip | `rgba(20,24,33,.92)` / `#fff` |
 | `--chart-legend-bg` | Legend background | `rgba(128,128,128,.08)` |
 | `--chart-badge-bg` / `--chart-badge-text` | Reduction badges | `rgba(255,255,255,.82)` / `#0f172a` |
-| `--chart-modebar-bg` / `--chart-modebar-active` | Modebar / active button | `rgba(255,255,255,.78)` / `rgba(128,128,128,.22)` |
+| `--chart-modebar-bg` / `--chart-modebar-active` | Modebar / active button | `rgba(255,255,255,.78)` / `rgba(128,128,128,.2)` (light; see below) |
 | `--chart-selection` / `--chart-selection-fill` | Box-select rectangle | `rgba(90,140,240,.9)` / `…,.15)` |
 | `--chart-zoom-selection` / `--chart-zoom-selection-fill` | Box-zoom drag rectangle | `rgba(120,120,120,.9)` / `…,.12)` |
 | `--chart-crosshair` | Crosshair lines | `rgba(15,23,42,.42)` |
 | `--chart-annotation-text` | Annotation label color | falls back to `--chart-text` |
 | `--chart-cursor` / `--chart-cursor-pan` | Plot cursor (box-zoom / pan) | `crosshair` / `grab` |
+| `--chart-focus` | Keyboard focus ring on the plot canvas and modebar buttons | `#2563eb` |
+
+The modebar defaults are **scheme-aware**: a `.dark` class on the chart root or
+any ancestor flips the internal fallbacks to `rgba(37,42,52,.9)` /
+`rgba(255,255,255,.16)`. The public `--chart-modebar-*` tokens override both
+schemes; the modebar's border and shadow have no public token and are internal
+`--xy-modebar-*` defaults only. `--chart-focus` is likewise not carried into
+client-side PNG/SVG export, which snapshots the other `--chart-*` tokens.
 
 The **figure background** (matplotlib's `figure.facecolor` — the whole card
 including margins, title, and tick labels) is not a token: `theme(background=)`
@@ -257,7 +302,11 @@ The compact toolbar appears while the chart is hovered or one of its controls
 has keyboard focus. Drag its grip to move it within the chart. Zoom and
 selection modes are grouped into menus; completed lasso selections expose up
 to 16 adaptively simplified handles that can be dragged to refine the selected
-range. The grip's menu exports PNG, SVG, or the chart's resident data as CSV.
+range. The grip's menu defaults to PNG, SVG, and the chart's resident data as
+CSV. `xy.export_config(formats=[...])` governs which of `png`, `jpeg`, `webp`,
+`svg`, and `csv` appear and in what order; `pdf` and `html` are Python-side
+formats and are skipped in the client menu. An explicit empty list hides the
+download items, leaving the grip a drag handle only.
 Client PNG and SVG export snapshot the chart's computed `--chart-*` tokens,
 text color, and font styles so themes inherited from a host application are
 preserved in the downloaded image.
@@ -356,7 +405,7 @@ fill with an opaque outline, keep whole-mark opacity at `1` and set
 ### Scatter markers — `symbol`, `stroke`, `stroke_width`
 
 `scatter` markers take any of the 17 renderer-backed symbols listed in the
-public [Mark styles](../docs/styling/mark-styles.md#mark-specific-appearance) guide,
+public [Mark styles](../../docs/styling/mark-styles.md#mark-specific-appearance) guide,
 plus a `stroke` color and `stroke_width` (px) for a border, e.g.
 `scatter(x, y, symbol="triangle", stroke="#fff", stroke_width=2)`. Each is an
 antialiased SDF in the point shader, so shapes stay crisp at any size and the
@@ -379,7 +428,7 @@ dense and smoothing is invisible by construction.
 ### Common typed appearance combinations
 
 This table compares the most feature-rich typed appearance props. The public
-[Mark Styles](../docs/styling/mark-styles.md) matrix is exhaustive across every
+[Mark Styles](../../docs/styling/mark-styles.md) matrix is exhaustive across every
 rendered mark family and its accepted `style=` properties.
 
 | Mark | Color/opacity | Gradient fill | Corner radius | Stroke | Curve | Dash | Size/width |
@@ -435,6 +484,31 @@ and thus fully CSS-styleable.
 
 ## Static export
 
+`fig.to_image(format="png", *, width=, height=, scale=2.0, background=,
+engine=xy.Engine.auto, quality=, optimize=, custom_css=)` returns image bytes,
+and `fig.write_image(path, *, format=None, ...)` writes them (format inferred
+from the path suffix when omitted). Both are mirrored on `Chart` and
+`FacetChart`. The five formats are `png`, `jpeg` (alias `jpg`), `webp`, `svg`,
+and `pdf`; `to_svg` and `to_png` remain as the two-format shorthands described
+below.
+
+| Format | Nature | Notes |
+| --- | --- | --- |
+| `png` | Raster | `optimize=True` trades latency for indexed-palette compression |
+| `jpeg` | Raster, lossy | `quality` 1–100 (default 90); rejects `background="transparent"` |
+| `webp` | Raster | Native encoder is lossless; `quality` applies to Chromium's lossy WebP |
+| `svg` | Vector | Native-only — `engine=chromium` is not available |
+| `pdf` | Vector | Text, axes, and marks stay vector; density and heatmap layers embed as bounded rasters (hybrid-vector policy) |
+
+`scale` is the device-pixel ratio for raster output and is ignored by the vector
+formats. `background` accepts `"auto"` (per-format default), a CSS color, or
+`"transparent"`.
+
+`engine=xy.Engine.auto` — the default for `to_image`/`write_image` — resolves
+deterministically: the browser-free native path for every format, and Chromium
+only when `custom_css` requires a real CSS engine. `xy.Engine.default` pins the
+native path and `xy.Engine.chromium` pins the browser.
+
 `fig.to_svg(path?, width=, height=)` renders the same decimated payload the
 browser client consumes into a standalone, resolution-independent SVG — pure
 Python, no browser, no extra dependencies. Because decimation runs first, the
@@ -447,6 +521,24 @@ built-in **Rust rasterizer** paints that same decimated payload — no browser a
 millisecond export. Pass `optimize=True` to trade latency for indexed-palette
 PNG compression and smaller files. Text uses a baked bitmap font (the core has no FreeType),
 so small labels are slightly less refined than a browser's.
+
+**Native text coverage.** The atlas is a generated grayscale DejaVu Sans sheet
+(`src/font.rs`, regenerated by `scripts/gen_font.py`) baked at a 16 px base
+cell and blitted and scaled at runtime, so glyph coverage is a fixed set: ASCII
+32–126 plus 110 enumerated extras (Greek, common math operators, arrows,
+super/subscripts, typographic quotes and dashes). A codepoint outside that set
+— CJK, Cyrillic, Arabic, emoji, most accented Latin — has no glyph and is
+**silently skipped**, with no tofu box and no advance reserved, so a title,
+tick label, legend entry, or annotation containing one renders shortened rather
+than raising. Use `engine=xy.Engine.chromium` for full Unicode text.
+
+The atlas bounds the native **raster** formats (PNG, JPEG, WebP) only. The
+other two native formats carry their own text contracts: SVG emits real
+`<text>` elements in a `system-ui` stack and so resolves against the viewer's
+fonts, while PDF sets text with the base-14 Helvetica family in WinAnsiEncoding
+and replaces any character outside WinAnsi with `?` — a deterministic,
+locale-independent substitution.
+
 For browser CSS, font, and WebGL fidelity, `engine=xy.Engine.chromium`
 screenshots the standalone HTML with an installed Chrome, Chromium, Edge, or
 `chrome-headless-shell`. Set `XY_BROWSER` to an executable path to override

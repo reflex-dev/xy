@@ -687,7 +687,7 @@ def test_client_renders_mark_level_styling() -> None:
     """Gradient fills (premultiplied, currentColor-aware), rounded corners +
     stroke borders on both rect-family GPU programs, and curve:"smooth"
     monotone-cubic densification are first-class mark styling
-    (spec/styling.md#styling-the-marks)."""
+    (spec/api/styling.md#styling-the-marks)."""
     required = (
         "xyGradSample(",  # gradient sampler shared by area + rect shaders
         "u_gradMode",

@@ -321,7 +321,7 @@ def test_ci_workflow_rejects_missing_regression_gate(tmp_path: Path) -> None:
     path.write_text(
         workflow.replace(
             "          python3 scripts/check_regressions.py --scatter scatter.json --kernel kernel.json \\\n"
-            "            --transport transport.json --emit-md spec/benchmark_metrics.md\n",
+            "            --transport transport.json --emit-md spec/benchmarks/metrics.md\n",
             "",
         ),
         encoding="utf-8",

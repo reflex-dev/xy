@@ -21,11 +21,11 @@ DEFAULT_DOCS = (
     "README.md",
     "SECURITY.md",
     "CONTRIBUTING.md",
-    "spec/api-examples.md",
-    "spec/benchmark.md",
-    "spec/chart-roadmap.md",
-    "spec/contributing.md",
-    "spec/production-readiness.md",
+    "spec/api/api-examples.md",
+    "spec/benchmarks/results.md",
+    "spec/api/chart-roadmap.md",
+    "spec/process/contributing.md",
+    "spec/process/production-readiness.md",
     "examples/reflex/README.md",
 )
 
@@ -82,7 +82,7 @@ QUALIFIER_GROUPS = (
     re.compile(
         r"\b(?:benchmark|measured|documented|ttfr|payload|memory|ms|mb|gb|artifact)\b", re.I
     ),
-    re.compile(r"\b(?:chart type|data size|mode|row|table|spec/benchmark\.md)\b", re.I),
+    re.compile(r"\b(?:chart type|data size|mode|row|table|spec/benchmarks/results\.md)\b", re.I),
 )
 
 

@@ -73,7 +73,7 @@ The same chart can be exported without changing how it is built.
 xy currently includes line, scatter, area, histogram, bar and column, heatmap,
 error bar and band, box, violin, ECDF, hexbin, contour, step, stairs, stem,
 triangle mesh, and faceted charts. See the
-[copyable examples](spec/api-examples.md) for the complete surface.
+[copyable examples](spec/api/api-examples.md) for the complete surface.
 
 ### Coming from matplotlib
 
@@ -91,7 +91,7 @@ plt.show()
 ```
 
 The shim intentionally covers common plotting workflows rather than every
-matplotlib feature. See the [compatibility guide](spec/matplotlib-compat.md).
+matplotlib feature. See the [compatibility guide](spec/matplotlib/compat.md).
 
 ## Benchmarks
 
@@ -202,12 +202,12 @@ needed for browser behavior.
 
 Engineering references:
 
-- [API examples](spec/api-examples.md)
-- [Styling](spec/styling.md)
+- [API examples](spec/api/api-examples.md)
+- [Styling](spec/api/styling.md)
 - [Benchmarks](benchmarks/README.md)
-- [Matplotlib compatibility](spec/matplotlib-compat.md)
+- [Matplotlib compatibility](spec/matplotlib/compat.md)
 - [Architecture and design](spec/design-dossier.md)
-- [Production readiness](spec/production-readiness.md)
+- [Production readiness](spec/process/production-readiness.md)
 - [Security](SECURITY.md)
 - [Changelog](CHANGELOG.md)
 

@@ -69,18 +69,28 @@ These must pass before publishing or making a broad performance claim.
 | HTML export safety | Inline JSON/script escaping, atomic path writes, hostile user strings, and browser client text-node insertion stay protected | `make check-security` |
 | Python tests | Native backend passes | `pytest -q` |
 | Python style | Library, tests, scripts, and benchmarks lint clean | `ruff check .` and `ruff format --check .` |
-| Type surface | Shippable library is type-checkable and ships a full-package `py.typed` marker | `ty check python` |
+| Matplotlib reference | The reviewed compatibility snapshot matches the pinned released matplotlib reference, and the `xy.pyplot` shim passes its interoperability and dual-engine corpus suites | `python scripts/sync_matplotlib_compat.py --check` and `pytest tests/pyplot` |
 | Rust core | Native kernels pass and lint clean | `cargo test` and `cargo clippy --all-targets -- -D warnings` |
 | Native ABI | C ABI can be loaded from the built core | `python scripts/abi_smoke.py` |
 | JavaScript | Committed bundles match source | `node js/build.mjs --check` |
 | Browser render | WebGL smoke reaches real pixels | `python scripts/render_smoke_nonumpy.py <chromium>` |
 | Accessibility / cross-browser | Semantic interaction checks plus tolerant WebGL/layout comparison pass in Chromium, Firefox, and WebKit | `make check-conformance` |
 | Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
+| Step tier update | A decimated `step` chart keeps its risers after a synthetic kernel `tier_update` replaces the vertex buffers | `python scripts/step_tier_smoke.py <chromium>` |
+| Dashboard reliability | 10/20/50-chart dashboards stay nonblank under the render client's context governor | `python benchmarks/bench_dashboard.py --chart-counts 10,20,50 --chromium <chromium> --json dashboard-smoke.json` then `python scripts/verify_benchmark_report.py dashboard-smoke.json --kind dashboard-browser` |
 | sdist | Source archive contains required source/bundles, benchmark regression harness/baseline, release docs/tests/scripts, the Reflex example app, `PKG-INFO` version/dependencies matching `pyproject.toml`, no duplicate members, and no generated junk | `python scripts/verify_sdist.py dist/*.tar.gz` |
 | Native wheel | Platform wheel contains package-only files, exactly one native library, `METADATA` version/dependencies matching `pyproject.toml`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
 | Fallback wheel | No-toolchain wheel contains package-only files, `METADATA` version/dependencies matching `pyproject.toml`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
 | Wheel size | Platform wheel remains small enough for notebook installs | CI budget: 15 MB |
-| Benchmark artifact | JSON benchmark reports carry schema, environment, categories, row status, and finite non-negative metrics; native reports must declare the native backend | `python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs`; repeat for line, install, core-2D, native, interaction, dashboard, and workflow artifacts |
+| Benchmark artifact | JSON benchmark reports carry schema, environment, categories, row status, and finite non-negative metrics; native reports must declare the native backend | `python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs`; repeat for line, install, core-2D, pyplot-vs-matplotlib, native, interaction, dashboard, and workflow artifacts |
+
+Type checking is **advisory, not release-blocking**. CI runs `ty check python`
+and reports findings without failing the build, and `scripts/verify_local.py`
+registers the same check with `advisory=True`, so `make check-full` prints
+warnings for type findings rather than failing. Promoting it to a hard gate is
+tracked in the Hardening Backlog. The full-package `py.typed` marker is a hard
+gate, but it is enforced by `make check-api`
+(`scripts/check_public_api.py`), not by the type checker.
 
 ## Standalone HTML Safety
 
@@ -98,8 +108,11 @@ reports, and sharing a single file, but it has a clear security contract:
   replace the target after the full document is flushed, so failed writes do
   not corrupt the previous standalone artifact.
 - The standalone file emits a defensive `Content-Security-Policy` meta tag that
-  blocks network fetches, workers, objects, forms, and external images while
-  allowing the inline scripts/styles required by single-file export.
+  blocks network fetches, external worker scripts, objects, forms, and external
+  images, and pins `base-uri 'none'`, while allowing the inline scripts/styles
+  required by single-file export. Workers are restricted to `blob:` URLs so the
+  bundled density re-bin worker can boot from its own inlined source; no
+  external worker script can load.
 - The browser client inserts user-facing text with `textContent` or text nodes;
   HTML parser sinks such as `innerHTML` are reserved for fixed internal icons,
   not titles, labels, legends, categories, or tooltips.
@@ -121,10 +134,13 @@ production-facing push:
 | Changed surface | Focused gate |
 |---|---|
 | README/API prose, examples, public benchmark wording | `make check-docs` |
-| README snippets, `spec/api-examples.md`, Reflex chart registry/assets | `make check-examples` |
+| README snippets, `spec/api/api-examples.md`, Reflex chart registry/assets | `make check-examples` |
 | Public validation, error messages, builder rollback, LOD/drill mutation boundaries, chart/widget caching | `make check-errors` |
 | Public exports, lazy import mappings, component factories, public annotations | `make check-api` |
 | Import-time budget, `xy.__init__`, dependency boundaries, widget/export/backend import boundaries | `make check-import` |
+| `xy.pyplot` shim behavior, matplotlib interoperability, reference corpus | `make check-pyplot` |
+| Reviewed matplotlib compatibility snapshot (`spec/matplotlib/compat-matrix.md`) | `python scripts/sync_matplotlib_compat.py --check` |
+| `xy.pyplot` speed margin against matplotlib | `make check-pyplot-speed` |
 | Standalone HTML export, path writes, user text, tooltips, legends, browser DOM insertion | `make check-security` |
 | Benchmark harness code, environment metadata, report schema, regressions | `make check-benchmark-harness` |
 | Generated benchmark JSON artifacts | `make check-benchmark-report BENCHMARK_JSON=benchmark.json BENCHMARK_KIND=scatter-vs` |
@@ -147,9 +163,12 @@ wording:
 make check-docs
 ```
 
-The browser gates are split into three app-facing checks that match the CI step
+The browser gates are split into app-facing checks that match the CI step
 names: `Browser lifecycle smoke (Chromium)`, `Browser visual regression smoke
-(Chromium)`, and `Browser interaction stress smoke (Chromium)`. The Reflex
+(Chromium)`, `Step tier-update smoke (Chromium)`, `Browser interaction stress
+smoke (Chromium)`, and `Browser dashboard reliability smoke (Chromium)`.
+`make check-browser` runs all of these except the dashboard reliability smoke,
+which runs in CI only. The Reflex
 lifecycle smoke remounts every committed XY iframe asset, the visual
 regression smoke screenshots generated representative chart families plus every
 committed XY Reflex gallery asset except the Plotly comparison page,
@@ -198,7 +217,7 @@ verify those exact files rather than rebuilding locally:
 make check-artifacts SDIST=/path/to/xy.tar.gz WHEEL=/path/to/xy.whl
 ```
 
-Use this after editing README snippets, `spec/api-examples.md`, or the Reflex
+Use this after editing README snippets, `spec/api/api-examples.md`, or the Reflex
 dashboard chart registry/assets:
 
 ```bash
@@ -349,7 +368,7 @@ Before tagging a release:
   package-only: docs, tests, benchmarks, scripts, and `examples/reflex/`
   are sdist-only.
 - Confirm the wheel size budget is still below 15 MB.
-- Confirm README examples and `spec/api-examples.md` run against the tagged API.
+- Confirm README examples and `spec/api/api-examples.md` run against the tagged API.
 - Confirm package metadata uses measured, scoped language rather than broad
   "faster/best" positioning.
 - Confirm performance claims mention chart type, mode, backend, data size, and
@@ -364,7 +383,7 @@ Safe claims:
 - The native backend is substantially faster than pure Python/NumPy for kernel
   work covered by the benchmarks.
 - Current 2D core chart benchmarks beat Plotly on the measured payload-prep,
-  payload-size, and TTFR rows documented in `spec/benchmark.md`.
+  payload-size, and TTFR rows documented in `spec/benchmarks/results.md`.
 
 Claims that need qualification:
 

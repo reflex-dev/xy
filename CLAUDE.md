@@ -38,7 +38,7 @@ instead of treating the implementation alone as authoritative.
 - `python/xy/pyplot/` — the matplotlib shim, fully contained
   (one-way dependency onto the public composition API; guardrails in
   `tests/pyplot/test_boundaries.py`). Corpus-defined compatibility:
-  `tests/pyplot/corpus/` + `spec/matplotlib-compat.md`.
+  `tests/pyplot/corpus/` + `spec/matplotlib/compat.md`.
 - `python/reflex-xy/` — the Reflex adapter, a separate distributable
   package (`reflex_xy`; design: `spec/design/reflex-integration.md`). Chart
   data rides the app's own websocket as a second socket.io namespace;

@@ -41,9 +41,9 @@ Every claim in this dossier is **mode-scoped and testable** — no universal num
 |---|---|---|
 | Round 2 (self) | 15 findings | Resolved in-place → §15–§26 |
 | Round 3 (external) | 10 findings | Resolved in-place → §27–§31 |
-| Round 3 (deep, Appendix A) | F1–F3 (Critical/Major) | **Resolved** → Part IV (§32–§35): distribution, filtering, GPU ceilings |
+| Round 3 (deep, Appendix A) | F1–F3 (Critical/Major) | **F1–F2 resolved** → Part IV (§32–§35): distribution, filtering. **F3 specified, not implemented** — the tier decision is still count-only and vertex buffers are unchunked (§5) |
 | Round 3 (deep, Appendix A) | **F4–F12** | **Outstanding** — not yet folded into the spec (see below) |
-| Round 4 (styling) | F-S1–F-S3 | **Resolved** → §36 (export parity, probe-element color resolution, indexed series tokens) |
+| Round 4 (styling) | F-S1–F-S3 | **Partly resolved** → §36: probe-element color resolution shipped; client-side export parity shipped, kernel-side theme snapshot and indexed series tokens still pending |
 
 **Outstanding work (F4–F12), the honest to-do list:**
 - **F4** — per-trace f32 offsets (a single viewport origin can't serve traces at wildly
@@ -144,13 +144,13 @@ If a milestone doesn't move one of these numbers, it's not in scope for that mil
                 │  spec (small JSON) + typed column buffers (binary)
                 ▼
 ┌───────────────────────────────────────────────────────────────┐
-│  CORE  (Rust → compiled to WASM for browser, native for export) │
+│  CORE  (Rust cdylib, C ABI — runs inside the Python process)    │
 │  ┌─────────────┐  ┌──────────────┐  ┌────────────────────────┐ │
 │  │ Ingest &    │  │ LOD /        │  │ Scene graph (retained) │ │
 │  │ column store│→ │ decimation / │→ │ + diff engine          │ │
 │  │ (1 copy)    │  │ aggregation  │  │                        │ │
 │  └─────────────┘  └──────────────┘  └────────────────────────┘ │
-│         runs in a Web Worker; SharedArrayBuffer to main thread   │
+│         loaded via ctypes; NumPy buffers passed by pointer       │
 └───────────────┬───────────────────────────────────────────────┘
                 │  GPU buffers (uploaded once)   +  draw commands
                 ▼
@@ -160,6 +160,10 @@ If a milestone doesn't move one of these numbers, it's not in scope for that mil
 │  - DOM/SVG only for chrome (axes text, legend, tooltip)         │
 └───────────────────────────────────────────────────────────────┘
 ```
+
+An in-browser WASM core running in a Web Worker with SharedArrayBuffer transport was
+the original design and was dropped in favor of the native-in-kernel core (§32); a WASM
+client remains a possible future pure-browser path.
 
 The two requirements live primarily in the **data pipeline (§4–§6)**. The renderer
 (§7) matters, but memory and scale are won or lost in how we store and reduce data.
@@ -239,8 +243,8 @@ The two requirements live primarily in the **data pipeline (§4–§6)**. The re
 
 The key insight: **never push the GPU more primitives than the screen has pixels.**
 The engine picks a tier per trace and re-picks on zoom (operating only on the visible
-window). **The tier heuristic is NOT point count alone** — real GPUs impose two other
-ceilings (both documented by deck.gl in production):
+window). Beyond vertex count, real GPUs impose two other ceilings (both documented by
+deck.gl in production):
 
 - **Fill-rate:** fragment work = `count × mark_pixel_area × overdraw`. 10M radius-5
   points ≈ 1B fragment invocations/frame; a 500k-point scatter with large or
@@ -248,15 +252,28 @@ ceilings (both documented by deck.gl in production):
 - **Allocation:** Chrome caps a single allocation at ~1 GB; deck.gl documents crashes
   between 10M–100M items during buffer creation for exactly this reason.
 
-So: `tier = f(visible_count, mark_pixel_area × estimated_overdraw)` — a dense
-large-marker scatter trips Tier 2 aggregation even at "sub-ceiling" counts — and the
-render core **chunks vertex buffers** (multi-buffer draws, ~128 MB segments) as a
-structural rule, not an edge case. "One instanced draw call for N points" is the
-mental model; the implementation is a handful of chunked draws, which costs nothing
-measurable and never hits the allocation cliff.
+**What ships today is count-only:** `tier = f(visible_count)`, hysteresis-guarded.
+`drill_decision(visible, budget, in_drill, exit_factor)` in `python/xy/lod.py` returns
+`visible <= budget * (exit_factor if in_drill else 1.0)`, with
+`DRILL_EXIT_FACTOR = 1.15` (`python/xy/config.py`) so a trace that has drilled down to
+real points stays drilled until the count clearly exceeds the budget again. The client
+mirrors the same rule (`LOD_DIRECT_POINT_BUDGET`, `LOD_DRILL_EXIT_FACTOR` in
+`js/src/45_lod.js`). Mark pixel area and overdraw do **not** enter the decision.
 
-**Tier 0 — Direct (up to ~1–2M *drawn, small-marker* points):** upload raw columns,
-draw with instancing (chunked per the above). Simple, exact.
+*Pending (F3, not implemented):* folding `mark_pixel_area × estimated_overdraw` into the
+tier decision, so a dense large-marker scatter trips Tier 2 aggregation at sub-ceiling
+counts; and **chunked vertex buffers** (multi-buffer draws, ~128 MB segments) so the
+allocation cliff is structurally unreachable. Both remain the intended design; neither
+exists in `js/src/` today.
+
+**Tier 0 — Direct.** Upload raw columns, draw with instancing. Simple, exact. The
+budget is channel-dependent: `Trace.use_density()` (`python/xy/_trace.py`) picks
+`DIRECT_SOFT_CEILING = 2_000_000` when the trace carries a per-point color or size
+channel, and `SCATTER_DENSITY_THRESHOLD = 200_000` otherwise (both in
+`python/xy/config.py`). A plain scatter therefore aggregates at 200k — its whole win is
+not drawing 10M dots — while a scatter whose per-point color/size aggregation would
+destroy stays direct up to 2M. `js/src/45_lod.js` carries the matching 200k client
+budget.
 
 **Tier 1 — Decimated lines (LTTB / min-max per pixel column):** for line/area traces
 with more points than horizontal pixels, reduce to ~2–4 points per pixel column
@@ -269,7 +286,8 @@ scatter and heatmaps, don't draw points — draw a colormapped **density texture
 
 The naive version ("bin all points into a screen-sized texture") is *not* "O(points)
 once": the bin grid depends on the viewport, so every pan/zoom would re-bin the whole
-dataset. The actual design is a **data-space tile pyramid**:
+dataset. The intended design is a **data-space tile pyramid** — the four bullets below
+describe that target, not current behavior; see the shipped subset after them:
 
 - At ingest (or lazily on first Tier-2 entry), build aggregation tiles in *data*
   coordinates at power-of-two zoom levels — count/sum per cell, ~256² cells per tile.
@@ -285,7 +303,20 @@ dataset. The actual design is a **data-space tile pyramid**:
 - Colormapping (including perceptual/log scaling and dynamic-range normalization)
   happens at *composite* time on the aggregate values, so restyling never re-bins.
 
-So the honest cost model: **O(points) once at build, O(visible tiles) per frame,
+*Shipped today (`src/tiles.rs`, `python/xy/interaction.py`):* a **single square count
+pyramid**, not tiles. One trace-wide grid over the full data bounds whose finest level
+is `PYRAMID_BASE_DIM`² (2048², `python/xy/config.py`), each coarser level an exact 4→1
+u64 sum saturating to u32 down to 1². Built lazily on the first density view at
+≥ `PYRAMID_MIN_POINTS` (2,000,000). There is no per-tile fetch entry point and no tile
+addressing — the C ABI is `xy_pyramid_build` / `_append` / `_count` / `_compose` /
+`_free`, and composition happens kernel-side over the whole window, refusing past
+`MAX_UPSAMPLE` (2×, `src/tiles.rs`) so below-floor windows fall back to the exact
+`range_indices` + `bin_2d` path. Only the `count` plane exists; the per-channel `sum` /
+`argmax+purity` planes above are not built. *Pending:* tiling proper (per-tile build,
+fetch, and pan-time reuse), so "pan is pure tile reuse" is design, not behavior. See
+`spec/design/lod-architecture.md` §4 for the full design and its shipped-status ledger.
+
+So the honest cost model of the tiled design: **O(points) once at build, O(visible tiles) per frame,
 O(visible points) on deep zoom past the pyramid floor.** This is also exactly the
 structure Tier 3 needs (§28) — Tier 2 and Tier 3 share the tile machinery; Tier 3
 just adds not-all-tiles-resident.
@@ -322,21 +353,53 @@ per-trace-kind rules live in the LOD/Tiling Contract (§28).
 Tier transitions are automatic and hysteresis-guarded (to avoid thrashing at the
 boundary), and every downsampling decision is logged so we never *silently* hide data.
 
+### 5.1 Tuning constants — `python/xy/config.py`
+
+Every tier/decimation threshold lives in one module (§28: no silent decisions). The
+table is the complete contents of `python/xy/config.py`; values are the ones shipped
+today. "Read by" lists the modules that *consume* the constant — `python/xy/_figure.py`
+re-exports several of them as a historic import path and is not listed for those.
+
+| Constant | Value | What it gates | Read by |
+| --- | --- | --- | --- |
+| `PROTOCOL_VERSION` | `3` | Wire-spec version stamped on every payload; the client refuses a mismatch loudly (§33). | `_payload.py` |
+| `DECIMATION_THRESHOLD` | `10_000` | Line/area traces with more points than this ship M4-decimated (Tier 1); at or below, raw columns go over the wire. Also gates re-decimation on the interaction path. | `_payload.py`, `interaction.py` |
+| `SCATTER_DENSITY_THRESHOLD` | `200_000` | Tier-0 → Tier-2 count budget for a scatter with **no** per-point channel (`Trace.use_density()`), and the visible-count budget for view-LOD planning and drill decisions. | `_trace.py`, `interaction.py`; mirrored client-side as `LOD_DIRECT_POINT_BUDGET` in `js/src/45_lod.js` |
+| `DIRECT_SOFT_CEILING` | `2_000_000` | Tier-0 → Tier-2 count budget for a scatter that **does** carry a per-point color or size channel; above it density is forced and the channels are warned about, never silently dropped (§5 F5). | `_trace.py`, `marks.py` |
+| `DENSITY_GRID` | `(512, 384)` | Default density-grid cell dimensions for the initial spec, before the client requests a viewport-matched size via `density_view`. | `_payload.py` |
+| `MAX_SCREEN_DIM` | `4096` | Upper clamp on any browser-supplied pixel dimension, so untrusted widget/comm input cannot inflate decimation buckets or density grids. | `lod.py`, `_native.py` |
+| `MAX_CONTOUR_WORK` | `4_000_000` | Ceiling on contour `cells × levels`; a request over it raises instead of allocating an unbounded segment buffer. | `marks.py`, `_native.py` |
+| `DRILL_EXIT_FACTOR` | `1.15` | Hysteresis multiplier on the drill boundary: a trace already drilled to real points stays drilled until the visible count exceeds `budget × 1.15`. | `lod.py` (`drill_decision`, `plan_view_lod`), `interaction.py`; mirrored as `LOD_DRILL_EXIT_FACTOR` in `js/src/45_lod.js` |
+| `DENSITY_TARGET_POINTS_PER_CELL` | `16.0` | Target points per cell when sizing an aggregation grid, so a barely-over-budget view does not get a one-point-per-pixel grid that looks like static and re-ships large. | `lod.py` |
+| `DENSITY_SAMPLE_TARGET` | `8_192` | Size of the deterministic real-point sample shipped over an aggregated scatter's density texture (hybrid overlay). | `_payload.py`, `interaction.py` |
+| `DENSITY_SAMPLE_SEED` | `0` | Seed for that sample; a fixed seed makes the overlay identical across re-ships of the same view. | `_payload.py`, `interaction.py` |
+| `DEFAULT_PALETTE` | 10 CVD-safe hex entries | Per-trace default color cycle and the fallback categorical palette when a channel supplies none (§20/§36). | `marks.py`, `_payload.py`, `_svg.py`, `_raster.py` |
+| `PYRAMID_MIN_POINTS` | `2_000_000` | Trace size at/above which a Tier-3 tile pyramid is built lazily; smaller traces never pay for one. | `interaction.py` |
+| `PYRAMID_BASE_DIM` | `2048` | Edge of the pyramid's base level in cells (`dim²` u32 counts, ~1/3 overhead for the coarser levels); sets resident pyramid bytes. | `interaction.py` |
+
+Nothing in this table folds mark pixel area or overdraw into a tier decision — that is
+F3, still pending (above).
+
 ---
 
 ## 6. Memory-reduction techniques (checklist)
 
 - ✅ Binary Arrow transport — no JSON, no parse bloat, no string numbers.
 - ✅ Single physical copy — references through the pipeline, not clones.
-- ✅ f32 coordinates by default; f64 opt-in.
+- ✅ f64 canonical CPU-side, uploaded as window-centered offset-encoded f32 (§4/§16) —
+  *not* "f32 by default", which §4 rejects outright.
 - ✅ Struct-of-Arrays typed columns → direct GPU upload.
 - ✅ Dictionary encoding for categoricals.
-- ✅ Drop/free CPU buffers after GPU upload; `mmap` on native.
+- ✅ GPU buffers are droppable caches, rebuilt from the retained canonical CPU store
+  (§27 rule 1); `mmap` on native. Dropping the *canonical* copy after upload is a
+  narrow, explicit opt-in for static Tier-0 traces, never the default (§4).
 - ✅ Aggregation tiers so hot memory is screen-bounded, not data-bounded.
 - ✅ **Ring buffers for streaming** — fixed-capacity circular GPU buffer; appends
   overwrite oldest, constant memory, no re-allocation, no re-serialize.
-- ✅ SharedArrayBuffer between worker and main thread where available; **transferable
-  ArrayBuffers (zero-copy move) as the universal fallback** — never postMessage-copy.
+- ✅ No worker/main-thread data duplication: the core computes in the Python process and
+  the client receives screen-bounded buffers over the comm channel (§8/§37). The
+  SharedArrayBuffer/transferable-ArrayBuffer scheme belonged to the dropped in-browser
+  WASM core (§8).
 - ✅ Retained scene graph + buffer diffs — updating a color is a uniform write, not a
   data re-upload.
 - ✅ Large columns live *outside* WASM linear memory (JS ArrayBuffers / GPU); linear
@@ -368,21 +431,27 @@ boundary), and every downsampling decision is logged so we never *silently* hide
 
 ## 8. Compute & threading
 
-- The Rust core runs in a **Web Worker** (WASM); the main thread only mounts, forwards
-  input, and draws chrome. Big data never blocks the UI.
-- Heavy stages (decimation, binning, autorange, KDE, stacking) run in the worker on the
-  columnar buffers.
-- **SharedArrayBuffer where available — transferable ArrayBuffers as the mandatory
-  fallback.** SAB requires cross-origin isolation (COOP/COEP response headers), which
-  Jupyter, embedded iframes, and most third-party contexts **cannot set**. Those are
-  precisely the environments the "runs everywhere Plotly does" requirement exists for,
-  so SAB cannot be a load-bearing assumption. The fallback is `postMessage` with
-  **transferable** ArrayBuffers — a zero-copy *move* (ownership transfer) rather than
-  a share. It forbids concurrent access but costs no copies; the pipeline is designed
-  around ownership handoff (ingest → worker → upload) so both modes use the same code
-  path. SAB is a latency optimization, not a correctness dependency. (Same story for
-  `OffscreenCanvas`: use when present, render on main thread from worker-computed
-  buffers when not.)
+- The Rust core runs **natively inside the Python process**, loaded as a C-ABI cdylib
+  through `ctypes` (`python/xy/_native.py`; `Cargo.toml` `crate-type = ["cdylib",
+  "rlib"]`). It is not compiled to WASM and does not run in a browser thread. Heavy
+  work happens off the browser entirely, so the UI thread is never the bottleneck for
+  big data.
+- Heavy stages (decimation, binning, autorange, KDE, stacking) run in the kernel on the
+  columnar buffers; NumPy arrays are passed to the core by pointer, without copying.
+- The browser side is a **thin JS/WebGL2 client** on the main thread: it mounts,
+  forwards input, uploads the screen-bounded buffers the kernel computes, and draws
+  chrome. Results arrive over the comm channel (§37), not over `postMessage`, so
+  neither SharedArrayBuffer nor cross-origin isolation (COOP/COEP) is required —
+  which is what lets the client run in Jupyter, embedded iframes, and third-party
+  contexts that cannot set those headers.
+- One Web Worker exists client-side, and it is not the core: `js/src/46_worker.js`
+  re-bins the retained density sample for kernel-less standalone exports (`to_html`),
+  off the main thread, booted from a Blob URL. Environments without workers fall back
+  to the stretched overview texture.
+- *Dropped path, kept for history:* the original design put the Rust core in a Web
+  Worker as WASM, with SharedArrayBuffer transport and transferable ArrayBuffers as the
+  universal fallback. §32 supersedes it. A WASM client remains a future pure-browser
+  option.
 - The *same Rust* compiled **native** does headless static export (PNG/SVG/PDF) with no
   browser — faster than Kaleido. **Consistency claim, stated honestly:** *logically*
   identical (same scales, same layout, same LOD decisions — guaranteed by sharing the
@@ -474,7 +543,7 @@ struct LodCache {
 | SAB unavailable (no COOP/COEP in notebooks/iframes) | Transferable-ArrayBuffer ownership-handoff path is the default design; SAB is an optimization (§8) |
 | Timestamps/large magnitudes break f32 | Offset+scale encoding is the default upload path; f64 view transform on CPU (§4, §16) |
 | WebGL2 can't do compute-shader binning | Additive-blend float-target binning; worker-side SIMD binning as last resort (§5) |
-| Browser caps live GPU contexts (~8–16); dashboards want 30+ charts | One shared context + per-chart viewport/scissor compositing (§18) |
+| Browser caps live GPU contexts (~16 in Chrome); dashboards want 30+ charts | Per-chart context under an LRU governor, budget 12 (§18) |
 | VRAM exhaustion / device loss | Byte-budgeted caches with eviction; full GPU state rebuildable from scene graph (§6, §18) |
 | Canvas is invisible to screen readers | Structured a11y layer: ARIA summary, keyboard nav, data-table export (§20) |
 | WASM bundle bloat vs plotly.js partial bundles | Feature-gated trace modules, size budget in CI (§23) |
@@ -515,7 +584,7 @@ missing entirely.*
 | 4 | Tier-2 GPU binning assumed compute shaders + atomics; WebGL2 has neither — flagship feature silently absent on fallback | **Critical — feature gap** | Three-implementation ladder: compute / additive-blend float target / worker SIMD (§5) |
 | 5 | "Free CPU buffer after upload" is a no-op for browser memory — wasm32 linear memory never shrinks, caps at 4 GB | **Major — memory claim** | Large columns never enter linear memory; screen-sized scratch arenas (§4, §6) |
 | 6 | Hover/pick undefined for aggregated tiers; naive pick readback + LOD recompute breaks interaction latency | Major | Interaction latency model, stale-while-revalidate, progressive refinement (§17) |
-| 7 | No multi-chart story; browsers cap live GPU contexts (~8–16), dashboards want 30+ | Major | Shared-context renderer with viewport compositing (§18) |
+| 7 | No multi-chart story; browsers cap live GPU contexts (~16 in Chrome), dashboards want 30+ | Major | Per-chart context under an LRU governor, budget 12 (§18) |
 | 8 | No null/NaN semantics; NaN in f32 vertex data corrupts primitives | Major | Validity bitmaps end-to-end, gap semantics (§19) |
 | 9 | Canvas rendering is an accessibility regression vs Plotly's SVG | Major | Structured a11y layer (§20) |
 | 10 | Autorange is an O(n) full scan per update | Moderate | Chunk zone maps make it O(chunks) (§22) |
@@ -567,22 +636,36 @@ Part I said "60fps" without defining what has to happen inside a frame. The budg
 ## 18. Many charts per page (the dashboard problem)
 
 Plotly's real-world habitat is dashboards with 10–50 figures. Browsers cap live
-WebGL/WebGPU contexts per page (typically 8–16; oldest silently dies). One context per
-chart is therefore an architecture bug, not a scaling detail.
+WebGL contexts per page (~16 in Chrome) and LRU-evict the oldest on overflow, which
+permanently blanks the earliest charts of a big dashboard.
 
-- **One renderer, one GPU context per page** (per worker). Each chart is a *client*
-  of the shared renderer: it owns a scene subgraph and a target rectangle.
+**Shipped: one context per chart, governed.** `XY_CONTEXT_GOVERNOR`
+(`js/src/50_chartview.js`) keeps the page inside a budget — default **12**, overridable
+via `window.XY_CONTEXT_BUDGET` — leaving headroom under Chrome's cap for host-page GL.
+When a view is about to acquire a context at budget, the least-recently-visible
+*off-screen* view releases its own via `WEBGL_lose_context` and re-acquires when
+scrolled back into view; an over-budget panel keeps showing its last frame as a static
+image. Under the budget nothing is ever released. Every decision is observable:
+`data-xy-ctx` on the canvas reads `live` | `released` | `lost`. See
+`spec/process/production-readiness.md` §"WebGL context cap" for the claim limits.
+
+**Device/context loss is a first-class event:** all GPU state is derived state, rebuilt
+from the scene graph + column store on a new context. The visible cost is one reupload
+flicker, never lost data. The governor depends on this — a governed release is a
+deliberate context loss put through the same restore path.
+
+*Unimplemented design option — shared-context compositing:*
+
+- **One renderer, one GPU context per page.** Each chart becomes a *client* of the
+  shared renderer: it owns a scene subgraph and a target rectangle.
 - Two compositing modes, chosen per environment: (a) a single full-page canvas behind
   the DOM, charts drawn into scissored viewports — cheapest, works everywhere; or
   (b) per-chart canvases fed by `transferControlToOffscreen` /
   `drawImage`-from-shared-framebuffer where layout demands real DOM interleaving.
-- Shared context also means **shared caches**: two charts of the same DataFrame
+- Shared context would also mean **shared caches**: two charts of the same DataFrame
   reference the same columns and the same GPU buffers — a dashboard of 20 views of
   one 10M-row table holds the data **once**, which is a memory win Plotly cannot
   express at all.
-- **Device/context loss is a first-class event** (mandatory in WebGPU's model): all
-  GPU state is derived state, rebuilt from the scene graph + column store on a new
-  device. The visible cost is one reupload flicker, never lost data.
 
 ## 19. Nulls, NaN, and gaps
 
@@ -661,10 +744,15 @@ Where it must run, and what each environment denies us:
 | Old browsers / no WebGL2 | GPU entirely | same pure-JS + 2D-canvas fallback, capped; loudly reported via the §5 no-silent-caps rule |
 | Server / CI (native) | no display | headless native path (§8) |
 
-**Bundle budget is a CI-enforced number, not an aspiration:** core (spec + layout +
-Tier 0/1 + cartesian traces) ≤ **1.5 MB** wasm+js gzipped; every additional trace
-family is a lazily-loaded feature module (Plotly's partial-bundle pain, solved by
-default). A size regression fails the build exactly like a perf regression (§12).
+**Bundle size.** The shipped client is a single JS bundle — `python/xy/static/index.js`,
+309 KB uncompressed / ~74 KB gzipped — with no WASM payload and no lazily-loaded trace
+modules. The one size gate CI enforces is on the **wheel**: `.github/workflows/ci.yml`
+asserts the built wheel is ≤ 15 MB (§33). CI also verifies the committed JS bundles are
+*fresh* (`node js/build.mjs` reproduces them), but it does not measure their bytes.
+
+*Pending:* a gzipped-size budget on the client bundle, failing the build exactly like a
+perf regression (§12), plus per-trace-family lazy feature modules (Plotly's
+partial-bundle pain). Neither exists today.
 
 ## 24. Extensibility & the compatibility contract
 
@@ -881,9 +969,11 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
 
 **Contracts that keep it honest:**
 - **Comm-protocol versioning.** The native core and JS client ship together but can
-  drift (cached notebook outputs, pinned server assets). Every message carries a
-  protocol version; mismatch fails **loudly with an upgrade hint**, never silently
-  renders wrong.
+  drift (cached notebook outputs, pinned server assets). The first-paint spec carries
+  a protocol version; mismatch fails **loudly with an upgrade hint**, never silently
+  renders wrong. Requests and replies carry no version of their own — the handshake
+  happens once, at first paint, before any request is possible
+  (`spec/design/wire-protocol.md` §7).
 - **No-wheel behavior is defined:** the native Rust core is required and there is no
   pure-Python fallback. A source install compiles the core (Rust toolchain required);
   if the core cannot be loaded — an unsupported platform with no wheel and no local
@@ -952,8 +1042,9 @@ receive Arrow slices, not JSON.
 - **Phase 1** adds Filter Tier A (zone-map range filtering) — near-free once zone maps
   (§22) exist.
 - **Phase 2** adds Filter Tier B (visible-window re-bin) alongside the Tier-2
-  pyramid — they share the SIMD binning kernel — and implements the fill-rate-aware
-  tier heuristic + buffer chunking (F3) in the render client.
+  pyramid — they share the SIMD binning kernel. The fill-rate-aware tier heuristic and
+  buffer chunking (F3) are **still pending**: the shipped tier decision is count-only
+  and the render client does not chunk vertex buffers (§5).
 - **Phase 4** adds Filter Tier C (summed-area index + linked views) with the
   shared-context dashboard work (§18) — same milestone because cross-filtering is a
   dashboard feature.
@@ -988,37 +1079,43 @@ the chart match my site" actually means — typography and chrome.
 
 ```css
 .my-dashboard {
-  --chart-bg:       #0f1520;
-  --chart-grid:     #24313f;
-  --chart-font:     "Inter", sans-serif;   /* also drives DOM chrome */
-  --chart-series-1: #6e9bff;   /* indexed — override one without restating all,   */
-  --chart-series-2: #3fc3b1;   /* and each index cascades independently           */
-  --chart-series-3: #e29350;
-  --chart-colormap: viridis;               /* sequential ramp for Tier-2 density */
+  --chart-bg:   #0f1520;
+  --chart-grid: #24313f;
+  --chart-axis: rgb(226 232 240 / 55%);
+  --chart-text: #e5e7eb;   /* chrome text: ticks, titles, legend, annotations */
 }
 ```
 
-Mechanism: at mount the client resolves the `--chart-*` tokens and writes them to
-renderer state — clear color, grid uniform, per-series palette buffer, colormap LUT
-texture. Two implementation realities (audit round 4): **(1)** `getComputedStyle`
-returns a custom property's *raw token stream*, not a resolved color — so color tokens
-are resolved via a hidden **probe element** (assign `color: var(--chart-series-1)`,
-read back the browser-computed rgb), which handles every CSS color format (`oklch()`,
-`color-mix()`, named colors) without shipping a CSS color parser. **(2)** Series
-tokens are **indexed** (`--chart-series-N`), not a space-separated list — a list can't
-be overridden per-entry or cascaded per-index. Series beyond the highest defined index
-cycle the defined set with a documented lightness rotation. Crucially, **because
+Mechanism: `readTheme()` (`js/src/20_theme.js`) resolves the canvas tokens at mount and
+writes them to renderer state — clear color, grid and axis uniforms, label color. Chrome
+tokens are consumed directly by the stylesheet (`XY_CHROME_CSS`, zero-specificity
+`:where()` rules) rather than through the renderer. One implementation reality (audit
+round 4): `getComputedStyle` returns a custom property's *raw token stream*, not a
+resolved color — so color tokens are resolved via a hidden **probe element** (assign
+`color: var(--chart-bg)`, read back the browser-computed rgb), which handles every CSS
+color format (`oklch()`, `color-mix()`, named colors) without shipping a CSS color
+parser. Crucially, **because
 tokens flow through CSS variables, the cascade, inheritance, and media queries all
 work** — the *variables* cascade even though the pixels don't, so per-container
 theming, brand overrides, and `@media (prefers-color-scheme)` behave exactly as a CSS
 author expects.
 
 **The theme contract:**
-- **A documented token vocabulary** — `--chart-bg`, `--chart-grid`, `--chart-axis`,
-  `--chart-font`, `--chart-series` (categorical list), `--chart-colormap` (named ramp
-  or stops), `--chart-selection`, `--chart-muted`. Unset tokens fall back to a built-in
-  theme; the categorical/sequential defaults are the accessible, CVD-safe palettes from
-  §20, not arbitrary.
+- **A documented token vocabulary**, split by consumer. Canvas tokens read by
+  `readTheme()`: `--chart-bg`, `--chart-grid`, `--chart-axis`, `--chart-text`. Chrome
+  tokens read by the stylesheet: `--chart-tooltip-bg` / `--chart-tooltip-text`,
+  `--chart-legend-bg`, `--chart-badge-bg` / `--chart-badge-text`, `--chart-modebar-bg` /
+  `--chart-modebar-active`, `--chart-selection` / `--chart-selection-fill`,
+  `--chart-zoom-selection` / `--chart-zoom-selection-fill`, `--chart-crosshair`,
+  `--chart-annotation-text`, `--chart-cursor` / `--chart-cursor-pan`, `--chart-focus`.
+  Unset tokens fall back to a built-in theme (`currentColor` at documented opacities for
+  grid/axis/label). The public reference is `docs/styling/themes-and-tokens.md`.
+- *Pending:* a **series-palette token** (`--chart-series-N`, indexed rather than a
+  space-separated list so entries cascade and override individually, cycling with a
+  lightness rotation past the highest defined index) and a **colormap token**
+  (`--chart-colormap`, named ramp or stops → LUT texture). Neither is wired: series
+  colors and colormaps come from the spec / `theme()` only. The categorical and
+  sequential defaults are the accessible, CVD-safe palettes from §20, not arbitrary.
 - **Live re-resolution.** The client watches `matchMedia('(prefers-color-scheme: dark)')`
   and a `MutationObserver` on the container's `class`/`data-theme`/`style`, re-resolving
   tokens on any change. Because of the retained scene graph (§7), **a theme change is
@@ -1028,12 +1125,18 @@ author expects.
 - **Programmatic parity.** Everything a token sets is also settable from Python
   (`fig.theme(...)`) so notebook users who never touch CSS get the same control; the
   CSS bridge is the web-author's path to the same renderer state, not a separate system.
-- **Export parity (audit round 4 — this was broken as first written).** Static export
-  renders kernel-side (§8, §32), where CSS does not exist — so a CSS-themed chart would
-  export with the wrong theme. Fix: the client sends a **theme snapshot** (its resolved
-  token values) back over the comm channel on every theme change; the kernel holds the
-  effective theme and export always matches the screen. If no client is attached
-  (headless script), the Python-set theme is authoritative.
+- **Export parity — partially closed; the kernel path is still an open gap.** Two export
+  routes exist. *Client-side* (modebar download) is themed correctly: `_exportSvgMarkup()`
+  (`js/src/53_interaction.js`) inlines the resolved `--chart-*` tokens and inherited text
+  styles onto the detached clone before serializing, so the downloaded SVG/PNG matches
+  the screen. *Kernel-side* export (`to_svg` / `to_png` / `write_image`, rendered by
+  `python/xy/_svg.py` and `python/xy/_raster.py`) has no CSS: it uses only the
+  Python-set theme (`xy.theme(...)`), so a chart themed purely through CSS custom
+  properties exports with the Python theme, not the on-screen one.
+  *Pending:* a **theme snapshot** — the client sending its resolved token values back
+  over the comm channel on every theme change, so the kernel holds the effective theme.
+  No producer or handler exists today. With no client attached (headless script) the
+  Python-set theme is authoritative and correct either way.
 - **Escape hatches.** `MutationObserver` misses stylesheet swaps and non-color-scheme
   media flips → a public `refreshTheme()` exists for apps that restyle dynamically.
   `forced-colors: active` (Windows High Contrast) restyles DOM chrome automatically
@@ -1047,7 +1150,7 @@ reachable by CSS and never will be — there's no node. This goes through the sp
 selected/hover/highlight styling, resolved on the GPU. This is a real limitation, not
 an oversight: it's the same reason the engine scales.
 
-**Summary:** chrome is plain CSS; background/grid/palette/colormap are CSS via the
+**Summary:** chrome is plain CSS; background/grid/axis/text are CSS via the
 `--chart-*` token bridge (cascade + dark-mode included); per-mark data-driven styling
 is spec-level. The one thing we explicitly *don't* promise is arbitrary per-element CSS
 selectors on marks — the price of the pixel-based scale everything else buys.
@@ -1089,7 +1192,7 @@ everything, so the manifest mechanism *is* the recovery mechanism.
 | Filter toggle **back** to a previous state | **0 bytes** (typ.) | old `filter_hash` generation still cached — flipping US on/off re-sends nothing |
 | New filter state | recomputed *visible* tiles only | §34 Tier A/B; tagged with new `filter_hash` |
 | Streaming append | dirty tile cells + ring delta | O(appended), per §28 |
-| Theme / style change | **0 bytes** | client-side uniforms/LUT (§36); tiny theme-snapshot upstream |
+| Theme / style change | **0 bytes** | client-side uniforms/LUT (§36); nothing goes upstream |
 | Hover / pick | ~1 row on drill | pick resolves client-side; drill fetches top-k rows |
 | New trace on same DataFrame | new columns only | column IDs shared across figures — a dashboard of 20 views of one table transfers the data **once** (§18) |
 

@@ -25,7 +25,7 @@ check_regressions = _load_regression_module()
 
 def test_committed_metrics_document_matches_baseline_contract() -> None:
     expected = set(json.loads((ROOT / "benchmarks/baseline.json").read_text())["metrics"])
-    lines = (ROOT / "spec/benchmark_metrics.md").read_text(encoding="utf-8").splitlines()
+    lines = (ROOT / "spec/benchmarks/metrics.md").read_text(encoding="utf-8").splitlines()
     documented = {
         cells[0]
         for line in lines

@@ -81,8 +81,11 @@ numbers into docs or posts:
 make check-benchmark-report BENCHMARK_JSON=benchmark.json BENCHMARK_KIND=scatter-vs
 ```
 
-Use `BENCHMARK_KIND=line-decimation`, `install-footprint`, `core-2d`,
-`scatter-native`, `kernel-native`, or `auto` for the other report shapes. The
+`BENCHMARK_KIND` accepts `auto`, `scatter-vs`, `core-2d`,
+`pyplot-vs-matplotlib`, `scatter-native`, `heatmap-native`, `kernel-native`,
+`interaction-browser`, `dashboard-browser`, `workflow-native`,
+`line-decimation`, `install-footprint`, and `transport-loopback`; the
+authoritative list is `KNOWN_KINDS` in `scripts/verify_benchmark_report.py`. The
 verifier prints a compact report summary with the detected kind, row count,
 statuses, categories, backend, and git commit so CI logs remain self-describing.
 
@@ -100,12 +103,22 @@ or anything that could become a public performance claim, run:
 make check-claims
 ```
 
-When you edit README snippets, `spec/api-examples.md`, or the Reflex example
+When you edit README snippets, `spec/api/api-examples.md`, or the Reflex example
 dashboard registry/assets, run:
 
 ```bash
 make check-examples
 ```
+
+When you touch `python/xy/pyplot/` or the matplotlib compatibility corpus, run:
+
+```bash
+make check-pyplot
+```
+
+When you change shim rendering performance, run `make check-pyplot-speed`, which
+enforces the per-family 10x static-PNG target via
+`benchmarks/bench_pyplot_vs_matplotlib.py` and requires the `.[bench]` extra.
 
 When you touch standalone HTML export, path writes, user-facing text surfaces,
 tooltips, legends, or the browser client DOM code, run:
@@ -140,9 +153,34 @@ For browser render smoke checks, pass a local Chrome/Chromium executable:
 make check-browser CHROMIUM=/path/to/chrome
 ```
 
-This runs the same split browser checks that CI names as `Browser lifecycle
-smoke (Chromium)`, `Browser visual regression smoke (Chromium)`, and `Browser
-interaction stress smoke (Chromium)`.
+This runs six split browser checks, which CI runs as separate steps:
+
+| Check | CI step name |
+| --- | --- |
+| `render_smoke_nonumpy` | `Headless render smoke (stdlib + Chromium)` |
+| `smoke_render` | `Real-Figure render smoke (numpy + Chromium)` |
+| `reflex_lifecycle_smoke` | `Browser lifecycle smoke (Chromium)` |
+| `visual_regression_smoke` | `Browser visual regression smoke (Chromium)` |
+| `step_tier_smoke` | `Step tier-update smoke (Chromium)` |
+| `interaction_stress_smoke` | `Browser interaction stress smoke (Chromium)` |
+
+The stdlib payload gate runs `scripts/render_smoke_nonumpy.py`. It hand-builds a
+payload from stdlib `array` and `struct` in exactly the wire shape
+`build_payload` emits, drives the standalone JS bundle in Chromium, and reads
+back a lit-pixel count via `gl.readPixels`. It needs neither numpy nor PyPI, so
+it covers the render client in a locked-down environment.
+
+The real-Figure gate runs `scripts/smoke_render.py`. It builds a standalone page
+the same way `Chart.to_html` does from an actual Figure (line decimation plus
+scatter), then counts non-transparent pixels via `gl.readPixels`. This is the
+end-to-end Figure-to-browser path that the hand-built stdlib smoke cannot reach.
+
+The step tier gate runs `scripts/step_tier_smoke.py`. Step geometry is expanded
+client-side after LOD, so both upload paths — the initial build and the
+`tier_update` refinement that replaces vertex buffers on zoom — must run the
+same expansion. It renders a decimated `step` chart, feeds the view a synthetic
+`tier_update` exactly as the kernel would ship it, and asserts the re-uploaded
+vertex stream still contains the step risers.
 
 The lifecycle gate runs `scripts/reflex_lifecycle_smoke.py`: every committed
 XY demo asset is loaded repeatedly, and each child chart must stay
@@ -154,9 +192,13 @@ requires the rebuilt chart to remain nonblank. The iframe shell also exercises
 hash navigation, fast scrolling, resize and visibility events, a full iframe
 remount, an in-place iframe reload, and a hidden-boot/reveal pass where charts
 initialize at zero-sized iframe dimensions before becoming visible. The custom
-chrome, business overview, and retention cohort assets are tracked as critical
-reports in every shell phase. A blank, destroyed, shortened lifecycle, failed
-context restore, or missing critical asset/phase pair is a failing browser gate.
+chrome, business overview, retention cohort, and the two live drilldown assets
+(`live_drilldown_10m.html`, `live_drilldown_100m.html`) are tracked as critical
+reports in every shell phase. Critical assets are enforced per shell asset group
+rather than across one flat asset set: the live drilldown assets form their own
+group, and each group requires only its own critical assets in every phase. A
+blank, destroyed, shortened lifecycle, failed context restore, or missing
+critical asset/phase pair is a failing browser gate.
 
 The visual gate runs `scripts/visual_regression_smoke.py`. It is layout-aware:
 beyond global nonblank/color checks, it verifies title, plot, x-axis, and y-axis
@@ -186,8 +228,12 @@ On macOS, pass the executable inside the app bundle, for example
 
 Use `make list-checks` to see check names, or
 `python scripts/verify_local.py --dry-run --full` to print commands without
-running them. Browser checks are listed even before a Chrome path is configured;
-dry-run output uses `<CHROMIUM>` until you pass `--chromium` or `CHROMIUM=...`.
+running them. `--dry-run --full` prints only the quick and full gates; browser
+checks are appended only with `--browser`, which requires `--chromium PATH`.
+`make list-checks` does show the browser checks before a Chrome path is
+configured, marked `[requires chromium]`. To see a browser command rendered with
+the `<CHROMIUM>` placeholder, name it explicitly, for example
+`python scripts/verify_local.py --dry-run --only reflex_lifecycle_smoke`.
 
 ## Pull Request Checklist
 
@@ -230,7 +276,7 @@ Do not write broad claims like "faster than Plotly" without naming:
 
 - chart type
 - data size and shape
-- backend (`native` or `numpy`)
+- backend (always `native`; there is no NumPy fallback)
 - render target
 - whether browser time-to-first-render is included
 - whether the result is exact markers, decimated geometry, density, or adaptive
@@ -238,5 +284,5 @@ Do not write broad claims like "faster than Plotly" without naming:
 Numeric multipliers such as "10x faster" or "5x smaller" need the same measured
 benchmark context.
 
-When in doubt, phrase it as a measured row from `spec/benchmark.md`, not as a
+When in doubt, phrase it as a measured row from `spec/benchmarks/results.md`, not as a
 universal product claim, and run `make check-claims` before publishing.

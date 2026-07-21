@@ -100,7 +100,7 @@ MPL_PATHS = (
     "python/xy/pyplot/",
     "tests/pyplot/",
     "examples/pdsh/",
-    "spec/matplotlib-compat.md",
+    "spec/matplotlib/compat.md",
 )
 MPL_FC = re.compile(r"""["']fc["']|\bfc=\\?["'0-9]|\bFc\b""")
 AUDIT = re.compile(r"(?i:\bfc\b|fastchart)|\bfc(?=[A-Z])")

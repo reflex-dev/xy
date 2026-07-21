@@ -8,7 +8,7 @@ description: Set up XY development, run the right gates, and prepare a focused c
 XY welcomes focused bug fixes, documentation improvements, tests, and chart
 surface work. The canonical contributor guide is
 [CONTRIBUTING.md](https://github.com/reflex-dev/xy/blob/main/CONTRIBUTING.md);
-the internal [contributor specification](https://github.com/reflex-dev/xy/blob/main/spec/contributing.md)
+the internal [contributor specification](https://github.com/reflex-dev/xy/blob/main/spec/process/contributing.md)
 contains the complete release and browser checklists.
 
 ## Local Setup

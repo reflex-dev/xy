@@ -123,7 +123,7 @@ jobs:
 
   # Pyodide / Emscripten WASM wheel for in-browser CPython. Pyodide's platform
   # ABI is compiler-sensitive, so keep Rust, Emscripten, the wheel tag, and the
-  # runtime probe pinned as one tested set (see spec/production-readiness.md).
+  # runtime probe pinned as one tested set (see spec/process/production-readiness.md).
   wasm:
     name: Wheel Pyodide (runtime verified)
     runs-on: ubuntu-latest

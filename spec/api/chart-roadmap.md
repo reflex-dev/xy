@@ -41,7 +41,7 @@ Beyond the mark set, four capability layers now ship on `main`:
   (hex/`rgb()`/`hsl()`/named colors, lengths, numbers) parse strictly,
   browser-resolved forms (`var()`/`oklch()`/`calc()`) pass through, and a
   malformed value raises instead of rendering a silently wrong chart (see
-  `spec/styling.md` § Validation).
+  `spec/api/styling.md` § Validation).
 - **Static export:** `fig.to_svg(...)` (pure-Python, screen-bounded vector —
   a 10M-point line exports in ~4 ms / ~58 KB) and `fig.to_png(...)` (a
   browser-free native Rust rasterizer by default, ~50× faster than the
@@ -131,7 +131,7 @@ not fall out of sight.
 | 24 | Categorical distributions | strip, swarm, beeswarm, boxen, rug | Planned | Seaborn-style stats breadth; requires jitter/packing and distribution summaries. |
 | 25 | Step/stairs/stem/lollipop | stairs, step area, stem, lollipop | Implemented core | Step/stairs remain compact line inputs; stems reuse instanced segments and points. |
 | 26 | Slope/bump/dumbbell | slopegraph, bump chart, dumbbell, connected dot plot | Planned | Popular editorial/business comparisons; composition of line + point + labels. |
-| 27 | Timeline/Gantt/event charts | event timeline, bar range, Gantt, milestone chart | Planned later | Useful for operations/product; more UI/axis polish than rendering complexity. |
+| 27 | Timeline/Gantt/event charts | event timeline, bar range, Gantt, milestone chart | Partially implemented in `xy.pyplot` | `eventplot(positions, orientation=, lineoffsets=, linelengths=, linewidths=, colors=, linestyles=)` renders event timelines through instanced segments; `broken_barh(xranges, yrange)` renders bar ranges as horizontal `bar` marks with a per-range base and categorical y support. Gantt/milestone composition and date-axis polish remain planned later. |
 | 28 | Calendar charts | calendar heatmap, contribution graph, daily cohort grid | Planned later | Product analytics and ops compatibility; grid + date-axis specialization. |
 | 29 | Parallel coordinate/category | parallel coordinates, parallel categories, alluvial-lite | Planned later | Present in Plotly/ECharts; useful for high-dimensional EDA. |
 | 30 | Sankey / alluvial | Sankey, alluvial, dependency wheel | Planned later | Important flow chart, but requires layout and interaction work. |
@@ -144,7 +144,7 @@ not fall out of sight.
 | 37 | Statistical evaluation | ROC, precision-recall, lift, calibration, Manhattan, volcano | Planned later | Mostly composed line/scatter variants with domain helpers. |
 | 38 | Composition/part-to-whole extras | waffle, mosaic/Mekko, variwide, packed bubble, Venn/Euler | Planned later | Useful compatibility charts; mostly layout algorithms plus rectangles/circles. |
 | 39 | Decorative/compatibility series | pictorial bar, item chart, text marks, image markers, custom symbol scatter | Planned later | ECharts/Highcharts-style polish and compatibility after core performance work. |
-| 40 | Tables and table-adjacent views | table, pivot-like summary, annotated table | Deferred dashboard surface | Plotly includes tables, but they are dashboard UI, not core chart rendering. |
+| 40 | Tables and table-adjacent views | table, pivot-like summary, annotated table | Partially implemented in `xy.pyplot` | `table(cellText=, cellColours=, cellLoc=, colWidths=, rowLabels=, colLabels=, loc=, bbox=)` tessellates cells into `triangle_mesh` geometry with per-cell colors, rules, and text, so it renders through the core mark path rather than as dashboard DOM. Pivot-like summaries and annotated-table depth remain deferred. |
 
 ### P1 - Add next
 
@@ -195,7 +195,7 @@ depth: strip/swarm/boxen/rug distributions, regression diagnostics, richer
 | 23 | Sankey / alluvial / dependency wheel | Common flow visualization in BI and systems analysis. | Layout and interaction are the hard parts. |
 | 24 | Network / tree / org / dendrogram / arc | Graph and hierarchy compatibility. | Requires graph layout algorithms and selection semantics. |
 | 25 | Gauge / bullet / indicator | Dashboard/KPI compatibility. | Mostly chrome and layout, not large-array rendering. |
-| 26 | Table-adjacent views | Table, pivot-like summary, annotated table. | Useful in dashboards, but not a chart-rendering primitive. |
+| 26 | Table-adjacent views | Table, pivot-like summary, annotated table. | Basic `table` is implemented through `xy.pyplot` as tessellated cell geometry; pivot-like summary and annotated-table depth remain deferred. |
 
 ### P5 - Scientific, coordinate-system, and obscure compatibility
 
@@ -311,7 +311,7 @@ pattern); line/area take `curve="smooth"` (monotone-cubic); scatter takes 17
 renderer-backed `symbol` glyphs plus point strokes. Mark colors
 flow through the same `--chart-*` tokens as the chrome, so a theme change
 re-resolves marks and chrome together. The full matrix and per-mark support
-table live in [`spec/styling.md`](styling.md). Static SVG export reproduces all
+table live in [`spec/api/styling.md`](styling.md). Static SVG export reproduces all
 of it (gradients → `<linearGradient>`, smooth curves → exact cubic Béziers,
 etc.) with two documented approximations (area mark-space gradient uses the
 bbox; `var()` colors fall back to the mark color — no DOM).
@@ -378,14 +378,20 @@ not re-implementing shipped primitives.
    as a durable release asset (#97). The docs site is live, and the reflex-xy
    adapter is on `main` — so release/distribution correctness and the
    post-launch bug backlog are the current gate, not shipping. The interaction
-   correctness issues (heatmap hover kernel crash, box-zoom view collapse,
-   double-click blanking a dense Reflex scatter, reflex-xy static chart crash,
-   FacetChart CSS leak) come before any new chart family.
+   correctness issues (box-zoom view collapse, double-click blanking a dense
+   Reflex scatter, reflex-xy static chart crash, FacetChart CSS leak) come
+   before any new chart family. The heatmap hover kernel crash is fixed
+   (PR #106): the pick handler takes a dedicated grid-trace branch that returns
+   row/col plus the cell value instead of indexing the edge-only x/y arrays.
 2. **Reflex-first reactive API — shipped** (PR #55, `python/reflex-xy/`; see
-   the capability-layer summary near the top of this doc). Remaining depth is
-   adapter polish: install/packaging docs from a clean environment, linked
-   facet interactions, and first-class pan/zoom controls surfaced through the
-   component API.
+   the capability-layer summary near the top of this doc). Linked facet
+   interactions shipped in PR #105: `xy.facet_chart(...)` takes
+   `link=True|"both"|"x"|"y"` for runtime-linked panel axes and
+   `link_select=True` to echo data-space selections across panels. First-class
+   pan/zoom controls shipped in PR #103: `xy.interaction_config(...)` exposes
+   `pan` and `zoom` switches alongside the existing `navigation` flag.
+   Remaining depth is adapter polish: install/packaging docs from a clean
+   environment.
 3. **Statistical compatibility depth.** Add strip/swarm/boxen/rug,
    regression/diagnostic helpers, richer density hover/readout, and
    scatter-matrix/joint-plot composition on the shipped primitives.
