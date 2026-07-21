@@ -608,6 +608,14 @@ detail inside a decade of millisecond timestamps).
   values, and hover readouts are computed CPU-side in f64/i64 from source columns —
   the GPU path only ever positions pixels, so display precision is exact even when
   geometry is quantized to sub-pixel f32.
+- **Linear axes stay offset-encoded through the vertex transform.** The shader's
+  affine view mapping is composed directly onto the encoded values (`xyMap`,
+  `js/src/40_gl.js`); the CPU folds the offset into the affine constants in f64
+  (`_map`, `js/src/50_chartview.js`). Decoding to absolute coordinates in-shader
+  first would discard the low bits whenever a deeply zoomed window is far smaller
+  than the offset — after which zooming back out could never recover the point
+  spread. Only log axes decode before mapping, because log10 is not affine.
+  *Augments §4.*
 - **Time is i64 end-to-end** (Arrow timestamp columns), with calendar-aware tick
   generation (months are not 30×86400s). Plotly gets this right; matching it is
   table stakes and it must not be routed through any float path.
