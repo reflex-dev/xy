@@ -48,6 +48,8 @@ CHART_ASSETS = (
     "area.html",
     "bar_column.html",
     "histogram.html",
+    "histogram_x_zoom.html",
+    "box_zoom_drag.html",
     "heatmap.html",
     "colored_scatter.html",
     "density_scatter.html",
@@ -55,6 +57,9 @@ CHART_ASSETS = (
     "live_drilldown_100m.html",
     "stacked_bar.html",
     "horizontal_bar.html",
+    "normalized_bar.html",
+    "diverging_bar.html",
+    "rounded_goal_bar.html",
     "interaction_basics.html",
 )
 
@@ -71,8 +76,17 @@ CRITICAL_ASSETS = (
     "live_drilldown_100m.html",
 )
 
+# Chrome keeps at most 16 WebGL contexts alive per renderer and LRU-evicts the
+# rest, so a shell that mounts more charts than that kills the earliest slots'
+# contexts mid-probe ("WEBGL_lose_context extension unavailable"). Chunk the
+# static fleet to stay at the cap; the live drilldowns keep their own shell.
+_MAX_SHELL_CONTEXTS = 16
+_STATIC_SHELL_ASSETS = tuple(asset for asset in CHART_ASSETS if asset not in LIVE_CHART_ASSETS)
 SHELL_ASSET_GROUPS = (
-    tuple(asset for asset in CHART_ASSETS if asset not in LIVE_CHART_ASSETS),
+    *(
+        _STATIC_SHELL_ASSETS[start : start + _MAX_SHELL_CONTEXTS]
+        for start in range(0, len(_STATIC_SHELL_ASSETS), _MAX_SHELL_CONTEXTS)
+    ),
     LIVE_CHART_ASSETS,
 )
 

@@ -34,7 +34,7 @@ import datetime as dt
 import re
 import uuid
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from os import PathLike
 from typing import Any, Literal, Optional, TypeAlias, Union
@@ -143,6 +143,11 @@ StyleValue: TypeAlias = str | int | float
 CoordinateLike: TypeAlias = Union[Scalar, str, dt.datetime, dt.date, np.datetime64]
 AxisLabelPosition: TypeAlias = str | dict[str, StyleValue]
 AxisTickLabelStrategy: TypeAlias = str
+DefaultDragAction: TypeAlias = Literal[
+    "auto", "none", "pan", "zoom", "select", "select-x", "select-y", "select-lasso"
+]
+ZoomLimit: TypeAlias = tuple[Optional[float], Optional[float]]
+ZoomLimits: TypeAlias = Union[ZoomLimit, Mapping[str, ZoomLimit]]
 
 # ---------------------------------------------------------------------------
 # Component tree (lightweight declarative specs — no rendering here)
@@ -299,10 +304,18 @@ class Interaction(Component):
     crosshair: Optional[bool] = None
     navigation: Optional[bool] = None
     pan: Optional[bool] = None
+    pan_axes: Optional[tuple[str, ...]] = None
     zoom: Optional[bool] = None
-    view_change: Optional[bool] = None
+    default_drag_action: Optional[DefaultDragAction] = None
+    zoom_axes: Optional[tuple[str, ...]] = None
+    zoom_limits: Optional[ZoomLimits] = None
+    wheel_zoom: Optional[bool] = None
+    box_zoom: Optional[bool] = None
+    zoom_buttons: Optional[bool] = None
+    double_click_reset: Optional[bool] = None
+    reset_axes: Optional[tuple[str, ...]] = None
     link_group: Optional[str] = None
-    link_axes: tuple[str, ...] = ("x", "y")
+    link_axes: Optional[tuple[str, ...]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -321,11 +334,12 @@ def scatter(
     colormap: str = channels.DEFAULT_COLORMAP,
     color_domain: Optional[tuple[float, float]] = None,
     size_range: tuple[float, float] = (2.0, 18.0),
-    opacity: float = 0.8,
+    opacity: Any = 0.8,
     density: Optional[bool] = None,
-    symbol: str = "circle",
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    symbol: Any = "circle",
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    _artist_alpha: Any = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -348,6 +362,7 @@ def scatter(
         symbol: Marker symbol name.
         stroke: Optional marker outline color.
         stroke_width: Marker outline width in pixels.
+        _artist_alpha: Internal Matplotlib alpha override, scalar or per marker.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
@@ -372,6 +387,7 @@ def scatter(
             "symbol": symbol,
             "stroke": stroke,
             "stroke_width": stroke_width,
+            "_artist_alpha": _artist_alpha,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -622,8 +638,8 @@ def segments(
     color: Union[str, ColorLike, ArrayLike, None] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
-    width: float = 1.2,
-    opacity: float = 1.0,
+    width: Any = 1.2,
+    opacity: Any = 1.0,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -683,9 +699,9 @@ def triangle_mesh(
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     name: Optional[str] = None,
-    opacity: float = 1.0,
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    opacity: Any = 1.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -1201,11 +1217,12 @@ def histogram(
     density: bool = False,
     cumulative: bool = False,
     name: Optional[str] = None,
-    color: Optional[str] = None,
-    opacity: float = 0.85,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    color: Any = None,
+    opacity: Any = 0.85,
+    corner_radius: Any = 0.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    _artist_alpha: Any = None,
     fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
@@ -1227,6 +1244,7 @@ def histogram(
         corner_radius: Bar corner radius in pixels.
         stroke: Optional bar outline color.
         stroke_width: Bar outline width in pixels.
+        _artist_alpha: Internal Matplotlib alpha override, scalar or per bin.
         fill: CSS fill value or linear gradient.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
@@ -1250,6 +1268,7 @@ def histogram(
             "corner_radius": corner_radius,
             "stroke": stroke,
             "stroke_width": stroke_width,
+            "_artist_alpha": _artist_alpha,
             "fill": fill,
             "x_axis": x_axis,
             "y_axis": y_axis,
@@ -1266,11 +1285,12 @@ def hist(
     density: bool = False,
     cumulative: bool = False,
     name: Optional[str] = None,
-    color: Optional[str] = None,
-    opacity: float = 0.85,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    color: Any = None,
+    opacity: Any = 0.85,
+    corner_radius: Any = 0.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    _artist_alpha: Any = None,
     fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
@@ -1291,6 +1311,7 @@ def hist(
         corner_radius=corner_radius,
         stroke=stroke,
         stroke_width=stroke_width,
+        _artist_alpha=_artist_alpha,
         fill=fill,
         style=style,
         class_name=class_name,
@@ -1305,17 +1326,18 @@ def bar(
     *,
     data: TableLike = None,
     name: Optional[str] = None,
-    color: Union[str, Sequence[str], None] = None,
+    color: Any = None,
     colors: Optional[list[str]] = None,
     width: float = 0.8,
     base: Union[str, Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
     series: Optional[list[str]] = None,
-    opacity: float = 0.85,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    opacity: Any = 0.85,
+    corner_radius: Any = 0.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    _artist_alpha: Any = None,
     fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
@@ -1340,6 +1362,7 @@ def bar(
         corner_radius: Bar corner radius in pixels.
         stroke: Optional bar outline color.
         stroke_width: Bar outline width in pixels.
+        _artist_alpha: Internal Matplotlib alpha override, scalar or per bar.
         fill: CSS fill value or linear gradient.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
@@ -1366,6 +1389,7 @@ def bar(
             "corner_radius": corner_radius,
             "stroke": stroke,
             "stroke_width": stroke_width,
+            "_artist_alpha": _artist_alpha,
             "fill": fill,
             "x_axis": x_axis,
             "y_axis": y_axis,
@@ -2430,10 +2454,18 @@ def interaction_config(
     crosshair: Optional[bool] = None,
     navigation: Optional[bool] = None,
     pan: Optional[bool] = None,
+    pan_axes: Optional[tuple[str, ...]] = None,
     zoom: Optional[bool] = None,
-    view_change: Optional[bool] = None,
+    default_drag_action: Optional[DefaultDragAction] = None,
+    zoom_axes: Optional[tuple[str, ...]] = None,
+    zoom_limits: Optional[ZoomLimits] = None,
+    wheel_zoom: Optional[bool] = None,
+    box_zoom: Optional[bool] = None,
+    zoom_buttons: Optional[bool] = None,
+    double_click_reset: Optional[bool] = None,
+    reset_axes: Optional[tuple[str, ...]] = None,
     link_group: Optional[str] = None,
-    link_axes: tuple[str, ...] = ("x", "y"),
+    link_axes: Optional[tuple[str, ...]] = None,
 ) -> Interaction:
     """Configure browser interaction chrome and event emission.
 
@@ -2445,11 +2477,34 @@ def interaction_config(
         crosshair: Whether plot-aligned hover guides are shown.
         navigation: Whether pointer drag and wheel gestures pan or zoom the chart.
         pan: Whether plain-drag pan is enabled. ``False`` ignores plain-drag
-            pan gestures. The default keeps panning enabled.
+            pan gestures and contains every zoom-enabled axis to its home
+            window. The default keeps panning enabled.
+        pan_axes: Concrete declared axis IDs pan gestures translate freely.
+            The default includes every declared axis. An excluded axis that
+            zoom can still navigate is contained: its window slides inside
+            the axis's home extents (plain drag keeps working on a zoomed-in
+            view) but never extends past them, on any mutation path.
         zoom: Whether viewport zoom is enabled. ``False`` ignores wheel and
             box zoom, double-click reset, and modebar zoom controls. The
             default keeps zooming enabled.
-        view_change: Whether pan, zoom, and reset emit range events.
+        default_drag_action: Initial action performed by a plain plot drag.
+            ``"auto"`` is the default and chooses pan first; ``"zoom"`` draws
+            a rectangle and zooms to its bounds. Selection actions make their
+            corresponding gesture the default without requiring Shift. The
+            modebar can change the active action without changing this
+            configured default.
+        zoom_axes: Axis dimensions changed by wheel, modebar, and box zoom.
+            Use ``("x",)`` for x-only zoom. Secondary IDs such as ``"y2"``
+            are independent. The default includes every declared axis.
+        zoom_limits: Minimum and maximum magnification relative to the home
+            range, either one pair for all zoom axes or a mapping by axis ID.
+            Missing configuration defaults to ``(1.0, None)`` per zoom axis.
+        wheel_zoom: Whether wheel and trackpad zoom is available.
+        box_zoom: Whether box zoom is available as a drag action.
+        zoom_buttons: Whether toolbar Zoom In/Out commands are available.
+        double_click_reset: Whether double-click restores ``reset_axes``.
+        reset_axes: Concrete declared axis IDs restored by reset. The default
+            is the union of enabled pan and zoom axes.
         link_group: Identifier used to synchronize charts in the browser.
         link_axes: Axes synchronized within the link group.
     """
@@ -2461,8 +2516,16 @@ def interaction_config(
         crosshair=crosshair,
         navigation=navigation,
         pan=pan,
+        pan_axes=pan_axes,
         zoom=zoom,
-        view_change=view_change,
+        default_drag_action=default_drag_action,
+        zoom_axes=zoom_axes,
+        zoom_limits=zoom_limits,
+        wheel_zoom=wheel_zoom,
+        box_zoom=box_zoom,
+        zoom_buttons=zoom_buttons,
+        double_click_reset=double_click_reset,
+        reset_axes=reset_axes,
         link_group=link_group,
         link_axes=link_axes,
     )
@@ -2568,10 +2631,18 @@ class Chart(Component):
         crosshair: Optional[bool] = None,
         navigation: Optional[bool] = None,
         pan: Optional[bool] = None,
+        pan_axes: Optional[tuple[str, ...]] = None,
         zoom: Optional[bool] = None,
-        view_change: Optional[bool] = None,
+        default_drag_action: Optional[DefaultDragAction] = None,
+        zoom_axes: Optional[tuple[str, ...]] = None,
+        zoom_limits: Optional[ZoomLimits] = None,
+        wheel_zoom: Optional[bool] = None,
+        box_zoom: Optional[bool] = None,
+        zoom_buttons: Optional[bool] = None,
+        double_click_reset: Optional[bool] = None,
+        reset_axes: Optional[tuple[str, ...]] = None,
         link_group: Optional[str] = None,
-        link_axes: tuple[str, ...] = ("x", "y"),
+        link_axes: Optional[tuple[str, ...]] = None,
     ) -> None:
         self.kind = kind
         self.children = children
@@ -2596,8 +2667,16 @@ class Chart(Component):
         self.crosshair = crosshair
         self.navigation = navigation
         self.pan = pan
+        self.pan_axes = pan_axes
         self.zoom = zoom
-        self.view_change = view_change
+        self.default_drag_action = default_drag_action
+        self.zoom_axes = zoom_axes
+        self.zoom_limits = zoom_limits
+        self.wheel_zoom = wheel_zoom
+        self.box_zoom = box_zoom
+        self.zoom_buttons = zoom_buttons
+        self.double_click_reset = double_click_reset
+        self.reset_axes = reset_axes
         self.link_group = link_group
         self.link_axes = link_axes
         self._figure: Optional[Figure] = None
@@ -2701,8 +2780,16 @@ class Chart(Component):
             or self.crosshair is not None
             or self.navigation is not None
             or self.pan is not None
+            or self.pan_axes is not None
             or self.zoom is not None
-            or self.view_change is not None
+            or self.default_drag_action is not None
+            or self.zoom_axes is not None
+            or self.zoom_limits is not None
+            or self.wheel_zoom is not None
+            or self.box_zoom is not None
+            or self.zoom_buttons is not None
+            or self.double_click_reset is not None
+            or self.reset_axes is not None
             or self.link_group is not None
         ):
             fig.set_interaction(
@@ -2713,8 +2800,16 @@ class Chart(Component):
                 crosshair=self.crosshair,
                 navigation=self.navigation,
                 pan=self.pan,
+                pan_axes=self.pan_axes,
                 zoom=self.zoom,
-                view_change=self.view_change,
+                default_drag_action=self.default_drag_action,
+                zoom_axes=self.zoom_axes,
+                zoom_limits=self.zoom_limits,
+                wheel_zoom=self.wheel_zoom,
+                box_zoom=self.box_zoom,
+                zoom_buttons=self.zoom_buttons,
+                double_click_reset=self.double_click_reset,
+                reset_axes=self.reset_axes,
                 link_group=self.link_group,
                 link_axes=self.link_axes,
             )
@@ -2727,8 +2822,16 @@ class Chart(Component):
                 crosshair=node.crosshair,
                 navigation=node.navigation,
                 pan=node.pan,
+                pan_axes=node.pan_axes,
                 zoom=node.zoom,
-                view_change=node.view_change,
+                default_drag_action=node.default_drag_action,
+                zoom_axes=node.zoom_axes,
+                zoom_limits=node.zoom_limits,
+                wheel_zoom=node.wheel_zoom,
+                box_zoom=node.box_zoom,
+                zoom_buttons=node.zoom_buttons,
+                double_click_reset=node.double_click_reset,
+                reset_axes=node.reset_axes,
                 link_group=node.link_group,
                 link_axes=node.link_axes,
             )
@@ -2737,7 +2840,6 @@ class Chart(Component):
             click=True if self.on_click is not None else None,
             brush=True if self.on_brush is not None else None,
             select=True if self.on_brush is not None or self.on_select is not None else None,
-            view_change=True if self.on_view_change is not None else None,
         )
         tooltip_aliases: dict[str, str] = {}
         tooltip_sources: dict[str, list[dict[str, Any]]] = {}
@@ -2856,6 +2958,7 @@ class Chart(Component):
                     if node_ticks is not None:
                         options["ticks"] = node_ticks
                     fig.colorbar_options = options
+        fig._validate_interaction()
         self._figure = fig
         return fig
 
@@ -3920,6 +4023,7 @@ def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
             symbol=m.props["symbol"],
             stroke=m.props["stroke"],
             stroke_width=m.props["stroke_width"],
+            _artist_alpha=m.props.get("_artist_alpha"),
             style=m.style,
         )
     except Exception:
@@ -4175,6 +4279,7 @@ def _apply_histogram(fig: Figure, m: Mark, data: Any) -> None:
         corner_radius=m.props["corner_radius"],
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
+        _artist_alpha=m.props.get("_artist_alpha"),
         fill=m.props["fill"],
         style=m.style,
     )
@@ -4210,6 +4315,7 @@ def _apply_bar(fig: Figure, m: Mark, data: Any) -> None:
         corner_radius=m.props["corner_radius"],
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
+        _artist_alpha=m.props.get("_artist_alpha"),
         fill=m.props["fill"],
         style=m.style,
     )

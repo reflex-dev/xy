@@ -183,12 +183,17 @@ plus two cross-chart linking props. Every switch defaults to `None`, meaning
 | `hover` | off | Pointer motion emits hover events and drives the tooltip. |
 | `click` | off | Picked marks emit click events. |
 | `crosshair` | off | Plot-aligned hover guides are created. |
-| `view_change` | off | Pan/zoom/reset emit range events. |
 | `select` | on | Shift-drag box selection. |
 | `brush` | on | Brush selection (also requires `select`). |
-| `pan` | on | Plain-drag pan. |
-| `zoom` | on | Wheel, box zoom, double-click reset, modebar zoom. |
+| `pan` | on | Plain-drag pan of `pan_axes`. |
+| `zoom` | on | Master zoom gate for wheel, box, and modebar zoom. |
 | `navigation` | on | Master gate: when off, neither pan nor zoom gestures run. |
+
+Viewport navigation also carries the per-axis policy switches
+`default_drag_action`, `pan_axes`, `zoom_axes`, `zoom_limits`, `reset_axes`, and
+the source toggles `wheel_zoom`/`box_zoom`/`zoom_buttons`/`double_click_reset`;
+[interaction.md](../api/interaction.md) §2/§2.1 is the authority on those and
+[pan-and-zoom-configuration.md](pan-and-zoom-configuration.md) on their design.
 
 `navigation` is checked before `pan` and `zoom` at each gesture site
 (`js/src/53_interaction.js:112`, `:240`, `:251`), so it disables pointer
@@ -196,33 +201,36 @@ navigation wholesale while leaving `pan`/`zoom` as the finer-grained
 switches.
 
 The Python side sets these implicitly from the callbacks a `Chart` was given:
-`hover`, `click`, `brush`, `select`, and `view_change` are emitted as `True`
-exactly when the matching handler is present (`components.py:2736-2740`).
-That pass runs *last* — after the chart-level keywords (`components.py:2708`)
-and after any `interaction_config` nodes (`:2722`) — and it overwrites rather
+`hover`, `click`, `brush`, and `select` are emitted as `True` exactly when the
+matching handler is present. That pass runs *last* — after the chart-level
+keywords and after any `interaction_config` nodes — and it overwrites rather
 than defaults: `on_hover=` together with `hover=False` yields `hover=True`.
 [interaction.md](../api/interaction.md) §1 is the authority on resolution order.
 
-Channel traffic follows `view_change` specifically. `_emitViewChange`
-(`js/src/50_chartview.js:460`) coalesces to one `requestAnimationFrame`, and
-sends `comm.send({type: "view_change", …})` only when the flag is on — so
-disabling it removes the per-viewport server round-trip while leaving local
-pan/zoom fully interactive.
+View transport is derived differently: there is no `view_change` switch. The
+widget attaches a private `_transport_view_change` subscription when an
+`on_view_change` callback is present (`widget.py:83-87`) without changing
+browser behavior. `_emitViewChange` coalesces to one `requestAnimationFrame`
+and sends `comm.send({type: "view_change", …})` only when a view listener
+exists — so a chart with no view callback does the local pan/zoom work and
+skips the per-viewport server round-trip entirely.
 
 **Cross-chart linking.** `link_group` is an opaque identifier; charts sharing
 one join the `BroadcastChannel` named `` `xy:${group}` ``
-(`js/src/50_chartview.js:487`). `link_axes` defaults to `("x", "y")` and is
-filtered to those two names at runtime; only the listed dimensions of the
+(`js/src/50_chartview.js:487`). `link_axes` defaults to every declared axis and
+is filtered to declared axis IDs at runtime; only those dimensions of the
 broadcast view are copied onto the receiving chart. Semantics that matter:
 
-- What propagates is the **view window** (`x0/x1/y0/y1`), not data, selection,
-  or scale type. A receiver ignores messages tagged with its own source id, so
-  linking does not echo.
-- A receiver applies a linked view only if `pan` or `zoom` is enabled
-  (`js/src/50_chartview.js:514`); a fully navigation-locked chart broadcasts
-  but does not follow.
-- Being in a link group makes a chart compute view events even with
-  `view_change` off — it broadcasts locally without sending to the server.
+- What propagates is the **per-axis view** (the `ranges` map, including
+  secondary axes such as `y2`), not data, selection, or scale type. A receiver
+  ignores messages tagged with its own source id, so linking does not echo.
+- A receiver applies a linked view regardless of its local `navigation`/`pan`/
+  `zoom` state and clamps it to its own bounds; a fully navigation-locked chart
+  still follows its group, which is what drives read-only detail panels from an
+  overview.
+- Being in a link group makes a chart broadcast on every committed view change
+  even when no `on_view_change` listener is attached — it broadcasts locally
+  without sending to the server.
 - Selections propagate only under the separate `link_select` wire flag
   (range, polygon, or clear — `js/src/50_chartview.js:491`), applied without
   re-dispatching events so linked charts do not feed back. `link_select` is

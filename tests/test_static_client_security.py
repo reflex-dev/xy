@@ -404,6 +404,8 @@ def test_client_hardens_responsive_visibility_recovery() -> None:
         "new IntersectionObserver",
         "this._io?.disconnect();",
         "const compact = this.size.w < 520;",
+        "_queueResize(cssW = null, cssH = null, measure = false)",
+        'this._colorbar.dataset.xyCompact = compactVertical ? "true" : "false";',
     )
 
     for path, text in CLIENT_FILES:
@@ -513,7 +515,7 @@ def test_client_coalesces_wheel_zoom_without_animation_lag() -> None:
         "_queueWheelZoom(factor, fx, fy)",
         "this._pendingWheelZoom.factor *= factor;",
         "this._wheelZoomRaf = requestAnimationFrame",
-        "this._zoomAt(pending.factor, pending.fx, pending.fy, false);",
+        "this._zoomAt(pending.factor, pending.fx, pending.fy, false, 120, {",
         "this._queueWheelZoom(f, fx, fy);",
     )
 
@@ -693,7 +695,6 @@ def test_client_renders_mark_level_styling() -> None:
         "u_gradMode",
         'u("u_radius")',  # rounded-corner SDF uniform
         'u("u_strokeWidth")',
-        "xyGradSample(xyGradT(v_t, u_res)) * u_color.a",  # opacity composes w/ gradient
         "(v_pos - v_base) / (abs(denom)",  # area gradient: per-column, seam-free + even
         "xySmoothResample(",  # monotone cubic (Fritsch–Carlson)
         "xyMonotoneTangents(",
@@ -716,6 +717,20 @@ def test_client_renders_mark_level_styling() -> None:
     src = _CLIENT_SRC[1]
     assert "g._cpu = { x, y, xMeta: g.xMeta, yMeta: g.yMeta };" in src
     assert "g._cpu = { x, y, base, xMeta: g.xMeta, yMeta: g.yMeta };" in src
+
+
+def test_rect_gradient_preserves_per_item_alpha_stack() -> None:
+    """Gradient rects compose vector opacity and artist-alpha while keeping
+    the fragment output premultiplied for WebGL blending."""
+    required = (
+        "vec4 gradient = xyGradSample(xyGradT(v_t, u_res));",
+        "(v_style.y >= 0.0 ? v_style.y : gradient.a) * v_style.x * u_opacity",
+        "gradient.a > 1e-6 ? gradient.rgb / gradient.a : vec3(0.0)",
+        "premult = vec4(gradientRgb * gradientAlpha, gradientAlpha);",
+    )
+    for path, text in CLIENT_FILES:
+        for marker in required:
+            assert marker in text, f"{path} drops gradient alpha marker {marker!r}"
 
 
 def test_standalone_density_rebin_worker() -> None:
@@ -761,7 +776,7 @@ def test_client_supports_edge_to_edge_sparklines() -> None:
     src = _CLIENT_SRC[1]
     # padding override feeds _layout's margins
     assert "Array.isArray(this.spec.padding) ? this.spec.padding : null" in src
-    assert "marginLeft = pad ? pad[3]" in src
+    assert "responsivePad ? Math.min(pad[3], 46) : pad[3]" in src
     # "none" returns an empty label set even when the axis has only one tick.
     assert 'if (strategyValue === "none" || strategyValue === "off") return [];' in src
     assert "if (s.x_axis.label && !hideX)" in src

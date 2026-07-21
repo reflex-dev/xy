@@ -30,9 +30,9 @@ row dicts and selection summaries, never data buffers (§1 of the design):
         height="480px",
     )
 
-Semantic events need the kernel, so they apply to live sources; a static
-chart renders, pans/zooms, and resolves hover tooltips client-side but
-dispatches no backend events.
+Point and selection events need the kernel, so they apply to live sources. A static
+chart renders, pans/zooms, and resolves hover tooltips client-side; its small
+``on_view_change`` payload can use the normal Reflex event prop without a data kernel.
 """
 
 from __future__ import annotations
@@ -77,8 +77,9 @@ def _build_component_cls() -> Any:
         # wrapper destructures and discards it; it never reaches the DOM.
         tailwind_class_tokens: rx.Var[str]
 
-        # Semantic events out (small JSON by construction — §1). Live mode
-        # only; the static tier has no kernel to resolve rows.
+        # Semantic events out (small JSON by construction — §1). Point and
+        # selection events are live-only because static charts have no row
+        # resolution kernel; view changes are already complete client-side.
         on_point_hover: rx.EventHandler[lambda row: [row]]
         on_point_click: rx.EventHandler[lambda row: [row]]
         on_select_end: rx.EventHandler[lambda selection: [selection]]

@@ -1,4 +1,16 @@
-(() => {
+<!doctype html>
+<html>
+<head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; worker-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Team goal progress</title>
+<style>
+html,body{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;background:#fff;}
+#chart{width:100%;}
+</style>
+</head>
+<body>
+<div id="chart"></div>
+<script>(() => {
 
 "use strict";
 const PROTOCOL = 4;
@@ -1813,7 +1825,6 @@ return null;
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
-const COMPACT_COLORBAR_GAP = 8;
 let XY_A11Y_ID = 0;
 const XY_SR_ONLY_STYLE =
 "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;" +
@@ -1968,9 +1979,6 @@ this._glPrograms = [];
 this._progCache = new Map();
 this._bufSeq = 0;
 this._destroyed = false;
-this._resizeRaf = null;
-this._pendingResize = null;
-this._resizeNeedsMeasure = false;
 this._hoverId = -1;
 this._hoverTarget = null;
 this._viewEventRaf = null;
@@ -2025,7 +2033,7 @@ this._buildModebar(this.root);
 if ((this.fluid || this.fluidH) && typeof ResizeObserver !== "undefined") {
 this._ro = new ResizeObserver((entries) => {
 const r = entries[entries.length - 1].contentRect;
-if (r.width || r.height) this._queueResize(r.width, r.height);
+if (r.width || r.height) this._resize(r.width, r.height);
 });
 this._ro.observe(this.root);
 }
@@ -2050,20 +2058,13 @@ this.draw();
 _layout() {
 const compact = this.size.w < 520;
 const pad = Array.isArray(this.spec.padding) ? this.spec.padding : null;
+const marginLeft = pad ? pad[3] : compact ? 46 : MARGIN.l;
 const colorbar = this.spec.colorbar;
 const verticalColorbar = colorbar && colorbar.orientation !== "horizontal";
 const horizontalColorbar = colorbar && colorbar.orientation === "horizontal";
-const responsivePad = this.fluid && compact && pad;
-const marginLeft = pad ? (responsivePad ? Math.min(pad[3], 46) : pad[3]) : compact ? 46 : MARGIN.l;
-this._compactVerticalColorbar = Boolean(this.fluid && compact && verticalColorbar);
-const colorbarRightRoom = verticalColorbar
-? (this._compactVerticalColorbar
-? COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + 8
-: 86 + (colorbar.label ? 18 : 0))
-: 0;
+const colorbarRightRoom = verticalColorbar ? 86 + (colorbar.label ? 18 : 0) : 0;
 const colorbarBottomRoom = horizontalColorbar ? 38 + (colorbar.label ? 16 : 0) : 0;
-const baseRight = pad ? (responsivePad ? Math.min(pad[1], 8) : pad[1]) : compact ? 8 : MARGIN.r;
-const marginRight = baseRight + colorbarRightRoom;
+const marginRight = (pad ? pad[1] : compact ? 8 : MARGIN.r) + colorbarRightRoom;
 const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
 const marginBottom = (pad ? pad[2] : compact ? 36 : MARGIN.b) + colorbarBottomRoom;
 const hasBottomAxis = Object.values(this.axes || {}).some((axis) =>
@@ -2415,32 +2416,14 @@ return null;
 }
 _syncContainerSize() {
 if (this._destroyed || !(this.fluid || this.fluidH) || !this.root) return;
-this._queueResize(null, null, true);
-}
-_queueResize(cssW = null, cssH = null, measure = false) {
-if (this._destroyed) return;
-if (cssW || cssH) this._pendingResize = { cssW, cssH };
-if (measure) this._resizeNeedsMeasure = true;
-if (this._resizeRaf) return;
-this._resizeRaf = requestAnimationFrame(() => {
-this._resizeRaf = null;
-let pending = this._pendingResize;
-this._pendingResize = null;
-if (this._resizeNeedsMeasure && this.root) {
 const rect = this.root.getBoundingClientRect();
-if (rect.width || rect.height) pending = { cssW: rect.width, cssH: rect.height };
-}
-this._resizeNeedsMeasure = false;
-if (pending && (pending.cssW || pending.cssH)) {
-this._resize(pending.cssW, pending.cssH);
-}
-});
+if (rect.width || rect.height) this._resize(rect.width, rect.height);
 }
 _armVisibilityResizeWatch() {
 if (!(this.fluid || this.fluidH)) return;
 const syncSoon = () => {
 if (this._destroyed) return;
-this._syncContainerSize();
+requestAnimationFrame(() => this._syncContainerSize());
 };
 this._listen(window, "resize", syncSoon);
 this._listen(window, "pageshow", syncSoon);
@@ -2793,9 +2776,7 @@ this._positionReductionBadges();
 this._positionColorbar();
 this._fitModebar();
 this._pickDirty = true;
-if (this._raf) cancelAnimationFrame(this._raf);
-this._raf = null;
-this._drawNow();
+this.draw();
 this._scheduleViewRequest();
 }
 _buildDom(el) {
@@ -3169,24 +3150,14 @@ this._positionColorbar();
 _positionColorbar() {
 if (!this._colorbar) return;
 const horizontal = this._colorbarHorizontal;
-const compactVertical = !horizontal && this._compactVerticalColorbar;
-const gap = compactVertical ? COMPACT_COLORBAR_GAP : COLORBAR_GAP;
 this._colorbar.style.left = (horizontal
 ? this.plot.x
-: this.plot.x + this.plot.w + this._rightAxisRoom + gap) + "px";
+: this.plot.x + this.plot.w + this._rightAxisRoom + COLORBAR_GAP) + "px";
 this._colorbar.style.top = (horizontal
 ? this.plot.y + this.plot.h + (this._bottomAxisRoom || 8)
 : this.plot.y) + "px";
-this._colorbar.style.width = (horizontal
-? this.plot.w
-: compactVertical ? COLORBAR_THICKNESS : 66) + "px";
+this._colorbar.style.width = (horizontal ? this.plot.w : 66) + "px";
 this._colorbar.style.height = (horizontal ? 50 : Math.max(24, this.plot.h)) + "px";
-this._colorbar.dataset.xyCompact = compactVertical ? "true" : "false";
-for (const node of this._colorbar.querySelectorAll(
-'[data-xy-slot="colorbar_tick"], [data-xy-slot="colorbar_title"]'
-)) {
-node.hidden = compactVertical;
-}
 }
 _initGl(buffer) {
 const dpr = window.devicePixelRatio || 1;
@@ -4093,7 +4064,6 @@ continue;
 markOf(g.trace.kind).draw(this, g, x0, x1, y0, y1);
 }
 this._drawHoverState();
-this._repositionTooltip();
 if (!this._rafKeepPick) this._pickDirty = true;
 this._rafKeepPick = false;
 this._drawChrome();
@@ -5494,7 +5464,7 @@ this._hoverId = -1;
 this._hoverTarget = null;
 this._lastHoverXY = null;
 this._pickSeq = (this._pickSeq || 0) + 1;
-this._hideTooltip();
+this.tooltip.style.display = "none";
 if (hadHover) this.draw();
 return;
 }
@@ -5508,14 +5478,14 @@ this._hoverId = -1;
 this._hoverTarget = null;
 this._lastHoverXY = null;
 this._pickSeq = (this._pickSeq || 0) + 1;
-this._hideTooltip();
+this.tooltip.style.display = "none";
 if (hadHover) this._drawKeepPick();
 return;
 }
 const id = hit.trace * 1e9 + hit.index;
 this._lastHoverXY = { clientX: e.clientX, clientY: e.clientY };
 if (id === this._hoverId) {
-if (!this._tooltipAnchor) this._renderTooltip(this._lastRow, e.clientX, e.clientY);
+this._renderTooltip(this._lastRow, e.clientX, e.clientY);
 return;
 }
 this._hoverId = id;
@@ -5599,10 +5569,6 @@ this._linkChannel?.close?.();
 this._linkChannel = null;
 if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
-if (this._resizeRaf) cancelAnimationFrame(this._resizeRaf);
-this._resizeRaf = null;
-this._pendingResize = null;
-this._resizeNeedsMeasure = false;
 this._cancelViewAnimation();
 this._destroyGlResources();
 const loseExt = this.gl && this.gl.getExtension("WEBGL_lose_context");
@@ -6189,7 +6155,6 @@ Object.assign(ChartView.prototype, {
 _showTooltip(hit, clientX, clientY) {
 const row = this._localRow(hit);
 this._lastRow = row;
-this._setTooltipAnchor(hit, row, clientX, clientY);
 this._renderTooltip(row, clientX, clientY);
 if (this._interactionFlag("hover")) {
 this._dispatchChartEvent("hover", {
@@ -6383,66 +6348,14 @@ lines.push(`${field}: ${this._formatTooltipValue(value, kind, formats[field])}`)
 }
 return lines.length ? lines : this._defaultTooltipLines(row);
 },
-_setTooltipAnchor(hit, row, clientX, clientY) {
-const g = hit.g;
-if (!g) { this._tooltipAnchor = null; return; }
-const xAxis = g.xAxis || "x";
-const yAxis = g.yAxis || "y";
-let x = row.x;
-let y = row.y;
-if (!Number.isFinite(x) || !Number.isFinite(y)) {
-const rect = this.canvas.getBoundingClientRect();
-[x, y] = this._dataFromCanvas(clientX - rect.left, clientY - rect.top, xAxis, yAxis);
-}
-this._tooltipAnchor = Number.isFinite(x) && Number.isFinite(y)
-? { xAxis, yAxis, x, y }
-: null;
-if (this._tooltipAnchor && !this._tooltipAnchorPx()) this._tooltipAnchor = null;
-},
-_tooltipAnchorPx() {
-const a = this._tooltipAnchor;
-if (!a) return null;
-const lx = this._dataPx(a.xAxis, a.x);
-const ly = this._dataPx(a.yAxis, a.y);
-const p = this.plot;
-if (!Number.isFinite(lx) || !Number.isFinite(ly)
-|| lx < p.x || lx > p.x + p.w || ly < p.y || ly > p.y + p.h) {
-return null;
-}
-return { lx, ly };
-},
-_hideTooltip() {
-this.tooltip.style.display = "none";
-this._tooltipAnchor = null;
-},
-_repositionTooltip() {
-if (!this._tooltipAnchor) return;
-const pos = this._tooltipAnchorPx();
-if (!pos) {
-this.tooltip.style.display = "none";
-return;
-}
-this.tooltip.style.display = "block";
-this._placeTooltip(pos.lx, pos.ly);
-},
-_placeTooltip(lx, ly) {
-const tw = this.tooltip.offsetWidth;
-const th = this.tooltip.offsetHeight;
-const edge = 4;
-const gap = 12;
-const maxLeft = Math.max(edge, this.size.w - tw - edge);
-const left = Math.max(edge, Math.min(lx + gap, maxLeft));
-const below = ly + gap;
-const above = ly - th - gap;
-const top = below + th <= this.size.h - edge ? below : Math.max(edge, above);
-this.tooltip.style.left = left + "px";
-this.tooltip.style.top = top + "px";
-},
 _renderTooltip(row, clientX, clientY, options = {}) {
 if (!row || this.spec.show_tooltip === false) {
-this._hideTooltip();
+this.tooltip.style.display = "none";
 return;
 }
+const rect = this.root.getBoundingClientRect();
+const lx = clientX - rect.left;
+const ly = clientY - rect.top;
 const lines = this._tooltipLines(row);
 this.tooltip.textContent = "";
 lines.forEach((ln, i) => {
@@ -6458,15 +6371,17 @@ const announcement = prefix
 if (this.a11yLive.textContent !== announcement) this.a11yLive.textContent = announcement;
 }
 this.tooltip.style.display = "block";
-const pos = this._tooltipAnchorPx();
-if (pos) {
-this._placeTooltip(pos.lx, pos.ly);
-} else if (this._tooltipAnchor) {
-this.tooltip.style.display = "none";
-} else {
-const rect = this.root.getBoundingClientRect();
-this._placeTooltip(clientX - rect.left, clientY - rect.top);
-}
+const tw = this.tooltip.offsetWidth;
+const th = this.tooltip.offsetHeight;
+const edge = 4;
+const gap = 12;
+const maxLeft = Math.max(edge, this.size.w - tw - edge);
+const left = Math.max(edge, Math.min(lx + gap, maxLeft));
+const below = ly + gap;
+const above = ly - th - gap;
+const top = below + th <= this.size.h - edge ? below : Math.max(edge, above);
+this.tooltip.style.left = left + "px";
+this.tooltip.style.top = top + "px";
 },
 });
 Object.assign(ChartView.prototype, {
@@ -6514,7 +6429,7 @@ original: [...this._lassoPolygon[index]],
 handle,
 };
 handle.dataset.xyActive = "";
-this._hideTooltip();
+this.tooltip.style.display = "none";
 try { this.selLasso.setPointerCapture(e.pointerId); } catch (_err) {   }
 e.preventDefault();
 e.stopPropagation();
@@ -6588,7 +6503,7 @@ points: firstLassoPoint ? [firstLassoPoint] : null,
 previousLasso,
 };
 try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
-this._hideTooltip();
+this.tooltip.style.display = "none";
 return;
 }
 if (this.dragMode === "pan" && canNavigate && canPan) {
@@ -6605,7 +6520,7 @@ axes: [...new Set([
 changedAxes: [],
 };
 try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
-this._hideTooltip();
+this.tooltip.style.display = "none";
 }
 });
 this._listen(c, "pointermove", (e) => {
@@ -6692,7 +6607,7 @@ phase: "end",
 interactionId: drag.interactionId,
 });
 }
-if (drag && !drag.moved) this._hideTooltip();
+if (drag && !drag.moved) this.tooltip.style.display = "none";
 drag = null;
 };
 this._listen(c, "pointerup", end);
@@ -6713,7 +6628,7 @@ this._hoverTarget = null;
 this._lastHoverXY = null;
 this._a11yKeyboardReadout = null;
 this._pickSeq = (this._pickSeq || 0) + 1;
-this._hideTooltip();
+this.tooltip.style.display = "none";
 this._hideCrosshair();
 if (this._interactionFlag("hover")) {
 this._dispatchChartEvent("leave", { view: this._eventView("leave") });
@@ -6762,7 +6677,7 @@ return;
 if (e.key === "Escape") {
 e.preventDefault();
 const hadHover = this._hoverId !== -1;
-this._hideTooltip();
+this.tooltip.style.display = "none";
 this._hoverId = -1;
 this._hoverTarget = null;
 this._lastHoverXY = null;
@@ -7954,22 +7869,9 @@ if (f < 1) {
 const minSpan = Math.max(Math.abs(ca), 1e-30) * 1e-12;
 if (Math.abs((c1 - c0) * f) < minSpan) return null;
 }
-const next0 = ca - (ca - c0) * f;
-const next1 = ca + (c1 - ca) * f;
-if (f > 1 && this.view0) {
-const home = axisId === "x"
-? [this.view0.x0, this.view0.x1]
-: [this.view0.y0, this.view0.y1];
-const home0 = this._axisCoord(axis, home[0]);
-const home1 = this._axisCoord(axis, home[1]);
-if ([home0, home1].every(Number.isFinite)
-&& Math.abs(next1 - next0) >= Math.abs(home1 - home0)) {
-return home;
-}
-}
 return [
-this._axisValue(axis, next0),
-this._axisValue(axis, next1),
+this._axisValue(axis, ca - (ca - c0) * f),
+this._axisValue(axis, ca + (c1 - ca) * f),
 ];
 },
 _zoomAt(f, fx, fy, animate = false, duration = 120, opts = {}) {
@@ -8179,7 +8081,7 @@ clone.prepend(stylesheet);
 const content = new XMLSerializer().serializeToString(clone);
 return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" ` +
 `viewBox="0 0 ${width} ${height}"><foreignObject width="100%" height="100%">` +
-`${content}</foreignObject></svg>`;
+`${content}<\/foreignObject><\/svg>`;
 },
 _exportSvg() {
 const svg = this._exportSvgMarkup();
@@ -8300,7 +8202,7 @@ _icon(name) {
 const svg = (body) =>
 `<svg width="15" height="15" viewBox="0 0 20 20" fill="none" ` +
 `stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ` +
-`stroke-linejoin="round">${body}</svg>`;
+`stroke-linejoin="round">${body}<\/svg>`;
 switch (name) {
 case "zoomin":
 return svg('<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5 L17 17"/>' +
@@ -8636,7 +8538,7 @@ this.draw();
 this._applyAppend(msg, buffers);
 } else if (msg.type === "pick_result") {
 if (msg.seq !== undefined && msg.seq !== this._pickSeq) return;
-if (!msg.row) { this._hideTooltip(); return; }
+if (!msg.row) { this.tooltip.style.display = "none"; return; }
 const local = this._lastRow;
 if (local && local.trace === msg.row.trace && local.index === msg.row.index) {
 for (const [key, value] of Object.entries(local)) {
@@ -8645,11 +8547,6 @@ if (msg.row[key] === undefined) msg.row[key] = value;
 }
 this._applySharedTooltipFields(msg.row);
 this._lastRow = msg.row;
-if (this._tooltipAnchor
-&& Number.isFinite(msg.row.x) && Number.isFinite(msg.row.y)) {
-this._tooltipAnchor.x = msg.row.x;
-this._tooltipAnchor.y = msg.row.y;
-}
 const xy = this._lastHoverXY;
 if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY, {
 announce: !this._a11yKeyboardReadout,
@@ -8959,3 +8856,15 @@ return view;
 
 window.xy = { render, renderStandalone, decodeFrame, ChartView, MARK_KINDS, markOf };
 })();
+</script>
+<script>var __xyChunks = [];</script>
+<script>__xyChunks.push("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==");</script>
+<script>
+  function xyDecodeB64(chunks, total) {const bytes = new Uint8Array(total); let off = 0;const native = typeof bytes.setFromBase64 === "function";for (let i = 0; i < chunks.length; i++) {const s = chunks[i];if (native) { off += bytes.subarray(off).setFromBase64(s).written; }else { const bin = atob(s), n = bin.length;for (let j = 0; j < n; j++) bytes[off + j] = bin.charCodeAt(j); off += n; }} return bytes.buffer; }
+  const spec = {"protocol":4,"width":"100%","height":430,"title":"Team goal progress","x_axis":{"id":"x","kind":"linear","label":"quarterly goal completion","range":[0.0,110.0],"side":"bottom","tick_values":[0.0,25.0,50.0,75.0,100.0],"tick_labels":["0%","25%","50%","75%","100%"],"domain":[0.0,110.0]},"y_axis":{"id":"y","kind":"category","label":null,"range":[-0.4486,4.4486],"side":"left","categories":["Platform","Growth","Data","Success","Security"]},"axes":{"x":{"id":"x","kind":"linear","label":"quarterly goal completion","range":[0.0,110.0],"side":"bottom","tick_values":[0.0,25.0,50.0,75.0,100.0],"tick_labels":["0%","25%","50%","75%","100%"],"domain":[0.0,110.0]},"y":{"id":"y","kind":"category","label":null,"range":[-0.4486,4.4486],"side":"left","categories":["Platform","Growth","Data","Success","Security"]}},"traces":[{"id":0,"kind":"bar","name":"Platform","style":{"color":"#4c78a8","opacity":0.96,"role":"bar","orientation":"horizontal","corner_radius":10.0,"stroke":"rgba(15, 23, 42, 0.12)","stroke_width":1.0,"fill":{"space":"plot","dir":"right","stops":[[0.0,"#2563eb"],[1.0,"#60a5fa"]]}},"tier":"direct","n_points":1,"n_marks":1,"x_axis":"x","y_axis":"y","bar":{"orientation":"horizontal","value_axis":"x","pos":0,"value1":1,"width":0.62,"value0_const":0.0}},{"id":1,"kind":"bar","name":"Growth","style":{"color":"#f58518","opacity":0.96,"role":"bar","orientation":"horizontal","corner_radius":10.0,"stroke":"rgba(15, 23, 42, 0.12)","stroke_width":1.0,"fill":{"space":"plot","dir":"right","stops":[[0.0,"#7c3aed"],[1.0,"#a78bfa"]]}},"tier":"direct","n_points":1,"n_marks":1,"x_axis":"x","y_axis":"y","bar":{"orientation":"horizontal","value_axis":"x","pos":2,"value1":3,"width":0.6200000000000001,"value0_const":0.0}},{"id":2,"kind":"bar","name":"Data","style":{"color":"#54a24b","opacity":0.96,"role":"bar","orientation":"horizontal","corner_radius":10.0,"stroke":"rgba(15, 23, 42, 0.12)","stroke_width":1.0,"fill":{"space":"plot","dir":"right","stops":[[0.0,"#0891b2"],[1.0,"#22d3ee"]]}},"tier":"direct","n_points":1,"n_marks":1,"x_axis":"x","y_axis":"y","bar":{"orientation":"horizontal","value_axis":"x","pos":4,"value1":5,"width":0.6200000000000001,"value0_const":0.0}},{"id":3,"kind":"bar","name":"Success","style":{"color":"#e45756","opacity":0.96,"role":"bar","orientation":"horizontal","corner_radius":10.0,"stroke":"rgba(15, 23, 42, 0.12)","stroke_width":1.0,"fill":{"space":"plot","dir":"right","stops":[[0.0,"#0f766e"],[1.0,"#34d399"]]}},"tier":"direct","n_points":1,"n_marks":1,"x_axis":"x","y_axis":"y","bar":{"orientation":"horizontal","value_axis":"x","pos":6,"value1":7,"width":0.6200000000000001,"value0_const":0.0}},{"id":4,"kind":"bar","name":"Security","style":{"color":"#72b7b2","opacity":0.96,"role":"bar","orientation":"horizontal","corner_radius":10.0,"stroke":"rgba(15, 23, 42, 0.12)","stroke_width":1.0,"fill":{"space":"plot","dir":"right","stops":[[0.0,"#c2410c"],[1.0,"#fb923c"]]}},"tier":"direct","n_points":1,"n_marks":1,"x_axis":"x","y_axis":"y","bar":{"orientation":"horizontal","value_axis":"x","pos":8,"value1":9,"width":0.6199999999999997,"value0_const":0.0}}],"columns":[{"byte_offset":0,"len":1,"offset":0.0,"scale":1.0,"kind":"float"},{"byte_offset":4,"len":1,"offset":92.0,"scale":1.0,"kind":"float"},{"byte_offset":8,"len":1,"offset":1.0,"scale":1.0,"kind":"float"},{"byte_offset":12,"len":1,"offset":84.0,"scale":1.0,"kind":"float"},{"byte_offset":16,"len":1,"offset":2.0,"scale":1.0,"kind":"float"},{"byte_offset":20,"len":1,"offset":78.0,"scale":1.0,"kind":"float"},{"byte_offset":24,"len":1,"offset":3.0,"scale":1.0,"kind":"float"},{"byte_offset":28,"len":1,"offset":71.0,"scale":1.0,"kind":"float"},{"byte_offset":32,"len":1,"offset":4.0,"scale":1.0,"kind":"float"},{"byte_offset":36,"len":1,"offset":63.0,"scale":1.0,"kind":"float"}],"backend":"native","show_legend":false,"view":{"ranges":{"x":[0.0,110.0],"y":[-0.4486,4.4486]}},"legend":{"loc":null,"ncols":1},"dom":{"style":{"--chart-bg":"#f8fafc","--chart-grid":"rgba(148, 163, 184, 0.20)"}},"annotations":[{"text":"92%","style":{"color":"#0f172a","font_size":"13px","font_weight":"800"},"kind":"text","x":92.0,"y":0.0,"dx":10.0,"dy":4.0,"anchor":"start"},{"text":"84%","style":{"color":"#0f172a","font_size":"13px","font_weight":"800"},"kind":"text","x":84.0,"y":1.0,"dx":10.0,"dy":4.0,"anchor":"start"},{"text":"78%","style":{"color":"#0f172a","font_size":"13px","font_weight":"800"},"kind":"text","x":78.0,"y":2.0,"dx":10.0,"dy":4.0,"anchor":"start"},{"text":"71%","style":{"color":"#0f172a","font_size":"13px","font_weight":"800"},"kind":"text","x":71.0,"y":3.0,"dx":10.0,"dy":4.0,"anchor":"start"},{"text":"63%","style":{"color":"#0f172a","font_size":"13px","font_weight":"800"},"kind":"text","x":63.0,"y":4.0,"dx":10.0,"dy":4.0,"anchor":"start"},{"text":"goal","style":{"color":"#475569","width":1.5,"opacity":1.0},"kind":"rule","axis":"x","value":80.0}]};
+  const buf = xyDecodeB64(__xyChunks, 40);
+  __xyChunks.length = 0;
+  xy.renderStandalone(document.getElementById("chart"), spec, buf);
+</script>
+</body>
+</html>

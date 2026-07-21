@@ -656,6 +656,10 @@ scrolled back into view; an over-budget panel keeps showing its last frame as a 
 image. Under the budget nothing is ever released. Every decision is observable:
 `data-xy-ctx` on the canvas reads `live` | `released` | `lost`. See
 `spec/process/production-readiness.md` §"WebGL context cap" for the claim limits.
+`destroy()` releases the context via `WEBGL_lose_context` too, so a view teardown —
+including the destroy+rebuild a full-payload republish performs — frees its slot
+immediately rather than leaving a destroyed context to linger until GC and count
+against the browser cap.
 
 **Device/context loss is a first-class event:** all GPU state is derived state, rebuilt
 from the scene graph + column store on a new context. The visible cost is one reupload

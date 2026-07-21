@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "python"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # for abi_smoke.load
 
+from _protocol import PROTOCOL_VERSION  # noqa: E402
 from abi_smoke import load  # noqa: E402
 from xy.export import find_chromium, html_to_png  # noqa: E402
 
@@ -39,7 +40,7 @@ def build_html() -> str:
     # two-point line, f32 offset-encoded (offset 0.5, scale 1) — no numpy.
     blob = struct.pack("<2f", -0.5, 0.5) + struct.pack("<2f", -0.5, 0.5)
     spec = {
-        "protocol": 3,
+        "protocol": PROTOCOL_VERSION,
         "width": W,
         "height": H,
         "title": "png-export-smoke",

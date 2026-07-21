@@ -5,6 +5,7 @@
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
+const COMPACT_COLORBAR_GAP = 8;
 let XY_A11Y_ID = 0;
 const XY_SR_ONLY_STYLE =
   "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;" +
@@ -191,12 +192,17 @@ class ChartView {
     this._progCache = new Map();
     this._bufSeq = 0;
     this._destroyed = false;
+    this._resizeRaf = null;
+    this._pendingResize = null;
+    this._resizeNeedsMeasure = false;
     this._hoverId = -1;
     this._hoverTarget = null;
     this._viewEventRaf = null;
     this._linkedSource = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    // pan | zoom | internal selection modes (the modebar exposes only pan/zoom)
-    this.dragMode = "pan";
+    // Browser-local active drag action. The configured default resolves after
+    // GL setup, when pickability is known.
+    this.dragMode = "none";
+    this._interactionSeq = 0;
 
     // Responsive size: "100%" means the *container* owns that axis — measure
     // it now, track it with a ResizeObserver below. Numeric sizes are fixed.
@@ -252,6 +258,11 @@ class ChartView {
       throw err;
     }
     this.canvas.dataset.xyCtx = "live";
+    this.view0 = this._clampView({
+      ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]) => [id, [...axis.range]])),
+    });
+    this.view = this._copyView(this.view0);
+    this.dragMode = this._resolveDefaultDragAction();
     this._initA11y();
     this.root.dataset.xyContextState = "ready";
     this._initContextLossRecovery();
@@ -262,18 +273,13 @@ class ChartView {
     if ((this.fluid || this.fluidH) && typeof ResizeObserver !== "undefined") {
       this._ro = new ResizeObserver((entries) => {
         const r = entries[entries.length - 1].contentRect;
-        if (r.width || r.height) this._resize(r.width, r.height);
+        if (r.width || r.height) this._queueResize(r.width, r.height);
       });
       this._ro.observe(this.root);
     }
     this._armVisibilityResizeWatch();
     this._armDprWatch();
 
-    this.view0 = this._clampView({
-      x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
-      y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
-    });
-    this.view = { ...this.view0 };
     this._initLinkedCharts();
 
     this._themeWatch = window.matchMedia("(prefers-color-scheme: dark)");
@@ -303,13 +309,24 @@ class ChartView {
     // Explicit padding (spec.padding = [top,right,bottom,left]) overrides the
     // label-aware defaults — zero padding gives an edge-to-edge sparkline.
     const pad = Array.isArray(this.spec.padding) ? this.spec.padding : null;
-    const marginLeft = pad ? pad[3] : compact ? 46 : MARGIN.l;
     const colorbar = this.spec.colorbar;
     const verticalColorbar = colorbar && colorbar.orientation !== "horizontal";
     const horizontalColorbar = colorbar && colorbar.orientation === "horizontal";
-    const colorbarRightRoom = verticalColorbar ? 86 + (colorbar.label ? 18 : 0) : 0;
+    // Fluid charts have to remain useful inside dashboard columns. On compact
+    // widths, cap only oversized authored horizontal padding and collapse a
+    // vertical colorbar to its gradient; the full tick/title chrome returns
+    // automatically when the container widens again.
+    const responsivePad = this.fluid && compact && pad;
+    const marginLeft = pad ? (responsivePad ? Math.min(pad[3], 46) : pad[3]) : compact ? 46 : MARGIN.l;
+    this._compactVerticalColorbar = Boolean(this.fluid && compact && verticalColorbar);
+    const colorbarRightRoom = verticalColorbar
+      ? (this._compactVerticalColorbar
+        ? COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + 8
+        : 86 + (colorbar.label ? 18 : 0))
+      : 0;
     const colorbarBottomRoom = horizontalColorbar ? 38 + (colorbar.label ? 16 : 0) : 0;
-    const marginRight = (pad ? pad[1] : compact ? 8 : MARGIN.r) + colorbarRightRoom;
+    const baseRight = pad ? (responsivePad ? Math.min(pad[1], 8) : pad[1]) : compact ? 8 : MARGIN.r;
+    const marginRight = baseRight + colorbarRightRoom;
     const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
     const marginBottom = (pad ? pad[2] : compact ? 36 : MARGIN.b) + colorbarBottomRoom;
     const hasBottomAxis = Object.values(this.axes || {}).some((axis) =>
@@ -364,6 +381,93 @@ class ChartView {
     return this._axis(axisId).scale === "log" ? 1 : 0;
   }
 
+  _axisIds() {
+    return Object.keys(this.axes || {});
+  }
+
+  _copyView(view) {
+    const ranges = {};
+    for (const axisId of this._axisIds()) {
+      const range = view?.ranges?.[axisId] || this._axis(axisId).range || [0, 1];
+      ranges[axisId] = [Number(range[0]), Number(range[1])];
+    }
+    const x = ranges.x || [0, 1];
+    const y = ranges.y || [0, 1];
+    return { ranges, x0: x[0], x1: x[1], y0: y[0], y1: y[1] };
+  }
+
+  _viewFrom(next, base = this.view) {
+    const ranges = {};
+    for (const axisId of this._axisIds()) {
+      const source = next?.ranges?.[axisId]
+        || (axisId === "x" && next?.x0 !== undefined ? [next.x0, next.x1] : null)
+        || (axisId === "y" && next?.y0 !== undefined ? [next.y0, next.y1] : null)
+        || base?.ranges?.[axisId]
+        || this._axis(axisId).range
+        || [0, 1];
+      ranges[axisId] = [Number(source[0]), Number(source[1])];
+    }
+    return this._copyView({ ranges });
+  }
+
+  _axisPolicy(name) {
+    const configured = this.interaction?.[name];
+    if (!Array.isArray(configured) || !configured.length) return this._axisIds();
+    const declared = new Set(this._axisIds());
+    return [...new Set(configured.filter((axisId) => declared.has(axisId)))];
+  }
+
+  _resetAxisPolicy() {
+    if (Array.isArray(this.interaction?.reset_axes)) return this._axisPolicy("reset_axes");
+    const axes = [];
+    if (this._interactionFlag("pan", true)) axes.push(...this._axisPolicy("pan_axes"));
+    if (this._interactionFlag("zoom", true)) axes.push(...this._axisPolicy("zoom_axes"));
+    return [...new Set(axes)];
+  }
+
+  // An axis zoom can navigate but pan cannot is *contained*: every clamped
+  // mutation keeps its window inside its home extents. Cursor-anchored zoom
+  // is a scaling plus a translation, so without containment a zoom-in/out
+  // chain at two cursor positions is an exact pan of the "locked" axis.
+  _axisContained(axisId) {
+    if (!this._interactionFlag("navigation", true)) return false;
+    if (!this._interactionFlag("zoom", true)) return false;
+    if (!this._axisPolicy("zoom_axes").includes(axisId)) return false;
+    if (!this._interactionFlag("pan", true)) return true;
+    return !this._axisPolicy("pan_axes").includes(axisId);
+  }
+
+  _resolveDefaultDragAction() {
+    const requested = typeof this.interaction?.default_drag_action === "string"
+      ? this.interaction.default_drag_action : "auto";
+    const canNavigate = this._interactionFlag("navigation", true);
+    const canPan = canNavigate && this._interactionFlag("pan", true);
+    const canZoom = canNavigate && this._interactionFlag("zoom", true)
+      && this._interactionFlag("box_zoom", true);
+    const canSelect = this._pickable && this._interactionFlag("select", true)
+      && this._interactionFlag("brush", true);
+    if (requested === "auto") {
+      if (canPan) return "pan";
+      if (canZoom) return "zoom";
+      if (canSelect) return "select";
+      return "none";
+    }
+    if (requested === "pan") return canPan ? "pan" : this._resolveDefaultDragActionFallback();
+    if (requested === "zoom") return canZoom ? "zoom" : this._resolveDefaultDragActionFallback();
+    if (requested.startsWith("select")) {
+      return canSelect ? requested : this._resolveDefaultDragActionFallback();
+    }
+    return requested === "none" ? "none" : this._resolveDefaultDragActionFallback();
+  }
+
+  _resolveDefaultDragActionFallback() {
+    const saved = this.interaction.default_drag_action;
+    this.interaction.default_drag_action = "auto";
+    const resolved = this._resolveDefaultDragAction();
+    this.interaction.default_drag_action = saved;
+    return resolved;
+  }
+
   _axisCoord(axis, value) {
     const v = Number(value);
     if (!Number.isFinite(v)) return NaN;
@@ -377,8 +481,10 @@ class ChartView {
   }
 
   _axisRange(axisId, view = this.view) {
-    if (axisId === "x") return [view.x0, view.x1];
-    if (axisId === "y") return [view.y0, view.y1];
+    const mapped = view?.ranges?.[axisId];
+    if (Array.isArray(mapped)) return [mapped[0], mapped[1]];
+    if (axisId === "x" && view) return [view.x0, view.x1];
+    if (axisId === "y" && view) return [view.y0, view.y1];
     const axis = this._axis(axisId);
     const r = axis.range || [0, 1];
     return [Number(r[0]), Number(r[1])];
@@ -440,6 +546,9 @@ class ChartView {
 
   _eventView(source = "view") {
     return {
+      ranges: Object.fromEntries(
+        this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+      ),
       x0: this.view.x0,
       x1: this.view.x1,
       y0: this.view.y0,
@@ -458,20 +567,28 @@ class ChartView {
   }
 
   _emitViewChange(source = "view", opts = {}) {
-    const shouldDispatch = this._interactionFlag("view_change") || this._linkChannel;
-    if (!shouldDispatch || this._destroyed) return;
+    if (this._destroyed) return;
     const broadcast = opts.broadcast !== false;
-    this._pendingViewEvent = { source, broadcast };
+    this._pendingViewEvent = {
+      source,
+      broadcast,
+      axes: Array.isArray(opts.axes) ? [...opts.axes] : [],
+      phase: opts.phase || "end",
+      interaction_id: opts.interactionId ?? ++this._interactionSeq,
+    };
     if (this._viewEventRaf) return;
     this._viewEventRaf = requestAnimationFrame(() => {
       this._viewEventRaf = null;
       const pending = this._pendingViewEvent || { source, broadcast };
       this._pendingViewEvent = null;
-      const detail = this._eventView(pending.source);
-      if (this._interactionFlag("view_change")) {
-        this._dispatchChartEvent("view_change", detail);
-      }
-      if (this.comm && this._interactionFlag("view_change")) {
+      const detail = {
+        ...this._eventView(pending.source),
+        axes: pending.axes,
+        phase: pending.phase,
+        interaction_id: pending.interaction_id,
+      };
+      this._dispatchChartEvent("view_change", detail);
+      if (this.comm && (!this.comm.wantsViewChange || this.comm.wantsViewChange())) {
         this.comm.send({ type: "view_change", ...detail });
       }
       if (pending.broadcast) this._broadcastLinkedView(detail);
@@ -481,9 +598,7 @@ class ChartView {
   _initLinkedCharts() {
     const group = this.interaction && this.interaction.link_group;
     if (!group || typeof BroadcastChannel !== "function") return;
-    this._linkAxes = Array.isArray(this.interaction.link_axes)
-      ? this.interaction.link_axes.filter((axis) => axis === "x" || axis === "y")
-      : ["x", "y"];
+    this._linkAxes = this._axisPolicy("link_axes");
     this._linkChannel = new BroadcastChannel(`xy:${group}`);
     this._linkChannel.onmessage = (event) => {
       const msg = event.data || {};
@@ -501,29 +616,55 @@ class ChartView {
         return;
       }
       if (!msg.view || msg.source === this._linkedSource) return;
-      const next = { ...this.view };
-      if (this._linkAxes.includes("x")) {
-        next.x0 = Number(msg.view.x0);
-        next.x1 = Number(msg.view.x1);
+      const incoming = msg.view.ranges || {};
+      const ranges = Object.fromEntries(
+        this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+      );
+      for (const axisId of this._linkAxes) {
+        const range = incoming[axisId]
+          || (axisId === "x" ? [msg.view.x0, msg.view.x1] : null)
+          || (axisId === "y" ? [msg.view.y0, msg.view.y1] : null);
+        if (Array.isArray(range) && range.length === 2 && range.every(Number.isFinite)) {
+          ranges[axisId] = [Number(range[0]), Number(range[1])];
+        }
       }
-      if (this._linkAxes.includes("y")) {
-        next.y0 = Number(msg.view.y0);
-        next.y1 = Number(msg.view.y1);
-      }
-      if (![next.x0, next.x1, next.y0, next.y1].every(Number.isFinite)) return;
-      if (!this._interactionFlag("pan", true) && !this._interactionFlag("zoom", true)) return;
-      this._setView(next, { animate: false, source: "linked", broadcast: false });
+      this._setView({ ranges }, {
+        animate: false,
+        source: "linked",
+        phase: "end",
+        broadcast: false,
+      });
     };
   }
 
   _broadcastLinkedView(detail) {
     if (!this._linkChannel) return;
-    this._linkChannel.postMessage({ source: this._linkedSource, view: detail });
+    const axes = (detail.axes || []).filter((axisId) => this._linkAxes.includes(axisId));
+    if (!axes.length) return;
+    const ranges = Object.fromEntries(axes.map((axisId) => [axisId, detail.ranges[axisId]]));
+    this._linkChannel.postMessage({
+      source: this._linkedSource,
+      view: { ...detail, axes, ranges },
+    });
   }
 
   _broadcastLinkedSelection(selection) {
     if (!this._linkChannel || !this._interactionFlag("link_select")) return;
     this._linkChannel.postMessage({ source: this._linkedSource, selection });
+  }
+
+  setView(ranges, opts = {}) {
+    return this._setView({ ranges }, {
+      animate: opts.animate === true,
+      source: "programmatic",
+      phase: "end",
+      interactionId: ++this._interactionSeq,
+      broadcast: opts.broadcast === true,
+    });
+  }
+
+  resetView(opts = {}) {
+    return this._resetView(opts.animate !== false, "reset");
   }
 
   _applyClass(el, className) {
@@ -596,15 +737,34 @@ class ChartView {
 
   _syncContainerSize() {
     if (this._destroyed || !(this.fluid || this.fluidH) || !this.root) return;
-    const rect = this.root.getBoundingClientRect();
-    if (rect.width || rect.height) this._resize(rect.width, rect.height);
+    this._queueResize(null, null, true);
+  }
+
+  _queueResize(cssW = null, cssH = null, measure = false) {
+    if (this._destroyed) return;
+    if (cssW || cssH) this._pendingResize = { cssW, cssH };
+    if (measure) this._resizeNeedsMeasure = true;
+    if (this._resizeRaf) return;
+    this._resizeRaf = requestAnimationFrame(() => {
+      this._resizeRaf = null;
+      let pending = this._pendingResize;
+      this._pendingResize = null;
+      if (this._resizeNeedsMeasure && this.root) {
+        const rect = this.root.getBoundingClientRect();
+        if (rect.width || rect.height) pending = { cssW: rect.width, cssH: rect.height };
+      }
+      this._resizeNeedsMeasure = false;
+      if (pending && (pending.cssW || pending.cssH)) {
+        this._resize(pending.cssW, pending.cssH);
+      }
+    });
   }
 
   _armVisibilityResizeWatch() {
     if (!(this.fluid || this.fluidH)) return;
     const syncSoon = () => {
       if (this._destroyed) return;
-      requestAnimationFrame(() => this._syncContainerSize());
+      this._syncContainerSize();
     };
     this._listen(window, "resize", syncSoon);
     this._listen(window, "pageshow", syncSoon);
@@ -684,6 +844,9 @@ class ChartView {
       if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
       this._wheelZoomRaf = null;
       this._pendingWheelZoom = null;
+      clearTimeout(this._wheelZoomEndTimer);
+      this._wheelZoomEndTimer = null;
+      this._wheelGesture = null;
       this._cancelViewAnimation();
       clearTimeout(this._viewTimer);
       this._viewTimer = null;
@@ -1072,7 +1235,12 @@ class ChartView {
     this._positionColorbar();
     this._fitModebar();
     this._pickDirty = true;
-    this.draw();
+    // Changing a canvas backing-store dimension clears it immediately. Resize
+    // work is already coalesced into one animation frame, so paint in that same
+    // frame instead of exposing cleared canvases until a second rAF callback.
+    if (this._raf) cancelAnimationFrame(this._raf);
+    this._raf = null;
+    this._drawNow();
     this._scheduleViewRequest();
   }
 
@@ -1499,14 +1667,24 @@ class ChartView {
   _positionColorbar() {
     if (!this._colorbar) return;
     const horizontal = this._colorbarHorizontal;
+    const compactVertical = !horizontal && this._compactVerticalColorbar;
+    const gap = compactVertical ? COMPACT_COLORBAR_GAP : COLORBAR_GAP;
     this._colorbar.style.left = (horizontal
       ? this.plot.x
-      : this.plot.x + this.plot.w + this._rightAxisRoom + COLORBAR_GAP) + "px";
+      : this.plot.x + this.plot.w + this._rightAxisRoom + gap) + "px";
     this._colorbar.style.top = (horizontal
       ? this.plot.y + this.plot.h + (this._bottomAxisRoom || 8)
       : this.plot.y) + "px";
-    this._colorbar.style.width = (horizontal ? this.plot.w : 66) + "px";
+    this._colorbar.style.width = (horizontal
+      ? this.plot.w
+      : compactVertical ? COLORBAR_THICKNESS : 66) + "px";
     this._colorbar.style.height = (horizontal ? 50 : Math.max(24, this.plot.h)) + "px";
+    this._colorbar.dataset.xyCompact = compactVertical ? "true" : "false";
+    for (const node of this._colorbar.querySelectorAll(
+      '[data-xy-slot="colorbar_tick"], [data-xy-slot="colorbar_title"]'
+    )) {
+      node.hidden = compactVertical;
+    }
   }
 
   _initGl(buffer) {
@@ -1671,6 +1849,47 @@ class ChartView {
     g.yBuf = this._upload(y);
   }
 
+  _buildInstanceStyleChannels(g, t, buffer, widthName) {
+    const channel = (name) => t.channels && t.channels[name];
+    const artistScalar = Number(t.style && t.style.artist_alpha);
+    const hasStyle = channel("opacity") || channel("artist_alpha") ||
+      channel(widthName) || channel("symbol") || Number.isFinite(artistScalar);
+    if (hasStyle) {
+      const values = new Float32Array(g.n * 4);
+      for (let i = 0; i < g.n; i++) {
+        values[i * 4] = 1;
+        values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
+        values[i * 4 + 2] = -1;
+        values[i * 4 + 3] = -1;
+      }
+      const copy = (name, component, scale = 1) => {
+        const spec = channel(name);
+        if (!spec) return;
+        const source = this._columnView(buffer, this.spec.columns[spec.buf]);
+        for (let i = 0; i < g.n; i++) values[i * 4 + component] = source[i * (spec.components || 1)] * scale;
+      };
+      copy("opacity", 0);
+      copy("artist_alpha", 1);
+      copy(widthName, 2, this.dpr);
+      copy("symbol", 3);
+      g.styleBuf = this._upload(values);
+    }
+    const radius = channel("corner_radius");
+    if (radius) {
+      const source = this._columnView(buffer, this.spec.columns[radius.buf]);
+      const components = radius.components || 1;
+      const values = new Float32Array(g.n * 2);
+      for (let i = 0; i < g.n; i++) {
+        values[i * 2] = source[i * components] * this.dpr;
+        values[i * 2 + 1] = (components > 1 ? source[i * components + 1] : source[i * components]) * this.dpr;
+      }
+      g.radiusBuf = this._upload(values);
+    }
+    if (t.stroke && t.stroke.mode === "direct_rgba") {
+      g.strokeBuf = this._upload(this._columnView(buffer, this.spec.columns[t.stroke.buf]));
+    }
+  }
+
   _buildScatterMark(g, t, buffer) {
     this._buildXY(g, t, buffer);
     g.colorMode = 0;
@@ -1685,6 +1904,10 @@ class ChartView {
       g._cpu.color = this._columnView(buffer, this.spec.columns[t.color.buf]);
       g.cBuf = this._upload(g._cpu.color);
       g.lut = this._paletteLut(t.color.palette);
+    } else if (t.color && t.color.mode === "direct_rgba") {
+      g.colorMode = 3;
+      g._cpu.rgba = this._columnView(buffer, this.spec.columns[t.color.buf]);
+      g.rgbaBuf = this._upload(g._cpu.rgba);
     }
     g.sizeMode = 0;
     g.size = (t.size && t.size.size) || 4.0;
@@ -1695,6 +1918,7 @@ class ChartView {
       g.sBuf = this._upload(g._cpu.size);
       g.sizeRange = t.size.range_px;
     }
+    this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
     this._pointMarkStyle(g, t);
   }
 
@@ -1704,7 +1928,7 @@ class ChartView {
     const s = t.style || {};
     g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 }[s.symbol] || 0;
     g.pointStrokeWidth = Number(s.stroke_width) || 0;
-    g.pointStrokeFace = !s.stroke;
+    g.pointStrokeFace = !s.stroke && (!t.stroke || t.stroke.mode === "match_fill");
     g.pointStroke = s.stroke
       ? parseColor(this.root, s.stroke, [g.color[0], g.color[1], g.color[2], 1])
       : null;
@@ -1723,6 +1947,8 @@ class ChartView {
       y_axis: parentTrace.y_axis,
       color: sample.color,
       size: sample.size,
+      stroke: sample.stroke,
+      channels: sample.channels,
     };
   }
 
@@ -1749,7 +1975,8 @@ class ChartView {
   _destroyDensitySample(g) {
     const s = g && g.sampleOverlay;
     if (!s || !this.gl) return;
-    for (const b of [s.xBuf, s.yBuf, s.cBuf, s.sBuf, s.selBuf, s.dBuf]) {
+    for (const b of [s.xBuf, s.yBuf, s.cBuf, s.rgbaBuf, s.sBuf, s.styleBuf,
+      s.strokeBuf, s.selBuf, s.dBuf]) {
       if (b) this.gl.deleteBuffer(b);
     }
     g.sampleOverlay = null;
@@ -1772,6 +1999,8 @@ class ChartView {
       y_axis: g.trace.y_axis,
       color: sample.color,
       size: sample.size,
+      stroke: sample.stroke,
+      channels: sample.channels,
     };
     const s = {
       trace,
@@ -1800,17 +2029,21 @@ class ChartView {
     gl.bindBuffer(gl.ARRAY_BUFFER, s.yBuf);
     gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.y.buf]), gl.STATIC_DRAW);
     if (sample.color && sample.color.buf !== undefined) {
-      s.colorMode = sample.color.mode === "continuous" ? 1 : 2;
-      s.cBuf = gl.createBuffer();
+      s.colorMode = sample.color.mode === "continuous" ? 1 :
+        (sample.color.mode === "categorical" ? 2 : 3);
       const colorValues = sample.color.dtype === "u8"
         ? this._asU8(buffers[sample.color.buf])
         : this._asF32(buffers[sample.color.buf]);
-      s.cBuf._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
-      gl.bindBuffer(gl.ARRAY_BUFFER, s.cBuf);
+      const colorBufferName = s.colorMode === 3 ? "rgbaBuf" : "cBuf";
+      s[colorBufferName] = gl.createBuffer();
+      s[colorBufferName]._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
+      gl.bindBuffer(gl.ARRAY_BUFFER, s[colorBufferName]);
       gl.bufferData(gl.ARRAY_BUFFER, colorValues, gl.STATIC_DRAW);
-      s.lut = sample.color.mode === "continuous"
-        ? this._lut(sample.color.colormap)
-        : this._paletteLut(sample.color.palette);
+      if (s.colorMode !== 3) {
+        s.lut = sample.color.mode === "continuous"
+          ? this._lut(sample.color.colormap)
+          : this._paletteLut(sample.color.palette);
+      }
     }
     if (sample.size && sample.size.mode === "continuous") {
       s.sizeMode = 1;
@@ -1819,6 +2052,36 @@ class ChartView {
       gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.size.buf]), gl.STATIC_DRAW);
       s.sizeRange = sample.size.range_px;
     }
+    const channel = (name) => sample.channels && sample.channels[name];
+    const artistScalar = Number(trace.style && trace.style.artist_alpha);
+    if (channel("opacity") || channel("artist_alpha") || channel("stroke_width") ||
+        channel("symbol") || Number.isFinite(artistScalar)) {
+      const values = new Float32Array(s.n * 4);
+      for (let i = 0; i < s.n; i++) {
+        values[i * 4] = 1;
+        values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
+        values[i * 4 + 2] = -1;
+        values[i * 4 + 3] = -1;
+      }
+      const copy = (name, component, scale = 1) => {
+        const spec = channel(name);
+        if (!spec) return;
+        const source = spec.dtype === "u8"
+          ? this._asU8(buffers[spec.buf])
+          : this._asF32(buffers[spec.buf]);
+        const components = spec.components || 1;
+        for (let i = 0; i < s.n; i++) values[i * 4 + component] = source[i * components] * scale;
+      };
+      copy("opacity", 0);
+      copy("artist_alpha", 1);
+      copy("stroke_width", 2, this.dpr);
+      copy("symbol", 3);
+      s.styleBuf = this._upload(values);
+    }
+    if (sample.stroke && sample.stroke.mode === "direct_rgba") {
+      s.strokeBuf = this._upload(this._asU8(buffers[sample.stroke.buf]));
+    }
+    this._pointMarkStyle(s, trace);
     g.sampleOverlay = s;
     this._refreshReductionBadges();
   }
@@ -1900,9 +2163,12 @@ class ChartView {
     const cr = g.cornerRadius || [0, 0];
     gl.uniform2f(u("u_radius"), cr[0] * this.dpr, cr[1] * this.dpr);
     gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
+    // Straight alpha: RECT_FS folds u_strokeOpacity and the per-item alpha
+    // stack in and premultiplies there (uniform and buffer strokes alike).
     const sc = g.strokeColor || [0, 0, 0, 0];
-    const sa = sc[3] * this._strokeOpacity(g.trace.style || {});
-    gl.uniform4f(u("u_stroke"), sc[0] * sa, sc[1] * sa, sc[2] * sa, sa);
+    gl.uniform4f(u("u_stroke"), sc[0], sc[1], sc[2], sc[3]);
+    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}));
     this._setGradientUniforms(prog, g.grad);
   }
 
@@ -2007,7 +2273,11 @@ class ChartView {
       g.colorMode = 2;
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
       g.lut = this._paletteLut(t.color.palette);
+    } else if (t.color && t.color.mode === "direct_rgba") {
+      g.colorMode = 3;
+      g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
     }
+    this._buildInstanceStyleChannels(g, t, buffer, "width");
     g._cpu = { x: x0, y: y1, xMeta: g.x0Meta, yMeta: g.y1Meta };
   }
 
@@ -2028,7 +2298,11 @@ class ChartView {
       g.colorMode = 2;
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
       g.lut = this._paletteLut(t.color.palette);
+    } else if (t.color && t.color.mode === "direct_rgba") {
+      g.colorMode = 3;
+      g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
     }
+    this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
     const style = t.style || {};
     g.meshStrokeWidth = Number(style.stroke_width) || 0;
     g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
@@ -2137,7 +2411,11 @@ class ChartView {
       g.colorMode = 2;
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
       g.lut = this._paletteLut(t.color.palette);
+    } else if (t.color && t.color.mode === "direct_rgba") {
+      g.colorMode = 3;
+      g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
     }
+    this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
     this._rectMarkStyleGpu(g, t);
   }
 
@@ -2175,7 +2453,11 @@ class ChartView {
       g.colorMode = 2;
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
       g.lut = this._paletteLut(t.color.palette);
+    } else if (t.color && t.color.mode === "direct_rgba") {
+      g.colorMode = 3;
+      g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
     }
+    this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
     this._rectMarkStyleGpu(g, t);
   }
 
@@ -2328,11 +2610,11 @@ class ChartView {
 
   // Enable slot + pointer into `buf` — only ever called inside a _bindVao
   // setup closure, so the state lands in that VAO, not global state.
-  _vaoAttr(slot, buf, byteOffset, divisor, size = 1) {
+  _vaoAttr(slot, buf, byteOffset, divisor, size = 1, normalized = false) {
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.enableVertexAttribArray(slot);
-    gl.vertexAttribPointer(slot, size, buf._fcType || gl.FLOAT, false, 0, byteOffset);
+    gl.vertexAttribPointer(slot, size, buf._fcType || gl.FLOAT, normalized, 0, byteOffset);
     gl.vertexAttribDivisor(slot, divisor);
   }
 
@@ -2470,12 +2752,15 @@ class ChartView {
   }
 
 
-  _drawPoints(g, xm, ym, opacityScale = 1) {
-    const simple =
-      g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
+  _canDrawSimplePoints(g) {
+    return g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
+      !g.rgbaBuf && !g.styleBuf && !g.strokeBuf &&
       (g.symbol || 0) === 0 && (g.pointStrokeWidth || 0) <= 0 &&
       Math.max(g.lodBlendShown ?? 0, g.lodBlend ?? 0) <= 0.001;
-    if (simple) {
+  }
+
+  _drawPoints(g, xm, ym, opacityScale = 1) {
+    if (this._canDrawSimplePoints(g)) {
       this._drawSimplePoints(g, xm, ym, opacityScale);
       return;
     }
@@ -2503,22 +2788,26 @@ class ChartView {
     };
     stateColor(u("u_selColor"), this._markStateValue("selected", "color"));
     stateColor(u("u_unselColor"), this._markStateValue("unselected", "color"));
-    const [r, gg, b] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, 1);
+    const [r, gg, b, a] = g.color;
+    gl.uniform4f(u("u_color"), r, gg, b, a);
     gl.uniform1i(u("u_symbol"), g.symbol || 0);
     const sc = g.pointStroke;
-    const strokeAlpha = sc
-      ? sc[3] * this._strokeOpacity(g.trace.style, 0.8) * opacityScale
-      : 0;
     gl.uniform1f(u("u_ptStrokeWidth"), (g.pointStrokeWidth || 0) * this.dpr);
     gl.uniform1i(u("u_ptStrokeFace"), g.pointStrokeFace ? 1 : 0);
-    gl.uniform4f(u("u_ptStroke"), sc ? sc[0] * strokeAlpha : 0, sc ? sc[1] * strokeAlpha : 0,
-      sc ? sc[2] * strokeAlpha : 0, strokeAlpha);
+    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style, 0.8) * opacityScale);
+    // Straight alpha: POINT_FS folds u_strokeOpacity and the per-item alpha
+    // stack in and premultiplies there (uniform and buffer strokes alike).
+    gl.uniform4f(u("u_ptStroke"), sc ? sc[0] : 0, sc ? sc[1] : 0,
+      sc ? sc[2] : 0, sc ? sc[3] : 0);
 
     gl.uniform1i(u("u_selActive"), g.selActive ? 1 : 0);
     const colorOn = g.colorMode !== 0 && g.cBuf;
     const sizeOn = g.sizeMode === 1 && g.sBuf;
     const selOn = g.selActive && g.selBuf;
+    const rgbaOn = g.colorMode === 3 && g.rgbaBuf;
+    const styleOn = !!g.styleBuf;
+    const strokeOn = !!g.strokeBuf;
     if (g.lut) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -2558,6 +2847,9 @@ class ChartView {
         sizeOn ? g.sBuf._fcId : 0,
         selOn ? g.selBuf._fcId : 0,
         blendOn ? g.dBuf._fcId : 0,
+        rgbaOn ? g.rgbaBuf._fcId : 0,
+        styleOn ? g.styleBuf._fcId : 0,
+        strokeOn ? g.strokeBuf._fcId : 0,
       ],
       () => {
         this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 0);
@@ -2566,6 +2858,9 @@ class ChartView {
         if (sizeOn) this._vaoAttr(ATTR_SLOTS.a_sval, g.sBuf, 0, 0);
         if (selOn) this._vaoAttr(ATTR_SLOTS.a_sel, g.selBuf, 0, 0);
         if (blendOn) this._vaoAttr(ATTR_SLOTS.a_dval, g.dBuf, 0, 0);
+        if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 0, 4, true);
+        if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 0, 4);
+        if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 0, 4, true);
       }
     );
     // Generic (constant) attribute values are context state, not VAO state —
@@ -2574,6 +2869,9 @@ class ChartView {
     if (!sizeOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
     if (!selOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sel, 1.0);
     if (!blendOn) gl.vertexAttrib1f(ATTR_SLOTS.a_dval, 0);
+    if (!rgbaOn) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+    if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+    if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, r, gg, b, a);
     gl.drawArrays(gl.POINTS, 0, g.n);
   }
 
@@ -2588,8 +2886,10 @@ class ChartView {
     this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
     gl.uniform1f(u("u_dpr"), this.dpr);
     gl.uniform1f(u("u_size"), g.size);
-    const [r, gg, b] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, this._fillOpacity(g.trace.style, 0.8) * opacityScale);
+    const [r, gg, b, a] = g.color;
+    gl.uniform4f(
+      u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.8) * opacityScale
+    );
     this._bindVao(
       g,
       "points-simple",
@@ -2773,7 +3073,8 @@ class ChartView {
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     gl.uniform1f(u("u_width"), (g.trace.style.width ?? 1.5) * this.dpr);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * this._strokeOpacity(g.trace.style));
+    gl.uniform4f(u("u_color"), r, gg, b, a);
+    gl.uniform1f(u("u_opacity"), this._strokeOpacity(g.trace.style));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     const dashed = this._segmentDash(g, prog);
     if (g.colorMode && g.lut) {
@@ -2785,7 +3086,9 @@ class ChartView {
       g,
       "segment",
       [g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId,
-        g.colorMode ? g.cBuf._fcId : 0,
+        g.colorMode && g.cBuf ? g.cBuf._fcId : 0,
+        g.rgbaBuf ? g.rgbaBuf._fcId : 0,
+        g.styleBuf ? g.styleBuf._fcId : 0,
         dashed ? g._segmentDashOffsetBuf._fcId : 0,
         dashed ? g._segmentDashDirBuf._fcId : 0],
       () => {
@@ -2793,14 +3096,18 @@ class ChartView {
         this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
-        if (g.colorMode) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+        if (g.colorMode && g.cBuf) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+        if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+        if (g.styleBuf) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
         if (dashed) {
           this._vaoAttr(ATTR_SLOTS.a_dash0, g._segmentDashOffsetBuf, 0, 1);
           this._vaoAttr(ATTR_SLOTS.a_dashDir, g._segmentDashDirBuf, 0, 1);
         }
       }
     );
-    if (!g.colorMode) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!g.cBuf) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!g.rgbaBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+    if (!g.styleBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
   }
 
@@ -2889,26 +3196,35 @@ class ChartView {
     for (const name of ["y0", "y1", "y2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.yAxis);
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
-    gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], 1);
+    gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], g.color[3]);
+    // Straight alpha: MESH_FS folds u_strokeOpacity and the per-item alpha
+    // stack in and premultiplies there (uniform and buffer strokes alike).
     const stroke = g.meshStroke || [0, 0, 0, 0];
-    const strokeAlpha = stroke[3] * this._strokeOpacity(g.trace.style);
-    gl.uniform4f(u("u_stroke"), stroke[0] * strokeAlpha, stroke[1] * strokeAlpha,
-      stroke[2] * strokeAlpha, strokeAlpha);
+    gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
     gl.uniform1f(u("u_strokeWidth"), g.meshStrokeWidth || 0);
+    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style));
     if (g.colorMode && g.lut) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
       gl.uniform1i(u("u_lut"), 0);
     }
     const parts = ["x0", "x1", "x2", "y0", "y1", "y2"].map((name) => g[name + "Buf"]._fcId);
-    parts.push(g.colorMode ? g.cBuf._fcId : 0);
+    parts.push(g.cBuf ? g.cBuf._fcId : 0, g.rgbaBuf ? g.rgbaBuf._fcId : 0,
+      g.styleBuf ? g.styleBuf._fcId : 0, g.strokeBuf ? g.strokeBuf._fcId : 0);
     this._bindVao(g, "mesh", parts, () => {
       for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) {
         this._vaoAttr(ATTR_SLOTS["a" + name], g[name + "Buf"], 0, 1);
       }
-      if (g.colorMode) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+      if (g.cBuf) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+      if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+      if (g.styleBuf) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+      if (g.strokeBuf) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
     });
-    if (!g.colorMode) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!g.cBuf) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!g.rgbaBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, ...g.color);
+    if (!g.styleBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+    if (!g.strokeBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...stroke);
     gl.drawArraysInstanced(gl.TRIANGLES, 0, 3, g.n);
   }
 
@@ -3005,10 +3321,15 @@ class ChartView {
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     gl.uniform4f(u("u_edgePad"), edgePad[0], edgePad[1], edgePad[2], edgePad[3]);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style));
+    gl.uniform4f(u("u_color"), r, gg, b, a);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     this._setRectStyleUniforms(prog, g);
-    const colorOn = g.colorMode && g.cBuf;
+    const colorOn = !!g.cBuf;
+    const rgbaOn = !!g.rgbaBuf;
+    const styleOn = !!g.styleBuf;
+    const strokeOn = !!g.strokeBuf;
+    const radiusOn = !!g.radiusBuf;
     if (colorOn) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -3017,16 +3338,27 @@ class ChartView {
     this._bindVao(
       g,
       "rects",
-      [g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId, colorOn ? g.cBuf._fcId : 0],
+      [g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId,
+        colorOn ? g.cBuf._fcId : 0, rgbaOn ? g.rgbaBuf._fcId : 0,
+        styleOn ? g.styleBuf._fcId : 0, strokeOn ? g.strokeBuf._fcId : 0,
+        radiusOn ? g.radiusBuf._fcId : 0],
       () => {
         this._vaoAttr(ATTR_SLOTS.ax0, g.x0Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
         if (colorOn) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+        if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+        if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+        if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
+        if (radiusOn) this._vaoAttr(ATTR_SLOTS.a_radius, g.radiusBuf, 0, 1, 2);
       }
     );
     if (!colorOn) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!rgbaOn) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+    if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+    if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...(g.strokeColor || g.color));
+    if (!radiusOn) gl.vertexAttrib2f(ATTR_SLOTS.a_radius, -1, -1);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
   }
 
@@ -3052,11 +3384,16 @@ class ChartView {
     gl.uniform1f(u("u_v0Const"), v0Const ?? 0);
     gl.uniform1f(u("u_v0EdgePad"), v0EdgePad);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style));
+    gl.uniform4f(u("u_color"), r, gg, b, a);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     this._setRectStyleUniforms(prog, g);
     const v0On = g.value0Mode === 1 && g.value0Buf;
-    const colorOn = g.colorMode && g.cBuf;
+    const colorOn = !!g.cBuf;
+    const rgbaOn = !!g.rgbaBuf;
+    const styleOn = !!g.styleBuf;
+    const strokeOn = !!g.strokeBuf;
+    const radiusOn = !!g.radiusBuf;
     if (colorOn) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -3069,16 +3406,28 @@ class ChartView {
         g.posBuf._fcId, g.value1Buf._fcId,
         v0On ? g.value0Buf._fcId : 0,
         colorOn ? g.cBuf._fcId : 0,
+        rgbaOn ? g.rgbaBuf._fcId : 0,
+        styleOn ? g.styleBuf._fcId : 0,
+        strokeOn ? g.strokeBuf._fcId : 0,
+        radiusOn ? g.radiusBuf._fcId : 0,
       ],
       () => {
         this._vaoAttr(ATTR_SLOTS.a_pos, g.posBuf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.a_v1, g.value1Buf, 0, 1);
         if (v0On) this._vaoAttr(ATTR_SLOTS.a_v0, g.value0Buf, 0, 1);
         if (colorOn) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+        if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+        if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+        if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
+        if (radiusOn) this._vaoAttr(ATTR_SLOTS.a_radius, g.radiusBuf, 0, 1, 2);
       }
     );
     if (!v0On) gl.vertexAttrib1f(ATTR_SLOTS.a_v0, 0);
     if (!colorOn) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!rgbaOn) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+    if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+    if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...(g.strokeColor || g.color));
+    if (!radiusOn) gl.vertexAttrib2f(ATTR_SLOTS.a_radius, -1, -1);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
   }
 
@@ -4091,12 +4440,27 @@ class ChartView {
     if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
     this._wheelZoomRaf = null;
     this._pendingWheelZoom = null;
+    clearTimeout(this._wheelZoomEndTimer);
+    this._wheelZoomEndTimer = null;
+    this._wheelGesture = null;
     this._linkChannel?.close?.();
     this._linkChannel = null;
     if (this._raf) cancelAnimationFrame(this._raf);
     this._raf = null;
+    if (this._resizeRaf) cancelAnimationFrame(this._resizeRaf);
+    this._resizeRaf = null;
+    this._pendingResize = null;
+    this._resizeNeedsMeasure = false;
     this._cancelViewAnimation();
     this._destroyGlResources();
+    // Release the GL context now instead of waiting for GC. Republishing a
+    // figure destroys and rebuilds its view, and browsers cap live contexts
+    // (~16); without an explicit loss the destroyed contexts pile up under
+    // repeated rebuilds (e.g. an on_view_change-driven refresh) and trip the
+    // "too many active WebGL contexts" eviction. Listeners are already removed
+    // above and _destroyed is set, so the resulting event starts no recovery.
+    const loseExt = this.gl && this.gl.getExtension("WEBGL_lose_context");
+    if (loseExt) loseExt.loseContext();
     this.gl = null;
     this.root.remove();
   }
