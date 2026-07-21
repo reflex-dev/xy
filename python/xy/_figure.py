@@ -1512,7 +1512,33 @@ class Figure(AnnotationsMixin, PayloadMixin):
             tid = int(trace_id)
             if not 0 <= tid < len(self.traces):
                 raise ValueError(f"unknown trace id {trace_id!r}")
-            idx = np.asarray(indices, dtype=np.int64).ravel()
+            raw = np.asarray(indices)
+            # Canonical row indices are validated here, before the uint32
+            # wire encoding: a negative or oversized value would otherwise
+            # wrap/ship silently (-1 -> 4294967295) and inflate `total`
+            # while the browser highlights nothing (staff-review finding).
+            integral = raw.size == 0 or (
+                raw.dtype != np.bool_
+                and (
+                    np.issubdtype(raw.dtype, np.integer)
+                    or (
+                        np.issubdtype(raw.dtype, np.floating)
+                        and bool(np.all(np.isfinite(raw)))
+                        and bool(np.all(np.equal(np.mod(raw, 1), 0)))
+                    )
+                )
+            )
+            if not integral:
+                raise ValueError(
+                    f"row indices for trace {tid} must be integers, got dtype {raw.dtype}"
+                )
+            idx = np.unique(np.asarray(raw, dtype=np.int64).ravel())
+            n_rows = len(self.traces[tid].x)
+            if idx.size and (int(idx[0]) < 0 or int(idx[-1]) >= n_rows):
+                raise ValueError(
+                    f"row indices for trace {tid} must be in [0, {n_rows}), "
+                    f"got {int(idx[0])}..{int(idx[-1])}"
+                )
             wire_idx = self.to_shipped_indices(tid, idx)
             traces.append(
                 {
@@ -1523,7 +1549,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 }
             )
             out.append(wire_idx.tobytes())
-            total += int(len(idx))
+            # Deduplicated, validated canonical rows — not the raw request
+            # length and not only the currently-shipped subset.
+            total += int(idx.size)
         return {"type": "selection_rows", "traces": traces, "total": total}, out
 
     def view_state(self) -> dict[str, Any]:

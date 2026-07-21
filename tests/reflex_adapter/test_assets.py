@@ -83,6 +83,19 @@ def test_wrapper_sizes_static_and_live_charts_to_the_reflex_mount():
     assert "withHoverFlag(fitSpecToElement(data.spec))" in jsx
 
 
+def test_wrapper_feeds_hover_payload_to_custom_tooltip_children():
+    """xy.tooltip(render=...) children must receive the live §7.1 payload as
+    props client-side (Recharts-style cloneElement) — a statically rendered
+    slot would show frozen content and defeat the whole contract."""
+    jsx = (ADAPTER_ASSETS / "XYChart.jsx").read_text(encoding="utf-8")
+    assert "cloneElement(child, {" in jsx
+    assert "active: tooltipPayload.active" in jsx
+    assert "cursor: tooltipPayload.cursor" in jsx
+    assert "points: tooltipPayload.points" in jsx
+    # driven by state per hover, not a one-shot render
+    assert "setHoverPayload(payload)" in jsx
+
+
 def test_wrapper_discards_tailwind_scan_manifest_before_dom_props():
     """The scan bridge must not become an unknown DOM attribute at runtime."""
     jsx = (ADAPTER_ASSETS / "XYChart.jsx").read_text(encoding="utf-8")

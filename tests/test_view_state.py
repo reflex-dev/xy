@@ -149,6 +149,43 @@ def test_selection_rows_message_rejects_unknown_trace() -> None:
         fig.selection_rows_message(None)
 
 
+@pytest.mark.parametrize(
+    "bad",
+    [
+        [-1],  # would wrap to 4294967295 in the uint32 wire encoding
+        [0, 99],  # out of range for a 10-row trace
+        [0.5],  # non-integral
+        [float("nan")],
+        [True, False],  # boolean masks are not index lists
+        ["a"],  # non-numeric
+    ],
+)
+def test_selection_rows_message_rejects_invalid_indices(bad: list) -> None:
+    fig = _figure()
+    with pytest.raises(ValueError):
+        fig.selection_rows_message({0: bad})
+
+
+def test_selection_rows_message_dedupes_and_counts_validated_rows() -> None:
+    # `total` reports validated unique canonical rows, not the raw request
+    # length — [3, 3, 1] is two selected rows, shipped once each.
+    fig = _figure()
+    msg, buffers = fig.selection_rows_message({0: [3, 3, 1]})
+    assert msg["total"] == 2
+    assert msg["traces"][0]["count"] == 2
+    expected = fig.to_shipped_indices(0, np.asarray([1, 3]))
+    assert buffers[0] == expected.tobytes()
+
+
+def test_selection_rows_message_accepts_integral_floats_and_empty() -> None:
+    fig = _figure()
+    msg, _buffers = fig.selection_rows_message({0: np.asarray([2.0, 4.0])})
+    assert msg["total"] == 2
+    msg, buffers = fig.selection_rows_message({0: []})
+    assert msg["total"] == 0
+    assert buffers[0] == b""
+
+
 # -- view_state cache (§5.1: evented, no round-trip) -------------------------
 
 

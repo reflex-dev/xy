@@ -1435,11 +1435,17 @@ Object.assign(ChartView.prototype, {
     if (!changedAxes.length) return [];
     // History push (view-state.md §4): snapshot the pre-mutation durable
     // state once per interaction id; linked/history sources never push.
-    this._historyRecord({
-      source: opts.source || "programmatic",
-      interactionId: opts.interactionId,
-      history: opts.history,
-    });
+    // A write landing while an animation is in flight coalesces into that
+    // navigation instead: its pre-state is a mid-flight frame the user
+    // never settled on, so recording it would store an intermediate
+    // snapshot (staff-review finding).
+    if (!this._viewAnim) {
+      this._historyRecord({
+        source: opts.source || "programmatic",
+        interactionId: opts.interactionId,
+        history: opts.history,
+      });
+    }
     const animate = opts.animate === true && !this._prefersReducedMotion();
     const duration = opts.duration || 180;
     if (!animate || duration <= 0) {
@@ -1467,9 +1473,18 @@ Object.assign(ChartView.prototype, {
     const now = this._now();
     const tau = Math.max(18, duration / 5);
     if (this._viewAnim) {
-      this._viewAnim.target = target;
-      this._viewAnim.tau = tau;
-      this._viewAnim.changedAxes = [...new Set([...this._viewAnim.changedAxes, ...changedAxes])];
+      // Retarget: the settle event must describe the write that actually
+      // determined the destination, so the emit metadata follows the
+      // latest caller instead of retaining the first one's.
+      Object.assign(this._viewAnim, {
+        target,
+        tau,
+        changedAxes: [...new Set([...this._viewAnim.changedAxes, ...changedAxes])],
+        source: opts.source || "programmatic",
+        phase: opts.phase || "end",
+        interactionId: opts.interactionId,
+        broadcast: opts.broadcast,
+      });
       return changedAxes;
     }
 
@@ -1478,6 +1493,10 @@ Object.assign(ChartView.prototype, {
       last: now,
       tau,
       changedAxes,
+      source: opts.source || "programmatic",
+      phase: opts.phase || "end",
+      interactionId: opts.interactionId,
+      broadcast: opts.broadcast,
     };
     const lerp = (a, b, t) => a + (b - a) * t;
     const span = (v) => Math.max(
@@ -1520,11 +1539,11 @@ Object.assign(ChartView.prototype, {
         this.view = anim.target;
         this._lastLabelDraw = null;
         this.draw();
-        this._emitViewChange(opts.source || "programmatic", {
+        this._emitViewChange(anim.source, {
           axes: anim.changedAxes,
-          phase: opts.phase || "end",
-          interactionId: opts.interactionId,
-          broadcast: opts.broadcast,
+          phase: anim.phase,
+          interactionId: anim.interactionId,
+          broadcast: anim.broadcast,
         });
       }
     };

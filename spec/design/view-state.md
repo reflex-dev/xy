@@ -128,6 +128,10 @@ history works in notebooks, Reflex, and standalone HTML export identically.
   is one history entry, not hundreds. Geometric selection changes push like
   range changes: they are durable and undoable. Rows-selections do not push
   (§5.1) — stepping back over one restores the prior *geometric* state.
+  A write that lands while an animated navigation is still in flight
+  coalesces into it: no new entry (its pre-state is a mid-flight frame the
+  user never settled on), and the settle event carries the *latest*
+  writer's `source` and `interaction_id`.
 - **Writers that push:** user gestures, toolbar actions, double-click reset,
   and programmatic writes (opt out per call with `history=False`).
 - **Writers that do not push:** linked updates (`source: "linked"`) and
@@ -171,6 +175,11 @@ fig.view_state()                       # -> last committed durable state
   the shipped `Selection` object reports — and resolves them kernel-side
   into the existing binary selection-mask buffers. `range=`/`polygon=` ship
   the geometric forms and let the client resolve, exactly like a gesture.
+  Indices are validated against the trace's canonical row count before the
+  uint32 wire encoding — negative, non-integral, or out-of-range input
+  raises; duplicates deduplicate, and `total` reports validated unique
+  rows. A rows document *replaces* the whole selection: traces omitted
+  from it are cleared, not left holding stale masks.
   Rows-selections are **non-durable and non-undoable**: `history=` is
   ignored for them, they never enter the §4 stack, and `view_state()`
   reports them as the opaque marker `{"selection": {"rows": true}}` rather

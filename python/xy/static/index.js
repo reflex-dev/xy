@@ -7927,11 +7927,13 @@ const after = this._axisRange(axisId, target);
 return before[0] !== after[0] || before[1] !== after[1];
 });
 if (!changedAxes.length) return [];
+if (!this._viewAnim) {
 this._historyRecord({
 source: opts.source || "programmatic",
 interactionId: opts.interactionId,
 history: opts.history,
 });
+}
 const animate = opts.animate === true && !this._prefersReducedMotion();
 const duration = opts.duration || 180;
 if (!animate || duration <= 0) {
@@ -7958,9 +7960,15 @@ this._scheduleViewRequest(target, { seq: this.seq, delay: requestDelay, maxWait:
 const now = this._now();
 const tau = Math.max(18, duration / 5);
 if (this._viewAnim) {
-this._viewAnim.target = target;
-this._viewAnim.tau = tau;
-this._viewAnim.changedAxes = [...new Set([...this._viewAnim.changedAxes, ...changedAxes])];
+Object.assign(this._viewAnim, {
+target,
+tau,
+changedAxes: [...new Set([...this._viewAnim.changedAxes, ...changedAxes])],
+source: opts.source || "programmatic",
+phase: opts.phase || "end",
+interactionId: opts.interactionId,
+broadcast: opts.broadcast,
+});
 return changedAxes;
 }
 this._viewAnim = {
@@ -7968,6 +7976,10 @@ target,
 last: now,
 tau,
 changedAxes,
+source: opts.source || "programmatic",
+phase: opts.phase || "end",
+interactionId: opts.interactionId,
+broadcast: opts.broadcast,
 };
 const lerp = (a, b, t) => a + (b - a) * t;
 const span = (v) => Math.max(
@@ -8010,11 +8022,11 @@ this._viewAnim = null;
 this.view = anim.target;
 this._lastLabelDraw = null;
 this.draw();
-this._emitViewChange(opts.source || "programmatic", {
+this._emitViewChange(anim.source, {
 axes: anim.changedAxes,
-phase: opts.phase || "end",
-interactionId: opts.interactionId,
-broadcast: opts.broadcast,
+phase: anim.phase,
+interactionId: anim.interactionId,
+broadcast: anim.broadcast,
 });
 }
 };
@@ -9751,6 +9763,10 @@ this._resetView(true, "reset", override);
 },
 _applyRowsSelection(msg, buffers) {
 this._clearLassoOverlay();
+for (const g of this.gpuTraces) {
+g.selActive = false;
+if (g.drill) g.drill.selActive = false;
+}
 this._applySelectionBuffers(msg, buffers);
 this._stateSelection = { rows: true };
 this._selectionCount = msg.total || 0;

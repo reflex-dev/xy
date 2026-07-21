@@ -226,6 +226,14 @@ Object.assign(ChartView.prototype, {
   // history, reported in state only as the opaque marker.
   _applyRowsSelection(msg, buffers) {
     this._clearLassoOverlay();
+    // A rows document replaces the whole selection. The message carries
+    // buffers only for the traces it names, so deactivate every existing
+    // mask first — otherwise a prior selection keeps highlighting traces
+    // omitted from this document while total reports only the new rows.
+    for (const g of this.gpuTraces) {
+      g.selActive = false;
+      if (g.drill) g.drill.selActive = false;
+    }
     this._applySelectionBuffers(msg, buffers);
     this._stateSelection = { rows: true };
     this._selectionCount = msg.total || 0;

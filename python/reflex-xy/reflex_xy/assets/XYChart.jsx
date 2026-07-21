@@ -26,7 +26,9 @@
 // sibling copy, ./xy_client.js). Its `comm` seam is fed from socket events;
 // binary columns arrive as ArrayBuffers and go straight to the GL path.
 
-import { useEffect, useRef } from "react";
+import {
+  Children, cloneElement, isValidElement, useEffect, useRef, useState,
+} from "react";
 // Reflex compiles style props to emotion's `css`; rendering through
 // emotion's jsx() (a guaranteed app dependency) honors it without relying
 // on any jsxImportSource configuration in the app's build.
@@ -108,6 +110,11 @@ export function XYChart(props) {
   const elRef = useRef(null); // inner chart mount (wiped on payload swaps)
   const outerRef = useRef(null); // stable wrapper: events, tooltip slot
   const tooltipSlotRef = useRef(null);
+  // Live §7.1 payload for the mounted tooltip children (null until first
+  // hover). State, not a ref: the custom renderer re-renders per hover.
+  const [hoverPayload, setHoverPayload] = useState(null);
+  const hasTooltipChildrenRef = useRef(false);
+  hasTooltipChildrenRef.current = Boolean(children);
   dbg("render", { id: divProps.id, token: String(token).slice(0, 30), src });
   // Live callback refs so socket handlers never close over stale props.
   const cbRef = useRef({});
@@ -149,15 +156,22 @@ export function XYChart(props) {
     const hover = (event) => {
       const d = event.detail || {};
       if (d.cursor) {
-        cbRef.current.onHover?.({
+        const payload = {
           active: true,
           cursor: d.cursor,
           points: d.points || [],
           exact: d.exact === true,
-        });
+        };
+        cbRef.current.onHover?.(payload);
+        // The mounted tooltip children render from this payload (§7.2);
+        // skip the re-render churn when no custom renderer is mounted.
+        if (hasTooltipChildrenRef.current) setHoverPayload(payload);
       }
     };
-    const leave = () => cbRef.current.onHover?.({ active: false, cursor: null, points: [] });
+    const leave = () => {
+      cbRef.current.onHover?.({ active: false, cursor: null, points: [] });
+      if (hasTooltipChildrenRef.current) setHoverPayload(null);
+    };
     el.addEventListener("xy:animation_start", start);
     el.addEventListener("xy:animation_end", end);
     el.addEventListener("xy:hover", hover);
@@ -367,6 +381,24 @@ export function XYChart(props) {
   // Children are the framework-owned tooltip content (view-state.md §7.2):
   // they render into a hidden slot beside the chart mount; setCustomTooltip
   // adopts the slot into the chart's tooltip container, which owns placement.
+  // Recharts-style render contract: each element child is cloned with the
+  // live §7.1 payload as props ({active, cursor, points, exact}), so the
+  // renderer receives hover data client-side with no backend bridge — the
+  // slot node moves under the tooltip container, but React keeps updating
+  // its subtree by node identity. DOM-tag children (plain divs) are left
+  // uncloned to avoid leaking non-DOM attributes.
+  const tooltipPayload = hoverPayload || { active: false, cursor: null, points: [] };
+  const tooltipChildren = children
+    ? Children.map(children, (child) =>
+        isValidElement(child) && typeof child.type !== "string"
+          ? cloneElement(child, {
+              active: tooltipPayload.active,
+              cursor: tooltipPayload.cursor,
+              points: tooltipPayload.points,
+              exact: tooltipPayload.exact === true,
+            })
+          : child)
+    : null;
   return jsx(
     "div",
     { ...divProps, ref: mergedRef, style: { position: "relative", ...divProps.style } },
@@ -379,7 +411,7 @@ export function XYChart(props) {
             "data-xy-tooltip-slot": "",
             style: { display: "none" },
           },
-          children,
+          tooltipChildren,
         )
       : null,
   );

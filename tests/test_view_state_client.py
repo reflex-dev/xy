@@ -320,6 +320,123 @@ def test_rows_selection_is_non_durable(tmp_path: Path) -> None:
     assert result == {key: True for key in result}
 
 
+_ROWS_CLEAR_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    const activeById = (id) => {
+      const g = view.gpuTraces.find((t) => t.trace.id === id);
+      return !!(g && g.selActive);
+    };
+
+    // Rows on both traces, then a document naming only trace 0: a rows
+    // document replaces the whole selection, so the omitted trace's mask
+    // must deactivate instead of staying highlighted (wire-protocol.md
+    // `selection_rows`).
+    view._onKernelMsg(
+      { type: "selection_rows", total: 3, traces: [
+        { id: 0, count: 2, buf: 0 }, { id: 1, count: 1, buf: 1 },
+      ] },
+      [new Uint32Array([0, 2]).buffer, new Uint32Array([1]).buffer],
+    );
+    const bothActive = activeById(0) && activeById(1);
+
+    view._onKernelMsg(
+      { type: "selection_rows", total: 1, traces: [{ id: 0, count: 1, buf: 0 }] },
+      [new Uint32Array([4]).buffer],
+    );
+    const trace0Active = activeById(0);
+    const trace1Cleared = !activeById(1);
+    const countMatches = view._selectionCount === 1;
+
+    document.body.setAttribute("data-xy-rows-clear-probe", JSON.stringify({
+      bothActive, trace0Active, trace1Cleared, countMatches,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-rows-clear-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_rows_selection_clears_omitted_traces(tmp_path: Path) -> None:
+    document = _chart_html(
+        xy.scatter([0.0, 1.0, 2.0, 3.0, 4.0], [1.0, 3.0, 5.0, 7.0, 9.0]),
+    ).replace(_RENDER_CALL, _ROWS_CLEAR_PROBE)
+    result = _run(tmp_path, document, "data-xy-rows-clear-probe", label="rows-clear probe")
+    assert result == {key: True for key in result}
+
+
+_RETARGET_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    const ranges = () => Object.fromEntries(
+      view._axisIds().map((id) => [id, [...view._axisRange(id)]]));
+    const handle = view.root.xy;
+    const events = [];
+    view.root.addEventListener("xy:view_change", (e) => events.push({
+      source: e.detail.source,
+      phase: e.detail.phase,
+      interaction_id: e.detail.interaction_id,
+    }));
+    const realRaf = window.requestAnimationFrame;
+    let frames = [];
+    let ts = 0;
+    window.requestAnimationFrame = (fn) => { frames.push(fn); return frames.length; };
+    const flush = () => {
+      for (let round = 0; round < 300 && (frames.length || view._viewAnim); round++) {
+        const queued = frames; frames = [];
+        ts += 100;
+        for (const fn of queued) fn(ts);
+      }
+    };
+
+    // Two rapid animated writes: the second lands mid-flight and retargets.
+    // One history entry (the pre-first state), the view settles at the
+    // second target, and the settle event describes the second write
+    // (view-state.md §4: coalesce into the in-flight navigation).
+    const home = ranges();
+    handle.applyState({ v: 1, ranges: { x: [1.0, 3.0] } }, { animate: true });
+    const idFirst = view._interactionSeq;
+    const midFlight = view._viewAnim !== null;
+    handle.applyState({ v: 1, ranges: { x: [2.0, 4.0] } }, { animate: true });
+    const idSecond = view._interactionSeq;
+    flush();
+    window.requestAnimationFrame = realRaf;
+
+    const oneEntry = view._historyPast.length === 1;
+    const entryIsHome = JSON.stringify(view._historyPast[0]?.ranges.x)
+      === JSON.stringify(home.x);
+    const settledAtSecondTarget =
+      Math.abs(ranges().x[0] - 2.0) < 1e-9 && Math.abs(ranges().x[1] - 4.0) < 1e-9;
+    const settle = events[events.length - 1];
+    const settleIsEnd = !!settle && settle.phase === "end";
+    const settleSourceApi = !!settle && settle.source === "api";
+    const settleHasSecondId = !!settle && settle.interaction_id === idSecond
+      && idSecond !== idFirst;
+
+    document.body.setAttribute("data-xy-retarget-probe", JSON.stringify({
+      midFlight, oneEntry, entryIsHome, settledAtSecondTarget,
+      settleIsEnd, settleSourceApi, settleHasSecondId,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-retarget-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_retargeted_animation_coalesces_history_and_metadata(tmp_path: Path) -> None:
+    result = _run(
+        tmp_path,
+        _chart_html().replace(_RENDER_CALL, _RETARGET_PROBE),
+        "data-xy-retarget-probe",
+        label="retarget probe",
+    )
+    assert result == {key: True for key in result}
+
+
 _KERNEL_MSG_PROBE = """
   const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
   try {

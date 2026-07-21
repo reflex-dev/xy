@@ -186,9 +186,13 @@ client-local (view-state.md §4/§5.2).
 byte-identical in shape to the `selection` reply (same
 `fig.to_shipped_indices` mask space, same `{id, count, buf, drill_seq}`
 entries). Kernel-resolved from caller-supplied per-trace row indices
-(`Figure.selection_rows_message`); the client applies it as a **non-durable**
-selection — never pushed to history, reported by `state()`/`view_state()`
-only as the opaque `{"rows": true}` marker (view-state.md §5.1).
+(`Figure.selection_rows_message`), which validates canonical indices
+(bounds, integrality) and deduplicates before encoding, so `total` counts
+validated unique rows. The client applies the document as a **non-durable**
+*replacement* selection — every existing mask deactivates first, so traces
+omitted from the message clear; never pushed to history, reported by
+`state()`/`view_state()` only as the opaque `{"rows": true}` marker
+(view-state.md §5.1).
 
 All three ride the existing `msg` envelope in both transports (anywidget
 comm and the `/_xy` socket.io namespace) behind the version handshake.
