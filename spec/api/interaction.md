@@ -54,7 +54,7 @@ the switch is never set. The non-boolean viewport keys — `default_drag_action`
 | `brush` | on | Same conjunction: `canBrush = brush && select` (`53_interaction.js:115`) gates every selection drag and the modebar Selection menu. |
 | `crosshair` | off | The two guide elements are created only when the flag is true, at init (`53_interaction.js:80`). Not togglable after mount. |
 | `navigation` | on | Master gate on pointer-drag pan, wheel zoom, box-zoom drags, dblclick reset, and every modebar viewport control. |
-| `pan` | on | Plain-drag pan is ignored and the modebar Pan button is not built. Requires `navigation`. Pans `pan_axes` (§2.1). |
+| `pan` | on | Plain-drag pan is ignored, the modebar Pan button is not built, and every zoom-enabled axis is contained (§2.2). Requires `navigation`. Pans `pan_axes` (§2.1). |
 | `zoom` | on | Master zoom gate: wheel zoom, box zoom, and the modebar zoom menu are all ignored. Requires `navigation`. Zooms `zoom_axes` (§2.1). |
 | `wheel_zoom` | on | Cursor-anchored wheel/trackpad zoom is ignored and the page keeps scrolling; box and button zoom are unaffected. Requires `navigation` and `zoom` (`53_interaction.js:271-273`). |
 | `box_zoom` | on | Box-zoom drags and the modebar Box Zoom button are removed, and `default_drag_action="zoom"` has no usable drag tool. Requires `navigation` and `zoom` (`53_interaction.js:112-113`, `50_chartview.js:419`). |
@@ -85,7 +85,7 @@ including per-source semantics and the shared clamp pipeline, is
 | Key | Type | Default | Role |
 | --- | --- | --- | --- |
 | `default_drag_action` | `"auto" \| "none" \| "pan" \| "zoom" \| "select" \| "select-x" \| "select-y" \| "select-lasso"` | `"auto"` | Initial tool for an unmodified primary-button drag. `"auto"` resolves pan → box zoom → rectangular select → none. `"zoom"` means **box zoom for drag only**; it does not touch wheel or button zoom. The modebar can change the live tool without mutating this configured default. |
-| `pan_axes` | axis-ID tuple | all declared axes | Concrete axis IDs a pan gesture may translate. |
+| `pan_axes` | axis-ID tuple | all declared axes | Concrete axis IDs a pan gesture may translate freely. An axis excluded here while zoom can navigate it is **contained** (§2.2). |
 | `zoom_axes` | axis-ID tuple | all declared axes | Concrete axis IDs wheel, box, and button zoom may scale. Selecting `"y"` never implies `"y2"`. |
 | `reset_axes` | axis-ID tuple | enabled `pan_axes` ∪ enabled `zoom_axes` | Axis IDs restored by reset. Resolved client-side; the modebar Reset button hides when it resolves empty. |
 | `zoom_limits` | `(min, max)` pair, or axis-ID → pair map | `(1.0, None)` per zoom axis | Magnification bounds relative to each axis's home span (`magnification = home_span / current_span`). The default stops zoom-out at the home window. Each interval must contain `1.0`; `(None, None)` opts an axis out. A bare pair broadcasts to every `zoom_axes` entry; a map applies per axis and missing selected axes inherit `(1.0, None)`. Python normalizes both forms to an axis-keyed wire map. |
@@ -94,6 +94,28 @@ Axis policies are filters, not permissions: they never grant an action whose
 capability switch is off, and a disabled capability may still carry a dormant
 policy for reuse. Bounds set by `x_axis(bounds=…)` clamp position and maximum
 span after `zoom_limits`, on every mutation path.
+
+### 2.2 Containment of pan-locked axes
+
+Cursor-anchored zoom is a scaling composed with a translation
+(`Δcenter = span · (anchor − ½) · (1 − f)`), so merely excluding an axis from
+the pan *gesture* would leave its position reachable through zoom: a zoom-in /
+zoom-out chain at two cursor positions is an exact pan. Exclusion from pan
+therefore means containment, not gesture removal.
+
+An axis is **contained** when zoom navigation can change it but pan cannot:
+`navigation` and `zoom` are enabled, the axis is in `zoom_axes`, and either
+`pan` is off or the axis is outside `pan_axes`. A contained axis's window can
+never extend past its home extents, on any mutation path — pan, wheel, box,
+and button zoom, linked ranges, and programmatic updates share one clamp.
+Inside that envelope the axis stays live: zoomed in, plain drag still slides
+its window (containment bounds the motion instead of dropping the axis from
+the gesture) and pins flush at the home extent; at home magnification it
+cannot move at all. Consequently `zoom_limits` values that would allow
+magnification below `1.0` cannot carry a contained axis past its home window.
+Containment tightens the positional envelope only; an explicit
+`x_axis(bounds=…)` narrower than home still wins, and axes outside
+`zoom_axes` need no containment because nothing can change their span.
 
 ## 3. Event surface
 

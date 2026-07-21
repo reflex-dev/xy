@@ -141,7 +141,13 @@ Object.assign(ChartView.prototype, {
           view: this._copyView(this.view),
           moved: false,
           interactionId: ++this._interactionSeq,
-          axes: this._axisPolicy("pan_axes"),
+          // Free pan axes plus contained zoom axes: containment bounds a
+          // locked axis's motion in the clamp (it slides inside its home
+          // window once zoomed in) instead of removing it from the gesture.
+          axes: [...new Set([
+            ...this._axisPolicy("pan_axes"),
+            ...this._axisIds().filter((axisId) => this._axisContained(axisId)),
+          ])],
           changedAxes: [],
         };
         try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
@@ -1518,14 +1524,30 @@ Object.assign(ChartView.prototype, {
         c1 = anchor + (1 - anchorFrac) * limitedSpan * direction;
       }
     }
-    if (!Array.isArray(axis.bounds) || axis.bounds.length !== 2) {
+    // Positional envelope: explicit axis bounds, tightened to the home window
+    // when the axis is contained (§7.2). Inside the envelope the window
+    // slides; a window at least as large as the envelope pins to it exactly,
+    // so a contained axis at home magnification cannot move at all.
+    let boundLo = -Infinity, boundHi = Infinity;
+    if (Array.isArray(axis.bounds) && axis.bounds.length === 2) {
+      const b0 = this._axisCoord(axis, axis.bounds[0]);
+      const b1 = this._axisCoord(axis, axis.bounds[1]);
+      if (![c0, c1, b0, b1].every(Number.isFinite) || b0 === b1) return [lo, hi];
+      boundLo = Math.min(b0, b1);
+      boundHi = Math.max(b0, b1);
+    }
+    if (home && this._axisContained(axisId)) {
+      const h0 = this._axisCoord(axis, home[0]);
+      const h1 = this._axisCoord(axis, home[1]);
+      if ([h0, h1].every(Number.isFinite) && h0 !== h1) {
+        boundLo = Math.max(boundLo, Math.min(h0, h1));
+        boundHi = Math.min(boundHi, Math.max(h0, h1));
+      }
+    }
+    if (!Number.isFinite(boundLo) || !Number.isFinite(boundHi) || boundHi <= boundLo) {
       return [this._axisValue(axis, c0), this._axisValue(axis, c1)];
     }
-    const b0 = this._axisCoord(axis, axis.bounds[0]);
-    const b1 = this._axisCoord(axis, axis.bounds[1]);
-    if (![c0, c1, b0, b1].every(Number.isFinite) || b0 === b1) return [lo, hi];
     const reverse = c1 < c0;
-    const boundLo = Math.min(b0, b1), boundHi = Math.max(b0, b1);
     let outLo = Math.min(c0, c1), outHi = Math.max(c0, c1);
     if (outHi - outLo >= boundHi - boundLo) {
       outLo = boundLo;

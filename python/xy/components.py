@@ -2466,9 +2466,13 @@ def interaction_config(
         crosshair: Whether plot-aligned hover guides are shown.
         navigation: Whether pointer drag and wheel gestures pan or zoom the chart.
         pan: Whether plain-drag pan is enabled. ``False`` ignores plain-drag
-            pan gestures. The default keeps panning enabled.
-        pan_axes: Concrete declared axis IDs changed by pan gestures. The
-            default includes every declared axis.
+            pan gestures and contains every zoom-enabled axis to its home
+            window. The default keeps panning enabled.
+        pan_axes: Concrete declared axis IDs pan gestures translate freely.
+            The default includes every declared axis. An excluded axis that
+            zoom can still navigate is contained: its window slides inside
+            the axis's home extents (plain drag keeps working on a zoomed-in
+            view) but never extends past them, on any mutation path.
         zoom: Whether viewport zoom is enabled. ``False`` ignores wheel and
             box zoom, double-click reset, and modebar zoom controls. The
             default keeps zooming enabled.

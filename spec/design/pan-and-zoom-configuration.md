@@ -124,7 +124,7 @@ keeps policy in one visible node.
 | `navigation` | `True` | Local viewport changes are allowed. |
 | `default_drag_action` | `"auto"` | Choose pan when available, then another enabled drag tool. |
 | `pan` | `True` | Drag panning is available. |
-| `pan_axes` | all declared axes | Pan every axis unless explicitly narrowed. |
+| `pan_axes` | all declared axes | Pan every axis unless explicitly narrowed. A narrowed-out zoom axis is contained to its home window (§7.1). |
 | `zoom` | `True` | Zoom actions are available. |
 | `zoom_axes` | all declared axes | Zoom every axis unless explicitly narrowed. |
 | `zoom_limits` | `(1.0, None)` on every axis in `zoom_axes` | Do not zoom out past home; allow zoom-in to bounds/precision. |
@@ -146,12 +146,14 @@ keeping exports compact and compatibility explicit.
 
 1. `navigation=False` disables local pan, zoom, reset, and matching modebar
    controls. It does not disable hover, click, or selection.
-2. `pan=False` disables every pan source regardless of `pan_axes`.
+2. `pan=False` disables every pan source regardless of `pan_axes`; every
+   enabled zoom axis is then contained (§7.1).
 3. `zoom=False` disables wheel, box, and button zoom regardless of their switches.
 4. A source-specific `False` disables only that source.
 5. Axis policy filters the action's candidate ranges.
 6. `zoom_limits` clamps each participating axis's candidate span relative to home.
-7. Each axis's `bounds` clamps its filtered position and maximum available span.
+7. Each axis's positional envelope — `bounds`, tightened to the home window on
+   contained axes — clamps its filtered position and maximum available span.
 8. `link_axes` filters broadcast axis IDs; it never grants local permission.
 
 Disabled capabilities may carry dormant axis/source settings. This supports reusable
@@ -240,7 +242,8 @@ Every action follows one path:
 
 ```text
 input -> capability check -> action transform -> axis filter -> zoom-limit clamp
-      -> bounds clamp
+      -> positional clamp (hard bounds, tightened to home containment on
+         pan-locked axes)
       -> render -> LOD request -> event -> linked-view broadcast
 ```
 
@@ -257,23 +260,35 @@ emits no event, and broadcasts no update.
 
 - Primary drag pans when the resolved drag mode is `"pan"`.
 - Pointer displacement is converted in axis scale coordinates.
-- `pan_axes` chooses participating axis IDs.
+- `pan_axes` chooses the freely panning axis IDs.
 - Linear/time/category axes translate additively in scale coordinates.
 - Log axes translate multiplicatively because their scale coordinate is logarithmic.
 - Reversed axes preserve direction.
 - A hard bound stops motion on that axis without blocking another axis.
 - Pointer capture keeps a drag coherent outside the plot.
 
+An axis zoom may navigate but pan may not is **contained**: cursor-anchored
+zoom is a scaling composed with a translation, so a zoom-in/zoom-out chain at
+two cursor positions would otherwise pan the "locked" axis exactly. The
+positional clamp therefore keeps a contained axis's window inside its home
+extents on every mutation path. The drag still includes it — zoomed in, its
+window slides within home and pins flush at the extent — while at home
+magnification the window fills the envelope and cannot move (see the API
+spec, `interaction.md` §2.2).
+
 Horizontal pointer movement applies independently to selected x-oriented axes;
 vertical movement applies independently to selected y-oriented axes. For
-`pan_axes=("x", "y2")`, x and y2 move through their own scales while primary y stays
-bit-for-bit unchanged.
+`pan_axes=("x", "y2")`, x and y2 move through their own scales while primary y —
+contained, because the default `zoom_axes` still lets zoom navigate it — never
+leaves its home extents and stays bit-for-bit unchanged at home magnification.
 
 ### 7.2 Wheel and trackpad zoom
 
 - Wheel zoom is cursor-anchored on every axis in `zoom_axes`.
 - The pointer fraction is converted through each selected axis's own scale.
 - Non-participating axes stay unchanged.
+- On contained axes (§7.1) the positional clamp keeps the zoomed window inside
+  home extents, so cursor anchoring cannot relocate a pan-locked axis.
 - Deltas accumulate and apply at most once per animation frame.
 - XY calls `preventDefault()` only inside the plot while wheel zoom is enabled.
   Otherwise the page remains scrollable.
@@ -305,9 +320,10 @@ bit-for-bit unchanged.
   y-oriented axes participate, width is decorative.
 - Non-participating ranges remain exactly unchanged.
 - Degeneracy is checked only on participating axes.
-- `zoom_limits` then clamp magnification around the box center, followed by hard
-  bounds. A box implying more than the maximum allowed magnification is expanded to
-  the minimum permitted span rather than over-zooming.
+- `zoom_limits` then clamp magnification around the box center, followed by the
+  positional envelope (hard bounds, tightened to home containment on pan-locked
+  axes — §7.1). A box implying more than the maximum allowed magnification is
+  expanded to the minimum permitted span rather than over-zooming.
 - The final range is clamped and animated unless reduced motion is active.
 - Pointer cancel or Escape removes the band and preserves the current view.
 - After a completed box zoom, the active drag mode remains `"zoom"` for the next
@@ -332,6 +348,10 @@ produces values below `1.0`. The tuple is `(minimum_magnification,
 maximum_magnification)`; `None` leaves that side unconstrained except for hard bounds
 and the renderer precision floor. The resolved default is `(1.0, None)` for every
 axis in `zoom_axes`—on a normal chart, both x and y stop at their original spans.
+On a contained axis (§7.1) the home envelope also caps the effective minimum
+magnification at `1.0`: a window that would exceed home pins to it exactly, so
+limits permitting magnification below `1.0` cannot carry the axis past its home
+window.
 
 ```python
 # Explicit form of the default: never zoom out beyond the original window.
@@ -394,11 +414,15 @@ command, so resetting a viewport cannot silently discard a user's selected rows.
 ### 7.7 Programmatic updates
 
 Adapters may apply a view from application state or a linked peer. These updates use
-the same zoom limits, bounds, and scale validation as gestures.
+the same zoom limits, bounds, scale validation, and home containment (§7.1) as
+gestures — one clamped mutation path.
 
-Programmatic updates are not filtered by `pan_axes` or `zoom_axes`; those describe
-user actions. `navigation=False` blocks local input but not application-driven view
-updates, allowing a read-only chart to follow a dashboard controller.
+Programmatic updates are not filtered by `pan_axes` or `zoom_axes`; those select
+which axes user gestures may touch. Containment is a clamp, not a filter, so a
+contained axis accepts programmatic and linked updates but keeps them inside its
+home extents. `navigation=False` blocks local input, disables containment (no
+gesture can navigate anything), and does not block application-driven view
+updates, allowing a read-only chart to follow a dashboard controller freely.
 
 ## 8. Drag-mode runtime state and gesture conflicts
 
@@ -583,8 +607,9 @@ Action axes and link axes answer different questions:
 
 Outgoing axes are `actually changed axes intersect link_axes`. Incoming updates copy
 only matching declared IDs in `link_axes`, preserve other local axes, clamp to
-receiver bounds, and never rebroadcast. An absent ID is ignored. Linking axes with
-different IDs requires an explicit mapping API in a later proposal.
+receiver limits (bounds and, on contained axes, the home window — §7.7), and never
+rebroadcast. An absent ID is ignored. Linking axes with different IDs requires an
+explicit mapping API in a later proposal.
 
 Different policies in one group are valid. An overview can navigate x while a detail
 chart disables local navigation but follows linked x. Receivers may also have
@@ -840,7 +865,9 @@ configuration classes. Reject for now.
 ### One shared `navigation_axes`
 
 It cannot express “pan both, zoom x only” or “fixed x, inspect y.” Reject because
-axis policy is action-specific.
+axis policy is action-specific. Independence needs the containment clamp to be
+real, though: cursor-anchored zoom embeds a translation, so “zoom without pan”
+holds only because a pan-locked axis is confined to its home window (§7.1).
 
 ### Infer locked axes from domain
 

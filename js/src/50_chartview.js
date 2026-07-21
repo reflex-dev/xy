@@ -410,6 +410,18 @@ class ChartView {
     return [...new Set(axes)];
   }
 
+  // An axis zoom can navigate but pan cannot is *contained*: every clamped
+  // mutation keeps its window inside its home extents. Cursor-anchored zoom
+  // is a scaling plus a translation, so without containment a zoom-in/out
+  // chain at two cursor positions is an exact pan of the "locked" axis.
+  _axisContained(axisId) {
+    if (!this._interactionFlag("navigation", true)) return false;
+    if (!this._interactionFlag("zoom", true)) return false;
+    if (!this._axisPolicy("zoom_axes").includes(axisId)) return false;
+    if (!this._interactionFlag("pan", true)) return true;
+    return !this._axisPolicy("pan_axes").includes(axisId);
+  }
+
   _resolveDefaultDragAction() {
     const requested = typeof this.interaction?.default_drag_action === "string"
       ? this.interaction.default_drag_action : "auto";

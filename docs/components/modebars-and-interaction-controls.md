@@ -88,7 +88,7 @@ The complete navigation policy is:
 | Option | Purpose |
 | --- | --- |
 | `navigation` | Master switch for local pan, zoom, and reset input. |
-| `pan`, `pan_axes` | Enable pan and name the exact axes it changes. |
+| `pan`, `pan_axes` | Enable pan and name the exact axes it moves freely. An axis zoom can navigate but pan cannot is contained: it drags only within its home extents. |
 | `zoom`, `zoom_axes` | Enable zoom and name the exact axes it changes. |
 | `zoom_limits` | Set `(minimum, maximum)` magnification relative to the original range, globally or by axis ID. |
 | `wheel_zoom` | Enable wheel and trackpad zoom. |
