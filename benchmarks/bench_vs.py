@@ -20,10 +20,13 @@ Measures, per library, per point count N, on identical random data:
                 RSS delta too when psutil is present
   out_bytes   — PNG bytes / HTML bytes / xy wire bytes
   pts_per_s   — N / total_s
-  status      — ok | failed(reason) | skipped(over budget)
+  status      — ok | failed(reason) | skipped(over budget or hard timeout)
 
 Then a **ceiling probe**: the largest N each library renders under a wall-clock
 budget without erroring — the "how many points can it actually draw" number.
+The budget is also a hard per-library/per-size deadline across timed rendering,
+the separate memory pass, artifact serialization, and browser TTFR. Once a row
+times out, larger sizes for that library are recorded as skipped.
 
 Design notes / fairness:
 - Data generation is excluded from every timing (shared arrays).
@@ -49,10 +52,12 @@ import argparse
 import gc
 import io
 import json
+import signal
 import sys
 import time
 import tracemalloc
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -86,6 +91,39 @@ BENCH_VS_CATEGORY_IDS = (
     "huge_scatter_overview",
     "payload_export_size",
 )
+
+
+class _MeasurementTimedOut(TimeoutError):
+    """Raised when one build/render/memory measurement exhausts its budget."""
+
+
+@contextmanager
+def _hard_timeout(timeout_s: float):
+    """Interrupt a measurement after ``timeout_s`` wall-clock seconds.
+
+    The cross-library benchmark runs on POSIX reference and CI hosts, where an
+    interval timer can interrupt both Python work and waits on renderer
+    subprocesses. Restore any caller-owned alarm so this helper is safe to use
+    from another benchmark harness.
+    """
+    if not all(hasattr(signal, name) for name in ("SIGALRM", "ITIMER_REAL", "setitimer")):
+        raise RuntimeError("hard benchmark timeouts require POSIX interval timers")
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.setitimer(signal.ITIMER_REAL, 0)
+
+    def _raise_timeout(_signum, _frame):
+        raise _MeasurementTimedOut
+
+    signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.setitimer(signal.ITIMER_REAL, timeout_s)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_timer[0] > 0:
+            signal.setitimer(signal.ITIMER_REAL, *previous_timer)
 
 
 def _rss_mb() -> float | None:
@@ -541,6 +579,8 @@ def run(
     ttfr_max_n: int | None = None,
     chromium: str | None = None,
 ) -> dict:
+    if budget_s <= 0:
+        raise SystemExit("--budget must be greater than zero")
     if np is None:
         raise SystemExit(
             "numpy is required to run the comparison (data generation). "
@@ -587,33 +627,42 @@ def run(
                 continue
             build, render, artifact_fn = _normalize(adapter)
             try:
-                row.update(_measure(build, render, artifact_fn if ttfr else None))
+                capture_artifact = ttfr and (ttfr_max_n is None or n <= ttfr_max_n)
+                with _hard_timeout(budget_s):
+                    row.update(_measure(build, render, artifact_fn if capture_artifact else None))
+                    row["pts_per_s"] = (n / row["total_s"]) if row.get("total_s") else None
+                    # Time to first render: browser paint for HTML artifacts; the render
+                    # itself for raster libs (PNG already = pixels). §17 makes this the
+                    # metric that matters — bytes and serialize time don't equal pixels.
+                    if capture_artifact and row.get("status") == "ok":
+                        html = row.pop("_artifact", None)
+                        if html:
+                            browser = chart_ready_metrics(html, chromium=chromium)
+                            ready = None if browser is None else browser["ready_ms"]
+                            row["browser_ready_ms"] = ready
+                            row["browser_fcp_ms"] = None if browser is None else browser["fcp_ms"]
+                            row["browser_js_heap_bytes"] = (
+                                None if browser is None else browser["js_heap_bytes"]
+                            )
+                            row["browser_paint_ms"] = ready  # schema-v2 compatibility
+                            artifact_s = row.get("artifact_s")
+                            row["ttfr_ms"] = (
+                                (row["build_s"] + artifact_s) * 1e3 + ready
+                                if ready is not None and artifact_s is not None
+                                else None
+                            )
+                        else:  # raster: build+render already produced pixels
+                            row["ttfr_ms"] = row["total_s"] * 1e3
+            except _MeasurementTimedOut:
+                if tracemalloc.is_tracing():
+                    tracemalloc.stop()
+                row["status"] = f"skipped(hard timeout after {budget_s:g}s budget)"
+                over_budget.add(name)
+                gc.collect()
             except Exception as e:
                 row["status"] = f"failed({type(e).__name__}: {str(e)[:80]})"
-            row["pts_per_s"] = (n / row["total_s"]) if row.get("total_s") else None
-            # Time to first render: browser paint for HTML artifacts; the render
-            # itself for raster libs (PNG already = pixels). §17 makes this the
-            # metric that matters — bytes and serialize time don't equal pixels.
-            if ttfr and row.get("status") == "ok" and (ttfr_max_n is None or n <= ttfr_max_n):
-                html = row.pop("_artifact", None)
-                if html:
-                    browser = chart_ready_metrics(html, chromium=chromium)
-                    ready = None if browser is None else browser["ready_ms"]
-                    row["browser_ready_ms"] = ready
-                    row["browser_fcp_ms"] = None if browser is None else browser["fcp_ms"]
-                    row["browser_js_heap_bytes"] = (
-                        None if browser is None else browser["js_heap_bytes"]
-                    )
-                    row["browser_paint_ms"] = ready  # schema-v2 compatibility
-                    artifact_s = row.get("artifact_s")
-                    row["ttfr_ms"] = (
-                        (row["build_s"] + artifact_s) * 1e3 + ready
-                        if ready is not None and artifact_s is not None
-                        else None
-                    )
-                else:  # raster: build+render already produced pixels
-                    row["ttfr_ms"] = row["total_s"] * 1e3
-            row.pop("_artifact", None)
+            finally:
+                row.pop("_artifact", None)
             results[name].append(row)
             if row.get("total_s", 0) > budget_s:
                 over_budget.add(name)  # ceiling reached; skip larger N
@@ -786,7 +835,12 @@ def to_markdown(report: dict) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sizes", default="1e3,1e4,1e5,1e6,1e7")
-    ap.add_argument("--budget", type=float, default=45.0)
+    ap.add_argument(
+        "--budget",
+        type=float,
+        default=45.0,
+        help="hard wall-clock deadline in seconds for each library/size row",
+    )
     ap.add_argument("--out", default=None, help="write Markdown report here")
     ap.add_argument("--json", default=None, help="write JSON results here")
     ap.add_argument(

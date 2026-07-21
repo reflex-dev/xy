@@ -109,6 +109,13 @@ These commands match the non-blocking GitHub Actions measurement lane:
   --repeat 3 --fresh-venv --json install-fresh.json
 ```
 
+For `bench_vs.py`, `--budget` is a hard wall-clock deadline for each
+library/size row, including the untimed memory pass and any in-scope browser
+TTFR work. A timed-out row and every larger size for that library remain
+explicitly present as skipped rows. Browser artifact serialization is only
+performed through `--ttfr-max-n`; larger rows do not build HTML that will not
+be painted.
+
 The browser helpers force SwiftShader themselves. Validate every artifact before
 publication with `scripts/verify_benchmark_report.py --kind ...`.
 
