@@ -404,6 +404,8 @@ def test_client_hardens_responsive_visibility_recovery() -> None:
         "new IntersectionObserver",
         "this._io?.disconnect();",
         "const compact = this.size.w < 520;",
+        "_queueResize(cssW = null, cssH = null, measure = false)",
+        'this._colorbar.dataset.xyCompact = compactVertical ? "true" : "false";',
     )
 
     for path, text in CLIENT_FILES:
@@ -513,7 +515,7 @@ def test_client_coalesces_wheel_zoom_without_animation_lag() -> None:
         "_queueWheelZoom(factor, fx, fy)",
         "this._pendingWheelZoom.factor *= factor;",
         "this._wheelZoomRaf = requestAnimationFrame",
-        "this._zoomAt(pending.factor, pending.fx, pending.fy, false);",
+        "this._zoomAt(pending.factor, pending.fx, pending.fy, false, 120, {",
         "this._queueWheelZoom(f, fx, fy);",
     )
 
@@ -699,7 +701,7 @@ def test_client_renders_mark_level_styling() -> None:
         "xyMarkerSdf(d, u_symbol)",  # scatter symbol shapes (circle/square/diamond/triangle/cross)
         "_pointMarkStyle(",  # point stroke + symbol resolution
         "rgb = mix(rgb, sc.rgb, sc.a);",  # selected/unselected recolor (mark_style)
-        "v_dash = mix(a_len0, a_len1, c.x);",  # screen-space arc-length line dashes
+        "v_dash = mix(a_len0, mix(a_len0, a_len1, reveal), c.x);",  # fractional reveal preserves line dashes
         "_lineDash(g)",
         "_resolveMarkFill(",
         "_setRectStyleUniforms(",
@@ -774,7 +776,7 @@ def test_client_supports_edge_to_edge_sparklines() -> None:
     src = _CLIENT_SRC[1]
     # padding override feeds _layout's margins
     assert "Array.isArray(this.spec.padding) ? this.spec.padding : null" in src
-    assert "marginLeft = pad ? pad[3]" in src
+    assert "responsivePad ? Math.min(pad[3], 46) : pad[3]" in src
     # "none" returns an empty label set even when the axis has only one tick.
     assert 'if (strategyValue === "none" || strategyValue === "off") return [];' in src
     assert "if (s.x_axis.label && !hideX)" in src

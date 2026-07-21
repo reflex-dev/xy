@@ -1,49 +1,40 @@
-# xy Reflex Example
+# reflex-xy showcase
 
-A small Reflex dashboard that embeds standalone xy charts plus a live
-100M-point drilldown chart.
+A [Reflex](https://reflex.dev) app built on the
+[`reflex-xy`](../../python/reflex-xy) adapter. One page walks through the ways
+to link chart data into a Reflex app, and each section carries a **Code**
+accordion showing its source via `inspect.getsource`.
 
-The app uses xy' `Figure.to_html()` export as the bridge: generated HTML
-charts live under `assets/charts/`, and the Reflex UI displays them in iframes.
-This keeps the example pure Python while exercising the same WebGL2 renderer
-used by notebooks and standalone exports.
+Chart data rides the app's own websocket as a second socket.io namespace of
+binary columns; Reflex state holds only a token string per chart.
 
-The live drilldown chart adds one Reflex backend route at
-`/api/xy/drilldown`. Its iframe starts from a 100M-point density payload
-and requests exact visible points from Python after zooming into a small region.
+## What it shows
+
+1. **Live figure var + events** — a 1M-point drillable scatter from an
+   `@reflex_xy.figure` method, with `on_point_hover` / `on_point_click` /
+   `on_select_end` handlers.
+2. **A chart driven by state vars** — a histogram whose bin count is a slider
+   and whose data is cross-filtered by the selection above; changing either
+   recomputes and re-publishes the figure under a stable token.
+3. **A dynamically updating chart** — a line grown by a background task via
+   `reflex_xy.append`.
+4. **Data computed from `on_view_change`** — pan/zoom an overview and a detail
+   histogram recomputes from the points in the reported window.
+5. **Fixed data, two ways** — a `xy.Chart` passed straight to `reflex_xy.chart`
+   (static payload tier) and a `reflex_xy.inline` token (fixed data served
+   through the kernel).
 
 ## Run
 
 ```bash
 cd examples/reflex
-uv venv
-uv pip install -r requirements.txt
-python scripts/build_charts.py
-reflex run
+uv run reflex run
 ```
 
-Then open the URL printed by Reflex, usually `http://localhost:3000`.
+`uv run` resolves this directory's [`pyproject.toml`](pyproject.toml) (xy,
+reflex-xy) into a local environment. Open the URL Reflex prints (usually
+<http://localhost:3000>). Zoom into the cloud to drill density into exact
+points; box-select to cross-filter the histogram; press **go live** to stream.
 
-## Charts Included
-
-| Chart | File | What it shows |
-|---|---|---|
-| Live drilldown scatter | `assets/charts/live_drilldown_100m.html` | 100M-point adaptive LOD through the Reflex backend |
-| Business overview | `assets/charts/business_overview.html` | Small grouped revenue and pipeline columns for normal dashboard data |
-| Retention cohort | `assets/charts/retention_cohort.html` | Small product analytics heatmap for ordinary cohort retention |
-| Decimated line | `assets/charts/line_walk.html` | 120k-point time-series line |
-| Filled area | `assets/charts/area.html` | 80k-point filled time series with a baseline |
-| Colored scatter | `assets/charts/colored_scatter.html` | 10M points with color and size channels, aggregated for export |
-| Plotly Scattergl | `assets/charts/plotly_colored_scatter.html` | 100k sampled points from the colored scatter distribution |
-| Density scatter | `assets/charts/density_scatter.html` | 10M points rendered as a responsive density surface |
-| Histogram | `assets/charts/histogram.html` | 500k values binned into the shared rectangle renderer |
-| Grouped bars | `assets/charts/bar_column.html` | Category-axis grouped bars using the shared rectangle renderer |
-| Stacked bars | `assets/charts/stacked_bar.html` | Stacked column bars using the shared rectangle renderer |
-| Horizontal bars | `assets/charts/horizontal_bar.html` | Category-axis horizontal bars using the shared rectangle renderer |
-| Heatmap | `assets/charts/heatmap.html` | Matrix values rendered as colored cells on categorical axes |
-
-Regenerate the chart assets any time with:
-
-```bash
-PYTHONPATH=../python uv run python scripts/build_charts.py
-```
+The adapter is wired in one line — `plugins=[reflex_xy.XYPlugin()]` in
+[`rxconfig.py`](rxconfig.py).

@@ -62,6 +62,10 @@ def merge(paths: list[Path], expected_libraries: list[str]) -> dict[str, Any]:
         raise SystemExit("partial report library mismatch (" + "; ".join(details) + ")")
 
     ordered_results = {library: results[library] for library in expected_libraries}
+    environment_report = next(
+        (report for report in reports if "xy" in report.get("results", {})),
+        first,
+    )
     budget = float(first["budget_s"])
     ceilings = {
         library: max(
@@ -79,7 +83,10 @@ def merge(paths: list[Path], expected_libraries: list[str]) -> dict[str, Any]:
 
     return {
         "schema_version": first["schema_version"],
-        "environment": first["environment"],
+        # Competitor-only jobs deliberately avoid installing xy and Rust. Use
+        # the native partial as the canonical benchmark environment regardless
+        # of artifact download order.
+        "environment": environment_report["environment"],
         "libraries": expected_libraries,
         "sizes": first["sizes"],
         "budget_s": first["budget_s"],

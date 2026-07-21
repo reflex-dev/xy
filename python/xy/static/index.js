@@ -521,6 +521,7 @@ a_corner: 0,
 a_cval: 6, a_sval: 7, a_sel: 8, a_dval: 9,
 a_len0: 10, a_len1: 11,
 a_dash0: 10, a_dashDir: 11,
+a_prevx: 4, a_prevy: 5, a_prevx1: 7, a_prevy1: 8,
 a_rgba: 12, a_style: 13, a_stroke: 14, a_radius: 15,
 };
 function makeProgram(gl, vs, fs) {
@@ -576,18 +577,22 @@ float xyViewValue(float coord, int mode) {
 }
 `;
 const POINT_VS = `#version 300 es
-in float ax; in float ay; in float a_cval; in float a_sval; in float a_sel; in float a_dval;
+in float ax; in float ay; in float a_prevx; in float a_prevy;
+in float a_cval; in float a_sval; in float a_sel; in float a_dval;
 in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange;
 uniform int u_colorMode; uniform float u_dpr; uniform int u_selActive;
 uniform float u_selectedOpacity; uniform float u_unselectedOpacity;
+uniform float u_transitionProgress; uniform int u_transitionActive;
 out float v_lutCoord; out float v_dim; out float v_dval; out float v_ptSize; out float v_sel;
 out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke;
 ${AXIS_GLSL}
 void main() {
-  gl_Position = vec4(xyMap(ax, u_xmap, u_xmeta, u_xmode), xyMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
+  float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
+  gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode), xyMap(y, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = sz * u_dpr;
   v_ptSize = sz * u_dpr;
@@ -754,13 +759,16 @@ void main() {
   outColor = px * (shapeCov * v_dim);
 }`;
 const POINT_SIMPLE_VS = `#version 300 es
-in float ax; in float ay;
+in float ax; in float ay; in float a_prevx; in float a_prevy;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 uniform float u_size; uniform float u_dpr;
+uniform float u_transitionProgress; uniform int u_transitionActive;
 ${AXIS_GLSL}
 void main() {
-  gl_Position = vec4(xyMap(ax, u_xmap, u_xmeta, u_xmode), xyMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
+  float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
+  gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode), xyMap(y, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   gl_PointSize = u_size * u_dpr;
 }`;
 const POINT_SIMPLE_FS = `#version 300 es
@@ -775,14 +783,17 @@ void main() {
   outColor = vec4(u_color.rgb * u_color.a, u_color.a) * coverage;
 }`;
 const PICK_VS = `#version 300 es
-in float ax; in float ay; in float a_sval;
+in float ax; in float ay; in float a_prevx; in float a_prevy; in float a_sval;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange; uniform float u_dpr;
+uniform float u_transitionProgress; uniform int u_transitionActive;
 flat out int v_id;
 ${AXIS_GLSL}
 void main() {
-  gl_Position = vec4(xyMap(ax, u_xmap, u_xmeta, u_xmode), xyMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
+  float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
+  gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode), xyMap(y, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = max(sz, 6.0) * u_dpr; // enlarge hit target
   v_id = gl_VertexID;
@@ -863,16 +874,25 @@ void main() {
 }`;
 const LINE_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1;
+in float a_prevx; in float a_prevy; in float a_prevx1; in float a_prevy1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
 uniform int u_colorMode;
+uniform float u_transitionProgress; uniform int u_transitionActive;
+uniform float u_revealProgress; uniform float u_revealSegments;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 in float a_len0; in float a_len1;
 out float v_off; out float v_dash;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
-  vec2 p0 = vec2(xyMap(ax0, u_xmap, u_xmeta, u_xmode), xyMap(ay0, u_ymap, u_ymeta, u_ymode));
-  vec2 p1 = vec2(xyMap(ax1, u_xmap, u_xmeta, u_xmode), xyMap(ay1, u_ymap, u_ymeta, u_ymode));
+  float px0 = u_transitionActive == 1 ? mix(a_prevx, ax0, u_transitionProgress) : ax0;
+  float py0 = u_transitionActive == 1 ? mix(a_prevy, ay0, u_transitionProgress) : ay0;
+  float px1 = u_transitionActive == 1 ? mix(a_prevx1, ax1, u_transitionProgress) : ax1;
+  float py1 = u_transitionActive == 1 ? mix(a_prevy1, ay1, u_transitionProgress) : ay1;
+  vec2 p0 = vec2(xyMap(px0, u_xmap, u_xmeta, u_xmode), xyMap(py0, u_ymap, u_ymeta, u_ymode));
+  vec2 p1 = vec2(xyMap(px1, u_xmap, u_xmeta, u_xmode), xyMap(py1, u_ymap, u_ymeta, u_ymode));
+  float reveal = clamp(u_revealProgress * u_revealSegments - float(gl_InstanceID), 0.0, 1.0);
+  p1 = mix(p0, p1, reveal);
   vec2 pix0 = (p0 * 0.5 + 0.5) * u_res;
   vec2 pix1 = (p1 * 0.5 + 0.5) * u_res;
   vec2 dir = pix1 - pix0;
@@ -887,7 +907,7 @@ void main() {
   // Cumulative screen-space arc length at this fragment (device px), fed from
   // CPU-computed per-vertex lengths so dashes stay continuous across segments
   // and constant on screen through zoom.
-  v_dash = mix(a_len0, a_len1, c.x);
+  v_dash = mix(a_len0, mix(a_len0, a_len1, reveal), c.x);
 }`;
 const LINE_FS = `#version 300 es
 precision highp float; precision highp int;
@@ -922,6 +942,7 @@ const SEGMENT_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1; in float a_cval; in vec4 a_rgba; in vec4 a_style;
 in float a_dash0; in float a_dashDir;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
+uniform float u_animationProgress;
 uniform int u_colorMode;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
 uniform int u_x0mode; uniform int u_x1mode; uniform int u_y0mode; uniform int u_y1mode;
@@ -931,6 +952,9 @@ ${AXIS_GLSL}
 void main() {
   vec2 p0 = vec2(xyMap(ax0, u_xmap, u_x0meta, u_x0mode), xyMap(ay0, u_ymap, u_y0meta, u_y0mode));
   vec2 p1 = vec2(xyMap(ax1, u_xmap, u_x1meta, u_x1mode), xyMap(ay1, u_ymap, u_y1meta, u_y1mode));
+  vec2 center = (p0 + p1) * 0.5;
+  p0 = mix(center, p0, u_animationProgress);
+  p1 = mix(center, p1, u_animationProgress);
   vec2 pix0 = (p0 * 0.5 + 0.5) * u_res;
   vec2 pix1 = (p1 * 0.5 + 0.5) * u_res;
   vec2 dir = pix1 - pix0;
@@ -1052,6 +1076,7 @@ in float ax0; in float ax1; in float ay0; in float ay1; in float ab0; in float a
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_bmap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform vec2 u_bmeta;
 uniform int u_xmode; uniform int u_ymode;
+uniform float u_revealProgress; uniform float u_revealSegments;
 out float v_top; out float v_base; out float v_pos;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
@@ -1063,6 +1088,10 @@ void main() {
   float y1 = xyMap(ay1, u_ymap, u_ymeta, u_ymode);
   float b0 = xyMap(ab0, u_bmap, u_bmeta, u_ymode);
   float b1 = xyMap(ab1, u_bmap, u_bmeta, u_ymode);
+  float reveal = clamp(u_revealProgress * u_revealSegments - float(gl_InstanceID), 0.0, 1.0);
+  x1 = mix(x0, x1, reveal);
+  y1 = mix(y0, y1, reveal);
+  b1 = mix(b0, b1, reveal);
   float top = mix(y0, y1, c.x);
   float base = mix(b0, b1, c.x);
   float clipY = mix(base, top, c.y);
@@ -1128,12 +1157,15 @@ void main() {
 }`;
 const BAR_VS = `#version 300 es
 in float a_pos; in float a_v0; in float a_v1; in float a_cval;
+in float a_prevx; in float a_prevy; in float a_prevx1;
 in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke; in vec2 a_radius;
 uniform vec2 u_pmap; uniform vec2 u_v0map; uniform vec2 u_v1map;
 uniform vec2 u_pmeta; uniform vec2 u_v0meta; uniform vec2 u_v1meta;
 uniform int u_pmode; uniform int u_vmode;
 uniform float u_width; uniform int u_orientation; uniform int u_v0Mode; uniform float u_v0Const;
 uniform float u_v0EdgePad;
+uniform float u_animationProgress;
+uniform float u_transitionProgress; uniform int u_transitionActive; uniform float u_prevWidth;
 uniform vec2 u_res;
 uniform int u_colorMode;
 out float v_lutCoord;
@@ -1143,10 +1175,24 @@ const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1
 ${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
-  float p = xyMap(a_pos, u_pmap, u_pmeta, u_pmode);
-  float halfW = abs(u_width * u_pmap.x) * 0.5;
-  float v0 = (u_v0Mode == 0 ? u_v0Const : xyMap(a_v0, u_v0map, u_v0meta, u_vmode)) + u_v0EdgePad;
-  float v1 = xyMap(a_v1, u_v1map, u_v1meta, u_vmode);
+  float nextP = xyMap(a_pos, u_pmap, u_pmeta, u_pmode);
+  float nextV0 = u_v0Mode == 0 ? u_v0Const : xyMap(a_v0, u_v0map, u_v0meta, u_vmode);
+  float nextV1 = xyMap(a_v1, u_v1map, u_v1meta, u_vmode);
+  float p = nextP;
+  float v0 = nextV0;
+  float v1 = nextV1;
+  float width = u_width;
+  if (u_transitionActive == 1) {
+    p = mix(xyMap(a_prevx, u_pmap, u_pmeta, u_pmode), nextP, u_transitionProgress);
+    // Previous baselines are encoded in the next value column's coordinate
+    // system, which lets constant and per-row baselines share one attribute.
+    v0 = mix(xyMap(a_prevx1, u_v1map, u_v1meta, u_vmode), nextV0, u_transitionProgress);
+    v1 = mix(xyMap(a_prevy, u_v1map, u_v1meta, u_vmode), nextV1, u_transitionProgress);
+    width = mix(u_prevWidth, u_width, u_transitionProgress);
+  }
+  v0 += u_v0EdgePad;
+  v1 = mix(v0, v1, u_animationProgress);
+  float halfW = abs(width * u_pmap.x) * 0.5;
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   vec2 clipA, clipB;
   if (u_orientation == 0) {
@@ -1812,6 +1858,7 @@ return null;
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
+const COMPACT_COLORBAR_GAP = 8;
 let XY_A11Y_ID = 0;
 const XY_SR_ONLY_STYLE =
 "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;" +
@@ -1957,6 +2004,10 @@ this._densityStamp = 0;
 this._viewRequestBurstStart = null;
 this._viewAnim = null;
 this._animRaf = null;
+this._dataAnim = null;
+this._dataAnimRaf = null;
+this._transitionOldTraces = null;
+this._transitionView = null;
 this._wheelZoomRaf = null;
 this._pendingWheelZoom = null;
 this._lastLabelDraw = null;
@@ -1966,11 +2017,15 @@ this._glPrograms = [];
 this._progCache = new Map();
 this._bufSeq = 0;
 this._destroyed = false;
+this._resizeRaf = null;
+this._pendingResize = null;
+this._resizeNeedsMeasure = false;
 this._hoverId = -1;
 this._hoverTarget = null;
 this._viewEventRaf = null;
 this._linkedSource = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-this.dragMode = "pan";
+this.dragMode = "none";
+this._interactionSeq = 0;
 this.fluid = spec.width === "100%";
 this.fluidH = spec.height === "100%";
 const rect = this.fluid || this.fluidH ? el.getBoundingClientRect() : null;
@@ -2005,6 +2060,11 @@ this.root.textContent = "xy: WebGL2 unavailable in this browser.";
 throw err;
 }
 this.canvas.dataset.xyCtx = "live";
+this.view0 = this._clampView({
+ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]) => [id, [...axis.range]])),
+});
+this.view = this._copyView(this.view0);
+this.dragMode = this._resolveDefaultDragAction();
 this._initA11y();
 this.root.dataset.xyContextState = "ready";
 this._initContextLossRecovery();
@@ -2014,17 +2074,12 @@ this._buildModebar(this.root);
 if ((this.fluid || this.fluidH) && typeof ResizeObserver !== "undefined") {
 this._ro = new ResizeObserver((entries) => {
 const r = entries[entries.length - 1].contentRect;
-if (r.width || r.height) this._resize(r.width, r.height);
+if (r.width || r.height) this._queueResize(r.width, r.height);
 });
 this._ro.observe(this.root);
 }
 this._armVisibilityResizeWatch();
 this._armDprWatch();
-this.view0 = this._clampView({
-x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
-y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
-});
-this.view = { ...this.view0 };
 this._initLinkedCharts();
 this._themeWatch = window.matchMedia("(prefers-color-scheme: dark)");
 this._onScheme = () => this.refreshTheme();
@@ -2039,18 +2094,26 @@ attributeFilter: ["class", "style"],
 }
 }
 this._unsubscribeComm = comm ? comm.onMessage((msg, buffers) => this._onKernelMsg(msg, buffers)) : null;
-this.draw();
+if (this._startEntranceAnimation) this._startEntranceAnimation();
+else this.draw();
 }
 _layout() {
 const compact = this.size.w < 520;
 const pad = Array.isArray(this.spec.padding) ? this.spec.padding : null;
-const marginLeft = pad ? pad[3] : compact ? 46 : MARGIN.l;
 const colorbar = this.spec.colorbar;
 const verticalColorbar = colorbar && colorbar.orientation !== "horizontal";
 const horizontalColorbar = colorbar && colorbar.orientation === "horizontal";
-const colorbarRightRoom = verticalColorbar ? 86 + (colorbar.label ? 18 : 0) : 0;
+const responsivePad = this.fluid && compact && pad;
+const marginLeft = pad ? (responsivePad ? Math.min(pad[3], 46) : pad[3]) : compact ? 46 : MARGIN.l;
+this._compactVerticalColorbar = Boolean(this.fluid && compact && verticalColorbar);
+const colorbarRightRoom = verticalColorbar
+? (this._compactVerticalColorbar
+? COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + 8
+: 86 + (colorbar.label ? 18 : 0))
+: 0;
 const colorbarBottomRoom = horizontalColorbar ? 38 + (colorbar.label ? 16 : 0) : 0;
-const marginRight = (pad ? pad[1] : compact ? 8 : MARGIN.r) + colorbarRightRoom;
+const baseRight = pad ? (responsivePad ? Math.min(pad[1], 8) : pad[1]) : compact ? 8 : MARGIN.r;
+const marginRight = baseRight + colorbarRightRoom;
 const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
 const marginBottom = (pad ? pad[2] : compact ? 36 : MARGIN.b) + colorbarBottomRoom;
 const hasBottomAxis = Object.values(this.axes || {}).some((axis) =>
@@ -2094,6 +2157,81 @@ return String(axisId || "x").startsWith("y") ? "y" : "x";
 _axisMode(axisId) {
 return this._axis(axisId).scale === "log" ? 1 : 0;
 }
+_axisIds() {
+return Object.keys(this.axes || {});
+}
+_copyView(view) {
+const ranges = {};
+for (const axisId of this._axisIds()) {
+const range = view?.ranges?.[axisId] || this._axis(axisId).range || [0, 1];
+ranges[axisId] = [Number(range[0]), Number(range[1])];
+}
+const x = ranges.x || [0, 1];
+const y = ranges.y || [0, 1];
+return { ranges, x0: x[0], x1: x[1], y0: y[0], y1: y[1] };
+}
+_viewFrom(next, base = this.view) {
+const ranges = {};
+for (const axisId of this._axisIds()) {
+const source = next?.ranges?.[axisId]
+|| (axisId === "x" && next?.x0 !== undefined ? [next.x0, next.x1] : null)
+|| (axisId === "y" && next?.y0 !== undefined ? [next.y0, next.y1] : null)
+|| base?.ranges?.[axisId]
+|| this._axis(axisId).range
+|| [0, 1];
+ranges[axisId] = [Number(source[0]), Number(source[1])];
+}
+return this._copyView({ ranges });
+}
+_axisPolicy(name) {
+const configured = this.interaction?.[name];
+if (!Array.isArray(configured) || !configured.length) return this._axisIds();
+const declared = new Set(this._axisIds());
+return [...new Set(configured.filter((axisId) => declared.has(axisId)))];
+}
+_resetAxisPolicy() {
+if (Array.isArray(this.interaction?.reset_axes)) return this._axisPolicy("reset_axes");
+const axes = [];
+if (this._interactionFlag("pan", true)) axes.push(...this._axisPolicy("pan_axes"));
+if (this._interactionFlag("zoom", true)) axes.push(...this._axisPolicy("zoom_axes"));
+return [...new Set(axes)];
+}
+_axisContained(axisId) {
+if (!this._interactionFlag("navigation", true)) return false;
+if (!this._interactionFlag("zoom", true)) return false;
+if (!this._axisPolicy("zoom_axes").includes(axisId)) return false;
+if (!this._interactionFlag("pan", true)) return true;
+return !this._axisPolicy("pan_axes").includes(axisId);
+}
+_resolveDefaultDragAction() {
+const requested = typeof this.interaction?.default_drag_action === "string"
+? this.interaction.default_drag_action : "auto";
+const canNavigate = this._interactionFlag("navigation", true);
+const canPan = canNavigate && this._interactionFlag("pan", true);
+const canZoom = canNavigate && this._interactionFlag("zoom", true)
+&& this._interactionFlag("box_zoom", true);
+const canSelect = this._pickable && this._interactionFlag("select", true)
+&& this._interactionFlag("brush", true);
+if (requested === "auto") {
+if (canPan) return "pan";
+if (canZoom) return "zoom";
+if (canSelect) return "select";
+return "none";
+}
+if (requested === "pan") return canPan ? "pan" : this._resolveDefaultDragActionFallback();
+if (requested === "zoom") return canZoom ? "zoom" : this._resolveDefaultDragActionFallback();
+if (requested.startsWith("select")) {
+return canSelect ? requested : this._resolveDefaultDragActionFallback();
+}
+return requested === "none" ? "none" : this._resolveDefaultDragActionFallback();
+}
+_resolveDefaultDragActionFallback() {
+const saved = this.interaction.default_drag_action;
+this.interaction.default_drag_action = "auto";
+const resolved = this._resolveDefaultDragAction();
+this.interaction.default_drag_action = saved;
+return resolved;
+}
 _axisCoord(axis, value) {
 const v = Number(value);
 if (!Number.isFinite(v)) return NaN;
@@ -2105,8 +2243,10 @@ if (axis && axis.scale === "log") return Math.pow(10, coord);
 return coord;
 }
 _axisRange(axisId, view = this.view) {
-if (axisId === "x") return [view.x0, view.x1];
-if (axisId === "y") return [view.y0, view.y1];
+const mapped = view?.ranges?.[axisId];
+if (Array.isArray(mapped)) return [mapped[0], mapped[1]];
+if (axisId === "x" && view) return [view.x0, view.x1];
+if (axisId === "y" && view) return [view.y0, view.y1];
 const axis = this._axis(axisId);
 const r = axis.range || [0, 1];
 return [Number(r[0]), Number(r[1])];
@@ -2161,6 +2301,9 @@ return value === undefined ? fallback : value === true;
 }
 _eventView(source = "view") {
 return {
+ranges: Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+),
 x0: this.view.x0,
 x1: this.view.x1,
 y0: this.view.y0,
@@ -2177,20 +2320,28 @@ composed: true,
 }));
 }
 _emitViewChange(source = "view", opts = {}) {
-const shouldDispatch = this._interactionFlag("view_change") || this._linkChannel;
-if (!shouldDispatch || this._destroyed) return;
+if (this._destroyed) return;
 const broadcast = opts.broadcast !== false;
-this._pendingViewEvent = { source, broadcast };
+this._pendingViewEvent = {
+source,
+broadcast,
+axes: Array.isArray(opts.axes) ? [...opts.axes] : [],
+phase: opts.phase || "end",
+interaction_id: opts.interactionId ?? ++this._interactionSeq,
+};
 if (this._viewEventRaf) return;
 this._viewEventRaf = requestAnimationFrame(() => {
 this._viewEventRaf = null;
 const pending = this._pendingViewEvent || { source, broadcast };
 this._pendingViewEvent = null;
-const detail = this._eventView(pending.source);
-if (this._interactionFlag("view_change")) {
+const detail = {
+...this._eventView(pending.source),
+axes: pending.axes,
+phase: pending.phase,
+interaction_id: pending.interaction_id,
+};
 this._dispatchChartEvent("view_change", detail);
-}
-if (this.comm && this._interactionFlag("view_change")) {
+if (this.comm && (!this.comm.wantsViewChange || this.comm.wantsViewChange())) {
 this.comm.send({ type: "view_change", ...detail });
 }
 if (pending.broadcast) this._broadcastLinkedView(detail);
@@ -2199,9 +2350,7 @@ if (pending.broadcast) this._broadcastLinkedView(detail);
 _initLinkedCharts() {
 const group = this.interaction && this.interaction.link_group;
 if (!group || typeof BroadcastChannel !== "function") return;
-this._linkAxes = Array.isArray(this.interaction.link_axes)
-? this.interaction.link_axes.filter((axis) => axis === "x" || axis === "y")
-: ["x", "y"];
+this._linkAxes = this._axisPolicy("link_axes");
 this._linkChannel = new BroadcastChannel(`xy:${group}`);
 this._linkChannel.onmessage = (event) => {
 const msg = event.data || {};
@@ -2219,27 +2368,51 @@ this._selectLocal(x0, x1, y0, y1, { dispatch: false });
 return;
 }
 if (!msg.view || msg.source === this._linkedSource) return;
-const next = { ...this.view };
-if (this._linkAxes.includes("x")) {
-next.x0 = Number(msg.view.x0);
-next.x1 = Number(msg.view.x1);
+const incoming = msg.view.ranges || {};
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+);
+for (const axisId of this._linkAxes) {
+const range = incoming[axisId]
+|| (axisId === "x" ? [msg.view.x0, msg.view.x1] : null)
+|| (axisId === "y" ? [msg.view.y0, msg.view.y1] : null);
+if (Array.isArray(range) && range.length === 2 && range.every(Number.isFinite)) {
+ranges[axisId] = [Number(range[0]), Number(range[1])];
 }
-if (this._linkAxes.includes("y")) {
-next.y0 = Number(msg.view.y0);
-next.y1 = Number(msg.view.y1);
 }
-if (![next.x0, next.x1, next.y0, next.y1].every(Number.isFinite)) return;
-if (!this._interactionFlag("pan", true) && !this._interactionFlag("zoom", true)) return;
-this._setView(next, { animate: false, source: "linked", broadcast: false });
+this._setView({ ranges }, {
+animate: false,
+source: "linked",
+phase: "end",
+broadcast: false,
+});
 };
 }
 _broadcastLinkedView(detail) {
 if (!this._linkChannel) return;
-this._linkChannel.postMessage({ source: this._linkedSource, view: detail });
+const axes = (detail.axes || []).filter((axisId) => this._linkAxes.includes(axisId));
+if (!axes.length) return;
+const ranges = Object.fromEntries(axes.map((axisId) => [axisId, detail.ranges[axisId]]));
+this._linkChannel.postMessage({
+source: this._linkedSource,
+view: { ...detail, axes, ranges },
+});
 }
 _broadcastLinkedSelection(selection) {
 if (!this._linkChannel || !this._interactionFlag("link_select")) return;
 this._linkChannel.postMessage({ source: this._linkedSource, selection });
+}
+setView(ranges, opts = {}) {
+return this._setView({ ranges }, {
+animate: opts.animate === true,
+source: "programmatic",
+phase: "end",
+interactionId: ++this._interactionSeq,
+broadcast: opts.broadcast === true,
+});
+}
+resetView(opts = {}) {
+return this._resetView(opts.animate !== false, "reset");
 }
 _applyClass(el, className) {
 if (typeof className !== "string") return;
@@ -2292,14 +2465,32 @@ return null;
 }
 _syncContainerSize() {
 if (this._destroyed || !(this.fluid || this.fluidH) || !this.root) return;
+this._queueResize(null, null, true);
+}
+_queueResize(cssW = null, cssH = null, measure = false) {
+if (this._destroyed) return;
+if (cssW || cssH) this._pendingResize = { cssW, cssH };
+if (measure) this._resizeNeedsMeasure = true;
+if (this._resizeRaf) return;
+this._resizeRaf = requestAnimationFrame(() => {
+this._resizeRaf = null;
+let pending = this._pendingResize;
+this._pendingResize = null;
+if (this._resizeNeedsMeasure && this.root) {
 const rect = this.root.getBoundingClientRect();
-if (rect.width || rect.height) this._resize(rect.width, rect.height);
+if (rect.width || rect.height) pending = { cssW: rect.width, cssH: rect.height };
+}
+this._resizeNeedsMeasure = false;
+if (pending && (pending.cssW || pending.cssH)) {
+this._resize(pending.cssW, pending.cssH);
+}
+});
 }
 _armVisibilityResizeWatch() {
 if (!(this.fluid || this.fluidH)) return;
 const syncSoon = () => {
 if (this._destroyed) return;
-requestAnimationFrame(() => this._syncContainerSize());
+this._syncContainerSize();
 };
 this._listen(window, "resize", syncSoon);
 this._listen(window, "pageshow", syncSoon);
@@ -2357,6 +2548,18 @@ this._raf = null;
 if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
 this._wheelZoomRaf = null;
 this._pendingWheelZoom = null;
+clearTimeout(this._wheelZoomEndTimer);
+this._wheelZoomEndTimer = null;
+this._wheelGesture = null;
+if (this._dataAnimRaf) cancelAnimationFrame(this._dataAnimRaf);
+this._dataAnimRaf = null;
+if (this._dataAnim) {
+this._emitAnimationLifecycle?.("end", this._dataAnim.phase, { cancelled: true });
+}
+this._dataAnim = null;
+this._transitionOldTraces = null;
+this._transitionView = null;
+if (this.view0) this.view = { ...this.view0 };
 this._cancelViewAnimation();
 clearTimeout(this._viewTimer);
 this._viewTimer = null;
@@ -2649,7 +2852,9 @@ this._positionReductionBadges();
 this._positionColorbar();
 this._fitModebar();
 this._pickDirty = true;
-this.draw();
+if (this._raf) cancelAnimationFrame(this._raf);
+this._raf = null;
+this._drawNow();
 this._scheduleViewRequest();
 }
 _buildDom(el) {
@@ -3023,14 +3228,24 @@ this._positionColorbar();
 _positionColorbar() {
 if (!this._colorbar) return;
 const horizontal = this._colorbarHorizontal;
+const compactVertical = !horizontal && this._compactVerticalColorbar;
+const gap = compactVertical ? COMPACT_COLORBAR_GAP : COLORBAR_GAP;
 this._colorbar.style.left = (horizontal
 ? this.plot.x
-: this.plot.x + this.plot.w + this._rightAxisRoom + COLORBAR_GAP) + "px";
+: this.plot.x + this.plot.w + this._rightAxisRoom + gap) + "px";
 this._colorbar.style.top = (horizontal
 ? this.plot.y + this.plot.h + (this._bottomAxisRoom || 8)
 : this.plot.y) + "px";
-this._colorbar.style.width = (horizontal ? this.plot.w : 66) + "px";
+this._colorbar.style.width = (horizontal
+? this.plot.w
+: compactVertical ? COLORBAR_THICKNESS : 66) + "px";
 this._colorbar.style.height = (horizontal ? 50 : Math.max(24, this.plot.h)) + "px";
+this._colorbar.dataset.xyCompact = compactVertical ? "true" : "false";
+for (const node of this._colorbar.querySelectorAll(
+'[data-xy-slot="colorbar_tick"], [data-xy-slot="colorbar_title"]'
+)) {
+node.hidden = compactVertical;
+}
 }
 _initGl(buffer) {
 const dpr = window.devicePixelRatio || 1;
@@ -3156,6 +3371,19 @@ lodRememberDensity(this, g, g.density);
 return g;
 }
 markOf(t.kind).build(this, g, t, buffer);
+if (t.keys && Number.isInteger(t.keys.lo) && Number.isInteger(t.keys.hi)) {
+const lo = this._columnView(buffer, this.spec.columns[t.keys.lo]);
+const hi = this._columnView(buffer, this.spec.columns[t.keys.hi]);
+const count = Math.min(g.n || 0, lo.length, hi.length);
+g._transitionKeys = new Array(count);
+g._transitionKeyIndex = new Map();
+for (let i = 0; i < count; i++) {
+const key = `${hi[i]}:${lo[i]}`;
+if (g._transitionKeyIndex.has(key)) throw new Error("xy: duplicate binary animation key");
+g._transitionKeys[i] = key;
+g._transitionKeyIndex.set(key, i);
+}
+}
 return g;
 }
 _buildXY(g, t, buffer) {
@@ -3701,6 +3929,16 @@ g.n = Math.min(g.n, v0.length);
 g._cpuValue0 = v0;
 g.value0Buf = this._upload(v0);
 }
+g._cpuBar = {
+pos,
+value1: v1,
+value0: g._cpuValue0 || null,
+posMeta: g.posMeta,
+value1Meta: g.value1Meta,
+value0Meta: g.value0Meta || null,
+value0Const: g.value0Const,
+width: g.width,
+};
 g._cpu = g.orientation === 1
 ? { x: v1, y: pos, xMeta: g.value1Meta, yMeta: g.posMeta, value0: g._cpuValue0 }
 : { x: pos, y: v1, xMeta: g.posMeta, yMeta: g.value1Meta, value0: g._cpuValue0 };
@@ -3805,6 +4043,7 @@ const end = relativeOffset + length * bytesPerElement;
 if (end > span.byteLength) throw new RangeError("column extends past chart payload");
 if (absoluteOffset % bytesPerElement !== 0) throw new RangeError("column is misaligned");
 if (meta.dtype === "u8") return new Uint8Array(span.buffer, absoluteOffset, length);
+if (meta.dtype === "u32") return new Uint32Array(span.buffer, absoluteOffset, length);
 return new Float32Array(span.buffer, absoluteOffset, length);
 }
 _upload(view) {
@@ -3927,14 +4166,18 @@ gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 gl.viewport(0, 0, this.canvas.width, this.canvas.height);
 gl.clearColor(0, 0, 0, 0);
 gl.clear(gl.COLOR_BUFFER_BIT);
-for (const g of this.gpuTraces) {
+const drawTrace = (g) => {
 if (g.tier === "density") {
 const [gx0, gx1] = this._axisRange(g.xAxis);
 const [gy0, gy1] = this._axisRange(g.yAxis);
 lodDrawDensityTier(this, g, gx0, gx1, gy0, gy1);
-continue;
+return;
 }
 markOf(g.trace.kind).draw(this, g, x0, x1, y0, y1);
+};
+for (const g of this._transitionOldTraces || []) drawTrace(g);
+for (const g of this.gpuTraces) {
+drawTrace(g);
 }
 this._drawHoverState();
 if (!this._rafKeepPick) this._pickDirty = true;
@@ -3952,6 +4195,8 @@ return g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
 Math.max(g.lodBlendShown ?? 0, g.lodBlend ?? 0) <= 0.001;
 }
 _drawPoints(g, xm, ym, opacityScale = 1) {
+opacityScale *= g._transitionOpacity ?? 1;
+const animationScale = g._transitionScale ?? 1;
 if (this._canDrawSimplePoints(g)) {
 this._drawSimplePoints(g, xm, ym, opacityScale);
 return;
@@ -3965,9 +4210,12 @@ gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
 this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
 this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
 gl.uniform1f(u("u_dpr"), this.dpr);
-gl.uniform1f(u("u_size"), g.size);
+const transitionOn = !!(g._transitionPrevXBuf && g._transitionPrevYBuf);
+gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
+gl.uniform1f(u("u_transitionProgress"), g._transitionPositionProgress ?? 1);
+gl.uniform1f(u("u_size"), g.size * animationScale);
 gl.uniform1i(u("u_sizeMode"), g.sizeMode);
-gl.uniform2f(u("u_sizeRange"), g.sizeRange[0], g.sizeRange[1]);
+gl.uniform2f(u("u_sizeRange"), g.sizeRange[0] * animationScale, g.sizeRange[1] * animationScale);
 gl.uniform1i(u("u_colorMode"), g.colorMode);
 const markOpacity = this._fillOpacity(g.trace.style, 0.8) * opacityScale;
 gl.uniform1f(u("u_opacity"), markOpacity);
@@ -4030,6 +4278,8 @@ colorOn ? g.cBuf._fcId : 0,
 sizeOn ? g.sBuf._fcId : 0,
 selOn ? g.selBuf._fcId : 0,
 blendOn ? g.dBuf._fcId : 0,
+transitionOn ? g._transitionPrevXBuf._fcId : 0,
+transitionOn ? g._transitionPrevYBuf._fcId : 0,
 rgbaOn ? g.rgbaBuf._fcId : 0,
 styleOn ? g.styleBuf._fcId : 0,
 strokeOn ? g.strokeBuf._fcId : 0,
@@ -4041,6 +4291,10 @@ if (colorOn) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 0);
 if (sizeOn) this._vaoAttr(ATTR_SLOTS.a_sval, g.sBuf, 0, 0);
 if (selOn) this._vaoAttr(ATTR_SLOTS.a_sel, g.selBuf, 0, 0);
 if (blendOn) this._vaoAttr(ATTR_SLOTS.a_dval, g.dBuf, 0, 0);
+if (transitionOn) {
+this._vaoAttr(ATTR_SLOTS.a_prevx, g._transitionPrevXBuf, 0, 0);
+this._vaoAttr(ATTR_SLOTS.a_prevy, g._transitionPrevYBuf, 0, 0);
+}
 if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 0, 4, true);
 if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 0, 4);
 if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 0, 4, true);
@@ -4065,7 +4319,10 @@ gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
 this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
 this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
 gl.uniform1f(u("u_dpr"), this.dpr);
-gl.uniform1f(u("u_size"), g.size);
+const transitionOn = !!(g._transitionPrevXBuf && g._transitionPrevYBuf);
+gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
+gl.uniform1f(u("u_transitionProgress"), g._transitionPositionProgress ?? 1);
+gl.uniform1f(u("u_size"), g.size * (g._transitionScale ?? 1));
 const [r, gg, b, a] = g.color;
 gl.uniform4f(
 u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.8) * opacityScale
@@ -4073,10 +4330,16 @@ u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.8) * opacityScale
 this._bindVao(
 g,
 "points-simple",
-[g.xBuf._fcId, g.yBuf._fcId],
+[g.xBuf._fcId, g.yBuf._fcId,
+transitionOn ? g._transitionPrevXBuf._fcId : 0,
+transitionOn ? g._transitionPrevYBuf._fcId : 0],
 () => {
 this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 0);
 this._vaoAttr(ATTR_SLOTS.ay, g.yBuf, 0, 0);
+if (transitionOn) {
+this._vaoAttr(ATTR_SLOTS.a_prevx, g._transitionPrevXBuf, 0, 0);
+this._vaoAttr(ATTR_SLOTS.a_prevy, g._transitionPrevYBuf, 0, 0);
+}
 }
 );
 gl.drawArrays(gl.POINTS, 0, g.n);
@@ -4135,6 +4398,7 @@ gl.vertexAttrib1f(ATTR_SLOTS.a_dval, 0);
 gl.drawArrays(gl.POINTS, index, 1);
 }
 _drawDensity(g, density, opacityScale = 1) {
+opacityScale *= g._transitionOpacity ?? 1;
 const gl = this.gl;
 const prog = this.densityProg;
 gl.useProgram(prog);
@@ -4180,7 +4444,7 @@ u("u_gridRange"),
 h.xRange[xrev ? 1 : 0], h.xRange[xrev ? 0 : 1],
 h.yRange[yrev ? 1 : 0], h.yRange[yrev ? 0 : 1],
 );
-gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
+gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
 gl.uniform1i(u("u_truecolor"), h.truecolor ? 1 : 0);
 gl.activeTexture(gl.TEXTURE0);
 gl.bindTexture(gl.TEXTURE_2D, h.tex);
@@ -4203,15 +4467,23 @@ gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
 this._setAxisUniforms(this.lineProg, "u_x", g.xMeta, g.xAxis);
 this._setAxisUniforms(this.lineProg, "u_y", g.yMeta, g.yAxis);
 gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
+const transitionOn = !!(g._transitionPrevXBuf && g._transitionPrevYBuf);
+gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
+gl.uniform1f(u("u_transitionProgress"), g._transitionPositionProgress ?? 1);
+const reveal = Math.max(0, Math.min(1, g._transitionReveal ?? 1));
+gl.uniform1f(u("u_revealProgress"), reveal);
+gl.uniform1f(u("u_revealSegments"), g.n - 1);
 gl.uniform1f(u("u_width"), (width ?? g.trace.style.width ?? 1.5) * this.dpr);
 const [r, gg, b, a] = color || g.color;
-const strokeOpacity = this._strokeOpacity(g.trace.style) * (opacity ?? 1);
+const strokeOpacity = this._strokeOpacity(g.trace.style) * (opacity ?? 1) * (g._transitionOpacity ?? 1);
 gl.uniform4f(u("u_color"), r, gg, b, a * strokeOpacity);
 const dashed = this._lineDash(g);
 this._bindVao(
 g,
 "line",
-dashed ? [g.xBuf._fcId, g.yBuf._fcId, g._lenBuf._fcId] : [g.xBuf._fcId, g.yBuf._fcId],
+[g.xBuf._fcId, g.yBuf._fcId, dashed ? g._lenBuf._fcId : 0,
+transitionOn ? g._transitionPrevXBuf._fcId : 0,
+transitionOn ? g._transitionPrevYBuf._fcId : 0],
 () => {
 this._vaoAttr(ATTR_SLOTS.ax0, g.xBuf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.ax1, g.xBuf, 4, 1);
@@ -4221,9 +4493,16 @@ if (dashed) {
 this._vaoAttr(ATTR_SLOTS.a_len0, g._lenBuf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.a_len1, g._lenBuf, 4, 1);
 }
+if (transitionOn) {
+this._vaoAttr(ATTR_SLOTS.a_prevx, g._transitionPrevXBuf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.a_prevy, g._transitionPrevYBuf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.a_prevx1, g._transitionPrevXBuf, 4, 1);
+this._vaoAttr(ATTR_SLOTS.a_prevy1, g._transitionPrevYBuf, 4, 1);
+}
 }
 );
-gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n - 1);
+const segments = Math.max(0, Math.min(g.n - 1, Math.ceil((g.n - 1) * reveal)));
+gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, segments);
 }
 _drawSegments(g, xm, ym) {
 if (g.n < 1) return;
@@ -4239,9 +4518,10 @@ this._setAxisUniforms(prog, "u_y0", g.y0Meta, g.yAxis);
 this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis);
 gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
 gl.uniform1f(u("u_width"), (g.trace.style.width ?? 1.5) * this.dpr);
+gl.uniform1f(u("u_animationProgress"), g._transitionScale ?? 1);
 const [r, gg, b, a] = g.color;
 gl.uniform4f(u("u_color"), r, gg, b, a);
-gl.uniform1f(u("u_opacity"), this._strokeOpacity(g.trace.style));
+gl.uniform1f(u("u_opacity"), this._strokeOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
 gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
 const dashed = this._segmentDash(g, prog);
 if (g.colorMode && g.lut) {
@@ -4275,7 +4555,8 @@ this._vaoAttr(ATTR_SLOTS.a_dashDir, g._segmentDashDirBuf, 0, 1);
 if (!g.cBuf) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
 if (!g.rgbaBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
 if (!g.styleBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
-gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+const count = Math.max(0, Math.min(g.n, Math.ceil(g.n * (g._transitionReveal ?? 1))));
+gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
 }
 _segmentDash(g, prog) {
 const gl = this.gl;
@@ -4445,8 +4726,11 @@ gl.uniform2f(u("u_bmap"), bm[0], bm[1]);
 this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
 this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
 this._setAxisUniforms(prog, "u_b", g.baseMeta, g.yAxis);
+const reveal = Math.max(0, Math.min(1, g._transitionReveal ?? 1));
+gl.uniform1f(u("u_revealProgress"), reveal);
+gl.uniform1f(u("u_revealSegments"), g.n - 1);
 const [r, gg, b, a] = g.color;
-gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.35));
+gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.35) * (g._transitionOpacity ?? 1));
 gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
 this._setGradientUniforms(prog, g.grad);
 this._bindVao(g, "area", [g.xBuf._fcId, g.yBuf._fcId, g.baseBuf._fcId], () => {
@@ -4457,7 +4741,8 @@ this._vaoAttr(ATTR_SLOTS.ay1, g.yBuf, 4, 1);
 this._vaoAttr(ATTR_SLOTS.ab0, g.baseBuf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.ab1, g.baseBuf, 4, 1);
 });
-gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n - 1);
+const count = Math.max(0, Math.min(g.n - 1, Math.ceil((g.n - 1) * reveal)));
+gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
 }
 _drawRects(g, x0, x1, y0, y1, edgePad = [0, 0, 0, 0]) {
 if (!g.n) return;
@@ -4478,7 +4763,7 @@ gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
 gl.uniform4f(u("u_edgePad"), edgePad[0], edgePad[1], edgePad[2], edgePad[3]);
 const [r, gg, b, a] = g.color;
 gl.uniform4f(u("u_color"), r, gg, b, a);
-gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
+gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
 gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
 this._setRectStyleUniforms(prog, g);
 const colorOn = !!g.cBuf;
@@ -4538,9 +4823,18 @@ gl.uniform1i(u("u_orientation"), g.orientation);
 gl.uniform1i(u("u_v0Mode"), g.value0Mode);
 gl.uniform1f(u("u_v0Const"), v0Const ?? 0);
 gl.uniform1f(u("u_v0EdgePad"), v0EdgePad);
+gl.uniform1f(u("u_animationProgress"), g._transitionGrow ?? 1);
+const transitionOn = !!(
+g._transitionPrevPosBuf &&
+g._transitionPrevValue1Buf &&
+g._transitionPrevValue0Buf
+);
+gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
+gl.uniform1f(u("u_transitionProgress"), g._transitionPositionProgress ?? 1);
+gl.uniform1f(u("u_prevWidth"), g._transitionPrevWidth ?? g.width);
 const [r, gg, b, a] = g.color;
 gl.uniform4f(u("u_color"), r, gg, b, a);
-gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
+gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
 gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
 this._setRectStyleUniforms(prog, g);
 const v0On = g.value0Mode === 1 && g.value0Buf;
@@ -4561,6 +4855,9 @@ g,
 g.posBuf._fcId, g.value1Buf._fcId,
 v0On ? g.value0Buf._fcId : 0,
 colorOn ? g.cBuf._fcId : 0,
+transitionOn ? g._transitionPrevPosBuf._fcId : 0,
+transitionOn ? g._transitionPrevValue1Buf._fcId : 0,
+transitionOn ? g._transitionPrevValue0Buf._fcId : 0,
 rgbaOn ? g.rgbaBuf._fcId : 0,
 styleOn ? g.styleBuf._fcId : 0,
 strokeOn ? g.strokeBuf._fcId : 0,
@@ -4571,6 +4868,11 @@ this._vaoAttr(ATTR_SLOTS.a_pos, g.posBuf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.a_v1, g.value1Buf, 0, 1);
 if (v0On) this._vaoAttr(ATTR_SLOTS.a_v0, g.value0Buf, 0, 1);
 if (colorOn) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+if (transitionOn) {
+this._vaoAttr(ATTR_SLOTS.a_prevx, g._transitionPrevPosBuf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.a_prevy, g._transitionPrevValue1Buf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.a_prevx1, g._transitionPrevValue0Buf, 0, 1);
+}
 if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
 if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
 if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
@@ -5101,7 +5403,7 @@ label(s.y_axis.label, placement.css, yAxis, "label", placement.style);
 }
 this._drawAnnotationLabels(updateLabels);
 }
-_transitionActive() {
+_interactionTransitionActive() {
 const activeStart = (v) => v !== undefined && v !== null;
 return !!this._viewAnim || this.gpuTraces.some((g) =>
 activeStart(g._densityFadeStart) ||
@@ -5146,6 +5448,9 @@ this._setAxisUniforms(prog, "u_y", pg.yMeta, pg.yAxis || g.yAxis);
 gl.uniform1f(u("u_size"), pg.size);
 gl.uniform1i(u("u_sizeMode"), pg.sizeMode);
 gl.uniform2f(u("u_sizeRange"), pg.sizeRange[0], pg.sizeRange[1]);
+const transitionOn = !!(pg._transitionPrevXBuf && pg._transitionPrevYBuf);
+gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
+gl.uniform1f(u("u_transitionProgress"), pg._transitionPositionProgress ?? 1);
 gl.uniform1i(u("u_pick_base"), base);
 g.pickBase = base;
 g.pickCount = pg.n;
@@ -5153,11 +5458,17 @@ const sizeOn = pg.sizeMode === 1 && pg.sBuf;
 this._bindVao(
 pg,
 "pick",
-[pg.xBuf._fcId, pg.yBuf._fcId, sizeOn ? pg.sBuf._fcId : 0],
+[pg.xBuf._fcId, pg.yBuf._fcId, sizeOn ? pg.sBuf._fcId : 0,
+transitionOn ? pg._transitionPrevXBuf._fcId : 0,
+transitionOn ? pg._transitionPrevYBuf._fcId : 0],
 () => {
 this._vaoAttr(ATTR_SLOTS.ax, pg.xBuf, 0, 0);
 this._vaoAttr(ATTR_SLOTS.ay, pg.yBuf, 0, 0);
 if (sizeOn) this._vaoAttr(ATTR_SLOTS.a_sval, pg.sBuf, 0, 0);
+if (transitionOn) {
+this._vaoAttr(ATTR_SLOTS.a_prevx, pg._transitionPrevXBuf, 0, 0);
+this._vaoAttr(ATTR_SLOTS.a_prevy, pg._transitionPrevYBuf, 0, 0);
+}
 }
 );
 if (!sizeOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
@@ -5228,7 +5539,12 @@ let best = -1;
 let bestDist = Infinity;
 const limit = Math.min(cpu.x.length, g.n || cpu.x.length);
 for (let i = 0; i < limit; i++) {
-const x = this._decodeValue(cpu.x, xMeta, i);
+const starts = g._transitionPrevXValues;
+const progress = g._transitionPositionProgress;
+const xEncoded = starts && Number.isFinite(progress)
+? starts[i] + (cpu.x[i] - starts[i]) * progress
+: cpu.x[i];
+const x = xEncoded / (xMeta.scale || 1) + xMeta.offset;
 const d = Math.abs(this._axisCoord(axis, x) - target);
 if (d < bestDist) {
 bestDist = d;
@@ -5262,8 +5578,15 @@ continue;
 if (!g._cpu || !g._cpu.x || !g._cpu.y) continue;
 const idx = this._nearestCpuIndex(g, dataX);
 if (idx < 0) continue;
-const x = this._decodeValue(g._cpu.x, g._cpu.xMeta, idx);
-const y = this._decodeValue(g._cpu.y, g._cpu.yMeta, idx);
+const progress = g._transitionPositionProgress;
+const xEncoded = g._transitionPrevXValues && Number.isFinite(progress)
+? g._transitionPrevXValues[idx] + (g._cpu.x[idx] - g._transitionPrevXValues[idx]) * progress
+: g._cpu.x[idx];
+const yEncoded = g._transitionPrevYValues && Number.isFinite(progress)
+? g._transitionPrevYValues[idx] + (g._cpu.y[idx] - g._transitionPrevYValues[idx]) * progress
+: g._cpu.y[idx];
+const x = xEncoded / (g._cpu.xMeta.scale || 1) + g._cpu.xMeta.offset;
+const y = yEncoded / (g._cpu.yMeta.scale || 1) + g._cpu.yMeta.offset;
 const px = this._dataPx(g.xAxis, x) - this.plot.x;
 const py = this._dataPx(g.yAxis, y) - this.plot.y;
 const dist = Math.hypot(px - cssX, py - cssY);
@@ -5331,7 +5654,7 @@ this.draw(true);
 }
 _hover(e) {
 this._a11yKeyboardReadout = null;
-if (this._transitionActive()) {
+if (this._interactionTransitionActive()) {
 const hadHover = this._hoverId !== -1;
 this._hoverId = -1;
 this._hoverTarget = null;
@@ -5404,6 +5727,9 @@ return true;
 destroy() {
 if (this._destroyed) return;
 this._destroyed = true;
+if (this._dataAnim) {
+this._emitAnimationLifecycle?.("end", this._dataAnim.phase, { cancelled: true });
+}
 XY_CONTEXT_GOVERNOR.unregister(this);
 this._ctxIo?.disconnect();
 this._ctxIo = null;
@@ -5435,11 +5761,22 @@ this._viewEventRaf = null;
 if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
 this._wheelZoomRaf = null;
 this._pendingWheelZoom = null;
+clearTimeout(this._wheelZoomEndTimer);
+this._wheelZoomEndTimer = null;
+this._wheelGesture = null;
 this._linkChannel?.close?.();
 this._linkChannel = null;
 if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
+if (this._resizeRaf) cancelAnimationFrame(this._resizeRaf);
+this._resizeRaf = null;
+this._pendingResize = null;
+this._resizeNeedsMeasure = false;
 this._cancelViewAnimation();
+if (this._dataAnimRaf) cancelAnimationFrame(this._dataAnimRaf);
+this._dataAnimRaf = null;
+this._dataAnim = null;
+this._destroyTransitionOldTraces?.();
 this._destroyGlResources();
 const loseExt = this.gl && this.gl.getExtension("WEBGL_lose_context");
 if (loseExt) loseExt.loseContext();
@@ -5468,6 +5805,8 @@ this._deleteBuffers(g, [
 "xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "baseBuf",
 "x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf",
 "posBuf", "value1Buf", "value0Buf",
+"_transitionPrevXBuf", "_transitionPrevYBuf",
+"_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",
 ]);
 this._deleteBuffers(g.drill, ["xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "dBuf"]);
 const textures = [];
@@ -6354,11 +6693,12 @@ this._cancelViewAnimation();
 const canPan = this._interactionFlag("pan", true);
 const canZoom = this._interactionFlag("zoom", true);
 const canNavigate = this._interactionFlag("navigation", true);
+const canBoxZoom = this._interactionFlag("box_zoom", true);
 const canBrush = this._interactionFlag("brush", true) && this._interactionFlag("select", true);
 const selectMode = this.dragMode.startsWith("select") ? this.dragMode : null;
 const mode = (e.shiftKey || selectMode) && canBrush && this._pickable
 ? (e.shiftKey ? "select" : selectMode)
-: this.dragMode === "zoom" && canNavigate && canZoom ? "zoom" : null;
+: this.dragMode === "zoom" && canNavigate && canZoom && canBoxZoom ? "zoom" : null;
 if (mode) {
 const previousLasso = mode.startsWith("select") && this._lassoPolygon
 ? this._lassoPolygon.map((point) => [...point])
@@ -6375,8 +6715,19 @@ try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
 this.tooltip.style.display = "none";
 return;
 }
-if (canNavigate && canPan) {
-drag = { px: e.clientX, py: e.clientY, view: { ...this.view }, moved: false };
+if (this.dragMode === "pan" && canNavigate && canPan) {
+drag = {
+px: e.clientX,
+py: e.clientY,
+view: this._copyView(this.view),
+moved: false,
+interactionId: ++this._interactionSeq,
+axes: [...new Set([
+...this._axisPolicy("pan_axes"),
+...this._axisIds().filter((axisId) => this._axisContained(axisId)),
+])],
+changedAxes: [],
+};
 try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
 this.tooltip.style.display = "none";
 }
@@ -6385,19 +6736,30 @@ this._listen(c, "pointermove", (e) => {
 if (band) { this._updateBand(band, e); return; }
 if (drag) {
 drag.moved = true;
-const { x0, x1, y0, y1 } = drag.view;
-const xa = this._axis("x");
-const ya = this._axis("y");
-const cx0 = this._axisCoord(xa, x0), cx1 = this._axisCoord(xa, x1);
-const cy0 = this._axisCoord(ya, y0), cy1 = this._axisCoord(ya, y1);
-const dx = ((e.clientX - drag.px) / this.plot.w) * (cx1 - cx0);
-const dy = ((e.clientY - drag.py) / this.plot.h) * (cy1 - cy0);
-this._setView({
-x0: this._axisValue(xa, cx0 - dx),
-x1: this._axisValue(xa, cx1 - dx),
-y0: this._axisValue(ya, cy0 + dy),
-y1: this._axisValue(ya, cy1 + dy),
-}, { source: "pan" });
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId, drag.view)]])
+);
+for (const axisId of drag.axes) {
+const axis = this._axis(axisId);
+const [lo, hi] = this._axisRange(axisId, drag.view);
+const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+if (![c0, c1].every(Number.isFinite) || c0 === c1) continue;
+const dim = this._axisDim(axisId);
+const pixels = dim === "x" ? this.plot.w : this.plot.h;
+const deltaPx = dim === "x" ? e.clientX - drag.px : e.clientY - drag.py;
+const delta = (deltaPx / pixels) * (c1 - c0);
+const signed = dim === "x" ? -delta : delta;
+ranges[axisId] = [
+this._axisValue(axis, c0 + signed),
+this._axisValue(axis, c1 + signed),
+];
+}
+const changedAxes = this._setView({ ranges }, {
+source: "pan_drag",
+phase: "update",
+interactionId: drag.interactionId,
+});
+drag.changedAxes = [...new Set([...drag.changedAxes, ...changedAxes])];
 return;
 }
 this._updateCrosshair(e);
@@ -6414,7 +6776,11 @@ const moved = band.mode === "select-lasso"
 : Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
 if (moved) {
 if (band.mode === "zoom" && this._interactionFlag("zoom", true)) {
-this._zoomToBox(band.d0, d1, true);
+this._zoomToBox(band.d0, d1, true, {
+source: "box_zoom",
+phase: "end",
+interactionId: ++this._interactionSeq,
+});
 } else if (band.mode === "select-lasso") {
 if (band.points.length >= 3) {
 const editable = this._simplifyLassoPoints(band.points);
@@ -6442,7 +6808,14 @@ this._renderLassoSelection();
 band = null;
 return;
 }
-if (drag && drag.moved) this._ignoreNextClick = true;
+if (drag && drag.moved) {
+this._ignoreNextClick = true;
+if (drag.changedAxes.length) this._emitViewChange("pan_drag", {
+axes: drag.changedAxes,
+phase: "end",
+interactionId: drag.interactionId,
+});
+}
 if (drag && !drag.moved) this.tooltip.style.display = "none";
 drag = null;
 };
@@ -6475,6 +6848,7 @@ this._listen(c, "click", (e) => this._click(e));
 this._listen(c, "wheel", (e) => {
 if (!this._interactionFlag("navigation", true)) return;
 if (!this._interactionFlag("zoom", true)) return;
+if (!this._interactionFlag("wheel_zoom", true)) return;
 e.preventDefault();
 const f = Math.pow(1.0015, e.deltaY);
 const r = c.getBoundingClientRect();
@@ -6484,9 +6858,18 @@ this._queueWheelZoom(f, fx, fy);
 }, { passive: false });
 this._listen(c, "dblclick", () => {
 if (!this._interactionFlag("navigation", true)) return;
-if (!this._interactionFlag("zoom", true)) return;
-this._clearSelection();
-this._setView(this.view0, { animate: true });
+if (!this._interactionFlag("double_click_reset", true)) return;
+this._resetView(true, "reset");
+});
+this._listen(c, "keydown", (e) => {
+if (e.key === "Escape" && (band || drag)) {
+this.selRect.style.display = "none";
+this.selLasso.style.display = "none";
+band = null;
+drag = null;
+e.preventDefault();
+e.stopImmediatePropagation();
+}
 });
 this._listen(c, "keydown", (e) => this._onA11yKey(e));
 },
@@ -6517,7 +6900,7 @@ if (hadHover) this._drawKeepPick();
 return;
 }
 e.preventDefault();
-if (this._transitionActive()) return;
+if (this._interactionTransitionActive()) return;
 const groups = this._a11yPointGroups();
 const total = groups.reduce((sum, g) => sum + Math.min(g._cpu.x.length, g._cpu.y.length), 0);
 if (!total) return;
@@ -7019,13 +7402,18 @@ bar.appendChild(b);
 if (toggles) this._modeBtns[toggles] = b;
 return b;
 };
-const canPan = this._interactionFlag("pan", true);
-const canZoom = this._interactionFlag("zoom", true);
+const canNavigate = this._interactionFlag("navigation", true);
+const canPan = canNavigate && this._interactionFlag("pan", true);
+const canZoom = canNavigate && this._interactionFlag("zoom", true);
+const canZoomButtons = canZoom && this._interactionFlag("zoom_buttons", true);
+const canBoxZoom = canZoom && this._interactionFlag("box_zoom", true);
+const canReset = canNavigate && this._resetAxisPolicy().length > 0;
+const hasZoomMenu = canZoomButtons || canBoxZoom || canReset;
 let zoomTrigger = null;
 let zoomIndicator = null;
 this._zoomMenuButton = null;
 this._zoomMenuLabel = null;
-if (canZoom) {
+if (hasZoomMenu) {
 zoomTrigger = mk("zoommenu", "Zoom controls", () => {
 setZoomMenuOpen(!this._zoomMenuOpen);
 });
@@ -7072,7 +7460,7 @@ this._selectMenuIcon = selectModeIcon;
 }
 if (canPan) mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
 let zoomMenu = null;
-if (canZoom) {
+if (hasZoomMenu) {
 zoomMenu = document.createElement("div");
 zoomMenu.dataset.xyModebarMenu = "";
 zoomMenu.setAttribute("role", "menu");
@@ -7110,15 +7498,21 @@ zoomMenuItems.push(button);
 if (toggles) this._modeBtns[toggles] = button;
 return button;
 };
-if (canZoom) {
-const resetView = () => {
-this._clearSelection();
-this._setView(this.view0, { animate: true });
-};
-mkZoomItem("zoomin", "Zoom In", () => this._zoomBy(0.5, true));
-mkZoomItem("zoomout", "Zoom Out", () => this._zoomBy(2, true));
-mkZoomItem("zoom", "Box Zoom", () => this._setDragMode("zoom"), "zoom");
-mkZoomItem("reset", "Reset View", resetView, null, true);
+if (hasZoomMenu) {
+if (canZoomButtons) {
+mkZoomItem("zoomin", this._actionLabel("Zoom In", this._axisPolicy("zoom_axes")),
+() => this._zoomBy(0.5, true, "zoom_in"));
+mkZoomItem("zoomout", this._actionLabel("Zoom Out", this._axisPolicy("zoom_axes")),
+() => this._zoomBy(2, true, "zoom_out"));
+}
+if (canBoxZoom) {
+mkZoomItem("zoom", this._actionLabel("Box Zoom", this._axisPolicy("zoom_axes")),
+() => this._setDragMode("zoom"), "zoom");
+}
+if (canReset) {
+mkZoomItem("reset", this._actionLabel("Reset View", this._resetAxisPolicy()),
+() => this._resetView(true, "reset"), null, canZoomButtons || canBoxZoom);
+}
 }
 const selectMenu = document.createElement("div");
 selectMenu.dataset.xyModebarMenu = "";
@@ -7440,6 +7834,11 @@ this._selectMenuButton.title = `Selection controls: ${label}`;
 this._selectMenuButton.setAttribute("aria-label", `Selection controls: ${label}`);
 }
 },
+_actionLabel(action, axes) {
+const ids = Array.isArray(axes) ? axes : [...axes || []];
+if (!ids.length) return action;
+return `${action} on ${ids.join(" and ")} ${ids.length === 1 ? "axis" : "axes"}`;
+},
 _updateZoomMenuLabel() {
 if (!this._zoomMenuLabel || !this.view || !this.view0) return;
 const axisPercent = (axisId, lo, hi, homeLo, homeHi) => {
@@ -7452,9 +7851,13 @@ return Number.isFinite(span) && span > 0 && Number.isFinite(homeSpan) && homeSpa
 ? (homeSpan / span) * 100
 : null;
 };
-const percent = axisPercent("x", this.view.x0, this.view.x1, this.view0.x0, this.view0.x1)
-?? axisPercent("y", this.view.y0, this.view.y1, this.view0.y0, this.view0.y1)
-?? 100;
+const zoomAxes = [...this._zoomAxes()];
+const percentages = zoomAxes.map((axisId) => {
+const [lo, hi] = this._axisRange(axisId);
+const [homeLo, homeHi] = this._axisRange(axisId, this.view0);
+return [axisId, axisPercent(axisId, lo, hi, homeLo, homeHi)];
+}).filter((entry) => entry[1] !== null);
+const percent = percentages[0]?.[1] ?? 100;
 const rounded = Math.round(percent);
 const exactText = percent < 1 ? "<1%" : `${rounded}%`;
 const displayText = rounded > 999 ? `${String(rounded).slice(0, 3)}…%` : exactText;
@@ -7462,8 +7865,9 @@ if (this._zoomMenuLabel.dataset.xyZoomExact === exactText
 && this._zoomMenuLabel.textContent === displayText) return;
 this._zoomMenuLabel.textContent = displayText;
 this._zoomMenuLabel.dataset.xyZoomExact = exactText;
-this._zoomMenuButton.title = `Zoom controls (${exactText})`;
-this._zoomMenuButton.setAttribute("aria-label", `Zoom controls, ${exactText}`);
+const details = percentages.map(([axisId, value]) => `${axisId} ${Math.round(value)}%`).join(", ");
+this._zoomMenuButton.title = `Zoom controls (${details || exactText})`;
+this._zoomMenuButton.setAttribute("aria-label", `Zoom controls, ${details || exactText}`);
 },
 _prefersReducedMotion() {
 return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
@@ -7474,9 +7878,14 @@ this._animRaf = null;
 this._viewAnim = null;
 },
 _setView(next, opts = {}) {
-if (this._destroyed) return;
-const target = this._clampView(
-{ x0: next.x0, x1: next.x1, y0: next.y0, y1: next.y1 });
+if (this._destroyed) return [];
+const target = this._clampView(this._viewFrom(next), { anchors: opts.anchors });
+const changedAxes = this._axisIds().filter((axisId) => {
+const before = this._axisRange(axisId);
+const after = this._axisRange(axisId, target);
+return before[0] !== after[0] || before[1] !== after[1];
+});
+if (!changedAxes.length) return [];
 const animate = opts.animate === true && !this._prefersReducedMotion();
 const duration = opts.duration || 180;
 if (!animate || duration <= 0) {
@@ -7484,8 +7893,13 @@ this._cancelViewAnimation();
 this.view = target;
 this.draw();
 if (opts.request !== false) this._scheduleViewRequest();
-this._emitViewChange(opts.source || "view", { broadcast: opts.broadcast });
-return;
+this._emitViewChange(opts.source || "programmatic", {
+axes: changedAxes,
+phase: opts.phase || "end",
+interactionId: opts.interactionId,
+broadcast: opts.broadcast,
+});
+return changedAxes;
 }
 clearTimeout(this._viewTimer);
 this.seq += 1;
@@ -7500,20 +7914,29 @@ const tau = Math.max(18, duration / 5);
 if (this._viewAnim) {
 this._viewAnim.target = target;
 this._viewAnim.tau = tau;
-return;
+this._viewAnim.changedAxes = [...new Set([...this._viewAnim.changedAxes, ...changedAxes])];
+return changedAxes;
 }
 this._viewAnim = {
 target,
 last: now,
 tau,
+changedAxes,
 };
 const lerp = (a, b, t) => a + (b - a) * t;
-const span = (v) => Math.max(Math.abs(v.x1 - v.x0), Math.abs(v.y1 - v.y0), 1e-12);
+const span = (v) => Math.max(
+...this._axisIds().map((axisId) => {
+const [lo, hi] = this._axisRange(axisId, v);
+return Math.abs(hi - lo);
+}),
+1e-12,
+);
 const closeEnough = (a, b) => {
 const tol = span(b) * 1e-4;
-return Math.max(
-Math.abs(a.x0 - b.x0), Math.abs(a.x1 - b.x1),
-Math.abs(a.y0 - b.y0), Math.abs(a.y1 - b.y1)) <= tol;
+return Math.max(...this._axisIds().flatMap((axisId) => {
+const ar = this._axisRange(axisId, a), br = this._axisRange(axisId, b);
+return [Math.abs(ar[0] - br[0]), Math.abs(ar[1] - br[1])];
+})) <= tol;
 };
 const step = (nowFrame) => {
 if (this._destroyed) { this._animRaf = null; return; }
@@ -7523,12 +7946,15 @@ const dt = Math.max(0, Math.min(64, nowFrame - anim.last));
 anim.last = nowFrame;
 const k = 1 - Math.exp(-dt / anim.tau);
 const t = closeEnough(this.view, anim.target) ? 1 : k;
-this.view = {
-x0: lerp(this.view.x0, anim.target.x0, t),
-x1: lerp(this.view.x1, anim.target.x1, t),
-y0: lerp(this.view.y0, anim.target.y0, t),
-y1: lerp(this.view.y1, anim.target.y1, t),
-};
+const ranges = {};
+for (const axisId of this._axisIds()) {
+const current = this._axisRange(axisId), targetRange = this._axisRange(axisId, anim.target);
+ranges[axisId] = [
+lerp(current[0], targetRange[0], t),
+lerp(current[1], targetRange[1], t),
+];
+}
+this.view = this._copyView({ ranges });
 if (t < 1) {
 this.draw();
 this._animRaf = requestAnimationFrame(step);
@@ -7538,20 +7964,67 @@ this._viewAnim = null;
 this.view = anim.target;
 this._lastLabelDraw = null;
 this.draw();
-this._emitViewChange(opts.source || "view", { broadcast: opts.broadcast });
+this._emitViewChange(opts.source || "programmatic", {
+axes: anim.changedAxes,
+phase: opts.phase || "end",
+interactionId: opts.interactionId,
+broadcast: opts.broadcast,
+});
 }
 };
 this._animRaf = requestAnimationFrame(step);
+return changedAxes;
 },
-_clampAxisRange(axisId, lo, hi) {
+_zoomLimitForAxis(axisId) {
+if (!this._axisPolicy("zoom_axes").includes(axisId)) return [null, null];
+const configured = this.interaction?.zoom_limits;
+if (configured && typeof configured === "object" && !Array.isArray(configured)) {
+const pair = configured[axisId];
+if (Array.isArray(pair) && pair.length === 2) return pair;
+}
+return [1, null];
+},
+_clampAxisRange(axisId, lo, hi, anchorFrac = 0.5) {
 const axis = this._axis(axisId);
-if (!Array.isArray(axis.bounds) || axis.bounds.length !== 2) return [lo, hi];
-const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+let c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+if (![c0, c1].every(Number.isFinite) || c0 === c1) return this._axisRange(axisId, this.view0);
+const home = this.view0?.ranges?.[axisId];
+if (home) {
+const h0 = this._axisCoord(axis, home[0]), h1 = this._axisCoord(axis, home[1]);
+const homeSpan = Math.abs(h1 - h0);
+const [minMagRaw, maxMagRaw] = this._zoomLimitForAxis(axisId);
+const minMag = Number(minMagRaw), maxMag = Number(maxMagRaw);
+const maxSpan = Number.isFinite(minMag) && minMag > 0 ? homeSpan / minMag : Infinity;
+const minSpan = Number.isFinite(maxMag) && maxMag > 0 ? homeSpan / maxMag : 0;
+const requestedSpan = Math.abs(c1 - c0);
+const limitedSpan = Math.max(minSpan, Math.min(maxSpan, requestedSpan));
+if (Number.isFinite(limitedSpan) && limitedSpan > 0 && limitedSpan !== requestedSpan) {
+const direction = c1 < c0 ? -1 : 1;
+const anchor = c0 + anchorFrac * (c1 - c0);
+c0 = anchor - anchorFrac * limitedSpan * direction;
+c1 = anchor + (1 - anchorFrac) * limitedSpan * direction;
+}
+}
+let boundLo = -Infinity, boundHi = Infinity;
+if (Array.isArray(axis.bounds) && axis.bounds.length === 2) {
 const b0 = this._axisCoord(axis, axis.bounds[0]);
 const b1 = this._axisCoord(axis, axis.bounds[1]);
 if (![c0, c1, b0, b1].every(Number.isFinite) || b0 === b1) return [lo, hi];
+boundLo = Math.min(b0, b1);
+boundHi = Math.max(b0, b1);
+}
+if (home && this._axisContained(axisId)) {
+const h0 = this._axisCoord(axis, home[0]);
+const h1 = this._axisCoord(axis, home[1]);
+if ([h0, h1].every(Number.isFinite) && h0 !== h1) {
+boundLo = Math.max(boundLo, Math.min(h0, h1));
+boundHi = Math.min(boundHi, Math.max(h0, h1));
+}
+}
+if (!Number.isFinite(boundLo) || !Number.isFinite(boundHi) || boundHi <= boundLo) {
+return [this._axisValue(axis, c0), this._axisValue(axis, c1)];
+}
 const reverse = c1 < c0;
-const boundLo = Math.min(b0, b1), boundHi = Math.max(b0, b1);
 let outLo = Math.min(c0, c1), outHi = Math.max(c0, c1);
 if (outHi - outLo >= boundHi - boundLo) {
 outLo = boundLo;
@@ -7565,18 +8038,35 @@ const first = reverse ? outHi : outLo;
 const second = reverse ? outLo : outHi;
 return [this._axisValue(axis, first), this._axisValue(axis, second)];
 },
-_clampView(view) {
-const x = this._clampAxisRange("x", view.x0, view.x1);
-const y = this._clampAxisRange("y", view.y0, view.y1);
-return { x0: x[0], x1: x[1], y0: y[0], y1: y[1] };
+_clampView(view, opts = {}) {
+const candidate = this._viewFrom(view, this.view0);
+const ranges = {};
+for (const axisId of this._axisIds()) {
+const [lo, hi] = this._axisRange(axisId, candidate);
+ranges[axisId] = this._clampAxisRange(axisId, lo, hi, opts.anchors?.[axisId] ?? 0.5);
+}
+return this._copyView({ ranges });
 },
-_zoomBy(f, animate = false) {
+_zoomAxes() {
+return new Set(this._axisPolicy("zoom_axes"));
+},
+_zoomBy(f, animate = false, source = f < 1 ? "zoom_in" : "zoom_out") {
 const base = this._viewAnim ? this._viewAnim.target : this.view;
-const { x0, x1, y0, y1 } = base;
-const xr = this._zoomAxisRange("x", x0, x1, f, 0.5);
-const yr = this._zoomAxisRange("y", y0, y1, f, 0.5);
-if (!xr || !yr) return;
-this._setView({ x0: xr[0], x1: xr[1], y0: yr[0], y1: yr[1] }, { animate });
+const axes = this._zoomAxes();
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId, base)]])
+);
+for (const axisId of axes) {
+const [lo, hi] = ranges[axisId];
+const range = this._zoomAxisRange(axisId, lo, hi, f, 0.5);
+if (range) ranges[axisId] = range;
+}
+this._setView({ ranges }, {
+animate,
+source,
+phase: "end",
+interactionId: ++this._interactionSeq,
+});
 },
 _zoomAxisRange(axisId, lo, hi, f, anchorFrac) {
 const axis = this._axis(axisId);
@@ -7593,18 +8083,44 @@ this._axisValue(axis, ca - (ca - c0) * f),
 this._axisValue(axis, ca + (c1 - ca) * f),
 ];
 },
-_zoomAt(f, fx, fy, animate = false, duration = 120) {
+_zoomAt(f, fx, fy, animate = false, duration = 120, opts = {}) {
 const base = this._viewAnim ? this._viewAnim.target : this.view;
-const { x0, x1, y0, y1 } = base;
-const xr = this._zoomAxisRange("x", x0, x1, f, fx);
-const yr = this._zoomAxisRange("y", y0, y1, f, fy);
-if (!xr || !yr) return;
-this._setView({ x0: xr[0], x1: xr[1], y0: yr[0], y1: yr[1] }, { animate, duration });
+const axes = this._zoomAxes();
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId, base)]])
+);
+const anchors = {};
+for (const axisId of axes) {
+const anchor = this._axisDim(axisId) === "x" ? fx : fy;
+const [lo, hi] = ranges[axisId];
+const range = this._zoomAxisRange(axisId, lo, hi, f, anchor);
+if (range) ranges[axisId] = range;
+anchors[axisId] = anchor;
+}
+return this._setView({ ranges }, {
+animate,
+duration,
+anchors,
+source: opts.source || "wheel_zoom",
+phase: opts.phase || "update",
+interactionId: opts.interactionId,
+});
 },
 _queueWheelZoom(factor, fx, fy) {
 if (!Number.isFinite(factor) || factor <= 0) return;
+clearTimeout(this._wheelZoomEndTimer);
+this._wheelZoomEndTimer = null;
+if (!this._wheelGesture) {
+this._wheelGesture = { interactionId: ++this._interactionSeq, axes: new Set() };
+}
 if (!this._pendingWheelZoom) {
-this._pendingWheelZoom = { factor: 1, fx, fy };
+this._pendingWheelZoom = {
+factor: 1,
+fx,
+fy,
+interactionId: this._wheelGesture.interactionId,
+axes: [],
+};
 }
 this._pendingWheelZoom.factor *= factor;
 this._pendingWheelZoom.fx = fx;
@@ -7615,27 +8131,78 @@ this._wheelZoomRaf = null;
 const pending = this._pendingWheelZoom;
 this._pendingWheelZoom = null;
 if (!pending || this._destroyed) return;
-this._zoomAt(pending.factor, pending.fx, pending.fy, false);
+pending.axes = this._zoomAt(pending.factor, pending.fx, pending.fy, false, 120, {
+source: "wheel_zoom",
+phase: "update",
+interactionId: pending.interactionId,
+}) || [];
+for (const axisId of pending.axes) this._wheelGesture?.axes.add(axisId);
+clearTimeout(this._wheelZoomEndTimer);
+this._wheelZoomEndTimer = setTimeout(() => {
+const gesture = this._wheelGesture;
+this._wheelGesture = null;
+if (this._destroyed || !gesture || !gesture.axes.size) return;
+this._emitViewChange("wheel_zoom", {
+axes: [...gesture.axes],
+phase: "end",
+interactionId: gesture.interactionId,
+});
+}, 90);
 });
 },
-_zoomToBox(d0, d1, animate = false) {
-const xa = this._axis("x");
-const ya = this._axis("y");
-const xlo = Math.min(d0[0], d1[0]), xhi = Math.max(d0[0], d1[0]);
-const ylo = Math.min(d0[1], d1[1]), yhi = Math.max(d0[1], d1[1]);
-const cx0 = this._axisCoord(xa, xlo), cx1 = this._axisCoord(xa, xhi);
-const cy0 = this._axisCoord(ya, ylo), cy1 = this._axisCoord(ya, yhi);
-if (![cx0, cx1, cy0, cy1].every(Number.isFinite)) return;
-const minSpanX = Math.max(Math.abs(cx0), Math.abs(cx1), 1e-30) * 1e-12;
-const minSpanY = Math.max(Math.abs(cy0), Math.abs(cy1), 1e-30) * 1e-12;
-if (Math.abs(cx1 - cx0) < minSpanX || Math.abs(cy1 - cy0) < minSpanY) return;
-const xReversed = this.view.x1 < this.view.x0;
-const yReversed = this.view.y1 < this.view.y0;
-const x0 = xReversed ? xhi : xlo;
-const x1 = xReversed ? xlo : xhi;
-const y0 = yReversed ? yhi : ylo;
-const y1 = yReversed ? ylo : yhi;
-this._setView({ x0, x1, y0, y1 }, { animate });
+_zoomToBox(d0, d1, animate = false, opts = {}) {
+const axes = this._zoomAxes();
+const fractions = {};
+for (const dim of ["x", "y"]) {
+const primary = this._axis(dim);
+const [lo, hi] = this._axisRange(dim);
+const c0 = this._axisCoord(primary, lo), c1 = this._axisCoord(primary, hi);
+const first = this._axisCoord(primary, d0[dim === "x" ? 0 : 1]);
+const second = this._axisCoord(primary, d1[dim === "x" ? 0 : 1]);
+if (![c0, c1, first, second].every(Number.isFinite) || c0 === c1) return [];
+fractions[dim] = [(first - c0) / (c1 - c0), (second - c0) / (c1 - c0)];
+}
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+);
+const anchors = {};
+for (const axisId of axes) {
+const axis = this._axis(axisId);
+const [lo, hi] = ranges[axisId];
+const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+const [f0, f1] = fractions[this._axisDim(axisId)];
+const a = c0 + f0 * (c1 - c0), b = c0 + f1 * (c1 - c0);
+const minSpan = Math.max(Math.abs(a), Math.abs(b), 1e-30) * 1e-12;
+if (!Number.isFinite(a) || !Number.isFinite(b) || Math.abs(b - a) < minSpan) continue;
+const reverse = c1 < c0;
+const low = Math.min(a, b), high = Math.max(a, b);
+ranges[axisId] = [
+this._axisValue(axis, reverse ? high : low),
+this._axisValue(axis, reverse ? low : high),
+];
+anchors[axisId] = 0.5;
+}
+return this._setView({ ranges }, {
+animate,
+anchors,
+source: opts.source || "box_zoom",
+phase: opts.phase || "end",
+interactionId: opts.interactionId,
+});
+},
+_resetView(animate = true, source = "reset") {
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+);
+for (const axisId of this._resetAxisPolicy()) {
+ranges[axisId] = [...this._axisRange(axisId, this.view0)];
+}
+return this._setView({ ranges }, {
+animate,
+source,
+phase: "end",
+interactionId: ++this._interactionSeq,
+});
 },
 _exportConfig() {
 const config = this.spec && this.spec.export;
@@ -7923,7 +8490,7 @@ const needsDecimated = this.spec.traces.some((t) => t.tier === "decimated");
 const needsDensity = this.gpuTraces.some((g) => g.tier === "density");
 if (!needsDecimated && !needsDensity) return;
 const seq = opts.seq ?? ++this.seq;
-const view = { ...viewOverride };
+const view = this._copyView(viewOverride);
 const plotW = Math.round(this.plot.w);
 const plotH = Math.round(this.plot.h);
 if (needsDensity) {
@@ -7960,10 +8527,12 @@ x0: Math.min(view.x0, view.x1), x1: Math.max(view.x0, view.x1), px: plotW,
 if (needsDensity) {
 for (const g of this.gpuTraces) {
 if (g.tier !== "density") continue;
+const [x0, x1] = this._axisRange(g.xAxis, view);
+const [y0, y1] = this._axisRange(g.yAxis, view);
 this.comm.send({
 type: "density_view", seq, trace: g.trace.id,
-x0: Math.min(view.x0, view.x1), x1: Math.max(view.x0, view.x1),
-y0: Math.min(view.y0, view.y1), y1: Math.max(view.y0, view.y1),
+x0: Math.min(x0, x1), x1: Math.max(x0, x1),
+y0: Math.min(y0, y1), y1: Math.max(y0, y1),
 w: plotW, h: plotH,
 });
 }
@@ -7983,7 +8552,7 @@ const targets = (this.gpuTraces || []).filter(
 );
 if (!targets.length) return;
 const seq = opts.seq ?? ++this.seq;
-const view = { ...viewOverride };
+const view = this._copyView(viewOverride);
 clearTimeout(this._rebinTimer);
 this._rebinTimer = setTimeout(() => {
 if (this._destroyed || seq !== this.seq) return;
@@ -7992,11 +8561,14 @@ for (const g of targets) this._requestSampleRebin(g, view, seq);
 },
 _requestSampleRebin(g, view, seq) {
 if (!g._homeDensity) g._homeDensity = g.density;
-const v0 = this.view0;
-const homeSpanX = Math.max(Math.abs(v0.x1 - v0.x0), 1e-300);
-const homeSpanY = Math.max(Math.abs(v0.y1 - v0.y0), 1e-300);
-const viewSpanX = Math.abs(view.x1 - view.x0);
-const viewSpanY = Math.abs(view.y1 - view.y0);
+const [vx0, vx1] = this._axisRange(g.xAxis, view);
+const [vy0, vy1] = this._axisRange(g.yAxis, view);
+const [hx0, hx1] = this._axisRange(g.xAxis, this.view0);
+const [hy0, hy1] = this._axisRange(g.yAxis, this.view0);
+const homeSpanX = Math.max(Math.abs(hx1 - hx0), 1e-300);
+const homeSpanY = Math.max(Math.abs(hy1 - hy0), 1e-300);
+const viewSpanX = Math.abs(vx1 - vx0);
+const viewSpanY = Math.abs(vy1 - vy0);
 const notZoomedIn =
 viewSpanX >= homeSpanX * (1 - 1e-6) && viewSpanY >= homeSpanY * (1 - 1e-6);
 if (notZoomedIn) {
@@ -8036,8 +8608,8 @@ this._rebinInit.add(g.trace.id);
 }
 this._rebinWorker.postMessage({
 type: "rebin", trace: g.trace.id, seq,
-x0: Math.min(view.x0, view.x1), x1: Math.max(view.x0, view.x1),
-y0: Math.min(view.y0, view.y1), y1: Math.max(view.y0, view.y1),
+x0: Math.min(vx0, vx1), x1: Math.max(vx0, vx1),
+y0: Math.min(vy0, vy1), y1: Math.max(vy0, vy1),
 w: Math.max(16, Math.min(2048, Math.round(this.plot.w))),
 h: Math.max(16, Math.min(2048, Math.round(this.plot.h))),
 });
@@ -8078,18 +8650,35 @@ const atHome =
 Math.abs(this.view.x0 - this.view0.x0) <= ex && Math.abs(this.view.x1 - this.view0.x1) <= ex &&
 Math.abs(this.view.y0 - this.view0.y0) <= ey && Math.abs(this.view.y1 - this.view0.y1) <= ey;
 const pinnedRight = !atHome && Math.abs(this.view.x1 - this.view0.x1) <= ex;
-this.spec = spec;
-this.axes = this._normalizeAxes(spec);
-this._payload = blob;
-this.view0 = {
+const nextHome = {
 x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
 y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
 };
+let nextView = { ...this.view };
 if (atHome) {
-this.view = { ...this.view0 };
+nextView = { ...nextHome };
 } else if (pinnedRight) {
 const w = this.view.x1 - this.view.x0;
-this.view = { ...this.view, x1: this.view0.x1, x0: this.view0.x1 - w };
+nextView = { ...this.view, x1: nextHome.x1, x0: nextHome.x1 - w };
+}
+const animated = !!spec.animation || spec.traces.some((trace) => !!trace.animation);
+if (animated && !this._glLost && this.gl && this.updatePayload(spec, blob)) {
+if (this._transitionView) this._transitionView.to = { ...nextView };
+else this.view = { ...nextView };
+this._scheduleViewRequest(nextView, { delay: 0 });
+return;
+}
+this.spec = spec;
+this.axes = this._normalizeAxes(spec);
+this._payload = blob;
+this.view0 = this._copyView({
+ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]) => [id, [...axis.range]])),
+});
+if (atHome) {
+this.view = this._copyView(this.view0);
+} else if (pinnedRight) {
+const w = this.view.x1 - this.view.x0;
+this.view = this._viewFrom({ x1: this.view0.x1, x0: this.view0.x1 - w });
 }
 if (this._glLost || !this.gl) return;
 const texSeen = new Set();
@@ -8436,6 +9025,464 @@ area: AREA_MARK,
 function markOf(kind) {
 return MARK_KINDS[kind] || MARK_KINDS.scatter;
 }
+const XY_EASINGS = {
+linear: [0, 0, 1, 1],
+ease: [0.25, 0.1, 0.25, 1],
+"ease-in": [0.42, 0, 1, 1],
+"ease-out": [0, 0, 0.58, 1],
+"ease-in-out": [0.42, 0, 0.58, 1],
+};
+function xyCubicBezierProgress(value, points) {
+const x1 = Number(points[0]), y1 = Number(points[1]);
+const x2 = Number(points[2]), y2 = Number(points[3]);
+const sample = (t, a, b) => {
+const u = 1 - t;
+return 3 * u * u * t * a + 3 * u * t * t * b + t * t * t;
+};
+const slope = (t, a, b) => {
+const u = 1 - t;
+return 3 * u * u * a + 6 * u * t * (b - a) + 3 * t * t * (1 - b);
+};
+let t = value;
+for (let i = 0; i < 5; i++) {
+const d = slope(t, x1, x2);
+if (Math.abs(d) < 1e-6) break;
+t = Math.max(0, Math.min(1, t - (sample(t, x1, x2) - value) / d));
+}
+let lo = 0, hi = 1;
+for (let i = 0; i < 8; i++) {
+if (sample(t, x1, x2) < value) lo = t; else hi = t;
+t = (lo + hi) * 0.5;
+}
+return sample(t, y1, y2);
+}
+function xySpringProgress(value, policy) {
+const stiffness = Math.max(1e-6, Number(policy.stiffness) || 170);
+const damping = Math.max(1e-6, Number(policy.damping) || 26);
+const mass = Math.max(1e-6, Number(policy.mass) || 1);
+const w0 = Math.sqrt(stiffness / mass);
+const zeta = damping / (2 * Math.sqrt(stiffness * mass));
+const response = (progress) => {
+const time = progress * 6 / w0;
+if (zeta < 1) {
+const wd = w0 * Math.sqrt(1 - zeta * zeta);
+return 1 - Math.exp(-zeta * w0 * time) *
+(Math.cos(wd * time) + (zeta * w0 / wd) * Math.sin(wd * time));
+}
+return 1 - Math.exp(-w0 * time) * (1 + w0 * time);
+};
+const endpoint = response(1);
+const result = Math.abs(endpoint) > 1e-9 ? response(value) / endpoint : value;
+return Math.max(0, Math.min(1.15, result));
+}
+function xyAnimationEase(value, easing) {
+if (easing && typeof easing === "object" && !Array.isArray(easing) && easing.type === "spring") {
+return xySpringProgress(value, easing);
+}
+const points = Array.isArray(easing) ? easing : XY_EASINGS[easing] || XY_EASINGS["ease-out"];
+return xyCubicBezierProgress(value, points);
+}
+Object.assign(ChartView.prototype, {
+_resolvedAnimation(trace) {
+return {
+...(this.spec.animation || {}),
+...((trace && trace.animation) || {}),
+_present: !!this.spec.animation || !!(trace && trace.animation),
+};
+},
+_animationEnabled(config) {
+if (!config._present) return false;
+if (config.enabled === false) return false;
+if (config.enabled === true) return true;
+return !this._prefersReducedMotion();
+},
+_defaultEntrance(kind) {
+if (kind === "line" || kind === "area" || kind === "error_band") return "reveal";
+if (kind === "bar" || kind === "column") return "grow";
+if (kind === "scatter" || kind === "errorbar") return "scale";
+return "none";
+},
+_setTransitionVisual(g, phase, progress, config) {
+const p = Math.max(0, Math.min(1, progress));
+g._transitionOpacity = 1;
+g._transitionScale = 1;
+g._transitionReveal = 1;
+g._transitionGrow = 1;
+if (phase === "exit") {
+g._transitionOpacity = 0;
+return;
+}
+if (phase === "update") {
+g._transitionPositionProgress = p;
+return;
+}
+let enter = config.enter || "auto";
+if (enter === "auto") enter = this._defaultEntrance(g.trace.kind);
+if (enter === "none") return;
+if (enter === "scale") {
+if (g.trace.kind === "scatter") g._transitionScale = p;
+else if (g.trace.kind === "errorbar") g._transitionScale = p;
+else if (g.trace.kind === "bar" || g.trace.kind === "column") g._transitionGrow = p;
+else if (g.trace.kind === "line" || g.trace.kind === "area" ||
+g.trace.kind === "error_band") g._transitionReveal = p;
+}
+if (enter === "reveal") g._transitionReveal = p;
+if (enter === "grow") g._transitionGrow = p;
+},
+_clearTransitionVisual(g) {
+delete g._transitionOpacity;
+delete g._transitionScale;
+delete g._transitionReveal;
+delete g._transitionGrow;
+delete g._transitionPositionProgress;
+delete g._transitionPhase;
+delete g._transitionPrevXValues;
+delete g._transitionPrevYValues;
+delete g._transitionPrevPosValues;
+delete g._transitionPrevValue1Values;
+delete g._transitionPrevValue0Values;
+delete g._transitionPrevWidth;
+delete g._transitionPositionInterpolated;
+this._deleteBuffers(g, [
+"_transitionPrevXBuf", "_transitionPrevYBuf",
+"_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",
+]);
+},
+_emitAnimationLifecycle(stage, phase, extra = {}) {
+const detail = { stage, phase, ...extra, view: this._eventView(`animation_${stage}`) };
+this._dispatchChartEvent(`animation_${stage}`, detail);
+this.comm?.send?.({ type: `animation_${stage}`, phase, ...extra });
+},
+_runDataAnimation(phase, current, exiting = []) {
+if (this._dataAnimRaf) cancelAnimationFrame(this._dataAnimRaf);
+const epoch = (this._dataAnimEpoch || 0) + 1;
+this._dataAnimEpoch = epoch;
+const records = [];
+for (const g of current) {
+const config = this._resolvedAnimation(g.trace);
+const recordPhase = g._transitionPhase || phase;
+if (!this._animationEnabled(config) ||
+(recordPhase === "enter" && config.enter === "none") ||
+(recordPhase === "update" && config.update === "none")) {
+this._clearTransitionVisual(g);
+continue;
+}
+records.push({ g, config, phase: recordPhase, delay: Number(config.delay) || 0, duration: Math.max(0, Number(config.duration) || 0) });
+}
+for (const g of exiting) {
+g._transitionOpacity = 0;
+}
+if (!records.length) {
+for (const g of current) this._clearTransitionVisual(g);
+if (this._transitionView) {
+this.view = { ...this._transitionView.to };
+this._transitionView = null;
+}
+this._destroyTransitionOldTraces();
+this.draw();
+return false;
+}
+const start = this._now();
+this._dataAnim = { epoch, phase, start };
+this._emitAnimationLifecycle("start", phase);
+const tick = () => {
+if (this._destroyed || !this._dataAnim || this._dataAnim.epoch !== epoch) return;
+const now = this._now();
+let active = false;
+let maxRaw = 0;
+for (const record of records) {
+const raw = record.duration <= 0
+? (now >= start + record.delay ? 1 : 0)
+: Math.max(0, Math.min(1, (now - start - record.delay) / record.duration));
+if (this._transitionView) maxRaw = Math.max(maxRaw, raw);
+const eased = xyAnimationEase(raw, record.config.easing);
+this._setTransitionVisual(record.g, record.phase, eased, record.config);
+if (raw < 1) active = true;
+}
+if (this._transitionView) {
+const p = xyAnimationEase(maxRaw, (this.spec.animation || {}).easing);
+const from = this._transitionView.from, to = this._transitionView.to;
+this.view = {
+x0: from.x0 + (to.x0 - from.x0) * p,
+x1: from.x1 + (to.x1 - from.x1) * p,
+y0: from.y0 + (to.y0 - from.y0) * p,
+y1: from.y1 + (to.y1 - from.y1) * p,
+};
+}
+this.draw();
+if (active) {
+this._dataAnimRaf = requestAnimationFrame(tick);
+} else {
+this._dataAnimRaf = null;
+for (const record of records) this._clearTransitionVisual(record.g);
+this._finishDataAnimation(phase);
+}
+};
+this._dataAnimRaf = requestAnimationFrame(tick);
+return true;
+},
+_finishDataAnimation(phase) {
+this._dataAnim = null;
+if (this._transitionView) {
+this.view = { ...this._transitionView.to };
+this._transitionView = null;
+}
+this._destroyTransitionOldTraces();
+this._emitAnimationLifecycle("end", phase);
+},
+_startEntranceAnimation() {
+const capture = Number(this.spec.animation_capture_progress);
+if (Number.isFinite(capture) && capture >= 0 && capture <= 1) {
+for (const g of this.gpuTraces || []) {
+const config = this._resolvedAnimation(g.trace);
+if (config._present && config.enabled !== false && config.enter !== "none") {
+this._setTransitionVisual(g, "enter", xyAnimationEase(capture, config.easing), config);
+} else {
+this._clearTransitionVisual(g);
+}
+}
+this.draw();
+return;
+}
+this._runDataAnimation("enter", this.gpuTraces || []);
+},
+_destroyTransitionOldTraces() {
+if (!this._transitionOldTraces || !this.gl) {
+this._transitionOldTraces = null;
+return;
+}
+const seen = new Set();
+for (const g of this._transitionOldTraces) this._destroyTraceResources(g, seen);
+this._transitionOldTraces = null;
+},
+_transitionMatches(previous, next, config) {
+let strategy = config.match || "index";
+const pairs = [];
+let fallback = next.trace.animation_fallback || null;
+if ((previous.n || 0) > 200000 || (next.n || 0) > 200000) {
+return {
+strategy: "snap",
+pairs,
+fallback: fallback || `snap:${strategy}-match-limit`,
+};
+}
+if (strategy === "key") {
+if (previous._transitionKeyIndex && next._transitionKeys) {
+for (let ni = 0; ni < next._transitionKeys.length; ni++) {
+const oi = previous._transitionKeyIndex.get(next._transitionKeys[ni]);
+if (oi !== undefined) pairs.push([oi, ni]);
+}
+} else {
+fallback ||= "index:missing-keys";
+strategy = "index";
+}
+}
+if (strategy === "append") {
+const oldX = previous._cpu && previous._cpu.x;
+const newX = next._cpu && next._cpu.x;
+if (oldX && newX && oldX.length <= 200000 && newX.length <= 200000) {
+const index = new Map();
+for (let i = 0; i < oldX.length; i++) {
+const value = this._decodeValue(oldX, previous.xMeta, i);
+if (Number.isFinite(value)) index.set(value.toPrecision(12), i);
+}
+for (let i = 0; i < newX.length; i++) {
+const value = this._decodeValue(newX, next.xMeta, i);
+const oi = Number.isFinite(value) ? index.get(value.toPrecision(12)) : undefined;
+if (oi !== undefined) pairs.push([oi, i]);
+}
+} else {
+fallback ||= "index:append-limit";
+strategy = "index";
+}
+}
+if (strategy === "index") {
+const count = Math.min(previous.n || 0, next.n || 0);
+for (let i = 0; i < count; i++) pairs.push([i, i]);
+}
+return {
+strategy,
+pairs,
+fallback,
+};
+},
+_recordAnimationFallback(trace, fallback) {
+if (!trace || !fallback) return;
+trace.animation_fallback = fallback;
+if (this.root && this.root.dataset) {
+this.root.dataset.xyAnimationFallback = fallback;
+}
+},
+_preparePositionInterpolation(previous, next, config) {
+const match = next._transitionMatch;
+const policies = config.interpolate || [];
+if (config.update !== "interpolate" || !policies.includes("position") || !match) return false;
+if (["bar", "column"].includes(next.trace.kind)) {
+return this._prepareBarPositionInterpolation(previous, next, match);
+}
+if (!["scatter", "line"].includes(next.trace.kind)) return false;
+if (!previous._cpu || !next._cpu || next.n !== next._cpu.x.length ||
+previous.n !== previous._cpu.x.length) {
+match.fallback ||= "snap:layout-mismatch";
+return false;
+}
+const startX = new Float32Array(next._cpu.x);
+const startY = new Float32Array(next._cpu.y);
+const encode = (value, meta) => (value - (Number(meta.offset) || 0)) * (Number(meta.scale) || 1);
+const displayedValue = (axis, index) => {
+const cpu = previous._cpu[axis];
+const starts = previous[axis === "x" ? "_transitionPrevXValues" : "_transitionPrevYValues"];
+const progress = previous._transitionPositionProgress;
+if (!starts || !Number.isFinite(progress)) {
+return this._decodeValue(cpu, previous[`${axis}Meta`], index);
+}
+const encoded = starts[index] + (cpu[index] - starts[index]) * progress;
+const meta = previous[`${axis}Meta`];
+return encoded / (meta.scale || 1) + meta.offset;
+};
+for (const [oldIndex, newIndex] of match.pairs) {
+const x = displayedValue("x", oldIndex);
+const y = displayedValue("y", oldIndex);
+if (Number.isFinite(x) && Number.isFinite(y)) {
+startX[newIndex] = encode(x, next.xMeta);
+startY[newIndex] = encode(y, next.yMeta);
+}
+}
+next._transitionPrevXBuf = this._upload(startX);
+next._transitionPrevYBuf = this._upload(startY);
+next._transitionPrevXValues = startX;
+next._transitionPrevYValues = startY;
+next._transitionPositionProgress = 0;
+next._transitionPositionInterpolated = true;
+previous._transitionSkipExit = true;
+return true;
+},
+_prepareBarPositionInterpolation(previous, next, match) {
+const oldBar = previous._cpuBar;
+const newBar = next._cpuBar;
+if (!oldBar || !newBar || previous.orientation !== next.orientation ||
+next.n !== newBar.pos.length || previous.n !== oldBar.pos.length) {
+match.fallback ||= "snap:layout-mismatch";
+return false;
+}
+const startPos = new Float32Array(newBar.pos);
+const startValue1 = new Float32Array(newBar.value1);
+const startValue0 = new Float32Array(next.n);
+const encode = (value, meta) => (value - (Number(meta.offset) || 0)) * (Number(meta.scale) || 1);
+const decode = (value, meta) => value / (Number(meta.scale) || 1) + (Number(meta.offset) || 0);
+const value0At = (bar, index) => bar.value0
+? decode(bar.value0[index], bar.value0Meta)
+: Number(bar.value0Const) || 0;
+const displayed = (values, current, meta, index) => {
+const progress = previous._transitionPositionProgress;
+if (!values || !Number.isFinite(progress)) return decode(current[index], meta);
+return decode(values[index] + (current[index] - values[index]) * progress, meta);
+};
+const displayedValue0 = (index) => {
+const starts = previous._transitionPrevValue0Values;
+const progress = previous._transitionPositionProgress;
+const current = value0At(oldBar, index);
+if (!starts || !Number.isFinite(progress)) return current;
+const start = decode(starts[index], oldBar.value1Meta);
+return start + (current - start) * progress;
+};
+for (let i = 0; i < next.n; i++) {
+startValue0[i] = encode(value0At(newBar, i), newBar.value1Meta);
+}
+for (const [oldIndex, newIndex] of match.pairs) {
+const pos = displayed(
+previous._transitionPrevPosValues,
+oldBar.pos,
+oldBar.posMeta,
+oldIndex
+);
+const value1 = displayed(
+previous._transitionPrevValue1Values,
+oldBar.value1,
+oldBar.value1Meta,
+oldIndex
+);
+const value0 = displayedValue0(oldIndex);
+if (Number.isFinite(pos) && Number.isFinite(value0) && Number.isFinite(value1)) {
+startPos[newIndex] = encode(pos, newBar.posMeta);
+startValue1[newIndex] = encode(value1, newBar.value1Meta);
+startValue0[newIndex] = encode(value0, newBar.value1Meta);
+}
+}
+const progress = previous._transitionPositionProgress;
+const previousWidth = Number.isFinite(previous._transitionPrevWidth) && Number.isFinite(progress)
+? previous._transitionPrevWidth + (oldBar.width - previous._transitionPrevWidth) * progress
+: oldBar.width;
+next._transitionPrevPosBuf = this._upload(startPos);
+next._transitionPrevValue1Buf = this._upload(startValue1);
+next._transitionPrevValue0Buf = this._upload(startValue0);
+next._transitionPrevPosValues = startPos;
+next._transitionPrevValue1Values = startValue1;
+next._transitionPrevValue0Values = startValue0;
+next._transitionPrevWidth = previousWidth;
+next._transitionPositionProgress = 0;
+next._transitionPositionInterpolated = true;
+previous._transitionSkipExit = true;
+return true;
+},
+updatePayload(spec, buffer) {
+if (this._destroyed || !spec || spec.protocol !== PROTOCOL) return false;
+if (this._dataAnimRaf) cancelAnimationFrame(this._dataAnimRaf);
+this._dataAnimRaf = null;
+if (this._dataAnim) {
+this._emitAnimationLifecycle("end", this._dataAnim.phase, { cancelled: true });
+}
+this._dataAnim = null;
+this._destroyTransitionOldTraces();
+const previous = this.gpuTraces || [];
+const fromView = { ...this.view };
+this.spec = spec;
+this.interaction = spec.interaction || {};
+this.markStyle = spec.mark_style || {};
+this.axes = this._normalizeAxes(spec);
+this._payload = buffer;
+const target = this._clampView({
+x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
+y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
+});
+this.view0 = { ...target };
+if (this._glLost || !this.gl) {
+this.view = { ...target };
+return true;
+}
+this.gpuTraces = spec.traces.map((trace) => this._buildTrace(buffer, trace));
+for (const next of this.gpuTraces) {
+const old = previous.find((candidate) => candidate.trace.id === next.trace.id && candidate.trace.kind === next.trace.kind);
+if (old) {
+const config = this._resolvedAnimation(next.trace);
+old._transitionExitTrace = next.trace;
+if (this._animationEnabled(config) && config.update !== "none") {
+next._transitionMatch = this._transitionMatches(old, next, config);
+this._preparePositionInterpolation(old, next, config);
+old._transitionSkipExit = true;
+this._recordAnimationFallback(next.trace, next._transitionMatch.fallback);
+}
+} else {
+next._transitionPhase = "enter";
+}
+}
+this._transitionOldTraces = previous;
+const animateDomain = this.gpuTraces.some((g) => {
+const config = this._resolvedAnimation(g.trace);
+return this._animationEnabled(config) && config.update === "interpolate" &&
+(config.interpolate || []).includes("domain");
+});
+this._transitionView = animateDomain ? { from: fromView, to: target } : null;
+if (!animateDomain) this.view = { ...target };
+this._pickable = this.gpuTraces.some((g) => markOf(g.trace.kind).pointPick && g.tier !== "density");
+if (this._pickable && !this.pickFbo) this._initPickTarget();
+if (!this._runDataAnimation("update", this.gpuTraces, previous)) {
+this.view = { ...target };
+this._transitionView = null;
+}
+return true;
+},
+});
 function bytesToSpan(b) {
 const span = xyByteSpan(b, "chart payload");
 return span.byteOffset % 4 === 0 ? span : new Uint8Array(span);
@@ -8458,6 +9505,7 @@ const spec = model.get("spec");
 const buffer = payloadBuffers(spec, model.get("buffers"));
 const comm = {
 send: (msg) => model.send(msg),
+wantsViewChange: () => spec.interaction?._transport_view_change === true,
 onMessage: (cb) => {
 const handler = (content, buffers) => cb(content, buffers);
 model.on("msg:custom", handler);

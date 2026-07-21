@@ -52,10 +52,7 @@ EXCLUDED_BASENAMES = {
     "Cargo.lock",
     "package-lock.json",
 }
-EXCLUDED = (
-    "benchmarks/launch_baselines/",
-    "examples/reflex/assets/charts/plotly_colored_scatter.html",
-)
+EXCLUDED = ("benchmarks/launch_baselines/",)
 
 # Global rules, applied in order to every non-excluded text file.
 RULES: list[tuple[str, str]] = [

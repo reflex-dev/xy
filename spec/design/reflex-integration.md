@@ -365,8 +365,10 @@ with the Python that produced it. One renderer for notebooks, static
 export, and Reflex.
 
 The wrapper: opens/reuses the shared namespace socket, `sub`s with the
-element's measured width, builds a `ChartView` per `payload` (full refresh =
-destroy + rebuild), bridges `comm` to `msg` events, and forwards semantic
+element's measured width, builds a `ChartView` for the first `payload`, and
+passes later full payloads to `ChartView.updatePayload` (preserving keyed
+animation state; destroy + rebuild is only the compatibility fallback),
+bridges `comm` to `msg` events, and forwards semantic
 events into Reflex's event system via the component's event-trigger props
 (`props.onPointHover(row)` → `addEvents(...)` → the user's handler).
 Client-side niceties: `view_change` resolves locally (no kernel round-trip;
@@ -408,8 +410,13 @@ python/reflex-xy/
   reflex_xy/payload_asset.py static tier: Chart -> content-addressed XYBF
                              asset in assets/xy/ (§3.4)
   reflex_xy/assets/          XYChart.jsx; links xy's installed render client
-  examples/demo_app/         1M-point drilldown + hover + cross-filter +
-                             stream + a direct-Chart static payload
+examples/reflex/  (repo root) reflex-xy showcase: figure-var drilldown with
+                             hover/click/select events, a slider-driven +
+                             cross-filtered histogram, a streaming line, an
+                             on_view_change-computed detail chart, and both
+                             fixed-data tiers (direct Chart + inline() token)
+examples/fastapi/ (repo root) the same charts + a live 100M drilldown served
+                             from a plain FastAPI app (no committed HTML)
 tests/reflex_adapter/        69 tests: token/registry/var/bridge/payload-asset
                              units, component compile, and a real-websocket
                              integration suite (uvicorn + socketio client)

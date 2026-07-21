@@ -14,28 +14,39 @@ main:has(#xy-chart-examples) > div:has(article #xy-chart-examples) {
 }
 """
 
+# The tabs form one connected strip on the card's top-right edge. Triggers touch
+# (`-gap-0`, `-ml-px` collapses the shared vertical borders into one line) and
+# only the strip's outer corners round — the middle trigger stays square. The
+# list overlaps the card border by 1px (`-mb-px`) so the active trigger, wearing
+# white, covers the seam and opens into the surface below while inactive
+# triggers keep their bottom border. Card and triggers share `border-secondary-4`.
 _EXAMPLE_TAB_LIST_CLASS = (
-    "xy-example-tab-list inline-flex !w-fit !gap-1 !rounded-xl !border-b-0 "
-    "!bg-[#f5f5f5] !p-1 "
-    "shadow-[0_1px_2px_#0000000f,0_4px_12px_#0000000a] "
-    "before:!hidden after:!hidden dark:!bg-[#171717] "
-    "dark:shadow-[0_1px_2px_#ffffff0d,0_4px_12px_#00000052]"
+    "xy-example-tab-list relative z-10 -mb-px flex w-full items-end justify-end "
+    "!gap-0 !border-b-0 !bg-transparent !p-0 !shadow-none "
+    "before:!hidden after:!hidden"
 )
 
 _EXAMPLE_TAB_CLASS = (
-    "xy-example-tab cursor-pointer appearance-none !rounded-[0.625rem] !border "
-    "!border-transparent !bg-transparent !px-4 !py-2.5 !text-[0.9375rem] "
-    "!leading-5 !text-[#525252] !shadow-none "
-    "transition-[color,background-color,box-shadow] duration-[120ms] "
-    "before:!hidden after:!hidden dark:!text-[#a3a3a3] "
-    "data-[state=active]:!border-[#e5e5e5] data-[state=active]:!bg-white "
-    "data-[state=active]:!text-[#171717] "
-    "data-[state=active]:!shadow-[0_1px_2px_#00000014] "
-    "dark:data-[state=active]:!border-[#262626] "
+    "xy-example-tab cursor-pointer appearance-none !rounded-none "
+    "first:!rounded-tl-[0.625rem] last:!rounded-tr-[0.625rem] "
+    "!border !border-secondary-4 -ml-px first:!ml-0 "
+    "!bg-[#f5f5f5] !px-3.5 !py-2 !text-[0.8125rem] !font-medium !leading-5 "
+    "!text-[#525252] !shadow-none transition-[color,background-color] "
+    "duration-[120ms] before:!hidden after:!hidden "
+    "dark:!bg-[#171717] dark:!text-[#a3a3a3] "
+    "data-[state=active]:!z-10 data-[state=active]:!bg-white "
+    "data-[state=active]:!border-b-transparent data-[state=active]:!text-[#171717] "
     "dark:data-[state=active]:!bg-black "
     "dark:data-[state=active]:!text-[#fafafa] "
-    "dark:data-[state=active]:!shadow-[0_1px_2px_#00000066] "
     "[&_.rt-BaseTabListTriggerInner]:!bg-transparent"
+)
+
+# The shared surface behind every panel, so Preview/Code/Data all sit on the
+# same background. Rounded on the top-left and both bottom corners; the top-right
+# stays square so the connected tab strip meets it flush.
+_EXAMPLE_CARD_CLASS = (
+    "relative w-full overflow-hidden rounded-xl rounded-tr-none border "
+    "border-secondary-4 bg-white dark:bg-black"
 )
 
 _EXAMPLE_LEGENDS = {
@@ -155,38 +166,65 @@ def _chart_legend(component_id: str | None) -> rx.Component:
     )
 
 
+def _example_tab_trigger(value: str, icon: str, label: str) -> rx.Component:
+    """One folder-style trigger in the demo card's top-right tab strip."""
+    return rx.tabs.trigger(
+        rx.el.span(
+            rx.icon(icon, size=15, aria_hidden="true"),
+            rx.el.span(label),
+            class_name="inline-flex items-center gap-2",
+        ),
+        value=value,
+        class_name=_EXAMPLE_TAB_CLASS,
+    )
+
+
+def _example_code_panel(source: str, value: str) -> rx.Component:
+    """A code/data tab panel that sits on the card's own surface.
+
+    ``doccode`` wraps long snippets in a ``bg-secondary-2`` expand container with
+    its own code-block fill and a matching fade gradient behind the Expand
+    toggle. Strip every one of those backgrounds to transparent and recolor the
+    fade to the card so the code reads on the same surface as the Preview tab.
+    """
+    return rx.tabs.content(
+        rx.el.div(
+            doccode(source),
+            class_name=(
+                "min-h-[430px] w-full px-1 py-2 sm:px-2 sm:py-7 "
+                "[&>div]:!m-0 [&>div]:!rounded-none [&>div]:!border-0 "
+                "[&_div]:!bg-transparent [&_pre]:!bg-transparent "
+                "[&_.code-block]:!bg-transparent [&_.code-block]:!rounded-none "
+                "[&_.code-block]:!border-0 [&_.code-block]:!shadow-none "
+                "[&_summary]:!from-white dark:[&_summary]:!from-black"
+            ),
+        ),
+        value=value,
+        class_name="w-full outline-none",
+    )
+
+
 def chart_example_demo(
     code: str,
     preview: rx.Component,
     *,
     component_id: str | None = None,
+    data: str | None = None,
 ) -> rx.Component:
-    """Render a spacious chart demo with controls above its content surface."""
-    return rx.tabs.root(
-        rx.el.div(
-            rx.tabs.list(
-                rx.tabs.trigger(
-                    rx.el.span(
-                        rx.icon("eye", size=15, aria_hidden="true"),
-                        rx.el.span("Preview"),
-                        class_name="inline-flex items-center gap-2",
-                    ),
-                    value="preview",
-                    class_name=_EXAMPLE_TAB_CLASS,
-                ),
-                rx.tabs.trigger(
-                    rx.el.span(
-                        rx.icon("code-xml", size=15, aria_hidden="true"),
-                        rx.el.span("Code"),
-                        class_name="inline-flex items-center gap-2",
-                    ),
-                    value="code",
-                    class_name=_EXAMPLE_TAB_CLASS,
-                ),
-                class_name=_EXAMPLE_TAB_LIST_CLASS,
-            ),
-            class_name="mb-4 flex items-center justify-start",
-        ),
+    """Render a chart demo whose Preview/Code/Data tabs attach to the card.
+
+    When ``data`` is supplied (the hardcoded arrays split out of the fence, see
+    ``markdown._split_demo_data``) a third "Data" tab appears so the Code tab can
+    stay focused on the chart itself.
+    """
+    triggers = [
+        _example_tab_trigger("preview", "eye", "Preview"),
+        _example_tab_trigger("code", "code-xml", "Code"),
+    ]
+    if data:
+        triggers.append(_example_tab_trigger("data", "database", "Data"))
+
+    panels = [
         rx.tabs.content(
             rx.el.div(
                 _chart_legend(component_id),
@@ -194,31 +232,22 @@ def chart_example_demo(
                     preview,
                     class_name="flex w-full items-center overflow-hidden",
                 ),
-                class_name=(
-                    "flex w-full flex-col gap-2 overflow-hidden rounded-xl border "
-                    "border-secondary-4 bg-white dark:bg-black"
-                ),
+                class_name="flex w-full flex-col gap-2 overflow-hidden",
             ),
             value="preview",
             class_name="w-full outline-none",
         ),
-        rx.tabs.content(
-            rx.el.div(
-                doccode(code),
-                class_name=(
-                    "min-h-[430px] w-full px-1 py-2 sm:px-2 "
-                    "sm:py-7 [&>div]:!m-0 [&>div]:!rounded-none "
-                    "[&>div]:!border-0 [&>div]:!bg-transparent "
-                    "[&_.code-block]:!rounded-none [&_.code-block]:!border-0 "
-                    "[&_.code-block]:!shadow-none"
-                ),
-            ),
-            value="code",
-            class_name="w-full outline-none",
-        ),
+        _example_code_panel(code, "code"),
+    ]
+    if data:
+        panels.append(_example_code_panel(data, "data"))
+
+    return rx.tabs.root(
+        rx.tabs.list(*triggers, class_name=_EXAMPLE_TAB_LIST_CLASS),
+        rx.el.div(*panels, class_name=_EXAMPLE_CARD_CLASS),
         default_value="preview",
         id=component_id,
-        class_name="mb-14 w-full",
+        class_name="mb-14 flex w-full flex-col",
     )
 
 

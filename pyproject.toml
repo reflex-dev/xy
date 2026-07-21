@@ -68,12 +68,13 @@ include = [
     "benchmarks",
     "docs",
     "spec",
+    "examples/fastapi/*.py",
+    "examples/fastapi/pyproject.toml",
+    "examples/fastapi/README.md",
+    "examples/reflex/pyproject.toml",
     "examples/reflex/README.md",
-    "examples/reflex/requirements.txt",
     "examples/reflex/rxconfig.py",
-    "examples/reflex/reflex_xy_app/*.py",
-    "examples/reflex/scripts/build_charts.py",
-    "examples/reflex/assets/charts/*.html",
+    "examples/reflex/xy_reflex_demo/*.py",
     "scripts",
     "tests",
     "Cargo.toml",
@@ -152,8 +153,10 @@ exclude = ["examples/pdsh/*.ipynb"]
 # helper defs repeat by design.
 "examples/pdsh/*.ipynb" = ["E402", "E731", "E741", "F401", "F811", "I001", "UP030", "UP032", "B007"]
 # Reflex state classes declare mutable defaults by design (reflex deep-copies
-# them per instance); the demo heading's unicode × is intentional prose.
-"python/reflex-xy/examples/**" = ["RUF012", "RUF001"]
+# them per instance); both showcases use intentional unicode (× ∈ · › ⌄) in
+# their page prose and chrome.
+"examples/reflex/**" = ["RUF012", "RUF001"]
+"examples/fastapi/**" = ["RUF001"]
 "tests/reflex_adapter/*.py" = ["RUF012"]
 
 [tool.ruff.lint.isort]
@@ -165,11 +168,10 @@ python = ".venv"
 [tool.ty.src]
 # Type-check the shippable library; tests/scripts/benchmarks use dynamic
 # patterns (ctypes, deliberately subscripting known-non-None Optionals) that a
-# pre-1.0 checker flags as false positives. The reflex demo app is excluded
-# for the same reason: reflex state vars are Vars at class scope (`.length()`
-# etc.), which a plain `dict` annotation can't express.
+# pre-1.0 checker flags as false positives. The example apps live under
+# examples/ (outside this include) for the same reason: reflex state vars are
+# Vars at class scope (`.length()` etc.), which a plain annotation can't express.
 include = ["python"]
-exclude = ["python/reflex-xy/examples"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
