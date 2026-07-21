@@ -223,10 +223,12 @@ function lodApplyDrill(view, g, upd, buffers) {
   d.trace = { ...g.trace, style: upd.style || g.trace.style || {} };
   d.xAxis = g.xAxis;
   d.yAxis = g.yAxis;
+  const xs = view._asF32(buffers[upd.x.buf]);
+  const ys = view._asF32(buffers[upd.y.buf]);
   gl.bindBuffer(gl.ARRAY_BUFFER, d.xBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.x.buf]), gl.STATIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, xs, gl.STATIC_DRAW);
   gl.bindBuffer(gl.ARRAY_BUFFER, d.yBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.y.buf]), gl.STATIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, ys, gl.STATIC_DRAW);
   d.xMeta = { offset: upd.x.offset, scale: upd.x.scale };
   d.yMeta = { offset: upd.y.offset, scale: upd.y.scale };
   d.win = { x0: upd.x_range[0], x1: upd.x_range[1], y0: upd.y_range[0], y1: upd.y_range[1] };
@@ -234,6 +236,12 @@ function lodApplyDrill(view, g, upd, buffers) {
   d.visible = upd.visible ?? d.n;
   d.seq = upd.drill_seq; // subset version — echoed with picks, gates selections
   d.selActive = false; // drilled subset changed; old mask indices are stale
+  // §34 selection continuity: the swapped subset invalidates the old mask
+  // *indices*, but the brush geometry is still authoritative — re-derive the
+  // mask from the decoded window coordinates so the highlight never blinks
+  // out across a pan/zoom re-drill. The kernel's next selection reply (the
+  // adapter's resync, or a fresh drag) remains the authoritative overwrite.
+  lodRestoreBrushMask(view, d, xs, ys);
   // The point under the cursor is a different row now; a cached tooltip for
   // the same index would silently show the old point's values (§16).
   view._hoverId = -1;
@@ -341,6 +349,38 @@ function lodApplyDrill(view, g, upd, buffers) {
   g._drillDiedInsideWin = false;
 }
 
+// Provisional selection mask for a freshly shipped drill subset, derived
+// locally from the retained data-space brush (box or lasso). Exact for range
+// predicates — the same containment test the kernel runs (§34 Tier A) — so
+// the eventual kernel mask is a no-op overwrite, not a correction.
+function lodRestoreBrushMask(view, d, xs, ys) {
+  const b = view._lastBrush;
+  if (!b || !d.n) return;
+  const ox = d.xMeta.offset, sx = d.xMeta.scale || 1;
+  const oy = d.yMeta.offset, sy = d.yMeta.scale || 1;
+  const mask = new Float32Array(d.n);
+  if (b.mode === "box") {
+    for (let i = 0; i < d.n; i++) {
+      const x = xs[i] / sx + ox, y = ys[i] / sy + oy;
+      if (x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) mask[i] = 1;
+    }
+  } else if (b.mode === "poly" && Array.isArray(b.points) && b.points.length >= 3) {
+    const pts = b.points;
+    for (let i = 0; i < d.n; i++) {
+      const x = xs[i] / sx + ox, y = ys[i] / sy + oy;
+      let hit = false;
+      for (let a = 0, z = pts.length - 1; a < pts.length; z = a++) {
+        const [xa, ya] = pts[a], [xz, yz] = pts[z];
+        if ((ya > y) !== (yz > y) && x < ((xz - xa) * (y - ya)) / (yz - ya) + xa) hit = !hit;
+      }
+      if (hit) mask[i] = 1;
+    }
+  } else {
+    return;
+  }
+  view._applySelMask(d, mask);
+}
+
 function lodDropDrill(view, g) {
   const d = g.drill;
   if (!d) return;
@@ -357,6 +397,9 @@ function lodDropDrill(view, g) {
   g._drillDiedInsideWin = false;
   view._hoverId = -1; // drilled indices are dead; don't reuse a cached row
   view._lastRow = null;
+  // The freed drill may have been the only pickable geometry (a density-only
+  // chart): retract the modebar Select trigger with the capability.
+  view._updatePickable();
 }
 
 // A density update arrived while drilled: don't drop the marks instantly

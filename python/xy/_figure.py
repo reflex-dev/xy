@@ -68,6 +68,15 @@ class Selection:
             return np.empty(0), np.empty(0)
         return t.x.values[idx], t.y.values[idx]
 
+    def rows(self, limit: int | None = None) -> list[dict[str, Any]]:
+        """Return deterministic JSON rows based on canonical indices.
+
+        Traces and their indices are ordered ascending. ``limit`` bounds the
+        projection without changing the complete selection held by this object.
+        """
+        rows, _ = interaction.selection_rows(self._figure, self.per_trace, limit)
+        return rows
+
 
 class Figure(AnnotationsMixin, PayloadMixin):
     """Build with `line()` / `scatter()`, display with `show()` (notebook) or

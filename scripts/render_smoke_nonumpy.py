@@ -552,6 +552,10 @@ try{{
     // palette LUTs cached (categorical drills leaked a texture per update).
     const dseq=(gd.drill && gd.drill.seq===5)?1:0;
     const hov=(v._hoverId===-1 && !v._lastRow)?1:0;
+    // The earlier lasso is still retained as brush geometry (§34), so the
+    // drill apply above legitimately restored a provisional mask. Clear it so
+    // the stale-mask assertion below isolates the drill_seq gate.
+    v._clearSelection();
     const selIdx=new Uint32Array([0,1,2]);
     v._onKernelMsg({{type:"selection",total:3,traces:[{{id:gd.trace.id,buf:0,drill_seq:4}}]}},
       [selIdx.buffer]);
@@ -579,6 +583,9 @@ try{{
     // Flashing fix: a points REFRESH (already drilled) must not restart the
     // entry fade — restarting blanked the points to ~0 alpha on every kernel
     // reply while zooming inside a drilled view.
+    // Also §34 continuity: a retained data-space brush must re-derive a
+    // provisional mask when the refresh swaps the subset (srestore below).
+    v._lastBrush={{mode:"box",x0:5000,x1:5010,y0:5000,y1:5010}};
     gd._drillFadeStart=null; gd._drillWasInside=true; gd._drillShownAlpha=1; // entry fade settled (drawn inside)
     v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"points",visible:n3,
       x_range:[5000,5010],y_range:[5000,5010],
@@ -588,6 +595,8 @@ try{{
       [xs3.buffer,ys3.buffer,cs3.buffer,ds3.buffer]);
     const refresh=(gd.drill && gd.drill.seq===6 && gd._drillFadeStart===null
       && gd._drillDying!==true)?1:0;
+    const srestore=(gd.drill.selActive===true)?1:0;
+    v._clearSelection();
     v._drawNow();
     const hit3=v._pickAt(v.plot.w/2, v.plot.h/2);
     const dpick=(hit3 && hit3.trace===gd.trace.id)?1:0;
@@ -1066,7 +1075,7 @@ try{{
     const gLn=vSm.gpuTraces[0], gAr=vSm.gpuTraces[1];
     const msmooth=(gLn.n===65 && gLn._cpu.x.length===5 && gAr.n===65 && gAr._cpu.base.length===5)?1:0;
     vSm.destroy();holderSm.remove();
-    const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} xonly=${{xonly}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
+    const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} xonly=${{xonly}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} srestore=${{srestore}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
     const baseWithStyle=`${{base}} vstyle=${{vstyle}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
@@ -1274,6 +1283,7 @@ try{{
     dseq = int(re.search(r"dseq=(\d+)", title).group(1))
     hov = int(re.search(r"hov=(\d+)", title).group(1))
     sstale = int(re.search(r"sstale=(\d+)", title).group(1))
+    srestore = int(re.search(r"srestore=(\d+)", title).group(1))
     sfresh = int(re.search(r"sfresh=(\d+)", title).group(1))
     plut = int(re.search(r"plut=(\d+)", title).group(1))
     reg = int(re.search(r"reg=(\d+)", title).group(1))
@@ -1403,6 +1413,10 @@ try{{
         raise SystemExit("selection mask from another drill_seq was applied (index-space bug)")
     if sfresh != 1:
         raise SystemExit("matching-drill_seq selection mask was not applied")
+    if srestore != 1:
+        raise SystemExit(
+            "retained brush did not restore a provisional mask across a drill swap (§34)"
+        )
     if plut != 1:
         raise SystemExit("palette LUT not cached (GL texture leak per categorical drill)")
     if reg != 1:

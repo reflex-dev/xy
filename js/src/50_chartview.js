@@ -1749,8 +1749,18 @@ class ChartView {
     gl.bindVertexArray(null);
 
     this.gpuTraces = this.spec.traces.map((t) => this._buildTrace(buffer, t));
-    this._pickable = this.gpuTraces.some((g) => markOf(g.trace.kind).pointPick && g.tier !== "density");
-    if (this._pickable) this._initPickTarget();
+    this._updatePickable();
+  }
+
+  // Recompute point-pickability from the current GPU traces and reflect it in
+  // the modebar. Density traces count only while drilled to exact points
+  // (§5/§34), so this must re-run on every drill state change — the Select
+  // trigger tracks the capability instead of freezing at construction time.
+  _updatePickable() {
+    this._pickable = this.gpuTraces.some(
+      (t) => markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill));
+    if (this._pickable && !this.pickFbo) this._initPickTarget();
+    this._syncModebarSelect?.();
   }
 
   _prog(key, vs, fs) {

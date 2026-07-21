@@ -77,7 +77,7 @@ def test_wrapper_sizes_static_and_live_charts_to_the_reflex_mount():
     assert 'width: "100%"' in jsx
     assert 'height: "100%"' in jsx
     assert "renderStandalone(el, fitSpecToElement(frame.message)" in jsx
-    assert "fitSpecToElement(data.spec)," in jsx
+    assert "const spec = eventSpec(data.spec, cbRef.current)" in jsx
 
 
 def test_wrapper_discards_tailwind_scan_manifest_before_dom_props():
