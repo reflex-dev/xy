@@ -32,7 +32,7 @@ from it.
 
 View state has two tiers with different lifetimes:
 
-- **Durable state** — axis ranges, selection, drag action. Snapshotted by
+- **Durable state** — axis ranges and geometric selection. Snapshotted by
   history, writable programmatically, serializable, restorable.
 - **Ephemeral state** — hover/cursor. Evented and readable (§7), never
   snapshotted, never serialized, never broadcast to link groups.
@@ -43,8 +43,7 @@ The durable state is one JSON document:
 {
   "v": 1,
   "ranges": {"x": [1706.25, 1834.5], "y2": [-3.0, 3.0]},
-  "selection": {"range": {"x0": 10, "x1": 20, "y0": 0, "y1": 5}},
-  "drag_action": "pan"
+  "selection": {"range": {"x0": 10, "x1": 20, "y0": 0, "y1": 5}}
 }
 ```
 
@@ -57,9 +56,14 @@ Rules:
   PR #117 event payload. Values are `[lo, hi]` f64 pairs.
 - `selection` is one of `{"range": {x0, x1, y0, y1}}`,
   `{"polygon": [[x, y], …]}`, or `null`. The two non-null shapes are exactly
-  the shipped `on_brush` payloads.
-- `drag_action` is the current modebar drag mode (`"pan"`, `"zoom"`,
-  `"select"`, `"select-lasso"`, `"select-x"`, `"select-y"`).
+  the shipped `on_brush` payloads. Row-index selections (§5.1
+  `select(rows=...)`) are deliberately *not* representable here: an arbitrary
+  per-trace index set can be arbitrarily large, and snapshots must stay a
+  handful of floats. Rows-selections are therefore non-durable (§5.1).
+  The modebar drag mode is UI mode, not view state; it is not part of this
+  document (an early draft included `drag_action` and it was removed — the
+  kernel cannot observe modebar tool changes, and "which tool is armed" says
+  nothing about where the chart is looking).
 - All numbers must be finite. Like standalone HTML export, `NaN` and
   infinity are rejected at the boundary, not coerced.
 - Unknown top-level keys and unknown axis IDs are errors at `v: 1`. Forward
@@ -114,8 +118,9 @@ history works in notebooks, Reflex, and standalone HTML export identically.
 - **Push policy.** A snapshot of the *previous* durable state is pushed when
   a mutation with a new `interaction_id` commits. All phases of one gesture
   (`phase: "start"` → moves → `"end"`) share an `interaction_id`, so a drag
-  is one history entry, not hundreds. Selection changes and drag-mode
-  changes push like range changes: they are durable and undoable.
+  is one history entry, not hundreds. Geometric selection changes push like
+  range changes: they are durable and undoable. Rows-selections do not push
+  (§5.1) — stepping back over one restores the prior *geometric* state.
 - **Writers that push:** user gestures, toolbar actions, double-click reset,
   and programmatic writes (opt out per call with `history=False`).
 - **Writers that do not push:** linked updates (`source: "linked"`) and
@@ -130,9 +135,13 @@ history works in notebooks, Reflex, and standalone HTML export identically.
   floats; memory is not a concern, predictability is.
 - **Surface.** Two modebar buttons, Back and Forward, enabled only when the
   corresponding stack side is non-empty, subject to the existing modebar fit
-  rule. Programmatic `view_back()`/`view_forward()` (§5). Keyboard bindings
-  are deferred with touch pinch; the existing keyboard point traversal is
-  untouched.
+  rule; and the static handle's `back()`/`forward()` (§5.3). History
+  navigation is *client-scoped by construction* — there is deliberately no
+  Python-side `view_back()`: stacks live in each client, clients in one
+  Reflex room (or views of one notebook model) accumulate different stacks
+  after local gestures, so a broadcast "back" operation would have each
+  client restore a different snapshot (§5.2). Keyboard bindings are deferred
+  with touch pinch; the existing keyboard point traversal is untouched.
 - **Switch.** `interaction_config(history=…)`, default on, following the
   absent-key-fallback resolution of interaction.md §1. Disabling removes the
   buttons and stops snapshotting.
@@ -146,8 +155,6 @@ fig.set_view(ranges={"x": (0, 100)}, *, animate=True, history=True)
 fig.reset_view(axes=None)              # None = the configured reset_axes
 fig.select(range=..., polygon=..., rows=..., *, history=True)
 fig.clear_selection()
-fig.set_drag_action("zoom")
-fig.view_back(); fig.view_forward()
 fig.view_state()                       # -> last committed durable state
 ```
 
@@ -157,6 +164,10 @@ fig.view_state()                       # -> last committed durable state
   the shipped `Selection` object reports — and resolves them kernel-side
   into the existing binary selection-mask buffers. `range=`/`polygon=` ship
   the geometric forms and let the client resolve, exactly like a gesture.
+  Rows-selections are **non-durable and non-undoable**: `history=` is
+  ignored for them, they never enter the §4 stack, and `view_state()`
+  reports them as the opaque marker `{"selection": {"rows": true}}` rather
+  than the index set (§2 records why).
 - `view_state()` does not round-trip: the kernel already observes every
   committed change through view/selection events; it caches the last
   durable state and serves reads from that cache. Immediately after a
@@ -175,15 +186,29 @@ reflex_xy.set_view(token, ranges={"x": (t0, t1)})
 reflex_xy.reset_view(token)
 reflex_xy.select(token, range=..., polygon=..., rows=...)
 reflex_xy.clear_selection(token)
-reflex_xy.view_back(token); reflex_xy.view_forward(token)
 ```
+
+History navigation is deliberately absent from this surface. §4 stacks are
+client-local, and clients in one room hold different stacks after local
+gestures, so a broadcast back/forward *operation* would restore a different
+snapshot on every client — no room convergence is possible, and a
+server-initiated "back" has no originating stack to resolve against.
+Back/Forward exist only where a single client resolves them locally (the
+modebar and the §5.3 handle). An app that needs a server-driven "return to
+X" flow composes it from what it already has: record the state it cares
+about from `on_view_change`, restore it with `set_view` — an absolute patch,
+which does converge room-wide.
 
 Path: figure lock → one wire message (§8) → pushed room-wide as a `msg`
 event on the `/_xy` namespace → every client in the room applies it through
 the §3 mutation path with `source: "api"`. Multi-client semantics are
 therefore identical to `append` and `registry.publish`: the room converges.
 The token stays the only chart state Reflex holds; setting a view does not
-touch the figure payload or version.
+touch the figure payload or version. Like `append`, a call holds the figure
+lock only long enough to serialize one small message and performs no network
+round-trip in the caller's thread, so it is safe from ordinary event
+handlers as well as background tasks and threads; prefer a background task
+for long programmatic sequences, as for any bulk work in a handler.
 
 `on_view_change` handlers still fire for api-sourced changes (an app may
 need to persist them) but carry `source: "api"`, so a state bridge that
@@ -195,8 +220,9 @@ mechanism, no special cases.
 Zero-backend charts (static payload tier, standalone HTML) have no Python
 side, but the client-side controller from §3 exists there too. The mount
 exposes it as a JS handle on the chart root (`root.xy.applyState(patch)`,
-`root.xy.state()`, `root.xy.back()`), which is the whole public JS control
-surface — one object, same patch semantics. This is what makes "shareable
+`root.xy.state()`, `root.xy.back()`, `root.xy.forward()`), which is the
+whole public JS control surface — one object, same patch semantics. This
+handle and the modebar are the *only* history-navigation surfaces (§4). This is what makes "shareable
 view" utilities possible on exported files without any server.
 
 ## 6. Per-axis gestures (#120)
@@ -232,18 +258,22 @@ Hover is the ephemeral tier: rich, evented, never durable.
   "active": true,
   "cursor": {
     "px": [412.5, 118.0],
-    "data": {"x": 1731.4, "y": 0.82}
+    "data": {"x": 1731.4, "y": 0.82, "y2": -1.37}
   },
   "points": [
     {"trace": "sensor A", "index": 1042, "row": {"x": 1731.0, "y": 0.81},
-     "color": "rgb(31, 119, 180)"}
+     "x_axis": "x", "y_axis": "y", "color": "rgb(31, 119, 180)"}
   ]
 }
 ```
 
 `cursor.px` is chart-root-relative pixels (what a framework needs to
-position an element); `cursor.data` is the cursor position in data
-coordinates; `points` carries the resolved rows with series metadata. The
+position an element). `cursor.data` is keyed by **exact axis ID** with one
+entry per declared axis — a chart-root pixel maps to a different data value
+on each axis, so a bare `{x, y}` pair would be ambiguous the moment a chart
+declares `y2`. Each point carries its `x_axis`/`y_axis` binding so a custom
+tooltip can pick the right `cursor.data` entries for that point's trace.
+`points` carries the resolved rows with series metadata. The
 existing `xy:hover` two-stage behavior is preserved: the payload
 re-dispatches with `exact: true` when the kernel's f64 pick reply lands, and
 on static/standalone charts `points[].row` comes from browser-resident data
@@ -252,9 +282,14 @@ with no exact upgrade — the same honesty rule the LOD tiers follow.
 ### 7.2 Consumers
 
 - `xy:hover` / `xy:leave` gain the payload under `detail` (existing `row`,
-  `trace`, `index`, `view` keys remain — additive change).
-- `reflex_xy` `on_point_hover` receives the full payload instead of the bare
-  row dict, with `row` kept as a top-level key for compatibility.
+  `trace`, `index`, `view` keys remain — genuinely additive there).
+- `reflex_xy` grows a **new** `on_hover` prop that receives the full
+  payload. The existing `on_point_hover(row)` contract is untouched —
+  handlers reading `row["x"]` keep working. Replacing `on_point_hover`'s
+  argument was considered and rejected: nesting `row` inside a payload
+  breaks every existing subscript access, so "keep a `row` key" is not
+  compatibility. `on_point_hover` is documented as the narrow legacy form;
+  new code uses `on_hover`.
 - `xy.tooltip(render=…)`: the adapter finally honors it. `reflex_xy.chart`
   reads `chart.chrome_components()`, mounts the supplied Reflex component
   into an overlay that the client positions with the built-in tooltip's
@@ -276,8 +311,12 @@ handshake:
 | Message | Content | Effect |
 | --- | --- | --- |
 | `state_patch` | one §2 document (plus `animate`, `history` flags) | apply through the §3 path, `source: "api"` |
-| `view_nav` | `{"op": "back" \| "forward" \| "reset", "axes": […]}` | history/reset navigation |
-| `selection_rows` | per-trace index buffers (binary attachments) | kernel-resolved mask, same buffers the selection path ships today |
+| `view_nav` | `{"op": "reset", "axes": […]}` | navigation to home ranges |
+| `selection_rows` | per-trace index buffers (binary attachments) | kernel-resolved mask, same buffers the selection path ships today; applies as a non-durable selection (§5.1) |
+
+History back/forward have **no wire message**: stacks and their navigation
+are client-local (§4, §5.2). `view_nav` carries only `reset`, which is
+well-defined for every receiver because home ranges are client-known.
 
 All three reuse the existing `msg` envelope in both transports (anywidget
 comm and the `/_xy` socket.io namespace), so Reflex room broadcast and
@@ -299,6 +338,11 @@ Locked in before implementation, in the PR #117 fail-first style:
   the pre-reset view.
 - **Ordering:** `on_brush` before `on_select` holds for programmatic
   geometric selects.
+- **Rows non-durability:** a rows-selection never enters the history stack,
+  `view_state()` reports the `{"rows": true}` marker rather than indices,
+  and Back after a rows-select restores the prior geometric state.
+- **Hover compatibility:** `on_point_hover` still receives the bare row
+  dict (subscript access probed); the payload ships only on `on_hover`.
 - **Loop safety:** a state bridge that echoes `on_view_change` back into
   `set_view` converges (source filtering documented and probed).
 - **Headless-Chromium probes:** axis-band wheel mutates only the hovered
