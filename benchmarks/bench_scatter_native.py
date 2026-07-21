@@ -46,6 +46,7 @@ sys.path.insert(0, str(ROOT / "python"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from _protocol import PROTOCOL_VERSION  # noqa: E402
 from abi_smoke import load  # noqa: E402
 from categories import BENCHMARK_CATEGORIES, categories_for  # noqa: E402
 from environment import SCHEMA_VERSION, collect_environment_metadata  # noqa: E402
@@ -357,7 +358,7 @@ def bench_render(n: int, x: array, y: array) -> dict:
         cols[trace["y"]].update({"offset": 0.0, "scale": 1.0, "kind": "float"})
 
     spec = {
-        "protocol": 3,
+        "protocol": PROTOCOL_VERSION,
         "width": RENDER_W,
         "height": RENDER_H,
         "title": None,

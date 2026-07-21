@@ -1,6 +1,6 @@
 
 "use strict";
-const PROTOCOL = 3;
+const PROTOCOL = 4;
 const XY_FRAME_MAGIC = [0x58, 0x59, 0x42, 0x46];
 const XY_FRAME_VERSION = 1;
 const XY_FRAME_HEADER_SIZE = 24;
@@ -521,8 +521,8 @@ a_corner: 0,
 a_cval: 6, a_sval: 7, a_sel: 8, a_dval: 9,
 a_len0: 10, a_len1: 11,
 a_dash0: 10, a_dashDir: 11,
-a_prevx: 12, a_prevy: 13,
-a_prevx1: 14, a_prevy1: 15,
+a_prevx: 4, a_prevy: 5, a_prevx1: 7, a_prevy1: 8,
+a_rgba: 12, a_style: 13, a_stroke: 14, a_radius: 15,
 };
 function makeProgram(gl, vs, fs) {
 const p = gl.createProgram();
@@ -579,6 +579,7 @@ float xyViewValue(float coord, int mode) {
 const POINT_VS = `#version 300 es
 in float ax; in float ay; in float a_prevx; in float a_prevy;
 in float a_cval; in float a_sval; in float a_sel; in float a_dval;
+in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange;
@@ -586,6 +587,7 @@ uniform int u_colorMode; uniform float u_dpr; uniform int u_selActive;
 uniform float u_selectedOpacity; uniform float u_unselectedOpacity;
 uniform float u_transitionProgress; uniform int u_transitionActive;
 out float v_lutCoord; out float v_dim; out float v_dval; out float v_ptSize; out float v_sel;
+out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke;
 ${AXIS_GLSL}
 void main() {
   float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
@@ -595,6 +597,9 @@ void main() {
   gl_PointSize = sz * u_dpr;
   v_ptSize = sz * u_dpr;
   v_sel = a_sel;
+  v_rgba = a_rgba;
+  v_style = a_style;
+  v_stroke = a_stroke;
   // continuous: coord = value in [0,1]; categorical: center of texel a_cval.
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   // Local log-density LUT coord (drill handoff, §5): lets freshly drilled
@@ -685,26 +690,33 @@ precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
 uniform sampler2D u_dlut; uniform float u_dblend;
 uniform int u_symbol; uniform vec4 u_ptStroke; uniform float u_ptStrokeWidth; uniform int u_ptStrokeFace;
+uniform int u_strokeMode; uniform float u_strokeOpacity;
 uniform int u_selActive; uniform vec4 u_selColor; uniform vec4 u_unselColor;
 in float v_lutCoord; in float v_dim; in float v_dval; in float v_ptSize; in float v_sel;
+in vec4 v_rgba; in vec4 v_style; in vec4 v_stroke;
 out vec4 outColor;
 ${MARKER_SDF_GLSL}
 void main() {
   vec2 d = gl_PointCoord - 0.5;
   float sd;
-  bool lineMarker = u_symbol == 15 || u_symbol == 16;
+  int symbol = v_style.w >= 0.0 ? int(v_style.w + 0.5) : u_symbol;
+  bool lineMarker = symbol == 15 || symbol == 16;
   if (lineMarker) {
-    vec2 q = u_symbol == 16 ? vec2(d.x + d.y, d.y - d.x) * 0.707106781 : d;
-    float halfWidth = max(u_ptStrokeWidth, 1.0) / (2.0 * max(v_ptSize, 1.0));
+    vec2 q = symbol == 16 ? vec2(d.x + d.y, d.y - d.x) * 0.707106781 : d;
+    float itemStrokeWidth = v_style.z >= 0.0 ? v_style.z : u_ptStrokeWidth;
+    float halfWidth = max(itemStrokeWidth, 1.0) / (2.0 * max(v_ptSize, 1.0));
     vec2 a = abs(q);
     sd = min(max(a.x - 0.5, a.y - halfWidth), max(a.y - 0.5, a.x - halfWidth));
   } else {
-    sd = xyMarkerSdf(d, u_symbol);
+    // Scalar-only equivalent: xyMarkerSdf(d, u_symbol). The resolved symbol
+    // also permits a per-item glyph override from v_style.w.
+    sd = xyMarkerSdf(d, symbol);
   }
   float aa = fwidth(sd) + 1e-4;
   float shapeCov = clamp(0.5 - sd / aa, 0.0, 1.0);
   if (shapeCov <= 0.001) discard;
-  vec3 rgb = u_colorMode == 0 ? u_color.rgb : texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb;
+  vec4 paint = u_colorMode == 3 ? v_rgba : (u_colorMode == 0 ? u_color : vec4(texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb, 1.0));
+  vec3 rgb = paint.rgb;
   // Drill handoff (§5): near the density boundary, paint by local density with
   // the density ramp; ease into native colors as the zoom deepens (u_dblend->0).
   if (u_dblend > 0.001) {
@@ -717,15 +729,22 @@ void main() {
     vec4 sc = v_sel > 0.5 ? u_selColor : u_unselColor;
     rgb = mix(rgb, sc.rgb, sc.a);
   }
-  float fillAlpha = u_opacity;
+  float intrinsicAlpha = paint.a;
+  float fillAlpha = (v_style.y >= 0.0 ? v_style.y : intrinsicAlpha) * v_style.x * u_opacity;
   vec4 px = vec4(rgb * fillAlpha, fillAlpha);   // premultiplied fill
-  vec4 strokePx = u_ptStrokeFace == 1 ? px : u_ptStroke;
+  // Uniform (u_ptStroke) and per-item (v_stroke) stroke paint ship straight
+  // alpha and go through the same artist-alpha/opacity stack, so a scalar
+  // CSS edge fades under alpha overrides exactly like SVG/PNG export.
+  vec4 strokeSrc = u_strokeMode == 1 ? v_stroke : u_ptStroke;
+  float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : strokeSrc.a) * v_style.x * u_strokeOpacity;
+  vec4 strokePx = u_ptStrokeFace == 1 ? px : vec4(strokeSrc.rgb * strokeAlpha, strokeAlpha);
   if (lineMarker) {
     outColor = strokePx * (shapeCov * v_dim);
     return;
   }
-  if (u_ptStrokeWidth > 0.0) {
-    float sw = u_ptStrokeWidth / max(v_ptSize, 1.0);   // px -> gl_PointCoord units
+  float itemStrokeWidth = v_style.z >= 0.0 ? v_style.z : u_ptStrokeWidth;
+  if (itemStrokeWidth > 0.0) {
+    float sw = itemStrokeWidth / max(v_ptSize, 1.0);   // px -> gl_PointCoord units
     // The supplied point size includes the edge.  Recover Matplotlib's path
     // boundary half a stroke inside it, then source-over the centered stroke.
     float pathCov = clamp(0.5 - (sd + sw * 0.5) / aa, 0.0, 1.0);
@@ -920,14 +939,14 @@ void main() {
   outColor = vec4(u_color.rgb * alpha, alpha);
 }`;
 const SEGMENT_VS = `#version 300 es
-in float ax0; in float ay0; in float ax1; in float ay1; in float a_cval;
+in float ax0; in float ay0; in float ax1; in float ay1; in float a_cval; in vec4 a_rgba; in vec4 a_style;
 in float a_dash0; in float a_dashDir;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
 uniform float u_animationProgress;
 uniform int u_colorMode;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
 uniform int u_x0mode; uniform int u_x1mode; uniform int u_y0mode; uniform int u_y1mode;
-out float v_off; out float v_cval; out float v_dash;
+out float v_off; out float v_cval; out float v_dash; out vec4 v_rgba; out vec4 v_style;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -943,23 +962,28 @@ void main() {
   dir /= len;
   vec2 n = vec2(-dir.y, dir.x);
   vec2 c = corners[gl_VertexID];
-  float half_w = u_width * 0.5 + 0.5;
+  float itemWidth = a_style.z >= 0.0 ? a_style.z : u_width;
+  float half_w = itemWidth * 0.5 + 0.5;
   vec2 pos = mix(pix0, pix1, c.x) + dir * (c.x * 2.0 - 1.0) * 0.5 + n * c.y * half_w;
   gl_Position = vec4(pos / u_res * 2.0 - 1.0, 0.0, 1.0);
   v_off = c.y * half_w;
   v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   v_dash = a_dash0 + c.x * len * a_dashDir;
+  v_rgba = a_rgba; v_style = a_style;
 }`;
 const SEGMENT_FS = `#version 300 es
 precision highp float; precision highp int;
-uniform vec4 u_color; uniform float u_width; uniform int u_colorMode; uniform sampler2D u_lut;
+uniform vec4 u_color; uniform float u_width; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
 uniform int u_dashCount; uniform float u_dashArr[8]; uniform float u_dashPeriod;
-in float v_off; in float v_cval; in float v_dash;
+in float v_off; in float v_cval; in float v_dash; in vec4 v_rgba; in vec4 v_style;
 out vec4 outColor;
 void main() {
-  float half_w = u_width * 0.5;
-  vec3 rgb = u_colorMode != 0 ? texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb : u_color.rgb;
-  float alpha = (1.0 - smoothstep(half_w - 0.5, half_w + 0.5, abs(v_off))) * u_color.a;
+  float itemWidth = v_style.z >= 0.0 ? v_style.z : u_width;
+  float half_w = itemWidth * 0.5;
+  vec4 paint = u_colorMode == 3 ? v_rgba : (u_colorMode != 0 ? vec4(texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb, 1.0) : u_color);
+  vec3 rgb = paint.rgb;
+  float paintAlpha = (v_style.y >= 0.0 ? v_style.y : paint.a) * v_style.x * u_opacity;
+  float alpha = (1.0 - smoothstep(half_w - 0.5, half_w + 0.5, abs(v_off))) * paintAlpha;
   if (u_dashCount > 0) {
     float m = mod(v_dash, u_dashPeriod);
     float acc = 0.0;
@@ -977,13 +1001,14 @@ void main() {
 }`;
 const MESH_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1; in float ax2; in float ay2; in float a_cval;
+in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_x2meta;
 uniform vec2 u_y0meta; uniform vec2 u_y1meta; uniform vec2 u_y2meta;
 uniform int u_x0mode; uniform int u_x1mode; uniform int u_x2mode;
 uniform int u_y0mode; uniform int u_y1mode; uniform int u_y2mode;
 uniform int u_colorMode;
-out float v_cval; out vec3 v_bary;
+out float v_cval; out vec3 v_bary; out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke;
 ${AXIS_GLSL}
 void main() {
   int vertex = gl_VertexID % 3;
@@ -996,20 +1021,28 @@ void main() {
   gl_Position = vec4(xyMap(x, u_xmap, xm, xmode), xyMap(y, u_ymap, ym, ymode), 0.0, 1.0);
   v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   v_bary = vertex == 0 ? vec3(1.,0.,0.) : (vertex == 1 ? vec3(0.,1.,0.) : vec3(0.,0.,1.));
+  v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke;
 }`;
 const MESH_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
-uniform vec4 u_stroke; uniform float u_strokeWidth;
-in float v_cval; in vec3 v_bary;
+uniform vec4 u_stroke; uniform float u_strokeWidth; uniform int u_strokeMode; uniform float u_strokeOpacity;
+in float v_cval; in vec3 v_bary; in vec4 v_rgba; in vec4 v_style; in vec4 v_stroke;
 out vec4 outColor;
 void main() {
-  vec3 rgb = u_colorMode == 0 ? u_color.rgb : texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb;
-  vec4 fill = vec4(rgb * u_opacity, u_opacity);
-  if (u_strokeWidth > 0.0) {
+  vec4 paint = u_colorMode == 3 ? v_rgba : (u_colorMode == 0 ? u_color : vec4(texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb, 1.0));
+  float alpha = (v_style.y >= 0.0 ? v_style.y : paint.a) * v_style.x * u_opacity;
+  vec4 fill = vec4(paint.rgb * alpha, alpha);
+  float strokeWidth = v_style.z >= 0.0 ? v_style.z : u_strokeWidth;
+  if (strokeWidth > 0.0) {
     float edge = min(v_bary.x, min(v_bary.y, v_bary.z));
-    float coverage = smoothstep(0.0, max(fwidth(edge) * u_strokeWidth, 1e-5), edge);
-    outColor = mix(u_stroke, fill, coverage);
+    float coverage = smoothstep(0.0, max(fwidth(edge) * strokeWidth, 1e-5), edge);
+    // Both stroke sources ship straight alpha; the per-item alpha stack
+    // applies to scalar strokes as well (parity with static exporters).
+    vec4 strokeSrc = u_strokeMode == 1 ? v_stroke : u_stroke;
+    float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : strokeSrc.a) * v_style.x * u_strokeOpacity;
+    vec4 stroke = vec4(strokeSrc.rgb * strokeAlpha, strokeAlpha);
+    outColor = mix(stroke, fill, coverage);
   } else {
     outColor = fill;
   }
@@ -1098,9 +1131,11 @@ uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec
 uniform int u_xmode; uniform int u_ymode;
 uniform vec4 u_edgePad;
 uniform vec2 u_res;
-in float a_cval; uniform int u_colorMode;
+in float a_cval; in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke; in vec2 a_radius;
+uniform int u_colorMode;
 out float v_lutCoord;
 out vec2 v_local; out vec2 v_half; out float v_t;
+out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke; out vec2 v_radius;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -1117,11 +1152,13 @@ void main() {
   v_half = abs(pB - pA) * 0.5;
   v_local = mix(pA, pB, c) - (pA + pB) * 0.5;
   v_t = c.y;
+  v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke; v_radius = a_radius;
   gl_Position = vec4(mix(x0, x1, c.x), mix(y0, y1, c.y), 0.0, 1.0);
 }`;
 const BAR_VS = `#version 300 es
 in float a_pos; in float a_v0; in float a_v1; in float a_cval;
 in float a_prevx; in float a_prevy; in float a_prevx1;
+in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke; in vec2 a_radius;
 uniform vec2 u_pmap; uniform vec2 u_v0map; uniform vec2 u_v1map;
 uniform vec2 u_pmeta; uniform vec2 u_v0meta; uniform vec2 u_v1meta;
 uniform int u_pmode; uniform int u_vmode;
@@ -1133,6 +1170,7 @@ uniform vec2 u_res;
 uniform int u_colorMode;
 out float v_lutCoord;
 out vec2 v_local; out vec2 v_half; out float v_t;
+out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke; out vec2 v_radius;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -1172,34 +1210,51 @@ void main() {
   vec2 pB = (clipB * 0.5 + 0.5) * u_res;
   v_half = abs(pB - pA) * 0.5;
   v_local = vec2(mix(pA.x, pB.x, c.x), mix(pA.y, pB.y, c.y)) - (pA + pB) * 0.5;
+  v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke; v_radius = a_radius;
 }`;
 const RECT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut;
 uniform vec2 u_radius; uniform float u_strokeWidth; uniform vec4 u_stroke;
+uniform int u_strokeMode; uniform float u_strokeOpacity;
+uniform float u_opacity;
 uniform vec2 u_res;
 in float v_lutCoord;
 in vec2 v_local; in vec2 v_half; in float v_t;
+in vec4 v_rgba; in vec4 v_style; in vec4 v_stroke; in vec2 v_radius;
 out vec4 outColor;
 ${GRAD_GLSL}
 void main() {
-  vec3 rgb = u_colorMode == 0 ? u_color.rgb : texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb;
-  vec4 premult = vec4(rgb * u_color.a, u_color.a);
-  // Compose the mark opacity (u_color.a) over the gradient — premultiplied, so
-  // one scalar multiply fades every stop, including a fade-to-transparent.
-  if (u_gradMode != 0) premult = xyGradSample(xyGradT(v_t, u_res)) * u_color.a;
-  if (u_radius.x > 0.0 || u_radius.y > 0.0 || u_strokeWidth > 0.0) {
+  vec4 paint = u_colorMode == 3 ? v_rgba : (u_colorMode == 0 ? u_color : vec4(texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb, 1.0));
+  float alpha = (v_style.y >= 0.0 ? v_style.y : paint.a) * v_style.x * u_opacity;
+  vec4 premult = vec4(paint.rgb * alpha, alpha);
+  if (u_gradMode != 0) {
+    vec4 gradient = xyGradSample(xyGradT(v_t, u_res));
+    float gradientAlpha = (v_style.y >= 0.0 ? v_style.y : gradient.a) * v_style.x * u_opacity;
+    // Gradient stops are uploaded premultiplied. Recover their straight RGB
+    // before applying an artist-alpha override, then premultiply the result.
+    vec3 gradientRgb = gradient.a > 1e-6 ? gradient.rgb / gradient.a : vec3(0.0);
+    premult = vec4(gradientRgb * gradientAlpha, gradientAlpha);
+  }
+  vec2 radius = v_radius.x >= 0.0 ? v_radius : u_radius;
+  float strokeWidth = v_style.z >= 0.0 ? v_style.z : u_strokeWidth;
+  if (radius.x > 0.0 || radius.y > 0.0 || strokeWidth > 0.0) {
     // u_radius = (tip, base) in mark space: v_t > 0.5 is the tip half, so
     // corner_radius=(6, 0) rounds only the value end of the bar. On the
     // straight sides the SDF reduces to |local|-half independent of r, so
     // differing radii meet with no seam.
-    float r = min(v_t > 0.5 ? u_radius.x : u_radius.y, min(v_half.x, v_half.y));
+    float r = min(v_t > 0.5 ? radius.x : radius.y, min(v_half.x, v_half.y));
     vec2 q = abs(v_local) - (v_half - vec2(r));
     float d = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r;
     float aa = 0.75;
-    if (u_strokeWidth > 0.0) {
-      float inner = 1.0 - smoothstep(-aa, aa, d + u_strokeWidth);
-      premult = mix(u_stroke, premult, inner);
+    if (strokeWidth > 0.0) {
+      // Both stroke sources ship straight alpha; the per-item alpha stack
+      // applies to scalar strokes as well (parity with static exporters).
+      vec4 strokeSrc = u_strokeMode == 1 ? v_stroke : u_stroke;
+      float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : strokeSrc.a) * v_style.x * u_strokeOpacity;
+      vec4 stroke = vec4(strokeSrc.rgb * strokeAlpha, strokeAlpha);
+      float inner = 1.0 - smoothstep(-aa, aa, d + strokeWidth);
+      premult = mix(stroke, premult, inner);
     }
     premult *= 1.0 - smoothstep(-aa, aa, d);
   }
@@ -1449,6 +1504,7 @@ let d = g.drill;
 if (!d) {
 d = g.drill = { trace: g.trace, xBuf: gl.createBuffer(), yBuf: gl.createBuffer() };
 }
+d.trace = { ...g.trace, style: upd.style || g.trace.style || {} };
 d.xAxis = g.xAxis;
 d.yAxis = g.yAxis;
 gl.bindBuffer(gl.ARRAY_BUFFER, d.xBuf);
@@ -1467,17 +1523,21 @@ view._lastRow = null;
 d.colorMode = 0;
 d.color = parseColor(view.root, upd.color && upd.color.color, [0.3, 0.47, 0.66, 1]);
 if (upd.color && upd.color.buf !== undefined) {
-d.colorMode = upd.color.mode === "continuous" ? 1 : 2;
-if (!d.cBuf) d.cBuf = gl.createBuffer();
+d.colorMode = upd.color.mode === "continuous" ? 1 :
+(upd.color.mode === "categorical" ? 2 : 3);
 const colorValues = upd.color.dtype === "u8"
 ? view._asU8(buffers[upd.color.buf])
 : view._asF32(buffers[upd.color.buf]);
-d.cBuf._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
-gl.bindBuffer(gl.ARRAY_BUFFER, d.cBuf);
+const colorBufferName = d.colorMode === 3 ? "rgbaBuf" : "cBuf";
+if (!d[colorBufferName]) d[colorBufferName] = gl.createBuffer();
+d[colorBufferName]._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
+gl.bindBuffer(gl.ARRAY_BUFFER, d[colorBufferName]);
 gl.bufferData(gl.ARRAY_BUFFER, colorValues, gl.STATIC_DRAW);
+if (d.colorMode !== 3) {
 d.lut = upd.color.mode === "continuous"
 ? view._lut(upd.color.colormap)
 : view._paletteLut(upd.color.palette);
+}
 }
 d.sizeMode = 0;
 d.size = (upd.size && upd.size.size) || 4.0;
@@ -1489,6 +1549,43 @@ gl.bindBuffer(gl.ARRAY_BUFFER, d.sBuf);
 gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.size.buf]), gl.STATIC_DRAW);
 d.sizeRange = upd.size.range_px;
 }
+const styleChannel = (name) => upd.channels && upd.channels[name];
+const artistScalar = Number(d.trace.style && d.trace.style.artist_alpha);
+if (styleChannel("opacity") || styleChannel("artist_alpha") ||
+styleChannel("stroke_width") || styleChannel("symbol") || Number.isFinite(artistScalar)) {
+const values = new Float32Array(d.n * 4);
+for (let i = 0; i < d.n; i++) {
+values[i * 4] = 1;
+values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
+values[i * 4 + 2] = -1;
+values[i * 4 + 3] = -1;
+}
+const copy = (name, component, scale = 1) => {
+const spec = styleChannel(name);
+if (!spec) return;
+const source = spec.dtype === "u8"
+? view._asU8(buffers[spec.buf])
+: view._asF32(buffers[spec.buf]);
+const components = spec.components || 1;
+for (let i = 0; i < d.n; i++) values[i * 4 + component] = source[i * components] * scale;
+};
+copy("opacity", 0);
+copy("artist_alpha", 1);
+copy("stroke_width", 2, view.dpr);
+copy("symbol", 3);
+if (!d.styleBuf) d.styleBuf = gl.createBuffer();
+d.styleBuf._fcType = gl.FLOAT;
+gl.bindBuffer(gl.ARRAY_BUFFER, d.styleBuf);
+gl.bufferData(gl.ARRAY_BUFFER, values, gl.STATIC_DRAW);
+}
+if (upd.stroke && upd.stroke.mode === "direct_rgba") {
+const values = view._asU8(buffers[upd.stroke.buf]);
+if (!d.strokeBuf) d.strokeBuf = gl.createBuffer();
+d.strokeBuf._fcType = gl.UNSIGNED_BYTE;
+gl.bindBuffer(gl.ARRAY_BUFFER, d.strokeBuf);
+gl.bufferData(gl.ARRAY_BUFFER, values, gl.STATIC_DRAW);
+}
+view._pointMarkStyle(d, d.trace);
 if (upd.density_val && upd.density_val.buf !== undefined) {
 if (!d.dBuf) d.dBuf = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, d.dBuf);
@@ -1520,7 +1617,8 @@ const d = g.drill;
 if (!d) return;
 const gl = view.gl;
 view._deleteVaos(d);
-for (const b of [d.xBuf, d.yBuf, d.cBuf, d.sBuf, d.selBuf, d.dBuf]) if (b) gl.deleteBuffer(b);
+for (const b of [d.xBuf, d.yBuf, d.cBuf, d.rgbaBuf, d.sBuf, d.styleBuf,
+d.strokeBuf, d.selBuf, d.dBuf]) if (b) gl.deleteBuffer(b);
 g.drill = null;
 g._drillFadeStart = null;
 g._drillExitFadeStart = null;
@@ -3143,6 +3241,46 @@ g._cpu = { x, y, xMeta: g.xMeta, yMeta: g.yMeta };
 g.xBuf = this._upload(x);
 g.yBuf = this._upload(y);
 }
+_buildInstanceStyleChannels(g, t, buffer, widthName) {
+const channel = (name) => t.channels && t.channels[name];
+const artistScalar = Number(t.style && t.style.artist_alpha);
+const hasStyle = channel("opacity") || channel("artist_alpha") ||
+channel(widthName) || channel("symbol") || Number.isFinite(artistScalar);
+if (hasStyle) {
+const values = new Float32Array(g.n * 4);
+for (let i = 0; i < g.n; i++) {
+values[i * 4] = 1;
+values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
+values[i * 4 + 2] = -1;
+values[i * 4 + 3] = -1;
+}
+const copy = (name, component, scale = 1) => {
+const spec = channel(name);
+if (!spec) return;
+const source = this._columnView(buffer, this.spec.columns[spec.buf]);
+for (let i = 0; i < g.n; i++) values[i * 4 + component] = source[i * (spec.components || 1)] * scale;
+};
+copy("opacity", 0);
+copy("artist_alpha", 1);
+copy(widthName, 2, this.dpr);
+copy("symbol", 3);
+g.styleBuf = this._upload(values);
+}
+const radius = channel("corner_radius");
+if (radius) {
+const source = this._columnView(buffer, this.spec.columns[radius.buf]);
+const components = radius.components || 1;
+const values = new Float32Array(g.n * 2);
+for (let i = 0; i < g.n; i++) {
+values[i * 2] = source[i * components] * this.dpr;
+values[i * 2 + 1] = (components > 1 ? source[i * components + 1] : source[i * components]) * this.dpr;
+}
+g.radiusBuf = this._upload(values);
+}
+if (t.stroke && t.stroke.mode === "direct_rgba") {
+g.strokeBuf = this._upload(this._columnView(buffer, this.spec.columns[t.stroke.buf]));
+}
+}
 _buildScatterMark(g, t, buffer) {
 this._buildXY(g, t, buffer);
 g.colorMode = 0;
@@ -3157,6 +3295,10 @@ g.colorMode = 2;
 g._cpu.color = this._columnView(buffer, this.spec.columns[t.color.buf]);
 g.cBuf = this._upload(g._cpu.color);
 g.lut = this._paletteLut(t.color.palette);
+} else if (t.color && t.color.mode === "direct_rgba") {
+g.colorMode = 3;
+g._cpu.rgba = this._columnView(buffer, this.spec.columns[t.color.buf]);
+g.rgbaBuf = this._upload(g._cpu.rgba);
 }
 g.sizeMode = 0;
 g.size = (t.size && t.size.size) || 4.0;
@@ -3167,13 +3309,14 @@ g._cpu.size = this._columnView(buffer, this.spec.columns[t.size.buf]);
 g.sBuf = this._upload(g._cpu.size);
 g.sizeRange = t.size.range_px;
 }
+this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
 this._pointMarkStyle(g, t);
 }
 _pointMarkStyle(g, t) {
 const s = t.style || {};
 g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 }[s.symbol] || 0;
 g.pointStrokeWidth = Number(s.stroke_width) || 0;
-g.pointStrokeFace = !s.stroke;
+g.pointStrokeFace = !s.stroke && (!t.stroke || t.stroke.mode === "match_fill");
 g.pointStroke = s.stroke
 ? parseColor(this.root, s.stroke, [g.color[0], g.color[1], g.color[2], 1])
 : null;
@@ -3191,6 +3334,8 @@ x_axis: parentTrace.x_axis,
 y_axis: parentTrace.y_axis,
 color: sample.color,
 size: sample.size,
+stroke: sample.stroke,
+channels: sample.channels,
 };
 }
 _buildDensitySample(parentTrace, sample, buffer) {
@@ -3215,7 +3360,8 @@ return g;
 _destroyDensitySample(g) {
 const s = g && g.sampleOverlay;
 if (!s || !this.gl) return;
-for (const b of [s.xBuf, s.yBuf, s.cBuf, s.sBuf, s.selBuf, s.dBuf]) {
+for (const b of [s.xBuf, s.yBuf, s.cBuf, s.rgbaBuf, s.sBuf, s.styleBuf,
+s.strokeBuf, s.selBuf, s.dBuf]) {
 if (b) this.gl.deleteBuffer(b);
 }
 g.sampleOverlay = null;
@@ -3237,6 +3383,8 @@ x_axis: g.trace.x_axis,
 y_axis: g.trace.y_axis,
 color: sample.color,
 size: sample.size,
+stroke: sample.stroke,
+channels: sample.channels,
 };
 const s = {
 trace,
@@ -3265,17 +3413,21 @@ gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.x.buf]), gl.STATIC_DRA
 gl.bindBuffer(gl.ARRAY_BUFFER, s.yBuf);
 gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.y.buf]), gl.STATIC_DRAW);
 if (sample.color && sample.color.buf !== undefined) {
-s.colorMode = sample.color.mode === "continuous" ? 1 : 2;
-s.cBuf = gl.createBuffer();
+s.colorMode = sample.color.mode === "continuous" ? 1 :
+(sample.color.mode === "categorical" ? 2 : 3);
 const colorValues = sample.color.dtype === "u8"
 ? this._asU8(buffers[sample.color.buf])
 : this._asF32(buffers[sample.color.buf]);
-s.cBuf._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
-gl.bindBuffer(gl.ARRAY_BUFFER, s.cBuf);
+const colorBufferName = s.colorMode === 3 ? "rgbaBuf" : "cBuf";
+s[colorBufferName] = gl.createBuffer();
+s[colorBufferName]._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
+gl.bindBuffer(gl.ARRAY_BUFFER, s[colorBufferName]);
 gl.bufferData(gl.ARRAY_BUFFER, colorValues, gl.STATIC_DRAW);
+if (s.colorMode !== 3) {
 s.lut = sample.color.mode === "continuous"
 ? this._lut(sample.color.colormap)
 : this._paletteLut(sample.color.palette);
+}
 }
 if (sample.size && sample.size.mode === "continuous") {
 s.sizeMode = 1;
@@ -3284,6 +3436,36 @@ gl.bindBuffer(gl.ARRAY_BUFFER, s.sBuf);
 gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.size.buf]), gl.STATIC_DRAW);
 s.sizeRange = sample.size.range_px;
 }
+const channel = (name) => sample.channels && sample.channels[name];
+const artistScalar = Number(trace.style && trace.style.artist_alpha);
+if (channel("opacity") || channel("artist_alpha") || channel("stroke_width") ||
+channel("symbol") || Number.isFinite(artistScalar)) {
+const values = new Float32Array(s.n * 4);
+for (let i = 0; i < s.n; i++) {
+values[i * 4] = 1;
+values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
+values[i * 4 + 2] = -1;
+values[i * 4 + 3] = -1;
+}
+const copy = (name, component, scale = 1) => {
+const spec = channel(name);
+if (!spec) return;
+const source = spec.dtype === "u8"
+? this._asU8(buffers[spec.buf])
+: this._asF32(buffers[spec.buf]);
+const components = spec.components || 1;
+for (let i = 0; i < s.n; i++) values[i * 4 + component] = source[i * components] * scale;
+};
+copy("opacity", 0);
+copy("artist_alpha", 1);
+copy("stroke_width", 2, this.dpr);
+copy("symbol", 3);
+s.styleBuf = this._upload(values);
+}
+if (sample.stroke && sample.stroke.mode === "direct_rgba") {
+s.strokeBuf = this._upload(this._asU8(buffers[sample.stroke.buf]));
+}
+this._pointMarkStyle(s, trace);
 g.sampleOverlay = s;
 this._refreshReductionBadges();
 }
@@ -3346,8 +3528,9 @@ const cr = g.cornerRadius || [0, 0];
 gl.uniform2f(u("u_radius"), cr[0] * this.dpr, cr[1] * this.dpr);
 gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
 const sc = g.strokeColor || [0, 0, 0, 0];
-const sa = sc[3] * this._strokeOpacity(g.trace.style || {});
-gl.uniform4f(u("u_stroke"), sc[0] * sa, sc[1] * sa, sc[2] * sa, sa);
+gl.uniform4f(u("u_stroke"), sc[0], sc[1], sc[2], sc[3]);
+gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}));
 this._setGradientUniforms(prog, g.grad);
 }
 _rectMarkStyleGpu(g, t) {
@@ -3435,7 +3618,11 @@ g.lut = this._lut(t.color.colormap);
 g.colorMode = 2;
 g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
 g.lut = this._paletteLut(t.color.palette);
+} else if (t.color && t.color.mode === "direct_rgba") {
+g.colorMode = 3;
+g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
 }
+this._buildInstanceStyleChannels(g, t, buffer, "width");
 g._cpu = { x: x0, y: y1, xMeta: g.x0Meta, yMeta: g.y1Meta };
 }
 _buildMeshMark(g, t, buffer) {
@@ -3455,7 +3642,11 @@ g.lut = this._lut(t.color.colormap);
 g.colorMode = 2;
 g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
 g.lut = this._paletteLut(t.color.palette);
+} else if (t.color && t.color.mode === "direct_rgba") {
+g.colorMode = 3;
+g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
 }
+this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
 const style = t.style || {};
 g.meshStrokeWidth = Number(style.stroke_width) || 0;
 g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
@@ -3555,7 +3746,11 @@ g.lut = this._lut(t.color.colormap);
 g.colorMode = 2;
 g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
 g.lut = this._paletteLut(t.color.palette);
+} else if (t.color && t.color.mode === "direct_rgba") {
+g.colorMode = 3;
+g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
 }
+this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
 this._rectMarkStyleGpu(g, t);
 }
 _buildBarMark(g, t, buffer) {
@@ -3602,7 +3797,11 @@ g.lut = this._lut(t.color.colormap);
 g.colorMode = 2;
 g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
 g.lut = this._paletteLut(t.color.palette);
+} else if (t.color && t.color.mode === "direct_rgba") {
+g.colorMode = 3;
+g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
 }
+this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
 this._rectMarkStyleGpu(g, t);
 }
 _buildHeatmapMark(g, t, buffer) {
@@ -3723,11 +3922,11 @@ const gl = this.gl;
 if (gl) for (const { vao } of g._vaos.values()) gl.deleteVertexArray(vao);
 g._vaos = null;
 }
-_vaoAttr(slot, buf, byteOffset, divisor, size = 1) {
+_vaoAttr(slot, buf, byteOffset, divisor, size = 1, normalized = false) {
 const gl = this.gl;
 gl.bindBuffer(gl.ARRAY_BUFFER, buf);
 gl.enableVertexAttribArray(slot);
-gl.vertexAttribPointer(slot, size, buf._fcType || gl.FLOAT, false, 0, byteOffset);
+gl.vertexAttribPointer(slot, size, buf._fcType || gl.FLOAT, normalized, 0, byteOffset);
 gl.vertexAttribDivisor(slot, divisor);
 }
 _initPickTarget() {
@@ -3834,14 +4033,16 @@ this._renderLassoSelection?.();
 _now() {
 return performance.now();
 }
+_canDrawSimplePoints(g) {
+return g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
+!g.rgbaBuf && !g.styleBuf && !g.strokeBuf &&
+(g.symbol || 0) === 0 && (g.pointStrokeWidth || 0) <= 0 &&
+Math.max(g.lodBlendShown ?? 0, g.lodBlend ?? 0) <= 0.001;
+}
 _drawPoints(g, xm, ym, opacityScale = 1) {
 opacityScale *= g._transitionOpacity ?? 1;
 const animationScale = g._transitionScale ?? 1;
-const simple =
-g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
-(g.symbol || 0) === 0 && (g.pointStrokeWidth || 0) <= 0 &&
-Math.max(g.lodBlendShown ?? 0, g.lodBlend ?? 0) <= 0.001;
-if (simple) {
+if (this._canDrawSimplePoints(g)) {
 this._drawSimplePoints(g, xm, ym, opacityScale);
 return;
 }
@@ -3871,21 +4072,23 @@ gl.uniform4f(loc, c ? c[0] : 0, c ? c[1] : 0, c ? c[2] : 0, c ? 1 : 0);
 };
 stateColor(u("u_selColor"), this._markStateValue("selected", "color"));
 stateColor(u("u_unselColor"), this._markStateValue("unselected", "color"));
-const [r, gg, b] = g.color;
-gl.uniform4f(u("u_color"), r, gg, b, 1);
+const [r, gg, b, a] = g.color;
+gl.uniform4f(u("u_color"), r, gg, b, a);
 gl.uniform1i(u("u_symbol"), g.symbol || 0);
 const sc = g.pointStroke;
-const strokeAlpha = sc
-? sc[3] * this._strokeOpacity(g.trace.style, 0.8) * opacityScale
-: 0;
 gl.uniform1f(u("u_ptStrokeWidth"), (g.pointStrokeWidth || 0) * this.dpr);
 gl.uniform1i(u("u_ptStrokeFace"), g.pointStrokeFace ? 1 : 0);
-gl.uniform4f(u("u_ptStroke"), sc ? sc[0] * strokeAlpha : 0, sc ? sc[1] * strokeAlpha : 0,
-sc ? sc[2] * strokeAlpha : 0, strokeAlpha);
+gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style, 0.8) * opacityScale);
+gl.uniform4f(u("u_ptStroke"), sc ? sc[0] : 0, sc ? sc[1] : 0,
+sc ? sc[2] : 0, sc ? sc[3] : 0);
 gl.uniform1i(u("u_selActive"), g.selActive ? 1 : 0);
 const colorOn = g.colorMode !== 0 && g.cBuf;
 const sizeOn = g.sizeMode === 1 && g.sBuf;
 const selOn = g.selActive && g.selBuf;
+const rgbaOn = g.colorMode === 3 && g.rgbaBuf;
+const styleOn = !!g.styleBuf;
+const strokeOn = !!g.strokeBuf;
 if (g.lut) {
 gl.activeTexture(gl.TEXTURE0);
 gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -3922,6 +4125,9 @@ selOn ? g.selBuf._fcId : 0,
 blendOn ? g.dBuf._fcId : 0,
 transitionOn ? g._transitionPrevXBuf._fcId : 0,
 transitionOn ? g._transitionPrevYBuf._fcId : 0,
+rgbaOn ? g.rgbaBuf._fcId : 0,
+styleOn ? g.styleBuf._fcId : 0,
+strokeOn ? g.strokeBuf._fcId : 0,
 ],
 () => {
 this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 0);
@@ -3934,12 +4140,18 @@ if (transitionOn) {
 this._vaoAttr(ATTR_SLOTS.a_prevx, g._transitionPrevXBuf, 0, 0);
 this._vaoAttr(ATTR_SLOTS.a_prevy, g._transitionPrevYBuf, 0, 0);
 }
+if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 0, 4, true);
+if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 0, 4);
+if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 0, 4, true);
 }
 );
 if (!colorOn) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
 if (!sizeOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
 if (!selOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sel, 1.0);
 if (!blendOn) gl.vertexAttrib1f(ATTR_SLOTS.a_dval, 0);
+if (!rgbaOn) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, r, gg, b, a);
 gl.drawArrays(gl.POINTS, 0, g.n);
 }
 _drawSimplePoints(g, xm, ym, opacityScale = 1) {
@@ -3956,8 +4168,10 @@ const transitionOn = !!(g._transitionPrevXBuf && g._transitionPrevYBuf);
 gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
 gl.uniform1f(u("u_transitionProgress"), g._transitionPositionProgress ?? 1);
 gl.uniform1f(u("u_size"), g.size * (g._transitionScale ?? 1));
-const [r, gg, b] = g.color;
-gl.uniform4f(u("u_color"), r, gg, b, this._fillOpacity(g.trace.style, 0.8) * opacityScale);
+const [r, gg, b, a] = g.color;
+gl.uniform4f(
+u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.8) * opacityScale
+);
 this._bindVao(
 g,
 "points-simple",
@@ -4151,7 +4365,8 @@ gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
 gl.uniform1f(u("u_width"), (g.trace.style.width ?? 1.5) * this.dpr);
 gl.uniform1f(u("u_animationProgress"), g._transitionScale ?? 1);
 const [r, gg, b, a] = g.color;
-gl.uniform4f(u("u_color"), r, gg, b, a * this._strokeOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
+gl.uniform4f(u("u_color"), r, gg, b, a);
+gl.uniform1f(u("u_opacity"), this._strokeOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
 gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
 const dashed = this._segmentDash(g, prog);
 if (g.colorMode && g.lut) {
@@ -4163,7 +4378,9 @@ this._bindVao(
 g,
 "segment",
 [g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId,
-g.colorMode ? g.cBuf._fcId : 0,
+g.colorMode && g.cBuf ? g.cBuf._fcId : 0,
+g.rgbaBuf ? g.rgbaBuf._fcId : 0,
+g.styleBuf ? g.styleBuf._fcId : 0,
 dashed ? g._segmentDashOffsetBuf._fcId : 0,
 dashed ? g._segmentDashDirBuf._fcId : 0],
 () => {
@@ -4171,14 +4388,18 @@ this._vaoAttr(ATTR_SLOTS.ax0, g.x0Buf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
-if (g.colorMode) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+if (g.colorMode && g.cBuf) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+if (g.styleBuf) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
 if (dashed) {
 this._vaoAttr(ATTR_SLOTS.a_dash0, g._segmentDashOffsetBuf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.a_dashDir, g._segmentDashDirBuf, 0, 1);
 }
 }
 );
-if (!g.colorMode) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+if (!g.cBuf) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+if (!g.rgbaBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+if (!g.styleBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
 const count = Math.max(0, Math.min(g.n, Math.ceil(g.n * (g._transitionReveal ?? 1))));
 gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
 }
@@ -4266,26 +4487,33 @@ for (const name of ["x0", "x1", "x2"]) this._setAxisUniforms(prog, "u_" + name, 
 for (const name of ["y0", "y1", "y2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.yAxis);
 gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
 gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
-gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], 1);
+gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], g.color[3]);
 const stroke = g.meshStroke || [0, 0, 0, 0];
-const strokeAlpha = stroke[3] * this._strokeOpacity(g.trace.style);
-gl.uniform4f(u("u_stroke"), stroke[0] * strokeAlpha, stroke[1] * strokeAlpha,
-stroke[2] * strokeAlpha, strokeAlpha);
+gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
 gl.uniform1f(u("u_strokeWidth"), g.meshStrokeWidth || 0);
+gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style));
 if (g.colorMode && g.lut) {
 gl.activeTexture(gl.TEXTURE0);
 gl.bindTexture(gl.TEXTURE_2D, g.lut);
 gl.uniform1i(u("u_lut"), 0);
 }
 const parts = ["x0", "x1", "x2", "y0", "y1", "y2"].map((name) => g[name + "Buf"]._fcId);
-parts.push(g.colorMode ? g.cBuf._fcId : 0);
+parts.push(g.cBuf ? g.cBuf._fcId : 0, g.rgbaBuf ? g.rgbaBuf._fcId : 0,
+g.styleBuf ? g.styleBuf._fcId : 0, g.strokeBuf ? g.strokeBuf._fcId : 0);
 this._bindVao(g, "mesh", parts, () => {
 for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) {
 this._vaoAttr(ATTR_SLOTS["a" + name], g[name + "Buf"], 0, 1);
 }
-if (g.colorMode) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+if (g.cBuf) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+if (g.styleBuf) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+if (g.strokeBuf) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
 });
-if (!g.colorMode) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+if (!g.cBuf) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+if (!g.rgbaBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, ...g.color);
+if (!g.styleBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+if (!g.strokeBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...stroke);
 gl.drawArraysInstanced(gl.TRIANGLES, 0, 3, g.n);
 }
 _lineDash(g) {
@@ -4379,10 +4607,15 @@ gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
 gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
 gl.uniform4f(u("u_edgePad"), edgePad[0], edgePad[1], edgePad[2], edgePad[3]);
 const [r, gg, b, a] = g.color;
-gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
+gl.uniform4f(u("u_color"), r, gg, b, a);
+gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
 gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
 this._setRectStyleUniforms(prog, g);
-const colorOn = g.colorMode && g.cBuf;
+const colorOn = !!g.cBuf;
+const rgbaOn = !!g.rgbaBuf;
+const styleOn = !!g.styleBuf;
+const strokeOn = !!g.strokeBuf;
+const radiusOn = !!g.radiusBuf;
 if (colorOn) {
 gl.activeTexture(gl.TEXTURE0);
 gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -4391,16 +4624,27 @@ gl.uniform1i(u("u_lut"), 0);
 this._bindVao(
 g,
 "rects",
-[g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId, colorOn ? g.cBuf._fcId : 0],
+[g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId,
+colorOn ? g.cBuf._fcId : 0, rgbaOn ? g.rgbaBuf._fcId : 0,
+styleOn ? g.styleBuf._fcId : 0, strokeOn ? g.strokeBuf._fcId : 0,
+radiusOn ? g.radiusBuf._fcId : 0],
 () => {
 this._vaoAttr(ATTR_SLOTS.ax0, g.x0Buf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
 if (colorOn) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
+if (radiusOn) this._vaoAttr(ATTR_SLOTS.a_radius, g.radiusBuf, 0, 1, 2);
 }
 );
 if (!colorOn) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+if (!rgbaOn) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...(g.strokeColor || g.color));
+if (!radiusOn) gl.vertexAttrib2f(ATTR_SLOTS.a_radius, -1, -1);
 gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
 }
 _drawBars(g, pmap, v1map, v0map, v0Const, v0EdgePad = 0) {
@@ -4434,11 +4678,16 @@ gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
 gl.uniform1f(u("u_transitionProgress"), g._transitionPositionProgress ?? 1);
 gl.uniform1f(u("u_prevWidth"), g._transitionPrevWidth ?? g.width);
 const [r, gg, b, a] = g.color;
-gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
+gl.uniform4f(u("u_color"), r, gg, b, a);
+gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
 gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
 this._setRectStyleUniforms(prog, g);
 const v0On = g.value0Mode === 1 && g.value0Buf;
-const colorOn = g.colorMode && g.cBuf;
+const colorOn = !!g.cBuf;
+const rgbaOn = !!g.rgbaBuf;
+const styleOn = !!g.styleBuf;
+const strokeOn = !!g.strokeBuf;
+const radiusOn = !!g.radiusBuf;
 if (colorOn) {
 gl.activeTexture(gl.TEXTURE0);
 gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -4454,6 +4703,10 @@ colorOn ? g.cBuf._fcId : 0,
 transitionOn ? g._transitionPrevPosBuf._fcId : 0,
 transitionOn ? g._transitionPrevValue1Buf._fcId : 0,
 transitionOn ? g._transitionPrevValue0Buf._fcId : 0,
+rgbaOn ? g.rgbaBuf._fcId : 0,
+styleOn ? g.styleBuf._fcId : 0,
+strokeOn ? g.strokeBuf._fcId : 0,
+radiusOn ? g.radiusBuf._fcId : 0,
 ],
 () => {
 this._vaoAttr(ATTR_SLOTS.a_pos, g.posBuf, 0, 1);
@@ -4465,10 +4718,18 @@ this._vaoAttr(ATTR_SLOTS.a_prevx, g._transitionPrevPosBuf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.a_prevy, g._transitionPrevValue1Buf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.a_prevx1, g._transitionPrevValue0Buf, 0, 1);
 }
+if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
+if (radiusOn) this._vaoAttr(ATTR_SLOTS.a_radius, g.radiusBuf, 0, 1, 2);
 }
 );
 if (!v0On) gl.vertexAttrib1f(ATTR_SLOTS.a_v0, 0);
 if (!colorOn) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+if (!rgbaOn) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...(g.strokeColor || g.color));
+if (!radiusOn) gl.vertexAttrib2f(ATTR_SLOTS.a_radius, -1, -1);
 gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
 }
 _dataPxX(value) {
@@ -5355,6 +5616,8 @@ this._dataAnimRaf = null;
 this._dataAnim = null;
 this._destroyTransitionOldTraces?.();
 this._destroyGlResources();
+const loseExt = this.gl && this.gl.getExtension("WEBGL_lose_context");
+if (loseExt) loseExt.loseContext();
 this.gl = null;
 this.root.remove();
 }

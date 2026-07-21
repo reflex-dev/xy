@@ -146,9 +146,12 @@ Ordered by how much each compounds as kinds multiply.
 - **R8 — Lifecycle cleanup.** ✅ **Already complete** (re-audit): `destroy()`
   → `_destroyGlResources` frees per-trace static + drill buffers, density/
   heatmap/LUT textures (dedup via `texSeen`), pick FBO/texture, the quad, and
-  all programs. The original finding is stale. Remaining nicety only: move
-  per-kind buffer-name lists into a registry `dispose` hook when a kind
-  arrives whose resources don't fit the shared name list.
+  all programs, then releases the GL context itself via `WEBGL_lose_context`
+  so a torn-down view (including a full-payload republish's destroy+rebuild)
+  frees its context slot immediately instead of waiting for GC. The original
+  finding is stale. Remaining nicety only: move per-kind buffer-name lists into
+  a registry `dispose` hook when a kind arrives whose resources don't fit the
+  shared name list.
 - **R9 — Picking model won't stretch as-is.** GPU ID pass is point-only
   (`pointPick`); rect-family picking (bars/candles) is planned as a
   registry `pick` step (contract). The ID encoding is a single *global*

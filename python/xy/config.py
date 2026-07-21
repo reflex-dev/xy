@@ -8,7 +8,7 @@ recorded in the shipped spec, never silent (§28).
 from __future__ import annotations
 
 # Wire protocol version: the client refuses a mismatched spec loudly (§33).
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the

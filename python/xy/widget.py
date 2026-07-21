@@ -81,11 +81,35 @@ class FigureWidget(anywidget.AnyWidget):
         super().__init__(spec=spec, buffers=bufs, **kwargs)
         self.on_msg(self._on_custom_msg)
 
-    def append(self, trace_id: int, x: Any, y: Any, *, color: Any = None, size: Any = None) -> None:
+    def append(
+        self,
+        trace_id: int,
+        x: Any,
+        y: Any,
+        *,
+        color: Any = None,
+        size: Any = None,
+        stroke: Any = None,
+        opacity: Any = None,
+        alpha: Any = None,
+        stroke_width: Any = None,
+        symbol: Any = None,
+    ) -> None:
         """Streaming append: extend a trace's data and push the refresh to the
         client. Also refreshes the synced spec/buffers traits so a re-rendered
         output (notebook reopen) shows the streamed state, not the initial one."""
-        msg, buffers = self._figure.append(trace_id, x, y, color=color, size=size)
+        msg, buffers = self._figure.append(
+            trace_id,
+            x,
+            y,
+            color=color,
+            size=size,
+            stroke=stroke,
+            opacity=opacity,
+            alpha=alpha,
+            stroke_width=stroke_width,
+            symbol=symbol,
+        )
         self.spec = msg["spec"]
         self.buffers = buffers[0]
         self.send(msg, buffers=buffers)

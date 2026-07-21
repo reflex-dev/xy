@@ -8,6 +8,7 @@ validates CSS colors natively.
 
 from __future__ import annotations
 
+import numbers
 import re
 from typing import Optional
 
@@ -260,8 +261,10 @@ def _rgba_floats(value: object) -> tuple[float, float, float, float]:
                 f"colormap extremes require a CSS hex/rgb or basic named color, got {color!r}"
             )
         result = named[resolved.lower()]
-    if isinstance(alpha, (int, float)):
+    if isinstance(alpha, numbers.Real) and not isinstance(alpha, (bool, np.bool_)):
         result = (result[0], result[1], result[2], float(alpha))
+    if not all(np.isfinite(result)) or any(channel < 0.0 or channel > 1.0 for channel in result):
+        raise ValueError(f"RGBA channels must be finite and between 0 and 1, got {value!r}")
     return result
 
 
@@ -270,7 +273,9 @@ def _is_color_alpha_pair(value: object) -> bool:
     if not (isinstance(value, (tuple, list)) and len(value) == 2):
         return False
     color, alpha = value
-    if alpha is not None and not isinstance(alpha, (int, float)):
+    if alpha is not None and (
+        not isinstance(alpha, numbers.Real) or isinstance(alpha, (bool, np.bool_))
+    ):
         return False
     return isinstance(color, str) or (
         isinstance(color, (tuple, list, np.ndarray)) and len(color) in (3, 4)
@@ -282,8 +287,12 @@ def resolve_color(value: object) -> Optional[str]:
     if value is None:
         return None
     if not isinstance(value, str):
-        if isinstance(value, (tuple, list)) and len(value) == 2 and isinstance(value[0], str):
-            return resolve_color(value[0])
+        if _is_color_alpha_pair(value):
+            rgba = _rgba_floats(value)
+            return (
+                f"rgba({round(rgba[0] * 255)},{round(rgba[1] * 255)},"
+                f"{round(rgba[2] * 255)},{rgba[3]:g})"
+            )
         # RGB(A) tuples in 0-1 floats.
         if isinstance(value, (tuple, list, np.ndarray)) and len(value) in (3, 4):
             channels = np.asarray(value, dtype=np.float64).reshape(-1).tolist()
@@ -307,6 +316,62 @@ def resolve_color(value: object) -> Optional[str]:
         return value  # CSS name/hex/rgb() — engine validates
     level = max(0, min(255, round(gray * 255)))
     return f"rgb({level},{level},{level})"
+
+
+def resolve_rgba(value: object) -> tuple[float, float, float, float]:
+    """Resolve one Matplotlib color spec to canonical straight-alpha RGBA."""
+    alpha: Optional[float] = None
+    color = value
+    if _is_color_alpha_pair(value):
+        color, raw_alpha = value  # type: ignore[misc]
+        alpha = None if raw_alpha is None else float(raw_alpha)
+    css = resolve_color(color)
+    if css is None:
+        css = "transparent"
+    from xy import kernels
+
+    status, parsed = kernels.css_check(kernels.CSS_COLOR, css)
+    if status <= 0 or parsed is None:
+        raise ValueError(f"color {value!r} cannot be resolved to static RGBA")
+    rgba = tuple(float(channel) for channel in parsed)
+    if alpha is not None:
+        rgba = (rgba[0], rgba[1], rgba[2], alpha)
+    if not all(np.isfinite(rgba)) or any(channel < 0.0 or channel > 1.0 for channel in rgba):
+        raise ValueError(f"RGBA channels must be finite and between 0 and 1, got {value!r}")
+    return rgba
+
+
+def resolve_rgba_array(values: object, n: int, label: str) -> np.ndarray:
+    """Resolve one color or N color specs into an ``(N, 4)`` float array."""
+    try:
+        numeric = np.asarray(values)
+    except (TypeError, ValueError):
+        numeric = np.asarray(values, dtype=object)
+    if (
+        numeric.ndim == 2
+        and numeric.shape in {(n, 3), (n, 4)}
+        and np.issubdtype(numeric.dtype, np.number)
+    ):
+        rgba = np.asarray(numeric, dtype=np.float64)
+        if rgba.shape[1] == 3:
+            rgba = np.column_stack((rgba, np.ones(n, dtype=np.float64)))
+        if not np.isfinite(rgba).all() or np.any((rgba < 0.0) | (rgba > 1.0)):
+            raise ValueError(f"{label} RGBA channels must be finite and between 0 and 1")
+        return np.ascontiguousarray(rgba)
+    if (
+        isinstance(values, str)
+        or _is_color_alpha_pair(values)
+        or (
+            numeric.ndim == 1
+            and numeric.shape in {(3,), (4,)}
+            and np.issubdtype(numeric.dtype, np.number)
+        )
+    ):
+        return np.tile(np.asarray(resolve_rgba(values), dtype=np.float64), (n, 1))
+    sequence = list(values)  # type: ignore[arg-type]
+    if len(sequence) != n:
+        raise ValueError(f"{label} sequence must have length {n}, got {len(sequence)}")
+    return np.asarray([resolve_rgba(item) for item in sequence], dtype=np.float64)
 
 
 def resolve_cmap(name: object) -> str:
