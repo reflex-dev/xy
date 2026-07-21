@@ -365,8 +365,10 @@ with the Python that produced it. One renderer for notebooks, static
 export, and Reflex.
 
 The wrapper: opens/reuses the shared namespace socket, `sub`s with the
-element's measured width, builds a `ChartView` per `payload` (full refresh =
-destroy + rebuild), bridges `comm` to `msg` events, and forwards semantic
+element's measured width, builds a `ChartView` for the first `payload`, and
+passes later full payloads to `ChartView.updatePayload` (preserving keyed
+animation state; destroy + rebuild is only the compatibility fallback),
+bridges `comm` to `msg` events, and forwards semantic
 events into Reflex's event system via the component's event-trigger props
 (`props.onPointHover(row)` → `addEvents(...)` → the user's handler).
 Client-side niceties: `view_change` resolves locally (no kernel round-trip;

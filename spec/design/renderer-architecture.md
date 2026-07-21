@@ -4,10 +4,10 @@
 should converge to as chart kinds multiply. Findings below are verified
 against the source, not hypothetical.
 
-**Scope.** The client builds from 14 parts, concatenated in filename order into
+**Scope.** The client builds from 15 parts, concatenated in filename order into
 one bundle by `js/build.mjs`. The audit findings in §2 cover the render path —
 `40_gl.js`, `45_lod.js`, `50_chartview.js`, `55_marks.js`, `60_entries.js`.
-The module inventory below covers all 14. Ticks and axis label formatting
+The module inventory below covers all 15. Ticks and axis label formatting
 (`30_ticks.js`) are specified in §6; the gesture contract in `53_interaction.js`
 is specified in [interaction.md](../api/interaction.md) §5, and the client half of
 the kernel channel (`54_kernel.js`) in [wire-protocol.md](wire-protocol.md).
@@ -34,6 +34,7 @@ relative mass, not as a budget (see §3 on why a line count failed as a metric).
 | `53_interaction.js` | 1803 | The entire user-facing interaction surface: pointer/drag/wheel wiring, crosshair, box select, box zoom, lasso, the modebar and its export menu, and the animated pan/zoom view state machine. The gesture→action mapping, the modebar tool inventory and the `interaction_config` switches are specified in [interaction.md](../api/interaction.md) §2 and §5. |
 | `54_kernel.js` | 408 | The client half of the kernel channel: debounced density/decimated view-requests, streaming `append` handling, the inbound message dispatcher, and the deep-zoom drill lifecycle (§16). Degrades to `46_worker.js` when there is no comm. The message catalog it consumes is specified in [wire-protocol.md](wire-protocol.md). |
 | `55_marks.js` | 220 | The `MARK_KINDS` registry — `build`/`draw` per kind plus the `pointPick`/`retainCpu`/`refreshColor` capability flags — mirroring the kernel's `_emit_<kind>` dispatch so adding a 2D chart is an entry here, not a branch in `ChartView`. |
+| `56_animation.js` | — | Declarative entrance/update/exit state machine, easing/spring evaluation, bounded identity matching, full-payload replacement, interruption, reduced-motion resolution, and lifecycle events. Its normative behavior is in [animation.md](animation.md). |
 | `60_entries.js` | 76 | Mount/unmount entry points for both hosts (`render` for anywidget, `renderStandalone` for exported HTML) and `payloadBuffers`, which materializes first-paint columns in whichever layout the spec declares. Keeps aligned views zero-copy; a spec/transport disagreement throws. |
 
 ## 1. What's structurally right (keep)

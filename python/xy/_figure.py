@@ -124,6 +124,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         self.chrome_styles: dict[str, dict[str, str | int | float]] = {}
         self.tooltip: Optional[dict[str, Any]] = None
         self.interaction: dict[str, Any] = {}
+        # Browser-only motion policy. Static/native exporters intentionally
+        # ignore this and always render the deterministic final scene.
+        self.animation_options: Optional[dict[str, Any]] = None
         self.mark_style: dict[str, dict[str, str | int | float]] = {}
         self.annotations: list[dict[str, Any]] = []
         self._axis_categories: dict[str, list[str]] = {}
@@ -1237,21 +1240,32 @@ class Figure(AnnotationsMixin, PayloadMixin):
         path: Optional[str | PathLike[str]] = None,
         *,
         custom_css: Optional[str] = None,
+        animation_progress: Optional[float] = None,
     ) -> str:
         """Standalone interactive HTML: JS client + spec + base64 buffers in
         one self-contained file (base64 carries a ~33% size tax). `custom_css`
         injects an author stylesheet so `class_names` utility classes
         (e.g. Tailwind) resolve in the export."""
-        return export.to_html(self, path, custom_css=custom_css)
+        return export.to_html(
+            self,
+            path,
+            custom_css=custom_css,
+            animation_progress=animation_progress,
+        )
 
     def html(
         self,
         path: Optional[str | PathLike[str]] = None,
         *,
         custom_css: Optional[str] = None,
+        animation_progress: Optional[float] = None,
     ) -> str:
         """Alias for ``to_html`` for component-style API symmetry."""
-        return self.to_html(path, custom_css=custom_css)
+        return self.to_html(
+            path,
+            custom_css=custom_css,
+            animation_progress=animation_progress,
+        )
 
     def _repr_html_(self) -> str:
         """Notebook HTML repr isolated from the host document's styles."""

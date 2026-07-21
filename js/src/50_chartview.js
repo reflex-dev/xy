@@ -182,6 +182,10 @@ class ChartView {
     this._viewRequestBurstStart = null;
     this._viewAnim = null;
     this._animRaf = null;
+    this._dataAnim = null;
+    this._dataAnimRaf = null;
+    this._transitionOldTraces = null;
+    this._transitionView = null;
     this._wheelZoomRaf = null;
     this._pendingWheelZoom = null;
     this._lastLabelDraw = null;
@@ -294,7 +298,8 @@ class ChartView {
     }
 
     this._unsubscribeComm = comm ? comm.onMessage((msg, buffers) => this._onKernelMsg(msg, buffers)) : null;
-    this.draw();
+    if (this._startEntranceAnimation) this._startEntranceAnimation();
+    else this.draw();
   }
 
   _layout() {
@@ -684,6 +689,15 @@ class ChartView {
       if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
       this._wheelZoomRaf = null;
       this._pendingWheelZoom = null;
+      if (this._dataAnimRaf) cancelAnimationFrame(this._dataAnimRaf);
+      this._dataAnimRaf = null;
+      if (this._dataAnim) {
+        this._emitAnimationLifecycle?.("end", this._dataAnim.phase, { cancelled: true });
+      }
+      this._dataAnim = null;
+      this._transitionOldTraces = null; // handles died with the context
+      this._transitionView = null;
+      if (this.view0) this.view = { ...this.view0 };
       this._cancelViewAnimation();
       clearTimeout(this._viewTimer);
       this._viewTimer = null;
@@ -1654,6 +1668,19 @@ class ChartView {
     // Per-mark GPU setup is dispatched through MARK_KINDS (55_marks.js) so a
     // new chart kind is an entry in that registry, not another branch here.
     markOf(t.kind).build(this, g, t, buffer);
+    if (t.keys && Number.isInteger(t.keys.lo) && Number.isInteger(t.keys.hi)) {
+      const lo = this._columnView(buffer, this.spec.columns[t.keys.lo]);
+      const hi = this._columnView(buffer, this.spec.columns[t.keys.hi]);
+      const count = Math.min(g.n || 0, lo.length, hi.length);
+      g._transitionKeys = new Array(count);
+      g._transitionKeyIndex = new Map();
+      for (let i = 0; i < count; i++) {
+        const key = `${hi[i]}:${lo[i]}`;
+        if (g._transitionKeyIndex.has(key)) throw new Error("xy: duplicate binary animation key");
+        g._transitionKeys[i] = key;
+        g._transitionKeyIndex.set(key, i);
+      }
+    }
     return g;
   }
 
@@ -2162,6 +2189,16 @@ class ChartView {
       g._cpuValue0 = v0;
       g.value0Buf = this._upload(v0);
     }
+    g._cpuBar = {
+      pos,
+      value1: v1,
+      value0: g._cpuValue0 || null,
+      posMeta: g.posMeta,
+      value1Meta: g.value1Meta,
+      value0Meta: g.value0Meta || null,
+      value0Const: g.value0Const,
+      width: g.width,
+    };
     g._cpu = g.orientation === 1
       ? { x: v1, y: pos, xMeta: g.value1Meta, yMeta: g.posMeta, value0: g._cpuValue0 }
       : { x: pos, y: v1, xMeta: g.posMeta, yMeta: g.value1Meta, value0: g._cpuValue0 };
@@ -2276,6 +2313,7 @@ class ChartView {
     if (end > span.byteLength) throw new RangeError("column extends past chart payload");
     if (absoluteOffset % bytesPerElement !== 0) throw new RangeError("column is misaligned");
     if (meta.dtype === "u8") return new Uint8Array(span.buffer, absoluteOffset, length);
+    if (meta.dtype === "u32") return new Uint32Array(span.buffer, absoluteOffset, length);
     return new Float32Array(span.buffer, absoluteOffset, length);
   }
 
@@ -2440,15 +2478,19 @@ class ChartView {
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    for (const g of this.gpuTraces) {
+    const drawTrace = (g) => {
       if (g.tier === "density") {
         // Tier frame (drill/fades/cache) lives in 45_lod.js — chart-agnostic.
         const [gx0, gx1] = this._axisRange(g.xAxis);
         const [gy0, gy1] = this._axisRange(g.yAxis);
         lodDrawDensityTier(this, g, gx0, gx1, gy0, gy1);
-        continue;
+        return;
       }
       markOf(g.trace.kind).draw(this, g, x0, x1, y0, y1);
+    };
+    for (const g of this._transitionOldTraces || []) drawTrace(g);
+    for (const g of this.gpuTraces) {
+      drawTrace(g);
     }
     this._drawHoverState();
     // Hover-only frames leave the pick snapshot valid (see draw()); direct
@@ -2469,6 +2511,8 @@ class ChartView {
 
 
   _drawPoints(g, xm, ym, opacityScale = 1) {
+    opacityScale *= g._transitionOpacity ?? 1;
+    const animationScale = g._transitionScale ?? 1;
     const simple =
       g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
       (g.symbol || 0) === 0 && (g.pointStrokeWidth || 0) <= 0 &&
@@ -2486,9 +2530,12 @@ class ChartView {
     this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
     this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
     gl.uniform1f(u("u_dpr"), this.dpr);
-    gl.uniform1f(u("u_size"), g.size);
+    const transitionOn = !!(g._transitionPrevXBuf && g._transitionPrevYBuf);
+    gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
+    gl.uniform1f(u("u_transitionProgress"), g._transitionPositionProgress ?? 1);
+    gl.uniform1f(u("u_size"), g.size * animationScale);
     gl.uniform1i(u("u_sizeMode"), g.sizeMode);
-    gl.uniform2f(u("u_sizeRange"), g.sizeRange[0], g.sizeRange[1]);
+    gl.uniform2f(u("u_sizeRange"), g.sizeRange[0] * animationScale, g.sizeRange[1] * animationScale);
     gl.uniform1i(u("u_colorMode"), g.colorMode);
     const markOpacity = this._fillOpacity(g.trace.style, 0.8) * opacityScale;
     gl.uniform1f(u("u_opacity"), markOpacity);
@@ -2556,6 +2603,8 @@ class ChartView {
         sizeOn ? g.sBuf._fcId : 0,
         selOn ? g.selBuf._fcId : 0,
         blendOn ? g.dBuf._fcId : 0,
+        transitionOn ? g._transitionPrevXBuf._fcId : 0,
+        transitionOn ? g._transitionPrevYBuf._fcId : 0,
       ],
       () => {
         this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 0);
@@ -2564,6 +2613,10 @@ class ChartView {
         if (sizeOn) this._vaoAttr(ATTR_SLOTS.a_sval, g.sBuf, 0, 0);
         if (selOn) this._vaoAttr(ATTR_SLOTS.a_sel, g.selBuf, 0, 0);
         if (blendOn) this._vaoAttr(ATTR_SLOTS.a_dval, g.dBuf, 0, 0);
+        if (transitionOn) {
+          this._vaoAttr(ATTR_SLOTS.a_prevx, g._transitionPrevXBuf, 0, 0);
+          this._vaoAttr(ATTR_SLOTS.a_prevy, g._transitionPrevYBuf, 0, 0);
+        }
       }
     );
     // Generic (constant) attribute values are context state, not VAO state —
@@ -2585,16 +2638,25 @@ class ChartView {
     this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
     this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
     gl.uniform1f(u("u_dpr"), this.dpr);
-    gl.uniform1f(u("u_size"), g.size);
+    const transitionOn = !!(g._transitionPrevXBuf && g._transitionPrevYBuf);
+    gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
+    gl.uniform1f(u("u_transitionProgress"), g._transitionPositionProgress ?? 1);
+    gl.uniform1f(u("u_size"), g.size * (g._transitionScale ?? 1));
     const [r, gg, b] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, this._fillOpacity(g.trace.style, 0.8) * opacityScale);
     this._bindVao(
       g,
       "points-simple",
-      [g.xBuf._fcId, g.yBuf._fcId],
+      [g.xBuf._fcId, g.yBuf._fcId,
+        transitionOn ? g._transitionPrevXBuf._fcId : 0,
+        transitionOn ? g._transitionPrevYBuf._fcId : 0],
       () => {
         this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 0);
         this._vaoAttr(ATTR_SLOTS.ay, g.yBuf, 0, 0);
+        if (transitionOn) {
+          this._vaoAttr(ATTR_SLOTS.a_prevx, g._transitionPrevXBuf, 0, 0);
+          this._vaoAttr(ATTR_SLOTS.a_prevy, g._transitionPrevYBuf, 0, 0);
+        }
       }
     );
     gl.drawArrays(gl.POINTS, 0, g.n);
@@ -2657,6 +2719,7 @@ class ChartView {
   }
 
   _drawDensity(g, density, opacityScale = 1) {
+    opacityScale *= g._transitionOpacity ?? 1;
     const gl = this.gl;
     const prog = this.densityProg;
     gl.useProgram(prog);
@@ -2709,7 +2772,7 @@ class ChartView {
       h.xRange[xrev ? 1 : 0], h.xRange[xrev ? 0 : 1],
       h.yRange[yrev ? 1 : 0], h.yRange[yrev ? 0 : 1],
     );
-    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
     gl.uniform1i(u("u_truecolor"), h.truecolor ? 1 : 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, h.tex);
@@ -2733,15 +2796,23 @@ class ChartView {
     this._setAxisUniforms(this.lineProg, "u_x", g.xMeta, g.xAxis);
     this._setAxisUniforms(this.lineProg, "u_y", g.yMeta, g.yAxis);
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
+    const transitionOn = !!(g._transitionPrevXBuf && g._transitionPrevYBuf);
+    gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
+    gl.uniform1f(u("u_transitionProgress"), g._transitionPositionProgress ?? 1);
+    const reveal = Math.max(0, Math.min(1, g._transitionReveal ?? 1));
+    gl.uniform1f(u("u_revealProgress"), reveal);
+    gl.uniform1f(u("u_revealSegments"), g.n - 1);
     gl.uniform1f(u("u_width"), (width ?? g.trace.style.width ?? 1.5) * this.dpr);
     const [r, gg, b, a] = color || g.color;
-    const strokeOpacity = this._strokeOpacity(g.trace.style) * (opacity ?? 1);
+    const strokeOpacity = this._strokeOpacity(g.trace.style) * (opacity ?? 1) * (g._transitionOpacity ?? 1);
     gl.uniform4f(u("u_color"), r, gg, b, a * strokeOpacity);
     const dashed = this._lineDash(g);
     this._bindVao(
       g,
       "line",
-      dashed ? [g.xBuf._fcId, g.yBuf._fcId, g._lenBuf._fcId] : [g.xBuf._fcId, g.yBuf._fcId],
+      [g.xBuf._fcId, g.yBuf._fcId, dashed ? g._lenBuf._fcId : 0,
+        transitionOn ? g._transitionPrevXBuf._fcId : 0,
+        transitionOn ? g._transitionPrevYBuf._fcId : 0],
       () => {
         this._vaoAttr(ATTR_SLOTS.ax0, g.xBuf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ax1, g.xBuf, 4, 1);
@@ -2751,9 +2822,16 @@ class ChartView {
           this._vaoAttr(ATTR_SLOTS.a_len0, g._lenBuf, 0, 1);
           this._vaoAttr(ATTR_SLOTS.a_len1, g._lenBuf, 4, 1);
         }
+        if (transitionOn) {
+          this._vaoAttr(ATTR_SLOTS.a_prevx, g._transitionPrevXBuf, 0, 1);
+          this._vaoAttr(ATTR_SLOTS.a_prevy, g._transitionPrevYBuf, 0, 1);
+          this._vaoAttr(ATTR_SLOTS.a_prevx1, g._transitionPrevXBuf, 4, 1);
+          this._vaoAttr(ATTR_SLOTS.a_prevy1, g._transitionPrevYBuf, 4, 1);
+        }
       }
     );
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n - 1);
+    const segments = Math.max(0, Math.min(g.n - 1, Math.ceil((g.n - 1) * reveal)));
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, segments);
   }
 
   _drawSegments(g, xm, ym) {
@@ -2770,8 +2848,9 @@ class ChartView {
     this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis);
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     gl.uniform1f(u("u_width"), (g.trace.style.width ?? 1.5) * this.dpr);
+    gl.uniform1f(u("u_animationProgress"), g._transitionScale ?? 1);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * this._strokeOpacity(g.trace.style));
+    gl.uniform4f(u("u_color"), r, gg, b, a * this._strokeOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     const dashed = this._segmentDash(g, prog);
     if (g.colorMode && g.lut) {
@@ -2799,7 +2878,8 @@ class ChartView {
       }
     );
     if (!g.colorMode) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+    const count = Math.max(0, Math.min(g.n, Math.ceil(g.n * (g._transitionReveal ?? 1))));
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
   }
 
   _segmentDash(g, prog) {
@@ -2970,8 +3050,11 @@ class ChartView {
     this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
     this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
     this._setAxisUniforms(prog, "u_b", g.baseMeta, g.yAxis);
+    const reveal = Math.max(0, Math.min(1, g._transitionReveal ?? 1));
+    gl.uniform1f(u("u_revealProgress"), reveal);
+    gl.uniform1f(u("u_revealSegments"), g.n - 1);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.35));
+    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.35) * (g._transitionOpacity ?? 1));
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     this._setGradientUniforms(prog, g.grad);
     this._bindVao(g, "area", [g.xBuf._fcId, g.yBuf._fcId, g.baseBuf._fcId], () => {
@@ -2982,7 +3065,8 @@ class ChartView {
       this._vaoAttr(ATTR_SLOTS.ab0, g.baseBuf, 0, 1);
       this._vaoAttr(ATTR_SLOTS.ab1, g.baseBuf, 4, 1);
     });
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n - 1);
+    const count = Math.max(0, Math.min(g.n - 1, Math.ceil((g.n - 1) * reveal)));
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
   }
 
   _drawRects(g, x0, x1, y0, y1, edgePad = [0, 0, 0, 0]) {
@@ -3003,7 +3087,7 @@ class ChartView {
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     gl.uniform4f(u("u_edgePad"), edgePad[0], edgePad[1], edgePad[2], edgePad[3]);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style));
+    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     this._setRectStyleUniforms(prog, g);
     const colorOn = g.colorMode && g.cBuf;
@@ -3049,8 +3133,17 @@ class ChartView {
     gl.uniform1i(u("u_v0Mode"), g.value0Mode);
     gl.uniform1f(u("u_v0Const"), v0Const ?? 0);
     gl.uniform1f(u("u_v0EdgePad"), v0EdgePad);
+    gl.uniform1f(u("u_animationProgress"), g._transitionGrow ?? 1);
+    const transitionOn = !!(
+      g._transitionPrevPosBuf &&
+      g._transitionPrevValue1Buf &&
+      g._transitionPrevValue0Buf
+    );
+    gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
+    gl.uniform1f(u("u_transitionProgress"), g._transitionPositionProgress ?? 1);
+    gl.uniform1f(u("u_prevWidth"), g._transitionPrevWidth ?? g.width);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style));
+    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     this._setRectStyleUniforms(prog, g);
     const v0On = g.value0Mode === 1 && g.value0Buf;
@@ -3067,12 +3160,20 @@ class ChartView {
         g.posBuf._fcId, g.value1Buf._fcId,
         v0On ? g.value0Buf._fcId : 0,
         colorOn ? g.cBuf._fcId : 0,
+        transitionOn ? g._transitionPrevPosBuf._fcId : 0,
+        transitionOn ? g._transitionPrevValue1Buf._fcId : 0,
+        transitionOn ? g._transitionPrevValue0Buf._fcId : 0,
       ],
       () => {
         this._vaoAttr(ATTR_SLOTS.a_pos, g.posBuf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.a_v1, g.value1Buf, 0, 1);
         if (v0On) this._vaoAttr(ATTR_SLOTS.a_v0, g.value0Buf, 0, 1);
         if (colorOn) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+        if (transitionOn) {
+          this._vaoAttr(ATTR_SLOTS.a_prevx, g._transitionPrevPosBuf, 0, 1);
+          this._vaoAttr(ATTR_SLOTS.a_prevy, g._transitionPrevValue1Buf, 0, 1);
+          this._vaoAttr(ATTR_SLOTS.a_prevx1, g._transitionPrevValue0Buf, 0, 1);
+        }
       }
     );
     if (!v0On) gl.vertexAttrib1f(ATTR_SLOTS.a_v0, 0);
@@ -3664,7 +3765,10 @@ class ChartView {
     this._drawAnnotationLabels(updateLabels);
   }
 
-  _transitionActive() {
+  _interactionTransitionActive() {
+    // Data transitions stay pickable: the pick shader follows the same
+    // interpolated positions as the visible point shader. View and LOD
+    // handoffs still suppress hit-testing while their mapping changes.
     const activeStart = (v) => v !== undefined && v !== null;
     return !!this._viewAnim || this.gpuTraces.some((g) =>
       activeStart(g._densityFadeStart) ||
@@ -3718,6 +3822,9 @@ class ChartView {
       gl.uniform1f(u("u_size"), pg.size);
       gl.uniform1i(u("u_sizeMode"), pg.sizeMode);
       gl.uniform2f(u("u_sizeRange"), pg.sizeRange[0], pg.sizeRange[1]);
+      const transitionOn = !!(pg._transitionPrevXBuf && pg._transitionPrevYBuf);
+      gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
+      gl.uniform1f(u("u_transitionProgress"), pg._transitionPositionProgress ?? 1);
       gl.uniform1i(u("u_pick_base"), base);
       g.pickBase = base;
       g.pickCount = pg.n;
@@ -3725,11 +3832,17 @@ class ChartView {
       this._bindVao(
         pg,
         "pick",
-        [pg.xBuf._fcId, pg.yBuf._fcId, sizeOn ? pg.sBuf._fcId : 0],
+        [pg.xBuf._fcId, pg.yBuf._fcId, sizeOn ? pg.sBuf._fcId : 0,
+          transitionOn ? pg._transitionPrevXBuf._fcId : 0,
+          transitionOn ? pg._transitionPrevYBuf._fcId : 0],
         () => {
           this._vaoAttr(ATTR_SLOTS.ax, pg.xBuf, 0, 0);
           this._vaoAttr(ATTR_SLOTS.ay, pg.yBuf, 0, 0);
           if (sizeOn) this._vaoAttr(ATTR_SLOTS.a_sval, pg.sBuf, 0, 0);
+          if (transitionOn) {
+            this._vaoAttr(ATTR_SLOTS.a_prevx, pg._transitionPrevXBuf, 0, 0);
+            this._vaoAttr(ATTR_SLOTS.a_prevy, pg._transitionPrevYBuf, 0, 0);
+          }
         }
       );
       if (!sizeOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
@@ -3808,7 +3921,12 @@ class ChartView {
     let bestDist = Infinity;
     const limit = Math.min(cpu.x.length, g.n || cpu.x.length);
     for (let i = 0; i < limit; i++) {
-      const x = this._decodeValue(cpu.x, xMeta, i);
+      const starts = g._transitionPrevXValues;
+      const progress = g._transitionPositionProgress;
+      const xEncoded = starts && Number.isFinite(progress)
+        ? starts[i] + (cpu.x[i] - starts[i]) * progress
+        : cpu.x[i];
+      const x = xEncoded / (xMeta.scale || 1) + xMeta.offset;
       const d = Math.abs(this._axisCoord(axis, x) - target);
       if (d < bestDist) {
         bestDist = d;
@@ -3843,8 +3961,15 @@ class ChartView {
       if (!g._cpu || !g._cpu.x || !g._cpu.y) continue;
       const idx = this._nearestCpuIndex(g, dataX);
       if (idx < 0) continue;
-      const x = this._decodeValue(g._cpu.x, g._cpu.xMeta, idx);
-      const y = this._decodeValue(g._cpu.y, g._cpu.yMeta, idx);
+      const progress = g._transitionPositionProgress;
+      const xEncoded = g._transitionPrevXValues && Number.isFinite(progress)
+        ? g._transitionPrevXValues[idx] + (g._cpu.x[idx] - g._transitionPrevXValues[idx]) * progress
+        : g._cpu.x[idx];
+      const yEncoded = g._transitionPrevYValues && Number.isFinite(progress)
+        ? g._transitionPrevYValues[idx] + (g._cpu.y[idx] - g._transitionPrevYValues[idx]) * progress
+        : g._cpu.y[idx];
+      const x = xEncoded / (g._cpu.xMeta.scale || 1) + g._cpu.xMeta.offset;
+      const y = yEncoded / (g._cpu.yMeta.scale || 1) + g._cpu.yMeta.offset;
       const px = this._dataPx(g.xAxis, x) - this.plot.x;
       const py = this._dataPx(g.yAxis, y) - this.plot.y;
       const dist = Math.hypot(px - cssX, py - cssY);
@@ -3961,7 +4086,7 @@ class ChartView {
     // Pointer exploration supersedes any positional prefix retained for
     // keyboard readouts and their asynchronous exact-value replies.
     this._a11yKeyboardReadout = null;
-    if (this._transitionActive()) {
+    if (this._interactionTransitionActive()) {
       const hadHover = this._hoverId !== -1;
       this._hoverId = -1;
       this._hoverTarget = null;
@@ -4057,6 +4182,9 @@ class ChartView {
   destroy() {
     if (this._destroyed) return;
     this._destroyed = true;
+    if (this._dataAnim) {
+      this._emitAnimationLifecycle?.("end", this._dataAnim.phase, { cancelled: true });
+    }
     XY_CONTEXT_GOVERNOR.unregister(this);
     this._ctxIo?.disconnect();
     this._ctxIo = null;
@@ -4093,6 +4221,10 @@ class ChartView {
     if (this._raf) cancelAnimationFrame(this._raf);
     this._raf = null;
     this._cancelViewAnimation();
+    if (this._dataAnimRaf) cancelAnimationFrame(this._dataAnimRaf);
+    this._dataAnimRaf = null;
+    this._dataAnim = null;
+    this._destroyTransitionOldTraces?.();
     this._destroyGlResources();
     this.gl = null;
     this.root.remove();
@@ -4121,6 +4253,8 @@ class ChartView {
       "xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "baseBuf",
       "x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf",
       "posBuf", "value1Buf", "value0Buf",
+      "_transitionPrevXBuf", "_transitionPrevYBuf",
+      "_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",
     ]);
     this._deleteBuffers(g.drill, ["xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "dBuf"]);
     const textures = [];

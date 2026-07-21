@@ -41,6 +41,11 @@ class Trace:
     y1: Optional[Column] = None
     color_ch: Optional[ColorChannel] = None  # scatter color encoding
     size_ch: Optional[SizeChannel] = None  # scatter size encoding
+    # Declarative data-transition metadata. Keys are two uint32 words per
+    # canonical row (a deterministic 64-bit digest), kept out of the f64
+    # column store because they are identity rather than numeric geometry.
+    animation: Optional[dict[str, Any]] = None
+    transition_keys: Optional[Any] = None
     # Tri-state density override: None = auto (threshold), True/False = forced.
     # (A bool here silently ignored density=False — staff-review finding.)
     force_density: Optional[bool] = None

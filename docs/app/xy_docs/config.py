@@ -29,6 +29,7 @@ DOCS_SECTIONS = (
             ("Data and Columns", "/core-concepts/data/"),
             ("Axes and Scales", "/core-concepts/axes-and-scales/"),
             ("Interactions and Selections", "/core-concepts/interactions/"),
+            ("Animations", "/core-concepts/animations/"),
             (
                 "Large Data and Performance",
                 "/core-concepts/large-data-and-performance/",

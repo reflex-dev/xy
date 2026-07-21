@@ -85,7 +85,7 @@ interface. `facet_chart()` repeats a template over groups and returns a
 | Annotations | Rules, bands, thresholds, text, labels, arrows, and callouts |
 | Chrome | Legends, tooltips, colorbars, and the modebar |
 | Appearance | Themes, CSS/Tailwind slots, and rendered-mark styles |
-| Behavior | `interaction_config()` and Reflex-shaped `on_*` callback props |
+| Behavior | `interaction_config()`, `animation()`, and Reflex-shaped `on_*` callback props |
 
 ## Application behavior stays outside the tree
 
@@ -106,3 +106,6 @@ Every composed chart exposes `show()`, `widget()`, `to_html()`, `to_png()`,
 `to_svg()`, and `memory_report()`. Continue with
 [Data and columns](/docs/xy/core-concepts/data/) or browse the
 [Gallery](/docs/xy/overview/gallery/).
+
+For browser entrance and live-data motion, continue with
+[Animations and data transitions](/docs/xy/core-concepts/animations/).

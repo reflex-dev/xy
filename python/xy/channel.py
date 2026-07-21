@@ -92,6 +92,8 @@ class ChannelCallbacks:
     on_brush: Optional[Callable[[dict[str, Any]], None]] = None
     on_select: Optional[Callable[[Selection], None]] = None
     on_view_change: Optional[Callable[[dict[str, Any]], None]] = None
+    on_animation_start: Optional[Callable[[dict[str, Any]], None]] = None
+    on_animation_end: Optional[Callable[[dict[str, Any]], None]] = None
 
 
 _NO_CALLBACKS = ChannelCallbacks()
@@ -142,6 +144,18 @@ def handle_message(
     if not isinstance(content, dict):
         return None
     kind = content.get("type")
+    if kind in {"animation_start", "animation_end"}:
+        callback = (
+            callbacks.on_animation_start
+            if kind == "animation_start"
+            else callbacks.on_animation_end
+        )
+        if callback is not None:
+            event: dict[str, Any] = {"phase": str(content.get("phase", "update"))}
+            if kind == "animation_end" and isinstance(content.get("cancelled"), bool):
+                event["cancelled"] = content["cancelled"]
+            callback(event)
+        return None
     if kind == "view":
         # Zoom/pan crossed what the shipped decimation can serve: recompute
         # for the visible window only (§28), stale-while-revalidate on the

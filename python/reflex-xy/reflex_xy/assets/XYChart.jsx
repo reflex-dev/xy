@@ -93,6 +93,8 @@ export function XYChart(props) {
     onPointClick,
     onSelectEnd,
     onViewChange,
+    onAnimationStart,
+    onAnimationEnd,
     // Compile-time-only literal scanned by Reflex's TailwindV4Plugin. The
     // runtime chart receives the same classes from its XYBF payload; keeping
     // this prop out of divProps prevents an unknown attribute or class leak.
@@ -105,7 +107,23 @@ export function XYChart(props) {
   dbg("render", { id: divProps.id, token: String(token).slice(0, 30), src });
   // Live callback refs so socket handlers never close over stale props.
   const cbRef = useRef({});
-  cbRef.current = { onPointHover, onPointClick, onSelectEnd, onViewChange };
+  cbRef.current = {
+    onPointHover, onPointClick, onSelectEnd, onViewChange,
+    onAnimationStart, onAnimationEnd,
+  };
+
+  useEffect(() => {
+    const el = elRef.current;
+    if (!el) return undefined;
+    const start = (event) => cbRef.current.onAnimationStart?.(event.detail);
+    const end = (event) => cbRef.current.onAnimationEnd?.(event.detail);
+    el.addEventListener("xy:animation_start", start);
+    el.addEventListener("xy:animation_end", end);
+    return () => {
+      el.removeEventListener("xy:animation_start", start);
+      el.removeEventListener("xy:animation_end", end);
+    };
+  }, []);
 
   // Static mode: fetch the payload asset, render kernel-less.
   useEffect(() => {
@@ -204,13 +222,16 @@ export function XYChart(props) {
 
     const onPayload = (data) => {
       if (destroyed || !data || data.fig !== token) return;
+      const nextSpec = fitSpecToElement(data.spec);
+      const nextBuffers = toSpans(data.spec, data.buffers);
+      if (view?.updatePayload?.(nextSpec, nextBuffers)) return;
       if (view) view.destroy();
       viewCallbacks.length = 0;
       el.replaceChildren();
       view = new ChartView(
         el,
-        fitSpecToElement(data.spec),
-        toSpans(data.spec, data.buffers),
+        nextSpec,
+        nextBuffers,
         comm,
       );
       // Debug/e2e handle (same spirit as the standalone example's

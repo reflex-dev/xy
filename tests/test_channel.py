@@ -134,6 +134,32 @@ def test_click_fires_callback_and_returns_none():
     assert len(clicked) == 1
 
 
+def test_animation_lifecycle_callbacks_are_sanitized_and_replyless():
+    fig = Figure().scatter(np.arange(3.0), np.arange(3.0))
+    started = []
+    ended = []
+
+    assert (
+        handle(
+            fig,
+            {"type": "animation_start", "phase": "enter", "ignored": object()},
+            on_animation_start=started.append,
+        )
+        is None
+    )
+    assert (
+        handle(
+            fig,
+            {"type": "animation_end", "phase": "update", "cancelled": True},
+            on_animation_end=ended.append,
+        )
+        is None
+    )
+
+    assert started == [{"phase": "enter"}]
+    assert ended == [{"phase": "update", "cancelled": True}]
+
+
 def test_view_change_short_circuits_without_callback():
     fig = Figure().scatter(np.arange(3.0), np.arange(3.0))
     views = []

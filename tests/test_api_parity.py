@@ -27,9 +27,10 @@ from xy._figure import Figure
 from xy.components import _MARK_APPLIERS
 
 # Props the composition layer owns that intentionally never reach the engine:
-# `data` is resolved into arrays before the engine call, and the class/axis
-# hooks configure the Chart container rather than the trace.
-COMPOSITION_ONLY = {"data", "class_name", "x_axis", "y_axis"}
+# `data`/`key` are resolved into arrays before or after the engine call, and
+# class/axis/animation hooks configure declarative trace metadata rather than
+# changing the shared mark geometry implementation.
+COMPOSITION_ONLY = {"data", "class_name", "key", "animation", "x_axis", "y_axis"}
 
 # factory name -> Figure method name (same-named today; the pairing is
 # explicit so a future rename must update the guard deliberately).

@@ -18,7 +18,7 @@ function compile(gl, type, src) {
 // per-frame getAttribLocation lookups into compile-time constants. Names only
 // need distinct slots *within* each program; the groups below are disjoint per
 // shader (point: ax/ay + a_*; line/area: ax0..ab1; bar: a_pos/a_v1/a_v0;
-// grid quad: a_corner). WebGL2 guarantees >= 16 attribs; the max used is 10.
+// grid quad: a_corner). WebGL2 guarantees >= 16 attribs; the max used is 15.
 const ATTR_SLOTS = {
   ax: 0, ay: 1,
   ax0: 0, ax1: 1, ay0: 2, ay1: 3, ax2: 4, ay2: 5, ab0: 4, ab1: 5,
@@ -27,6 +27,8 @@ const ATTR_SLOTS = {
   a_cval: 6, a_sval: 7, a_sel: 8, a_dval: 9,
   a_len0: 10, a_len1: 11,
   a_dash0: 10, a_dashDir: 11,
+  a_prevx: 12, a_prevy: 13,
+  a_prevx1: 14, a_prevy1: 15,
 };
 
 function makeProgram(gl, vs, fs) {
@@ -91,16 +93,20 @@ float xyViewValue(float coord, int mode) {
 `;
 
 const POINT_VS = `#version 300 es
-in float ax; in float ay; in float a_cval; in float a_sval; in float a_sel; in float a_dval;
+in float ax; in float ay; in float a_prevx; in float a_prevy;
+in float a_cval; in float a_sval; in float a_sel; in float a_dval;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange;
 uniform int u_colorMode; uniform float u_dpr; uniform int u_selActive;
 uniform float u_selectedOpacity; uniform float u_unselectedOpacity;
+uniform float u_transitionProgress; uniform int u_transitionActive;
 out float v_lutCoord; out float v_dim; out float v_dval; out float v_ptSize; out float v_sel;
 ${AXIS_GLSL}
 void main() {
-  gl_Position = vec4(xyMap(ax, u_xmap, u_xmeta, u_xmode), xyMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
+  float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
+  gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode), xyMap(y, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = sz * u_dpr;
   v_ptSize = sz * u_dpr;
@@ -261,13 +267,16 @@ void main() {
 // specialization separate avoids dynamic feature branches and texture state
 // on software GL while producing the same circle SDF and premultiplied color.
 const POINT_SIMPLE_VS = `#version 300 es
-in float ax; in float ay;
+in float ax; in float ay; in float a_prevx; in float a_prevy;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 uniform float u_size; uniform float u_dpr;
+uniform float u_transitionProgress; uniform int u_transitionActive;
 ${AXIS_GLSL}
 void main() {
-  gl_Position = vec4(xyMap(ax, u_xmap, u_xmeta, u_xmode), xyMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
+  float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
+  gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode), xyMap(y, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   gl_PointSize = u_size * u_dpr;
 }`;
 
@@ -295,14 +304,17 @@ void main() {
 // global id space has neither limit — capacity is 2^31-1 total pickable
 // points (GLSL highp int is signed), far beyond what GPU memory admits.
 const PICK_VS = `#version 300 es
-in float ax; in float ay; in float a_sval;
+in float ax; in float ay; in float a_prevx; in float a_prevy; in float a_sval;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange; uniform float u_dpr;
+uniform float u_transitionProgress; uniform int u_transitionActive;
 flat out int v_id;
 ${AXIS_GLSL}
 void main() {
-  gl_Position = vec4(xyMap(ax, u_xmap, u_xmeta, u_xmode), xyMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
+  float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
+  gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode), xyMap(y, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = max(sz, 6.0) * u_dpr; // enlarge hit target
   v_id = gl_VertexID;
@@ -398,16 +410,25 @@ void main() {
 
 const LINE_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1;
+in float a_prevx; in float a_prevy; in float a_prevx1; in float a_prevy1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
 uniform int u_colorMode;
+uniform float u_transitionProgress; uniform int u_transitionActive;
+uniform float u_revealProgress; uniform float u_revealSegments;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 in float a_len0; in float a_len1;
 out float v_off; out float v_dash;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
-  vec2 p0 = vec2(xyMap(ax0, u_xmap, u_xmeta, u_xmode), xyMap(ay0, u_ymap, u_ymeta, u_ymode));
-  vec2 p1 = vec2(xyMap(ax1, u_xmap, u_xmeta, u_xmode), xyMap(ay1, u_ymap, u_ymeta, u_ymode));
+  float px0 = u_transitionActive == 1 ? mix(a_prevx, ax0, u_transitionProgress) : ax0;
+  float py0 = u_transitionActive == 1 ? mix(a_prevy, ay0, u_transitionProgress) : ay0;
+  float px1 = u_transitionActive == 1 ? mix(a_prevx1, ax1, u_transitionProgress) : ax1;
+  float py1 = u_transitionActive == 1 ? mix(a_prevy1, ay1, u_transitionProgress) : ay1;
+  vec2 p0 = vec2(xyMap(px0, u_xmap, u_xmeta, u_xmode), xyMap(py0, u_ymap, u_ymeta, u_ymode));
+  vec2 p1 = vec2(xyMap(px1, u_xmap, u_xmeta, u_xmode), xyMap(py1, u_ymap, u_ymeta, u_ymode));
+  float reveal = clamp(u_revealProgress * u_revealSegments - float(gl_InstanceID), 0.0, 1.0);
+  p1 = mix(p0, p1, reveal);
   vec2 pix0 = (p0 * 0.5 + 0.5) * u_res;
   vec2 pix1 = (p1 * 0.5 + 0.5) * u_res;
   vec2 dir = pix1 - pix0;
@@ -422,7 +443,7 @@ void main() {
   // Cumulative screen-space arc length at this fragment (device px), fed from
   // CPU-computed per-vertex lengths so dashes stay continuous across segments
   // and constant on screen through zoom.
-  v_dash = mix(a_len0, a_len1, c.x);
+  v_dash = mix(a_len0, mix(a_len0, a_len1, reveal), c.x);
 }`;
 
 const LINE_FS = `#version 300 es
@@ -463,6 +484,7 @@ const SEGMENT_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1; in float a_cval;
 in float a_dash0; in float a_dashDir;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
+uniform float u_animationProgress;
 uniform int u_colorMode;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
 uniform int u_x0mode; uniform int u_x1mode; uniform int u_y0mode; uniform int u_y1mode;
@@ -472,6 +494,9 @@ ${AXIS_GLSL}
 void main() {
   vec2 p0 = vec2(xyMap(ax0, u_xmap, u_x0meta, u_x0mode), xyMap(ay0, u_ymap, u_y0meta, u_y0mode));
   vec2 p1 = vec2(xyMap(ax1, u_xmap, u_x1meta, u_x1mode), xyMap(ay1, u_ymap, u_y1meta, u_y1mode));
+  vec2 center = (p0 + p1) * 0.5;
+  p0 = mix(center, p0, u_animationProgress);
+  p1 = mix(center, p1, u_animationProgress);
   vec2 pix0 = (p0 * 0.5 + 0.5) * u_res;
   vec2 pix1 = (p1 * 0.5 + 0.5) * u_res;
   vec2 dir = pix1 - pix0;
@@ -594,6 +619,7 @@ in float ax0; in float ax1; in float ay0; in float ay1; in float ab0; in float a
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_bmap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform vec2 u_bmeta;
 uniform int u_xmode; uniform int u_ymode;
+uniform float u_revealProgress; uniform float u_revealSegments;
 out float v_top; out float v_base; out float v_pos;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
@@ -605,6 +631,10 @@ void main() {
   float y1 = xyMap(ay1, u_ymap, u_ymeta, u_ymode);
   float b0 = xyMap(ab0, u_bmap, u_bmeta, u_ymode);
   float b1 = xyMap(ab1, u_bmap, u_bmeta, u_ymode);
+  float reveal = clamp(u_revealProgress * u_revealSegments - float(gl_InstanceID), 0.0, 1.0);
+  x1 = mix(x0, x1, reveal);
+  y1 = mix(y0, y1, reveal);
+  b1 = mix(b0, b1, reveal);
   float top = mix(y0, y1, c.x);
   float base = mix(b0, b1, c.x);
   float clipY = mix(base, top, c.y);
@@ -677,11 +707,14 @@ void main() {
 // histograms/candles/waterfalls.
 const BAR_VS = `#version 300 es
 in float a_pos; in float a_v0; in float a_v1; in float a_cval;
+in float a_prevx; in float a_prevy; in float a_prevx1;
 uniform vec2 u_pmap; uniform vec2 u_v0map; uniform vec2 u_v1map;
 uniform vec2 u_pmeta; uniform vec2 u_v0meta; uniform vec2 u_v1meta;
 uniform int u_pmode; uniform int u_vmode;
 uniform float u_width; uniform int u_orientation; uniform int u_v0Mode; uniform float u_v0Const;
 uniform float u_v0EdgePad;
+uniform float u_animationProgress;
+uniform float u_transitionProgress; uniform int u_transitionActive; uniform float u_prevWidth;
 uniform vec2 u_res;
 uniform int u_colorMode;
 out float v_lutCoord;
@@ -690,10 +723,24 @@ const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1
 ${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
-  float p = xyMap(a_pos, u_pmap, u_pmeta, u_pmode);
-  float halfW = abs(u_width * u_pmap.x) * 0.5;
-  float v0 = (u_v0Mode == 0 ? u_v0Const : xyMap(a_v0, u_v0map, u_v0meta, u_vmode)) + u_v0EdgePad;
-  float v1 = xyMap(a_v1, u_v1map, u_v1meta, u_vmode);
+  float nextP = xyMap(a_pos, u_pmap, u_pmeta, u_pmode);
+  float nextV0 = u_v0Mode == 0 ? u_v0Const : xyMap(a_v0, u_v0map, u_v0meta, u_vmode);
+  float nextV1 = xyMap(a_v1, u_v1map, u_v1meta, u_vmode);
+  float p = nextP;
+  float v0 = nextV0;
+  float v1 = nextV1;
+  float width = u_width;
+  if (u_transitionActive == 1) {
+    p = mix(xyMap(a_prevx, u_pmap, u_pmeta, u_pmode), nextP, u_transitionProgress);
+    // Previous baselines are encoded in the next value column's coordinate
+    // system, which lets constant and per-row baselines share one attribute.
+    v0 = mix(xyMap(a_prevx1, u_v1map, u_v1meta, u_vmode), nextV0, u_transitionProgress);
+    v1 = mix(xyMap(a_prevy, u_v1map, u_v1meta, u_vmode), nextV1, u_transitionProgress);
+    width = mix(u_prevWidth, u_width, u_transitionProgress);
+  }
+  v0 += u_v0EdgePad;
+  v1 = mix(v0, v1, u_animationProgress);
+  float halfW = abs(width * u_pmap.x) * 0.5;
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   vec2 clipA, clipB;
   if (u_orientation == 0) {

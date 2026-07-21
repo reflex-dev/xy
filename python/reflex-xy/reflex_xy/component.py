@@ -83,6 +83,8 @@ def _build_component_cls() -> Any:
         on_point_click: rx.EventHandler[lambda row: [row]]
         on_select_end: rx.EventHandler[lambda selection: [selection]]
         on_view_change: rx.EventHandler[lambda view: [view]]
+        on_animation_start: rx.EventHandler[lambda event: [event]]
+        on_animation_end: rx.EventHandler[lambda event: [event]]
 
     # The class is created lazily inside this function; reflex derives JS
     # identifiers from __qualname__, and "<locals>" would leak an illegal
