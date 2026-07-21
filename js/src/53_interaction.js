@@ -1624,6 +1624,7 @@ Object.assign(ChartView.prototype, {
     // pending, so the gesture would never deliver an "end" carrying the final
     // committed range. The rAF re-arms the timer after the delta applies.
     clearTimeout(this._wheelZoomEndTimer);
+    this._wheelZoomEndTimer = null;
     if (!this._wheelGesture) {
       this._wheelGesture = { interactionId: ++this._interactionSeq, axes: new Set() };
     }
