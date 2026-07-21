@@ -52,7 +52,7 @@ Object.assign(ChartView.prototype, {
         handle,
       };
       handle.dataset.xyActive = "";
-      this.tooltip.style.display = "none";
+      this._hideTooltip();
       try { this.selLasso.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
       e.preventDefault();
       e.stopPropagation();
@@ -131,7 +131,7 @@ Object.assign(ChartView.prototype, {
           previousLasso,
         };
         try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
-        this.tooltip.style.display = "none";
+        this._hideTooltip();
         return;
       }
       if (this.dragMode === "pan" && canNavigate && canPan) {
@@ -151,7 +151,7 @@ Object.assign(ChartView.prototype, {
           changedAxes: [],
         };
         try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
-        this.tooltip.style.display = "none";
+        this._hideTooltip();
       }
     });
     this._listen(c, "pointermove", (e) => {
@@ -242,7 +242,7 @@ Object.assign(ChartView.prototype, {
           interactionId: drag.interactionId,
         });
       }
-      if (drag && !drag.moved) this.tooltip.style.display = "none";
+      if (drag && !drag.moved) this._hideTooltip();
       drag = null;
     };
     this._listen(c, "pointerup", end);
@@ -263,7 +263,7 @@ Object.assign(ChartView.prototype, {
       this._lastHoverXY = null;
       this._a11yKeyboardReadout = null;
       this._pickSeq = (this._pickSeq || 0) + 1;
-      this.tooltip.style.display = "none";
+      this._hideTooltip();
       this._hideCrosshair();
       if (this._interactionFlag("hover")) {
         this._dispatchChartEvent("leave", { view: this._eventView("leave") });
@@ -317,7 +317,7 @@ Object.assign(ChartView.prototype, {
     if (e.key === "Escape") {
       e.preventDefault();
       const hadHover = this._hoverId !== -1;
-      this.tooltip.style.display = "none";
+      this._hideTooltip();
       this._hoverId = -1;
       this._hoverTarget = null;
       this._lastHoverXY = null;
@@ -1607,9 +1607,33 @@ Object.assign(ChartView.prototype, {
       const minSpan = Math.max(Math.abs(ca), 1e-30) * 1e-12;
       if (Math.abs((c1 - c0) * f) < minSpan) return null;
     }
+    const next0 = ca - (ca - c0) * f;
+    const next1 = ca + (c1 - ca) * f;
+    if (f > 1 && this.view0) {
+      // A box zoom can narrow X and Y by very different factors.  Cap each
+      // axis's span at its home span while zooming out; otherwise the
+      // less-zoomed axis expands far beyond home and flattens the point cloud
+      // while the other axis is still zoomed in. Preserve the cursor anchor
+      // instead of snapping to the home *range*: a free (pan-enabled) axis may
+      // still sit off-center after the cap, and positional containment (the
+      // shared clamp, applied later) is what pins a locked axis to home.
+      const home = this._axisRange(axisId, this.view0);
+      const home0 = this._axisCoord(axis, home[0]);
+      const home1 = this._axisCoord(axis, home[1]);
+      const homeSpan = Math.abs(home1 - home0);
+      if ([home0, home1].every(Number.isFinite)
+          && homeSpan > 0
+          && Math.abs(next1 - next0) > homeSpan) {
+        const signedHome = homeSpan * Math.sign(next1 - next0);
+        return [
+          this._axisValue(axis, ca - anchorFrac * signedHome),
+          this._axisValue(axis, ca + (1 - anchorFrac) * signedHome),
+        ];
+      }
+    }
     return [
-      this._axisValue(axis, ca - (ca - c0) * f),
-      this._axisValue(axis, ca + (c1 - ca) * f),
+      this._axisValue(axis, next0),
+      this._axisValue(axis, next1),
     ];
   },
 
