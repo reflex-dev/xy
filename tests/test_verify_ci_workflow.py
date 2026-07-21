@@ -64,18 +64,34 @@ def test_ci_workflow_rejects_regrouped_expensive_cross_library_adapters(
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
     path.write_text(
-        workflow.replace(
-            "          - name: plotly-svg\n"
-            "            libraries: plotly_svg\n"
-            "            max_n: 10000000\n",
-            "",
-        ),
+        workflow.replace("          - name: plotly-svg\n", "", 1),
         encoding="utf-8",
     )
 
     errors = verify_ci_workflow.validate_ci_workflow(path)
 
     assert any("benchmark_vs" in error and "plotly-svg" in error for error in errors)
+
+
+def test_ci_workflow_rejects_unconditional_cross_library_browser_setup(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Install Chromium (Playwright)\n        if: matrix.browser\n",
+            "      - name: Install Chromium (Playwright)\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "Install Chromium (Playwright)" in error and "matrix.browser" in error for error in errors
+    )
 
 
 def test_ci_workflow_rejects_benchmark_upload_that_skips_after_failures(

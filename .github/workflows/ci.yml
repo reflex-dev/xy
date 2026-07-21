@@ -267,46 +267,66 @@ jobs:
         include:
           - name: native-and-webgl
             libraries: xy,plotly_gl,bokeh_webgl,datashader
+            packages: plotly kaleido bokeh datashader psutil
             max_n: 10000000
+            browser: true
+            build_js: true
           # These adapters each run a timed render plus a separate tracemalloc
           # render. Keep them isolated so their expensive ceiling probes run in
           # parallel instead of serializing the slowest benchmark job.
           - name: matplotlib
             libraries: matplotlib
+            packages: matplotlib psutil
             max_n: 10000000
+            browser: false
+            build_js: false
           - name: seaborn
             libraries: seaborn
+            packages: seaborn psutil
             max_n: 10000000
+            browser: false
+            build_js: false
           - name: plotly-svg
             libraries: plotly_svg
+            packages: plotly kaleido psutil
             max_n: 10000000
+            browser: true
+            build_js: false
           - name: bokeh-canvas
             libraries: bokeh_canvas
+            packages: bokeh psutil
             max_n: 10000000
+            browser: true
+            build_js: false
           - name: html-adapters
             libraries: altair,hvplot_bokeh
+            packages: altair hvplot psutil
             # HTML serialization becomes pathological at multi-million-point
             # sizes. Keep this group aligned with the existing TTFR cap; the
             # skipped rows remain explicit in the merged report.
             max_n: 100000
+            browser: true
+            build_js: false
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: matrix.browser || matrix.build_js
         with:
           node-version: "22"
-      - name: Build core + JS client
-        run: |
-          node js/build.mjs
-          cargo build --release
-      - name: Install xy + competitors
+      - name: Build native core
+        run: cargo build --release
+      - name: Build JS client
+        if: matrix.build_js
+        run: node js/build.mjs
+      - name: Install xy + selected competitors
         env:
           XY_REQUIRE_CARGO: "1"
         run: |
           uv venv .venv
           uv pip install -p .venv/bin/python -e .
-          uv pip install -p .venv/bin/python matplotlib seaborn plotly kaleido bokeh altair datashader hvplot plotly-resampler psutil
+          uv pip install -p .venv/bin/python ${{ matrix.packages }}
       - name: Verify native benchmark backend
         run: |
           .venv/bin/python - <<'PY'
@@ -314,17 +334,22 @@ jobs:
           assert k.BACKEND == "native", f"benchmark job requires native backend, got {k.BACKEND!r}"
           PY
       - name: Install Chromium (Playwright)
+        if: matrix.browser
         run: |
           npm ci
           npx playwright install --with-deps chromium
       - name: Run cross-library benchmark group
         run: |
-          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          CHROMIUM_ARGS=()
+          if [[ "${{ matrix.browser }}" == "true" ]]; then
+            CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+            CHROMIUM_ARGS=(--chromium "$CHROME")
+          fi
           .venv/bin/python scripts/bench_vs.py \
             --libraries "${{ matrix.libraries }}" \
             --max-n "${{ matrix.max_n }}" \
             --sizes 1e3,1e4,1e5,1e6,3e6,1e7 --budget 45 \
-            --ttfr --ttfr-max-n 1e5 --chromium "$CHROME" \
+            --ttfr --ttfr-max-n 1e5 "${CHROMIUM_ARGS[@]}" \
             --out scatter-${{ matrix.name }}.md --json scatter-${{ matrix.name }}.json
       - name: Upload cross-library benchmark part
         if: always()

@@ -265,12 +265,22 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "matrix:",
         "- name: matplotlib",
         "libraries: matplotlib",
+        "packages: matplotlib psutil",
         "- name: seaborn",
         "libraries: seaborn",
+        "packages: seaborn psutil",
         "- name: plotly-svg",
         "libraries: plotly_svg",
+        "packages: plotly kaleido psutil",
         "- name: bokeh-canvas",
         "libraries: bokeh_canvas",
+        "packages: bokeh psutil",
+        "browser: false",
+        "build_js: false",
+        "if: matrix.browser",
+        "if: matrix.build_js",
+        "uv pip install -p .venv/bin/python ${{ matrix.packages }}",
+        "CHROMIUM_ARGS=()",
         "--libraries",
         "--max-n",
         "Run cross-library benchmark group",
@@ -279,6 +289,21 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "if: always()",
         "actions/upload-artifact@",
         "if-no-files-found: warn",
+    )
+    cross_library = jobs.get("benchmark_vs", "")
+    _require_step_contains(
+        errors,
+        cross_library,
+        "Install Chromium (Playwright)",
+        "browser-only setup condition",
+        "if: matrix.browser",
+    )
+    _require_step_contains(
+        errors,
+        cross_library,
+        "Build JS client",
+        "xy browser-build condition",
+        "if: matrix.build_js",
     )
     _require_job_contains(
         errors,
