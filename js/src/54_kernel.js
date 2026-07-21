@@ -365,41 +365,24 @@ Object.assign(ChartView.prototype, {
         announce: !this._a11yKeyboardReadout,
       });
       if (this._interactionFlag("hover")) {
-        this._dispatchChartEvent("hover", {
+        const detail = {
           row: msg.row,
           trace: msg.row.trace,
           index: msg.row.index,
           exact: true,
           view: this._eventView("hover"),
-        });
+        };
+        // §7.1 payload on the exact re-dispatch too, when the cursor is
+        // still known (the two-stage upgrade keeps `exact: true`).
+        if (xy) {
+          Object.assign(detail, this._hoverPayload(
+            msg.row, this._hoverTarget, xy.clientX, xy.clientY, true,
+          ));
+        }
+        this._dispatchChartEvent("hover", detail);
       }
     } else if (msg.type === "selection") {
-      if (!msg.traces || !msg.traces.length) {
-        for (const g of this.gpuTraces) {
-          g.selActive = false;
-          if (g.drill) g.drill.selActive = false;
-        }
-      } else {
-        for (const upd of msg.traces) {
-          const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
-          if (!g) continue;
-          // Aggregate density has no per-point marks, but a drilled view does —
-          // the kernel's indices are in the drilled subset's space (§17).
-          const pg = g.tier === "density" ? g.drill : g;
-          if (!pg || !pg.n) continue;
-          // A mask built against another subset version would highlight
-          // arbitrary points — drop it; the kernel's canonical Selection is
-          // still correct and a fresh drag re-syncs the visual.
-          if (
-            g.tier === "density" && upd.drill_seq !== undefined &&
-            pg.seq !== undefined && upd.drill_seq !== pg.seq
-          ) continue;
-          const idx = this._asU32(buffers[upd.buf]);
-          const mask = new Float32Array(pg.n);
-          for (let i = 0; i < idx.length; i++) if (idx[i] < pg.n) mask[idx[i]] = 1;
-          this._applySelMask(pg, mask);
-        }
-      }
+      this._applySelectionBuffers(msg, buffers);
       this._selectionCount = msg.total || 0;
       this.draw();
       if (this._interactionFlag("select", true)) {
@@ -408,6 +391,49 @@ Object.assign(ChartView.prototype, {
           view: this._eventView("select"),
         });
       }
+    } else if (msg.type === "state_patch") {
+      // Programmatic write (view-state.md §8): the same §3 mutation path a
+      // gesture takes, tagged source "api" so bridges can filter their echo.
+      this._applyStatePatch(msg.state, {
+        source: "api",
+        animate: msg.animate === true,
+        history: msg.history !== false,
+      });
+    } else if (msg.type === "view_nav") {
+      if (msg.op === "reset") this._navReset(msg.axes);
+    } else if (msg.type === "selection_rows") {
+      this._applyRowsSelection(msg, buffers);
+    }
+  },
+
+  // Shared mask application for kernel "selection" replies and pushed
+  // "selection_rows" messages — both carry the same per-trace index buffers.
+  _applySelectionBuffers(msg, buffers) {
+    if (!msg.traces || !msg.traces.length) {
+      for (const g of this.gpuTraces) {
+        g.selActive = false;
+        if (g.drill) g.drill.selActive = false;
+      }
+      return;
+    }
+    for (const upd of msg.traces) {
+      const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
+      if (!g) continue;
+      // Aggregate density has no per-point marks, but a drilled view does —
+      // the kernel's indices are in the drilled subset's space (§17).
+      const pg = g.tier === "density" ? g.drill : g;
+      if (!pg || !pg.n) continue;
+      // A mask built against another subset version would highlight
+      // arbitrary points — drop it; the kernel's canonical Selection is
+      // still correct and a fresh drag re-syncs the visual.
+      if (
+        g.tier === "density" && upd.drill_seq !== undefined &&
+        pg.seq !== undefined && upd.drill_seq !== pg.seq
+      ) continue;
+      const idx = this._asU32(buffers[upd.buf]);
+      const mask = new Float32Array(pg.n);
+      for (let i = 0; i < idx.length; i++) if (idx[i] < pg.n) mask[idx[i]] = 1;
+      this._applySelMask(pg, mask);
     }
   },
 

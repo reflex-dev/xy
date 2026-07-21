@@ -93,6 +93,7 @@ export function XYChart(props) {
     onPointClick,
     onSelectEnd,
     onViewChange,
+    onHover,
     onAnimationStart,
     onAnimationEnd,
     // Compile-time-only literal scanned by Reflex's TailwindV4Plugin. The
@@ -100,28 +101,72 @@ export function XYChart(props) {
     // this prop out of divProps prevents an unknown attribute or class leak.
     tailwindClassTokens: _tailwindClassTokens,
     ref: externalRef, // reflex attaches its own ref to id-bearing components
+    children,
     ...divProps
   } = props;
   void _tailwindClassTokens;
-  const elRef = useRef(null);
+  const elRef = useRef(null); // inner chart mount (wiped on payload swaps)
+  const outerRef = useRef(null); // stable wrapper: events, tooltip slot
+  const tooltipSlotRef = useRef(null);
   dbg("render", { id: divProps.id, token: String(token).slice(0, 30), src });
   // Live callback refs so socket handlers never close over stale props.
   const cbRef = useRef({});
   cbRef.current = {
-    onPointHover, onPointClick, onSelectEnd, onViewChange,
+    onPointHover, onPointClick, onSelectEnd, onViewChange, onHover,
     onAnimationStart, onAnimationEnd,
   };
 
+  // The structured on_hover prop needs the client's hover event surface; the
+  // chart's spec may not have asked for it, so flip the switch locally
+  // (spec objects are per-mount copies — see fitSpecToElement).
+  const withHoverFlag = (spec) =>
+    cbRef.current.onHover
+      ? { ...spec, interaction: { ...spec.interaction, hover: true } }
+      : spec;
+
+  // Re-adopt the tooltip slot into a freshly built view: setCustomTooltip
+  // moves the slot node inside the chart root, so it must be rescued before
+  // the mount element is wiped (see reclaimTooltipSlot below).
+  const mountTooltipSlot = (view) => {
+    const slot = tooltipSlotRef.current;
+    if (slot && view?.setCustomTooltip) view.setCustomTooltip(slot);
+  };
+  const reclaimTooltipSlot = () => {
+    const slot = tooltipSlotRef.current;
+    if (slot && outerRef.current && slot.parentElement !== outerRef.current) {
+      slot.style.display = "none";
+      outerRef.current.appendChild(slot);
+    }
+  };
+
   useEffect(() => {
-    const el = elRef.current;
+    const el = outerRef.current;
     if (!el) return undefined;
     const start = (event) => cbRef.current.onAnimationStart?.(event.detail);
     const end = (event) => cbRef.current.onAnimationEnd?.(event.detail);
+    // view-state.md §7.1: the full payload rides the client's hover/leave
+    // events (bubbling CustomEvents), resolved without any kernel.
+    const hover = (event) => {
+      const d = event.detail || {};
+      if (d.cursor) {
+        cbRef.current.onHover?.({
+          active: true,
+          cursor: d.cursor,
+          points: d.points || [],
+          exact: d.exact === true,
+        });
+      }
+    };
+    const leave = () => cbRef.current.onHover?.({ active: false, cursor: null, points: [] });
     el.addEventListener("xy:animation_start", start);
     el.addEventListener("xy:animation_end", end);
+    el.addEventListener("xy:hover", hover);
+    el.addEventListener("xy:leave", leave);
     return () => {
       el.removeEventListener("xy:animation_start", start);
       el.removeEventListener("xy:animation_end", end);
+      el.removeEventListener("xy:hover", hover);
+      el.removeEventListener("xy:leave", leave);
     };
   }, []);
 
@@ -129,7 +174,7 @@ export function XYChart(props) {
   useEffect(() => {
     const el = elRef.current;
     if (!src || !el) return undefined;
-    const key = el.id || `src:${src}`;
+    const key = outerRef.current?.id || `src:${src}`;
     let view = null;
     let cancelled = false;
     const handleViewChange = (event) => cbRef.current.onViewChange?.(event.detail);
@@ -145,7 +190,9 @@ export function XYChart(props) {
         el.replaceChildren();
         // Same call the static HTML export makes: spec + one packed blob
         // span, comm = null → local hover columns + worker density re-bin.
-        view = renderStandalone(el, fitSpecToElement(frame.message), frame.buffers[0]);
+        view = renderStandalone(
+          el, withHoverFlag(fitSpecToElement(frame.message)), frame.buffers[0]);
+        mountTooltipSlot(view);
         (window.__xy_views ||= new Map()).set(key, view);
         dbg("static payload mounted", { src, bytes: body.byteLength });
       })
@@ -154,6 +201,7 @@ export function XYChart(props) {
       });
     return () => {
       cancelled = true;
+      reclaimTooltipSlot();
       if (view) view.destroy();
       view = null;
       window.__xy_views?.delete(key);
@@ -226,9 +274,10 @@ export function XYChart(props) {
 
     const onPayload = (data) => {
       if (destroyed || !data || data.fig !== token) return;
-      const nextSpec = fitSpecToElement(data.spec);
+      const nextSpec = withHoverFlag(fitSpecToElement(data.spec));
       const nextBuffers = toSpans(data.spec, data.buffers);
       if (view?.updatePayload?.(nextSpec, nextBuffers)) return;
+      reclaimTooltipSlot();
       if (view) view.destroy();
       viewCallbacks.length = 0;
       el.replaceChildren();
@@ -238,9 +287,10 @@ export function XYChart(props) {
         nextBuffers,
         comm,
       );
+      mountTooltipSlot(view);
       // Debug/e2e handle (same spirit as the standalone example's
       // window.xyLiveDrilldown): headless probes assert on live views.
-      (window.__xy_views ||= new Map()).set(el.id || mid, view);
+      (window.__xy_views ||= new Map()).set(outerRef.current?.id || mid, view);
     };
 
     const onMsg = (data) => {
@@ -300,18 +350,37 @@ export function XYChart(props) {
       } else {
         subCounts.set(token, remaining);
       }
+      reclaimTooltipSlot();
       if (view) view.destroy();
       view = null;
-      window.__xy_views?.delete(el.id || mid);
+      window.__xy_views?.delete(outerRef.current?.id || mid);
       el.replaceChildren();
     };
   }, [token, src]);
 
   // One DOM node, two consumers: our mount logic and reflex's ref registry.
   const mergedRef = (node) => {
-    elRef.current = node;
+    outerRef.current = node;
     if (typeof externalRef === "function") externalRef(node);
     else if (externalRef) externalRef.current = node;
   };
-  return jsx("div", { ...divProps, ref: mergedRef });
+  // Children are the framework-owned tooltip content (view-state.md §7.2):
+  // they render into a hidden slot beside the chart mount; setCustomTooltip
+  // adopts the slot into the chart's tooltip container, which owns placement.
+  return jsx(
+    "div",
+    { ...divProps, ref: mergedRef, style: { position: "relative", ...divProps.style } },
+    jsx("div", { ref: elRef, style: { width: "100%", height: "100%" } }),
+    children
+      ? jsx(
+          "div",
+          {
+            ref: (node) => { tooltipSlotRef.current = node; },
+            "data-xy-tooltip-slot": "",
+            style: { display: "none" },
+          },
+          children,
+        )
+      : null,
+  );
 }

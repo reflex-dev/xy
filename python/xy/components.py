@@ -324,6 +324,7 @@ class Interaction(Component):
     reset_axes: Optional[tuple[str, ...]] = None
     link_group: Optional[str] = None
     link_axes: Optional[tuple[str, ...]] = None
+    history: Optional[bool] = None
 
 
 @dataclass(frozen=True)
@@ -2681,6 +2682,7 @@ def interaction_config(
     reset_axes: Optional[tuple[str, ...]] = None,
     link_group: Optional[str] = None,
     link_axes: Optional[tuple[str, ...]] = None,
+    history: Optional[bool] = None,
 ) -> Interaction:
     """Configure browser interaction chrome and event emission.
 
@@ -2722,6 +2724,9 @@ def interaction_config(
             is the union of enabled pan and zoom axes.
         link_group: Identifier used to synchronize charts in the browser.
         link_axes: Axes synchronized within the link group.
+        history: Whether the client keeps a view-history stack with modebar
+            Back/Forward buttons. Enabled by default; ``False`` removes the
+            buttons and stops snapshotting.
     """
     return Interaction(
         hover=hover,
@@ -2743,6 +2748,7 @@ def interaction_config(
         reset_axes=reset_axes,
         link_group=link_group,
         link_axes=link_axes,
+        history=history,
     )
 
 
@@ -2877,7 +2883,10 @@ class Chart(Component):
         self.on_view_change = on_view_change
         self.hover = hover
         self.click = click
-        self.select = select
+        # Stored under a private name: the public `select` kwarg would
+        # otherwise shadow the programmatic `Chart.select()` method on every
+        # instance (instance attributes beat class methods).
+        self._select_switch = select
         self.brush = brush
         self.crosshair = crosshair
         self.navigation = navigation
@@ -2995,7 +3004,7 @@ class Chart(Component):
         if (
             self.hover is not None
             or self.click is not None
-            or self.select is not None
+            or self._select_switch is not None
             or self.brush is not None
             or self.crosshair is not None
             or self.navigation is not None
@@ -3015,7 +3024,7 @@ class Chart(Component):
             fig.set_interaction(
                 hover=self.hover,
                 click=self.click,
-                select=self.select,
+                select=self._select_switch,
                 brush=self.brush,
                 crosshair=self.crosshair,
                 navigation=self.navigation,
@@ -3054,6 +3063,7 @@ class Chart(Component):
                 reset_axes=node.reset_axes,
                 link_group=node.link_group,
                 link_axes=node.link_axes,
+                history=node.history,
             )
         fig.set_interaction(
             hover=True if self.on_hover is not None else None,
@@ -3270,6 +3280,36 @@ class Chart(Component):
     def show(self) -> Any:
         """Display the chart: returns the live widget (see `widget`)."""
         return self.widget()
+
+    # -- programmatic view state (kernel-connected; view-state.md §5.1) ------
+
+    def set_view(self, ranges: Any = None, *, animate: bool = True, history: bool = True) -> None:
+        """Apply a partial per-axis ranges patch (the write-side mirror of the
+        ``on_view_change`` payload) through the client's clamped mutation path."""
+        self.widget().set_view(ranges, animate=animate, history=history)
+
+    def reset_view(self, axes: Any = None) -> None:
+        """Navigate to the home ranges (None = the configured reset_axes)."""
+        self.widget().reset_view(axes)
+
+    def select(
+        self,
+        *,
+        range: Any = None,
+        polygon: Any = None,
+        rows: Any = None,
+        history: bool = True,
+    ) -> None:
+        """Programmatic selection; see `FigureWidget.select`."""
+        self.widget().select(range=range, polygon=polygon, rows=rows, history=history)
+
+    def clear_selection(self) -> None:
+        """Clear any selection."""
+        self.widget().clear_selection()
+
+    def view_state(self) -> dict[str, Any]:
+        """Last committed durable view state (kernel-side cache)."""
+        return self.widget().view_state()
 
     def _ipython_display_(self) -> None:
         from IPython.display import display  # type: ignore[import-not-found]

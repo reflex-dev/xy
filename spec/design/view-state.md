@@ -1,12 +1,19 @@
 # View state, history, and programmatic control — design
 
-**Status: design, not implemented.** This document specifies the unified
-view-state layer. [`../api/interaction.md`](../api/interaction.md) remains the
-authority on the *shipped* interaction surface; each phase in §11 lands with a
-matching update there. This design builds directly on the per-axis
+**Status: implemented** (all four §11 phases, this PR).
+[`../api/interaction.md`](../api/interaction.md) is the authority on the
+*shipped* interaction surface and [`wire-protocol.md`](wire-protocol.md) §4 on
+the wire messages; this document records the rationale and the §13
+implementation divergences. The implementation lives in
+`js/src/57_viewstate.js` (state document, history, axis bands, hover payload)
+plus hooks in `50_chartview.js`/`52_tooltip.js`/`53_interaction.js`/
+`54_kernel.js`, `python/xy/_figure.py` (message builders, `view_state()`
+cache), `widget.py`, `channel.py`, and
+`python/reflex-xy/reflex_xy/` (registry push path, `on_hover`, tooltip
+mount). It builds directly on the per-axis
 pan/zoom contract of PR #117 (canonical per-axis `ranges`, one clamped
 mutation path, semantic view events with `source`, `axes`, `phase`,
-`interaction_id`) and assumes it has landed.
+`interaction_id`), which has landed.
 
 ## 1. Problem: four requests, one missing primitive
 
@@ -370,7 +377,37 @@ Each phase updates [`../api/interaction.md`](../api/interaction.md) (and
 `wire-protocol.md` for phase 1) in the same PR; this document then records
 divergences rather than duplicating the shipped authority.
 
-## 12. Non-goals
+## 12. Implementation divergences (recorded per §11)
+
+Shipped behavior that refines this design rather than following it verbatim:
+
+- **View-event transport.** For `view_state()` to be event-fed without a
+  registered callback, the client now ships `phase: "end"` view events
+  unconditionally (one rAF-coalesced message per gesture); `"update"`
+  streams stay gated on listener presence. Recorded in interaction.md §3 and
+  wire-protocol.md §2 — a deliberate refinement of the pre-existing
+  "listener presence" gate, costing one small message per gesture.
+- **Reflex tooltip payload.** §7.2 says the payload is piped "as props".
+  Reflex components are compiled ahead of time, so live per-frame props are
+  not expressible; the mounted component is positioned by the client (built-in
+  placement logic, built-in tooltip suppressed) and the payload reaches app
+  code through the new `on_hover` event prop — Reflex state is the dynamic
+  channel, which is the framework-native equivalent. `reflex_xy.chart` also
+  accepts an explicit `tooltip=` component for live (token) sources, where
+  `chrome_components()` is unreachable.
+- **Axis-band drag classification.** "Drag along" vs "drag across" is decided
+  once per gesture by the dominant displacement direction at the 3 px
+  threshold, then locked; a pan-ineligible axis falls back to span-zoom and
+  vice versa, so a band drag never dead-ends when only one capability is
+  enabled.
+- **The JS handle is universal.** `root.xy` (`applyState`/`state`/`back`/
+  `forward`) is attached by every mount — notebook and Reflex included — not
+  only the static tier; the §5.3 guarantee is the static tier's, the handle
+  itself has one implementation.
+- **History restores animate** (like reset); `prefers-reduced-motion` is
+  respected as everywhere else.
+
+## 13. Non-goals
 
 - Animation/keyed-transition depth (ENG-10446) — `animate` stays the
   existing boolean.

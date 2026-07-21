@@ -266,7 +266,7 @@ Object.assign(ChartView.prototype, {
       this.tooltip.style.display = "none";
       this._hideCrosshair();
       if (this._interactionFlag("hover")) {
-        this._dispatchChartEvent("leave", { view: this._eventView("leave") });
+        this._dispatchChartEvent("leave", { view: this._eventView("leave"), active: false });
       }
       // Highlight-clear only — the pick snapshot stays valid (§17).
       if (hadHover) this._drawKeepPick();
@@ -328,7 +328,7 @@ Object.assign(ChartView.prototype, {
       this._pickSeq = (this._pickSeq || 0) + 1;
       if (this.a11yLive) this.a11yLive.textContent = "Readout closed.";
       if (hadHover && this._interactionFlag("hover")) {
-        this._dispatchChartEvent("leave", { view: this._eventView("leave") });
+        this._dispatchChartEvent("leave", { view: this._eventView("leave"), active: false });
       }
       if (hadHover) this._drawKeepPick();
       return;
@@ -609,11 +609,18 @@ Object.assign(ChartView.prototype, {
     });
   },
 
-  _sendSelect(d0, d1) {
+  _sendSelect(d0, d1, opts = {}) {
     this._clearLassoOverlay();
     const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
     const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
     const range = { x0, x1, y0, y1 };
+    // Geometric selections are durable: push like a range change (§4).
+    this._historyRecord({
+      source: opts.source,
+      interactionId: opts.interactionId,
+      history: opts.history,
+    });
+    this._stateSelection = { range: { ...range } };
     this._broadcastLinkedSelection({ range });
     this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
     if (this.comm) {
@@ -623,10 +630,16 @@ Object.assign(ChartView.prototype, {
     }
   },
 
-  _sendSelectPolygon(points) {
+  _sendSelectPolygon(points, opts = {}) {
     if (!Array.isArray(points) || points.length < 3) return;
     const polygon = points.map((point) => [point[0], point[1]]);
     if (!polygon.every((point) => point.every(Number.isFinite))) return;
+    this._historyRecord({
+      source: opts.source,
+      interactionId: opts.interactionId,
+      history: opts.history,
+    });
+    this._stateSelection = { polygon: polygon.map((point) => [...point]) };
     this._lassoPolygon = polygon;
     this._broadcastLinkedSelection({ polygon });
     this._renderLassoSelection();
@@ -727,6 +740,17 @@ Object.assign(ChartView.prototype, {
 
   _clearSelection(opts = {}) {
     this._clearLassoOverlay();
+    // Clearing a durable selection is itself a durable-state change; linked
+    // applies (dispatch: false) and no-op clears push nothing.
+    if (opts.dispatch !== false && this._stateSelection !== null
+        && this._stateSelection !== undefined) {
+      this._historyRecord({
+        source: opts.source,
+        interactionId: opts.interactionId,
+        history: opts.history,
+      });
+    }
+    this._stateSelection = null;
     for (const g of this.gpuTraces) {
       g.selActive = false;
       if (g.drill) g.drill.selActive = false;
@@ -940,6 +964,17 @@ Object.assign(ChartView.prototype, {
       this._selectMenuIcon = selectModeIcon;
     }
     if (canPan) mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
+    // History navigation (view-state.md §4): client-scoped by construction —
+    // the modebar and the root.xy handle are the only surfaces.
+    if (canNavigate && this._historyEnabled()) {
+      this._historyBackBtn = mk("historyback", "Back to previous view",
+        () => this._historyBack());
+      this._historyBackBtn.dataset.xyModebarHistory = "back";
+      this._historyForwardBtn = mk("historyforward", "Forward to next view",
+        () => this._historyForward());
+      this._historyForwardBtn.dataset.xyModebarHistory = "forward";
+      this._updateHistoryButtons();
+    }
     let zoomMenu = null;
     if (hasZoomMenu) {
       zoomMenu = document.createElement("div");
@@ -1398,6 +1433,13 @@ Object.assign(ChartView.prototype, {
       return before[0] !== after[0] || before[1] !== after[1];
     });
     if (!changedAxes.length) return [];
+    // History push (view-state.md §4): snapshot the pre-mutation durable
+    // state once per interaction id; linked/history sources never push.
+    this._historyRecord({
+      source: opts.source || "programmatic",
+      interactionId: opts.interactionId,
+      history: opts.history,
+    });
     const animate = opts.animate === true && !this._prefersReducedMotion();
     const duration = opts.duration || 180;
     if (!animate || duration <= 0) {
@@ -1615,7 +1657,11 @@ Object.assign(ChartView.prototype, {
 
   _zoomAt(f, fx, fy, animate = false, duration = 120, opts = {}) {
     const base = this._viewAnim ? this._viewAnim.target : this.view;
-    const axes = this._zoomAxes();
+    // An axis-band gesture scopes the zoom to the hovered axis (§6 of
+    // view-state.md); the policy still filters, never grants.
+    const axes = Array.isArray(opts.axes)
+      ? new Set(opts.axes.filter((axisId) => this._zoomAxes().has(axisId)))
+      : this._zoomAxes();
     const ranges = Object.fromEntries(
       this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId, base)]])
     );
@@ -1637,7 +1683,7 @@ Object.assign(ChartView.prototype, {
     });
   },
 
-  _queueWheelZoom(factor, fx, fy) {
+  _queueWheelZoom(factor, fx, fy, axesScope = null) {
     if (!Number.isFinite(factor) || factor <= 0) return;
     // A queued delta keeps the gesture open: kill the pending end timer here,
     // not in the rAF. Otherwise a wheel event landing just before the 90 ms
@@ -1647,8 +1693,26 @@ Object.assign(ChartView.prototype, {
     // committed range. The rAF re-arms the timer after the delta applies.
     clearTimeout(this._wheelZoomEndTimer);
     this._wheelZoomEndTimer = null;
+    // A scope change (plot wheel vs an axis band, or two different bands) is
+    // a different gesture: close the open one so its id is not shared.
+    const scopeKey = Array.isArray(axesScope) ? axesScope.join(",") : "";
+    if (this._wheelGesture && this._wheelGesture.scopeKey !== scopeKey) {
+      const gesture = this._wheelGesture;
+      this._wheelGesture = null;
+      if (gesture.axes.size) {
+        this._emitViewChange("wheel_zoom", {
+          axes: [...gesture.axes],
+          phase: "end",
+          interactionId: gesture.interactionId,
+        });
+      }
+    }
     if (!this._wheelGesture) {
-      this._wheelGesture = { interactionId: ++this._interactionSeq, axes: new Set() };
+      this._wheelGesture = {
+        interactionId: ++this._interactionSeq,
+        axes: new Set(),
+        scopeKey,
+      };
     }
     if (!this._pendingWheelZoom) {
       this._pendingWheelZoom = {
@@ -1657,11 +1721,13 @@ Object.assign(ChartView.prototype, {
         fy,
         interactionId: this._wheelGesture.interactionId,
         axes: [],
+        axesScope,
       };
     }
     this._pendingWheelZoom.factor *= factor;
     this._pendingWheelZoom.fx = fx;
     this._pendingWheelZoom.fy = fy;
+    this._pendingWheelZoom.axesScope = axesScope;
     if (this._wheelZoomRaf) return;
     this._wheelZoomRaf = requestAnimationFrame(() => {
       this._wheelZoomRaf = null;
@@ -1672,6 +1738,7 @@ Object.assign(ChartView.prototype, {
         source: "wheel_zoom",
         phase: "update",
         interactionId: pending.interactionId,
+        axes: pending.axesScope || undefined,
       }) || [];
       for (const axisId of pending.axes) this._wheelGesture?.axes.add(axisId);
       clearTimeout(this._wheelZoomEndTimer);
@@ -1731,11 +1798,11 @@ Object.assign(ChartView.prototype, {
     });
   },
 
-  _resetView(animate = true, source = "reset") {
+  _resetView(animate = true, source = "reset", axesOverride = null) {
     const ranges = Object.fromEntries(
       this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
     );
-    for (const axisId of this._resetAxisPolicy()) {
+    for (const axisId of axesOverride || this._resetAxisPolicy()) {
       ranges[axisId] = [...this._axisRange(axisId, this.view0)];
     }
     return this._setView({ ranges }, {
@@ -2034,6 +2101,10 @@ Object.assign(ChartView.prototype, {
           '<path d="M7 9 H13 M7 12 H13 M7 15 H13 M9 8 V16"/>');
       case "reset":
         return svg('<path d="M4 10 a6 6 0 1 1 1.8 4.3"/><path d="M4 6 V10 H8"/>');
+      case "historyback":
+        return svg('<path d="M13 4 L7 10 L13 16"/>');
+      case "historyforward":
+        return svg('<path d="M7 4 L13 10 L7 16"/>');
       case "drag":
         return svg('<circle cx="7" cy="5" r=".8" fill="currentColor" stroke="none"/>' +
           '<circle cx="13" cy="5" r=".8" fill="currentColor" stroke="none"/>' +

@@ -229,8 +229,6 @@ def handle_message(
             callbacks.on_click(row)
         return None
     if kind == "view_change":
-        if callbacks.on_view_change is None:
-            return None
         try:
             raw_ranges = content.get("ranges")
             ranges: dict[str, list[float]] = {}
@@ -272,7 +270,12 @@ def handle_message(
                 view.update({"y0": y_range[0], "y1": y_range[1]})
         except (KeyError, TypeError, ValueError):
             return None
-        callbacks.on_view_change(view)
+        # Every committed view event feeds the figure's durable-state cache
+        # (view-state.md §5.1) — the reason end-phase events always ship —
+        # independent of whether a Python callback is registered.
+        fig._record_view_ranges(ranges)
+        if callbacks.on_view_change is not None:
+            callbacks.on_view_change(view)
         return None
     if kind == "select":
         # Box-select → range predicate (§34 Tier A). Ship a selection mask
@@ -294,6 +297,7 @@ def handle_message(
             )
         except (KeyError, TypeError, ValueError):
             return None
+        fig._record_selection({"range": {"x0": x0, "x1": x1, "y0": y0, "y1": y1}})
         return _selection_reply(
             fig,
             sel,
@@ -307,8 +311,10 @@ def handle_message(
             polygon = [[float(point[0]), float(point[1])] for point in points]
         except (IndexError, KeyError, TypeError, ValueError):
             return None
+        fig._record_selection({"polygon": polygon})
         return _selection_reply(fig, sel, callbacks, {"polygon": polygon})
     if kind == "select_clear":
+        fig._record_selection(None)
         if callbacks.on_select is not None:
             callbacks.on_select(Selection(fig, {}))
         return {"type": "selection", "traces": [], "total": 0}, None

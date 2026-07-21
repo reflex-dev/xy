@@ -174,7 +174,8 @@ def test_pointer_capture_tolerates_synthetic_accessibility_clicks() -> None:
         capture_lines = [
             line.strip() for line in text.splitlines() if ".setPointerCapture(" in line
         ]
-        assert len(capture_lines) == 4, f"{path} has an unexpected capture site"
+        # canvas drag, band select, lasso handle, modebar grip, axis band
+        assert len(capture_lines) == 5, f"{path} has an unexpected capture site"
         assert all(line.startswith("try {") and "catch (_err)" in line for line in capture_lines), (
             f"{path} leaves pointer capture unguarded for synthetic events"
         )
@@ -350,7 +351,7 @@ def test_client_interaction_event_payload_contract_is_stable() -> None:
         "trace: hit.trace,",
         "index: hit.index,",
         'view: this._eventView("hover"),',
-        'this._dispatchChartEvent("leave", { view: this._eventView("leave") });',
+        'this._dispatchChartEvent("leave", { view: this._eventView("leave"), active: false });',
         'this._dispatchChartEvent("click", detail);',
         "const detail = {",
         "x,",
@@ -512,7 +513,7 @@ def test_client_lod_layer_stays_chart_agnostic_and_renderer_delegated() -> None:
 
 def test_client_coalesces_wheel_zoom_without_animation_lag() -> None:
     required = (
-        "_queueWheelZoom(factor, fx, fy)",
+        "_queueWheelZoom(factor, fx, fy, axesScope = null)",
         "this._pendingWheelZoom.factor *= factor;",
         "this._wheelZoomRaf = requestAnimationFrame",
         "this._zoomAt(pending.factor, pending.fx, pending.fy, false, 120, {",

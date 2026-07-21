@@ -43,7 +43,7 @@ import hashlib
 import json
 from typing import Any
 
-from .app import XYPlugin, append, setup
+from .app import XYPlugin, append, clear_selection, reset_view, select, set_view, setup
 from .component import chart
 from .namespace import XY_NAMESPACE, XYNamespace
 from .registry import FigureRegistry, _figure_of, registry
@@ -58,11 +58,15 @@ __all__ = [
     "XYPlugin",
     "append",
     "chart",
+    "clear_selection",
     "figure",
     "inline",
     "register",
     "registry",
     "release",
+    "reset_view",
+    "select",
+    "set_view",
     "setup",
 ]
 

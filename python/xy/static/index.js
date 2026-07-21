@@ -2069,8 +2069,10 @@ this._initA11y();
 this.root.dataset.xyContextState = "ready";
 this._initContextLossRecovery();
 this._armContextVisibilityWatch();
+this._initViewState();
 this._initInteraction();
 this._buildModebar(this.root);
+this._initAxisBands();
 if ((this.fluid || this.fluidH) && typeof ResizeObserver !== "undefined") {
 this._ro = new ResizeObserver((entries) => {
 const r = entries[entries.length - 1].contentRect;
@@ -2341,7 +2343,8 @@ phase: pending.phase,
 interaction_id: pending.interaction_id,
 };
 this._dispatchChartEvent("view_change", detail);
-if (this.comm && (!this.comm.wantsViewChange || this.comm.wantsViewChange())) {
+if (this.comm && (pending.phase === "end"
+|| !this.comm.wantsViewChange || this.comm.wantsViewChange())) {
 this.comm.send({ type: "view_change", ...detail });
 }
 if (pending.broadcast) this._broadcastLinkedView(detail);
@@ -2357,11 +2360,15 @@ const msg = event.data || {};
 if (msg.source === this._linkedSource) return;
 if (this._interactionFlag("link_select") && msg.selection) {
 const selection = msg.selection;
-if (selection.clear) this._clearSelection({ broadcast: false, dispatch: false });
-else if (selection.polygon) this._selectLocalPolygon(selection.polygon, { dispatch: false });
-else if (selection.range) {
+if (selection.clear) {
+this._clearSelection({ broadcast: false, dispatch: false });
+} else if (selection.polygon) {
+this._stateSelection = { polygon: selection.polygon.map((point) => [...point]) };
+this._selectLocalPolygon(selection.polygon, { dispatch: false });
+} else if (selection.range) {
 const { x0, x1, y0, y1 } = selection.range;
 if ([x0, x1, y0, y1].every(Number.isFinite)) {
+this._stateSelection = { range: { x0, x1, y0, y1 } };
 this._selectLocal(x0, x1, y0, y1, { dispatch: false });
 }
 }
@@ -2851,6 +2858,7 @@ this._positionLegend(lg, lg.dataset.xyLegendLoc || "upper right");
 this._positionReductionBadges();
 this._positionColorbar();
 this._fitModebar();
+this._layoutAxisBands();
 this._pickDirty = true;
 if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
@@ -6371,6 +6379,7 @@ row,
 trace: hit.trace,
 index: hit.index,
 view: this._eventView("hover"),
+...this._hoverPayload(row, hit, clientX, clientY),
 });
 }
 if (this.comm) {
@@ -6566,11 +6575,13 @@ const rect = this.root.getBoundingClientRect();
 const lx = clientX - rect.left;
 const ly = clientY - rect.top;
 const lines = this._tooltipLines(row);
+if (!this._customTooltip) {
 this.tooltip.textContent = "";
 lines.forEach((ln, i) => {
 if (i) this.tooltip.appendChild(document.createElement("br"));
 this.tooltip.appendChild(document.createTextNode(ln));
 });
+}
 if (this.a11yLive && options.announce !== false) {
 const prefix = this._a11yKeyboardReadout;
 const detail = lines.join(", ");
@@ -6840,7 +6851,7 @@ this._pickSeq = (this._pickSeq || 0) + 1;
 this.tooltip.style.display = "none";
 this._hideCrosshair();
 if (this._interactionFlag("hover")) {
-this._dispatchChartEvent("leave", { view: this._eventView("leave") });
+this._dispatchChartEvent("leave", { view: this._eventView("leave"), active: false });
 }
 if (hadHover) this._drawKeepPick();
 });
@@ -6894,7 +6905,7 @@ this._a11yKeyboardReadout = null;
 this._pickSeq = (this._pickSeq || 0) + 1;
 if (this.a11yLive) this.a11yLive.textContent = "Readout closed.";
 if (hadHover && this._interactionFlag("hover")) {
-this._dispatchChartEvent("leave", { view: this._eventView("leave") });
+this._dispatchChartEvent("leave", { view: this._eventView("leave"), active: false });
 }
 if (hadHover) this._drawKeepPick();
 return;
@@ -7149,11 +7160,17 @@ handle.setAttribute("cy", String(points[index][1]));
 handle.setAttribute("aria-label", `Lasso point ${index + 1}`);
 });
 },
-_sendSelect(d0, d1) {
+_sendSelect(d0, d1, opts = {}) {
 this._clearLassoOverlay();
 const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
 const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
 const range = { x0, x1, y0, y1 };
+this._historyRecord({
+source: opts.source,
+interactionId: opts.interactionId,
+history: opts.history,
+});
+this._stateSelection = { range: { ...range } };
 this._broadcastLinkedSelection({ range });
 this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
 if (this.comm) {
@@ -7162,10 +7179,16 @@ this.comm.send({ type: "select", x0, x1, y0, y1 });
 this._selectLocal(x0, x1, y0, y1);
 }
 },
-_sendSelectPolygon(points) {
+_sendSelectPolygon(points, opts = {}) {
 if (!Array.isArray(points) || points.length < 3) return;
 const polygon = points.map((point) => [point[0], point[1]]);
 if (!polygon.every((point) => point.every(Number.isFinite))) return;
+this._historyRecord({
+source: opts.source,
+interactionId: opts.interactionId,
+history: opts.history,
+});
+this._stateSelection = { polygon: polygon.map((point) => [...point]) };
 this._lassoPolygon = polygon;
 this._broadcastLinkedSelection({ polygon });
 this._renderLassoSelection();
@@ -7260,6 +7283,15 @@ g.selActive = true;
 },
 _clearSelection(opts = {}) {
 this._clearLassoOverlay();
+if (opts.dispatch !== false && this._stateSelection !== null
+&& this._stateSelection !== undefined) {
+this._historyRecord({
+source: opts.source,
+interactionId: opts.interactionId,
+history: opts.history,
+});
+}
+this._stateSelection = null;
 for (const g of this.gpuTraces) {
 g.selActive = false;
 if (g.drill) g.drill.selActive = false;
@@ -7459,6 +7491,15 @@ this._selectMenuButton = selectTrigger;
 this._selectMenuIcon = selectModeIcon;
 }
 if (canPan) mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
+if (canNavigate && this._historyEnabled()) {
+this._historyBackBtn = mk("historyback", "Back to previous view",
+() => this._historyBack());
+this._historyBackBtn.dataset.xyModebarHistory = "back";
+this._historyForwardBtn = mk("historyforward", "Forward to next view",
+() => this._historyForward());
+this._historyForwardBtn.dataset.xyModebarHistory = "forward";
+this._updateHistoryButtons();
+}
 let zoomMenu = null;
 if (hasZoomMenu) {
 zoomMenu = document.createElement("div");
@@ -7886,6 +7927,11 @@ const after = this._axisRange(axisId, target);
 return before[0] !== after[0] || before[1] !== after[1];
 });
 if (!changedAxes.length) return [];
+this._historyRecord({
+source: opts.source || "programmatic",
+interactionId: opts.interactionId,
+history: opts.history,
+});
 const animate = opts.animate === true && !this._prefersReducedMotion();
 const duration = opts.duration || 180;
 if (!animate || duration <= 0) {
@@ -8085,7 +8131,9 @@ this._axisValue(axis, ca + (c1 - ca) * f),
 },
 _zoomAt(f, fx, fy, animate = false, duration = 120, opts = {}) {
 const base = this._viewAnim ? this._viewAnim.target : this.view;
-const axes = this._zoomAxes();
+const axes = Array.isArray(opts.axes)
+? new Set(opts.axes.filter((axisId) => this._zoomAxes().has(axisId)))
+: this._zoomAxes();
 const ranges = Object.fromEntries(
 this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId, base)]])
 );
@@ -8106,12 +8154,28 @@ phase: opts.phase || "update",
 interactionId: opts.interactionId,
 });
 },
-_queueWheelZoom(factor, fx, fy) {
+_queueWheelZoom(factor, fx, fy, axesScope = null) {
 if (!Number.isFinite(factor) || factor <= 0) return;
 clearTimeout(this._wheelZoomEndTimer);
 this._wheelZoomEndTimer = null;
+const scopeKey = Array.isArray(axesScope) ? axesScope.join(",") : "";
+if (this._wheelGesture && this._wheelGesture.scopeKey !== scopeKey) {
+const gesture = this._wheelGesture;
+this._wheelGesture = null;
+if (gesture.axes.size) {
+this._emitViewChange("wheel_zoom", {
+axes: [...gesture.axes],
+phase: "end",
+interactionId: gesture.interactionId,
+});
+}
+}
 if (!this._wheelGesture) {
-this._wheelGesture = { interactionId: ++this._interactionSeq, axes: new Set() };
+this._wheelGesture = {
+interactionId: ++this._interactionSeq,
+axes: new Set(),
+scopeKey,
+};
 }
 if (!this._pendingWheelZoom) {
 this._pendingWheelZoom = {
@@ -8120,11 +8184,13 @@ fx,
 fy,
 interactionId: this._wheelGesture.interactionId,
 axes: [],
+axesScope,
 };
 }
 this._pendingWheelZoom.factor *= factor;
 this._pendingWheelZoom.fx = fx;
 this._pendingWheelZoom.fy = fy;
+this._pendingWheelZoom.axesScope = axesScope;
 if (this._wheelZoomRaf) return;
 this._wheelZoomRaf = requestAnimationFrame(() => {
 this._wheelZoomRaf = null;
@@ -8135,6 +8201,7 @@ pending.axes = this._zoomAt(pending.factor, pending.fx, pending.fy, false, 120, 
 source: "wheel_zoom",
 phase: "update",
 interactionId: pending.interactionId,
+axes: pending.axesScope || undefined,
 }) || [];
 for (const axisId of pending.axes) this._wheelGesture?.axes.add(axisId);
 clearTimeout(this._wheelZoomEndTimer);
@@ -8190,11 +8257,11 @@ phase: opts.phase || "end",
 interactionId: opts.interactionId,
 });
 },
-_resetView(animate = true, source = "reset") {
+_resetView(animate = true, source = "reset", axesOverride = null) {
 const ranges = Object.fromEntries(
 this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
 );
-for (const axisId of this._resetAxisPolicy()) {
+for (const axisId of axesOverride || this._resetAxisPolicy()) {
 ranges[axisId] = [...this._axisRange(axisId, this.view0)];
 }
 return this._setView({ ranges }, {
@@ -8467,6 +8534,10 @@ return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/
 '<path d="M7 9 H13 M7 12 H13 M7 15 H13 M9 8 V16"/>');
 case "reset":
 return svg('<path d="M4 10 a6 6 0 1 1 1.8 4.3"/><path d="M4 6 V10 H8"/>');
+case "historyback":
+return svg('<path d="M13 4 L7 10 L13 16"/>');
+case "historyforward":
+return svg('<path d="M7 4 L13 10 L7 16"/>');
 case "drag":
 return svg('<circle cx="7" cy="5" r=".8" fill="currentColor" stroke="none"/>' +
 '<circle cx="13" cy="5" r=".8" fill="currentColor" stroke="none"/>' +
@@ -8779,21 +8850,50 @@ if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY, {
 announce: !this._a11yKeyboardReadout,
 });
 if (this._interactionFlag("hover")) {
-this._dispatchChartEvent("hover", {
+const detail = {
 row: msg.row,
 trace: msg.row.trace,
 index: msg.row.index,
 exact: true,
 view: this._eventView("hover"),
-});
+};
+if (xy) {
+Object.assign(detail, this._hoverPayload(
+msg.row, this._hoverTarget, xy.clientX, xy.clientY, true,
+));
+}
+this._dispatchChartEvent("hover", detail);
 }
 } else if (msg.type === "selection") {
+this._applySelectionBuffers(msg, buffers);
+this._selectionCount = msg.total || 0;
+this.draw();
+if (this._interactionFlag("select", true)) {
+this._dispatchChartEvent("select", {
+total: this._selectionCount,
+view: this._eventView("select"),
+});
+}
+} else if (msg.type === "state_patch") {
+this._applyStatePatch(msg.state, {
+source: "api",
+animate: msg.animate === true,
+history: msg.history !== false,
+});
+} else if (msg.type === "view_nav") {
+if (msg.op === "reset") this._navReset(msg.axes);
+} else if (msg.type === "selection_rows") {
+this._applyRowsSelection(msg, buffers);
+}
+},
+_applySelectionBuffers(msg, buffers) {
 if (!msg.traces || !msg.traces.length) {
 for (const g of this.gpuTraces) {
 g.selActive = false;
 if (g.drill) g.drill.selActive = false;
 }
-} else {
+return;
+}
 for (const upd of msg.traces) {
 const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
 if (!g) continue;
@@ -8807,16 +8907,6 @@ const idx = this._asU32(buffers[upd.buf]);
 const mask = new Float32Array(pg.n);
 for (let i = 0; i < idx.length; i++) if (idx[i] < pg.n) mask[idx[i]] = 1;
 this._applySelMask(pg, mask);
-}
-}
-this._selectionCount = msg.total || 0;
-this.draw();
-if (this._interactionFlag("select", true)) {
-this._dispatchChartEvent("select", {
-total: this._selectionCount,
-view: this._eventView("select"),
-});
-}
 }
 },
 _applyDrill(g, upd, buffers) {
@@ -9481,6 +9571,468 @@ this.view = { ...target };
 this._transitionView = null;
 }
 return true;
+},
+});
+const XY_HISTORY_CAPACITY = 64;
+Object.assign(ChartView.prototype, {
+_initViewState() {
+this._historyPast = [];
+this._historyFuture = [];
+this._historyLastInteractionId = null;
+this._stateSelection = null;
+this._customTooltip = null;
+this.root.xy = {
+applyState: (patch, opts = {}) => this._applyStatePatch(patch, {
+source: "api",
+animate: opts.animate === true,
+history: opts.history !== false,
+}),
+state: () => this._durableState(),
+back: () => this._historyBack(),
+forward: () => this._historyForward(),
+};
+},
+_durableState() {
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+);
+const sel = this._stateSelection;
+const selection = sel === null || sel === undefined
+? null
+: sel.rows
+? { rows: true }
+: sel.range
+? { range: { ...sel.range } }
+: { polygon: sel.polygon.map((point) => [...point]) };
+return { v: 1, ranges, selection };
+},
+_validateStatePatch(patch) {
+if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+return "state patch must be an object";
+}
+if (patch.v !== undefined && patch.v !== 1) {
+return `unsupported state version ${patch.v}`;
+}
+for (const key of Object.keys(patch)) {
+if (!["v", "ranges", "selection"].includes(key)) return `unknown key ${key}`;
+}
+if (patch.ranges !== undefined) {
+if (!patch.ranges || typeof patch.ranges !== "object" || Array.isArray(patch.ranges)) {
+return "ranges must be an object";
+}
+const declared = new Set(this._axisIds());
+for (const [axisId, range] of Object.entries(patch.ranges)) {
+if (!declared.has(axisId)) return `unknown axis ${axisId}`;
+if (!Array.isArray(range) || range.length !== 2
+|| !range.every((v) => Number.isFinite(v)) || range[0] === range[1]) {
+return `invalid range for axis ${axisId}`;
+}
+}
+}
+if (patch.selection !== undefined && patch.selection !== null) {
+const sel = patch.selection;
+if (typeof sel !== "object" || Array.isArray(sel)) return "invalid selection";
+const keys = Object.keys(sel);
+if (keys.length !== 1) return "invalid selection";
+if (keys[0] === "range") {
+const r = sel.range;
+if (!r || typeof r !== "object"
+|| !["x0", "x1", "y0", "y1"].every((k) => Number.isFinite(r[k]))) {
+return "invalid selection range";
+}
+} else if (keys[0] === "polygon") {
+const p = sel.polygon;
+if (!Array.isArray(p) || p.length < 3
+|| !p.every((pt) => Array.isArray(pt) && pt.length === 2
+&& pt.every(Number.isFinite))) {
+return "invalid selection polygon";
+}
+} else if (keys[0] === "rows") {
+return "rows selections are not applicable state";
+} else {
+return "invalid selection";
+}
+}
+return null;
+},
+_applyStatePatch(patch, opts = {}) {
+if (this._destroyed) return false;
+const error = this._validateStatePatch(patch);
+if (error) {
+if (typeof console !== "undefined" && console.warn) {
+console.warn(`xy: state patch rejected: ${error}`);
+}
+return false;
+}
+const source = opts.source || "api";
+const interactionId = ++this._interactionSeq;
+if (patch.ranges !== undefined) {
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+);
+for (const [axisId, range] of Object.entries(patch.ranges)) {
+ranges[axisId] = [Number(range[0]), Number(range[1])];
+}
+this._setView({ ranges }, {
+animate: opts.animate === true,
+source,
+phase: "end",
+interactionId,
+history: opts.history,
+});
+}
+if (patch.selection !== undefined) {
+const sel = patch.selection;
+const selOpts = { history: opts.history, interactionId, source };
+if (sel === null) {
+this._clearSelection(selOpts);
+} else if (sel.range) {
+const { x0, x1, y0, y1 } = sel.range;
+this._sendSelect([x0, y0], [x1, y1], selOpts);
+} else if (sel.polygon) {
+this._sendSelectPolygon(sel.polygon.map((point) => [...point]), selOpts);
+}
+}
+return true;
+},
+_historyEnabled() {
+return this._interactionFlag("history", true);
+},
+_historyRecord(opts = {}) {
+if (!this._historyPast || !this._historyEnabled() || this._destroyed) return;
+if (opts.history === false) return;
+if (opts.source === "linked" || opts.source === "history") return;
+const id = opts.interactionId;
+if (id !== undefined && id !== null && id === this._historyLastInteractionId) return;
+this._historyLastInteractionId = id === undefined ? null : id;
+this._historyPast.push(this._durableState());
+if (this._historyPast.length > XY_HISTORY_CAPACITY) this._historyPast.shift();
+this._historyFuture.length = 0;
+this._updateHistoryButtons();
+},
+_historyBack() {
+if (!this._historyEnabled() || !this._historyPast.length) return false;
+const snapshot = this._historyPast.pop();
+this._historyFuture.push(this._durableState());
+this._historyApply(snapshot);
+return true;
+},
+_historyForward() {
+if (!this._historyEnabled() || !this._historyFuture.length) return false;
+const snapshot = this._historyFuture.pop();
+this._historyPast.push(this._durableState());
+this._historyApply(snapshot);
+return true;
+},
+_historyApply(snapshot) {
+const patch = { v: 1, ranges: snapshot.ranges };
+if (!snapshot.selection || !snapshot.selection.rows) {
+patch.selection = snapshot.selection ?? null;
+}
+this._applyStatePatch(patch, { source: "history", animate: true, history: false });
+this._historyLastInteractionId = null;
+this._updateHistoryButtons();
+},
+_updateHistoryButtons() {
+const set = (btn, enabled) => {
+if (!btn) return;
+btn.disabled = !enabled;
+btn.setAttribute("aria-disabled", String(!enabled));
+btn.style.opacity = enabled ? "" : "0.4";
+};
+set(this._historyBackBtn, this._historyPast.length > 0);
+set(this._historyForwardBtn, this._historyFuture.length > 0);
+},
+_navReset(axes) {
+const override = Array.isArray(axes)
+? axes.filter((axisId) => this._axisIds().includes(axisId))
+: null;
+this._resetView(true, "reset", override);
+},
+_applyRowsSelection(msg, buffers) {
+this._clearLassoOverlay();
+this._applySelectionBuffers(msg, buffers);
+this._stateSelection = { rows: true };
+this._selectionCount = msg.total || 0;
+this.draw();
+if (this._interactionFlag("select", true)) {
+this._dispatchChartEvent("select", {
+total: this._selectionCount,
+view: this._eventView("select"),
+});
+}
+},
+_axisBandNavigable(axisId) {
+if (!this._interactionFlag("navigation", true)) return false;
+const pan = this._interactionFlag("pan", true)
+&& this._axisPolicy("pan_axes").includes(axisId);
+const zoom = this._interactionFlag("zoom", true)
+&& this._axisPolicy("zoom_axes").includes(axisId);
+return pan || zoom;
+},
+_initAxisBands() {
+if (!this.root) return;
+this._axisBands = {};
+for (const axisId of this._axisIds()) {
+if (!this._axisBandNavigable(axisId)) continue;
+const dim = this._axisDim(axisId);
+const band = document.createElement("div");
+band.dataset.xyAxisBand = axisId;
+band.style.cssText =
+"position:absolute;z-index:2;touch-action:none;" +
+`cursor:${dim === "x" ? "ew-resize" : "ns-resize"};`;
+this.root.appendChild(band);
+this._axisBands[axisId] = band;
+this._bindAxisBand(band, axisId, dim);
+}
+this._layoutAxisBands();
+},
+_layoutAxisBands() {
+if (!this._axisBands) return;
+const OUT = 24;
+const IN = 6;
+for (const [axisId, band] of Object.entries(this._axisBands)) {
+const dim = this._axisDim(axisId);
+const side = this._axis(axisId).side;
+if (dim === "x") {
+band.style.left = `${this.plot.x}px`;
+band.style.width = `${this.plot.w}px`;
+if (side === "top") {
+band.style.top = `${Math.max(0, this.plot.y - OUT)}px`;
+band.style.height = `${OUT + IN}px`;
+} else {
+band.style.top = `${this.plot.y + this.plot.h - IN}px`;
+band.style.height = `${IN + OUT}px`;
+}
+} else {
+band.style.top = `${this.plot.y}px`;
+band.style.height = `${this.plot.h}px`;
+if (side === "right") {
+band.style.left = `${this.plot.x + this.plot.w - IN}px`;
+band.style.width = `${IN + OUT}px`;
+} else {
+band.style.left = `${Math.max(0, this.plot.x - OUT)}px`;
+band.style.width = `${OUT + IN}px`;
+}
+}
+}
+},
+_axisBandValue(axisId, clientX, clientY) {
+const rect = this.canvas.getBoundingClientRect();
+const dim = this._axisDim(axisId);
+if (dim === "x") {
+const cssX = Math.max(0, Math.min(rect.width, clientX - rect.left));
+return this._dataFromCanvas(cssX, 0, axisId, "y")[0];
+}
+const cssY = Math.max(0, Math.min(rect.height, clientY - rect.top));
+return this._dataFromCanvas(0, cssY, "x", axisId)[1];
+},
+_bindAxisBand(band, axisId, dim) {
+let drag = null;
+this._listen(band, "wheel", (e) => {
+if (!this._interactionFlag("navigation", true)) return;
+if (!this._interactionFlag("zoom", true)) return;
+if (!this._interactionFlag("wheel_zoom", true)) return;
+if (!this._axisPolicy("zoom_axes").includes(axisId)) return;
+e.preventDefault();
+const factor = Math.pow(1.0015, e.deltaY);
+const rect = this.canvas.getBoundingClientRect();
+const fx = (e.clientX - rect.left) / rect.width;
+const fy = 1 - (e.clientY - rect.top) / rect.height;
+this._queueWheelZoom(factor, fx, fy, [axisId]);
+}, { passive: false });
+this._listen(band, "pointerdown", (e) => {
+if (e.pointerType === "mouse" && e.button !== 0) return;
+if (!this._interactionFlag("navigation", true)) return;
+this._cancelViewAnimation();
+drag = {
+pointerId: e.pointerId,
+sx: e.clientX,
+sy: e.clientY,
+view: this._copyView(this.view),
+d0: this._axisBandValue(axisId, e.clientX, e.clientY),
+mode: null,
+interactionId: ++this._interactionSeq,
+changedAxes: [],
+};
+try { band.setPointerCapture(e.pointerId); } catch (_err) {   }
+this.tooltip.style.display = "none";
+e.preventDefault();
+});
+const canBandPan = () =>
+this._interactionFlag("pan", true) && this._axisPolicy("pan_axes").includes(axisId)
+? true
+: this._axisContained(axisId);
+const canBandSpanZoom = () =>
+this._interactionFlag("zoom", true)
+&& this._interactionFlag("box_zoom", true)
+&& this._axisPolicy("zoom_axes").includes(axisId);
+this._listen(band, "pointermove", (e) => {
+if (!drag || e.pointerId !== drag.pointerId) return;
+const dx = e.clientX - drag.sx;
+const dy = e.clientY - drag.sy;
+if (!drag.mode) {
+if (Math.hypot(dx, dy) <= 3) return;
+const parallel = dim === "x" ? dx : dy;
+const perpendicular = dim === "x" ? dy : dx;
+const wantPan = Math.abs(parallel) >= Math.abs(perpendicular);
+drag.mode = wantPan
+? (canBandPan() ? "pan" : canBandSpanZoom() ? "span" : "none")
+: (canBandSpanZoom() ? "span" : canBandPan() ? "pan" : "none");
+}
+if (drag.mode === "pan") {
+const ranges = Object.fromEntries(
+this._axisIds().map((id) => [id, [...this._axisRange(id, drag.view)]])
+);
+const axis = this._axis(axisId);
+const [lo, hi] = this._axisRange(axisId, drag.view);
+const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+if (![c0, c1].every(Number.isFinite) || c0 === c1) return;
+const pixels = dim === "x" ? this.plot.w : this.plot.h;
+const deltaPx = dim === "x" ? dx : dy;
+const delta = (deltaPx / pixels) * (c1 - c0);
+const signed = dim === "x" ? -delta : delta;
+ranges[axisId] = [
+this._axisValue(axis, c0 + signed),
+this._axisValue(axis, c1 + signed),
+];
+const changed = this._setView({ ranges }, {
+source: "pan_drag",
+phase: "update",
+interactionId: drag.interactionId,
+});
+drag.changedAxes = [...new Set([...drag.changedAxes, ...changed])];
+} else if (drag.mode === "span") {
+const rootRect = this.root.getBoundingClientRect();
+this.selRect.dataset.xyBand = "zoom";
+this.selRect.style.display = "block";
+if (dim === "x") {
+const a = Math.max(this.plot.x, Math.min(
+this.plot.x + this.plot.w,
+Math.min(drag.sx, e.clientX) - rootRect.left));
+const b = Math.max(this.plot.x, Math.min(
+this.plot.x + this.plot.w,
+Math.max(drag.sx, e.clientX) - rootRect.left));
+this.selRect.style.left = `${a}px`;
+this.selRect.style.width = `${Math.max(0, b - a)}px`;
+this.selRect.style.top = `${this.plot.y}px`;
+this.selRect.style.height = `${this.plot.h}px`;
+} else {
+const a = Math.max(this.plot.y, Math.min(
+this.plot.y + this.plot.h,
+Math.min(drag.sy, e.clientY) - rootRect.top));
+const b = Math.max(this.plot.y, Math.min(
+this.plot.y + this.plot.h,
+Math.max(drag.sy, e.clientY) - rootRect.top));
+this.selRect.style.top = `${a}px`;
+this.selRect.style.height = `${Math.max(0, b - a)}px`;
+this.selRect.style.left = `${this.plot.x}px`;
+this.selRect.style.width = `${this.plot.w}px`;
+}
+}
+e.preventDefault();
+});
+const end = (e) => {
+if (!drag || e.pointerId !== drag.pointerId) return;
+const finished = drag;
+drag = null;
+if (finished.mode === "span") this.selRect.style.display = "none";
+if (e.type === "pointercancel") return;
+if (finished.mode === "pan" && finished.changedAxes.length) {
+this._emitViewChange("pan_drag", {
+axes: finished.changedAxes,
+phase: "end",
+interactionId: finished.interactionId,
+});
+} else if (finished.mode === "span") {
+const d1 = this._axisBandValue(axisId, e.clientX, e.clientY);
+const axis = this._axis(axisId);
+const a = this._axisCoord(axis, finished.d0);
+const b = this._axisCoord(axis, d1);
+const minSpan = Math.max(Math.abs(a), Math.abs(b), 1e-30) * 1e-12;
+if (![a, b].every(Number.isFinite) || Math.abs(b - a) < minSpan) return;
+const [lo, hi] = this._axisRange(axisId);
+const reverse = this._axisCoord(axis, hi) < this._axisCoord(axis, lo);
+const low = Math.min(a, b), high = Math.max(a, b);
+const ranges = Object.fromEntries(
+this._axisIds().map((id) => [id, [...this._axisRange(id)]])
+);
+ranges[axisId] = [
+this._axisValue(axis, reverse ? high : low),
+this._axisValue(axis, reverse ? low : high),
+];
+this._setView({ ranges }, {
+animate: true,
+anchors: { [axisId]: 0.5 },
+source: "box_zoom",
+phase: "end",
+interactionId: finished.interactionId,
+});
+}
+};
+this._listen(band, "pointerup", end);
+this._listen(band, "pointercancel", end);
+},
+_seriesColorCss(g) {
+const c = g && g.color;
+if (!Array.isArray(c) || c.length < 3) return null;
+const channel = (v) => Math.max(0, Math.min(255, Math.round(Number(v) * 255)));
+return `rgb(${channel(c[0])}, ${channel(c[1])}, ${channel(c[2])})`;
+},
+_hoverPayload(row, hit, clientX, clientY, exact = false) {
+const rootRect = this.root.getBoundingClientRect();
+const canvasRect = this.canvas.getBoundingClientRect();
+const cssX = Math.max(0, Math.min(canvasRect.width, clientX - canvasRect.left));
+const cssY = Math.max(0, Math.min(canvasRect.height, clientY - canvasRect.top));
+const data = {};
+for (const axisId of this._axisIds()) {
+const dim = this._axisDim(axisId);
+const [x, y] = this._dataFromCanvas(
+cssX, cssY,
+dim === "x" ? axisId : "x",
+dim === "y" ? axisId : "y",
+);
+data[axisId] = dim === "x" ? x : y;
+}
+const g = hit && hit.g;
+const points = row ? [{
+trace: (g && g.trace && g.trace.name) || row.trace,
+index: row.index,
+row,
+x_axis: (g && g.xAxis) || "x",
+y_axis: (g && g.yAxis) || "y",
+color: this._seriesColorCss(g),
+}] : [];
+const payload = {
+active: true,
+cursor: {
+px: [clientX - rootRect.left, clientY - rootRect.top],
+data,
+},
+points,
+};
+if (exact) payload.exact = true;
+return payload;
+},
+setCustomTooltip(el) {
+if (!this.tooltip) return;
+if (!el) {
+this._customTooltip = null;
+delete this.tooltip.dataset.xyCustomTooltip;
+this.tooltip.style.background = "";
+this.tooltip.style.border = "";
+this.tooltip.style.padding = "";
+this.tooltip.replaceChildren();
+this.tooltip.style.display = "none";
+return;
+}
+this._customTooltip = el;
+this.tooltip.dataset.xyCustomTooltip = "";
+this.tooltip.style.background = "transparent";
+this.tooltip.style.border = "none";
+this.tooltip.style.padding = "0";
+el.style.display = "";
+this.tooltip.replaceChildren(el);
 },
 });
 function bytesToSpan(b) {
