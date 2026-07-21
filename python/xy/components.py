@@ -3709,7 +3709,18 @@ class FacetChart(Component):
         return self.to_html(path, custom_css=custom_css)
 
     def _repr_html_(self) -> str:
-        return self.to_html()
+        grid = self.figure()
+        return export.notebook_iframe(
+            grid.to_html(),
+            width=grid.width,
+            height=grid.grid_height + grid._title_height,
+        )
+
+    def _ipython_display_(self) -> None:
+        """Display the isolated facet document in notebook frontends."""
+        from IPython.display import display  # type: ignore[import-not-found]
+
+        display({"text/html": self._repr_html_()}, raw=True)
 
     def to_svg(self, path: Optional[str | PathLike[str]] = None) -> str:
         """A static SVG render of the facet grid (written to ``path`` if given)."""
@@ -4500,7 +4511,9 @@ def facet_chart(
             ``"x"`` or ``"y"`` for one axis, and ``False``/``None`` to disable.
         link_select: Whether data-space selections are echoed across panels.
         gap: Gap between panels in pixels.
-        **props: Additional shared chart properties.
+        **props: Additional shared chart properties. ``width`` is the total
+            grid width, while ``height`` is the height of each panel; the
+            composed height grows with the number of facet rows.
     """
     return FacetChart(
         children,
