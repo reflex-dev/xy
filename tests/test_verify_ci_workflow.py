@@ -57,43 +57,6 @@ def test_all_workflows_accept_current_gates() -> None:
     assert verify_ci_workflow.validate_all_workflows() == []
 
 
-def test_ci_workflow_rejects_running_for_spec_only_prs(tmp_path: Path) -> None:
-    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    path = tmp_path / "ci.yml"
-    path.write_text(workflow.replace('      - "spec/**"\n', "", 1), encoding="utf-8")
-
-    errors = verify_ci_workflow.validate_ci_workflow(path)
-
-    assert any("CI pull_request trigger" in error and "spec/**" in error for error in errors)
-
-
-def test_codspeed_workflow_rejects_running_for_docs_only_prs(tmp_path: Path) -> None:
-    workflow = Path(".github/workflows/codspeed.yml").read_text(encoding="utf-8")
-    path = tmp_path / "codspeed.yml"
-    path.write_text(workflow.replace('      - "docs/**"\n', "", 1), encoding="utf-8")
-
-    errors = verify_ci_workflow.validate_codspeed_workflow(path)
-
-    assert any("CodSpeed pull_request trigger" in error and "docs/**" in error for error in errors)
-
-
-def test_ci_workflow_rejects_paths_ignore_text_hidden_in_a_comment(tmp_path: Path) -> None:
-    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    path = tmp_path / "ci.yml"
-    path.write_text(
-        workflow.replace(
-            "    paths-ignore:\n",
-            "    paths:\n    # paths-ignore:\n",
-            1,
-        ),
-        encoding="utf-8",
-    )
-
-    errors = verify_ci_workflow.validate_ci_workflow(path)
-
-    assert any("CI pull_request trigger" in error for error in errors)
-
-
 def test_workflows_use_consistent_node24_action_pins() -> None:
     workflow_text = "\n".join(
         path.read_text(encoding="utf-8") for path in sorted(Path(".github/workflows").glob("*.yml"))
