@@ -38,6 +38,7 @@ Then open the URL printed by Reflex, usually `http://localhost:3000`.
 | Density scatter | `assets/charts/density_scatter.html` | 10M points rendered as a responsive density surface |
 | Histogram | `assets/charts/histogram.html` | 500k values binned into the shared rectangle renderer |
 | Histogram with x-only zoom | `assets/charts/histogram_x_zoom.html` | Wheel, toolbar, and box zoom change x while y remains fixed |
+| Box zoom drag mode | `assets/charts/box_zoom_drag.html` | Plain drag zooms the histogram x range; double-click resets the view |
 | Grouped bars | `assets/charts/bar_column.html` | Category-axis grouped bars using the shared rectangle renderer |
 | Stacked bars | `assets/charts/stacked_bar.html` | Stacked column bars using the shared rectangle renderer |
 | Horizontal bars | `assets/charts/horizontal_bar.html` | Category-axis horizontal bars using the shared rectangle renderer |

@@ -686,6 +686,7 @@ ASSET_CASES: tuple[str, ...] = (
     "area.html",
     "histogram.html",
     "histogram_x_zoom.html",
+    "box_zoom_drag.html",
     "bar_column.html",
     "stacked_bar.html",
     "horizontal_bar.html",

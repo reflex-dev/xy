@@ -90,7 +90,6 @@ def _scatter_figure(n: int) -> Any:
         select=True,
         brush=True,
         crosshair=True,
-        view_change=True,
     ).figure()
 
 

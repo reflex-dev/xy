@@ -297,8 +297,8 @@ try{{
     const zoomPercent = zoomTrigger && zoomTrigger.querySelector("[data-xy-modebar-zoom-percent]");
     const zoomIndicator = zoomTrigger && zoomTrigger.querySelector("[data-xy-modebar-menu-indicator] svg");
     const zoomTriggerInitial = zoomPercent && zoomPercent.textContent === "100%" && zoomIndicator;
-    const zoomLabelView = {{...v.view}};
-    v.view = {{...v.view, x1:v.view.x0+(v.view.x1-v.view.x0)/4000}};
+    const zoomLabelView = v._copyView(v.view);
+    v.view = v._viewFrom({{x0:v.view.x0,x1:v.view.x0+(v.view.x1-v.view.x0)/4000}});
     v._updateZoomMenuLabel();
     const zoomCompact = zoomPercent && zoomPercent.textContent === "400…%"
       && zoomPercent.dataset.xyZoomExact === "400000%";
@@ -476,9 +476,9 @@ try{{
     v.comm=null;
     v._zoomToBox([10,0],[20,5]);    // box-zoom fits the rectangle
     const boxOk = (Math.abs(v.view.x0-10)<1e-6 && Math.abs(v.view.x1-20)<1e-6) ? 1 : 0;
-    const zoomAxesInteraction=v.spec.interaction;
+    const zoomAxesInteraction=v.interaction;
     const zoomAxesView={{x0:0,x1:100,y0:0,y1:100}};
-    v.spec.interaction={{...(zoomAxesInteraction||{{}}),zoom_axes:["x"]}};
+    v.interaction={{...(zoomAxesInteraction||{{}}),zoom_axes:["x"]}};
     v.view={{...zoomAxesView}};
     v._zoomBy(0.5);
     const xOnlyButton=(v.view.x1-v.view.x0<100 && v.view.y0===0 && v.view.y1===100);
@@ -488,7 +488,7 @@ try{{
     const xOnlyBox=(Math.abs(v.view.x0-20)<1e-6 && Math.abs(v.view.x1-40)<1e-6
       && v.view.y0===0 && v.view.y1===100);
     const xonly=(xOnlyButton && xOnlyWheel && xOnlyBox)?1:0;
-    v.spec.interaction=zoomAxesInteraction;
+    v.interaction=zoomAxesInteraction;
     v.view = {{...v.view0}};
     v._setDragMode("zoom");
     const zmode = (v.dragMode==="zoom" && v.canvas.dataset.xyDragmode==="zoom") ? 1 : 0;

@@ -240,6 +240,7 @@ class PayloadMixin(_Host):
             "columns": pw.columns,
             "backend": kernels.BACKEND,
             "show_legend": self.show_legend,
+            "view": {"ranges": {axis_id: list(axis["range"]) for axis_id, axis in axis_specs.items()}},
         }
         if self.legend_options:
             spec["legend"] = self.legend_options

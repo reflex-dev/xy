@@ -1871,7 +1871,8 @@ this._hoverId = -1;
 this._hoverTarget = null;
 this._viewEventRaf = null;
 this._linkedSource = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-this.dragMode = "pan";
+this.dragMode = "none";
+this._interactionSeq = 0;
 this.fluid = spec.width === "100%";
 this.fluidH = spec.height === "100%";
 const rect = this.fluid || this.fluidH ? el.getBoundingClientRect() : null;
@@ -1906,6 +1907,11 @@ this.root.textContent = "xy: WebGL2 unavailable in this browser.";
 throw err;
 }
 this.canvas.dataset.xyCtx = "live";
+this.view0 = this._clampView({
+ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]) => [id, [...axis.range]])),
+});
+this.view = this._copyView(this.view0);
+this.dragMode = this._resolveDefaultDragAction();
 this._initA11y();
 this.root.dataset.xyContextState = "ready";
 this._initContextLossRecovery();
@@ -1921,11 +1927,6 @@ this._ro.observe(this.root);
 }
 this._armVisibilityResizeWatch();
 this._armDprWatch();
-this.view0 = this._clampView({
-x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
-y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
-});
-this.view = { ...this.view0 };
 this._initLinkedCharts();
 this._themeWatch = window.matchMedia("(prefers-color-scheme: dark)");
 this._onScheme = () => this.refreshTheme();
@@ -1995,6 +1996,74 @@ return String(axisId || "x").startsWith("y") ? "y" : "x";
 _axisMode(axisId) {
 return this._axis(axisId).scale === "log" ? 1 : 0;
 }
+_axisIds() {
+return Object.keys(this.axes || {});
+}
+_copyView(view) {
+const ranges = {};
+for (const axisId of this._axisIds()) {
+const range = view?.ranges?.[axisId] || this._axis(axisId).range || [0, 1];
+ranges[axisId] = [Number(range[0]), Number(range[1])];
+}
+const x = ranges.x || [0, 1];
+const y = ranges.y || [0, 1];
+return { ranges, x0: x[0], x1: x[1], y0: y[0], y1: y[1] };
+}
+_viewFrom(next, base = this.view) {
+const ranges = {};
+for (const axisId of this._axisIds()) {
+const source = next?.ranges?.[axisId]
+|| (axisId === "x" && next?.x0 !== undefined ? [next.x0, next.x1] : null)
+|| (axisId === "y" && next?.y0 !== undefined ? [next.y0, next.y1] : null)
+|| base?.ranges?.[axisId]
+|| this._axis(axisId).range
+|| [0, 1];
+ranges[axisId] = [Number(source[0]), Number(source[1])];
+}
+return this._copyView({ ranges });
+}
+_axisPolicy(name) {
+const configured = this.interaction?.[name];
+if (!Array.isArray(configured) || !configured.length) return this._axisIds();
+const declared = new Set(this._axisIds());
+return [...new Set(configured.filter((axisId) => declared.has(axisId)))];
+}
+_resetAxisPolicy() {
+if (Array.isArray(this.interaction?.reset_axes)) return this._axisPolicy("reset_axes");
+const axes = [];
+if (this._interactionFlag("pan", true)) axes.push(...this._axisPolicy("pan_axes"));
+if (this._interactionFlag("zoom", true)) axes.push(...this._axisPolicy("zoom_axes"));
+return [...new Set(axes)];
+}
+_resolveDefaultDragAction() {
+const requested = typeof this.interaction?.default_drag_action === "string"
+? this.interaction.default_drag_action : "auto";
+const canNavigate = this._interactionFlag("navigation", true);
+const canPan = canNavigate && this._interactionFlag("pan", true);
+const canZoom = canNavigate && this._interactionFlag("zoom", true)
+&& this._interactionFlag("box_zoom", true);
+const canSelect = this._pickable && this._interactionFlag("select", true)
+&& this._interactionFlag("brush", true);
+if (requested === "auto") {
+if (canPan) return "pan";
+if (canZoom) return "zoom";
+if (canSelect) return "select";
+return "none";
+}
+if (requested === "pan") return canPan ? "pan" : this._resolveDefaultDragActionFallback();
+if (requested === "zoom") return canZoom ? "zoom" : this._resolveDefaultDragActionFallback();
+if (requested.startsWith("select")) {
+return canSelect ? requested : this._resolveDefaultDragActionFallback();
+}
+return requested === "none" ? "none" : this._resolveDefaultDragActionFallback();
+}
+_resolveDefaultDragActionFallback() {
+const saved = this.interaction.default_drag_action;
+this.interaction.default_drag_action = "auto";
+const resolved = this._resolveDefaultDragAction();
+this.interaction.default_drag_action = saved;
+return resolved;
+}
 _axisCoord(axis, value) {
 const v = Number(value);
 if (!Number.isFinite(v)) return NaN;
@@ -2006,8 +2075,10 @@ if (axis && axis.scale === "log") return Math.pow(10, coord);
 return coord;
 }
 _axisRange(axisId, view = this.view) {
-if (axisId === "x") return [view.x0, view.x1];
-if (axisId === "y") return [view.y0, view.y1];
+const mapped = view?.ranges?.[axisId];
+if (Array.isArray(mapped)) return [mapped[0], mapped[1]];
+if (axisId === "x" && view) return [view.x0, view.x1];
+if (axisId === "y" && view) return [view.y0, view.y1];
 const axis = this._axis(axisId);
 const r = axis.range || [0, 1];
 return [Number(r[0]), Number(r[1])];
@@ -2062,6 +2133,9 @@ return value === undefined ? fallback : value === true;
 }
 _eventView(source = "view") {
 return {
+ranges: Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+),
 x0: this.view.x0,
 x1: this.view.x1,
 y0: this.view.y0,
@@ -2078,20 +2152,28 @@ composed: true,
 }));
 }
 _emitViewChange(source = "view", opts = {}) {
-const shouldDispatch = this._interactionFlag("view_change") || this._linkChannel;
-if (!shouldDispatch || this._destroyed) return;
+if (this._destroyed) return;
 const broadcast = opts.broadcast !== false;
-this._pendingViewEvent = { source, broadcast };
+this._pendingViewEvent = {
+source,
+broadcast,
+axes: Array.isArray(opts.axes) ? [...opts.axes] : [],
+phase: opts.phase || "end",
+interaction_id: opts.interactionId ?? ++this._interactionSeq,
+};
 if (this._viewEventRaf) return;
 this._viewEventRaf = requestAnimationFrame(() => {
 this._viewEventRaf = null;
 const pending = this._pendingViewEvent || { source, broadcast };
 this._pendingViewEvent = null;
-const detail = this._eventView(pending.source);
-if (this._interactionFlag("view_change")) {
+const detail = {
+...this._eventView(pending.source),
+axes: pending.axes,
+phase: pending.phase,
+interaction_id: pending.interaction_id,
+};
 this._dispatchChartEvent("view_change", detail);
-}
-if (this.comm && this._interactionFlag("view_change")) {
+if (this.comm && (!this.comm.wantsViewChange || this.comm.wantsViewChange())) {
 this.comm.send({ type: "view_change", ...detail });
 }
 if (pending.broadcast) this._broadcastLinkedView(detail);
@@ -2100,9 +2182,7 @@ if (pending.broadcast) this._broadcastLinkedView(detail);
 _initLinkedCharts() {
 const group = this.interaction && this.interaction.link_group;
 if (!group || typeof BroadcastChannel !== "function") return;
-this._linkAxes = Array.isArray(this.interaction.link_axes)
-? this.interaction.link_axes.filter((axis) => axis === "x" || axis === "y")
-: ["x", "y"];
+this._linkAxes = this._axisPolicy("link_axes");
 this._linkChannel = new BroadcastChannel(`xy:${group}`);
 this._linkChannel.onmessage = (event) => {
 const msg = event.data || {};
@@ -2120,27 +2200,51 @@ this._selectLocal(x0, x1, y0, y1, { dispatch: false });
 return;
 }
 if (!msg.view || msg.source === this._linkedSource) return;
-const next = { ...this.view };
-if (this._linkAxes.includes("x")) {
-next.x0 = Number(msg.view.x0);
-next.x1 = Number(msg.view.x1);
+const incoming = msg.view.ranges || {};
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+);
+for (const axisId of this._linkAxes) {
+const range = incoming[axisId]
+|| (axisId === "x" ? [msg.view.x0, msg.view.x1] : null)
+|| (axisId === "y" ? [msg.view.y0, msg.view.y1] : null);
+if (Array.isArray(range) && range.length === 2 && range.every(Number.isFinite)) {
+ranges[axisId] = [Number(range[0]), Number(range[1])];
 }
-if (this._linkAxes.includes("y")) {
-next.y0 = Number(msg.view.y0);
-next.y1 = Number(msg.view.y1);
 }
-if (![next.x0, next.x1, next.y0, next.y1].every(Number.isFinite)) return;
-if (!this._interactionFlag("pan", true) && !this._interactionFlag("zoom", true)) return;
-this._setView(next, { animate: false, source: "linked", broadcast: false });
+this._setView({ ranges }, {
+animate: false,
+source: "linked",
+phase: "end",
+broadcast: false,
+});
 };
 }
 _broadcastLinkedView(detail) {
 if (!this._linkChannel) return;
-this._linkChannel.postMessage({ source: this._linkedSource, view: detail });
+const axes = (detail.axes || []).filter((axisId) => this._linkAxes.includes(axisId));
+if (!axes.length) return;
+const ranges = Object.fromEntries(axes.map((axisId) => [axisId, detail.ranges[axisId]]));
+this._linkChannel.postMessage({
+source: this._linkedSource,
+view: { ...detail, axes, ranges },
+});
 }
 _broadcastLinkedSelection(selection) {
 if (!this._linkChannel || !this._interactionFlag("link_select")) return;
 this._linkChannel.postMessage({ source: this._linkedSource, selection });
+}
+setView(ranges, opts = {}) {
+return this._setView({ ranges }, {
+animate: opts.animate === true,
+source: "programmatic",
+phase: "end",
+interactionId: ++this._interactionSeq,
+broadcast: opts.broadcast === true,
+});
+}
+resetView(opts = {}) {
+return this._resetView(opts.animate !== false, "reset");
 }
 _applyClass(el, className) {
 if (typeof className !== "string") return;
@@ -2258,6 +2362,9 @@ this._raf = null;
 if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
 this._wheelZoomRaf = null;
 this._pendingWheelZoom = null;
+clearTimeout(this._wheelZoomEndTimer);
+this._wheelZoomEndTimer = null;
+this._wheelGesture = null;
 this._cancelViewAnimation();
 clearTimeout(this._viewTimer);
 this._viewTimer = null;
@@ -5173,6 +5280,9 @@ this._viewEventRaf = null;
 if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
 this._wheelZoomRaf = null;
 this._pendingWheelZoom = null;
+clearTimeout(this._wheelZoomEndTimer);
+this._wheelZoomEndTimer = null;
+this._wheelGesture = null;
 this._linkChannel?.close?.();
 this._linkChannel = null;
 if (this._raf) cancelAnimationFrame(this._raf);
@@ -6090,11 +6200,12 @@ this._cancelViewAnimation();
 const canPan = this._interactionFlag("pan", true);
 const canZoom = this._interactionFlag("zoom", true);
 const canNavigate = this._interactionFlag("navigation", true);
+const canBoxZoom = this._interactionFlag("box_zoom", true);
 const canBrush = this._interactionFlag("brush", true) && this._interactionFlag("select", true);
 const selectMode = this.dragMode.startsWith("select") ? this.dragMode : null;
 const mode = (e.shiftKey || selectMode) && canBrush && this._pickable
 ? (e.shiftKey ? "select" : selectMode)
-: this.dragMode === "zoom" && canNavigate && canZoom ? "zoom" : null;
+: this.dragMode === "zoom" && canNavigate && canZoom && canBoxZoom ? "zoom" : null;
 if (mode) {
 const previousLasso = mode.startsWith("select") && this._lassoPolygon
 ? this._lassoPolygon.map((point) => [...point])
@@ -6111,8 +6222,16 @@ try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
 this.tooltip.style.display = "none";
 return;
 }
-if (canNavigate && canPan) {
-drag = { px: e.clientX, py: e.clientY, view: { ...this.view }, moved: false };
+if (this.dragMode === "pan" && canNavigate && canPan) {
+drag = {
+px: e.clientX,
+py: e.clientY,
+view: this._copyView(this.view),
+moved: false,
+interactionId: ++this._interactionSeq,
+axes: this._axisPolicy("pan_axes"),
+changedAxes: [],
+};
 try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
 this.tooltip.style.display = "none";
 }
@@ -6121,19 +6240,30 @@ this._listen(c, "pointermove", (e) => {
 if (band) { this._updateBand(band, e); return; }
 if (drag) {
 drag.moved = true;
-const { x0, x1, y0, y1 } = drag.view;
-const xa = this._axis("x");
-const ya = this._axis("y");
-const cx0 = this._axisCoord(xa, x0), cx1 = this._axisCoord(xa, x1);
-const cy0 = this._axisCoord(ya, y0), cy1 = this._axisCoord(ya, y1);
-const dx = ((e.clientX - drag.px) / this.plot.w) * (cx1 - cx0);
-const dy = ((e.clientY - drag.py) / this.plot.h) * (cy1 - cy0);
-this._setView({
-x0: this._axisValue(xa, cx0 - dx),
-x1: this._axisValue(xa, cx1 - dx),
-y0: this._axisValue(ya, cy0 + dy),
-y1: this._axisValue(ya, cy1 + dy),
-}, { source: "pan" });
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId, drag.view)]])
+);
+for (const axisId of drag.axes) {
+const axis = this._axis(axisId);
+const [lo, hi] = this._axisRange(axisId, drag.view);
+const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+if (![c0, c1].every(Number.isFinite) || c0 === c1) continue;
+const dim = this._axisDim(axisId);
+const pixels = dim === "x" ? this.plot.w : this.plot.h;
+const deltaPx = dim === "x" ? e.clientX - drag.px : e.clientY - drag.py;
+const delta = (deltaPx / pixels) * (c1 - c0);
+const signed = dim === "x" ? -delta : delta;
+ranges[axisId] = [
+this._axisValue(axis, c0 + signed),
+this._axisValue(axis, c1 + signed),
+];
+}
+const changedAxes = this._setView({ ranges }, {
+source: "pan_drag",
+phase: "update",
+interactionId: drag.interactionId,
+});
+drag.changedAxes = [...new Set([...drag.changedAxes, ...changedAxes])];
 return;
 }
 this._updateCrosshair(e);
@@ -6150,7 +6280,11 @@ const moved = band.mode === "select-lasso"
 : Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
 if (moved) {
 if (band.mode === "zoom" && this._interactionFlag("zoom", true)) {
-this._zoomToBox(band.d0, d1, true);
+this._zoomToBox(band.d0, d1, true, {
+source: "box_zoom",
+phase: "end",
+interactionId: ++this._interactionSeq,
+});
 } else if (band.mode === "select-lasso") {
 if (band.points.length >= 3) {
 const editable = this._simplifyLassoPoints(band.points);
@@ -6178,7 +6312,14 @@ this._renderLassoSelection();
 band = null;
 return;
 }
-if (drag && drag.moved) this._ignoreNextClick = true;
+if (drag && drag.moved) {
+this._ignoreNextClick = true;
+if (drag.changedAxes.length) this._emitViewChange("pan_drag", {
+axes: drag.changedAxes,
+phase: "end",
+interactionId: drag.interactionId,
+});
+}
 if (drag && !drag.moved) this.tooltip.style.display = "none";
 drag = null;
 };
@@ -6211,6 +6352,7 @@ this._listen(c, "click", (e) => this._click(e));
 this._listen(c, "wheel", (e) => {
 if (!this._interactionFlag("navigation", true)) return;
 if (!this._interactionFlag("zoom", true)) return;
+if (!this._interactionFlag("wheel_zoom", true)) return;
 e.preventDefault();
 const f = Math.pow(1.0015, e.deltaY);
 const r = c.getBoundingClientRect();
@@ -6220,9 +6362,18 @@ this._queueWheelZoom(f, fx, fy);
 }, { passive: false });
 this._listen(c, "dblclick", () => {
 if (!this._interactionFlag("navigation", true)) return;
-if (!this._interactionFlag("zoom", true)) return;
-this._clearSelection();
-this._setView(this.view0, { animate: true });
+if (!this._interactionFlag("double_click_reset", true)) return;
+this._resetView(true, "reset");
+});
+this._listen(c, "keydown", (e) => {
+if (e.key === "Escape" && (band || drag)) {
+this.selRect.style.display = "none";
+this.selLasso.style.display = "none";
+band = null;
+drag = null;
+e.preventDefault();
+e.stopImmediatePropagation();
+}
 });
 this._listen(c, "keydown", (e) => this._onA11yKey(e));
 },
@@ -6755,13 +6906,18 @@ bar.appendChild(b);
 if (toggles) this._modeBtns[toggles] = b;
 return b;
 };
-const canPan = this._interactionFlag("pan", true);
-const canZoom = this._interactionFlag("zoom", true);
+const canNavigate = this._interactionFlag("navigation", true);
+const canPan = canNavigate && this._interactionFlag("pan", true);
+const canZoom = canNavigate && this._interactionFlag("zoom", true);
+const canZoomButtons = canZoom && this._interactionFlag("zoom_buttons", true);
+const canBoxZoom = canZoom && this._interactionFlag("box_zoom", true);
+const canReset = canNavigate && this._resetAxisPolicy().length > 0;
+const hasZoomMenu = canZoomButtons || canBoxZoom || canReset;
 let zoomTrigger = null;
 let zoomIndicator = null;
 this._zoomMenuButton = null;
 this._zoomMenuLabel = null;
-if (canZoom) {
+if (hasZoomMenu) {
 zoomTrigger = mk("zoommenu", "Zoom controls", () => {
 setZoomMenuOpen(!this._zoomMenuOpen);
 });
@@ -6808,7 +6964,7 @@ this._selectMenuIcon = selectModeIcon;
 }
 if (canPan) mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
 let zoomMenu = null;
-if (canZoom) {
+if (hasZoomMenu) {
 zoomMenu = document.createElement("div");
 zoomMenu.dataset.xyModebarMenu = "";
 zoomMenu.setAttribute("role", "menu");
@@ -6846,15 +7002,21 @@ zoomMenuItems.push(button);
 if (toggles) this._modeBtns[toggles] = button;
 return button;
 };
-if (canZoom) {
-const resetView = () => {
-this._clearSelection();
-this._setView(this.view0, { animate: true });
-};
-mkZoomItem("zoomin", "Zoom In", () => this._zoomBy(0.5, true));
-mkZoomItem("zoomout", "Zoom Out", () => this._zoomBy(2, true));
-mkZoomItem("zoom", "Box Zoom", () => this._setDragMode("zoom"), "zoom");
-mkZoomItem("reset", "Reset View", resetView, null, true);
+if (hasZoomMenu) {
+if (canZoomButtons) {
+mkZoomItem("zoomin", this._actionLabel("Zoom In", this._axisPolicy("zoom_axes")),
+() => this._zoomBy(0.5, true, "zoom_in"));
+mkZoomItem("zoomout", this._actionLabel("Zoom Out", this._axisPolicy("zoom_axes")),
+() => this._zoomBy(2, true, "zoom_out"));
+}
+if (canBoxZoom) {
+mkZoomItem("zoom", this._actionLabel("Box Zoom", this._axisPolicy("zoom_axes")),
+() => this._setDragMode("zoom"), "zoom");
+}
+if (canReset) {
+mkZoomItem("reset", this._actionLabel("Reset View", this._resetAxisPolicy()),
+() => this._resetView(true, "reset"), null, canZoomButtons || canBoxZoom);
+}
 }
 const selectMenu = document.createElement("div");
 selectMenu.dataset.xyModebarMenu = "";
@@ -7176,6 +7338,11 @@ this._selectMenuButton.title = `Selection controls: ${label}`;
 this._selectMenuButton.setAttribute("aria-label", `Selection controls: ${label}`);
 }
 },
+_actionLabel(action, axes) {
+const ids = Array.isArray(axes) ? axes : [...axes || []];
+if (!ids.length) return action;
+return `${action} on ${ids.join(" and ")} ${ids.length === 1 ? "axis" : "axes"}`;
+},
 _updateZoomMenuLabel() {
 if (!this._zoomMenuLabel || !this.view || !this.view0) return;
 const axisPercent = (axisId, lo, hi, homeLo, homeHi) => {
@@ -7188,14 +7355,13 @@ return Number.isFinite(span) && span > 0 && Number.isFinite(homeSpan) && homeSpa
 ? (homeSpan / span) * 100
 : null;
 };
-const zoomAxes = this._zoomAxes();
-const percent = (zoomAxes.has("x")
-? axisPercent("x", this.view.x0, this.view.x1, this.view0.x0, this.view0.x1)
-: null)
-?? (zoomAxes.has("y")
-? axisPercent("y", this.view.y0, this.view.y1, this.view0.y0, this.view0.y1)
-: null)
-?? 100;
+const zoomAxes = [...this._zoomAxes()];
+const percentages = zoomAxes.map((axisId) => {
+const [lo, hi] = this._axisRange(axisId);
+const [homeLo, homeHi] = this._axisRange(axisId, this.view0);
+return [axisId, axisPercent(axisId, lo, hi, homeLo, homeHi)];
+}).filter((entry) => entry[1] !== null);
+const percent = percentages[0]?.[1] ?? 100;
 const rounded = Math.round(percent);
 const exactText = percent < 1 ? "<1%" : `${rounded}%`;
 const displayText = rounded > 999 ? `${String(rounded).slice(0, 3)}…%` : exactText;
@@ -7203,8 +7369,9 @@ if (this._zoomMenuLabel.dataset.xyZoomExact === exactText
 && this._zoomMenuLabel.textContent === displayText) return;
 this._zoomMenuLabel.textContent = displayText;
 this._zoomMenuLabel.dataset.xyZoomExact = exactText;
-this._zoomMenuButton.title = `Zoom controls (${exactText})`;
-this._zoomMenuButton.setAttribute("aria-label", `Zoom controls, ${exactText}`);
+const details = percentages.map(([axisId, value]) => `${axisId} ${Math.round(value)}%`).join(", ");
+this._zoomMenuButton.title = `Zoom controls (${details || exactText})`;
+this._zoomMenuButton.setAttribute("aria-label", `Zoom controls, ${details || exactText}`);
 },
 _prefersReducedMotion() {
 return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
@@ -7215,9 +7382,14 @@ this._animRaf = null;
 this._viewAnim = null;
 },
 _setView(next, opts = {}) {
-if (this._destroyed) return;
-const target = this._clampView(
-{ x0: next.x0, x1: next.x1, y0: next.y0, y1: next.y1 });
+if (this._destroyed) return [];
+const target = this._clampView(this._viewFrom(next), { anchors: opts.anchors });
+const changedAxes = this._axisIds().filter((axisId) => {
+const before = this._axisRange(axisId);
+const after = this._axisRange(axisId, target);
+return before[0] !== after[0] || before[1] !== after[1];
+});
+if (!changedAxes.length) return [];
 const animate = opts.animate === true && !this._prefersReducedMotion();
 const duration = opts.duration || 180;
 if (!animate || duration <= 0) {
@@ -7225,8 +7397,13 @@ this._cancelViewAnimation();
 this.view = target;
 this.draw();
 if (opts.request !== false) this._scheduleViewRequest();
-this._emitViewChange(opts.source || "view", { broadcast: opts.broadcast });
-return;
+this._emitViewChange(opts.source || "programmatic", {
+axes: changedAxes,
+phase: opts.phase || "end",
+interactionId: opts.interactionId,
+broadcast: opts.broadcast,
+});
+return changedAxes;
 }
 clearTimeout(this._viewTimer);
 this.seq += 1;
@@ -7241,20 +7418,29 @@ const tau = Math.max(18, duration / 5);
 if (this._viewAnim) {
 this._viewAnim.target = target;
 this._viewAnim.tau = tau;
-return;
+this._viewAnim.changedAxes = [...new Set([...this._viewAnim.changedAxes, ...changedAxes])];
+return changedAxes;
 }
 this._viewAnim = {
 target,
 last: now,
 tau,
+changedAxes,
 };
 const lerp = (a, b, t) => a + (b - a) * t;
-const span = (v) => Math.max(Math.abs(v.x1 - v.x0), Math.abs(v.y1 - v.y0), 1e-12);
+const span = (v) => Math.max(
+...this._axisIds().map((axisId) => {
+const [lo, hi] = this._axisRange(axisId, v);
+return Math.abs(hi - lo);
+}),
+1e-12,
+);
 const closeEnough = (a, b) => {
 const tol = span(b) * 1e-4;
-return Math.max(
-Math.abs(a.x0 - b.x0), Math.abs(a.x1 - b.x1),
-Math.abs(a.y0 - b.y0), Math.abs(a.y1 - b.y1)) <= tol;
+return Math.max(...this._axisIds().flatMap((axisId) => {
+const ar = this._axisRange(axisId, a), br = this._axisRange(axisId, b);
+return [Math.abs(ar[0] - br[0]), Math.abs(ar[1] - br[1])];
+})) <= tol;
 };
 const step = (nowFrame) => {
 if (this._destroyed) { this._animRaf = null; return; }
@@ -7264,12 +7450,15 @@ const dt = Math.max(0, Math.min(64, nowFrame - anim.last));
 anim.last = nowFrame;
 const k = 1 - Math.exp(-dt / anim.tau);
 const t = closeEnough(this.view, anim.target) ? 1 : k;
-this.view = {
-x0: lerp(this.view.x0, anim.target.x0, t),
-x1: lerp(this.view.x1, anim.target.x1, t),
-y0: lerp(this.view.y0, anim.target.y0, t),
-y1: lerp(this.view.y1, anim.target.y1, t),
-};
+const ranges = {};
+for (const axisId of this._axisIds()) {
+const current = this._axisRange(axisId), targetRange = this._axisRange(axisId, anim.target);
+ranges[axisId] = [
+lerp(current[0], targetRange[0], t),
+lerp(current[1], targetRange[1], t),
+];
+}
+this.view = this._copyView({ ranges });
 if (t < 1) {
 this.draw();
 this._animRaf = requestAnimationFrame(step);
@@ -7279,15 +7468,50 @@ this._viewAnim = null;
 this.view = anim.target;
 this._lastLabelDraw = null;
 this.draw();
-this._emitViewChange(opts.source || "view", { broadcast: opts.broadcast });
+this._emitViewChange(opts.source || "programmatic", {
+axes: anim.changedAxes,
+phase: opts.phase || "end",
+interactionId: opts.interactionId,
+broadcast: opts.broadcast,
+});
 }
 };
 this._animRaf = requestAnimationFrame(step);
+return changedAxes;
 },
-_clampAxisRange(axisId, lo, hi) {
+_zoomLimitForAxis(axisId) {
+if (!this._axisPolicy("zoom_axes").includes(axisId)) return [null, null];
+const configured = this.interaction?.zoom_limits;
+if (configured && typeof configured === "object" && !Array.isArray(configured)) {
+const pair = configured[axisId];
+if (Array.isArray(pair) && pair.length === 2) return pair;
+}
+return [1, null];
+},
+_clampAxisRange(axisId, lo, hi, anchorFrac = 0.5) {
 const axis = this._axis(axisId);
-if (!Array.isArray(axis.bounds) || axis.bounds.length !== 2) return [lo, hi];
-const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+let c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+if (![c0, c1].every(Number.isFinite) || c0 === c1) return this._axisRange(axisId, this.view0);
+const home = this.view0?.ranges?.[axisId];
+if (home) {
+const h0 = this._axisCoord(axis, home[0]), h1 = this._axisCoord(axis, home[1]);
+const homeSpan = Math.abs(h1 - h0);
+const [minMagRaw, maxMagRaw] = this._zoomLimitForAxis(axisId);
+const minMag = Number(minMagRaw), maxMag = Number(maxMagRaw);
+const maxSpan = Number.isFinite(minMag) && minMag > 0 ? homeSpan / minMag : Infinity;
+const minSpan = Number.isFinite(maxMag) && maxMag > 0 ? homeSpan / maxMag : 0;
+const requestedSpan = Math.abs(c1 - c0);
+const limitedSpan = Math.max(minSpan, Math.min(maxSpan, requestedSpan));
+if (Number.isFinite(limitedSpan) && limitedSpan > 0 && limitedSpan !== requestedSpan) {
+const direction = c1 < c0 ? -1 : 1;
+const anchor = c0 + anchorFrac * (c1 - c0);
+c0 = anchor - anchorFrac * limitedSpan * direction;
+c1 = anchor + (1 - anchorFrac) * limitedSpan * direction;
+}
+}
+if (!Array.isArray(axis.bounds) || axis.bounds.length !== 2) {
+return [this._axisValue(axis, c0), this._axisValue(axis, c1)];
+}
 const b0 = this._axisCoord(axis, axis.bounds[0]);
 const b1 = this._axisCoord(axis, axis.bounds[1]);
 if (![c0, c1, b0, b1].every(Number.isFinite) || b0 === b1) return [lo, hi];
@@ -7306,25 +7530,35 @@ const first = reverse ? outHi : outLo;
 const second = reverse ? outLo : outHi;
 return [this._axisValue(axis, first), this._axisValue(axis, second)];
 },
-_clampView(view) {
-const x = this._clampAxisRange("x", view.x0, view.x1);
-const y = this._clampAxisRange("y", view.y0, view.y1);
-return { x0: x[0], x1: x[1], y0: y[0], y1: y[1] };
+_clampView(view, opts = {}) {
+const candidate = this._viewFrom(view, this.view0);
+const ranges = {};
+for (const axisId of this._axisIds()) {
+const [lo, hi] = this._axisRange(axisId, candidate);
+ranges[axisId] = this._clampAxisRange(axisId, lo, hi, opts.anchors?.[axisId] ?? 0.5);
+}
+return this._copyView({ ranges });
 },
 _zoomAxes() {
-const configured = this.spec?.interaction?.zoom_axes;
-if (!Array.isArray(configured)) return new Set(["x", "y"]);
-const axes = new Set(configured.filter((axis) => axis === "x" || axis === "y"));
-return axes.size ? axes : new Set(["x", "y"]);
+return new Set(this._axisPolicy("zoom_axes"));
 },
-_zoomBy(f, animate = false) {
+_zoomBy(f, animate = false, source = f < 1 ? "zoom_in" : "zoom_out") {
 const base = this._viewAnim ? this._viewAnim.target : this.view;
-const { x0, x1, y0, y1 } = base;
 const axes = this._zoomAxes();
-const xr = axes.has("x") ? this._zoomAxisRange("x", x0, x1, f, 0.5) : [x0, x1];
-const yr = axes.has("y") ? this._zoomAxisRange("y", y0, y1, f, 0.5) : [y0, y1];
-if (!xr || !yr) return;
-this._setView({ x0: xr[0], x1: xr[1], y0: yr[0], y1: yr[1] }, { animate });
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId, base)]])
+);
+for (const axisId of axes) {
+const [lo, hi] = ranges[axisId];
+const range = this._zoomAxisRange(axisId, lo, hi, f, 0.5);
+if (range) ranges[axisId] = range;
+}
+this._setView({ ranges }, {
+animate,
+source,
+phase: "end",
+interactionId: ++this._interactionSeq,
+});
 },
 _zoomAxisRange(axisId, lo, hi, f, anchorFrac) {
 const axis = this._axis(axisId);
@@ -7341,19 +7575,42 @@ this._axisValue(axis, ca - (ca - c0) * f),
 this._axisValue(axis, ca + (c1 - ca) * f),
 ];
 },
-_zoomAt(f, fx, fy, animate = false, duration = 120) {
+_zoomAt(f, fx, fy, animate = false, duration = 120, opts = {}) {
 const base = this._viewAnim ? this._viewAnim.target : this.view;
-const { x0, x1, y0, y1 } = base;
 const axes = this._zoomAxes();
-const xr = axes.has("x") ? this._zoomAxisRange("x", x0, x1, f, fx) : [x0, x1];
-const yr = axes.has("y") ? this._zoomAxisRange("y", y0, y1, f, fy) : [y0, y1];
-if (!xr || !yr) return;
-this._setView({ x0: xr[0], x1: xr[1], y0: yr[0], y1: yr[1] }, { animate, duration });
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId, base)]])
+);
+const anchors = {};
+for (const axisId of axes) {
+const anchor = this._axisDim(axisId) === "x" ? fx : fy;
+const [lo, hi] = ranges[axisId];
+const range = this._zoomAxisRange(axisId, lo, hi, f, anchor);
+if (range) ranges[axisId] = range;
+anchors[axisId] = anchor;
+}
+return this._setView({ ranges }, {
+animate,
+duration,
+anchors,
+source: opts.source || "wheel_zoom",
+phase: opts.phase || "update",
+interactionId: opts.interactionId,
+});
 },
 _queueWheelZoom(factor, fx, fy) {
 if (!Number.isFinite(factor) || factor <= 0) return;
+if (!this._wheelGesture) {
+this._wheelGesture = { interactionId: ++this._interactionSeq, axes: new Set() };
+}
 if (!this._pendingWheelZoom) {
-this._pendingWheelZoom = { factor: 1, fx, fy };
+this._pendingWheelZoom = {
+factor: 1,
+fx,
+fy,
+interactionId: this._wheelGesture.interactionId,
+axes: [],
+};
 }
 this._pendingWheelZoom.factor *= factor;
 this._pendingWheelZoom.fx = fx;
@@ -7364,35 +7621,78 @@ this._wheelZoomRaf = null;
 const pending = this._pendingWheelZoom;
 this._pendingWheelZoom = null;
 if (!pending || this._destroyed) return;
-this._zoomAt(pending.factor, pending.fx, pending.fy, false);
+pending.axes = this._zoomAt(pending.factor, pending.fx, pending.fy, false, 120, {
+source: "wheel_zoom",
+phase: "update",
+interactionId: pending.interactionId,
+}) || [];
+for (const axisId of pending.axes) this._wheelGesture?.axes.add(axisId);
+clearTimeout(this._wheelZoomEndTimer);
+this._wheelZoomEndTimer = setTimeout(() => {
+const gesture = this._wheelGesture;
+this._wheelGesture = null;
+if (this._destroyed || !gesture || !gesture.axes.size) return;
+this._emitViewChange("wheel_zoom", {
+axes: [...gesture.axes],
+phase: "end",
+interactionId: gesture.interactionId,
+});
+}, 90);
 });
 },
-_zoomToBox(d0, d1, animate = false) {
+_zoomToBox(d0, d1, animate = false, opts = {}) {
 const axes = this._zoomAxes();
-const xa = this._axis("x");
-const ya = this._axis("y");
-const xlo = Math.min(d0[0], d1[0]), xhi = Math.max(d0[0], d1[0]);
-const ylo = Math.min(d0[1], d1[1]), yhi = Math.max(d0[1], d1[1]);
-const xReversed = this.view.x1 < this.view.x0;
-const yReversed = this.view.y1 < this.view.y0;
-let { x0, x1, y0, y1 } = this.view;
-if (axes.has("x")) {
-const cx0 = this._axisCoord(xa, xlo), cx1 = this._axisCoord(xa, xhi);
-if (![cx0, cx1].every(Number.isFinite)) return;
-const minSpanX = Math.max(Math.abs(cx0), Math.abs(cx1), 1e-30) * 1e-12;
-if (Math.abs(cx1 - cx0) < minSpanX) return;
-x0 = xReversed ? xhi : xlo;
-x1 = xReversed ? xlo : xhi;
+const fractions = {};
+for (const dim of ["x", "y"]) {
+const primary = this._axis(dim);
+const [lo, hi] = this._axisRange(dim);
+const c0 = this._axisCoord(primary, lo), c1 = this._axisCoord(primary, hi);
+const first = this._axisCoord(primary, d0[dim === "x" ? 0 : 1]);
+const second = this._axisCoord(primary, d1[dim === "x" ? 0 : 1]);
+if (![c0, c1, first, second].every(Number.isFinite) || c0 === c1) return [];
+fractions[dim] = [(first - c0) / (c1 - c0), (second - c0) / (c1 - c0)];
 }
-if (axes.has("y")) {
-const cy0 = this._axisCoord(ya, ylo), cy1 = this._axisCoord(ya, yhi);
-if (![cy0, cy1].every(Number.isFinite)) return;
-const minSpanY = Math.max(Math.abs(cy0), Math.abs(cy1), 1e-30) * 1e-12;
-if (Math.abs(cy1 - cy0) < minSpanY) return;
-y0 = yReversed ? yhi : ylo;
-y1 = yReversed ? ylo : yhi;
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+);
+const anchors = {};
+for (const axisId of axes) {
+const axis = this._axis(axisId);
+const [lo, hi] = ranges[axisId];
+const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+const [f0, f1] = fractions[this._axisDim(axisId)];
+const a = c0 + f0 * (c1 - c0), b = c0 + f1 * (c1 - c0);
+const minSpan = Math.max(Math.abs(a), Math.abs(b), 1e-30) * 1e-12;
+if (!Number.isFinite(a) || !Number.isFinite(b) || Math.abs(b - a) < minSpan) continue;
+const reverse = c1 < c0;
+const low = Math.min(a, b), high = Math.max(a, b);
+ranges[axisId] = [
+this._axisValue(axis, reverse ? high : low),
+this._axisValue(axis, reverse ? low : high),
+];
+anchors[axisId] = 0.5;
 }
-this._setView({ x0, x1, y0, y1 }, { animate });
+return this._setView({ ranges }, {
+animate,
+anchors,
+source: opts.source || "box_zoom",
+phase: opts.phase || "end",
+interactionId: opts.interactionId,
+});
+},
+_resetView(animate = true, source = "reset") {
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+);
+for (const axisId of this._resetAxisPolicy()) {
+ranges[axisId] = [...this._axisRange(axisId, this.view0)];
+}
+return this._setView({ ranges }, {
+animate,
+source,
+phase: "end",
+interactionId: ++this._interactionSeq,
+});
 },
 _exportConfig() {
 const config = this.spec && this.spec.export;
@@ -7680,7 +7980,7 @@ const needsDecimated = this.spec.traces.some((t) => t.tier === "decimated");
 const needsDensity = this.gpuTraces.some((g) => g.tier === "density");
 if (!needsDecimated && !needsDensity) return;
 const seq = opts.seq ?? ++this.seq;
-const view = { ...viewOverride };
+const view = this._copyView(viewOverride);
 const plotW = Math.round(this.plot.w);
 const plotH = Math.round(this.plot.h);
 if (needsDensity) {
@@ -7717,10 +8017,12 @@ x0: Math.min(view.x0, view.x1), x1: Math.max(view.x0, view.x1), px: plotW,
 if (needsDensity) {
 for (const g of this.gpuTraces) {
 if (g.tier !== "density") continue;
+const [x0, x1] = this._axisRange(g.xAxis, view);
+const [y0, y1] = this._axisRange(g.yAxis, view);
 this.comm.send({
 type: "density_view", seq, trace: g.trace.id,
-x0: Math.min(view.x0, view.x1), x1: Math.max(view.x0, view.x1),
-y0: Math.min(view.y0, view.y1), y1: Math.max(view.y0, view.y1),
+x0: Math.min(x0, x1), x1: Math.max(x0, x1),
+y0: Math.min(y0, y1), y1: Math.max(y0, y1),
 w: plotW, h: plotH,
 });
 }
@@ -7740,7 +8042,7 @@ const targets = (this.gpuTraces || []).filter(
 );
 if (!targets.length) return;
 const seq = opts.seq ?? ++this.seq;
-const view = { ...viewOverride };
+const view = this._copyView(viewOverride);
 clearTimeout(this._rebinTimer);
 this._rebinTimer = setTimeout(() => {
 if (this._destroyed || seq !== this.seq) return;
@@ -7749,11 +8051,14 @@ for (const g of targets) this._requestSampleRebin(g, view, seq);
 },
 _requestSampleRebin(g, view, seq) {
 if (!g._homeDensity) g._homeDensity = g.density;
-const v0 = this.view0;
-const homeSpanX = Math.max(Math.abs(v0.x1 - v0.x0), 1e-300);
-const homeSpanY = Math.max(Math.abs(v0.y1 - v0.y0), 1e-300);
-const viewSpanX = Math.abs(view.x1 - view.x0);
-const viewSpanY = Math.abs(view.y1 - view.y0);
+const [vx0, vx1] = this._axisRange(g.xAxis, view);
+const [vy0, vy1] = this._axisRange(g.yAxis, view);
+const [hx0, hx1] = this._axisRange(g.xAxis, this.view0);
+const [hy0, hy1] = this._axisRange(g.yAxis, this.view0);
+const homeSpanX = Math.max(Math.abs(hx1 - hx0), 1e-300);
+const homeSpanY = Math.max(Math.abs(hy1 - hy0), 1e-300);
+const viewSpanX = Math.abs(vx1 - vx0);
+const viewSpanY = Math.abs(vy1 - vy0);
 const notZoomedIn =
 viewSpanX >= homeSpanX * (1 - 1e-6) && viewSpanY >= homeSpanY * (1 - 1e-6);
 if (notZoomedIn) {
@@ -7793,8 +8098,8 @@ this._rebinInit.add(g.trace.id);
 }
 this._rebinWorker.postMessage({
 type: "rebin", trace: g.trace.id, seq,
-x0: Math.min(view.x0, view.x1), x1: Math.max(view.x0, view.x1),
-y0: Math.min(view.y0, view.y1), y1: Math.max(view.y0, view.y1),
+x0: Math.min(vx0, vx1), x1: Math.max(vx0, vx1),
+y0: Math.min(vy0, vy1), y1: Math.max(vy0, vy1),
 w: Math.max(16, Math.min(2048, Math.round(this.plot.w))),
 h: Math.max(16, Math.min(2048, Math.round(this.plot.h))),
 });
@@ -7838,15 +8143,14 @@ const pinnedRight = !atHome && Math.abs(this.view.x1 - this.view0.x1) <= ex;
 this.spec = spec;
 this.axes = this._normalizeAxes(spec);
 this._payload = blob;
-this.view0 = {
-x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
-y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
-};
+this.view0 = this._copyView({
+ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]) => [id, [...axis.range]])),
+});
 if (atHome) {
-this.view = { ...this.view0 };
+this.view = this._copyView(this.view0);
 } else if (pinnedRight) {
 const w = this.view.x1 - this.view.x0;
-this.view = { ...this.view, x1: this.view0.x1, x0: this.view0.x1 - w };
+this.view = this._viewFrom({ x1: this.view0.x1, x0: this.view0.x1 - w });
 }
 if (this._glLost || !this.gl) return;
 const texSeen = new Set();
@@ -8215,6 +8519,7 @@ const spec = model.get("spec");
 const buffer = payloadBuffers(spec, model.get("buffers"));
 const comm = {
 send: (msg) => model.send(msg),
+wantsViewChange: () => spec.interaction?._transport_view_change === true,
 onMessage: (cb) => {
 const handler = (content, buffers) => cb(content, buffers);
 model.on("msg:custom", handler);

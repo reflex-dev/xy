@@ -49,6 +49,7 @@ CHART_ASSETS = (
     "bar_column.html",
     "histogram.html",
     "histogram_x_zoom.html",
+    "box_zoom_drag.html",
     "heatmap.html",
     "colored_scatter.html",
     "density_scatter.html",

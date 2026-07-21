@@ -224,6 +224,22 @@ def histogram_x_zoom_demo() -> xy.Chart:
     )
 
 
+def box_zoom_drag_demo() -> xy.Chart:
+    rng = np.random.default_rng(107)
+    values = np.concatenate(
+        [rng.normal(38, 7, 140_000), rng.normal(72, 12, 110_000)]
+    )
+    return xy.histogram_chart(
+        xy.hist(values, bins=120, name="duration", color="#0891b2", opacity=0.84),
+        xy.interaction_config(default_drag_action="zoom", zoom_axes=("x",)),
+        xy.x_axis(label="duration (ms)"),
+        xy.y_axis(label="requests"),
+        title="Drag over the histogram to zoom x",
+        width="100%",
+        height=430,
+    )
+
+
 def bar_column_demo() -> xy.Chart:
     categories = ["Search", "Ads", "Email", "Direct", "Partner", "Social"]
     values = np.array(
@@ -726,6 +742,12 @@ def axes_scales_demo() -> xy.Chart:
         ),
         xy.tooltip(fields=["x", "y"], format={"x": ",.0f", "y": ".2f"}),
         xy.legend(),
+        xy.interaction_config(
+            pan_axes=("x", "y2"),
+            zoom_axes=("x", "y2"),
+            zoom_limits={"x": (1.0, 64.0), "y2": (0.5, 32.0)},
+            reset_axes=("x", "y2"),
+        ),
         title="Log scale, reversed axis, fixed domains, dual y-axis",
         width="100%",
         height=430,
@@ -745,7 +767,6 @@ def interaction_basics_demo() -> xy.Chart:
             select=True,
             brush=True,
             crosshair=True,
-            view_change=True,
             zoom_axes=("x",),
             link_group="demo-linked-x",
             link_axes=("x",),
@@ -949,6 +970,7 @@ def main() -> None:
     write_chart(density_scatter(), "density_scatter.html")
     write_chart(histogram_demo(), "histogram.html")
     write_chart(histogram_x_zoom_demo(), "histogram_x_zoom.html")
+    write_chart(box_zoom_drag_demo(), "box_zoom_drag.html")
     write_chart(bar_column_demo(), "bar_column.html")
     write_chart(stacked_bar_demo(), "stacked_bar.html")
     write_chart(horizontal_bar_demo(), "horizontal_bar.html")

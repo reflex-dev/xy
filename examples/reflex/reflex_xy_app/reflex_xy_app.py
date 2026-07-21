@@ -84,14 +84,14 @@ CORE_API_STATUS = [
         "status": "done",
         "color": "green",
         "shipped": "Linear, time, categorical, log, reversed axes, fixed domains, dual y-axes, and tick formatters.",
-        "next": "More date presets, axis-linked charts, and multi-axis interaction policies.",
+        "next": "More date presets and additional mixed-axis gallery examples.",
     },
     {
         "title": "Interaction",
-        "status": "partial",
-        "color": "amber",
-        "shipped": "Hover, wheel zoom, pan, box zoom, box select, and component event hooks.",
-        "next": "Click selection, lasso, crosshair, linked charts, and synchronized brushing.",
+        "status": "done",
+        "color": "green",
+        "shipped": "Per-axis pan, zoom, reset, selection, crosshair, linking, and semantic events.",
+        "next": "Touch pinch zoom and a dedicated keyboard viewport-navigation mode.",
     },
 ]
 
@@ -149,6 +149,14 @@ HISTOGRAM_X_ZOOM_CHART = {
     "subtitle": "Wheel, toolbar, and box zoom change the latency range while y stays fixed.",
     "src": "/charts/histogram_x_zoom.html",
     "stat": "x-only zoom",
+}
+
+BOX_ZOOM_DRAG_CHART = {
+    "id": "box-zoom-drag",
+    "title": "Box Zoom Drag Mode",
+    "subtitle": "Plain drag zooms the x range while y stays fixed; double-click resets it.",
+    "src": "/charts/box_zoom_drag.html",
+    "stat": "drag = box zoom",
 }
 
 BAR_CHART = {
@@ -226,7 +234,7 @@ ANNOTATED_HEATMAP_CHART = {
 AXES_SCALES_CHART = {
     "id": "axes-scales",
     "title": "Axes And Scales",
-    "subtitle": "Log x-scale, reversed fixed y-domain, formatted ticks, and right-side y2 overlay.",
+    "subtitle": "Pan and zoom log x plus y2 independently while reversed primary y stays fixed.",
     "src": "/charts/axes_scales.html",
     "stat": "axes",
 }
@@ -259,6 +267,7 @@ CORE_CHARTS = [
     AREA_CHART,
     HISTOGRAM_CHART,
     HISTOGRAM_X_ZOOM_CHART,
+    BOX_ZOOM_DRAG_CHART,
     HEATMAP_CHART,
     COMPOSED_LAYERS_CHART,
     ANNOTATED_HEATMAP_CHART,
@@ -467,6 +476,26 @@ chart = xy.chart(
     xy.x_axis(label="request latency (ms)"),
     xy.y_axis(label="requests"),
     title="Latency histogram with x-only zoom",
+    width="100%",
+    height=430,
+)
+""".strip(),
+    "box-zoom-drag": """
+import xy
+import numpy as np
+
+rng = np.random.default_rng(107)
+values = np.concatenate([
+    rng.normal(38, 7, 140_000),
+    rng.normal(72, 12, 110_000),
+])
+
+chart = xy.chart(
+    xy.hist(values, bins=120, name="duration", color="#0891b2"),
+    xy.interaction_config(default_drag_action="zoom", zoom_axes=("x",)),
+    xy.x_axis(label="duration (ms)"),
+    xy.y_axis(label="requests"),
+    title="Drag over the histogram to zoom x",
     width="100%",
     height=430,
 )
@@ -699,6 +728,12 @@ chart = xy.chart(
         format={"bookings": ".1f", "forecast": ".1f", "sample": ".1f", "target": ".1f"},
     ),
     xy.legend(),
+    xy.interaction_config(
+        pan_axes=("x", "y2"),
+        zoom_axes=("x", "y2"),
+        zoom_limits={"x": (1.0, 64.0), "y2": (0.5, 32.0)},
+        reset_axes=("x", "y2"),
+    ),
     title="Composed layered chart",
     width="100%",
     height=430,

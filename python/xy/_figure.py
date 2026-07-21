@@ -8,6 +8,7 @@ work is forbidden on the client).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from os import PathLike
 from typing import Any, Optional, TypeAlias
 
@@ -250,11 +251,18 @@ class Figure(AnnotationsMixin, PayloadMixin):
         crosshair: Optional[bool] = None,
         navigation: Optional[bool] = None,
         pan: Optional[bool] = None,
+        pan_axes: Optional[tuple[str, ...]] = None,
         zoom: Optional[bool] = None,
+        default_drag_action: Optional[str] = None,
         zoom_axes: Optional[tuple[str, ...]] = None,
-        view_change: Optional[bool] = None,
+        zoom_limits: Any = None,
+        wheel_zoom: Optional[bool] = None,
+        box_zoom: Optional[bool] = None,
+        zoom_buttons: Optional[bool] = None,
+        double_click_reset: Optional[bool] = None,
+        reset_axes: Optional[tuple[str, ...]] = None,
         link_group: Optional[str] = None,
-        link_axes: tuple[str, ...] = ("x", "y"),
+        link_axes: Optional[tuple[str, ...]] = None,
         link_select: Optional[bool] = None,
     ) -> "Figure":
         updates: dict[str, Any] = {}
@@ -267,20 +275,29 @@ class Figure(AnnotationsMixin, PayloadMixin):
             ("navigation", navigation),
             ("pan", pan),
             ("zoom", zoom),
-            ("view_change", view_change),
+            ("wheel_zoom", wheel_zoom),
+            ("box_zoom", box_zoom),
+            ("zoom_buttons", zoom_buttons),
+            ("double_click_reset", double_click_reset),
             ("link_select", link_select),
         ):
             normalized = self._optional_bool(value, f"interaction {name}")
             if normalized is not None:
                 updates[name] = normalized
-        if zoom_axes is not None:
-            updates["zoom_axes"] = self._zoom_axes(zoom_axes)
+        for name, axes in (("pan_axes", pan_axes), ("zoom_axes", zoom_axes), ("reset_axes", reset_axes)):
+            if axes is not None:
+                updates[name] = self._axis_policy(axes, name)
+        if zoom_limits is not None:
+            updates["zoom_limits"] = zoom_limits
+        if default_drag_action is not None:
+            updates["default_drag_action"] = self._default_drag_action(default_drag_action)
         if link_group is not None:
             group = self._optional_text(link_group, "interaction link_group")
             if not group:
                 raise ValueError("interaction link_group must be a non-empty string or None")
             updates["link_group"] = group
-            updates["link_axes"] = self._link_axes(link_axes)
+        if link_axes is not None:
+            updates["link_axes"] = self._axis_policy(link_axes, "link_axes")
         self.interaction.update(updates)
         return self
 
@@ -487,13 +504,18 @@ class Figure(AnnotationsMixin, PayloadMixin):
     def _axis_dim(axis_id: str) -> str:
         return "x" if axis_id.startswith("x") else "y"
 
-    @staticmethod
-    def _link_axes(value: Any) -> list[str]:
+    def _axis_policy(self, value: Any, name: str) -> list[str]:
         if not isinstance(value, (tuple, list)):
-            raise ValueError("interaction link_axes must be a tuple/list containing 'x' and/or 'y'")
+            raise ValueError(f"interaction {name} must be a tuple/list of declared axis IDs")
         axes = list(value)
-        if any(axis not in {"x", "y"} for axis in axes):
-            raise ValueError("interaction link_axes must contain only 'x' and/or 'y'")
+        if not axes:
+            raise ValueError(f"interaction {name} must contain at least one axis")
+        unknown = [axis for axis in axes if axis not in self.axis_options]
+        if unknown:
+            raise ValueError(
+                f"interaction {name} contains unknown axis IDs {unknown!r}; "
+                f"declared axes are {list(self.axis_options)!r}"
+            )
         out: list[str] = []
         for axis in axes:
             if axis not in out:
@@ -501,19 +523,98 @@ class Figure(AnnotationsMixin, PayloadMixin):
         return out
 
     @staticmethod
-    def _zoom_axes(value: Any) -> list[str]:
-        if not isinstance(value, (tuple, list)):
-            raise ValueError("interaction zoom_axes must be a tuple/list containing 'x' and/or 'y'")
-        axes = list(value)
-        if not axes:
-            raise ValueError("interaction zoom_axes must contain at least one axis")
-        if any(axis not in {"x", "y"} for axis in axes):
-            raise ValueError("interaction zoom_axes must contain only 'x' and/or 'y'")
-        out: list[str] = []
-        for axis in axes:
-            if axis not in out:
-                out.append(axis)
-        return out
+    def _default_drag_action(value: Any) -> str:
+        allowed = {
+            "auto",
+            "none",
+            "pan",
+            "zoom",
+            "select",
+            "select-x",
+            "select-y",
+            "select-lasso",
+        }
+        if not isinstance(value, str) or value not in allowed:
+            choices = ", ".join(repr(mode) for mode in sorted(allowed))
+            raise ValueError(f"interaction default_drag_action must be one of {choices}")
+        return value
+
+    @staticmethod
+    def _zoom_limit_pair(value: Any, label: str) -> list[Optional[float]]:
+        if not isinstance(value, (tuple, list)) or len(value) != 2:
+            raise ValueError(f"{label} must be a two-item tuple/list")
+        normalized: list[Optional[float]] = []
+        for endpoint in value:
+            if endpoint is None:
+                normalized.append(None)
+                continue
+            if isinstance(endpoint, (bool, np.bool_)):
+                raise ValueError(f"{label} endpoints must be positive finite numbers or None")
+            try:
+                number = float(endpoint)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{label} endpoints must be positive finite numbers or None"
+                ) from exc
+            if not np.isfinite(number) or number <= 0:
+                raise ValueError(f"{label} endpoints must be positive finite numbers or None")
+            normalized.append(number)
+        lower, upper = normalized
+        if lower is not None and upper is not None and lower > upper:
+            raise ValueError(f"{label} lower endpoint must not exceed its upper endpoint")
+        if (lower is not None and lower > 1.0) or (upper is not None and upper < 1.0):
+            raise ValueError(f"{label} must contain home magnification 1.0")
+        return normalized
+
+    def _zoom_limits(self, value: Any) -> dict[str, list[Optional[float]]]:
+        selected = self._interaction_axes("zoom_axes")
+        default = [1.0, None]
+        if isinstance(value, Mapping):
+            unknown = [axis for axis in value if axis not in self.axis_options]
+            if unknown:
+                raise ValueError(f"interaction zoom_limits contains unknown axis IDs {unknown!r}")
+            normalized = {axis: list(default) for axis in selected}
+            for axis in self.axis_options:
+                if axis in value:
+                    normalized[axis] = self._zoom_limit_pair(
+                        value[axis], f"interaction zoom_limits[{axis!r}]"
+                    )
+            return normalized
+        pair = self._zoom_limit_pair(value, "interaction zoom_limits")
+        return {axis: list(pair) for axis in selected}
+
+    def _interaction_axes(self, name: str) -> list[str]:
+        value = self.interaction.get(name)
+        return list(self.axis_options) if value is None else self._axis_policy(value, name)
+
+    def _validate_interaction(self) -> None:
+        for name in ("pan_axes", "zoom_axes", "reset_axes", "link_axes"):
+            if name in self.interaction:
+                self._axis_policy(self.interaction[name], name)
+        if "zoom_limits" in self.interaction:
+            self._zoom_limits(self.interaction["zoom_limits"])
+        action = self.interaction.get("default_drag_action")
+        if action is None:
+            return
+        action = self._default_drag_action(action)
+        if action in {"auto", "none"}:
+            return
+        def enabled(name: str) -> bool:
+            return self.interaction.get(name, True) is not False
+        if action == "pan" and not (enabled("navigation") and enabled("pan")):
+            raise ValueError("interaction default_drag_action='pan' requires navigation and pan")
+        if action == "zoom" and not (
+            enabled("navigation") and enabled("zoom") and enabled("box_zoom")
+        ):
+            raise ValueError(
+                "interaction default_drag_action='zoom' requires navigation, zoom, and box_zoom"
+            )
+        if action.startswith("select") and not (
+            enabled("select") and enabled("brush") and any(t.kind == "scatter" for t in self.traces)
+        ):
+            raise ValueError(
+                f"interaction default_drag_action={action!r} requires select, brush, and pickable data"
+            )
 
     _axis_label_position = staticmethod(_validate.axis_label_position)
 
@@ -1062,6 +1163,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
     # -- payload --------------------------------------------------------------
 
     def _interaction_spec(self) -> dict[str, Any]:
+        self._validate_interaction()
         spec: dict[str, Any] = {}
         for name in (
             "hover",
@@ -1072,20 +1174,29 @@ class Figure(AnnotationsMixin, PayloadMixin):
             "navigation",
             "pan",
             "zoom",
-            "view_change",
+            "wheel_zoom",
+            "box_zoom",
+            "zoom_buttons",
+            "double_click_reset",
             "link_select",
         ):
             if name in self.interaction:
                 spec[name] = self._bool_param(self.interaction[name], f"interaction {name}")
-        if "zoom_axes" in self.interaction:
-            spec["zoom_axes"] = self._zoom_axes(self.interaction["zoom_axes"])
+        for name in ("pan_axes", "zoom_axes", "reset_axes", "link_axes"):
+            if name in self.interaction:
+                spec[name] = self._axis_policy(self.interaction[name], name)
+        if "zoom_limits" in self.interaction:
+            spec["zoom_limits"] = self._zoom_limits(self.interaction["zoom_limits"])
+        if "default_drag_action" in self.interaction:
+            spec["default_drag_action"] = self._default_drag_action(
+                self.interaction["default_drag_action"]
+            )
         link_group = self.interaction.get("link_group")
         if link_group is not None:
             group = self._optional_text(link_group, "interaction link_group")
             if not group:
                 raise ValueError("interaction link_group must be a non-empty string or None")
             spec["link_group"] = group
-            spec["link_axes"] = self._link_axes(self.interaction.get("link_axes", ("x", "y")))
         return spec
 
     def _mark_style_spec(self) -> dict[str, Any]:

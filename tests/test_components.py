@@ -599,7 +599,6 @@ def test_declarative_core_contract_for_layered_axis_chrome_and_interaction():
             pan=True,
             zoom=True,
             zoom_axes=("x",),
-            view_change=True,
             link_group="ops",
             link_axes=("x",),
         ),
@@ -691,7 +690,6 @@ def test_declarative_core_contract_for_layered_axis_chrome_and_interaction():
         "pan": True,
         "zoom": True,
         "zoom_axes": ["x"],
-        "view_change": True,
         "link_group": "ops",
         "link_axes": ["x"],
     }
@@ -734,6 +732,170 @@ def test_zoom_axes_defaults_to_both_and_validates_explicit_dimensions():
         with pytest.raises(ValueError, match="zoom_axes"):
             chart.figure()
         assert chart._figure is None
+
+
+def test_default_drag_action_sets_initial_plain_drag_action_and_validates_values():
+    chart = xy.chart(
+        xy.scatter(x=[1.0, 2.0], y=[2.0, 3.0]),
+        xy.interaction_config(default_drag_action="zoom"),
+    )
+
+    spec, _ = chart.figure().build_payload()
+    assert spec["interaction"]["default_drag_action"] == "zoom"
+
+    for default_drag_action in ("orbit", 1):
+        invalid = xy.chart(
+            xy.scatter(x=[1.0, 2.0], y=[2.0, 3.0]),
+            xy.interaction_config(default_drag_action=default_drag_action),
+        )
+        with pytest.raises(ValueError, match="default_drag_action"):
+            invalid.figure()
+
+    chart_level = xy.chart(
+        xy.scatter(x=[1.0, 2.0], y=[2.0, 3.0]),
+        default_drag_action="zoom",
+    )
+    chart_level_spec, _ = chart_level.figure().build_payload()
+    assert chart_level_spec["interaction"]["default_drag_action"] == "zoom"
+
+
+def test_complete_navigation_policy_normalizes_dual_axis_wire_contract():
+    chart = xy.chart(
+        xy.line(x=[0.0, 1.0], y=[10.0, 20.0]),
+        xy.line(x=[0.0, 1.0], y=[100.0, 120.0], y_axis="y2"),
+        xy.y_axis(id="y2", side="right"),
+        xy.interaction_config(
+            navigation=True,
+            default_drag_action="zoom",
+            pan=True,
+            pan_axes=("x", "y2", "x"),
+            zoom=True,
+            zoom_axes=("x", "y2"),
+            zoom_limits={"x": (1.0, None), "y2": (0.5, 32.0)},
+            wheel_zoom=False,
+            box_zoom=True,
+            zoom_buttons=False,
+            double_click_reset=True,
+            reset_axes=("x", "y2"),
+            link_group="dual-axis",
+            link_axes=("x", "y2"),
+        ),
+    )
+
+    spec, _ = chart.figure().build_payload()
+
+    assert spec["interaction"] == {
+        "navigation": True,
+        "pan": True,
+        "zoom": True,
+        "wheel_zoom": False,
+        "box_zoom": True,
+        "zoom_buttons": False,
+        "double_click_reset": True,
+        "pan_axes": ["x", "y2"],
+        "zoom_axes": ["x", "y2"],
+        "reset_axes": ["x", "y2"],
+        "link_axes": ["x", "y2"],
+        "zoom_limits": {"x": [1.0, None], "y2": [0.5, 32.0]},
+        "default_drag_action": "zoom",
+        "link_group": "dual-axis",
+    }
+    assert set(spec["view"]["ranges"]) == {"x", "y", "y2"}
+
+
+def test_zoom_limit_tuple_and_partial_mapping_normalize_per_selected_axis():
+    base_children = (
+        xy.line(x=[0.0, 1.0], y=[10.0, 20.0]),
+        xy.line(x=[0.0, 1.0], y=[100.0, 120.0], y_axis="y2"),
+        xy.y_axis(id="y2", side="right"),
+    )
+    tuple_chart = xy.chart(
+        *base_children,
+        xy.interaction_config(zoom_axes=("x", "y2"), zoom_limits=(0.25, 64.0)),
+    )
+    tuple_spec, _ = tuple_chart.figure().build_payload()
+    assert tuple_spec["interaction"]["zoom_limits"] == {
+        "x": [0.25, 64.0],
+        "y2": [0.25, 64.0],
+    }
+
+    mapping_chart = xy.chart(
+        *base_children,
+        xy.interaction_config(zoom_axes=("x", "y2"), zoom_limits={"y2": (None, None)}),
+    )
+    mapping_spec, _ = mapping_chart.figure().build_payload()
+    assert mapping_spec["interaction"]["zoom_limits"] == {
+        "x": [1.0, None],
+        "y2": [None, None],
+    }
+
+
+@pytest.mark.parametrize("name", ["pan_axes", "zoom_axes", "reset_axes", "link_axes"])
+def test_navigation_axis_policies_reject_empty_and_unknown_ids(name):
+    for axes in ((), ("y2",), "x"):
+        kwargs = {name: axes}
+        if name == "link_axes":
+            kwargs["link_group"] = "group"
+        chart = xy.chart(
+            xy.scatter(x=[0.0, 1.0], y=[0.0, 1.0]),
+            xy.interaction_config(**kwargs),
+        )
+        with pytest.raises(ValueError, match=name):
+            chart.figure()
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [
+        (0.0, None),
+        (2.0, None),
+        (None, 0.5),
+        (2.0, 1.0),
+        (1.0,),
+        {"z": (1.0, None)},
+        {"x": (float("inf"), None)},
+    ],
+)
+def test_zoom_limits_reject_invalid_intervals_and_axis_ids(limits):
+    chart = xy.chart(
+        xy.scatter(x=[0.0, 1.0], y=[0.0, 1.0]),
+        xy.interaction_config(zoom_limits=limits),
+    )
+    with pytest.raises(ValueError, match="zoom_limits"):
+        chart.figure()
+
+
+@pytest.mark.parametrize(
+    ("action", "config"),
+    [
+        ("pan", {"pan": False}),
+        ("zoom", {"box_zoom": False}),
+        ("zoom", {"navigation": False}),
+        ("select", {"select": False}),
+    ],
+)
+def test_explicit_default_drag_action_requires_its_capability(action, config):
+    chart = xy.chart(
+        xy.scatter(x=[0.0, 1.0], y=[0.0, 1.0]),
+        xy.interaction_config(default_drag_action=action, **config),
+    )
+    with pytest.raises(ValueError, match="default_drag_action"):
+        chart.figure()
+
+
+def test_auto_and_none_default_drag_actions_are_always_valid():
+    for action in ("auto", "none"):
+        chart = xy.chart(
+            xy.line(x=[0.0, 1.0], y=[0.0, 1.0]),
+            xy.interaction_config(
+                navigation=False,
+                pan=False,
+                zoom=False,
+                default_drag_action=action,
+            ),
+        )
+        spec, _ = chart.figure().build_payload()
+        assert spec["interaction"]["default_drag_action"] == action
 
 
 def test_legend_and_tooltip_accept_opaque_framework_components_without_serializing():
@@ -986,7 +1148,6 @@ def test_interaction_component_builds_declarative_spec():
             select=True,
             brush=True,
             crosshair=True,
-            view_change=True,
             link_group="dashboard",
             link_axes=("x",),
         ),
@@ -1000,7 +1161,6 @@ def test_interaction_component_builds_declarative_spec():
         "select": True,
         "brush": True,
         "crosshair": True,
-        "view_change": True,
         "link_group": "dashboard",
         "link_axes": ["x"],
     }
@@ -1023,7 +1183,6 @@ def test_chart_callbacks_enable_matching_event_streams():
         "click": True,
         "brush": True,
         "select": True,
-        "view_change": True,
     }
 
 
@@ -1054,7 +1213,6 @@ def test_chart_callbacks_are_python_only_and_do_not_serialize_to_html(monkeypatc
         "click": True,
         "brush": True,
         "select": True,
-        "view_change": True,
     }
 
     html = chart.to_html()
@@ -1103,16 +1261,14 @@ def test_bad_interaction_options_do_not_cache_partial_chart_figure():
         chart.figure()
     assert chart._figure is None
 
-    chart = xy.chart(
-        xy.scatter(x=[1.0], y=[2.0]),
-        xy.interaction_config(view_change="yes"),
-    )
-
-    with pytest.raises(ValueError, match="interaction view_change"):
-        chart.figure()
-    assert chart._figure is None
-
-    for option in ("pan", "zoom"):
+    for option in (
+        "pan",
+        "zoom",
+        "wheel_zoom",
+        "box_zoom",
+        "zoom_buttons",
+        "double_click_reset",
+    ):
         chart = xy.chart(
             xy.scatter(x=[1.0], y=[2.0]),
             xy.interaction_config(**{option: "yes"}),
