@@ -2,7 +2,7 @@
 
 The full contributor guide — PR checklist, local gate commands, and the
 chart-type contribution walkthrough — lives at
-[`docs/engineering/contributing.md`](docs/engineering/contributing.md).
+[`spec/contributing.md`](spec/contributing.md).
 
 Quick start:
 
@@ -26,6 +26,6 @@ python -c "import xy.kernels as k; print(k.BACKEND)"
 `BACKEND` is always `native`; an unavailable native core raises `ImportError`
 with remediation instead of silently degrading.
 
-Design questions are settled by [`docs/engineering/design-dossier.md`](docs/engineering/design-dossier.md)
+Design questions are settled by [`spec/design-dossier.md`](spec/design-dossier.md)
 — code comments cite its §-numbers. Read the relevant section before changing
 behavior, and don't regress the invariants listed in `CLAUDE.md`.

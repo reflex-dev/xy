@@ -2,19 +2,21 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from pathlib import Path
+from urllib.parse import unquote
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-ENGINEERING_DOCS = ROOT / "docs" / "engineering"
-API_EXAMPLES = ENGINEERING_DOCS / "api-examples.md"
+SPEC_DOCS = ROOT / "spec"
+API_EXAMPLES = SPEC_DOCS / "api-examples.md"
 README = ROOT / "README.md"
 CONTRIBUTING = ROOT / "CONTRIBUTING.md"
 SECURITY = ROOT / "SECURITY.md"
-BENCHMARK_DOC = ENGINEERING_DOCS / "benchmark.md"
-PRODUCTION_DOC = ENGINEERING_DOCS / "production-readiness.md"
-REFLEX_SHAPED_API_DOC = ENGINEERING_DOCS / "design" / "reflex-shaped-api.md"
+BENCHMARK_DOC = SPEC_DOCS / "benchmark.md"
+PRODUCTION_DOC = SPEC_DOCS / "production-readiness.md"
+REFLEX_SHAPED_API_DOC = SPEC_DOCS / "design" / "reflex-shaped-api.md"
 EXPECTED_QUICK_REFERENCE = {
     "Line": ("xy.line_chart", "xy.line"),
     "Scatter": ("xy.scatter_chart", "xy.scatter"),
@@ -28,6 +30,34 @@ EXPECTED_QUICK_REFERENCE = {
     "Horizontal bars": ('orientation="horizontal"', "xy.bar_chart", "xy.bar"),
     "Heatmap": ("xy.heatmap_chart", "xy.heatmap"),
 }
+
+LOCAL_MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+
+
+def test_spec_local_links_resolve() -> None:
+    broken: list[str] = []
+    for path in sorted(SPEC_DOCS.rglob("*.md")):
+        in_fence = False
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if line.lstrip().startswith("```"):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            for match in LOCAL_MARKDOWN_LINK_RE.finditer(line):
+                raw_target = match.group(1).strip()
+                if raw_target.startswith("<") and raw_target.endswith(">"):
+                    raw_target = raw_target[1:-1]
+                target = raw_target.split(maxsplit=1)[0]
+                if target.startswith(("#", "/", "http://", "https://", "mailto:")):
+                    continue
+                target_path = unquote(target.split("#", 1)[0].split("?", 1)[0])
+                if not target_path:
+                    continue
+                resolved = (path.parent / target_path).resolve()
+                if not resolved.is_relative_to(ROOT) or not resolved.exists():
+                    broken.append(f"{path.relative_to(ROOT)}:{line_number}: {target}")
+    assert not broken, "broken local spec links:\n" + "\n".join(broken)
 
 
 def _python_examples(path: Path = API_EXAMPLES) -> list[tuple[str, str]]:
@@ -364,7 +394,7 @@ def test_benchmark_docs_name_ci_report_artifacts() -> None:
         "benchmark-report",
         "regression-benchmark-report",
         "docs/benchmark_ci.md",
-        "docs/engineering/benchmark_metrics.md",
+        "spec/benchmark_metrics.md",
         "scatter.json",
         "kernel.json",
         "compact summary",
@@ -395,9 +425,7 @@ def test_benchmark_docs_include_copyable_claim_taxonomy() -> None:
 def test_docs_name_benchmark_harness_shortcut() -> None:
     readme = " ".join(README.read_text(encoding="utf-8").split())
     production = " ".join(PRODUCTION_DOC.read_text(encoding="utf-8").split())
-    contributing = " ".join(
-        (ENGINEERING_DOCS / "contributing.md").read_text(encoding="utf-8").split()
-    )
+    contributing = " ".join((SPEC_DOCS / "contributing.md").read_text(encoding="utf-8").split())
 
     for text in (readme, production, contributing):
         assert "make check-benchmark-harness" in text
@@ -409,9 +437,7 @@ def test_docs_name_benchmark_harness_shortcut() -> None:
 def test_docs_name_claim_guardrail_shortcut() -> None:
     readme = " ".join(README.read_text(encoding="utf-8").split())
     production = " ".join(PRODUCTION_DOC.read_text(encoding="utf-8").split())
-    contributing = " ".join(
-        (ENGINEERING_DOCS / "contributing.md").read_text(encoding="utf-8").split()
-    )
+    contributing = " ".join((SPEC_DOCS / "contributing.md").read_text(encoding="utf-8").split())
 
     for text in (readme, production, contributing):
         assert "make check-claims" in text
@@ -469,9 +495,7 @@ def test_production_docs_name_ci_workflow_gate_shortcut() -> None:
 def test_docs_name_split_browser_hardening_gates() -> None:
     readme = " ".join(README.read_text(encoding="utf-8").split())
     production = " ".join(PRODUCTION_DOC.read_text(encoding="utf-8").split())
-    contributing = " ".join(
-        (ENGINEERING_DOCS / "contributing.md").read_text(encoding="utf-8").split()
-    )
+    contributing = " ".join((SPEC_DOCS / "contributing.md").read_text(encoding="utf-8").split())
 
     step_names = [
         "Browser lifecycle smoke (Chromium)",

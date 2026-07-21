@@ -199,7 +199,6 @@ DOCS_CONFIG = DocsSiteConfig(
     exclude=(
         "app/**",
         "assets/**",
-        "engineering/**",
         "styling/chrome-slots.md",
         "styling/component-variations.md",
         "styling/mark-styles.md",

@@ -119,7 +119,7 @@ in the README).
   values.
 - `xy.pyplot`: a matplotlib-flavored shim over the composition
   API (`import xy.pyplot as plt`). Corpus-defined compatibility —
-  see `docs/engineering/matplotlib-compat.md`; fully contained in
+  see `spec/matplotlib-compat.md`; fully contained in
   `python/xy/pyplot/` with boundary guardrails.
 - **Statistical and density chart breadth.** Added first-class `errorbar`/
   `error_band`, `box`, `violin`, `ecdf`, `hexbin`, and `contour` marks plus
@@ -299,7 +299,7 @@ in the README).
   as a ~58 KB, resolution-independent SVG); covers every chart kind including
   density/heatmap rasters, and the full mark styling surface (gradients,
   dashes, symbols, rounded bars, smooth curves as exact cubic Béziers).
-- **Mark-level styling** (both APIs; `docs/engineering/styling.md#styling-the-marks`):
+- **Mark-level styling** (both APIs; `spec/styling.md#styling-the-marks`):
   - `fill="linear-gradient(...)"` on `area`/`bar`/`column`/`histogram` — real
     CSS gradient syntax (2–8 stops, `%` positions, `currentColor` = the mark's
     own resolved color, hue-preserving fades to `transparent`); mark-space by
@@ -362,7 +362,7 @@ in the README).
   Linux glibc **and** musl/Alpine (x86-64, aarch64, armv7), macOS (x86-64,
   Apple Silicon), and Windows (x86, x64, arm64). An experimental
   Pyodide/Emscripten WASM wheel is built but does not yet load in-browser
-  (`docs/engineering/production-readiness.md` documents the exact linker failure and fix
+  (`spec/production-readiness.md` documents the exact linker failure and fix
   direction).
 - Release workflow `workflow_dispatch` dry-run mode: builds and verifies the
   full artifact matrix without publishing to PyPI (default for manual runs).

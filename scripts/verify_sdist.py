@@ -52,11 +52,11 @@ REQUIRED_FILES = {
     "benchmarks/bench_workflows.py",
     "benchmarks/categories.py",
     "benchmarks/environment.py",
-    "docs/engineering/api-examples.md",
-    "docs/engineering/benchmark.md",
-    "docs/engineering/chart-roadmap.md",
-    "docs/engineering/contributing.md",
-    "docs/engineering/production-readiness.md",
+    "spec/api-examples.md",
+    "spec/benchmark.md",
+    "spec/chart-roadmap.md",
+    "spec/contributing.md",
+    "spec/production-readiness.md",
     "hatch_build.py",
     "pyproject.toml",
     "js/src/00_header.js",
@@ -332,14 +332,14 @@ def verify_sdist(path: str) -> None:
         {
             "Stable vs. Experimental",
             "Python 3.11+",
-            "docs/engineering/api-examples.md",
+            "spec/api-examples.md",
             "make check-examples",
         },
     )
     _require_file_contains(
         path,
         root,
-        "docs/engineering/api-examples.md",
+        "spec/api-examples.md",
         {
             "Chart Family Quick Reference",
             "Small Business Chart",
@@ -351,11 +351,11 @@ def verify_sdist(path: str) -> None:
     _require_file_contains(
         path,
         root,
-        "docs/engineering/benchmark.md",
+        "spec/benchmark.md",
         {
             "benchmark-report",
             "regression-benchmark-report",
-            "docs/engineering/benchmark_metrics.md",
+            "spec/benchmark_metrics.md",
             "scatter.json",
             "kernel.json",
         },
@@ -363,7 +363,7 @@ def verify_sdist(path: str) -> None:
     _require_file_contains(
         path,
         root,
-        "docs/engineering/production-readiness.md",
+        "spec/production-readiness.md",
         {
             "Release-Blocking Gates",
             "make check-artifacts",
@@ -379,7 +379,7 @@ def verify_sdist(path: str) -> None:
     _require_file_contains(
         path,
         root,
-        "docs/engineering/contributing.md",
+        "spec/contributing.md",
         {
             "Pull Request Checklist",
             "make check-full",

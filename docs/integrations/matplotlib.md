@@ -47,7 +47,7 @@ Artist graphs, clipping/transform graphs, and material options that XY cannot
 honor fail with an actionable error instead of being silently ignored.
 
 Consult the repository's
-[generated compatibility matrix](https://github.com/reflex-dev/xy/blob/main/docs/engineering/matplotlib-compat-matrix.md)
+[generated compatibility matrix](https://github.com/reflex-dev/xy/blob/main/spec/matplotlib-compat-matrix.md)
 when a workflow depends on a specific option. Compatibility shims remain
 experimental and can change before XY 1.0.
 

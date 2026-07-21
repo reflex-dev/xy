@@ -9,7 +9,7 @@ independent SVG in milliseconds — no browser, no extra dependencies.
 Layout, tick math, colormaps, and mark styling mirror the JS client
 (`30_ticks.js`, `10_colormaps.js`, `50_chartview.js`); tests assert the
 ported tables stay in sync with the JS parts. Known static-export
-approximations, documented in docs/engineering/styling.md: area mark-space gradients use
+approximations, documented in spec/styling.md: area mark-space gradients use
 the area's bounding box (SVG has no per-column gradient); complete chart color
 tokens resolve statically, while nested browser-only expressions remain
 browser-dependent in SVG and use the native PNG fallback.

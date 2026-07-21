@@ -1,6 +1,6 @@
 """The Reflex component: `reflex_xy.chart(...)`.
 
-One factory, three chart sources (docs/engineering/design/reflex-integration.md §5):
+One factory, three chart sources (spec/design/reflex-integration.md §5):
 
     reflex_xy.chart(Dash.chart)            # @reflex_xy.figure state var (live)
     reflex_xy.chart(some_token_string)     # register()/inline() token (live)

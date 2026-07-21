@@ -96,7 +96,12 @@ MAX_LINE = 2000
 # Audit whitelist: occurrences of fc/fastchart that are correct to keep.
 # - "fc"/fc= is matplotlib's facecolor alias (quotes may be JSON-escaped in .ipynb)
 # - Fc is matplotlib's center-frequency parameter (psd/*_spectrum signatures)
-MPL_PATHS = ("python/xy/pyplot/", "tests/pyplot/", "examples/pdsh/", "docs/matplotlib-compat.md")
+MPL_PATHS = (
+    "python/xy/pyplot/",
+    "tests/pyplot/",
+    "examples/pdsh/",
+    "spec/matplotlib-compat.md",
+)
 MPL_FC = re.compile(r"""["']fc["']|\bfc=\\?["'0-9]|\bFc\b""")
 AUDIT = re.compile(r"(?i:\bfc\b|fastchart)|\bfc(?=[A-Z])")
 # base64 blobs / minified vendor payloads live on very long lines

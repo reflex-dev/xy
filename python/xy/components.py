@@ -3299,7 +3299,7 @@ def _mark_style_dict(value: Any, label: str) -> dict[str, StyleValue]:
 
 
 def _slot_styles_dict(value: Any, label: str) -> dict[str, dict[str, StyleValue]]:
-    """Per-slot inline styles (`styles={slot: {...}}` — docs/engineering/styling.md's
+    """Per-slot inline styles (`styles={slot: {...}}` — spec/styling.md's
     fourth mechanism): slot names validate against `CHART_DOM_SLOTS`, each
     inner dict through the same CSS-declaration gate as `style=`."""
     if value is None:

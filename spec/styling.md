@@ -5,9 +5,9 @@ restyle the whole chart with plain CSS, attribute selectors, Tailwind, or
 per-slot inline styles — and your styles always win, without `!important`.
 
 This engineering guide explains the implementation contract. The public,
-task-oriented references are [Styling](../styling/index.md),
-[Component Variations](../styling/component-variations.md), and
-[Mark Styles](../styling/mark-styles.md). For the API shapes see
+task-oriented references are [Styling](../docs/styling/index.md),
+[Component Variations](../docs/styling/component-variations.md), and
+[Mark Styles](../docs/styling/mark-styles.md). For the API shapes see
 [reflex-shaped-api.md](design/reflex-shaped-api.md); for the render internals
 see [renderer-architecture.md](design/renderer-architecture.md).
 
@@ -47,7 +47,7 @@ through untouched.
 In Reflex, Tailwind utilities require `rx.plugins.TailwindV4Plugin()`. Complete
 literal classes emitted into Reflex's generated JSX work with the plugin's
 normal scan paths; the original Python or Markdown path does not need to be
-added. See the public [Chrome Slots](../styling/chrome-slots.md) guide for the
+added. See the public [Chrome Slots](../docs/styling/chrome-slots.md) guide for the
 standalone-export and dynamic-class boundaries.
 
 ## Rendered marks: standard CSS vocabulary
@@ -356,7 +356,7 @@ fill with an opaque outline, keep whole-mark opacity at `1` and set
 ### Scatter markers — `symbol`, `stroke`, `stroke_width`
 
 `scatter` markers take any of the 17 renderer-backed symbols listed in the
-public [Mark styles](../styling/mark-styles.md#mark-specific-appearance) guide,
+public [Mark styles](../docs/styling/mark-styles.md#mark-specific-appearance) guide,
 plus a `stroke` color and `stroke_width` (px) for a border, e.g.
 `scatter(x, y, symbol="triangle", stroke="#fff", stroke_width=2)`. Each is an
 antialiased SDF in the point shader, so shapes stay crisp at any size and the
@@ -379,7 +379,7 @@ dense and smoothing is invisible by construction.
 ### Common typed appearance combinations
 
 This table compares the most feature-rich typed appearance props. The public
-[Mark Styles](../styling/mark-styles.md) matrix is exhaustive across every
+[Mark Styles](../docs/styling/mark-styles.md) matrix is exhaustive across every
 rendered mark family and its accepted `style=` properties.
 
 | Mark | Color/opacity | Gradient fill | Corner radius | Stroke | Curve | Dash | Size/width |

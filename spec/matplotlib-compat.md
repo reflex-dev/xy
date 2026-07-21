@@ -12,15 +12,15 @@ screen-bounded cost — with matplotlib's calling conventions.
 **The claim, precisely:** every method in the Matplotlib 3.11 `Axes` **Plotting**
 section is present on both `xy.pyplot.Axes` and the stateful `xy.pyplot`
 namespace. The reviewed
-[`matplotlib_311_plotting.json`](../../tests/pyplot/matplotlib_311_plotting.json)
+[`matplotlib_311_plotting.json`](../tests/pyplot/matplotlib_311_plotting.json)
 snapshot locks that inventory to the pinned upstream documentation, while the executable compatibility
-corpus in [`tests/pyplot/corpus/`](../../tests/pyplot/corpus/) covers representative
+corpus in [`tests/pyplot/corpus/`](../tests/pyplot/corpus/) covers representative
 calls from every family. This is 100% 2-D *chart-method* coverage; it is not a
 claim to reproduce Matplotlib's renderer, transforms, or full Artist graph.
 
 The generated [method-by-method compatibility matrix](matplotlib-compat-matrix.md)
 is sourced from that snapshot, executable corpus calls, and
-[`compatibility.json`](../../tests/pyplot/compatibility.json). CI fails if the
+[`compatibility.json`](../tests/pyplot/compatibility.json). CI fails if the
 generated matrix is stale, installs the released `matplotlib==3.11.0` wheel,
 and asserts every snapshot method exists on its `Axes`. The dev revision
 recorded in the snapshot is informational: CI no longer compares the snapshot

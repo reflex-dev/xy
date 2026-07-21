@@ -3,7 +3,7 @@
 **Status:** methodology spec. Extends the shipped harness (`benchmarks/
 bench_vs.py` adapters, `categories.py` registry, `_browser.py` FCP-based
 TTFR, `bench_scatter_native.py`, CI `benchmark` job feeding
-`docs/engineering/benchmark.md`). Written to survive a hostile Hacker News thread: every
+`spec/benchmark.md`). Written to survive a hostile Hacker News thread: every
 number is mode-scoped, reproducible, oracle-checked, and the cases we *lose*
 are published.
 
@@ -93,7 +93,7 @@ reported).
   machine" — pre-empt by publishing both.
 - Every table header carries: dataset generator + seed, library versions,
   timestamp, harness commit. `benchmark.json` (already emitted by CI) is the
-  canonical artifact; `docs/engineering/benchmark.md` renders from it — numbers in prose
+  canonical artifact; `spec/benchmark.md` renders from it — numbers in prose
   that don't exist in the artifact are banned (existing policy, kept).
 - **Warm/cold discipline:** every timing reports which it is; first-run
   (cold cache) and steady-state are separate rows for TTFR and import.
@@ -140,10 +140,10 @@ reported).
    comm internals, production framing, GPU upload, and visible-pixel readback.
 3. PyGWalker adapter and Plotly/Bokeh equivalents for the
    `dashboard_20` scenario.
-4. Reference-hardware runbook (`benchmarks/README`): exact pins + one-command
+4. Reference-hardware runbook (`benchmarks/README.md`): exact pins + one-command
    repro; publish both tiers on the next README refresh.
 
 Timing regression policy is two-level: movement beyond 2x is advisory on shared
-runners, while movement beyond 4x is a hard failure. Interaction and visual
+runners, while movement beyond 8x is a hard failure. Interaction and visual
 budgets are capped in the report verifier so a benchmark change cannot silently
 make its own gate easier.

@@ -2,10 +2,10 @@
 
 **Status:** API design proposal. Goal: fix the composition model **before**
 the catalog grows to 40 kinds, so nothing here forces a public-API rewrite
-later. Grounded in what ships today (`components.py`: `Chart` + `Mark` +
-`Axis` + `Legend`, `_MARK_APPLIERS` registry; `figure.py`: fluent builders +
-`_emit_<kind>` dispatch) — the proposal is an *extension* of that shape, not
-a replacement.
+later. Grounded in what ships today (`python/xy/components.py`: `Chart` +
+`Mark` + `Axis` + `Legend`, `_MARK_APPLIERS` registry;
+`python/xy/_figure.py`: fluent builders + `_emit_<kind>` dispatch) — the
+proposal is an *extension* of that shape, not a replacement.
 
 Related: `reflex-shaped-api.md` covers the public API/styling proposal for a
 Reflex-like component surface without making Reflex a core dependency.

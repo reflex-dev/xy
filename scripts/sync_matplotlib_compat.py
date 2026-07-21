@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT = ROOT / "tests/pyplot/matplotlib_311_plotting.json"
 METADATA = ROOT / "tests/pyplot/compatibility.json"
 CORPUS = ROOT / "tests/pyplot/corpus"
-OUTPUT = ROOT / "docs/engineering/matplotlib-compat-matrix.md"
+OUTPUT = ROOT / "spec/matplotlib-compat-matrix.md"
 
 
 def _load(path: Path) -> dict:
@@ -136,7 +136,7 @@ def _render() -> str:
         lines += [f"### {family}", "", f"Approximation level: **{level}**.", ""]
         for method in methods:
             examples = calls.get(method, [])
-            refs = ", ".join(f"[`{name}`](../../tests/pyplot/corpus/{name})" for name in examples)
+            refs = ", ".join(f"[`{name}`](../tests/pyplot/corpus/{name})" for name in examples)
             lines.append(f"- `{method}` — {refs or '**missing executable corpus coverage**'}")
         lines.append("")
     return "\n".join(lines)

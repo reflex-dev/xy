@@ -41,7 +41,7 @@ Beyond the mark set, four capability layers now ship on `main`:
   (hex/`rgb()`/`hsl()`/named colors, lengths, numbers) parse strictly,
   browser-resolved forms (`var()`/`oklch()`/`calc()`) pass through, and a
   malformed value raises instead of rendering a silently wrong chart (see
-  `docs/engineering/styling.md` § Validation).
+  `spec/styling.md` § Validation).
 - **Static export:** `fig.to_svg(...)` (pure-Python, screen-bounded vector —
   a 10M-point line exports in ~4 ms / ~58 KB) and `fig.to_png(...)` (a
   browser-free native Rust rasterizer by default, ~50× faster than the
@@ -58,7 +58,7 @@ Beyond the mark set, four capability layers now ship on `main`:
   `@reflex_xy.figure` computed-var decorator binds figure builders to Reflex
   state so dependency tracking drives rebuilds and republishes, and a static
   payload tier compiles zero-backend charts to asset files. See
-  `docs/integrations/reflex.md` and `docs/engineering/design/reflex-integration.md`.
+  `docs/integrations/reflex.md` and `spec/design/reflex-integration.md`.
 
 **Prototyped (not on `main`):** candlestick + OHLC marks and a finance
 overlay/indicator layer (volume pane, SMA, VWAP, Bollinger, RSI, MACD,
@@ -311,7 +311,7 @@ pattern); line/area take `curve="smooth"` (monotone-cubic); scatter takes 17
 renderer-backed `symbol` glyphs plus point strokes. Mark colors
 flow through the same `--chart-*` tokens as the chrome, so a theme change
 re-resolves marks and chrome together. The full matrix and per-mark support
-table live in [`docs/engineering/styling.md`](styling.md). Static SVG export reproduces all
+table live in [`spec/styling.md`](styling.md). Static SVG export reproduces all
 of it (gradients → `<linearGradient>`, smooth curves → exact cubic Béziers,
 etc.) with two documented approximations (area mark-space gradient uses the
 bbox; `var()` colors fall back to the mark color — no DOM).
