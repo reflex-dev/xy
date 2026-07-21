@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 
 import benchmarks.bench_vs as bench_vs
-import pytest
 
 
 def test_run_marks_sizes_above_max_n_as_skipped(monkeypatch) -> None:
@@ -17,10 +16,6 @@ def test_run_marks_sizes_above_max_n_as_skipped(monkeypatch) -> None:
     ]
 
 
-@pytest.mark.skipif(
-    not hasattr(bench_vs.signal, "setitimer"),
-    reason="hard benchmark deadlines require POSIX interval timers",
-)
 def test_run_enforces_budget_as_hard_measurement_timeout(monkeypatch) -> None:
     monkeypatch.setattr(
         bench_vs,
@@ -45,10 +40,6 @@ def test_run_enforces_budget_as_hard_measurement_timeout(monkeypatch) -> None:
     assert elapsed < 0.5
 
 
-@pytest.mark.skipif(
-    not hasattr(bench_vs.signal, "setitimer"),
-    reason="hard benchmark deadlines require POSIX interval timers",
-)
 def test_hard_timeout_includes_browser_ttfr(monkeypatch) -> None:
     monkeypatch.setattr(
         bench_vs,
@@ -87,26 +78,25 @@ def test_hard_timeout_includes_browser_ttfr(monkeypatch) -> None:
 
 
 def test_run_only_captures_browser_artifact_within_ttfr_cap(monkeypatch) -> None:
-    artifact_sizes: list[int] = []
+    artifact_sizes: list[tuple[int, bool]] = []
 
-    def factory(x, _y):
-        def render(_fig):
-            return {
-                "out_bytes": 1,
-                "mode": "direct",
-                "render_target": "test",
-                "oracle_status": "pass",
-                "oracle_kind": "raw-row-count",
-            }
+    def fake_process(
+        _factory,
+        _x,
+        _y,
+        n,
+        _budget_s,
+        *,
+        capture_artifact,
+        chromium,
+    ):
+        assert chromium is None
+        artifact_sizes.append((n, capture_artifact))
+        return {"status": "unavailable"}
 
-        def artifact(_fig):
-            artifact_sizes.append(len(x))
-            return ""
-
-        return lambda: None, render, artifact
-
-    monkeypatch.setattr(bench_vs, "ADAPTERS", {"fake": factory})
+    monkeypatch.setattr(bench_vs, "ADAPTERS", {"fake": lambda _x, _y: None})
+    monkeypatch.setattr(bench_vs, "_run_measurement_process", fake_process)
 
     bench_vs.run([10, 100], 45, libraries=["fake"], ttfr=True, ttfr_max_n=10)
 
-    assert artifact_sizes == [10]
+    assert artifact_sizes == [(10, True), (100, False)]

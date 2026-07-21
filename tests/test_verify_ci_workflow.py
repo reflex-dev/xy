@@ -73,6 +73,30 @@ def test_ci_workflow_rejects_regrouped_expensive_cross_library_adapters(
     assert any("benchmark_vs" in error and "plotly-svg" in error for error in errors)
 
 
+def test_ci_workflow_rejects_substring_preserving_adapter_regrouping(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "            libraries: plotly_svg\n",
+            "            libraries: plotly_svg,bokeh_canvas\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "matrix entry 'plotly-svg'" in error
+        and "must exactly equal" in error
+        and "plotly_svg,bokeh_canvas" in error
+        for error in errors
+    )
+
+
 def test_ci_workflow_rejects_unconditional_cross_library_browser_setup(
     tmp_path: Path,
 ) -> None:
@@ -92,6 +116,25 @@ def test_ci_workflow_rejects_unconditional_cross_library_browser_setup(
     assert any(
         "Install Chromium (Playwright)" in error and "matrix.browser" in error for error in errors
     )
+
+
+def test_ci_workflow_rejects_unconditional_cross_library_native_build(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Build native core\n        if: matrix.xy\n",
+            "      - name: Build native core\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Build native core" in error and "matrix.xy" in error for error in errors)
 
 
 def test_ci_workflow_rejects_benchmark_upload_that_skips_after_failures(

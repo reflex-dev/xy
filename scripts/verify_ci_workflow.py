@@ -56,6 +56,36 @@ def _job_blocks(text: str) -> dict[str, str]:
     return {name: "\n".join(block) for name, block in blocks.items()}
 
 
+def _matrix_include_entries(job_text: str) -> list[dict[str, str]]:
+    """Parse the flat mappings under one job's strategy.matrix.include list."""
+    entries: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    in_include = False
+    for line in job_text.splitlines():
+        if line == "        include:":
+            in_include = True
+            continue
+        if not in_include:
+            continue
+        if line.startswith("          - "):
+            if current is not None:
+                entries.append(current)
+            current = {}
+            item = line.removeprefix("          - ")
+        elif line.startswith("            ") and not line.lstrip().startswith("#"):
+            item = line.removeprefix("            ")
+        elif line.strip() and len(line) - len(line.lstrip()) <= 8:
+            break
+        else:
+            continue
+        match = re.fullmatch(r"([A-Za-z0-9_-]+):\s*(.*?)", item)
+        if match and current is not None:
+            current[match.group(1)] = match.group(2)
+    if current is not None:
+        entries.append(current)
+    return entries
+
+
 def _missing_needles(block: str, needles: tuple[str, ...]) -> list[str]:
     return [needle for needle in needles if needle not in block]
 
@@ -263,20 +293,10 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "continue-on-error: true",
         "fail-fast: false",
         "matrix:",
-        "- name: matplotlib",
-        "libraries: matplotlib",
-        "packages: matplotlib psutil",
-        "- name: seaborn",
-        "libraries: seaborn",
-        "packages: seaborn psutil",
-        "- name: plotly-svg",
-        "libraries: plotly_svg",
-        "packages: plotly kaleido psutil",
-        "- name: bokeh-canvas",
-        "libraries: bokeh_canvas",
-        "packages: bokeh psutil",
+        "xy: false",
         "browser: false",
         "build_js: false",
+        "if: matrix.xy",
         "if: matrix.browser",
         "if: matrix.build_js",
         "uv pip install -p .venv/bin/python ${{ matrix.packages }}",
@@ -291,6 +311,103 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "if-no-files-found: warn",
     )
     cross_library = jobs.get("benchmark_vs", "")
+    expected_matrix = {
+        "native-and-webgl": {
+            "libraries": "xy,plotly_gl,bokeh_webgl,datashader",
+            "packages": "plotly kaleido bokeh datashader psutil",
+            "max_n": "10000000",
+            "xy": "true",
+            "browser": "true",
+            "build_js": "true",
+        },
+        "matplotlib": {
+            "libraries": "matplotlib",
+            "packages": "numpy matplotlib psutil",
+            "max_n": "10000000",
+            "xy": "false",
+            "browser": "false",
+            "build_js": "false",
+        },
+        "seaborn": {
+            "libraries": "seaborn",
+            "packages": "numpy seaborn psutil",
+            "max_n": "10000000",
+            "xy": "false",
+            "browser": "false",
+            "build_js": "false",
+        },
+        "plotly-svg": {
+            "libraries": "plotly_svg",
+            "packages": "numpy plotly kaleido psutil",
+            "max_n": "10000000",
+            "xy": "false",
+            "browser": "true",
+            "build_js": "false",
+        },
+        "bokeh-canvas": {
+            "libraries": "bokeh_canvas",
+            "packages": "numpy bokeh psutil",
+            "max_n": "10000000",
+            "xy": "false",
+            "browser": "true",
+            "build_js": "false",
+        },
+        "html-adapters": {
+            "libraries": "altair,hvplot_bokeh",
+            "packages": "numpy altair hvplot psutil",
+            "max_n": "100000",
+            "xy": "false",
+            "browser": "true",
+            "build_js": "false",
+        },
+    }
+    matrix_entries = _matrix_include_entries(cross_library)
+    matrix_by_name = {
+        entry["name"]: entry for entry in matrix_entries if isinstance(entry.get("name"), str)
+    }
+    matrix_names = [entry.get("name") for entry in matrix_entries]
+    duplicate_names = sorted({name for name in matrix_names if matrix_names.count(name) > 1})
+    if duplicate_names:
+        errors.append(f"CI benchmark_vs matrix has duplicate names: {duplicate_names}")
+    if set(matrix_by_name) != set(expected_matrix):
+        errors.append(
+            "CI benchmark_vs matrix names must exactly match isolated benchmark groups; "
+            f"got {sorted(matrix_by_name)}, expected {sorted(expected_matrix)}"
+        )
+    for name, expected in expected_matrix.items():
+        actual = matrix_by_name.get(name)
+        if actual is None:
+            continue
+        expected_entry = {"name": name, **expected}
+        if actual != expected_entry:
+            errors.append(
+                f"CI benchmark_vs matrix entry {name!r} must exactly equal "
+                f"{expected_entry!r}; got {actual!r}"
+            )
+    if not _step_is_conditioned(cross_library, "dtolnay/rust-toolchain@"):
+        errors.append("CI benchmark_vs Rust toolchain setup must be conditioned on matrix.xy")
+    _require_step_contains(
+        errors,
+        cross_library,
+        "Build native core",
+        "xy-only setup condition",
+        "if: matrix.xy",
+    )
+    _require_step_contains(
+        errors,
+        cross_library,
+        "Install xy",
+        "xy-only install condition",
+        "if: matrix.xy",
+        'XY_REQUIRE_CARGO: "1"',
+    )
+    _require_step_contains(
+        errors,
+        cross_library,
+        "Verify native benchmark backend",
+        "xy-only verification condition",
+        "if: matrix.xy",
+    )
     _require_step_contains(
         errors,
         cross_library,

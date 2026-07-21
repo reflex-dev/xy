@@ -269,6 +269,7 @@ jobs:
             libraries: xy,plotly_gl,bokeh_webgl,datashader
             packages: plotly kaleido bokeh datashader psutil
             max_n: 10000000
+            xy: true
             browser: true
             build_js: true
           # These adapters each run a timed render plus a separate tracemalloc
@@ -276,58 +277,68 @@ jobs:
           # parallel instead of serializing the slowest benchmark job.
           - name: matplotlib
             libraries: matplotlib
-            packages: matplotlib psutil
+            packages: numpy matplotlib psutil
             max_n: 10000000
+            xy: false
             browser: false
             build_js: false
           - name: seaborn
             libraries: seaborn
-            packages: seaborn psutil
+            packages: numpy seaborn psutil
             max_n: 10000000
+            xy: false
             browser: false
             build_js: false
           - name: plotly-svg
             libraries: plotly_svg
-            packages: plotly kaleido psutil
+            packages: numpy plotly kaleido psutil
             max_n: 10000000
+            xy: false
             browser: true
             build_js: false
           - name: bokeh-canvas
             libraries: bokeh_canvas
-            packages: bokeh psutil
+            packages: numpy bokeh psutil
             max_n: 10000000
+            xy: false
             browser: true
             build_js: false
           - name: html-adapters
             libraries: altair,hvplot_bokeh
-            packages: altair hvplot psutil
+            packages: numpy altair hvplot psutil
             # HTML serialization becomes pathological at multi-million-point
             # sizes. Keep this group aligned with the existing TTFR cap; the
             # skipped rows remain explicit in the merged report.
             max_n: 100000
+            xy: false
             browser: true
             build_js: false
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        if: matrix.xy
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         if: matrix.browser || matrix.build_js
         with:
           node-version: "22"
       - name: Build native core
+        if: matrix.xy
         run: cargo build --release
       - name: Build JS client
         if: matrix.build_js
         run: node js/build.mjs
-      - name: Install xy + selected competitors
+      - name: Create benchmark environment
+        run: uv venv .venv
+      - name: Install xy
+        if: matrix.xy
         env:
           XY_REQUIRE_CARGO: "1"
-        run: |
-          uv venv .venv
-          uv pip install -p .venv/bin/python -e .
-          uv pip install -p .venv/bin/python ${{ matrix.packages }}
+        run: uv pip install -p .venv/bin/python -e .
+      - name: Install selected competitors
+        run: uv pip install -p .venv/bin/python ${{ matrix.packages }}
       - name: Verify native benchmark backend
+        if: matrix.xy
         run: |
           .venv/bin/python - <<'PY'
           import xy.kernels as k
