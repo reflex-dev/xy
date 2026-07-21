@@ -16,6 +16,7 @@ import contextlib
 import json
 import re
 import secrets
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -130,7 +131,9 @@ class ChromiumSession:
         sandbox: bool = True,
         launch_timeout_s: float = 30.0,
     ) -> None:
-        self._tmp = tempfile.TemporaryDirectory(prefix="xy-export-")
+        # ignore_cleanup_errors covers the GC-finalizer path; close() does its
+        # own retrying removal (see _cleanup_tmp) for the common `with` path.
+        self._tmp = tempfile.TemporaryDirectory(prefix="xy-export-", ignore_cleanup_errors=True)
         stderr_path = Path(self._tmp.name) / "chromium-stderr.log"
         self._stderr_file = stderr_path.open("w+b")
         gl_flags = (
@@ -392,6 +395,24 @@ class ChromiumSession:
             self._proc.kill()
             self._proc.wait()
         self._stderr_file.close()
+        self._cleanup_tmp()
+
+    def _cleanup_tmp(self) -> None:
+        # Chromium's child processes (zygote/GPU) can keep flushing the profile
+        # dir for a beat after the main process exits, so a bare rmtree races
+        # them and dies with "Directory not empty". Retry the removal briefly,
+        # then let TemporaryDirectory swallow whatever remains — the tree lives
+        # under the OS temp dir and is disposable.
+        for delay in (0.0, 0.1, 0.25, 0.5):
+            if delay:
+                time.sleep(delay)
+            try:
+                shutil.rmtree(self._tmp.name)
+                break
+            except FileNotFoundError:
+                break
+            except OSError:
+                continue
         self._tmp.cleanup()
 
     def __enter__(self) -> "ChromiumSession":
