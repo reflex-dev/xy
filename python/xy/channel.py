@@ -64,6 +64,8 @@ __all__ = [
     "FRAME_HEADER_SIZE",
     "FRAME_MAGIC",
     "FRAME_VERSION",
+    "SELECTION_EVENT_ID_LIMIT",
+    "SELECTION_EVENT_ROW_LIMIT",
     "ChannelCallbacks",
     "DecodedFrame",
     "FrameDecodeError",
@@ -78,6 +80,11 @@ __all__ = [
 
 # (reply message, buffers to ship beside it — None when the reply has none).
 Reply = tuple[dict[str, Any], Optional[list[bytes]]]
+
+# Reflex semantic selection events include bounded JSON projections. The
+# complete canonical Selection remains server-side and can be re-resolved.
+SELECTION_EVENT_ROW_LIMIT = 1000
+SELECTION_EVENT_ID_LIMIT = 10000
 
 
 @dataclass(frozen=True)
@@ -105,6 +112,10 @@ def _selection_reply(
     selected: dict[int, Any],
     callbacks: ChannelCallbacks,
     brush: dict[str, Any],
+    *,
+    include_rows: bool = False,
+    kind: Optional[str] = None,
+    seq: Any = None,
 ) -> Reply:
     if callbacks.on_brush is not None:
         callbacks.on_brush(brush)
@@ -127,7 +138,44 @@ def _selection_reply(
         total += len(idx)
     if callbacks.on_select is not None:
         callbacks.on_select(Selection(fig, selected))
-    return {"type": "selection", "traces": traces, "total": total}, out
+    message: dict[str, Any] = {"type": "selection", "traces": traces, "total": total}
+    if seq is not None:
+        message["seq"] = seq
+    if include_rows:
+        canonical_row_ids = []
+        ids_remaining = SELECTION_EVENT_ID_LIMIT
+        ids_truncated = False
+        for tid in sorted(selected):
+            canonical = sorted(int(value) for value in selected[tid])
+            kept = canonical[:ids_remaining]
+            canonical_row_ids.append({"trace": int(tid), "ids": kept})
+            ids_remaining -= len(kept)
+            if len(kept) < len(canonical):
+                ids_truncated = True
+            if ids_remaining == 0:
+                ids_truncated = ids_truncated or any(
+                    len(selected[other_tid]) for other_tid in sorted(selected) if other_tid > tid
+                )
+                break
+        rows, rows_truncated = (
+            Selection(fig, selected).rows(SELECTION_EVENT_ROW_LIMIT),
+            (total > SELECTION_EVENT_ROW_LIMIT),
+        )
+        message.update(
+            {
+                "version": 1,
+                "kind": kind,
+                "mode": "replace",
+                "canonical_row_ids": canonical_row_ids,
+                "rows": rows,
+                "truncated": ids_truncated or rows_truncated,
+            }
+        )
+        if kind == "box":
+            message["bounds"] = dict(brush)
+        elif kind == "lasso":
+            message["polygon"] = brush["polygon"]
+    return message, out
 
 
 def handle_message(
@@ -303,6 +351,9 @@ def handle_message(
             sel,
             callbacks,
             {"x0": x0, "x1": x1, "y0": y0, "y1": y1},
+            include_rows=bool(content.get("include_rows")),
+            kind="box",
+            seq=content.get("seq"),
         )
     if kind == "select_polygon":
         try:
@@ -312,10 +363,32 @@ def handle_message(
         except (IndexError, KeyError, TypeError, ValueError):
             return None
         fig._record_selection({"polygon": polygon})
-        return _selection_reply(fig, sel, callbacks, {"polygon": polygon})
+        return _selection_reply(
+            fig,
+            sel,
+            callbacks,
+            {"polygon": polygon},
+            include_rows=bool(content.get("include_rows")),
+            kind="lasso",
+            seq=content.get("seq"),
+        )
     if kind == "select_clear":
         fig._record_selection(None)
         if callbacks.on_select is not None:
             callbacks.on_select(Selection(fig, {}))
-        return {"type": "selection", "traces": [], "total": 0}, None
+        message: dict[str, Any] = {"type": "selection", "traces": [], "total": 0}
+        if content.get("seq") is not None:
+            message["seq"] = content["seq"]
+        if content.get("include_rows"):
+            message.update(
+                {
+                    "version": 1,
+                    "kind": "clear",
+                    "mode": "replace",
+                    "canonical_row_ids": [],
+                    "rows": [],
+                    "truncated": False,
+                }
+            )
+        return message, None
     return None

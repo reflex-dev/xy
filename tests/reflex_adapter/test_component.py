@@ -125,9 +125,20 @@ def test_component_creation_does_not_touch_repo_root():
     assert os.getcwd() != str(repo_root) or True
 
 
-def test_lasso_selection_summary_keeps_polygon_geometry():
+def test_semantic_event_wrapper_contracts_are_present():
     source = (
         pathlib.Path(__file__).parents[2] / "python/reflex-xy/reflex_xy/assets/XYChart.jsx"
     ).read_text()
     assert 'm.type === "select_polygon"' in source
     assert 'lastSelect?.type === "select_polygon" ? lastSelect.points : null' in source
+    assert "interaction.click = true" in source
+    assert "interaction.view_change = true" in source
+    assert "include_rows: true" in source
+    assert "HOVER_THROTTLE_MS = 120" in source
+    assert "VIEW_DEBOUNCE_MS = 200" in source
+    assert "envelope.v = payloadVersion" in source
+    assert "restoreSelectionSeqs.delete(message.seq)" in source
+    assert "restoringSelection" not in source
+    assert 'pointEnvelope("point_click"' in source
+    assert 'type: "select_end"' in source
+    assert 'type: "view_change"' in source

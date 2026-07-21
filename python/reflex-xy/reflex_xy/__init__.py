@@ -45,15 +45,38 @@ from typing import Any
 
 from .app import XYPlugin, append, clear_selection, reset_view, select, set_view, setup
 from .component import chart
+from .events import (
+    CanonicalRowIdGroup,
+    DataBounds,
+    Modifiers,
+    PointClickEvent,
+    PointData,
+    PointHoverEvent,
+    ScreenPoint,
+    SelectEndEvent,
+    SelectionPayload,
+    ViewChangeEvent,
+)
 from .namespace import XY_NAMESPACE, XYNamespace
 from .registry import FigureRegistry, _figure_of, registry
+from .selections import resolve_selection
 from .vars import AsyncFigureVar, FigureVar, figure
 
 __all__ = [
     "XY_NAMESPACE",
     "AsyncFigureVar",
+    "CanonicalRowIdGroup",
+    "DataBounds",
     "FigureRegistry",
     "FigureVar",
+    "Modifiers",
+    "PointClickEvent",
+    "PointData",
+    "PointHoverEvent",
+    "ScreenPoint",
+    "SelectEndEvent",
+    "SelectionPayload",
+    "ViewChangeEvent",
     "XYNamespace",
     "XYPlugin",
     "append",
@@ -65,6 +88,7 @@ __all__ = [
     "registry",
     "release",
     "reset_view",
+    "resolve_selection",
     "select",
     "set_view",
     "setup",

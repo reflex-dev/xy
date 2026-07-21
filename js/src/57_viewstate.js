@@ -234,6 +234,10 @@ Object.assign(ChartView.prototype, {
       g.selActive = false;
       if (g.drill) g.drill.selActive = false;
     }
+    // The retained brush geometry (§34) belongs to the replaced selection:
+    // keeping it would let a drill swap re-derive the old box/lasso mask
+    // over this rows-selection.
+    this._lastBrush = null;
     this._applySelectionBuffers(msg, buffers);
     this._stateSelection = { rows: true };
     this._selectionCount = msg.total || 0;

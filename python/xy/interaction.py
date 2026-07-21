@@ -12,6 +12,7 @@ question — the widget (or any other frontend) is a thin transport over these.
 
 from __future__ import annotations
 
+import math
 import operator
 import weakref
 from typing import TYPE_CHECKING, Any, Optional
@@ -93,6 +94,22 @@ def pick(
         idx = int(shipped_sel[idx])
     if idx < 0 or idx >= t.n_points:
         return None
+    return row_dict(fig, t, idx)
+
+
+def _json_scalar(value: Any) -> Any:
+    """Return the small scalar values used by semantic events as JSON values."""
+    item = getattr(value, "item", None)
+    if callable(item):
+        value = item()
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+def row_dict(fig: "Figure", t: "Trace", idx: int) -> dict[str, Any]:
+    """Project one canonical trace row using the exact pick-result shape."""
+    del fig  # Kept in the signature for symmetry with other interaction helpers.
     if t.grid_shape is not None:
         # Heatmap x/y contain only the outer edges. The client already has the
         # cell center (including categorical labels), so return only grid data.
@@ -112,22 +129,45 @@ def pick(
     out: dict[str, Any] = {
         "trace": t.id,
         "index": idx,
-        "x": float(t.x.values[idx]),
-        "y": float(t.y.values[idx]),
+        "x": _json_scalar(float(t.x.values[idx])),
+        "y": _json_scalar(float(t.y.values[idx])),
         "x_kind": t.x.kind,
         "y_kind": t.y.kind,
     }
     cc = t.color_ch
     if cc and cc.mode == "continuous" and cc.values is not None:
-        out["color_value"] = float(cc.values[idx])
+        out["color_value"] = _json_scalar(float(cc.values[idx]))
     elif cc and cc.mode == "categorical" and cc.codes is not None and cc.categories is not None:
         code = int(cc.codes[idx])
         if 0 <= code < len(cc.categories):
-            out["color_category"] = cc.categories[code]
+            out["color_category"] = _json_scalar(cc.categories[code])
     sc = t.size_ch
     if sc and sc.mode == "continuous" and sc.values is not None:
-        out["size_value"] = float(sc.values[idx])
+        out["size_value"] = _json_scalar(float(sc.values[idx]))
     return out
+
+
+def selection_rows(
+    fig: "Figure", per_trace: dict[int, np.ndarray], limit: Optional[int] = None
+) -> tuple[list[dict[str, Any]], bool]:
+    """Deterministic, JSON-safe row projection for a selection.
+
+    Traces are ascending by trace id and canonical indices are ascending
+    within a trace. ``limit=None`` means unbounded. The boolean reports
+    whether rows were omitted by the limit.
+    """
+    max_rows = None if limit is None else max(0, operator.index(limit))
+    rows: list[dict[str, Any]] = []
+    total = sum(len(indices) for indices in per_trace.values())
+    for tid in sorted(per_trace):
+        t = _trace(fig, tid)
+        for raw_idx in np.sort(np.asarray(per_trace[tid]).ravel()):
+            if max_rows is not None and len(rows) >= max_rows:
+                return rows, len(rows) < total
+            idx = int(raw_idx)
+            if 0 <= idx < t.n_points:
+                rows.append(row_dict(fig, t, idx))
+    return rows, len(rows) < total
 
 
 def select_range(

@@ -41,6 +41,8 @@ import { ChartView, decodeFrame, renderStandalone } from "./xy_client.js";
 
 // Opt-in console tracing: localStorage.setItem("xy_debug", "1")
 const DEBUG = globalThis.localStorage?.getItem?.("xy_debug") === "1";
+const HOVER_THROTTLE_MS = 120;
+const VIEW_DEBOUNCE_MS = 200;
 const dbg = (...args) =>
   DEBUG &&
   console.log(
@@ -86,6 +88,31 @@ const fitSpecToElement = (spec) => ({
   width: "100%",
   height: "100%",
 });
+
+const eventSpec = (spec, callbacks) => {
+  const fitted = fitSpecToElement(spec);
+  if (!callbacks.onPointClick && !callbacks.onViewChange) return fitted;
+  const interaction = { ...(fitted.interaction || {}) };
+  if (callbacks.onPointClick && interaction.click === undefined) interaction.click = true;
+  if (callbacks.onViewChange && interaction.view_change === undefined) {
+    interaction.view_change = true;
+  }
+  return { ...fitted, interaction };
+};
+
+const pointEnvelope = (type, token, row, extra = {}) => {
+  const { trace, index, x, y, ...datum } = row;
+  return {
+    version: 1,
+    type,
+    token,
+    trace,
+    canonical_row_id: index,
+    data: { x, y },
+    datum,
+    ...extra,
+  };
+};
 
 export function XYChart(props) {
   const {
@@ -235,10 +262,75 @@ export function XYChart(props) {
     let destroyed = false;
     let clickSeq = 0;
     let lastSelect = null;
+    let payloadVersion = null;
+    let pendingClickInput = null;
+    const clickInputs = new Map();
+    let hoverTimer = null;
+    let pendingHover = null;
+    let viewTimer = null;
+    let pendingView = null;
+    let selectionSeq = 0;
+    const restoreSelectionSeqs = new Set();
     const viewCallbacks = [];
 
     const subscribe = () => {
       socket.emit("sub", { fig: token, px: el.clientWidth || null, mid });
+    };
+
+    const emitMessage = (m) => {
+      const envelope = { fig: token, mid, m };
+      if (payloadVersion !== null) envelope.v = payloadVersion;
+      socket.emit("msg", envelope);
+    };
+
+    const withSelectionSeq = (m) => ({
+      ...m,
+      seq: `selection:${++selectionSeq}`,
+    });
+
+    const restoreSelection = (selection) => {
+      const restore = withSelectionSeq(
+        cbRef.current.onSelectEnd
+          ? { ...selection, include_rows: true }
+          : selection,
+      );
+      restoreSelectionSeqs.add(restore.seq);
+      emitMessage(restore);
+    };
+
+    const dispatchHover = (row) => {
+      pendingHover = row;
+      if (hoverTimer !== null) return;
+      hoverTimer = setTimeout(() => {
+        hoverTimer = null;
+        const latest = pendingHover;
+        pendingHover = null;
+        if (!destroyed && latest && cbRef.current.onPointHover) {
+          cbRef.current.onPointHover(pointEnvelope("point_hover", token, latest));
+        }
+      }, HOVER_THROTTLE_MS);
+    };
+
+    const dispatchView = (m) => {
+      if (!cbRef.current.onViewChange || m.source === "linked" || m.source === "republish") return;
+      pendingView = m;
+      if (viewTimer !== null) clearTimeout(viewTimer);
+      viewTimer = setTimeout(() => {
+        viewTimer = null;
+        const latest = pendingView;
+        pendingView = null;
+        if (!destroyed && latest && cbRef.current.onViewChange) {
+          cbRef.current.onViewChange({
+            version: 1,
+            type: "view_change",
+            token,
+            x_domain: [latest.x0, latest.x1],
+            y_domain: [latest.y0, latest.y1],
+            source: latest.source,
+            phase: "final",
+          });
+        }
+      }, VIEW_DEBOUNCE_MS);
     };
 
     const comm = {
@@ -247,27 +339,31 @@ export function XYChart(props) {
         if (m.type === "view_change") {
           // Semantic event, resolved locally — the kernel round-trip would
           // be a no-op (the namespace registers no Python-side callbacks).
-          cbRef.current.onViewChange?.(m);
+          dispatchView(m);
           return;
         }
         if (m.type === "select" || m.type === "select_polygon" || m.type === "select_clear") {
+          m = withSelectionSeq(m);
           lastSelect = m.type === "select_clear" ? null : m;
+          if (cbRef.current.onSelectEnd) m = { ...m, include_rows: true };
         }
-        socket.emit("msg", { fig: token, mid, m });
+        emitMessage(m);
         if (m.type === "click" && cbRef.current.onPointClick) {
           // The kernel's click path resolves rows via pick; ask for the row
           // with a tagged seq the reply routing below consumes.
           clickSeq += 1;
-          socket.emit("msg", {
-            fig: token,
-            mid,
-            m: {
-              type: "pick",
-              trace: m.trace,
-              index: m.index,
-              drill_seq: m.drill_seq,
-              seq: `click:${clickSeq}`,
-            },
+          const seq = `click:${clickSeq}`;
+          clickInputs.set(seq, pendingClickInput || {
+            screen: m.screen || { x: null, y: null },
+            modifiers: m.modifiers || { shift: false, alt: false, ctrl: false, meta: false },
+          });
+          pendingClickInput = null;
+          emitMessage({
+            type: "pick",
+            trace: m.trace,
+            index: m.index,
+            drill_seq: m.drill_seq,
+            seq,
           });
         }
       },
@@ -288,20 +384,44 @@ export function XYChart(props) {
 
     const onPayload = (data) => {
       if (destroyed || !data || data.fig !== token) return;
-      const nextSpec = withHoverFlag(fitSpecToElement(data.spec));
+      const previousView = view?._eventView?.("republish") || null;
+      const homeView = view?.view0 || null;
+      const viewChanged = previousView && homeView && ["x0", "x1", "y0", "y1"].some(
+        (key) => previousView[key] !== homeView[key],
+      );
+      const selectionToRestore = lastSelect;
+      payloadVersion = Number.isInteger(data.version) ? data.version : null;
+      const spec = withHoverFlag(eventSpec(data.spec, cbRef.current));
       const nextBuffers = toSpans(data.spec, data.buffers);
-      if (view?.updatePayload?.(nextSpec, nextBuffers)) return;
+      if (view?.updatePayload?.(spec, nextBuffers)) {
+        // updatePayload re-homes the viewport and rebuilds trace state, so pin
+        // the domain and re-request the selection mask after the in-place swap.
+        if (viewChanged) {
+          view._transitionView = null;
+          view._setView(previousView, { animate: false, source: "republish" });
+        }
+        if (selectionToRestore) {
+          restoreSelection(selectionToRestore);
+        }
+        return;
+      }
       reclaimTooltipSlot();
       if (view) view.destroy();
       viewCallbacks.length = 0;
       el.replaceChildren();
       view = new ChartView(
         el,
-        nextSpec,
+        spec,
         nextBuffers,
         comm,
       );
       mountTooltipSlot(view);
+      if (viewChanged) {
+        view._setView(previousView, { animate: false, source: "republish" });
+      }
+      if (selectionToRestore) {
+        restoreSelection(selectionToRestore);
+      }
       // Debug/e2e handle (same spirit as the standalone example's
       // window.xyLiveDrilldown): headless probes assert on live views.
       (window.__xy_views ||= new Map()).set(outerRef.current?.id || mid, view);
@@ -314,24 +434,43 @@ export function XYChart(props) {
       const message = data.message;
       if (!message) return;
       if (typeof message.seq === "string" && message.seq.startsWith("click:")) {
+        const clickInput = clickInputs.get(message.seq);
+        clickInputs.delete(message.seq);
         if (message.type === "pick_result" && message.row) {
-          cbRef.current.onPointClick?.(message.row);
+          cbRef.current.onPointClick?.(
+            pointEnvelope("point_click", token, message.row, clickInput || {}),
+          );
         }
         return; // synthetic pick — not for the view
       }
       if (message.type === "pick_result" && message.row) {
-        cbRef.current.onPointHover?.(message.row);
+        if (cbRef.current.onPointHover) dispatchHover(message.row);
       }
-      if (message.type === "selection" && cbRef.current.onSelectEnd) {
-        cbRef.current.onSelectEnd({
-          total: message.total ?? 0,
-          x0: lastSelect?.x0 ?? null,
-          x1: lastSelect?.x1 ?? null,
-          y0: lastSelect?.y0 ?? null,
-          y1: lastSelect?.y1 ?? null,
-          polygon: lastSelect?.type === "select_polygon" ? lastSelect.points : null,
-          cleared: message.total === 0 && lastSelect === null,
-        });
+      if (message.type === "selection") {
+        const isRestore = restoreSelectionSeqs.delete(message.seq);
+        if (!isRestore && cbRef.current.onSelectEnd) {
+          const cleared = message.total === 0 && lastSelect === null;
+          const fallbackBounds = lastSelect && lastSelect.type === "select"
+            ? { x0: lastSelect.x0, x1: lastSelect.x1, y0: lastSelect.y0, y1: lastSelect.y1 }
+            : null;
+          cbRef.current.onSelectEnd({
+            version: 1,
+            type: "select_end",
+            token,
+            selection: {
+              kind: cleared ? "clear" : (message.kind || "box"),
+              mode: message.mode || "replace",
+              data_bounds: message.bounds || fallbackBounds,
+              polygon: message.polygon
+                || (lastSelect?.type === "select_polygon" ? lastSelect.points : null),
+              canonical_row_ids: message.canonical_row_ids || [],
+              rows: message.rows || [],
+              total_count: message.total ?? 0,
+              truncated: message.truncated === true,
+              cleared,
+            },
+          });
+        }
       }
       for (const cb of [...viewCallbacks]) cb(message, data.buffers || []);
     };
@@ -351,8 +490,37 @@ export function XYChart(props) {
     subCounts.set(token, (subCounts.get(token) || 0) + 1);
     if (socket.connected) subscribe();
 
+    const rememberClick = (event) => {
+      if (!cbRef.current.onPointClick) return;
+      const rect = view?.canvas?.getBoundingClientRect?.() || el.getBoundingClientRect();
+      pendingClickInput = {
+        screen: {
+          x: Number.isFinite(event.clientX) ? event.clientX - rect.left : null,
+          y: Number.isFinite(event.clientY) ? event.clientY - rect.top : null,
+        },
+        modifiers: {
+          shift: event.shiftKey === true,
+          alt: event.altKey === true,
+          ctrl: event.ctrlKey === true,
+          meta: event.metaKey === true,
+        },
+      };
+    };
+    const tracksClickInput = Boolean(cbRef.current.onPointClick);
+    if (tracksClickInput) el.addEventListener("click", rememberClick, true);
+
     return () => {
       destroyed = true;
+      if (tracksClickInput) el.removeEventListener("click", rememberClick, true);
+      if (hoverTimer !== null) clearTimeout(hoverTimer);
+      if (viewTimer !== null) clearTimeout(viewTimer);
+      hoverTimer = null;
+      viewTimer = null;
+      pendingHover = null;
+      pendingView = null;
+      pendingClickInput = null;
+      clickInputs.clear();
+      restoreSelectionSeqs.clear();
       socket.off("payload", onPayload);
       socket.off("msg", onMsg);
       socket.off("err", onErr);

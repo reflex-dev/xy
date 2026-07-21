@@ -259,9 +259,7 @@ Object.assign(ChartView.prototype, {
       this._destroyTraceResources(this.gpuTraces[i], texSeen);
       this.gpuTraces[i] = this._buildTrace(blob, ts);
     }
-    this._pickable = this.gpuTraces.some(
-      (g) => markOf(g.trace.kind).pointPick && (g.tier !== "density" || g.drill));
-    if (this._pickable && !this.pickFbo) this._initPickTarget();
+    this._updatePickable();
     this._scheduleViewRequest(this.view, { delay: 0 });
     this.draw();
   },
@@ -333,9 +331,7 @@ Object.assign(ChartView.prototype, {
         lodApplyDensityUpdate(this, g, upd, buffers);
       }
       // Drill state changes what's pickable; hover needs the FBO ready.
-      this._pickable = this.gpuTraces.some(
-        (t) => markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill));
-      if (this._pickable && !this.pickFbo) this._initPickTarget();
+      this._updatePickable();
       this.draw();
     } else if (msg.type === "append") {
       this._applyAppend(msg, buffers);
@@ -388,6 +384,12 @@ Object.assign(ChartView.prototype, {
         this._dispatchChartEvent("hover", detail);
       }
     } else if (msg.type === "selection") {
+      // Enriched replies echo the brush geometry (channel.py include_rows):
+      // adopt it so a view that never saw the drag (republish restore) can
+      // still re-derive masks across later drill swaps (§34).
+      if (msg.bounds) this._lastBrush = { mode: "box", ...msg.bounds };
+      else if (msg.polygon) this._lastBrush = { mode: "poly", points: msg.polygon };
+      if (!msg.traces || !msg.traces.length) this._lastBrush = null;
       this._applySelectionBuffers(msg, buffers);
       this._selectionCount = msg.total || 0;
       this.draw();

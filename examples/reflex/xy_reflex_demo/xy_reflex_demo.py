@@ -121,6 +121,14 @@ class Demo(rx.State):
     # §1 semantic events
     hovered: dict = {}
     clicked: dict = {}
+    click_events: int = 0
+    select_events: int = 0
+    # Click/select handlers bump this and the cloud's title reads it, so every
+    # event deliberately republishes the source figure behind its stable
+    # token. The wrapper must keep the viewport and selection across that
+    # republish without re-dispatching events (no feedback loop) — the
+    # counters above make a violation visible as a runaway count.
+    interaction_revision: int = 0
     # §2 state-driven + cross-filter
     bins: int = 60
     sel_active: bool = False
@@ -146,7 +154,10 @@ class Demo(rx.State):
             xy.interaction_config(hover=True, click=True),
             xy.x_axis(label="feature A"),
             xy.y_axis(label="feature B"),
-            title=f"{POINTS // 1_000_000}M points, drillable",
+            title=(
+                f"{POINTS // 1_000_000}M points, drillable · "
+                f"handler revision {self.interaction_revision}"
+            ),
             width="100%",
             height=460,
         )
@@ -210,21 +221,36 @@ class Demo(rx.State):
         )
 
     @rx.event
-    def on_hover(self, row: dict):
-        self.hovered = row
+    def on_hover(self, event: reflex_xy.PointHoverEvent):
+        # v1 point envelope: canonical_row_id + f64 data coordinates.
+        self.hovered = event.get("data", {})
 
     @rx.event
-    def on_click(self, row: dict):
-        self.clicked = row
+    def on_click(self, event: reflex_xy.PointClickEvent):
+        self.click_events += 1
+        self.interaction_revision += 1
+        modifiers = event.get("modifiers", {})
+        self.clicked = {
+            "row": event.get("canonical_row_id"),
+            **event.get("data", {}),
+            "modifiers": ",".join(k for k, v in modifiers.items() if v) or "none",
+        }
 
     @rx.event
-    def on_select(self, selection: dict):
-        total = int(selection.get("total") or 0)
-        if total and selection.get("x0") is not None:
-            self.sel_x0 = float(selection["x0"])
-            self.sel_x1 = float(selection["x1"])
+    def on_select(self, event: reflex_xy.SelectEndEvent):
+        self.select_events += 1
+        self.interaction_revision += 1
+        selection = event.get("selection", {})
+        total = int(selection.get("total_count") or 0)
+        bounds = selection.get("data_bounds") or {}
+        if total and bounds.get("x0") is not None:
+            self.sel_x0 = float(bounds["x0"])
+            self.sel_x1 = float(bounds["x1"])
             self.sel_active = True
-            self.select_note = f"{total:,} points selected"
+            self.select_note = (
+                f"{total:,} selected · {len(selection.get('rows', [])):,} rows in JSON · "
+                f"truncated={bool(selection.get('truncated'))}"
+            )
         else:
             self.sel_active = False
             self.select_note = "selection cleared"
@@ -234,11 +260,13 @@ class Demo(rx.State):
         self.bins = int(value[0])
 
     @rx.event
-    def on_view(self, view: dict):
-        # `view` is the small view-change payload: {x0, x1, y0, y1, ...}. Store
-        # the window; the `detail` figure var depends on it and recomputes.
-        self.view_x0 = float(view.get("x0", 0.0))
-        self.view_x1 = float(view.get("x1", 0.0))
+    def on_view(self, event: reflex_xy.ViewChangeEvent):
+        # `event` is the v1 view-change envelope; `x_domain` is the reported
+        # [x0, x1] window (debounced by the wrapper). Store the window; the
+        # `detail` figure var depends on it and recomputes.
+        x_domain = event.get("x_domain") or [0.0, 0.0]
+        self.view_x0 = float(x_domain[0])
+        self.view_x1 = float(x_domain[1])
         self.view_ready = True
         x, _ = _scan(120_000)
         self.visible = int(((x >= self.view_x0) & (x <= self.view_x1)).sum())
@@ -419,7 +447,9 @@ def index() -> rx.Component:
             section(
                 "1 · Live figure var + events",
                 "A 1M-point drillable scatter from an @reflex_xy.figure method. "
-                "Zoom to drill density into exact points; hover, click, and box-select.",
+                "Zoom to drill density into exact points; hover, click, and box-select. "
+                "Click and select handlers republish the chart itself (the title's "
+                "revision) — viewport and selection must survive each republish.",
                 rx.vstack(
                     cloud_view(),
                     kv(
@@ -434,9 +464,15 @@ def index() -> rx.Component:
                         "click",
                         rx.cond(
                             Demo.clicked.length() > 0,
-                            f"x={Demo.clicked['x']}  y={Demo.clicked['y']}",
+                            f"row {Demo.clicked['row']} · x={Demo.clicked['x']}  "
+                            f"y={Demo.clicked['y']} · modifiers={Demo.clicked['modifiers']}",
                             "zoom in to drill, then click a point",
                         ),
+                    ),
+                    kv(
+                        "events",
+                        f"{Demo.click_events} clicks · {Demo.select_events} selections · "
+                        f"republish revision {Demo.interaction_revision}",
                     ),
                     width="100%",
                     spacing="3",
