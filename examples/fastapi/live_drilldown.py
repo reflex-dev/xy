@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import threading
+import warnings
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Union
@@ -22,8 +23,34 @@ from xy.config import DRILL_EXIT_FACTOR, SCATTER_DENSITY_THRESHOLD
 from xy.lod import grid_shape
 from xy.widget import bundled_js
 
+_DEFAULT_LIVE_POINTS = 100_000_000
+
+
+def _live_points() -> int:
+    """Point count for the drilldown demo, from ``XY_LIVE_POINTS``.
+
+    A non-integer or non-positive value falls back to the default with a
+    warning rather than aborting app import or failing deep in data generation.
+    """
+    raw = os.environ.get("XY_LIVE_POINTS")
+    if raw is None:
+        return _DEFAULT_LIVE_POINTS
+    try:
+        points = int(raw)
+    except ValueError:
+        points = 0
+    if points < 1:
+        warnings.warn(
+            f"XY_LIVE_POINTS={raw!r} is not a positive integer; using {_DEFAULT_LIVE_POINTS:,}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return _DEFAULT_LIVE_POINTS
+    return points
+
+
 # Point count for the drilldown demo; override with XY_LIVE_POINTS.
-LIVE_SCATTER_POINTS = int(os.environ.get("XY_LIVE_POINTS", 100_000_000))
+LIVE_SCATTER_POINTS = _live_points()
 LIVE_DRILLDOWN_ROUTE = "/api/xy/drilldown"
 DENSITY_OVERVIEW_BINS = 6144
 DENSITY_OVERVIEW_CHUNK = 1_000_000

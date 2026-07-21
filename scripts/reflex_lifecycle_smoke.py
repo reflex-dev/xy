@@ -254,31 +254,45 @@ def _run_lifecycle(session: ChromiumSession, url: str, label: str) -> int:
 
 
 def _check_index_iframes(session: ChromiumSession, base_url: str) -> int:
-    """Load the index and confirm its embedded iframes paint lit pixels."""
+    """Load the index and confirm every gallery route is embedded and paints.
+
+    Each chart route is exercised on its own above; here we verify the index
+    embeds all of them and that each one paints. A page holds more WebGL charts
+    than the browser's live-context cap, so charts release their context off
+    screen and repaint on demand — scroll each iframe into view and require it
+    to paint, so a missing or blank route cannot slip through.
+    """
     probe = Probe(session, base_url, init_script=WRAP_SCRIPT)
     try:
-        expected = len(GALLERY_IDS) + 1  # gallery charts + drilldown
-        probe.wait_for(
-            f"document.querySelectorAll('iframe').length >= {expected}",
+        expected_srcs = [f"/chart/{cid}" for cid in GALLERY_IDS] + [DRILLDOWN_PATH]
+        srcs = probe.wait_for(
+            "(() => { const f = Array.from(document.querySelectorAll('iframe'));"
+            " return f.length >= "
+            + str(len(expected_srcs))
+            + " ? f.map(x => new URL(x.src, location.href).pathname) : null; })()",
             timeout_s=30.0,
             label="index iframes present",
         )
-        # Scroll through so lazy iframes load, then let them paint.
-        probe.eval(
-            "(async () => { for (let y = 0; y <= document.body.scrollHeight; y += 500)"
-            " { window.scrollTo(0, y); await new Promise(r => setTimeout(r, 60)); }"
-            " window.scrollTo(0, 0); })()",
-            timeout_s=60.0,
-        )
-        lit = probe.wait_for(
-            "(() => { const f = Array.from(document.querySelectorAll('iframe'))"
-            ".map(f => { try { return f.contentWindow.__xyLit ? Math.max(0, ...f.contentWindow.__xyLit()) : 0; }"
-            " catch (e) { return 0; } }); const ready = f.filter(v => v > 8).length;"
-            " return ready >= 3 ? ready : 0; })()",
-            timeout_s=60.0,
-            label="index iframes painted",
-        )
-        return int(lit)
+        missing = [src for src in expected_srcs if src not in srcs]
+        if missing:
+            raise SystemExit(f"index is missing chart iframes: {missing}")
+        # Bring each iframe on screen (the browser keeps the visible chart's
+        # context) and require it to paint; a blank route fails here.
+        for i, src in enumerate(srcs):
+            idx = str(i)
+            probe.eval(
+                "document.querySelectorAll('iframe')[" + idx + "]"
+                ".scrollIntoView({block: 'center', behavior: 'instant'})"
+            )
+            probe.wait_for(
+                "(() => { const f = document.querySelectorAll('iframe')[" + idx + "];"
+                " try { return !!(f && f.contentWindow.__xyLit"
+                " && Math.max(0, ...f.contentWindow.__xyLit()) > 8); }"
+                " catch (e) { return false; } })()",
+                timeout_s=30.0,
+                label=f"index iframe {src} painted",
+            )
+        return len(srcs)
     finally:
         probe.close()
 

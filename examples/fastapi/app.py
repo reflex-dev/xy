@@ -21,11 +21,11 @@ from __future__ import annotations
 
 import html
 import inspect
+import threading
 from collections.abc import Callable
-from functools import cache
 
 import charts
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from live_drilldown import (
     LIVE_DRILLDOWN_ROUTE,
@@ -40,21 +40,37 @@ app = FastAPI(title="xy × FastAPI")
 # --- chart rendering --------------------------------------------------------
 
 
-@cache
-def _chart_html(chart_id: str) -> str:
-    """Render one gallery chart to a standalone HTML document (cached per id).
+_html_cache: dict[str, str] = {}
+_html_locks: dict[str, threading.Lock] = {}
+_html_locks_guard = threading.Lock()
 
-    Caching keeps repeat loads instant; the first hit for a heavy chart (e.g.
-    the 10M density scatter) builds its screen-bounded payload once.
+
+def _chart_html(chart_id: str) -> str:
+    """Render one gallery chart to a standalone HTML document, once per id.
+
+    Cached so repeat loads are instant. FastAPI runs sync routes in a
+    threadpool, so a per-id lock keeps concurrent first requests for the same
+    chart from each building its payload (the 10M density scatter would
+    otherwise duplicate a large allocation).
     """
-    return charts.BY_ID[chart_id].builder().to_html()
+    cached = _html_cache.get(chart_id)
+    if cached is not None:
+        return cached
+    with _html_locks_guard:
+        lock = _html_locks.setdefault(chart_id, threading.Lock())
+    with lock:
+        if chart_id not in _html_cache:
+            _html_cache[chart_id] = charts.BY_ID[chart_id].builder().to_html()
+        return _html_cache[chart_id]
 
 
 @app.get("/chart/{chart_id}", response_class=HTMLResponse)
 def chart_html(chart_id: str) -> HTMLResponse:
     """Serve a live-generated standalone chart document."""
     if chart_id not in charts.BY_ID:
-        return HTMLResponse(f"unknown chart {chart_id!r}", status_code=404)
+        # Do not echo the raw id into an HTML response (reflected-XSS sink);
+        # HTTPException renders a JSON error instead.
+        raise HTTPException(status_code=404, detail="unknown chart")
     return HTMLResponse(_chart_html(chart_id))
 
 
@@ -95,7 +111,7 @@ def chart_code(chart_id: str) -> PlainTextResponse:
     """The builder source for one chart (also inlined in the index accordion)."""
     info = charts.BY_ID.get(chart_id)
     if info is None:
-        return PlainTextResponse(f"unknown chart {chart_id!r}", status_code=404)
+        raise HTTPException(status_code=404, detail="unknown chart")
     return PlainTextResponse(_source(info.builder))
 
 
