@@ -31,6 +31,7 @@ Contracts (moved verbatim from `FigureWidget._on_custom_msg`):
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
@@ -217,16 +218,44 @@ def handle_message(
         if callbacks.on_view_change is None:
             return None
         try:
-            x0, x1, y0, y1 = normalize_window(
-                content["x0"], content["x1"], content["y0"], content["y1"], require_area=False
-            )
+            raw_ranges = content.get("ranges")
+            ranges: dict[str, list[float]] = {}
+            if isinstance(raw_ranges, dict):
+                for axis_id, raw_range in raw_ranges.items():
+                    if axis_id not in fig.axis_options:
+                        continue
+                    if not isinstance(raw_range, (tuple, list)) or len(raw_range) != 2:
+                        raise ValueError("invalid view range")
+                    lo, hi = float(raw_range[0]), float(raw_range[1])
+                    if not math.isfinite(lo) or not math.isfinite(hi) or lo == hi:
+                        raise ValueError("invalid view range")
+                    ranges[axis_id] = [lo, hi]
+            if not ranges:
+                x0, x1, y0, y1 = normalize_window(
+                    content["x0"],
+                    content["x1"],
+                    content["y0"],
+                    content["y1"],
+                    require_area=False,
+                )
+                ranges = {"x": [x0, x1], "y": [y0, y1]}
+            x_range = ranges.get("x")
+            y_range = ranges.get("y")
             view = {
-                "x0": x0,
-                "x1": x1,
-                "y0": y0,
-                "y1": y1,
+                "ranges": ranges,
                 "source": str(content.get("source", "view")),
+                "axes": [
+                    axis_id
+                    for axis_id in content.get("axes", [])
+                    if isinstance(axis_id, str) and axis_id in ranges
+                ],
+                "phase": str(content.get("phase", "end")),
+                "interaction_id": content.get("interaction_id"),
             }
+            if x_range is not None:
+                view.update({"x0": x_range[0], "x1": x_range[1]})
+            if y_range is not None:
+                view.update({"y0": y_range[0], "y1": y_range[1]})
         except (KeyError, TypeError, ValueError):
             return None
         callbacks.on_view_change(view)

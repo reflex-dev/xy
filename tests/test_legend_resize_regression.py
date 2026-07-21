@@ -531,7 +531,6 @@ def test_long_legend_and_edge_tooltip_stay_inside_narrow_chart() -> None:
             crosshair=True,
             select=True,
             brush=True,
-            view_change=True,
         ),
         class_names={"tooltip": "xy-probe-tooltip"},
         width="100%",

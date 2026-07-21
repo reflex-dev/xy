@@ -515,7 +515,7 @@ def test_client_coalesces_wheel_zoom_without_animation_lag() -> None:
         "_queueWheelZoom(factor, fx, fy)",
         "this._pendingWheelZoom.factor *= factor;",
         "this._wheelZoomRaf = requestAnimationFrame",
-        "this._zoomAt(pending.factor, pending.fx, pending.fy, false);",
+        "this._zoomAt(pending.factor, pending.fx, pending.fy, false, 120, {",
         "this._queueWheelZoom(f, fx, fy);",
     )
 

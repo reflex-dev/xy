@@ -114,6 +114,8 @@ export function XYChart(props) {
     const key = el.id || `src:${src}`;
     let view = null;
     let cancelled = false;
+    const handleViewChange = (event) => cbRef.current.onViewChange?.(event.detail);
+    el.addEventListener("xy:view_change", handleViewChange);
     fetch(src)
       .then((resp) => {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -137,6 +139,7 @@ export function XYChart(props) {
       if (view) view.destroy();
       view = null;
       window.__xy_views?.delete(key);
+      el.removeEventListener("xy:view_change", handleViewChange);
       el.replaceChildren();
     };
   }, [src]);
@@ -188,6 +191,7 @@ export function XYChart(props) {
           });
         }
       },
+      wantsViewChange: () => Boolean(cbRef.current.onViewChange),
       onMessage: (cb) => {
         viewCallbacks.push(cb);
         return () => {

@@ -32,6 +32,7 @@ function render({ model, el }) {
   const buffer = payloadBuffers(spec, model.get("buffers"));
   const comm = {
     send: (msg) => model.send(msg),
+    wantsViewChange: () => spec.interaction?._transport_view_change === true,
     onMessage: (cb) => {
       const handler = (content, buffers) => cb(content, buffers);
       model.on("msg:custom", handler);
