@@ -242,19 +242,24 @@ def _normalize_accent(accent: str) -> str:
     value = accent.lower()
     if len(value) == 4:
         value = "#" + "".join(character * 2 for character in value[1:])
-    return value[:7]
+    return value
 
 
 def accent_tokens(accent: str) -> dict[str, str]:
-    """Expand an accent color into selection, zoom, focus, and active tokens."""
-    opaque = _normalize_accent(accent)
+    """Expand an accent color into selection, zoom, focus, and active tokens.
+
+    A #rrggbbaa accent keeps its alpha in the solid tokens; the fills always
+    derive from the opaque base so appending the fixed fill alpha stays a
+    valid 8-digit hex."""
+    value = _normalize_accent(accent)
+    base = value[:7]
     return {
-        "--chart-selection": opaque,
-        "--chart-selection-fill": f"{opaque}26",
-        "--chart-zoom-selection": opaque,
-        "--chart-zoom-selection-fill": f"{opaque}26",
-        "--chart-focus": opaque,
-        "--chart-modebar-active": opaque,
+        "--chart-selection": value,
+        "--chart-selection-fill": f"{base}26",
+        "--chart-zoom-selection": value,
+        "--chart-zoom-selection-fill": f"{base}26",
+        "--chart-focus": value,
+        "--chart-modebar-active": value,
     }
 
 

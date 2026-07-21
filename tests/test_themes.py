@@ -80,6 +80,17 @@ def test_unknown_high_level_names_are_actionable(kwargs, bad, expected) -> None:
     assert repr(expected) in message
 
 
+def test_accent_alpha_is_honored() -> None:
+    tokens = _themes.accent_tokens("#8b5cf680")
+    assert tokens["--chart-selection"] == "#8b5cf680"
+    assert tokens["--chart-focus"] == "#8b5cf680"
+    assert tokens["--chart-modebar-active"] == "#8b5cf680"
+    # Fills derive from the opaque base so the fixed fill alpha composes a
+    # valid 8-digit hex.
+    assert tokens["--chart-selection-fill"] == "#8b5cf626"
+    assert tokens["--chart-zoom-selection-fill"] == "#8b5cf626"
+
+
 def test_accent_must_be_hex() -> None:
     with pytest.raises(ValueError) as exc_info:
         xy.theme(accent="red")
