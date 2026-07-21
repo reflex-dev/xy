@@ -1527,7 +1527,7 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'dev'", specifier = ">=3.9" },
     { name = "reflex", specifier = ">=0.9.6" },
     { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.23" },
-    { name = "xy", editable = "../../" },
+    { name = "xy" },
 ]
 provides-extras = ["dev"]
 
@@ -1838,27 +1838,22 @@ wheels = [
 [[package]]
 name = "xy"
 version = "0.0.1"
-source = { editable = "../../" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anywidget" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "anywidget", specifier = ">=0.9" },
-    { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6" },
-    { name = "numpy", specifier = ">=1.24" },
-    { name = "pillow", marker = "extra == 'dev'", specifier = ">=10" },
-    { name = "plotly", marker = "extra == 'bench'", specifier = ">=5" },
-    { name = "pyarrow", marker = "extra == 'dev'", specifier = ">=15" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "pytest-codspeed", marker = "extra == 'codspeed'", specifier = ">=5,<6" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.8" },
-    { name = "ty", marker = "extra == 'dev'" },
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d0/90/fb44bfd5418942ddb2c11b5004b989012f9df08ad334aef2eace5c0fc69f/xy-0.0.1-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:b48be2dc704d3c5a1201d848ec5ead5eb1279e150b801ca17ce43577c664a3e4", size = 1038536, upload-time = "2026-07-17T03:56:31.438Z" },
+    { url = "https://files.pythonhosted.org/packages/14/8e/91664f28cfbe7b84b4fafc9007696f8f3afbdf69d99d1a4e6cf71300a58c/xy-0.0.1-py3-none-macosx_11_0_arm64.whl", hash = "sha256:aa90b9e617dc09b997380cf4f2aeb81fefb6eb437611911162cde3fa1802e282", size = 999341, upload-time = "2026-07-17T03:56:33.823Z" },
+    { url = "https://files.pythonhosted.org/packages/e2/a1/3694eb1c554f99aa29d49dc34c2bbf7777e95b6ec3df654ae924f03b7b74/xy-0.0.1-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:cdf6c76dc3c5a2a365c0d0daaba3b935da261f21a1dc4cfb6029e61db8283b00", size = 1011582, upload-time = "2026-07-17T03:56:35.628Z" },
+    { url = "https://files.pythonhosted.org/packages/56/cc/91f953f903547e1cb0579ce8b2ea242b5b0defaf8516e958ee98d70b7fa6/xy-0.0.1-py3-none-manylinux_2_17_armv7l.whl", hash = "sha256:c261ca75cb7cbc6a3d75c24203b5ac37fcebd0926f7e497ef73beb9c0e65865b", size = 1029374, upload-time = "2026-07-17T03:56:37.668Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/41/119536dd3e1bef39be6004f003bcc6c2845e77909adbe6edcaa24c261951/xy-0.0.1-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:92ff1177515a24eb87945d047572416f9c5cb7e884da1edf9d96c759a7d5c108", size = 1061096, upload-time = "2026-07-17T03:56:39.383Z" },
+    { url = "https://files.pythonhosted.org/packages/79/4e/80152310817b07ebc6ea895be65036fa76a488035259eba055ec83e79a42/xy-0.0.1-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:1cdf30a8ae9427bac2077fc09b83e21ed5d0bb54b045d6d21b0ba4ec5120136b", size = 1010253, upload-time = "2026-07-17T03:56:41.117Z" },
+    { url = "https://files.pythonhosted.org/packages/35/76/909275b3c481c040fdec9f6f767f07eab56c0e0520a0aa2435bac31c7dc8/xy-0.0.1-py3-none-musllinux_1_2_armv7l.whl", hash = "sha256:395e4c7430d3e16ad63cd69bef025a4580ecb1f9798d806d3bc2ab7793d6d1a7", size = 1028103, upload-time = "2026-07-17T03:56:42.95Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/3a/30500a86da0618f71833bf0632a926cc72c1b0db71eaed8d650565da1342/xy-0.0.1-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:fb969fae3ab23b837d43b606c4d89c549b734571155828a61b349cf518eebf91", size = 1059538, upload-time = "2026-07-17T03:56:44.638Z" },
 ]
-provides-extras = ["dev", "bench", "codspeed"]
 
 [[package]]
 name = "yarl"

@@ -1,3 +1,5 @@
+.states
+.web
 .web/
 .states/
 *.db

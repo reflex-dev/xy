@@ -115,6 +115,7 @@ def _selection_reply(
     *,
     include_rows: bool = False,
     kind: Optional[str] = None,
+    seq: Any = None,
 ) -> Reply:
     if callbacks.on_brush is not None:
         callbacks.on_brush(brush)
@@ -138,6 +139,8 @@ def _selection_reply(
     if callbacks.on_select is not None:
         callbacks.on_select(Selection(fig, selected))
     message: dict[str, Any] = {"type": "selection", "traces": traces, "total": total}
+    if seq is not None:
+        message["seq"] = seq
     if include_rows:
         canonical_row_ids = []
         ids_remaining = SELECTION_EVENT_ID_LIMIT
@@ -346,6 +349,7 @@ def handle_message(
             {"x0": x0, "x1": x1, "y0": y0, "y1": y1},
             include_rows=bool(content.get("include_rows")),
             kind="box",
+            seq=content.get("seq"),
         )
     if kind == "select_polygon":
         try:
@@ -361,11 +365,14 @@ def handle_message(
             {"polygon": polygon},
             include_rows=bool(content.get("include_rows")),
             kind="lasso",
+            seq=content.get("seq"),
         )
     if kind == "select_clear":
         if callbacks.on_select is not None:
             callbacks.on_select(Selection(fig, {}))
         message: dict[str, Any] = {"type": "selection", "traces": [], "total": 0}
+        if content.get("seq") is not None:
+            message["seq"] = content["seq"]
         if content.get("include_rows"):
             message.update(
                 {

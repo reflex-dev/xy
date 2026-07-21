@@ -463,11 +463,8 @@ A republish first attempts an in-place data swap through
 but the swap re-homes the viewport and rebuilds trace state, so the restore
 contract still applies — the wrapper pins the domain (clearing any in-flight
 domain interpolation) and re-requests the selection mask. When the in-place
-swap is refused and the view is rebuilt, the outgoing view remains as a
-pointer-inert overlay until the replacement has restored any selection and
-drilled density tier. The overlay then waits for tier fades to finish before
-being removed; a 1200 ms timeout prevents a lost reply from leaving stale
-content visible. The client retains brush geometry, so points arriving in a
+swap is refused, the wrapper destroys the outgoing view immediately and builds
+the replacement. The client retains brush geometry, so points arriving in a
 re-drill can reconstruct their selection mask without a second selection
 request.
 

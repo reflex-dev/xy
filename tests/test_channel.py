@@ -262,7 +262,14 @@ def test_select_fires_brush_before_select_and_returns_selection_reply():
 
     reply = handle(
         fig,
-        {"type": "select", "x0": 5.0, "x1": 2.0, "y0": 0.0, "y1": 6.0},
+        {
+            "type": "select",
+            "x0": 5.0,
+            "x1": 2.0,
+            "y0": 0.0,
+            "y1": 6.0,
+            "seq": "selection:7",
+        },
         on_brush=lambda r: (order.append("brush"), brush_calls.append(r)),
         on_select=lambda s: (order.append("select"), select_calls.append(s)),
     )
@@ -273,6 +280,7 @@ def test_select_fires_brush_before_select_and_returns_selection_reply():
     assert reply is not None
     msg, buffers = reply
     assert msg["type"] == "selection"
+    assert msg["seq"] == "selection:7"
     assert msg["total"] == 4
     assert buffers is not None and len(buffers) == len(msg["traces"])
 
@@ -343,6 +351,17 @@ def test_select_clear_returns_empty_selection_and_fires_callback():
     assert len(select_calls) == 1
     assert isinstance(select_calls[0], Selection)
     assert len(select_calls[0]) == 0
+
+
+def test_select_clear_echoes_request_identity():
+    fig = Figure().scatter(np.arange(3.0), np.arange(3.0))
+
+    reply = handle(fig, {"type": "select_clear", "seq": "selection:9"})
+
+    assert reply == (
+        {"type": "selection", "traces": [], "total": 0, "seq": "selection:9"},
+        None,
+    )
 
 
 def test_buffers_argument_is_accepted_and_ignored():
