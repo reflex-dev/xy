@@ -71,13 +71,44 @@ class _PointEventBase(TypedDict):
 
 
 class PointHoverEvent(_PointEventBase):
-    """``on_point_hover`` — throttled hover row resolution."""
+    """``on_point_hover`` — throttled hover row resolution.
+
+    Shape (hover tooltips don't expand TypedDict fields, so they are
+    spelled out here)::
+
+        {
+            "version": int,             # envelope version (1)
+            "type": "point_hover",
+            "token": str,               # chart identity token
+            "trace": int,               # trace index in the figure
+            "canonical_row_id": int,    # row id in canonical data order
+            "data": {"x": float, "y": float},   # f64 data-space coords
+            "datum": {channel: value, ...},     # remaining per-point channels
+        }
+    """
 
     type: Literal["point_hover"]
 
 
 class PointClickEvent(_PointEventBase):
-    """``on_point_click`` — pointer or keyboard activation of one point."""
+    """``on_point_click`` — pointer or keyboard activation of one point.
+
+    Shape::
+
+        {
+            "version": int,             # envelope version (1)
+            "type": "point_click",
+            "token": str,               # chart identity token
+            "trace": int,               # trace index in the figure
+            "canonical_row_id": int,    # row id in canonical data order
+            "data": {"x": float, "y": float},   # f64 data-space coords
+            "datum": {channel: value, ...},     # remaining per-point channels
+            "screen": {"x": float | None, "y": float | None},  # CSS px;
+                                        # None for keyboard activation
+            "modifiers": {"shift": bool, "alt": bool,
+                          "ctrl": bool, "meta": bool},
+        }
+    """
 
     type: Literal["point_click"]
     screen: ScreenPoint
@@ -118,6 +149,25 @@ class SelectEndEvent(TypedDict):
 
     ``resolve_selection(event)`` re-resolves the complete, unbounded
     selection server-side when the bounded payload reports ``truncated``.
+
+    Shape::
+
+        {
+            "version": int,             # envelope version (1)
+            "type": "select_end",
+            "token": str,               # chart identity token
+            "selection": {
+                "kind": "box" | "lasso" | "clear",
+                "mode": "replace",
+                "data_bounds": {"x0", "x1", "y0", "y1"} | None,  # box only
+                "polygon": [[x, y], ...] | None,                 # lasso only
+                "canonical_row_ids": [{"trace": int, "ids": [int, ...]}, ...],
+                "rows": [{column: value, ...}, ...],  # bounded projection
+                "total_count": int,
+                "truncated": bool,      # rows/ids were cut at the event limit
+                "cleared": bool,
+            },
+        }
     """
 
     version: int
@@ -127,7 +177,20 @@ class SelectEndEvent(TypedDict):
 
 
 class ViewChangeEvent(TypedDict):
-    """``on_view_change`` — debounced final viewport after pan/zoom."""
+    """``on_view_change`` — debounced final viewport after pan/zoom.
+
+    Shape::
+
+        {
+            "version": int,             # envelope version (1)
+            "type": "view_change",
+            "token": str,               # chart identity token
+            "x_domain": [x0, x1],       # f64 data-space window
+            "y_domain": [y0, y1],
+            "source": str,              # gesture: pan/zoom/keyboard/...
+            "phase": "final",
+        }
+    """
 
     version: int
     type: Literal["view_change"]

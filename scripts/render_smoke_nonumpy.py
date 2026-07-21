@@ -552,6 +552,10 @@ try{{
     // palette LUTs cached (categorical drills leaked a texture per update).
     const dseq=(gd.drill && gd.drill.seq===5)?1:0;
     const hov=(v._hoverId===-1 && !v._lastRow)?1:0;
+    // The earlier lasso is still retained as brush geometry (§34), so the
+    // drill apply above legitimately restored a provisional mask. Clear it so
+    // the stale-mask assertion below isolates the drill_seq gate.
+    v._clearSelection();
     const selIdx=new Uint32Array([0,1,2]);
     v._onKernelMsg({{type:"selection",total:3,traces:[{{id:gd.trace.id,buf:0,drill_seq:4}}]}},
       [selIdx.buffer]);
@@ -579,6 +583,9 @@ try{{
     // Flashing fix: a points REFRESH (already drilled) must not restart the
     // entry fade — restarting blanked the points to ~0 alpha on every kernel
     // reply while zooming inside a drilled view.
+    // Also §34 continuity: a retained data-space brush must re-derive a
+    // provisional mask when the refresh swaps the subset (srestore below).
+    v._lastBrush={{mode:"box",x0:5000,x1:5010,y0:5000,y1:5010}};
     gd._drillFadeStart=null; gd._drillWasInside=true; gd._drillShownAlpha=1; // entry fade settled (drawn inside)
     v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"points",visible:n3,
       x_range:[5000,5010],y_range:[5000,5010],
@@ -588,6 +595,8 @@ try{{
       [xs3.buffer,ys3.buffer,cs3.buffer,ds3.buffer]);
     const refresh=(gd.drill && gd.drill.seq===6 && gd._drillFadeStart===null
       && gd._drillDying!==true)?1:0;
+    const srestore=(gd.drill.selActive===true)?1:0;
+    v._clearSelection();
     v._drawNow();
     const hit3=v._pickAt(v.plot.w/2, v.plot.h/2);
     const dpick=(hit3 && hit3.trace===gd.trace.id)?1:0;
