@@ -1470,6 +1470,10 @@ if (!Number.isFinite(baseVisible) || baseVisible <= 0) return false;
 const estimatedVisible = baseVisible * Math.max(1, pendingArea / drillArea);
 return estimatedVisible <= LOD_DIRECT_POINT_BUDGET * LOD_DRILL_EXIT_FACTOR;
 }
+function lodDensityPinned(g, d) {
+return d === g.density || d === g.prevDensity || d === g._densitySwitchPrev ||
+d === g._shownDensity || d === g._homeDensity;
+}
 function lodRememberDensity(view, g, d) {
 if (!d || !d.tex) return;
 d._stamp = ++view._densityStamp;
@@ -1480,9 +1484,7 @@ while (g.densityCache.length > maxCached) {
 let drop = -1;
 for (let i = 0; i < g.densityCache.length; i++) {
 const cand = g.densityCache[i];
-if (cand === g.density) continue;
-if (cand === g.prevDensity) continue;
-if (cand === g._densitySwitchPrev) continue;
+if (lodDensityPinned(g, cand)) continue;
 if (drop < 0) { drop = i; continue; }
 const dropArea = lodDensityArea(g.densityCache[drop]);
 const candArea = lodDensityArea(cand);
@@ -1492,9 +1494,7 @@ drop = i;
 }
 if (drop < 0) break;
 const old = g.densityCache.splice(drop, 1)[0];
-if (old !== g.density && old !== g.prevDensity && old !== g._densitySwitchPrev) {
-view.gl.deleteTexture(old.tex);
-}
+if (!lodDensityPinned(g, old)) view.gl.deleteTexture(old.tex);
 }
 }
 function lodApplyDrill(view, g, upd, buffers) {
@@ -4398,8 +4398,10 @@ gl.vertexAttrib1f(ATTR_SLOTS.a_dval, 0);
 gl.drawArrays(gl.POINTS, index, 1);
 }
 _drawDensity(g, density, opacityScale = 1) {
-opacityScale *= g._transitionOpacity ?? 1;
 const gl = this.gl;
+const d = density || g.density;
+if (!d || !d.tex || !gl.isTexture(d.tex)) return;
+opacityScale *= g._transitionOpacity ?? 1;
 const prog = this.densityProg;
 gl.useProgram(prog);
 const u = (n) => uniformOf(gl, prog, n);
@@ -4409,7 +4411,6 @@ const [vy0, vy1] = this._axisRange(g.yAxis);
 gl.uniform4f(u("u_view"), vx0 ?? x0, vx1 ?? x1, vy0 ?? y0, vy1 ?? y1);
 gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
 gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
-const d = density || g.density;
 gl.uniform4f(u("u_gridRange"), d.xRange[0], d.xRange[1], d.yRange[0], d.yRange[1]);
 gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * opacityScale);
 const constant = d.color;

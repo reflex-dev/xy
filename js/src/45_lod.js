@@ -180,6 +180,19 @@ function lodHoldPendingDrill(view, g, d) {
   return estimatedVisible <= LOD_DIRECT_POINT_BUDGET * LOD_DRILL_EXIT_FACTOR;
 }
 
+// Every density object still reachable from the trace, so eviction never
+// deletes a texture that is about to be bound. Besides the active grid, the
+// previous grid, and the crossfade source, `_shownDensity` (what the tier last
+// drew — it becomes the next `_densitySwitchPrev`) and `_homeDensity` (the
+// standalone overview restore point) are live too. Missing `_shownDensity` here
+// let its texture be evicted while still referenced; the next crossfade bound
+// the freed handle → "bindTexture: attempt to use a deleted object", a dropped
+// density frame, and drilled points left stranded over a stale surface.
+function lodDensityPinned(g, d) {
+  return d === g.density || d === g.prevDensity || d === g._densitySwitchPrev ||
+    d === g._shownDensity || d === g._homeDensity;
+}
+
 function lodRememberDensity(view, g, d) {
   if (!d || !d.tex) return;
   d._stamp = ++view._densityStamp;
@@ -190,9 +203,7 @@ function lodRememberDensity(view, g, d) {
     let drop = -1;
     for (let i = 0; i < g.densityCache.length; i++) {
       const cand = g.densityCache[i];
-      if (cand === g.density) continue;
-      if (cand === g.prevDensity) continue;
-      if (cand === g._densitySwitchPrev) continue;
+      if (lodDensityPinned(g, cand)) continue;
       if (drop < 0) { drop = i; continue; }
       const dropArea = lodDensityArea(g.densityCache[drop]);
       const candArea = lodDensityArea(cand);
@@ -202,9 +213,7 @@ function lodRememberDensity(view, g, d) {
     }
     if (drop < 0) break;
     const old = g.densityCache.splice(drop, 1)[0];
-    if (old !== g.density && old !== g.prevDensity && old !== g._densitySwitchPrev) {
-      view.gl.deleteTexture(old.tex);
-    }
+    if (!lodDensityPinned(g, old)) view.gl.deleteTexture(old.tex);
   }
 }
 
