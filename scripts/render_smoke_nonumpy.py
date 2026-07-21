@@ -1070,7 +1070,14 @@ try{{
       && v2.root.style.width==="100%" && v2.root.style.height==="100%")?1:0;
     holder.style.width="640px";
     holder.style.height="360px";
-    setTimeout(()=>{{try{{
+    setTimeout(async()=>{{try{{
+      // ResizeObserver now coalesces its work into requestAnimationFrame. A
+      // fixed delay can run before that frame under --virtual-time-budget, so
+      // poll the public result instead of assuming a particular task order.
+      const resizeDeadline=performance.now()+1000;
+      while((v2.size.w!==640 || v2.size.h!==360) && performance.now()<resizeDeadline){{
+        await new Promise((resolve)=>setTimeout(resolve,20));
+      }}
       const grew=(v2.size.w===640 && v2.size.h===360 && v2.canvas.width===v2.plot.w*v2.dpr
         && v2.canvas.height===v2.plot.h*v2.dpr && v2.chrome.width===640*v2.dpr
         && v2.chrome.height===360*v2.dpr)?1:0;

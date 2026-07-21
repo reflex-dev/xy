@@ -1812,6 +1812,7 @@ return null;
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
+const COMPACT_COLORBAR_GAP = 8;
 let XY_A11Y_ID = 0;
 const XY_SR_ONLY_STYLE =
 "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;" +
@@ -1966,6 +1967,9 @@ this._glPrograms = [];
 this._progCache = new Map();
 this._bufSeq = 0;
 this._destroyed = false;
+this._resizeRaf = null;
+this._pendingResize = null;
+this._resizeNeedsMeasure = false;
 this._hoverId = -1;
 this._hoverTarget = null;
 this._viewEventRaf = null;
@@ -2014,7 +2018,7 @@ this._buildModebar(this.root);
 if ((this.fluid || this.fluidH) && typeof ResizeObserver !== "undefined") {
 this._ro = new ResizeObserver((entries) => {
 const r = entries[entries.length - 1].contentRect;
-if (r.width || r.height) this._resize(r.width, r.height);
+if (r.width || r.height) this._queueResize(r.width, r.height);
 });
 this._ro.observe(this.root);
 }
@@ -2044,13 +2048,20 @@ this.draw();
 _layout() {
 const compact = this.size.w < 520;
 const pad = Array.isArray(this.spec.padding) ? this.spec.padding : null;
-const marginLeft = pad ? pad[3] : compact ? 46 : MARGIN.l;
 const colorbar = this.spec.colorbar;
 const verticalColorbar = colorbar && colorbar.orientation !== "horizontal";
 const horizontalColorbar = colorbar && colorbar.orientation === "horizontal";
-const colorbarRightRoom = verticalColorbar ? 86 + (colorbar.label ? 18 : 0) : 0;
+const responsivePad = this.fluid && compact && pad;
+const marginLeft = pad ? (responsivePad ? Math.min(pad[3], 46) : pad[3]) : compact ? 46 : MARGIN.l;
+this._compactVerticalColorbar = Boolean(this.fluid && compact && verticalColorbar);
+const colorbarRightRoom = verticalColorbar
+? (this._compactVerticalColorbar
+? COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + 8
+: 86 + (colorbar.label ? 18 : 0))
+: 0;
 const colorbarBottomRoom = horizontalColorbar ? 38 + (colorbar.label ? 16 : 0) : 0;
-const marginRight = (pad ? pad[1] : compact ? 8 : MARGIN.r) + colorbarRightRoom;
+const baseRight = pad ? (responsivePad ? Math.min(pad[1], 8) : pad[1]) : compact ? 8 : MARGIN.r;
+const marginRight = baseRight + colorbarRightRoom;
 const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
 const marginBottom = (pad ? pad[2] : compact ? 36 : MARGIN.b) + colorbarBottomRoom;
 const hasBottomAxis = Object.values(this.axes || {}).some((axis) =>
@@ -2292,14 +2303,32 @@ return null;
 }
 _syncContainerSize() {
 if (this._destroyed || !(this.fluid || this.fluidH) || !this.root) return;
+this._queueResize(null, null, true);
+}
+_queueResize(cssW = null, cssH = null, measure = false) {
+if (this._destroyed) return;
+if (cssW || cssH) this._pendingResize = { cssW, cssH };
+if (measure) this._resizeNeedsMeasure = true;
+if (this._resizeRaf) return;
+this._resizeRaf = requestAnimationFrame(() => {
+this._resizeRaf = null;
+let pending = this._pendingResize;
+this._pendingResize = null;
+if (this._resizeNeedsMeasure && this.root) {
 const rect = this.root.getBoundingClientRect();
-if (rect.width || rect.height) this._resize(rect.width, rect.height);
+if (rect.width || rect.height) pending = { cssW: rect.width, cssH: rect.height };
+}
+this._resizeNeedsMeasure = false;
+if (pending && (pending.cssW || pending.cssH)) {
+this._resize(pending.cssW, pending.cssH);
+}
+});
 }
 _armVisibilityResizeWatch() {
 if (!(this.fluid || this.fluidH)) return;
 const syncSoon = () => {
 if (this._destroyed) return;
-requestAnimationFrame(() => this._syncContainerSize());
+this._syncContainerSize();
 };
 this._listen(window, "resize", syncSoon);
 this._listen(window, "pageshow", syncSoon);
@@ -2649,7 +2678,9 @@ this._positionReductionBadges();
 this._positionColorbar();
 this._fitModebar();
 this._pickDirty = true;
-this.draw();
+if (this._raf) cancelAnimationFrame(this._raf);
+this._raf = null;
+this._drawNow();
 this._scheduleViewRequest();
 }
 _buildDom(el) {
@@ -3023,14 +3054,24 @@ this._positionColorbar();
 _positionColorbar() {
 if (!this._colorbar) return;
 const horizontal = this._colorbarHorizontal;
+const compactVertical = !horizontal && this._compactVerticalColorbar;
+const gap = compactVertical ? COMPACT_COLORBAR_GAP : COLORBAR_GAP;
 this._colorbar.style.left = (horizontal
 ? this.plot.x
-: this.plot.x + this.plot.w + this._rightAxisRoom + COLORBAR_GAP) + "px";
+: this.plot.x + this.plot.w + this._rightAxisRoom + gap) + "px";
 this._colorbar.style.top = (horizontal
 ? this.plot.y + this.plot.h + (this._bottomAxisRoom || 8)
 : this.plot.y) + "px";
-this._colorbar.style.width = (horizontal ? this.plot.w : 66) + "px";
+this._colorbar.style.width = (horizontal
+? this.plot.w
+: compactVertical ? COLORBAR_THICKNESS : 66) + "px";
 this._colorbar.style.height = (horizontal ? 50 : Math.max(24, this.plot.h)) + "px";
+this._colorbar.dataset.xyCompact = compactVertical ? "true" : "false";
+for (const node of this._colorbar.querySelectorAll(
+'[data-xy-slot="colorbar_tick"], [data-xy-slot="colorbar_title"]'
+)) {
+node.hidden = compactVertical;
+}
 }
 _initGl(buffer) {
 const dpr = window.devicePixelRatio || 1;
@@ -5439,6 +5480,10 @@ this._linkChannel?.close?.();
 this._linkChannel = null;
 if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
+if (this._resizeRaf) cancelAnimationFrame(this._resizeRaf);
+this._resizeRaf = null;
+this._pendingResize = null;
+this._resizeNeedsMeasure = false;
 this._cancelViewAnimation();
 this._destroyGlResources();
 const loseExt = this.gl && this.gl.getExtension("WEBGL_lose_context");
