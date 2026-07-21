@@ -438,6 +438,44 @@ def test_client_quiesces_and_rebuilds_repeated_context_loss() -> None:
     assert "ctxpost != 1" in smoke
 
 
+def test_client_shares_context_budget_across_same_origin_frames() -> None:
+    # The browser's WebGL-context cap is process-wide (shared across a tab's
+    # iframes), but the governor is per-document. A chart-per-iframe page (the
+    # examples/fastapi gallery) would otherwise blow the cap and flood the
+    # console with "Too many active WebGL contexts". The governor coordinates a
+    # single shared budget across same-origin frames over a BroadcastChannel
+    # (§18); these markers guard that machinery against silent removal.
+    required = (
+        'new BroadcastChannel("xy-webgl-context-governor")',
+        "_initCrossFrame()",
+        "_onForeignMessage(",
+        # The message contract peers rely on: a live-context count keyed by frame.
+        '{ t: "live", id: this.frameId, n }',
+        '{ t: "hello", id: this.frameId }',
+        '{ t: "bye", id: this.frameId }',
+        # Effective budget = own live contexts + those reported by other frames.
+        "this.localLive() + this.foreignLive() - this.budget()",
+    )
+    for path, text in CLIENT_FILES:
+        for marker in required:
+            assert marker in text, f"{path} lost cross-frame governor marker {marker!r}"
+
+
+def test_cross_frame_rebalance_only_sheds_offscreen_views() -> None:
+    # Shared-budget shedding must release only OFF-screen views: a sibling frame
+    # loading a chart must never blank one the user is looking at. The _rebalance
+    # candidate filter therefore requires `!view._ctxVisible`. (reserve() may
+    # still release a visible view as a last resort for a dense single-document
+    # grid, but that is intra-document, not driven by a peer frame.)
+    for path, text in CLIENT_FILES:
+        start = text.index("_rebalance() {")  # the method definition, not a call site
+        body = text[start : start + 700]
+        assert "!view._ctxVisible" in body, (
+            f"{path}: _rebalance must only shed off-screen views (missing !view._ctxVisible)"
+        )
+        assert "this.budget()" in body, f"{path}: _rebalance must compare against the budget"
+
+
 def test_client_refreshes_and_destroys_density_sample_overlays() -> None:
     chartview_required = (
         "_refreshReductionBadges()",

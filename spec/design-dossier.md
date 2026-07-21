@@ -653,6 +653,29 @@ including the destroy+rebuild a full-payload republish performs — frees its sl
 immediately rather than leaving a destroyed context to linger until GC and count
 against the browser cap.
 
+**The budget is shared across same-origin frames.** Chrome's cap is *process-wide* —
+one budget for every iframe in the tab — but a per-document governor sees only its own
+charts. A page that renders each chart in its own iframe (docs sites, SaaS dashboards,
+and the `examples/fastapi` gallery, which needs iframes to host each standalone
+`to_html` document) would otherwise defeat the governor entirely: no frame ever
+releases (each is under budget alone), the browser LRU-evicts live charts, and the
+evicted charts fight to recover and re-evict — a scroll-driven "Too many active WebGL
+contexts" storm. The governor closes this by sharing one budget over a
+`BroadcastChannel("xy-webgl-context-governor")`: each frame announces its live-context
+count (`{t:"live", id, n}`, with `hello`/`bye` for join/leave), and any frame over the
+shared budget sheds its own *off-screen* views — never a visible one, so a sibling
+frame loading cannot blank a chart the user is looking at. `IntersectionObserver`
+already reports an off-screen iframe's chart as not-intersecting (it clips to the
+top-level viewport), so the visibility signal is correct across the frame boundary; the
+budget accounting was the only gap. Coordination is best-effort and self-healing:
+`BroadcastChannel` delivery is asynchronous, so a burst of charts constructed in one
+synchronous tick across many frames can briefly overshoot before the first `live`
+messages arrive (a handful of transient evictions that recover), and a frame that
+crashes without a `bye` only lowers the effective budget (a few extra off-screen
+releases, revived on demand) — it never blanks a visible chart or evicts. Cross-origin
+and `sandbox`-without-`allow-same-origin` frames (e.g. the notebook `_repr_html_`
+frame) get an isolated channel scope and fall back to per-document behavior.
+
 **Device/context loss is a first-class event:** all GPU state is derived state, rebuilt
 from the scene graph + column store on a new context. The visible cost is one reupload
 flicker, never lost data. The governor depends on this — a governed release is a
@@ -743,7 +766,7 @@ Where it must run, and what each environment denies us:
 | Environment | Denied | Design answer |
 |---|---|---|
 | Jupyter / VS Code notebooks | COOP/COEP (no SAB), sometimes strict CSP | transferables path (§8); WASM served same-origin by the extension; no `eval` anywhere |
-| Embedded iframes (docs, dashboards-in-SaaS) | COOP/COEP, GPU context quota shared with host | transferables; shared-context renderer (§18) degrades chart count gracefully |
+| Embedded iframes (docs, dashboards-in-SaaS) | COOP/COEP, GPU context quota shared with host | transferables; the context governor shares one budget across same-origin iframes over a `BroadcastChannel` so a chart-per-iframe page stays under the process-wide cap (§18) |
 | Strict-CSP enterprise pages | `wasm-unsafe-eval` may be blocked | documented CSP requirements; **pure-JS fallback build** (same core transpiled level: Tier 0/1 only, capped point counts) so a chart *renders* rather than white-boxes |
 | Old browsers / no WebGL2 | GPU entirely | same pure-JS + 2D-canvas fallback, capped; loudly reported via the §5 no-silent-caps rule |
 | Server / CI (native) | no display | headless native path (§8) |
