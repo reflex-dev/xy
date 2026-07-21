@@ -247,8 +247,11 @@ PR #117 makes ranges, clamps, and events per-axis; what remains is a gesture
 *scope*, not a new state model.
 
 - Hovering an axis band — the tick-label strip plus a small gutter on the
-  plot side — shows a resize cursor (`ew-resize` for x-axes, `ns-resize`
-  for y-axes) when that axis is navigable.
+  plot side — shows a cursor that advertises the axis's actual capability:
+  a resize cursor (`ew-resize` for x-axes, `ns-resize` for y-axes) when the
+  axis can zoom, and a grab hand (`grabbing` while a drag is active) when
+  it can only pan — the cursor never promises a zoom the policy would
+  ignore.
 - Wheel over the band zooms only that axis, anchored at the cursor's
   position along it. Drag along the band pans only that axis. Drag
   *across* it (perpendicular) box-zooms the axis span, mirroring the
@@ -256,7 +259,7 @@ PR #117 makes ranges, clamps, and events per-axis; what remains is a gesture
 - The gesture feeds the §3 path with `axes: ["y2"]` (the hovered axis
   only); `pan_axes`, `zoom_axes`, `zoom_limits`, containment, and `bounds`
   govern it exactly as they govern plot-area gestures. An axis excluded
-  from both `pan_axes` and `zoom_axes` shows no resize cursor.
+  from both `pan_axes` and `zoom_axes` gets no band at all.
 - Secondary axes get their band on their own side, so `y` vs `y2` scoping
   is by geometry, with no modifier keys. `shift` remains the only modifier
   the renderer reads.

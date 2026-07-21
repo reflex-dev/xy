@@ -588,10 +588,32 @@ _AXIS_BAND_POLICY_PROBE = """
   const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
   try {
     view._drawNow();
+    // Config: pan_axes=("x","y"), zoom_axes=("x",). The cursor advertises
+    // capability (view-state.md §6): resize only where zoom works; the
+    // pan-only y band shows a grab hand, grabbing while a drag is active.
+    const bandX = view.root.querySelector('[data-xy-axis-band="x"]');
+    const bandY = view.root.querySelector('[data-xy-axis-band="y"]');
+    const zoomableShowsResize = !!bandX && bandX.style.cursor === "ew-resize";
+    const panOnlyShowsGrab = !!bandY && bandY.style.cursor === "grab";
+
+    let grabbingDuringDrag = false;
+    let grabRestoredAfterDrag = false;
+    if (bandY) {
+      const yRect = bandY.getBoundingClientRect();
+      const sx = yRect.left + yRect.width / 2;
+      const sy = yRect.top + yRect.height / 2;
+      const opts = (x, y) => (
+        { pointerId: 9, clientX: x, clientY: y, bubbles: true, cancelable: true });
+      bandY.dispatchEvent(new PointerEvent("pointerdown", opts(sx, sy)));
+      bandY.dispatchEvent(new PointerEvent("pointermove", opts(sx, sy + 40)));
+      grabbingDuringDrag = bandY.style.cursor === "grabbing";
+      bandY.dispatchEvent(new PointerEvent("pointerup", opts(sx, sy + 40)));
+      grabRestoredAfterDrag = bandY.style.cursor === "grab";
+    }
+
     document.body.setAttribute("data-xy-axisband-policy-probe", JSON.stringify({
-      // y is outside both pan_axes and zoom_axes -> no band, no resize cursor.
-      noBandForExcludedAxis: !view.root.querySelector('[data-xy-axis-band="y"]'),
-      bandForNavigableAxis: !!view.root.querySelector('[data-xy-axis-band="x"]'),
+      zoomableShowsResize, panOnlyShowsGrab,
+      grabbingDuringDrag, grabRestoredAfterDrag,
     }));
   } catch (err) {
     document.body.setAttribute(
@@ -601,11 +623,37 @@ _AXIS_BAND_POLICY_PROBE = """
 
 
 def test_axis_band_respects_axis_policies(tmp_path: Path) -> None:
-    document = _chart_html(xy.interaction_config(pan_axes=("x",), zoom_axes=("x",))).replace(
+    document = _chart_html(xy.interaction_config(pan_axes=("x", "y"), zoom_axes=("x",))).replace(
         _RENDER_CALL, _AXIS_BAND_POLICY_PROBE
     )
     result = _run(
         tmp_path, document, "data-xy-axisband-policy-probe", label="axis-band policy probe"
+    )
+    assert result == {key: True for key in result}
+
+
+_AXIS_BAND_EXCLUDED_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    document.body.setAttribute("data-xy-axisband-excluded-probe", JSON.stringify({
+      // y is outside both pan_axes and zoom_axes -> no band at all.
+      noBandForExcludedAxis: !view.root.querySelector('[data-xy-axis-band="y"]'),
+      bandForNavigableAxis: !!view.root.querySelector('[data-xy-axis-band="x"]'),
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-axisband-excluded-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_axis_band_absent_for_excluded_axis(tmp_path: Path) -> None:
+    document = _chart_html(xy.interaction_config(pan_axes=("x",), zoom_axes=("x",))).replace(
+        _RENDER_CALL, _AXIS_BAND_EXCLUDED_PROBE
+    )
+    result = _run(
+        tmp_path, document, "data-xy-axisband-excluded-probe", label="axis-band excluded probe"
     )
     assert result == {"noBandForExcludedAxis": True, "bandForNavigableAxis": True}
 

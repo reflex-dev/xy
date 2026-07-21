@@ -9861,6 +9861,12 @@ const zoom = this._interactionFlag("zoom", true)
 && this._axisPolicy("zoom_axes").includes(axisId);
 return pan || zoom;
 },
+_axisBandCursor(axisId, dim) {
+const zoom = this._interactionFlag("zoom", true)
+&& this._axisPolicy("zoom_axes").includes(axisId);
+if (zoom) return dim === "x" ? "ew-resize" : "ns-resize";
+return "grab";
+},
 _initAxisBands() {
 if (!this.root) return;
 this._axisBands = {};
@@ -9871,7 +9877,7 @@ const band = document.createElement("div");
 band.dataset.xyAxisBand = axisId;
 band.style.cssText =
 "position:absolute;z-index:2;touch-action:none;" +
-`cursor:${dim === "x" ? "ew-resize" : "ns-resize"};`;
+`cursor:${this._axisBandCursor(axisId, dim)};`;
 this.root.appendChild(band);
 this._axisBands[axisId] = band;
 this._bindAxisBand(band, axisId, dim);
@@ -9970,6 +9976,7 @@ const wantPan = Math.abs(parallel) >= Math.abs(perpendicular);
 drag.mode = wantPan
 ? (canBandPan() ? "pan" : canBandSpanZoom() ? "span" : "none")
 : (canBandSpanZoom() ? "span" : canBandPan() ? "pan" : "none");
+if (drag.mode === "pan") band.style.cursor = "grabbing";
 }
 if (drag.mode === "pan") {
 const ranges = Object.fromEntries(
@@ -10027,6 +10034,7 @@ const end = (e) => {
 if (!drag || e.pointerId !== drag.pointerId) return;
 const finished = drag;
 drag = null;
+band.style.cursor = this._axisBandCursor(axisId, dim);
 if (finished.mode === "span") this.selRect.style.display = "none";
 if (e.type === "pointercancel") return;
 if (finished.mode === "pan" && finished.changedAxes.length) {

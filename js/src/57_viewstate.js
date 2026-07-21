@@ -257,6 +257,16 @@ Object.assign(ChartView.prototype, {
     return pan || zoom;
   },
 
+  // The band cursor advertises the axis's actual capability (§6): a resize
+  // arrow only when the axis can zoom; a pan-only axis shows a grab hand
+  // instead, so the cursor never promises a zoom the policy would ignore.
+  _axisBandCursor(axisId, dim) {
+    const zoom = this._interactionFlag("zoom", true)
+      && this._axisPolicy("zoom_axes").includes(axisId);
+    if (zoom) return dim === "x" ? "ew-resize" : "ns-resize";
+    return "grab";
+  },
+
   _initAxisBands() {
     if (!this.root) return;
     this._axisBands = {};
@@ -267,7 +277,7 @@ Object.assign(ChartView.prototype, {
       band.dataset.xyAxisBand = axisId;
       band.style.cssText =
         "position:absolute;z-index:2;touch-action:none;" +
-        `cursor:${dim === "x" ? "ew-resize" : "ns-resize"};`;
+        `cursor:${this._axisBandCursor(axisId, dim)};`;
       this.root.appendChild(band);
       this._axisBands[axisId] = band;
       this._bindAxisBand(band, axisId, dim);
@@ -379,6 +389,7 @@ Object.assign(ChartView.prototype, {
         drag.mode = wantPan
           ? (canBandPan() ? "pan" : canBandSpanZoom() ? "span" : "none")
           : (canBandSpanZoom() ? "span" : canBandPan() ? "pan" : "none");
+        if (drag.mode === "pan") band.style.cursor = "grabbing";
       }
       if (drag.mode === "pan") {
         const ranges = Object.fromEntries(
@@ -437,6 +448,7 @@ Object.assign(ChartView.prototype, {
       if (!drag || e.pointerId !== drag.pointerId) return;
       const finished = drag;
       drag = null;
+      band.style.cursor = this._axisBandCursor(axisId, dim);
       if (finished.mode === "span") this.selRect.style.display = "none";
       if (e.type === "pointercancel") return;
       if (finished.mode === "pan" && finished.changedAxes.length) {

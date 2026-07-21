@@ -259,7 +259,7 @@ renderer reads anywhere in `js/src/`.
 | Double click | Reset `reset_axes` to home (animated); does **not** clear selection | `navigation` and `double_click_reset` |
 | Click without drag | Pick; a drag past threshold sets `_ignoreNextClick` and swallows the click | `click` |
 | Pointer down on a lasso vertex handle | Drag that vertex; re-runs the selection on release | an existing lasso |
-| Hover an axis band (tick strip + 6 px plot-side gutter) | Resize cursor (`ew-resize` x, `ns-resize` y) | axis navigable: `navigation` and (`pan` ∧ in `pan_axes`, or `zoom` ∧ in `zoom_axes`) |
+| Hover an axis band (tick strip + 6 px plot-side gutter) | Resize cursor (`ew-resize` x, `ns-resize` y) when the axis can zoom; a pan-only axis shows a grab hand (`grabbing` while dragging) | axis navigable: `navigation` and (`pan` ∧ in `pan_axes`, or `zoom` ∧ in `zoom_axes`) |
 | Wheel over an axis band | Cursor-anchored zoom of **that axis only** | `navigation`, `zoom`, `wheel_zoom`, axis in `zoom_axes` |
 | Drag **along** an axis band | Pan that axis only (containment clamps as in §2.2) | `navigation`, and `pan` ∧ in `pan_axes` (or contained) |
 | Drag **across** an axis band | Marks a span along the axis, box-zooms to it on release (the one-axis `select-x`/`select-y` shape) | `navigation`, `zoom`, `box_zoom`, axis in `zoom_axes` |
