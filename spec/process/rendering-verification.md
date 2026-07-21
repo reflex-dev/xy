@@ -82,11 +82,11 @@ quotable in review when an implementation change breaks one.
 | A2 | **Density/hexbin count fidelity** (Tier-2): per-cell / per-occupied-bin counts equal brute-force binning; only occupied bins ship (the centers-only wire contract); channel aggregates match the oracle in f64 | O(n) NumPy `histogram2d` / hex assignment | points exactly on bin edges, all-in-one-bin, uniform spread, counts near the payload bound |
 | A3 | **Worker/kernel re-bin equivalence**: the standalone Web Worker re-bin of the retained sample equals the kernel re-bin of the same sample on the same viewport | kernel output *is* the oracle (differential) | zoom-in, zoom-out past home, repeated re-bins (the #118 shape) |
 | A4 | **Deterministic sampling** (lod-architecture.md §3): keep-masks are deterministic, monotonic across levels, row-order-independent, and stratified masks preserve rare categories | already specified; existing example tests promoted to generated inputs | pathological category skew, one-row strata, saturation boundaries |
-| A5 | **Re-bin mass conservation** (histogram/bar Tier-1): refining bins never invents or loses mass — each coarse bin equals the sum of its child fine bins; total always equals the visible row count | O(n) NumPy histogram at both resolutions | bin edges vs data ties, empty windows, single-bin windows |
+| A5 | **Re-bin count fidelity** (histogram/bar Tier-1): per-bin counts equal the oracle at the *same* edge set, at every generated resolution, and total mass always equals the visible row count. Nested-edge conservation (coarse bin = sum of its children) is checked only on constructed k× subdivisions — independent "nice" edges do not nest, and the property must not reject correct output for that | O(n) NumPy histogram at the implementation's own edges | bin edges vs data ties, empty windows, single-bin windows, deliberately non-nested edge pairs (must pass) |
 | A6 | **Heatmap sampled normalization**: normalizing only sampled pixels equals full normalization evaluated at the sampled coordinates | full-grid NumPy normalization | non-uniform value distributions, constant grids, extreme dynamic range |
 | A7 | **View round-trips**: zoom-in → zoom-out restores the exact f64 domain; drill-in → drill-out restores tier and recorded metadata; stale `drill_seq` replies are dropped, never applied (L3) | exact f64 equality / state comparison | deep zoom sequences (dossier §16 territory), interleaved stale replies |
 | A8 | **NaN containment** (dossier §19): for any input mixing finite, NaN, and ±Inf values, no non-finite value reaches a vertex buffer, and the finite-row count matches the oracle | NumPy `isfinite` masking | NaN runs at head/tail, all-NaN traces, NaN in channel columns only |
-| A9 | **Offset-encoding error bound** (dossier §4): f32 offset-encoded uploads reconstruct within a stated epsilon of the f64 originals at representative magnitudes (timestamps, micro-ranges) | direct f64 arithmetic | large offsets + small spans (the classic catastrophic-cancellation shape) |
+| A9 | **Offset-encoding error bound** (dossier §4): with `value = offset₆₄ + f32(value − offset₆₄)`, reconstruction error is bounded by one f32 ULP of the offset-relative magnitude — the contract is `\|reconstructed − original\| ≤ 2⁻²³ × max(window_span, \|value − offset\|)`, which keeps error sub-pixel at any physical zoom (a span never maps to more than 2²³ pixels). Tighter is allowed; looser fails | direct f64 arithmetic against the formula | large offsets + small spans (the classic catastrophic-cancellation shape), timestamps, micro-ranges |
 | A10 | **Tier-decision consistency** (L1/L2): crossing the budget boundary in either direction yields `tier`, `mode`, `visible`, `reduction` metadata consistent with what shipped, and `visible ≤ budget` always renders exact marks | recompute `drill_decision` in Python | counts straddling `budget`, hysteresis window edges |
 
 A1, A2, A5, A6 are the truthfulness core — they are the sentences the
@@ -128,7 +128,26 @@ headless in a pinned Chromium:
 
   Gestures are driven over CDP, reusing the dispatch machinery the staged
   interaction benchmarks and existing probes already use. Each state waits
-  on the render-client's settled signal, not on timeouts.
+  on the render-client's settled signal (§4.2a), not on timeouts.
+
+### 4.2a The settled signal is a client deliverable
+
+The client does not expose this today — existing probes force a draw or
+wait on frames and timers, which is exactly why they can capture an
+intermediate frame. Phase 3 therefore ships, as part of the harness work,
+a CDP-observable quiescence marker on the view: a monotonically increasing
+**settle counter**, readable through the chart root, that increments only
+when the client has no pending kernel round-trip, no queued worker re-bin,
+no scheduled animation frame, and the last requested frame has drawn. The
+harness reads the counter, dispatches a gesture, and waits for the counter
+to advance and then hold for one animation frame. A counter (not an event)
+keeps it poll-friendly over CDP, race-free for gestures that coalesce, and
+adds nothing to the `xy:` event surface that
+[`../api/interaction.md`](../api/interaction.md) §3 enumerates. It ships in
+the production client (it is how the corpus observes reality, so it must
+not be a test-build divergence), documented as internal/unstable, and the
+existing probes migrate to it from their frame/time waits as they are
+touched.
 
 ### 4.2 Determinism contract (what makes goldens honest)
 
@@ -200,7 +219,7 @@ failed against a real bug is a hypothesis, not a safety net.
 | --- | --- | --- |
 | 1 | `tests/property/` A1–A2, A8 (the truthfulness core + NaN), strategies module, CI Hypothesis profile | inside `pytest -q` — hard gate from day one |
 | 2 | remaining rows A3–A7, A9–A10 | hard gate |
-| 3 | corpus harness + first-paint baselines for all families, `make regen-visual` / `make check-visual`, size budget | **advisory** (like type checking): failures report, don't block |
+| 3 | settle counter in the render client (§4.2a), corpus harness + first-paint baselines for all families, `make regen-visual` / `make check-visual`, size budget | **advisory** (like type checking): failures report, don't block |
 | 4 | interaction states (the §4.1 table), fail-first calibration (§5) | promoted to **hard gate** once green for two consecutive weeks of normal churn |
 | 5 | production-readiness.md gains both gates in the release-blocking table; smoke-script fold-in decision | — |
 
