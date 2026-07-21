@@ -49,6 +49,8 @@ const UNITLESS_STYLE_PROPS = new Set([
 const XY_CONTEXT_GOVERNOR = {
   views: new Set(),
   seq: 1,
+  hiddenReleaseChannel: null,
+  hiddenReleaseQueue: [],
   budget() {
     const v = typeof window !== "undefined" ? window.XY_CONTEXT_BUDGET : null;
     // 12 leaves headroom under Chrome's ~16 so host-page GL (maps, editors)
@@ -103,6 +105,47 @@ const XY_CONTEXT_GOVERNOR = {
   },
   cancel(requester) {
     requester._ctxPendingReservation = false;
+  },
+  // Releasing a context takes a synchronous framebuffer readback. Queue one
+  // chart per task when a document is hidden so visibilitychange itself stays
+  // cheap and a many-chart page cannot monopolize the event-loop turn.
+  scheduleHiddenReleases() {
+    if (this.hiddenReleaseChannel !== null) return;
+    this.hiddenReleaseQueue = Array.from(this.views);
+    const channel = new MessageChannel();
+    this.hiddenReleaseChannel = channel;
+    channel.port1.onmessage = () => {
+      if (
+        typeof document === "undefined" ||
+        document.visibilityState !== "hidden"
+      ) {
+        this.cancelHiddenReleases();
+        return;
+      }
+      let view = null;
+      while (this.hiddenReleaseQueue.length && !view) {
+        const candidate = this.hiddenReleaseQueue.shift();
+        if (
+          !candidate._destroyed &&
+          candidate.gl &&
+          !candidate._glLost &&
+          !candidate.gl.isContextLost()
+        ) view = candidate;
+      }
+      if (!view) {
+        this.cancelHiddenReleases();
+        return;
+      }
+      view._releaseContext();
+      channel.port2.postMessage(null);
+    };
+    channel.port2.postMessage(null);
+  },
+  cancelHiddenReleases() {
+    this.hiddenReleaseChannel?.port1.close();
+    this.hiddenReleaseChannel?.port2.close();
+    this.hiddenReleaseChannel = null;
+    this.hiddenReleaseQueue = [];
   },
 };
 
@@ -195,7 +238,20 @@ class ChartView {
     this._contextLossCount = 0;
     this._contextRestoreCount = 0;
     this._contextRecoveryError = null;
-    this._initGl(buffer);
+    try {
+      this._initGl(buffer);
+    } catch (err) {
+      // Initial construction has no recovery handler yet and the public entry
+      // points intentionally let the exception surface. Leave a useful DOM
+      // fallback behind for browsers without WebGL2; recovery attempts catch
+      // the same error themselves and therefore never replace their canvas.
+      XY_CONTEXT_GOVERNOR.unregister(this);
+      if (String(err && err.message || err) === "webgl2 unavailable") {
+        this.root.textContent = "xy: WebGL2 unavailable in this browser.";
+      }
+      throw err;
+    }
+    this.canvas.dataset.xyCtx = "live";
     this._initA11y();
     this.root.dataset.xyContextState = "ready";
     this._initContextLossRecovery();
@@ -213,10 +269,10 @@ class ChartView {
     this._armVisibilityResizeWatch();
     this._armDprWatch();
 
-    this.view0 = {
+    this.view0 = this._clampView({
       x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
       y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
-    };
+    });
     this.view = { ...this.view0 };
     this._initLinkedCharts();
 
@@ -428,10 +484,22 @@ class ChartView {
     this._linkAxes = Array.isArray(this.interaction.link_axes)
       ? this.interaction.link_axes.filter((axis) => axis === "x" || axis === "y")
       : ["x", "y"];
-    if (!this._linkAxes.length) this._linkAxes = ["x", "y"];
     this._linkChannel = new BroadcastChannel(`xy:${group}`);
     this._linkChannel.onmessage = (event) => {
       const msg = event.data || {};
+      if (msg.source === this._linkedSource) return;
+      if (this._interactionFlag("link_select") && msg.selection) {
+        const selection = msg.selection;
+        if (selection.clear) this._clearSelection({ broadcast: false, dispatch: false });
+        else if (selection.polygon) this._selectLocalPolygon(selection.polygon, { dispatch: false });
+        else if (selection.range) {
+          const { x0, x1, y0, y1 } = selection.range;
+          if ([x0, x1, y0, y1].every(Number.isFinite)) {
+            this._selectLocal(x0, x1, y0, y1, { dispatch: false });
+          }
+        }
+        return;
+      }
       if (!msg.view || msg.source === this._linkedSource) return;
       const next = { ...this.view };
       if (this._linkAxes.includes("x")) {
@@ -443,6 +511,7 @@ class ChartView {
         next.y1 = Number(msg.view.y1);
       }
       if (![next.x0, next.x1, next.y0, next.y1].every(Number.isFinite)) return;
+      if (!this._interactionFlag("pan", true) && !this._interactionFlag("zoom", true)) return;
       this._setView(next, { animate: false, source: "linked", broadcast: false });
     };
   }
@@ -450,6 +519,11 @@ class ChartView {
   _broadcastLinkedView(detail) {
     if (!this._linkChannel) return;
     this._linkChannel.postMessage({ source: this._linkedSource, view: detail });
+  }
+
+  _broadcastLinkedSelection(selection) {
+    if (!this._linkChannel || !this._interactionFlag("link_select")) return;
+    this._linkChannel.postMessage({ source: this._linkedSource, selection });
   }
 
   _applyClass(el, className) {
@@ -619,6 +693,30 @@ class ChartView {
       this._dispatchChartEvent("context_lost", {
         loss_count: this._contextLossCount,
       });
+      // A governed release keeps a snapshot and deliberately waits until the
+      // chart is requested again. A browser-side eviction is different: the
+      // canvas has no stand-in, and IntersectionObserver may not deliver a
+      // new entry when an already-visible chart loses its context (notably
+      // when other chart-heavy tabs push Chrome over its process-wide cap).
+      // Rebuild on the next task while this document is active so the loss
+      // handler can finish first and the visible chart never waits for a
+      // scroll-out/scroll-in cycle to recover.
+      const documentVisible =
+        typeof document === "undefined" ||
+        !document.visibilityState ||
+        document.visibilityState === "visible";
+      if (!governedRelease && this._ctxVisible && documentVisible) {
+        setTimeout(() => {
+          if (
+            !this._destroyed &&
+            this._glLost &&
+            this.canvas.dataset.xyCtx === "lost" &&
+            this._ctxVisible
+          ) {
+            this._recoverContext();
+          }
+        }, 0);
+      }
     });
     this._listen(this.canvas, "webglcontextrestored", () => {
       // A failed recovery replaced the canvas with the error message; a later
@@ -631,8 +729,31 @@ class ChartView {
       this.pickTex = null;
       try {
         this._initGl(this._payload);
+        this._glLost = false;
+        // Compile the programs this chart actually uses and submit a complete
+        // frame before advertising the replacement context as live. Under
+        // process-wide pressure Chrome can lose a just-created context during
+        // resource setup; an async draw would otherwise leave a blank canvas
+        // stamped "live" and surface a later `shader compile: null` from pick.
+        this._drawNow();
+        this._assertContextFrameReady("restore");
       } catch (err) {
         this._glLost = true;
+        this.canvas.dataset.xyCtx = "lost";
+        this.root.dataset.xyContextState = "lost";
+        // A null shader log is Chromium's characteristic response when the
+        // context disappears mid-compile. Keep the chart recoverable instead
+        // of turning transient global pressure into a permanent error card.
+        const transient =
+          !this.gl ||
+          this.gl.isContextLost() ||
+          String(err && err.message || err).includes("shader compile: null") ||
+          String(err && err.message || err).startsWith("WebGL error ");
+        if (transient) {
+          this._contextRecoveryError = null;
+          this._scheduleContextRecovery();
+          return;
+        }
         this._contextRecoveryError = err;
         this.root.dataset.xyContextState = "failed";
         try { this._destroyGlResources(); } catch (_cleanupErr) {}
@@ -644,12 +765,12 @@ class ChartView {
         this.root.textContent = "xy: WebGL2 context could not be restored.";
         return;
       }
-      this._glLost = false;
       this._contextRestoreCount += 1;
       this._contextRecoveryError = null;
+      this._ctxRecoveryDelay = 0;
+      this.canvas.dataset.xyCtx = "live";
       this.root.dataset.xyContextState = "ready";
       this._scheduleViewRequest(this.view, { delay: 0 });
-      this.draw();
       this._dropContextSnapshot(); // live frame is back; retire the stand-in
       this._dispatchChartEvent("context_restored", {
         loss_count: this._contextLossCount,
@@ -699,7 +820,47 @@ class ChartView {
       snap.height = this.canvas.height;
       snap.style.cssText = this.canvas.style.cssText;
       snap.style.pointerEvents = "none";
-      snap.getContext("2d").drawImage(this.canvas, 0, 0);
+      // Do not copy the default WebGL framebuffer with drawImage(). Contexts
+      // use preserveDrawingBuffer=false, so Chrome may hand the 2D canvas an
+      // already-discarded transparent buffer even though _drawNow() just
+      // submitted the marks. Read the freshly drawn pixels synchronously
+      // before WEBGL_lose_context instead; this keeps governed releases from
+      // showing only the independently painted grid/chrome while scrolling a
+      // many-chart page.
+      const gl = this.gl;
+      const w = this.canvas.width;
+      const h = this.canvas.height;
+      gl.finish();
+      const pixels = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      const ctx = snap.getContext("2d");
+      const image = ctx.createImageData(w, h);
+      const data = image.data;
+      // Flip WebGL's bottom-up rows while converting its premultiplied colors
+      // to the straight-alpha channels expected by ImageData. Keeping both
+      // transforms in one pixel pass avoids scanning every snapshot twice.
+      for (let srcY = 0; srcY < h; srcY++) {
+        let src = srcY * w * 4;
+        const srcEnd = src + w * 4;
+        let dst = (h - 1 - srcY) * w * 4;
+        for (; src < srcEnd; src += 4, dst += 4) {
+          const alpha = pixels[src + 3];
+          let red = pixels[src];
+          let green = pixels[src + 1];
+          let blue = pixels[src + 2];
+          if (alpha > 0 && alpha < 255) {
+            const scale = 255 / alpha;
+            red = Math.min(255, Math.round(red * scale));
+            green = Math.min(255, Math.round(green * scale));
+            blue = Math.min(255, Math.round(blue * scale));
+          }
+          data[dst] = red;
+          data[dst + 1] = green;
+          data[dst + 2] = blue;
+          data[dst + 3] = alpha;
+        }
+      }
+      ctx.putImageData(image, 0, 0);
       this.canvas.before(snap);
       // Chrome composites a lost-context canvas as an opaque broken-image
       // tile, which would sit on top of the stand-in. Events still reach the
@@ -741,11 +902,51 @@ class ChartView {
     this._rebuildEvictedContext();
   }
 
+  _assertContextFrameReady(stage) {
+    if (!this.gl) {
+      throw new Error(`context lost during ${stage} draw`);
+    }
+    // This runs only during recovery. Paying for a synchronous completion
+    // here prevents command-queue acceptance from being mistaken for a real
+    // frame when Chrome revokes the new context under global pressure.
+    this.gl.finish();
+    if (this.gl.isContextLost()) throw new Error(`context lost during ${stage} draw`);
+    // WebGL resource creation can fail under process-wide pressure without a
+    // useful shader log. A clean first frame is the commit point: do not call
+    // the canvas live while setup/draw left an error behind.
+    const error = this.gl.getError();
+    if (error !== this.gl.NO_ERROR) {
+      throw new Error(`WebGL error ${error} during ${stage} draw`);
+    }
+  }
+
+  _scheduleContextRecovery() {
+    if (this._ctxRecoveryTimer || this._destroyed || !this._ctxVisible) return;
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState &&
+      document.visibilityState !== "visible"
+    ) return;
+    const delay = this._ctxRecoveryDelay || 50;
+    this._ctxRecoveryDelay = Math.min(1000, delay * 2);
+    this._ctxRecoveryTimer = setTimeout(() => {
+      this._ctxRecoveryTimer = null;
+      if (this._glLost && !this._destroyed && this._ctxVisible) this._recoverContext();
+    }, delay);
+  }
+
   _rebuildEvictedContext() {
     // The evicted context object is dead for good and a canvas keeps its
     // context forever, so recovery swaps in a fresh canvas (attributes
     // cloned, listeners retargeted) and rebuilds — the same §18/§27 rebuild
     // the restored path uses.
+    // A transactional restore can also reject a technically-live context
+    // whose first frame reported an error. Explicitly release that stale
+    // handle before replacing the canvas so retries do not add to the global
+    // pressure they are trying to escape.
+    if (this.gl && !this.gl.isContextLost()) {
+      try { this.gl.getExtension("WEBGL_lose_context")?.loseContext(); } catch (_err) {}
+    }
     const fresh = this.canvas.cloneNode(false);
     for (const record of this._listeners) {
       if (record.target === this.canvas) {
@@ -762,13 +963,18 @@ class ChartView {
     this.pickTex = null;
     try {
       this._initGl(this._payload);
+      this._glLost = false;
+      this._drawNow();
+      this._assertContextFrameReady("rebuild");
     } catch (_err) {
       this._glLost = true;
       this.canvas.dataset.xyCtx = "lost";
+      this._scheduleContextRecovery();
       return; // context pressure persists; the next visibility pass retries
     }
+    this._ctxRecoveryDelay = 0;
+    this.canvas.dataset.xyCtx = "live";
     this._scheduleViewRequest(this.view, { delay: 0 });
-    this.draw();
     this._dropContextSnapshot();
   }
 
@@ -783,6 +989,30 @@ class ChartView {
     this._listen(this.root, "pointerenter", () => {
       if (this._glLost && !this._destroyed) this._recoverContext();
     });
+    // A background tab can lose contexts without changing any element's
+    // intersection state. When the tab becomes active again, eagerly recover
+    // an on-screen browser-evicted canvas; governed releases still retain
+    // their snapshots and stay demand-driven.
+    if (typeof document !== "undefined") {
+      this._listen(document, "visibilitychange", () => {
+        if (document.visibilityState === "hidden") {
+          // Chrome's WebGL allowance is process-wide in the multi-tab case.
+          // Release healthy contexts from the inactive document without doing
+          // every synchronous snapshot inside this visibilitychange turn.
+          XY_CONTEXT_GOVERNOR.scheduleHiddenReleases();
+          return;
+        }
+        XY_CONTEXT_GOVERNOR.cancelHiddenReleases();
+        if (
+          document.visibilityState === "visible" &&
+          this._ctxVisible &&
+          this._glLost &&
+          !this._destroyed
+        ) {
+          this._recoverContext();
+        }
+      });
+    }
     if (typeof IntersectionObserver === "undefined") {
       this._ctxVisible = true; // no observer: never treat as releasable
       return;
@@ -1301,12 +1531,10 @@ class ChartView {
     });
     if (!gl) {
       XY_CONTEXT_GOVERNOR.cancel(this);
-      this.root.textContent = "xy: WebGL2 unavailable in this browser.";
       throw new Error("webgl2 unavailable");
     }
     this.gl = gl;
     XY_CONTEXT_GOVERNOR.acquired(this);
-    this.canvas.dataset.xyCtx = "live";
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
@@ -1443,6 +1671,47 @@ class ChartView {
     g.yBuf = this._upload(y);
   }
 
+  _buildInstanceStyleChannels(g, t, buffer, widthName) {
+    const channel = (name) => t.channels && t.channels[name];
+    const artistScalar = Number(t.style && t.style.artist_alpha);
+    const hasStyle = channel("opacity") || channel("artist_alpha") ||
+      channel(widthName) || channel("symbol") || Number.isFinite(artistScalar);
+    if (hasStyle) {
+      const values = new Float32Array(g.n * 4);
+      for (let i = 0; i < g.n; i++) {
+        values[i * 4] = 1;
+        values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
+        values[i * 4 + 2] = -1;
+        values[i * 4 + 3] = -1;
+      }
+      const copy = (name, component, scale = 1) => {
+        const spec = channel(name);
+        if (!spec) return;
+        const source = this._columnView(buffer, this.spec.columns[spec.buf]);
+        for (let i = 0; i < g.n; i++) values[i * 4 + component] = source[i * (spec.components || 1)] * scale;
+      };
+      copy("opacity", 0);
+      copy("artist_alpha", 1);
+      copy(widthName, 2, this.dpr);
+      copy("symbol", 3);
+      g.styleBuf = this._upload(values);
+    }
+    const radius = channel("corner_radius");
+    if (radius) {
+      const source = this._columnView(buffer, this.spec.columns[radius.buf]);
+      const components = radius.components || 1;
+      const values = new Float32Array(g.n * 2);
+      for (let i = 0; i < g.n; i++) {
+        values[i * 2] = source[i * components] * this.dpr;
+        values[i * 2 + 1] = (components > 1 ? source[i * components + 1] : source[i * components]) * this.dpr;
+      }
+      g.radiusBuf = this._upload(values);
+    }
+    if (t.stroke && t.stroke.mode === "direct_rgba") {
+      g.strokeBuf = this._upload(this._columnView(buffer, this.spec.columns[t.stroke.buf]));
+    }
+  }
+
   _buildScatterMark(g, t, buffer) {
     this._buildXY(g, t, buffer);
     g.colorMode = 0;
@@ -1457,6 +1726,10 @@ class ChartView {
       g._cpu.color = this._columnView(buffer, this.spec.columns[t.color.buf]);
       g.cBuf = this._upload(g._cpu.color);
       g.lut = this._paletteLut(t.color.palette);
+    } else if (t.color && t.color.mode === "direct_rgba") {
+      g.colorMode = 3;
+      g._cpu.rgba = this._columnView(buffer, this.spec.columns[t.color.buf]);
+      g.rgbaBuf = this._upload(g._cpu.rgba);
     }
     g.sizeMode = 0;
     g.size = (t.size && t.size.size) || 4.0;
@@ -1467,6 +1740,7 @@ class ChartView {
       g.sBuf = this._upload(g._cpu.size);
       g.sizeRange = t.size.range_px;
     }
+    this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
     this._pointMarkStyle(g, t);
   }
 
@@ -1476,7 +1750,7 @@ class ChartView {
     const s = t.style || {};
     g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 }[s.symbol] || 0;
     g.pointStrokeWidth = Number(s.stroke_width) || 0;
-    g.pointStrokeFace = !s.stroke;
+    g.pointStrokeFace = !s.stroke && (!t.stroke || t.stroke.mode === "match_fill");
     g.pointStroke = s.stroke
       ? parseColor(this.root, s.stroke, [g.color[0], g.color[1], g.color[2], 1])
       : null;
@@ -1495,6 +1769,8 @@ class ChartView {
       y_axis: parentTrace.y_axis,
       color: sample.color,
       size: sample.size,
+      stroke: sample.stroke,
+      channels: sample.channels,
     };
   }
 
@@ -1521,7 +1797,8 @@ class ChartView {
   _destroyDensitySample(g) {
     const s = g && g.sampleOverlay;
     if (!s || !this.gl) return;
-    for (const b of [s.xBuf, s.yBuf, s.cBuf, s.sBuf, s.selBuf, s.dBuf]) {
+    for (const b of [s.xBuf, s.yBuf, s.cBuf, s.rgbaBuf, s.sBuf, s.styleBuf,
+      s.strokeBuf, s.selBuf, s.dBuf]) {
       if (b) this.gl.deleteBuffer(b);
     }
     g.sampleOverlay = null;
@@ -1544,6 +1821,8 @@ class ChartView {
       y_axis: g.trace.y_axis,
       color: sample.color,
       size: sample.size,
+      stroke: sample.stroke,
+      channels: sample.channels,
     };
     const s = {
       trace,
@@ -1572,17 +1851,21 @@ class ChartView {
     gl.bindBuffer(gl.ARRAY_BUFFER, s.yBuf);
     gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.y.buf]), gl.STATIC_DRAW);
     if (sample.color && sample.color.buf !== undefined) {
-      s.colorMode = sample.color.mode === "continuous" ? 1 : 2;
-      s.cBuf = gl.createBuffer();
+      s.colorMode = sample.color.mode === "continuous" ? 1 :
+        (sample.color.mode === "categorical" ? 2 : 3);
       const colorValues = sample.color.dtype === "u8"
         ? this._asU8(buffers[sample.color.buf])
         : this._asF32(buffers[sample.color.buf]);
-      s.cBuf._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
-      gl.bindBuffer(gl.ARRAY_BUFFER, s.cBuf);
+      const colorBufferName = s.colorMode === 3 ? "rgbaBuf" : "cBuf";
+      s[colorBufferName] = gl.createBuffer();
+      s[colorBufferName]._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
+      gl.bindBuffer(gl.ARRAY_BUFFER, s[colorBufferName]);
       gl.bufferData(gl.ARRAY_BUFFER, colorValues, gl.STATIC_DRAW);
-      s.lut = sample.color.mode === "continuous"
-        ? this._lut(sample.color.colormap)
-        : this._paletteLut(sample.color.palette);
+      if (s.colorMode !== 3) {
+        s.lut = sample.color.mode === "continuous"
+          ? this._lut(sample.color.colormap)
+          : this._paletteLut(sample.color.palette);
+      }
     }
     if (sample.size && sample.size.mode === "continuous") {
       s.sizeMode = 1;
@@ -1591,13 +1874,48 @@ class ChartView {
       gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.size.buf]), gl.STATIC_DRAW);
       s.sizeRange = sample.size.range_px;
     }
+    const channel = (name) => sample.channels && sample.channels[name];
+    const artistScalar = Number(trace.style && trace.style.artist_alpha);
+    if (channel("opacity") || channel("artist_alpha") || channel("stroke_width") ||
+        channel("symbol") || Number.isFinite(artistScalar)) {
+      const values = new Float32Array(s.n * 4);
+      for (let i = 0; i < s.n; i++) {
+        values[i * 4] = 1;
+        values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
+        values[i * 4 + 2] = -1;
+        values[i * 4 + 3] = -1;
+      }
+      const copy = (name, component, scale = 1) => {
+        const spec = channel(name);
+        if (!spec) return;
+        const source = spec.dtype === "u8"
+          ? this._asU8(buffers[spec.buf])
+          : this._asF32(buffers[spec.buf]);
+        const components = spec.components || 1;
+        for (let i = 0; i < s.n; i++) values[i * 4 + component] = source[i * components] * scale;
+      };
+      copy("opacity", 0);
+      copy("artist_alpha", 1);
+      copy("stroke_width", 2, this.dpr);
+      copy("symbol", 3);
+      s.styleBuf = this._upload(values);
+    }
+    if (sample.stroke && sample.stroke.mode === "direct_rgba") {
+      s.strokeBuf = this._upload(this._asU8(buffers[sample.stroke.buf]));
+    }
+    this._pointMarkStyle(s, trace);
     g.sampleOverlay = s;
     this._refreshReductionBadges();
   }
 
   _drawDensitySample(g, x0, x1, y0, y1, opacityScale = 1) {
     const s = g && g.sampleOverlay;
-    if (!s || !s.n || !this._viewInside(s.win)) return;
+    // Draw the retained sample whenever it overlaps the view, not only when the
+    // view sits fully inside the sample window: a pan or zoom-out must keep the
+    // same "density + points" look instead of dropping the points the instant
+    // the view crosses the sample's home extent (the density grid stays, so the
+    // points have to as well). Off-screen points are clipped by the GPU.
+    if (!s || !s.n || !this._viewOverlaps(s.win)) return;
     this._drawPoints(
       s,
       this._map(s.xMeta, x0, x1, s.xAxis),
@@ -1667,9 +1985,12 @@ class ChartView {
     const cr = g.cornerRadius || [0, 0];
     gl.uniform2f(u("u_radius"), cr[0] * this.dpr, cr[1] * this.dpr);
     gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
+    // Straight alpha: RECT_FS folds u_strokeOpacity and the per-item alpha
+    // stack in and premultiplies there (uniform and buffer strokes alike).
     const sc = g.strokeColor || [0, 0, 0, 0];
-    const sa = sc[3] * this._strokeOpacity(g.trace.style || {});
-    gl.uniform4f(u("u_stroke"), sc[0] * sa, sc[1] * sa, sc[2] * sa, sa);
+    gl.uniform4f(u("u_stroke"), sc[0], sc[1], sc[2], sc[3]);
+    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}));
     this._setGradientUniforms(prog, g.grad);
   }
 
@@ -1774,7 +2095,11 @@ class ChartView {
       g.colorMode = 2;
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
       g.lut = this._paletteLut(t.color.palette);
+    } else if (t.color && t.color.mode === "direct_rgba") {
+      g.colorMode = 3;
+      g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
     }
+    this._buildInstanceStyleChannels(g, t, buffer, "width");
     g._cpu = { x: x0, y: y1, xMeta: g.x0Meta, yMeta: g.y1Meta };
   }
 
@@ -1795,7 +2120,11 @@ class ChartView {
       g.colorMode = 2;
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
       g.lut = this._paletteLut(t.color.palette);
+    } else if (t.color && t.color.mode === "direct_rgba") {
+      g.colorMode = 3;
+      g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
     }
+    this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
     const style = t.style || {};
     g.meshStrokeWidth = Number(style.stroke_width) || 0;
     g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
@@ -1904,7 +2233,11 @@ class ChartView {
       g.colorMode = 2;
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
       g.lut = this._paletteLut(t.color.palette);
+    } else if (t.color && t.color.mode === "direct_rgba") {
+      g.colorMode = 3;
+      g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
     }
+    this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
     this._rectMarkStyleGpu(g, t);
   }
 
@@ -1942,7 +2275,11 @@ class ChartView {
       g.colorMode = 2;
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
       g.lut = this._paletteLut(t.color.palette);
+    } else if (t.color && t.color.mode === "direct_rgba") {
+      g.colorMode = 3;
+      g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
     }
+    this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
     this._rectMarkStyleGpu(g, t);
   }
 
@@ -2095,11 +2432,11 @@ class ChartView {
 
   // Enable slot + pointer into `buf` — only ever called inside a _bindVao
   // setup closure, so the state lands in that VAO, not global state.
-  _vaoAttr(slot, buf, byteOffset, divisor, size = 1) {
+  _vaoAttr(slot, buf, byteOffset, divisor, size = 1, normalized = false) {
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.enableVertexAttribArray(slot);
-    gl.vertexAttribPointer(slot, size, buf._fcType || gl.FLOAT, false, 0, byteOffset);
+    gl.vertexAttribPointer(slot, size, buf._fcType || gl.FLOAT, normalized, 0, byteOffset);
     gl.vertexAttribDivisor(slot, divisor);
   }
 
@@ -2235,12 +2572,15 @@ class ChartView {
   }
 
 
-  _drawPoints(g, xm, ym, opacityScale = 1) {
-    const simple =
-      g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
+  _canDrawSimplePoints(g) {
+    return g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
+      !g.rgbaBuf && !g.styleBuf && !g.strokeBuf &&
       (g.symbol || 0) === 0 && (g.pointStrokeWidth || 0) <= 0 &&
       Math.max(g.lodBlendShown ?? 0, g.lodBlend ?? 0) <= 0.001;
-    if (simple) {
+  }
+
+  _drawPoints(g, xm, ym, opacityScale = 1) {
+    if (this._canDrawSimplePoints(g)) {
       this._drawSimplePoints(g, xm, ym, opacityScale);
       return;
     }
@@ -2268,22 +2608,26 @@ class ChartView {
     };
     stateColor(u("u_selColor"), this._markStateValue("selected", "color"));
     stateColor(u("u_unselColor"), this._markStateValue("unselected", "color"));
-    const [r, gg, b] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, 1);
+    const [r, gg, b, a] = g.color;
+    gl.uniform4f(u("u_color"), r, gg, b, a);
     gl.uniform1i(u("u_symbol"), g.symbol || 0);
     const sc = g.pointStroke;
-    const strokeAlpha = sc
-      ? sc[3] * this._strokeOpacity(g.trace.style, 0.8) * opacityScale
-      : 0;
     gl.uniform1f(u("u_ptStrokeWidth"), (g.pointStrokeWidth || 0) * this.dpr);
     gl.uniform1i(u("u_ptStrokeFace"), g.pointStrokeFace ? 1 : 0);
-    gl.uniform4f(u("u_ptStroke"), sc ? sc[0] * strokeAlpha : 0, sc ? sc[1] * strokeAlpha : 0,
-      sc ? sc[2] * strokeAlpha : 0, strokeAlpha);
+    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style, 0.8) * opacityScale);
+    // Straight alpha: POINT_FS folds u_strokeOpacity and the per-item alpha
+    // stack in and premultiplies there (uniform and buffer strokes alike).
+    gl.uniform4f(u("u_ptStroke"), sc ? sc[0] : 0, sc ? sc[1] : 0,
+      sc ? sc[2] : 0, sc ? sc[3] : 0);
 
     gl.uniform1i(u("u_selActive"), g.selActive ? 1 : 0);
     const colorOn = g.colorMode !== 0 && g.cBuf;
     const sizeOn = g.sizeMode === 1 && g.sBuf;
     const selOn = g.selActive && g.selBuf;
+    const rgbaOn = g.colorMode === 3 && g.rgbaBuf;
+    const styleOn = !!g.styleBuf;
+    const strokeOn = !!g.strokeBuf;
     if (g.lut) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -2323,6 +2667,9 @@ class ChartView {
         sizeOn ? g.sBuf._fcId : 0,
         selOn ? g.selBuf._fcId : 0,
         blendOn ? g.dBuf._fcId : 0,
+        rgbaOn ? g.rgbaBuf._fcId : 0,
+        styleOn ? g.styleBuf._fcId : 0,
+        strokeOn ? g.strokeBuf._fcId : 0,
       ],
       () => {
         this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 0);
@@ -2331,6 +2678,9 @@ class ChartView {
         if (sizeOn) this._vaoAttr(ATTR_SLOTS.a_sval, g.sBuf, 0, 0);
         if (selOn) this._vaoAttr(ATTR_SLOTS.a_sel, g.selBuf, 0, 0);
         if (blendOn) this._vaoAttr(ATTR_SLOTS.a_dval, g.dBuf, 0, 0);
+        if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 0, 4, true);
+        if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 0, 4);
+        if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 0, 4, true);
       }
     );
     // Generic (constant) attribute values are context state, not VAO state —
@@ -2339,6 +2689,9 @@ class ChartView {
     if (!sizeOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
     if (!selOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sel, 1.0);
     if (!blendOn) gl.vertexAttrib1f(ATTR_SLOTS.a_dval, 0);
+    if (!rgbaOn) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+    if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+    if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, r, gg, b, a);
     gl.drawArrays(gl.POINTS, 0, g.n);
   }
 
@@ -2353,8 +2706,10 @@ class ChartView {
     this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
     gl.uniform1f(u("u_dpr"), this.dpr);
     gl.uniform1f(u("u_size"), g.size);
-    const [r, gg, b] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, this._fillOpacity(g.trace.style, 0.8) * opacityScale);
+    const [r, gg, b, a] = g.color;
+    gl.uniform4f(
+      u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.8) * opacityScale
+    );
     this._bindVao(
       g,
       "points-simple",
@@ -2538,7 +2893,8 @@ class ChartView {
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     gl.uniform1f(u("u_width"), (g.trace.style.width ?? 1.5) * this.dpr);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * this._strokeOpacity(g.trace.style));
+    gl.uniform4f(u("u_color"), r, gg, b, a);
+    gl.uniform1f(u("u_opacity"), this._strokeOpacity(g.trace.style));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     const dashed = this._segmentDash(g, prog);
     if (g.colorMode && g.lut) {
@@ -2550,7 +2906,9 @@ class ChartView {
       g,
       "segment",
       [g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId,
-        g.colorMode ? g.cBuf._fcId : 0,
+        g.colorMode && g.cBuf ? g.cBuf._fcId : 0,
+        g.rgbaBuf ? g.rgbaBuf._fcId : 0,
+        g.styleBuf ? g.styleBuf._fcId : 0,
         dashed ? g._segmentDashOffsetBuf._fcId : 0,
         dashed ? g._segmentDashDirBuf._fcId : 0],
       () => {
@@ -2558,14 +2916,18 @@ class ChartView {
         this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
-        if (g.colorMode) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+        if (g.colorMode && g.cBuf) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+        if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+        if (g.styleBuf) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
         if (dashed) {
           this._vaoAttr(ATTR_SLOTS.a_dash0, g._segmentDashOffsetBuf, 0, 1);
           this._vaoAttr(ATTR_SLOTS.a_dashDir, g._segmentDashDirBuf, 0, 1);
         }
       }
     );
-    if (!g.colorMode) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!g.cBuf) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!g.rgbaBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+    if (!g.styleBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
   }
 
@@ -2654,26 +3016,35 @@ class ChartView {
     for (const name of ["y0", "y1", "y2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.yAxis);
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
-    gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], 1);
+    gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], g.color[3]);
+    // Straight alpha: MESH_FS folds u_strokeOpacity and the per-item alpha
+    // stack in and premultiplies there (uniform and buffer strokes alike).
     const stroke = g.meshStroke || [0, 0, 0, 0];
-    const strokeAlpha = stroke[3] * this._strokeOpacity(g.trace.style);
-    gl.uniform4f(u("u_stroke"), stroke[0] * strokeAlpha, stroke[1] * strokeAlpha,
-      stroke[2] * strokeAlpha, strokeAlpha);
+    gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
     gl.uniform1f(u("u_strokeWidth"), g.meshStrokeWidth || 0);
+    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style));
     if (g.colorMode && g.lut) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
       gl.uniform1i(u("u_lut"), 0);
     }
     const parts = ["x0", "x1", "x2", "y0", "y1", "y2"].map((name) => g[name + "Buf"]._fcId);
-    parts.push(g.colorMode ? g.cBuf._fcId : 0);
+    parts.push(g.cBuf ? g.cBuf._fcId : 0, g.rgbaBuf ? g.rgbaBuf._fcId : 0,
+      g.styleBuf ? g.styleBuf._fcId : 0, g.strokeBuf ? g.strokeBuf._fcId : 0);
     this._bindVao(g, "mesh", parts, () => {
       for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) {
         this._vaoAttr(ATTR_SLOTS["a" + name], g[name + "Buf"], 0, 1);
       }
-      if (g.colorMode) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+      if (g.cBuf) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+      if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+      if (g.styleBuf) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+      if (g.strokeBuf) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
     });
-    if (!g.colorMode) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!g.cBuf) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!g.rgbaBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, ...g.color);
+    if (!g.styleBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+    if (!g.strokeBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...stroke);
     gl.drawArraysInstanced(gl.TRIANGLES, 0, 3, g.n);
   }
 
@@ -2770,10 +3141,15 @@ class ChartView {
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     gl.uniform4f(u("u_edgePad"), edgePad[0], edgePad[1], edgePad[2], edgePad[3]);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style));
+    gl.uniform4f(u("u_color"), r, gg, b, a);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     this._setRectStyleUniforms(prog, g);
-    const colorOn = g.colorMode && g.cBuf;
+    const colorOn = !!g.cBuf;
+    const rgbaOn = !!g.rgbaBuf;
+    const styleOn = !!g.styleBuf;
+    const strokeOn = !!g.strokeBuf;
+    const radiusOn = !!g.radiusBuf;
     if (colorOn) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -2782,16 +3158,27 @@ class ChartView {
     this._bindVao(
       g,
       "rects",
-      [g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId, colorOn ? g.cBuf._fcId : 0],
+      [g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId,
+        colorOn ? g.cBuf._fcId : 0, rgbaOn ? g.rgbaBuf._fcId : 0,
+        styleOn ? g.styleBuf._fcId : 0, strokeOn ? g.strokeBuf._fcId : 0,
+        radiusOn ? g.radiusBuf._fcId : 0],
       () => {
         this._vaoAttr(ATTR_SLOTS.ax0, g.x0Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
         if (colorOn) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+        if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+        if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+        if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
+        if (radiusOn) this._vaoAttr(ATTR_SLOTS.a_radius, g.radiusBuf, 0, 1, 2);
       }
     );
     if (!colorOn) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!rgbaOn) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+    if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+    if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...(g.strokeColor || g.color));
+    if (!radiusOn) gl.vertexAttrib2f(ATTR_SLOTS.a_radius, -1, -1);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
   }
 
@@ -2817,11 +3204,16 @@ class ChartView {
     gl.uniform1f(u("u_v0Const"), v0Const ?? 0);
     gl.uniform1f(u("u_v0EdgePad"), v0EdgePad);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style));
+    gl.uniform4f(u("u_color"), r, gg, b, a);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     this._setRectStyleUniforms(prog, g);
     const v0On = g.value0Mode === 1 && g.value0Buf;
-    const colorOn = g.colorMode && g.cBuf;
+    const colorOn = !!g.cBuf;
+    const rgbaOn = !!g.rgbaBuf;
+    const styleOn = !!g.styleBuf;
+    const strokeOn = !!g.strokeBuf;
+    const radiusOn = !!g.radiusBuf;
     if (colorOn) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -2834,16 +3226,28 @@ class ChartView {
         g.posBuf._fcId, g.value1Buf._fcId,
         v0On ? g.value0Buf._fcId : 0,
         colorOn ? g.cBuf._fcId : 0,
+        rgbaOn ? g.rgbaBuf._fcId : 0,
+        styleOn ? g.styleBuf._fcId : 0,
+        strokeOn ? g.strokeBuf._fcId : 0,
+        radiusOn ? g.radiusBuf._fcId : 0,
       ],
       () => {
         this._vaoAttr(ATTR_SLOTS.a_pos, g.posBuf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.a_v1, g.value1Buf, 0, 1);
         if (v0On) this._vaoAttr(ATTR_SLOTS.a_v0, g.value0Buf, 0, 1);
         if (colorOn) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+        if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+        if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+        if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
+        if (radiusOn) this._vaoAttr(ATTR_SLOTS.a_radius, g.radiusBuf, 0, 1, 2);
       }
     );
     if (!v0On) gl.vertexAttrib1f(ATTR_SLOTS.a_v0, 0);
     if (!colorOn) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!rgbaOn) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+    if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+    if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...(g.strokeColor || g.color));
+    if (!radiusOn) gl.vertexAttrib2f(ATTR_SLOTS.a_radius, -1, -1);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
   }
 
@@ -3509,8 +3913,23 @@ class ChartView {
   }
 
   _pickAt(cssX, cssY) {
-    if (!this._pickable) return null;
-    if (this._pickDirty) this._renderPick();
+    if (
+      !this._pickable ||
+      this._glLost ||
+      !this.gl ||
+      this.gl.isContextLost()
+    ) return null;
+    if (this._pickDirty) {
+      try {
+        this._renderPick();
+      } catch (err) {
+        // Native eviction can race pointer movement before the asynchronous
+        // webglcontextlost event updates `_glLost`. Suppress only that lost-
+        // context case; real shader/program defects must remain observable.
+        if (!this.gl || this.gl.isContextLost()) return null;
+        throw err;
+      }
+    }
     const gl = this.gl;
     const px = Math.round(cssX * this.dpr);
     const py = Math.round((this.plot.h - cssY) * this.dpr); // GL origin bottom-left
@@ -3812,6 +4231,8 @@ class ChartView {
     XY_CONTEXT_GOVERNOR.unregister(this);
     this._ctxIo?.disconnect();
     this._ctxIo = null;
+    clearTimeout(this._ctxRecoveryTimer);
+    this._ctxRecoveryTimer = null;
     clearTimeout(this._rebinTimer);
     if (this._rebinWorker) {
       this._rebinWorker.terminate();
@@ -3844,6 +4265,14 @@ class ChartView {
     this._raf = null;
     this._cancelViewAnimation();
     this._destroyGlResources();
+    // Release the GL context now instead of waiting for GC. Republishing a
+    // figure destroys and rebuilds its view, and browsers cap live contexts
+    // (~16); without an explicit loss the destroyed contexts pile up under
+    // repeated rebuilds (e.g. an on_view_change-driven refresh) and trip the
+    // "too many active WebGL contexts" eviction. Listeners are already removed
+    // above and _destroyed is set, so the resulting event starts no recovery.
+    const loseExt = this.gl && this.gl.getExtension("WEBGL_lose_context");
+    if (loseExt) loseExt.loseContext();
     this.gl = null;
     this.root.remove();
   }

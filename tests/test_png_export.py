@@ -885,3 +885,33 @@ def test_public_native_heatmap_png_skips_browser_normalization(monkeypatch) -> N
     monkeypatch.setattr(_payload.kernels, "normalize_f32", fail_normalization)
     png = figure.to_png(scale=1)
     assert _ihdr(png)[:2] == (180, 120)
+
+
+def _dark_pixel_count(png: bytes, threshold: int = 60) -> int:
+    rgba = _decode_rgba(png)
+    rgb = rgba[..., :3].astype(np.int64)
+    return int(((rgb < threshold).all(axis=-1) & (rgba[..., 3] > 200)).sum())
+
+
+def test_bar_scalar_stroke_color_renders_in_png() -> None:
+    """Regression: scalar stroke= must not collapse to the face paint."""
+    fig = Figure().bar(
+        [0, 1, 2], [1.0, 2.0, 3.0], color="white", stroke="black", stroke_width=4.0, opacity=1.0
+    )
+    assert _dark_pixel_count(fig.to_png(width=300, height=200)) > 200
+
+
+def test_scatter_direct_edges_with_colormap_c_render_in_png() -> None:
+    """Regression: the affine channel fast path must defer to the styled
+    painter when a per-point stroke channel is present."""
+    edges = np.tile([0.0, 0.0, 0.0, 1.0], (3, 1))
+    fig = Figure().scatter(
+        [0, 1, 2],
+        [0, 1, 0],
+        color=np.array([0.9, 0.95, 1.0]),
+        size=24.0,
+        stroke=edges,
+        stroke_width=4.0,
+        opacity=1.0,
+    )
+    assert _dark_pixel_count(fig.to_png(width=300, height=200)) > 200

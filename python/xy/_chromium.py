@@ -217,25 +217,59 @@ class ChromiumSession:
                     reply.get("params", {})
                 )
 
-    def render_png(
-        self,
-        html: str,
-        width: int,
-        height: int,
-        *,
-        scale: float = 2.0,
-        timeout_s: float = 120.0,
-    ) -> bytes:
-        """Load a standalone chart page in a fresh tab and screenshot it."""
+    def _page_session(self, html: str, timeout_s: float) -> tuple[str, str, "Path"]:
+        """Open a fresh tab on `html` (written to disk) and return its ids."""
         target = self._call("Target.createTarget", {"url": "about:blank"})
         attached = self._call(
             "Target.attachToTarget", {"targetId": target["targetId"], "flatten": True}
         )
         sid = attached["sessionId"]
         page_path = Path(self._tmp.name) / f"chart-{target['targetId'][:8]}.html"
+        page_path.write_text(html, encoding="utf-8")
+        self._call("Page.enable", session_id=sid, timeout_s=timeout_s)
+        return target["targetId"], sid, page_path
+
+    def _navigate_and_settle(self, sid: str, page_path: "Path", timeout_s: float) -> None:
+        self._call(
+            "Page.navigate", {"url": page_path.as_uri()}, session_id=sid, timeout_s=timeout_s
+        )
+        self._wait_event("Page.loadEventFired", session_id=sid, timeout_s=timeout_s)
+        # First painted frame: the client draws via requestAnimationFrame
+        # after the inline decode; two frames guarantee the paint landed.
+        self._call(
+            "Runtime.evaluate",
+            {
+                "expression": (
+                    "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
+                ),
+                "awaitPromise": True,
+            },
+            session_id=sid,
+            timeout_s=timeout_s,
+        )
+
+    def render_image(
+        self,
+        html: str,
+        width: int,
+        height: int,
+        *,
+        format: str = "png",
+        scale: float = 2.0,
+        quality: Optional[int] = None,
+        transparent: bool = False,
+        timeout_s: float = 120.0,
+    ) -> bytes:
+        """Load a standalone chart page in a fresh tab and screenshot it.
+
+        `format` is a CDP screenshot format ("png", "jpeg", or "webp");
+        `quality` applies to the lossy formats (0-100, encoder-defined
+        default when omitted). `transparent` clears Chromium's default white
+        page backdrop so alpha-capable formats keep the page's transparency."""
+        if format not in ("png", "jpeg", "webp"):
+            raise ChromiumError(f"unsupported screenshot format {format!r}")
+        target_id, sid, page_path = self._page_session(html, timeout_s)
         try:
-            page_path.write_text(html, encoding="utf-8")
-            self._call("Page.enable", session_id=sid, timeout_s=timeout_s)
             self._call(
                 "Emulation.setDeviceMetricsOverride",
                 {
@@ -247,46 +281,105 @@ class ChromiumSession:
                 session_id=sid,
                 timeout_s=timeout_s,
             )
-            self._call(
-                "Page.navigate", {"url": page_path.as_uri()}, session_id=sid, timeout_s=timeout_s
-            )
-            self._wait_event("Page.loadEventFired", session_id=sid, timeout_s=timeout_s)
-            # First painted frame: the client draws via requestAnimationFrame
-            # after the inline decode; two frames guarantee the paint landed.
-            self._call(
-                "Runtime.evaluate",
-                {
-                    "expression": (
-                        "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
-                    ),
-                    "awaitPromise": True,
+            if transparent:
+                self._call(
+                    "Emulation.setDefaultBackgroundColorOverride",
+                    {"color": {"r": 0, "g": 0, "b": 0, "a": 0}},
+                    session_id=sid,
+                    timeout_s=timeout_s,
+                )
+            self._navigate_and_settle(sid, page_path, timeout_s)
+            params: dict[str, Any] = {
+                "format": format,
+                "clip": {
+                    "x": 0,
+                    "y": 0,
+                    "width": int(width),
+                    "height": int(height),
+                    "scale": 1,
                 },
-                session_id=sid,
-                timeout_s=timeout_s,
-            )
-            shot = self._call(
-                "Page.captureScreenshot",
-                {
-                    "format": "png",
-                    "clip": {
-                        "x": 0,
-                        "y": 0,
-                        "width": int(width),
-                        "height": int(height),
-                        "scale": 1,
-                    },
-                    "captureBeyondViewport": True,
-                },
-                session_id=sid,
-                timeout_s=timeout_s,
-            )
+                "captureBeyondViewport": True,
+            }
+            if quality is not None and format in ("jpeg", "webp"):
+                params["quality"] = int(quality)
+            shot = self._call("Page.captureScreenshot", params, session_id=sid, timeout_s=timeout_s)
             data = base64.b64decode(shot["data"])
-            if data[:8] != b"\x89PNG\r\n\x1a\n":
-                raise ChromiumError("screenshot output was not a PNG")
+            magics = {
+                "png": (b"\x89PNG\r\n\x1a\n",),
+                "jpeg": (b"\xff\xd8\xff",),
+                "webp": (b"RIFF",),
+            }
+            if not any(data.startswith(m) for m in magics[format]):
+                raise ChromiumError(f"screenshot output was not a {format.upper()}")
             return data
         finally:
             with contextlib.suppress(Exception):
-                self._call("Target.closeTarget", {"targetId": target["targetId"]})
+                self._call("Target.closeTarget", {"targetId": target_id})
+            page_path.unlink(missing_ok=True)
+
+    def render_png(
+        self,
+        html: str,
+        width: int,
+        height: int,
+        *,
+        scale: float = 2.0,
+        timeout_s: float = 120.0,
+    ) -> bytes:
+        """Compatibility wrapper: `render_image` with format="png"."""
+        return self.render_image(html, width, height, scale=scale, timeout_s=timeout_s)
+
+    def render_pdf(
+        self,
+        html: str,
+        width: int,
+        height: int,
+        *,
+        timeout_s: float = 120.0,
+    ) -> bytes:
+        """Print the standalone chart page to a single-page PDF.
+
+        The page box matches the chart's CSS pixel size at the standard
+        96 px/in ↔ 72 pt/in mapping. `scale` deliberately does not apply:
+        PDF is resolution-independent, so device-pixel-ratio has no meaning
+        here (raster layers print at the page's natural DPR)."""
+        target_id, sid, page_path = self._page_session(html, timeout_s)
+        try:
+            self._call(
+                "Emulation.setDeviceMetricsOverride",
+                {
+                    "width": int(width),
+                    "height": int(height),
+                    "deviceScaleFactor": 1.0,
+                    "mobile": False,
+                },
+                session_id=sid,
+                timeout_s=timeout_s,
+            )
+            self._navigate_and_settle(sid, page_path, timeout_s)
+            printed = self._call(
+                "Page.printToPDF",
+                {
+                    "printBackground": True,
+                    "paperWidth": int(width) / 96.0,
+                    "paperHeight": int(height) / 96.0,
+                    "marginTop": 0,
+                    "marginBottom": 0,
+                    "marginLeft": 0,
+                    "marginRight": 0,
+                    "pageRanges": "1",
+                    "preferCSSPageSize": False,
+                },
+                session_id=sid,
+                timeout_s=timeout_s,
+            )
+            data = base64.b64decode(printed["data"])
+            if not data.startswith(b"%PDF-"):
+                raise ChromiumError("print output was not a PDF")
+            return data
+        finally:
+            with contextlib.suppress(Exception):
+                self._call("Target.closeTarget", {"targetId": target_id})
             page_path.unlink(missing_ok=True)
 
     def close(self) -> None:

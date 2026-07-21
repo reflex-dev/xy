@@ -36,7 +36,7 @@ from ._artists import (
     Text,
     unit_converted_values,
 )
-from ._colors import PROP_CYCLE, resolve_cmap, resolve_color
+from ._colors import PROP_CYCLE, resolve_cmap, resolve_color, resolve_rgba_array
 from ._fmt import parse_fmt
 from ._mathtext import mathtext_to_unicode
 from ._plot_types import PlotTypeMixin
@@ -1158,40 +1158,64 @@ class Axes(PlotTypeMixin):
         xv = np.ma.asarray(x).reshape(-1)
         yv = np.ma.asarray(y).reshape(-1)
         s_arr = None if s is None or np.isscalar(s) else np.ma.asarray(s).reshape(-1)
+        alpha_arr = (
+            None if alpha is None or np.isscalar(alpha) else np.ma.asarray(alpha).reshape(-1)
+        )
+        linewidth_arr = (
+            None
+            if linewidths is None or np.isscalar(linewidths)
+            else np.ma.asarray(linewidths).reshape(-1)
+        )
         dropped = np.ma.getmaskarray(xv) | np.ma.getmaskarray(yv)
-        if s_arr is not None and len(s_arr) == len(dropped):
-            dropped = dropped | np.ma.getmaskarray(s_arr)
+        for channel in (s_arr, alpha_arr, linewidth_arr):
+            if channel is not None and len(channel) == len(dropped):
+                dropped = dropped | np.ma.getmaskarray(channel)
         if dropped.any():
-            # matplotlib never draws rows masked in x, y, or s
+            # Matplotlib never draws rows masked in geometry or a style channel.
             keep = ~dropped
             xv, yv = xv[keep], yv[keep]
             if s_arr is not None and len(s_arr) == len(dropped):
                 s_arr = s_arr[keep]
-            if (
-                c is not None
-                and not isinstance(c, str)
-                and not (
-                    isinstance(c, (tuple, list))
-                    and len(c) in (3, 4)
-                    and not hasattr(c[0], "__len__")
-                )
-            ):
-                c_rows = np.ma.asarray(c)
-                if c_rows.ndim >= 1 and c_rows.shape[0] == len(dropped):
-                    c = c_rows[keep]
+            if alpha_arr is not None and len(alpha_arr) == len(dropped):
+                alpha_arr = alpha_arr[keep]
+            if linewidth_arr is not None and len(linewidth_arr) == len(dropped):
+                linewidth_arr = linewidth_arr[keep]
+            for channel_name, channel in (("c", c), ("edgecolors", edgecolors)):
+                if channel is None or isinstance(channel, str):
+                    continue
+                rows = np.ma.asarray(channel)
+                if rows.ndim >= 1 and rows.shape[0] == len(dropped):
+                    if channel_name == "c":
+                        c = rows[keep]
+                    else:
+                        edgecolors = rows[keep]
         xv, yv = np.asarray(xv), np.asarray(yv)
         if s_arr is not None:
             s = np.asarray(s_arr)
+        if alpha_arr is not None:
+            alpha = np.asarray(alpha_arr)
+        if linewidth_arr is not None:
+            linewidths = np.asarray(linewidth_arr)
         x, y = xv, yv
         if transform is not None:
             x, y = self._transform_points(x, y, transform)
         source_color = None
-        cv = None if c is None or isinstance(c, str) else np.ma.asarray(c).reshape(-1)
+        c_array = None if c is None or isinstance(c, str) else np.ma.asarray(c)
+        single_numeric_color = bool(
+            c_array is not None
+            and c_array.ndim == 1
+            and c_array.shape in {(3,), (4,)}
+            and len(c_array) != len(xv)
+            and np.issubdtype(c_array.dtype, np.number)
+            and isinstance(c, (tuple, list))
+        )
+        cv = c_array
         if (
             cv is not None
             and cv.ndim == 1
             and len(cv) == len(xv)
             and np.issubdtype(cv.dtype, np.number)
+            and not single_numeric_color
         ):
             source_color = cv.copy()
             numeric_color = np.ma.asarray(cv, dtype=np.float64)
@@ -1204,6 +1228,14 @@ class Axes(PlotTypeMixin):
                 xv, yv, cv = xv[finite_color], yv[finite_color], numeric_color.data[finite_color]
                 if s is not None and not np.isscalar(s):
                     s = np.asarray(s)[finite_color]
+                if alpha is not None and not np.isscalar(alpha):
+                    alpha = np.asarray(alpha)[finite_color]
+                if linewidths is not None and not np.isscalar(linewidths):
+                    linewidths = np.asarray(linewidths)[finite_color]
+                if edgecolors is not None and not isinstance(edgecolors, str):
+                    edge_array = np.asarray(edgecolors)
+                    if edge_array.ndim >= 1 and edge_array.shape[0] == len(finite_color):
+                        edgecolors = edge_array[finite_color]
             x, y, c = xv, yv, cv
 
         symbol = _marker_symbol(marker) if marker else "circle"
@@ -1225,21 +1257,27 @@ class Axes(PlotTypeMixin):
 
         edge_setting = rcParams["scatter.edgecolors"] if edgecolors is None else edgecolors
         no_edges = isinstance(edge_setting, str) and edge_setting.lower() == "none"
+        raw_edge_width = rcParams["patch.linewidth"] if linewidths is None else linewidths
         edge_width_px = (
-            0.0
-            if no_edges
-            else float(rcParams["patch.linewidth"] if linewidths is None else linewidths)
-            * self._point_scale()
+            0.0 if no_edges else np.asarray(raw_edge_width, dtype=np.float64) * self._point_scale()
         )
+        if np.ndim(edge_width_px) == 0:
+            edge_width_px = float(edge_width_px)
         size_px = np.asarray(marker_path_px) + edge_width_px
         if np.ndim(size_px) == 0:
             size_px = float(size_px)
         entry_kwargs: dict[str, Any] = {
             "size": size_px,
-            "opacity": float(alpha) if alpha is not None else 1.0,
+            # Preserve the long-standing pyplot artist metadata while the
+            # core receives alpha through the override channel below.
+            "opacity": float(alpha) if alpha is not None and np.isscalar(alpha) else 1.0,
             "name": str(label) if label is not None else None,
             "symbol": symbol,
         }
+        if alpha is not None:
+            entry_kwargs["_artist_alpha"] = (
+                float(alpha) if np.isscalar(alpha) else np.asarray(alpha, dtype=np.float64)
+            )
         if isinstance(size_px, np.ndarray) and size_px.size:
             # matplotlib s= is absolute (points²); pin the engine's size range
             # to the converted pixel values so normalization is the identity
@@ -1252,13 +1290,13 @@ class Axes(PlotTypeMixin):
                     entry_kwargs["size_range"] = (lo_px, hi_px)
         if c is None:
             entry_kwargs["color"] = self._next_color()
-        elif isinstance(c, str) or (
-            isinstance(c, (tuple, list)) and len(c) in (3, 4) and not hasattr(c[0], "__len__")
-        ):
+        elif isinstance(c, str) or single_numeric_color:
             try:
                 entry_kwargs["color"] = resolve_color(c)
             except ValueError:
                 entry_kwargs["color"] = np.asarray(c)  # data array, not a color
+        elif np.asarray(c).ndim == 2 or not np.issubdtype(np.asarray(c).dtype, np.number):
+            entry_kwargs["color"] = resolve_rgba_array(c, len(x), "scatter c")
         else:
             entry_kwargs["color"] = np.asarray(c)  # value encoding
             entry_kwargs["colormap"] = resolve_cmap(
@@ -1277,7 +1315,12 @@ class Axes(PlotTypeMixin):
                 entry_kwargs["domain"] = (lo, hi)
         if not no_edges:
             if not (isinstance(edge_setting, str) and edge_setting.lower() == "face"):
-                entry_kwargs["stroke"] = resolve_color(edge_setting)
+                if isinstance(edge_setting, str):
+                    entry_kwargs["stroke"] = resolve_color(edge_setting)
+                else:
+                    entry_kwargs["stroke"] = resolve_rgba_array(
+                        edge_setting, len(x), "scatter edgecolors"
+                    )
             entry_kwargs["stroke_width"] = edge_width_px
         entry = self._add("scatter", {"x": x, "y": y, "kwargs": entry_kwargs})
         if source_color is not None:
@@ -1380,73 +1423,49 @@ class Axes(PlotTypeMixin):
             except (TypeError, ValueError):
                 raise ValueError("bar align='edge' requires numeric positions") from None
         check_unsupported(kwargs, "bar()/barh()")
-        colors = None
-        scalar_channels = False
-        if color is not None and not isinstance(color, str) and hasattr(color, "__len__"):
-            try:
-                color_array = np.asarray(color)
-                scalar_channels = color_array.shape in {(3,), (4,)} and np.issubdtype(
-                    color_array.dtype, np.number
-                )
-            except (TypeError, ValueError):
-                pass
-        if (
-            color is not None
-            and not isinstance(color, str)
-            and hasattr(color, "__len__")
-            and not scalar_channels
-        ):
-            colors = [resolve_color(value) for value in color]
-        if colors is not None:
-            positions = np.asarray(cats, dtype=object).reshape(-1)
-            values = np.asarray(vals, dtype=np.float64).reshape(-1)
-            bases = np.zeros_like(values) if base is None else np.broadcast_to(base, values.shape)
-            if len(colors) != len(values):
-                raise ValueError("bar color sequence must match the number of bars")
-            first: Optional[dict[str, Any]] = None
-            for index, (position, value, base_value, item_color) in enumerate(
-                zip(positions, values, bases, colors, strict=True)
+        n_bars = int(np.asarray(vals).size)
+
+        def paint(value: Any, label_text: str, default: Optional[str] = None) -> Any:
+            if value is None:
+                return default
+            if isinstance(value, str):
+                return resolve_color(value)
+            array = np.asarray(value)
+            if (
+                array.ndim == 1
+                and array.shape in {(3,), (4,)}
+                and np.issubdtype(array.dtype, np.number)
+                and isinstance(value, (tuple, list))
             ):
-                item = self._add(
-                    "bar",
-                    {
-                        "x": [position],
-                        "y": [value],
-                        "kwargs": {
-                            "color": item_color,
-                            "width": float(thickness),
-                            "base": [base_value],
-                            "opacity": float(alpha) if alpha is not None else 1.0,
-                            "name": str(label[index] if isinstance(label, (list, tuple)) else label)
-                            if label is not None
-                            else None,
-                            "orientation": orientation,
-                        },
-                    },
-                )
-                first = first or item
-            assert first is not None
-            synthetic = {
-                "x": cats,
-                "y": vals,
-                "kwargs": {"base": bases, "orientation": orientation},
-            }
-            return BarContainer(self, synthetic)
+                return resolve_color(value)
+            return resolve_rgba_array(value, n_bars, label_text)
+
         entry_kwargs: dict[str, Any] = {
-            "color": None
-            if colors is not None
-            else (resolve_color(color) if color is not None else self._next_color()),
-            "colors": colors,
+            "color": paint(color, "bar color", self._next_color()),
             "width": float(thickness),
-            "opacity": float(alpha) if alpha is not None else 1.0,
+            "opacity": 1.0,
             "name": str(label) if label is not None else None,
             "orientation": orientation,
         }
+        if alpha is not None:
+            entry_kwargs["_artist_alpha"] = (
+                float(alpha) if np.isscalar(alpha) else np.asarray(alpha, dtype=np.float64)
+            )
         if base is not None:
             entry_kwargs["base"] = np.array(base, copy=True) if not np.isscalar(base) else base
         if edgecolor is not None:
-            entry_kwargs["stroke"] = resolve_color(edgecolor)
-            entry_kwargs["stroke_width"] = float(linewidth or 1.0)
+            entry_kwargs["stroke"] = paint(edgecolor, "bar edgecolor")
+            entry_kwargs["stroke_width"] = (
+                np.asarray(linewidth, dtype=np.float64)
+                if linewidth is not None and not np.isscalar(linewidth)
+                else float(linewidth or 1.0)
+            )
+        elif linewidth is not None:
+            entry_kwargs["stroke_width"] = (
+                np.asarray(linewidth, dtype=np.float64)
+                if not np.isscalar(linewidth)
+                else float(linewidth)
+            )
         entry = self._add("bar", {"x": cats, "y": vals, "kwargs": entry_kwargs})
         container = BarContainer(self, entry)
         if xerr is not None or yerr is not None:
@@ -4248,6 +4267,10 @@ class Axes(PlotTypeMixin):
                 children.append(xy.line(x=e["x"], y=e["y"], **kw, **axis_kw))
             elif kind == "scatter":
                 kw = dict(kw)
+                if "_artist_alpha" in kw:
+                    # pyplot alpha overrides intrinsic RGBA. Core opacity is
+                    # an independent multiplier, so do not apply it twice.
+                    kw["opacity"] = 1.0
                 domain = kw.pop("domain", None)  # vmin/vmax → the color channel window
                 levels = e.get("discrete_levels")
                 if levels is not None and "colormap" in kw and not isinstance(kw.get("color"), str):
@@ -4958,7 +4981,7 @@ def _bbox_label_style(bbox: dict[str, Any], font_size: float = 11.0) -> dict[str
     """matplotlib text ``bbox`` patch → annotation-label box styles.
 
     A CSS approximation drawn by the render client's DOM label; the static
-    exporters keep the plain label (recorded in docs/engineering/matplotlib-compat.md).
+    exporters keep the plain label (recorded in spec/matplotlib/compat.md).
     """
     style: dict[str, Any] = {}
     face = bbox.get("fc", bbox.get("facecolor", "C0"))

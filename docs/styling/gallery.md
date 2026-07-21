@@ -1,536 +1,141 @@
 ---
-title: Styling Gallery
-description: Exercise every XY mark family, chart shell, facet, badge, axis, and custom-chrome boundary.
+title: Advanced Styling Gallery
+description: Inspect advanced XY styling paths for scalar fields, uncertainty, explicit geometry, facets, reduction badges, and custom chrome.
 ---
 
-# Styling Gallery
+# Advanced Styling Gallery
 
-This gallery demonstrates the full range of XY's public styling features. The
-examples combine mark styles, DOM slots, theme tokens, responsive sizing, and
-less common axis and annotation configurations. Use the shorter
-[recipes](/docs/xy/styling/recipes/) when you want one polished treatment;
-use this page when you need to see how far a styling surface reaches.
+This gallery focuses on advanced renderer and composition paths that do not
+belong in the product-ready examples: scalar fields, density reduction,
+uncertainty, explicit geometry, facets, and host-owned chrome. Start with
+[Examples](/docs/xy/styling/examples/) when you want a polished chart pattern
+to copy; use this page when you need to inspect a less common styling boundary.
 
-## Complete coverage map
+## Trend and cumulative marks
 
-| Family | Components exercised here | Useful styling variations |
-| --- | --- | --- |
-| Trend | `line`, `area`, `step`, `stairs`, `ecdf` | smooth and stepped geometry, gradients, outlines, dashes, opacity |
-| Points | `scatter` | all symbols, fill/stroke separation, continuous color and size |
-| Categories | `bar`, `column` | horizontal/vertical layout, gradients, outline, asymmetric corner radii |
-| Distributions | `histogram` / `hist`, `box`, `violin` | rounded bins, density fill, translucent comparison layers |
-| Grids and density | `heatmap`, `hexbin`, `contour` | colormaps, cell alpha, contour strokes, layered scalar fields |
-| Uncertainty | `error_band`, `errorbar` | translucent interval fill, boundary strokes, caps, estimate overlays |
-| Explicit geometry | `segments`, `stem`, `triangle_mesh` | per-item color, stroke width, marker paint, mesh borders |
-| Annotations | `vline`, `hline`, `x_band`, `y_band`, `text`, `label`, `marker`, `arrow`, `threshold`, `threshold_zone`, `callout` | geometry paint plus independently styled DOM labels |
-| Chrome | `x_axis`, `y_axis`, `legend`, `tooltip`, `colorbar`, `modebar`, `theme`, `interaction_config` | classes, inline slot styles, tokens, crosshair, selection |
-| Composition | `chart`, typed chart factories, `facet_chart` | layered marks, shared panel styles, responsive wrappers, export CSS |
-
-`hist` is an alias of `histogram`; `label` is an alias of `text`; and
-`threshold` / `threshold_zone` resolve to the corresponding rule or band.
-The aliases are listed for completeness; they use the same rendering behavior
-as their corresponding components.
-
-## Responsive chart shells
-
-Both cards use `width="100%"`; resize the page to exercise the chart's
-`ResizeObserver`. They use different accent colors while their background,
-text, axes, legend, tooltip, and modebar follow the page's light or dark theme.
-Hover the live marks to inspect the tooltip.
+A compact combo chart gives monthly production the visual weight of blue
+columns while an amber line keeps the cumulative signal easy to compare. The
+host-owned key distinguishes bar and line marks, and only quiet horizontal guides
+remain inside the plot.
 
 ~~~python demo exec
 import reflex as rx
 import reflex_xy
 import xy
 
-
-def shell_chart(accent: str, title: str):
-    return xy.line_chart(
-        xy.area(
-            [0, 1, 2, 3, 4, 5],
-            [3, 5, 4, 7, 6, 9],
-            color=accent,
-            curve="smooth",
-            fill="linear-gradient(currentColor, transparent)",
-            opacity=0.42,
-            line_width=2,
-        ),
-        xy.scatter(
-            [0, 1, 2, 3, 4, 5],
-            [3, 5, 4, 7, 6, 9],
-            name="Observed",
-            color=accent,
-            size=7,
-            stroke="#ffffff",
-            stroke_width=1.5,
-        ),
-        xy.legend(
-            loc="upper left",
-            title="Series",
-            style={
-                "background": "var(--secondary-3)",
-                "color": "var(--secondary-12)",
-                "border": "1px solid var(--secondary-5)",
-            },
-        ),
-        xy.tooltip(title="Sample {x}", format={"y": ".1f"}),
-        xy.x_axis(label="sample", tick_count=6),
-        xy.y_axis(label="value"),
-        xy.theme(
-            style={
-                "--chart-bg": "var(--secondary-2)",
-                "--chart-text": "var(--secondary-11)",
-                "--chart-grid": "var(--secondary-a5)",
-                "--chart-axis": "var(--secondary-a8)",
-                "--chart-legend-bg": "var(--secondary-3)",
-                "--chart-tooltip-bg": "var(--secondary-3)",
-                "--chart-tooltip-text": "var(--secondary-12)",
-            }
-        ),
-        class_name=(
-            "rounded-2xl border border-secondary-5 bg-secondary-2 "
-            "text-secondary-12 shadow-sm"
-        ),
-        class_names={
-            "title": "font-semibold tracking-tight",
-            "legend": "rounded-lg backdrop-blur-sm",
-            "tooltip": "rounded-lg shadow-2xl",
-            "modebar_button": "rounded-md focus:ring-2",
-        },
-        styles={
-            "root": {"border_color": "var(--secondary-5)"},
-            "legend_item": {"padding": "2px 4px"},
-            "legend_swatch": {"border_radius": 999},
-        },
-        style={"background": "var(--secondary-2)"},
-        width="100%",
-        height=350,
-        padding=[42, 40, 64, 58],
-        title=title,
-    )
-
-
-def responsive_shells_preview():
-    return rx.el.div(
-        rx.box(
-            reflex_xy.chart(
-                shell_chart("#7c3aed", "Responsive shell"),
-                height="350px",
-            ),
-            class_name="min-w-0",
-        ),
-        rx.box(
-            reflex_xy.chart(
-                shell_chart("#38bdf8", "Alternate accent"),
-                height="350px",
-            ),
-            class_name="min-w-0",
-        ),
-        class_name="flex w-full flex-col gap-5",
-    )
-~~~
-
-Do not put `overflow-hidden` on the XY root when axis titles or annotation
-labels may reach its edge; those labels are DOM chrome and can be clipped by
-normal CSS overflow. Put clipping on an outer host wrapper only when that is
-the visual effect you actually want.
-
-In a standalone document, system dark mode belongs in author CSS rather than
-Python conditionals:
-
-~~~css
-@media (prefers-color-scheme: dark) {
-  .xy {
-    --chart-bg: #18181b;
-    --chart-text: #e4e4e7;
-    --chart-grid: rgb(212 212 216 / 12%);
-  }
-}
-~~~
-
-## Long legends and edge tooltips
-
-This example keeps a few operational series in a centered legend and puts four
-resident fields in the tooltip. Resize the page until the chart crosses 520 px.
-The legend stays centered on the new plot without escaping the chart; the
-tooltip wraps horizontally and flips above points near the bottom edge.
-
-Tab to the plot and press Home, End, or an arrow key for a deterministic
-tooltip readout. Move the pointer to inspect the styled crosshair, or
-Shift-drag across the plot to inspect the box-selection slot.
-
-~~~python demo exec
-import reflex_xy
-import xy
-
-
-stress_x = [0, 1, 2, 3, 4, 5, 6, 7]
-stress_names = [
-    "Authentication reconciliation",
-    "Payments settlement",
-    "Inventory replication coordinator",
+months = [
+    "Jan 23", "Feb 23", "Mar 23", "Apr 23", "May 23", "Jun 23",
+    "Jul 23", "Aug 23", "Sep 23", "Oct 23", "Nov 23", "Dec 23",
 ]
-stress_colors = [
-    "#2563eb",
-    "#7c3aed",
-    "#db2777",
-]
-incident_data = {
-    "sample": stress_x,
-    "latency_ms": [8.4, 7.1, 6.3, 5.8, 4.7, 3.6, 2.4, 1.0],
-    "service_tier": [
-        "edge",
-        "edge",
-        "core",
-        "core",
-        "priority",
-        "priority",
-        "critical",
-        "critical-payments-reconciliation-with-extra-long-label",
-    ],
-    "requests_per_minute": [1200, 1800, 2400, 3300, 4700, 6800, 9100, 12400],
-}
-
-responsive_chrome_chart = xy.chart(
-    *(
-        xy.line(
-            stress_x,
-            [2.2 + index * 0.35 + ((point + index) % 3) * 0.24 for point in stress_x],
-            name=name,
-            color=color,
-            width=1.2,
-            opacity=0.58,
-        )
-        for index, (name, color) in enumerate(zip(stress_names, stress_colors))
-    ),
-    xy.scatter(
-        x="sample",
-        y="latency_ms",
-        color="#f97316",
-        size="requests_per_minute",
-        data=incident_data,
-        name="Incident samples",
-        opacity=0.92,
-        stroke="#ffffff",
-        stroke_width=1.5,
-    ),
-    xy.legend(
-        loc="upper center",
-        ncols=2,
-        title="Operational series",
-    ),
-    xy.tooltip(
-        fields=["sample", "latency_ms", "service_tier", "requests_per_minute"],
-        title="{service_tier}",
-        format={"latency_ms": ".1f", "requests_per_minute": ",.0f"},
-    ),
-    xy.interaction_config(
-        hover=True,
-        click=True,
-        select=True,
-        brush=True,
-        crosshair=True,
-        view_change=True,
-    ),
-    # Keep this example focused on legend, tooltip, and interaction overlays.
-    xy.modebar(show=False),
-    xy.theme(
-        crosshair_color="#e11d48",
-        selection_color="#7c3aed",
-        selection_fill="rgb(124 58 237 / 16%)",
-    ),
-    class_name="text-slate-900 dark:text-slate-100",
-    class_names={
-        "legend": (
-            "rounded-xl bg-white/90 shadow-lg backdrop-blur-sm dark:bg-zinc-900/90"
-        ),
-        "tooltip": "rounded-xl bg-zinc-950/95 px-3 py-2 text-white shadow-2xl",
-    },
-    styles={
-        "legend_item": {"padding": "2px 5px"},
-        "crosshair_x": {"width": 2},
-        "crosshair_y": {"height": 2},
-        "selection": {"border_radius": 6},
-    },
-    width="100%",
-    height=360,
-    title="Responsive legend and tooltip",
-)
-
-
-def long_legend_edge_tooltip_preview():
-    return reflex_xy.chart(responsive_chrome_chart, height="360px")
-~~~
-
-The automatic legend width and height are browser defaults, not inline
-author styles. `class_names["legend"]`, `styles["legend"]`, or the
-component-local `legend(style=...)` can therefore replace either limit. The
-same is true for tooltip wrapping and maximum size. If you remove those
-limits intentionally, overflow becomes the responsibility of your CSS.
-
-## Trend and cumulative marks
-
-One coordinate system can layer the entire line-like paint vocabulary. The
-lower-opacity area goes first, followed by smooth, dashed, and stepped strokes.
-The `ecdf` uses a named right axis so its 0–1 range stays legible.
-
-~~~python demo exec
-import reflex_xy
-import xy
-
-x = [0, 1, 2, 3, 4, 5, 6]
+production = [2890, 2756, 3322, 3470, 3475, 3129, 3490, 2903, 2643, 2837, 2954, 3239]
+cumulative = [2338, 2103, 2194, 2108, 1812, 1726, 1982, 2012, 2342, 2473, 3848, 3736]
 
 trend_atlas = xy.chart(
-    xy.area(
-        x,
-        [2, 3, 3, 5, 4, 6, 7],
-        name="Area",
-        color="#8b5cf6",
-        fill=(
-            "linear-gradient(to top, rgb(124 58 237 / 0%), "
-            "rgb(124 58 237 / 14%) 55%, rgb(167 139 250 / 38%))"
-        ),
-        opacity=1,
-        line_color="#8b5cf6",
-        line_width=1.5,
-        line_opacity=0.9,
+    xy.column(
+        months,
+        production,
+        name="Production",
+        color="#2b7fff",
+        corner_radius=0,
+        stroke_width=0,
     ),
     xy.line(
-        x,
-        [3, 4, 4, 6, 5, 7, 8],
-        name="Line",
-        color="#2563eb",
-        width=2.5,
-        curve="smooth",
-    ),
-    xy.step(
-        x,
-        [1, 2, 2, 4, 3, 5, 6],
-        name="Step",
-        color="#ea580c",
+        months,
+        cumulative,
+        name="Cumulative",
+        color="#fe9a00",
         width=2,
-        dash="dashed",
+        curve="linear",
     ),
-    xy.stairs(
-        [1.4, 2.1, 1.8, 3.2, 2.7, 4.1, 4.8],
-        edges=[0, 1, 2, 3, 4, 5, 6, 7],
-        name="Stairs",
-        color="#0f766e",
-        width=1.8,
-        dash="dotted",
+    xy.x_axis(
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "grid_opacity": 0,
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
     ),
-    xy.ecdf(
-        [0.3, 0.8, 1.1, 1.9, 2.7, 3.4, 4.8, 5.2, 5.9],
-        name="ECDF",
-        color="#be123c",
-        width=2,
-        y_axis="y2",
-    ),
-    xy.x_axis(label="ordered domain"),
-    xy.y_axis(label="value"),
     xy.y_axis(
-        id="y2",
-        side="right",
-        label="cumulative share",
-        domain=(0, 1),
-        format=".0%",
-        style={"label_color": "#be123c", "tick_label_color": "#be123c"},
+        domain=(0, 4200),
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
     ),
-    xy.legend(loc="upper left", ncols=3),
-    title="Line, area, step, stairs, and ECDF",
+    xy.tooltip(title="{x}", format={"y": ",.0f"}),
+    xy.legend(show=False),
+    xy.theme(
+        plot_background="var(--gallery-surface, #ffffff)",
+        grid_color="var(--gallery-grid, #e5e7eb)",
+        axis_color="var(--gallery-axis, #d1d5db)",
+        text_color="var(--gallery-text, #4b5563)",
+    ),
+    class_name=(
+        "bg-[#ffffff] [--gallery-surface:#ffffff] [--gallery-grid:#e5e7eb] "
+        "[--gallery-axis:#d1d5db] [--gallery-text:#4b5563] "
+        "dark:bg-[#000000] dark:[--gallery-surface:#000000] "
+        "dark:[--gallery-grid:#27272a] dark:[--gallery-axis:#3f3f46] "
+        "dark:[--gallery-text:#d4d4d8]"
+    ),
+    width="100%",
+    height=330,
+    padding=[14, 20, 16, 20],
 )
 
 
 def trend_mark_atlas_preview():
-    return reflex_xy.chart(trend_atlas, height="430px")
-~~~
-
-## Points, categories, and distributions
-
-The first chart uses all 17 scatter symbols and separates fill from stroke.
-The remaining cards show `column`, `histogram`, `box`, and `violin`
-treatments at independent scales so each filled-geometry path can be judged at
-a useful size. `bar` uses the same paint contract as `column`, with horizontal
-layout.
-
-~~~python demo exec
-import reflex as rx
-import reflex_xy
-import xy
-
-
-symbol_names = [
-    "circle",
-    "square",
-    "diamond",
-    "triangle",
-    "triangle_down",
-    "triangle_left",
-    "triangle_right",
-    "cross",
-    "x",
-    "hexagon",
-    "pentagon",
-    "star",
-    "point",
-    "pixel",
-    "thin_diamond",
-    "plus_line",
-    "x_line",
-]
-symbol_colors = ["#2563eb", "#7c3aed", "#db2777", "#ea580c", "#0f766e"]
-symbol_children = []
-for index, symbol in enumerate(symbol_names):
-    symbol_x = (index % 3) * 4
-    symbol_y = 5 - index // 3
-    symbol_color = symbol_colors[index % len(symbol_colors)]
-    symbol_stroke = symbol_color if symbol in {"plus_line", "x_line"} else "#ffffff"
-    symbol_children.extend([
-        xy.scatter(
-            [symbol_x],
-            [symbol_y],
-            symbol=symbol,
-            size=14,
-            color=symbol_color,
-            stroke=symbol_stroke,
-            stroke_width=2,
+    return rx.vstack(
+        rx.hstack(
+            rx.hstack(
+                rx.box(class_name="size-3 rounded-sm bg-[#2b7fff]"),
+                rx.text("Production", size="2", weight="medium"),
+                align="center",
+                spacing="2",
+            ),
+            rx.hstack(
+                rx.box(class_name="h-0.5 w-5 rounded-full bg-[#fe9a00]"),
+                rx.text("Cumulative", size="2", weight="medium"),
+                align="center",
+                spacing="2",
+            ),
+            align="center",
+            justify="center",
+            spacing="5",
+            width="100%",
         ),
-        xy.text(
-            symbol_x + 0.35,
-            symbol_y,
-            symbol,
-            dy=3,
-            color="var(--chart-text)",
-            style={"font_size": 10},
+        reflex_xy.chart(trend_atlas, height="330px"),
+        align="stretch",
+        spacing="2",
+        width="100%",
+        class_name=(
+            "bg-[#ffffff] px-4 pb-4 pt-6 text-[#364153] "
+            "dark:bg-[#000000] dark:text-[#d4d4d8] sm:px-6"
         ),
-    ])
-
-symbol_chart = xy.scatter_chart(
-    *symbol_children,
-    xy.legend(show=False),
-    xy.x_axis(
-        domain=(-0.5, 11.8),
-        tick_label_strategy="none",
-        style={"axis_color": "transparent", "tick_color": "transparent"},
-    ),
-    xy.y_axis(
-        domain=(-0.5, 5.5),
-        tick_label_strategy="none",
-        style={"axis_color": "transparent", "tick_color": "transparent"},
-    ),
-    padding=[42, 20, 24, 20],
-    title="All 17 scatter symbols",
-)
-
-column_chart = xy.column_chart(
-    xy.column(
-        ["Starter", "Team", "Business", "Enterprise"],
-        [34, 58, 76, 93],
-        name="Adoption",
-        fill="linear-gradient(to top, #2563eb, #93c5fd)",
-        stroke="#1e3a8a",
-        stroke_width=1,
-        corner_radius=(8, 1),
-    ),
-    xy.y_axis(domain=(0, 100), format=".0f"),
-    title="Gradient columns",
-)
-
-histogram_chart = xy.histogram_chart(
-    xy.histogram(
-        [2, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 7, 8, 9],
-        bins=7,
-        name="Histogram",
-        color="#8b5cf6",
-        fill=(
-            "linear-gradient(to top, rgb(109 40 217 / 38%), "
-            "rgb(139 92 246 / 92%))"
-        ),
-        opacity=1,
-        corner_radius=(5, 1),
-        stroke="#7c3aed",
-        stroke_width=0.9,
-    ),
-    title="Rounded histogram",
-)
-
-distribution_chart = xy.chart(
-    xy.violin(
-        [2, 3, 3, 4, 4, 4.5, 5, 5, 5.5, 6, 6, 7, 8, 9],
-        name="Violin",
-        color="#0ea5e9",
-        opacity=0.38,
-        width=0.9,
-    ),
-    xy.box(
-        [2, 3, 3, 4, 4, 5, 5, 6, 7, 9],
-        name="Box",
-        color="#7c3aed",
-        opacity=0.62,
-        width=0.42,
-    ),
-    xy.legend(loc="upper right"),
-    title="Violin with box overlay",
-)
-
-matrix_categories = ["Starter", "Team", "Business", "Enterprise"]
-matrix_values = [
-    [18, 27, 34, 43],
-    [11, 19, 28, 37],
-    [7, 13, 22, 31],
-]
-matrix_colors = ["#2563eb", "#7c3aed", "#db2777"]
-
-grouped_bar_chart = xy.bar_chart(
-    xy.bar(
-        matrix_categories,
-        matrix_values,
-        orientation="horizontal",
-        mode="grouped",
-        series=["Core", "Growth", "New"],
-        colors=matrix_colors,
-        corner_radius=(7, 2),
-        stroke="#ffffff",
-        stroke_width=0.8,
-    ),
-    xy.legend(loc="lower right", ncols=3),
-    padding=[42, 30, 54, 88],
-    title="Grouped horizontal bars",
-)
-
-normalized_column_chart = xy.column_chart(
-    xy.column(
-        matrix_categories,
-        matrix_values,
-        mode="normalized",
-        series=["Core", "Growth", "New"],
-        colors=matrix_colors,
-        corner_radius=(6, 1),
-        stroke="#ffffff",
-        stroke_width=0.8,
-    ),
-    xy.legend(loc="upper left", ncols=3),
-    xy.y_axis(domain=(0, 1), format=".0%"),
-    title="Normalized stacked columns",
-)
-
-
-def categorical_distribution_atlas_preview():
-    return rx.el.div(
-        reflex_xy.chart(symbol_chart, height="430px"),
-        reflex_xy.chart(column_chart, height="310px"),
-        reflex_xy.chart(histogram_chart, height="310px"),
-        reflex_xy.chart(distribution_chart, height="310px"),
-        reflex_xy.chart(grouped_bar_chart, height="330px"),
-        reflex_xy.chart(normalized_column_chart, height="330px"),
-        class_name="grid w-full grid-cols-1 gap-5 xl:grid-cols-2",
     )
 ~~~
 
-Grouped, stacked, and normalized matrix modes share the same per-series color,
-stroke, gradient, and asymmetric-corner contract. The final two cards make the
-grouped and normalized paths visible; use `mode="stacked"` for absolute stacks.
-`hist(values, ...)` is the short spelling for `histogram(values, ...)`.
+## What this gallery includes
+
+| Family | Components | Useful styling variations |
+| --- | --- | --- |
+| Trend | `column`, `line` | layered measures, a custom key, hidden axes, tooltip readout |
+| Scalar fields and density | `heatmap`, `hexbin`, `contour`, `scatter` | colormaps, cell alpha, contour strokes, density reduction |
+| Uncertainty | `error_band`, `errorbar`, `line` | translucent interval fill, boundary strokes, caps, estimate overlays |
+| Explicit geometry | `segments`, `stem`, `triangle_mesh` | per-item color, stroke width, marker paint, mesh borders |
+| Chrome | `x_axis`, `y_axis`, `legend`, `tooltip`, `colorbar`, `theme` | hidden axes, built-in and host-owned chrome, tokens, pointer tooltips |
+| Composition | `chart`, typed chart factories, `facet_chart` | layered marks, shared panel styles, responsive wrappers, export CSS |
+
+The cursor-tooltip example below uses `area`; choose `ecdf` when
+the cumulative signal is a distribution rather than a month-by-month measure.
+
+For every available component and argument, use the API reference.
 
 ## Scalar fields and density
 
@@ -561,6 +166,14 @@ field_chart = xy.chart(
         width=1.4,
         opacity=0.9,
     ),
+    xy.x_axis(
+        tick_label_strategy="none",
+        style={"axis_width": 0, "grid_opacity": 0, "tick_width": 0},
+    ),
+    xy.y_axis(
+        tick_label_strategy="none",
+        style={"axis_width": 0, "tick_width": 0},
+    ),
     xy.colorbar(
         title="Intensity",
         orientation="vertical",
@@ -577,7 +190,6 @@ field_chart = xy.chart(
         "colorbar_tick": {"color": "var(--chart-text)"},
         "colorbar_title": {"font_weight": 700},
     },
-    title="Heatmap with contour overlay",
 )
 
 hex_x = (
@@ -644,8 +256,14 @@ hexbin_chart = xy.hexbin_chart(
         orientation="horizontal",
         ticks=[1, 3, 6],
     ),
-    xy.x_axis(style={"grid_dash": "dotted"}),
-    title="Hexagonal density",
+    xy.x_axis(
+        tick_label_strategy="none",
+        style={"axis_width": 0, "grid_opacity": 0, "tick_width": 0},
+    ),
+    xy.y_axis(
+        tick_label_strategy="none",
+        style={"axis_width": 0, "tick_width": 0},
+    ),
 )
 
 
@@ -659,10 +277,9 @@ def scalar_field_atlas_preview():
 
 ## Uncertainty and explicit geometry
 
-This pair covers the remaining renderer paths: `error_band`, `errorbar`,
-`segments`, `stem`, and `triangle_mesh`. The mesh demonstrates data-driven
-fills with a constant border; segments demonstrate per-item color; stem keeps
-its marker visually distinct from its shaft.
+This pair shows advanced geometry from `error_band`, `errorbar`, `segments`,
+`stem`, and `triangle_mesh`. A restrained dashboard
+palette separates each geometry without adding decorative chart chrome.
 
 ~~~python demo exec
 import reflex as rx
@@ -678,24 +295,43 @@ uncertainty_chart = xy.chart(
         [value - 0.8 for value in estimate],
         [value + 0.8 for value in estimate],
         name="90% interval",
-        color="#a78bfa",
-        fill="linear-gradient(to top, transparent, currentColor)",
-        opacity=0.38,
-        line_width=1,
-        line_opacity=0.65,
+        color="#8e51ff",
+        fill="linear-gradient(#8e51ff4d 5%, #8e51ff00 95%)",
+        opacity=1,
+        line_width=2,
+        line_opacity=1,
     ),
     xy.errorbar(
         x,
         estimate,
         yerr=[0.4, 0.7, 0.5, 0.8, 0.6, 0.5],
         name="Observed error",
-        color="#6d28d9",
+        color="#00b8db",
         width=1.7,
         cap_size=5,
     ),
-    xy.line(x, estimate, name="Estimate", color="#312e81", width=2.4),
+    xy.line(x, estimate, name="Estimate", color="#2b7fff", width=2),
+    xy.x_axis(
+        tick_label_strategy="none",
+        style={"axis_width": 0, "grid_opacity": 0, "tick_width": 0},
+    ),
+    xy.y_axis(
+        tick_label_strategy="none",
+        style={"axis_width": 0, "tick_width": 0},
+    ),
     xy.legend(loc="upper left"),
-    title="Uncertainty layers",
+    xy.theme(
+        plot_background="var(--atlas-surface, #ffffff)",
+        grid_color="var(--atlas-grid, #e5e7eb)",
+        axis_color="var(--atlas-axis, #d1d5db)",
+        text_color="var(--atlas-text, #4b5563)",
+    ),
+    class_name=(
+        "bg-[#ffffff] [--atlas-surface:#ffffff] [--atlas-grid:#e5e7eb] "
+        "[--atlas-axis:#d1d5db] [--atlas-text:#4b5563] dark:bg-[#000000] "
+        "dark:[--atlas-surface:#000000] dark:[--atlas-grid:#27272a] "
+        "dark:[--atlas-axis:#3f3f46] dark:[--atlas-text:#d4d4d8]"
+    ),
 )
 
 geometry_chart = xy.chart(
@@ -709,8 +345,8 @@ geometry_chart = xy.chart(
         color=[0.2, 0.65, 1.0],
         colormap="purples",
         domain=(0, 1),
-        opacity=0.42,
-        stroke="#6d28d9",
+        opacity=0.52,
+        stroke="#8e51ff",
         stroke_width=1,
         name="Mesh",
     ),
@@ -720,7 +356,7 @@ geometry_chart = xy.chart(
         [0.8, 1.3, 1.9],
         [0.8, 1.2, 1.7],
         color=[0.1, 0.55, 1.0],
-        colormap="viridis",
+        colormap="blues",
         domain=(0, 1),
         width=4,
         name="Segments",
@@ -729,13 +365,32 @@ geometry_chart = xy.chart(
         [0.25, 0.9, 1.55],
         [0.7, 1.45, 1.9],
         base=0,
-        color="#e11d48",
+        color="#fe9a00",
         width=1.8,
         marker_size=7,
         name="Stems",
     ),
+    xy.x_axis(
+        tick_label_strategy="none",
+        style={"axis_width": 0, "grid_opacity": 0, "tick_width": 0},
+    ),
+    xy.y_axis(
+        tick_label_strategy="none",
+        style={"axis_width": 0, "tick_width": 0},
+    ),
     xy.legend(loc="upper left"),
-    title="Segments, stems, and triangle mesh",
+    xy.theme(
+        plot_background="var(--atlas-surface, #ffffff)",
+        grid_color="var(--atlas-grid, #e5e7eb)",
+        axis_color="var(--atlas-axis, #d1d5db)",
+        text_color="var(--atlas-text, #4b5563)",
+    ),
+    class_name=(
+        "bg-[#ffffff] [--atlas-surface:#ffffff] [--atlas-grid:#e5e7eb] "
+        "[--atlas-axis:#d1d5db] [--atlas-text:#4b5563] dark:bg-[#000000] "
+        "dark:[--atlas-surface:#000000] dark:[--atlas-grid:#27272a] "
+        "dark:[--atlas-axis:#3f3f46] dark:[--atlas-text:#d4d4d8]"
+    ),
 )
 
 
@@ -746,122 +401,6 @@ def uncertainty_geometry_atlas_preview():
         class_name="grid w-full grid-cols-1 gap-5 xl:grid-cols-2",
     )
 ~~~
-
-## Categorical and time axis styling
-
-Rotated category labels, explicit time axes, and annotation labels are common
-places for spacing bugs. This example keeps both cases live and gives labels
-opaque backgrounds so overlap and clipping are easy to spot.
-
-~~~python demo exec
-import datetime as dt
-
-import reflex as rx
-import reflex_xy
-import xy
-
-category_chart = xy.bar_chart(
-    xy.bar(
-        ["Design review", "Build candidate", "Security review", "General release"],
-        [46, 72, 61, 88],
-        orientation="horizontal",
-        fill="linear-gradient(to top, #bfdbfe, #2563eb)",
-        corner_radius=(7, 1),
-    ),
-    xy.threshold(70, axis="x", text="target", color="#16a34a", width=2),
-    xy.x_axis(label="completion", domain=(0, 100), format=".0f"),
-    xy.y_axis(
-        tick_label_angle=-8,
-        tick_label_strategy="rotate",
-        style={"tick_label_color": "var(--chart-text)", "tick_label_size": 12},
-    ),
-    padding=[44, 28, 54, 128],
-    title="Categorical labels",
-)
-
-dates = [dt.datetime(2026, 7, day) for day in range(1, 8)]
-time_chart = xy.line_chart(
-    xy.line(
-        dates,
-        [42, 48, 45, 56, 54, 63, 68],
-        color="#7c3aed",
-        width=2.5,
-        curve="smooth",
-    ),
-    xy.x_band(
-        dt.datetime(2026, 7, 3),
-        dt.datetime(2026, 7, 4),
-        text="deploy",
-        color="#f59e0b",
-        opacity=0.14,
-        style={
-            "background": "var(--time-warning-bg, #fffbeb)",
-            "label_color": "var(--time-warning-text, #92400e)",
-            "padding": "2px 5px",
-        },
-    ),
-    xy.hline(
-        60,
-        text="SLO",
-        color="#16a34a",
-        style={
-            "background": "var(--time-success-bg, #f0fdf4)",
-            "label_color": "var(--time-success-text, #166534)",
-            "padding": "2px 5px",
-        },
-    ),
-    xy.marker(dates[5], 63, text="marker", color="#0ea5e9", symbol="diamond"),
-    xy.arrow(dates[4], 52, dates[5], 63, text="arrow", color="#e11d48"),
-    xy.callout(
-        dates[6],
-        68,
-        "callout",
-        dx=-62,
-        dy=-28,
-        color="#7c3aed",
-        style={
-            "label_color": "var(--time-callout-text, #6b21a8)",
-            "background": "var(--time-callout-bg, #faf5ff)",
-            "border": "1px solid var(--time-callout-border, #d8b4fe)",
-            "padding": "3px 6px",
-        },
-    ),
-    xy.text(
-        dates[1],
-        48,
-        "text / label",
-        dx=8,
-        dy=-18,
-        color="var(--chart-text)",
-    ),
-    xy.x_axis(type_="time", label="July 2026", label_offset=12, tick_count=7),
-    xy.y_axis(label="requests"),
-    class_name=(
-        "[--time-warning-bg:#fffbeb] [--time-warning-text:#92400e] "
-        "[--time-success-bg:#f0fdf4] [--time-success-text:#166534] "
-        "[--time-callout-bg:#faf5ff] [--time-callout-text:#6b21a8] "
-        "[--time-callout-border:#d8b4fe] "
-        "dark:[--time-warning-bg:#451a03] dark:[--time-warning-text:#fde68a] "
-        "dark:[--time-success-bg:#14532d] dark:[--time-success-text:#bbf7d0] "
-        "dark:[--time-callout-bg:#3b0764] dark:[--time-callout-text:#e9d5ff] "
-        "dark:[--time-callout-border:#7e22ce]"
-    ),
-    padding=[48, 82, 76, 58],
-    title="Time axis and annotation labels",
-)
-
-
-def axis_edge_cases_preview():
-    return rx.el.div(
-        reflex_xy.chart(category_chart, height="390px"),
-        reflex_xy.chart(time_chart, height="390px"),
-        class_name="grid w-full grid-cols-1 gap-5 xl:grid-cols-2",
-    )
-~~~
-
-`y_band`, `vline`, `label`, `threshold_zone`, and the corresponding x/y alias
-directions use the same geometry/label split demonstrated above. The complete
-annotation atlas is in [Component Variations](/docs/xy/styling/component-variations/#annotation-variants).
 
 ## A real reduction badge
 
@@ -888,6 +427,14 @@ reduction_chart = xy.scatter_chart(
         colormap="viridis",
         opacity=0.9,
     ),
+    xy.x_axis(
+        tick_label_strategy="none",
+        style={"axis_width": 0, "grid_opacity": 0, "tick_width": 0},
+    ),
+    xy.y_axis(
+        tick_label_strategy="none",
+        style={"axis_width": 0, "tick_width": 0},
+    ),
     class_names={
         "badge": "gap-1",
         "badge_item": "rounded-full font-mono text-[10px] shadow-sm",
@@ -900,7 +447,6 @@ reduction_chart = xy.scatter_chart(
             "padding": "3px 7px",
         }
     },
-    title="Density with disclosed aggregation",
 )
 
 
@@ -912,9 +458,7 @@ def reduction_badge_preview():
 
 `facet_chart` applies the same mark, axis, annotation, theme, and chart-slot
 styles to every panel. XY's standalone wrapper owns the grid, so wrapper
-layout selectors belong in export CSS. The docs preview below uses XY's own
-SVG compositor, avoiding multiple live WebGL contexts just to demonstrate the
-panel layout.
+layout selectors belong in export CSS.
 
 ~~~python demo exec
 import reflex as rx
@@ -930,17 +474,29 @@ styled_facets = xy.facet_chart(
     xy.area(
         x="x",
         y="y",
-        color="var(--facet-accent, #a78bfa)",
-        fill="linear-gradient(currentColor, transparent)",
-        line_color="var(--facet-line, #6d28d9)",
+        color="var(--facet-line, #d97706)",
+        fill=(
+            "linear-gradient("
+            "var(--facet-fill-strong, #d977064d) 5%, "
+            "var(--facet-fill-soft, #d9770600) 95%"
+            ")"
+        ),
+        line_color="var(--facet-line, #d97706)",
         line_width=2,
     ),
-    xy.x_axis(style={"grid_dash": "dotted"}),
+    xy.x_axis(
+        tick_label_strategy="none",
+        style={"axis_width": 0, "grid_opacity": 0, "tick_width": 0},
+    ),
+    xy.y_axis(
+        tick_label_strategy="none",
+        style={"axis_width": 0, "tick_width": 0},
+    ),
     xy.theme(
         plot_background="var(--facet-bg, #ffffff)",
-        grid_color="var(--facet-grid, rgb(148 163 184 / 22%))",
-        axis_color="var(--facet-axis, #64748b)",
-        text_color="var(--facet-text, #334155)",
+        grid_color="var(--facet-grid, #e5e7eb)",
+        axis_color="var(--facet-axis, #d1d5db)",
+        text_color="var(--facet-text, #4b5563)",
     ),
     xy.modebar(show=False),
     by="region",
@@ -949,8 +505,7 @@ styled_facets = xy.facet_chart(
     gap=16,
     width=900,
     height=230,
-    padding=[28, 18, 34, 40],
-    title="Regional trend",
+    padding=[24, 18, 18, 18],
 )
 
 
@@ -959,14 +514,14 @@ def styled_facet_preview():
         styled_facets.to_svg(),
         class_name=(
             "w-full [--facet-bg:#ffffff] "
-            "[--facet-text:#334155] [--facet-grid:#94a3b838] "
-            "[--facet-axis:#64748b] [--facet-accent:#a78bfa] "
-            "[--facet-line:#6d28d9] [&>svg]:h-auto [&>svg]:w-full "
-            "dark:[--facet-bg:#18181b] dark:[--facet-text:#e4e4e7] "
-            "dark:[--facet-grid:#d4d4d81f] dark:[--facet-axis:#a1a1aa] "
-            "dark:[--facet-accent:#c4b5fd] dark:[--facet-line:#a78bfa] "
-            "dark:[&_text]:fill-zinc-200 "
-            "dark:[&_path[stroke]]:stroke-violet-400"
+            "[--facet-text:#4b5563] [--facet-grid:#e5e7eb] "
+            "[--facet-axis:#d1d5db] [--facet-line:#d97706] "
+            "[--facet-fill-strong:#d977064d] [--facet-fill-soft:#d9770600] "
+            "[&>svg]:h-auto [&>svg]:w-full dark:[--facet-bg:#000000] "
+            "dark:[--facet-text:#d4d4d8] dark:[--facet-grid:#27272a] "
+            "dark:[--facet-axis:#3f3f46] dark:[--facet-line:#f59e0b] "
+            "dark:[--facet-fill-strong:#f59e0b4d] "
+            "dark:[--facet-fill-soft:#f59e0b00] dark:[&_text]:fill-zinc-300"
         ),
     )
 ~~~
@@ -976,20 +531,20 @@ For standalone HTML, style the grid itself at export time:
 ~~~python
 html = styled_facets.to_html(
     custom_css="""
-.xy-facet-grid { gap: 1rem; padding: 1rem; background: #fafafa; }
+.xy-facet-grid { gap: 1rem; padding: 1rem; background: #ffffff; }
 .xy-facet-panel { overflow: hidden; border: 1px solid #e2e8f0; border-radius: 12px; }
-.xy-facet-title { color: #312e81; letter-spacing: .02em; }
+.xy-facet-title { color: #4b5563; letter-spacing: .02em; }
 """
 )
 ~~~
 
-## Custom legend and custom tooltip
+## Custom legend and styled cursor tooltip
 
-XY can fully restyle its built-in legend and tooltip. A genuinely custom
-legend or custom tooltip is host-owned UI: hide the built-ins, keep the chart
-in Reflex state, and render ordinary Reflex components from that same state.
-This requires no change to Reflex or XY, but it intentionally does not become
-part of a standalone XY export.
+XY's built-in tooltip already follows the pointer and can be fully restyled.
+This example keeps that client-owned positioning while rendering an interactive
+host-owned legend below the chart. Reflex hover callbacks expose the resolved
+row rather than pointer coordinates, so a state-backed tooltip cannot follow
+the cursor without additional positioning data.
 
 ~~~python demo exec
 import reflex as rx
@@ -999,24 +554,102 @@ import xy
 
 class StyledChromeState(rx.State):
     show_plan: bool = True
-    hovered: dict = {}
 
     @reflex_xy.figure
     def figure(self) -> xy.Chart:
-        marks = [xy.line([0, 1, 2, 3], [2, 5, 3, 7], name="Actual", color="#7c3aed")]
+        data = {
+            "period": [
+                "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+            ],
+            "actual": [2900, 2780, 3330, 3490, 3500, 3120, 3510, 2910, 2650, 2840, 2960, 3240],
+            "plan": [2340, 2100, 2190, 2110, 1820, 1730, 1980, 2010, 2340, 2470, 3850, 3740],
+        }
+        marks = [
+            xy.area(
+                x="period",
+                y="actual",
+                data=data,
+                name="Actual",
+                color="#2b7fff",
+                fill="linear-gradient(#2b7fff66 5%, #2b7fff00 95%)",
+                line_width=2.25,
+                opacity=1,
+                curve="linear",
+            )
+        ]
         if self.show_plan:
             marks.append(
-                xy.line([0, 1, 2, 3], [1, 3, 4, 6], name="Plan", color="#0ea5e9")
+                xy.area(
+                    x="period",
+                    y="plan",
+                    data=data,
+                    name="Plan",
+                    color="#00bc7d",
+                    fill="linear-gradient(#00bc7d66 5%, #00bc7d00 95%)",
+                    line_width=2.25,
+                    opacity=1,
+                    curve="linear",
+                )
             )
-        return xy.line_chart(
+        return xy.area_chart(
             *marks,
             xy.legend(show=False),
-            xy.tooltip(show=False),
+            xy.tooltip(
+                fields=["actual", "plan"],
+                title="{period}",
+                format={"actual": "$,.0f", "plan": "$,.0f"},
+                style={
+                    "background": "var(--tooltip-surface, #ffffff)",
+                    "color": "var(--tooltip-text, #1d293d)",
+                    "border": "1px solid var(--tooltip-border, #e5e7eb)",
+                    "border-radius": 8,
+                    "box-shadow": "0 8px 24px #1118271f",
+                    "padding": "8px 10px",
+                },
+            ),
+            xy.x_axis(
+                style={
+                    "axis_width": 0,
+                    "axis_color": "#00000000",
+                    "grid_opacity": 0,
+                    "tick_width": 0,
+                    "tick_color": "#00000000",
+                    "tick_label_color": "#00000000",
+                    "label_color": "#00000000",
+                },
+            ),
+            xy.y_axis(
+                domain=(0, 4200),
+                style={
+                    "axis_width": 0,
+                    "axis_color": "#00000000",
+                    "tick_width": 0,
+                    "tick_color": "#00000000",
+                    "tick_label_color": "#00000000",
+                    "label_color": "#00000000",
+                },
+            ),
+            xy.theme(
+                plot_background="var(--chrome-surface, #ffffff)",
+                grid_color="var(--chrome-grid, #e5e7eb)",
+                axis_color="var(--chrome-axis, #d1d5db)",
+                text_color="var(--chrome-text, #4b5563)",
+            ),
+            class_name=(
+                "bg-[#ffffff] [--chrome-surface:#ffffff] [--chrome-grid:#e5e7eb] "
+                "[--chrome-axis:#d1d5db] [--chrome-text:#4b5563] "
+                "[--tooltip-surface:#ffffff] [--tooltip-text:#1d293d] "
+                "[--tooltip-border:#e5e7eb] dark:bg-[#000000] "
+                "dark:[--chrome-surface:#000000] dark:[--chrome-grid:#27272a] "
+                "dark:[--chrome-axis:#3f3f46] dark:[--chrome-text:#d4d4d8] "
+                "dark:[--tooltip-surface:#18181f] dark:[--tooltip-text:#f3f4f6] "
+                "dark:[--tooltip-border:#3f3f46]"
+            ),
+            width="100%",
+            height=340,
+            padding=[12, 20, 18, 20],
         )
-
-    @rx.event
-    def record_hover(self, row: dict):
-        self.hovered = row
 
     @rx.event
     def set_show_plan(self, value: bool):
@@ -1025,28 +658,51 @@ class StyledChromeState(rx.State):
 
 def custom_chrome():
     return rx.vstack(
-        reflex_xy.chart(
-            StyledChromeState.figure,
-            on_point_hover=StyledChromeState.record_hover,
-            height="340px",
-        ),
         rx.hstack(
-            rx.badge("Actual", color_scheme="purple"),
-            rx.checkbox(
-                "Plan",
-                checked=StyledChromeState.show_plan,
-                on_change=StyledChromeState.set_show_plan,
+            rx.hstack(
+                rx.hstack(
+                    rx.box(class_name="h-0.5 w-5 rounded-full bg-[#2b7fff]"),
+                    rx.text("Actual", size="2", weight="medium"),
+                    align="center",
+                    spacing="2",
+                ),
+                rx.checkbox(
+                    rx.hstack(
+                        rx.box(class_name="h-0.5 w-5 rounded-full bg-[#00bc7d]"),
+                        rx.text("Plan", size="2", weight="medium"),
+                        align="center",
+                        spacing="2",
+                    ),
+                    checked=StyledChromeState.show_plan,
+                    on_change=StyledChromeState.set_show_plan,
+                    class_name="accent-[#00bc7d]",
+                ),
+                align="center",
+                spacing="4",
+            ),
+            align="center",
+            justify="center",
+            class_name=(
+                "w-full bg-[#ffffff] px-4 pt-5 text-[#1d293d] sm:px-6 sm:pt-6 "
+                "dark:bg-[#000000] dark:text-[#f3f4f6]"
             ),
         ),
-        rx.callout(StyledChromeState.hovered.to_string(), icon="info"),
+        reflex_xy.chart(
+            StyledChromeState.figure,
+            height="340px",
+        ),
+        align="stretch",
+        spacing="1",
         width="100%",
+        class_name="bg-[#ffffff] pb-4 dark:bg-[#000000]",
     )
 ~~~
 
-That pattern makes the legend interactive and the tooltip layout arbitrary.
+That pattern keeps the legend interactive while the styled built-in tooltip
+tracks the pointer and remains available to standalone chart exports.
 For a fixed chart, a simpler host-owned key can sit next to
 `reflex_xy.chart(...)`, as shown in
-[Component Variations](/docs/xy/styling/component-variations/#custom-component-replacements).
+[Customize Each Part](/docs/xy/styling/customize/#legend).
 
 ## Export parity checklist
 

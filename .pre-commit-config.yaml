@@ -20,5 +20,4 @@ repos:
         language: system
         types: [text]
         files: ^docs/
-        exclude: ^docs/engineering/
         require_serial: true

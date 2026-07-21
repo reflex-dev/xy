@@ -252,6 +252,9 @@ class PayloadMixin(_Host):
             spec["colorbar"] = self.colorbar_options
         if self.show_modebar is False:
             spec["show_modebar"] = False
+        export_options = getattr(self, "export_options", None)
+        if export_options:
+            spec["export"] = export_options
         if self.show_tooltip is False:
             spec["show_tooltip"] = False
         if self.padding is not None:
@@ -411,6 +414,7 @@ class PayloadMixin(_Host):
                 xv, yv = xv[visible], yv[visible]
         entry = self._base_entry(t, pw, xv, yv, "direct", dict(t.style))
         entry["color"], entry["size"] = self._ship_channels(t, sel, pw.ship_scalar, pw.ship_u8)
+        self._ship_trace_styles(entry, t, sel, pw)
         t.shipped_sel = sel  # pick/selection translation (§17)
         return entry
 
@@ -533,6 +537,7 @@ class PayloadMixin(_Host):
             raise ValueError(f"{t.kind} trace missing segment columns")
         x0v, x1v, y0v, y1v = t.x0.values, t.x1.values, t.y0.values, t.y1.values
         tier = "direct"
+        source_sel: Optional[np.ndarray] = None
         if t.kind == "errorbar" and t.count:
             # Segments ship grouped by role, count per group: 3 groups with
             # caps (main + two cap blocks), 1 without. Decimate per point
@@ -543,14 +548,22 @@ class PayloadMixin(_Host):
                 chosen = np.linspace(0, t.count - 1, max_groups, dtype=np.int64)
                 indices = np.concatenate([chosen + k * t.count for k in range(seg_per)])
                 x0v, x1v, y0v, y1v = x0v[indices], x1v[indices], y0v[indices], y1v[indices]
+                source_sel = indices
                 tier = "decimated"
         elif t.kind == "stem" and len(x0v) > max(1024, int(px_width) * 4):
             chosen = np.linspace(0, len(x0v) - 1, max(1024, int(px_width) * 4), dtype=np.int64)
             x0v, x1v, y0v, y1v = x0v[chosen], x1v[chosen], y0v[chosen], y1v[chosen]
+            source_sel = chosen
             tier = "decimated"
-        sel_arg = self._rect_finite_sel(t, x0v, x1v, y0v, y1v)
-        if sel_arg is not None:
-            x0v, x1v, y0v, y1v = x0v[sel_arg], x1v[sel_arg], y0v[sel_arg], y1v[sel_arg]
+        finite_sel = self._rect_finite_sel(t, x0v, x1v, y0v, y1v)
+        if finite_sel is not None:
+            x0v, x1v, y0v, y1v = (
+                x0v[finite_sel],
+                x1v[finite_sel],
+                y0v[finite_sel],
+                y1v[finite_sel],
+            )
+            source_sel = finite_sel if source_sel is None else source_sel[finite_sel]
         entry = {
             "id": t.id,
             "kind": t.kind,
@@ -567,7 +580,8 @@ class PayloadMixin(_Host):
             "y1": pw.ship(y1v, t.y1),
         }
         if t.color_ch is not None:
-            entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar, pw.ship_u8)
+            entry["color"], _size = self._ship_channels(t, source_sel, pw.ship_scalar, pw.ship_u8)
+        self._ship_trace_styles(entry, t, source_sel, pw)
         return entry
 
     def _emit_triangle_mesh(
@@ -610,6 +624,7 @@ class PayloadMixin(_Host):
         }
         if t.color_ch is not None:
             entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar, pw.ship_u8)
+        self._ship_trace_styles(entry, t, sel_arg, pw)
         return entry
 
     def _emit_errorbar(
@@ -665,6 +680,7 @@ class PayloadMixin(_Host):
         }
         if t.color_ch is not None:
             entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar, pw.ship_u8)
+        self._ship_trace_styles(entry, t, sel_arg, pw)
         return entry
 
     def _emit_bar_compact(
@@ -735,12 +751,25 @@ class PayloadMixin(_Host):
         }
         if t.color_ch is not None:
             entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar, pw.ship_u8)
+        self._ship_trace_styles(entry, t, sel_arg, pw)
         return entry
 
     def _ship_channels(self, t: Trace, sel, ship_scalar, ship_u8) -> tuple[Any, Any]:  # noqa: ANN001
         """Ship a trace's color/size channels (delegates to channels.py — the
         same wire shape serves the build path and drill-in view updates)."""
         return channels.ship_channels(t, sel, ship_scalar, ship_u8, DEFAULT_PALETTE)
+
+    @staticmethod
+    def _ship_trace_styles(entry: dict[str, Any], t: Trace, sel, pw: "_PayloadWriter") -> None:  # noqa: ANN001
+        """Attach outline paint and direct instance attributes to a trace spec."""
+        if t.stroke_ch is not None:
+            entry["stroke"] = channels.ship_color_channel(
+                t.stroke_ch, sel, pw.ship_scalar, pw.ship_u8, DEFAULT_PALETTE
+            )
+        if t.style_channels:
+            entry["channels"] = channels.ship_style_channels(
+                t.style_channels, sel, pw.ship_scalar, pw.ship_u8
+            )
 
     def _density_sample_spec(
         self,
@@ -775,7 +804,7 @@ class PayloadMixin(_Host):
             style["opacity"] = 0.55
         x_col = pw.ship_values(t.x.values[sample_sel], kind=t.x.kind)
         y_col = pw.ship_values(t.y.values[sample_sel], kind=t.y.kind)
-        return {
+        sample = {
             "mode": "sampled",
             "n": int(len(sample_sel)),
             "visible": int(visible),
@@ -790,6 +819,8 @@ class PayloadMixin(_Host):
             "size": size_spec,
             "style": style,
         }
+        self._ship_trace_styles(sample, t, sample_sel, pw)
+        return sample
 
     def _density_trace_spec(self, t: Trace, xr, yr, w, h, pw: "_PayloadWriter") -> dict[str, Any]:  # noqa: ANN001
         """Bin a scatter into a density grid and build its spec entry (§5 Tier 2).
@@ -880,9 +911,7 @@ class PayloadMixin(_Host):
             if (t.color_ch and t.color_ch.mode in ("constant", "continuous"))
             else channels.DEFAULT_COLORMAP
         )
-        color_dropped = bool(t.color_ch and t.color_ch.mode != "constant")
-        size_dropped = bool(t.size_ch and t.size_ch.mode != "constant")
-        dropped = color_dropped or size_dropped
+        dropped_channels = list(t.per_item_channel_names())
         density = {
             "buf": pw.ship_u8(encoded_grid),
             "w": w,
@@ -892,7 +921,8 @@ class PayloadMixin(_Host):
             "colormap": cmap,
             "x_range": list(xr),
             "y_range": list(yr),
-            "channels_dropped": dropped,  # never silent (§28)
+            "channels_dropped": bool(dropped_channels),  # compatibility boolean
+            "dropped_channels": dropped_channels,  # complete, actionable list (§28)
         }
         if t.color_ch and t.color_ch.mode == "constant" and t.color_ch.constant is not None:
             density["color"] = t.color_ch.constant

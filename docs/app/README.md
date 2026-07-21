@@ -30,7 +30,7 @@ development.
 
 Public pages live in the parent `docs/` directory. Page routes and sidebar
 order are declared centrally in `xy_docs/config.py`; do not add ordering
-frontmatter to individual Markdown files. The `docs/engineering/` tree is
+frontmatter to individual Markdown files. The `spec/` tree is
 internal project documentation and is intentionally excluded from the public
 site.
 

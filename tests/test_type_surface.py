@@ -173,7 +173,7 @@ def test_component_types_are_lazy_public_root_exports() -> None:
 def test_export_engine_is_lazy_public_enum() -> None:
     assert "Engine" in xy.__all__
     assert xy.Engine is Engine
-    assert tuple(Engine) == (Engine.default, Engine.chromium)
+    assert tuple(Engine) == (Engine.auto, Engine.default, Engine.chromium)
 
 
 def test_chart_dom_slots_are_public_styling_contract() -> None:
@@ -208,9 +208,7 @@ def test_chart_dom_slots_are_public_styling_contract() -> None:
     assert len(components.CHART_DOM_SLOTS) == len(set(components.CHART_DOM_SLOTS))
     assert all(slot == slot.lower() and " " not in slot for slot in components.CHART_DOM_SLOTS)
 
-    design = (ROOT / "docs" / "engineering" / "design" / "reflex-shaped-api.md").read_text(
-        encoding="utf-8"
-    )
+    design = (ROOT / "spec" / "design" / "reflex-shaped-api.md").read_text(encoding="utf-8")
     for slot in components.CHART_DOM_SLOTS:
         assert f"`{slot}`" in design
 

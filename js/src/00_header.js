@@ -22,9 +22,10 @@
 
 "use strict";
 
-const PROTOCOL = 3;
+const PROTOCOL = 4;
 
-// HTTP binary frame v1 (reflex-integration §3.2). The chart spec's PROTOCOL
+// HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
+// python/xy/_framing.py). The chart spec's PROTOCOL
 // above versions renderer semantics; this separately versions the transport
 // envelope so either layer can fail loudly without coupling their evolution.
 const XY_FRAME_MAGIC = [0x58, 0x59, 0x42, 0x46]; // "XYBF"

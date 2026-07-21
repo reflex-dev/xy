@@ -220,6 +220,7 @@ function lodApplyDrill(view, g, upd, buffers) {
   if (!d) {
     d = g.drill = { trace: g.trace, xBuf: gl.createBuffer(), yBuf: gl.createBuffer() };
   }
+  d.trace = { ...g.trace, style: upd.style || g.trace.style || {} };
   d.xAxis = g.xAxis;
   d.yAxis = g.yAxis;
   gl.bindBuffer(gl.ARRAY_BUFFER, d.xBuf);
@@ -240,17 +241,21 @@ function lodApplyDrill(view, g, upd, buffers) {
   d.colorMode = 0;
   d.color = parseColor(view.root, upd.color && upd.color.color, [0.3, 0.47, 0.66, 1]);
   if (upd.color && upd.color.buf !== undefined) {
-    d.colorMode = upd.color.mode === "continuous" ? 1 : 2;
-    if (!d.cBuf) d.cBuf = gl.createBuffer();
+    d.colorMode = upd.color.mode === "continuous" ? 1 :
+      (upd.color.mode === "categorical" ? 2 : 3);
     const colorValues = upd.color.dtype === "u8"
       ? view._asU8(buffers[upd.color.buf])
       : view._asF32(buffers[upd.color.buf]);
-    d.cBuf._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
-    gl.bindBuffer(gl.ARRAY_BUFFER, d.cBuf);
+    const colorBufferName = d.colorMode === 3 ? "rgbaBuf" : "cBuf";
+    if (!d[colorBufferName]) d[colorBufferName] = gl.createBuffer();
+    d[colorBufferName]._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
+    gl.bindBuffer(gl.ARRAY_BUFFER, d[colorBufferName]);
     gl.bufferData(gl.ARRAY_BUFFER, colorValues, gl.STATIC_DRAW);
-    d.lut = upd.color.mode === "continuous"
-      ? view._lut(upd.color.colormap)
-      : view._paletteLut(upd.color.palette);
+    if (d.colorMode !== 3) {
+      d.lut = upd.color.mode === "continuous"
+        ? view._lut(upd.color.colormap)
+        : view._paletteLut(upd.color.palette);
+    }
   }
   d.sizeMode = 0;
   d.size = (upd.size && upd.size.size) || 4.0;
@@ -262,6 +267,43 @@ function lodApplyDrill(view, g, upd, buffers) {
     gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.size.buf]), gl.STATIC_DRAW);
     d.sizeRange = upd.size.range_px;
   }
+  const styleChannel = (name) => upd.channels && upd.channels[name];
+  const artistScalar = Number(d.trace.style && d.trace.style.artist_alpha);
+  if (styleChannel("opacity") || styleChannel("artist_alpha") ||
+      styleChannel("stroke_width") || styleChannel("symbol") || Number.isFinite(artistScalar)) {
+    const values = new Float32Array(d.n * 4);
+    for (let i = 0; i < d.n; i++) {
+      values[i * 4] = 1;
+      values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
+      values[i * 4 + 2] = -1;
+      values[i * 4 + 3] = -1;
+    }
+    const copy = (name, component, scale = 1) => {
+      const spec = styleChannel(name);
+      if (!spec) return;
+      const source = spec.dtype === "u8"
+        ? view._asU8(buffers[spec.buf])
+        : view._asF32(buffers[spec.buf]);
+      const components = spec.components || 1;
+      for (let i = 0; i < d.n; i++) values[i * 4 + component] = source[i * components] * scale;
+    };
+    copy("opacity", 0);
+    copy("artist_alpha", 1);
+    copy("stroke_width", 2, view.dpr);
+    copy("symbol", 3);
+    if (!d.styleBuf) d.styleBuf = gl.createBuffer();
+    d.styleBuf._fcType = gl.FLOAT;
+    gl.bindBuffer(gl.ARRAY_BUFFER, d.styleBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, values, gl.STATIC_DRAW);
+  }
+  if (upd.stroke && upd.stroke.mode === "direct_rgba") {
+    const values = view._asU8(buffers[upd.stroke.buf]);
+    if (!d.strokeBuf) d.strokeBuf = gl.createBuffer();
+    d.strokeBuf._fcType = gl.UNSIGNED_BYTE;
+    gl.bindBuffer(gl.ARRAY_BUFFER, d.strokeBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, values, gl.STATIC_DRAW);
+  }
+  view._pointMarkStyle(d, d.trace);
   // Color-continuous handoff (§5): per-point local log-density + a blend
   // weight. Fresh at the boundary (blend≈1) the marks wear the aggregate's
   // colormap, so the texture->marks swap doesn't recolor the chart; deeper
@@ -304,7 +346,8 @@ function lodDropDrill(view, g) {
   if (!d) return;
   const gl = view.gl;
   view._deleteVaos(d); // the drill sibling carries its own VAOs
-  for (const b of [d.xBuf, d.yBuf, d.cBuf, d.sBuf, d.selBuf, d.dBuf]) if (b) gl.deleteBuffer(b);
+  for (const b of [d.xBuf, d.yBuf, d.cBuf, d.rgbaBuf, d.sBuf, d.styleBuf,
+    d.strokeBuf, d.selBuf, d.dBuf]) if (b) gl.deleteBuffer(b);
   g.drill = null;
   g._drillFadeStart = null;
   g._drillExitFadeStart = null;

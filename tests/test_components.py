@@ -595,6 +595,9 @@ def test_declarative_core_contract_for_layered_axis_chrome_and_interaction():
             click=True,
             brush=True,
             crosshair=True,
+            navigation=False,
+            pan=True,
+            zoom=True,
             view_change=True,
             link_group="ops",
             link_axes=("x",),
@@ -683,10 +686,36 @@ def test_declarative_core_contract_for_layered_axis_chrome_and_interaction():
         "click": True,
         "brush": True,
         "crosshair": True,
+        "navigation": False,
+        "pan": True,
+        "zoom": True,
         "view_change": True,
         "link_group": "ops",
         "link_axes": ["x"],
     }
+
+
+def test_interaction_component_disables_pan_and_zoom():
+    chart = xy.chart(
+        xy.scatter(x=[1.0, 2.0], y=[2.0, 3.0]),
+        xy.interaction_config(pan=False, zoom=False),
+    )
+
+    spec, _ = chart.figure().build_payload()
+
+    assert spec["interaction"] == {"pan": False, "zoom": False}
+
+
+def test_chart_level_pan_and_zoom_kwargs_build_declarative_spec():
+    chart = xy.bar_chart(
+        xy.bar(x=["A", "B"], y=[1.0, 2.0]),
+        pan=False,
+        zoom=False,
+    )
+
+    spec, _ = chart.figure().build_payload()
+
+    assert spec["interaction"] == {"pan": False, "zoom": False}
 
 
 def test_legend_and_tooltip_accept_opaque_framework_components_without_serializing():
@@ -1064,6 +1093,16 @@ def test_bad_interaction_options_do_not_cache_partial_chart_figure():
     with pytest.raises(ValueError, match="interaction view_change"):
         chart.figure()
     assert chart._figure is None
+
+    for option in ("pan", "zoom"):
+        chart = xy.chart(
+            xy.scatter(x=[1.0], y=[2.0]),
+            xy.interaction_config(**{option: "yes"}),
+        )
+
+        with pytest.raises(ValueError, match=f"interaction {option}"):
+            chart.figure()
+        assert chart._figure is None
 
     chart = xy.chart(
         xy.scatter(x=[1.0], y=[2.0]),
@@ -1879,7 +1918,7 @@ def test_selection_payload():
 
 
 def test_chart_styles_prop_is_the_documented_per_slot_mechanism() -> None:
-    """docs/engineering/styling.md's fourth mechanism: `styles={slot: {...}}` on xy.chart —
+    """spec/api/styling.md's fourth mechanism: `styles={slot: {...}}` on xy.chart —
     slot-validated, CSS-validated, merged with per-component `style=`."""
     xs = np.arange(6.0)
     chart = xy.chart(

@@ -122,6 +122,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # pyplot sets an explicit Matplotlib-style spine list.
         self.frame_sides: Optional[list[str]] = None
         self.colorbar_options: Optional[dict[str, Any]] = None
+        # Declarative export defaults (xy.export_config): governs the client
+        # modebar's format menu + filename and the Python export defaults.
+        self.export_options: Optional[dict[str, Any]] = None
         self.show_modebar = True
         self.show_tooltip = True
         self.class_name: Optional[str] = None
@@ -152,6 +155,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         label_angle: Optional[float] = None,
         type_: Optional[str] = None,
         domain: Optional[tuple[float, float]] = None,
+        bounds: Any = None,
         reverse: bool = False,
         format: Optional[str] = None,
         tick_count: Optional[int] = None,
@@ -172,6 +176,13 @@ class Figure(AnnotationsMixin, PayloadMixin):
             domain = self._finite_increasing_pair(domain, f"{axis_id} axis domain")
             if type_ == "log" and domain[0] <= 0:
                 raise ValueError(f"{axis_id} log axis domain must be positive")
+        if isinstance(bounds, str):
+            if bounds != "data":
+                raise ValueError(f"{axis_id} axis bounds must be an increasing pair or 'data'")
+        elif bounds is not None:
+            bounds = self._finite_increasing_pair(bounds, f"{axis_id} axis bounds")
+            if type_ == "log" and bounds[0] <= 0:
+                raise ValueError(f"{axis_id} log axis bounds must be positive")
         if side is None:
             side = "bottom" if axis_dim == "x" else ("right" if axis_id != "y" else "left")
         elif axis_dim == "x" and side not in {"top", "bottom"}:
@@ -197,6 +208,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             "label_angle": self._optional_finite_scalar(label_angle, f"{axis_id} axis label_angle"),
             "type": type_,
             "domain": domain,
+            "bounds": bounds,
             "reverse": self._bool_param(reverse, f"{axis_id} axis reverse"),
             "format": self._optional_text(format, f"{axis_id} axis format"),
             "tick_count": self._optional_positive_int(tick_count, f"{axis_id} axis tick_count"),
@@ -245,9 +257,13 @@ class Figure(AnnotationsMixin, PayloadMixin):
         select: Optional[bool] = None,
         brush: Optional[bool] = None,
         crosshair: Optional[bool] = None,
+        navigation: Optional[bool] = None,
+        pan: Optional[bool] = None,
+        zoom: Optional[bool] = None,
         view_change: Optional[bool] = None,
         link_group: Optional[str] = None,
         link_axes: tuple[str, ...] = ("x", "y"),
+        link_select: Optional[bool] = None,
     ) -> "Figure":
         updates: dict[str, Any] = {}
         for name, value in (
@@ -256,7 +272,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
             ("select", select),
             ("brush", brush),
             ("crosshair", crosshair),
+            ("navigation", navigation),
+            ("pan", pan),
+            ("zoom", zoom),
             ("view_change", view_change),
+            ("link_select", link_select),
         ):
             normalized = self._optional_bool(value, f"interaction {name}")
             if normalized is not None:
@@ -409,6 +429,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         opacity: float,
         role: str,
         extra_style: Optional[dict[str, Any]] = None,
+        color_ch: Optional[ColorChannel] = None,
+        stroke_ch: Optional[ColorChannel] = None,
+        style_channels: Optional[dict[str, Any]] = None,
     ) -> None:
         if orientation == "vertical":
             self._append_rect_trace(
@@ -423,6 +446,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 role=role,
                 orientation=orientation,
                 extra_style=extra_style,
+                color_ch=color_ch,
+                stroke_ch=stroke_ch,
+                style_channels=style_channels,
             )
         else:
             self._append_rect_trace(
@@ -437,6 +463,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 role=role,
                 orientation=orientation,
                 extra_style=extra_style,
+                color_ch=color_ch,
+                stroke_ch=stroke_ch,
+                style_channels=style_channels,
             )
 
     @staticmethod
@@ -478,7 +507,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if not isinstance(value, (tuple, list)):
             raise ValueError("interaction link_axes must be a tuple/list containing 'x' and/or 'y'")
         axes = list(value)
-        if not axes or any(axis not in {"x", "y"} for axis in axes):
+        if any(axis not in {"x", "y"} for axis in axes):
             raise ValueError("interaction link_axes must contain only 'x' and/or 'y'")
         out: list[str] = []
         for axis in axes:
@@ -761,7 +790,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         role: str,
         orientation: Optional[str] = None,
         color_ch: Optional[ColorChannel] = None,
+        stroke_ch: Optional[ColorChannel] = None,
         size_ch: Optional[SizeChannel] = None,
+        style_channels: Optional[dict[str, Any]] = None,
         count: Optional[int] = None,
         extra_style: Optional[dict[str, Any]] = None,
     ) -> None:
@@ -801,7 +832,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
                     name=name,
                     style=style,
                     color_ch=color_ch,
+                    stroke_ch=stroke_ch,
                     size_ch=size_ch,
+                    style_channels=style_channels or {},
                     count=count,
                 )
             )
@@ -826,10 +859,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
     def y_range(self) -> tuple[float, float]:
         return self._range("y")
 
-    def _range(self, axis_id: str) -> tuple[float, float]:
+    def _range(self, axis_id: str, *, use_domain: bool = True) -> tuple[float, float]:
         opts = self.axis_options.get(axis_id, {})
         fixed = opts.get("domain")
-        if fixed is not None:
+        if use_domain and fixed is not None:
             lo, hi = fixed
             return (hi, lo) if opts.get("reverse") else (lo, hi)
 
@@ -994,6 +1027,13 @@ class Figure(AnnotationsMixin, PayloadMixin):
             spec["reverse"] = True
         if opts.get("domain") is not None:
             spec["domain"] = list(opts["domain"])
+        bounds = opts.get("bounds")
+        if bounds == "data":
+            # Resolve once on the Python side so the client receives concrete
+            # limits even when an independent explicit domain sets view0.
+            bounds = self._range(axis_id, use_domain=False)
+        if bounds is not None:
+            spec["bounds"] = sorted(bounds)
         if opts.get("format") is not None:
             spec["format"] = opts["format"]
         style = styles.compile_axis_style(opts.get("style"), f"{axis_id} axis style")
@@ -1027,7 +1067,18 @@ class Figure(AnnotationsMixin, PayloadMixin):
 
     def _interaction_spec(self) -> dict[str, Any]:
         spec: dict[str, Any] = {}
-        for name in ("hover", "click", "select", "brush", "crosshair", "view_change"):
+        for name in (
+            "hover",
+            "click",
+            "select",
+            "brush",
+            "crosshair",
+            "navigation",
+            "pan",
+            "zoom",
+            "view_change",
+            "link_select",
+        ):
             if name in self.interaction:
                 spec[name] = self._bool_param(self.interaction[name], f"interaction {name}")
         link_group = self.interaction.get("link_group")
@@ -1177,14 +1228,37 @@ class Figure(AnnotationsMixin, PayloadMixin):
         return interaction.decimate_view(self, x0, x1, px_width)
 
     def append(
-        self, trace_id: int, x: Any, y: Any, *, color: Any = None, size: Any = None
+        self,
+        trace_id: int,
+        x: Any,
+        y: Any,
+        *,
+        color: Any = None,
+        size: Any = None,
+        stroke: Any = None,
+        opacity: Any = None,
+        alpha: Any = None,
+        stroke_width: Any = None,
+        symbol: Any = None,
     ) -> tuple[dict[str, Any], list[bytes]]:
         """Streaming append: extend a scatter/line trace's canonical columns
         and get the client refresh message back. The widget's `append` sends
         it; headless callers can inspect or discard it. Payloads stay
         screen-bounded, so this is O(pixels) on the wire regardless of how
         much data has accumulated."""
-        return interaction.append_data(self, trace_id, x, y, color, size)
+        return interaction.append_data(
+            self,
+            trace_id,
+            x,
+            y,
+            color,
+            size,
+            stroke,
+            opacity,
+            alpha,
+            stroke_width,
+            symbol,
+        )
 
     # -- output -----------------------------------------------------------
 
@@ -1272,6 +1346,76 @@ class Figure(AnnotationsMixin, PayloadMixin):
             height=height,
             scale=scale,
             engine=engine,
+            optimize=optimize,
+            custom_css=custom_css,
+            sandbox=sandbox,
+            gl=gl,
+        )
+
+    def to_image(
+        self,
+        format: str = "png",
+        *,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        scale: float = 2.0,
+        background: Optional[str] = None,
+        engine: export.Engine | str = export.Engine.auto,
+        quality: Optional[int] = None,
+        optimize: bool = False,
+        custom_css: Optional[str] = None,
+        sandbox: bool = True,
+        gl: str = "software",
+    ) -> bytes:
+        """Unified static export: PNG/JPEG/WebP/SVG/PDF bytes (export.py).
+
+        `engine=Engine.auto` is deterministic — the browser-free native path
+        for every format, Chromium only when `custom_css` needs a real CSS
+        engine. See `export.to_image` for the format, quality, and background
+        policies."""
+        return export.to_image(
+            self,
+            format,
+            width=width,
+            height=height,
+            scale=scale,
+            background=background,
+            engine=engine,
+            quality=quality,
+            optimize=optimize,
+            custom_css=custom_css,
+            sandbox=sandbox,
+            gl=gl,
+        )
+
+    def write_image(
+        self,
+        path: str | PathLike[str],
+        *,
+        format: Optional[str] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        scale: float = 2.0,
+        background: Optional[str] = None,
+        engine: export.Engine | str = export.Engine.auto,
+        quality: Optional[int] = None,
+        optimize: bool = False,
+        custom_css: Optional[str] = None,
+        sandbox: bool = True,
+        gl: str = "software",
+    ) -> bytes:
+        """Atomic file export with extension-inferred format (export.py):
+        .png/.jpg/.jpeg/.webp/.svg/.pdf, plus .html routing to `to_html`."""
+        return export.write_image(
+            self,
+            path,
+            format=format,
+            width=width,
+            height=height,
+            scale=scale,
+            background=background,
+            engine=engine,
+            quality=quality,
             optimize=optimize,
             custom_css=custom_css,
             sandbox=sandbox,

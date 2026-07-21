@@ -1,4 +1,4 @@
-"""Transport-agnostic message dispatcher (docs/engineering/design/reflex-integration.md §3.1).
+"""Transport-agnostic message dispatcher (spec/design/reflex-integration.md §3.1).
 
 One kernel-side dispatcher for every transport: the anywidget comm today, and
 any future host (the planned Reflex adapter's HTTP routes) tomorrow. A

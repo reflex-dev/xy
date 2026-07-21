@@ -2020,7 +2020,7 @@ def test_html_to_png_retries_without_sandbox_when_browser_crashes(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Mark-level styling (docs/engineering/styling.md#styling-the-marks): CSS linear-gradient
+# Mark-level styling (spec/api/styling.md#styling-the-marks): CSS linear-gradient
 # fills, rounded corners + stroke borders on the rect family, smooth curves.
 # ---------------------------------------------------------------------------
 

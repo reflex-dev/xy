@@ -1,6 +1,6 @@
 // XYChart: mount a xy figure inside a Reflex app.
 //
-// Two modes, one prop apart (docs/engineering/design/reflex-integration.md):
+// Two modes, one prop apart (spec/design/reflex-integration.md):
 //
 // `token` (live) — this component does NOT open its own connection.
 // socket.io multiplexing reuses the app's engine.io websocket when the

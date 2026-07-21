@@ -198,9 +198,7 @@ def test_line_area_decimate_view_routes_through_shared_buffer_writer(monkeypatch
 
 
 def test_lod_architecture_doc_names_shared_extension_points() -> None:
-    text = (ROOT / "docs" / "engineering" / "design" / "lod-architecture.md").read_text(
-        encoding="utf-8"
-    )
+    text = (ROOT / "spec" / "design" / "lod-architecture.md").read_text(encoding="utf-8")
 
     for marker in (
         "ViewportRequest.from_client",
