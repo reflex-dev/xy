@@ -1749,8 +1749,18 @@ class ChartView {
     gl.bindVertexArray(null);
 
     this.gpuTraces = this.spec.traces.map((t) => this._buildTrace(buffer, t));
-    this._pickable = this.gpuTraces.some((g) => markOf(g.trace.kind).pointPick && g.tier !== "density");
-    if (this._pickable) this._initPickTarget();
+    this._updatePickable();
+  }
+
+  // Recompute point-pickability from the current GPU traces and reflect it in
+  // the modebar. Density traces count only while drilled to exact points
+  // (§5/§34), so this must re-run on every drill state change — the Select
+  // trigger tracks the capability instead of freezing at construction time.
+  _updatePickable() {
+    this._pickable = this.gpuTraces.some(
+      (t) => markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill));
+    if (this._pickable && !this.pickFbo) this._initPickTarget();
+    this._syncModebarSelect?.();
   }
 
   _prog(key, vs, fs) {
@@ -2775,6 +2785,8 @@ class ChartView {
       drawTrace(g);
     }
     this._drawHoverState();
+    // Keep a visible tooltip anchored through pan, zoom, and linked views.
+    this._repositionTooltip();
     // Hover-only frames leave the pick snapshot valid (see draw()); direct
     // _drawNow() callers never set the flag, so they invalidate as before.
     if (!this._rafKeepPick) this._pickDirty = true;
@@ -4441,7 +4453,7 @@ class ChartView {
       this._hoverTarget = null;
       this._lastHoverXY = null;
       this._pickSeq = (this._pickSeq || 0) + 1;
-      this.tooltip.style.display = "none";
+      this._hideTooltip();
       if (hadHover) this.draw();
       return;
     }
@@ -4455,14 +4467,15 @@ class ChartView {
       this._hoverTarget = null;
       this._lastHoverXY = null;
       this._pickSeq = (this._pickSeq || 0) + 1;
-      this.tooltip.style.display = "none";
+      this._hideTooltip();
       if (hadHover) this._drawKeepPick();
       return;
     }
     const id = hit.trace * 1e9 + hit.index;
     this._lastHoverXY = { clientX: e.clientX, clientY: e.clientY };
     if (id === this._hoverId) {
-      this._renderTooltip(this._lastRow, e.clientX, e.clientY);
+      // Anchored tooltips do not need a per-pointermove DOM rebuild.
+      if (!this._tooltipAnchor) this._renderTooltip(this._lastRow, e.clientX, e.clientY);
       return;
     }
     this._hoverId = id;

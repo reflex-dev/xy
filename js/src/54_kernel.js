@@ -259,9 +259,7 @@ Object.assign(ChartView.prototype, {
       this._destroyTraceResources(this.gpuTraces[i], texSeen);
       this.gpuTraces[i] = this._buildTrace(blob, ts);
     }
-    this._pickable = this.gpuTraces.some(
-      (g) => markOf(g.trace.kind).pointPick && (g.tier !== "density" || g.drill));
-    if (this._pickable && !this.pickFbo) this._initPickTarget();
+    this._updatePickable();
     this._scheduleViewRequest(this.view, { delay: 0 });
     this.draw();
   },
@@ -333,15 +331,13 @@ Object.assign(ChartView.prototype, {
         lodApplyDensityUpdate(this, g, upd, buffers);
       }
       // Drill state changes what's pickable; hover needs the FBO ready.
-      this._pickable = this.gpuTraces.some(
-        (t) => markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill));
-      if (this._pickable && !this.pickFbo) this._initPickTarget();
+      this._updatePickable();
       this.draw();
     } else if (msg.type === "append") {
       this._applyAppend(msg, buffers);
     } else if (msg.type === "pick_result") {
       if (msg.seq !== undefined && msg.seq !== this._pickSeq) return;
-      if (!msg.row) { this.tooltip.style.display = "none"; return; }
+      if (!msg.row) { this._hideTooltip(); return; }
       // The kernel returns exact values for the picked trace only. Rehydrate
       // tooltip fields sourced from sibling traces before replacing the local
       // approximate row, otherwise a rich layered tooltip visibly collapses.
@@ -357,6 +353,12 @@ Object.assign(ChartView.prototype, {
       }
       this._applySharedTooltipFields(msg.row);
       this._lastRow = msg.row;
+      // Replace the approximate f32 anchor with the exact f64 point (§16).
+      if (this._tooltipAnchor
+          && Number.isFinite(msg.row.x) && Number.isFinite(msg.row.y)) {
+        this._tooltipAnchor.x = msg.row.x;
+        this._tooltipAnchor.y = msg.row.y;
+      }
       const xy = this._lastHoverXY;
       // Exact values replace the visible approximate tooltip. A keyboard
       // readout already announced its position and approximate values, so do
@@ -374,7 +376,13 @@ Object.assign(ChartView.prototype, {
         });
       }
     } else if (msg.type === "selection") {
+      // Enriched replies echo the brush geometry (channel.py include_rows):
+      // adopt it so a view that never saw the drag (republish restore) can
+      // still re-derive masks across later drill swaps (§34).
+      if (msg.bounds) this._lastBrush = { mode: "box", ...msg.bounds };
+      else if (msg.polygon) this._lastBrush = { mode: "poly", points: msg.polygon };
       if (!msg.traces || !msg.traces.length) {
+        this._lastBrush = null;
         for (const g of this.gpuTraces) {
           g.selActive = false;
           if (g.drill) g.drill.selActive = false;

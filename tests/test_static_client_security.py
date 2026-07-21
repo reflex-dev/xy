@@ -331,7 +331,7 @@ def test_client_exposes_first_class_interaction_events() -> None:
         'this._dispatchChartEvent("brush",',
         'this._dispatchChartEvent("select",',
         'this.comm.send({ type: "view_change", ...detail });',
-        'const msg = { type: "click", trace: hit.trace, index: hit.index };',
+        'const msg = { type: "click", trace: hit.trace, index: hit.index, screen, modifiers };',
         "new BroadcastChannel(`xy:${group}`)",
     )
 

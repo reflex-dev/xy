@@ -491,8 +491,7 @@ Object.assign(ChartView.prototype, {
     });
     this._transitionView = animateDomain ? { from: fromView, to: target } : null;
     if (!animateDomain) this.view = { ...target };
-    this._pickable = this.gpuTraces.some((g) => markOf(g.trace.kind).pointPick && g.tier !== "density");
-    if (this._pickable && !this.pickFbo) this._initPickTarget();
+    this._updatePickable();
     if (!this._runDataAnimation("update", this.gpuTraces, previous)) {
       this.view = { ...target };
       this._transitionView = null;

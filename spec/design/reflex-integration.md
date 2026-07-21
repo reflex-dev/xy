@@ -26,8 +26,8 @@ state, wrong for data buffers. The integration splits every chart into:
 
 - **Control plane (Reflex-native, low-frequency, JSON).** Which figure a
   component shows (a token string minted by a computed var), style/layout
-  props, and *semantic* events out: `on_point_hover(row)`,
-  `on_select_end(summary)`, `on_view_change(view)`, `on_point_click(row)`.
+  props, and *semantic* events out: `on_point_hover(event)`,
+  `on_select_end(event)`, `on_view_change(event)`, `on_point_click(event)`.
   These go through normal Reflex event handlers, so app code composes the
   usual way. Rows and summaries are small by construction — never buffers.
 - **Data plane (xy-native, high-frequency, binary).** First paint,
@@ -316,12 +316,15 @@ absorbs newer publishes and always ships the latest payload.
 - **State-driven rebuild** (filter changed): the figure var recomputes,
   `registry.publish` bumps the version and pushes one full `payload` to the
   room. Stable token: no component re-render, one screen-bounded reship. The
-  client re-homes to the incoming spec's axis ranges — a full payload carries no
-  follow policy, so it lands like a fresh mount of the new data. This is what
-  lets an `on_view_change`-computed detail chart track its source both ways:
-  when the linked overview zooms *out*, the recomputed detail's range grows and
-  the view expands with it rather than staying pinned to the previous, smaller
-  home window (`ChartView.updatePayload`, `js/src/56_animation.js`).
+  in-place swap re-homes the viewport to the incoming spec's axis ranges — a
+  full payload carries no follow policy of its own. A chart the viewer has
+  navigated is re-pinned to its prior window afterward (the restore contract
+  below); a dependent chart sitting at its home simply follows the new data. In
+  both cases the home *must* be the new spec's own extents, not the previous
+  payload's: it is what lets an `on_view_change`-computed detail chart track its
+  source both ways — when the linked overview zooms *out*, the recomputed
+  detail's count axis grows and the view expands with it instead of clamping to
+  the previous, smaller home (`ChartView.updatePayload`, `js/src/56_animation.js`).
 - **Streaming**: `reflex_xy.append(token, x=..., y=...)` from any handler,
   background task, or thread → `Figure.append` under the figure lock (worker
   thread) → the same `append` message the notebook widget ships, pushed
@@ -386,6 +389,130 @@ Multiple mounts of one figure render and stream correctly (room fan-out,
 `mid`-addressed replies); concurrent *drilldown* from several views of the
 same figure shares kernel drill state — same known engine-level shape as
 multiple notebook views today, acceptable and documented.
+
+### 5.1 Semantic event contract
+
+Semantic events are available for live, token-backed figures created with
+`@reflex_xy.figure`, `inline()`, or `register()`. A static `src` chart has no
+socket: browser-local tooltip and navigation behavior remains available, but
+it cannot dispatch Reflex handlers or drive server-side cross-filtering.
+Unset event props install no corresponding interaction work.
+
+Every handler receives a versioned dictionary with `version: 1`, `type`, and
+the stable figure `token`. Point events also contain `trace`, the canonical
+CPU-store `canonical_row_id`, `data: {x, y}`, and a bounded `datum` containing
+the remaining configured pick fields. Click adds canvas-relative `screen`
+coordinates and keyboard `modifiers`. Canonical IDs never refer to a shipped,
+sampled, decimated, or GPU-buffer position.
+
+```python
+@rx.event
+def inspect_point(self, event: dict):
+    self.last_id = event["canonical_row_id"]
+    self.last_xy = event["data"]
+
+reflex_xy.chart(Dash.cloud, on_point_click=Dash.inspect_point)
+```
+
+Selection events use the following shape. P0 supports deterministic `replace`
+mode; an empty clear is explicit (`kind: "clear"`, `cleared: true`). Box and
+lasso rows are ordered by trace then canonical ID.
+
+```python
+{
+  "version": 1, "type": "select_end", "token": "xyv1|...",
+  "selection": {
+    "kind": "box", "mode": "replace",
+    "data_bounds": {"x0": 0, "x1": 10, "y0": 20, "y1": 50},
+    "polygon": None,
+    "canonical_row_ids": [{"trace": 0, "ids": [12, 18, 27]}],
+    "rows": [{"trace": 0, "index": 12, "x": 2.0, "y": 30.0,
+              "x_kind": "linear", "y_kind": "linear"}],
+    "total_count": 3, "truncated": False, "cleared": False,
+  },
+}
+```
+
+The JSON projection is capped at `SELECTION_EVENT_ROW_LIMIT = 1000` rows and
+`SELECTION_EVENT_ID_LIMIT = 10000` canonical IDs. `total_count` always reports
+the complete count and `truncated` is never silent. For complete server-side
+data, re-resolve the geometry against the current live figure; `rows()` is
+unbounded unless the caller supplies a limit:
+
+Every envelope shape is declared as a `TypedDict` in `reflex_xy.events`
+(exported from the package root: `PointHoverEvent`, `PointClickEvent`,
+`SelectEndEvent`, `SelectionPayload`, `ViewChangeEvent`, plus their component
+pieces). Handlers still receive plain dicts — the declarations exist for type
+checking and editor support; `assets/XYChart.jsx` is the single producer they
+mirror, and the two must change together.
+
+```python
+@rx.event
+def filter_regions(self, event: reflex_xy.SelectEndEvent):
+    selection = event["selection"]
+    if selection["cleared"]:
+        self.selected_regions = []
+        return
+    self.selected_regions = sorted({
+        row["color_category"] for row in selection["rows"]
+        if "color_category" in row
+    })
+    complete = reflex_xy.resolve_selection(event)
+    if selection["truncated"] and complete is not None:
+        process_all_rows(complete.rows())
+```
+
+LOD and density rendering do not change this contract. For example, a box
+drawn over a million-point density tier may return 1000 projected rows and
+10,000 IDs with `total_count: 247381, truncated: true`; `resolve_selection`
+re-runs that box against canonical f64 columns and returns all 247,381 rows,
+never the visible sample or decimated buffer positions.
+
+The source chart retains its box/lasso highlight and viewport when the state
+change republishes its figure; dependent charts update behind their unchanged
+tokens. A restore is tagged `source: "republish"` and does not redispatch
+`on_select_end` or `on_view_change`, preventing feedback loops. Clearing the
+selection resets dependent filters through the same handler.
+
+A republish first attempts an in-place data swap through
+`ChartView.updatePayload` (the animations path): the canvas never tears down,
+but the swap re-homes the viewport and rebuilds trace state, so the restore
+contract still applies — the wrapper pins the domain (clearing any in-flight
+domain interpolation) and re-requests the selection mask. When the in-place
+swap is refused, the wrapper destroys the outgoing view immediately and builds
+the replacement. The client retains brush geometry, so points arriving in a
+re-drill can reconstruct their selection mask without a second selection
+request.
+
+One handler can route several charts by stable token:
+
+```python
+@rx.event
+def shared(self, event: dict):
+    if event["token"] == self.region_chart:
+        self.apply_regions(event["selection"]["rows"])
+    elif event["token"] == self.product_chart:
+        self.apply_products(event["selection"]["rows"])
+```
+
+View events are `{version, type: "view_change", token, x_domain, y_domain,
+source, phase: "final"}`. User changes are trailing-edge debounced for 200 ms;
+linked and republish sources are suppressed. Hover events are latest-wins and
+throttled to one dispatch per 120 ms. For viewport synchronization:
+
+```python
+@rx.event
+def remember_view(self, event: dict):
+    self.x_domain = event["x_domain"]
+    self.y_domain = event["y_domain"]
+
+reflex_xy.chart(Dash.cloud, on_view_change=Dash.remember_view)
+```
+
+Every kernel message echoes the last payload version as `v`; the namespace
+silently rejects messages for an older figure version. This prevents an
+in-flight pick or selection from resolving in a replacement coordinate space,
+while clients that omit `v` remain compatible.
 
 ## 6. Latency budget
 

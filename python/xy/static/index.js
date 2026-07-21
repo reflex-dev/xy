@@ -1507,10 +1507,12 @@ d = g.drill = { trace: g.trace, xBuf: gl.createBuffer(), yBuf: gl.createBuffer()
 d.trace = { ...g.trace, style: upd.style || g.trace.style || {} };
 d.xAxis = g.xAxis;
 d.yAxis = g.yAxis;
+const xs = view._asF32(buffers[upd.x.buf]);
+const ys = view._asF32(buffers[upd.y.buf]);
 gl.bindBuffer(gl.ARRAY_BUFFER, d.xBuf);
-gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.x.buf]), gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, xs, gl.STATIC_DRAW);
 gl.bindBuffer(gl.ARRAY_BUFFER, d.yBuf);
-gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.y.buf]), gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, ys, gl.STATIC_DRAW);
 d.xMeta = { offset: upd.x.offset, scale: upd.x.scale };
 d.yMeta = { offset: upd.y.offset, scale: upd.y.scale };
 d.win = { x0: upd.x_range[0], x1: upd.x_range[1], y0: upd.y_range[0], y1: upd.y_range[1] };
@@ -1518,6 +1520,7 @@ d.n = Math.min(upd.x.len, upd.y.len);
 d.visible = upd.visible ?? d.n;
 d.seq = upd.drill_seq;
 d.selActive = false;
+lodRestoreBrushMask(view, d, xs, ys);
 view._hoverId = -1;
 view._lastRow = null;
 d.colorMode = 0;
@@ -1612,6 +1615,33 @@ lodEnterDrillContinuous(view, g);
 g._drillDying = false;
 g._drillDiedInsideWin = false;
 }
+function lodRestoreBrushMask(view, d, xs, ys) {
+const b = view._lastBrush;
+if (!b || !d.n) return;
+const ox = d.xMeta.offset, sx = d.xMeta.scale || 1;
+const oy = d.yMeta.offset, sy = d.yMeta.scale || 1;
+const mask = new Float32Array(d.n);
+if (b.mode === "box") {
+for (let i = 0; i < d.n; i++) {
+const x = xs[i] / sx + ox, y = ys[i] / sy + oy;
+if (x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) mask[i] = 1;
+}
+} else if (b.mode === "poly" && Array.isArray(b.points) && b.points.length >= 3) {
+const pts = b.points;
+for (let i = 0; i < d.n; i++) {
+const x = xs[i] / sx + ox, y = ys[i] / sy + oy;
+let hit = false;
+for (let a = 0, z = pts.length - 1; a < pts.length; z = a++) {
+const [xa, ya] = pts[a], [xz, yz] = pts[z];
+if ((ya > y) !== (yz > y) && x < ((xz - xa) * (y - ya)) / (yz - ya) + xa) hit = !hit;
+}
+if (hit) mask[i] = 1;
+}
+} else {
+return;
+}
+view._applySelMask(d, mask);
+}
 function lodDropDrill(view, g) {
 const d = g.drill;
 if (!d) return;
@@ -1628,6 +1658,7 @@ g._drillDying = false;
 g._drillDiedInsideWin = false;
 view._hoverId = -1;
 view._lastRow = null;
+view._updatePickable();
 }
 function lodMarkDrillDying(view, g) {
 if (!g.drill) return;
@@ -3285,8 +3316,13 @@ gl.vertexAttribPointer(ATTR_SLOTS.a_corner, 2, gl.FLOAT, false, 0, 0);
 gl.vertexAttribDivisor(ATTR_SLOTS.a_corner, 0);
 gl.bindVertexArray(null);
 this.gpuTraces = this.spec.traces.map((t) => this._buildTrace(buffer, t));
-this._pickable = this.gpuTraces.some((g) => markOf(g.trace.kind).pointPick && g.tier !== "density");
-if (this._pickable) this._initPickTarget();
+this._updatePickable();
+}
+_updatePickable() {
+this._pickable = this.gpuTraces.some(
+(t) => markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill));
+if (this._pickable && !this.pickFbo) this._initPickTarget();
+this._syncModebarSelect?.();
 }
 _prog(key, vs, fs) {
 let p = this._progCache.get(key);
@@ -4180,6 +4216,7 @@ for (const g of this.gpuTraces) {
 drawTrace(g);
 }
 this._drawHoverState();
+this._repositionTooltip();
 if (!this._rafKeepPick) this._pickDirty = true;
 this._rafKeepPick = false;
 this._drawChrome();
@@ -5660,7 +5697,7 @@ this._hoverId = -1;
 this._hoverTarget = null;
 this._lastHoverXY = null;
 this._pickSeq = (this._pickSeq || 0) + 1;
-this.tooltip.style.display = "none";
+this._hideTooltip();
 if (hadHover) this.draw();
 return;
 }
@@ -5674,14 +5711,14 @@ this._hoverId = -1;
 this._hoverTarget = null;
 this._lastHoverXY = null;
 this._pickSeq = (this._pickSeq || 0) + 1;
-this.tooltip.style.display = "none";
+this._hideTooltip();
 if (hadHover) this._drawKeepPick();
 return;
 }
 const id = hit.trace * 1e9 + hit.index;
 this._lastHoverXY = { clientX: e.clientX, clientY: e.clientY };
 if (id === this._hoverId) {
-this._renderTooltip(this._lastRow, e.clientX, e.clientY);
+if (!this._tooltipAnchor) this._renderTooltip(this._lastRow, e.clientX, e.clientY);
 return;
 }
 this._hoverId = id;
@@ -6364,6 +6401,7 @@ Object.assign(ChartView.prototype, {
 _showTooltip(hit, clientX, clientY) {
 const row = this._localRow(hit);
 this._lastRow = row;
+this._setTooltipAnchor(hit, row, clientX, clientY);
 this._renderTooltip(row, clientX, clientY);
 if (this._interactionFlag("hover")) {
 this._dispatchChartEvent("hover", {
@@ -6557,14 +6595,66 @@ lines.push(`${field}: ${this._formatTooltipValue(value, kind, formats[field])}`)
 }
 return lines.length ? lines : this._defaultTooltipLines(row);
 },
-_renderTooltip(row, clientX, clientY, options = {}) {
-if (!row || this.spec.show_tooltip === false) {
+_setTooltipAnchor(hit, row, clientX, clientY) {
+const g = hit.g;
+if (!g) { this._tooltipAnchor = null; return; }
+const xAxis = g.xAxis || "x";
+const yAxis = g.yAxis || "y";
+let x = row.x;
+let y = row.y;
+if (!Number.isFinite(x) || !Number.isFinite(y)) {
+const rect = this.canvas.getBoundingClientRect();
+[x, y] = this._dataFromCanvas(clientX - rect.left, clientY - rect.top, xAxis, yAxis);
+}
+this._tooltipAnchor = Number.isFinite(x) && Number.isFinite(y)
+? { xAxis, yAxis, x, y }
+: null;
+if (this._tooltipAnchor && !this._tooltipAnchorPx()) this._tooltipAnchor = null;
+},
+_tooltipAnchorPx() {
+const a = this._tooltipAnchor;
+if (!a) return null;
+const lx = this._dataPx(a.xAxis, a.x);
+const ly = this._dataPx(a.yAxis, a.y);
+const p = this.plot;
+if (!Number.isFinite(lx) || !Number.isFinite(ly)
+|| lx < p.x || lx > p.x + p.w || ly < p.y || ly > p.y + p.h) {
+return null;
+}
+return { lx, ly };
+},
+_hideTooltip() {
+this.tooltip.style.display = "none";
+this._tooltipAnchor = null;
+},
+_repositionTooltip() {
+if (!this._tooltipAnchor) return;
+const pos = this._tooltipAnchorPx();
+if (!pos) {
 this.tooltip.style.display = "none";
 return;
 }
-const rect = this.root.getBoundingClientRect();
-const lx = clientX - rect.left;
-const ly = clientY - rect.top;
+this.tooltip.style.display = "block";
+this._placeTooltip(pos.lx, pos.ly);
+},
+_placeTooltip(lx, ly) {
+const tw = this.tooltip.offsetWidth;
+const th = this.tooltip.offsetHeight;
+const edge = 4;
+const gap = 12;
+const maxLeft = Math.max(edge, this.size.w - tw - edge);
+const left = Math.max(edge, Math.min(lx + gap, maxLeft));
+const below = ly + gap;
+const above = ly - th - gap;
+const top = below + th <= this.size.h - edge ? below : Math.max(edge, above);
+this.tooltip.style.left = left + "px";
+this.tooltip.style.top = top + "px";
+},
+_renderTooltip(row, clientX, clientY, options = {}) {
+if (!row || this.spec.show_tooltip === false) {
+this._hideTooltip();
+return;
+}
 const lines = this._tooltipLines(row);
 this.tooltip.textContent = "";
 lines.forEach((ln, i) => {
@@ -6580,17 +6670,15 @@ const announcement = prefix
 if (this.a11yLive.textContent !== announcement) this.a11yLive.textContent = announcement;
 }
 this.tooltip.style.display = "block";
-const tw = this.tooltip.offsetWidth;
-const th = this.tooltip.offsetHeight;
-const edge = 4;
-const gap = 12;
-const maxLeft = Math.max(edge, this.size.w - tw - edge);
-const left = Math.max(edge, Math.min(lx + gap, maxLeft));
-const below = ly + gap;
-const above = ly - th - gap;
-const top = below + th <= this.size.h - edge ? below : Math.max(edge, above);
-this.tooltip.style.left = left + "px";
-this.tooltip.style.top = top + "px";
+const pos = this._tooltipAnchorPx();
+if (pos) {
+this._placeTooltip(pos.lx, pos.ly);
+} else if (this._tooltipAnchor) {
+this.tooltip.style.display = "none";
+} else {
+const rect = this.root.getBoundingClientRect();
+this._placeTooltip(clientX - rect.left, clientY - rect.top);
+}
 },
 });
 Object.assign(ChartView.prototype, {
@@ -6638,7 +6726,7 @@ original: [...this._lassoPolygon[index]],
 handle,
 };
 handle.dataset.xyActive = "";
-this.tooltip.style.display = "none";
+this._hideTooltip();
 try { this.selLasso.setPointerCapture(e.pointerId); } catch (_err) {   }
 e.preventDefault();
 e.stopPropagation();
@@ -6712,7 +6800,7 @@ points: firstLassoPoint ? [firstLassoPoint] : null,
 previousLasso,
 };
 try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
-this.tooltip.style.display = "none";
+this._hideTooltip();
 return;
 }
 if (this.dragMode === "pan" && canNavigate && canPan) {
@@ -6729,7 +6817,7 @@ axes: [...new Set([
 changedAxes: [],
 };
 try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
-this.tooltip.style.display = "none";
+this._hideTooltip();
 }
 });
 this._listen(c, "pointermove", (e) => {
@@ -6816,7 +6904,7 @@ phase: "end",
 interactionId: drag.interactionId,
 });
 }
-if (drag && !drag.moved) this.tooltip.style.display = "none";
+if (drag && !drag.moved) this._hideTooltip();
 drag = null;
 };
 this._listen(c, "pointerup", end);
@@ -6837,7 +6925,7 @@ this._hoverTarget = null;
 this._lastHoverXY = null;
 this._a11yKeyboardReadout = null;
 this._pickSeq = (this._pickSeq || 0) + 1;
-this.tooltip.style.display = "none";
+this._hideTooltip();
 this._hideCrosshair();
 if (this._interactionFlag("hover")) {
 this._dispatchChartEvent("leave", { view: this._eventView("leave") });
@@ -6880,13 +6968,48 @@ g._cpu.x && g._cpu.y && Math.min(g._cpu.x.length, g._cpu.y.length) > 0);
 },
 _onA11yKey(e) {
 const direction = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
-if (direction === undefined && e.key !== "Home" && e.key !== "End" && e.key !== "Escape") {
+const activate = e.key === "Enter" || e.key === " ";
+if (direction === undefined && e.key !== "Home" && e.key !== "End" && e.key !== "Escape"
+&& !activate) {
+return;
+}
+if (activate) {
+if (!this._interactionFlag("click") || !this._hoverTarget) return;
+e.preventDefault();
+const hit = this._hoverTarget;
+const rect = this.canvas.getBoundingClientRect();
+const clientX = this._lastHoverXY?.clientX ?? rect.left;
+const clientY = this._lastHoverXY?.clientY ?? rect.top;
+const screen = { x: clientX - rect.left, y: clientY - rect.top };
+const modifiers = {
+shift: e.shiftKey === true,
+alt: e.altKey === true,
+ctrl: e.ctrlKey === true,
+meta: e.metaKey === true,
+};
+const detail = {
+row: this._localRow ? this._localRow(hit) : null,
+trace: hit.trace,
+index: hit.index,
+screen,
+modifiers,
+view: this._eventView("click"),
+};
+this._dispatchChartEvent("click", detail);
+if (this.comm) {
+const msg = { type: "click", trace: hit.trace, index: hit.index, screen, modifiers };
+const g = hit.g;
+if (g && g.tier === "density" && g.drill && g.drill.seq !== undefined) {
+msg.drill_seq = g.drill.seq;
+}
+this.comm.send(msg);
+}
 return;
 }
 if (e.key === "Escape") {
 e.preventDefault();
 const hadHover = this._hoverId !== -1;
-this.tooltip.style.display = "none";
+this._hideTooltip();
 this._hoverId = -1;
 this._hoverTarget = null;
 this._lastHoverXY = null;
@@ -6978,7 +7101,18 @@ index: hit ? hit.index : null,
 };
 this._dispatchChartEvent("click", detail);
 if (hit && this.comm) {
-const msg = { type: "click", trace: hit.trace, index: hit.index };
+const msg = {
+type: "click",
+trace: hit.trace,
+index: hit.index,
+screen: { x: cssX, y: cssY },
+modifiers: {
+shift: e.shiftKey === true,
+alt: e.altKey === true,
+ctrl: e.ctrlKey === true,
+meta: e.metaKey === true,
+},
+};
 const g = hit.g;
 if (g && g.tier === "density" && g.drill && g.drill.seq !== undefined) {
 msg.drill_seq = g.drill.seq;
@@ -7154,6 +7288,7 @@ this._clearLassoOverlay();
 const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
 const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
 const range = { x0, x1, y0, y1 };
+this._lastBrush = { mode: "box", x0, x1, y0, y1 };
 this._broadcastLinkedSelection({ range });
 this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
 if (this.comm) {
@@ -7167,6 +7302,7 @@ if (!Array.isArray(points) || points.length < 3) return;
 const polygon = points.map((point) => [point[0], point[1]]);
 if (!polygon.every((point) => point.every(Number.isFinite))) return;
 this._lassoPolygon = polygon;
+this._lastBrush = { mode: "poly", points: polygon };
 this._broadcastLinkedSelection({ polygon });
 this._renderLassoSelection();
 this._dispatchChartEvent("brush", {
@@ -7265,6 +7401,7 @@ g.selActive = false;
 if (g.drill) g.drill.selActive = false;
 }
 this._selectionCount = 0;
+this._lastBrush = null;
 if (opts.broadcast !== false) this._broadcastLinkedSelection({ clear: true });
 if (opts.dispatch !== false) {
 if (this._interactionFlag("select", true)) {
@@ -7432,8 +7569,7 @@ this._zoomMenuLabel = zoomPercent;
 zoomTrigger.setAttribute("aria-haspopup", "menu");
 zoomTrigger.setAttribute("aria-expanded", "false");
 }
-const canSelect = this._pickable
-&& this._interactionFlag("brush", true)
+const canSelect = this._interactionFlag("brush", true)
 && this._interactionFlag("select", true);
 let selectTrigger = null;
 let selectIndicator = null;
@@ -7707,6 +7843,16 @@ setZoomMenuOpen(false);
 setSelectMenuOpen(false);
 setExportMenuOpen(false);
 };
+this._syncModebarSelect = () => {
+if (!selectTrigger) return;
+const on = Boolean(this._pickable);
+if (!on) {
+setSelectMenuOpen(false);
+if (this.dragMode.startsWith("select")) this._setDragMode("pan");
+}
+selectTrigger.style.display = on ? "flex" : "none";
+};
+this._syncModebarSelect();
 this._listen(document, "pointerdown", (e) => {
 if (this._zoomMenuOpen && !bar.contains(e.target)) setZoomMenuOpen(false);
 if (this._selectMenuOpen && !bar.contains(e.target)) setSelectMenuOpen(false);
@@ -8078,9 +8224,26 @@ if (f < 1) {
 const minSpan = Math.max(Math.abs(ca), 1e-30) * 1e-12;
 if (Math.abs((c1 - c0) * f) < minSpan) return null;
 }
+const next0 = ca - (ca - c0) * f;
+const next1 = ca + (c1 - ca) * f;
+if (f > 1 && this.view0) {
+const home = this._axisRange(axisId, this.view0);
+const home0 = this._axisCoord(axis, home[0]);
+const home1 = this._axisCoord(axis, home[1]);
+const homeSpan = Math.abs(home1 - home0);
+if ([home0, home1].every(Number.isFinite)
+&& homeSpan > 0
+&& Math.abs(next1 - next0) > homeSpan) {
+const signedHome = homeSpan * Math.sign(next1 - next0);
 return [
-this._axisValue(axis, ca - (ca - c0) * f),
-this._axisValue(axis, ca + (c1 - ca) * f),
+this._axisValue(axis, ca - anchorFrac * signedHome),
+this._axisValue(axis, ca + (1 - anchorFrac) * signedHome),
+];
+}
+}
+return [
+this._axisValue(axis, next0),
+this._axisValue(axis, next1),
 ];
 },
 _zoomAt(f, fx, fy, animate = false, duration = 120, opts = {}) {
@@ -8689,9 +8852,7 @@ if (i < 0 || !ts) continue;
 this._destroyTraceResources(this.gpuTraces[i], texSeen);
 this.gpuTraces[i] = this._buildTrace(blob, ts);
 }
-this._pickable = this.gpuTraces.some(
-(g) => markOf(g.trace.kind).pointPick && (g.tier !== "density" || g.drill));
-if (this._pickable && !this.pickFbo) this._initPickTarget();
+this._updatePickable();
 this._scheduleViewRequest(this.view, { delay: 0 });
 this.draw();
 },
@@ -8757,15 +8918,13 @@ clearPending(g);
 if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
 lodApplyDensityUpdate(this, g, upd, buffers);
 }
-this._pickable = this.gpuTraces.some(
-(t) => markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill));
-if (this._pickable && !this.pickFbo) this._initPickTarget();
+this._updatePickable();
 this.draw();
 } else if (msg.type === "append") {
 this._applyAppend(msg, buffers);
 } else if (msg.type === "pick_result") {
 if (msg.seq !== undefined && msg.seq !== this._pickSeq) return;
-if (!msg.row) { this.tooltip.style.display = "none"; return; }
+if (!msg.row) { this._hideTooltip(); return; }
 const local = this._lastRow;
 if (local && local.trace === msg.row.trace && local.index === msg.row.index) {
 for (const [key, value] of Object.entries(local)) {
@@ -8774,6 +8933,11 @@ if (msg.row[key] === undefined) msg.row[key] = value;
 }
 this._applySharedTooltipFields(msg.row);
 this._lastRow = msg.row;
+if (this._tooltipAnchor
+&& Number.isFinite(msg.row.x) && Number.isFinite(msg.row.y)) {
+this._tooltipAnchor.x = msg.row.x;
+this._tooltipAnchor.y = msg.row.y;
+}
 const xy = this._lastHoverXY;
 if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY, {
 announce: !this._a11yKeyboardReadout,
@@ -8788,7 +8952,10 @@ view: this._eventView("hover"),
 });
 }
 } else if (msg.type === "selection") {
+if (msg.bounds) this._lastBrush = { mode: "box", ...msg.bounds };
+else if (msg.polygon) this._lastBrush = { mode: "poly", points: msg.polygon };
 if (!msg.traces || !msg.traces.length) {
+this._lastBrush = null;
 for (const g of this.gpuTraces) {
 g.selActive = false;
 if (g.drill) g.drill.selActive = false;
@@ -9476,8 +9643,7 @@ return this._animationEnabled(config) && config.update === "interpolate" &&
 });
 this._transitionView = animateDomain ? { from: fromView, to: target } : null;
 if (!animateDomain) this.view = { ...target };
-this._pickable = this.gpuTraces.some((g) => markOf(g.trace.kind).pointPick && g.tier !== "density");
-if (this._pickable && !this.pickFbo) this._initPickTarget();
+this._updatePickable();
 if (!this._runDataAnimation("update", this.gpuTraces, previous)) {
 this.view = { ...target };
 this._transitionView = null;
