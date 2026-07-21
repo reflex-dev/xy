@@ -91,7 +91,10 @@ updates, and drill drop), which also calls
 `_syncModebarSelect`. Losing pickability hides the trigger, closes its menu,
 and reverts an active `select*` drag mode to `pan`; regaining it (including a
 re-drill) shows the trigger again. Regression coverage:
-`tests/test_modebar_select_drill.py`.
+`tests/test_modebar_select_drill.py`; the headless render smoke
+(`scripts/render_smoke_nonumpy.py`) pins both sides of the mask contract —
+`sstale`/`sfresh` gate kernel masks on `drill_seq`, and `srestore` asserts the
+retained brush re-derives a provisional mask across a drill swap.
 
 ### 2.1 Axis policy, drag mode, and zoom limits
 
