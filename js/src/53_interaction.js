@@ -52,7 +52,7 @@ Object.assign(ChartView.prototype, {
         handle,
       };
       handle.dataset.xyActive = "";
-      this.tooltip.style.display = "none";
+      this._hideTooltip();
       try { this.selLasso.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
       e.preventDefault();
       e.stopPropagation();
@@ -127,12 +127,12 @@ Object.assign(ChartView.prototype, {
           previousLasso,
         };
         try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
-        this.tooltip.style.display = "none";
+        this._hideTooltip();
         return;
       }
       drag = { px: e.clientX, py: e.clientY, view: { ...this.view }, moved: false };
       try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
-      this.tooltip.style.display = "none";
+      this._hideTooltip();
     });
     this._listen(c, "pointermove", (e) => {
       if (band) { this._updateBand(band, e); return; }
@@ -202,7 +202,7 @@ Object.assign(ChartView.prototype, {
         return;
       }
       if (drag && drag.moved) this._ignoreNextClick = true;
-      if (drag && !drag.moved) this.tooltip.style.display = "none";
+      if (drag && !drag.moved) this._hideTooltip();
       drag = null;
     };
     this._listen(c, "pointerup", end);
@@ -223,7 +223,7 @@ Object.assign(ChartView.prototype, {
       this._lastHoverXY = null;
       this._a11yKeyboardReadout = null;
       this._pickSeq = (this._pickSeq || 0) + 1;
-      this.tooltip.style.display = "none";
+      this._hideTooltip();
       this._hideCrosshair();
       if (this._interactionFlag("hover")) {
         this._dispatchChartEvent("leave", { view: this._eventView("leave") });
@@ -263,7 +263,7 @@ Object.assign(ChartView.prototype, {
     if (e.key === "Escape") {
       e.preventDefault();
       const hadHover = this._hoverId !== -1;
-      this.tooltip.style.display = "none";
+      this._hideTooltip();
       this._hoverId = -1;
       this._hoverTarget = null;
       this._lastHoverXY = null;

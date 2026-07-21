@@ -6,6 +6,7 @@ Object.assign(ChartView.prototype, {
   _showTooltip(hit, clientX, clientY) {
     const row = this._localRow(hit);
     this._lastRow = row;
+    this._setTooltipAnchor(hit, row, clientX, clientY);
     this._renderTooltip(row, clientX, clientY);
     if (this._interactionFlag("hover")) {
       this._dispatchChartEvent("hover", {
@@ -212,14 +213,75 @@ Object.assign(ChartView.prototype, {
     return lines.length ? lines : this._defaultTooltipLines(row);
   },
 
-  _renderTooltip(row, clientX, clientY, options = {}) {
-    if (!row || this.spec.show_tooltip === false) {
+  // Anchor in data space so view changes carry the tooltip with its point.
+  _setTooltipAnchor(hit, row, clientX, clientY) {
+    const g = hit.g;
+    if (!g) { this._tooltipAnchor = null; return; }
+    const xAxis = g.xAxis || "x";
+    const yAxis = g.yAxis || "y";
+    let x = row.x;
+    let y = row.y;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      // Category rows carry labels, so derive their numeric anchor from the pick.
+      const rect = this.canvas.getBoundingClientRect();
+      [x, y] = this._dataFromCanvas(clientX - rect.left, clientY - rect.top, xAxis, yAxis);
+    }
+    this._tooltipAnchor = Number.isFinite(x) && Number.isFinite(y)
+      ? { xAxis, yAxis, x, y }
+      : null;
+    // Keyboard traversal can reach an off-screen point; keep its clamped placement.
+    if (this._tooltipAnchor && !this._tooltipAnchorPx()) this._tooltipAnchor = null;
+  },
+
+  _tooltipAnchorPx() {
+    const a = this._tooltipAnchor;
+    if (!a) return null;
+    const lx = this._dataPx(a.xAxis, a.x);
+    const ly = this._dataPx(a.yAxis, a.y);
+    const p = this.plot;
+    if (!Number.isFinite(lx) || !Number.isFinite(ly)
+        || lx < p.x || lx > p.x + p.w || ly < p.y || ly > p.y + p.h) {
+      return null;
+    }
+    return { lx, ly };
+  },
+
+  _hideTooltip() {
+    this.tooltip.style.display = "none";
+    this._tooltipAnchor = null;
+  },
+
+  // A hidden retained anchor is off-screen and may return after another draw.
+  _repositionTooltip() {
+    if (!this._tooltipAnchor) return;
+    const pos = this._tooltipAnchorPx();
+    if (!pos) {
       this.tooltip.style.display = "none";
       return;
     }
-    const rect = this.root.getBoundingClientRect();
-    const lx = clientX - rect.left;
-    const ly = clientY - rect.top;
+    this.tooltip.style.display = "block";
+    this._placeTooltip(pos.lx, pos.ly);
+  },
+
+  _placeTooltip(lx, ly) {
+    const tw = this.tooltip.offsetWidth;
+    const th = this.tooltip.offsetHeight;
+    const edge = 4;
+    const gap = 12;
+    const maxLeft = Math.max(edge, this.size.w - tw - edge);
+    const left = Math.max(edge, Math.min(lx + gap, maxLeft));
+    const below = ly + gap;
+    const above = ly - th - gap;
+    const top = below + th <= this.size.h - edge ? below : Math.max(edge, above);
+    this.tooltip.style.left = left + "px";
+    this.tooltip.style.top = top + "px";
+  },
+
+  _renderTooltip(row, clientX, clientY, options = {}) {
+    if (!row || this.spec.show_tooltip === false) {
+      this._hideTooltip();
+      return;
+    }
     const lines = this._tooltipLines(row);
     // Text nodes, not innerHTML: category labels are user data and must never
     // be parsed as markup (a category named "<img onerror=…>" is just a label).
@@ -237,16 +299,15 @@ Object.assign(ChartView.prototype, {
       if (this.a11yLive.textContent !== announcement) this.a11yLive.textContent = announcement;
     }
     this.tooltip.style.display = "block";
-    const tw = this.tooltip.offsetWidth;
-    const th = this.tooltip.offsetHeight;
-    const edge = 4;
-    const gap = 12;
-    const maxLeft = Math.max(edge, this.size.w - tw - edge);
-    const left = Math.max(edge, Math.min(lx + gap, maxLeft));
-    const below = ly + gap;
-    const above = ly - th - gap;
-    const top = below + th <= this.size.h - edge ? below : Math.max(edge, above);
-    this.tooltip.style.left = left + "px";
-    this.tooltip.style.top = top + "px";
+    const pos = this._tooltipAnchorPx();
+    if (pos) {
+      this._placeTooltip(pos.lx, pos.ly);
+    } else if (this._tooltipAnchor) {
+      // Keep the content and anchor so zooming back can reveal the tooltip.
+      this.tooltip.style.display = "none";
+    } else {
+      const rect = this.root.getBoundingClientRect();
+      this._placeTooltip(clientX - rect.left, clientY - rect.top);
+    }
   },
 });
