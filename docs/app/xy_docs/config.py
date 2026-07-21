@@ -29,7 +29,6 @@ DOCS_SECTIONS = (
             ("Data and Columns", "/core-concepts/data/"),
             ("Axes and Scales", "/core-concepts/axes-and-scales/"),
             ("Interactions and Selections", "/core-concepts/interactions/"),
-            ("Animations", "/core-concepts/animations/"),
             (
                 "Large Data and Performance",
                 "/core-concepts/large-data-and-performance/",
@@ -45,6 +44,7 @@ DOCS_SECTIONS = (
             ("Overview", "/styling/"),
             ("Examples", "/styling/examples/"),
             ("Customize Each Part", "/styling/customize/"),
+            ("Animations", "/styling/animations/"),
             ("Themes and Export", "/styling/themes-and-tokens/"),
             ("Advanced Styling Gallery", "/styling/gallery/"),
         ),
@@ -152,6 +152,7 @@ DOCS_SECTIONS = (
 
 DOCS_REDIRECTS = {
     "/charts/annotations/": "/components/annotations/",
+    "/core-concepts/animations/": "/styling/animations/",
     "/styling/playground/": "/styling/examples/#palette-playground",
     "/styling/recipes/": "/styling/examples/#responsive-combo-chart",
     "/styling/chrome-slots/": "/styling/customize/#legend",

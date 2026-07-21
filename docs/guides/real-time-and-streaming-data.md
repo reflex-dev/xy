@@ -35,7 +35,7 @@ a partial update.
 
 When an `animation()` child is present, the live browser matches retained x
 values and transitions the appended tail without changing the follow policy.
-See [Animations and data transitions](/docs/xy/core-concepts/animations/) for
+See [Animations and data transitions](/docs/xy/styling/animations/) for
 keyed replacement, interruption, reduced motion, and large-data fallback.
 
 For ordered line traces, new x values must continue the series in ascending

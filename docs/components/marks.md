@@ -72,7 +72,7 @@ family-specific choices.
   lines and points.
 - `key=` supplies stable row identity for keyed browser data transitions, and
   mark-level `animation=` overrides or disables the chart's `xy.animation()`
-  policy. See [Animations and data transitions](/docs/xy/core-concepts/animations/).
+  policy. See [Animations and data transitions](/docs/xy/styling/animations/).
 
 Canvas and WebGL marks are not DOM elements. CSS selectors and Tailwind classes
 cannot paint their geometry; use `style=` or the mark's paint props. In

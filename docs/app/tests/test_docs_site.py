@@ -236,7 +236,11 @@ def test_public_markdown_routes_match_the_docs_navigation() -> None:
     core_concept_leaves = next(
         leaves for title, _route, _icon, leaves in DOCS_SECTIONS if title == "Core Concepts"
     )
-    assert ("Animations", "/core-concepts/animations/") in core_concept_leaves
+    assert ("Animations", "/core-concepts/animations/") not in core_concept_leaves
+    styling_leaves = next(
+        leaves for title, _route, _icon, leaves in DOCS_SECTIONS if title == "Styling"
+    )
+    assert ("Animations", "/styling/animations/") in styling_leaves
     assert (
         max(len(tuple(part for part in route.split("/") if part)) for route in section_routes) <= 2
     )
@@ -391,11 +395,15 @@ def test_chart_examples_are_wide_copyable_demos_without_a_toc() -> None:
 
     rendered_page = str(render_xy_markdown_page(page))
     demo_count = len(demos)
+    # Demos that split their hardcoded data into a Data tab (the `# --- chart ---`
+    # divider) render a third trigger/panel; the rest stay Preview/Code.
+    data_demos = sum("# --- chart ---" in block.content for block in demos)
     assert rendered_page.count("XYChart") == demo_count + 6
     assert rendered_page.count('value:"preview"') == demo_count * 2
     assert rendered_page.count('value:"code"') == demo_count * 2
-    assert rendered_page.count("xy-example-tab cursor-pointer") == demo_count * 2
-    assert rendered_page.count("xy-example-tab-list inline-flex") == demo_count
+    assert rendered_page.count('value:"data"') == data_demos * 2
+    assert rendered_page.count("xy-example-tab cursor-pointer") == demo_count * 2 + data_demos
+    assert rendered_page.count("xy-example-tab-list relative") == demo_count
     assert "xy-chart-examples" in rendered_page
     assert "max-width: 88rem" in rendered_page
     assert "div:has(#toc-navigation)" in rendered_page
@@ -409,9 +417,7 @@ def test_chart_examples_are_wide_copyable_demos_without_a_toc() -> None:
 
 def test_animation_replay_demos_reuse_example_chrome_and_controls() -> None:
     """Keep animation demos visually aligned with the polished examples."""
-    page = next(
-        page for page in discover_docs(DOCS_CONFIG) if page.route == "/core-concepts/animations/"
-    )
+    page = next(page for page in discover_docs(DOCS_CONFIG) if page.route == "/styling/animations/")
     content = page.content
 
     assert content.count("ui.button(") == 8
@@ -797,7 +803,7 @@ def test_every_core_concepts_python_example_renders_a_live_chart() -> None:
             if "demo exec" not in fence or "reflex_xy.chart" not in body:
                 violations.append(f"{path.relative_to(DOCS_ROOT)}: {fence}")
 
-    assert example_count == 23
+    assert example_count == 17
     assert not violations, "\n".join(violations)
 
 

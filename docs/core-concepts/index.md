@@ -108,4 +108,4 @@ Every composed chart exposes `show()`, `widget()`, `to_html()`, `to_png()`,
 [Gallery](/docs/xy/overview/gallery/).
 
 For browser entrance and live-data motion, continue with
-[Animations and data transitions](/docs/xy/core-concepts/animations/).
+[Animations and data transitions](/docs/xy/styling/animations/).

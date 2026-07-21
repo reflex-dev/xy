@@ -171,7 +171,7 @@ core callback contract.
 State-driven full payloads update the existing browser view in place, so
 stable mark `key=` values and an `xy.animation(match="key")` child preserve
 identity across a Reflex recompute. See
-[Animations and data transitions](/docs/xy/core-concepts/animations/).
+[Animations and data transitions](/docs/xy/styling/animations/).
 
 To extend a registered chart from an event or background task, append new
 points without rebuilding the component:

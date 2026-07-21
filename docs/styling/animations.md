@@ -10,17 +10,18 @@ refreshes one declarative motion policy. The browser owns the clock and GPU
 interpolation; Python receives only optional start/end lifecycle events.
 
 ~~~python demo exec toggle preview-code id=animation-entrance-demo
-import reflex as rx
-import reflex_components_internal as ui
-import reflex_xy
-import xy
-
 months = [
     "Jan 23", "Feb 23", "Mar 23", "Apr 23", "May 23", "Jun 23",
     "Jul 23", "Aug 23", "Sep 23", "Oct 23", "Nov 23", "Dec 23",
 ]
 solar_panels = [2890, 2756, 3322, 3470, 3475, 3129, 3490, 2903, 2643, 2837, 2954, 3239]
 inverters = [2338, 2103, 2194, 2108, 1812, 1726, 1982, 2012, 2342, 2473, 3848, 3736]
+
+# --- chart ---
+import reflex as rx
+import reflex_components_internal as ui
+import reflex_xy
+import xy
 
 chart = xy.chart(
     xy.column(
@@ -141,13 +142,14 @@ Set `enter` explicitly to `none`, `scale`, `grow`, or `reveal` when a shared
 chart needs a different visual language.
 
 ~~~python demo exec toggle preview-code id=animation-area-reveal-demo
+weeks = list(range(1, 13))
+active_teams = [28, 32, 31, 38, 43, 41, 49, 55, 53, 61, 66, 72]
+
+# --- chart ---
 import reflex as rx
 import reflex_components_internal as ui
 import reflex_xy
 import xy
-
-weeks = list(range(1, 13))
-active_teams = [28, 32, 31, 38, 43, 41, 49, 55, 53, 61, 66, 72]
 
 chart = xy.area_chart(
     xy.area(
@@ -371,17 +373,18 @@ before rendering. For a replacement without stable identity, choose
 Each mark may override the chart policy or opt out:
 
 ~~~python demo exec toggle preview-code id=animation-mark-override-demo
-import reflex as rx
-import reflex_components_internal as ui
-import reflex_xy
-import xy
-
 rows = {
     "x": [0, 1, 2, 3, 4, 5],
     "low": [8, 10, 9, 13, 12, 15],
     "high": [16, 18, 17, 21, 20, 24],
     "mean": [12, 14, 13, 17, 16, 20],
 }
+
+# --- chart ---
+import reflex as rx
+import reflex_components_internal as ui
+import reflex_xy
+import xy
 
 chart = xy.chart(
     xy.area(
