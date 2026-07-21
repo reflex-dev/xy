@@ -5179,6 +5179,8 @@ if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
 this._cancelViewAnimation();
 this._destroyGlResources();
+const loseExt = this.gl && this.gl.getExtension("WEBGL_lose_context");
+if (loseExt) loseExt.loseContext();
 this.gl = null;
 this.root.remove();
 }
