@@ -92,6 +92,22 @@ def pick(
         idx = int(shipped_sel[idx])
     if idx < 0 or idx >= t.n_points:
         return None
+    if t.grid_shape is not None:
+        # Heatmap x/y contain only the outer edges. The client already has the
+        # cell center (including categorical labels), so return only grid data.
+        _, cols = t.grid_shape
+        row, col = divmod(idx, cols)
+        out: dict[str, Any] = {
+            "trace": t.id,
+            "index": idx,
+            "row": row,
+            "col": col,
+        }
+        if t.grid is not None:
+            val = float(t.grid.values[idx])
+            if np.isfinite(val):
+                out["color_value"] = val
+        return out
     out: dict[str, Any] = {
         "trace": t.id,
         "index": idx,

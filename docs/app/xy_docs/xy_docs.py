@@ -101,11 +101,36 @@ for _route in _DOCS_ROUTES:
 
 def _redirect_page(destination: str):
     """Render a useful fallback while the browser follows a legacy route."""
+    if destination == "/components/annotations/":
+        heading = "Annotations moved"
+        description = "The chart gallery and component guide are now combined."
+        link_label = "Open the combined Annotations guide"
+    elif destination == "/styling/examples/#responsive-combo-chart":
+        heading = "Recipe moved"
+        description = "The responsive combo chart now lives on the Examples page."
+        link_label = "Open the responsive combo chart"
+    elif destination == "/styling/customize/#fill,-stroke,-opacity,-and-gradients":
+        heading = "Mark styling moved"
+        description = "Mark paint is now documented in Customize Each Part."
+        link_label = "Open fill, stroke, opacity, and gradients"
+    elif destination == "/styling/customize/#legend":
+        heading = "Chrome styling moved"
+        description = "Legend and slot styling now live in Customize Each Part."
+        link_label = "Open legend styling"
+    elif destination == "/styling/customize/#annotations":
+        heading = "Component styling moved"
+        description = "Annotation and component styling now live in Customize Each Part."
+        link_label = "Open annotation styling"
+    else:
+        heading = "Playground moved"
+        description = "The palette playground now lives on the Examples page."
+        link_label = "Open Examples"
+
     return lambda: rx.center(
         rx.vstack(
-            rx.heading("Annotations moved", size="6"),
-            rx.text("The chart gallery and component guide are now combined."),
-            rx.link("Open the combined Annotations guide", href=destination),
+            rx.heading(heading, size="6"),
+            rx.text(description),
+            rx.link(link_label, href=destination),
             align="center",
             spacing="4",
         ),
@@ -117,11 +142,30 @@ def _redirect_page(destination: str):
 for _legacy_route, _destination in DOCS_REDIRECTS.items():
     _public_destination = f"/docs/xy{_destination}"
     _canonical_destination = f"{PUBLIC_DOCS_URL}{_destination}"
+    _is_annotations_redirect = _destination == "/components/annotations/"
+    _is_recipe_redirect = _destination == "/styling/examples/#responsive-combo-chart"
+    _is_customize_redirect = _destination.startswith("/styling/customize/")
     app.add_page(
         component=_redirect_page(_destination),
         route=_legacy_route,
-        title="Annotations moved · XY",
-        description="Annotations are documented in one combined component guide.",
+        title=(
+            "Annotations moved · XY"
+            if _is_annotations_redirect
+            else "Recipe moved · XY"
+            if _is_recipe_redirect
+            else "Styling guide moved · XY"
+            if _is_customize_redirect
+            else "Playground moved · XY"
+        ),
+        description=(
+            "Annotations are documented in one combined component guide."
+            if _is_annotations_redirect
+            else "The responsive combo chart is now part of the Examples page."
+            if _is_recipe_redirect
+            else "This styling guide now lives in Customize Each Part."
+            if _is_customize_redirect
+            else "The palette playground is now part of the combined Examples page."
+        ),
         on_load=rx.redirect(_destination, replace=True),
         meta=(
             rx.el.link(rel="canonical", href=_canonical_destination),

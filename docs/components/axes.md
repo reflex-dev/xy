@@ -92,4 +92,4 @@ style for output that must agree across HTML, SVG, and native PNG.
 
 For the scale model, including datetime and category handling, see
 [Axes and scales](/docs/xy/core-concepts/axes-and-scales/). For styling, see
-[Mark styles](/docs/xy/styling/mark-styles/).
+[Customize Each Part](/docs/xy/styling/customize/#axes,-grid,-and-ticks).

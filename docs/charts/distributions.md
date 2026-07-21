@@ -53,6 +53,117 @@ def latency_distribution():
     )
 ~~~
 
+## Chart Types
+
+### Histogram
+
+Use `histogram` to group numeric observations into intervals and compare their
+frequency or density.
+
+### ECDF
+
+Use `ecdf` to read the fraction of observations at or below any value without
+choosing fixed bins. Set `bins` only when a bounded approximation is preferable
+for very large inputs.
+
+~~~python demo exec
+import numpy as np
+import reflex_xy
+import xy
+
+rng = np.random.default_rng(11)
+response_time = rng.lognormal(mean=4.2, sigma=0.38, size=2_000)
+
+ecdf_detail_chart = xy.ecdf_chart(
+    xy.ecdf(
+        response_time,
+        name="Requests",
+        color="#6e56cf",
+        width=2.5,
+    ),
+    xy.x_axis(label="response time (ms)"),
+    xy.y_axis(label="cumulative fraction", domain=(0, 1)),
+    title="Response-time ECDF",
+)
+
+
+def ecdf_demo():
+    return reflex_xy.chart(ecdf_detail_chart, height="320px")
+~~~
+
+### Box
+
+Use `box` for a compact comparison of medians, quartiles, whiskers, and optional
+outliers across one or more groups.
+
+~~~python demo exec
+import numpy as np
+import reflex_xy
+import xy
+
+box_rng = np.random.default_rng(23)
+box_groups = [
+    box_rng.normal(48, 7, 800),
+    box_rng.normal(57, 9, 800),
+]
+
+box_detail_chart = xy.box_chart(
+    xy.box(
+        box_groups,
+        x=["Control", "Treatment"],
+        color="#6e56cf",
+        width=0.5,
+        show_outliers=True,
+    ),
+    xy.x_axis(label="cohort"),
+    xy.y_axis(label="score"),
+    title="Cohort score distribution",
+)
+
+
+def box_demo():
+    return reflex_xy.chart(box_detail_chart, height="320px")
+~~~
+
+### Violin
+
+Use `violin` when the shape and density of each distribution matter in addition
+to its center and spread.
+
+~~~python demo exec
+import numpy as np
+import reflex_xy
+import xy
+
+violin_rng = np.random.default_rng(31)
+violin_groups = [
+    violin_rng.normal(50, 7, 1_200),
+    np.concatenate(
+        [
+            violin_rng.normal(43, 4, 600),
+            violin_rng.normal(59, 5, 600),
+        ]
+    ),
+]
+
+violin_detail_chart = xy.violin_chart(
+    xy.violin(
+        violin_groups,
+        x=["Single peak", "Two peaks"],
+        color="#6e56cf",
+        opacity=0.65,
+        bins=72,
+    ),
+    xy.x_axis(label="distribution"),
+    xy.y_axis(label="score"),
+    title="Distribution shape",
+)
+
+
+def violin_demo():
+    return reflex_xy.chart(violin_detail_chart, height="320px")
+~~~
+
 ## Variants
 
 Histograms show frequency or density by interval. An ECDF is exact when `bins`

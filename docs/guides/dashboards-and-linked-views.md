@@ -26,8 +26,13 @@ detail = xy.line_chart(
 ~~~
 
 Use unique group names for independent dashboard regions. Link only `x` when
-panels share time but use different y units. `facet_chart(..., share_x=True,
-share_y=True)` configures the corresponding links for small multiples.
+panels share time but use different y units. Facet domains remain independent
+at runtime by default; opt into synchronized navigation with
+`facet_chart(..., link="x")`, `link="y"`, or `link="both"`. `link=True` is a
+convenient alias for `link="both"`, while `False` and `None` disable runtime axis
+linking. A linked axis also shares its initial domain, even when its matching
+`share_x`/`share_y` flag is false. Set `link_select=True` to echo the same
+data-space brush predicate and selection highlighting across the facet panels.
 
 ## Application-Driven Coordination
 

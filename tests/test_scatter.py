@@ -886,6 +886,43 @@ def test_pick_out_of_range():
     assert fig.pick(0, True) is None
 
 
+def test_pick_heatmap_cell_returns_grid_readout():
+    z = np.arange(12, dtype=float).reshape(3, 4)
+    fig = Figure().heatmap(z)
+    idx = 1 * 4 + 2
+
+    row = fig.pick(0, idx)
+
+    assert row is not None
+    assert row["trace"] == 0
+    assert row["index"] == idx
+    assert row["row"] == 1
+    assert row["col"] == 2
+    assert row["color_value"] == z[1, 2]
+    # Kernel fields override client fields, which may contain categorical labels.
+    assert "x" not in row and "y" not in row
+
+
+def test_pick_heatmap_out_of_range_returns_none():
+    z = np.arange(12, dtype=float).reshape(3, 4)
+    fig = Figure().heatmap(z)
+
+    assert fig.pick(0, 12) is None
+    assert fig.pick(0, -1) is None
+    assert fig.pick(0, 10**6) is None
+
+
+def test_pick_heatmap_nan_cell_omits_value():
+    z = np.arange(12, dtype=float).reshape(3, 4)
+    z[1, 2] = np.nan
+    fig = Figure().heatmap(z)
+
+    row = fig.pick(0, 1 * 4 + 2)
+
+    assert row is not None
+    assert "color_value" not in row
+
+
 # -- shipped↔canonical translation (staff-review regressions) ----------------
 
 

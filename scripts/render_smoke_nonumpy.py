@@ -930,7 +930,7 @@ try{{
     vS._drawNow();
     vS.destroy();holderS.remove();
     const stream=(okGrow&&okHome&&okHoldS&&okPin&&okPayload)?1:0;
-    // Mark styling (docs/engineering/styling.md#styling-the-marks): gradient fills,
+    // Mark styling (spec/api/styling.md#styling-the-marks): gradient fills,
     // rounded corners, and stroke borders on BOTH rect-family programs
     // (histogram uses RECT, compact bar uses BAR), plus curve:"smooth"
     // monotone-cubic densification for line/area.

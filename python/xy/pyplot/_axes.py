@@ -4958,7 +4958,7 @@ def _bbox_label_style(bbox: dict[str, Any], font_size: float = 11.0) -> dict[str
     """matplotlib text ``bbox`` patch → annotation-label box styles.
 
     A CSS approximation drawn by the render client's DOM label; the static
-    exporters keep the plain label (recorded in docs/engineering/matplotlib-compat.md).
+    exporters keep the plain label (recorded in spec/matplotlib/compat.md).
     """
     style: dict[str, Any] = {}
     face = bbox.get("fc", bbox.get("facecolor", "C0"))
