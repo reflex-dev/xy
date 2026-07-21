@@ -693,7 +693,6 @@ def test_client_renders_mark_level_styling() -> None:
         "u_gradMode",
         'u("u_radius")',  # rounded-corner SDF uniform
         'u("u_strokeWidth")',
-        "xyGradSample(xyGradT(v_t, u_res)) * u_color.a",  # opacity composes w/ gradient
         "(v_pos - v_base) / (abs(denom)",  # area gradient: per-column, seam-free + even
         "xySmoothResample(",  # monotone cubic (Fritsch–Carlson)
         "xyMonotoneTangents(",
@@ -716,6 +715,20 @@ def test_client_renders_mark_level_styling() -> None:
     src = _CLIENT_SRC[1]
     assert "g._cpu = { x, y, xMeta: g.xMeta, yMeta: g.yMeta };" in src
     assert "g._cpu = { x, y, base, xMeta: g.xMeta, yMeta: g.yMeta };" in src
+
+
+def test_rect_gradient_preserves_per_item_alpha_stack() -> None:
+    """Gradient rects compose vector opacity and artist-alpha while keeping
+    the fragment output premultiplied for WebGL blending."""
+    required = (
+        "vec4 gradient = xyGradSample(xyGradT(v_t, u_res));",
+        "(v_style.y >= 0.0 ? v_style.y : gradient.a) * v_style.x * u_opacity",
+        "gradient.a > 1e-6 ? gradient.rgb / gradient.a : vec3(0.0)",
+        "premult = vec4(gradientRgb * gradientAlpha, gradientAlpha);",
+    )
+    for path, text in CLIENT_FILES:
+        for marker in required:
+            assert marker in text, f"{path} drops gradient alpha marker {marker!r}"
 
 
 def test_standalone_density_rebin_worker() -> None:

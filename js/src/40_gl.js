@@ -774,12 +774,14 @@ void main() {
   vec4 paint = u_colorMode == 3 ? v_rgba : (u_colorMode == 0 ? u_color : vec4(texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb, 1.0));
   float alpha = (v_style.y >= 0.0 ? v_style.y : paint.a) * v_style.x * u_opacity;
   vec4 premult = vec4(paint.rgb * alpha, alpha);
-  // Compose the mark opacity (u_color.a) over the gradient — premultiplied, so
-  // one scalar multiply fades every stop, including a fade-to-transparent.
-  // The former scalar-only expression was:
-  // xyGradSample(xyGradT(v_t, u_res)) * u_color.a
-  // u_opacity now contains the resolved scalar/vector alpha stack.
-  if (u_gradMode != 0) premult = xyGradSample(xyGradT(v_t, u_res)) * u_opacity;
+  if (u_gradMode != 0) {
+    vec4 gradient = xyGradSample(xyGradT(v_t, u_res));
+    float gradientAlpha = (v_style.y >= 0.0 ? v_style.y : gradient.a) * v_style.x * u_opacity;
+    // Gradient stops are uploaded premultiplied. Recover their straight RGB
+    // before applying an artist-alpha override, then premultiply the result.
+    vec3 gradientRgb = gradient.a > 1e-6 ? gradient.rgb / gradient.a : vec3(0.0);
+    premult = vec4(gradientRgb * gradientAlpha, gradientAlpha);
+  }
   vec2 radius = v_radius.x >= 0.0 ? v_radius : u_radius;
   float strokeWidth = v_style.z >= 0.0 ? v_style.z : u_strokeWidth;
   if (radius.x > 0.0 || radius.y > 0.0 || strokeWidth > 0.0) {
