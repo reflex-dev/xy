@@ -44,7 +44,7 @@ Every request is a dict with a `type`. Coordinate fields are JSON numbers in
 | `density_view` | `trace`, `x0`, `x1`, `y0`, `y1`, `w?`, `h?`, `seq?` | `density_update`, or nothing |
 | `pick` | `trace`, `index`, `drill_seq?`, `seq?` | `pick_result` |
 | `click` | `trace`, `index`, `drill_seq?` | none (`on_click`) |
-| `view_change` | `x0`, `x1`, `y0`, `y1`, `source?` | none (`on_view_change`) |
+| `view_change` | `ranges`, `source?`, `axes?`, `phase?`, `interaction_id?` (legacy `x0`/`x1`/`y0`/`y1` accepted) | none (`on_view_change`) |
 | `select` | `x0`, `x1`, `y0`, `y1` | `selection` |
 | `select_polygon` | `points` | `selection` |
 | `select_clear` | — | `selection` (empty) |
@@ -72,10 +72,13 @@ rather than to a row in a dead index space.
 **`click`** — same fields and same `fig.pick` resolution as `pick`, minus
 `seq`; it fires `on_click` and returns nothing.
 
-**`view_change`** — the four view edges plus a `source` string (default
-`"view"`, stringified kernel-side). The client sends it rAF-coalesced and only
-while the `view_change` interaction flag is set; the kernel returns
-immediately when no `on_view_change` callback is wired. This is the one request
+**`view_change`** — a per-axis `ranges` map (`{axisId: [lo, hi]}`) plus a
+`source` string (default `"view"`, stringified kernel-side), the changed `axes`,
+a `phase` (default `"end"`), and an `interaction_id`; a legacy `{x0, x1, y0, y1}`
+message with no `ranges` is still accepted and normalized kernel-side. There is
+no `view_change` interaction flag: the client sends it rAF-coalesced only when
+an `on_view_change` listener exists, and the kernel returns immediately when no
+callback is wired. This is the one request
 type a host may withhold: on the Reflex host it never reaches the kernel,
 because `XYChart.jsx` intercepts the outgoing message and invokes the
 `on_view_change` prop directly

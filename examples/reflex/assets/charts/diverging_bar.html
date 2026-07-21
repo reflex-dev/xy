@@ -2,7 +2,7 @@
 <html>
 <head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; worker-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
-<title>Annotated risk heatmap</title>
+<title>Diverging product growth</title>
 <style>
 html,body{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;background:#fff;}
 #chart{width:100%;}
@@ -8858,55 +8858,13 @@ window.xy = { render, renderStandalone, decodeFrame, ChartView, MARK_KINDS, mark
 })();
 </script>
 <script>var __xyChunks = [];</script>
-<script>__xyChunks.push("7FE4Po/CdT6uR2E+mpmZPilcjz5cj0I+7FG4Pj0K1z4fhes+uB4FP0jh+j7D9ag+UrgeP3sULj/sUTg/FK5HP6RwPT/hehQ/hetRP/YoXD9mZmY/j8J1P8P1aD9cj0I/");</script>
+<script>__xyChunks.push("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");</script>
 <script>
   function xyDecodeB64(chunks, total) {const bytes = new Uint8Array(total); let off = 0;const native = typeof bytes.setFromBase64 === "function";for (let i = 0; i < chunks.length; i++) {const s = chunks[i];if (native) { off += bytes.subarray(off).setFromBase64(s).written; }else { const bin = atob(s), n = bin.length;for (let j = 0; j < n; j++) bytes[off + j] = bin.charCodeAt(j); off += n; }} return bytes.buffer; }
-  const spec = {"protocol":4,"width":"100%","height":430,"title":"Annotated risk heatmap","x_axis":{"id":"x","kind":"category","label":"day","range":[-0.6799999999999999,5.68],"side":"bottom","style":{"tick_color":"#334155","label_color":"#0f172a","label_size":12.0},"categories":["Mon","Tue","Wed","Thu","Fri","Sat"]},"y_axis":{"id":"y","kind":"category","label":"risk tier","range":[-0.62,3.62],"side":"left","style":{"tick_color":"#334155","label_color":"#0f172a","label_size":12.0},"categories":["Low","Medium","High","Critical"]},"axes":{"x":{"id":"x","kind":"category","label":"day","range":[-0.6799999999999999,5.68],"side":"bottom","style":{"tick_color":"#334155","label_color":"#0f172a","label_size":12.0},"categories":["Mon","Tue","Wed","Thu","Fri","Sat"]},"y":{"id":"y","kind":"category","label":"risk tier","range":[-0.62,3.62],"side":"left","style":{"tick_color":"#334155","label_color":"#0f172a","label_size":12.0},"categories":["Low","Medium","High","Critical"]}},"traces":[{"id":0,"kind":"heatmap","name":"risk score","style":{"opacity":0.9,"role":"heatmap","colormap":"turbo","domain":[0.0,1.0],"truecolor":false,"x_range":[-0.5,5.5],"y_range":[-0.5,3.5]},"tier":"direct","n_points":24,"n_marks":24,"x_axis":"x","y_axis":"y","heatmap":{"buf":0,"w":6,"h":4,"x_range":[-0.5,5.5],"y_range":[-0.5,3.5],"colormap":"turbo","domain":[0.0,1.0]},"color":{"mode":"continuous","colormap":"turbo","domain":[0.0,1.0]}}],"columns":[{"byte_offset":0,"len":24}],"backend":"native","show_legend":false,"view":{"ranges":{"x":[-0.6799999999999999,5.68],"y":[-0.62,3.62]}},"legend":{"loc":null,"ncols":1},"show_tooltip":false,"dom":{"style":{"--chart-bg":"#f8fafc","--chart-grid":"rgba(100, 116, 139, 0.16)","--chart-axis":"#cbd5e1","--chart-text":"#334155"}},"tooltip":{"fields":["day","risk_tier","risk_score"],"title":"{risk_tier} / {day}","format":{"risk_score":".0%"},"aliases":{"day":"x","risk_tier":"y"},"sources":{"day":[{"trace":0,"channel":"x"}],"risk_tier":[{"trace":0,"channel":"y"}],"risk_score":[{"trace":0,"channel":"color_value"}]}},"annotations":[{"text":"launch window","style":{"color":"#1d4ed8","opacity":0.1,"background":"rgba(219, 234, 254, 0.92)","border":"1px solid rgba(37, 99, 235, 0.22)","border_radius":6,"padding":"3px 6px","font_weight":700},"kind":"band","axis":"x","start":2.0,"end":4.0},{"text":"alert threshold","style":{"color":"#be123c","width":1.8,"opacity":1.0,"background":"rgba(255, 241, 242, 0.96)","border":"1px solid rgba(225, 29, 72, 0.22)","border_radius":6,"padding":"3px 6px","font_weight":700},"kind":"rule","axis":"y","value":2.0},{"text":"max load","style":{"color":"#0f172a","stroke_color":"#ffffff","stroke_width":1.5,"opacity":1.0,"background":"rgba(15, 23, 42, 0.88)","label_color":"#ffffff","border_radius":6,"padding":"3px 7px","box_shadow":"0 10px 24px rgba(15, 23, 42, 0.18)"},"kind":"marker","x":3.0,"y":3.0,"size":9.0,"symbol":"diamond","dx":10.0,"dy":20.0,"anchor":"start"},{"text":"72%","style":{"color":"#0f172a","font_weight":800,"font_size":11,"text_shadow":"0 1px 2px rgba(255, 255, 255, 0.70)"},"kind":"text","x":2.0,"y":2.0,"dx":0.0,"dy":-6.0,"anchor":"middle"},{"text":"96%","style":{"color":"#ffffff","font_weight":800,"font_size":11,"text_shadow":"0 1px 2px rgba(15, 23, 42, 0.55)"},"kind":"text","x":3.0,"y":3.0,"dx":0.0,"dy":-6.0,"anchor":"middle"},{"text":"escalation","style":{"color":"#7c3aed","width":1.5,"opacity":1.0},"kind":"arrow","x0":1.0,"y0":1.0,"x1":2.0,"y1":2.0},{"text":"ops review","style":{"color":"#0f172a","width":1.5,"opacity":1.0,"background":"rgba(255, 255, 255, 0.94)","border":"1px solid rgba(15, 23, 42, 0.16)","border_radius":6,"padding":"3px 7px"},"kind":"callout","x":4.0,"y":3.0,"dx":-78.0,"dy":-30.0,"anchor":"start"}]};
-  const buf = xyDecodeB64(__xyChunks, 96);
+  const spec = {"protocol":4,"width":"100%","height":430,"title":"Diverging product growth","x_axis":{"id":"x","kind":"category","label":"product","range":[-0.5104,5.5104],"side":"bottom","categories":["Core","Cloud","Data","Mobile","Support","Labs"]},"y_axis":{"id":"y","kind":"linear","label":"year-over-year change","range":[-0.3,0.45],"side":"left","tick_values":[-0.25,0.0,0.25],"tick_labels":["-25%","0%","+25%"],"domain":[-0.3,0.45]},"axes":{"x":{"id":"x","kind":"category","label":"product","range":[-0.5104,5.5104],"side":"bottom","categories":["Core","Cloud","Data","Mobile","Support","Labs"]},"y":{"id":"y","kind":"linear","label":"year-over-year change","range":[-0.3,0.45],"side":"left","tick_values":[-0.25,0.0,0.25],"tick_labels":["-25%","0%","+25%"],"domain":[-0.3,0.45]}},"traces":[{"id":0,"kind":"bar","name":"Core","style":{"color":"#0f766e","opacity":0.92,"role":"bar","orientation":"vertical","corner_radius":[6.0,6.0]},"tier":"direct","n_points":1,"n_marks":1,"x_axis":"x","y_axis":"y","bar":{"orientation":"vertical","value_axis":"y","pos":0,"value1":1,"width":0.68,"value0_const":0.0}},{"id":1,"kind":"bar","name":"Cloud","style":{"color":"#0f766e","opacity":0.92,"role":"bar","orientation":"vertical","corner_radius":[6.0,6.0]},"tier":"direct","n_points":1,"n_marks":1,"x_axis":"x","y_axis":"y","bar":{"orientation":"vertical","value_axis":"y","pos":2,"value1":3,"width":0.6800000000000002,"value0_const":0.0}},{"id":2,"kind":"bar","name":"Data","style":{"color":"#0f766e","opacity":0.92,"role":"bar","orientation":"vertical","corner_radius":[6.0,6.0]},"tier":"direct","n_points":1,"n_marks":1,"x_axis":"x","y_axis":"y","bar":{"orientation":"vertical","value_axis":"y","pos":4,"value1":5,"width":0.6799999999999999,"value0_const":0.0}},{"id":3,"kind":"bar","name":"Mobile","style":{"color":"#e11d48","opacity":0.92,"role":"bar","orientation":"vertical","corner_radius":[6.0,6.0]},"tier":"direct","n_points":1,"n_marks":1,"x_axis":"x","y_axis":"y","bar":{"orientation":"vertical","value_axis":"y","pos":6,"value1":7,"width":0.6799999999999997,"value0_const":0.0}},{"id":4,"kind":"bar","name":"Support","style":{"color":"#e11d48","opacity":0.92,"role":"bar","orientation":"vertical","corner_radius":[6.0,6.0]},"tier":"direct","n_points":1,"n_marks":1,"x_axis":"x","y_axis":"y","bar":{"orientation":"vertical","value_axis":"y","pos":8,"value1":9,"width":0.6799999999999997,"value0_const":0.0}},{"id":5,"kind":"bar","name":"Labs","style":{"color":"#0f766e","opacity":0.92,"role":"bar","orientation":"vertical","corner_radius":[6.0,6.0]},"tier":"direct","n_points":1,"n_marks":1,"x_axis":"x","y_axis":"y","bar":{"orientation":"vertical","value_axis":"y","pos":10,"value1":11,"width":0.6799999999999997,"value0_const":0.0}}],"columns":[{"byte_offset":0,"len":1,"offset":0.0,"scale":1.0,"kind":"float"},{"byte_offset":4,"len":1,"offset":0.34,"scale":1.0,"kind":"float"},{"byte_offset":8,"len":1,"offset":1.0,"scale":1.0,"kind":"float"},{"byte_offset":12,"len":1,"offset":0.21,"scale":1.0,"kind":"float"},{"byte_offset":16,"len":1,"offset":2.0,"scale":1.0,"kind":"float"},{"byte_offset":20,"len":1,"offset":0.12,"scale":1.0,"kind":"float"},{"byte_offset":24,"len":1,"offset":3.0,"scale":1.0,"kind":"float"},{"byte_offset":28,"len":1,"offset":-0.08,"scale":1.0,"kind":"float"},{"byte_offset":32,"len":1,"offset":4.0,"scale":1.0,"kind":"float"},{"byte_offset":36,"len":1,"offset":-0.17,"scale":1.0,"kind":"float"},{"byte_offset":40,"len":1,"offset":5.0,"scale":1.0,"kind":"float"},{"byte_offset":44,"len":1,"offset":0.27,"scale":1.0,"kind":"float"}],"backend":"native","show_legend":false,"view":{"ranges":{"x":[-0.5104,5.5104],"y":[-0.3,0.45]}},"legend":{"loc":null,"ncols":1},"dom":{"style":{"--chart-bg":"#ffffff","--chart-grid":"rgba(100, 116, 139, 0.16)"}},"annotations":[{"text":"+34%","style":{"color":"#0f172a","font_size":"13px","font_weight":"700"},"kind":"text","x":0.0,"y":0.34,"dx":0.0,"dy":-10.0,"anchor":"middle"},{"text":"+21%","style":{"color":"#0f172a","font_size":"13px","font_weight":"700"},"kind":"text","x":1.0,"y":0.21,"dx":0.0,"dy":-10.0,"anchor":"middle"},{"text":"+12%","style":{"color":"#0f172a","font_size":"13px","font_weight":"700"},"kind":"text","x":2.0,"y":0.12,"dx":0.0,"dy":-10.0,"anchor":"middle"},{"text":"-8%","style":{"color":"#0f172a","font_size":"13px","font_weight":"700"},"kind":"text","x":3.0,"y":-0.08,"dx":0.0,"dy":18.0,"anchor":"middle"},{"text":"-17%","style":{"color":"#0f172a","font_size":"13px","font_weight":"700"},"kind":"text","x":4.0,"y":-0.17,"dx":0.0,"dy":18.0,"anchor":"middle"},{"text":"+27%","style":{"color":"#0f172a","font_size":"13px","font_weight":"700"},"kind":"text","x":5.0,"y":0.27,"dx":0.0,"dy":-10.0,"anchor":"middle"},{"style":{"color":"#64748b","width":1.4,"opacity":1.0},"kind":"rule","axis":"y","value":0.0}]};
+  const buf = xyDecodeB64(__xyChunks, 48);
   __xyChunks.length = 0;
-  window.__xyAnnotatedHeatmapView = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  xy.renderStandalone(document.getElementById("chart"), spec, buf);
 </script>
-
-<script>
-(() => {
-  const attach = () => {
-    const view = window.__xyAnnotatedHeatmapView;
-    if (!view || view.__annotatedHeatmapBridge || !view.canvas) return false;
-    view.__annotatedHeatmapBridge = true;
-    const send = (type, row, clientX, clientY) => {
-      const rect = view.canvas.getBoundingClientRect();
-      const x = Number(clientX) - rect.left;
-      const y = Number(clientY) - rect.top;
-      if (type === "hover" && (!Number.isFinite(x) || !Number.isFinite(y))) return;
-      window.parent.postMessage({
-        source: "xy-annotated-heatmap",
-        chart: "annotated-heatmap",
-        type,
-        row,
-        x,
-        y,
-      }, window.location.origin);
-    };
-    view.canvas.addEventListener("pointermove", (event) => {
-      const rect = view.canvas.getBoundingClientRect();
-      const cssX = event.clientX - rect.left;
-      const cssY = event.clientY - rect.top;
-      const hit = view._hoverAt && view._hoverAt(cssX, cssY);
-      if (!hit || !view._localRow) {
-        send("leave", null, event.clientX, event.clientY);
-        return;
-      }
-      send("hover", view._localRow(hit), event.clientX, event.clientY);
-    });
-    view.canvas.addEventListener("pointerleave", () => send("leave", null, 0, 0));
-    return true;
-  };
-  if (attach()) return;
-  requestAnimationFrame(attach);
-  window.setTimeout(attach, 80);
-  window.setTimeout(attach, 300);
-})();
-</script>
-
 </body>
 </html>

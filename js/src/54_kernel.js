@@ -16,7 +16,7 @@ Object.assign(ChartView.prototype, {
     const needsDensity = this.gpuTraces.some((g) => g.tier === "density");
     if (!needsDecimated && !needsDensity) return;
     const seq = opts.seq ?? ++this.seq;
-    const view = { ...viewOverride };
+    const view = this._copyView(viewOverride);
     const plotW = Math.round(this.plot.w);
     const plotH = Math.round(this.plot.h);
     if (needsDensity) {
@@ -53,10 +53,12 @@ Object.assign(ChartView.prototype, {
       if (needsDensity) {
         for (const g of this.gpuTraces) {
           if (g.tier !== "density") continue;
+          const [x0, x1] = this._axisRange(g.xAxis, view);
+          const [y0, y1] = this._axisRange(g.yAxis, view);
           this.comm.send({
             type: "density_view", seq, trace: g.trace.id,
-            x0: Math.min(view.x0, view.x1), x1: Math.max(view.x0, view.x1),
-            y0: Math.min(view.y0, view.y1), y1: Math.max(view.y0, view.y1),
+            x0: Math.min(x0, x1), x1: Math.max(x0, x1),
+            y0: Math.min(y0, y1), y1: Math.max(y0, y1),
             w: plotW, h: plotH,
           });
         }
@@ -80,7 +82,7 @@ Object.assign(ChartView.prototype, {
     );
     if (!targets.length) return;
     const seq = opts.seq ?? ++this.seq;
-    const view = { ...viewOverride };
+    const view = this._copyView(viewOverride);
     clearTimeout(this._rebinTimer);
     this._rebinTimer = setTimeout(() => {
       if (this._destroyed || seq !== this.seq) return;
@@ -98,12 +100,16 @@ Object.assign(ChartView.prototype, {
     // grid that normalizes against a different, much smaller maximum, so the
     // density visibly jumps between the overview and the sample on the
     // slightest drag. Gate on view *span*, not position: keep (and restore)
-    // the overview for pans and zoom-outs; only a real zoom-in re-bins.
-    const v0 = this.view0;
-    const homeSpanX = Math.max(Math.abs(v0.x1 - v0.x0), 1e-300);
-    const homeSpanY = Math.max(Math.abs(v0.y1 - v0.y0), 1e-300);
-    const viewSpanX = Math.abs(view.x1 - view.x0);
-    const viewSpanY = Math.abs(view.y1 - view.y0);
+    // the overview for pans and zoom-outs; only a real zoom-in re-bins. Spans
+    // are read per axis (§9.2) so multi-axis views compare like for like.
+    const [vx0, vx1] = this._axisRange(g.xAxis, view);
+    const [vy0, vy1] = this._axisRange(g.yAxis, view);
+    const [hx0, hx1] = this._axisRange(g.xAxis, this.view0);
+    const [hy0, hy1] = this._axisRange(g.yAxis, this.view0);
+    const homeSpanX = Math.max(Math.abs(hx1 - hx0), 1e-300);
+    const homeSpanY = Math.max(Math.abs(hy1 - hy0), 1e-300);
+    const viewSpanX = Math.abs(vx1 - vx0);
+    const viewSpanY = Math.abs(vy1 - vy0);
     // 1e-6 slack absorbs float drift so a pan at home zoom never trips a re-bin.
     const notZoomedIn =
       viewSpanX >= homeSpanX * (1 - 1e-6) && viewSpanY >= homeSpanY * (1 - 1e-6);
@@ -145,8 +151,8 @@ Object.assign(ChartView.prototype, {
     }
     this._rebinWorker.postMessage({
       type: "rebin", trace: g.trace.id, seq,
-      x0: Math.min(view.x0, view.x1), x1: Math.max(view.x0, view.x1),
-      y0: Math.min(view.y0, view.y1), y1: Math.max(view.y0, view.y1),
+      x0: Math.min(vx0, vx1), x1: Math.max(vx0, vx1),
+      y0: Math.min(vy0, vy1), y1: Math.max(vy0, vy1),
       w: Math.max(16, Math.min(2048, Math.round(this.plot.w))),
       h: Math.max(16, Math.min(2048, Math.round(this.plot.h))),
     });
@@ -231,8 +237,15 @@ Object.assign(ChartView.prototype, {
     this.spec = spec;
     this.axes = this._normalizeAxes(spec);
     this._payload = blob;
-    this.view0 = nextHome;
-    this.view = nextView;
+    this.view0 = this._copyView({
+      ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]) => [id, [...axis.range]])),
+    });
+    if (atHome) {
+      this.view = this._copyView(this.view0);
+    } else if (pinnedRight) {
+      const w = this.view.x1 - this.view.x0;
+      this.view = this._viewFrom({ x1: this.view0.x1, x0: this.view0.x1 - w });
+    }
     // Append payloads are canonical state, so retain them even while the
     // context is lost. The restore path rebuilds every affected GPU object
     // from this latest payload; attempting partial uploads to a dead context

@@ -43,6 +43,9 @@ Internal architecture: how the engine is built and why.
   motion, stable identity, interruption, reduced motion, and export determinism.
 - [`lod-architecture.md`](design/lod-architecture.md) — the Tier 0/1/2/3
   LOD/drilldown design that keeps large data truthful and interactive.
+- [`pan-and-zoom-configuration.md`](design/pan-and-zoom-configuration.md) — the
+  flat per-axis viewport-navigation contract: capability/action/axis/source
+  switches, `zoom_limits`, reset, and the semantic `ranges` view events.
 - [`reflex-integration.md`](design/reflex-integration.md) — the `reflex-xy`
   adapter design: figures as first-class Reflex components over a second
   socket.io namespace.

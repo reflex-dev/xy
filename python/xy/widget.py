@@ -78,8 +78,17 @@ class FigureWidget(anywidget.AnyWidget):
             on_animation_end=on_animation_end,
         )
         spec, bufs = figure.build_payload_split()
+        self._configure_transport(spec)
         super().__init__(spec=spec, buffers=bufs, **kwargs)
         self.on_msg(self._on_custom_msg)
+
+    def _configure_transport(self, spec: dict[str, Any]) -> None:
+        """Attach private subscriptions without changing browser behavior."""
+        if self._callbacks.on_view_change is not None:
+            spec["interaction"] = {
+                **spec.get("interaction", {}),
+                "_transport_view_change": True,
+            }
 
     def append(
         self,
@@ -110,6 +119,7 @@ class FigureWidget(anywidget.AnyWidget):
             stroke_width=stroke_width,
             symbol=symbol,
         )
+        self._configure_transport(msg["spec"])
         self.spec = msg["spec"]
         self.buffers = buffers[0]
         self.send(msg, buffers=buffers)

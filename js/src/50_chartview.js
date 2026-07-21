@@ -5,6 +5,7 @@
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
+const COMPACT_COLORBAR_GAP = 8;
 let XY_A11Y_ID = 0;
 const XY_SR_ONLY_STYLE =
   "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;" +
@@ -195,12 +196,17 @@ class ChartView {
     this._progCache = new Map();
     this._bufSeq = 0;
     this._destroyed = false;
+    this._resizeRaf = null;
+    this._pendingResize = null;
+    this._resizeNeedsMeasure = false;
     this._hoverId = -1;
     this._hoverTarget = null;
     this._viewEventRaf = null;
     this._linkedSource = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    // pan | zoom | internal selection modes (the modebar exposes only pan/zoom)
-    this.dragMode = "pan";
+    // Browser-local active drag action. The configured default resolves after
+    // GL setup, when pickability is known.
+    this.dragMode = "none";
+    this._interactionSeq = 0;
 
     // Responsive size: "100%" means the *container* owns that axis — measure
     // it now, track it with a ResizeObserver below. Numeric sizes are fixed.
@@ -256,6 +262,11 @@ class ChartView {
       throw err;
     }
     this.canvas.dataset.xyCtx = "live";
+    this.view0 = this._clampView({
+      ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]) => [id, [...axis.range]])),
+    });
+    this.view = this._copyView(this.view0);
+    this.dragMode = this._resolveDefaultDragAction();
     this._initA11y();
     this.root.dataset.xyContextState = "ready";
     this._initContextLossRecovery();
@@ -266,18 +277,13 @@ class ChartView {
     if ((this.fluid || this.fluidH) && typeof ResizeObserver !== "undefined") {
       this._ro = new ResizeObserver((entries) => {
         const r = entries[entries.length - 1].contentRect;
-        if (r.width || r.height) this._resize(r.width, r.height);
+        if (r.width || r.height) this._queueResize(r.width, r.height);
       });
       this._ro.observe(this.root);
     }
     this._armVisibilityResizeWatch();
     this._armDprWatch();
 
-    this.view0 = this._clampView({
-      x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
-      y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
-    });
-    this.view = { ...this.view0 };
     this._initLinkedCharts();
 
     this._themeWatch = window.matchMedia("(prefers-color-scheme: dark)");
@@ -308,13 +314,24 @@ class ChartView {
     // Explicit padding (spec.padding = [top,right,bottom,left]) overrides the
     // label-aware defaults — zero padding gives an edge-to-edge sparkline.
     const pad = Array.isArray(this.spec.padding) ? this.spec.padding : null;
-    const marginLeft = pad ? pad[3] : compact ? 46 : MARGIN.l;
     const colorbar = this.spec.colorbar;
     const verticalColorbar = colorbar && colorbar.orientation !== "horizontal";
     const horizontalColorbar = colorbar && colorbar.orientation === "horizontal";
-    const colorbarRightRoom = verticalColorbar ? 86 + (colorbar.label ? 18 : 0) : 0;
+    // Fluid charts have to remain useful inside dashboard columns. On compact
+    // widths, cap only oversized authored horizontal padding and collapse a
+    // vertical colorbar to its gradient; the full tick/title chrome returns
+    // automatically when the container widens again.
+    const responsivePad = this.fluid && compact && pad;
+    const marginLeft = pad ? (responsivePad ? Math.min(pad[3], 46) : pad[3]) : compact ? 46 : MARGIN.l;
+    this._compactVerticalColorbar = Boolean(this.fluid && compact && verticalColorbar);
+    const colorbarRightRoom = verticalColorbar
+      ? (this._compactVerticalColorbar
+        ? COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + 8
+        : 86 + (colorbar.label ? 18 : 0))
+      : 0;
     const colorbarBottomRoom = horizontalColorbar ? 38 + (colorbar.label ? 16 : 0) : 0;
-    const marginRight = (pad ? pad[1] : compact ? 8 : MARGIN.r) + colorbarRightRoom;
+    const baseRight = pad ? (responsivePad ? Math.min(pad[1], 8) : pad[1]) : compact ? 8 : MARGIN.r;
+    const marginRight = baseRight + colorbarRightRoom;
     const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
     const marginBottom = (pad ? pad[2] : compact ? 36 : MARGIN.b) + colorbarBottomRoom;
     const hasBottomAxis = Object.values(this.axes || {}).some((axis) =>
@@ -369,6 +386,93 @@ class ChartView {
     return this._axis(axisId).scale === "log" ? 1 : 0;
   }
 
+  _axisIds() {
+    return Object.keys(this.axes || {});
+  }
+
+  _copyView(view) {
+    const ranges = {};
+    for (const axisId of this._axisIds()) {
+      const range = view?.ranges?.[axisId] || this._axis(axisId).range || [0, 1];
+      ranges[axisId] = [Number(range[0]), Number(range[1])];
+    }
+    const x = ranges.x || [0, 1];
+    const y = ranges.y || [0, 1];
+    return { ranges, x0: x[0], x1: x[1], y0: y[0], y1: y[1] };
+  }
+
+  _viewFrom(next, base = this.view) {
+    const ranges = {};
+    for (const axisId of this._axisIds()) {
+      const source = next?.ranges?.[axisId]
+        || (axisId === "x" && next?.x0 !== undefined ? [next.x0, next.x1] : null)
+        || (axisId === "y" && next?.y0 !== undefined ? [next.y0, next.y1] : null)
+        || base?.ranges?.[axisId]
+        || this._axis(axisId).range
+        || [0, 1];
+      ranges[axisId] = [Number(source[0]), Number(source[1])];
+    }
+    return this._copyView({ ranges });
+  }
+
+  _axisPolicy(name) {
+    const configured = this.interaction?.[name];
+    if (!Array.isArray(configured) || !configured.length) return this._axisIds();
+    const declared = new Set(this._axisIds());
+    return [...new Set(configured.filter((axisId) => declared.has(axisId)))];
+  }
+
+  _resetAxisPolicy() {
+    if (Array.isArray(this.interaction?.reset_axes)) return this._axisPolicy("reset_axes");
+    const axes = [];
+    if (this._interactionFlag("pan", true)) axes.push(...this._axisPolicy("pan_axes"));
+    if (this._interactionFlag("zoom", true)) axes.push(...this._axisPolicy("zoom_axes"));
+    return [...new Set(axes)];
+  }
+
+  // An axis zoom can navigate but pan cannot is *contained*: every clamped
+  // mutation keeps its window inside its home extents. Cursor-anchored zoom
+  // is a scaling plus a translation, so without containment a zoom-in/out
+  // chain at two cursor positions is an exact pan of the "locked" axis.
+  _axisContained(axisId) {
+    if (!this._interactionFlag("navigation", true)) return false;
+    if (!this._interactionFlag("zoom", true)) return false;
+    if (!this._axisPolicy("zoom_axes").includes(axisId)) return false;
+    if (!this._interactionFlag("pan", true)) return true;
+    return !this._axisPolicy("pan_axes").includes(axisId);
+  }
+
+  _resolveDefaultDragAction() {
+    const requested = typeof this.interaction?.default_drag_action === "string"
+      ? this.interaction.default_drag_action : "auto";
+    const canNavigate = this._interactionFlag("navigation", true);
+    const canPan = canNavigate && this._interactionFlag("pan", true);
+    const canZoom = canNavigate && this._interactionFlag("zoom", true)
+      && this._interactionFlag("box_zoom", true);
+    const canSelect = this._pickable && this._interactionFlag("select", true)
+      && this._interactionFlag("brush", true);
+    if (requested === "auto") {
+      if (canPan) return "pan";
+      if (canZoom) return "zoom";
+      if (canSelect) return "select";
+      return "none";
+    }
+    if (requested === "pan") return canPan ? "pan" : this._resolveDefaultDragActionFallback();
+    if (requested === "zoom") return canZoom ? "zoom" : this._resolveDefaultDragActionFallback();
+    if (requested.startsWith("select")) {
+      return canSelect ? requested : this._resolveDefaultDragActionFallback();
+    }
+    return requested === "none" ? "none" : this._resolveDefaultDragActionFallback();
+  }
+
+  _resolveDefaultDragActionFallback() {
+    const saved = this.interaction.default_drag_action;
+    this.interaction.default_drag_action = "auto";
+    const resolved = this._resolveDefaultDragAction();
+    this.interaction.default_drag_action = saved;
+    return resolved;
+  }
+
   _axisCoord(axis, value) {
     const v = Number(value);
     if (!Number.isFinite(v)) return NaN;
@@ -382,8 +486,10 @@ class ChartView {
   }
 
   _axisRange(axisId, view = this.view) {
-    if (axisId === "x") return [view.x0, view.x1];
-    if (axisId === "y") return [view.y0, view.y1];
+    const mapped = view?.ranges?.[axisId];
+    if (Array.isArray(mapped)) return [mapped[0], mapped[1]];
+    if (axisId === "x" && view) return [view.x0, view.x1];
+    if (axisId === "y" && view) return [view.y0, view.y1];
     const axis = this._axis(axisId);
     const r = axis.range || [0, 1];
     return [Number(r[0]), Number(r[1])];
@@ -445,6 +551,9 @@ class ChartView {
 
   _eventView(source = "view") {
     return {
+      ranges: Object.fromEntries(
+        this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+      ),
       x0: this.view.x0,
       x1: this.view.x1,
       y0: this.view.y0,
@@ -463,20 +572,28 @@ class ChartView {
   }
 
   _emitViewChange(source = "view", opts = {}) {
-    const shouldDispatch = this._interactionFlag("view_change") || this._linkChannel;
-    if (!shouldDispatch || this._destroyed) return;
+    if (this._destroyed) return;
     const broadcast = opts.broadcast !== false;
-    this._pendingViewEvent = { source, broadcast };
+    this._pendingViewEvent = {
+      source,
+      broadcast,
+      axes: Array.isArray(opts.axes) ? [...opts.axes] : [],
+      phase: opts.phase || "end",
+      interaction_id: opts.interactionId ?? ++this._interactionSeq,
+    };
     if (this._viewEventRaf) return;
     this._viewEventRaf = requestAnimationFrame(() => {
       this._viewEventRaf = null;
       const pending = this._pendingViewEvent || { source, broadcast };
       this._pendingViewEvent = null;
-      const detail = this._eventView(pending.source);
-      if (this._interactionFlag("view_change")) {
-        this._dispatchChartEvent("view_change", detail);
-      }
-      if (this.comm && this._interactionFlag("view_change")) {
+      const detail = {
+        ...this._eventView(pending.source),
+        axes: pending.axes,
+        phase: pending.phase,
+        interaction_id: pending.interaction_id,
+      };
+      this._dispatchChartEvent("view_change", detail);
+      if (this.comm && (!this.comm.wantsViewChange || this.comm.wantsViewChange())) {
         this.comm.send({ type: "view_change", ...detail });
       }
       if (pending.broadcast) this._broadcastLinkedView(detail);
@@ -486,9 +603,7 @@ class ChartView {
   _initLinkedCharts() {
     const group = this.interaction && this.interaction.link_group;
     if (!group || typeof BroadcastChannel !== "function") return;
-    this._linkAxes = Array.isArray(this.interaction.link_axes)
-      ? this.interaction.link_axes.filter((axis) => axis === "x" || axis === "y")
-      : ["x", "y"];
+    this._linkAxes = this._axisPolicy("link_axes");
     this._linkChannel = new BroadcastChannel(`xy:${group}`);
     this._linkChannel.onmessage = (event) => {
       const msg = event.data || {};
@@ -506,29 +621,55 @@ class ChartView {
         return;
       }
       if (!msg.view || msg.source === this._linkedSource) return;
-      const next = { ...this.view };
-      if (this._linkAxes.includes("x")) {
-        next.x0 = Number(msg.view.x0);
-        next.x1 = Number(msg.view.x1);
+      const incoming = msg.view.ranges || {};
+      const ranges = Object.fromEntries(
+        this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+      );
+      for (const axisId of this._linkAxes) {
+        const range = incoming[axisId]
+          || (axisId === "x" ? [msg.view.x0, msg.view.x1] : null)
+          || (axisId === "y" ? [msg.view.y0, msg.view.y1] : null);
+        if (Array.isArray(range) && range.length === 2 && range.every(Number.isFinite)) {
+          ranges[axisId] = [Number(range[0]), Number(range[1])];
+        }
       }
-      if (this._linkAxes.includes("y")) {
-        next.y0 = Number(msg.view.y0);
-        next.y1 = Number(msg.view.y1);
-      }
-      if (![next.x0, next.x1, next.y0, next.y1].every(Number.isFinite)) return;
-      if (!this._interactionFlag("pan", true) && !this._interactionFlag("zoom", true)) return;
-      this._setView(next, { animate: false, source: "linked", broadcast: false });
+      this._setView({ ranges }, {
+        animate: false,
+        source: "linked",
+        phase: "end",
+        broadcast: false,
+      });
     };
   }
 
   _broadcastLinkedView(detail) {
     if (!this._linkChannel) return;
-    this._linkChannel.postMessage({ source: this._linkedSource, view: detail });
+    const axes = (detail.axes || []).filter((axisId) => this._linkAxes.includes(axisId));
+    if (!axes.length) return;
+    const ranges = Object.fromEntries(axes.map((axisId) => [axisId, detail.ranges[axisId]]));
+    this._linkChannel.postMessage({
+      source: this._linkedSource,
+      view: { ...detail, axes, ranges },
+    });
   }
 
   _broadcastLinkedSelection(selection) {
     if (!this._linkChannel || !this._interactionFlag("link_select")) return;
     this._linkChannel.postMessage({ source: this._linkedSource, selection });
+  }
+
+  setView(ranges, opts = {}) {
+    return this._setView({ ranges }, {
+      animate: opts.animate === true,
+      source: "programmatic",
+      phase: "end",
+      interactionId: ++this._interactionSeq,
+      broadcast: opts.broadcast === true,
+    });
+  }
+
+  resetView(opts = {}) {
+    return this._resetView(opts.animate !== false, "reset");
   }
 
   _applyClass(el, className) {
@@ -601,15 +742,34 @@ class ChartView {
 
   _syncContainerSize() {
     if (this._destroyed || !(this.fluid || this.fluidH) || !this.root) return;
-    const rect = this.root.getBoundingClientRect();
-    if (rect.width || rect.height) this._resize(rect.width, rect.height);
+    this._queueResize(null, null, true);
+  }
+
+  _queueResize(cssW = null, cssH = null, measure = false) {
+    if (this._destroyed) return;
+    if (cssW || cssH) this._pendingResize = { cssW, cssH };
+    if (measure) this._resizeNeedsMeasure = true;
+    if (this._resizeRaf) return;
+    this._resizeRaf = requestAnimationFrame(() => {
+      this._resizeRaf = null;
+      let pending = this._pendingResize;
+      this._pendingResize = null;
+      if (this._resizeNeedsMeasure && this.root) {
+        const rect = this.root.getBoundingClientRect();
+        if (rect.width || rect.height) pending = { cssW: rect.width, cssH: rect.height };
+      }
+      this._resizeNeedsMeasure = false;
+      if (pending && (pending.cssW || pending.cssH)) {
+        this._resize(pending.cssW, pending.cssH);
+      }
+    });
   }
 
   _armVisibilityResizeWatch() {
     if (!(this.fluid || this.fluidH)) return;
     const syncSoon = () => {
       if (this._destroyed) return;
-      requestAnimationFrame(() => this._syncContainerSize());
+      this._syncContainerSize();
     };
     this._listen(window, "resize", syncSoon);
     this._listen(window, "pageshow", syncSoon);
@@ -689,6 +849,9 @@ class ChartView {
       if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
       this._wheelZoomRaf = null;
       this._pendingWheelZoom = null;
+      clearTimeout(this._wheelZoomEndTimer);
+      this._wheelZoomEndTimer = null;
+      this._wheelGesture = null;
       if (this._dataAnimRaf) cancelAnimationFrame(this._dataAnimRaf);
       this._dataAnimRaf = null;
       if (this._dataAnim) {
@@ -1086,7 +1249,12 @@ class ChartView {
     this._positionColorbar();
     this._fitModebar();
     this._pickDirty = true;
-    this.draw();
+    // Changing a canvas backing-store dimension clears it immediately. Resize
+    // work is already coalesced into one animation frame, so paint in that same
+    // frame instead of exposing cleared canvases until a second rAF callback.
+    if (this._raf) cancelAnimationFrame(this._raf);
+    this._raf = null;
+    this._drawNow();
     this._scheduleViewRequest();
   }
 
@@ -1513,14 +1681,24 @@ class ChartView {
   _positionColorbar() {
     if (!this._colorbar) return;
     const horizontal = this._colorbarHorizontal;
+    const compactVertical = !horizontal && this._compactVerticalColorbar;
+    const gap = compactVertical ? COMPACT_COLORBAR_GAP : COLORBAR_GAP;
     this._colorbar.style.left = (horizontal
       ? this.plot.x
-      : this.plot.x + this.plot.w + this._rightAxisRoom + COLORBAR_GAP) + "px";
+      : this.plot.x + this.plot.w + this._rightAxisRoom + gap) + "px";
     this._colorbar.style.top = (horizontal
       ? this.plot.y + this.plot.h + (this._bottomAxisRoom || 8)
       : this.plot.y) + "px";
-    this._colorbar.style.width = (horizontal ? this.plot.w : 66) + "px";
+    this._colorbar.style.width = (horizontal
+      ? this.plot.w
+      : compactVertical ? COLORBAR_THICKNESS : 66) + "px";
     this._colorbar.style.height = (horizontal ? 50 : Math.max(24, this.plot.h)) + "px";
+    this._colorbar.dataset.xyCompact = compactVertical ? "true" : "false";
+    for (const node of this._colorbar.querySelectorAll(
+      '[data-xy-slot="colorbar_tick"], [data-xy-slot="colorbar_title"]'
+    )) {
+      node.hidden = compactVertical;
+    }
   }
 
   _initGl(buffer) {
@@ -4387,10 +4565,17 @@ class ChartView {
     if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
     this._wheelZoomRaf = null;
     this._pendingWheelZoom = null;
+    clearTimeout(this._wheelZoomEndTimer);
+    this._wheelZoomEndTimer = null;
+    this._wheelGesture = null;
     this._linkChannel?.close?.();
     this._linkChannel = null;
     if (this._raf) cancelAnimationFrame(this._raf);
     this._raf = null;
+    if (this._resizeRaf) cancelAnimationFrame(this._resizeRaf);
+    this._resizeRaf = null;
+    this._pendingResize = null;
+    this._resizeNeedsMeasure = false;
     this._cancelViewAnimation();
     if (this._dataAnimRaf) cancelAnimationFrame(this._dataAnimRaf);
     this._dataAnimRaf = null;

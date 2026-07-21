@@ -174,7 +174,19 @@ def test_view_change_short_circuits_without_callback():
         on_view_change=views.append,
     )
     assert reply is None
-    assert views == [{"x0": 0.0, "x1": 2.0, "y0": 0.0, "y1": 3.0, "source": "wheel"}]
+    assert views == [
+        {
+            "ranges": {"x": [0.0, 2.0], "y": [0.0, 3.0]},
+            "source": "wheel",
+            "axes": [],
+            "phase": "end",
+            "interaction_id": None,
+            "x0": 0.0,
+            "x1": 2.0,
+            "y0": 0.0,
+            "y1": 3.0,
+        }
+    ]
     # Malformed with callback: dropped.
     assert handle(fig, {"type": "view_change", "x0": "bad"}, on_view_change=views.append) is None
     assert (
@@ -194,7 +206,52 @@ def test_view_change_short_circuits_without_callback():
         is None
     )
     assert len(views) == 2
-    assert views[-1] == {"x0": 0.0, "x1": 2.0, "y0": 0.0, "y1": 3.0, "source": "view"}
+    assert views[-1] == {
+        "ranges": {"x": [0.0, 2.0], "y": [0.0, 3.0]},
+        "source": "view",
+        "axes": [],
+        "phase": "end",
+        "interaction_id": None,
+        "x0": 0.0,
+        "x1": 2.0,
+        "y0": 0.0,
+        "y1": 3.0,
+    }
+
+
+def test_view_change_accepts_range_map_and_semantic_metadata():
+    fig = Figure().scatter(np.arange(3.0), np.arange(3.0))
+    fig.set_axis("y2")
+    views = []
+
+    assert (
+        handle(
+            fig,
+            {
+                "type": "view_change",
+                "ranges": {"x": [0, 2], "y": [0, 3], "y2": [95, 105]},
+                "source": "wheel_zoom",
+                "axes": ["x", "y2"],
+                "phase": "end",
+                "interaction_id": 42,
+            },
+            on_view_change=views.append,
+        )
+        is None
+    )
+    assert views == [
+        {
+            "ranges": {"x": [0.0, 2.0], "y": [0.0, 3.0], "y2": [95.0, 105.0]},
+            "source": "wheel_zoom",
+            "axes": ["x", "y2"],
+            "phase": "end",
+            "interaction_id": 42,
+            "x0": 0.0,
+            "x1": 2.0,
+            "y0": 0.0,
+            "y1": 3.0,
+        }
+    ]
 
 
 def test_select_fires_brush_before_select_and_returns_selection_reply():

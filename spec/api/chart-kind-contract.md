@@ -169,11 +169,12 @@ benchmark tracks this as part of the core 2D payload budget.
 ## What you get for free (do not re-implement)
 
 - **Interaction**: pan, wheel zoom (cursor-anchored), box-zoom, modebar, reset,
-  dblclick — all operate on the view rectangle and `_map` uniforms, mark-blind.
-  A new kind inherits them without writing any interaction code, but they are
-  not unconditional: `navigation`/`pan`/`zoom` default to on and can be turned
-  off per figure. [interaction.md](interaction.md) is the authority on the
-  switches, defaults, gesture map, and event payloads.
+  dblclick — all operate on the per-axis view `ranges` and `_map` uniforms,
+  mark-blind. A new kind inherits them without writing any interaction code, but
+  they are not unconditional: `navigation`/`pan`/`zoom` default to on and can be
+  turned off — or scoped to specific axes — per figure.
+  [interaction.md](interaction.md) is the authority on the switches, per-axis
+  policy, defaults, gesture map, and event payloads.
 - **Responsive sizing**: `width/height:"100%"` + ResizeObserver.
 - **Precision**: canonical f64 CPU-side; f32 upload offset-encoded and
   re-centered on deep zoom (§16). Never send f64 through the GPU path.
