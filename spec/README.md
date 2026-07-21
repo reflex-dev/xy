@@ -86,6 +86,9 @@ Release bar, contribution rules, and audit trail.
   production invariants a change must not lose.
 - [`production-readiness.md`](process/production-readiness.md) — the release
   bar, separating hard gates from advisory measurements.
+- [`rendering-verification.md`](process/rendering-verification.md) — the
+  LOD-invariant property tests and golden visual-regression corpus that make
+  renderer churn safe.
 - [`security-audit-2026-07-06.md`](process/security-audit-2026-07-06.md) —
   scope, findings, and status of the 2026-07-06 source audit.
 
