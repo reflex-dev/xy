@@ -7957,14 +7957,18 @@ if (Math.abs((c1 - c0) * f) < minSpan) return null;
 const next0 = ca - (ca - c0) * f;
 const next1 = ca + (c1 - ca) * f;
 if (f > 1 && this.view0) {
-const home = axisId === "x"
-? [this.view0.x0, this.view0.x1]
-: [this.view0.y0, this.view0.y1];
+const home = this._axisRange(axisId, this.view0);
 const home0 = this._axisCoord(axis, home[0]);
 const home1 = this._axisCoord(axis, home[1]);
+const homeSpan = Math.abs(home1 - home0);
 if ([home0, home1].every(Number.isFinite)
-&& Math.abs(next1 - next0) >= Math.abs(home1 - home0)) {
-return home;
+&& homeSpan > 0
+&& Math.abs(next1 - next0) > homeSpan) {
+const signedHome = homeSpan * Math.sign(next1 - next0);
+return [
+this._axisValue(axis, ca - anchorFrac * signedHome),
+this._axisValue(axis, ca + (1 - anchorFrac) * signedHome),
+];
 }
 }
 return [

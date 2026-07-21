@@ -1610,18 +1610,25 @@ Object.assign(ChartView.prototype, {
     const next0 = ca - (ca - c0) * f;
     const next1 = ca + (c1 - ca) * f;
     if (f > 1 && this.view0) {
-      // A box zoom can narrow X and Y by very different factors.  Stop each
-      // axis independently at its home span while zooming out; otherwise the
+      // A box zoom can narrow X and Y by very different factors.  Cap each
+      // axis's span at its home span while zooming out; otherwise the
       // less-zoomed axis expands far beyond home and flattens the point cloud
-      // while the other axis is still zoomed in.
-      const home = axisId === "x"
-        ? [this.view0.x0, this.view0.x1]
-        : [this.view0.y0, this.view0.y1];
+      // while the other axis is still zoomed in. Preserve the cursor anchor
+      // instead of snapping to the home *range*: a free (pan-enabled) axis may
+      // still sit off-center after the cap, and positional containment (the
+      // shared clamp, applied later) is what pins a locked axis to home.
+      const home = this._axisRange(axisId, this.view0);
       const home0 = this._axisCoord(axis, home[0]);
       const home1 = this._axisCoord(axis, home[1]);
+      const homeSpan = Math.abs(home1 - home0);
       if ([home0, home1].every(Number.isFinite)
-          && Math.abs(next1 - next0) >= Math.abs(home1 - home0)) {
-        return home;
+          && homeSpan > 0
+          && Math.abs(next1 - next0) > homeSpan) {
+        const signedHome = homeSpan * Math.sign(next1 - next0);
+        return [
+          this._axisValue(axis, ca - anchorFrac * signedHome),
+          this._axisValue(axis, ca + (1 - anchorFrac) * signedHome),
+        ];
       }
     }
     return [

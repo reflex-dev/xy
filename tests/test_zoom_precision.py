@@ -51,7 +51,7 @@ _PROBE = """
       current,
       xZoom,
       yZoom,
-      finite: Object.values(current).every(Number.isFinite),
+      finite: [current.x0, current.x1, current.y0, current.y1].every(Number.isFinite),
     }));
   } catch (err) {
     document.body.setAttribute(
