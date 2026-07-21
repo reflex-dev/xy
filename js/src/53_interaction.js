@@ -336,7 +336,7 @@ Object.assign(ChartView.prototype, {
     e.preventDefault();
     // Match pointer hover: never expose a readout against an in-between view,
     // density handoff, or animated tier frame.
-    if (this._transitionActive()) return;
+    if (this._interactionTransitionActive()) return;
     const groups = this._a11yPointGroups();
     const total = groups.reduce((sum, g) => sum + Math.min(g._cpu.x.length, g._cpu.y.length), 0);
     if (!total) return;

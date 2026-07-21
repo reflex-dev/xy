@@ -1,6 +1,6 @@
 """A declarative, composition-based component API.
 
-The *feel* is Reflex's (reflex.dev) Recharts components — a chart container with
+The *feel* is Reflex's (reflex.dev) chart components — a chart container with
 mark and axis children, snake_case keyword props, `data=` + column-name
 resolution, and `on_*` event props — but xy does **not** import or depend
 on Reflex. It's the same ergonomics on top of the xy engine (`Figure`):
@@ -18,8 +18,8 @@ on Reflex. It's the same ergonomics on top of the xy engine (`Figure`):
     )
 
 Marks accept `x`/`y`/`color`/`size` as arrays *or* as string column names into
-`data` (a DataFrame, dict, or anything indexable) — the Reflex/Recharts
-`data_key` idiom, read more directly. Everything composes into a `Figure`, so a
+`data` (a DataFrame, dict, or anything indexable) — a string-column key
+idiom, read more directly. Everything composes into a `Figure`, so a
 chart renders in notebooks and exports to HTML exactly like the fluent API.
 
 The declarative layer is the core: `marks.py` holds the single implementation
@@ -31,6 +31,8 @@ behavior, signatures, or defaults (asserted by tests/test_api_parity.py).
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import math
 import re
 import uuid
 import warnings
@@ -60,6 +62,7 @@ _optional_nonnegative_number = _validate.optional_nonnegative_scalar
 
 __all__ = [
     "CHART_DOM_SLOTS",
+    "Animation",
     "Annotation",
     "Axis",
     "Chart",
@@ -71,8 +74,10 @@ __all__ = [
     "Legend",
     "Mark",
     "Modebar",
+    "Spring",
     "Theme",
     "Tooltip",
+    "animation",
     "area",
     "area_chart",
     "arrow",
@@ -114,6 +119,7 @@ __all__ = [
     "scatter_chart",
     "segments",
     "segments_chart",
+    "spring",
     "stairs",
     "stairs_chart",
     "stem",
@@ -173,6 +179,8 @@ class Mark(Component):
     name: Optional[str] = None
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
+    key: Any = None
+    animation: "Animation | bool | None" = None
     props: dict[str, Any] = field(default_factory=dict)
 
 
@@ -318,6 +326,171 @@ class Interaction(Component):
     link_axes: Optional[tuple[str, ...]] = None
 
 
+@dataclass(frozen=True)
+class Spring:
+    """A bounded, serializable spring easing policy."""
+
+    stiffness: float = 170.0
+    damping: float = 26.0
+    mass: float = 1.0
+
+    def to_spec(self) -> dict[str, float | str]:
+        return {
+            "type": "spring",
+            "stiffness": _positive_animation_number(self.stiffness, "spring stiffness"),
+            "damping": _positive_animation_number(self.damping, "spring damping"),
+            "mass": _positive_animation_number(self.mass, "spring mass"),
+        }
+
+
+@dataclass
+class Animation(Component):
+    """Declarative browser transition policy built by :func:`animation`."""
+
+    enabled: bool | Literal["auto"] = "auto"
+    delay: float = 0.0
+    duration: float = 400.0
+    easing: str | tuple[float, float, float, float] | Spring = "ease-out"
+    match: Literal["index", "append", "key"] = "index"
+    enter: str = "auto"
+    update: str = "interpolate"
+    interpolate: tuple[str, ...] = ("position", "size", "color", "domain")
+    on_start: Optional[Callable[[dict], None]] = field(default=None, repr=False, compare=False)
+    on_end: Optional[Callable[[dict], None]] = field(default=None, repr=False, compare=False)
+
+    def to_spec(self) -> dict[str, Any]:
+        enabled = self.enabled
+        if enabled != "auto" and not isinstance(enabled, bool):
+            raise ValueError("animation enabled must be False, True, or 'auto'")
+        match = _animation_choice(self.match, "match", {"index", "append", "key"})
+        enter = _animation_choice(self.enter, "enter", {"auto", "none", "scale", "grow", "reveal"})
+        update = _animation_choice(self.update, "update", {"none", "interpolate"})
+        easing: Any
+        if isinstance(self.easing, Spring):
+            easing = self.easing.to_spec()
+        elif isinstance(self.easing, str):
+            allowed = {"linear", "ease", "ease-in", "ease-out", "ease-in-out", "spring"}
+            easing = _animation_choice(self.easing, "easing", allowed)
+            if easing == "spring":
+                easing = Spring().to_spec()
+        elif isinstance(self.easing, (tuple, list)):
+            if len(self.easing) != 4:
+                raise ValueError("animation cubic Bézier easing must contain four numbers")
+            easing = [
+                _finite_number(value, f"animation easing[{i}]")
+                for i, value in enumerate(self.easing)
+            ]
+            if not (0.0 <= easing[0] <= 1.0 and 0.0 <= easing[2] <= 1.0):
+                raise ValueError("animation cubic Bézier x control points must be between 0 and 1")
+        else:
+            raise ValueError(
+                "animation easing must be a named easing, four-number cubic Bézier, or spring"
+            )
+        try:
+            policies = tuple(self.interpolate)
+        except TypeError as exc:
+            raise ValueError("animation interpolate must be a sequence of named policies") from exc
+        allowed_policies = {"position", "size", "color", "domain"}
+        if (
+            not policies
+            or any(p not in allowed_policies for p in policies)
+            or len(set(policies)) != len(policies)
+        ):
+            raise ValueError(
+                "animation interpolate must contain unique named policies from "
+                f"{sorted(allowed_policies)}"
+            )
+        for callback, label in ((self.on_start, "on_start"), (self.on_end, "on_end")):
+            if callback is not None and not callable(callback):
+                raise ValueError(f"animation {label} must be callable or None")
+        return {
+            "enabled": enabled,
+            "delay": _nonnegative_animation_number(self.delay, "animation delay"),
+            "duration": _nonnegative_animation_number(self.duration, "animation duration"),
+            "easing": easing,
+            "match": match,
+            "enter": enter,
+            "update": update,
+            "interpolate": list(policies),
+        }
+
+
+def _positive_animation_number(value: Any, label: str) -> float:
+    number = _finite_number(value, label)
+    if number <= 0:
+        raise ValueError(f"{label} must be positive")
+    return number
+
+
+def _nonnegative_animation_number(value: Any, label: str) -> float:
+    number = _finite_number(value, label)
+    if number < 0:
+        raise ValueError(f"{label} must be non-negative")
+    return number
+
+
+def _animation_choice(value: Any, label: str, allowed: set[str]) -> str:
+    if not isinstance(value, str) or value not in allowed:
+        raise ValueError(f"animation {label} must be one of {sorted(allowed)}")
+    return value
+
+
+def spring(*, stiffness: float = 170.0, damping: float = 26.0, mass: float = 1.0) -> Spring:
+    """Build a serializable spring easing policy.
+
+    Args:
+        stiffness: Spring stiffness; larger values respond more quickly.
+        damping: Resistance that settles the spring and limits overshoot.
+        mass: Spring mass; larger values respond more slowly.
+    """
+    value = Spring(stiffness=stiffness, damping=damping, mass=mass)
+    value.to_spec()
+    return value
+
+
+def animation(
+    *,
+    enabled: bool | Literal["auto"] = "auto",
+    delay: float = 0,
+    duration: float = 400,
+    easing: str | tuple[float, float, float, float] | Spring = "ease-out",
+    match: Literal["index", "append", "key"] = "index",
+    enter: str = "auto",
+    update: str = "interpolate",
+    interpolate: Sequence[str] = ("position", "size", "color", "domain"),
+    on_start: Optional[Callable[[dict], None]] = None,
+    on_end: Optional[Callable[[dict], None]] = None,
+) -> Animation:
+    """Configure entrance and data-update motion without per-frame callbacks.
+
+    Args:
+        enabled: ``"auto"`` honors reduced motion; a boolean explicitly enables or disables.
+        delay: Non-negative delay before motion begins, in milliseconds.
+        duration: Non-negative animation duration, in milliseconds.
+        easing: Named easing, four-number cubic Bézier tuple, or ``spring()`` policy.
+        match: Row identity strategy: ``"index"``, ``"append"``, or ``"key"``.
+        enter: Entrance effect, such as ``"auto"``, ``"scale"``, or ``"reveal"``.
+        update: Update effect; use ``"interpolate"`` or ``"none"``.
+        interpolate: Unique channels to interpolate during updates.
+        on_start: Optional live-host callback receiving the animation-start event.
+        on_end: Optional live-host callback receiving the animation-end event.
+    """
+    value = Animation(
+        enabled=enabled,
+        delay=delay,
+        duration=duration,
+        easing=easing,
+        match=match,
+        enter=enter,
+        update=update,
+        interpolate=tuple(interpolate),
+        on_start=on_start,
+        on_end=on_end,
+    )
+    value.to_spec()
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Factory functions (the public, Reflex-flavored surface)
 # ---------------------------------------------------------------------------
@@ -342,6 +515,8 @@ def scatter(
     _artist_alpha: Any = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
+    key: Any = None,
+    animation: Animation | bool | None = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
@@ -365,6 +540,8 @@ def scatter(
         _artist_alpha: Internal Matplotlib alpha override, scalar or per marker.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
+        key: Stable row identities, or a column name resolved from ``data``.
+        animation: Per-mark animation override; ``False`` disables animation.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -375,6 +552,8 @@ def scatter(
         data=data,
         name=name,
         class_name=class_name,
+        key=key,
+        animation=animation,
         style=_mark_style_dict(style, "scatter style"),
         props={
             "color": color,
@@ -407,6 +586,8 @@ def line(
     dash: Union[str, Sequence[float], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
+    key: Any = None,
+    animation: Animation | bool | None = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
@@ -424,6 +605,8 @@ def line(
         dash: Optional line dash pattern.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
+        key: Stable row identities, or a column name resolved from ``data``.
+        animation: Per-mark animation override; ``False`` disables animation.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -434,6 +617,8 @@ def line(
         data=data,
         name=name,
         class_name=class_name,
+        key=key,
+        animation=animation,
         style=_mark_style_dict(style, "line style"),
         props={
             "color": color,
@@ -465,6 +650,8 @@ def area(
     dash: Union[str, Sequence[float], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
+    key: Any = None,
+    animation: Animation | bool | None = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
@@ -487,6 +674,8 @@ def area(
         dash: Optional outline dash pattern.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
+        key: Stable row identities, or a column name resolved from ``data``.
+        animation: Per-mark animation override; ``False`` disables animation.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -497,6 +686,8 @@ def area(
         data=data,
         name=name,
         class_name=class_name,
+        key=key,
+        animation=animation,
         style=_mark_style_dict(style, "area style"),
         props={
             "base": base,
@@ -529,6 +720,8 @@ def error_band(
     fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
+    key: Any = None,
+    animation: Animation | bool | None = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
@@ -547,6 +740,8 @@ def error_band(
         fill: CSS fill value or linear gradient.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
+        key: Stable row identities, or a column name resolved from ``data``.
+        animation: Per-mark animation override; ``False`` disables animation.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -557,6 +752,8 @@ def error_band(
         data=data,
         name=name,
         class_name=class_name,
+        key=key,
+        animation=animation,
         style=_mark_style_dict(style, "error_band style"),
         props={
             "upper": upper,
@@ -585,6 +782,8 @@ def errorbar(
     opacity: float = 1.0,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
+    key: Any = None,
+    animation: Animation | bool | None = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
@@ -603,6 +802,8 @@ def errorbar(
         opacity: Stroke opacity from zero to one.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
+        key: Stable row identities, or a column name resolved from ``data``.
+        animation: Per-mark animation override; ``False`` disables animation.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -613,6 +814,8 @@ def errorbar(
         data=data,
         name=name,
         class_name=class_name,
+        key=key,
+        animation=animation,
         style=_mark_style_dict(style, "errorbar style"),
         props={
             "yerr": yerr,
@@ -1341,6 +1544,8 @@ def bar(
     fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
+    key: Any = None,
+    animation: Animation | bool | None = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
@@ -1366,6 +1571,8 @@ def bar(
         fill: CSS fill value or linear gradient.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
+        key: Stable row identities, or a column name resolved from ``data``.
+        animation: Per-mark animation override; ``False`` disables animation.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -1376,6 +1583,8 @@ def bar(
         data=data,
         name=name,
         class_name=class_name,
+        key=key,
+        animation=animation,
         style=_mark_style_dict(style, "bar style"),
         props={
             "color": color,
@@ -1417,6 +1626,8 @@ def column(
     fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
+    key: Any = None,
+    animation: Animation | bool | None = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
@@ -1441,6 +1652,8 @@ def column(
         fill: CSS fill value or linear gradient.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
+        key: Stable row identities, or a column name resolved from ``data``.
+        animation: Per-mark animation override; ``False`` disables animation.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -1451,6 +1664,8 @@ def column(
         data=data,
         name=name,
         class_name=class_name,
+        key=key,
+        animation=animation,
         style=_mark_style_dict(style, "column style"),
         props={
             "color": color,
@@ -2705,6 +2920,7 @@ class Chart(Component):
         export_configs = [c for c in self.children if isinstance(c, ExportConfig)]
         themes = [c for c in self.children if isinstance(c, Theme)]
         interactions = [c for c in self.children if isinstance(c, Interaction)]
+        animations = [c for c in self.children if isinstance(c, Animation)]
         legend_shows = [_strict_bool(c.show, "legend show") for c in legends]
         known = (
             Mark,
@@ -2717,12 +2933,13 @@ class Chart(Component):
             ExportConfig,
             Theme,
             Interaction,
+            Animation,
         )
         unknown = [c for c in self.children if not isinstance(c, known)]
         if unknown:
             raise TypeError(
                 f"{self.kind}() children must be marks/annotations/axes/legend/tooltip/"
-                f"colorbar/modebar/export_config/theme/interaction_config, got "
+                f"colorbar/modebar/export_config/theme/interaction_config/animation, got "
                 f"{[type(c).__name__ for c in unknown]}"
             )
 
@@ -2770,6 +2987,9 @@ class Chart(Component):
         for theme_node in themes:
             fig.style.update(theme_node.style)
         fig.style.update(self.style)
+        chart_animation = animations[-1] if animations else None
+        if chart_animation is not None:
+            fig.animation_options = chart_animation.to_spec()
         for slot, slot_style in self.styles.items():
             fig.chrome_styles[slot] = {**fig.chrome_styles.get(slot, {}), **slot_style}
         if (
@@ -2861,6 +3081,13 @@ class Chart(Component):
             for trace in new_traces:
                 trace.x_axis = x_axis_id
                 trace.y_axis = y_axis_id
+            _apply_mark_transition_metadata(
+                fig,
+                m,
+                data,
+                new_traces,
+                fig.animation_options,
+            )
             if m.class_name is not None:
                 class_name = _optional_string(m.class_name, f"{m.kind} class_name")
                 for trace in new_traces:
@@ -2997,14 +3224,47 @@ class Chart(Component):
         if self._widget is None:
             from .widget import FigureWidget
 
-            self._widget = FigureWidget(
-                self.figure(),
-                on_hover=self.on_hover,
-                on_click=self.on_click,
-                on_brush=self.on_brush,
-                on_select=self.on_select,
-                on_view_change=self.on_view_change,
-            )
+            animations = [c for c in self.children if isinstance(c, Animation)]
+            animation_node = animations[-1] if animations else None
+            mark_animations = [
+                c.animation
+                for c in self.children
+                if isinstance(c, Mark) and isinstance(c.animation, Animation)
+            ]
+
+            def animation_callback(name: str) -> Optional[Callable[[dict], None]]:
+                callbacks = []
+                if animation_node is not None:
+                    callback = getattr(animation_node, name)
+                    if callback is not None:
+                        callbacks.append(callback)
+                for node in mark_animations:
+                    callback = getattr(node, name)
+                    if callback is not None and callback not in callbacks:
+                        callbacks.append(callback)
+                if not callbacks:
+                    return None
+
+                def dispatch(event: dict) -> None:
+                    for callback in callbacks:
+                        callback(event)
+
+                return dispatch
+
+            widget_kwargs: dict[str, Any] = {
+                "on_hover": self.on_hover,
+                "on_click": self.on_click,
+                "on_brush": self.on_brush,
+                "on_select": self.on_select,
+                "on_view_change": self.on_view_change,
+            }
+            on_animation_start = animation_callback("on_start")
+            on_animation_end = animation_callback("on_end")
+            if on_animation_start is not None:
+                widget_kwargs["on_animation_start"] = on_animation_start
+            if on_animation_end is not None:
+                widget_kwargs["on_animation_end"] = on_animation_end
+            self._widget = FigureWidget(self.figure(), **widget_kwargs)
         return self._widget
 
     def show(self) -> Any:
@@ -3021,21 +3281,31 @@ class Chart(Component):
         path: Optional[str | PathLike[str]] = None,
         *,
         custom_css: Optional[str] = None,
+        animation_progress: Optional[float] = None,
     ) -> str:
         """A self-contained HTML document for the chart.
 
         Writes it to ``path`` when given; returns the HTML either way.
         """
-        return self.figure().to_html(path, custom_css=custom_css)
+        return self.figure().to_html(
+            path,
+            custom_css=custom_css,
+            animation_progress=animation_progress,
+        )
 
     def html(
         self,
         path: Optional[str | PathLike[str]] = None,
         *,
         custom_css: Optional[str] = None,
+        animation_progress: Optional[float] = None,
     ) -> str:
         """Alias of `to_html`."""
-        return self.to_html(path, custom_css=custom_css)
+        return self.to_html(
+            path,
+            custom_css=custom_css,
+            animation_progress=animation_progress,
+        )
 
     def _repr_html_(self) -> str:
         return self.figure()._repr_html_()
@@ -3288,6 +3558,137 @@ def _resolve_color(data: Any, color: Any, *, context: Optional[str] = None) -> A
             # misleading column-lookup error.
             _validate.css_color(color, context or "color")
         raise
+
+
+def _transition_key_token(value: Any, index: int) -> bytes:
+    """Canonical, type-sensitive bytes for one supported stable key."""
+    if isinstance(value, np.generic):
+        value = value.item()
+    if value is None or value.__class__.__name__ in {"NAType", "NaTType"}:
+        raise ValueError(f"animation key is missing at row {index}")
+    if isinstance(value, bool):
+        return b"b:1" if value else b"b:0"
+    if isinstance(value, int):
+        return f"i:{value}".encode("ascii")
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"animation key must be finite at row {index}")
+        return b"f:" + value.hex().encode("ascii")
+    if isinstance(value, str):
+        return b"s:" + value.encode("utf-8")
+    if isinstance(value, bytes):
+        return b"y:" + value
+    if isinstance(value, (dt.datetime, dt.date)):
+        return ("t:" + value.isoformat()).encode("utf-8")
+    raise ValueError(
+        "animation key values must be strings, finite numbers, booleans, bytes, or dates; "
+        f"row {index} has {type(value).__name__}"
+    )
+
+
+def _encode_transition_keys(value: Any, expected: int, label: str) -> np.ndarray:
+    arr = np.asarray(value, dtype=object)
+    if arr.ndim != 1:
+        raise ValueError(f"{label} must be one-dimensional")
+    if len(arr) != expected:
+        raise ValueError(f"{label} must have length {expected}, got {len(arr)}")
+    result = np.empty((expected, 2), dtype=np.uint32)
+    seen: dict[bytes, int] = {}
+    digests: dict[bytes, bytes] = {}
+    for index, raw in enumerate(arr):
+        token = _transition_key_token(raw, index)
+        previous = seen.get(token)
+        if previous is not None:
+            raise ValueError(f"{label} contains duplicate value at rows {previous} and {index}")
+        seen[token] = index
+        digest = hashlib.blake2s(token, digest_size=8, person=b"xykeyv1").digest()
+        collision = digests.get(digest)
+        if collision is not None and collision != token:
+            raise ValueError(f"{label} produced an identity digest collision")
+        digests[digest] = token
+        result[index, 0] = int.from_bytes(digest[:4], "little")
+        result[index, 1] = int.from_bytes(digest[4:], "little")
+    return result
+
+
+def _original_mark_positions(
+    fig: Figure, mark: Mark, data: Any, expected: int
+) -> np.ndarray | None:
+    """Return pre-sort numeric x positions for sorted line-like marks."""
+    try:
+        raw = _resolve(data, mark.x, context=f"{mark.kind}.x")
+        arr = np.asarray(raw)
+    except (TypeError, ValueError, KeyError):
+        return None
+    if arr.ndim != 1 or len(arr) != expected:
+        return None
+    if np.issubdtype(arr.dtype, np.number) or np.issubdtype(arr.dtype, np.datetime64):
+        try:
+            return (
+                arr.astype("datetime64[ns]").astype(np.int64)
+                if np.issubdtype(arr.dtype, np.datetime64)
+                else arr.astype(np.float64)
+            )
+        except (TypeError, ValueError):
+            return None
+    axis_id = str(mark.props.get("x_axis", "x"))
+    categories = fig._axis_categories.get(axis_id, [])
+    lookup = {value: i for i, value in enumerate(categories)}
+    try:
+        return np.asarray([lookup[value] for value in arr], dtype=np.float64)
+    except (KeyError, TypeError):
+        return None
+
+
+def _apply_mark_transition_metadata(
+    fig: Figure,
+    mark: Mark,
+    data: Any,
+    traces: list[Any],
+    chart_spec: Optional[dict[str, Any]],
+) -> None:
+    override = mark.animation
+    if override is None:
+        mark_spec = None
+    elif isinstance(override, bool):
+        mark_spec = {"enabled": override}
+    elif isinstance(override, Animation):
+        mark_spec = override.to_spec()
+    else:
+        raise ValueError(f"{mark.kind} animation must be xy.animation(...), bool, or None")
+    effective = {**(chart_spec or {}), **(mark_spec or {})}
+    if (
+        effective.get("enabled") is not False
+        and effective.get("match") == "key"
+        and mark.key is None
+    ):
+        raise ValueError(f"{mark.kind} animation match='key' requires key=")
+    keys: np.ndarray | None = None
+    if mark.key is not None:
+        raw = (
+            _resolve(data, mark.key, context=f"{mark.kind}.key")
+            if isinstance(mark.key, str)
+            else mark.key
+        )
+        if not traces:
+            raise ValueError(
+                f"{mark.kind} key cannot be attached because the mark emitted no traces"
+            )
+        expected = int(traces[0].n_points)
+        keys = _encode_transition_keys(raw, expected, f"{mark.kind} key")
+        if mark.kind in {"line", "area", "error_band"}:
+            positions = _original_mark_positions(fig, mark, data, expected)
+            if positions is not None:
+                keys = keys[np.argsort(positions, kind="stable")]
+    for trace in traces:
+        trace.animation = None if mark_spec is None else dict(mark_spec)
+        if keys is not None:
+            if trace.n_points != len(keys):
+                raise ValueError(
+                    f"{mark.kind} key has {len(keys)} rows but emitted trace {trace.id} "
+                    f"has {trace.n_points} logical rows"
+                )
+            trace.transition_keys = keys
 
 
 def _colorbar_source_title(mark: Mark) -> Optional[str]:

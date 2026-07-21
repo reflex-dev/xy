@@ -45,6 +45,11 @@ class Trace:
     # edgecolors="face" and is resolved against color_ch by the renderers.
     stroke_ch: Optional[ColorChannel] = None
     size_ch: Optional[SizeChannel] = None  # scatter size encoding
+    # Declarative data-transition metadata. Keys are two uint32 words per
+    # canonical row (a deterministic 64-bit digest), kept out of the f64
+    # column store because they are identity rather than numeric geometry.
+    animation: Optional[dict[str, Any]] = None
+    transition_keys: Optional[Any] = None
     # Direct, final-unit instance attributes (alpha override, opacity, widths,
     # symbols, corner radii).  Constants stay in ``style`` and cost no buffer.
     style_channels: dict[str, StyleChannel] = field(default_factory=dict)

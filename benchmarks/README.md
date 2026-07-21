@@ -160,6 +160,13 @@ and direct-payload sizes, with base64 JSON encode/decode comparator rows. The
 loopback/browser harness remains authoritative for HTTP, compression, JS heap,
 and request-to-next-frame measurements.
 
+`test_codspeed_animation.py` attributes the animation data plane separately:
+100k stable-key encoding, the plain 100k scatter payload, and the same payload
+with keyed transition columns. Run `bench_animation.py` for real-Chrome
+`updatePayload` time, animation-frame pacing, heap delta, and the hard
+previous+next scene bound; browser clocks and GPU work do not belong in
+CodSpeed simulation.
+
 ## Reference Hardware
 
 Set `XY_BENCH_HARDWARE_GL=1` to disable the benchmark helpers' SwiftShader

@@ -211,6 +211,27 @@ Object.assign(ChartView.prototype, {
       Math.abs(this.view.x0 - this.view0.x0) <= ex && Math.abs(this.view.x1 - this.view0.x1) <= ex &&
       Math.abs(this.view.y0 - this.view0.y0) <= ey && Math.abs(this.view.y1 - this.view0.y1) <= ey;
     const pinnedRight = !atHome && Math.abs(this.view.x1 - this.view0.x1) <= ex;
+    const nextHome = {
+      x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
+      y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
+    };
+    let nextView = { ...this.view };
+    if (atHome) {
+      nextView = { ...nextHome };
+    } else if (pinnedRight) {
+      const w = this.view.x1 - this.view.x0;
+      nextView = { ...this.view, x1: nextHome.x1, x0: nextHome.x1 - w };
+    }
+    const animated = !!spec.animation || spec.traces.some((trace) => !!trace.animation);
+    if (animated && !this._glLost && this.gl && this.updatePayload(spec, blob)) {
+      // updatePayload owns previous/next GPU lifetime and matching. Preserve
+      // append's follow policy instead of always animating to the new home
+      // domain (history inspection must remain stationary).
+      if (this._transitionView) this._transitionView.to = { ...nextView };
+      else this.view = { ...nextView };
+      this._scheduleViewRequest(nextView, { delay: 0 });
+      return;
+    }
     // Swap spec + retained payload together so GL context restore (§27)
     // rebuilds the streamed state, not the initial one.
     this.spec = spec;

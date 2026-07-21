@@ -23,6 +23,7 @@ const PARTS = [
   "53_interaction.js", //+ pointer/drag/wheel, selection, modebar, view anim
   "54_kernel.js", //     + kernel comm: view-requests, append, drill (§16)
   "55_marks.js", //      MARK_KINDS: per-chart-kind build/draw dispatch registry
+  "56_animation.js", //  declarative entrance/data transition controller
   "60_entries.js", //    anywidget + standalone entry points, export tail
 ];
 

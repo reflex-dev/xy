@@ -166,6 +166,11 @@ panes is layout the Figure grid owns.
   `on_view_change` carries the viewport for server-driven cross-filtering
   and is wired in the Reflex wrapper
   (`python/reflex-xy/reflex_xy/component.py:85`).
+- Animation ★: `animation` is a chart child supplying the default
+  entrance/update/exit policy; mark-level `animation=` overrides it and
+  `key=` supplies stable data identity. Lifecycle callbacks are fields of the
+  animation child. The full grammar, bounded matching rules, and host behavior
+  are specified in [animation.md](animation.md).
 - Interaction ★: `interaction_config` — see §5.1.
 - Faceting ★: `facet_chart` — see §5.2.
 

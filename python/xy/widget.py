@@ -63,6 +63,8 @@ class FigureWidget(anywidget.AnyWidget):
         on_brush: Any = None,
         on_select: Any = None,
         on_view_change: Any = None,
+        on_animation_start: Any = None,
+        on_animation_end: Any = None,
         **kwargs: Any,
     ) -> None:
         self._figure = figure
@@ -72,6 +74,8 @@ class FigureWidget(anywidget.AnyWidget):
             on_brush=on_brush,
             on_select=on_select,
             on_view_change=on_view_change,
+            on_animation_start=on_animation_start,
+            on_animation_end=on_animation_end,
         )
         spec, bufs = figure.build_payload_split()
         self._configure_transport(spec)

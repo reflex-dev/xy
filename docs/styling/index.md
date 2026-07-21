@@ -12,15 +12,16 @@ XY compiles a deliberate CSS-property subset for them instead of claiming that
 arbitrary browser selectors can reach a canvas.
 
 ~~~python demo exec toggle preview-code id=styling-overview-area-demo
-import reflex_xy
-import xy
-
 months = [
     "Jan 23", "Feb 23", "Mar 23", "Apr 23", "May 23", "Jun 23",
     "Jul 23", "Aug 23", "Sep 23", "Oct 23", "Nov 23", "Dec 23",
 ]
 solar_panels = [2890, 2756, 3322, 3470, 3475, 3129, 3490, 2903, 2643, 2837, 2954, 3239]
 inverters = [2338, 2103, 2194, 2108, 1812, 1726, 1982, 2012, 2342, 2473, 3848, 3736]
+
+# --- chart ---
+import reflex_xy
+import xy
 
 overview_area = xy.area_chart(
     xy.area(
@@ -141,10 +142,7 @@ If you are unsure, use this shortcut:
   `class_name`/`style` or `xy.theme()`.
 - Styling only a self-contained HTML or Chromium export? Use `custom_css`.
 
-~~~python demo exec
-import reflex_xy
-import xy
-
+~~~python demo exec toggle preview-code id=styling-overview-columns-demo
 months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
 core = [28, 31, 35, 38, 42, 46]
 growth = [16, 18, 19, 23, 25, 29]
@@ -153,6 +151,10 @@ enterprise_base = [
     core_value + growth_value
     for core_value, growth_value in zip(core, growth, strict=True)
 ]
+
+# --- chart ---
+import reflex_xy
+import xy
 
 chart = xy.column_chart(
     xy.column(

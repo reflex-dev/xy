@@ -29,9 +29,9 @@ binary attachments the reply's spec entries index into by position.
   pass attachments through without a signature break.
 - `append` is not a request kind — it is a server push (§4).
 
-`ChannelCallbacks` carries five optional hooks: `on_hover`, `on_click`,
-`on_brush`, `on_select`, `on_view_change`. A host with none still gets every
-wire reply.
+`ChannelCallbacks` carries seven optional hooks: `on_hover`, `on_click`,
+`on_brush`, `on_select`, `on_view_change`, `on_animation_start`, and
+`on_animation_end`. A host with none still gets every wire reply.
 
 ## 2. Requests (client → Python)
 
@@ -48,6 +48,8 @@ Every request is a dict with a `type`. Coordinate fields are JSON numbers in
 | `select` | `x0`, `x1`, `y0`, `y1` | `selection` |
 | `select_polygon` | `points` | `selection` |
 | `select_clear` | — | `selection` (empty) |
+| `animation_start` | `phase` | none (`on_animation_start`) |
+| `animation_end` | `phase`, `cancelled?` | none (`on_animation_end`) |
 
 **`view`** — sent by `_scheduleViewRequest` when the chart holds any trace at
 `tier === "decimated"` and a pan/zoom crossed what the shipped decimation can
@@ -91,6 +93,11 @@ sequences; each is coerced to `[float, float]` for the `on_brush` payload.
 
 **`select_clear`** — no fields. Fires `on_select` with an empty `Selection`
 and replies with the empty selection message.
+
+**`animation_start` / `animation_end`** — browser lifecycle notifications,
+not per-frame updates. `phase` is `enter` or `update`; an interrupted update
+sets `cancelled: true` on its end message. Hosts invoke the corresponding
+callback when present and otherwise return silently.
 
 `px`, `w`, and `h` are untrusted: they pass through `lod.screen_shape`, which
 rejects non-finite values and clamps to `[16, MAX_SCREEN_DIM]`.
@@ -143,10 +150,15 @@ assembled and `on_select` after — that order is the invariant. An empty
 **`append`** — `{type: "append", affected: [trace_id], spec}` with a single
 packed blob attachment. The kernel re-emits a complete fresh payload rather
 than a delta, because every tier's payload is screen-bounded by construction.
-The client swaps `spec` and the retained payload together, rebuilds only the
-GPU traces named in `affected`, then re-requests its current view with
-`delay: 0`. The widget also re-syncs its `spec`/`buffers` traits so a
-re-rendered output shows the streamed state.
+Without animation, the client swaps `spec` and the retained payload together,
+rebuilds only the GPU traces named in `affected`, then re-requests its current
+view with `delay: 0`. With animation configured it routes the full payload
+through `ChartView.updatePayload`, retaining one previous scene for matching
+and positional interpolation while preserving append's
+home/live-edge/history follow policy. Unsupported layouts snap to the new
+representation without an opacity animation.
+The widget also re-syncs its `spec`/`buffers` traits so a re-rendered output
+shows the streamed state.
 
 ## 5. First-paint buffer layout: packed vs split
 
@@ -155,7 +167,7 @@ spec's `columns` table is the addressing scheme, and it comes in two layouts:
 
 - **Packed** (`build_payload`) — one blob. Column entries carry a global
   `byte_offset` into it. `u8` columns are followed by padding to the next
-  4-byte boundary so later f32 columns stay aligned. This is the layout used
+  4-byte boundary so later f32/u32 columns stay aligned. This is the layout used
   by static HTML export and by streaming-refresh reopen state.
 - **Split** (`build_payload_split`) — one wire buffer per column. The spec
   sets `buffer_layout: "split"`, and every column entry carries `buf` (its
@@ -166,8 +178,9 @@ spec's `columns` table is the addressing scheme, and it comes in two layouts:
   (`python/xy/widget.py:76`) and the `/_xy` namespace
   (`python/reflex-xy/reflex_xy/namespace.py:135`, `:197`) — with no join copy.
 
-Column entries otherwise carry `len`, an optional `dtype` (`"u8"`; absent
-means f32), and, for offset-encoded geometry, `offset`/`scale`/`kind`.
+Column entries otherwise carry `len`, an optional `dtype` (`"u8"` or `"u32"`;
+absent means f32), and, for offset-encoded geometry,
+`offset`/`scale`/`kind`.
 
 The client picks the layout from the spec, never from the shape of what
 arrived, and **a disagreement is a fatal error, not a fallback**.
@@ -178,6 +191,25 @@ disagrees with `Array.isArray(buffer)`, and rejects non-safe-integer or
 negative `byte_offset`/`len`, a column extending past the payload, and a
 misaligned start. Aligned spans stay zero-copy; only a legacy view whose
 `byteOffset` is not a multiple of 4 pays one view-sized copy.
+
+Stable animation identity is the second intentional u32 use beside selection
+indices. A keyed direct trace carries `keys: {lo, hi}` referring to two u32
+columns that form one stable 64-bit identity per shipped mark. Aggregate and
+decimated tiers omit keys and record an animation fallback rather than
+materializing canonical rows in the browser.
+
+### 5.1 Full-payload data transition
+
+A host receiving a replacement `{spec, buffers}` for the same mounted figure
+calls `ChartView.updatePayload`. This is an in-browser operation, not a new
+wire message: optional chart/trace `animation` objects and trace `keys`
+metadata select the transition specified in [animation.md](animation.md).
+The renderer retains at most previous+next GPU state and sends only the two
+lifecycle messages above; no frame progress crosses the Python transport.
+
+Standalone deterministic capture may include
+`spec.animation_capture_progress` in `[0,1]`. It freezes the initial scene at
+that progress and starts no animation clock.
 
 ## 6. Chunked base64 (standalone export only)
 
