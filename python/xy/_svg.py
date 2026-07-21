@@ -620,15 +620,15 @@ def _px_size(value: Any, default: float) -> float:
 
 def _solid_paint(css: Any) -> Optional[str]:
     """A parseable solid CSS color string, or None when unset/unpaintable
-    (var(), gradients) — for background rects that must be omitted rather
-    than fallback-painted."""
+    (var(), gradients) or fully transparent — for background rects that must
+    be omitted rather than fallback-painted (alpha 0 == omission)."""
     from . import kernels
 
     s = _css(css, "")
     if not s:
         return None
     _status, rgba = kernels.css_check(kernels.CSS_COLOR, s)
-    if rgba is None:
+    if rgba is None or rgba[3] == 0:
         return None
     return s
 

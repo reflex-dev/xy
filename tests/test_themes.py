@@ -38,6 +38,12 @@ def test_catalog_uses_implemented_tokens_and_valid_hex_palettes() -> None:
         assert set(preset.dark) <= ALLOWED_TOKENS
         assert "background" in preset.light
         assert "background" in preset.dark
+        # A host page may define surface tokens per page color mode (the docs
+        # site does); every preset pins them so a scheme-pinned chart's plot,
+        # legend, and modebar surfaces can't follow the page.
+        for token in ("--chart-bg", "--chart-legend-bg", "--chart-modebar-bg"):
+            assert token in preset.light, (preset.name, token)
+            assert token in preset.dark, (preset.name, token)
     for palette in _themes.PALETTES.values():
         assert palette
         assert all(color.startswith("#") and len(color) in {4, 7, 9} for color in palette)

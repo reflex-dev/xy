@@ -67,11 +67,30 @@ class ThemePreset:
     accent: str
 
 
+# Every preset pins its full surface vocabulary — --chart-bg (transparent =
+# plot rect shows the figure background), --chart-legend-bg, and
+# --chart-modebar-bg: host pages may define any of these per page color mode
+# (the docs site does), and an inheritable token would repaint a scheme-pinned
+# chart's surfaces to the page's mode instead of the preset's. The values are
+# the engine's own scheme defaults, so pinning changes nothing outside
+# token-setting hosts.
+_LIGHT_SURFACES = {
+    "--chart-bg": "transparent",
+    "--chart-legend-bg": "rgba(128,128,128,.08)",
+    "--chart-modebar-bg": "rgba(255,255,255,.78)",
+}
+_DARK_SURFACES = {
+    "--chart-bg": "transparent",
+    "--chart-legend-bg": "rgba(128,128,128,.08)",
+    "--chart-modebar-bg": "rgba(37,42,52,.9)",
+}
+
 PRESETS: dict[str, ThemePreset] = {
     "xy": ThemePreset(
         "xy",
         _tokens(
             {
+                **_LIGHT_SURFACES,
                 "background": "#ffffff",
                 "--chart-text": "#374151",
                 "--chart-axis": "#6b7280",
@@ -83,6 +102,7 @@ PRESETS: dict[str, ThemePreset] = {
         ),
         _tokens(
             {
+                **_DARK_SURFACES,
                 "background": "#18181b",
                 "--chart-text": "#e4e4e7",
                 "--chart-axis": "#a1a1aa",
@@ -99,6 +119,7 @@ PRESETS: dict[str, ThemePreset] = {
         "minimal",
         _tokens(
             {
+                **_LIGHT_SURFACES,
                 "background": "#ffffff",
                 "--chart-text": "#374151",
                 "--chart-axis": "#9ca3af",
@@ -111,6 +132,7 @@ PRESETS: dict[str, ThemePreset] = {
         ),
         _tokens(
             {
+                **_DARK_SURFACES,
                 "background": "#18181b",
                 "--chart-text": "#e4e4e7",
                 "--chart-axis": "#71717a",
@@ -128,6 +150,7 @@ PRESETS: dict[str, ThemePreset] = {
         "dashboard",
         _tokens(
             {
+                **_LIGHT_SURFACES,
                 "background": "#ffffff",
                 "--chart-bg": "#f8fafc",
                 "--chart-grid": "#e2e8f0",
@@ -139,6 +162,7 @@ PRESETS: dict[str, ThemePreset] = {
         ),
         _tokens(
             {
+                **_DARK_SURFACES,
                 "background": "#09090b",
                 "--chart-bg": "#111318",
                 "--chart-grid": "#ffffff14",
@@ -155,6 +179,7 @@ PRESETS: dict[str, ThemePreset] = {
         "publication",
         _tokens(
             {
+                **_LIGHT_SURFACES,
                 "background": "#ffffff",
                 "--chart-text": "#111827",
                 "--chart-axis": "#111827",
@@ -164,6 +189,7 @@ PRESETS: dict[str, ThemePreset] = {
         ),
         _tokens(
             {
+                **_DARK_SURFACES,
                 "background": "#111111",
                 "--chart-text": "#f5f5f5",
                 "--chart-axis": "#f5f5f5",
@@ -178,6 +204,7 @@ PRESETS: dict[str, ThemePreset] = {
         "high_contrast",
         _tokens(
             {
+                **_LIGHT_SURFACES,
                 "background": "#ffffff",
                 "--chart-text": "#000000",
                 "--chart-axis": "#000000",
@@ -189,6 +216,7 @@ PRESETS: dict[str, ThemePreset] = {
         ),
         _tokens(
             {
+                **_DARK_SURFACES,
                 "background": "#000000",
                 "--chart-text": "#ffffff",
                 "--chart-axis": "#ffffff",
