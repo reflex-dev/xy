@@ -178,16 +178,32 @@ def _require_docs_spec_pr_paths_ignored(errors: list[str], text: str, workflow_l
         errors.append(f"{workflow_label} workflow missing pull_request trigger")
         return
 
-    trigger_lines = [lines[start]]
+    paths_ignore: list[str] | None = None
+    collecting_paths_ignore = False
     for line in lines[start + 1 :]:
         indent = len(line) - len(line.lstrip())
         if line.strip() and indent <= 2:
             break
-        trigger_lines.append(line)
-    trigger = "\n".join(trigger_lines)
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if indent == 4:
+            collecting_paths_ignore = bool(re.fullmatch(r"paths-ignore:\s*(?:#.*)?", stripped))
+            if collecting_paths_ignore:
+                paths_ignore = []
+            continue
+        if not collecting_paths_ignore or indent <= 4:
+            continue
+        item = re.fullmatch(r"-\s+(.+?)\s*", stripped)
+        if item is None or paths_ignore is None:
+            continue
+        value = re.sub(r"\s+#.*$", "", item.group(1)).strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        paths_ignore.append(value)
 
-    required = ("paths-ignore:", '- "docs/**"', '- "spec/**"')
-    missing = _missing_needles(trigger, required)
+    required = {"docs/**", "spec/**"}
+    missing = sorted(required - set(paths_ignore or []))
     if missing:
         errors.append(
             f"{workflow_label} pull_request trigger must skip docs/spec-only changes: {missing}"
