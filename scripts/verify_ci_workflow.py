@@ -267,7 +267,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "accessibility and three-engine conformance gate",
         'node-version: "22"',
         "npm ci",
-        "actions/cache@5a3ec84eff668545956fd18022155c47e93e2684",
+        "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
         "~/.cache/ms-playwright",
         "playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}",
         "npx playwright install --with-deps chromium firefox webkit",

@@ -9,6 +9,15 @@ from pathlib import Path
 # so fixtures strip a step by its action *path*, not a version tag — a SHA bump
 # must not silently turn these negative tests into no-ops.
 _UPLOAD_ARTIFACT_USES = re.compile(r" *- uses: actions/upload-artifact@\S+.*\n")
+_NODE24_ACTION_PINS = {
+    "actions/cache": "55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+    "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+    "actions/download-artifact": "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+    "actions/setup-node": "820762786026740c76f36085b0efc47a31fe5020",
+    "actions/setup-python": "5fda3b95a4ea91299a34e894583c3862153e4b97",
+    "actions/upload-artifact": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    "astral-sh/setup-uv": "11f9893b081a58869d3b5fccaea48c9e9e46f990",
+}
 
 
 def _load_verify_module():
@@ -46,6 +55,17 @@ def test_codspeed_workflow_accepts_current_gates() -> None:
 
 def test_all_workflows_accept_current_gates() -> None:
     assert verify_ci_workflow.validate_all_workflows() == []
+
+
+def test_workflows_use_consistent_node24_action_pins() -> None:
+    workflow_text = "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(Path(".github/workflows").glob("*.yml"))
+    )
+
+    for action, sha in _NODE24_ACTION_PINS.items():
+        uses_lines = [line for line in workflow_text.splitlines() if f"uses: {action}@" in line]
+        assert uses_lines, f"expected at least one {action} use"
+        assert all(f"uses: {action}@{sha}" in line for line in uses_lines), uses_lines
 
 
 def test_ci_workflow_rejects_blocking_benchmark_job(tmp_path: Path) -> None:
@@ -415,7 +435,7 @@ def test_ci_workflow_rejects_missing_playwright_browser_cache(tmp_path: Path) ->
     path.write_text(
         text.replace(
             "      - name: Cache Playwright browsers\n"
-            "        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3\n"
+            "        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n"
             "        with:\n"
             "          path: ~/.cache/ms-playwright\n"
             "          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}\n",
