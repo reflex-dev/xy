@@ -160,29 +160,45 @@ platform and font stack. Within the canvas:
 - Pinned Chromium build (the CI runner's pinned Playwright Chromium),
   fixed viewport, DPR 1, reduced-motion enabled, seeded data, deterministic
   sampling (already guaranteed by A4).
-- Comparison metric: exact match is the target for aggregate surfaces
-  (density textures, heatmap grids — they are computed, not rasterized);
-  antialiased mark edges get a per-tile tolerance — a tile fails on mean
-  channel delta or on a connected cluster of differing pixels above a
-  per-family threshold. Thresholds live next to the baselines, in the
-  repo, reviewed like code.
+- Comparison metric, computable from the stored manifest alone (§4.3): the
+  canvas is tiled, and each tile is recorded as an exact content hash plus
+  per-channel means. Aggregate surfaces (density textures, heatmap grids —
+  computed, not rasterized) must hash-match exactly; antialiased mark
+  tiles pass on per-channel mean deltas within a per-family threshold.
+  Pixel-level diffing (clusters, triptychs) is a *diagnostic*, produced in
+  CI against an on-demand merge-base render — never the gate itself.
+  Thresholds live in the manifest, in the repo, reviewed like code.
 - Firefox/WebKit are **not** golden-compared; they keep the tolerant
   conformance signature. One engine produces goldens; three engines prove
   semantics. Cross-OS pixel identity is a non-goal (§8).
 
-### 4.3 Baselines are code
+### 4.3 Baselines are code — and no image is ever committed
 
-- Stored as PNGs under `tests/visual/baselines/`, committed. Budget:
-  ≤ 6 MB total for the initial ~90 entries (charts compress well); the
-  check fails if the directory exceeds the budget, so growth is a
-  reviewed decision, like the wheel-size gate.
-- `make regen-visual` regenerates every baseline locally;
-  `make check-visual` compares. A PR that changes rendering **must ship
-  its baseline updates in the same PR** — the spec-currency rule applied
-  to pixels. A baseline diff in review *is* the visual review.
-- On CI failure, the job uploads an expected/actual/diff triptych per
-  failing entry as an artifact — the debugging loop starts from images,
-  not from a numeric threshold report.
+The repository stays binary-free: no golden PNGs in git, and no Git LFS
+(the repo does not use LFS today, and introducing it would tax every clone
+and CI checkout with quota and fetch friction for what is, by
+construction, *regenerable* data). Committed PNGs would also ship in the
+sdist, which packages `tests/`. Instead:
+
+- **The committed baseline is a text manifest**, not images:
+  `tests/visual/manifest.json` holds, per corpus entry, the per-tile
+  signature vector (§4.2's metric), the per-family threshold, and the
+  generator fingerprint (Chromium build, DPR, corpus revision). A few KB,
+  diffable, reviewed like code.
+- `make regen-visual` re-renders every entry with the pinned Chromium and
+  rewrites the manifest; `make check-visual` re-renders and compares
+  against it. A PR that changes rendering **must ship its manifest update
+  in the same PR** — the spec-currency rule applied to pixels.
+- **Images exist only as CI artifacts.** On any failing entry, the job
+  renders the same entry from the PR's merge-base with `main` (pinned
+  engine + seeded data make both sides reproducible) and uploads an
+  expected/actual/diff triptych — the debugging and review loop starts
+  from images, but the images are always manufactured on demand, never
+  stored in history. `make regen-visual` writes the PNGs to a git-ignored
+  `tests/visual/out/` for local eyeballing.
+- The manifest check fails if a PNG appears anywhere under
+  `tests/visual/`; `verify_sdist.py`'s no-generated-junk rule extends to
+  the git-ignored output directory.
 
 ## 5. Fail-first calibration
 
@@ -219,7 +235,7 @@ failed against a real bug is a hypothesis, not a safety net.
 | --- | --- | --- |
 | 1 | `tests/property/` A1–A2, A8 (the truthfulness core + NaN), strategies module, CI Hypothesis profile | inside `pytest -q` — hard gate from day one |
 | 2 | remaining rows A3–A7, A9–A10 | hard gate |
-| 3 | settle counter in the render client (§4.2a), corpus harness + first-paint baselines for all families, `make regen-visual` / `make check-visual`, size budget | **advisory** (like type checking): failures report, don't block |
+| 3 | settle counter in the render client (§4.2a), corpus harness + first-paint manifest entries for all families, `make regen-visual` / `make check-visual`, no-binaries check | **advisory** (like type checking): failures report, don't block |
 | 4 | interaction states (the §4.1 table), fail-first calibration (§5) | promoted to **hard gate** once green for two consecutive weeks of normal churn |
 | 5 | production-readiness.md gains both gates in the release-blocking table; smoke-script fold-in decision | — |
 
