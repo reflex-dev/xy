@@ -11,6 +11,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Iterator
 from itertools import pairwise
+from operator import index as operator_index
 from typing import Any, Optional
 
 import numpy as np
@@ -654,7 +655,11 @@ class BarContainer(Artist):
         self.orientation = entry.get("kwargs", {}).get("orientation", "vertical")
         self.errorbar = None
         count = np.asarray(entry.get("y", [])).reshape(-1).size
-        self.patches = [BarPatch(self, index) for index in range(count)]
+        # A categorical bar chart can contain thousands of bars while most
+        # callers never inspect its Matplotlib-compatible patch handles.
+        # Keep those indexed views lazy so the batched trace stays O(1) in
+        # Python objects on the chart-build hot path.
+        self.patches = _BarPatchViews(self, count)
         axes._register_container(self)
 
     def __len__(self) -> int:
@@ -699,6 +704,38 @@ class BarContainer(Artist):
         import numpy as np
 
         return self.bottoms + np.asarray(self.datavalues, dtype=np.float64)
+
+
+class _BarPatchViews:
+    """Stable list-like bar patch views, materialized only when inspected."""
+
+    def __init__(self, container: BarContainer, count: int) -> None:
+        self._container = container
+        self._count = count
+        self._cache: dict[int, "BarPatch"] = {}
+
+    def __len__(self) -> int:
+        return self._count
+
+    def _get(self, index: int) -> "BarPatch":
+        resolved = operator_index(index)
+        if resolved < 0:
+            resolved += self._count
+        if resolved < 0 or resolved >= self._count:
+            raise IndexError("bar patch index out of range")
+        patch = self._cache.get(resolved)
+        if patch is None:
+            patch = BarPatch(self._container, resolved)
+            self._cache[resolved] = patch
+        return patch
+
+    def __getitem__(self, index: int | slice) -> "BarPatch" | list["BarPatch"]:
+        if isinstance(index, slice):
+            return [self._get(item) for item in range(*index.indices(self._count))]
+        return self._get(index)
+
+    def __iter__(self) -> Iterator["BarPatch"]:
+        return (self._get(index) for index in range(self._count))
 
 
 class BarPatch:

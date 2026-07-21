@@ -111,6 +111,7 @@ def test_bar_patch_view_updates_parent_channel_without_splitting_trace() -> None
     _fig, ax = plt.subplots()
     bars = ax.bar([0, 1, 2], [1, 2, 3], color=["red", "green", "blue"])
 
+    assert not bars.patches._cache
     assert len(bars.patches) == len(bars) == 3
     assert bars[1] is list(bars)[1]
     bars[1].set_alpha(0.4)
