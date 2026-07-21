@@ -144,6 +144,10 @@ class ChromiumSession:
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-dev-shm-usage",
+            # No crashpad handler: it is a detached process that writes into
+            # the profile dir on its own schedule, past the browser's exit.
+            "--disable-breakpad",
+            "--disable-crash-reporter",
             "--hide-scrollbars",
             *gl_flags,
         ]
@@ -383,14 +387,24 @@ class ChromiumSession:
             page_path.unlink(missing_ok=True)
 
     def close(self) -> None:
+        # Orderly shutdown via CDP: on Browser.close Chromium flushes profile
+        # state and reaps its helper processes before the main process exits,
+        # so waiting on it leaves the profile dir quiescent for cleanup().
+        # SIGTERM instead kills the browser out from under its helpers, which
+        # keep writing into Default/ while rmtree walks it (ENOTEMPTY races).
+        with contextlib.suppress(Exception):
+            self._call("Browser.close", timeout_s=10.0)
         with contextlib.suppress(Exception):
             self._ws.close()
-        self._proc.terminate()
         try:
-            self._proc.wait(timeout=10)
+            self._proc.wait(timeout=15)
         except subprocess.TimeoutExpired:
-            self._proc.kill()
-            self._proc.wait()
+            self._proc.terminate()
+            try:
+                self._proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+                self._proc.wait()
         self._stderr_file.close()
         self._tmp.cleanup()
 
