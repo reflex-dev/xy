@@ -1,0 +1,340 @@
+# View state, history, and programmatic control — design
+
+**Status: design, not implemented.** This document specifies the unified
+view-state layer. [`../api/interaction.md`](../api/interaction.md) remains the
+authority on the *shipped* interaction surface; each phase in §11 lands with a
+matching update there. This design builds directly on the per-axis
+pan/zoom contract of PR #117 (canonical per-axis `ranges`, one clamped
+mutation path, semantic view events with `source`, `axes`, `phase`,
+`interaction_id`) and assumes it has landed.
+
+## 1. Problem: four requests, one missing primitive
+
+Four open requests are, individually, small features:
+
+- **#110** — a view history stack, so a user can step back to a previous view.
+- **#111** — custom tooltip renderers in `reflex_xy` with a structured
+  payload and cursor coordinates.
+- **#120** — per-axis navigation gestures: hover an axis, get a resize
+  cursor, drag/scroll to change only that axis.
+- **#121** — out-of-band programmatic zoom/pan/select through `reflex_xy`,
+  "similar to `.append`", without recreating the chart.
+
+Designed separately, each grows its own code path for describing "where the
+chart is looking and what is selected", its own clamping rules, and its own
+event story. Designed together, they are one primitive: a **canonical,
+serializable view state** with a single mutation path, which history
+snapshots, programmatic APIs write, axis gestures scope, and hover events
+read. This document defines that primitive and derives the four features
+from it.
+
+## 2. The state object
+
+View state has two tiers with different lifetimes:
+
+- **Durable state** — axis ranges, selection, drag action. Snapshotted by
+  history, writable programmatically, serializable, restorable.
+- **Ephemeral state** — hover/cursor. Evented and readable (§7), never
+  snapshotted, never serialized, never broadcast to link groups.
+
+The durable state is one JSON document:
+
+```json
+{
+  "v": 1,
+  "ranges": {"x": [1706.25, 1834.5], "y2": [-3.0, 3.0]},
+  "selection": {"range": {"x0": 10, "x1": 20, "y0": 0, "y1": 5}},
+  "drag_action": "pan"
+}
+```
+
+Rules:
+
+- `v` is the state-schema version, independent of the wire-protocol
+  handshake. A client that receives a higher `v` than it understands rejects
+  the whole document; it never applies a partial interpretation.
+- `ranges` is keyed by exact axis ID (`"x"`, `"y"`, `"y2"`, …), matching the
+  PR #117 event payload. Values are `[lo, hi]` f64 pairs.
+- `selection` is one of `{"range": {x0, x1, y0, y1}}`,
+  `{"polygon": [[x, y], …]}`, or `null`. The two non-null shapes are exactly
+  the shipped `on_brush` payloads.
+- `drag_action` is the current modebar drag mode (`"pan"`, `"zoom"`,
+  `"select"`, `"select-lasso"`, `"select-x"`, `"select-y"`).
+- All numbers must be finite. Like standalone HTML export, `NaN` and
+  infinity are rejected at the boundary, not coerced.
+- Unknown top-level keys and unknown axis IDs are errors at `v: 1`. Forward
+  compatibility comes from bumping `v`, not from silently ignoring content.
+
+**Patch semantics.** Everywhere a state document is *applied* (programmatic
+set, history restore, linked update), it is a merge-patch against the live
+state: an absent key leaves that facet unchanged, an explicit `null`
+selection clears the selection, an absent axis in `ranges` leaves that axis
+alone. A full snapshot (as stored by history) is therefore just a patch that
+happens to mention everything. `fig.reset_view()` is not "apply empty
+patch"; it is an explicit navigation to the home ranges (§5).
+
+## 3. One mutation path
+
+The load-bearing invariant, extended from PR #117:
+
+> Every durable-state change — pointer drag, wheel, box zoom, toolbar
+> button, double-click, linked update, history restore, and programmatic
+> write — flows through the same validate → clamp → commit → emit path in
+> the browser client.
+
+Consequences:
+
+- Programmatic writes and history restores obey the same per-axis clamps as
+  gestures: `zoom_limits`, pan-lock containment, and `bounds`. An
+  application cannot construct a view that a user gesture could not reach.
+  (`navigation=False` charts keep their PR #117 behavior: they accept linked
+  and programmatic updates — that gate is a *capability* gate on user input,
+  not a clamp.)
+- Every change emits the same semantic view event. New `source` values are
+  added for the new writers: `"api"` (programmatic), `"history"`
+  (back/forward), joining `"pan"`, `"linked"`, and the PR #117 source set.
+  Handlers that must not react to their own writes filter on `source`
+  — the same discipline the `BroadcastChannel` link layer already applies
+  with `_linkedSource` echo-dropping.
+- Selection changes keep the shipped ordering invariant (`on_brush` before
+  `on_select`) regardless of writer.
+- There is exactly one implementation of "apply a state patch" in
+  `js/src/53_interaction.js`, and every entry point in this document is a
+  caller of it.
+
+The browser client owns the live state; the kernel and the Reflex backend
+are writers and observers, never a second source of truth. This keeps every
+feature below functional in kernel-less standalone HTML.
+
+## 4. History (#110)
+
+A client-side ring buffer of durable-state snapshots. No kernel required —
+history works in notebooks, Reflex, and standalone HTML export identically.
+
+- **Push policy.** A snapshot of the *previous* durable state is pushed when
+  a mutation with a new `interaction_id` commits. All phases of one gesture
+  (`phase: "start"` → moves → `"end"`) share an `interaction_id`, so a drag
+  is one history entry, not hundreds. Selection changes and drag-mode
+  changes push like range changes: they are durable and undoable.
+- **Writers that push:** user gestures, toolbar actions, double-click reset,
+  and programmatic writes (opt out per call with `history=False`).
+- **Writers that do not push:** linked updates (`source: "linked"`) and
+  history navigation itself. A linked peer does not record the group's
+  churn; stepping back on the *originating* chart re-broadcasts through the
+  normal mutation path, so the group follows the originator's history.
+- **Reset is navigation, not amnesia.** Double-click / Reset View pushes the
+  pre-reset state, so "I double-clicked and lost my zoom" — the literal
+  #110 complaint — is one Back away. Reset continues to preserve the
+  selection per PR #117.
+- **Capacity** is 64 entries, oldest evicted. Snapshots are a handful of
+  floats; memory is not a concern, predictability is.
+- **Surface.** Two modebar buttons, Back and Forward, enabled only when the
+  corresponding stack side is non-empty, subject to the existing modebar fit
+  rule. Programmatic `view_back()`/`view_forward()` (§5). Keyboard bindings
+  are deferred with touch pinch; the existing keyboard point traversal is
+  untouched.
+- **Switch.** `interaction_config(history=…)`, default on, following the
+  absent-key-fallback resolution of interaction.md §1. Disabling removes the
+  buttons and stops snapshotting.
+
+## 5. Programmatic control (#121)
+
+### 5.1 Core figure API (kernel-connected: notebook widget, live Reflex)
+
+```python
+fig.set_view(ranges={"x": (0, 100)}, *, animate=True, history=True)
+fig.reset_view(axes=None)              # None = the configured reset_axes
+fig.select(range=..., polygon=..., rows=..., *, history=True)
+fig.clear_selection()
+fig.set_drag_action("zoom")
+fig.view_back(); fig.view_forward()
+fig.view_state()                       # -> last committed durable state
+```
+
+- `set_view` takes a partial `ranges` mapping — patch semantics (§2). It is
+  the write-side mirror of the `on_view_change` payload.
+- `select(rows=...)` accepts per-trace row indices — the same canonical form
+  the shipped `Selection` object reports — and resolves them kernel-side
+  into the existing binary selection-mask buffers. `range=`/`polygon=` ship
+  the geometric forms and let the client resolve, exactly like a gesture.
+- `view_state()` does not round-trip: the kernel already observes every
+  committed change through view/selection events; it caches the last
+  durable state and serves reads from that cache. Immediately after a
+  write, the cache reflects the *requested* state only once the client's
+  event confirms the clamped result — reads are eventually consistent and
+  documented as such.
+
+### 5.2 `reflex_xy` out-of-band API
+
+Mirrors `reflex_xy.append(token, …)` exactly — callable from any event
+handler, background task, or thread, with no component re-render and no
+payload reship:
+
+```python
+reflex_xy.set_view(token, ranges={"x": (t0, t1)})
+reflex_xy.reset_view(token)
+reflex_xy.select(token, range=..., polygon=..., rows=...)
+reflex_xy.clear_selection(token)
+reflex_xy.view_back(token); reflex_xy.view_forward(token)
+```
+
+Path: figure lock → one wire message (§8) → pushed room-wide as a `msg`
+event on the `/_xy` namespace → every client in the room applies it through
+the §3 mutation path with `source: "api"`. Multi-client semantics are
+therefore identical to `append` and `registry.publish`: the room converges.
+The token stays the only chart state Reflex holds; setting a view does not
+touch the figure payload or version.
+
+`on_view_change` handlers still fire for api-sourced changes (an app may
+need to persist them) but carry `source: "api"`, so a state bridge that
+writes what it reads can break the loop by filtering — no suppression
+mechanism, no special cases.
+
+### 5.3 Static tier
+
+Zero-backend charts (static payload tier, standalone HTML) have no Python
+side, but the client-side controller from §3 exists there too. The mount
+exposes it as a JS handle on the chart root (`root.xy.applyState(patch)`,
+`root.xy.state()`, `root.xy.back()`), which is the whole public JS control
+surface — one object, same patch semantics. This is what makes "shareable
+view" utilities possible on exported files without any server.
+
+## 6. Per-axis gestures (#120)
+
+PR #117 makes ranges, clamps, and events per-axis; what remains is a gesture
+*scope*, not a new state model.
+
+- Hovering an axis band — the tick-label strip plus a small gutter on the
+  plot side — shows a resize cursor (`ew-resize` for x-axes, `ns-resize`
+  for y-axes) when that axis is navigable.
+- Wheel over the band zooms only that axis, anchored at the cursor's
+  position along it. Drag along the band pans only that axis. Drag
+  *across* it (perpendicular) box-zooms the axis span, mirroring the
+  existing `select-x`/`select-y` one-axis brush shapes.
+- The gesture feeds the §3 path with `axes: ["y2"]` (the hovered axis
+  only); `pan_axes`, `zoom_axes`, `zoom_limits`, containment, and `bounds`
+  govern it exactly as they govern plot-area gestures. An axis excluded
+  from both `pan_axes` and `zoom_axes` shows no resize cursor.
+- Secondary axes get their band on their own side, so `y` vs `y2` scoping
+  is by geometry, with no modifier keys. `shift` remains the only modifier
+  the renderer reads.
+- History and events see nothing new: an axis-band gesture is an ordinary
+  interaction with a narrower `axes` list.
+
+## 7. Structured hover and framework-owned tooltips (#111)
+
+Hover is the ephemeral tier: rich, evented, never durable.
+
+### 7.1 The payload
+
+```json
+{
+  "active": true,
+  "cursor": {
+    "px": [412.5, 118.0],
+    "data": {"x": 1731.4, "y": 0.82}
+  },
+  "points": [
+    {"trace": "sensor A", "index": 1042, "row": {"x": 1731.0, "y": 0.81},
+     "color": "rgb(31, 119, 180)"}
+  ]
+}
+```
+
+`cursor.px` is chart-root-relative pixels (what a framework needs to
+position an element); `cursor.data` is the cursor position in data
+coordinates; `points` carries the resolved rows with series metadata. The
+existing `xy:hover` two-stage behavior is preserved: the payload
+re-dispatches with `exact: true` when the kernel's f64 pick reply lands, and
+on static/standalone charts `points[].row` comes from browser-resident data
+with no exact upgrade — the same honesty rule the LOD tiers follow.
+
+### 7.2 Consumers
+
+- `xy:hover` / `xy:leave` gain the payload under `detail` (existing `row`,
+  `trace`, `index`, `view` keys remain — additive change).
+- `reflex_xy` `on_point_hover` receives the full payload instead of the bare
+  row dict, with `row` kept as a top-level key for compatibility.
+- `xy.tooltip(render=…)`: the adapter finally honors it. `reflex_xy.chart`
+  reads `chart.chrome_components()`, mounts the supplied Reflex component
+  into an overlay that the client positions with the built-in tooltip's
+  placement logic (flip-at-edges included), and pipes the §7.1 payload in as
+  props. The built-in tooltip is suppressed while a custom renderer is
+  mounted. Static charts get the same mount fed by the browser-resident
+  payload, which removes the "static charts cannot use the backend-event
+  workaround" gap from #111.
+
+## 8. Wire and event additions
+
+Client → kernel: nothing new. The PR #117 view events and existing
+brush/select messages already report every commit.
+
+Kernel/backend → client, added to the catalog in
+[`wire-protocol.md`](wire-protocol.md) behind the existing version
+handshake:
+
+| Message | Content | Effect |
+| --- | --- | --- |
+| `state_patch` | one §2 document (plus `animate`, `history` flags) | apply through the §3 path, `source: "api"` |
+| `view_nav` | `{"op": "back" \| "forward" \| "reset", "axes": […]}` | history/reset navigation |
+| `selection_rows` | per-trace index buffers (binary attachments) | kernel-resolved mask, same buffers the selection path ships today |
+
+All three reuse the existing `msg` envelope in both transports (anywidget
+comm and the `/_xy` socket.io namespace), so Reflex room broadcast and
+notebook delivery need no new plumbing. Hover payloads (§7) ride the
+existing hover/pick messages — no new message, larger detail.
+
+## 9. Testing contract
+
+Locked in before implementation, in the PR #117 fail-first style:
+
+- **Round-trip:** for any reachable durable state, `apply(serialize(state))`
+  is a no-op (exact f64 range equality, selection identity).
+- **Clamp equivalence:** property test that a programmatic `state_patch` and
+  the equivalent gesture sequence commit identical clamped ranges — the §3
+  invariant, tested differentially.
+- **History:** N gestures produce exactly N entries (coalescing by
+  `interaction_id`); back restores exact pre-gesture ranges; linked
+  applications push nothing; eviction at capacity; reset-then-back restores
+  the pre-reset view.
+- **Ordering:** `on_brush` before `on_select` holds for programmatic
+  geometric selects.
+- **Loop safety:** a state bridge that echoes `on_view_change` back into
+  `set_view` converges (source filtering documented and probed).
+- **Headless-Chromium probes:** axis-band wheel mutates only the hovered
+  axis; Back button state tracks stack emptiness; custom tooltip component
+  receives a payload with `cursor.px` on a static page.
+
+## 10. What this unlocks (recorded, not promised)
+
+Shareable view permalinks (`serialize` → URL fragment → `applyState` on the
+static handle), server-driven guided tours in Reflex apps, cross-session
+view restore, and "sync my dashboard to this incident window" flows — all
+without new primitives.
+
+## 11. Rollout
+
+| Phase | Ships | Delivers |
+| --- | --- | --- |
+| 0 | PR #117 lands | per-axis ranges, clamps, semantic events (dependency) |
+| 1 | §2 state object, §3 client controller, §5 Python + `reflex_xy` + static handle, §8 messages | #121 |
+| 2 | §4 history, modebar Back/Forward, reset-as-navigation | #110 |
+| 3 | §6 axis-band gestures | #120 |
+| 4 | §7 hover payload + adapter tooltip mount | #111 |
+
+Each phase updates [`../api/interaction.md`](../api/interaction.md) (and
+`wire-protocol.md` for phase 1) in the same PR; this document then records
+divergences rather than duplicating the shipped authority.
+
+## 12. Non-goals
+
+- Animation/keyed-transition depth (ENG-10446) — `animate` stays the
+  existing boolean.
+- Touch pinch and keyboard viewport navigation — still deferred, as in
+  PR #117.
+- Cross-chart or cross-page shared history; link groups share views, not
+  stacks.
+- URL-router integration in `reflex_xy` — apps compose it from
+  `on_view_change` + `set_view`.
+- Persisting view state into the figure payload — the browser client stays
+  the single owner of live view state.

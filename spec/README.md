@@ -50,6 +50,9 @@ Internal architecture: how the engine is built and why.
   shipped WebGL2 render path plus the architecture it converges to.
 - [`rust-engine.md`](design/rust-engine.md) — what lives in Rust vs Python and
   how the C-ABI/FFI seam evolves without rewrites.
+- [`view-state.md`](design/view-state.md) — the unified view-state layer:
+  one serializable state object behind history, programmatic zoom/pan/select,
+  axis-scoped gestures, and framework-owned tooltips.
 - [`wire-protocol.md`](design/wire-protocol.md) — the client↔Python message
   catalog, first-paint buffer layouts, and the version handshake.
 
