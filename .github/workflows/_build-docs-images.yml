@@ -66,6 +66,7 @@ jobs:
         with:
           python-version: "3.13"
           activate-environment: false
+          enable-cache: false
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable

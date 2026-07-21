@@ -68,6 +68,24 @@ def test_workflows_use_consistent_node24_action_pins() -> None:
         assert all(f"uses: {action}@{sha}" in line for line in uses_lines), uses_lines
 
 
+def test_setup_uv_cache_is_only_enabled_intentionally() -> None:
+    for path in sorted(Path(".github/workflows").glob("*.yml")):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for index, line in enumerate(lines):
+            if "uses: astral-sh/setup-uv@" not in line:
+                continue
+            step_indent = len(line) - len(line.lstrip())
+            boundary_indent = step_indent - 2 if line.lstrip().startswith("uses:") else step_indent
+            block: list[str] = []
+            for following in lines[index + 1 :]:
+                indent = len(following) - len(following.lstrip())
+                if following.strip() and indent <= boundary_indent:
+                    break
+                block.append(following)
+            setting = "\n".join(block)
+            assert "enable-cache:" in setting, f"{path}:{index + 1} relies on auto cache mode"
+
+
 def test_ci_workflow_rejects_blocking_benchmark_job(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
