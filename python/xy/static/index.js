@@ -1898,6 +1898,7 @@ channel: null,
 foreign: null,
 _announcedLive: -1,
 _crossFrameReady: false,
+_rebalanceScheduled: false,
 budget() {
 const v = typeof window !== "undefined" ? window.XY_CONTEXT_BUDGET : null;
 return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 12;
@@ -1958,6 +1959,12 @@ this.channel.onmessage = (event) => this._onForeignMessage(event.data);
 this._post({ t: "hello", id: this.frameId });
 if (typeof window !== "undefined" && window.addEventListener) {
 window.addEventListener("pagehide", () => this._post({ t: "bye", id: this.frameId }));
+window.addEventListener("pageshow", (event) => {
+if (!event || !event.persisted) return;
+this._announcedLive = -1;
+this._post({ t: "hello", id: this.frameId });
+this._announceLive(true);
+});
 }
 } catch (_err) {
 this.channel = null;
@@ -2001,16 +2008,20 @@ this._announcedLive = n;
 this._post({ t: "live", id: this.frameId, n });
 },
 _rebalance() {
-let over = this.localLive() + this.foreignLive() - this.budget();
-if (over <= 0) return;
-const candidates = [];
+if (this.localLive() + this.foreignLive() - this.budget() <= 0) return;
+let target = null;
 for (const view of this.views) {
-if (view.gl && !view._glLost && !view._destroyed && !view._ctxVisible) candidates.push(view);
+if (view.gl && !view._glLost && !view._destroyed && !view._ctxVisible) {
+if (!target || (view._ctxSeenSeq || 0) < (target._ctxSeenSeq || 0)) target = view;
 }
-candidates.sort((a, b) => (a._ctxSeenSeq || 0) - (b._ctxSeenSeq || 0));
-for (const view of candidates) {
-if (over <= 0) break;
-if (view._releaseContext()) over -= 1;
+}
+if (!target || !target._releaseContext()) return;
+if (this.localLive() + this.foreignLive() - this.budget() > 0 && !this._rebalanceScheduled) {
+this._rebalanceScheduled = true;
+setTimeout(() => {
+this._rebalanceScheduled = false;
+this._rebalance();
+}, 0);
 }
 },
 scheduleHiddenReleases() {
@@ -2120,6 +2131,8 @@ this._glLost = false;
 this._ctxReleasedExt = null;
 this._ctxReleases = 0;
 this._ctxRecoveries = 0;
+this._ctxLostPending = false;
+this._ctxRecoverRequested = false;
 this._ctxVisible = xyInitiallyVisible(el);
 XY_CONTEXT_GOVERNOR.register(this);
 if (this._ctxVisible) this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
@@ -2614,6 +2627,7 @@ if (this._destroyed) return;
 const governedRelease = this.canvas.dataset.xyCtx === "released";
 if (this._glLost && !governedRelease) return;
 this._glLost = true;
+this._ctxLostPending = false;
 if (!governedRelease) this.canvas.dataset.xyCtx = "lost";
 XY_CONTEXT_GOVERNOR._announceLive();
 this._contextLossCount += 1;
@@ -2660,6 +2674,12 @@ this._ctxVisible
 ) {
 this._recoverContext();
 }
+}, 0);
+}
+if (governedRelease && this._ctxRecoverRequested && !this._destroyed && this._ctxVisible) {
+this._ctxRecoverRequested = false;
+setTimeout(() => {
+if (!this._destroyed && this._glLost && this._ctxVisible) this._recoverContext();
 }, 0);
 }
 });
@@ -2720,6 +2740,7 @@ this._snapshotBeforeRelease();
 this._ctxReleasedExt = ext;
 this._ctxReleases += 1;
 this._glLost = true;
+this._ctxLostPending = true;
 this.canvas.dataset.xyCtx = "released";
 if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
@@ -2786,6 +2807,10 @@ this._ctxSnapshot = null;
 }
 _recoverContext() {
 if (this._destroyed || !this._glLost) return;
+if (this._ctxReleasedExt && this._ctxLostPending) {
+this._ctxRecoverRequested = true;
+return;
+}
 this._ctxRecoveries += 1;
 if (this._ctxReleasedExt) {
 const ext = this._ctxReleasedExt;

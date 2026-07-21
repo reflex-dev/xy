@@ -455,10 +455,39 @@ def test_client_shares_context_budget_across_same_origin_frames() -> None:
         '{ t: "bye", id: this.frameId }',
         # Effective budget = own live contexts + those reported by other frames.
         "this.localLive() + this.foreignLive() - this.budget()",
+        # A bfcache restore must re-advertise, or peers omit the restored frame
+        # forever and the page silently exceeds the browser cap.
+        'window.addEventListener("pageshow"',
+        "event.persisted",
     )
     for path, text in CLIENT_FILES:
         for marker in required:
             assert marker in text, f"{path} lost cross-frame governor marker {marker!r}"
+
+
+def test_governed_recovery_waits_for_loss_event_before_restore() -> None:
+    # Chromium silently drops WEBGL_lose_context.restoreContext() if it is called
+    # before that context's webglcontextlost event has dispatched (or during the
+    # dispatch) — the context is then stranded lost forever. A governed release
+    # that is scrolled back into view in the same task must therefore defer its
+    # restore until the loss event lands and then retry on a fresh task. Without
+    # this, a chart-per-iframe dashboard leaves charts permanently blank on
+    # scroll-in. Guard the deferral so it cannot regress.
+    for path, text in CLIENT_FILES:
+        assert "this._ctxLostPending = true" in text, (
+            f"{path}: release no longer marks the loss event pending"
+        )
+        assert "this._ctxLostPending = false" in text, (
+            f"{path}: loss handler no longer clears the pending flag"
+        )
+        # _recoverContext defers while the loss event is still pending.
+        rec = text[text.index("_recoverContext() {") :][:900]
+        assert "this._ctxReleasedExt && this._ctxLostPending" in rec, (
+            f"{path}: _recoverContext must defer restore until the loss event dispatched"
+        )
+        assert "this._ctxRecoverRequested = true" in rec, (
+            f"{path}: _recoverContext must record the deferred recovery"
+        )
 
 
 def test_cross_frame_rebalance_only_sheds_offscreen_views() -> None:

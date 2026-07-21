@@ -667,14 +667,32 @@ shared budget sheds its own *off-screen* views — never a visible one, so a sib
 frame loading cannot blank a chart the user is looking at. `IntersectionObserver`
 already reports an off-screen iframe's chart as not-intersecting (it clips to the
 top-level viewport), so the visibility signal is correct across the frame boundary; the
-budget accounting was the only gap. Coordination is best-effort and self-healing:
-`BroadcastChannel` delivery is asynchronous, so a burst of charts constructed in one
-synchronous tick across many frames can briefly overshoot before the first `live`
-messages arrive (a handful of transient evictions that recover), and a frame that
-crashes without a `bye` only lowers the effective budget (a few extra off-screen
-releases, revived on demand) — it never blanks a visible chart or evicts. Cross-origin
-and `sandbox`-without-`allow-same-origin` frames (e.g. the notebook `_repr_html_`
-frame) get an isolated channel scope and fall back to per-document behavior.
+budget accounting was the only gap.
+
+Two subtleties the implementation must get right. **(1) Restore ordering.** A governed
+release is `WEBGL_lose_context.loseContext()`; re-acquire is `restoreContext()`. Chromium
+*silently drops* a `restoreContext()` issued before that context's `webglcontextlost`
+event has dispatched (or synchronously inside the dispatch), stranding the canvas lost
+forever — and a chart scrolled back into view in the same task it was shed hits exactly
+that window. Recovery therefore defers until the loss event lands (`_ctxLostPending`)
+and retries on a fresh task; a released chart that never re-acquired on scroll-in was the
+first symptom. **(2) Incremental shedding.** Frames over budget release *one* off-screen
+view per event-loop turn, not the whole computed excess: several frames observing the
+same over-budget snapshot would each drop the full deficit and collectively over-release,
+so each sheds one, announces, and re-evaluates against the fresher count — converging on
+the budget instead of overshooting it (still safe either way; an off-screen over-release
+just revives on demand).
+
+Coordination is otherwise best-effort and self-healing: `BroadcastChannel` delivery is
+asynchronous, so a burst of charts constructed in one synchronous tick across many frames
+can briefly overshoot before the first `live` messages arrive (a handful of transient
+evictions that recover); a frame frozen into the back/forward cache says `bye` on
+`pagehide` and re-announces on `pageshow` (`persisted`) so peers neither count a frozen
+frame nor omit a restored one; and a frame that crashes without a `bye` only lowers the
+effective budget (a few extra off-screen releases, revived on demand) — it never blanks a
+visible chart or evicts. Cross-origin and `sandbox`-without-`allow-same-origin` frames
+(e.g. the notebook `_repr_html_` frame) get an isolated channel scope and fall back to
+per-document behavior.
 
 **Device/context loss is a first-class event:** all GPU state is derived state, rebuilt
 from the scene graph + column store on a new context. The visible cost is one reupload
