@@ -102,7 +102,7 @@ The shim can be called complete for ordinary 2-D scripts when:
 - [x] Optional support for real Matplotlib objects is tested in a dedicated CI
       environment.
 - [x] Public compatibility boundaries and intentional exclusions are current
-      in both this document and `docs/engineering/matplotlib-compat.md`.
+      in both this document and `spec/matplotlib/compat.md`.
 
 ## P0 — make the compatibility claim measurable
 
@@ -259,10 +259,14 @@ appear frequently in ordinary scripts and notebooks.
 - [x] `get_xlabel`, `get_ylabel`, `get_title`, `get_xaxis`, and `get_yaxis`. Evidence: `tests/pyplot/test_axes_helpers.py::test_ticklabel_minor_label_axis_and_legend_helpers` verifies label/title getters and axis proxy identity.
 - [x] `get_legend()` and `get_legend_handles_labels()`. Evidence: `tests/pyplot/test_axes_helpers.py::test_ticklabel_minor_label_axis_and_legend_helpers` verifies legend presence and labeled handles.
 - [x] `set_prop_cycle()` beyond the fixed default color sequence. Evidence: `tests/pyplot/test_axes_helpers.py::test_prop_cycle_setp_getp_rc_context_and_colormap_helpers` verifies per-Axes color cycle order.
-- [x] `secondary_xaxis()` and `secondary_yaxis()` if secondary-axis layout is
-      promoted into supported scope; otherwise keep them explicitly excluded. Evidence:
-      `tests/pyplot/test_axes_helpers.py::test_subplot2grid_box_and_secondary_axes_contract`
-      verifies both helpers raise `NotImplementedError` with the compatibility-table error path.
+- [x] `secondary_xaxis()` and `secondary_yaxis()`, promoted into supported scope
+      as tick-only linked axes. Both return a `SecondaryAxis` built from
+      `location` (`"top"`/`"bottom"`, `"left"`/`"right"`) and a `functions`
+      forward/inverse pair; only `transform=` raises `NotImplementedError`.
+      Evidence: `tests/pyplot/test_axes_helpers.py::test_subplot2grid_box_and_secondary_axes_contract`
+      calls both helpers, labels the returned objects, and asserts the built
+      chart carries `axis_options["xs1"]["side"] == "top"` and
+      `axis_options["ys2"]["side"] == "right"`.
 
 ### Image, property and convenience helpers
 
@@ -348,7 +352,7 @@ method accepts the call.
 - [x] `barbs`: non-default increments, flags, rounding, empty-barb, flip,
       color and size options now fail loudly instead of being discarded. The
       rendered glyph remains a documented visual approximation (bounded tick
-      count, not WMO barb geometry) — see `docs/engineering/matplotlib-compat.md`.
+      count, not WMO barb geometry) — see `spec/matplotlib/compat.md`.
 - [x] `quiverkey`: coordinates, label positions, fonts and sizing.
 - [x] `streamplot`: always integrates with the shim's own bounded fixed-step
       kernel, so output no longer depends on whether Matplotlib is installed;
@@ -416,7 +420,7 @@ method accepts the call.
 - [x] Add a useful typed public surface for `xy.pyplot`, `Axes`, `Figure`,
       common Artists, containers and return tuples; reduce broad `Any` usage.
 - [x] Add API documentation generated from the supported compatibility matrix.
-- [x] Fix the stale `docs/engineering/chart-roadmap.md` rows that still call pie, vector
+- [x] Fix the stale `spec/api/chart-roadmap.md` rows that still call pie, vector
       fields and irregular-grid families planned even though the shim exposes
       implementations.
 - [x] Document approximation levels: exact geometry, equivalent semantics,
@@ -658,7 +662,10 @@ streamplot
 
 - Exporter chrome beyond backgrounds (fonts, tick/legend styling) stays fixed
   in single-chart PNG/SVG regardless of rcParams.
-- `ax.set_facecolor()` does not exist; axes background is rc-at-creation.
+- `ax.set_facecolor()` mutates the per-Axes plot background after creation,
+  but `set_facecolor(None)` is a silent no-op rather than a reset to the rc
+  default; restoring it requires passing `rcParams["axes.facecolor"]` back
+  explicitly.
 - `ax.patches` holds only pie wedges; bar rects live in containers.
 - `get_xticks()` on category/time axes falls back to linear ticks; tick
   density ignores figure size.

@@ -23,20 +23,30 @@ children, layered marks, axes, annotations, built-in or custom legend/tooltip
 chrome, and CSS/Tailwind-friendly DOM hooks. Callback payload details and
 future adapter packages may still evolve before 1.0.
 
-Composed `Chart` objects handle standalone HTML export, PNG/SVG export,
-notebook display, and memory reporting directly. The internal engine object a
-chart compiles to is reachable via `chart.figure()` as an advanced escape
-hatch, but it is not part of the public chart-building surface.
+Composed `Chart` objects handle standalone HTML export, static image export
+(PNG/JPEG/WebP/SVG/PDF), notebook display, and memory reporting directly. The
+internal engine object a chart compiles to is reachable via `chart.figure()` as
+an advanced escape hatch, but it is not part of the public chart-building
+surface.
 
 Charts accept `width="100%"` and/or `height="100%"` for responsive layouts.
-Standalone `to_html(...)` needs no browser dependency, and `to_png(...)` defaults
-to a browser-free native rasterizer (`Engine.default`).
-`to_png(..., engine=Engine.chromium)` uses an
-installed Chrome, Chromium, Edge, or `chrome-headless-shell` executable because
-it screenshots the same standalone HTML document for browser CSS/WebGL fidelity.
-Automatic discovery can be overridden with `XY_BROWSER`. Pass `custom_css=` to
-that engine when the screenshot also needs author CSS; native PNG intentionally
-rejects browser-only stylesheets.
+Standalone `to_html(...)` needs no browser dependency. Every static image
+format — PNG, JPEG, WebP, SVG, PDF — is produced natively, without a browser.
+
+`Engine` has three members — `auto`, `default`, `chromium` — and the entry
+points split on their default. `to_png(...)` defaults to `Engine.default`, the
+browser-free native rasterizer; `to_svg(...)` takes no `engine` argument at all
+and is always native. The unified `to_image(...)` / `write_image(...)` entry
+points default to `Engine.auto`, which resolves deterministically per request:
+native for every format, chromium only when `custom_css=` is passed, since
+author CSS needs a real CSS engine. `to_png(..., engine=Engine.chromium)` uses
+an installed Chrome, Chromium, Edge, or `chrome-headless-shell` executable
+because it screenshots
+the same standalone HTML document for browser CSS/WebGL fidelity. Automatic
+discovery can be overridden with `XY_BROWSER`. Native raster export
+intentionally rejects browser-only stylesheets, and SVG is native-only:
+resolving to a browser engine for SVG — by `engine=Engine.chromium` or by
+`custom_css=` — raises, because a screenshot cannot emit vector SVG.
 
 ## Chart Family Quick Reference
 
@@ -439,8 +449,23 @@ chart
 ```
 
 Composed `Chart` objects expose `to_html(...)`, `html(...)`, `_repr_html_()`,
-`to_png(...)`, `to_svg(...)`, `widget()`, `show()`, and `memory_report()`
-readout methods directly.
+`to_png(...)`, `to_svg(...)`, `to_image(...)`, `write_image(...)`, `widget()`,
+`show()`, and `memory_report()` readout methods directly.
+`to_image(format="png", ...)` returns bytes and `write_image(path, ...)` writes
+one file atomically with the format inferred from its extension; together they
+are the unified export surface across PNG/JPEG/WebP/SVG/PDF (and standalone
+HTML for `write_image`). `xy.write_images(figs, paths)` is the batch form: it
+accepts composed charts directly and shares one persistent Chromium session
+across every browser-resolved file instead of paying browser startup per
+figure.
+
+Export defaults travel with the chart. `xy.export_config(...)` is a chart child
+taking `formats`, `filename`, `width`, `height`, `scale`, `background`, and
+`quality`; it sets the browser modebar's download menu (the client-safe subset
+png/jpeg/webp/svg/csv, in the given order — an empty list hides the menu) and
+supplies the `width`/`height`/`scale`/`background`/`quality` defaults for any
+of those arguments omitted from `to_image`, `write_image`, or that chart's
+files in `write_images`. Explicit arguments override them.
 
 ## Live Data On A Composed Chart
 

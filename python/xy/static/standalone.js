@@ -1923,10 +1923,10 @@ this._ro.observe(this.root);
 }
 this._armVisibilityResizeWatch();
 this._armDprWatch();
-this.view0 = {
+this.view0 = this._clampView({
 x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
 y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
-};
+});
 this.view = { ...this.view0 };
 this._initLinkedCharts();
 this._onScheme = () => {
@@ -2107,10 +2107,22 @@ if (!group || typeof BroadcastChannel !== "function") return;
 this._linkAxes = Array.isArray(this.interaction.link_axes)
 ? this.interaction.link_axes.filter((axis) => axis === "x" || axis === "y")
 : ["x", "y"];
-if (!this._linkAxes.length) this._linkAxes = ["x", "y"];
 this._linkChannel = new BroadcastChannel(`xy:${group}`);
 this._linkChannel.onmessage = (event) => {
 const msg = event.data || {};
+if (msg.source === this._linkedSource) return;
+if (this._interactionFlag("link_select") && msg.selection) {
+const selection = msg.selection;
+if (selection.clear) this._clearSelection({ broadcast: false, dispatch: false });
+else if (selection.polygon) this._selectLocalPolygon(selection.polygon, { dispatch: false });
+else if (selection.range) {
+const { x0, x1, y0, y1 } = selection.range;
+if ([x0, x1, y0, y1].every(Number.isFinite)) {
+this._selectLocal(x0, x1, y0, y1, { dispatch: false });
+}
+}
+return;
+}
 if (!msg.view || msg.source === this._linkedSource) return;
 const next = { ...this.view };
 if (this._linkAxes.includes("x")) {
@@ -2122,12 +2134,17 @@ next.y0 = Number(msg.view.y0);
 next.y1 = Number(msg.view.y1);
 }
 if (![next.x0, next.x1, next.y0, next.y1].every(Number.isFinite)) return;
+if (!this._interactionFlag("pan", true) && !this._interactionFlag("zoom", true)) return;
 this._setView(next, { animate: false, source: "linked", broadcast: false });
 };
 }
 _broadcastLinkedView(detail) {
 if (!this._linkChannel) return;
 this._linkChannel.postMessage({ source: this._linkedSource, view: detail });
+}
+_broadcastLinkedSelection(selection) {
+if (!this._linkChannel || !this._interactionFlag("link_select")) return;
+this._linkChannel.postMessage({ source: this._linkedSource, selection });
 }
 _applyClass(el, className) {
 if (typeof className !== "string") return;
@@ -3235,7 +3252,7 @@ this._refreshReductionBadges();
 }
 _drawDensitySample(g, x0, x1, y0, y1, opacityScale = 1) {
 const s = g && g.sampleOverlay;
-if (!s || !s.n || !this._viewInside(s.win)) return;
+if (!s || !s.n || !this._viewOverlaps(s.win)) return;
 this._drawPoints(
 s,
 this._map(s.xMeta, x0, x1, s.xAxis),
@@ -5823,17 +5840,25 @@ const x0 = this._decodeValue(r.x0, r.x0Meta, hit.index);
 const x1 = this._decodeValue(r.x1, r.x1Meta, hit.index);
 const y0 = this._decodeValue(r.y0, r.y0Meta, hit.index);
 const y1 = this._decodeValue(r.y1, r.y1Meta, hit.index);
-row.x = x0 + (x1 - x0) / 2;
-row.y = y1;
-row.x_kind = r.x0Meta.kind;
-row.y_kind = r.y1Meta.kind;
+const [x, xKind] = this._sourceDisplayValue(
+g, "x", x0 + (x1 - x0) / 2, r.x0Meta.kind,
+);
+const [y, yKind] = this._sourceDisplayValue(g, "y", y1, r.y1Meta.kind);
+row.x = x;
+row.y = y;
+if (xKind !== undefined) row.x_kind = xKind;
+if (yKind !== undefined) row.y_kind = yKind;
 } else if (cpu) {
 const xMeta = cpu.xMeta || g.xMeta;
 const yMeta = cpu.yMeta || g.yMeta;
-row.x = this._decodeValue(cpu.x, xMeta, hit.index);
-row.y = this._decodeValue(cpu.y, yMeta, hit.index);
-row.x_kind = xMeta && xMeta.kind;
-row.y_kind = yMeta && yMeta.kind;
+const rawX = this._decodeValue(cpu.x, xMeta, hit.index);
+const rawY = this._decodeValue(cpu.y, yMeta, hit.index);
+const [x, xKind] = this._sourceDisplayValue(g, "x", rawX, xMeta && xMeta.kind);
+const [y, yKind] = this._sourceDisplayValue(g, "y", rawY, yMeta && yMeta.kind);
+row.x = x;
+row.y = y;
+if (xKind !== undefined) row.x_kind = xKind;
+if (yKind !== undefined) row.y_kind = yKind;
 const color = g.trace.color;
 if (cpu.color && color) {
 if (color.mode === "categorical" && Array.isArray(color.categories)) {
@@ -6099,11 +6124,14 @@ data: this._dataFromCanvas(cssX, cssY),
 };
 this._listen(c, "pointerdown", (e) => {
 this._cancelViewAnimation();
+const canPan = this._interactionFlag("pan", true);
+const canZoom = this._interactionFlag("zoom", true);
+const canNavigate = this._interactionFlag("navigation", true);
 const canBrush = this._interactionFlag("brush", true) && this._interactionFlag("select", true);
 const selectMode = this.dragMode.startsWith("select") ? this.dragMode : null;
 const mode = (e.shiftKey || selectMode) && canBrush && this._pickable
 ? (e.shiftKey ? "select" : selectMode)
-: this.dragMode === "zoom" ? "zoom" : null;
+: this.dragMode === "zoom" && canNavigate && canZoom ? "zoom" : null;
 if (mode) {
 const previousLasso = mode.startsWith("select") && this._lassoPolygon
 ? this._lassoPolygon.map((point) => [...point])
@@ -6120,9 +6148,11 @@ try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
 this.tooltip.style.display = "none";
 return;
 }
+if (canNavigate && canPan) {
 drag = { px: e.clientX, py: e.clientY, view: { ...this.view }, moved: false };
 try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
 this.tooltip.style.display = "none";
+}
 });
 this._listen(c, "pointermove", (e) => {
 if (band) { this._updateBand(band, e); return; }
@@ -6135,15 +6165,12 @@ const cx0 = this._axisCoord(xa, x0), cx1 = this._axisCoord(xa, x1);
 const cy0 = this._axisCoord(ya, y0), cy1 = this._axisCoord(ya, y1);
 const dx = ((e.clientX - drag.px) / this.plot.w) * (cx1 - cx0);
 const dy = ((e.clientY - drag.py) / this.plot.h) * (cy1 - cy0);
-this.view = {
+this._setView({
 x0: this._axisValue(xa, cx0 - dx),
 x1: this._axisValue(xa, cx1 - dx),
 y0: this._axisValue(ya, cy0 + dy),
 y1: this._axisValue(ya, cy1 + dy),
-};
-this.draw();
-this._scheduleViewRequest();
-this._emitViewChange("pan");
+}, { source: "pan" });
 return;
 }
 this._updateCrosshair(e);
@@ -6159,8 +6186,9 @@ const moved = band.mode === "select-lasso"
 ? band.points.length >= 3
 : Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
 if (moved) {
-if (band.mode === "zoom") this._zoomToBox(band.d0, d1, true);
-else if (band.mode === "select-lasso") {
+if (band.mode === "zoom" && this._interactionFlag("zoom", true)) {
+this._zoomToBox(band.d0, d1, true);
+} else if (band.mode === "select-lasso") {
 if (band.points.length >= 3) {
 const editable = this._simplifyLassoPoints(band.points);
 this._sendSelectPolygon(editable.map((point) => point.data));
@@ -6218,6 +6246,8 @@ if (hadHover) this._drawKeepPick();
 });
 this._listen(c, "click", (e) => this._click(e));
 this._listen(c, "wheel", (e) => {
+if (!this._interactionFlag("navigation", true)) return;
+if (!this._interactionFlag("zoom", true)) return;
 e.preventDefault();
 const f = Math.pow(1.0015, e.deltaY);
 const r = c.getBoundingClientRect();
@@ -6226,6 +6256,8 @@ const fy = 1 - (e.clientY - r.top) / r.height;
 this._queueWheelZoom(f, fx, fy);
 }, { passive: false });
 this._listen(c, "dblclick", () => {
+if (!this._interactionFlag("navigation", true)) return;
+if (!this._interactionFlag("zoom", true)) return;
 this._clearSelection();
 this._setView(this.view0, { animate: true });
 });
@@ -6512,6 +6544,7 @@ this._clearLassoOverlay();
 const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
 const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
 const range = { x0, x1, y0, y1 };
+this._broadcastLinkedSelection({ range });
 this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
 if (this.comm) {
 this.comm.send({ type: "select", x0, x1, y0, y1 });
@@ -6524,6 +6557,7 @@ if (!Array.isArray(points) || points.length < 3) return;
 const polygon = points.map((point) => [point[0], point[1]]);
 if (!polygon.every((point) => point.every(Number.isFinite))) return;
 this._lassoPolygon = polygon;
+this._broadcastLinkedSelection({ polygon });
 this._renderLassoSelection();
 this._dispatchChartEvent("brush", {
 polygon,
@@ -6535,7 +6569,7 @@ this.comm.send({ type: "select_polygon", points: polygon });
 this._selectLocalPolygon(polygon);
 }
 },
-_selectLocalPolygon(points) {
+_selectLocalPolygon(points, opts = {}) {
 const xs = points.map((point) => point[0]);
 const ys = points.map((point) => point[1]);
 const minX = Math.min(...xs), maxX = Math.max(...xs);
@@ -6571,13 +6605,15 @@ total += count;
 }
 this._selectionCount = total;
 this.draw();
+if (opts.dispatch !== false) {
 this._dispatchChartEvent("select", {
 total,
 polygon: points,
 view: this._eventView("select"),
 });
+}
 },
-_selectLocal(x0, x1, y0, y1) {
+_selectLocal(x0, x1, y0, y1, opts = {}) {
 let total = 0;
 for (const g of this.gpuTraces) {
 if (!g._cpu || g.tier === "density") continue;
@@ -6597,11 +6633,13 @@ total += cnt;
 }
 this._selectionCount = total;
 this.draw();
+if (opts.dispatch !== false) {
 this._dispatchChartEvent("select", {
 total,
 range: { x0, x1, y0, y1 },
 view: this._eventView("select"),
 });
+}
 },
 _applySelMask(g, maskF32) {
 const gl = this.gl;
@@ -6610,16 +6648,19 @@ gl.bindBuffer(gl.ARRAY_BUFFER, g.selBuf);
 gl.bufferData(gl.ARRAY_BUFFER, maskF32, gl.STATIC_DRAW);
 g.selActive = true;
 },
-_clearSelection() {
+_clearSelection(opts = {}) {
 this._clearLassoOverlay();
 for (const g of this.gpuTraces) {
 g.selActive = false;
 if (g.drill) g.drill.selActive = false;
 }
 this._selectionCount = 0;
+if (opts.broadcast !== false) this._broadcastLinkedSelection({ clear: true });
+if (opts.dispatch !== false) {
 if (this._interactionFlag("select", true)) {
 if (this.comm) this.comm.send({ type: "select_clear" });
 this._dispatchChartEvent("select", { total: 0, view: this._eventView("select_clear") });
+}
 }
 },
 _clampModebar(left, top) {
@@ -6751,7 +6792,14 @@ bar.appendChild(b);
 if (toggles) this._modeBtns[toggles] = b;
 return b;
 };
-const zoomTrigger = mk("zoommenu", "Zoom controls", () => {
+const canPan = this._interactionFlag("pan", true);
+const canZoom = this._interactionFlag("zoom", true);
+let zoomTrigger = null;
+let zoomIndicator = null;
+this._zoomMenuButton = null;
+this._zoomMenuLabel = null;
+if (canZoom) {
+zoomTrigger = mk("zoommenu", "Zoom controls", () => {
 setZoomMenuOpen(!this._zoomMenuOpen);
 });
 this._zoomMenuButton = zoomTrigger;
@@ -6761,13 +6809,14 @@ const zoomPercent = document.createElement("span");
 zoomPercent.dataset.xyModebarZoomPercent = "";
 zoomPercent.textContent = "100%";
 zoomTrigger.appendChild(zoomPercent);
-const zoomIndicator = document.createElement("span");
+zoomIndicator = document.createElement("span");
 zoomIndicator.dataset.xyModebarMenuIndicator = "";
 zoomIndicator.innerHTML = this._icon("chevrondown");
 zoomTrigger.appendChild(zoomIndicator);
 this._zoomMenuLabel = zoomPercent;
 zoomTrigger.setAttribute("aria-haspopup", "menu");
 zoomTrigger.setAttribute("aria-expanded", "false");
+}
 const canSelect = this._pickable
 && this._interactionFlag("brush", true)
 && this._interactionFlag("select", true);
@@ -6794,14 +6843,17 @@ selectTrigger.appendChild(selectIndicator);
 this._selectMenuButton = selectTrigger;
 this._selectMenuIcon = selectModeIcon;
 }
-mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
-const zoomMenu = document.createElement("div");
+if (canPan) mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
+let zoomMenu = null;
+if (canZoom) {
+zoomMenu = document.createElement("div");
 zoomMenu.dataset.xyModebarMenu = "";
 zoomMenu.setAttribute("role", "menu");
 zoomMenu.setAttribute("aria-label", "Zoom controls");
 zoomMenu.style.cssText =
 "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
 bar.appendChild(zoomMenu);
+}
 const zoomMenuItems = [];
 const mkZoomItem = (name, label, onClick, toggles, separator = false) => {
 const button = document.createElement("button");
@@ -6831,6 +6883,7 @@ zoomMenuItems.push(button);
 if (toggles) this._modeBtns[toggles] = button;
 return button;
 };
+if (canZoom) {
 const resetView = () => {
 this._clearSelection();
 this._setView(this.view0, { animate: true });
@@ -6839,6 +6892,7 @@ mkZoomItem("zoomin", "Zoom In", () => this._zoomBy(0.5, true));
 mkZoomItem("zoomout", "Zoom Out", () => this._zoomBy(2, true));
 mkZoomItem("zoom", "Box Zoom", () => this._setDragMode("zoom"), "zoom");
 mkZoomItem("reset", "Reset View", resetView, null, true);
+}
 const selectMenu = document.createElement("div");
 selectMenu.dataset.xyModebarMenu = "";
 selectMenu.dataset.xyModebarSelectMenu = "";
@@ -6916,9 +6970,21 @@ exportMenu.appendChild(button);
 exportMenuItems.push(button);
 return button;
 };
-mkExportItem("png", "Export PNG", () => this._exportPng());
-mkExportItem("svg", "Export SVG", () => this._exportSvg());
-mkExportItem("csv", "Export CSV", () => this._exportCsv());
+const EXPORT_ITEMS = {
+png: ["Export PNG", () => this._exportRaster("png")],
+jpeg: ["Export JPEG", () => this._exportRaster("jpeg")],
+webp: ["Export WebP", () => this._exportRaster("webp")],
+svg: ["Export SVG", () => this._exportSvg()],
+csv: ["Export CSV", () => this._exportCsv()],
+};
+const configuredFormats = Array.isArray(this._exportConfig().formats)
+? this._exportConfig().formats
+: ["png", "svg", "csv"];
+for (const name of configuredFormats) {
+const item = EXPORT_ITEMS[name];
+if (item) mkExportItem(name, item[0], item[1]);
+}
+if (zoomTrigger) {
 setZoomMenuOpen = (open, restoreFocus = false) => {
 const show = Boolean(open);
 if (show) {
@@ -6951,6 +7017,7 @@ zoomMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, zoomTrigger.offse
 zoomMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
 zoomMenu.style.visibility = "visible";
 };
+}
 setSelectMenuOpen = (open, restoreFocus = false) => {
 if (!selectTrigger) return;
 const show = Boolean(open);
@@ -6985,7 +7052,7 @@ selectMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`
 selectMenu.style.visibility = "visible";
 };
 setExportMenuOpen = (open, restoreFocus = false) => {
-const show = Boolean(open);
+const show = Boolean(open) && exportMenuItems.length > 0;
 if (show) {
 setZoomMenuOpen(false);
 setSelectMenuOpen(false);
@@ -7024,6 +7091,7 @@ if (this._zoomMenuOpen && !bar.contains(e.target)) setZoomMenuOpen(false);
 if (this._selectMenuOpen && !bar.contains(e.target)) setSelectMenuOpen(false);
 if (this._exportMenuOpen && !bar.contains(e.target)) setExportMenuOpen(false);
 });
+if (zoomTrigger) {
 this._listen(zoomTrigger, "keydown", (e) => {
 if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
 e.preventDefault();
@@ -7047,6 +7115,7 @@ if (e.key === "ArrowDown") next = (current + 1) % zoomMenuItems.length;
 if (e.key === "ArrowUp") next = (current - 1 + zoomMenuItems.length) % zoomMenuItems.length;
 zoomMenuItems[next].focus();
 });
+}
 if (selectTrigger) {
 this._listen(selectTrigger, "keydown", (e) => {
 if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
@@ -7076,6 +7145,7 @@ selectMenuItems[next].focus();
 }
 this._listen(grip, "keydown", (e) => {
 if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+if (!exportMenuItems.length) return;
 e.preventDefault();
 e.stopPropagation();
 setExportMenuOpen(true);
@@ -7178,7 +7248,8 @@ this._viewAnim = null;
 },
 _setView(next, opts = {}) {
 if (this._destroyed) return;
-const target = { x0: next.x0, x1: next.x1, y0: next.y0, y1: next.y1 };
+const target = this._clampView(
+{ x0: next.x0, x1: next.x1, y0: next.y0, y1: next.y1 });
 const animate = opts.animate === true && !this._prefersReducedMotion();
 const duration = opts.duration || 180;
 if (!animate || duration <= 0) {
@@ -7244,6 +7315,33 @@ this._emitViewChange(opts.source || "view", { broadcast: opts.broadcast });
 }
 };
 this._animRaf = requestAnimationFrame(step);
+},
+_clampAxisRange(axisId, lo, hi) {
+const axis = this._axis(axisId);
+if (!Array.isArray(axis.bounds) || axis.bounds.length !== 2) return [lo, hi];
+const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+const b0 = this._axisCoord(axis, axis.bounds[0]);
+const b1 = this._axisCoord(axis, axis.bounds[1]);
+if (![c0, c1, b0, b1].every(Number.isFinite) || b0 === b1) return [lo, hi];
+const reverse = c1 < c0;
+const boundLo = Math.min(b0, b1), boundHi = Math.max(b0, b1);
+let outLo = Math.min(c0, c1), outHi = Math.max(c0, c1);
+if (outHi - outLo >= boundHi - boundLo) {
+outLo = boundLo;
+outHi = boundHi;
+} else {
+const shift = Math.max(boundLo - outLo, Math.min(boundHi - outHi, 0));
+outLo += shift;
+outHi += shift;
+}
+const first = reverse ? outHi : outLo;
+const second = reverse ? outLo : outHi;
+return [this._axisValue(axis, first), this._axisValue(axis, second)];
+},
+_clampView(view) {
+const x = this._clampAxisRange("x", view.x0, view.x1);
+const y = this._clampAxisRange("y", view.y0, view.y1);
+return { x0: x[0], x1: x[1], y0: y[0], y1: y[1] };
 },
 _zoomBy(f, animate = false) {
 const base = this._viewAnim ? this._viewAnim.target : this.view;
@@ -7312,7 +7410,13 @@ const y0 = yReversed ? yhi : ylo;
 const y1 = yReversed ? ylo : yhi;
 this._setView({ x0, x1, y0, y1 }, { animate });
 },
+_exportConfig() {
+const config = this.spec && this.spec.export;
+return config && typeof config === "object" ? config : {};
+},
 _exportFilename(extension) {
+const configured = this._exportConfig().filename;
+if (typeof configured === "string" && configured) return `${configured}.${extension}`;
 const title = String(this.spec.title || "xy-chart")
 .trim()
 .toLowerCase()
@@ -7402,26 +7506,50 @@ this._exportFilename("svg")
 );
 },
 _exportPng() {
+return this._exportRaster("png");
+},
+_exportRaster(format) {
 const svg = this._exportSvgMarkup();
 const sourceUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 const image = new Image();
+const config = this._exportConfig();
+const mime = { png: "image/png", jpeg: "image/jpeg", webp: "image/webp" }[format];
+if (!mime) return Promise.reject(new Error(`unsupported raster export ${format}`));
 return new Promise((resolve, reject) => {
 image.onload = () => {
-const scale = Math.max(1, window.devicePixelRatio || 1);
+const scale = Number.isFinite(config.scale) && config.scale > 0
+? config.scale
+: Math.max(1, window.devicePixelRatio || 1);
 const canvas = document.createElement("canvas");
 canvas.width = Math.round(this.size.w * scale);
 canvas.height = Math.round(this.size.h * scale);
 const ctx = canvas.getContext("2d");
+const configured = typeof config.background === "string" &&
+config.background !== "auto" ? config.background : null;
+const transparent = configured === "transparent" || configured === "none";
+if (format === "jpeg") {
+ctx.fillStyle = configured && !transparent ? configured : "#ffffff";
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+} else if (configured && !transparent) {
+ctx.fillStyle = configured;
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
 ctx.scale(scale, scale);
 ctx.drawImage(image, 0, 0, this.size.w, this.size.h);
+const quality = Number.isFinite(config.quality)
+? Math.min(1, Math.max(0.01, config.quality / 100))
+: 0.9;
 canvas.toBlob((blob) => {
 if (!blob) {
-reject(new Error("PNG encoding returned no data"));
+reject(new Error(`${format.toUpperCase()} encoding returned no data`));
 return;
 }
-this._downloadExport(blob, this._exportFilename("png"));
+const actual = blob.type === "image/jpeg" ? "jpg"
+: blob.type === "image/webp" ? "webp"
+: "png";
+this._downloadExport(blob, this._exportFilename(actual));
 resolve();
-}, "image/png");
+}, mime, format === "png" ? undefined : quality);
 };
 image.onerror = () => {
 reject(new Error("chart SVG could not be rasterized"));
@@ -7530,6 +7658,13 @@ return svg('<path d="M4 5 H16 M4 15 H16 M7 12 L10 9 L13 12"/>');
 case "png":
 return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
 '<path d="M7 13 L9 10.5 L11 12 L13.5 9 V15 H7 Z"/>');
+case "jpeg":
+return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+'<circle cx="8.5" cy="10" r="1.2"/><path d="M7 15 L10 12 L13.5 15 Z"/>');
+case "webp":
+return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+'<path d="M7 11 C8 10 9 10 10 11 C11 12 12 12 13.5 11"/>' +
+'<path d="M7 14 C8 13 9 13 10 14 C11 15 12 15 13.5 14"/>');
 case "svg":
 return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
 '<path d="M7 13 L9 9 L11 14 L13.5 10"/>');
@@ -7631,12 +7766,13 @@ for (const g of targets) this._requestSampleRebin(g, view, seq);
 _requestSampleRebin(g, view, seq) {
 if (!g._homeDensity) g._homeDensity = g.density;
 const v0 = this.view0;
-const ex = Math.max(Math.abs(v0.x1 - v0.x0), 1e-300) * 1e-9;
-const ey = Math.max(Math.abs(v0.y1 - v0.y0), 1e-300) * 1e-9;
-const atHome =
-Math.min(view.x0, view.x1) <= v0.x0 + ex && Math.max(view.x0, view.x1) >= v0.x1 - ex &&
-Math.min(view.y0, view.y1) <= v0.y0 + ey && Math.max(view.y0, view.y1) >= v0.y1 - ey;
-if (atHome) {
+const homeSpanX = Math.max(Math.abs(v0.x1 - v0.x0), 1e-300);
+const homeSpanY = Math.max(Math.abs(v0.y1 - v0.y0), 1e-300);
+const viewSpanX = Math.abs(view.x1 - view.x0);
+const viewSpanY = Math.abs(view.y1 - view.y0);
+const notZoomedIn =
+viewSpanX >= homeSpanX * (1 - 1e-6) && viewSpanY >= homeSpanY * (1 - 1e-6);
+if (notZoomedIn) {
 if (g.density !== g._homeDensity) {
 const hd = g._homeDensity;
 this._applySampleRebinGrid(g, {
@@ -7882,6 +8018,15 @@ const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
 const wx0 = Math.min(win.x0, win.x1), wx1 = Math.max(win.x0, win.x1);
 const wy0 = Math.min(win.y0, win.y1), wy1 = Math.max(win.y0, win.y1);
 return vx0 >= wx0 - ex && vx1 <= wx1 + ex && vy0 >= wy0 - ey && vy1 <= wy1 + ey;
+},
+_viewOverlaps(win) {
+if (!win) return false;
+const { x0, x1, y0, y1 } = this.view;
+const vx0 = Math.min(x0, x1), vx1 = Math.max(x0, x1);
+const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
+const wx0 = Math.min(win.x0, win.x1), wx1 = Math.max(win.x0, win.x1);
+const wy0 = Math.min(win.y0, win.y1), wy1 = Math.max(win.y0, win.y1);
+return vx0 <= wx1 && vx1 >= wx0 && vy0 <= wy1 && vy1 >= wy0;
 },
 _viewInsideRange(xRange, yRange) {
 if (!xRange || !yRange) return false;

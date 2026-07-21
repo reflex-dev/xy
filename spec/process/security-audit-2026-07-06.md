@@ -31,6 +31,17 @@ Fix:
 Strict nonce/hash CSP still requires a host wrapper that serves the JS bundle as
 a separate asset.
 
+#### Status as of 2026-07-20 (XY-SEC-2026-01)
+
+`worker-src` is no longer `'none'`. It was relaxed to `worker-src blob:` on
+2026-07-08 in commit b353dea ("Standalone density re-bin in a Web Worker"), so
+the standalone density re-bin worker can boot from a Blob URL of its own
+bundled source. No external worker script can load under that directive. The
+shipped policy is `_STANDALONE_CSP` in `python/xy/export.py`; every other
+directive listed above is unchanged. `tests/test_static_client_security.py`
+asserts the directive is exactly `worker-src blob:`, and
+`docs/guides/serving-csp-and-offline-use.md` documents it for host operators.
+
 ### XY-SEC-2026-02: Legend swatches accepted raw CSS paint strings
 
 Severity: medium.
@@ -64,6 +75,23 @@ Fix:
   constrained CI/container environments.
 - Threaded the option through `Figure.to_png()` and composed chart `to_png()`.
 - Added tests proving `--no-sandbox` only appears when explicitly requested.
+
+#### Status as of 2026-07-20 (XY-SEC-2026-03)
+
+The last bullet no longer holds as written. Commit 8cda831 ("Stabilize Chromium
+PNG export in CI"), landed 2026-07-06, added an automatic fallback:
+`html_to_png` launches sandboxed first, and if that attempt produces no
+screenshot it rebuilds the argv with `--no-sandbox` inserted and re-runs before
+raising. The error message on total failure reports both attempts.
+`_browser_session` mirrors this for the persistent path, retrying
+`ChromiumSession(..., sandbox=False)` on `ChromiumError`. So `--no-sandbox` can
+appear without the caller requesting it.
+
+Sandboxing remains the default and the first attempt; the escape hatch and the
+threading through `Figure.to_png()` are unchanged. The fallback is an accepted
+residual risk taken to keep CI and container rasterization working where the
+sandbox cannot initialize. Follow-up pending: make the fallback opt-in (or at
+minimum warn on the downgrade) so a silent sandbox loss is observable.
 
 ### XY-SEC-2026-04: Pyramid native-boundary validation was weaker than other kernels
 
@@ -117,13 +145,30 @@ Fix:
 - CodSpeed and benchmark workflows assert native backend before performance
   runs.
 
+#### Status as of 2026-07-20 (Confirmed Controls)
+
+The Rust core is no longer std-only, so the "Cargo dependency tree is empty"
+control above and the `cargo tree --locked` evidence line below are both
+superseded. Commit c3c867b, landed 2026-07-11, added one direct dependency to
+`Cargo.toml` — `png = "0.18.1"`, for the native raster encoder's fdeflate fast
+path — which pulls in eight transitive crates: `bitflags`, `crc32fast`,
+`cfg-if`, `fdeflate`, `simd-adler32`, `flate2`, `miniz_oxide`, and `adler2`.
+`Cargo.lock` therefore holds nine third-party packages plus `xy-core`.
+
+The tree is still shallow and single-rooted, but "no third-party Rust crates"
+is no longer an accurate standing control. Follow-up pending: add `cargo audit`
+(or `cargo deny`) to CI now that a third-party tree exists, matching the
+`pip-audit` coverage already run on the Python side.
+
 ## Tooling Evidence
 
 - `uv tool run pip-audit --progress-spinner off .`: no known vulnerabilities.
 - `uv tool run pip-audit --progress-spinner off -r requirements.txt` from
   `examples/reflex/`: no known vulnerabilities; local editable
   `xy` is skipped because it is not a PyPI package.
-- `cargo tree --locked`: only `xy-core`, no third-party Rust crates.
+- `cargo tree --locked`: only `xy-core`, no third-party Rust crates. (True on
+  the audit date only; superseded by the 2026-07-20 status note above, which
+  records `png` plus eight transitive crates.)
 - `node js/build.mjs --check`: static JS bundles fresh.
 - `make check-security`: passed.
 - `make check-ci`: passed.
@@ -159,3 +204,25 @@ Fix:
   with Bun installed.
 - This audit did not perform browser fuzzing, GPU-driver fuzzing, native memory
   sanitizer runs, or a hosted-app penetration test.
+
+#### Status as of 2026-07-20 (Residual Risks)
+
+The first two bullets above understate the current exposure. "Keep Chromium's
+sandbox enabled" is caller-side advice that the library does not enforce end to
+end, and unsandboxed launches are not confined to CI smoke scripts: since commit
+8cda831 the public export path downgrades itself automatically. `html_to_png`
+re-runs with `--no-sandbox` inserted when the sandboxed launch produces no
+screenshot (`python/xy/export.py:509-526`, the retry itself at `:511-519` and
+the two-attempt error assembly through `:526`), and `_browser_session` retries
+`ChromiumSession(..., sandbox=False)` on `ChromiumError`
+(`python/xy/export.py:926-931`). Neither path emits a warning, so the downgrade
+is silent. See [the 2026-07-20 status note under
+XY-SEC-2026-03](#status-as-of-2026-07-20-xy-sec-2026-03) above and
+`spec/api/export.md` §7.
+
+Read that way, `sandbox=True` is a preference, not a guarantee: rendering
+untrusted HTML through `to_png()` can execute unsandboxed on a host where the
+sandbox cannot initialize. Container/worker isolation is therefore the load-
+bearing control, not the sandbox flag. Follow-up pending (same item as
+XY-SEC-2026-03): make the fallback opt-in, or at minimum warn on the downgrade,
+so a sandbox loss is observable.

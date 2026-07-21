@@ -17,7 +17,7 @@
 // Tiering is orthogonal: a density-tier trace is handled by 45_lod.js before
 // this registry is consulted (its drilled marks still render as points today).
 // Picking and legend swatches are separate extension points documented in
-// docs/engineering/chart-kind-contract.md — generalize them when a pickable non-point
+// spec/api/chart-kind-contract.md — generalize them when a pickable non-point
 // mark actually lands, not preemptively.
 // ---------------------------------------------------------------------------
 
@@ -25,7 +25,7 @@
 // ChartView branches:
 //   pointPick    — marks are point-shaped and participate in the GPU ID pick
 //                  pass (§17). A future rect/candle mark supplies its own pick
-//                  step instead (see docs/engineering/chart-kind-contract.md).
+//                  step instead (see spec/api/chart-kind-contract.md).
 //   retainCpu    — standalone export keeps CPU f32 copies of x/y so hover can
 //                  read approximate values with no kernel attached (§37).
 //   refreshColor — re-resolve CSS-expressed constant colors on theme change

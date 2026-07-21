@@ -251,6 +251,9 @@ class PayloadMixin(_Host):
             spec["colorbar"] = self.colorbar_options
         if self.show_modebar is False:
             spec["show_modebar"] = False
+        export_options = getattr(self, "export_options", None)
+        if export_options:
+            spec["export"] = export_options
         if self.show_tooltip is False:
             spec["show_tooltip"] = False
         if self.padding is not None:

@@ -52,11 +52,17 @@ REQUIRED_FILES = {
     "benchmarks/bench_workflows.py",
     "benchmarks/categories.py",
     "benchmarks/environment.py",
-    "docs/engineering/api-examples.md",
-    "docs/engineering/benchmark.md",
-    "docs/engineering/chart-roadmap.md",
-    "docs/engineering/contributing.md",
-    "docs/engineering/production-readiness.md",
+    "spec/README.md",
+    "spec/design-dossier.md",
+    "spec/api/api-examples.md",
+    "spec/api/chart-roadmap.md",
+    "spec/benchmarks/results.md",
+    "spec/design/renderer-architecture.md",
+    "spec/matplotlib/compat.md",
+    "spec/process/contributing.md",
+    "spec/process/production-readiness.md",
+    "spec/assets/benchmark-snapshot.svg",
+    "spec/assets/launch-benchmark-comparison.svg",
     "hatch_build.py",
     "pyproject.toml",
     "js/src/00_header.js",
@@ -290,11 +296,32 @@ def _require_baseline_json(path: str, root: str) -> None:
         raise AssertionError("benchmarks/baseline.json must contain a non-empty metrics object")
 
 
+# Every grouped subdirectory of spec/ must survive packaging. Pinning
+# individual files alone would let a whole group be dropped as long as the
+# pinned member stayed, so require each group to be non-empty in its own right.
+SPEC_SUBDIRS = ("api", "benchmarks", "design", "matplotlib", "process")
+
+
+def _require_spec_layout(files: set[str]) -> None:
+    empty = [
+        name
+        for name in SPEC_SUBDIRS
+        if not any(f.startswith(f"spec/{name}/") and f.endswith(".md") for f in files)
+    ]
+    if empty:
+        raise AssertionError(f"sdist has no markdown under spec/ subdirectories: {empty}")
+
+    svgs = sorted(f for f in files if f.startswith("spec/assets/") and f.endswith(".svg"))
+    if len(svgs) < 2:
+        raise AssertionError(f"sdist is missing spec/assets SVG evidence snapshots: {svgs}")
+
+
 def verify_sdist(path: str) -> None:
     root, files = _normalized_files(path)
     missing = sorted(REQUIRED_FILES - files)
     if missing:
         raise AssertionError(f"sdist missing required files: {missing}")
+    _require_spec_layout(files)
 
     forbidden = sorted(
         name
@@ -332,14 +359,14 @@ def verify_sdist(path: str) -> None:
         {
             "Stable vs. Experimental",
             "Python 3.11+",
-            "docs/engineering/api-examples.md",
+            "spec/api/api-examples.md",
             "make check-examples",
         },
     )
     _require_file_contains(
         path,
         root,
-        "docs/engineering/api-examples.md",
+        "spec/api/api-examples.md",
         {
             "Chart Family Quick Reference",
             "Small Business Chart",
@@ -351,11 +378,11 @@ def verify_sdist(path: str) -> None:
     _require_file_contains(
         path,
         root,
-        "docs/engineering/benchmark.md",
+        "spec/benchmarks/results.md",
         {
             "benchmark-report",
             "regression-benchmark-report",
-            "docs/engineering/benchmark_metrics.md",
+            "spec/benchmarks/metrics.md",
             "scatter.json",
             "kernel.json",
         },
@@ -363,7 +390,7 @@ def verify_sdist(path: str) -> None:
     _require_file_contains(
         path,
         root,
-        "docs/engineering/production-readiness.md",
+        "spec/process/production-readiness.md",
         {
             "Release-Blocking Gates",
             "make check-artifacts",
@@ -379,7 +406,7 @@ def verify_sdist(path: str) -> None:
     _require_file_contains(
         path,
         root,
-        "docs/engineering/contributing.md",
+        "spec/process/contributing.md",
         {
             "Pull Request Checklist",
             "make check-full",

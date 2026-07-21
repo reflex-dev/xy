@@ -18,7 +18,7 @@ corpus in [`tests/pyplot/corpus/`](../../tests/pyplot/corpus/) covers representa
 calls from every family. This is 100% 2-D *chart-method* coverage; it is not a
 claim to reproduce Matplotlib's renderer, transforms, or full Artist graph.
 
-The generated [method-by-method compatibility matrix](matplotlib-compat-matrix.md)
+The generated [method-by-method compatibility matrix](compat-matrix.md)
 is sourced from that snapshot, executable corpus calls, and
 [`compatibility.json`](../../tests/pyplot/compatibility.json). CI fails if the
 generated matrix is stale, installs the released `matplotlib==3.11.0` wheel,
@@ -64,7 +64,7 @@ dependency-free `triangles=` shorthand into Matplotlib's equivalent
 | `quiver`, `barbs`, `streamplot` | Native vector endpoint/arrowhead and bounded streamline kernels feeding one instanced segment mark. Barbs are a visual approximation: magnitude maps to a bounded tick count, not WMO 50/10/5 increments. Streamplot always uses the shim's own bounded fixed-step integrator (identical output with or without Matplotlib installed, but paths approximate Matplotlib's adaptive ones); `start_points`, `integration_direction`, array widths/colors and `num_arrows` are honored, and remaining non-default integration options fail loudly |
 | `tripcolor`, `triplot`, `tricontour`, `tricontourf` | Explicit topology or native dependency-free Delaunay triangulation; indexed geometry and isolines stay in Rust |
 | `pie` / `pie_label` | Native pie/donut tessellation and the Matplotlib 3.11 `PieContainer` (`values`, `fracs`, grouped text labels) |
-| `axhline` / `axvline` / `axhspan` / `axvspan`, `text`, `annotate`, `table` | Fractional span bounds plus data/axes/figure text coordinates are supported. `annotate(arrowprops=)` draws real arrows in every output: offset-point text becomes an engine callout (arrow pinned from label to point across zoom), data-coordinate text an arrow annotation; date-string coordinates convert on datetime axes. Arrowstyles map to head/tail shapes (`->` open V, `-|>` filled, `\|-\|`/brackets bar caps, `fancy`/`simple`/`wedge` filled tapered shafts sized by the text's mutation scale) and `connectionstyle` arc3/angle3/angle become quadratic curves (corner rounding approximated); `alpha` dims the arrow only. `bbox=` becomes label box styles (fill/edge/round corners/`pad`) on the HTML label; static exporters keep the plain label. Text is unclipped like Matplotlib (`clip_on=False`), and axes-fraction text right of the axes box (x > 1, e.g. seaborn-style row titles) reserves right margin in every exporter. `rotation=90/270` renders vertical text in browser, PNG, and SVG with Matplotlib's rotate-then-align box semantics; other angles rotate in browser and SVG output only (native PNG draws them horizontally) |
+| `axhline` / `axvline` / `axhspan` / `axvspan`, `text`, `annotate`, `table` | Fractional span bounds plus data/axes/figure text coordinates are supported. `annotate(arrowprops=)` draws real arrows in every output: offset-point text becomes an engine callout (arrow pinned from label to point across zoom), data-coordinate text an arrow annotation; date-string coordinates convert on datetime axes. Arrowstyles map to head/tail shapes (`->` open V, `-\|>` filled, `\|-\|`/brackets bar caps, `fancy`/`simple`/`wedge` filled tapered shafts sized by the text's mutation scale) and `connectionstyle` arc3/angle3/angle become quadratic curves (corner rounding approximated); `alpha` dims the arrow only. `bbox=` becomes label box styles (fill/edge/round corners/`pad`) on the HTML label; static exporters keep the plain label. Text is unclipped like Matplotlib (`clip_on=False`), and axes-fraction text right of the axes box (x > 1, e.g. seaborn-style row titles) reserves right margin in every exporter. `rotation=90/270` renders vertical text in browser, PNG, and SVG with Matplotlib's rotate-then-align box semantics; other angles rotate in browser and SVG output only (native PNG draws them horizontally) |
 | `from xy.pyplot import FacetGrid` (seaborn-shaped) | Row/column small multiples with seaborn's `map` contract (subset → activate panel → call the pyplot function), shared domains, edge-only axis labels, top-row column titles, and `margin_titles=True` rotated row titles. `hue=`/`palette=`, `col_wrap=`, `map_dataframe`, and `add_legend` fail loudly |
 | `xlabel` / `ylabel` / `title` / `suptitle` | Suptitles are retained in HTML and multi-panel PNG/SVG |
 | `legend()` | `loc`, columns, title/font size/colors, frame styling, `borderpad`, `labelspacing`, `fancybox`, `framealpha`, and `shadow` are retained across browser and static output. `loc='best'` chooses the least occupied corner from bounded samples of the current data |
@@ -77,12 +77,13 @@ dependency-free `triangles=` shorthand into Matplotlib's equivalent
 | `twinx()`, `secondary_xaxis()`, `secondary_yaxis()` | second data axes and linked tick-only secondary axes with callable forward/inverse conversions. Secondary-axis ticks are evenly spaced conversions of the primary domain (not Matplotlib's secondary-unit locators) and currently reach the interactive HTML client only — PNG/SVG export does not draw them yet |
 | `fig, ax = plt.subplots()`; `plt.subplots(n, m, figsize=, dpi=, squeeze=, sharex=, sharey=)` | Grid renders as CSS-grid HTML and stitched PNG/SVG; shared axes use common domains and live linked pan/zoom. `Figure.subplots_adjust(left=, right=, top=, bottom=, wspace=, hspace=)` moves the SubplotParams frame: the grid resolves to explicit figure rectangles and every exporter (HTML, PNG, SVG) positions panels at those rectangles |
 | `fig.add_subplot(2, 2, 1)` / `add_subplot(221)` | |
+| `plt.subplot_mosaic([['A','B'],['C','C']])` / `Figure.subplot_mosaic` | Row sequences (a list of equal-length label strings, or nested label lists) resolve to a uniform grid; each distinct label, in first-appearance order, binds to the next cell, returning `(fig, {label: Axes})` with `figsize=`/`dpi=` sizing the figure. Repeated labels do not span and `'.'` does not blank a cell — the grid keeps one axes per cell — and Matplotlib's single-string forms (`'AB;CC'`, newline-separated blocks) are not parsed into rows |
 | `gca` / `gcf` / `sca` / `figure(num)` / `close(...)` | matplotlib's implicit-state semantics |
 | `savefig('x.png' / '.svg' / '.html', dpi=)` | Browser-free PNG/SVG supports both single and multi-panel figures; file-like targets require an explicit `format=` and unsupported metadata/layout/export formats fail loudly |
 | `plt.show()` | notebooks: inline HTML display; scripts: opens the default browser |
 | Artists: `set_data` / `set_ydata` / `set_color` / `set_label` / `set_linewidth` / `remove` | mutating a handle rebuilds the chart on next render |
 | Colors | single letters, `C0`–`C9`, `tab:*`, gray `'0.5'`, RGB(A) tuples, any CSS color |
-| `plt.cm.*` / `plt.colormaps[...]` / `cmap=` names | viridis, plasma, inferno, magma, cividis, gray, turbo, coolwarm, Blues, RdYlGn, RdGy, jet, rainbow, Spectral, aliases, and true `*_r` reversal (RdGy/jet render from 11-stop anchor tables sampled from Matplotlib 3.11, linearly interpolated) |
+| `plt.cm.*` / `plt.colormaps[...]` / `cmap=` names | viridis, plasma, inferno, magma, cividis, gray, turbo, coolwarm, Blues, Purples, PuBu, RdBu, RdYlGn, RdGy, PiYG, PRGn, jet, rainbow, Spectral, binary, aliases, and true `*_r` reversal (RdGy/jet render from 11-stop anchor tables sampled from Matplotlib 3.11, linearly interpolated) |
 | `LinearSegmentedColormap.from_list` / `ListedColormap` | Python-side callables (`cmap(np.arange(cmap.N))` → RGBA) for scripts that colormap values themselves; they cannot be passed as `cmap=` to plotting calls (no engine table), which fails loudly |
 | `plt.colorbar()` / `fig.colorbar()` / `plt.clim()` / `plt.gci()` | Returns a live handle (`set_label`, `set_ticks`); with no mappable it uses the current image the way pyplot does. `ticks=`/`extend=` render in PNG and SVG (the HTML colorbar stays a minimal gradient without tick text); `clim` retargets the mappable's color window and any colorbar derived from it |
 | `rcParams` | Figure size/DPI, line width/marker size, image cmap/origin, axes color cycle, and all four `axes.spines.*` switches affect every exporter. Pyplot axes default to Matplotlib's four-sided box and each spine can be hidden independently. The chrome keys (axes face/edge/label/title styles, font family/size, tick colors/sizes, legend defaults, figure facecolor) reach the HTML renderer and multi-panel PNG stitching; single-chart PNG and SVG export currently render their own fixed chrome and ignore them. Unknown keys warn once |
@@ -112,9 +113,13 @@ arrows.
 
 - Custom Matplotlib marker paths, arbitrary clipping graphs, and unsupported
   collection gradients are rejected rather than silently approximated.
-- The shim's figure/axes bookkeeping adds ~10µs per figure over the
-  declarative API (measured: +9% at 10k points, +2% at 100k, +0.6% at 1M);
-  `tests/pyplot/test_perf_guardrail.py` gates this relationship in CI.
+- The shim's figure/axes bookkeeping adds ~50µs of fixed per-figure cost over
+  the declarative API (measured 2026-07-14, M-series: +60% at 10k points, +26%
+  at 100k — fixed cost over an ~85µs baseline, not O(n) work).
+  `tests/pyplot/test_perf_guardrail.py` gates the relationship at 10k and 100k
+  with generous headroom (1.6x and 1.5x ceilings plus a 100µs absolute
+  allowance for CI timer jitter), to catch structural regressions rather than
+  to re-measure the margin.
 
 ## Boundaries (enforced by `tests/pyplot/test_boundaries.py`)
 
@@ -133,4 +138,4 @@ python scripts/sync_matplotlib_compat.py
 ```
 
 Review the snapshot and generated matrix diff as an API change. Release-level
-changes are recorded in [the compatibility changelog](matplotlib-compat-changelog.md).
+changes are recorded in [the compatibility changelog](compat-changelog.md).
