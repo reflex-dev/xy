@@ -298,8 +298,9 @@ performance data.
 Two `make` targets bound the `xy.pyplot` shim from opposite sides. Both appear
 in the focused-gate table of `spec/process/production-readiness.md`.
 
-- **`make check-pyplot`** → `pytest tests/pyplot -q`. The correctness side: shim
-  behavior, matplotlib interoperability, and the reference corpus. It also
+- **`make check-pyplot`** → the structured pyplot accepted-option audit followed
+  by `pytest tests/pyplot -q`. The correctness side: shim behavior, matplotlib
+  interoperability, and the reference corpus. It also
   carries the *relative* speed gate, `tests/pyplot/test_perf_guardrail.py`,
   which asserts the pyplot build stays within 1.6x the declarative build at 10k
   points and 1.5x at 100k (best-of-N, plus a 100us absolute allowance for CI

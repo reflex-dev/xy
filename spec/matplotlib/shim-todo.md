@@ -61,11 +61,13 @@ evidence is not oversold:
 - The PNG comparisons in the same file are coarse structural smoke checks
   (aspect-preserving normalized-mask IoU, a 2x ink-area band, and a 0.20 luma
   band), plus negative controls proving blank and wrong geometry fail.
-- `test_silent_drop_regressions.py` mechanically scans every public adapter:
-  bare option pops and deleted signature parameters fail unless an explicit
-  `compat-noop:` rationale is attached. Corpus coverage only credits calls on
-  proven pyplot/Axes receivers, so unrelated `anything.fill()` calls cannot
-  satisfy the inventory.
+- `scripts/check_pyplot_options.py` performs the accepted-option audit: unread
+  named parameters and discarded literal option pops fail unless the exact
+  function/option appears in `spec/testing/pyplot-noops.json` with a substantive
+  rationale and a live behavioral contract in `test_compat_noops.py`. Reachable
+  local closures are followed; unused nested helpers cannot hide a dead option.
+  Corpus coverage separately credits calls only on proven pyplot/Axes receivers,
+  so unrelated `anything.fill()` calls cannot satisfy the inventory.
 - `test_p3_option_contracts.py`, `test_silent_drop_regressions.py`,
   `test_artist_transform_contracts.py`, `test_rc_chrome_contracts.py`, and
   `test_rc_color_export_contracts.py` cover implemented-or-rejected option
@@ -596,10 +598,13 @@ streamplot
   margins are thin (a correct image scores ~0.567 vs the 0.55 floor). The
   negative control is tied to the live `MINIMUM_IOU` values, so loosening
   them below a wrong-geometry score fails the control.
-- Discard detector: mechanically scans public shim adapters for bare
-  `kwargs.pop`/`del` statements without a `compat-noop:` marker. It does NOT
-  catch a named parameter that is accepted and never read, or an
-  assigned-then-unused pop; the `compat-noop:` escape hatch is free text.
+- Accepted-option detector: AST/dataflow checks unread public signature
+  parameters, bare literal option pops, and assigned-then-unused pops; it
+  follows reachable local closures without crediting dead nested helpers.
+  The exact 34-option compatibility boundary is structured in
+  `spec/testing/pyplot-noops.json`, and every entry names a behavioral invariant
+  test. Dynamic option keys are not credited as declarations; public adapters
+  still reject remaining unknown keys through `check_unsupported`.
 - Corpus coverage credits calls only on receivers traced to
   `subplots`/`gca`/... — but the names `ax`/`axes` are trusted
   unconditionally, so it is a naming heuristic, not type resolution.

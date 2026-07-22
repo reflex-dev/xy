@@ -102,6 +102,7 @@ def compose_html(
     else:
         grid_css = (
             f".xy-grid {{ display: grid; grid-template-columns: repeat({ncols}, max-content); "
+            f"grid-template-rows: repeat({nrows}, max-content); "
             "gap: 4px; padding: 4px; overflow-x: auto; }}"
         )
         grid = "\n".join(panels)

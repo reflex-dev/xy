@@ -242,6 +242,17 @@ jobs:
       - name: Public API coherence
         run: .venv/bin/python scripts/check_public_api.py
 
+      - name: Pyplot option contract
+        run: .venv/bin/python scripts/check_pyplot_options.py --report pyplot-option-contract.json
+
+      - name: Upload pyplot option contract evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pyplot-option-contract
+          if-no-files-found: error
+          path: pyplot-option-contract.json
+
       - name: Claim guardrails
         run: .venv/bin/python scripts/check_claim_guardrails.py
 

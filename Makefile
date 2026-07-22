@@ -85,6 +85,7 @@ check-examples:
 	$(PYTHON) scripts/verify_local.py --only examples
 
 check-pyplot:
+	$(PYTHON) scripts/check_pyplot_options.py
 	$(PYTHON) -m pytest tests/pyplot -q
 
 check-security:

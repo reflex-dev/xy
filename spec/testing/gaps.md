@@ -351,9 +351,15 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-027 — Sound pyplot unused-option detector
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: the current scan can miss named-but-never-read or assigned-unused
-  options, while compatibility no-ops are free text.
+- Status: `IMPLEMENTED`
+- Evidence: `scripts/check_pyplot_options.py`,
+  `spec/testing/pyplot-noops.json`, `tests/test_check_pyplot_options.py`,
+  `tests/pyplot/test_compat_noops.py`, `make check-pyplot`, and the hard-CI
+  `pyplot-option-contract` artifact.
+- Current gap: closed; the AST/dataflow audit detects unread named options and
+  discarded literal `kwargs`/`options` pops, follows only reachable local
+  closures, and requires an exact structured registry with substantive
+  rationale and executable behavioral evidence for all 34 deliberate no-ops.
 - Implemented when: AST/dataflow or runtime instrumentation proves each supported
   option affects state/geometry or maps to a structured, reviewed no-op with a
   rationale and test; adding an accepted unused option fails.

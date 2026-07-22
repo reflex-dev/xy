@@ -79,6 +79,38 @@ def test_ci_workflow_rejects_required_aggregate_missing_hard_job(tmp_path: Path)
     assert any("required_ci needs" in error and "sdist" in error for error in errors)
 
 
+def test_ci_workflow_rejects_missing_pyplot_option_contract(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Pyplot option contract\n"
+            "        run: .venv/bin/python scripts/check_pyplot_options.py --report pyplot-option-contract.json\n\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("Pyplot option contract" in error for error in errors)
+
+
+def test_ci_workflow_requires_retained_pyplot_option_evidence(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "          name: pyplot-option-contract\n"
+            "          if-no-files-found: error\n"
+            "          path: pyplot-option-contract.json\n",
+            "          name: pyplot-option-contract\n"
+            "          if-no-files-found: warn\n",
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("Upload pyplot option contract evidence" in error for error in errors)
+
+
 def test_ci_workflow_rejects_reflex_lane_outside_required_aggregate(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"

@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "noops": [
+    {
+      "path": "python/xy/pyplot/_artists.py",
+      "function": "PathCollection.set_sizes",
+      "options": ["dpi"],
+      "rationale": "Marker sizes are converted with the point scale owned by the axes; an unrelated renderer DPI cannot change that stored geometry.",
+      "test": "tests/pyplot/test_compat_noops.py::test_artist_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/_artists.py",
+      "function": "Text.get_window_extent",
+      "options": ["renderer"],
+      "rationale": "The shim has one deterministic text metric approximation and no renderer-specific font-metric object to consult.",
+      "test": "tests/pyplot/test_compat_noops.py::test_artist_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/_axes.py",
+      "function": "Axes.axis",
+      "options": ["emit"],
+      "rationale": "Axes limit callbacks are not part of the supported shim API, so changing callback emission cannot affect the resulting view.",
+      "test": "tests/pyplot/test_compat_noops.py::test_axes_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/_axes.py",
+      "function": "Axes.get_figure",
+      "options": ["root"],
+      "rationale": "The shim does not implement nested subfigures; the immediate and root figure are therefore the same supported object.",
+      "test": "tests/pyplot/test_compat_noops.py::test_axes_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/_axes.py",
+      "function": "Axes.get_position",
+      "options": ["original"],
+      "rationale": "There is one stored figure-fraction axes rectangle and no active-versus-original transform graph in the shim.",
+      "test": "tests/pyplot/test_compat_noops.py::test_axes_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/_axes.py",
+      "function": "Axes.margins",
+      "options": ["tight"],
+      "rationale": "The engine always derives auto limits directly from entries plus the requested margin, with no separate sticky-edge tightness pass.",
+      "test": "tests/pyplot/test_compat_noops.py::test_axes_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/_axes.py",
+      "function": "Axes.relim",
+      "options": ["visible_only"],
+      "rationale": "Visibility changes presentation opacity but deliberately retain every entry in the data-extent model used by relim.",
+      "test": "tests/pyplot/test_compat_noops.py::test_axes_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/_axes.py",
+      "function": "Axes.set_aspect",
+      "options": ["anchor", "share"],
+      "rationale": "The supported aspect model has no independent layout-anchor graph, and shared axes already resolve through shared axis state.",
+      "test": "tests/pyplot/test_compat_noops.py::test_axes_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/_axisgrid.py",
+      "function": "FacetGrid.__init__",
+      "options": ["legend_out"],
+      "rationale": "External facet legends are observable only with hue mapping, which this bounded FacetGrid surface rejects explicitly.",
+      "test": "tests/pyplot/test_compat_noops.py::test_facetgrid_legend_out_noop_is_bounded_by_hue_rejection"
+    },
+    {
+      "path": "python/xy/pyplot/_mplfig.py",
+      "function": "Figure.clear",
+      "options": ["keep_observers"],
+      "rationale": "The shim exposes no figure observer registry, so both values perform the same complete supported-state reset.",
+      "test": "tests/pyplot/test_compat_noops.py::test_figure_clear_observer_noop_is_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/_plot_types.py",
+      "function": "PlotTypeMixin.clabel",
+      "options": ["fontsize", "inline", "inline_spacing", "use_clabeltext", "rightside_up", "zorder"],
+      "rationale": "Contour labels use deterministic shim-owned placement and styling; unsupported manual layout controls cannot alter that bounded output.",
+      "test": "tests/pyplot/test_compat_noops.py::test_clabel_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/_ticker.py",
+      "function": "FixedFormatter.__call__",
+      "options": ["value"],
+      "rationale": "FixedFormatter selects its predeclared label exclusively by tick position, matching its supported sequence contract.",
+      "test": "tests/pyplot/test_compat_noops.py::test_formatter_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/_ticker.py",
+      "function": "FixedLocator.tick_values",
+      "options": ["vmin", "vmax"],
+      "rationale": "FixedLocator returns its configured locations regardless of the current view bounds; clipping is performed by the axis renderer.",
+      "test": "tests/pyplot/test_compat_noops.py::test_locator_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/_ticker.py",
+      "function": "FormatStrFormatter.__call__",
+      "options": ["pos"],
+      "rationale": "Percent-style formatting depends only on the numeric value and has no position placeholder in its supported contract.",
+      "test": "tests/pyplot/test_compat_noops.py::test_formatter_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/_ticker.py",
+      "function": "LogLocator.__init__",
+      "options": ["numticks"],
+      "rationale": "The bounded log locator emits every in-view requested-decade tick and leaves density clipping to the axis layout.",
+      "test": "tests/pyplot/test_compat_noops.py::test_locator_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/_ticker.py",
+      "function": "MaxNLocator.__init__",
+      "options": ["prune"],
+      "rationale": "Edge ticks remain part of the locator result and are clipped at draw time, so constructor pruning does not alter locations.",
+      "test": "tests/pyplot/test_compat_noops.py::test_locator_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/_ticker.py",
+      "function": "NullFormatter.__call__",
+      "options": ["value", "pos"],
+      "rationale": "NullFormatter intentionally returns an empty label for every numeric value and every tick position.",
+      "test": "tests/pyplot/test_compat_noops.py::test_formatter_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/_ticker.py",
+      "function": "NullLocator.tick_values",
+      "options": ["vmin", "vmax"],
+      "rationale": "NullLocator intentionally returns no locations for every possible pair of view bounds.",
+      "test": "tests/pyplot/test_compat_noops.py::test_locator_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/_ticker.py",
+      "function": "ScalarFormatter.__call__",
+      "options": ["pos"],
+      "rationale": "Scalar formatting is a pure numeric conversion and does not vary according to the tick's sequence position.",
+      "test": "tests/pyplot/test_compat_noops.py::test_formatter_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/dates.py",
+      "function": "DateFormatter.__call__",
+      "options": ["pos"],
+      "rationale": "Date label text is derived from epoch milliseconds and the stored format, independent of tick sequence position.",
+      "test": "tests/pyplot/test_compat_noops.py::test_date_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/dates.py",
+      "function": "DateFormatter.__init__",
+      "options": ["tz", "usetex"],
+      "rationale": "The supported date contract is naive UTC plain text, without timezone conversion or a TeX rendering backend.",
+      "test": "tests/pyplot/test_compat_noops.py::test_date_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/dates.py",
+      "function": "DayLocator.__init__",
+      "options": ["tz"],
+      "rationale": "Calendar locators operate in the shim's documented naive UTC millisecond coordinate space.",
+      "test": "tests/pyplot/test_compat_noops.py::test_date_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/dates.py",
+      "function": "MonthLocator.__init__",
+      "options": ["tz"],
+      "rationale": "Calendar locators operate in the shim's documented naive UTC millisecond coordinate space.",
+      "test": "tests/pyplot/test_compat_noops.py::test_date_compat_noops_are_invariant"
+    },
+    {
+      "path": "python/xy/pyplot/dates.py",
+      "function": "YearLocator.__init__",
+      "options": ["tz"],
+      "rationale": "Calendar locators operate in the shim's documented naive UTC millisecond coordinate space.",
+      "test": "tests/pyplot/test_compat_noops.py::test_date_compat_noops_are_invariant"
+    }
+  ]
+}

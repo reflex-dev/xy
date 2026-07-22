@@ -124,6 +124,17 @@ def test_grid_html_has_panels() -> None:
     assert "Content-Security-Policy" in html
 
 
+def test_css_grid_html_uses_both_declared_dimensions() -> None:
+    from xy.pyplot._grid import compose_html
+
+    _fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1])
+    chart = ax._build_chart(320, 240)
+    html = compose_html([chart], nrows=7, ncols=3, suptitle=None)
+    assert "grid-template-columns: repeat(3, max-content)" in html
+    assert "grid-template-rows: repeat(7, max-content)" in html
+
+
 def test_notebook_repr_isolates_standalone_document_styles() -> None:
     fig, ax = plt.subplots(figsize=(6.4, 4.8), dpi=100)
     ax.plot([0, 1], [1, 2])

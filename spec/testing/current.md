@@ -89,7 +89,7 @@ index. Missing additions are tracked by ID in [`gaps.md`](gaps.md).
 |---|---|---|---|---|
 | `xy.pyplot` API and state | `tests/pyplot/`; compatibility snapshot; public annotations and state/artist/options tests | Hard dedicated Matplotlib 3.11 and root suites | `IMPLEMENTED` | The declared compatibility inventory and broad behavioral corpus are substantial. |
 | Matplotlib semantic/perceptual parity | Pinned reference subsets and a 54-case corpus | Hard dedicated lane | `PARTIALLY IMPLEMENTED` | The tolerant corpus can accept wrong or empty data for some cases; contour, vector magnitude, transforms, and tick semantics need stronger independent oracles. See TST-NI-026. |
-| Pyplot accepted-option use | Existing compatibility and silent-drop regressions | Hard tests | `PARTIALLY IMPLEMENTED` | The current scanner can miss named-but-never-read options, and no-op declarations are free text. See TST-NI-027. |
+| Pyplot accepted-option use | `scripts/check_pyplot_options.py`; `spec/testing/pyplot-noops.json`; behavioral no-op contracts and detector mutation tests | Hard root CI with retained JSON | `IMPLEMENTED` | Unread named options and discarded literal option pops fail unless the exact function/option is reviewed with a substantive rationale and executable invariant test. TST-NI-027 records the completed gate. |
 | Required pandas interoperability lane | Tests guarded by `pytest.importorskip("pandas")` are supporting evidence | Dependency absent from normal CI | `NOT IMPLEMENTED` | No supported pandas floor/latest lane enforces Period/Series interoperability. See TST-NI-047. |
 | Documentation app | `docs/app/tests`; production app on Python 3.11/3.12; sitemap, Markdown asset, route, and preview checks | Docs workflow | `IMPLEMENTED` | Applies to selected docs paths, not specification-only changes. |
 | Published quickstart | Installs the configured released `xy` wheel and executes public quickstarts | Docs workflow | `IMPLEMENTED` | The published version is currently hard-coded and must be maintained deliberately. |
@@ -154,7 +154,7 @@ described above.
 | `make check-claims` | Public performance-claim guardrails |
 | `make check-testing-spec` | Validate this catalog's links, gap IDs, commands, paths, and workflow jobs |
 | `make check-benchmark-harness` | Benchmark metadata, schema, and regression tests |
-| `make check-pyplot` | Full `tests/pyplot` suite in the active environment |
+| `make check-pyplot` | Structured accepted-option audit plus the full `tests/pyplot` suite in the active environment |
 | `make check-pyplot-speed` | Local full pyplot-vs-Matplotlib static-PNG target; requires benchmark dependencies |
 | `make check-sdist` | Build and structurally verify a source archive |
 | `make check-wheel` | Build and structurally verify a wheel; native expectation is caller-selected |

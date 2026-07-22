@@ -123,6 +123,9 @@ When you touch `python/xy/pyplot/` or the matplotlib compatibility corpus, run:
 make check-pyplot
 ```
 
+This first rejects newly accepted-but-unused pyplot options against the
+reviewed `spec/testing/pyplot-noops.json` contract, then runs the shim suite.
+
 When you change shim rendering performance, run `make check-pyplot-speed`, which
 enforces the per-family 10x static-PNG target via
 `benchmarks/bench_pyplot_vs_matplotlib.py` and requires the `.[bench]` extra.

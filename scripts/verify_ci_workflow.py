@@ -321,6 +321,10 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "hard production gates",
         "scripts/verify_ci_workflow.py",
         "scripts/check_public_api.py",
+        "scripts/check_pyplot_options.py",
+        "--report pyplot-option-contract.json",
+        "Upload pyplot option contract evidence",
+        "pyplot-option-contract",
         "scripts/check_claim_guardrails.py",
         "ruff check .",
         "scripts/smoke_render.py",
@@ -387,6 +391,25 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "transport.json",
     )
     hard_test = jobs.get("test", "")
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Pyplot option contract",
+        "fail-closed structured no-op audit",
+        "scripts/check_pyplot_options.py",
+        "--report pyplot-option-contract.json",
+    )
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Upload pyplot option contract evidence",
+        "failure-retaining option-contract evidence",
+        "if: always()",
+        "actions/upload-artifact@",
+        "pyplot-option-contract",
+        "if-no-files-found: error",
+        "pyplot-option-contract.json",
+    )
     _require_step_contains(
         errors,
         hard_test,
