@@ -284,6 +284,15 @@ correct for free. What this tier gives up, deliberately: kernel round-trips
 (deep drilldown past the shipped tiers, exact server picks, streaming) and
 semantic events.
 
+`xy.facet_chart(...)` follows the same static tier, but preserves the core
+facet contract: because a `FacetGrid` is a composition of independent Figures
+rather than one Figure with a combined wire payload, the adapter emits a
+responsive CSS grid containing one content-addressed static `XYChart` per
+panel. The grid title, column count, gap, and panel height come from the core
+`FacetGrid`; container props stay on the grid while semantic event handlers
+are forwarded to each panel (with the static tier's event limitations
+unchanged).
+
 **`inline()` — fixed data that still wants the kernel.**
 `token = reflex_xy.inline(chart)` at **module scope** registers the figure
 under a content-addressed token (`xyin-<digest>`): every backend worker
