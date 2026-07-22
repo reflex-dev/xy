@@ -1,0 +1,10 @@
+# Rust build artifacts for the bundled native parser/sorter
+osmium-rs/target/
+
+# Local OSM data + derived caches (can be hundreds of GB — never commit)
+*.pbf
+*.f64
+*.f32
+*.idx
+*.xyzones
+osm-data/
