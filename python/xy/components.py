@@ -510,6 +510,9 @@ def scatter(
     color_domain: Optional[tuple[float, float]] = None,
     size_range: tuple[float, float] = (2.0, 18.0),
     opacity: Any = 0.8,
+    zoom_size_factor: float = 1.0,
+    zoom_opacity: Optional[float] = None,
+    zoom_emphasis: float = 16.0,
     density: Optional[bool] = None,
     symbol: Any = "circle",
     stroke: Any = None,
@@ -535,6 +538,9 @@ def scatter(
         color_domain: Explicit minimum and maximum for continuous colors.
         size_range: Minimum and maximum rendered marker sizes.
         opacity: Marker opacity from zero to one.
+        zoom_size_factor: Marker-size multiplier reached on deep zoom.
+        zoom_opacity: Optional marker opacity reached on deep zoom.
+        zoom_emphasis: Zoom factor at which responsive targets are reached.
         density: Whether to force or disable density aggregation.
         symbol: Marker symbol name.
         stroke: Optional marker outline color.
@@ -564,6 +570,9 @@ def scatter(
             "color_domain": color_domain,
             "size_range": size_range,
             "opacity": opacity,
+            "zoom_size_factor": zoom_size_factor,
+            "zoom_opacity": zoom_opacity,
+            "zoom_emphasis": zoom_emphasis,
             "density": density,
             "symbol": symbol,
             "stroke": stroke,
@@ -4521,6 +4530,9 @@ def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
             color_domain=m.props.get("color_domain"),
             size_range=m.props["size_range"],
             opacity=m.props["opacity"],
+            zoom_size_factor=m.props["zoom_size_factor"],
+            zoom_opacity=m.props["zoom_opacity"],
+            zoom_emphasis=m.props["zoom_emphasis"],
             density=m.props["density"],
             symbol=m.props["symbol"],
             stroke=m.props["stroke"],
