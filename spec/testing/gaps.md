@@ -143,9 +143,11 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-012 — Pick-boundary browser gate
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: `scripts/pick_boundary_smoke.py` exists but is absent from CI,
-  Makefile, local verification, and the release contract.
+- Status: `IMPLEMENTED`
+- Evidence: `scripts/pick_boundary_smoke.py`, `tests/test_pick_boundary_smoke.py`,
+  `make check-browser`, and the hard-CI `pick-boundary-evidence` artifact.
+- Current gap: closed; the configured Chromium executable is authoritative,
+  boundary and cache semantics are hard-gated, and failures retain JSON evidence.
 - Implemented when: it is a named hard check for 256 trace slots including 255,
   large indices, global/local mapping, and pick-cache reuse/invalidation, with
   catalog wiring and retained failure evidence.

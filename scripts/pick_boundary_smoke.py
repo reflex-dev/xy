@@ -21,10 +21,11 @@ harness conventions as render_smoke_nonumpy.py.
 
 from __future__ import annotations
 
+import argparse
 import json
+import re
 import shutil
 import subprocess
-import sys
 import tempfile
 from array import array
 from pathlib import Path
@@ -49,9 +50,12 @@ N_BIG = 70_000
 BIG_PICK_INDEX = 69_999
 
 
-def find_chromium() -> str:
-    if len(sys.argv) > 1:
-        return sys.argv[1]
+def find_chromium(explicit: str | None = None) -> str:
+    if explicit:
+        resolved = explicit if Path(explicit).is_file() else shutil.which(explicit)
+        if resolved:
+            return str(resolved)
+        raise SystemExit(f"configured chromium not found: {explicit}")
     for c in CHROMIUM_CANDIDATES:
         if Path(c).is_file() or shutil.which(c):
             return c
@@ -242,18 +246,22 @@ PROBE = """
       window.requestAnimationFrame = realRaf;
       return fail(`hover sweep rendered pick ${sweepRenders}x (want 1)`);
     }
-    // Zoom out slightly: the next pick must re-render and still resolve
-    // correctly in the new view.
-    v._setView({ x0: -0.1, x1: 1.1, y0: -0.1, y1: 1.1 }, { animate: false, request: false });
+    // Zoom in slightly: the next pick must re-render and still resolve
+    // correctly in the new view. (Zooming out beyond the home range is
+    // intentionally clamped by the public navigation contract.)
+    v._setView({ x0: 0.05, x1: 0.95, y0: 0.05, y1: 0.95 }, { animate: false, request: false });
     frame(); // the view-change frame invalidates the pick cache
-    const zx = ((0.5 / GRID + 0.1) / 1.2) * v.plot.w; // trace 0 in the new view
-    const zy = (1 - (0.5 / GRID + 0.1) / 1.2) * v.plot.h;
+    const zoomTarget = 136; // central point, comfortably inside the zoomed view
+    const zgx = (zoomTarget % GRID + 0.5) / GRID;
+    const zgy = (Math.floor(zoomTarget / GRID) + 0.5) / GRID;
+    const zx = ((zgx - 0.05) / 0.9) * v.plot.w;
+    const zy = (1 - (zgy - 0.05) / 0.9) * v.plot.h;
     const hitZoomed = v._pickAt(zx, zy);
     window.requestAnimationFrame = realRaf;
     if (pickRenders !== 2)
       return fail(`view change: pick rendered ${pickRenders}x total (want 2)`);
-    if (!hitZoomed || hitZoomed.trace !== 0)
-      return fail(`view change: picked ${hitZoomed && hitZoomed.trace} (want 0)`);
+    if (!hitZoomed || hitZoomed.trace !== zoomTarget)
+      return fail(`view change: picked ${hitZoomed && hitZoomed.trace} (want ${zoomTarget})`);
     v._renderPick = renderPick0;
 
     document.title = `XY_OK slots=${slots.join(",")} big=${hitBig.index} second=${hitSecond.trace}/${hitSecond.index} hoverPickRenders=${sweepRenders} viewRefresh=1`;
@@ -265,7 +273,21 @@ PROBE = """
 """
 
 
-def main() -> None:
+def _write_evidence(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("chromium", nargs="?", default=None)
+    parser.add_argument(
+        "--evidence",
+        type=Path,
+        default=None,
+        help="write a compact JSON diagnostic suitable for CI artifact retention",
+    )
+    args = parser.parse_args(argv)
     standalone = (STATIC / "standalone.js").read_text(encoding="utf-8")
     spec, blob, spec2, blob2 = build_payload()
     import base64
@@ -283,34 +305,69 @@ def main() -> None:
         f'const BLOB2="{base64.b64encode(blob2).decode()}";</script>'
         f"{PROBE}</body></html>"
     )
-    exe = find_chromium()
+    exe = find_chromium(args.chromium)
     with tempfile.TemporaryDirectory() as td:
         page = Path(td) / "pick.html"
         page.write_text(html, encoding="utf-8")
-        out = subprocess.run(
-            [
-                exe,
-                "--headless=new",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--use-angle=swiftshader",
-                "--enable-unsafe-swiftshader",
-                "--virtual-time-budget=8000",
-                "--dump-dom",
-                page.as_uri(),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-    import re
-
+        command = [
+            exe,
+            "--headless=new",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--use-angle=swiftshader",
+            "--enable-unsafe-swiftshader",
+            "--virtual-time-budget=8000",
+            "--dump-dom",
+            page.as_uri(),
+        ]
+        try:
+            out = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired as exc:
+            stderr = exc.stderr or ""
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode(errors="replace")
+            evidence = {
+                "status": "failed",
+                "title": "XY_FAIL browser timeout after 120s",
+                "chromium_returncode": None,
+                "stderr_tail": stderr[-4000:],
+                "timed_out": True,
+                "trace_slots": [0, 127, 253, 254, 255],
+                "large_pick_index": BIG_PICK_INDEX,
+            }
+            if args.evidence is not None:
+                _write_evidence(args.evidence, evidence)
+            print("pick boundary smoke FAILED: browser timeout after 120s")
+            if stderr:
+                print(stderr[-2000:])
+            return 1
     m = re.search(r"<title>(.*?)</title>", out.stdout, re.S | re.I)
     title = m.group(1).strip() if m else "(no title)"
-    if not title.startswith("XY_OK"):
-        raise SystemExit(f"pick boundary smoke FAILED: {title}")
+    passed = out.returncode == 0 and title.startswith("XY_OK")
+    evidence = {
+        "status": "ok" if passed else "failed",
+        "title": title,
+        "chromium_returncode": out.returncode,
+        "stderr_tail": out.stderr[-4000:],
+        "timed_out": False,
+        "trace_slots": [0, 127, 253, 254, 255],
+        "large_pick_index": BIG_PICK_INDEX,
+    }
+    if args.evidence is not None:
+        _write_evidence(args.evidence, evidence)
+    if not passed:
+        print(f"pick boundary smoke FAILED: {title}")
+        if out.stderr:
+            print(out.stderr[-2000:])
+        return 1
     print(f"pick boundary smoke OK: {title[6:]}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

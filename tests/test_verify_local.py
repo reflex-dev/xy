@@ -68,6 +68,7 @@ def test_browser_checks_are_listed_without_chromium(capsys: pytest.CaptureFixtur
     assert "smoke_render" in out
     assert "reflex_lifecycle_smoke" in out
     assert "visual_regression_smoke" in out
+    assert "pick_boundary_smoke" in out
     assert "interaction_stress_smoke" in out
     assert "chromium" in out
 

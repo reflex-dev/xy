@@ -83,6 +83,7 @@ These must pass before publishing or making a broad performance claim.
 | Accessibility / cross-browser | Semantic interaction checks plus tolerant WebGL/layout comparison pass in Chromium, Firefox, and WebKit | `make check-conformance` |
 | Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
 | Step tier update | A decimated `step` chart keeps its risers after a synthetic kernel `tier_update` replaces the vertex buffers | `python scripts/step_tier_smoke.py <chromium>` |
+| Pick boundaries | All 256 trace slots (including 255), large/global-to-local point IDs, and pick-cache invalidation/reuse remain exact | `python scripts/pick_boundary_smoke.py <chromium> --evidence pick-boundary-evidence.json` |
 | Dashboard reliability | 10/20/50-chart dashboards stay nonblank under the render client's context governor | `python benchmarks/bench_dashboard.py --chart-counts 10,20,50 --chromium <chromium> --json dashboard-smoke.json` then `python scripts/verify_benchmark_report.py dashboard-smoke.json --kind dashboard-browser --profile strict` |
 | sdist | Source archive contains required source/bundles, benchmark regression harness/baseline, release docs/tests/scripts, the example apps' source, `PKG-INFO` version/dependencies matching `pyproject.toml`, no duplicate members, and no generated junk | `python scripts/verify_sdist.py dist/*.tar.gz` |
 | Native wheel | Platform wheel contains package-only files, exactly one native library, `METADATA` version/dependencies matching `pyproject.toml`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
@@ -184,8 +185,9 @@ make check-docs
 
 The browser gates are split into app-facing checks that match the CI step
 names: `Browser lifecycle smoke (Chromium)`, `Browser visual regression smoke
-(Chromium)`, `Step tier-update smoke (Chromium)`, `Browser interaction stress
-smoke (Chromium)`, and `Browser dashboard reliability smoke (Chromium)`.
+(Chromium)`, `Step tier-update smoke (Chromium)`, `Pick boundary smoke
+(Chromium)`, `Browser interaction stress smoke (Chromium)`, and `Browser
+dashboard reliability smoke (Chromium)`.
 `make check-browser` runs all of these except the dashboard reliability smoke,
 which runs in CI only. The lifecycle and visual smokes both boot the
 `examples/fastapi` app under uvicorn and drive Chromium at its live routes (no
@@ -207,6 +209,13 @@ occupancy, and it screenshots static Reflex-style chrome shells for the custom
 legend/tooltip and annotated heatmap examples. A chart cannot collapse into a
 corner, lose axis/custom chrome, or pass merely because some pixels exist
 somewhere.
+
+The pick-boundary smoke is a hard local/CI browser gate. It covers trace slots
+0, 127, 253, 254, and 255 in a 256-trace fixture, an exact point index of
+69,999, a second trace whose global ID follows that range, steady-hover pick-FBO
+reuse, and view-change invalidation. CI retains its compact JSON title/stderr
+diagnostic with `if: always()` so a GPU/ID regression is inspectable after the
+step fails.
 
 Use this after packaging, workflow, or source-distribution changes:
 

@@ -310,10 +310,16 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "scripts/smoke_render.py",
         "Browser lifecycle smoke",
         "Browser visual regression smoke",
+        "Pick boundary smoke",
         "Browser interaction stress smoke",
         "Browser dashboard reliability smoke",
         "scripts/reflex_lifecycle_smoke.py",
         "scripts/visual_regression_smoke.py",
+        "scripts/pick_boundary_smoke.py",
+        "--evidence pick-boundary-evidence.json",
+        "Upload pick boundary evidence",
+        "pick-boundary-evidence",
+        "if-no-files-found: error",
         "scripts/interaction_stress_smoke.py",
         "benchmarks/bench_dashboard.py",
         "--chart-counts 10,20,50",
@@ -340,6 +346,25 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "transport.json",
     )
     hard_test = jobs.get("test", "")
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Pick boundary smoke (Chromium)",
+        "hard pick-boundary command and diagnostic path",
+        "scripts/pick_boundary_smoke.py",
+        "--evidence pick-boundary-evidence.json",
+    )
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Upload pick boundary evidence",
+        "failure-retaining pick-boundary artifact policy",
+        "if: always()",
+        "actions/upload-artifact@",
+        "pick-boundary-evidence",
+        "if-no-files-found: error",
+        "pick-boundary-evidence.json",
+    )
     _require_step_contains(
         errors,
         hard_test,

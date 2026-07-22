@@ -256,6 +256,13 @@ def _base_checks(
             requires_chromium=True,
         ),
         Check(
+            "pick_boundary_smoke",
+            "256-slot and large-index pick boundary/cache smoke in Chromium",
+            (py, "scripts/pick_boundary_smoke.py", chromium_arg),
+            requires_paths=chromium_paths,
+            requires_chromium=True,
+        ),
+        Check(
             "interaction_stress_smoke",
             "browser interaction stress smoke with latency/visual budgets",
             (py, "scripts/interaction_stress_smoke.py", chromium_arg),
@@ -305,6 +312,7 @@ BROWSER_CHECKS = (
     "reflex_lifecycle_smoke",
     "visual_regression_smoke",
     "step_tier_smoke",
+    "pick_boundary_smoke",
     "interaction_stress_smoke",
 )
 PACKAGING_CHECKS = ("sdist_artifact", "wheel_artifact")

@@ -18,7 +18,7 @@ help:
 		'  make setup-browser    install the pinned Playwright browser-test driver' \
 		'  make check            run the fast local verification gate' \
 		'  make check-full       run JS, Rust, and ABI gates too' \
-		'  make check-browser    run browser smokes (set CHROMIUM=/path/to/chrome)' \
+		'  make check-browser    run browser smokes, including pick boundaries (set CHROMIUM=/path/to/chrome)' \
 		'  make check-conformance run accessibility + Chromium/Firefox/WebKit conformance' \
 		'  make check-docs       run docs examples and public claim guardrails' \
 		'  make check-examples   run README/API examples and Reflex asset registry checks' \
