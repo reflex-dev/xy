@@ -3,7 +3,7 @@ import { buildLutData, colormapStops } from "./10_colormaps";
 import { cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
 import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
-import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodRememberDensity, lodWriteGridTexture } from "./45_lod";
+import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
 
 // ---------------------------------------------------------------------------
@@ -551,7 +551,13 @@ export class ChartView {
   }
 
   _axisMode(axisId) {
-    return this._axis(axisId).scale === "log" ? 1 : 0;
+    const scale = this._axis(axisId).scale;
+    return scale === "log" ? 1 : scale === "symlog" ? 2 : 0;
+  }
+
+  _axisConstant(axisId) {
+    const constant = Number(this._axis(axisId).constant);
+    return Number.isFinite(constant) && constant > 0 ? constant : 1;
   }
 
   _axisIds() {
@@ -645,11 +651,19 @@ export class ChartView {
     const v = Number(value);
     if (!Number.isFinite(v)) return NaN;
     if (axis && axis.scale === "log") return v > 0 ? Math.log10(v) : NaN;
+    if (axis && axis.scale === "symlog") {
+      const c = Number(axis.constant) || 1;
+      return Math.sign(v) * Math.log1p(Math.abs(v) / c);
+    }
     return v;
   }
 
   _axisValue(axis, coord) {
     if (axis && axis.scale === "log") return Math.pow(10, coord);
+    if (axis && axis.scale === "symlog") {
+      const c = Number(axis.constant) || 1;
+      return Math.sign(coord) * c * Math.expm1(Math.abs(coord));
+    }
     return coord;
   }
 
@@ -674,6 +688,14 @@ export class ChartView {
     if (axis.kind === "time") return timeTicks(lo, hi, target);
     if (axis.kind === "category") return categoryTicks(lo, hi, axis.categories || [], target);
     if (axis.scale === "log") return logTicks(lo, hi, target);
+    if (axis.scale === "symlog") {
+      const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+      const made = linearTicks(c0, c1, target);
+      const ticks = made.ticks.map((v) => this._axisValue(axis, v));
+      if (Math.min(lo, hi) <= 0 && Math.max(lo, hi) >= 0 && !ticks.some((v) => Math.abs(v) < 1e-12)) ticks.push(0);
+      ticks.sort((a, b) => lo <= hi ? a - b : b - a);
+      return { ticks, labels: ticks, step: Math.abs(this._axisValue(axis, made.step)) };
+    }
     return linearTicks(lo, hi, target);
   }
 
@@ -1629,10 +1651,12 @@ export class ChartView {
     for (const entry of traces) {
       const t = entry.trace || entry;
       if (t.tier !== "density" || !t.density) continue;
-      const sample = entry.sampleOverlay && entry.sampleOverlay.sample
-        ? entry.sampleOverlay.sample
-        : t.density.sample;
-      if (sample && Number(sample.n) > 0) {
+      // Badge what is actually drawn: the overlay _drawDensitySample chose
+      // for the current view (T9 pairing). Before the first frame runs, the
+      // home overlay (or the spec's sample counts) stands in.
+      const shown = entry._shownSampleOverlay || entry.sampleOverlay;
+      const sample = shown && shown.sample ? shown.sample : t.density.sample;
+      if (sample && Number(sample.n) > 0 && !entry._sampleFadedOut) {
         items.push(`sampled ${this._compactInt(sample.n)} of ${this._compactInt(sample.visible)}`);
       }
       // Standalone zoom refinement re-bins the sample in the worker — a
@@ -2061,6 +2085,11 @@ export class ChartView {
         lut: this._lut(d.colormap),
       };
       g.sampleOverlay = this._buildDensitySample(t, d.sample, buffer);
+      // The overlay rides its density window (T9 pairing): the home sample
+      // belongs to the home grid, so a deep zoom-out that falls back to the
+      // home texture brings the full-extent point sample back with it.
+      g.density.overlay = g.sampleOverlay;
+      g._shownSampleOverlay = g.sampleOverlay;
       g._shownDensity = g.density;
       lodRememberDensity(this, g, g.density);
       return g;
@@ -2222,19 +2251,43 @@ export class ChartView {
     return g;
   }
 
-  _destroyDensitySample(g) {
-    const s = g && g.sampleOverlay;
+  _destroySampleOverlay(s) {
     if (!s || !this.gl) return;
     for (const b of [s.xBuf, s.yBuf, s.cBuf, s.rgbaBuf, s.sBuf, s.styleBuf,
       s.strokeBuf, s.selBuf, s.dBuf]) {
       if (b) this.gl.deleteBuffer(b);
     }
+  }
+
+  // Full teardown of every sample overlay this tier owns. Overlays ride their
+  // density cache entries (T9 pairing), so sweep the cache plus the aliased
+  // references — an overlay can be reachable from several of them at once.
+  _destroyDensitySample(g) {
+    if (!g) return;
+    g._sampleFadedOut = false;
+    g._shownSampleOverlay = null;
+    const owners = [...(g.densityCache || []),
+      g.density, g.prevDensity, g._shownDensity, g._densitySwitchPrev, g._homeDensity];
+    const seen = new Set();
+    for (const d of owners) {
+      const s = d && d.overlay;
+      if (s && !seen.has(s)) { seen.add(s); this._destroySampleOverlay(s); }
+      if (d) d.overlay = null;
+    }
+    if (g.sampleOverlay && !seen.has(g.sampleOverlay)) {
+      this._destroySampleOverlay(g.sampleOverlay);
+    }
     g.sampleOverlay = null;
   }
 
+  // Build the overlay a sample-bearing reply shipped and attach it to the
+  // density entry it was computed for (T9 pairing) — the draw path picks the
+  // overlay of the best cached window for the view, so overlays for OTHER
+  // windows (the home sample above all) stay alive and take over on zoom-out.
+  // An explicit `sample: null` clears this window's overlay only.
   _applyDensitySample(g, sample, buffers) {
-    this._destroyDensitySample(g);
     if (!sample || !sample.x || !sample.y || sample.x.buf === undefined || sample.y.buf === undefined) {
+      if (g.density) g.density.overlay = null;
       this._refreshReductionBadges();
       return;
     }
@@ -2332,23 +2385,36 @@ export class ChartView {
       s.strokeBuf = this._upload(this._asU8(buffers[sample.stroke.buf]));
     }
     this._pointMarkStyle(s, trace);
-    g.sampleOverlay = s;
+    if (g.density) {
+      if (g.density.overlay && g.density.overlay !== g.sampleOverlay) {
+        this._destroySampleOverlay(g.density.overlay);
+      }
+      g.density.overlay = s;
+    }
     this._refreshReductionBadges();
   }
 
+  // Draw the sample overlay belonging to the best cached window for the view
+  // (T9 pairing, lodSampleForView): points on screen always describe the
+  // window being displayed — a deep zoom-out falls back through the cache to
+  // the home sample, so the full point cloud returns instead of a drilled
+  // cluster lingering. Only a view no cached window covers draws a partial
+  // overlay, bounded by the T9 coverage fade (overplot-compensated, so the
+  // band value is what actually composites on screen — a fading sample must
+  // LOOK faded). The "sampled n of N" badge tracks what is actually drawn.
   _drawDensitySample(g, x0, x1, y0, y1, opacityScale = 1) {
-    const s = g && g.sampleOverlay;
-    // Draw the retained sample whenever it overlaps the view, not only when the
-    // view sits fully inside the sample window: a pan or zoom-out must keep the
-    // same "density + points" look instead of dropping the points the instant
-    // the view crosses the sample's home extent (the density grid stays, so the
-    // points have to as well). Off-screen points are clipped by the GPU.
-    if (!s || !s.n || !this._viewOverlaps(s.win)) return;
+    const pick = lodSampleForView(this, g);
+    const s = pick && pick.overlay;
+    const changed = (g._shownSampleOverlay || null) !== (s || null);
+    g._shownSampleOverlay = s || null;
+    g._sampleFadedOut = !s;
+    if (changed) this._refreshReductionBadges();
+    if (!s) return;
     this._drawPoints(
       s,
       this._map(s.xMeta, x0, x1, s.xAxis),
       this._map(s.yMeta, y0, y1, s.yAxis),
-      opacityScale
+      opacityScale * pick.alpha
     );
   }
 
@@ -2946,6 +3012,7 @@ export class ChartView {
     const u = (n) => uniformOf(gl, prog, n);
     gl.uniform2f(u(`${prefix}meta`), meta && Number.isFinite(meta.offset) ? meta.offset : 0, meta && meta.scale ? meta.scale : 1);
     gl.uniform1i(u(`${prefix}mode`), this._axisMode(axisId));
+    gl.uniform1f(u(`${prefix}constant`), this._axisConstant(axisId));
   }
 
   // `keepPick` marks a frame whose ONLY trigger is hover-highlight state: the
@@ -3261,8 +3328,18 @@ export class ChartView {
     const [vy0, vy1] = this._axisRange(g.yAxis);
     gl.uniform4f(u("u_view"), vx0 ?? x0, vx1 ?? x1, vy0 ?? y0, vy1 ?? y1);
     gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
+    gl.uniform1f(u("u_xconstant"), this._axisConstant(g.xAxis));
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
-    gl.uniform4f(u("u_gridRange"), d.xRange[0], d.xRange[1], d.yRange[0], d.yRange[1]);
+    gl.uniform1f(u("u_yconstant"), this._axisConstant(g.yAxis));
+    // Density grids are uniform in scale coordinates (§28): the shader's uv
+    // is an affine map of the interpolated coordinate, so the grid range
+    // ships to the GPU already transformed (f64 here, cheap — 4 scalars).
+    const xAxis = this._axis(g.xAxis), yAxis = this._axis(g.yAxis);
+    gl.uniform4f(
+      u("u_gridRange"),
+      this._axisCoord(xAxis, d.xRange[0]), this._axisCoord(xAxis, d.xRange[1]),
+      this._axisCoord(yAxis, d.yRange[0]), this._axisCoord(yAxis, d.yRange[1]),
+    );
     gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * opacityScale);
     const constant = d.color;
     gl.uniform1i(u("u_constantColor"), constant ? 1 : 0);
@@ -3289,7 +3366,9 @@ export class ChartView {
     const [vy0, vy1] = this._axisRange(g.yAxis);
     gl.uniform4f(u("u_view"), vx0 ?? x0, vx1 ?? x1, vy0 ?? y0, vy1 ?? y1);
     gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
+    gl.uniform1f(u("u_xconstant"), this._axisConstant(g.xAxis));
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
+    gl.uniform1f(u("u_yconstant"), this._axisConstant(g.yAxis));
     // Grid row/column 0 anchors to the bottom/left edge of the grid rect in
     // *display* orientation — the raster/SVG exporters' convention (the shim's
     // imshow pre-flips rows for origin='upper' assuming it). A reversed axis
@@ -3631,7 +3710,9 @@ export class ChartView {
     this._setAxisUniforms(prog, "u_y0", g.y0Meta, g.yAxis);
     this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis);
     gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
+    gl.uniform1f(u("u_xconstant"), this._axisConstant(g.xAxis));
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
+    gl.uniform1f(u("u_yconstant"), this._axisConstant(g.yAxis));
     gl.uniform4f(u("u_edgePad"), edgePad[0], edgePad[1], edgePad[2], edgePad[3]);
     const [r, gg, b, a] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a);
@@ -3690,7 +3771,9 @@ export class ChartView {
     this._setAxisUniforms(prog, "u_v1", g.value1Meta, vAxis);
     this._setAxisUniforms(prog, "u_v0", g.value0Meta, vAxis);
     gl.uniform1i(u("u_pmode"), this._axisMode(pAxis));
+    gl.uniform1f(u("u_pconstant"), this._axisConstant(pAxis));
     gl.uniform1i(u("u_vmode"), this._axisMode(vAxis));
+    gl.uniform1f(u("u_vconstant"), this._axisConstant(vAxis));
     gl.uniform1f(u("u_width"), g.width);
     gl.uniform1i(u("u_orientation"), g.orientation);
     gl.uniform1i(u("u_v0Mode"), g.value0Mode);

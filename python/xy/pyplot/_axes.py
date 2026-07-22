@@ -36,7 +36,7 @@ from ._artists import (
     Text,
     unit_converted_values,
 )
-from ._colors import PROP_CYCLE, resolve_cmap, resolve_color, resolve_rgba_array
+from ._colors import PROP_CYCLE, resolve_cmap, resolve_color, resolve_rgba_array, scalar_float
 from ._fmt import parse_fmt
 from ._mathtext import mathtext_to_unicode
 from ._plot_types import PlotTypeMixin
@@ -1270,13 +1270,13 @@ class Axes(PlotTypeMixin):
             "size": size_px,
             # Preserve the long-standing pyplot artist metadata while the
             # core receives alpha through the override channel below.
-            "opacity": float(alpha) if alpha is not None and np.isscalar(alpha) else 1.0,
+            "opacity": scalar_float(alpha) if alpha is not None and np.isscalar(alpha) else 1.0,
             "name": str(label) if label is not None else None,
             "symbol": symbol,
         }
         if alpha is not None:
             entry_kwargs["_artist_alpha"] = (
-                float(alpha) if np.isscalar(alpha) else np.asarray(alpha, dtype=np.float64)
+                scalar_float(alpha) if np.isscalar(alpha) else np.asarray(alpha, dtype=np.float64)
             )
         if isinstance(size_px, np.ndarray) and size_px.size:
             # matplotlib s= is absolute (points²); pin the engine's size range
@@ -1449,7 +1449,7 @@ class Axes(PlotTypeMixin):
         }
         if alpha is not None:
             entry_kwargs["_artist_alpha"] = (
-                float(alpha) if np.isscalar(alpha) else np.asarray(alpha, dtype=np.float64)
+                scalar_float(alpha) if np.isscalar(alpha) else np.asarray(alpha, dtype=np.float64)
             )
         if base is not None:
             entry_kwargs["base"] = np.array(base, copy=True) if not np.isscalar(base) else base
@@ -1458,13 +1458,13 @@ class Axes(PlotTypeMixin):
             entry_kwargs["stroke_width"] = (
                 np.asarray(linewidth, dtype=np.float64)
                 if linewidth is not None and not np.isscalar(linewidth)
-                else float(linewidth or 1.0)
+                else scalar_float(linewidth or 1.0)
             )
         elif linewidth is not None:
             entry_kwargs["stroke_width"] = (
                 np.asarray(linewidth, dtype=np.float64)
                 if not np.isscalar(linewidth)
-                else float(linewidth)
+                else scalar_float(linewidth)
             )
         entry = self._add("bar", {"x": cats, "y": vals, "kwargs": entry_kwargs})
         container = BarContainer(self, entry)

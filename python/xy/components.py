@@ -212,7 +212,8 @@ class Axis(Component):
     label_position: Optional[AxisLabelPosition] = None
     label_offset: Optional[float] = None
     label_angle: Optional[float] = None
-    type_: Optional[str] = None  # "linear" | "time" | "log" (auto-detected if None)
+    type_: Optional[str] = None  # "linear" | "time" | "log" | "symlog"
+    constant: Optional[float] = None
     domain: Optional[tuple[float, float]] = None
     bounds: Union[tuple[float, float], Literal["data"], None] = None
     reverse: bool = False
@@ -2188,6 +2189,7 @@ def x_axis(
     label_offset: Optional[float] = None,
     label_angle: Optional[float] = None,
     type_: Optional[str] = None,
+    constant: Optional[float] = None,
     domain: Optional[tuple[float, float]] = None,
     bounds: Union[tuple[float, float], Literal["data"], None] = None,
     reverse: bool = False,
@@ -2210,7 +2212,8 @@ def x_axis(
         label_position: Named or structured label placement.
         label_offset: Label offset in pixels.
         label_angle: Label rotation in degrees.
-        type_: Scale type, such as ``linear``, ``time``, or ``log``.
+        type_: Scale type, such as ``linear``, ``time``, ``log``, or ``symlog``.
+        constant: Width of the linear region around zero for ``symlog``.
         domain: Explicit minimum and maximum scale values.
         bounds: Hard navigation limits, or ``"data"`` to use the data range.
             Pan and zoom are clamped within these limits; ``None`` leaves
@@ -2245,6 +2248,7 @@ def x_axis(
         label_offset=_optional_finite_number(label_offset, "x_axis label_offset"),
         label_angle=_optional_finite_number(label_angle, "x_axis label_angle"),
         type_=type_,
+        constant=_axis_constant(constant, type_, "x_axis constant"),
         domain=_axis_domain(domain, "x_axis domain"),
         bounds=_axis_bounds(bounds, "x_axis bounds"),
         reverse=_strict_bool(reverse, "x_axis reverse"),
@@ -2273,6 +2277,7 @@ def y_axis(
     label_offset: Optional[float] = None,
     label_angle: Optional[float] = None,
     type_: Optional[str] = None,
+    constant: Optional[float] = None,
     domain: Optional[tuple[float, float]] = None,
     bounds: Union[tuple[float, float], Literal["data"], None] = None,
     reverse: bool = False,
@@ -2295,7 +2300,8 @@ def y_axis(
         label_position: Named or structured label placement.
         label_offset: Label offset in pixels.
         label_angle: Label rotation in degrees.
-        type_: Scale type, such as ``linear``, ``time``, or ``log``.
+        type_: Scale type, such as ``linear``, ``time``, ``log``, or ``symlog``.
+        constant: Width of the linear region around zero for ``symlog``.
         domain: Explicit minimum and maximum scale values.
         bounds: Hard navigation limits, or ``"data"`` to use the data range.
             Pan and zoom are clamped within these limits; ``None`` leaves
@@ -2330,6 +2336,7 @@ def y_axis(
         label_offset=_optional_finite_number(label_offset, "y_axis label_offset"),
         label_angle=_optional_finite_number(label_angle, "y_axis label_angle"),
         type_=type_,
+        constant=_axis_constant(constant, type_, "y_axis constant"),
         domain=_axis_domain(domain, "y_axis domain"),
         bounds=_axis_bounds(bounds, "y_axis bounds"),
         reverse=_strict_bool(reverse, "y_axis reverse"),
@@ -3010,6 +3017,7 @@ class Chart(Component):
                 label_offset=axis.label_offset,
                 label_angle=axis.label_angle,
                 type_=axis.type_,
+                constant=axis.constant,
                 domain=axis.domain,
                 bounds=axis.bounds,
                 reverse=axis.reverse,
@@ -4425,9 +4433,22 @@ def _mark_axis_ids(mark: Mark, axes: dict[str, Axis]) -> tuple[str, str]:
 
 
 def _validate_axis_type(type_: Optional[str]) -> None:
-    if type_ is None or type_ in {"linear", "time", "log"}:
+    if type_ is None or type_ in {"linear", "time", "log", "symlog"}:
         return
-    raise ValueError(f"axis type_ must be one of None, 'linear', 'time', or 'log', got {type_!r}")
+    raise ValueError(
+        f"axis type_ must be one of None, 'linear', 'time', 'log', or 'symlog', got {type_!r}"
+    )
+
+
+def _axis_constant(value: Any, type_: Optional[str], label: str) -> Optional[float]:
+    if value is None:
+        return None
+    constant = _optional_finite_number(value, label)
+    if constant is None or constant <= 0:
+        raise ValueError(f"{label} must be positive")
+    if type_ != "symlog":
+        raise ValueError(f"{label} is only valid when type_='symlog'")
+    return constant
 
 
 def _axis_domain(value: Any, label: str) -> Optional[tuple[float, float]]:

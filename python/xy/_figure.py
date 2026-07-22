@@ -173,6 +173,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         label_offset: Optional[float] = None,
         label_angle: Optional[float] = None,
         type_: Optional[str] = None,
+        constant: Optional[float] = None,
         domain: Optional[tuple[float, float]] = None,
         bounds: Any = None,
         reverse: bool = False,
@@ -189,8 +190,14 @@ class Figure(AnnotationsMixin, PayloadMixin):
     ) -> "Figure":
         axis_id = self._axis_id(axis_id, "axis id")
         axis_dim = self._axis_dim(axis_id)
-        if type_ is not None and type_ not in {"linear", "time", "log"}:
-            raise ValueError("axis type_ must be one of None, 'linear', 'time', or 'log'")
+        if type_ is not None and type_ not in {"linear", "time", "log", "symlog"}:
+            raise ValueError("axis type_ must be one of None, 'linear', 'time', 'log', or 'symlog'")
+        if constant is not None:
+            constant = self._finite_scalar(constant, f"{axis_id} axis constant")
+            if constant <= 0:
+                raise ValueError(f"{axis_id} axis constant must be positive")
+            if type_ != "symlog":
+                raise ValueError(f"{axis_id} axis constant is only valid for a symlog axis")
         if domain is not None:
             domain = self._finite_increasing_pair(domain, f"{axis_id} axis domain")
             if type_ == "log" and domain[0] <= 0:
@@ -226,6 +233,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             ),
             "label_angle": self._optional_finite_scalar(label_angle, f"{axis_id} axis label_angle"),
             "type": type_,
+            "constant": constant,
             "domain": domain,
             "bounds": bounds,
             "reverse": self._bool_param(reverse, f"{axis_id} axis reverse"),
@@ -1081,7 +1089,20 @@ class Figure(AnnotationsMixin, PayloadMixin):
         return None
 
     def _axis_scale(self, axis_id: str) -> str:
-        return "log" if self.axis_options.get(axis_id, {}).get("type") == "log" else "linear"
+        scale = self.axis_options.get(axis_id, {}).get("type")
+        return scale if scale in {"log", "symlog"} else "linear"
+
+    def _axis_coord(self, axis_id: str, values: Any) -> np.ndarray:
+        """Map values to axis coordinates for screen-space aggregation."""
+        v = np.asarray(values, dtype=np.float64)
+        scale = self._axis_scale(axis_id)
+        if scale == "log":
+            with np.errstate(divide="ignore", invalid="ignore"):
+                return np.where(v > 0.0, np.log10(v), np.nan)
+        if scale == "symlog":
+            constant = float(self.axis_options.get(axis_id, {}).get("constant") or 1.0)
+            return np.sign(v) * np.log1p(np.abs(v) / constant)
+        return v
 
     def _axis_kind(self, axis_id: str) -> str:
         axis = self._axis_dim(axis_id)
@@ -1166,8 +1187,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
             spec["tick_label_anchor"] = tick_label_anchor
         if tick_label_min_gap is not None:
             spec["tick_label_min_gap"] = tick_label_min_gap
-        if self._axis_scale(axis_id) == "log":
-            spec["scale"] = "log"
+        scale = self._axis_scale(axis_id)
+        if scale != "linear":
+            spec["scale"] = scale
+        if scale == "symlog":
+            spec["constant"] = opts.get("constant") or 1.0
         if opts.get("reverse"):
             spec["reverse"] = True
         if opts.get("domain") is not None:

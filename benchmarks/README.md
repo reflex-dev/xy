@@ -175,10 +175,20 @@ and request-to-next-frame measurements.
 
 `test_codspeed_animation.py` attributes the animation data plane separately:
 100k stable-key encoding, the plain 100k scatter payload, and the same payload
-with keyed transition columns. Run `bench_animation.py` for real-Chrome
+with keyed transition columns — both payload rows through the widget's
+production split transport. Run `bench_animation.py` for real-Chrome
 `updatePayload` time, animation-frame pacing, heap delta, and the hard
 previous+next scene bound; browser clocks and GPU work do not belong in
 CodSpeed simulation.
+
+`test_codspeed_selection.py` covers the backend handlers the client's gesture
+messages resolve to: hover pick readout with a categorical channel, zone-pruned
+and full-scan box select at 1M points, the lasso gesture unit through
+`channel.handle_message` (polygon ray casting plus the wire-mask reply), and
+the cross-filter rows-to-shipped-mask encoding over a NaN-dropped trace so the
+canonical-to-shipped translation is the path measured. `bench_interaction.py`
+stays authoritative for client input-to-pixel latency; these rows attribute a
+selection regression to the Python/kernel handler that caused it.
 
 ## Reference Hardware
 
@@ -204,7 +214,7 @@ JSON artifacts, retain failed/over-budget rows, and label the table
   stage is diagnostic because xy defers work until export.
 - Interactive TTFR is build + HTML serialization + chart-ready time.
 - Interaction browser rows are standalone client input-to-pixel-readback;
-  backend LOD work is in CodSpeed and workflow rows.
+  backend LOD and selection-handler work is in CodSpeed and workflow rows.
 - Dashboard rows attempt 10/20/50 charts, retain timings for partial dashboards,
   record per-chart context loss/restoration plus initial/scrolled nonblank IDs,
   and publish the largest stable loss-free count.
