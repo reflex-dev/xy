@@ -1829,10 +1829,18 @@ def violin(
     rect_y1: list[np.ndarray] = []
     n_bins = int(bins)
     kernel = np.array([1.0, 2.0, 3.0, 2.0, 1.0])
-    # mode="same" truncates the kernel at the boundaries; dividing by the
-    # per-bin kernel coverage keeps edge bins at full weight instead of
-    # pinching violins whose data piles at the min/max.
-    coverage = np.convolve(np.ones(n_bins), kernel, mode="same")
+    # A centered convolution truncates the kernel at the boundaries; dividing
+    # by the per-bin kernel coverage keeps edge bins at full weight instead of
+    # pinching violins whose data piles at the min/max. NumPy's mode="same"
+    # returns max(len(values), len(kernel)), so explicitly center-slice the
+    # full convolution to keep the documented four-bin minimum at four rows.
+    convolution_start = (len(kernel) - 1) // 2
+
+    def smooth_same(values: np.ndarray) -> np.ndarray:
+        full = np.convolve(values, kernel, mode="full")
+        return full[convolution_start : convolution_start + n_bins]
+
+    coverage = smooth_same(np.ones(n_bins))
     for center, group_values in zip(positions, groups, strict=True):
         finite = group_values[np.isfinite(group_values)]
         if len(finite) == 0:
@@ -1843,7 +1851,7 @@ def violin(
             hi += 0.5
         edges = np.linspace(lo, hi, n_bins + 1)
         counts, _ = np.histogram(finite, bins=edges)
-        smooth = np.convolve(counts.astype(np.float64), kernel, mode="same") / coverage
+        smooth = smooth_same(counts.astype(np.float64)) / coverage
         peak = float(np.max(smooth)) or 1.0
         half_width = width * 0.5 * smooth / peak
         if orientation == "vertical":

@@ -87,9 +87,13 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-006 — All-public-builder property and transaction matrix
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: property tests cover six of 20 public Figure builders and do not
-  prove seeded rollback for every late failure.
+- Status: `IMPLEMENTED`
+- Owner: unassigned — file a tracking issue before implementation starts
+- Evidence: `tests/test_property_figure.py`, the required Hypothesis development
+  dependency, and `make check-errors` / the hard root test suite.
+- Current gap: closed; all 20 public builders have must-succeed valid strategies,
+  classified-invalid strategies, and append-then-raise rollback proofs against
+  a seeded figure with exact state snapshots.
 - Implemented when: all builders have valid strategies that must succeed,
   classified invalid strategies, injected late failures on nonempty state, and
   exact pre/post snapshots of traces, columns/dedup keys, axes/categories,

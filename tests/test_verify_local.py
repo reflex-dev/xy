@@ -156,12 +156,13 @@ def test_error_safety_check_is_known_as_targeted_gate() -> None:
     selected = verify_local.select_checks(checks, only={"error_safety"})
 
     assert [check.name for check in selected] == ["error_safety"]
-    assert selected[0].command[-3:] == (
+    assert selected[0].command[-4:] == (
         "tests/test_figure.py",
         "tests/test_components.py",
         "tests/test_lod.py",
+        "tests/test_property_figure.py",
     )
-    assert selected[0].requires_modules == ("pytest",)
+    assert selected[0].requires_modules == ("pytest", "hypothesis")
 
 
 def test_benchmark_harness_check_is_known_as_targeted_gate() -> None:

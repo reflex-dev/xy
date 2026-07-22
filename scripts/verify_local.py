@@ -167,8 +167,9 @@ def _base_checks(
                 "tests/test_figure.py",
                 "tests/test_components.py",
                 "tests/test_lod.py",
+                "tests/test_property_figure.py",
             ),
-            requires_modules=("pytest",),
+            requires_modules=("pytest", "hypothesis"),
         ),
         Check(
             "ruff_check", "ruff lint", (py, "-m", "ruff", "check", "."), requires_modules=("ruff",)
