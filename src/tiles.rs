@@ -269,28 +269,46 @@ pub fn compose(
         // within COMPOSE_SNAP_EPS of a bin edge collapse to one bin, keeping
         // cell-aligned windows exact. center_range can yield an empty range for
         // windows astronomically past the domain; the guard avoids a slice panic.
+        //
+        // The 2D split is separable (weight = wx·wy), so resample in two
+        // passes: gather each source row into a w-wide scratch row by the x
+        // weights, then distribute that row into its 1–2 output rows as
+        // contiguous scale-and-add loops the compiler vectorizes. The x pass
+        // is pull-based — per output bin, sum the 1–3 source taps transposed
+        // from axis_weights — because both push formulations lose: the fused
+        // 2D scatter costs 4 read-modify-writes per cell, and a 1D x scatter
+        // chains through memory (adjacent cells hit the same bin, stalling on
+        // store-forwarding); pulling makes every output bin independent, so
+        // the loop pipelines. Scaling by wy after the x sum also rounds once
+        // instead of per cell; the aligned case (single tap, weight exactly
+        // 1.0) remains bit-exact against bin_2d.
         let none = u32::MAX;
         let xw = axis_weights(cx0, cx1, p.x0, cell_x, lo_x, sx, w);
         let yw = axis_weights(cy0, cy1, p.y0, cell_y, lo_y, sy, h);
+        let (xstarts, xtaps) = transpose_to_taps(&xw, w);
+        let mut xrow = vec![0.0f32; w];
         for (cy, &(by, wpy, nby, wny)) in (cy0..cy1).zip(yw.iter()) {
             let row = &lvl[cy * dim + cx0..cy * dim + cx1];
-            let by = by as usize;
-            for (&c, &(bx, wpx, nbx, wnx)) in row.iter().zip(xw.iter()) {
-                if c == 0 {
-                    continue;
+            for (j, o) in xrow.iter_mut().enumerate() {
+                let mut acc = 0.0f32;
+                for &(c, wt) in &xtaps[xstarts[j] as usize..xstarts[j + 1] as usize] {
+                    acc += row[c as usize] as f32 * wt;
                 }
-                let cf = c as f32;
-                let bx = bx as usize;
-                out[by * w + bx] += cf * wpx * wpy;
-                if nbx != none {
-                    out[by * w + nbx as usize] += cf * wnx * wpy;
+                *o = acc;
+            }
+            let dst = &mut out[by as usize * w..(by as usize + 1) * w];
+            if nby == none {
+                // No vertical straddle: wpy is exactly 1.0 by construction.
+                for (o, &t) in dst.iter_mut().zip(xrow.iter()) {
+                    *o += t;
                 }
-                if nby != none {
-                    let nby = nby as usize;
-                    out[nby * w + bx] += cf * wpx * wny;
-                    if nbx != none {
-                        out[nby * w + nbx as usize] += cf * wnx * wny;
-                    }
+            } else {
+                for (o, &t) in dst.iter_mut().zip(xrow.iter()) {
+                    *o += t * wpy;
+                }
+                let ndst = &mut out[nby as usize * w..(nby as usize + 1) * w];
+                for (o, &t) in ndst.iter_mut().zip(xrow.iter()) {
+                    *o += t * wny;
                 }
             }
         }
@@ -353,6 +371,43 @@ fn axis_weights(
         }
     }
     v
+}
+
+/// Transpose per-cell push weights from `axis_weights` into per-bin pull taps
+/// (CSR: `starts[j]..starts[j+1]` indexes `taps`, each tap = `(cell offset
+/// within the window, weight)`). Pure reindexing — every (bin, cell, weight)
+/// triple is carried over verbatim, so pull and push are the same linear map;
+/// taps for a bin stay in increasing cell order, keeping f32 summation order
+/// (and thus the aligned bit-exactness) identical to pushing cells in order.
+fn transpose_to_taps(
+    weights: &[(u32, f32, u32, f32)],
+    n_out: usize,
+) -> (Vec<u32>, Vec<(u32, f32)>) {
+    let none = u32::MAX;
+    let mut counts = vec![0u32; n_out + 1];
+    for &(b, _, nb, _) in weights {
+        counts[b as usize + 1] += 1;
+        if nb != none {
+            counts[nb as usize + 1] += 1;
+        }
+    }
+    for j in 0..n_out {
+        counts[j + 1] += counts[j];
+    }
+    let starts = counts;
+    let mut fill = starts.clone();
+    let mut taps = vec![(0u32, 0.0f32); starts[n_out] as usize];
+    for (c, &(b, wp, nb, wn)) in weights.iter().enumerate() {
+        let slot = &mut fill[b as usize];
+        taps[*slot as usize] = (c as u32, wp);
+        *slot += 1;
+        if nb != none {
+            let slot = &mut fill[nb as usize];
+            taps[*slot as usize] = (c as u32, wn);
+            *slot += 1;
+        }
+    }
+    (starts, taps)
 }
 
 // -- handle registry (engine doc §3.3) ---------------------------------------
@@ -468,7 +523,18 @@ mod tests {
         let dim = 64;
         let p = build(&x, &y, 0.0, 100.0, 0.0, 100.0, dim).unwrap();
         let mut composed = vec![0.0f32; dim * dim];
-        let level = compose(&p, 0.0, 100.0, 0.0, 100.0, dim, dim, MAX_UPSAMPLE, &mut composed).unwrap();
+        let level = compose(
+            &p,
+            0.0,
+            100.0,
+            0.0,
+            100.0,
+            dim,
+            dim,
+            MAX_UPSAMPLE,
+            &mut composed,
+        )
+        .unwrap();
         assert_eq!(level, 0);
         let mut direct = vec![0.0f32; dim * dim];
         kernels::bin_2d(&x, &y, 0.0, 100.0, 0.0, 100.0, dim, dim, &mut direct);
@@ -486,7 +552,18 @@ mod tests {
         // window aligned to level-0 cell edges: [25,75)² = cells 16..48
         let (w, h) = (32, 32);
         let mut composed = vec![0.0f32; w * h];
-        let level = compose(&p, 25.0, 75.0, 25.0, 75.0, w, h, MAX_UPSAMPLE, &mut composed).unwrap();
+        let level = compose(
+            &p,
+            25.0,
+            75.0,
+            25.0,
+            75.0,
+            w,
+            h,
+            MAX_UPSAMPLE,
+            &mut composed,
+        )
+        .unwrap();
         assert_eq!(level, 0);
         let mut direct = vec![0.0f32; w * h];
         kernels::bin_2d(&x, &y, 25.0, 75.0, 25.0, 75.0, w, h, &mut direct);
@@ -556,7 +633,18 @@ mod tests {
         );
         // deeper than level 0 can resolve at 2x upsample -> refused
         let mut tiny = vec![0.0f32; 512 * 512];
-        assert!(compose(&p, 50.0, 51.0, 50.0, 51.0, 512, 512, MAX_UPSAMPLE, &mut tiny).is_none());
+        assert!(compose(
+            &p,
+            50.0,
+            51.0,
+            50.0,
+            51.0,
+            512,
+            512,
+            MAX_UPSAMPLE,
+            &mut tiny
+        )
+        .is_none());
     }
 
     #[test]
@@ -576,7 +664,11 @@ mod tests {
         let lvl = compose(&p, 49.0, 51.0, 49.0, 51.0, w, h, 1 << 20, &mut filled).unwrap();
         assert_eq!(lvl, 0);
         let nz = filled.iter().filter(|&&c| c > 0.0).count();
-        assert!(nz > w * h / 2, "upsample must fill the block, got {nz}/{}", w * h);
+        assert!(
+            nz > w * h / 2,
+            "upsample must fill the block, got {nz}/{}",
+            w * h
+        );
     }
 
     #[test]
