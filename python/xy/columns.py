@@ -19,6 +19,8 @@ Phase 0 contract:
 from __future__ import annotations
 
 import datetime as dt
+import os as _os
+import struct as _struct
 from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
@@ -26,7 +28,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
-from . import kernels
+from . import _ooc, kernels
 
 ColumnStoreCheckpoint = tuple[int, dict[tuple[int, int, int], int]]
 
@@ -86,6 +88,108 @@ class ZoneMaps:
     def null_count(self) -> int:
         """Total NaN/null count across zones."""
         return int(self.null_counts.sum())
+
+
+# --- Zone-map disk cache (out-of-core figure build, §22/§27) -----------------
+# Folding zone maps over a disk-backed column is a full sequential scan of the
+# file (172 GB for planet OSM → ~50 s, NVMe-bound). The maps are a derived cache
+# (§27), so persist them next to the memmap and reload on the next build instead
+# of rescanning: first build pays the scan, every later build (each viewer
+# restart) loads a ~10 MB sidecar in well under a second. The cache self-
+# invalidates if the source file's size or mtime changed, or the chunk size /
+# row count no longer matches, so a stale/edited column is never trusted.
+_ZONE_CACHE_MAGIC = b"XYZONEC1"
+_ZONE_CACHE_SUFFIX = ".xyzones"
+# 6 f64 planes + 2 u64 planes per chunk (mirrors ZoneMaps' fields, in order).
+_ZONE_F64_FIELDS = ("mins", "maxs", "sums", "sum_sqs", "positive_mins", "positive_maxs")
+_ZONE_U64_FIELDS = ("counts", "null_counts")
+
+
+def _zone_cache_path(arr: Any) -> str | None:
+    bp = _ooc.backing_path(arr)
+    return (bp + _ZONE_CACHE_SUFFIX) if bp is not None else None
+
+
+def _zone_source_stamp(source: str) -> tuple[int, int]:
+    st = _os.stat(source)
+    return st.st_size, st.st_mtime_ns
+
+
+def _load_zone_cache(arr: Any) -> ZoneMaps | None:
+    """Return persisted zone maps for a memmapped column, or None on miss/stale."""
+    path = _zone_cache_path(arr)
+    if path is None or not _os.path.exists(path):
+        return None
+    source = _ooc.backing_path(arr)
+    try:
+        size, mtime = _zone_source_stamp(source) if source is not None else (0, 0)
+        with open(path, "rb") as f:
+            head = f.read(48)
+            if len(head) != 48 or head[:8] != _ZONE_CACHE_MAGIC:
+                return None
+            chunk, n, c_size, c_mtime, n_chunks = _struct.unpack("<QQQqQ", head[8:48])
+            if chunk != ZONE_CHUNK or n != len(arr) or c_size != size or c_mtime != mtime:
+                return None
+            expected = int((len(arr) + ZONE_CHUNK - 1) // ZONE_CHUNK) if len(arr) else 0
+            if n_chunks != expected:
+                return None
+            f64 = np.fromfile(f, dtype=np.float64, count=n_chunks * len(_ZONE_F64_FIELDS))
+            u64 = np.fromfile(f, dtype=np.uint64, count=n_chunks * len(_ZONE_U64_FIELDS))
+        if len(f64) != n_chunks * len(_ZONE_F64_FIELDS) or len(u64) != n_chunks * len(
+            _ZONE_U64_FIELDS
+        ):
+            return None
+        # Planes are stored in _ZONE_F64_FIELDS / _ZONE_U64_FIELDS order.
+        fp = f64.reshape(len(_ZONE_F64_FIELDS), n_chunks)
+        up = u64.reshape(len(_ZONE_U64_FIELDS), n_chunks)
+        return ZoneMaps(
+            mins=np.asarray(fp[0], dtype=np.float64),
+            maxs=np.asarray(fp[1], dtype=np.float64),
+            sums=np.asarray(fp[2], dtype=np.float64),
+            sum_sqs=np.asarray(fp[3], dtype=np.float64),
+            positive_mins=np.asarray(fp[4], dtype=np.float64),
+            positive_maxs=np.asarray(fp[5], dtype=np.float64),
+            counts=np.asarray(up[0], dtype=np.uint64),
+            null_counts=np.asarray(up[1], dtype=np.uint64),
+        )
+    except (OSError, ValueError, _struct.error):
+        return None
+
+
+def _store_zone_cache(arr: Any, zm: ZoneMaps) -> None:
+    """Best-effort persist of zone maps beside a memmapped column (silent on
+    any failure — a read-only or full filesystem must not break ingest)."""
+    path = _zone_cache_path(arr)
+    source = _ooc.backing_path(arr)
+    if path is None or source is None:
+        return
+    n_chunks = len(zm.mins)
+    try:
+        size, mtime = _zone_source_stamp(source)
+        tmp = f"{path}.{_os.getpid()}.tmp"
+        with open(tmp, "wb") as f:
+            f.write(_ZONE_CACHE_MAGIC)
+            f.write(_struct.pack("<QQQqQ", ZONE_CHUNK, len(arr), size, mtime, n_chunks))
+            for name in _ZONE_F64_FIELDS:
+                np.ascontiguousarray(getattr(zm, name), dtype=np.float64).tofile(f)
+            for name in _ZONE_U64_FIELDS:
+                np.ascontiguousarray(getattr(zm, name), dtype=np.uint64).tofile(f)
+        _os.replace(tmp, path)  # atomic: a concurrent reader sees whole-or-nothing
+    except OSError:
+        return
+
+
+def _zone_maps_for(arr: Any) -> ZoneMaps:
+    """Zone maps for one column, served from the disk cache when the column is
+    memmapped and a fresh sidecar exists, else folded and (best-effort) cached."""
+    if _ooc.is_memmapped(arr):
+        cached = _load_zone_cache(arr)
+        if cached is not None:
+            return cached
+        zm = ZoneMaps(*kernels.zone_maps(arr))
+        _store_zone_cache(arr, zm)
+        return zm
+    return ZoneMaps(*kernels.zone_maps(arr))
 
 
 @dataclass
@@ -252,7 +356,7 @@ class ColumnStore:
             if not defer_zone_maps:
                 _ = col.zone
             return col
-        zone = None if defer_zone_maps else ZoneMaps(*kernels.zone_maps(arr))
+        zone = None if defer_zone_maps else _zone_maps_for(arr)
         return self._append_canonical(arr, kind, copies, key, zone)
 
     def ingest(self, data: Any, *, defer_zone_maps: bool = False) -> Column:
@@ -303,40 +407,62 @@ class ColumnStore:
                     defer_zone_maps=False,
                 ),
             )
-        x_zone_raw, y_zone_raw = kernels.zone_maps_pair(x_arr, y_arr)
-        x_col = self._append_canonical(
-            x_arr,
-            x_kind,
-            x_copies,
-            x_key,
-            ZoneMaps(*x_zone_raw),
-        )
-        y_col = self._append_canonical(
-            y_arr,
-            y_kind,
-            y_copies,
-            y_key,
-            ZoneMaps(*y_zone_raw),
-        )
+        # Disk-backed columns reuse a persisted sidecar when fresh, skipping the
+        # scan entirely (§22/§27 zone-map cache); otherwise the fused pair fold
+        # does both columns in a single pass, and each result is cached.
+        x_zone = _load_zone_cache(x_arr) if _ooc.is_memmapped(x_arr) else None
+        y_zone = _load_zone_cache(y_arr) if _ooc.is_memmapped(y_arr) else None
+        if x_zone is None or y_zone is None:
+            x_zone_raw, y_zone_raw = kernels.zone_maps_pair(x_arr, y_arr)
+            if x_zone is None:
+                x_zone = ZoneMaps(*x_zone_raw)
+                if _ooc.is_memmapped(x_arr):
+                    _store_zone_cache(x_arr, x_zone)
+            if y_zone is None:
+                y_zone = ZoneMaps(*y_zone_raw)
+                if _ooc.is_memmapped(y_arr):
+                    _store_zone_cache(y_arr, y_zone)
+        x_col = self._append_canonical(x_arr, x_kind, x_copies, x_key, x_zone)
+        y_col = self._append_canonical(y_arr, y_kind, y_copies, y_key, y_zone)
         return x_col, y_col
 
     def memory_report(self) -> dict[str, Any]:
         """Canonical bytes per column — if a number isn't in the report, it
         isn't real (design dossier §27). Derived/GPU classes are added as
-        those caches land."""
-        return {
-            "canonical_bytes": int(sum(c.values.nbytes for c in self._columns)),
-            "columns": [
+        those caches land.
+
+        Out-of-core columns (disk-backed ``np.memmap``, §27's "mmap (native)"
+        row) are counted under ``canonical_mapped_bytes``, *not*
+        ``canonical_bytes``: their bytes live on disk and are paged in by the
+        OS as a reclaimable cache, so they do not sit in the process's resident
+        set the way an in-RAM column does. ``canonical_bytes`` therefore stays
+        the honest RAM-resident canonical figure (unchanged for all-RAM
+        figures, where ``canonical_mapped_bytes`` is 0)."""
+        resident = 0
+        mapped = 0
+        columns = []
+        for c in self._columns:
+            nbytes = int(c.values.nbytes)
+            memmapped = _ooc.is_memmapped(c.values)
+            if memmapped:
+                mapped += nbytes
+            else:
+                resident += nbytes
+            columns.append(
                 {
                     "id": c.id,
                     "kind": c.kind,
                     "len": len(c),
-                    "bytes": int(c.values.nbytes),
+                    "bytes": nbytes,
+                    "backing": "memmap" if memmapped else "ram",
                     "ingest_copies": c.ingest_copies,
                     "null_count": c.zone.null_count,
                 }
-                for c in self._columns
-            ],
+            )
+        return {
+            "canonical_bytes": resident,
+            "canonical_mapped_bytes": mapped,
+            "columns": columns,
         }
 
 

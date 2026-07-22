@@ -31,6 +31,12 @@ if TYPE_CHECKING:
 else:
     _Host = object
 
+# Per-row index kernels (range_indices, bin_2d_indices, the sample-range
+# family) return u32 row ids. Traces with more rows than this ship the density
+# grid alone (bin_2d counts in size_t and stays exact) and drop the u32-limited
+# point-sample overlay / drill paths — recorded per update, never silent (§28).
+_U32_MAX = (1 << 32) - 1
+
 
 class _PayloadWriter:
     """Accumulates the binary blob + column table for `build_payload`.
@@ -977,7 +983,17 @@ class PayloadMixin(_Host):
             and t.y.max <= yr[1]
         )
         sample_sel = None
-        if full_identity:
+        # Per-row index/sample kernels return u32 row ids, so the point-sample
+        # overlay and range-index paths top out at 2³²-1 rows. Past that the
+        # density grid itself is still exact (bin_2d counts in size_t), so we
+        # ship grid-only and record the overlay omission (§28: no silent caps).
+        oversized = int(t.n_points) > _U32_MAX
+        if oversized:
+            visible = int(t.n_points)
+            sel = np.empty(0, dtype=np.uint32)
+            sample_sel = None
+            grid = kernels.bin_2d(t.x.values, t.y.values, xr[0], xr[1], yr[0], yr[1], w, h)
+        elif full_identity:
             visible = int(t.n_points)
             sel = np.empty(0, dtype=np.uint32)
             if compact_categorical:
@@ -1052,6 +1068,10 @@ class PayloadMixin(_Host):
         }
         if t.color_ch and t.color_ch.mode == "constant" and t.color_ch.constant is not None:
             density["color"] = t.color_ch.constant
+        if oversized:
+            # §28: exact grid, but the deterministic point overlay is dropped
+            # because row ids exceed u32. Recorded so the client/legend can say so.
+            density["overlay_omitted"] = "rows_exceed_u32"
         sample = self._density_sample_spec(t, sel, visible, xr, yr, pw, sample_sel=sample_sel)
         if sample is not None:
             density["sample"] = sample
