@@ -1,3 +1,6 @@
+import { PROTOCOL } from "./00_header";
+import { ChartView } from "./50_chartview";
+
 // Declarative data animation: one browser clock, bounded previous/next GPU
 // state, no Python round-trips per frame. Full scene refreshes call
 // updatePayload(); rapid updates cancel/coalesce latest-wins.
@@ -459,7 +462,7 @@ Object.assign(ChartView.prototype, {
     this.view0 = undefined;
     this.view0 = this._clampView({
       ranges: Object.fromEntries(
-        Object.entries(this.axes).map(([id, axis]) => [id, [...axis.range]]),
+        Object.entries(this.axes).map(([id, axis]: any) => [id, [...axis.range]]),
       ),
     });
     const target = { ...this.view0 };

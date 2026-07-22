@@ -1,3 +1,6 @@
+import { fmtCategory, fmtNumberSpec, fmtValue } from "./30_ticks";
+import { ChartView } from "./50_chartview";
+
 // ChartView tooltip resolution: map a hovered vertex back to its source
 // row, denormalize units, and compose the tooltip lines/DOM. Split out of
 // 50_chartview.js; augments the prototype so `this.*` is unchanged.
@@ -26,7 +29,7 @@ Object.assign(ChartView.prototype, {
       // requests made a hover invalidate an in-flight tier_update, freezing
       // the stale tier (found in staff review).
       this._pickSeq = (this._pickSeq || 0) + 1;
-      const req = { type: "pick", seq: this._pickSeq, trace: hit.trace, index: hit.index };
+      const req: any = { type: "pick", seq: this._pickSeq, trace: hit.trace, index: hit.index };
       // Drilled picks name the subset version they hit against; the kernel
       // returns None instead of translating through the wrong subset (§16/§17).
       const hg = hit.g;
@@ -44,7 +47,7 @@ Object.assign(ChartView.prototype, {
     // this with the kernel's exact f64 row (§16).
     const g = hit.g;
     const cpu = g._cpu;
-    const row = { trace: g.trace.id, index: hit.index };
+    const row: any = { trace: g.trace.id, index: hit.index };
     if (hit.heatmap && g.heatmap && g._cpuHeatmap) {
       const h = g.heatmap;
       const { row: heatRow, col } = hit.heatmap;
@@ -288,7 +291,7 @@ Object.assign(ChartView.prototype, {
     this.tooltip.style.top = top + "px";
   },
 
-  _renderTooltip(row, clientX, clientY, options = {}) {
+  _renderTooltip(row, clientX, clientY, options: any = {}) {
     if (!row || this.spec.show_tooltip === false) {
       this._hideTooltip();
       return;

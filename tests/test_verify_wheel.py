@@ -52,21 +52,17 @@ except ImportError as err:
     raise ImportError("native core required") from err
 BACKEND = "native"
 """
+# Shaped like the real minified vite bundles: export aliases in the ESM,
+# a `var xy` IIFE namespace in the standalone build.
 INDEX_JS = (
-    "class ChartView {}\n"
-    "function render() {}\n"
-    "function renderStandalone() {}\n"
-    "function decodeFrame() {}\n"
-    "const padding = '" + ("x" * 1000) + "';\n"
-    "export { render, renderStandalone, decodeFrame, ChartView };\n"
+    "var C=class{};function r(){}function s(){}function d(){}"
+    "var p=`" + ("x" * 1000) + "`;"
+    "export{C as ChartView,d as decodeFrame,r as render,s as renderStandalone};"
 )
 STANDALONE_JS = (
-    "class ChartView {}\n"
-    "function render() {}\n"
-    "function renderStandalone() {}\n"
-    "function decodeFrame() {}\n"
-    "const padding = '" + ("x" * 1000) + "';\n"
-    "window.xy = { render, renderStandalone, decodeFrame, ChartView };\n"
+    "var xy=(function(e){var p=`" + ("x" * 1000) + "`;"
+    "return e.ChartView=class{},e.decodeFrame=()=>{},e.render=()=>{},"
+    "e.renderStandalone=()=>{},e})({});"
 )
 DEFAULT_METADATA = "\n".join(
     [

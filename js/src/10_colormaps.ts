@@ -26,14 +26,14 @@ const COLORMAP_STOPS = {
   spectral: [[158, 1, 66], [212, 61, 79], [244, 109, 67], [253, 173, 96], [254, 224, 139], [255, 255, 190], [230, 245, 152], [170, 220, 164], [102, 194, 165], [51, 135, 188], [94, 79, 162]],
 };
 
-function colormapStops(name) {
+export function colormapStops(name) {
   const reversed = typeof name === "string" && name.endsWith("_r");
   const base = reversed ? name.slice(0, -2) : name;
   const stops = COLORMAP_STOPS[base] || COLORMAP_STOPS.viridis;
   return reversed ? [...stops].reverse() : stops;
 }
 
-function buildLutData(name) {
+export function buildLutData(name) {
   const stops = colormapStops(name);
   const N = 256;
   const data = new Uint8Array(N * 4);

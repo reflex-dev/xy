@@ -1,14 +1,19 @@
+import { bytesToSpan, decodeFrame } from "./00_header";
+import { ChartView } from "./50_chartview";
+import { MARK_KINDS, markOf } from "./55_marks";
+// Prototype-augmentation modules: imported for their side effect of attaching
+// methods to ChartView.prototype. Every entry point must load them before the
+// first ChartView is constructed.
+import "./51_annotations";
+import "./52_tooltip";
+import "./53_interaction";
+import "./54_kernel";
+import "./56_animation";
+import "./57_viewstate";
+
 // ---------------------------------------------------------------------------
 // Entry points
 // ---------------------------------------------------------------------------
-
-function bytesToSpan(b) {
-  const span = xyByteSpan(b, "chart payload");
-  // anywidget/third-party callers may hand us an oddly-offset DataView. Keep
-  // the normal aligned path zero-copy; preserve compatibility with one narrow
-  // view-sized copy only when f32 columns could not be constructed in place.
-  return span.byteOffset % 4 === 0 ? span : new Uint8Array(span);
-}
 
 /** First-paint buffers in the shape the spec declares (§29): packed is one
  * blob; split is one span per column. Aligned views stay zero-copy; only a
@@ -27,7 +32,7 @@ function payloadBuffers(spec, raw) {
   return bytesToSpan(raw);
 }
 
-function render({ model, el }) {
+export function render({ model, el }) {
   const spec = model.get("spec");
   const buffer = payloadBuffers(spec, model.get("buffers"));
   const comm = {
@@ -45,7 +50,7 @@ function render({ model, el }) {
 
 /** Standalone (static HTML export — no kernel). Retains typed CPU views of
  * shipped channels so hover can read approximate values without a kernel (§37). */
-function renderStandalone(el, spec, arrayBuffer) {
+export function renderStandalone(el, spec, arrayBuffer) {
   const buffer = bytesToSpan(arrayBuffer);
   const view = new ChartView(el, spec, buffer, null);
   const column = (idx) => view._columnView(buffer, spec.columns[idx]);
@@ -68,10 +73,8 @@ function renderStandalone(el, spec, arrayBuffer) {
   return view;
 }
 
-// Everything from the next line on is stripped for the IIFE/standalone build
-// (ES `export` is illegal in a `new Function` body). The marker must be the
-// whole line — build.mjs splits on it and rejects any trailing text so this
-// description can never leak into the ESM bundle as bare code.
-// ---- exports ----
-export { render, renderStandalone, decodeFrame, ChartView, MARK_KINDS, markOf };
+// Public API. The ESM bundle (static/index.js, anywidget's `_esm`) re-exports
+// these directly; the IIFE bundle (static/standalone.js) exposes the same
+// namespace as `window.xy`.
+export { decodeFrame, ChartView, MARK_KINDS, markOf };
 export default { render, decodeFrame };

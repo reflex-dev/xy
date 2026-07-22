@@ -20,9 +20,7 @@
  * title, axis tick labels, legend, tooltip (§7).
  */
 
-"use strict";
-
-const PROTOCOL = 4;
+export const PROTOCOL = 4;
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
 // python/xy/_framing.py). The chart spec's PROTOCOL
@@ -39,12 +37,20 @@ const XY_FRAME_DEFAULT_LIMITS = Object.freeze({
   maxBufferBytes: 256 * 1024 * 1024,
 });
 
-function xyByteSpan(value, label = "buffer") {
+export function xyByteSpan(value, label = "buffer") {
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   if (ArrayBuffer.isView(value)) {
     return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
   }
   throw new TypeError(`${label} must be an ArrayBuffer or ArrayBuffer view`);
+}
+
+export function bytesToSpan(b) {
+  const span = xyByteSpan(b, "chart payload");
+  // anywidget/third-party callers may hand us an oddly-offset DataView. Keep
+  // the normal aligned path zero-copy; preserve compatibility with one narrow
+  // view-sized copy only when f32 columns could not be constructed in place.
+  return span.byteOffset % 4 === 0 ? span : new Uint8Array(span);
 }
 
 function xyFrameLimit(limits, name) {
@@ -81,7 +87,7 @@ function xyRequireZeroPadding(bytes, start, end, label) {
  * not copied. Response.arrayBuffer() supplies an aligned base. Passing an
  * unaligned subview is rejected rather than silently slicing the whole frame.
  */
-function decodeFrame(body, limits = null) {
+export function decodeFrame(body, limits = null) {
   const bytes = xyByteSpan(body, "frame body");
   const maxFrameBytes = xyFrameLimit(limits, "maxFrameBytes");
   const maxMetadataBytes = xyFrameLimit(limits, "maxMetadataBytes");

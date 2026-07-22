@@ -19,7 +19,7 @@ function compile(gl, type, src) {
 // need distinct slots *within* each program; the groups below are disjoint per
 // shader (point: ax/ay + a_*; line/area: ax0..ab1; bar: a_pos/a_v1/a_v0;
 // grid quad: a_corner). WebGL2 guarantees >= 16 attribs; the max used is 15.
-const ATTR_SLOTS = {
+export const ATTR_SLOTS = {
   ax: 0, ay: 1,
   ax0: 0, ax1: 1, ay0: 2, ay1: 3, ax2: 4, ay2: 5, ab0: 4, ab1: 5,
   a_pos: 0, a_v1: 1, a_v0: 2,
@@ -38,7 +38,7 @@ const ATTR_SLOTS = {
   a_rgba: 12, a_style: 13, a_stroke: 14, a_radius: 15,
 };
 
-function makeProgram(gl, vs, fs) {
+export function makeProgram(gl, vs, fs) {
   const p = gl.createProgram();
   const vsh = compile(gl, gl.VERTEX_SHADER, vs);
   const fsh = compile(gl, gl.FRAGMENT_SHADER, fs);
@@ -64,7 +64,7 @@ function makeProgram(gl, vs, fs) {
   return p;
 }
 
-function uniformOf(gl, prog, name) {
+export function uniformOf(gl, prog, name) {
   let loc = prog._u[name];
   if (loc === undefined) {
     loc = gl.getUniformLocation(prog, name);
@@ -99,7 +99,7 @@ float xyViewValue(float coord, int mode) {
 }
 `;
 
-const POINT_VS = `#version 300 es
+export const POINT_VS = `#version 300 es
 in float ax; in float ay; in float a_prevx; in float a_prevy;
 in float a_cval; in float a_sval; in float a_sel; in float a_dval;
 in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke;
@@ -213,7 +213,7 @@ float xyMarkerSdf(vec2 d, int shape) {
   return length(d) - 0.5;                                           // circle
 }`;
 
-const POINT_FS = `#version 300 es
+export const POINT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
 uniform sampler2D u_dlut; uniform float u_dblend;
@@ -292,7 +292,7 @@ void main() {
 // and stroked/symbol markers keep POINT_VS/POINT_FS below. Keeping this
 // specialization separate avoids dynamic feature branches and texture state
 // on software GL while producing the same circle SDF and premultiplied color.
-const POINT_SIMPLE_VS = `#version 300 es
+export const POINT_SIMPLE_VS = `#version 300 es
 in float ax; in float ay; in float a_prevx; in float a_prevy;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
@@ -306,7 +306,7 @@ void main() {
   gl_PointSize = u_size * u_dpr;
 }`;
 
-const POINT_SIMPLE_FS = `#version 300 es
+export const POINT_SIMPLE_FS = `#version 300 es
 precision highp float;
 uniform vec4 u_color;
 out vec4 outColor;
@@ -329,7 +329,7 @@ void main() {
 // saturated the u8 alpha channel) and wrapped point indices above 2^24; one
 // global id space has neither limit — capacity is 2^31-1 total pickable
 // points (GLSL highp int is signed), far beyond what GPU memory admits.
-const PICK_VS = `#version 300 es
+export const PICK_VS = `#version 300 es
 in float ax; in float ay; in float a_prevx; in float a_prevy; in float a_sval;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
@@ -346,7 +346,7 @@ void main() {
   v_id = gl_VertexID;
 }`;
 
-const PICK_FS = `#version 300 es
+export const PICK_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform int u_pick_base;
 flat in int v_id;
@@ -370,7 +370,7 @@ void main() {
 // positioned during pan until the re-bin arrives (§17). The two consumers
 // differ only in their fragment stage (log-density alpha ramp vs byte-
 // quantized heatmap values).
-const GRID_VS = `#version 300 es
+export const GRID_VS = `#version 300 es
 in vec2 a_corner;
 uniform vec4 u_view; // x0,x1,y0,y1
 uniform int u_xmode; uniform int u_ymode;
@@ -383,7 +383,7 @@ void main() {
   v_data = vec2(xyViewValue(x, u_xmode), xyViewValue(y, u_ymode));
 }`;
 
-const DENSITY_FS = `#version 300 es
+export const DENSITY_FS = `#version 300 es
 precision highp float;
 uniform sampler2D u_grid; uniform sampler2D u_lut;
 uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
@@ -408,7 +408,7 @@ void main() {
 // Heatmap grid: a regular value matrix as one R8 texture. Byte 0 means missing
 // (transparent); bytes 1..255 map back to normalized values [0,1]. Vertex
 // stage is the shared GRID_VS above.
-const HEATMAP_FS = `#version 300 es
+export const HEATMAP_FS = `#version 300 es
 precision highp float;
 uniform sampler2D u_grid; uniform sampler2D u_lut;
 uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
@@ -434,7 +434,7 @@ void main() {
   outColor = vec4(rgb * u_opacity, u_opacity);
 }`;
 
-const LINE_VS = `#version 300 es
+export const LINE_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1;
 in float a_prevx; in float a_prevy; in float a_prevx1; in float a_prevy1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
@@ -472,7 +472,7 @@ void main() {
   v_dash = mix(a_len0, mix(a_len0, a_len1, reveal), c.x);
 }`;
 
-const LINE_FS = `#version 300 es
+export const LINE_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform float u_width;
 uniform int u_dashCount; uniform float u_dashArr[8]; uniform float u_dashPeriod;
@@ -506,7 +506,7 @@ void main() {
 // endpoint pairs with per-column axis metas and an optional per-segment LUT
 // color. A separate program keeps the polyline path (LINE_VS/LINE_FS) free of
 // the extra meta uniforms and the sampler on its per-frame draw path.
-const SEGMENT_VS = `#version 300 es
+export const SEGMENT_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1; in float a_cval; in vec4 a_rgba; in vec4 a_style;
 in float a_dash0; in float a_dashDir;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
@@ -540,7 +540,7 @@ void main() {
   v_rgba = a_rgba; v_style = a_style;
 }`;
 
-const SEGMENT_FS = `#version 300 es
+export const SEGMENT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform float u_width; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
 uniform int u_dashCount; uniform float u_dashArr[8]; uniform float u_dashPeriod;
@@ -571,7 +571,7 @@ void main() {
 
 // Filled triangle meshes: one instance per triangle, with optional scalar LUT
 // color and antialiased barycentric edge strokes.
-const MESH_VS = `#version 300 es
+export const MESH_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1; in float ax2; in float ay2; in float a_cval;
 in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
@@ -596,7 +596,7 @@ void main() {
   v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke;
 }`;
 
-const MESH_FS = `#version 300 es
+export const MESH_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
 uniform vec4 u_stroke; uniform float u_strokeWidth; uniform int u_strokeMode; uniform float u_strokeOpacity;
@@ -654,7 +654,7 @@ float xyGradT(float markT, vec2 res) {
 
 // Area: one instanced strip per segment, filling between the top line (y) and a
 // baseline column. Baseline is offset-encoded independently from y.
-const AREA_VS = `#version 300 es
+export const AREA_VS = `#version 300 es
 in float ax0; in float ax1; in float ay0; in float ay1; in float ab0; in float ab1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_bmap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform vec2 u_bmeta;
@@ -689,7 +689,7 @@ void main() {
   gl_Position = vec4(mix(x0, x1, c.x), clipY, 0.0, 1.0);
 }`;
 
-const AREA_FS = `#version 300 es
+export const AREA_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color;
 uniform vec2 u_res;
@@ -712,7 +712,7 @@ void main() {
 // Rectangles: one instanced quad per mark. Geometry columns are left/right and
 // bottom/top in data space, each offset-encoded independently (§4). This is the
 // primitive for histogram, bar/column, waterfall, and later heatmap cells.
-const RECT_VS = `#version 300 es
+export const RECT_VS = `#version 300 es
 in float ax0; in float ax1; in float ay0; in float ay1;
 uniform vec2 u_x0map; uniform vec2 u_x1map; uniform vec2 u_y0map; uniform vec2 u_y1map;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
@@ -748,7 +748,7 @@ void main() {
 // and scalar width. This keeps common bar payloads to two columns instead of
 // four edge columns while preserving the full rectangle primitive for irregular
 // histograms/candles/waterfalls.
-const BAR_VS = `#version 300 es
+export const BAR_VS = `#version 300 es
 in float a_pos; in float a_v0; in float a_v1; in float a_cval;
 in float a_prevx; in float a_prevy; in float a_prevx1;
 in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke; in vec2 a_radius;
@@ -811,7 +811,7 @@ void main() {
 // With radius/stroke/gradient at their defaults this reduces exactly to the
 // old flat-quad output (cover = 1, no SDF sampled), so plain bars stay
 // pixel-identical.
-const RECT_FS = `#version 300 es
+export const RECT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut;
 uniform vec2 u_radius; uniform float u_strokeWidth; uniform vec4 u_stroke;
@@ -894,7 +894,7 @@ function xyMonotoneTangents(x, y, n) {
   return m;
 }
 
-function xySmoothResample(x, y, extra, n, maxOut) {
+export function xySmoothResample(x, y, extra, n, maxOut) {
   if (n < 3) return null;
   const sub = Math.max(1, Math.min(16, Math.floor(maxOut / n)));
   if (sub <= 1) return null; // already pixel-dense; identity at pixel scale

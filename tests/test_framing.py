@@ -293,9 +293,11 @@ def test_javascript_rejects_malformed_and_unaligned_frames() -> None:
 
 
 def test_widget_entry_no_longer_slices_binary_views() -> None:
-    source = (ROOT / "js" / "src" / "60_entries.js").read_text(encoding="utf-8")
+    source = (ROOT / "js" / "src" / "60_entries.ts").read_text(encoding="utf-8")
     built = CLIENT.read_text(encoding="utf-8")
     assert 'payloadBuffers(spec, model.get("buffers"))' in source
     assert "raw.map(bytesToSpan)" in source
     assert ".buffer.slice(b.byteOffset" not in source
-    assert "function decodeFrame(" in built
+    # The built bundle is minified; the decodeFrame export alias is the marker
+    # that survives identifier renaming.
+    assert "as decodeFrame" in built

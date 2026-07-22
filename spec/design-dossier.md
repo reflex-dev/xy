@@ -258,7 +258,7 @@ deck.gl in production):
 `DRILL_EXIT_FACTOR = 1.15` (`python/xy/config.py`) so a trace that has drilled down to
 real points stays drilled until the count clearly exceeds the budget again. The client
 mirrors the same rule (`LOD_DIRECT_POINT_BUDGET`, `LOD_DRILL_EXIT_FACTOR` in
-`js/src/45_lod.js`). Mark pixel area and overdraw do **not** enter the decision.
+`js/src/45_lod.ts`). Mark pixel area and overdraw do **not** enter the decision.
 
 *Pending (F3, not implemented):* folding `mark_pixel_area × estimated_overdraw` into the
 tier decision, so a dense large-marker scatter trips Tier 2 aggregation at sub-ceiling
@@ -272,7 +272,7 @@ budget is channel-dependent: `Trace.use_density()` (`python/xy/_trace.py`) picks
 channel, and `SCATTER_DENSITY_THRESHOLD = 200_000` otherwise (both in
 `python/xy/config.py`). A plain scatter therefore aggregates at 200k — its whole win is
 not drawing 10M dots — while a scatter whose per-point color/size aggregation would
-destroy stays direct up to 2M. `js/src/45_lod.js` carries the matching 200k client
+destroy stays direct up to 2M. `js/src/45_lod.ts` carries the matching 200k client
 budget.
 
 **Tier 1 — Decimated lines (LTTB / min-max per pixel column):** for line/area traces
@@ -364,12 +364,12 @@ re-exports several of them as a historic import path and is not listed for those
 | --- | --- | --- | --- |
 | `PROTOCOL_VERSION` | `3` | Wire-spec version stamped on every payload; the client refuses a mismatch loudly (§33). | `_payload.py` |
 | `DECIMATION_THRESHOLD` | `10_000` | Line/area traces with more points than this ship M4-decimated (Tier 1); at or below, raw columns go over the wire. Also gates re-decimation on the interaction path. | `_payload.py`, `interaction.py` |
-| `SCATTER_DENSITY_THRESHOLD` | `200_000` | Tier-0 → Tier-2 count budget for a scatter with **no** per-point channel (`Trace.use_density()`), and the visible-count budget for view-LOD planning and drill decisions. | `_trace.py`, `interaction.py`; mirrored client-side as `LOD_DIRECT_POINT_BUDGET` in `js/src/45_lod.js` |
+| `SCATTER_DENSITY_THRESHOLD` | `200_000` | Tier-0 → Tier-2 count budget for a scatter with **no** per-point channel (`Trace.use_density()`), and the visible-count budget for view-LOD planning and drill decisions. | `_trace.py`, `interaction.py`; mirrored client-side as `LOD_DIRECT_POINT_BUDGET` in `js/src/45_lod.ts` |
 | `DIRECT_SOFT_CEILING` | `2_000_000` | Tier-0 → Tier-2 count budget for a scatter that **does** carry a per-point color or size channel; above it density is forced and the channels are warned about, never silently dropped (§5 F5). | `_trace.py`, `marks.py` |
 | `DENSITY_GRID` | `(512, 384)` | Default density-grid cell dimensions for the initial spec, before the client requests a viewport-matched size via `density_view`. | `_payload.py` |
 | `MAX_SCREEN_DIM` | `4096` | Upper clamp on any browser-supplied pixel dimension, so untrusted widget/comm input cannot inflate decimation buckets or density grids. | `lod.py`, `_native.py` |
 | `MAX_CONTOUR_WORK` | `4_000_000` | Ceiling on contour `cells × levels`; a request over it raises instead of allocating an unbounded segment buffer. | `marks.py`, `_native.py` |
-| `DRILL_EXIT_FACTOR` | `1.15` | Hysteresis multiplier on the drill boundary: a trace already drilled to real points stays drilled until the visible count exceeds `budget × 1.15`. | `lod.py` (`drill_decision`, `plan_view_lod`), `interaction.py`; mirrored as `LOD_DRILL_EXIT_FACTOR` in `js/src/45_lod.js` |
+| `DRILL_EXIT_FACTOR` | `1.15` | Hysteresis multiplier on the drill boundary: a trace already drilled to real points stays drilled until the visible count exceeds `budget × 1.15`. | `lod.py` (`drill_decision`, `plan_view_lod`), `interaction.py`; mirrored as `LOD_DRILL_EXIT_FACTOR` in `js/src/45_lod.ts` |
 | `DENSITY_TARGET_POINTS_PER_CELL` | `16.0` | Target points per cell when sizing an aggregation grid, so a barely-over-budget view does not get a one-point-per-pixel grid that looks like static and re-ships large. | `lod.py` |
 | `DENSITY_SAMPLE_TARGET` | `8_192` | Size of the deterministic real-point sample shipped over an aggregated scatter's density texture (hybrid overlay). | `_payload.py`, `interaction.py` |
 | `DENSITY_SAMPLE_SEED` | `0` | Seed for that sample; a fixed seed makes the overlay identical across re-ships of the same view. | `_payload.py`, `interaction.py` |
@@ -444,7 +444,7 @@ F3, still pending (above).
   neither SharedArrayBuffer nor cross-origin isolation (COOP/COEP) is required —
   which is what lets the client run in Jupyter, embedded iframes, and third-party
   contexts that cannot set those headers.
-- One Web Worker exists client-side, and it is not the core: `js/src/46_worker.js`
+- One Web Worker exists client-side, and it is not the core: `js/src/46_worker.ts`
   re-bins the retained density sample for kernel-less standalone exports (`to_html`),
   off the main thread, booted from a Blob URL. Environments without workers fall back
   to the stretched overview texture.
@@ -610,8 +610,8 @@ detail inside a decade of millisecond timestamps).
   geometry is quantized to sub-pixel f32.
 - **Linear axes stay offset-encoded through the vertex transform.** The shader's
   affine view mapping is composed directly onto the encoded values (`xyMap`,
-  `js/src/40_gl.js`); the CPU folds the offset into the affine constants in f64
-  (`_map`, `js/src/50_chartview.js`). Decoding to absolute coordinates in-shader
+  `js/src/40_gl.ts`); the CPU folds the offset into the affine constants in f64
+  (`_map`, `js/src/50_chartview.ts`). Decoding to absolute coordinates in-shader
   first would discard the low bits whenever a deeply zoomed window is far smaller
   than the offset — after which zooming back out could never recover the point
   spread. Only log axes decode before mapping, because log10 is not affine.
@@ -648,7 +648,7 @@ WebGL contexts per page (~16 in Chrome) and LRU-evict the oldest on overflow, wh
 permanently blanks the earliest charts of a big dashboard.
 
 **Shipped: one context per chart, governed.** `XY_CONTEXT_GOVERNOR`
-(`js/src/50_chartview.js`) keeps the page inside a budget — default **12**, overridable
+(`js/src/50_chartview.ts`) keeps the page inside a budget — default **12**, overridable
 via `window.XY_CONTEXT_BUDGET` — leaving headroom under Chrome's cap for host-page GL.
 When a view is about to acquire a context at budget, the least-recently-visible
 *off-screen* view releases its own via `WEBGL_lose_context` and re-acquires when
@@ -797,11 +797,13 @@ Where it must run, and what each environment denies us:
 | Old browsers / no WebGL2 | GPU entirely | same pure-JS + 2D-canvas fallback, capped; loudly reported via the §5 no-silent-caps rule |
 | Server / CI (native) | no display | headless native path (§8) |
 
-**Bundle size.** The shipped client is a single JS bundle — `python/xy/static/index.js`,
-309 KB uncompressed / ~74 KB gzipped — with no WASM payload and no lazily-loaded trace
+**Bundle size.** The shipped client is a single minified JS bundle —
+`python/xy/static/index.js`, ~277 KB minified / ~76 KB gzipped (vite/oxc; built from
+the TypeScript sources in `js/src`) — with no WASM payload and no lazily-loaded trace
 modules. The one size gate CI enforces is on the **wheel**: `.github/workflows/ci.yml`
 asserts the built wheel is ≤ 15 MB (§33). CI also verifies the committed JS bundles are
-*fresh* (`node js/build.mjs` reproduces them), but it does not measure their bytes.
+*fresh* (`node js/build.mjs` reproduces them byte-for-byte), but it does not measure
+their bytes.
 
 *Pending:* a gzipped-size budget on the client bundle, failing the build exactly like a
 perf regression (§12), plus per-trace-family lazy feature modules (Plotly's
@@ -1139,7 +1141,7 @@ the chart match my site" actually means — typography and chrome.
 }
 ```
 
-Mechanism: `readTheme()` (`js/src/20_theme.js`) resolves the canvas tokens at mount and
+Mechanism: `readTheme()` (`js/src/20_theme.ts`) resolves the canvas tokens at mount and
 writes them to renderer state — clear color, grid and axis uniforms, label color. Chrome
 tokens are consumed directly by the stylesheet (`XY_CHROME_CSS`, zero-specificity
 `:where()` rules) rather than through the renderer. One implementation reality (audit
@@ -1180,7 +1182,7 @@ author expects.
   CSS bridge is the web-author's path to the same renderer state, not a separate system.
 - **Export parity — partially closed; the kernel path is still an open gap.** Two export
   routes exist. *Client-side* (modebar download) is themed correctly: `_exportSvgMarkup()`
-  (`js/src/53_interaction.js`) inlines the resolved `--chart-*` tokens and inherited text
+  (`js/src/53_interaction.ts`) inlines the resolved `--chart-*` tokens and inherited text
   styles onto the detached clone before serializing, so the downloaded SVG/PNG matches
   the screen. *Kernel-side* export (`to_svg` / `to_png` / `write_image`, rendered by
   `python/xy/_svg.py` and `python/xy/_raster.py`) has no CSS: it uses only the

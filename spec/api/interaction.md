@@ -13,8 +13,8 @@ that one governs the rationale. Where another spec describes an interaction as
 Implementation: `python/xy/components.py` (`interaction_config`, `Chart`,
 `FacetChart`), `python/xy/_figure.py` (`set_interaction`,
 `_interaction_spec`), `python/xy/channel.py` (kernel-side dispatch),
-`js/src/53_interaction.js` (gestures, modebar, view state machine),
-`js/src/50_chartview.js` (flag resolution, link channel),
+`js/src/53_interaction.ts` (gestures, modebar, view state machine),
+`js/src/50_chartview.ts` (flag resolution, link channel),
 `python/reflex-xy/reflex_xy/` (Reflex event props).
 
 ## 1. How a switch resolves
@@ -51,16 +51,16 @@ the switch is never set. The non-boolean viewport keys — `default_drag_action`
 | `hover` | off | Suppresses the `xy:hover` and `xy:leave` DOM events. The tooltip still renders and the kernel `pick` round-trip still runs; only the event surface is gated. |
 | `click` | off | `_click` returns immediately: no `xy:click` event and no `click` message to the kernel. |
 | `select` | on | Suppresses the `xy:select` event and the `select_clear` message, removes the modebar Selection menu, and (with `brush`) disables shift-drag. |
-| `brush` | on | Same conjunction: `canBrush = brush && select` (`53_interaction.js:115`) gates every selection drag and the modebar Selection menu. |
-| `crosshair` | off | The two guide elements are created only when the flag is true, at init (`53_interaction.js:80`). Not togglable after mount. |
+| `brush` | on | Same conjunction: `canBrush = brush && select` (`53_interaction.ts:115`) gates every selection drag and the modebar Selection menu. |
+| `crosshair` | off | The two guide elements are created only when the flag is true, at init (`53_interaction.ts:80`). Not togglable after mount. |
 | `navigation` | on | Master gate on pointer-drag pan, wheel zoom, box-zoom drags, dblclick reset, and every modebar viewport control. |
 | `pan` | on | Plain-drag pan is ignored, the modebar Pan button is not built, and every zoom-enabled axis is contained (§2.2). Requires `navigation`. Pans `pan_axes` (§2.1). |
 | `zoom` | on | Master zoom gate: wheel zoom, box zoom, and the modebar zoom menu are all ignored. Requires `navigation`. Zooms `zoom_axes` (§2.1). |
-| `wheel_zoom` | on | Cursor-anchored wheel/trackpad zoom is ignored and the page keeps scrolling; box and button zoom are unaffected. Requires `navigation` and `zoom` (`53_interaction.js:271-273`). |
-| `box_zoom` | on | Box-zoom drags and the modebar Box Zoom button are removed, and `default_drag_action="zoom"` has no usable drag tool. Requires `navigation` and `zoom` (`53_interaction.js:112-113`, `50_chartview.js:419`). |
-| `zoom_buttons` | on | The modebar Zoom In (×0.5) / Zoom Out (×2) commands are removed; wheel and box zoom keep working. Requires `navigation` and `zoom` (`53_interaction.js:883`). |
-| `double_click_reset` | on | Double-click no longer resets the view. The modebar Reset View button is unaffected. Requires `navigation` only — reset is independent of `zoom` (`53_interaction.js:283-284`). |
-| `history` | on | Removes the modebar Back/Forward buttons and stops durable-state snapshotting entirely (`57_viewstate.js`). The full history contract is [`../design/view-state.md`](../design/view-state.md) §4: a client-local 64-entry stack of durable-state snapshots, coalesced per gesture by `interaction_id`; linked and history-sourced writes never push; reset pushes (Back undoes a double-click). |
+| `wheel_zoom` | on | Cursor-anchored wheel/trackpad zoom is ignored and the page keeps scrolling; box and button zoom are unaffected. Requires `navigation` and `zoom` (`53_interaction.ts:271-273`). |
+| `box_zoom` | on | Box-zoom drags and the modebar Box Zoom button are removed, and `default_drag_action="zoom"` has no usable drag tool. Requires `navigation` and `zoom` (`53_interaction.ts:112-113`, `50_chartview.ts:419`). |
+| `zoom_buttons` | on | The modebar Zoom In (×0.5) / Zoom Out (×2) commands are removed; wheel and box zoom keep working. Requires `navigation` and `zoom` (`53_interaction.ts:883`). |
+| `double_click_reset` | on | Double-click no longer resets the view. The modebar Reset View button is unaffected. Requires `navigation` only — reset is independent of `zoom` (`53_interaction.ts:283-284`). |
+| `history` | on | Removes the modebar Back/Forward buttons and stops durable-state snapshotting entirely (`57_viewstate.ts`). The full history contract is [`../design/view-state.md`](../design/view-state.md) §4: a client-local 64-entry stack of durable-state snapshots, coalesced per gesture by `interaction_id`; linked and history-sourced writes never push; reset pushes (Back undoes a double-click). |
 | `link_group` | unset | See §4. |
 | `link_axes` | all declared axes | See §4. |
 
@@ -148,12 +148,12 @@ named `xy:<name>`. `view` is `_eventView(source)` —
 `{ranges: {axisId: [lo, hi]}, x0, x1, y0, y1, source}` in data coordinates. The
 per-axis `ranges` map is canonical and covers every declared axis (including
 independent secondary axes such as `y2`); `x0`/`x1`/`y0`/`y1` are compatibility
-aliases for `ranges.x`/`ranges.y` (`50_chartview.js`, `_eventView`).
+aliases for `ranges.x`/`ranges.y` (`50_chartview.ts`, `_eventView`).
 
 | Event | Detail |
 | --- | --- |
 | `xy:hover` | `{row, trace, index, view}` plus the structured payload `{active: true, cursor: {px, data}, points}` (view-state.md §7.1) — genuinely additive; the kernel's exact-value reply re-dispatches with `exact: true` and a refreshed payload. `cursor.px` is chart-root-relative pixels; `cursor.data` is keyed by **exact axis ID** with one entry per declared axis; each `points[]` entry carries `trace` (series name), `index`, `row`, its `x_axis`/`y_axis` bindings, and the series `color`. |
-| `xy:leave` | `{view, active: false}` with `source: "leave"`. Dispatched by canvas pointer exit and by a document-level missed-leave backstop: browsers skip boundary events when the element under a stationary cursor changes (page scroll, hit-test churn), so while a pointer-owned readout is live, a `pointerover` whose target left the chart root runs the same exit path (`53_interaction.js` `_pointerHoverExit`). Keyboard readouts are exempt — they survive mouse movement elsewhere and are dismissed by `Escape`. |
+| `xy:leave` | `{view, active: false}` with `source: "leave"`. Dispatched by canvas pointer exit and by a document-level missed-leave backstop: browsers skip boundary events when the element under a stationary cursor changes (page scroll, hit-test churn), so while a pointer-owned readout is live, a `pointerover` whose target left the chart root runs the same exit path (`53_interaction.ts` `_pointerHoverExit`). Keyboard readouts are exempt — they survive mouse movement elsewhere and are dismissed by `Escape`. |
 | `xy:click` | `{x, y, view, row, trace, index}`; `row`/`trace`/`index` are `null` when the click hit no mark. |
 | `xy:brush` | `{range: {x0, x1, y0, y1}, view}` for box/axis-range drags, or `{polygon: [[x, y], …], view}` for lasso. |
 | `xy:select` | `{total, view}` — the resolved count after the kernel replies, or `total: 0` on clear. |
@@ -190,12 +190,12 @@ They carry no `view`, and no interaction switch gates them:
 
 | Event | Detail |
 | --- | --- |
-| `xy:context_lost` | `{loss_count}` — the canvas lost its WebGL2 context (`50_chartview.js:693`). |
+| `xy:context_lost` | `{loss_count}` — the canvas lost its WebGL2 context (`50_chartview.ts:693`). |
 | `xy:context_restored` | `{loss_count, restore_count}` — a live frame is back (`:775`). |
 | `xy:context_restore_failed` | `{loss_count, message}` — recovery gave up; the root is replaced with an error string (`:761`). |
 
 Those nine are the whole `xy:` surface — every one goes through
-`_dispatchChartEvent` (`50_chartview.js:451`), and there is no other
+`_dispatchChartEvent` (`50_chartview.ts:451`), and there is no other
 `CustomEvent` dispatch in `js/src/`.
 
 Kernel-side callbacks (`python/xy/channel.py`), wired through
@@ -238,7 +238,7 @@ are in [`../design/wire-protocol.md`](../design/wire-protocol.md) §4.
 ## 4. Linking
 
 `link_group` names a `BroadcastChannel` opened as `` `xy:${group}` ``
-(`50_chartview.js:487`). Every view instance mints a random `_linkedSource`
+(`50_chartview.ts:487`). Every view instance mints a random `_linkedSource`
 id and drops messages carrying its own id, so a figure never re-applies its
 own broadcast. Because the transport is `BroadcastChannel`, linking spans
 tabs and windows of the same origin, and is a no-op where the constructor is
@@ -250,7 +250,7 @@ resolved against *declared* axes, so a secondary `y2` links when both peers
 declare it and any absent or non-matching ID is left alone — onto its current
 view, rejects non-finite results, clamps to its own bounds, and applies the
 result with `animate: false`, `source: "linked"`, and `broadcast: false` so the
-update does not echo (`50_chartview.js:591-609`). Outgoing axes are the mirror:
+update does not echo (`50_chartview.ts:591-609`). Outgoing axes are the mirror:
 `actually-changed ∩ link_axes`. Applying a linked view does **not** consult
 local `navigation`/`pan`/`zoom`, so a read-only chart (`navigation=False`) still
 follows its link group — the mechanism behind an overview-plus-linked-detail
@@ -269,13 +269,13 @@ updates the peer's rendering without re-emitting its own events.
 
 ## 5. Gesture map
 
-From `js/src/53_interaction.js`. `shift` is the only modifier key the
+From `js/src/53_interaction.ts`. `shift` is the only modifier key the
 renderer reads anywhere in `js/src/`.
 
 | Gesture | Action | Requires |
 | --- | --- | --- |
 | Plain drag | The resolved drag mode — pan by default (`default_drag_action`, §2.1) | mode-dependent; pan needs `navigation` and `pan` |
-| **Shift**-drag | Box select, overriding the current drag mode (`53_interaction.js:117`) | `brush`, `select`, `_pickable` |
+| **Shift**-drag | Box select, overriding the current drag mode (`53_interaction.ts:117`) | `brush`, `select`, `_pickable` |
 | Drag in `select` / `select-lasso` / `select-x` / `select-y` mode | That selection shape | `brush`, `select`, `_pickable` |
 | Drag in `zoom` mode | Box zoom, fitting `zoom_axes` on release | `navigation`, `zoom`, and `box_zoom` |
 | Wheel | Cursor-anchored zoom of `zoom_axes`, factor `1.0015 ** deltaY`; `preventDefault` | `navigation`, `zoom`, and `wheel_zoom` |
@@ -300,7 +300,7 @@ needs no modifier keys, and a band gesture is an ordinary interaction with a
 one-axis `axes` list — history and events see nothing new.
 
 **Zoom limits.** Every factor zoom — wheel, modebar Zoom In/Out — goes
-through `_zoomAxisRange` (`53_interaction.js:1661`) and stops at two
+through `_zoomAxisRange` (`53_interaction.ts:1661`) and stops at two
 boundaries:
 
 - *Zooming in* stops at the dossier §16 precision floor: if either axis's
@@ -348,7 +348,7 @@ is written straight into each panel's interaction dict.
 
 The hover tooltip is anchored in data space, not at the cursor
 (matplotlib's data-coordinate-annotation contract;
-`js/src/52_tooltip.js`, `_setTooltipAnchor` / `_repositionTooltip`):
+`js/src/52_tooltip.ts`, `_setTooltipAnchor` / `_repositionTooltip`):
 
 - At pick time the hovered point's data coordinates are recorded against the
   trace's own axis pair. Category rows carry labels rather than numbers, so

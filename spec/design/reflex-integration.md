@@ -324,7 +324,7 @@ absorbs newer publishes and always ships the latest payload.
   payload's: it is what lets an `on_view_change`-computed detail chart track its
   source both ways — when the linked overview zooms *out*, the recomputed
   detail's count axis grows and the view expands with it instead of clamping to
-  the previous, smaller home (`ChartView.updatePayload`, `js/src/56_animation.js`).
+  the previous, smaller home (`ChartView.updatePayload`, `js/src/56_animation.ts`).
 - **Streaming**: `reflex_xy.append(token, x=..., y=...)` from any handler,
   background task, or thread → `Figure.append` under the figure lock (worker
   thread) → the same `append` message the notebook widget ships, pushed

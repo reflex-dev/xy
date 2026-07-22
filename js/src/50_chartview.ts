@@ -1,6 +1,22 @@
+import { PROTOCOL, xyByteSpan } from "./00_header";
+import { buildLutData, colormapStops } from "./10_colormaps";
+import { cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
+import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
+import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
+import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodRememberDensity, lodWriteGridTexture } from "./45_lod";
+import { markOf } from "./55_marks";
+
 // ---------------------------------------------------------------------------
 // ChartView
 // ---------------------------------------------------------------------------
+
+// ChartView gains methods via prototype augmentation (51–57) and creates
+// instance fields ad hoc throughout its lifecycle; the merged index signature
+// keeps that dynamic surface type-legal until the class is annotated
+// field-by-field.
+export interface ChartView {
+  [key: string]: any;
+}
 
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 const COLORBAR_THICKNESS = 18;
@@ -76,7 +92,7 @@ const XY_CONTEXT_GOVERNOR = {
   _crossFrameReady: false,
   _rebalanceScheduled: false,
   budget() {
-    const v = typeof window !== "undefined" ? window.XY_CONTEXT_BUDGET : null;
+    const v = typeof window !== "undefined" ? (window as any).XY_CONTEXT_BUDGET : null;
     // 12 leaves headroom under Chrome's ~16 so host-page GL (maps, editors)
     // does not push chart contexts into browser-side eviction.
     return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 12;
@@ -214,7 +230,7 @@ const XY_CONTEXT_GOVERNOR = {
   // Broadcast this frame's live-context count when it changes (deduped so a
   // burst of releases collapses to one message). `force` re-sends the current
   // count in reply to a peer's hello even when it is unchanged.
-  _announceLive(force) {
+  _announceLive(force = false) {
     if (!this.channel) return;
     const n = this.localLive();
     if (!force && n === this._announcedLive) return;
@@ -310,7 +326,7 @@ function xyInitiallyVisible(el) {
   );
 }
 
-class ChartView {
+export class ChartView {
   constructor(el, spec, buffer, comm) {
     if (spec.protocol !== PROTOCOL) {
       el.textContent =
@@ -413,7 +429,7 @@ class ChartView {
     }
     this.canvas.dataset.xyCtx = "live";
     this.view0 = this._clampView({
-      ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]) => [id, [...axis.range]])),
+      ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]: any) => [id, [...axis.range]])),
     });
     this.view = this._copyView(this.view0);
     this.dragMode = this._resolveDefaultDragAction();
@@ -486,7 +502,7 @@ class ChartView {
     const marginRight = baseRight + colorbarRightRoom;
     const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
     const marginBottom = (pad ? pad[2] : compact ? 36 : MARGIN.b) + colorbarBottomRoom;
-    const hasBottomAxis = Object.values(this.axes || {}).some((axis) =>
+    const hasBottomAxis = Object.values<any>(this.axes || {}).some((axis: any) =>
       axis && String(axis.id || "").startsWith("x") && axis.side !== "top" &&
       this._axisTickLabelStrategy(axis) !== "none");
     this._bottomAxisRoom = hasBottomAxis ? (compact ? 36 : MARGIN.b) : 0;
@@ -494,13 +510,13 @@ class ChartView {
     // on the bottom. Reserve one shared gutter for every top-side x axis;
     // multiple axes on the same side intentionally overlay until axis offsets
     // become part of the public API (the same rule used by secondary y axes).
-    const topAxisRoom = Object.values(this.axes || {}).some((axis) =>
+    const topAxisRoom = Object.values<any>(this.axes || {}).some((axis: any) =>
       axis && String(axis.id || "").startsWith("x") && axis.side === "top" &&
       this._axisTickLabelStrategy(axis) !== "none")
       ? (compact ? 26 : 32)
       : 0;
     const top = marginTop + (this.spec.title ? (compact ? 26 : 30) : 0) + topAxisRoom;
-    const rightAxes = Object.values(this.axes || {}).filter((axis) =>
+    const rightAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("y") &&
       axis.side === "right" && this._axisTickLabelStrategy(axis) !== "none");
     // The vertical colorbar shifts right by this room (see _positionColorbar);
@@ -519,7 +535,7 @@ class ChartView {
     const axes = { ...(spec.axes || {}) };
     if (spec.x_axis) axes.x = spec.x_axis;
     if (spec.y_axis) axes.y = spec.y_axis;
-    for (const [id, axis] of Object.entries(axes)) {
+    for (const [id, axis] of Object.entries<any>(axes)) {
       if (axis && typeof axis === "object" && !axis.id) axis.id = id;
     }
     return axes;
@@ -543,7 +559,7 @@ class ChartView {
   }
 
   _copyView(view) {
-    const ranges = {};
+    const ranges: any = {};
     for (const axisId of this._axisIds()) {
       const range = view?.ranges?.[axisId] || this._axis(axisId).range || [0, 1];
       ranges[axisId] = [Number(range[0]), Number(range[1])];
@@ -647,7 +663,7 @@ class ChartView {
     return [Number(r[0]), Number(r[1])];
   }
 
-  _axisTicks(axisId, target) {
+  _axisTicks(axisId, target): any {
     const axis = this._axis(axisId);
     const [lo, hi] = this._axisRange(axisId);
     if (Array.isArray(axis.tick_values)) {
@@ -690,7 +706,7 @@ class ChartView {
     return this.plot.y + (1 - (c - c0) / (c1 - c0)) * this.plot.h;
   }
 
-  _listen(target, type, handler, options) {
+  _listen(target, type, handler, options?: any) {
     target.addEventListener(type, handler, options);
     this._listeners.push({ target, type, handler, options });
     return handler;
@@ -723,7 +739,7 @@ class ChartView {
     }));
   }
 
-  _emitViewChange(source = "view", opts = {}) {
+  _emitViewChange(source = "view", opts: any = {}) {
     if (this._destroyed) return;
     const broadcast = opts.broadcast !== false;
     this._pendingViewEvent = {
@@ -820,7 +836,7 @@ class ChartView {
     this._linkChannel.postMessage({ source: this._linkedSource, selection });
   }
 
-  setView(ranges, opts = {}) {
+  setView(ranges, opts: any = {}) {
     return this._setView({ ranges }, {
       animate: opts.animate === true,
       source: "programmatic",
@@ -830,7 +846,7 @@ class ChartView {
     });
   }
 
-  resetView(opts = {}) {
+  resetView(opts: any = {}) {
     return this._resetView(opts.animate !== false, "reset");
   }
 
@@ -2022,7 +2038,7 @@ class ChartView {
 
   _buildTrace(buffer, t) {
     const gl = this.gl;
-    const g = {
+    const g: any = {
       trace: t,
       tier: t.tier,
       color: [0.3, 0.47, 0.66, 1],
@@ -2191,7 +2207,7 @@ class ChartView {
       return null;
     }
     const trace = this._sampleTraceSpec(parentTrace, sample);
-    const g = {
+    const g: any = {
       trace,
       tier: "sampled",
       xAxis: typeof parentTrace.x_axis === "string" ? parentTrace.x_axis : "x",
@@ -2236,7 +2252,7 @@ class ChartView {
       stroke: sample.stroke,
       channels: sample.channels,
     };
-    const s = {
+    const s: any = {
       trace,
       tier: "sampled",
       xAxis: g.xAxis,
@@ -2559,7 +2575,7 @@ class ChartView {
     const dy = (Number(style.hex_dy) || 0) * (yMeta.scale || 1);
     const ringX = [0, dx / 2, dx / 2, 0, -dx / 2, -dx / 2, 0];
     const ringY = [-dy / 3, -dy / 6, dy / 6, dy / 3, dy / 6, -dy / 6, -dy / 3];
-    const parts = {};
+    const parts: any = {};
     for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) parts[name] = new Float32Array(n * 6);
     for (let i = 0; i < n; i++) {
       const px = cx[i], py = cy[i];
@@ -4026,9 +4042,9 @@ class ChartView {
     }
     const xAxis = this._axis("x");
     const yAxis = this._axis("y");
-    const extraXAxes = Object.values(this.axes).filter((axis) =>
+    const extraXAxes = Object.values<any>(this.axes).filter((axis: any) =>
       axis && axis.id !== "x" && String(axis.id || "").startsWith("x"));
-    const extraYAxes = Object.values(this.axes).filter((axis) =>
+    const extraYAxes = Object.values<any>(this.axes).filter((axis: any) =>
       axis && axis.id !== "y" && String(axis.id || "").startsWith("y"));
     const hideX = this._axisTickLabelStrategy(xAxis) === "none";
     const hideY = this._axisTickLabelStrategy(yAxis) === "none";
