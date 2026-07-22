@@ -20,6 +20,7 @@ from typing import Any
 HARD_JOBS = (
     "browser_conformance",
     "dependency_audit",
+    "host_integration",
     "install_without_rust",
     "javascript_semantics",
     "matplotlib_reference",

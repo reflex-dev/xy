@@ -121,7 +121,8 @@ DEFAULT_PKG_INFO = (
     "Name: xy\n"
     "Version: 0.0.1\n"
     "Requires-Python: >=3.11\n"
-    "Requires-Dist: anywidget>=0.9\n"
+    "Requires-Dist: anywidget>=0.9,<1\n"
+    "Requires-Dist: traitlets>=5.14,<6\n"
     "Requires-Dist: numpy>=1.24\n"
 )
 BASELINE_JSON = '{"metrics": {"scatter.tier.100000": "direct"}}\n'
@@ -210,9 +211,13 @@ def test_verify_sdist_accepts_required_source_shape(tmp_path: Path) -> None:
 
 def test_verify_sdist_accepts_normalized_metadata_spacing(tmp_path: Path) -> None:
     sdist = tmp_path / "xy-0.0.1.tar.gz"
-    pkg_info = DEFAULT_PKG_INFO.replace(
-        "Requires-Dist: anywidget>=0.9", "Requires-Dist: anywidget >= 0.9"
-    ).replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy >= 1.24")
+    pkg_info = (
+        DEFAULT_PKG_INFO.replace(
+            "Requires-Dist: anywidget>=0.9,<1", "Requires-Dist: anywidget < 1, >= 0.9"
+        )
+        .replace("Requires-Dist: traitlets>=5.14,<6", "Requires-Dist: traitlets < 6, >= 5.14")
+        .replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy >= 1.24")
+    )
     _write_sdist(sdist, pkg_info=pkg_info)
 
     verify_sdist.verify_sdist(str(sdist))
@@ -242,8 +247,12 @@ def test_verify_sdist_rejects_missing_pkg_info(tmp_path: Path) -> None:
             r"Requires-Python: >=3\.11",
         ),
         (
-            DEFAULT_PKG_INFO.replace("Requires-Dist: anywidget>=0.9", ""),
+            DEFAULT_PKG_INFO.replace("Requires-Dist: anywidget>=0.9,<1", ""),
             r"anywidget>=0\.9",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace("Requires-Dist: traitlets>=5.14,<6", ""),
+            r"traitlets>=5\.14",
         ),
         (
             DEFAULT_PKG_INFO.replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.20"),

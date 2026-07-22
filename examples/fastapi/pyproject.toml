@@ -4,8 +4,13 @@ version = "0"
 requires-python = ">=3.11"
 dependencies = [
     "xy",
-    "fastapi>=0.110",
-    "uvicorn>=0.29",
+    "fastapi>=0.110,<1",
+    # TestClient is the package-owned HTTP transport oracle.
+    "httpx>=0.27,<1",
+    # live_drilldown imports Starlette directly, so it is not merely an
+    # implementation detail inherited from FastAPI.
+    "starlette>=0.36.3,<1",
+    "uvicorn>=0.29,<1",
     "numpy>=1.24",
 ]
 

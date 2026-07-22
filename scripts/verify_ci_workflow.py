@@ -27,6 +27,7 @@ DEFAULT_WORKFLOW = DEFAULT_CI_WORKFLOW
 REQUIRED_CI_JOBS = {
     "browser_conformance",
     "dependency_audit",
+    "host_integration",
     "javascript_semantics",
     "reflex_adapter",
     "matplotlib_reference",
@@ -741,6 +742,14 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
             "CI reflex_adapter job must provision tests from python/reflex-xy[dev], "
             "not the root xy dev extra"
         )
+    expected_reflex_matrix = [
+        {"name": "floor", "reflex": "reflex==0.9.6"},
+        {"name": "latest", "reflex": "reflex>=0.9.6,<1"},
+    ]
+    if reflex_adapter and _matrix_include_entries(reflex_adapter) != expected_reflex_matrix:
+        errors.append(
+            "CI reflex_adapter matrix must exactly declare the reviewed floor/latest range"
+        )
     _require_job_contains(
         errors,
         jobs,
@@ -748,13 +757,19 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "CI",
         "Reflex host matrix, zero-skip suite, compile, and real browser E2E",
         "reflex==0.9.6",
-        "reflex>=0.9.6",
+        "reflex>=0.9.6,<1",
+        'python-version: "3.13"',
+        "npm ci",
         'XY_REQUIRE_CARGO: "1"',
         "uv pip install -p .venv/bin/python -e .",
         "python/reflex-xy[dev]",
         "from importlib.metadata import version",
         "version('reflex')",
+        "scripts/host_integration_policy.py validate",
+        "--profile ${{ matrix.name }} --hosts reflex",
+        "reflex-host-versions.json",
         "scripts/run_pytest_no_skips.py -q python/reflex-xy/tests",
+        "reflex-adapter-junit.xml",
         "reflex compile --dry",
         "reflex run --env prod --single-port",
         "scripts/reflex_ws_smoke.py",
@@ -791,7 +806,10 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "if: always()",
         "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
         "reflex-e2e-${{ matrix.name }}",
-        "if-no-files-found: warn",
+        "if-no-files-found: error",
+        "retention-days: 30",
+        "examples/reflex/reflex-host-versions.json",
+        "examples/reflex/reflex-adapter-junit.xml",
         "examples/reflex/reflex-e2e.log",
         "examples/reflex/reflex-e2e.png",
     )
@@ -805,6 +823,72 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "reflex-pan-zoom-${{ matrix.name }}",
         "if-no-files-found: error",
         "examples/reflex/pan-zoom-reflex-evidence.json",
+    )
+    host_integration = jobs.get("host_integration", "")
+    if "continue-on-error:" in host_integration:
+        errors.append("CI host_integration job must be a hard gate without continue-on-error")
+    expected_host_matrix = [
+        {
+            "name": "floor",
+            "anywidget": "anywidget==0.9.0",
+            "traitlets": "traitlets==5.14.0",
+            "fastapi": "fastapi==0.110.0",
+            "starlette": "starlette==0.36.3",
+            "uvicorn": "uvicorn==0.29.0",
+            "httpx": "httpx==0.27.0",
+        },
+        {
+            "name": "latest",
+            "anywidget": "anywidget>=0.9,<1",
+            "traitlets": "traitlets>=5.14,<6",
+            "fastapi": "fastapi>=0.110,<1",
+            "starlette": "starlette>=0.36.3,<1",
+            "uvicorn": "uvicorn>=0.29,<1",
+            "httpx": "httpx>=0.27,<1",
+        },
+    ]
+    if host_integration and _matrix_include_entries(host_integration) != expected_host_matrix:
+        errors.append(
+            "CI host_integration matrix must exactly declare the reviewed floor/latest "
+            "anywidget and FastAPI host stacks"
+        )
+    _require_job_contains(
+        errors,
+        jobs,
+        "host_integration",
+        "CI",
+        "bounded package-owned host matrix with zero-skip compile, mount, transport, "
+        "browser, and retained evidence gates",
+        'python-version: "3.13"',
+        "cargo build --locked --release",
+        "npm ci",
+        "node js/build.mjs --check",
+        '-e ".[dev]"',
+        "scripts/host_integration_policy.py validate",
+        "--profile ${{ matrix.name }} --hosts anywidget fastapi",
+        "host-integration/versions.json",
+        "scripts/run_pytest_no_skips.py -q",
+        "tests/host_integration",
+        "host-integration/junit.xml",
+        "npx playwright install --with-deps chromium",
+        "scripts/fastapi_host_smoke.py",
+        "--evidence host-integration/fastapi-browser.json",
+        "--screenshot host-integration/fastapi-browser.png",
+        "--server-log host-integration/fastapi-server.log",
+        "Upload host integration evidence",
+        "host-integration-${{ matrix.name }}",
+    )
+    _require_step_contains(
+        errors,
+        host_integration,
+        "Upload host integration evidence",
+        "failure-retaining host version, JUnit, screenshot, and browser evidence policy",
+        "if: always()",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        "host-integration-${{ matrix.name }}",
+        "if-no-files-found: error",
+        "retention-days: 30",
+        "path: host-integration/",
     )
     _require_job_contains(
         errors,
@@ -1237,6 +1321,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     hard_jobs = {
         "browser_conformance",
         "dependency_audit",
+        "host_integration",
         "install_without_rust",
         "javascript_semantics",
         "matplotlib_reference",

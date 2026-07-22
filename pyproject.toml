@@ -11,7 +11,10 @@ requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 dependencies = [
     "numpy>=1.24",
-    "anywidget>=0.9",
+    "anywidget>=0.9,<1",
+    # FigureWidget imports traitlets directly; keep its supported host range
+    # explicit instead of relying on anywidget's transitive dependency.
+    "traitlets>=5.14,<6",
 ]
 
 [project.urls]
@@ -27,6 +30,11 @@ dev = [
     "ruff==0.15.8",
     "ty",
     "hypothesis>=6",
+    # Package-owned host-integration tests exercise the FastAPI example without
+    # import skips. The dedicated CI matrix overrides these ranges at the floor.
+    "fastapi>=0.110,<1",
+    "httpx>=0.27,<1",
+    "packaging>=24,<26",
     # Optional *input* format, never a runtime dependency: the Arrow ingest
     # tests importorskip it, so it lives in dev where CI exercises them.
     "pyarrow>=15",
@@ -37,7 +45,8 @@ dev = [
     # load (its callback endpoint), never a runtime dependency of xy: the
     # drilldown pan-alignment browser test importorskips it, so it lives in dev
     # where CI exercises that test.
-    "starlette>=0.36",
+    "starlette>=0.36.3,<1",
+    "uvicorn>=0.29,<1",
 ]
 # Plotly comparison charts. Matplotlib is deliberately not a project extra:
 # benchmark jobs that compare against it install it explicitly as an external

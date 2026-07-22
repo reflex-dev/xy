@@ -70,7 +70,8 @@ DEFAULT_METADATA = "\n".join(
         "Name: xy",
         "Version: 0.0.1",
         "Requires-Python: >=3.11",
-        "Requires-Dist: anywidget>=0.9",
+        "Requires-Dist: anywidget>=0.9,<1",
+        "Requires-Dist: traitlets>=5.14,<6",
         "Requires-Dist: numpy>=1.24",
     ]
 )
@@ -200,9 +201,13 @@ def test_verify_pure_wheel_accepts_required_artifact_shape(tmp_path: Path) -> No
 
 def test_verify_wheel_accepts_normalized_metadata_spacing(tmp_path: Path) -> None:
     whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
-    metadata = DEFAULT_METADATA.replace(
-        "Requires-Dist: anywidget>=0.9", "Requires-Dist: anywidget >= 0.9"
-    ).replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy >= 1.24")
+    metadata = (
+        DEFAULT_METADATA.replace(
+            "Requires-Dist: anywidget>=0.9,<1", "Requires-Dist: anywidget < 1, >= 0.9"
+        )
+        .replace("Requires-Dist: traitlets>=5.14,<6", "Requires-Dist: traitlets < 6, >= 5.14")
+        .replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy >= 1.24")
+    )
     _write_wheel(whl, metadata=metadata)
 
     verify_wheel.verify_wheel(whl, expect_native=True)
@@ -248,8 +253,12 @@ def test_verify_wheel_rejects_missing_metadata_file(tmp_path: Path) -> None:
             r"Requires-Python: >=3\.11",
         ),
         (
-            DEFAULT_METADATA.replace("Requires-Dist: anywidget>=0.9", ""),
+            DEFAULT_METADATA.replace("Requires-Dist: anywidget>=0.9,<1", ""),
             r"anywidget>=0\.9",
+        ),
+        (
+            DEFAULT_METADATA.replace("Requires-Dist: traitlets>=5.14,<6", ""),
+            r"traitlets>=5\.14",
         ),
         (
             DEFAULT_METADATA.replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.20"),

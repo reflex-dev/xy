@@ -277,9 +277,19 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-019 — Host-integration version matrix
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: supported anywidget, Reflex, FastAPI/Starlette, and related host
-  floors/latest versions are not a declared executable matrix.
+- Status: `IMPLEMENTED`
+- Owner: unassigned — file a tracking issue before implementation starts
+- Evidence: `spec/testing/host-integration-policy.json`,
+  `spec/design/host-compatibility.md`, `scripts/host_integration_policy.py`,
+  `tests/host_integration/`, `scripts/fastapi_host_smoke.py`,
+  `tests/test_host_integration_policy.py`, `tests/test_fastapi_host_smoke.py`,
+  `tests/test_verify_ci_workflow.py`, and the hard `host_integration` and
+  `reflex_adapter` floor/latest CI jobs with retained version, JUnit, browser,
+  log, and screenshot artifacts.
+- Current gap: closed; bounded package-owned ranges are checked against project
+  metadata and both supported edges run compile, mount, transport, and browser
+  evidence without hidden dependency skips. A real notebook frontend remains
+  separately tracked by TST-NI-018.
 - Implemented when: the supported ranges are documented and focused compile,
   mount, transport, and browser tests run at floor/latest versions with zero
   hidden dependency skips.

@@ -23,6 +23,9 @@ The testing specification has three responsibilities:
 - [`dependency-auditing.md`](dependency-auditing.md) defines the hard
   multi-ecosystem lock inventory, severity and exception policy, and retained
   vulnerability evidence.
+- [`host-integration-policy.json`](host-integration-policy.json) is the
+  executable version inventory behind the bounded host contract in
+  [`../design/host-compatibility.md`](../design/host-compatibility.md).
 
 ## Status vocabulary
 

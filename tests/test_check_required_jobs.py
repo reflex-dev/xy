@@ -24,6 +24,7 @@ def _needs(result: str = "success") -> dict[str, dict[str, object]]:
 
 
 def test_required_aggregate_accepts_only_all_success() -> None:
+    assert "host_integration" in check_required_jobs.HARD_JOBS
     assert "reflex_adapter" in check_required_jobs.HARD_JOBS
     assert "rust_release" in check_required_jobs.HARD_JOBS
     assert "native_parity" in check_required_jobs.HARD_JOBS

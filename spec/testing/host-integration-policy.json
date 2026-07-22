@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "packages": {
+    "anywidget": {
+      "distribution": "anywidget",
+      "supported": ">=0.9,<1",
+      "floor": "==0.9.0"
+    },
+    "traitlets": {
+      "distribution": "traitlets",
+      "supported": ">=5.14,<6",
+      "floor": "==5.14.0"
+    },
+    "reflex": {
+      "distribution": "reflex",
+      "supported": ">=0.9.6,<1",
+      "floor": "==0.9.6"
+    },
+    "fastapi": {
+      "distribution": "fastapi",
+      "supported": ">=0.110,<1",
+      "floor": "==0.110.0"
+    },
+    "starlette": {
+      "distribution": "starlette",
+      "supported": ">=0.36.3,<1",
+      "floor": "==0.36.3"
+    },
+    "uvicorn": {
+      "distribution": "uvicorn",
+      "supported": ">=0.29,<1",
+      "floor": "==0.29.0"
+    },
+    "httpx": {
+      "distribution": "httpx",
+      "supported": ">=0.27,<1",
+      "floor": "==0.27.0"
+    }
+  },
+  "hosts": {
+    "anywidget": [
+      "anywidget",
+      "traitlets"
+    ],
+    "reflex": [
+      "reflex"
+    ],
+    "fastapi": [
+      "fastapi",
+      "starlette",
+      "uvicorn",
+      "httpx"
+    ]
+  }
+}

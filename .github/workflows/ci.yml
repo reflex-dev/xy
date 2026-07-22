@@ -539,10 +539,13 @@ jobs:
           - name: floor
             reflex: reflex==0.9.6
           - name: latest
-            reflex: reflex>=0.9.6
+            reflex: reflex>=0.9.6,<1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: false
@@ -552,6 +555,7 @@ jobs:
       - name: Build native core and client
         run: |
           cargo build --release
+          npm ci
           node js/build.mjs --check
       - name: Install xy, Reflex adapter, and selected Reflex version
         env:
@@ -564,15 +568,20 @@ jobs:
         run: |
           .venv/bin/python -c "from importlib.metadata import version; print('reflex', version('reflex'))"
           .venv/bin/python -c "import reflex_xy, xy; assert reflex_xy and xy"
+          mkdir -p examples/reflex
+          .venv/bin/python scripts/host_integration_policy.py validate
+          .venv/bin/python scripts/host_integration_policy.py report \
+            --profile ${{ matrix.name }} --hosts reflex \
+            --output examples/reflex/reflex-host-versions.json
       - name: Run adapter suite with zero skips
-        run: .venv/bin/python scripts/run_pytest_no_skips.py -q python/reflex-xy/tests
+        run: >-
+          .venv/bin/python scripts/run_pytest_no_skips.py -q python/reflex-xy/tests
+          --junitxml=examples/reflex/reflex-adapter-junit.xml
       - name: Compile real Reflex example
         working-directory: examples/reflex
         run: ../../.venv/bin/reflex compile --dry
       - name: Install Chromium (Playwright)
-        run: |
-          npm ci
-          npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium
       - name: Run real Reflex browser E2E
         shell: bash
         run: |
@@ -617,8 +626,11 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: reflex-e2e-${{ matrix.name }}
-          if-no-files-found: warn
+          if-no-files-found: error
+          retention-days: 30
           path: |
+            examples/reflex/reflex-host-versions.json
+            examples/reflex/reflex-adapter-junit.xml
             examples/reflex/reflex-e2e.log
             examples/reflex/reflex-e2e.png
 
@@ -629,6 +641,86 @@ jobs:
           name: reflex-pan-zoom-${{ matrix.name }}
           if-no-files-found: error
           path: examples/reflex/pan-zoom-reflex-evidence.json
+
+  host_integration:
+    name: Host integration (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: floor
+            anywidget: anywidget==0.9.0
+            traitlets: traitlets==5.14.0
+            fastapi: fastapi==0.110.0
+            starlette: starlette==0.36.3
+            uvicorn: uvicorn==0.29.0
+            httpx: httpx==0.27.0
+          - name: latest
+            anywidget: anywidget>=0.9,<1
+            traitlets: traitlets>=5.14,<6
+            fastapi: fastapi>=0.110,<1
+            starlette: starlette>=0.36.3,<1
+            uvicorn: uvicorn>=0.29,<1
+            httpx: httpx>=0.27,<1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Build locked native core and verify client
+        run: |
+          cargo build --locked --release
+          npm ci
+          node js/build.mjs --check
+      - name: Install selected package-owned host stack
+        env:
+          XY_REQUIRE_CARGO: "1"
+        run: |
+          uv venv .host-venv
+          uv pip install -p .host-venv/bin/python -e ".[dev]" \
+            "${{ matrix.anywidget }}" "${{ matrix.traitlets }}" \
+            "${{ matrix.fastapi }}" "${{ matrix.starlette }}" \
+            "${{ matrix.uvicorn }}" "${{ matrix.httpx }}"
+      - name: Validate and retain selected host versions
+        run: |
+          mkdir -p host-integration
+          .host-venv/bin/python scripts/host_integration_policy.py validate
+          .host-venv/bin/python scripts/host_integration_policy.py report \
+            --profile ${{ matrix.name }} --hosts anywidget fastapi \
+            --output host-integration/versions.json
+      - name: Run focused compile, mount, and transport suite with zero skips
+        env:
+          XY_HOST_PROFILE: ${{ matrix.name }}
+        run: >-
+          .host-venv/bin/python scripts/run_pytest_no_skips.py -q
+          tests/host_integration --junitxml=host-integration/junit.xml
+      - name: Install Chromium (Playwright)
+        run: npx playwright install --with-deps chromium
+      - name: Run FastAPI browser mount and transport probe
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .host-venv/bin/python scripts/fastapi_host_smoke.py \
+            --chromium "$CHROME" --no-sandbox \
+            --evidence host-integration/fastapi-browser.json \
+            --screenshot host-integration/fastapi-browser.png \
+            --server-log host-integration/fastapi-server.log
+      - name: Upload host integration evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: host-integration-${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 30
+          path: host-integration/
 
   browser_conformance:
     name: Accessibility + cross-browser conformance
@@ -1192,6 +1284,7 @@ jobs:
       - native_parity
       - python_coverage
       - python_floor
+      - host_integration
       - reflex_adapter
       - rust_release
       - sdist

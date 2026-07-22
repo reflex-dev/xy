@@ -58,6 +58,8 @@ REQUIRED_FILES = {
     "spec/api/chart-roadmap.md",
     "spec/benchmarks/results.md",
     "spec/design/renderer-architecture.md",
+    "spec/design/host-compatibility.md",
+    "spec/testing/host-integration-policy.json",
     "spec/matplotlib/compat.md",
     "spec/process/contributing.md",
     "spec/process/production-readiness.md",
@@ -110,6 +112,8 @@ REQUIRED_FILES = {
     "scripts/check_python_floor.py",
     "scripts/check_release_version.py",
     "scripts/check_regressions.py",
+    "scripts/fastapi_host_smoke.py",
+    "scripts/host_integration_policy.py",
     "scripts/bench_dashboard.py",
     "scripts/bench_interaction.py",
     "scripts/bench_pyplot_vs_matplotlib.py",
@@ -131,6 +135,9 @@ REQUIRED_FILES = {
     "tests/test_check_regressions.py",
     "tests/test_docs_examples.py",
     "tests/test_example_apps.py",
+    "tests/host_integration/test_host_matrix.py",
+    "tests/test_fastapi_host_smoke.py",
+    "tests/test_host_integration_policy.py",
     "tests/test_type_surface.py",
     "tests/test_verify_benchmark_report.py",
     "tests/test_verify_ci_workflow.py",
@@ -196,11 +203,17 @@ def _normalized_files(path: str) -> tuple[str, set[str]]:
 
 
 def _dependency_satisfies_floor(requirement: str, package: str, minimum: str) -> bool:
+    if _dependency_name(requirement) != package.lower().replace("_", "-"):
+        return False
+    specifiers = re.sub(
+        r"^\s*[A-Za-z0-9_.-]+\s*(?:\[[^\]]+\])?\s*",
+        "",
+        requirement.split(";", 1)[0],
+    )
     return bool(
-        re.match(
-            rf"^\s*{re.escape(package)}\s*(?:\[[^\]]+\])?\s*>=\s*"
-            rf"{re.escape(minimum)}(?:\b|[,;\s])",
-            requirement,
+        re.search(
+            rf"(?:^|,)\s*>=\s*{re.escape(minimum)}(?:\b|,|\s|$)",
+            specifiers,
             flags=re.IGNORECASE,
         )
     )
@@ -233,7 +246,11 @@ def _require_pkg_info(path: str, root: str) -> None:
     if metadata.get("Requires-Python", "").strip() != ">=3.11":
         missing.append("Requires-Python: >=3.11")
     requirements = metadata.get_all("Requires-Dist") or []
-    for package, minimum in (("anywidget", "0.9"), ("numpy", "1.24")):
+    for package, minimum in (
+        ("anywidget", "0.9"),
+        ("traitlets", "5.14"),
+        ("numpy", "1.24"),
+    ):
         if not any(
             _dependency_satisfies_floor(requirement, package, minimum)
             for requirement in requirements

@@ -129,11 +129,17 @@ def _require_filename_tag(path: Path, tags: list[str]) -> None:
 
 
 def _dependency_satisfies_floor(requirement: str, package: str, minimum: str) -> bool:
+    if _dependency_name(requirement) != package.lower().replace("_", "-"):
+        return False
+    specifiers = re.sub(
+        r"^\s*[A-Za-z0-9_.-]+\s*(?:\[[^\]]+\])?\s*",
+        "",
+        requirement.split(";", 1)[0],
+    )
     return bool(
-        re.match(
-            rf"^\s*{re.escape(package)}\s*(?:\[[^\]]+\])?\s*>=\s*"
-            rf"{re.escape(minimum)}(?:\b|[,;\s])",
-            requirement,
+        re.search(
+            rf"(?:^|,)\s*>=\s*{re.escape(minimum)}(?:\b|,|\s|$)",
+            specifiers,
             flags=re.IGNORECASE,
         )
     )
@@ -162,7 +168,11 @@ def _require_metadata(names: set[str], data: bytes) -> None:
     if metadata.get("Requires-Python", "").strip() != ">=3.11":
         missing.append("Requires-Python: >=3.11")
     requirements = metadata.get_all("Requires-Dist") or []
-    for package, minimum in (("anywidget", "0.9"), ("numpy", "1.24")):
+    for package, minimum in (
+        ("anywidget", "0.9"),
+        ("traitlets", "5.14"),
+        ("numpy", "1.24"),
+    ):
         if not any(
             _dependency_satisfies_floor(requirement, package, minimum)
             for requirement in requirements

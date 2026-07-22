@@ -15,7 +15,7 @@ dependencies = [
     # (reflex-base), plus App/State/state_manager access, which today live in the
     # full `reflex` distribution. Revisit when the reflex-base split grows a
     # public state/app surface (spec/design/reflex-integration.md §4).
-    "reflex>=0.9.6",
+    "reflex>=0.9.6,<1",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +27,7 @@ dev = [
     "aiohttp>=3.9",
     "coverage[toml]>=7.6,<8",
     "hypothesis>=6",
+    "packaging>=24,<26",
     "pytest>=8",
     "uvicorn>=0.23",
 ]

@@ -1398,6 +1398,119 @@ def test_ci_workflow_rejects_adapter_tests_outside_package_boundary(tmp_path: Pa
     assert any("reflex_adapter" in error and "python/reflex-xy/tests" in error for error in errors)
 
 
+def test_ci_workflow_rejects_unbounded_reflex_latest_selector(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(text.replace("reflex>=0.9.6,<1", "reflex>=0.9.6", 1), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("reflex_adapter" in error and "reflex>=0.9.6,<1" in error for error in errors)
+
+
+def test_ci_workflow_rejects_incomplete_host_floor_latest_matrix(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace("            httpx: httpx==0.27.0\n", "", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("host_integration matrix must exactly declare" in error for error in errors)
+
+
+def test_ci_workflow_rejects_unbounded_host_latest_matrix(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace("anywidget>=0.9,<1", "anywidget>=0.9", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("host_integration matrix must exactly declare" in error for error in errors)
+
+
+def test_ci_workflow_rejects_soft_host_integration_gate(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            "  host_integration:\n    name:",
+            "  host_integration:\n    continue-on-error: true\n    name:",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("host_integration job must be a hard gate" in error for error in errors)
+
+
+def test_ci_workflow_requires_host_integration_in_hard_aggregate(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(text.replace("      - host_integration\n", "", 1), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("required_ci needs" in error and "host_integration" in error for error in errors)
+
+
+def test_ci_workflow_rejects_host_suite_with_hidden_skips(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            ".host-venv/bin/python scripts/run_pytest_no_skips.py -q",
+            ".host-venv/bin/python -m pytest -q",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "host_integration" in error and "run_pytest_no_skips.py" in error for error in errors
+    )
+
+
+def test_ci_workflow_rejects_missing_host_browser_probe(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace("scripts/fastapi_host_smoke.py", "scripts/removed_host_smoke.py", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("host_integration" in error and "fastapi_host_smoke.py" in error for error in errors)
+
+
+def test_ci_workflow_rejects_host_evidence_upload_that_skips_failures(
+    tmp_path: Path,
+) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    marker = "      - name: Upload host integration evidence\n        if: always()\n"
+    path.write_text(
+        text.replace(marker, "      - name: Upload host integration evidence\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "failure-retaining host version" in error and "if: always()" in error for error in errors
+    )
+
+
 def test_ci_workflow_rejects_missing_playwright_browser_cache(tmp_path: Path) -> None:
     text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"

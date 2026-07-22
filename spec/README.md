@@ -39,6 +39,9 @@ Internal architecture: how the engine is built and why.
 
 - [`chart-grammar.md`](design/chart-grammar.md) — the declarative composition
   model (`Chart` + `Mark` + `Axis` + `Legend`), fixed before the catalog grows.
+- [`host-compatibility.md`](design/host-compatibility.md) — bounded supported
+  Anywidget, Reflex, and FastAPI host ranges plus their executable floor/latest
+  matrix.
 - [`animation.md`](design/animation.md) — declarative entrance/update/exit
   motion, stable identity, interruption, reduced motion, and export determinism.
 - [`lod-architecture.md`](design/lod-architecture.md) — the Tier 0/1/2/3

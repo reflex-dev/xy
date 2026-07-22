@@ -80,6 +80,7 @@ These must pass before publishing or making a broad performance claim.
 | Native ABI | C ABI can be loaded from the built core | `python scripts/abi_smoke.py` |
 | JavaScript | Committed bundles match source | `node js/build.mjs --check` |
 | Browser render | WebGL smoke reaches real pixels | `python scripts/render_smoke_nonumpy.py <chromium>` |
+| Host compatibility | Bounded Anywidget/FastAPI and Reflex floor/latest stacks pass compile, mount, transport, and browser evidence with zero skips | Hard `host_integration` and `reflex_adapter` jobs; see `spec/design/host-compatibility.md` |
 | Accessibility / cross-browser | Semantic interaction checks plus tolerant WebGL/layout comparison pass in Chromium, Firefox, and WebKit | `make check-conformance` |
 | Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
 | Step tier update | A decimated `step` chart keeps its risers after a synthetic kernel `tier_update` replaces the vertex buffers | `python scripts/step_tier_smoke.py <chromium>` |
@@ -410,7 +411,8 @@ Before tagging a release:
 - Confirm every wheel passes `scripts/verify_wheel.py --expect-native` and the
   install smoke loads `xy.kernels.BACKEND == "native"`. Wheel
   `METADATA` must keep `Name: xy`, `Requires-Python: >=3.11`,
-  `anywidget>=0.9`, and `numpy>=1.24`; wheel `RECORD` must list every archive
+  `anywidget>=0.9,<1`, `traitlets>=5.14,<6`, and `numpy>=1.24`; wheel `RECORD`
+  must list every archive
   file exactly once with matching `sha256` and size fields. Wheels must stay
   package-only: docs, tests, benchmarks, scripts, and the `examples/` apps
   are sdist-only.
