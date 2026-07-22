@@ -399,6 +399,10 @@ export class ChartView {
     // keeping it is cheap, and every GPU object is rebuildable from
     // spec + payload by design (§18/§27).
     this._payload = buffer;
+    // cid → span over the currently applied payload (§4 append reuse):
+    // partial append messages resolve their cid-only columns from here.
+    this._cidSpans = new Map();
+    this._reseedCidSpans();
     this._glLost = false;
     this._ctxReleasedExt = null;
     this._ctxReleases = 0;
@@ -2790,6 +2794,24 @@ export class ChartView {
   // Grid tone-mapping, exposure normalization, source cache, and the drill
   // lifecycle live in 45_lod.js — chart-agnostic so future tiered kinds
   // (heatmap, histogram) reuse them instead of copy-pasting.
+
+  // Rebuild the cid → span map from the currently applied spec + payload
+  // (§4 append reuse). Runs at construction, after every full payload swap,
+  // and after every applied append, so the cache always mirrors exactly the
+  // state the GPU was built from.
+  _reseedCidSpans() {
+    const m = new Map();
+    const spec = this.spec;
+    const payload = this._payload;
+    if (spec?.buffer_layout === "split" && Array.isArray(payload)) {
+      for (const c of spec.columns || []) {
+        if (c.cid != null && Number.isInteger(c.buf) && payload[c.buf]) {
+          m.set(c.cid, payload[c.buf]);
+        }
+      }
+    }
+    this._cidSpans = m;
+  }
 
   _columnView(buffer, meta) {
     // Packed layout: one blob, columns addressed by global byte_offset.

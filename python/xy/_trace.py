@@ -71,6 +71,12 @@ class Trace:
     # subset is dropped instead of translating indices in the wrong space
     # (§16/§17: exact readout beats stale availability).
     drill_seq: int = 0
+    # Monotonic data revision: bumped by every streaming append to this trace.
+    # It versions the trace's shipped columns on the wire (`cid`s) and keys
+    # the append emit cache — any out-of-band mutation of a compiled figure's
+    # trace data must bump it (figures are compiled artifacts; append is the
+    # only supported post-compile data mutation, wire-protocol §4).
+    data_rev: int = field(default=0, init=False, repr=False, compare=False)
     # Count-pyramid cache (§5 Tier 3), managed by `interaction.py`: None =
     # never tried, 0 = tried and not applicable, otherwise the native handle.
     # The finalizer frees the native side when the trace is collected.

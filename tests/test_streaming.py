@@ -317,3 +317,122 @@ def test_memory_report_itemizes_pyramid_bytes():
     assert fig.memory_report()["pyramid_bytes"] == 0  # not built yet
     assert _ensure_pyramid(fig.traces[0]) is not None
     assert fig.memory_report()["pyramid_bytes"] == _pyramid_resident_bytes()
+
+
+# --------------------------------------------------------------------------
+# Append reuse (§4): emit cache + cid wire omission
+# --------------------------------------------------------------------------
+
+
+def _two_trace_fig():
+    rng = np.random.default_rng(11)
+    fig = Figure()
+    fig.scatter(np.arange(100.0), rng.normal(size=100))
+    fig.scatter(np.arange(100.0) * 2.0, rng.normal(size=100))
+    return fig
+
+
+def test_append_omits_unchanged_trace_buffers():
+    fig = _two_trace_fig()
+    tid0, tid1 = fig.traces[0].id, fig.traces[1].id
+    # First paint establishes the client baseline.
+    fig.build_payload_split()
+
+    msg, buffers = fig.append(tid0, [100.0], [0.0])
+    cols = msg["spec"]["columns"]
+    by_trace = {t["id"]: t for t in msg["spec"]["traces"]}
+    # The affected trace re-ships its geometry.
+    assert "buf" in cols[by_trace[tid0]["x"]]
+    # The unchanged trace's columns are cid-only addressing: no bytes.
+    for idx in (by_trace[tid1]["x"], by_trace[tid1]["y"]):
+        assert "buf" not in cols[idx]
+        assert isinstance(cols[idx]["cid"], str)
+    # The wire carries fewer buffers than the table has columns.
+    assert len(buffers) < len(cols)
+    shipped = sum(1 for c in cols if "buf" in c)
+    assert len(buffers) == shipped
+
+
+def test_append_emit_cache_skips_reencode_for_unchanged_traces():
+    fig = _two_trace_fig()
+    tid0 = fig.traces[0].id
+    tid1 = fig.traces[1].id
+    fig.append(tid0, [100.0], [0.0])
+    first = fig._append_emit_cache[tid1]
+    fig.append(tid0, [101.0], [0.0])
+    second = fig._append_emit_cache[tid1]
+    # Cache hit: the unchanged trace's capture (records incl. encoded chunks)
+    # is the SAME object — its emitter never ran on the second tick.
+    assert second is first
+    # The affected trace's capture was rebuilt both ticks.
+    assert fig._append_emit_cache[tid0]["records"] is not None
+    assert fig._append_emit_cache[tid0]["key"][0] == fig.traces[0].data_rev
+
+
+def test_append_reuse_reships_after_full_split_build_resets_baseline():
+    fig = _two_trace_fig()
+    tid0 = fig.traces[0].id
+    fig.append(tid0, [100.0], [0.0])
+    # A fresh full build (new subscriber / reopen sync) resets the baseline
+    # to exactly what it shipped — the next append may still omit unchanged
+    # columns because their cids are unchanged.
+    fig.build_payload_split()
+    msg, buffers = fig.append(tid0, [101.0], [0.0])
+    cols = msg["spec"]["columns"]
+    assert any("buf" not in c for c in cols)  # reuse survives the reset
+
+
+def test_append_cache_busts_on_affected_shape_change_and_stays_correct():
+    # Crossing the density threshold changes the affected trace's column
+    # count; the positional splice must fall back to a full rebuild.
+    n = SCATTER_DENSITY_THRESHOLD - 5
+    rng = np.random.default_rng(13)
+    fig = Figure()
+    fig.scatter(rng.uniform(0, 100, n), rng.uniform(0, 100, n))
+    fig.scatter(np.arange(50.0), np.arange(50.0))
+    tid0 = fig.traces[0].id
+    fig.append(tid0, [1.0], [1.0])  # seeds the cache, still direct
+    assert fig.traces[0].use_density() is False
+    msg, buffers = fig.append(tid0, rng.uniform(0, 100, 10), rng.uniform(0, 100, 10))
+    assert fig.traces[0].use_density() is True
+    entry = next(t for t in msg["spec"]["traces"] if t["id"] == tid0)
+    assert entry["tier"] == "density"
+    # The spliced neighbor stays addressable and correct.
+    cols = msg["spec"]["columns"]
+    other = next(t for t in msg["spec"]["traces"] if t["id"] != tid0)
+    assert cols[other["x"]]["len"] == 50
+
+
+def test_append_range_growth_busts_range_dependent_neighbors_only():
+    from xy._figure import DECIMATION_THRESHOLD
+
+    n = DECIMATION_THRESHOLD + 100
+    x = np.arange(float(n))
+    fig = Figure()
+    fig.scatter(np.arange(100.0), np.arange(100.0))  # affected: grows shared x
+    fig.line(x, np.sin(x * 1e-3))  # decimated: bins over the shared x range
+    fig.scatter(np.arange(50.0), np.arange(50.0))  # direct: range-free
+    tid0 = fig.traces[0].id
+    fig.append(tid0, [float(n) + 1.0], [0.0])  # seed cache; x range grows past line
+    line_key = fig._append_emit_cache[fig.traces[1].id]["key"]
+    direct_cache = fig._append_emit_cache[fig.traces[2].id]
+    fig.append(tid0, [float(n) + 500.0], [0.0])  # grows the shared x range again
+    # The decimated line re-emitted (its M4 window follows the range)...
+    assert fig._append_emit_cache[fig.traces[1].id]["key"] != line_key
+    # ...while the range-free direct scatter spliced from cache.
+    assert fig._append_emit_cache[fig.traces[2].id] is direct_cache
+
+
+def test_refresh_request_returns_full_append_shaped_payload():
+    from xy.channel import handle_message
+
+    fig = _two_trace_fig()
+    fig.append(fig.traces[0].id, [100.0], [0.0])
+    reply = handle_message(fig, {"type": "refresh"})
+    assert reply is not None
+    msg, buffers = reply
+    assert msg["type"] == "append"
+    assert msg["affected"] == [t.id for t in fig.traces]
+    cols = msg["spec"]["columns"]
+    assert all("buf" in c for c in cols)  # complete: no cid-only entries
+    assert len(buffers) == len([c for c in cols if "buf" in c])

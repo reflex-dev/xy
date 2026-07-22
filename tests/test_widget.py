@@ -38,27 +38,33 @@ def test_widget_first_paint_ships_split_buffers_zero_copy():
     assert b"".join(bytes(b) for b in widget.buffers) == blob
 
 
-def test_widget_append_is_one_split_trait_update_with_no_custom_send():
-    # Streaming append ships the payload exactly once per tick: the
-    # spec+buffers trait update (split layout, borrowed memoryviews) is both
-    # the live push — the client applies it when spec.append.seq advances —
-    # and the notebook-reopen state. No custom message, no packed join copy.
+def test_widget_append_sends_partial_push_and_full_reopen_state():
+    # Streaming append pushes one custom message per tick (split layout,
+    # partial: only buffers the client does not already hold, §4 append
+    # reuse). The synced traits are the notebook-reopen state — always a
+    # complete payload, re-synced inline here because tests run without an
+    # event loop (the debounce defers only when a loop can fire trailing
+    # syncs).
     fig = Figure().scatter(np.arange(10.0), np.arange(10.0))
     widget, sent = _capturing_widget(fig)
     tid = fig.traces[0].id
     widget.append(tid, np.arange(10.0, 15.0), np.arange(10.0, 15.0))
 
-    assert sent == []  # the trait update IS the push
+    assert len(sent) == 1
+    msg, buffers = sent[0]
+    assert msg["type"] == "append"
+    assert msg["spec"]["append"] == {"seq": 1, "affected": [tid]}
+    assert all(isinstance(b, memoryview) for b in buffers)
+
+    # Reopen state: full split payload, no append tag (it is state, not a push).
     assert widget.spec["buffer_layout"] == "split"
-    assert widget.spec["append"] == {"seq": 1, "affected": [tid]}
+    assert "append" not in widget.spec
     assert isinstance(widget.buffers, list)
     assert len(widget.buffers) == len(widget.spec["columns"])
-    for view in widget.buffers:
-        assert isinstance(view, memoryview)
+    assert all("buf" in c for c in widget.spec["columns"])  # complete, no cid-only refs
 
     widget.append(tid, [15.0], [15.0])
-    assert widget.spec["append"]["seq"] == 2  # monotonic apply signal
-    assert sent == []
+    assert sent[1][0]["spec"]["append"]["seq"] == 2  # monotonic apply signal
 
 
 def test_view_change_transport_is_callback_gated_and_survives_append():
@@ -70,9 +76,9 @@ def test_view_change_transport_is_callback_gated_and_survives_append():
     assert widget.spec["interaction"]["_transport_view_change"] is True
 
     widget.append(fig.traces[0].id, [10.0], [10.0])
-    # The re-synced spec (the append's only transmission) carries the flag.
+    # Both transmissions carry the flag: the partial push and the reopen sync.
     assert widget.spec["interaction"]["_transport_view_change"] is True
-    assert sent == []
+    assert sent[0][0]["spec"]["interaction"]["_transport_view_change"] is True
 
 
 def test_widget_drops_malformed_view_messages():

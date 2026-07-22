@@ -48,6 +48,7 @@ Every request is a dict with a `type`. Coordinate fields are JSON numbers in
 | `select` | `x0`, `x1`, `y0`, `y1` | `selection` |
 | `select_polygon` | `points` | `selection` |
 | `select_clear` | — | `selection` (empty) |
+| `refresh` | — | `append` (complete payload) |
 | `animation_start` | `phase` | none (`on_animation_start`) |
 | `animation_end` | `phase`, `cancelled?` | none (`on_animation_end`) |
 
@@ -96,6 +97,13 @@ sequences; each is coerced to `[float, float]` for the `on_brush` payload.
 
 **`select_clear`** — no fields. Fires `on_select` with an empty `Selection`
 and replies with the empty selection message.
+
+**`refresh`** — append-reuse recovery (§4). Sent when a partial `append`
+references a `cid` the client does not hold (missed push, mounted mid-stream
+from stale reopen state). The reply is a complete fresh split payload shaped
+like an `append` naming every trace, so it applies through the same path and
+rebuilds a coherent baseline. The client keeps at most one outstanding
+`refresh`; the flag clears when any append applies.
 
 **`animation_start` / `animation_end`** — browser lifecycle notifications,
 not per-frame updates. `phase` is `enter` or `update`; an interrupted update
@@ -151,30 +159,37 @@ assembled and `on_select` after — that order is the invariant. An empty
 ## 4. Server push
 
 **`append`** — `{type: "append", affected: [trace_id], spec}` with
-split-layout buffers, one per column, exactly like first paint (§5). The spec
-additionally carries `append: {seq, affected}` — a monotonic apply signal, so
-a host whose transport is the payload itself can detect the refresh without a
-message envelope. The kernel re-emits a complete fresh payload rather
-than a delta, because every tier's payload is screen-bounded by construction.
-Without animation, the client swaps `spec` and the retained payload together,
-rebuilds only the GPU traces named in `affected`, then re-requests its current
-view with `delay: 0`. With animation configured it routes the full payload
-through `ChartView.updatePayload`, retaining one previous scene for matching
-and positional interpolation while preserving append's
-home/live-edge/history follow policy. Unsupported layouts snap to the new
-representation without an opacity animation.
+split-layout buffers (§5). The spec is complete (every trace, every column
+entry) and carries `append: {seq, affected}`, a monotonic tick counter — but
+the buffer list is **partial**: a column whose bytes the client is known to
+hold ships as a cid-only entry with no `buf` (§5), and the client resolves
+it from the payload it last applied. Kernel-side, the build splices
+unchanged traces from a per-trace emit cache — same emit key (data revision,
+px, drill state, and the axis ranges for range-dependent tiers) means no
+gathers, no f64→f32 re-encode, no re-bin — so an append tick costs
+O(affected trace), not O(figure), in both CPU and wire bytes. A client that
+cannot resolve some cid does not apply a torn table; it sends one `refresh`
+(§2) and waits for the complete reply. The kernel never sends row deltas:
+every tier's payload is screen-bounded by construction, so the affected
+trace's fresh emission is the delta.
 
-How the push travels is per-host, and the payload crosses the wire exactly
-once per tick. On the anywidget comm the `spec`/`buffers` trait update (one
-`hold_sync` message) is both the live push — the client applies an append
-when `spec.append.seq` advances — and the notebook-reopen state; no custom
-message is sent. Because a host may surface the two trait writes
-non-atomically, the client listens to *both* change events, defers a torn
-pair — a column that no longer fits its buffer — without consuming the seq,
-and keys applied state on (seq, buffers identity), so the write that
-completes the pair re-fires the apply and repairs even a same-shape tear.
-The `/_xy` namespace has no synced traits, so it wraps the
-same spec and buffers in a room-wide `msg` push. In both cases the client
+Without animation, the client swaps `spec` and the retained (resolved)
+payload together, rebuilds only the GPU traces named in `affected`, then
+re-requests its current view with `delay: 0`. With animation configured it
+routes the full payload through `ChartView.updatePayload`, retaining one
+previous scene for matching and positional interpolation while preserving
+append's home/live-edge/history follow policy. Unsupported layouts snap to
+the new representation without an opacity animation.
+
+How the push travels is per-host. On the anywidget comm it is a custom
+message; the synced `spec`/`buffers` traits are **notebook-reopen state
+only** — always a complete payload, re-synced kernel-side at most once per
+`REOPEN_SYNC_INTERVAL_S` (with a trailing sync when an event loop is
+running, inline otherwise), so a saved output is at most that interval stale
+and a fresh view always mounts from a coherent baseline. The `/_xy`
+namespace wraps the same message in a room-wide `msg` push; its full first
+paint (`on_sub`) resets the reuse baseline, so every subscriber that painted
+and then received the pushes can resolve every cid. In all cases the client
 reads the buffer layout from `spec.buffer_layout`, never from the shape of
 what arrived (§5).
 
@@ -235,7 +250,15 @@ spec's `columns` table is the addressing scheme, and it comes in two layouts:
 
 Column entries otherwise carry `len`, an optional `dtype` (`"u8"` or `"u32"`;
 absent means f32), and, for offset-encoded geometry,
-`offset`/`scale`/`kind`.
+`offset`/`scale`/`kind`. Split entries additionally carry `cid`, a
+deterministic content identity (`t<trace>.<emit-key digest>.<ordinal>`,
+assigned per trace scope by the writer): same cid ⇒ same bytes, because the
+digest covers everything that feeds the emission. An `append` message may
+ship an entry with `cid` and **no** `buf` — the client resolves it from the
+payload it last applied (§4 append reuse) and normalizes the table back to
+`buf: i` before use, so `_columnView`, context restore, and the animation
+path always see one uniform per-column array. First paints and `refresh`
+replies are always complete: every entry has a `buf`.
 
 The client picks the layout from the spec, never from the shape of what
 arrived, and **a disagreement is a fatal error, not a fallback**.
@@ -294,15 +317,17 @@ The reassembled bytes are identical to the source blob, which is what keeps
 
 Two independent version constants:
 
-- **Renderer/spec protocol.** `PROTOCOL_VERSION = 5` (`python/xy/config.py`)
+- **Renderer/spec protocol.** `PROTOCOL_VERSION = 6` (`python/xy/config.py`)
   rides every first-paint spec as `spec["protocol"]`; the client's
-  `PROTOCOL = 5` (`js/src/00_header.ts`) is checked in the `ChartView`
+  `PROTOCOL = 6` (`js/src/00_header.ts`) is checked in the `ChartView`
   constructor. A mismatch replaces the chart element with "update the xy
   package and restart the kernel" and throws. Requests and replies carry no
   version of their own — the handshake happens once, at first paint, before
-  any request is possible. v5 changed the append contract (§4: split
-  buffers, trait-ride on the widget host) — a cached pre-v5 bundle would
-  otherwise wait forever for a custom append message that no longer exists.
+  any request is possible. v5 moved streaming append to split buffers shipped
+  once per tick; v6 added append reuse (§4/§5: `cid` column identities,
+  partial buffer lists, the `refresh` recovery request) — a cached pre-v6
+  bundle would fail loudly on a cid-only column instead of rendering, so the
+  handshake catches it at first paint.
 - **Transport frame.** `FRAME_MAGIC` `"XYBF"` with `FRAME_VERSION = 1`
   versions the binary envelope separately, so the transport and the renderer
   can evolve without coupling.

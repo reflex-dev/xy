@@ -161,6 +161,12 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # `append.seq` so trait-transported hosts can detect the refresh
         # (wire-protocol §4).
         self._append_seq = 0
+        # Append-reuse state (§4): the client baseline of column identities
+        # shipped by the last full split build or append tick, and the
+        # per-trace emit cache append builds splice unchanged traces from.
+        self._shipped_cids: set[str] = set()
+        self._append_emit_cache: dict[int, dict[str, Any]] = {}
+        self._append_ctx: Optional[dict[str, Any]] = None
 
     # -- axis config --------------------------------------------------------
 
@@ -1398,7 +1404,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         alpha: Any = None,
         stroke_width: Any = None,
         symbol: Any = None,
-    ) -> tuple[dict[str, Any], list[bytes]]:
+    ) -> tuple[dict[str, Any], list[memoryview]]:
         """Streaming append: extend a scatter/line trace's canonical columns
         and get the client refresh message back. The widget's `append` sends
         it; headless callers can inspect or discard it. Payloads stay

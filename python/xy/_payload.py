@@ -6,6 +6,8 @@ concrete `Figure` via the MRO (§29: data moves as typed binary buffers)."""
 
 from __future__ import annotations
 
+import copy
+import hashlib
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
@@ -31,6 +33,11 @@ else:
     _Host = object
 
 
+class _AppendCacheBust(Exception):
+    """Positional splice invalidated mid-build (column-table drift) — the
+    append build retries once with an empty cache, which cannot bust."""
+
+
 class _PayloadWriter:
     """Accumulates the binary blob + column table for `build_payload`.
 
@@ -41,7 +48,13 @@ class _PayloadWriter:
     means calling these, not re-implementing the encoding.
     """
 
-    def __init__(self, *, split: bool = False, borrow_heatmaps: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        split: bool = False,
+        borrow_heatmaps: bool = False,
+        reuse: Optional[set[str]] = None,
+    ) -> None:
         # split=True: every column ships as its own wire buffer — spec entries
         # carry `buf` (the wire-buffer index) with byte_offset 0, and
         # `buffers()` returns per-column views with no join copy. Packed mode
@@ -53,6 +66,48 @@ class _PayloadWriter:
         self._split = split
         self.borrow_heatmaps = borrow_heatmaps
         self.borrowed: list[np.ndarray] = []
+        # Append reuse (§4): split columns carry a deterministic content
+        # identity (`cid`) while a trace scope is open. A cid in `reuse` is
+        # bytes the receiving client is known to hold — the entry ships
+        # addressing only, no buffer. `_scope_record` captures (entry, chunk)
+        # pairs for the emit cache regardless of omission, so a later splice
+        # can re-ship against a different client baseline.
+        self._reuse: set[str] = reuse if reuse is not None else set()
+        self._cid_prefix: Optional[str] = None
+        self._cid_ordinal = 0
+        self._scope_record: Optional[list[tuple[dict[str, Any], Any]]] = None
+
+    def begin_trace_scope(self, trace_id: int, emit_digest: str) -> None:
+        """Open a column-identity scope: columns emitted until the matching
+        `end_trace_scope` get cids `t<id>.<digest>.<ordinal>`. The digest must
+        cover everything that determines the encoded bytes (data revision,
+        ranges for range-dependent tiers, px) — same digest ⇒ same bytes."""
+        self._cid_prefix = f"t{trace_id}.{emit_digest}"
+        self._cid_ordinal = 0
+        self._scope_record = []
+
+    def end_trace_scope(self) -> list[tuple[dict[str, Any], Any]]:
+        """Close the scope and return its capture: (canonical entry, chunk)
+        per column, entries without `buf` (assigned at splice/emit time)."""
+        record = self._scope_record or []
+        self._cid_prefix = None
+        self._scope_record = None
+        return record
+
+    def splice_records(self, records: list[tuple[dict[str, Any], Any]]) -> None:
+        """Re-emit a cached trace's columns without running its emitter.
+        Entries are cloned; chunks re-attach unless the client baseline
+        (`reuse`) already holds the cid."""
+        for entry, chunk in records:
+            e = dict(entry)
+            cid = e.get("cid")
+            if cid is not None and cid in self._reuse:
+                self.columns.append(e)
+                continue
+            e["buf"] = len(self._chunks)
+            self.columns.append(e)
+            self._chunks.append(chunk)
+            self._pos += chunk.nbytes
 
     def ship(self, values: np.ndarray, col: "Column") -> int:
         """Offset-encoded geometry column: `(v - offset) * scale` as f32
@@ -75,19 +130,14 @@ class _PayloadWriter:
     def ship_u8(self, values: np.ndarray) -> int:
         """Raw byte column, padded so every later f32 column stays aligned."""
         enc = np.ascontiguousarray(values, dtype=np.uint8).reshape(-1)
-        index = len(self.columns)
         if self._split:
             # One buffer per column: fold the alignment padding into the u8
             # buffer itself (spec `len` still counts only real values), so the
             # split layout stays a byte-identical repack of the packed blob.
             padding = (-len(enc)) % 4
             padded = np.concatenate([enc, np.zeros(padding, np.uint8)]) if padding else enc
-            self.columns.append(
-                {"buf": len(self._chunks), "byte_offset": 0, "len": int(len(enc)), "dtype": "u8"}
-            )
-            self._chunks.append(padded)
-            self._pos += padded.nbytes
-            return index
+            return self._append(enc, {"dtype": "u8"}, chunk=padded)
+        index = len(self.columns)
         self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), "dtype": "u8"})
         self._chunks.append(enc)
         self._pos += enc.nbytes
@@ -128,22 +178,35 @@ class _PayloadWriter:
         encoded = lod.encode_f32_values(vals, offset, lo, hi, kind=kind)
         return self._append(encoded.values, encoded.meta)
 
-    def _append(self, enc: np.ndarray, meta: dict[str, Any]) -> int:
+    def _append(self, enc: np.ndarray, meta: dict[str, Any], *, chunk: Any = None) -> int:
         # Retain the encoded array until blob assembly so each column is copied
         # once into the final bytes object, rather than once in `tobytes()` and
         # again by `join` — and split mode ships these views with no copy at all.
         enc = np.ascontiguousarray(enc)
+        wire = enc if chunk is None else chunk
         idx = len(self.columns)
         if self._split:
+            entry = {"byte_offset": 0, "len": int(len(enc)), **meta}
+            if self._cid_prefix is not None:
+                entry["cid"] = f"{self._cid_prefix}.{self._cid_ordinal}"
+                self._cid_ordinal += 1
+            if self._scope_record is not None:
+                self._scope_record.append((dict(entry), wire))
+            if "cid" in entry and entry["cid"] in self._reuse:
+                # The client baseline holds these bytes under this identity —
+                # ship the addressing entry only (§4 append reuse).
+                self.columns.append(entry)
+                return idx
             # `buf` indexes the wire buffer list (== `_chunks`), which can
             # drift from the column table (`borrow_f64` columns own no chunk).
-            self.columns.append(
-                {"buf": len(self._chunks), "byte_offset": 0, "len": int(len(enc)), **meta}
-            )
-        else:
-            self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), **meta})
-        self._chunks.append(enc)
-        self._pos += enc.nbytes
+            entry["buf"] = len(self._chunks)
+            self.columns.append(entry)
+            self._chunks.append(wire)
+            self._pos += wire.nbytes
+            return idx
+        self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), **meta})
+        self._chunks.append(wire)
+        self._pos += wire.nbytes
         return idx
 
     def blob(self) -> bytes:
@@ -190,7 +253,86 @@ class PayloadMixin(_Host):
         pw = _PayloadWriter(split=True)
         spec = self._payload_spec(pw, self._resolve_px_width(px_width))
         spec["buffer_layout"] = "split"
+        # A full split build resets the append-reuse baseline (§4): every
+        # column just shipped, so these cids are exactly what a client that
+        # painted from this payload holds. The emit cache restarts too — a
+        # full build may run at a different px than the append path resolves.
+        self._shipped_cids = {c["cid"] for c in pw.columns if "cid" in c}
+        self._append_emit_cache = {}
         return spec, pw.buffers()
+
+    def build_append_payload(
+        self, affected_ids: set[int]
+    ) -> tuple[dict[str, Any], list[memoryview]]:
+        """Split payload for a streaming append tick (wire-protocol §4).
+
+        Two reuse layers on top of `build_payload_split`:
+
+        - **Emit cache** — a trace whose emit key (data revision + px + drill
+          state + ranges for range-dependent tiers) matches the previous
+          append build splices its cached spec fragment and encoded chunks
+          verbatim: no gathers, no f64→f32 encode, no re-bin. The splice is
+          positional, so any structural drift (an affected trace changing its
+          column count, e.g. a tier flip) busts the whole build back to a
+          fresh full emission — correctness never rides the cache.
+        - **Wire reuse** — a column whose cid is in the client baseline
+          (`_shipped_cids`, reset by every full split build) ships as an
+          addressing entry with no buffer; the client resolves it from the
+          bytes it already holds and falls back to a `refresh` request on a
+          cache miss (§2).
+        """
+        px = self._resolve_px_width(None)
+        baseline = getattr(self, "_shipped_cids", set())
+        cache = getattr(self, "_append_emit_cache", None) or {}
+        for attempt_cache in (cache, {}):
+            pw = _PayloadWriter(split=True, reuse=baseline)
+            self._append_ctx = {"cache": attempt_cache, "affected": set(affected_ids), "next": {}}
+            try:
+                spec = self._payload_spec(pw, px)
+            except _AppendCacheBust:
+                continue
+            finally:
+                ctx, self._append_ctx = self._append_ctx, None
+            self._append_emit_cache = ctx["next"]
+            self._shipped_cids = {c["cid"] for c in pw.columns if "cid" in c}
+            spec["buffer_layout"] = "split"
+            return spec, pw.buffers()
+        raise AssertionError("append build cannot bust without a cache")  # pragma: no cover
+
+    def _trace_emit_key(self, t: Trace, xr: tuple, yr: tuple, px_width: int) -> tuple:
+        """Everything that determines a trace's emitted bytes and fragment.
+
+        Range-free emissions (verified per emitter) key only on data revision,
+        so a neighbor's growing axis does not bust them; range-dependent tiers
+        (M4 decimation, density grids) key on the axis ranges they bin over.
+        """
+        range_free = (
+            (t.kind == "scatter" and not t.use_density())
+            or (t.kind in {"line", "area", "error_band"} and t.n_points <= DECIMATION_THRESHOLD)
+            or t.kind
+            in {
+                "hexbin",
+                "heatmap",
+                "segments",
+                "triangle_mesh",
+                "rect",
+                "histogram",
+                "bar_compact",
+            }
+        )
+        return (
+            t.data_rev,
+            px_width,
+            t.drill_mode,
+            t.drill_seq,
+            None if range_free else (xr, yr),
+        )
+
+    @staticmethod
+    def _emit_digest(key: tuple) -> str:
+        """Deterministic short digest of an emit key — the cid namespace.
+        Same digest ⇒ same emitted bytes (the key covers every input)."""
+        return hashlib.blake2s(repr(key).encode(), digest_size=8).hexdigest()
 
     def _build_raster_payload(
         self, px_width: Optional[int] = None
@@ -228,12 +370,18 @@ class PayloadMixin(_Host):
             return r
 
         spec_traces = []
+        append_ctx = getattr(self, "_append_ctx", None)
         for t in self.traces:
             xr = axis_range(t.x_axis)
             yr = axis_range(t.y_axis)
-            spec_traces.append(
-                self._emit_trace(t, pw, (min(xr), max(xr)), (min(yr), max(yr)), px_width)
-            )
+            xrn, yrn = (min(xr), max(xr)), (min(yr), max(yr))
+            if append_ctx is not None:
+                entry = self._emit_trace_for_append(append_ctx, t, pw, xrn, yrn, px_width)
+            elif pw._split:
+                entry, _record = self._emit_trace_scoped(t, pw, xrn, yrn, px_width)
+            else:
+                entry = self._emit_trace(t, pw, xrn, yrn, px_width)
+            spec_traces.append(entry)
         axis_specs = {
             axis_id: self._axis_spec(axis_id, axis_range(axis_id)) for axis_id in self.axis_options
         }
@@ -326,6 +474,52 @@ class PayloadMixin(_Host):
         if emitter is None:
             raise ValueError(f"no payload emitter for trace kind {t.kind!r}")
         return emitter(t, pw, xr, yr, px_width)
+
+    def _emit_trace_scoped(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> tuple[dict[str, Any], list]:
+        """Run one emitter inside a cid scope (split builds): its columns get
+        deterministic identities and the capture record feeds the append emit
+        cache."""
+        key = self._trace_emit_key(t, xr, yr, px_width)
+        pw.begin_trace_scope(t.id, self._emit_digest(key))
+        try:
+            entry = self._emit_trace(t, pw, xr, yr, px_width)
+        finally:
+            record = pw.end_trace_scope()
+        return entry, record
+
+    def _emit_trace_for_append(
+        self,
+        ctx: dict[str, Any],
+        t: Trace,
+        pw: "_PayloadWriter",
+        xr: tuple,
+        yr: tuple,
+        px_width: int,
+    ) -> dict[str, Any]:
+        """Emit one trace during an append build: splice the cached emission
+        when nothing that feeds it changed, else run the real emitter and
+        capture it for the next tick (§4 append reuse)."""
+        key = self._trace_emit_key(t, xr, yr, px_width)
+        cached = ctx["cache"].get(t.id)
+        start_col = len(pw.columns)
+        if t.id not in ctx["affected"] and cached is not None and cached["key"] == key:
+            if cached["start_col"] != start_col:
+                # Column-table drift (an earlier trace changed shape): the
+                # cached fragment's table indices are dead — rebuild fresh.
+                raise _AppendCacheBust
+            pw.splice_records(cached["records"])
+            ctx["next"][t.id] = cached
+            return copy.deepcopy(cached["frag"])
+        entry, record = self._emit_trace_scoped(t, pw, xr, yr, px_width)
+        ctx["next"][t.id] = {
+            "key": key,
+            "start_col": start_col,
+            "frag": copy.deepcopy(entry),
+            "records": record,
+        }
+        return entry
 
     def _base_entry(
         self, t: Trace, pw: "_PayloadWriter", xv: np.ndarray, yv: np.ndarray, tier: str, style: dict

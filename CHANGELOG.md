@@ -142,14 +142,21 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **Streaming append skips unchanged traces entirely (protocol v6).** An
+  append tick now costs O(affected trace), not O(figure): unchanged traces
+  splice from a per-trace emit cache (no gathers, no f64→f32 re-encode, no
+  density re-bin) and their columns ship as `cid`-only addressing the client
+  resolves from bytes it already holds. A client whose baseline drifted
+  recovers with one `refresh` request. The widget's synced traits become
+  debounced notebook-reopen state (complete payload, ≤1 s stale during a
+  stream) while the per-tick push is a small custom message. A 10-trace
+  dashboard streaming one trace drops from ~3.9 MB to ~0.4 MB per tick with
+  kernel build time halved.
 - **Streaming append ships once, split, per tick (protocol v5).** The
   `append` refresh now uses the same split buffer layout as first paint (no
-  packed join copy), and on the notebook widget it rides the single
-  `spec`/`buffers` trait update — which doubles as reopen state — instead of
-  being transmitted twice (trait re-sync plus a custom message). The client
-  applies appends when `spec.append.seq` advances; the Reflex socket push is
-  unchanged in shape apart from the split buffers. Halves streaming wire
-  bytes and removes two full-payload copies per tick.
+  packed join copy), and is transmitted once per tick instead of twice
+  (trait re-sync plus a custom message). Halves streaming wire bytes and
+  removes two full-payload copies per tick.
 - **Responsive, author-defeatable browser chrome.** XY's visual defaults now
   live in a low-priority cascade layer, so Tailwind utilities, ordinary author
   CSS, and slot styles override them without `!important`. Long legends remain

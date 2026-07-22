@@ -92,8 +92,11 @@ def test_build_payload_split_matches_packed():
         assert col_s["buf"] == i
         assert col_s["byte_offset"] == 0
         assert bufs[i].nbytes == col_p["len"] * 4
+        # Split columns additionally carry a deterministic content identity
+        # (`cid`, §4 append reuse); packed export columns do not need one.
+        assert isinstance(col_s["cid"], str) and col_s["cid"].startswith("t")
         drop_p = {k: v for k, v in col_p.items() if k != "byte_offset"}
-        drop_s = {k: v for k, v in col_s.items() if k not in ("buf", "byte_offset")}
+        drop_s = {k: v for k, v in col_s.items() if k not in ("buf", "byte_offset", "cid")}
         assert drop_s == drop_p
     strip_p = {k: v for k, v in spec_p.items() if k != "columns"}
     strip_s = {k: v for k, v in spec_s.items() if k not in ("columns", "buffer_layout")}
