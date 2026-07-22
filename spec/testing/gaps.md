@@ -70,7 +70,8 @@ and retained artifact to the relevant entry before changing its status.
 
 - Status: `IMPLEMENTED`
 - Owner: unassigned — file a tracking issue before implementation starts
-- Evidence: `scripts/check_testing_spec.py::main`, `tests/test_check_testing_spec.py`, `scripts/check_claim_guardrails.py`, `make check-testing-spec`, and the all-path `required_ci` job.
+- Evidence: `scripts/check_testing_spec.py::main`, `scripts/check_claim_guardrails.py`,
+  `make check-testing-spec`, and the all-path `required_ci` job.
 - Current gap: closed; the whole specification tree and its public claims are
   checked, and specification-only pull requests receive the stable hard result.
 - Implemented when: spec-only pull requests receive the stable required result
