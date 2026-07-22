@@ -22,7 +22,9 @@ def test_client_source_is_the_installed_bundle():
     source = _client_source()
     assert source == pathlib.Path(xy.__file__).resolve().parent / "static" / "index.js"
     text = source.read_text(encoding="utf-8")
-    for marker in ("function renderStandalone(", "function decodeFrame(", "class ChartView"):
+    # The shipped TypeScript client is minified, so implementation identifiers
+    # are intentionally unstable. Public ESM export labels remain stable.
+    for marker in ("renderStandalone", "decodeFrame", "ChartView", "MARK_KINDS"):
         assert marker in text
 
 
