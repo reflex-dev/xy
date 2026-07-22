@@ -53,19 +53,56 @@ class _PayloadWriter:
         self._split = split
         self.borrow_heatmaps = borrow_heatmaps
         self.borrowed: list[np.ndarray] = []
+        # One first-paint build may mention the same canonical Column from
+        # many traces (the common shared-x case). Keep the memo writer-local:
+        # streaming/appends get a fresh writer, and derived row selections
+        # must remain independent columns. Integer identities are paired with
+        # live refs in each value, so object-id reuse cannot create a hit.
+        self._canonical_ships: dict[
+            tuple[int, int, int, float, float, str, object],
+            tuple[Column, np.ndarray, int],
+        ] = {}
 
     def ship(self, values: np.ndarray, col: "Column") -> int:
         """Offset-encoded geometry column: `(v - offset) * scale` as f32
         (§4/§16). Scale is 1.0 except for absurd-magnitude domains, where it
-        normalizes so finite f64 can't overflow to ±inf in f32 (§19)."""
-        encoded = lod.encode_f32_values(
-            values,
-            col.suggest_offset(),
-            col.min,
-            col.max,
-            kind=col.kind,
-        )
-        return self._append(encoded.values, encoded.meta)
+        normalizes so finite f64 can't overflow to ±inf in f32 (§19).
+
+        Only the live canonical array (`values is col.values`) is memoized.
+        Filtered, selected, and decimated arrays are derived payloads whose
+        row semantics belong to one trace, even when their bytes happen to
+        match another trace's temporary.
+        """
+        offset = col.suggest_offset()
+        lo, hi = col.min, col.max
+        encoder = lod.encode_f32_values
+        canonical = values is col.values
+        key = None
+        if canonical:
+            # `offset`, safe scale, `kind`, and encoder identity completely
+            # describe this primitive's current wire encoding. Column object,
+            # store-local id, and array object identity prevent collisions
+            # between independent stores or a Column whose storage was
+            # rebound by append.
+            key = (
+                id(col),
+                col.id,
+                id(values),
+                offset,
+                lod.f32_safe_scale(offset, lo, hi),
+                col.kind,
+                encoder,
+            )
+            memo = self._canonical_ships.get(key)
+            if memo is not None:
+                memo_col, memo_values, index = memo
+                if memo_col is col and memo_values is values:
+                    return index
+        encoded = encoder(values, offset, lo, hi, kind=col.kind)
+        index = self._append(encoded.values, encoded.meta)
+        if key is not None:
+            self._canonical_ships[key] = (col, values, index)
+        return index
 
     def ship_scalar(self, values: np.ndarray) -> int:
         """Raw f32 column already in final units (no offset): channel/grid/heights."""

@@ -10,10 +10,11 @@ import pytest
 import xy
 
 
-def _column(blob: bytes, spec: dict, index: int) -> np.ndarray:
+def _column(blob: bytes | list[memoryview], spec: dict, index: int) -> np.ndarray:
     meta = spec["columns"][index]
     dtype = np.uint32 if meta.get("dtype") == "u32" else np.float32
-    return np.frombuffer(blob, dtype=dtype, count=meta["len"], offset=meta["byte_offset"])
+    source = blob if isinstance(blob, bytes) else blob[meta["buf"]]
+    return np.frombuffer(source, dtype=dtype, count=meta["len"], offset=meta["byte_offset"])
 
 
 def test_animation_component_serializes_without_callbacks() -> None:
@@ -152,6 +153,46 @@ def test_keyed_scatter_ships_identity_as_binary_u32_words() -> None:
     assert len(lo) == len(hi) == 2
     assert len({(int(a), int(b)) for a, b in zip(lo, hi, strict=True)}) == 2
     assert [column.get("dtype") for column in spec["columns"]].count("u32") == 2
+
+
+@pytest.mark.parametrize("layout", ["packed", "split"])
+def test_shared_geometry_dedup_keeps_animation_keys_trace_local(layout: str) -> None:
+    x = np.arange(6.0)
+    keys = [f"row-{index}" for index in range(len(x))]
+    chart = xy.chart(
+        xy.scatter(x=x, y=x + 10.0, key=keys),
+        xy.scatter(x=x, y=x + 20.0, key=keys),
+        xy.animation(match="key"),
+    )
+    figure = chart.figure()
+    spec, payload = figure.build_payload() if layout == "packed" else figure.build_payload_split()
+    first, second = spec["traces"]
+
+    assert first["x"] == second["x"]
+    key_refs = [
+        first["keys"]["lo"],
+        first["keys"]["hi"],
+        second["keys"]["lo"],
+        second["keys"]["hi"],
+    ]
+    assert len(set(key_refs)) == 4
+    assert len(spec["columns"]) == 7  # shared x + two y + four u32 key words
+    first_pairs = list(
+        zip(
+            _column(payload, spec, first["keys"]["lo"]),
+            _column(payload, spec, first["keys"]["hi"]),
+            strict=True,
+        )
+    )
+    second_pairs = list(
+        zip(
+            _column(payload, spec, second["keys"]["lo"]),
+            _column(payload, spec, second["keys"]["hi"]),
+            strict=True,
+        )
+    )
+    assert first_pairs == second_pairs
+    assert len(set(first_pairs)) == len(keys)
 
 
 def test_stable_keys_are_type_sensitive_and_deterministic() -> None:

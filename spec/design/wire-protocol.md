@@ -219,6 +219,18 @@ Column entries otherwise carry `len`, an optional `dtype` (`"u8"` or `"u32"`;
 absent means f32), and, for offset-encoded geometry,
 `offset`/`scale`/`kind`.
 
+Trace fields reference the column table by index, and multiple fields or traces
+may intentionally reference the same entry. During one first-paint build, the
+writer memoizes only an exact live canonical array (`values is col.values`)
+with the same Column identity/store-local id and offset/scale/kind encoder
+semantics. Thus K direct traces over one canonical x column encode and ship x
+once in both packed and split layouts, with no client or protocol change.
+Finite/log-filtered selections, decimated arrays, and other derived temporary
+geometry are never memoized: their row mapping belongs to the individual trace
+even when two temporary arrays happen to contain identical bytes. Keyed
+transition `lo`/`hi` u32 columns also remain trace-local and outside this
+geometry memo.
+
 The client picks the layout from the spec, never from the shape of what
 arrived, and **a disagreement is a fatal error, not a fallback**.
 `payloadBuffers` throws when the spec says `split` and the transport delivered

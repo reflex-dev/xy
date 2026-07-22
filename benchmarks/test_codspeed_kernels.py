@@ -39,6 +39,7 @@ APPEND_N = 100_000
 APPEND_BATCH = 1_000
 STACK_ROWS = 8
 STACK_COLS = 100_000
+SHARED_COLUMN_TRACES = 16
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -94,6 +95,17 @@ def medium_data() -> tuple[np.ndarray, np.ndarray]:
     x = np.arange(MEDIUM_N, dtype=np.float64)
     y = rng.normal(0.0, 1.0, MEDIUM_N)
     return x, y
+
+
+@pytest.fixture(scope="module")
+def shared_column_figure() -> Figure:
+    """K direct traces over one canonical x column, the dashboard hot path."""
+    x = 1.6e12 + np.arange(MEDIUM_N, dtype=np.float64)
+    rows = np.arange(MEDIUM_N, dtype=np.float64)
+    marks = [
+        xy.scatter(x=x, y=np.sin(rows * 0.001 + phase)) for phase in range(SHARED_COLUMN_TRACES)
+    ]
+    return xy.chart(*marks).figure()
 
 
 @pytest.fixture(scope="module")
@@ -710,6 +722,26 @@ def test_first_payload_scatter_medium(benchmark, medium_data):
     x, y = medium_data
     payload_bytes = benchmark(_scatter_payload, x, y)
     assert payload_bytes > 0
+
+
+def _assert_shared_column_payload(spec: dict, payload_bytes: int) -> None:
+    traces = spec["traces"]
+    assert len(traces) == SHARED_COLUMN_TRACES
+    assert len({trace["x"] for trace in traces}) == 1
+    assert len(spec["columns"]) == SHARED_COLUMN_TRACES + 1
+    assert payload_bytes == (SHARED_COLUMN_TRACES + 1) * MEDIUM_N * np.dtype(np.float32).itemsize
+
+
+def test_first_payload_shared_x_packed(benchmark, shared_column_figure):
+    """Packed K-trace payload encodes and ships its canonical x exactly once."""
+    spec, blob = benchmark(shared_column_figure.build_payload)
+    _assert_shared_column_payload(spec, len(blob))
+
+
+def test_first_payload_shared_x_split(benchmark, shared_column_figure):
+    """Live-host split payload keeps one borrowed buffer for the shared x."""
+    spec, buffers = benchmark(shared_column_figure.build_payload_split)
+    _assert_shared_column_payload(spec, sum(buffer.nbytes for buffer in buffers))
 
 
 def test_first_payload_scatter_categorical_color(benchmark, medium_data):

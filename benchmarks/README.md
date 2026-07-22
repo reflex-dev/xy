@@ -157,6 +157,13 @@ alongside the complete categorical first-payload row. Together they distinguish
 native encoding/sampling regressions from payload-policy or transport
 regressions.
 
+`test_first_payload_shared_x_packed` and
+`test_first_payload_shared_x_split` isolate the common multi-series payload:
+16 direct 100k-point traces with one canonical x array and distinct y arrays.
+Both rows hard-assert one shared x table reference and a 6.8 MB payload (17
+distinct f32 columns), so either a redundant encode or duplicate wire buffer is
+visible as both a timing and byte-contract regression.
+
 `test_codspeed_pyplot.py` tracks the `xy.pyplot` shim's overhead against the
 raw declarative API: each workload (line 10k/1M, scatter 100k, histogram,
 categorical bars, a chrome-heavy styled panel, and static PNG export) is built

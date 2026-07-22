@@ -142,6 +142,12 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- First-paint payload writers now offset-encode and ship a shared canonical
+  geometry column once per build. Repeated direct traces (including `x is y`)
+  share one column-table reference in both packed and split layouts, while
+  finite/log-selected and decimated temporaries remain trace-local. This
+  removes `(K - 1) * 4N` redundant bytes for K traces over one N-row shared
+  axis without a client or protocol change.
 - **Responsive, author-defeatable browser chrome.** XY's visual defaults now
   live in a low-priority cascade layer, so Tailwind utilities, ordinary author
   CSS, and slot styles override them without `!important`. Long legends remain

@@ -31,6 +31,26 @@ def _decoded_payload_col(spec, blob, ref):
     return vals.astype(np.float64) / meta.get("scale", 1.0) + meta.get("offset", 0.0)
 
 
+def _build_layout(fig, layout):
+    return fig.build_payload() if layout == "packed" else fig.build_payload_split()
+
+
+def _decoded_layout_col(spec, payload, ref):
+    meta = spec["columns"][ref]
+    source = payload if isinstance(payload, bytes) else payload[meta["buf"]]
+    values = np.frombuffer(
+        source,
+        dtype=np.float32,
+        count=meta["len"],
+        offset=meta["byte_offset"],
+    )
+    return values.astype(np.float64) / meta.get("scale", 1.0) + meta.get("offset", 0.0)
+
+
+def _layout_nbytes(payload):
+    return len(payload) if isinstance(payload, bytes) else sum(buf.nbytes for buf in payload)
+
+
 def _bar_payload(spec, blob, tr):
     bar = tr["bar"]
     pos = _decoded_payload_col(spec, blob, bar["pos"])
@@ -133,6 +153,142 @@ def test_build_payload_split_folds_u8_alignment_padding_into_column_buffer():
     assert meta["byte_offset"] == 0
     assert bufs[meta["buf"]].nbytes == 8
     assert b"".join(bytes(buf) for buf in bufs) == blob
+
+
+@pytest.mark.parametrize("layout", ["packed", "split"])
+def test_payload_deduplicates_shared_canonical_column(layout, monkeypatch):
+    from xy import lod
+
+    n = 64
+    shared_x = 1.6e12 + np.arange(n, dtype=np.float64)
+    ys = [np.sin(np.arange(n) * 0.1 + phase) for phase in range(3)]
+    fig = Figure()
+    for y in ys:
+        fig.scatter(shared_x, y)
+
+    encode_calls = []
+    encode = lod.encode_f32_values
+
+    def counting_encode(values, offset, lo, hi, *, kind=None):
+        encode_calls.append(values)
+        return encode(values, offset, lo, hi, kind=kind)
+
+    monkeypatch.setattr(lod, "encode_f32_values", counting_encode)
+
+    spec, payload = _build_layout(fig, layout)
+    traces = spec["traces"]
+    assert len({trace["x"] for trace in traces}) == 1
+    assert len(encode_calls) == 1 + len(ys)
+    assert sum(values is fig.traces[0].x.values for values in encode_calls) == 1
+    assert len(spec["columns"]) == 1 + len(ys)
+    assert _layout_nbytes(payload) == (1 + len(ys)) * n * np.dtype(np.float32).itemsize
+    for trace, expected_y in zip(traces, ys, strict=True):
+        np.testing.assert_allclose(_decoded_layout_col(spec, payload, trace["x"]), shared_x)
+        np.testing.assert_allclose(
+            _decoded_layout_col(spec, payload, trace["y"]), expected_y, rtol=1e-6, atol=1e-6
+        )
+
+
+@pytest.mark.parametrize("layout", ["packed", "split"])
+def test_payload_deduplicates_x_is_y_canonical_column(layout):
+    values = np.linspace(-2.0, 3.0, 51, dtype=np.float64)
+    spec, payload = _build_layout(Figure().scatter(values, values), layout)
+    trace = spec["traces"][0]
+
+    assert trace["x"] == trace["y"]
+    assert len(spec["columns"]) == 1
+    assert _layout_nbytes(payload) == values.size * np.dtype(np.float32).itemsize
+    np.testing.assert_allclose(_decoded_layout_col(spec, payload, trace["x"]), values, atol=1e-7)
+
+
+@pytest.mark.parametrize("layout", ["packed", "split"])
+def test_payload_does_not_deduplicate_different_finite_selections(layout):
+    shared_x = np.array([10.0, 20.0, 30.0, 40.0, 50.0])
+    y1 = np.array([1.0, np.nan, 3.0, 4.0, 5.0])
+    y2 = np.array([1.0, 2.0, np.nan, 4.0, 5.0])
+    fig = Figure().scatter(shared_x, y1).scatter(shared_x, y2)
+
+    spec, payload = _build_layout(fig, layout)
+    first, second = spec["traces"]
+    assert first["x"] != second["x"]
+    np.testing.assert_array_equal(
+        _decoded_layout_col(spec, payload, first["x"]), shared_x[[0, 2, 3, 4]]
+    )
+    np.testing.assert_array_equal(
+        _decoded_layout_col(spec, payload, second["x"]), shared_x[[0, 1, 3, 4]]
+    )
+
+
+@pytest.mark.parametrize("layout", ["packed", "split"])
+def test_payload_does_not_deduplicate_different_log_selections(layout):
+    shared_x = np.array([10.0, 20.0, 30.0, 40.0])
+    y1 = np.array([1.0, -2.0, 3.0, 4.0])
+    y2 = np.array([1.0, 2.0, -3.0, 4.0])
+    fig = Figure().scatter(shared_x, y1).scatter(shared_x, y2)
+    fig.set_axis("y", type_="log")
+
+    spec, payload = _build_layout(fig, layout)
+    first, second = spec["traces"]
+    assert first["x"] != second["x"]
+    np.testing.assert_array_equal(
+        _decoded_layout_col(spec, payload, first["x"]), shared_x[[0, 2, 3]]
+    )
+    np.testing.assert_array_equal(
+        _decoded_layout_col(spec, payload, second["x"]), shared_x[[0, 1, 3]]
+    )
+
+
+@pytest.mark.parametrize("layout", ["packed", "split"])
+def test_payload_does_not_deduplicate_decimated_temporaries(layout):
+    n = DECIMATION_THRESHOLD + 1
+    shared_x = np.arange(n, dtype=np.float64)
+    shared_y = np.sin(shared_x * 0.01)
+    fig = Figure().line(shared_x, shared_y).line(shared_x, shared_y)
+
+    spec, _payload = _build_layout(fig, layout)
+    first, second = spec["traces"]
+    assert first["tier"] == second["tier"] == "decimated"
+    assert first["x"] != second["x"]
+    assert first["y"] != second["y"]
+
+
+@pytest.mark.parametrize("split", [False, True])
+def test_payload_writer_memo_uses_live_column_identity_and_encoding_semantics(split, monkeypatch):
+    from xy import lod
+    from xy._payload import _PayloadWriter
+
+    values = np.arange(8.0)
+    first_col = ColumnStore().ingest(values)
+    same_id_col = ColumnStore().ingest(values)
+    assert first_col.id == same_id_col.id == 0
+    assert first_col.values is same_id_col.values
+
+    writer = _PayloadWriter(split=split)
+    first_ref = writer.ship(first_col.values, first_col)
+    assert writer.ship(first_col.values, first_col) == first_ref
+    # Same store-local id and exact array, but a different live Column object.
+    assert writer.ship(same_id_col.values, same_id_col) != first_ref
+
+    derived = first_col.values[:]
+    derived_ref = writer.ship(derived, first_col)
+    assert writer.ship(derived, first_col) != derived_ref
+
+    # Offset/scale/kind wire semantics are part of the key; changing them
+    # cannot reuse the old ref even while Column and values identities remain.
+    monkeypatch.setattr(first_col, "suggest_offset", lambda: 100.0)
+    changed_offset_ref = writer.ship(first_col.values, first_col)
+    assert changed_offset_ref != first_ref
+    assert writer.columns[changed_offset_ref]["offset"] == 100.0
+
+    monkeypatch.setattr(lod, "f32_safe_scale", lambda _offset, _lo, _hi: 0.5)
+    changed_scale_ref = writer.ship(first_col.values, first_col)
+    assert changed_scale_ref not in (first_ref, changed_offset_ref)
+    assert writer.columns[changed_scale_ref]["scale"] == 0.5
+
+    first_col.kind = "time_ms"
+    changed_kind_ref = writer.ship(first_col.values, first_col)
+    assert changed_kind_ref not in (first_ref, changed_offset_ref, changed_scale_ref)
+    assert writer.columns[changed_kind_ref]["kind"] == "time_ms"
 
 
 def test_offset_encoding_roundtrip():
