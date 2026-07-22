@@ -467,13 +467,17 @@ _DRILLDOWN_DEBUG_JS = r"""
   const g = view.gpuTraces.find((t) => t.tier === "density");
   if (!g) return;
   const statusEl = document.getElementById("status");
-  const watchdogOn = new URLSearchParams(location.search).get("nowatch") !== "1";
-  const S = { reqs: 0, lastReqSeq: null, resps: 0, lastResp: "-", lastDrillDrawAt: 0, fired: 0, lastFired: "-" };
+  const params = new URLSearchParams(location.search);
+  const watchdogOn = params.get("nowatch") !== "1";   // drill + freeze recovery
+  const S = {
+    reqs: 0, lastReqSeq: null, resps: 0, lastResp: "-", lastDrillDrawAt: 0,
+    fired: 0, lastFired: "-",
+    frames: 0, framesPrev: 0, fps: 0, lastDrawAt: 0, lastDrawnSeq: -1,
+    ctxLost: 0, ctxRestored: 0, stallFixes: 0, lastErr: "-",
+  };
 
   const norm = (w) => w && { x0: Math.min(w.x0, w.x1), x1: Math.max(w.x0, w.x1), y0: Math.min(w.y0, w.y1), y1: Math.max(w.y0, w.y1) };
   const fmt = (w) => { const n = norm(w); return n ? `[${n.x0.toFixed(2)},${n.x1.toFixed(2)}]` : "null"; };
-  // The view has zoomed OUT past the window: the window sits wholly inside the
-  // view (and the view is strictly larger on at least one side).
   function viewPast(w) {
     const win = norm(w); if (!win) return false;
     const v = view.view;
@@ -483,13 +487,11 @@ _DRILLDOWN_DEBUG_JS = r"""
     const strictlyBigger = vx0 < win.x0 - ex || vx1 > win.x1 + ex || vy0 < win.y0 - ey || vy1 > win.y1 + ey;
     return contains && strictlyBigger;
   }
+  const note = (e) => { S.lastErr = String((e && e.message) || e).slice(0, 90); };
 
   if (view.comm && typeof view.comm.send === "function") {
     const rs = view.comm.send.bind(view.comm);
-    view.comm.send = function (m) {
-      if (m && m.type === "density_view") { S.reqs++; S.lastReqSeq = m.seq; }
-      return rs(m);
-    };
+    view.comm.send = function (m) { if (m && m.type === "density_view") { S.reqs++; S.lastReqSeq = m.seq; } return rs(m); };
   }
   const rf = window.fetch;
   window.fetch = function (u) {
@@ -497,51 +499,78 @@ _DRILLDOWN_DEBUG_JS = r"""
     if (String(u).indexOf("drilldown") >= 0) {
       p.then((r) => r.clone().json()).then((j) => {
         const msg = j && j.message; const t = msg && msg.traces && msg.traces[0];
-        S.resps++;
-        S.lastResp = (msg && msg.stale ? "STALE" : (t && t.mode) || "empty") + " seq" + (msg && msg.seq);
+        S.resps++; S.lastResp = (msg && msg.stale ? "STALE" : (t && t.mode) || "empty") + " seq" + (msg && msg.seq);
       }).catch(() => {});
     }
     return p;
   };
   const rp = view._drawPoints.bind(view);
-  view._drawPoints = function (d) {
-    if (d === g.drill) S.lastDrillDrawAt = performance.now();
-    return rp.apply(view, arguments);
+  view._drawPoints = function (d) { if (d === g.drill) S.lastDrillDrawAt = performance.now(); return rp.apply(view, arguments); };
+  // Frame counter + throw capture on the actual render entry point. If the
+  // canvas is frozen while state moves on, `frames`/`fps` stop climbing while
+  // `view.seq` keeps rising — the tell for a stalled render loop.
+  const rdn = view._drawNow.bind(view);
+  view._drawNow = function () {
+    S.frames++; S.lastDrawAt = performance.now(); S.lastDrawnSeq = view.seq;
+    try { return rdn.apply(view, arguments); } catch (e) { note(e); throw e; }
   };
+  // Surface the causes that silently freeze the chart: a lost GL context (which
+  // also makes _scheduleViewRequest early-return → "stops requesting"), or any
+  // uncaught render error.
+  try {
+    const cv = view.canvas;
+    cv.addEventListener("webglcontextlost", () => { S.ctxLost++; note("webglcontextlost"); }, true);
+    cv.addEventListener("webglcontextrestored", () => { S.ctxRestored++; }, true);
+  } catch (e) {}
+  window.addEventListener("error", (e) => note(e.error || e.message), true);
+  const ce = console.error;
+  console.error = function () { try { note(Array.from(arguments).join(" ")); } catch (e) {} return ce.apply(this, arguments); };
 
   const panel = document.createElement("div");
-  panel.style.cssText = "position:absolute;left:8px;bottom:8px;z-index:20;max-width:60ch;padding:6px 9px;border-radius:5px;background:rgba(15,23,41,.9);color:#d6efff;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre;pointer-events:none;";
+  panel.style.cssText = "position:absolute;left:8px;bottom:8px;z-index:20;max-width:64ch;padding:6px 9px;border-radius:5px;background:rgba(15,23,41,.92);color:#d6efff;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre;pointer-events:none;";
   document.body.appendChild(panel);
 
-  let pastSince = 0;
+  let pastSince = 0, tickPrev = performance.now();
   function tick() {
     const now = performance.now();
+    if (now - tickPrev >= 500) { S.fps = Math.round((S.frames - S.framesPrev) * 1000 / (now - tickPrev)); S.framesPrev = S.frames; tickPrev = now; }
+    const glLost = !!view._glLost;
+    const ctxState = (view.canvas && view.canvas.dataset && view.canvas.dataset.xyCtx) || "?";
+    // FROZEN RENDER LOOP detector: the view has advanced past the last painted
+    // frame and no frame has landed for a while. This is the reported bug
+    // (canvas stuck on a stale frame). Recover it directly instead of via
+    // draw()'s _raf guard, and try to bring a lost context back.
+    const behind = view.seq !== S.lastDrawnSeq;
+    const stalled = behind && now - S.lastDrawAt > 500;
+    if (watchdogOn && stalled) {
+      S.stallFixes++;
+      try {
+        if (glLost && typeof view._recoverContext === "function") view._recoverContext();
+        else { view._raf = null; view._drawNow(); if (typeof view._scheduleViewRequest === "function") view._scheduleViewRequest(); }
+      } catch (e) { note(e); }
+    }
+    // drill-specific watchdog (kept from the first pass)
     const d = g.drill;
     const past = d ? viewPast(d.win) : false;
     if (d && past) {
       if (!pastSince) pastSince = now;
       if (watchdogOn && now - pastSince > 600) {
         S.fired++; S.lastFired = new Date().toISOString().slice(11, 19);
-        console.warn("[xy-watchdog] retiring stranded drill", fmt(d.win), "view", fmt(view.view));
-        try { view._dropDrill(g); } catch (e) {}
-        if (typeof view._scheduleViewRequest === "function") view._scheduleViewRequest();
-        view.draw();
+        try { view._dropDrill(g); if (typeof view._scheduleViewRequest === "function") view._scheduleViewRequest(); view.draw(); } catch (e) { note(e); }
         pastSince = 0;
       }
-    } else {
-      pastSince = 0;
-    }
+    } else { pastSince = 0; }
+
     const v = view.view;
     panel.textContent =
       `drilldown debug  ·  watchdog ${watchdogOn ? "ON" : "off (?nowatch=1)"}\n` +
       `view    ${fmt(v)}  span ${(Math.abs(v.x1 - v.x0)).toFixed(2)}  seq ${view.seq}\n` +
-      `engine  reqs ${S.reqs} (lastSeq ${S.lastReqSeq})\n` +
-      `server  resps ${S.resps} (${S.lastResp})\n` +
-      `drill   ${d ? "present " + fmt(d.win) : "none"}` +
-      (d ? `\n        inside=${view._viewInside(d.win)} viewPast=${past} lastDraw=${(now - S.lastDrillDrawAt).toFixed(0)}ms\n` +
-           `        dying=${!!g._drillDying} wasInside=${!!g._drillWasInside} pending=${!!g._lodPendingView}` : "") +
-      `\ncache   ${(g.densityCache || []).length} windows   status "${statusEl ? statusEl.textContent : "?"}"\n` +
-      `watchdog fired ${S.fired}${S.fired ? " (last " + S.lastFired + ")" : ""}`;
+      `render  frames ${S.frames} (${S.fps}/s)  drawnSeq ${S.lastDrawnSeq}${behind ? "  <-- BEHIND view" : ""}\n` +
+      `gl      glLost=${glLost}  ctx=${ctxState}  raf=${!!view._raf}  lostEvt=${S.ctxLost} restored=${S.ctxRestored}\n` +
+      `engine  reqs ${S.reqs} (lastSeq ${S.lastReqSeq})   server resps ${S.resps} (${S.lastResp})\n` +
+      `drill   ${d ? "present " + fmt(d.win) + "  inside=" + view._viewInside(d.win) + " viewPast=" + past + " dying=" + !!g._drillDying : "none"}\n` +
+      `cache   ${(g.densityCache || []).length} win   status "${statusEl ? statusEl.textContent : "?"}"\n` +
+      `recover drillWatch ${S.fired}  stallFix ${S.stallFixes}   lastErr ${S.lastErr}`;
     requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
