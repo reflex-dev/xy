@@ -93,6 +93,15 @@ residual risk taken to keep CI and container rasterization working where the
 sandbox cannot initialize. Follow-up pending: make the fallback opt-in (or at
 minimum warn on the downgrade) so a silent sandbox loss is observable.
 
+#### Resolution as of 2026-07-21 (XY-SEC-2026-03)
+
+The automatic fallback has been removed from both public browser-export paths.
+A sandboxed launch now fails once with an actionable diagnostic and never adds
+`--no-sandbox`. Trusted repository CI that needs the downgrade passes
+`sandbox=False` at the call site, making the exception reviewable. Unit tests
+assert the exact launch count, sandbox arguments, and failure guidance for the
+one-shot and persistent paths. This closes TST-NI-025.
+
 ### XY-SEC-2026-04: Pyramid native-boundary validation was weaker than other kernels
 
 Severity: low/medium robustness.
@@ -226,3 +235,6 @@ sandbox cannot initialize. Container/worker isolation is therefore the load-
 bearing control, not the sandbox flag. Follow-up pending (same item as
 XY-SEC-2026-03): make the fallback opt-in, or at minimum warn on the downgrade,
 so a sandbox loss is observable.
+
+The 2026-07-21 resolution under XY-SEC-2026-03 supersedes this residual-risk
+status: `sandbox=True` is now enforced end to end and never downgrades itself.

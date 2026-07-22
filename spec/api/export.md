@@ -172,25 +172,19 @@ end-to-end parity: the two download paths can disagree on the same chart.
 Closing this requires a theme snapshot on the comm channel and a bump of the
 message contract; nothing in the current protocol carries it.
 
-## 7. The `--no-sandbox` auto-fallback
+## 7. Chromium sandbox policy
 
-Chromium launches sandboxed by default. Both browser paths silently downgrade on
-failure:
+Chromium launches sandboxed by default, and that choice is a guarantee rather
+than a preference. Neither the one-shot `html_to_png` path nor the persistent
+`_browser_session` path retries with `--no-sandbox` after a launch failure.
+Sandboxed failures say that no downgrade was attempted and identify the only
+escape hatch: an explicit `sandbox=False` from a caller that has established the
+HTML is trusted and the surrounding CI/container isolation is sufficient.
 
-- `html_to_png` (`export.py:509-526`): if the sandboxed run produces no
-  screenshot, it rebuilds the argv with `--no-sandbox` inserted and re-runs
-  before raising. The final error reports both attempts.
-- `_browser_session` (`export.py:926-931`): retries
-  `ChromiumSession(..., sandbox=False)` on `ChromiumError`.
-
-So `--no-sandbox` can appear without the caller requesting it, on input that
-`html_to_png` accepts as arbitrary HTML. This is a known, accepted residual risk
-taken to keep CI and container rasterization working where the sandbox cannot
-initialize — see [XY-SEC-2026-03 and its 2026-07-20 status
-note](../process/security-audit-2026-07-06.md#status-as-of-2026-07-20-xy-sec-2026-03). The
-pending follow-up is to make the fallback opt-in, or at minimum warn, so a
-sandbox loss is observable. `sandbox=False` remains the explicit escape hatch
-for trusted HTML.
+The repository's PNG browser smoke owns its generated fixture and makes that
+trusted-runner exception explicit. Public export calls never acquire
+`--no-sandbox` merely because the sandbox failed to initialize. See the resolved
+[XY-SEC-2026-03 audit note](../process/security-audit-2026-07-06.md#resolution-as-of-2026-07-21-xy-sec-2026-03).
 
 ## 8. Batch export
 

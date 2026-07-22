@@ -300,9 +300,15 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-025 — Observable or opt-in Chromium sandbox downgrade
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: public export can retry unsandboxed after a sandboxed launch
-  failure without a product-level policy assertion.
+- Status: `IMPLEMENTED`
+- Owner: unassigned — file a tracking issue before implementation starts
+- Evidence: `python/xy/export.py::html_to_png`,
+  `python/xy/export.py::_browser_session`, sandbox-policy tests in
+  `tests/test_figure.py` and `tests/test_batch_export.py`, and the explicit
+  trusted-CI opt-in in `scripts/png_export_smoke.py`.
+- Current gap: closed; sandboxed launches fail once with actionable guidance,
+  never retry unsandboxed, and `--no-sandbox` requires explicit
+  `sandbox=False` at the call site.
 - Implemented when: policy chooses explicit opt-in or an observable warning,
   launch-failure tests assert exact arguments and diagnostics, no silent downgrade
   occurs, and trusted CI requests `sandbox=False` explicitly when necessary.

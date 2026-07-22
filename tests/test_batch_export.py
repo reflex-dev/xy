@@ -107,3 +107,44 @@ def test_write_images_chromium_threads_custom_css(tmp_path, monkeypatch):
     assert f"<style>{css}</style>" in seen[0][0]
     assert seen[0][1] == "png"
     assert seen[0][2] == 2.0
+
+
+def test_browser_session_never_silently_downgrades(monkeypatch):
+    from xy import _chromium
+
+    calls = []
+
+    class FailingSession:
+        def __init__(self, executable, *, gl, sandbox):
+            calls.append((executable, gl, sandbox))
+            raise _chromium.ChromiumError("sandbox unavailable")
+
+    monkeypatch.setattr(export, "find_browser", lambda explicit=None: "/fake/chrome")
+    monkeypatch.setattr(_chromium, "ChromiumSession", FailingSession)
+
+    with pytest.raises(
+        _chromium.ChromiumError,
+        match=r"sandboxed Chromium launch failed.*No unsandboxed retry.*sandbox=False",
+    ):
+        export._browser_session(gl="software", sandbox=True)
+
+    assert calls == [("/fake/chrome", "software", True)]
+
+
+def test_browser_session_honors_explicit_unsandboxed_opt_in(monkeypatch):
+    from xy import _chromium
+
+    calls = []
+
+    class FailingSession:
+        def __init__(self, executable, *, gl, sandbox):
+            calls.append((executable, gl, sandbox))
+            raise _chromium.ChromiumError("launch failed")
+
+    monkeypatch.setattr(export, "find_browser", lambda explicit=None: "/fake/chrome")
+    monkeypatch.setattr(_chromium, "ChromiumSession", FailingSession)
+
+    with pytest.raises(_chromium.ChromiumError, match="launch failed"):
+        export._browser_session(gl="hardware", sandbox=False)
+
+    assert calls == [("/fake/chrome", "hardware", False)]

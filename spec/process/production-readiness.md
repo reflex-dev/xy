@@ -138,9 +138,10 @@ reports, and sharing a single file, but it has a clear security contract:
   as a separate asset and inject data through a nonce/hash-aware wrapper.
 - Static PNG export validates width, height, scale, and timeout options before
   launching Chromium so bad user input produces actionable Python errors, and
-  keeps Chromium's sandbox enabled by default. Pass `sandbox=False` only for
-  trusted HTML in constrained CI/container environments that cannot launch a
-  sandboxed browser.
+  keeps Chromium's sandbox enabled by default without an automatic downgrade.
+  A sandboxed launch failure is final. Pass `sandbox=False` only as an explicit
+  opt-in for trusted HTML in constrained CI/container environments that cannot
+  launch a sandboxed browser.
 - Export tests should include weird strings with `</script>`, HTML entities,
   mixed-case tags, and Unicode line/paragraph separators.
 

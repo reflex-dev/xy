@@ -1992,7 +1992,7 @@ def test_html_to_png_uses_browser_sandbox_by_default(monkeypatch):
     assert "--no-sandbox" in seen[1]
 
 
-def test_html_to_png_retries_without_sandbox_when_browser_crashes(monkeypatch):
+def test_html_to_png_never_silently_downgrades_after_sandbox_failure(monkeypatch):
     from xy import export
 
     seen = []
@@ -2002,21 +2002,43 @@ def test_html_to_png_retries_without_sandbox_when_browser_crashes(monkeypatch):
     def fake_run(args, **kwargs):
         del kwargs
         seen.append(args)
-        if len(seen) == 2:
-            shot = next(
-                arg.removeprefix("--screenshot=") for arg in args if arg.startswith("--screenshot=")
-            )
-            Path(shot).write_bytes(b"\x89PNG\r\n\x1a\nfake")
-            return export_module.subprocess.CompletedProcess(args, 0, stdout="", stderr="")
         return export_module.subprocess.CompletedProcess(args, -6, stdout="", stderr="crashed")
 
     monkeypatch.setattr(export.subprocess, "run", fake_run)
 
-    data = export.html_to_png("<!doctype html>", 320, 200)
+    with pytest.raises(
+        RuntimeError,
+        match=r"sandboxed launch produced no screenshot.*No unsandboxed retry was attempted.*sandbox=False",
+    ):
+        export.html_to_png("<!doctype html>", 320, 200)
 
-    assert data == b"\x89PNG\r\n\x1a\nfake"
+    assert len(seen) == 1
     assert "--no-sandbox" not in seen[0]
-    assert "--no-sandbox" in seen[1]
+
+
+def test_html_to_png_reports_explicit_unsandboxed_launch_failure(monkeypatch):
+    from xy import export
+
+    seen = []
+    monkeypatch.setattr(export, "find_browser", lambda explicit=None: "/fake/chrome")
+
+    def fake_run(args, **kwargs):
+        del kwargs
+        seen.append(args)
+        return export_module.subprocess.CompletedProcess(
+            args, 17, stdout="", stderr="explicit failure"
+        )
+
+    monkeypatch.setattr(export.subprocess, "run", fake_run)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"explicitly unsandboxed launch produced no screenshot \(exit 17\): explicit failure",
+    ):
+        export.html_to_png("<!doctype html>", 320, 200, sandbox=False)
+
+    assert len(seen) == 1
+    assert "--no-sandbox" in seen[0]
 
 
 # ---------------------------------------------------------------------------

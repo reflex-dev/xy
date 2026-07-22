@@ -116,6 +116,15 @@ def test_security_export_check_is_known_as_targeted_gate() -> None:
         in command
     )
     assert (
+        "tests/test_figure.py::test_html_to_png_never_silently_downgrades_after_sandbox_failure"
+        in command
+    )
+    assert "tests/test_batch_export.py::test_browser_session_never_silently_downgrades" in command
+    assert (
+        "tests/test_docs_examples.py::test_security_policy_documents_standalone_html_contract"
+        in command
+    )
+    assert (
         "tests/test_components.py::test_component_to_html_path_keeps_existing_file_on_atomic_replace_failure"
         in command
     )

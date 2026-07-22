@@ -470,7 +470,11 @@ def html_to_png(
     `gl` picks the WebGL backend: "software" (default) pins SwiftShader for
     deterministic pixels on any machine (including GPU-less CI); "hardware"
     lets Chromium use the real GPU — much faster on large direct-mode payloads,
-    at the cost of driver-dependent rasterization."""
+    at the cost of driver-dependent rasterization.
+
+    Chromium stays sandboxed unless the caller explicitly passes
+    ``sandbox=False``. A failed sandboxed launch never retries with
+    ``--no-sandbox`` automatically."""
     width = _positive_pixel_count(width, "PNG width")
     height = _positive_pixel_count(height, "PNG height")
     scale = _positive_finite_float(scale, "PNG scale")
@@ -513,23 +517,18 @@ def html_to_png(
             timeout=timeout_s,
         )
         if not shot.exists():
-            first_tail = (proc.stderr or "")[-500:]
-            if sandbox:
-                retry_args = list(args)
-                retry_args.insert(2, "--no-sandbox")
-                proc = subprocess.run(
-                    retry_args,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout_s,
-                )
-            if not shot.exists():
-                tail = (proc.stderr or "")[-500:]
-                if sandbox:
-                    tail = f"sandboxed launch failed: {first_tail}\nno-sandbox retry failed: {tail}"
-                raise RuntimeError(
-                    f"Chromium produced no screenshot (exit {proc.returncode}): {tail}"
-                )
+            tail = (proc.stderr or "")[-500:]
+            mode = "sandboxed" if sandbox else "explicitly unsandboxed"
+            guidance = (
+                " No unsandboxed retry was attempted. For trusted HTML in a constrained "
+                "CI/container environment, pass sandbox=False explicitly."
+                if sandbox
+                else ""
+            )
+            raise RuntimeError(
+                f"Chromium {mode} launch produced no screenshot "
+                f"(exit {proc.returncode}): {tail}.{guidance}"
+            )
         data = shot.read_bytes()
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         raise RuntimeError("screenshot output was not a PNG")
@@ -918,7 +917,7 @@ def _browser_html(fig: "Figure", custom_css: Optional[str], background: Optional
 
 
 def _browser_session(*, gl: str, sandbox: bool) -> "Any":
-    """One launched ChromiumSession, mirroring `html_to_png`'s sandbox retry."""
+    """Launch one Chromium session with the caller's exact sandbox policy."""
     exe = find_browser()
     if exe is None:
         raise RuntimeError(
@@ -931,10 +930,14 @@ def _browser_session(*, gl: str, sandbox: bool) -> "Any":
 
     try:
         return ChromiumSession(exe, gl=gl, sandbox=sandbox)
-    except ChromiumError:
-        if not sandbox:
-            raise
-        return ChromiumSession(exe, gl=gl, sandbox=False)
+    except ChromiumError as exc:
+        if sandbox:
+            raise ChromiumError(
+                f"sandboxed Chromium launch failed: {exc}. No unsandboxed retry was "
+                "attempted; for trusted content in a constrained CI/container "
+                "environment, pass sandbox=False explicitly"
+            ) from exc
+        raise
 
 
 def _native_image(
