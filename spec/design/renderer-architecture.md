@@ -116,12 +116,21 @@ Ordered by how much each compounds as kinds multiply.
   `_initContextLossRecovery` listens for loss, prevents default eviction
   handling, quiesces draw/animation/re-bin work, and increments the request
   sequence so pre-loss kernel/worker replies cannot mutate the rebuilt state.
+  Loss also clears the accepted viewport-reply memo: refined tier buffers,
+  density textures, and drills are context-owned and therefore no longer live.
   Streaming appends still replace the retained canonical payload while the
   context is down. Restore drops dead handles, re-runs `_initGl` from that
   payload, and re-fires the view request to re-sync live tiers; a failed
   restore remains explicitly failed instead of throwing from the event
   handler. The dependency-free smoke forces three `WEBGL_lose_context`
   cycles, checks pixel-identical frames after each, and zooms after recovery.
+- **Accepted viewport no-ops.** `54_kernel.ts` keeps a bounded 64-entry LRU of
+  the one current accepted key for the shared decimated tier and each density
+  trace/axis identity. Keys include payload generation, normalized data-space
+  window, and rounded plot pixels. Hits are validated against live GPU/drill
+  identity; only complete current-seq applies are admitted. Y-only navigation
+  can therefore skip a byte-identical line tier while density still refines,
+  without weakening latest-wins, `drill_seq`, or selection semantics.
 - **R5 — Shader source conventions are informal.** ✅ **Done.** `build.mjs`
   lints every shader at build time: `#version 300 es` first line, every FS
   declares `precision highp float;`, every VS references a `u_*map` uniform

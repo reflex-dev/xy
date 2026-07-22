@@ -244,8 +244,16 @@ invariants so future kinds don't regress them:
   that drops the density frame and strands drilled points over a stale surface.
   Every `_drawDensity` also skips a grid whose texture is not `gl.isTexture`, so
   the invariant can never surface as a GL error even if a new reference is added.
+- **T8 — no-op suppression means current state, not response replay:** the
+  client remembers only an exact viewport request whose latest-wins reply was
+  accepted and is still represented by the live tier buffers, density grid, or
+  drill object/version. Payload generations and pixel dimensions are part of
+  the key. Full payloads, appends, context loss, partial/unsolicited updates,
+  and dead/dying drills force a miss. The 64-entry global LRU bounds trace
+  identity churn; one accepted key per request slot prevents A→B→A from
+  pretending the non-resident A tier is still current.
 
-Any new tiered kind must state how it satisfies T1–T7 in its chart-kind
+Any new tiered kind must state how it satisfies T1–T8 in its chart-kind
 contract entry before it lands.
 
 ---
@@ -292,7 +300,9 @@ contract entry before it lands.
    `bin_2d` path. Level is recorded per update as `binning: "pyramid-L<l>"`.
 8. Client: tile-keyed cache replaces window-keyed `densityCache` (same
    eviction, same crossfades). Still pending — `js/src/45_lod.ts` keys the
-   cache by density window, and no client code reads the served level.
+   cache by density window, and no client code reads the served level. The
+   shipped accepted-request memo only suppresses an exact reply already
+   represented by current GPU state; it is deliberately not tile reuse.
 9. Bench gate: 100M pan p95 < 16ms kernel time, zoom step < 50ms, memory
    within 1.5× finest level.
 

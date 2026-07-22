@@ -340,6 +340,14 @@ export class ChartView {
     this.axes = this._normalizeAxes(spec);
     this.comm = comm;
     this.seq = 0;
+    // Accepted viewport replies are memoized by the kernel bridge so an exact
+    // request already represented by live GPU state does not make another
+    // round trip.  The generation changes with every canonical payload; the
+    // bounded maps are cleared on payload/context lifecycle boundaries.
+    this._viewDataGeneration = 1;
+    this._servedViewMemo = new Map();
+    this._servedViewSlots = new Map();
+    this._pendingViewReplies = null;
     this._densityStamp = 0;
     this._viewRequestBurstStart = null;
     this._viewAnim = null;
@@ -1027,6 +1035,7 @@ export class ChartView {
       // Incrementing seq makes pre-loss kernel/worker replies stale, so they
       // cannot populate the newly restored context with an old view.
       this.seq += 1;
+      this._clearServedViewMemo?.();
       if (this._raf) cancelAnimationFrame(this._raf);
       this._raf = null;
       if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
@@ -4763,6 +4772,7 @@ export class ChartView {
   destroy() {
     if (this._destroyed) return;
     this._destroyed = true;
+    this._clearServedViewMemo?.();
     if (this._dataAnim) {
       this._emitAnimationLifecycle?.("end", this._dataAnim.phase, { cancelled: true });
     }

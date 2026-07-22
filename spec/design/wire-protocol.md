@@ -63,6 +63,15 @@ produces no traces, there is no reply at all (silence, not an empty message).
 plot width and height. A trace that is not in density mode yields
 `{"traces": []}`, which is dropped rather than sent.
 
+Both viewport request kinds have exact client-side no-op suppression. A key is
+the canonical payload generation, normalized visible data window, rounded plot
+dimensions, and the participating trace/axis identities. An entry is recorded
+only after the matching latest-wins reply was accepted and applied; an in-flight,
+stale, partial, or unsolicited reply never creates a hit. The memo stores only
+the key and identity of the live GPU state — it does not replay response bytes or
+reuse an old drill. Each request slot has one current accepted key, and the
+global LRU is capped at 64 entries.
+
 **`pick`** — `trace` and `index` pass through `_integer_id`. `index` is a
 *shipped-vertex* index, translated kernel-side to a canonical row when the
 shipped copy dropped non-finite rows. `drill_seq`, when present, is the drill
@@ -131,6 +140,13 @@ The client enforces `msg.seq` only when it is present, and additionally
 accepts `msg.trace` and `msg.stale` for pending-request bookkeeping — no
 current kernel path emits either field.
 
+After the seq check and a complete apply, `tier_update` records the shared tier
+request only when every expected decimated trace landed. `density_update`
+records each trace independently and ties a points entry to its live
+`drill_seq`/drill object or a density entry to its live grid object. Selection
+masks may update that drill in place without invalidating it; a replaced/dying
+drill, replaced grid, partial update, or changed GPU buffer identity is a miss.
+
 **`pick_result`** — `{type, seq, row}`. `row` is `null` when the index is out
 of range or `drill_seq` was stale; the reply ships regardless so the client
 clears its hover state. A point row is
@@ -160,6 +176,8 @@ through `ChartView.updatePayload`, retaining one previous scene for matching
 and positional interpolation while preserving append's
 home/live-edge/history follow policy. Unsupported layouts snap to the new
 representation without an opacity animation.
+Every full payload and append advances the viewport-data generation, clears the
+served-request memo, and invalidates in-flight view replies before rebuilding.
 The widget also re-syncs its `spec`/`buffers` traits so a re-rendered output
 shows the streamed state.
 

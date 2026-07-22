@@ -142,6 +142,16 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **Interactive viewport no-op suppression.** The client now skips exact
+  decimated-tier and per-trace density requests only after their latest-wins
+  replies were accepted and remain represented by live GPU state. Keys include
+  payload generation, normalized window, plot pixels, and trace/axis identity;
+  full payloads, appends, context loss, partial replies, and dead drills
+  invalidate them. The memo is capped at 64 entries and preserves drill/selection
+  versions instead of replaying response bytes. On the 120k combined line+
+  density benchmark, one duplicate avoids two round trips, 151,704 binary
+  payload bytes (152,432 complete XYBF bytes), and ~0.21 ms median kernel work;
+  a y-only pan avoids the unchanged 7,704-byte line-tier reply.
 - **Responsive, author-defeatable browser chrome.** XY's visual defaults now
   live in a low-priority cascade layer, so Tailwind utilities, ordinary author
   CSS, and slot styles override them without `!important`. Long legends remain

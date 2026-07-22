@@ -434,6 +434,9 @@ Object.assign(ChartView.prototype, {
 
   updatePayload(spec, buffer) {
     if (this._destroyed || !spec || spec.protocol !== PROTOCOL) return false;
+    // A payload replacement changes the data behind every viewport key.  It
+    // also invalidates in-flight replies before any new GPU state is built.
+    this._advanceViewDataGeneration?.();
     if (this._dataAnimRaf) cancelAnimationFrame(this._dataAnimRaf);
     this._dataAnimRaf = null;
     if (this._dataAnim) {

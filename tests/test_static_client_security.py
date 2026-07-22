@@ -574,7 +574,7 @@ def test_client_lod_layer_stays_chart_agnostic_and_renderer_delegated() -> None:
     chartview_required = (
         "lodDrawDensityTier(this, g",
         "markOf(g.trace.kind).draw(this, g",
-        'if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }',
+        'if (upd.mode === "points") this._applyDrill(g, upd, buffers);',
         "lodApplyDensityUpdate(this, g, upd, buffers);",
         "lodApplyDrill(this, g, upd, buffers);",
         "lodDropDrill(this, g);",

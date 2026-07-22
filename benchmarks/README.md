@@ -104,6 +104,8 @@ These commands match the non-blocking GitHub Actions measurement lane:
   --json heatmap-4b.json
 .venv/bin/python benchmarks/bench_interaction.py --sizes 1e4,2.5e5 \
   --reps 24 --chromium "$CHROME" --json interaction.json
+.venv/bin/python benchmarks/bench_served_view_memo.py --reps 21 \
+  --json served-view-memo.json
 .venv/bin/python benchmarks/bench_transport.py --n 1e6 --reps 15 \
   --browser-reps 12 --chromium "$CHROME" --require-browser \
   --json transport.json
@@ -132,6 +134,14 @@ measure request through decode and the next animation frame; they do not claim
 request-to-pixels or GPU-upload latency. The report also records current widget
 append retransmission and unaffected-trace bytes so later fixes have an explicit
 before/after baseline.
+
+`bench_served_view_memo.py` measures the real kernel work behind one combined
+decimated-line and density-drill viewport. Its accepted-client-memo arm is an
+exact no-op by contract, so the report records the two avoided round trips plus
+the exact binary payload and complete XYBF frame bytes that would otherwise be
+re-shipped. The Chromium lifecycle assertions live in
+`tests/test_served_view_memo.py`; this benchmark isolates reproducible kernel and
+wire accounting from browser launch noise.
 
 The CodSpeed suite is the reproducible backend/per-payload gate. Every
 module named `test_codspeed_*.py` is collected, so adding a dedicated CodSpeed
