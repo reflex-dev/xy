@@ -7,6 +7,8 @@ recorded in the shipped spec, never silent (§28).
 
 from __future__ import annotations
 
+import warnings
+
 # Wire protocol version: the client refuses a mismatched spec loudly (§33).
 # v5: streaming append ships split-layout buffers and, on the widget host,
 # rides the spec/buffers trait update (`spec.append.seq`) with no custom send.
@@ -63,19 +65,48 @@ DENSITY_TARGET_POINTS_PER_CELL = 16.0
 DENSITY_SAMPLE_TARGET = 8_192
 DENSITY_SAMPLE_SEED = 0
 
-# CVD-safe default categorical palette (§20/§36 default theme).
+# CVD-safe default categorical palette (§20/§36 default theme). Eight slots in
+# a fixed order; charts render on unknown host surfaces, so every step sits in
+# the OKLCH lightness band both light and dark modes share (L 0.48–0.67) and is
+# validated against both reference surfaces (#fcfcfb / #1a1a19) with
+# .claude/skills/xy-dataviz/scripts/validate_palette.py: chroma ≥ 0.10, worst
+# adjacent-pair CVD ΔE 8.5 (Machado–Oliveira–Fernandes protan/deutan, ≥8
+# target), worst adjacent normal-vision ΔE 19.1 (≥15 floor), all slots ≥3:1 on
+# both surfaces. The ORDER is the CVD-safety mechanism — adjacency drives the
+# ΔE gate — so never re-order or extend without re-running the validator.
+# (Replaced Tableau10, whose adjacent red/green collapsed to ΔE 1.2 under
+# deuteranopia and whose slots 1/5/7/9/10 sat below the chroma floor.)
 DEFAULT_PALETTE = [
-    "#4c78a8",
-    "#f58518",
-    "#54a24b",
-    "#e45756",
-    "#72b7b2",
-    "#eeca3b",
-    "#b279a2",
-    "#ff9da6",
-    "#9d755d",
-    "#bab0ac",
+    "#3987e5",  # blue
+    "#008300",  # green
+    "#d55181",  # magenta
+    "#c48300",  # amber
+    "#199e70",  # aqua
+    "#d95926",  # orange
+    "#9085e9",  # violet
+    "#e66767",  # red
 ]
+
+_PALETTE_WRAP_MESSAGE = (
+    f"more than {len(DEFAULT_PALETTE)} series use default colors; the default "
+    f"palette repeats every {len(DEFAULT_PALETTE)} (series 9 wears series 1's "
+    "color). Pass explicit color= per series, or group series, to keep "
+    "identities distinct."
+)
+
+
+def default_palette_color(index: int, *, stacklevel: int = 3) -> str:
+    """Default color for the `index`-th series (0-based): the palette, cycled.
+
+    The palette is deliberately eight slots — the adjacency order above is the
+    CVD-safety mechanism, so it cannot grow a ninth hue without re-clearing the
+    validator — which means assignment wraps modulo eight. The wrap is allowed
+    but never silent (§28): the first wrapped assignment warns.
+    """
+    if index >= len(DEFAULT_PALETTE):
+        warnings.warn(_PALETTE_WRAP_MESSAGE, RuntimeWarning, stacklevel=stacklevel)
+    return DEFAULT_PALETTE[index % len(DEFAULT_PALETTE)]
+
 
 # Tile pyramid (§5 Tier 3): built lazily per density trace at/above this size;
 # base level is PYRAMID_BASE_DIM² u32 counts (~4·dim² bytes + 1/3 overhead).
