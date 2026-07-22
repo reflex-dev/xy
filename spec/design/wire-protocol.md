@@ -13,6 +13,13 @@ has the shape specified here, byte for byte. What varies is *which* messages a
 host sends — the Reflex wrapper resolves `view_change` in the browser and never
 emits it (§2).
 
+The machine-readable test companion is
+[`../testing/protocol-catalog.json`](../testing/protocol-catalog.json). Its
+request inventory is checked against the dispatcher AST, and its committed
+`XYBF` reply frames are decoded by both Python and the shipped JavaScript client
+under the policy in
+[`../testing/protocol-conformance.md`](../testing/protocol-conformance.md).
+
 ## 1. Dispatch contract
 
 `handle_message(fig, content, buffers=None, callbacks=ChannelCallbacks())`

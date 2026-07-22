@@ -23,6 +23,9 @@ The testing specification has three responsibilities:
 - [`dependency-auditing.md`](dependency-auditing.md) defines the hard
   multi-ecosystem lock inventory, severity and exception policy, and retained
   vulnerability evidence.
+- [`protocol-conformance.md`](protocol-conformance.md) defines the executable
+  request/reply catalog, shared Python/JavaScript golden frames, and structural
+  byte-mutation parity policy.
 - [`host-integration-policy.json`](host-integration-policy.json) is the
   executable version inventory behind the bounded host contract in
   [`../design/host-compatibility.md`](../design/host-compatibility.md).

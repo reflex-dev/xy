@@ -372,6 +372,22 @@ jobs:
       - name: Typecheck (ty, advisory)
         run: .venv/bin/ty check python || echo "::warning::ty reported type findings (advisory)"
 
+      - name: Protocol catalog and byte-mutation conformance
+        run: |
+          mkdir -p test-results/protocol
+          .venv/bin/pytest -q \
+            tests/test_protocol_catalog.py tests/test_framing.py tests/test_framing_property.py \
+            --junitxml=test-results/protocol/junit.xml
+
+      - name: Upload protocol conformance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: protocol-conformance-evidence
+          if-no-files-found: error
+          retention-days: 30
+          path: test-results/protocol/junit.xml
+
       - name: Python tests (native core)
         # Point PNG-export tests at the Playwright Chromium (not on PATH) so the
         # full Figure.to_png path runs here rather than skipping.

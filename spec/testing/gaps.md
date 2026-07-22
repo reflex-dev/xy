@@ -412,9 +412,16 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-028 — Catalog-driven protocol conformance and byte mutation
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: framing tests are strong, but request coverage is handwritten and
-  the property suite focuses on valid round trips.
+- Status: `IMPLEMENTED`
+- Evidence: [`protocol-conformance.md`](protocol-conformance.md),
+  `spec/testing/protocol-catalog.json`, `tests/test_protocol_catalog.py`,
+  `tests/test_framing.py`, `tests/test_framing_property.py`,
+  `make check-protocol`, and the hard-CI `protocol-conformance-evidence`
+  JUnit artifact.
+- Current gap: closed; the catalog is checked against the dispatcher's AST and
+  generates all five case classes for every request, all reply schemas carry
+  committed Python/JavaScript golden frames, and required Hypothesis batches
+  mutate every structural frame class while enforcing decoder parity.
 - Implemented when: one protocol catalog generates valid, missing, wrong-type,
   bounds, and callback cases for every request/reply; shared golden frames run in
   Python and JavaScript; and property mutations of headers, lengths, counts,

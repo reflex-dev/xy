@@ -193,6 +193,8 @@ def handle_message(
     if not isinstance(content, dict):
         return None
     kind = content.get("type")
+    if not isinstance(kind, str):
+        return None
     if kind in {"animation_start", "animation_end"}:
         callback = (
             callbacks.on_animation_start
@@ -248,15 +250,15 @@ def handle_message(
         # client's drill_seq rejects picks that raced a subset swap.
         dseq = content.get("drill_seq")
         try:
-            trace_id = _integer_id(content.get("trace", -1), "trace")
-            index = _integer_id(content.get("index", -1), "index")
+            trace_id = _integer_id(content["trace"], "trace")
+            index = _integer_id(content["index"], "index")
             drill_seq = None if dseq is None else _integer_id(dseq, "drill_seq")
             row = fig.pick(
                 trace_id,
                 index,
                 drill_seq,
             )
-        except (TypeError, ValueError):
+        except (KeyError, TypeError, ValueError):
             return None
         if row is not None and callbacks.on_hover is not None:
             callbacks.on_hover(row)
@@ -267,11 +269,11 @@ def handle_message(
         dseq = content.get("drill_seq")
         row = None
         try:
-            trace_id = _integer_id(content.get("trace", -1), "trace")
-            index = _integer_id(content.get("index", -1), "index")
+            trace_id = _integer_id(content["trace"], "trace")
+            index = _integer_id(content["index"], "index")
             drill_seq = None if dseq is None else _integer_id(dseq, "drill_seq")
             row = fig.pick(trace_id, index, drill_seq)
-        except (TypeError, ValueError):
+        except (KeyError, TypeError, ValueError):
             return None
         if row is not None and callbacks.on_click is not None:
             callbacks.on_click(row)

@@ -620,6 +620,29 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "if-no-files-found: error",
         "dashboard-smoke.json",
     )
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Protocol catalog and byte-mutation conformance",
+        "catalog, golden-frame, malformed-frame, and required property suite",
+        "mkdir -p test-results/protocol",
+        "tests/test_protocol_catalog.py",
+        "tests/test_framing.py",
+        "tests/test_framing_property.py",
+        "--junitxml=test-results/protocol/junit.xml",
+    )
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Upload protocol conformance evidence",
+        "failure-retaining protocol JUnit artifact policy",
+        "if: always()",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        "protocol-conformance-evidence",
+        "if-no-files-found: error",
+        "retention-days: 30",
+        "test-results/protocol/junit.xml",
+    )
     javascript_semantics = jobs.get("javascript_semantics", "")
     if "continue-on-error:" in javascript_semantics:
         errors.append("CI javascript_semantics job must be a hard gate without continue-on-error")

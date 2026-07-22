@@ -11,8 +11,9 @@ COVERAGE_JSON ?= coverage/python/coverage.json
 COVERAGE_BASE ?= origin/main
 COVERAGE_HEAD ?= HEAD
 COVERAGE_REPORT ?= coverage/python/ratchet.json
+PROTOCOL_JUNIT ?= /tmp/xy-protocol-junit.xml
 
-.PHONY: help setup setup-browser check check-full check-browser check-labels check-pan-zoom check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-testing-spec check-benchmark-harness check-coverage check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check js-test rust-check abi-smoke
+.PHONY: help setup setup-browser check check-full check-browser check-labels check-pan-zoom check-conformance check-protocol check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-testing-spec check-benchmark-harness check-coverage check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check js-test rust-check abi-smoke
 
 help:
 	@printf '%s\n' \
@@ -26,6 +27,7 @@ help:
 		'  make check-labels     run strict formatter units and rendered-label DOM oracles' \
 		'  make check-pan-zoom   run the complete Chromium pan/zoom acceptance matrix (set CHROMIUM=/path/to/chrome)' \
 		'  make check-conformance run the bounded accessibility/DPR/motion matrix in Chromium, Firefox, and WebKit' \
+		'  make check-protocol   run the request/reply catalog, shared golden frames, and structural byte mutations' \
 		'  make check-docs       run docs examples and public claim guardrails' \
 		'  make check-examples   run README/API examples and Reflex asset registry checks' \
 		'  make check-security   run standalone HTML safety and client text-sink checks' \
@@ -107,6 +109,11 @@ check-conformance:
 	node scripts/pan_zoom_matrix.mjs --profile focused \
 		--browsers chromium,firefox,webkit \
 		--evidence /tmp/xy-pan-zoom-cross-engine-evidence.json
+
+check-protocol:
+	$(PYTHON) -m pytest -q \
+		tests/test_protocol_catalog.py tests/test_framing.py tests/test_framing_property.py \
+		--junitxml="$(PROTOCOL_JUNIT)"
 
 check-docs:
 	$(PYTHON) scripts/verify_local.py --only examples,claim_guardrails,testing_spec

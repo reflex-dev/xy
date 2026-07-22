@@ -1166,6 +1166,40 @@ def test_ci_workflow_rejects_missing_cross_browser_conformance(tmp_path: Path) -
     assert any("browser_conformance" in error and "conformance gate" in error for error in errors)
 
 
+def test_ci_workflow_rejects_missing_protocol_mutation_suite(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            "            tests/test_protocol_catalog.py tests/test_framing.py tests/test_framing_property.py \\\n",
+            "            tests/test_protocol_catalog.py tests/test_framing.py \\\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Protocol catalog and byte-mutation conformance" in error for error in errors)
+
+
+def test_ci_workflow_rejects_missing_protocol_evidence_upload(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            "      - name: Upload protocol conformance evidence\n",
+            "      - name: Removed protocol conformance evidence\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Upload protocol conformance evidence" in error for error in errors)
+
+
 def test_ci_workflow_rejects_missing_cross_browser_evidence_upload(tmp_path: Path) -> None:
     text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"

@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "request_case_kinds": ["valid", "missing", "wrong_type", "bounds", "callback"],
+  "requests": [
+    {
+      "type": "view",
+      "cases": {
+        "valid": {"message": {"type": "view", "x0": 10, "x1": 100, "px": 320, "seq": 1}, "reply": "tier_update"},
+        "missing": {"message": {"type": "view", "x1": 100}, "outcome": "drop"},
+        "wrong_type": {"message": {"type": "view", "x0": "left", "x1": 100}, "outcome": "drop"},
+        "bounds": {"message": {"type": "view", "x0": 100, "x1": 10}, "outcome": "drop"},
+        "callback": {"message": {"type": "view", "x0": 10, "x1": 100, "px": 320}, "reply": "tier_update", "callbacks": []}
+      }
+    },
+    {
+      "type": "density_view",
+      "cases": {
+        "valid": {"message": {"type": "density_view", "trace": 2, "x0": 0, "x1": 50, "y0": 0, "y1": 50, "w": 32, "h": 32, "seq": 2}, "reply": "density_update"},
+        "missing": {"message": {"type": "density_view", "trace": 2, "x0": 0, "x1": 50, "y0": 0}, "outcome": "drop"},
+        "wrong_type": {"message": {"type": "density_view", "trace": 2, "x0": 0, "x1": 50, "y0": 0, "y1": 50, "w": "wide"}, "outcome": "drop"},
+        "bounds": {"message": {"type": "density_view", "trace": 999, "x0": 0, "x1": 50, "y0": 0, "y1": 50}, "outcome": "drop"},
+        "callback": {"message": {"type": "density_view", "trace": 2, "x0": 0, "x1": 50, "y0": 0, "y1": 50, "w": 32, "h": 32}, "reply": "density_update", "callbacks": []}
+      }
+    },
+    {
+      "type": "pick",
+      "cases": {
+        "valid": {"message": {"type": "pick", "trace": 1, "index": 0, "seq": 3}, "reply": "pick_result"},
+        "missing": {"message": {"type": "pick", "trace": 1}, "outcome": "drop"},
+        "wrong_type": {"message": {"type": "pick", "trace": [], "index": 0}, "outcome": "drop"},
+        "bounds": {"message": {"type": "pick", "trace": 1, "index": 999, "seq": 4}, "reply": "pick_result"},
+        "callback": {"message": {"type": "pick", "trace": 1, "index": 0}, "reply": "pick_result", "callbacks": ["on_hover"]}
+      }
+    },
+    {
+      "type": "click",
+      "cases": {
+        "valid": {"message": {"type": "click", "trace": 1, "index": 0}, "outcome": "none"},
+        "missing": {"message": {"type": "click", "trace": 1}, "outcome": "drop"},
+        "wrong_type": {"message": {"type": "click", "trace": 1, "index": {}}, "outcome": "drop"},
+        "bounds": {"message": {"type": "click", "trace": 1, "index": 999}, "outcome": "none"},
+        "callback": {"message": {"type": "click", "trace": 1, "index": 0}, "outcome": "none", "callbacks": ["on_click"]}
+      }
+    },
+    {
+      "type": "view_change",
+      "cases": {
+        "valid": {"message": {"type": "view_change", "ranges": {"x": [0, 10], "y": [0, 10]}, "source": "catalog"}, "outcome": "none"},
+        "missing": {"message": {"type": "view_change"}, "outcome": "drop"},
+        "wrong_type": {"message": {"type": "view_change", "ranges": []}, "outcome": "drop"},
+        "bounds": {"message": {"type": "view_change", "ranges": {"x": [1, 1]}}, "outcome": "drop"},
+        "callback": {"message": {"type": "view_change", "ranges": {"x": [0, 10], "y": [0, 10]}}, "outcome": "none", "callbacks": ["on_view_change"]}
+      }
+    },
+    {
+      "type": "select",
+      "cases": {
+        "valid": {"message": {"type": "select", "x0": 0, "x1": 10, "y0": 0, "y1": 10}, "reply": "selection"},
+        "missing": {"message": {"type": "select", "x0": 0, "x1": 10, "y0": 0}, "outcome": "drop"},
+        "wrong_type": {"message": {"type": "select", "x0": [], "x1": 10, "y0": 0, "y1": 10}, "outcome": "drop"},
+        "bounds": {"message": {"type": "select", "x0": 10, "x1": 0, "y0": 10, "y1": 0}, "reply": "selection"},
+        "callback": {"message": {"type": "select", "x0": 0, "x1": 10, "y0": 0, "y1": 10}, "reply": "selection", "callbacks": ["on_brush", "on_select"]}
+      }
+    },
+    {
+      "type": "select_polygon",
+      "cases": {
+        "valid": {"message": {"type": "select_polygon", "points": [[0, 0], [10, 0], [5, 10]]}, "reply": "selection"},
+        "missing": {"message": {"type": "select_polygon"}, "outcome": "drop"},
+        "wrong_type": {"message": {"type": "select_polygon", "points": "triangle"}, "outcome": "drop"},
+        "bounds": {"message": {"type": "select_polygon", "points": [[0, 0], [1, 1]]}, "outcome": "drop"},
+        "callback": {"message": {"type": "select_polygon", "points": [[0, 0], [10, 0], [5, 10]]}, "reply": "selection", "callbacks": ["on_brush", "on_select"]}
+      }
+    },
+    {
+      "type": "select_clear",
+      "cases": {
+        "valid": {"message": {"type": "select_clear"}, "reply": "selection"},
+        "missing": {"message": {}, "outcome": "drop"},
+        "wrong_type": {"message": {"type": []}, "outcome": "drop"},
+        "bounds": {"message": {"type": "select_clear", "seq": 9007199254740991}, "reply": "selection"},
+        "callback": {"message": {"type": "select_clear"}, "reply": "selection", "callbacks": ["on_select"]}
+      }
+    },
+    {
+      "type": "animation_start",
+      "cases": {
+        "valid": {"message": {"type": "animation_start", "phase": "enter"}, "outcome": "none"},
+        "missing": {"message": {}, "outcome": "drop"},
+        "wrong_type": {"message": {"type": 1, "phase": "enter"}, "outcome": "drop"},
+        "bounds": {"message": {"type": "animation_start", "phase": ""}, "outcome": "none"},
+        "callback": {"message": {"type": "animation_start", "phase": "enter"}, "outcome": "none", "callbacks": ["on_animation_start"]}
+      }
+    },
+    {
+      "type": "animation_end",
+      "cases": {
+        "valid": {"message": {"type": "animation_end", "phase": "update", "cancelled": true}, "outcome": "none"},
+        "missing": {"message": {}, "outcome": "drop"},
+        "wrong_type": {"message": {"type": {}, "phase": "update"}, "outcome": "drop"},
+        "bounds": {"message": {"type": "animation_end", "phase": "", "cancelled": false}, "outcome": "none"},
+        "callback": {"message": {"type": "animation_end", "phase": "update", "cancelled": true}, "outcome": "none", "callbacks": ["on_animation_end"]}
+      }
+    }
+  ],
+  "replies": {
+    "tier_update": {
+      "required": ["type", "seq", "traces"],
+      "buffers": "nonempty",
+      "golden": {
+        "message": {"type": "tier_update", "seq": 7, "traces": [{"id": 0, "x": {"buf": 0, "len": 2, "offset": 0.0, "scale": 1.0}, "y": {"buf": 1, "len": 2, "offset": 0.0, "scale": 1.0}}]},
+        "buffers_base64": ["AACAPwAAAEA=", "AABAQAAAgEA="],
+        "frame_base64": "WFlCRgEAGACQAAAAAgAAAMgAAAAAAAAAeyJ0eXBlIjoidGllcl91cGRhdGUiLCJzZXEiOjcsInRyYWNlcyI6W3siaWQiOjAsIngiOnsiYnVmIjowLCJsZW4iOjIsIm9mZnNldCI6MC4wLCJzY2FsZSI6MS4wfSwieSI6eyJidWYiOjEsImxlbiI6Miwib2Zmc2V0IjowLjAsInNjYWxlIjoxLjB9fV19CAAAAAAAAAAAAIA/AAAAQAgAAAAAAAAAAABAQAAAgEA="
+      }
+    },
+    "density_update": {
+      "required": ["type", "seq", "traces"],
+      "buffers": "nonempty",
+      "golden": {
+        "message": {"type": "density_update", "seq": 8, "traces": [{"id": 1, "mode": "density", "tier": "density", "visible": 3, "reduction": "bin", "binning": "exact", "density": {"buf": 0, "w": 2, "h": 2, "max": 3, "enc": "log-u8", "x_range": [0.0, 1.0], "y_range": [0.0, 1.0]}}]},
+        "buffers_base64": ["AAECAw=="],
+        "frame_base64": "WFlCRgEAGADmAAAAAQAAABABAAAAAAAAeyJ0eXBlIjoiZGVuc2l0eV91cGRhdGUiLCJzZXEiOjgsInRyYWNlcyI6W3siaWQiOjEsIm1vZGUiOiJkZW5zaXR5IiwidGllciI6ImRlbnNpdHkiLCJ2aXNpYmxlIjozLCJyZWR1Y3Rpb24iOiJiaW4iLCJiaW5uaW5nIjoiZXhhY3QiLCJkZW5zaXR5Ijp7ImJ1ZiI6MCwidyI6MiwiaCI6MiwibWF4IjozLCJlbmMiOiJsb2ctdTgiLCJ4X3JhbmdlIjpbMC4wLDEuMF0sInlfcmFuZ2UiOlswLjAsMS4wXX19XX0AAAQAAAAAAAAAAAECAwAAAAA="
+      }
+    },
+    "pick_result": {
+      "required": ["type", "seq", "row"],
+      "buffers": "none",
+      "golden": {
+        "message": {"type": "pick_result", "seq": 9, "row": {"trace": 1, "index": 2, "x": 2.0, "y": 4.0, "x_kind": "number", "y_kind": "number"}},
+        "buffers_base64": [],
+        "frame_base64": "WFlCRgEAGABuAAAAAAAAAIgAAAAAAAAAeyJ0eXBlIjoicGlja19yZXN1bHQiLCJzZXEiOjksInJvdyI6eyJ0cmFjZSI6MSwiaW5kZXgiOjIsIngiOjIuMCwieSI6NC4wLCJ4X2tpbmQiOiJudW1iZXIiLCJ5X2tpbmQiOiJudW1iZXIifX0AAA=="
+      }
+    },
+    "selection": {
+      "required": ["type", "traces", "total"],
+      "buffers": "trace_count",
+      "golden": {
+        "message": {"type": "selection", "seq": "selection:4", "traces": [{"id": 1, "count": 2, "buf": 0, "drill_seq": 3}], "total": 2},
+        "buffers_base64": ["AQAAAAMAAAA="],
+        "frame_base64": "WFlCRgEAGABmAAAAAQAAAJAAAAAAAAAAeyJ0eXBlIjoic2VsZWN0aW9uIiwic2VxIjoic2VsZWN0aW9uOjQiLCJ0cmFjZXMiOlt7ImlkIjoxLCJjb3VudCI6MiwiYnVmIjowLCJkcmlsbF9zZXEiOjN9XSwidG90YWwiOjJ9AAAIAAAAAAAAAAEAAAADAAAA"
+      }
+    }
+  }
+}
