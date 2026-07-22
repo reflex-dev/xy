@@ -296,7 +296,7 @@ move together across the whole chart.
 | `--chart-legend-bg` | Legend background | faint neutral fill |
 | `--chart-badge-bg` / `--chart-badge-text` | Reduction badges | light / dark |
 | `--chart-tick-label-max-width` | Maximum browser width of categorical y-axis tick labels | available edge space |
-| `--chart-modebar-bg` / `--chart-modebar-active` | Toolbar and active button | light or dark translucent (follows a `.dark` root class) / neutral |
+| `--chart-modebar-bg` / `--chart-modebar-active` | Toolbar and active button | light or dark translucent (follows the nearest `.light`/`.dark` ancestor) / neutral |
 | `--chart-selection` / `--chart-selection-fill` | Selection outline/fill | blue outline / translucent blue |
 | `--chart-zoom-selection` / `--chart-zoom-selection-fill` | Box-zoom outline/fill | neutral outline/fill |
 | `--chart-crosshair` | Crosshair lines | translucent dark |
@@ -504,13 +504,17 @@ chart.to_png(
 ## Automatic dark mode for the toolbar
 
 The interactive toolbar (modebar) has no colored default a page can show
-through, so it reads the light/dark state straight from your page: when a
-`.dark` class is present on the chart root or any ancestor — the convention
-Reflex (next-themes), Radix Themes, and Tailwind all set on the root `<html>`
-element — its background, border, and shadow switch to a dark palette. Icon
-color already follows the inherited text color, so the toolbar stays readable in
-both modes with no configuration. An explicit `.light` class (or no class at
-all) keeps the light palette.
+through, so it reads the light/dark state straight from your page: it follows
+the **nearest** `.light` or `.dark` class among the chart root and its
+ancestors — the convention Reflex (next-themes), Radix Themes, and Tailwind all
+set on the root `<html>` element. When the closest such class is `.dark`, its
+background, border, and shadow switch to a dark palette; when it is `.light`
+(or when there is no scheme class at all) the toolbar stays light. Because the
+*nearest* class wins, nesting composes the way you would expect: a `.dark` card
+dropped onto a `.light` page gets a dark toolbar, and a `.light` panel inside a
+`.dark` app gets a light one — each chart matches the container it actually sits
+in, not some distant ancestor. Icon color already follows the inherited text
+color, so the toolbar stays readable in both modes with no configuration.
 
 That is only the built-in default. A `--chart-modebar-bg` or
 `--chart-modebar-active` value you set — through `theme()`, chart `style=`, or a

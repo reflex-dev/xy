@@ -72,6 +72,51 @@ def test_density_badges_follow_dark_theme(tmp_path: Path) -> None:
     assert result["background"] == "rgba(30, 35, 44, 0.88)", result
 
 
+def test_modebar_scheme_follows_nearest_container_class(tmp_path: Path) -> None:
+    """The toolbar palette tracks the closest `.light`/`.dark` ancestor.
+
+    A `.dark` card on a `.light` page must render a dark toolbar, and a `.light`
+    island inside a `.dark` page must render a light toolbar — the nearest class
+    wins, not merely "any `.dark` ancestor" (the old descendant-selector bug).
+    With no scheme class anywhere, the toolbar falls back to the light palette.
+    """
+    chart = xy.line_chart(xy.line([0, 1], [0, 1]), width=320, height=220)
+    script = (
+        _PRELUDE
+        + """
+    const modebarBg = (outerClass, innerClass) => {
+      const outer = document.createElement("div");
+      if (outerClass) outer.className = outerClass;
+      const inner = document.createElement("div");
+      if (innerClass) inner.className = innerClass;
+      document.body.appendChild(outer);
+      outer.appendChild(inner);
+      inner.appendChild(view.root);
+      const bar = document.createElement("div");
+      view._applySlot(bar, "modebar");
+      view.root.appendChild(bar);
+      const bg = getComputedStyle(bar).backgroundColor;
+      bar.remove();
+      outer.remove();
+      return bg;
+    };
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      darkCardOnLightPage: modebarBg("light", "dark"),
+      lightIslandInDarkPage: modebarBg("dark", "light"),
+      noSchemeClass: modebarBg("", ""),
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "modebar nested scheme")
+
+    dark_bg = "rgba(37, 42, 52, 0.9)"
+    light_bg = "rgba(255, 255, 255, 0.78)"
+    assert result["darkCardOnLightPage"] == dark_bg, result
+    assert result["lightIslandInDarkPage"] == light_bg, result
+    assert result["noSchemeClass"] == light_bg, result
+
+
 def test_narrow_annotation_labels_stay_inside_and_do_not_collide(tmp_path: Path) -> None:
     chart = xy.line_chart(
         xy.line([0, 25, 50, 75, 100], [0.1, 0.3, 0.55, 0.8, 1.0]),

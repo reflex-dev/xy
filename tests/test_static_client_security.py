@@ -114,7 +114,11 @@ def test_normative_styling_spec_tracks_responsive_theme_tokens() -> None:
     styling = _read(ROOT / "spec/api/styling.md")
     assert "--chart-tick-label-max-width" in styling
     normalized_styling = " ".join(styling.split())
-    assert "badges to `rgba(30,35,44,.88)` bg / `#f8fafc` text" in normalized_styling
+    assert "badges `rgba(30,35,44,.88)` bg / `#f8fafc` text" in normalized_styling
+    assert "bg `rgba(37,42,52,.9)`" in normalized_styling
+    # The scheme palette resolves from the *nearest* light/dark ancestor, not
+    # merely any dark ancestor — keep the spec asserting that contract.
+    assert "**nearest** `.light`/`.dark` ancestor" in normalized_styling
 
 
 def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:

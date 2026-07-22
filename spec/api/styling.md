@@ -292,14 +292,20 @@ Set them on `.xy` or any ancestor:
 | `--chart-cursor` / `--chart-cursor-pan` | Plot cursor (box-zoom / pan) | `crosshair` / `grab` |
 | `--chart-focus` | Keyboard focus ring on the plot canvas and modebar buttons | `#2563eb` |
 
-The modebar and badge defaults are **scheme-aware**: a `.dark` class on the
-chart root or any ancestor flips the internal fallbacks — modebar to
-`rgba(37,42,52,.9)` / `rgba(255,255,255,.16)`, badges to `rgba(30,35,44,.88)`
-bg / `#f8fafc` text. The public `--chart-modebar-*` and `--chart-badge-*`
-tokens override both schemes; the modebar's border and shadow and the badge's
-shadow have no public token and are internal `--xy-modebar-*` /
-`--xy-badge-shadow` defaults only. `--chart-focus` is likewise not carried into
-client-side PNG/SVG export, which snapshots the other `--chart-*` tokens.
+The modebar and badge defaults are **scheme-aware**, resolved from the
+**nearest** `.light`/`.dark` ancestor — not merely "any `.dark` ancestor". The
+internal `--xy-*` palette is declared on the scheme-defining containers
+themselves (`.dark` → dark; `.light`, the document root, and a shadow host →
+light) and inherited by the chart, so the class closest to the chart wins. A
+`.dark` card on a `.light` page therefore paints a dark modebar (bg
+`rgba(37,42,52,.9)`, active `rgba(255,255,255,.16)`, badges `rgba(30,35,44,.88)`
+bg / `#f8fafc` text); a `.light` island nested inside a `.dark` page paints a
+light one; with no scheme class on any ancestor the light palette is the
+fallback. The public `--chart-modebar-*` and `--chart-badge-*` tokens override
+both schemes; the modebar's border and shadow and the badge's shadow have no
+public token and are internal `--xy-modebar-*` / `--xy-badge-shadow` defaults
+only. `--chart-focus` is likewise not carried into client-side PNG/SVG export,
+which snapshots the other `--chart-*` tokens.
 
 The **figure background** (matplotlib's `figure.facecolor` — the whole card
 including margins, title, and tick labels) is not a token: `theme(background=)`
