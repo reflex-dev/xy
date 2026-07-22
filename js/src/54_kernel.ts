@@ -8,7 +8,159 @@ import { ChartView } from "./50_chartview";
 // (§16). Split out of 50_chartview.js; augments the prototype so `this.*`
 // is unchanged.
 
+const VIEW_REPLY_MEMO_LIMIT = 64;
+
+function requestNumber(value) {
+  if (!Number.isFinite(value)) return null;
+  // A reversed axis is normalized below; normalize signed zero too so the
+  // same wire request cannot occupy two cache keys.
+  return value === 0 ? 0 : value;
+}
+
+function requestKey(parts) {
+  return parts.some((part) => part === null) ? null : JSON.stringify(parts);
+}
+
 Object.assign(ChartView.prototype, {
+  _clearServedViewMemo() {
+    this._servedViewMemo?.clear();
+    this._servedViewSlots?.clear();
+    this._pendingViewReplies = null;
+    for (const g of this.gpuTraces || []) {
+      g._lodPendingView = null;
+      g._lodPendingSeq = null;
+      g._lodPendingAt = null;
+    }
+  },
+
+  _advanceViewDataGeneration() {
+    this._viewDataGeneration = (this._viewDataGeneration || 0) + 1;
+    // A reply computed against the previous canonical payload must not land
+    // after the replacement, even if its viewport happens to be identical.
+    this.seq += 1;
+    clearTimeout(this._viewTimer);
+    this._viewTimer = null;
+    this._viewRequestBurstStart = null;
+    this._clearServedViewMemo();
+  },
+
+  _forgetServedViewSlot(slot) {
+    const key = this._servedViewSlots?.get(slot);
+    if (key !== undefined) this._servedViewMemo?.delete(key);
+    this._servedViewSlots?.delete(slot);
+  },
+
+  _rememberServedViewRequest(request, state) {
+    if (!request || request.key === null) return;
+    if (!this._servedViewMemo) this._servedViewMemo = new Map();
+    if (!this._servedViewSlots) this._servedViewSlots = new Map();
+    this._forgetServedViewSlot(request.slot);
+    const entry = {
+      slot: request.slot,
+      key: request.key,
+      generation: this._viewDataGeneration,
+      state,
+    };
+    this._servedViewMemo.set(request.key, entry);
+    this._servedViewSlots.set(request.slot, request.key);
+    while (this._servedViewMemo.size > VIEW_REPLY_MEMO_LIMIT) {
+      const oldest = this._servedViewMemo.keys().next().value;
+      const evicted = this._servedViewMemo.get(oldest);
+      this._servedViewMemo.delete(oldest);
+      if (evicted && this._servedViewSlots.get(evicted.slot) === oldest) {
+        this._servedViewSlots.delete(evicted.slot);
+      }
+    }
+  },
+
+  _servedViewRequestIsLive(request, validate) {
+    if (!request || request.key === null) return false;
+    if (this._servedViewSlots?.get(request.slot) !== request.key) return false;
+    const entry = this._servedViewMemo?.get(request.key);
+    if (
+      !entry ||
+      entry.generation !== this._viewDataGeneration ||
+      !validate(entry.state)
+    ) {
+      this._forgetServedViewSlot(request.slot);
+      return false;
+    }
+    // Touch the accepted entry so the global trace bound is true LRU.
+    this._servedViewMemo.delete(request.key);
+    this._servedViewMemo.set(request.key, entry);
+    return true;
+  },
+
+  _tierRequest(view, plotW) {
+    const targets = (this.gpuTraces || []).filter((g) => g.tier === "decimated");
+    if (!targets.length) return null;
+    const rawX0 = Math.min(view.x0, view.x1), rawX1 = Math.max(view.x0, view.x1);
+    const x0 = requestNumber(rawX0), x1 = requestNumber(rawX1);
+    const identities = targets.map((g) => [
+      Number(g.trace.id), g.trace.kind, g.xAxis || "x", g.yAxis || "y",
+    ]).sort((a, b) => a[0] - b[0]);
+    return {
+      slot: "tier",
+      key: requestKey([
+        "tier", this._viewDataGeneration, x0, x1, requestNumber(plotW), identities,
+      ]),
+      message: { type: "view", x0: rawX0, x1: rawX1, px: plotW },
+      targets,
+      expected: new Set(targets.map((g) => Number(g.trace.id))),
+    };
+  },
+
+  _densityRequest(g, view, plotW, plotH) {
+    const [rawX0, rawX1] = this._axisRange(g.xAxis, view);
+    const [rawY0, rawY1] = this._axisRange(g.yAxis, view);
+    const normalizedX0 = Math.min(rawX0, rawX1), normalizedX1 = Math.max(rawX0, rawX1);
+    const normalizedY0 = Math.min(rawY0, rawY1), normalizedY1 = Math.max(rawY0, rawY1);
+    const x0 = requestNumber(normalizedX0), x1 = requestNumber(normalizedX1);
+    const y0 = requestNumber(normalizedY0), y1 = requestNumber(normalizedY1);
+    const trace = Number(g.trace.id);
+    const xAxis = g.xAxis || "x", yAxis = g.yAxis || "y";
+    const slot = this._densityRequestSlot(g);
+    return {
+      slot,
+      key: requestKey([
+        "density", this._viewDataGeneration, trace, xAxis, yAxis,
+        x0, x1, y0, y1, requestNumber(plotW), requestNumber(plotH),
+      ]),
+      message: {
+        type: "density_view", trace,
+        x0: normalizedX0, x1: normalizedX1, y0: normalizedY0, y1: normalizedY1,
+        w: plotW, h: plotH,
+      },
+      g,
+    };
+  },
+
+  _densityRequestSlot(g) {
+    return JSON.stringify([
+      "density-slot", Number(g.trace.id), g.xAxis || "x", g.yAxis || "y",
+    ]);
+  },
+
+  _tierMemoStateIsLive(state) {
+    if (!state || state.generation !== this._viewDataGeneration) return false;
+    return state.traces.every((saved) => {
+      const g = (this.gpuTraces || []).find((candidate) => candidate.trace.id === saved.id);
+      return g === saved.g && g.tier === "decimated" &&
+        g.xBuf === saved.xBuf && g.yBuf === saved.yBuf && g.baseBuf === saved.baseBuf;
+    });
+  },
+
+  _densityMemoStateIsLive(state) {
+    if (!state || state.generation !== this._viewDataGeneration) return false;
+    const g = (this.gpuTraces || []).find((candidate) => candidate.trace.id === state.id);
+    if (g !== state.g || g.tier !== "density") return false;
+    if (state.mode === "points") {
+      return !!g.drill && g.drill === state.resource && !g._drillDying &&
+        g.drill.seq === state.drillSeq;
+    }
+    return !!g.density && g.density === state.resource && !!g.density.tex;
+  },
+
   _scheduleViewRequest(viewOverride = this.view, opts: any = {}) {
     if (this._destroyed || this._glLost) return;
     if (!this.comm) {
@@ -17,21 +169,52 @@ Object.assign(ChartView.prototype, {
       this._scheduleSampleRebin(viewOverride, opts);
       return;
     }
-    const needsDecimated = this.spec.traces.some((t) => t.tier === "decimated");
-    const needsDensity = this.gpuTraces.some((g) => g.tier === "density");
-    if (!needsDecimated && !needsDensity) return;
-    const seq = opts.seq ?? ++this.seq;
     const view = this._copyView(viewOverride);
     const plotW = Math.round(this.plot.w);
     const plotH = Math.round(this.plot.h);
-    if (needsDensity) {
-      const now = this._now();
-      for (const g of this.gpuTraces) {
-        if (g.tier !== "density") continue;
-        g._lodPendingView = view;
-        g._lodPendingSeq = seq;
-        g._lodPendingAt = now;
+    const tierRequest = this._tierRequest(view, plotW);
+    const tierMiss = tierRequest && !this._servedViewRequestIsLive(
+      tierRequest, (state) => this._tierMemoStateIsLive(state),
+    );
+    const densityRequests = [];
+    let densityTargetCount = 0;
+    for (const g of this.gpuTraces || []) {
+      if (g.tier !== "density") continue;
+      densityTargetCount += 1;
+      const request = this._densityRequest(g, view, plotW, plotH);
+      const hit = this._servedViewRequestIsLive(
+        request, (state) => this._densityMemoStateIsLive(state),
+      );
+      if (hit) {
+        g._lodPendingView = null;
+        g._lodPendingSeq = null;
+        g._lodPendingAt = null;
+      } else {
+        densityRequests.push(request);
       }
+    }
+    if (!tierRequest && densityTargetCount === 0) return;
+    const seq = opts.seq ?? ++this.seq;
+    this._pendingViewReplies = {
+      seq,
+      generation: this._viewDataGeneration,
+      tier: tierMiss ? tierRequest : null,
+      density: new Map(densityRequests.map((request) => [request.message.trace, request])),
+    };
+    if (densityRequests.length) {
+      const now = this._now();
+      for (const request of densityRequests) {
+        request.g._lodPendingView = view;
+        request.g._lodPendingSeq = seq;
+        request.g._lodPendingAt = now;
+      }
+    }
+    clearTimeout(this._viewTimer);
+    this._viewTimer = null;
+    if (!tierMiss && !densityRequests.length) {
+      this._pendingViewReplies = null;
+      this._viewRequestBurstStart = null;
+      return seq;
     }
     let delay = opts.delay ?? 120;
     if (opts.maxWait !== undefined && opts.maxWait !== null) {
@@ -44,29 +227,15 @@ Object.assign(ChartView.prototype, {
     } else {
       this._viewRequestBurstStart = null;
     }
-    clearTimeout(this._viewTimer);
     const send = () => {
       if (this._destroyed) return;
       this._viewRequestBurstStart = null;
       if (seq !== this.seq) return;
-      if (needsDecimated) {
-        this.comm.send({
-          type: "view", seq,
-          x0: Math.min(view.x0, view.x1), x1: Math.max(view.x0, view.x1), px: plotW,
-        });
+      if (tierMiss) {
+        this.comm.send({ ...tierRequest.message, seq });
       }
-      if (needsDensity) {
-        for (const g of this.gpuTraces) {
-          if (g.tier !== "density") continue;
-          const [x0, x1] = this._axisRange(g.xAxis, view);
-          const [y0, y1] = this._axisRange(g.yAxis, view);
-          this.comm.send({
-            type: "density_view", seq, trace: g.trace.id,
-            x0: Math.min(x0, x1), x1: Math.max(x0, x1),
-            y0: Math.min(y0, y1), y1: Math.max(y0, y1),
-            w: plotW, h: plotH,
-          });
-        }
+      for (const request of densityRequests) {
+        this.comm.send({ ...request.message, seq });
       }
     };
     if (delay <= 0) {
@@ -237,6 +406,7 @@ Object.assign(ChartView.prototype, {
       this._scheduleViewRequest(nextView, { delay: 0 });
       return;
     }
+    this._advanceViewDataGeneration();
     // Swap spec + retained payload together so GL context restore (§27)
     // rebuilds the streamed state, not the initial one.
     this.spec = spec;
@@ -275,9 +445,24 @@ Object.assign(ChartView.prototype, {
     if (this._glLost && msg.type !== "append" && msg.type !== "pick_result") return;
     if (msg.type === "tier_update") {
       if (msg.seq !== this.seq) return;
-      for (const upd of msg.traces) {
+      const pending =
+        this._pendingViewReplies?.seq === msg.seq &&
+        this._pendingViewReplies.generation === this._viewDataGeneration
+          ? this._pendingViewReplies
+          : null;
+      const request = pending?.tier || null;
+      const applied = new Set();
+      let slotInvalidated = false;
+      for (const upd of msg.traces || []) {
         const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
         if (!g) continue;
+        // Tier replies overwrite retained WebGLBuffer objects in place. Retire
+        // the previous key before the first fallible decode/upload so an
+        // exception cannot leave that key naming partially replaced bytes.
+        if (!slotInvalidated) {
+          this._forgetServedViewSlot("tier");
+          slotInvalidated = true;
+        }
         const gl = this.gl;
         const xArr = this._asF32(buffers[upd.x.buf]);
         const yArr = this._asF32(buffers[upd.y.buf]);
@@ -305,10 +490,43 @@ Object.assign(ChartView.prototype, {
           g.baseMeta = { ...g.baseMeta, offset: upd.base.offset, scale: upd.base.scale };
         }
         g.n = st ? st.n : src.n;
+        if (!g.baseBuf || (upd.base && bArr)) applied.add(Number(upd.id));
+      }
+      let remembered = false;
+      if (
+        request && applied.size === request.expected.size &&
+        [...request.expected].every((id) => applied.has(id))
+      ) {
+        const traces = [...request.expected].map((id) => {
+          const g = this.gpuTraces.find((candidate) => candidate.trace.id === id);
+          return g ? {
+            id, g, xBuf: g.xBuf, yBuf: g.yBuf, baseBuf: g.baseBuf,
+          } : null;
+        });
+        if (traces.every(Boolean)) {
+          this._rememberServedViewRequest(request, {
+            generation: this._viewDataGeneration,
+            traces,
+          });
+          remembered = true;
+        }
+      }
+      // An unsolicited or partial accepted update changed the active tier but
+      // cannot safely be associated with a complete request key.
+      if (slotInvalidated && !remembered) this._forgetServedViewSlot("tier");
+      if (pending) pending.tier = null;
+      if (pending && !pending.tier && pending.density.size === 0) {
+        this._pendingViewReplies = null;
       }
       this.draw();
     } else if (msg.type === "density_update") {
       if (msg.seq !== undefined && msg.seq !== this.seq) return;
+      const pending =
+        msg.seq !== undefined &&
+        this._pendingViewReplies?.seq === msg.seq &&
+        this._pendingViewReplies.generation === this._viewDataGeneration
+          ? this._pendingViewReplies
+          : null;
       const densityTraces = msg.traces || [];
       const pendingTraceIds = new Set(densityTraces.map((upd) => Number(upd.id)));
       if (pendingTraceIds.size === 0 && msg.trace !== undefined) {
@@ -331,9 +549,32 @@ Object.assign(ChartView.prototype, {
       for (const upd of densityTraces) {
         const g = this.gpuTraces.find((t) => t.trace.id === upd.id && t.tier === "density");
         if (!g) continue;
+        const request = pending?.density.get(Number(upd.id)) || null;
+        // Drill uploads mutate a retained drill object/buffers in place, and
+        // density uploads can fail after allocating replacement resources.
+        // Invalidate before either path starts so failed applies always retry.
+        this._forgetServedViewSlot(request?.slot || this._densityRequestSlot(g));
         clearPending(g);
-        if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
-        lodApplyDensityUpdate(this, g, upd, buffers);
+        if (upd.mode === "points") this._applyDrill(g, upd, buffers);
+        else lodApplyDensityUpdate(this, g, upd, buffers);
+        const state = upd.mode === "points"
+          ? {
+            generation: this._viewDataGeneration,
+            id: Number(upd.id), g, mode: "points", resource: g.drill,
+            drillSeq: g.drill?.seq,
+          }
+          : {
+            generation: this._viewDataGeneration,
+            id: Number(upd.id), g, mode: "density", resource: g.density,
+          };
+        if (request && this._densityMemoStateIsLive(state)) {
+          this._rememberServedViewRequest(request, state);
+        }
+      }
+      if (pending) {
+        if (clearAllPending) pending.density.clear();
+        else for (const id of pendingTraceIds) pending.density.delete(Number(id));
+        if (!pending.tier && pending.density.size === 0) this._pendingViewReplies = null;
       }
       // Drill state changes what's pickable; hover needs the FBO ready.
       this._updatePickable();
