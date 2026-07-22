@@ -1413,6 +1413,32 @@ def test_nan_never_reaches_vertex_buffers():
     assert len(ye) == 997
 
 
+def test_linear_xy_payloads_skip_redundant_visibility_scans(monkeypatch):
+    calls: list[str] = []
+    original = Figure._log_visible_mask
+
+    def recording(self, trace, xv, yv, base=None):
+        calls.append(trace.kind)
+        return original(self, trace, xv, yv, base)
+
+    monkeypatch.setattr(Figure, "_log_visible_mask", recording)
+
+    Figure().line([1.0, 2.0], [3.0, 4.0]).build_payload()
+    Figure().scatter([1.0, 2.0], [3.0, 4.0]).build_payload()
+    Figure().area([1.0, 2.0], [3.0, 4.0], base=[0.0, 0.0]).build_payload()
+    assert calls == []
+
+    log_figure = Figure().line([1.0, 2.0], [3.0, 4.0])
+    log_figure.set_axis("x", type_="log")
+    log_figure.build_payload()
+    assert calls == ["line"]
+
+    nonfinite_area = Figure().area([1.0, 2.0], [3.0, 4.0], base=[0.0, np.nan])
+    spec, _ = nonfinite_area.build_payload()
+    assert calls == ["line", "area"]
+    assert spec["traces"][0]["n_marks"] == 1
+
+
 def test_unsorted_line_sorted_at_ingest():
     x = np.array([3.0, 1.0, 2.0])
     y = np.array([30.0, 10.0, 20.0])

@@ -379,6 +379,10 @@ class PayloadMixin(_Host):
             mask &= np.isfinite(base)
         return mask
 
+    def _uses_log_axis(self, t: Trace) -> bool:
+        """Whether positive-domain filtering is required for this trace."""
+        return self._axis_scale(t.x_axis) == "log" or self._axis_scale(t.y_axis) == "log"
+
     @staticmethod
     def _default_styled(t: Trace) -> dict[str, Any]:
         """Trace style dict with the per-trace palette default when no color
@@ -418,7 +422,10 @@ class PayloadMixin(_Host):
             sel = self._finite_sel(t, xv, yv)
             if sel is not None:
                 xv, yv = xv[sel], yv[sel]
-        if len(xv):
+        # Direct rows have already passed the zone-map-gated finite filter;
+        # M4 emits finite rows only. Linear axes therefore need no second O(N)
+        # visibility scan.
+        if len(xv) and self._uses_log_axis(t):
             finite = self._log_visible_mask(t, xv, yv)
             if not bool(np.all(finite)):
                 sel = np.flatnonzero(finite) if sel is None else sel[finite]
@@ -437,9 +444,18 @@ class PayloadMixin(_Host):
         tier, (xv, yv, bv) = self._m4_decimate(
             t, xr, px_width, t.x.values, t.y.values, t.base.values
         )
-        sel = np.flatnonzero(self._log_visible_mask(t, xv, yv, bv))
-        if len(sel) != len(xv):
-            xv, yv, bv = xv[sel], yv[sel], bv[sel]
+        sel = None
+        needs_visibility_scan = (
+            self._uses_log_axis(t)
+            or t.x.zone.null_count
+            or t.y.zone.null_count
+            or t.base.zone.null_count
+        )
+        if len(xv) and needs_visibility_scan:
+            visible = self._log_visible_mask(t, xv, yv, bv)
+            if not bool(np.all(visible)):
+                sel = np.flatnonzero(visible)
+                xv, yv, bv = xv[visible], yv[visible], bv[visible]
         entry = self._base_entry(t, pw, xv, yv, tier, self._default_styled(t))
         if t.transition_keys is not None:
             self._transition_entry(entry, t, pw, sel)
@@ -463,7 +479,7 @@ class PayloadMixin(_Host):
         sel = self._finite_sel(t, xv, yv)
         if sel is not None:
             xv, yv = xv[sel], yv[sel]
-        if len(xv):
+        if len(xv) and self._uses_log_axis(t):
             visible = self._log_visible_mask(t, xv, yv)
             if not bool(np.all(visible)):
                 sel = np.flatnonzero(visible) if sel is None else sel[visible]

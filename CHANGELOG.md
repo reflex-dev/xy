@@ -142,6 +142,9 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- Linear line, scatter, and area payload builds now trust all-finite zone-map
+  metadata instead of rescanning every x/y row for visibility; log axes and
+  columns containing non-finite values retain their existing filtering.
 - **Responsive, author-defeatable browser chrome.** XY's visual defaults now
   live in a low-priority cascade layer, so Tailwind utilities, ordinary author
   CSS, and slot styles override them without `!important`. Long legends remain
