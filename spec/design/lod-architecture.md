@@ -183,6 +183,23 @@ Wherever a representative *subset* is shown (Tier-2 hybrid overlay, future
   per-category thresholds ∝ sqrt(share), floored at 1, so rare categories
   survive (min-representation rule). Implemented as
   `lod.stratified_sample_keep_mask(...)`; deterministic because the hash is.
+- **The overlay's size is a pure function of the visible count**
+  (`lod.density_sample_target`). A flat target made the drill boundary a
+  cliff: one zoom step swapped ~8k sampled points for up to `budget` exact
+  ones (live-drilldown field report). The per-view target is
+  `budget² / visible`, floored at `DENSITY_SAMPLE_TARGET` and capped at the
+  visible count, so the drawn point count is continuous through the tier
+  swap (T2's no-hard-cut contract extends to *how many* marks are on screen)
+  while far zoom-outs keep the cheap payload-bounded overlay — the ramp is
+  active only between `budget` and `budget²/base` visible (~200k–4.9M at the
+  defaults) and its payload is bounded by the budget, i.e. by what the drill
+  itself would ship. Categorical overlays cap the ramp at `budget/√k`: the
+  sqrt-share rule keeps ≈ `target·√k` rows for k balanced categories (the
+  same Cauchy–Schwarz bound that sizes kernel capacity), so the stratified
+  overlay also approaches — never exceeds — the budget. Because the retained
+  fraction (`target/visible`) rises monotonically as the visible count
+  falls, subset monotonicity above is preserved: zooming in only adds
+  points. Every reply records the target it used (`sample.target`) — §28.
 
 This is the datashader/imMens lesson combined: screen-bounded *and* stable.
 

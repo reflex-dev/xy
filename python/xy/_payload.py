@@ -21,6 +21,7 @@ from .config import (
     DENSITY_SAMPLE_TARGET,
     MAX_ANIMATION_MATCH_ROWS,
     PROTOCOL_VERSION,
+    SCATTER_DENSITY_THRESHOLD,
     default_palette_color,
 )
 
@@ -901,13 +902,23 @@ class PayloadMixin(_Host):
     ) -> Optional[dict[str, Any]]:
         if visible <= 0:
             return None
+        # Near-boundary ramp (LOD doc §3): the same pure function of the
+        # visible count the live density_view path applies, so the first
+        # payload and every later refinement agree on the overlay size.
+        categorical = bool(
+            t.color_ch and t.color_ch.mode == "categorical" and t.color_ch.codes is not None
+        )
+        target = lod.density_sample_target(
+            visible,
+            SCATTER_DENSITY_THRESHOLD,
+            DENSITY_SAMPLE_TARGET,
+            n_categories=len(t.color_ch.categories or ()) if categorical else None,
+        )
         if sample_sel is None:
-            categories = None
-            if t.color_ch and t.color_ch.mode == "categorical" and t.color_ch.codes is not None:
-                categories = t.color_ch.codes[sel]
+            categories = t.color_ch.codes[sel] if categorical else None
             sample_sel = lod.sample_rows_for_target(
                 sel,
-                DENSITY_SAMPLE_TARGET,
+                target,
                 categories=categories,
                 seed=DENSITY_SAMPLE_SEED,
             )
@@ -929,7 +940,7 @@ class PayloadMixin(_Host):
             "mode": "sampled",
             "n": int(len(sample_sel)),
             "visible": int(visible),
-            "target": DENSITY_SAMPLE_TARGET,
+            "target": target,
             "level": 0,
             "seed": DENSITY_SAMPLE_SEED,
             "x": {"col": x_col, **pw.columns[x_col]},
@@ -979,6 +990,14 @@ class PayloadMixin(_Host):
         sample_sel = None
         if full_identity:
             visible = int(t.n_points)
+            # The fused kernels take the overlay size up front; feed them the
+            # same near-boundary ramp `_density_sample_spec` records (§28).
+            target = lod.density_sample_target(
+                visible,
+                SCATTER_DENSITY_THRESHOLD,
+                DENSITY_SAMPLE_TARGET,
+                n_categories=len(t.color_ch.categories or ()) if categorical else None,
+            )
             sel = np.empty(0, dtype=np.uint32)
             if compact_categorical:
                 assert t.color_ch is not None and t.color_ch.codes is not None
@@ -994,7 +1013,7 @@ class PayloadMixin(_Host):
                         by1,
                         w,
                         h,
-                        DENSITY_SAMPLE_TARGET,
+                        target,
                         counts=t.color_ch.counts,
                         seed=DENSITY_SAMPLE_SEED,
                     )
@@ -1006,7 +1025,7 @@ class PayloadMixin(_Host):
                     sample_sel = lod.stratified_sample_row_range_for_target(
                         t.color_ch.codes,
                         len(t.color_ch.categories or ()),
-                        DENSITY_SAMPLE_TARGET,
+                        target,
                         seed=DENSITY_SAMPLE_SEED,
                     )
             else:
@@ -1019,7 +1038,7 @@ class PayloadMixin(_Host):
                     by1,
                     w,
                     h,
-                    DENSITY_SAMPLE_TARGET,
+                    target,
                     seed=DENSITY_SAMPLE_SEED,
                 )
         else:

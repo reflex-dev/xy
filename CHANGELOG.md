@@ -35,7 +35,21 @@ in the README).
   to the internal engine object.
 
 ### Changed
-- **Density surfaces now wear the data's own colors (LOD doc §2).** A Tier-2
+- **The hybrid density overlay now ramps toward the drill budget (LOD doc
+  §3).** The deterministic point sample drawn over a density surface was a
+  flat `DENSITY_SAMPLE_TARGET` (8,192) regardless of how close the view sat
+  to the drill boundary, so crossing it swapped ~8k sampled points for up to
+  `SCATTER_DENSITY_THRESHOLD` (200,000) exact ones in a single zoom step — a
+  visible cliff in rendered point count. The per-view target is now
+  `lod.density_sample_target(visible)` = `budget²/visible`, floored at the
+  old constant and capped at the visible count (categorical overlays cap the
+  ramp at `budget/√k`, since the stratified sqrt-share rule keeps ≈
+  `target·√k` rows), making the density→points swap continuous: just above
+  the boundary the overlay is ~the budget, and the ramp decays back to the
+  cheap 8k floor by ~25× the budget (~4.9M visible at the defaults). Subset
+  monotonicity is preserved (the retained fraction only grows as you zoom
+  in), the first payload and live `density_view` replies use the same pure
+  function, and each reply records the target it used (`sample.target`).
   scatter's aggregated view colors each cell with the alpha-weighted **mean of
   its binned points' resolved colors** (continuous colormap, categorical
   palette, and direct-RGBA channels alike; averaged in linear light through a

@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from xy import channels as ch
-from xy import interaction
+from xy import interaction, lod
 from xy._figure import DENSITY_GRID, SCATTER_DENSITY_THRESHOLD, Figure
 from xy.columns import ZONE_CHUNK
 from xy.config import DENSITY_SAMPLE_TARGET, MAX_SCREEN_DIM
@@ -397,8 +397,13 @@ def test_density_payload_includes_deterministic_sample_overlay():
 
     assert sample["mode"] == "sampled"
     assert sample["visible"] == tr["visible"]
-    assert 0 < sample["n"] <= int(DENSITY_SAMPLE_TARGET * 1.2)
-    assert sample["target"] == DENSITY_SAMPLE_TARGET
+    # Near the drill budget the target ramps toward it (LOD doc §3) so the
+    # density→points swap is continuous in drawn point count; the recorded
+    # target is the same pure function of the visible count everywhere.
+    expected_target = lod.density_sample_target(tr["visible"])
+    assert DENSITY_SAMPLE_TARGET < expected_target < SCATTER_DENSITY_THRESHOLD
+    assert sample["target"] == expected_target
+    assert 0 < sample["n"] <= int(expected_target * 1.2)
     assert sample["style"]["opacity"] <= 0.55
     assert spec["columns"][sample["x"]["col"]]["len"] == sample["n"]
     assert spec["columns"][sample["y"]["col"]]["len"] == sample["n"]
@@ -474,7 +479,9 @@ def test_full_domain_density_avoids_materialized_visible_indices(monkeypatch):
 
     trace = spec["traces"][0]
     assert trace["visible"] == n
-    assert 0 < trace["density"]["sample"]["n"] <= int(DENSITY_SAMPLE_TARGET * 1.2)
+    # One point past the budget the ramp asks for ~every visible row.
+    assert 0 < trace["density"]["sample"]["n"] <= int(lod.density_sample_target(n) * 1.2)
+    assert trace["density"]["sample"]["target"] == SCATTER_DENSITY_THRESHOLD
 
 
 def test_full_domain_categorical_density_uses_implicit_stratified_rows(monkeypatch):
@@ -608,7 +615,8 @@ def test_density_view_rebins():
     sample = d["sample"]
     assert sample["mode"] == "sampled"
     assert sample["visible"] == update["traces"][0]["visible"] == inwin
-    assert 0 < sample["n"] <= int(DENSITY_SAMPLE_TARGET * 1.2)
+    assert sample["target"] == lod.density_sample_target(int(inwin))
+    assert 0 < sample["n"] <= int(sample["target"] * 1.2)
     xs = np.frombuffer(buffers[sample["x"]["buf"]], dtype=np.float32)
     ys = np.frombuffer(buffers[sample["y"]["buf"]], dtype=np.float32)
     assert len(xs) == sample["n"]

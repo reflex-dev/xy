@@ -130,7 +130,10 @@ states which representation this view resolved to:
   constant, so the client tints the count texture. Count always rides `buf`
   as log-u8 and drives only the drawn **alpha**; renderers must never
   colormap counts when either color source is present. Optional `sample` is
-  the retained point-sample overlay. `binning` is `"exact"` or
+  the retained point-sample overlay; its `target` records the per-view size
+  the near-boundary ramp asked for (`lod.density_sample_target`, LOD doc §3)
+  — a pure function of the visible count, so replies for the same view agree.
+  `binning` is `"exact"` or
   `"pyramid-L<level>"`. `x_range`/`y_range` are raw data endpoints, but the
   grid's cells are **uniform in the axis's scale coordinates** (identical to
   raw on a linear axis): on a log/symlog axis the kernel bins transformed

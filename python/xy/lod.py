@@ -27,7 +27,13 @@ from typing import Any, cast
 import numpy as np
 
 from . import kernels
-from .config import DENSITY_TARGET_POINTS_PER_CELL, DRILL_EXIT_FACTOR, MAX_SCREEN_DIM
+from .config import (
+    DENSITY_SAMPLE_TARGET,
+    DENSITY_TARGET_POINTS_PER_CELL,
+    DRILL_EXIT_FACTOR,
+    MAX_SCREEN_DIM,
+    SCATTER_DENSITY_THRESHOLD,
+)
 
 _SPLITMIX_INCREMENT = np.uint64(0x9E3779B97F4A7C15)
 _SPLITMIX_MUL_1 = np.uint64(0xBF58476D1CE4E5B9)
@@ -422,6 +428,57 @@ def stratified_sample_keep_mask(
     return kernels.stratified_sample_mask(
         ids, inverse.astype(np.uint32, copy=False), len(counts), seed_i, fraction, min_count
     )
+
+
+def density_sample_target(
+    visible: object,
+    budget: object = None,
+    base_target: object = None,
+    *,
+    n_categories: object = None,
+) -> int:
+    """Hybrid-overlay sample size for a density view of `visible` points.
+
+    A flat target reads fine far out but makes the density→points boundary a
+    cliff: one zoom step swaps ~`base_target` sampled points for up to
+    `budget` exact ones. The target is therefore a pure function of the
+    visible count that ramps toward the drill budget as the view approaches
+    it — `budget²/visible`, floored at `base_target` and capped at `visible`
+    — so the drawn point count is continuous through the tier swap (the T2/T3
+    no-hard-cut contract extends to *how many* marks are on screen) and far
+    zoom-outs keep the cheap payload-bounded overlay. Because the retained
+    fraction (`target/visible`) rises monotonically as the visible count
+    falls, the §3 subset-monotonicity contract is preserved: zooming in only
+    adds sampled points.
+
+    `n_categories` bounds the ramp for stratified overlays: the sqrt-share
+    rule keeps ≈ `target·√k` rows for k balanced categories (the same
+    Cauchy–Schwarz bound `_stratified_sample_range_plan` sizes capacity
+    with), so the ramp is capped at `budget/√k` — the categorical overlay
+    approaches the drill budget without ever out-shipping the drill itself.
+    The `base_target` floor is applied after the cap, so far-out categorical
+    views keep today's rare-category richness. The per-view target ships in
+    the update (`sample.target`) — a recorded reduction, never silent (§28).
+    """
+    visible_i = _integer_param(visible, "sample visible")
+    budget_f = _float_param(
+        SCATTER_DENSITY_THRESHOLD if budget is None else budget,
+        "sample budget",
+        min_exclusive=0.0,
+    )
+    base_i = _integer_param(
+        DENSITY_SAMPLE_TARGET if base_target is None else base_target,
+        "sample base target",
+        min_value=1,
+    )
+    if visible_i <= 0:
+        return base_i
+    ramp = math.ceil((budget_f * budget_f) / visible_i)
+    if n_categories is not None:
+        k = _integer_param(n_categories, "sample n_categories")
+        if k > 1:
+            ramp = min(ramp, math.ceil(budget_f / math.sqrt(k)))
+    return int(min(visible_i, max(base_i, ramp)))
 
 
 def sample_rows_for_target(

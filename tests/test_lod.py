@@ -634,3 +634,63 @@ def test_sample_rows_for_target_rejects_bad_options(kwargs, message: str) -> Non
 
     with pytest.raises(ValueError, match=message):
         lod.sample_rows_for_target(np.arange(3, dtype=np.int64), target, **options)
+
+
+def test_density_sample_target_ramps_to_budget_at_the_drill_boundary() -> None:
+    # Far out: the flat payload-bounded floor. Approaching the drill budget:
+    # budget²/visible, meeting the budget at the boundary so the density→points
+    # swap is continuous in drawn point count (LOD doc §3).
+    budget, base = 200_000, 8_192
+    assert lod.density_sample_target(100_000_000, budget, base) == base
+    assert lod.density_sample_target(5_000_000, budget, base) == base
+    assert lod.density_sample_target(1_000_000, budget, base) == 40_000
+    assert lod.density_sample_target(400_000, budget, base) == 100_000
+    assert lod.density_sample_target(budget + 1, budget, base) == budget
+    # The defaults are the config constants.
+    assert lod.density_sample_target(budget + 1) == budget
+
+
+def test_density_sample_target_is_monotone_and_visible_capped() -> None:
+    budget, base = 200_000, 8_192
+    counts = [budget + 1, 250_000, 400_000, 1_000_000, 5_000_000, 50_000_000]
+    targets = [lod.density_sample_target(v, budget, base) for v in counts]
+    # Zooming in (visible falls) never shrinks the target, so the retained
+    # hash fraction only grows — §3 subset monotonicity survives the ramp.
+    assert targets == sorted(targets, reverse=True)
+    fractions = [t / v for t, v in zip(targets, counts, strict=True)]
+    assert fractions == sorted(fractions, reverse=True)
+    # Tiny forced-density traces: never ask for more rows than exist.
+    assert lod.density_sample_target(100, budget, base) == 100
+    assert lod.density_sample_target(0, budget, base) == base
+
+
+def test_density_sample_target_caps_categorical_ramp_at_the_budget() -> None:
+    # The stratified sqrt-share rule keeps ≈ target·√k rows for k balanced
+    # categories, so the categorical ramp caps at budget/√k — the overlay
+    # approaches the drill budget without out-shipping the drill itself.
+    budget, base = 200_000, 8_192
+    near = lod.density_sample_target(250_000, budget, base, n_categories=8)
+    assert near == int(np.ceil(budget / np.sqrt(8)))
+    # The base floor applies after the cap: far-out categorical views keep
+    # today's rare-category richness.
+    far = lod.density_sample_target(100_000_000, budget, base, n_categories=8)
+    assert far == base
+    # k ≤ 1 degenerates to the plain ramp.
+    assert lod.density_sample_target(250_000, budget, base, n_categories=1) == 160_000
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"visible": -1}, "sample visible"),
+        ({"visible": 2.5}, "sample visible"),
+        ({"budget": 0}, "sample budget"),
+        ({"budget": float("nan")}, "sample budget"),
+        ({"base_target": 0}, "sample base target"),
+        ({"n_categories": -2}, "sample n_categories"),
+    ],
+)
+def test_density_sample_target_rejects_bad_options(kwargs, message: str) -> None:
+    options = {"visible": 1_000_000} | kwargs
+    with pytest.raises(ValueError, match=message):
+        lod.density_sample_target(options.pop("visible"), **options)

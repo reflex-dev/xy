@@ -472,9 +472,18 @@ def _density_sample_update(
     categories = None
     if t.color_ch and t.color_ch.mode == "categorical" and t.color_ch.codes is not None:
         categories = t.color_ch.codes[sel]
+    # Near-boundary ramp (LOD doc §3): the overlay grows toward the drill
+    # budget as the visible count approaches it, so the density→points swap
+    # is continuous in drawn point count instead of an ~8k → budget jump.
+    target = lod.density_sample_target(
+        visible,
+        SCATTER_DENSITY_THRESHOLD,
+        DENSITY_SAMPLE_TARGET,
+        n_categories=None if categories is None else len(t.color_ch.categories or ()),
+    )
     sample_sel = lod.sample_rows_for_target(
         sel,
-        DENSITY_SAMPLE_TARGET,
+        target,
         categories=categories,
         seed=DENSITY_SAMPLE_SEED,
     )
@@ -502,7 +511,7 @@ def _density_sample_update(
         "mode": "sampled",
         "n": int(len(sample_sel)),
         "visible": int(visible),
-        "target": DENSITY_SAMPLE_TARGET,
+        "target": target,
         "level": 0,
         "seed": DENSITY_SAMPLE_SEED,
         "x": x_ref,
