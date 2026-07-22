@@ -374,7 +374,14 @@ contract entry before it lands.
    drill threshold; `compose` picks the coarsest level that still meets the
    render resolution and refuses beyond `MAX_UPSAMPLE` (2×), so below-floor
    and near-drill windows fall through to the exact `range_indices` +
-   `bin_2d` path. Level is recorded per update as `binning: "pyramid-L<l>"`.
+   `bin_2d` path. The coarsest adequate level packs 1–2 source cells per
+   output bin, so `compose` **area-weights** each source cell across the bins
+   its extent overlaps rather than assigning it to the bin under its center;
+   center-only assignment handed adjacent bins 1 vs 2 cells apiece — a beat
+   against the output grid that showed as vertical banding in interim aggregate
+   frames while zooming a dense cloud (#153). Weights within a snap tolerance of
+   a bin edge collapse to one bin, so cell-aligned windows stay bit-exact.
+   Level is recorded per update as `binning: "pyramid-L<l>"`.
    Traces on a nonlinear (log/symlog) axis skip the pyramid entirely — its
    raw-space levels cannot compose a scale-coordinate grid (dossier §28) —
    and always take the exact path.
