@@ -4,6 +4,9 @@ import { parseColor } from "./20_theme";
 
 const LOD_DIRECT_POINT_BUDGET = 200000;
 const LOD_DRILL_EXIT_FACTOR = 1.15;
+// How long a pending refresh may hold the previous representation on screen
+// (drilled marks, sample overlays) before it is treated as stranded (T8).
+const LOD_PENDING_HOLD_MS = 1200;
 // Retained-sample zoom-out fade band (T9): full alpha while the sample's home
 // window still covers ≥ HI of the view area, gone below LO (log-eased between,
 // applied as composited opacity — see lodSampleViewAlpha).
@@ -181,16 +184,24 @@ function lodWindowArea(win) {
   return Math.abs((win.x1 - win.x0) * (win.y1 - win.y0));
 }
 
-function lodWindowCenterInside(win, view) {
-  if (!win || !view) return false;
-  const cx = (view.x0 + view.x1) / 2;
-  const cy = (view.y0 + view.y1) / 2;
-  return (
-    cx >= Math.min(win.x0, win.x1) &&
-    cx <= Math.max(win.x0, win.x1) &&
-    cy >= Math.min(win.y0, win.y1) &&
-    cy <= Math.max(win.y0, win.y1)
-  );
+function lodWindowsOverlap(a, b) {
+  if (!a || !b) return false;
+  const ax0 = Math.min(a.x0, a.x1), ax1 = Math.max(a.x0, a.x1);
+  const ay0 = Math.min(a.y0, a.y1), ay1 = Math.max(a.y0, a.y1);
+  const bx0 = Math.min(b.x0, b.x1), bx1 = Math.max(b.x0, b.x1);
+  const by0 = Math.min(b.y0, b.y1), by1 = Math.max(b.y0, b.y1);
+  return ax0 <= bx1 && ax1 >= bx0 && ay0 <= by1 && ay1 >= by0;
+}
+
+// A refresh for the CURRENT view is in flight and young enough to still
+// expect its reply. Shared freshness gate for every stale-while-revalidate
+// hold (drilled marks, sample overlays): the previous representation stays
+// on screen until the reply lands, and the age-out keeps a stranded pending
+// from holding anything forever (T8 — a hold cannot outlive its reply).
+function lodPendingFresh(view, g) {
+  if (!g._lodPendingView) return false;
+  if (g._lodPendingSeq !== view.seq) return false;
+  return !(g._lodPendingAt && view._now() - g._lodPendingAt > LOD_PENDING_HOLD_MS);
 }
 
 // §28 hybrid overlay, zoom-out bound (T9): the retained sample is
@@ -287,9 +298,9 @@ function lodDensityForView(view, g) {
   return best || broadest || g.density;
 }
 
-// The hold's density estimate, reused by retirement (T11): scale the drill
-// window's known count by the target window's area to predict whether that
-// window could still be answered with direct points.
+// Retirement's density estimate (T11): scale the drill window's known count
+// by the target window's area to predict whether that window could still be
+// answered with direct points.
 function lodEstimatedVisible(d, win) {
   const drillArea = lodWindowArea(d.win);
   const winArea = lodWindowArea(win);
@@ -299,15 +310,22 @@ function lodEstimatedVisible(d, win) {
   return baseVisible * Math.max(1, winArea / drillArea);
 }
 
+// Stale-while-revalidate for the drill's marks (T5/T8): while a fresh
+// refresh whose view still overlaps the drill window is in flight, the
+// exact marks ARE the previous zoom level's content — keep drawing them
+// (over the aggregate backdrop) instead of exit-fading into a coarser
+// cached texture and its overview sample the instant the view leaves the
+// window. This deliberately includes zoom-OUTS past the drill budget
+// (field report: zooming out flashed the home/initial content while the
+// right-sized reply was still loading): the hold is bounded by the reply
+// itself — a density reply marks the drill dying and the exit fade runs
+// over the fresh texture — or by the T8 age-out when the reply strands.
+// Only a pending view fully clear of the window (a far pan) drops straight
+// to the aggregate: marks clipped entirely off screen hold nothing.
 function lodHoldPendingDrill(view, g, d) {
-  const pending = g._lodPendingView;
-  if (!d || !pending || g._drillDying) return false;
-  if (g._lodPendingSeq !== view.seq) return false;
-  if (g._lodPendingAt && view._now() - g._lodPendingAt > 1200) return false;
-  if (!lodWindowCenterInside(d.win, pending)) return false;
-  const estimatedVisible = lodEstimatedVisible(d, pending);
-  if (!Number.isFinite(estimatedVisible)) return false;
-  return estimatedVisible <= LOD_DIRECT_POINT_BUDGET * LOD_DRILL_EXIT_FACTOR;
+  if (!d || g._drillDying) return false;
+  if (!lodPendingFresh(view, g)) return false;
+  return lodWindowsOverlap(d.win, g._lodPendingView);
 }
 
 // Geometry-only retirement (T11): an entered-then-exited drill is kept as a

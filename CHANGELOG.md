@@ -35,6 +35,19 @@ in the README).
   to the internal engine object.
 
 ### Changed
+- **Zooming out of a drill keeps the exact points on screen until the fresh
+  reply lands (T5/T8).** The client exit-faded drilled marks the moment the
+  view left their window, even with a refresh already in flight — the frame
+  dropped to a coarser cached texture plus the home/initial overview sample,
+  then transitioned again when the reply landed (the zoom-out "flash of the
+  initial view", live-drilldown field report). `lodHoldPendingDrill` now
+  holds the marks for any fresh pending refresh whose view still overlaps
+  the drill window — zoom-outs past the drill budget included — so a
+  zoom-out is one transition: previous points, then the reply's own
+  representation. The hold remains strictly bounded: a density reply retires
+  it through the normal dying exit fade, a points reply refreshes the marks
+  in place, and the T8 age-out (`LOD_PENDING_HOLD_MS`) still releases a
+  stranded pending with no reply at all.
 - **The hybrid density overlay now ramps toward the drill budget (LOD doc
   §3).** The deterministic point sample drawn over a density surface was a
   flat `DENSITY_SAMPLE_TARGET` (8,192) regardless of how close the view sat

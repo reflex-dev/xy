@@ -325,13 +325,27 @@ invariants so future kinds don't regress them:
   contract — it must keep a frame scheduled so it re-evaluates every tick
   (`js/src/45_lod.js` `lodDrawDensityTier`, held branch). If the reply never
   lands (dropped as stale, coalesced away, or never sent — all reachable on the
-  live-drilldown transport), `_lodPendingAt` ages past the hold window,
-  `lodHoldPendingDrill` releases, and the exit fade restores the aggregate.
-  Re-arming only while the view animates was a way the zoom-out "stuck point
-  blob" could persist: a settled view with a stranded pending had nothing to
-  drive it out of the hold, so the drilled subset stayed painted and the full
-  point cloud never returned. (Complements T7, which fixes the same visible
-  symptom from the texture-lifetime side.)
+  live-drilldown transport), `_lodPendingAt` ages past the hold window
+  (`LOD_PENDING_HOLD_MS`), `lodHoldPendingDrill` releases, and the exit fade
+  restores the aggregate. Re-arming only while the view animates was a way the
+  zoom-out "stuck point blob" could persist: a settled view with a stranded
+  pending had nothing to drive it out of the hold, so the drilled subset stayed
+  painted and the full point cloud never returned. (Complements T7, which fixes
+  the same visible symptom from the texture-lifetime side.)
+  The hold engages for ANY fresh pending refresh whose view still overlaps the
+  drill window — zoom-outs past the drill budget included. The exact marks are
+  the previous zoom level's content, and holding them until the right-sized
+  reply lands is one transition; exit-fading them immediately dropped the
+  frame to a coarser cached texture plus the home/initial overview sample and
+  then transitioned AGAIN when the reply landed — the zoom-out "flash of the
+  initial view" (live-drilldown field report). The earlier gate (pending view
+  centered in the window and estimated-visible within the drill budget) made
+  the hold refine-only, so every real zoom-out took the double transition. A
+  reply always retires the hold: a density reply marks the drill dying and the
+  exit fade runs over the fresh texture (T2), a points reply refreshes the
+  marks in place; the age-out above bounds a stranded pending, and a pending
+  view fully clear of the window (a far pan) never holds — marks clipped
+  entirely off screen hold nothing.
 - **T9 — the drawn sample describes the displayed window:** the deterministic
   point sample shipped with an exact-scan density reply represents *its*
   window only, so every sample overlay rides the density cache entry it was
