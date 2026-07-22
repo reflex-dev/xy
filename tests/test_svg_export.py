@@ -76,6 +76,34 @@ def test_svg_paints_figure_and_plot_backgrounds() -> None:
     assert "linear-gradient" not in gradient.figure().to_svg()
 
 
+def test_svg_theme_preset_dark_and_system_fallback() -> None:
+    dark = (
+        xy.line_chart(
+            xy.line([0, 1], [0, 1]),
+            xy.theme(preset="dashboard", color_scheme="dark"),
+            width=300,
+            height=200,
+        )
+        .figure()
+        .to_svg()
+    )
+    assert '<rect width="300" height="200" fill="#09090b"/>' in dark
+    assert 'fill="#d4d4d8"' in dark
+
+    system = (
+        xy.line_chart(
+            xy.line([0, 1], [0, 1]),
+            xy.theme(preset="dashboard", color_scheme="system"),
+            width=300,
+            height=200,
+        )
+        .figure()
+        .to_svg()
+    )
+    assert '<rect width="300" height="200" fill="#ffffff"/>' in system
+    assert 'fill="#334155"' in system
+
+
 def test_svg_honors_tick_label_anchor() -> None:
     chart = xy.line_chart(
         xy.line(x=[0.0, 1.0], y=[0.0, 1.0]),

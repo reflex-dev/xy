@@ -5,6 +5,11 @@ description: Choose between CSS/Tailwind chrome hooks, mark styles, theme tokens
 
 # Styling Overview
 
+For ready-made light and dark treatments, browse the
+[theme preset gallery](/docs/xy/styling/theme-presets/). For token-level
+customization and precedence, see
+[Themes and Tokens](/docs/xy/styling/themes-and-tokens/).
+
 XY has two rendering surfaces. Chart chrome—titles, axis labels, legends,
 tooltips, controls, and annotation labels—is DOM and participates in the normal
 CSS cascade. Data marks are painted by WebGL, SVG, or the native rasterizer, so

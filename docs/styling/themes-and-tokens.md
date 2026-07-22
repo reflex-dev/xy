@@ -33,6 +33,64 @@ tooltip, or annotation, use
 facets, and renderer edge cases, continue to the
 [Advanced Gallery](/docs/xy/styling/gallery/).
 
+## Built-in presets
+
+Choose a complete visual treatment with `preset`. XY includes `xy`, `minimal`,
+`dashboard`, `publication`, and `high_contrast`. The other high-level knobs are
+independent: `color_scheme` chooses `light`, `dark`, or `system`; `palette`
+chooses the default series and categorical colors; `accent` controls selection,
+focus, and active emphasis; and `contrast` chooses `normal` or accessible
+`high` contrast.
+
+~~~python demo exec
+import reflex_xy
+import xy
+
+preset_chart = xy.line_chart(
+    xy.line([1, 2, 3, 4], [4, 7, 5, 9], name="Revenue"),
+    xy.scatter([1, 2, 3, 4], [3, 5, 6, 8], name="Forecast"),
+    xy.legend(),
+    xy.theme(
+        preset="dashboard",
+        color_scheme="dark",
+        palette="vibrant",
+        accent="#8b5cf6",
+        contrast="normal",
+    ),
+    title="Quarterly outlook",
+)
+
+
+def built_in_preset_preview():
+    return reflex_xy.chart(preset_chart, height="320px")
+~~~
+
+Discover names programmatically with `xy.theme_presets()` and
+`xy.theme_palettes()`. See every built-in treatment in the
+[theme preset gallery](/docs/xy/styling/theme-presets/). Matplotlib-compatible
+stylesheet names remain a separate compatibility surface under
+`xy.pyplot.style`.
+
+Theme values resolve in this order, with each later layer winning:
+
+1. XY engine defaults
+2. Preset
+3. Color scheme
+4. Palette, accent, and contrast
+5. Named low-level theme arguments
+6. `theme(style={...})`
+7. Chart-level `style={...}`
+
+Explicit mark colors and palettes override all theme defaults. This makes it
+safe to customize any low-level token on top of a preset, for example
+`xy.theme(preset="dashboard", grid_color="#ffffff14",
+style={"--chart-tooltip-bg": "#09090b"})`.
+
+With `color_scheme="system"`, browser charts follow
+`prefers-color-scheme`. Browser-free SVG and native PNG exports, as well as
+headless Chromium export, deterministically use the light variant. Pass
+`color_scheme="dark"` explicitly when exporting dark output.
+
 ## Start with the theme component
 
 Use `xy.theme()` when the value belongs to the chart rather than one specific

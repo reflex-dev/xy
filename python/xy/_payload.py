@@ -15,13 +15,11 @@ from ._trace import Trace
 from .columns import Column
 from .config import (
     DECIMATION_THRESHOLD,
-    DEFAULT_PALETTE,
     DENSITY_GRID,
     DENSITY_SAMPLE_SEED,
     DENSITY_SAMPLE_TARGET,
     MAX_ANIMATION_MATCH_ROWS,
     PROTOCOL_VERSION,
-    default_palette_color,
 )
 
 if TYPE_CHECKING:
@@ -403,13 +401,12 @@ class PayloadMixin(_Host):
             return values, (float(bounds[0]), float(bounds[1]))
         return self._axis_coord(axis_id, values), (c0, c1)
 
-    @staticmethod
-    def _default_styled(t: Trace) -> dict[str, Any]:
+    def _default_styled(self, t: Trace) -> dict[str, Any]:
         """Trace style dict with the per-trace palette default when no color
         was given — the one place this rule lives (was copy-pasted per kind)."""
         style = dict(t.style)
         if style.get("color") is None:
-            style["color"] = default_palette_color(t.id)
+            style["color"] = self._default_color(t.id)
         return style
 
     def _m4_decimate(
@@ -874,14 +871,15 @@ class PayloadMixin(_Host):
     def _ship_channels(self, t: Trace, sel, ship_scalar, ship_u8) -> tuple[Any, Any]:  # noqa: ANN001
         """Ship a trace's color/size channels (delegates to channels.py — the
         same wire shape serves the build path and drill-in view updates)."""
-        return channels.ship_channels(t, sel, ship_scalar, ship_u8, DEFAULT_PALETTE)
+        return channels.ship_channels(t, sel, ship_scalar, ship_u8, self._categorical_palette())
 
-    @staticmethod
-    def _ship_trace_styles(entry: dict[str, Any], t: Trace, sel, pw: "_PayloadWriter") -> None:  # noqa: ANN001
+    def _ship_trace_styles(
+        self, entry: dict[str, Any], t: Trace, sel, pw: "_PayloadWriter"
+    ) -> None:  # noqa: ANN001
         """Attach outline paint and direct instance attributes to a trace spec."""
         if t.stroke_ch is not None:
             entry["stroke"] = channels.ship_color_channel(
-                t.stroke_ch, sel, pw.ship_scalar, pw.ship_u8, DEFAULT_PALETTE
+                t.stroke_ch, sel, pw.ship_scalar, pw.ship_u8, self._categorical_palette()
             )
         if t.style_channels:
             entry["channels"] = channels.ship_style_channels(

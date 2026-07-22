@@ -22,7 +22,9 @@ def test_client_source_is_the_installed_bundle():
     source = _client_source()
     assert source == pathlib.Path(xy.__file__).resolve().parent / "static" / "index.js"
     text = source.read_text(encoding="utf-8")
-    for marker in ("function renderStandalone(", "function decodeFrame(", "class ChartView"):
+    # The bundle is vite-minified (#159), so internal names are mangled; the
+    # public export names are the stable identity of the real render client.
+    for marker in ("renderStandalone", "decodeFrame", "ChartView", "MARK_KINDS"):
         assert marker in text
 
 

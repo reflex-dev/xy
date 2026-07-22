@@ -24,7 +24,6 @@ from .config import (
     DEFAULT_PALETTE,
     DIRECT_SOFT_CEILING,
     MAX_CONTOUR_WORK,
-    default_palette_color,
 )
 
 if TYPE_CHECKING:
@@ -333,7 +332,7 @@ def segments(
     arrays = [self._as_1d_float(values, "segments color geometry") for values in (x0, y0, x1, y1)]
     if len({len(values) for values in arrays}) != 1:
         raise ValueError("segments coordinate columns must have equal length")
-    default = default_palette_color(len(self.traces))
+    default = self._next_default_color()
     color_ch = channels.resolve_color(
         color, len(arrays[0]), colormap=colormap, default_constant=default
     )
@@ -425,7 +424,7 @@ def triangle_mesh(
         and ("stroke_width" not in style_channels)
     ):
         stroke_width_value = 1.0
-    default_color = default_palette_color(len(self.traces))
+    default_color = self._next_default_color()
     color_ch = channels.resolve_color(color, n, colormap=colormap, default_constant=default_color)
     if domain is not None:
         if color_ch.mode != "continuous":
@@ -1040,7 +1039,7 @@ def errorbar(
     name = self._optional_text(name, "errorbar name")
     color = self._optional_css_color(color, "errorbar color")
     if color is None:
-        color = default_palette_color(len(self.traces))
+        color = self._next_default_color()
     width = self._positive_scalar(width, "errorbar width")
     if cap_size is not None:
         cap_size = self._nonnegative_scalar(cap_size, "errorbar cap_size")
@@ -1278,7 +1277,7 @@ def stem(
     name = self._optional_text(name, "stem name")
     color = self._optional_css_color(color, "stem color")
     if color is None:
-        color = default_palette_color(len(self.traces))
+        color = self._next_default_color()
     width = self._positive_scalar(width, "stem width")
     opacity = self._opacity(opacity, "stem opacity")
     marker_size = self._nonnegative_scalar(marker_size, "stem marker_size")
@@ -1400,7 +1399,7 @@ def scatter(
             and (stroke_width_value or "stroke_width" in style_channels)
         ):
             stroke_ch = channels.ColorChannel(mode="match_fill")
-        default_color = default_palette_color(len(self.traces))
+        default_color = self._next_default_color()
         color_ch = channels.resolve_color(
             color, n, colormap=colormap, default_constant=default_color, domain=color_domain
         )
@@ -1662,7 +1661,7 @@ def box(
     name = self._optional_text(name, "box name")
     color = self._optional_css_color(color, "box color")
     if color is None:
-        color = default_palette_color(len(self.traces))
+        color = self._next_default_color()
     width = self._positive_scalar(width, "box width")
     opacity = self._opacity(opacity, "box opacity")
     show_outliers = self._bool_param(show_outliers, "box show_outliers")
@@ -2007,7 +2006,7 @@ def hexbin(
             reduced.append(float(made))
         metric = np.asarray(reduced, dtype=np.float64)
     color_ch = channels.resolve_color(
-        metric, len(metric), colormap=colormap, default_constant=DEFAULT_PALETTE[0]
+        metric, len(metric), colormap=colormap, default_constant=self._categorical_palette()[0]
     )
     checkpoint = self._checkpoint()
     try:
@@ -2019,7 +2018,7 @@ def hexbin(
                 y=self.store.ingest(centers_y),
                 name=name,
                 style={
-                    "color": default_palette_color(len(self.traces)),
+                    "color": self._next_default_color(),
                     "opacity": opacity,
                     "hex_dx": dx,
                     "hex_dy": dy,

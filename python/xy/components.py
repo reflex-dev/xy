@@ -43,8 +43,9 @@ from typing import Any, Literal, Optional, TypeAlias, Union
 
 import numpy as np
 
-from . import _validate, channels, export, styles
+from . import _themes, _validate, channels, export, styles
 from ._figure import Figure, Selection
+from ._themes import theme_palettes, theme_presets
 from ._typing import ArrayLike, ColorLike, Scalar, TableLike
 from .dom import CHART_DOM_SLOTS, validate_dom_slots
 
@@ -76,6 +77,10 @@ __all__ = [
     "Modebar",
     "Spring",
     "Theme",
+    "ThemeColorScheme",
+    "ThemeContrast",
+    "ThemePaletteName",
+    "ThemePresetName",
     "Tooltip",
     "animation",
     "area",
@@ -128,6 +133,8 @@ __all__ = [
     "step_chart",
     "text",
     "theme",
+    "theme_palettes",
+    "theme_presets",
     "threshold",
     "threshold_zone",
     "tooltip",
@@ -143,6 +150,10 @@ __all__ = [
 ]
 
 StyleValue: TypeAlias = str | int | float
+ThemePresetName: TypeAlias = Literal["dashboard", "high_contrast", "minimal", "publication", "xy"]
+ThemePaletteName: TypeAlias = Literal["colorblind", "muted", "okabe_ito", "vibrant", "xy"]
+ThemeColorScheme: TypeAlias = Literal["light", "dark", "system"]
+ThemeContrast: TypeAlias = Literal["normal", "high"]
 
 # One annotation coordinate: a number, a datetime, or (on a categorical
 # axis) a category label.
@@ -296,9 +307,12 @@ class ExportConfig(Component):
 
 @dataclass
 class Theme(Component):
-    """Chart-wide style tokens (plot background, grid/axis/text colors)."""
+    """Chart-wide style tokens, resolved variants, and default mark palette."""
 
     style: dict[str, StyleValue] = field(default_factory=dict)
+    dark_style: dict[str, StyleValue] = field(default_factory=dict)
+    palette: Optional[tuple[str, ...]] = None
+    color_scheme: Optional[str] = None
 
 
 @dataclass
@@ -2619,6 +2633,11 @@ def _export_background(background: str) -> str:
 def theme(
     style: Optional[dict[str, StyleValue]] = None,
     *,
+    preset: Optional[ThemePresetName] = None,
+    color_scheme: Optional[ThemeColorScheme] = None,
+    palette: Optional[ThemePaletteName] = None,
+    accent: Optional[str] = None,
+    contrast: Optional[ThemeContrast] = None,
     background: Optional[StyleValue] = None,
     plot_background: Optional[StyleValue] = None,
     grid_color: Optional[StyleValue] = None,
@@ -2629,10 +2648,18 @@ def theme(
     selection_fill: Optional[StyleValue] = None,
     **tokens: StyleValue,
 ) -> Theme:
-    """Configure chart theme tokens.
+    """Configure a chart theme preset and token overrides.
 
     Args:
-        style: Base chart style overrides.
+        style: Final theme-level style and token overrides.
+        preset: Built-in visual treatment. See ``theme_presets()``.
+        color_scheme: ``"light"``, ``"dark"``, or ``"system"``. System
+            follows the browser and deterministically uses light in
+            browser-free exports.
+        palette: Default categorical and series colors. See
+            ``theme_palettes()``.
+        accent: Hex color used for selection, focus, and default emphasis.
+        contrast: ``"normal"`` or accessibility-oriented ``"high"``.
         background: Figure background color — paints the whole chart card
             including margins, title, and tick labels (matplotlib's
             ``figure.facecolor``). The plot rect shows through unless
@@ -2646,26 +2673,47 @@ def theme(
         selection_color: Selection-outline color.
         selection_fill: Selection-region fill color.
         **tokens: Additional supported theme tokens.
+
+    Resolution order (later values win): engine defaults, preset, color
+    scheme, palette/accent/contrast, named low-level arguments and additional
+    tokens, ``theme(style=...)``, chart ``style=...``, then explicit mark
+    colors.
     """
-    merged = _style_dict(style, "theme style")
-    merged.update(
-        _theme_tokens(
-            {
-                "background": background,
-                "plot_background": plot_background,
-                "grid_color": grid_color,
-                "axis_color": axis_color,
-                "text_color": text_color,
-                "crosshair_color": crosshair_color,
-                "selection_color": selection_color,
-                "selection_fill": selection_fill,
-            },
-            "theme",
-        )
+    resolved = _themes.resolve_theme(
+        preset=preset,
+        color_scheme=color_scheme,
+        palette=palette,
+        accent=accent,
+        contrast=contrast,
+    )
+    style_overrides = _style_dict(style, "theme style")
+    named = _theme_tokens(
+        {
+            "background": background,
+            "plot_background": plot_background,
+            "grid_color": grid_color,
+            "axis_color": axis_color,
+            "text_color": text_color,
+            "crosshair_color": crosshair_color,
+            "selection_color": selection_color,
+            "selection_fill": selection_fill,
+        },
+        "theme",
     )
     if tokens:
-        merged.update(_theme_tokens(tokens, "theme tokens"))
-    return Theme(style=merged)
+        named.update(_theme_tokens(tokens, "theme tokens"))
+    merged: dict[str, StyleValue] = dict(resolved.style)
+    merged.update(named)
+    merged.update(style_overrides)
+    dark: dict[str, StyleValue] = dict(resolved.dark_style)
+    for key in named.keys() | style_overrides.keys():
+        dark.pop(key, None)
+    return Theme(
+        style=merged,
+        dark_style=dark,
+        palette=resolved.palette,
+        color_scheme=resolved.color_scheme,
+    )
 
 
 def interaction_config(
@@ -3008,6 +3056,13 @@ class Chart(Component):
             x_label=xa.label if xa else None,
             y_label=ya.label if ya else None,
         )
+        for theme_node in themes:
+            if theme_node.palette is not None:
+                fig.default_palette = list(theme_node.palette)
+            if theme_node.color_scheme is not None:
+                fig.color_scheme = theme_node.color_scheme
+            if theme_node.dark_style:
+                fig.dark_style.update(theme_node.dark_style)
         for axis in axis_children:
             axis_id = axis.id or axis.which
             fig.set_axis(
