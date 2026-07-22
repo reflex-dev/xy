@@ -296,6 +296,17 @@ panel figure with its facet label as the figure title, so the label ships
 inside the panel's payload and the render client draws it as the panel
 heading — the same contract `FacetGrid.to_html` relies on.
 
+Design note: the considered alternative was a composite facet spec rendered
+by the client (one component instance laying out child payloads, as
+Vega-Lite's facet operator does). Per-panel composition was chosen because it
+matches every core composer (`to_html`, `widget()`, PNG export), keeps
+payload assets content-addressed per panel (one changed facet invalidates
+one file), and needs no new spec kind. Revisit the composite-spec approach
+only if facets grow cross-panel chrome (shared legends, row/column label
+strips) that a host-level CSS grid cannot express. Panel count is bounded in
+practice by the render client's shared WebGL context budget, which the
+per-panel path inherits unchanged.
+
 **`inline()` — fixed data that still wants the kernel.**
 `token = reflex_xy.inline(chart)` at **module scope** registers the figure
 under a content-addressed token (`xyin-<digest>`): every backend worker
