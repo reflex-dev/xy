@@ -283,6 +283,7 @@ Set them on `.xy` or any ancestor:
 | `--chart-tooltip-bg` / `--chart-tooltip-text` | Tooltip | `rgba(20,24,33,.92)` / `#fff` |
 | `--chart-legend-bg` | Legend background | `rgba(128,128,128,.08)` |
 | `--chart-badge-bg` / `--chart-badge-text` | Reduction badges | `rgba(255,255,255,.82)` / `#0f172a` (light; see below) |
+| `--chart-tick-label-max-width` | Maximum browser width of categorical y-axis tick labels | available space between the transformed label and chart edge |
 | `--chart-modebar-bg` / `--chart-modebar-active` | Modebar / active button | `rgba(255,255,255,.78)` / `rgba(128,128,128,.2)` (light; see below) |
 | `--chart-selection` / `--chart-selection-fill` | Box-select rectangle | `rgba(90,140,240,.9)` / `…,.15)` |
 | `--chart-zoom-selection` / `--chart-zoom-selection-fill` | Box-zoom drag rectangle | `rgba(120,120,120,.9)` / `…,.12)` |

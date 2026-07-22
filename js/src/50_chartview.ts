@@ -4174,7 +4174,6 @@ export class ChartView {
     const octx = this.overlay.getContext("2d");
     octx.setTransform(dpr, 0, 0, dpr, 0, 0);
     octx.clearRect(0, 0, this.size.w, this.size.h);
-    this._drawAnnotationShapes(octx);
 
     // Axis baselines render in the labels overlay — *above* the marks canvas —
     // so a filled mark (bars, area) sits under a crisp, continuous baseline
@@ -4280,7 +4279,7 @@ export class ChartView {
       }
     }
 
-    const label = (text, css, axis, kind = "tick", extraStyle = null) => {
+    const label = (text, css, axis, kind = "tick", extraStyle = null, yPlacement = null) => {
       if (!updateLabels) return;
       const d = document.createElement("div");
       d.textContent = text;
@@ -4307,9 +4306,43 @@ export class ChartView {
         size = `font-size:${Math.max(8, this._axisStyleNumber(axis, sizeKey, 11))}px;`;
       }
       d.style.cssText = `position:absolute;line-height:1.2;white-space:nowrap;${color}${size}${css}`;
+      // Categorical y labels can exceed the space between their pinned anchor
+      // and the chart edge. Placement owns side/anchor/angle; consume that
+      // metadata here instead of re-deriving it and drifting from rendering.
+      if (kind === "tick" && axis && axis.kind === "category" && yPlacement) {
+        d.title = text;
+        d.setAttribute("aria-label", text);
+        d.style.overflow = "hidden";
+        d.style.textOverflow = "ellipsis";
+        d.style.boxSizing = "border-box";
+      }
       this._applySlot(d, kind === "label" ? "axis_title" : "tick_label");
       this._applyStyle(d, extraStyle);
       this.labels.appendChild(d);
+      if (kind === "tick" && axis && axis.kind === "category" && yPlacement) {
+        // Rotation contributes half the untransformed label height to each
+        // horizontal side. The width contribution depends on both the anchor
+        // and cos(angle); solve the two edge inequalities analytically so no
+        // post-layout search/reflow loop is needed.
+        const height = d.offsetHeight;
+        const radians = Number(yPlacement.angle || 0) * Math.PI / 180;
+        const cosine = Math.cos(radians);
+        const heightExtent = Math.abs(Math.sin(radians)) * height / 2;
+        const fractions = yPlacement.anchor === "start"
+          ? [0, 1] : yPlacement.anchor === "end" ? [-1, 0] : [-0.5, 0.5];
+        const projected = fractions.map((fraction) => fraction * cosine);
+        const leftCoefficient = Math.max(0, -Math.min(...projected));
+        const rightCoefficient = Math.max(0, Math.max(...projected));
+        const edge = 4;
+        const leftBudget = yPlacement.pin - edge - heightExtent;
+        const rightBudget = this.size.w - edge - yPlacement.pin - heightExtent;
+        const caps = [];
+        if (leftCoefficient > 1e-6) caps.push(leftBudget / leftCoefficient);
+        if (rightCoefficient > 1e-6) caps.push(rightBudget / rightCoefficient);
+        const available = Math.max(1, Math.min(...(caps.length ? caps : [this.size.w])));
+        d.style.maxWidth =
+          `min(var(--chart-tick-label-max-width, ${available}px), ${available}px)`;
+      }
     };
     const xLabelCandidates = [];
     for (const v of (xt.labels || xt.ticks)) {
@@ -4380,17 +4413,24 @@ export class ChartView {
     // the transform origin, so a rotated label pivots about the point at the
     // tick. Unset defaults to the tick-side edge — mpl `ha`: "end" left of
     // the plot, "start" right of it — reproducing the classic layout.
-    const yLabelCss = (axis, onRight, item) => {
+    const yLabelPlacement = (axis, onRight, item) => {
       const pin = onRight ? p.x + p.w + 8 : p.x - 8;
       const anchor = this._axisTickLabelAnchor(axis) ?? (onRight ? "start" : "end");
+      const angle = Number(item.angle || 0);
       const shift = anchor === "end" ? "-100%" : anchor === "start" ? "0%" : "-50%";
       const originX = anchor === "end" ? "right" : anchor === "start" ? "left" : "center";
-      return `left:${pin}px;top:${item.pos}px;` +
-        `transform:translate(${shift},-50%) rotate(${Number(item.angle || 0)}deg);` +
-        `transform-origin:${originX} center;`;
+      return {
+        css: `left:${pin}px;top:${item.pos}px;` +
+          `transform:translate(${shift},-50%) rotate(${angle}deg);` +
+          `transform-origin:${originX} center;`,
+        pin,
+        anchor,
+        angle,
+      };
     };
     for (const item of this._layoutTickLabels(yAxis, "y", yLabelCandidates)) {
-      label(item.text, yLabelCss(yAxis, yAxis.side === "right", item), yAxis);
+      const placement = yLabelPlacement(yAxis, yAxis.side === "right", item);
+      label(item.text, placement.css, yAxis, "tick", null, placement);
     }
     for (const axis of extraYAxes) {
       const ticks = this._axisTicks(axis.id, this._axisTickTarget(axis.id, Math.max(3, p.h / 45)));
@@ -4402,7 +4442,8 @@ export class ChartView {
         labelCandidates.push({ pos: py, text });
       }
       for (const item of this._layoutTickLabels(axis, "y", labelCandidates)) {
-        label(item.text, yLabelCss(axis, axis.side !== "left", item), axis);
+        const placement = yLabelPlacement(axis, axis.side !== "left", item);
+        label(item.text, placement.css, axis, "tick", null, placement);
       }
       if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
         const fallbackCss = axis.side === "left"
@@ -4426,6 +4467,9 @@ export class ChartView {
       label(s.y_axis.label, placement.css, yAxis, "label", placement.style);
     }
     this._drawAnnotationLabels(updateLabels);
+    // Label layout resolves responsive callout offsets before the pointer is
+    // painted, keeping its start attached when an edge clamp moves the text.
+    this._drawAnnotationShapes(octx);
   }
 
   _interactionTransitionActive() {
