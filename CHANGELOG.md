@@ -53,7 +53,7 @@ in the README).
   drilled points arrive in their native colors (`density_colormap` left the
   points wire). The color channel is no longer listed in `dropped_channels`
   at Tier 2, and a continuous-channel density scatter renders its colorbar
-  again. C ABI v38 (`xy_bin_2d_mean_color` + pyramid color entry points).
+  again. C ABI v40 (`xy_bin_2d_mean_color` + pyramid color entry points).
   Field fixes from the first 100M-point run: the aggregate backdrop now
   retires once a drill is settled inside its window (T10 — exact points no
   longer sit on a mean-color wash; it eases back the moment the view leaves

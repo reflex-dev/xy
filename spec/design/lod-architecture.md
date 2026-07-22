@@ -252,8 +252,10 @@ ever extrapolates.
 
 - Finest level for 100M points at 16 pts/cell ≈ 6.25M cells ≈ 25 MB (count
   u32) + 50 MB mean-color plane ([u16; 4]/cell). ×1.33 pyramid ≈ 33-100 MB
-  kernel-side. Fine. (Shipped shape: fixed 2048² base ⇒ 22 MB counts +
-  45 MB color per colored trace, `pyramid_report_bytes`.)
+  kernel-side. Fine. (Shipped shape: 2048² default base ⇒ 22 MB counts +
+  45 MB color per colored trace, `pyramid_report_bytes`; huge/out-of-core
+  traces build adaptively finer bases — Phase-3 item 7 — and the color plane
+  scales with them.)
 - 1B points: ~330-660 MB — still kernel-side RAM, but now Tier 3 applies:
   tiles are chunked to disk (Arrow/Parquet row groups per tile, dossier §32),
   LRU-resident under a byte budget, and *only* the ≤ ~12 visible tiles are
@@ -509,6 +511,11 @@ contract entry before it lands.
    nearest-neighbour filtering (`binning: "spatial-exact"`, `filter: "nearest"`)
    — no interpolation blur. Gated by an offsets-only `window_count` upper bound
    (`SPATIAL_EXACT_MAX_POINTS`); wider windows keep the instant upsampled pyramid.
+   Color-channelled traces skip this tier entirely: the index is position-only
+   (§27), so it can neither ship channels with a points drill nor bin the §2
+   mean-color plane — the upsampled *colored* pyramid grid stays (blurry but
+   truthful) rather than flipping to a count-only surface (recorded, dossier
+   §28 table).
 8. Client: tile-keyed cache replaces window-keyed `densityCache` (same
    eviction, same crossfades). Still pending — `js/src/45_lod.ts` keys the
    cache by density window, and no client code reads the served level.
