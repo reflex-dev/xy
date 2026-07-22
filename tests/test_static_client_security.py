@@ -527,7 +527,9 @@ def test_client_refreshes_and_destroys_density_sample_overlays() -> None:
     chartview_required = (
         "_refreshReductionBadges()",
         "_reductionBadgeItems()",
-        "entry.sampleOverlay && entry.sampleOverlay.sample",
+        # Badges report the overlay actually drawn for the current view (T9
+        # window pairing), falling back to the home overlay pre-first-frame.
+        "entry._shownSampleOverlay || entry.sampleOverlay",
         "this._destroyDensitySample(g);",
     )
 

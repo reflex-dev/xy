@@ -4,6 +4,11 @@ import { parseColor } from "./20_theme";
 
 const LOD_DIRECT_POINT_BUDGET = 200000;
 const LOD_DRILL_EXIT_FACTOR = 1.15;
+// Retained-sample zoom-out fade band (T9): full alpha while the sample's home
+// window still covers ≥ HI of the view area, gone below LO (log-eased between,
+// applied as composited opacity — see lodSampleViewAlpha).
+const LOD_SAMPLE_FADE_COVER_HI = 1 / 4;
+const LOD_SAMPLE_FADE_COVER_LO = 1 / 32;
 // View-dependent LOD machinery (§5/§28) — chart-agnostic.
 //
 // Everything a tiered trace needs client-side, factored out of ChartView so a
@@ -154,6 +159,87 @@ function lodWindowCenterInside(win, view) {
   );
 }
 
+// §28 hybrid overlay, zoom-out bound (T9): the retained sample is
+// representative of *its* window only. Once the view grows far past that
+// window, the same ~8k points compress into a small screen region and
+// overplot into a solid false cluster (the zoom-out "stuck point blob") —
+// at that scale the aggregate alone is truthful. Zoom-out density replies
+// intentionally ship no replacement sample (pyramid and integral-image
+// servers alike, #24), so the client must bound the retained overlay itself:
+// fade it with the window's share of the view area, from full alpha at
+// COVER_HI down to hidden at COVER_LO. Log-eased so a continuous zoom reads
+// as a linear fade; a pure function of (view, overlay), so every zoom frame
+// re-derives it — no state, no extra frames to schedule. Pans and mild
+// zoom-outs stay above the band and keep the hybrid "density + points" look.
+//
+// The band value is a *composited* opacity target, not a per-point alpha:
+// mid-band the window's screen footprint has shrunk enough that many points
+// land on each pixel, and alpha-compositing k overplotted layers of per-point
+// alpha a reads as 1-(1-a)^k — at k≈10 even a=0.2 renders a near-opaque slab
+// (the field failure that motivated this: a fading sample that never *looked*
+// faded). Invert that: estimate k from the drawn count, mean point footprint,
+// and the window's on-screen area, and solve a = 1-(1-band)^(1/k) so the
+// stack composites to ≈band regardless of compression. k≤1 (points still
+// distinguishable) degenerates to a=band exactly.
+function lodSampleViewAlpha(view, s) {
+  const win = s.win;
+  const v = view.view;
+  const viewArea = Math.abs((v.x1 - v.x0) * (v.y1 - v.y0));
+  const winArea = lodWindowArea(win);
+  if (!Number.isFinite(viewArea) || viewArea <= 0) return 1;
+  if (!Number.isFinite(winArea) || winArea <= 0) return 0;
+  const cover = winArea / viewArea;
+  if (cover >= LOD_SAMPLE_FADE_COVER_HI) return 1;
+  if (cover <= LOD_SAMPLE_FADE_COVER_LO) return 0;
+  const band =
+    Math.log(cover / LOD_SAMPLE_FADE_COVER_LO) /
+    Math.log(LOD_SAMPLE_FADE_COVER_HI / LOD_SAMPLE_FADE_COVER_LO);
+  // Expected overplot: drawn points × mean point footprint ÷ the window's
+  // on-screen pixel area (CSS px on both sides, so dpr cancels). Continuous
+  // size uses the midpoint of its pixel range — an estimate is all the
+  // perceptual correction needs.
+  const plot = view.plot || {};
+  const fx = Math.abs(win.x1 - win.x0) / Math.max(Math.abs(v.x1 - v.x0), 1e-12);
+  const fy = Math.abs(win.y1 - win.y0) / Math.max(Math.abs(v.y1 - v.y0), 1e-12);
+  const winScreenArea = fx * (plot.w || 0) * fy * (plot.h || 0);
+  if (!(winScreenArea > 0)) return 0;
+  const dia = s.sizeMode === 1 && s.sizeRange
+    ? (s.sizeRange[0] + s.sizeRange[1]) / 2
+    : s.size || 4;
+  const k = (s.n * Math.PI * dia * dia) / (4 * winScreenArea);
+  return k > 1 ? 1 - Math.pow(1 - band, 1 / k) : band;
+}
+
+// §28 hybrid overlay, window pairing (T9): every sample rides the density
+// window it was computed for, so the points on screen always describe the
+// window being displayed. Selection mirrors lodDensityForView: the smallest
+// cached window whose sample covers the whole view wins at full alpha (deep
+// zoom-out lands on the overview sample — the point cloud comes back instead
+// of a stale drilled cluster). Only when NO cached window covers the view
+// (pan off-cache, zoom-out past home) does the best partial overlay draw,
+// bounded by the T9 coverage fade so it can never read as a false cluster.
+export function lodSampleForView(view, g) {
+  const cache = g.densityCache || (g.density ? [g.density] : []);
+  let contained = null;
+  let fallback = null;
+  let fallbackAlpha = 0;
+  const seen = new Set();
+  for (const d of cache) {
+    const o = d && d.overlay;
+    if (!o || !o.n || !o.win || seen.has(o)) continue;
+    seen.add(o);
+    if (view._viewInside(o.win)) {
+      if (!contained || lodWindowArea(o.win) < lodWindowArea(contained.win)) contained = o;
+    } else if (view._viewOverlaps(o.win)) {
+      const a = lodSampleViewAlpha(view, o);
+      if (a > fallbackAlpha) { fallback = o; fallbackAlpha = a; }
+    }
+  }
+  if (contained) return { overlay: contained, alpha: 1 };
+  if (fallback && fallbackAlpha > 0) return { overlay: fallback, alpha: fallbackAlpha };
+  return null;
+}
+
 function lodDensityForView(view, g) {
   const cache = g.densityCache || (g.density ? [g.density] : []);
   let best = null;
@@ -167,19 +253,44 @@ function lodDensityForView(view, g) {
   return best || broadest || g.density;
 }
 
+// The hold's density estimate, reused by retirement (T11): scale the drill
+// window's known count by the target window's area to predict whether that
+// window could still be answered with direct points.
+function lodEstimatedVisible(d, win) {
+  const drillArea = lodWindowArea(d.win);
+  const winArea = lodWindowArea(win);
+  if (!Number.isFinite(drillArea) || !Number.isFinite(winArea) || drillArea <= 0) return NaN;
+  const baseVisible = Number.isFinite(d.visible) ? d.visible : d.n;
+  if (!Number.isFinite(baseVisible) || baseVisible <= 0) return NaN;
+  return baseVisible * Math.max(1, winArea / drillArea);
+}
+
 function lodHoldPendingDrill(view, g, d) {
   const pending = g._lodPendingView;
   if (!d || !pending || g._drillDying) return false;
   if (g._lodPendingSeq !== view.seq) return false;
   if (g._lodPendingAt && view._now() - g._lodPendingAt > 1200) return false;
   if (!lodWindowCenterInside(d.win, pending)) return false;
-  const drillArea = lodWindowArea(d.win);
-  const pendingArea = lodWindowArea(pending);
-  if (!Number.isFinite(drillArea) || !Number.isFinite(pendingArea) || drillArea <= 0) return false;
-  const baseVisible = Number.isFinite(d.visible) ? d.visible : d.n;
-  if (!Number.isFinite(baseVisible) || baseVisible <= 0) return false;
-  const estimatedVisible = baseVisible * Math.max(1, pendingArea / drillArea);
+  const estimatedVisible = lodEstimatedVisible(d, pending);
+  if (!Number.isFinite(estimatedVisible)) return false;
   return estimatedVisible <= LOD_DIRECT_POINT_BUDGET * LOD_DRILL_EXIT_FACTOR;
+}
+
+// Geometry-only retirement (T11): an entered-then-exited drill is kept as a
+// revive cache — a rapid zoom back into its window hands the exact marks
+// back with no kernel round-trip — but only while a nearby view could still
+// plausibly be points-tier. Once the view outgrows the window past the drill
+// budget, the kernel would answer density for anything around here, so the
+// retained buffers can no longer serve a revive that survives; free them
+// without waiting for a reply (zooming out with no kernel attached — or a
+// coalesced-away reply — must not strand a drill's GPU buffers forever).
+// Never-entered drills are exempt: they are prefetches en route to their
+// window, and the view being far from it is their normal transient state.
+function lodDrillOutgrown(view, g, d) {
+  const v = view.view;
+  const estimatedVisible = lodEstimatedVisible(d, v);
+  if (!Number.isFinite(estimatedVisible)) return false;
+  return estimatedVisible > LOD_DIRECT_POINT_BUDGET * LOD_DRILL_EXIT_FACTOR;
 }
 
 // Every density object still reachable from the trace, so eviction never
@@ -215,7 +326,16 @@ export function lodRememberDensity(view, g, d) {
     }
     if (drop < 0) break;
     const old = g.densityCache.splice(drop, 1)[0];
-    if (!lodDensityPinned(g, old)) view.gl.deleteTexture(old.tex);
+    if (!lodDensityPinned(g, old)) {
+      view.gl.deleteTexture(old.tex);
+      // The window's sample overlay rides its cache entry (T9 pairing) and
+      // dies with it — except the home/init overlay, which the standalone
+      // re-bin worker keeps as its CPU-side source.
+      if (old.overlay && old.overlay !== g.sampleOverlay) {
+        view._destroySampleOverlay(old.overlay);
+        old.overlay = null;
+      }
+    }
   }
 }
 
@@ -334,9 +454,18 @@ export function lodApplyDrill(view, g, upd, buffers) {
     d.dlut = view._lut(upd.density_colormap || "viridis");
     const first = d.lodBlend === undefined;
     d.lodBlend = Math.min(1, upd.lod_blend ?? 0);
-    if (first) d.lodBlendShown = d.lodBlend; // no tween-from-zero on arrival
+    // The kernel's blend weight assumes level-by-level zooms; a fast zoom
+    // skips levels and the first marks land with a mostly-native weight —
+    // a visible recolor at the texture→marks swap. The BOUNDARY is the
+    // transition itself: fresh marks appear wearing the aggregate's colormap
+    // (blend 1) and the tween eases them to the kernel's weight, so the swap
+    // never recolors regardless of how many levels the zoom skipped (§5).
+    d._lodBlendNative = d.lodBlend;
+    if (fresh) d.lodBlendShown = 1;
+    else if (first) d.lodBlendShown = d.lodBlend; // no tween-from-zero on refresh
   } else {
     d.lodBlend = 0;
+    d._lodBlendNative = 0;
   }
   // The entry fade runs ONLY on the aggregate→marks transition. Restarting it
   // on every refresh made the marks blink to ~0 alpha after each kernel
@@ -344,6 +473,7 @@ export function lodApplyDrill(view, g, upd, buffers) {
   if (fresh) {
     g._drillFadeStart = view._now();
     g._drillWasInside = false;
+    g._drillEverInside = false;
     g._drillShownAlpha = 0;
     g._drillExitFadeStart = null;
     g._drillDying = false;
@@ -403,6 +533,7 @@ export function lodDropDrill(view, g) {
   g._drillFadeStart = null;
   g._drillExitFadeStart = null;
   g._drillWasInside = false;
+  g._drillEverInside = false;
   g._drillShownAlpha = null;
   g._drillDying = false;
   g._drillDiedInsideWin = false;
@@ -473,6 +604,11 @@ function lodDrillShownAlpha(view, g) {
 
 // Switch to the entry (fade-in) clock, seeded so it starts at the shown alpha.
 function lodEnterDrillContinuous(view, g) {
+  // A revived/held drill eases back to its native colors (the exit ramp
+  // below may have retargeted the blend at the aggregate's colormap).
+  if (g.drill && g.drill.dBuf && g.drill._lodBlendNative !== undefined) {
+    g.drill.lodBlend = g.drill._lodBlendNative;
+  }
   const alpha = lodDrillShownAlpha(view, g);
   g._drillShownAlpha = alpha;
   g._drillExitFadeStart = null;
@@ -482,6 +618,11 @@ function lodEnterDrillContinuous(view, g) {
 
 // Switch to the exit (fade-out) clock, seeded the same way.
 function lodBeginDrillExitContinuous(view, g) {
+  // Exit recolor (§5): dying/exiting marks converge to the aggregate's
+  // colormap as they fade, so they melt INTO the texture instead of a
+  // differently-colored cluster blinking out over it. The blend tween
+  // (τ=90ms) does the easing; revives restore the native weight.
+  if (g.drill && g.drill.dBuf) g.drill.lodBlend = 1;
   if (g._drillExitFadeStart != null) return; // already exiting — keep its clock
   const alpha = lodDrillShownAlpha(view, g);
   g._drillShownAlpha = alpha;
@@ -556,10 +697,17 @@ function lodDrawDensityWithFade(view, g, density, opacityScale = 1) {
   view._drawDensity(g, density, opacityScale);
 }
 
-// The tier's frame: marks alone while the view sits inside a live drilled
-// window; aggregate + fading marks during transitions (drill-in entry fade,
-// dying drill exit fade); aggregate alone otherwise. Never blank, never a
-// hard cut (§5 smooth transitions).
+// The tier's frame: the aggregate texture is the CONTINUOUS BACKDROP at every
+// state (T10) — marks draw over it while the view sits inside a live drilled
+// window, fade over it during transitions (drill-in entry fade, dying drill
+// exit fade, stale-while-revalidate hold), and it stands alone otherwise.
+// Never blank, never a hard cut (§5 smooth transitions): the background of a
+// drilled frame and a density frame is the same texture, so every drill
+// transition is a marks-layer fade, not a full-frame swap. (Previously marks
+// "owned the frame" once their entry fade completed — the backdrop flipped to
+// the blank chart background, and interleaved density/points replies during a
+// continuous zoom flashed green-texture ⇄ points-on-blank, the live-drilldown
+// flicker.)
 export function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
   lodStepNorm(view, g);
   const d = g.drill;
@@ -576,61 +724,53 @@ export function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
   }
   const inside = d && !g._drillDying && view._viewInside(d.win);
   const density = lodDensityForView(view, g);
+  const drawMarks = (alpha) => view._drawPoints(
+    d,
+    view._map(d.xMeta, x0, x1, d.xAxis),
+    view._map(d.yMeta, y0, y1, d.yAxis),
+    alpha
+  );
   if (inside) {
     // Boundary re-entry — or entry with an exit fade mid-flight — continues
     // from the marks alpha currently on screen; never a snap to full.
     if (!g._drillWasInside || g._drillExitFadeStart != null) lodEnterDrillContinuous(view, g);
     g._drillWasInside = true;
+    g._drillEverInside = true; // arms geometry-only retirement (T11)
     g._drillExitFadeStart = null;
     const fade = lodFade(view, g._drillFadeStart);
     g._drillShownAlpha = fade;
-    // Marks own the frame; keep the density-switch machinery in sync so an
-    // eventual exit crossfades from what is actually on screen.
-    g._shownDensity = fade < 1 ? density : null;
-    g._densitySwitchPrev = null;
-    g._densitySwitchFadeStart = null;
-    if (fade < 1 && density && density.tex) {
-      view._drawDensity(g, density, 1 - fade);
-      view._drawPoints(
-        d,
-        view._map(d.xMeta, x0, x1, d.xAxis),
-        view._map(d.yMeta, y0, y1, d.yAxis),
-        fade
-      );
+    if (density && density.tex) lodDrawDensityWithFade(view, g, density);
+    if (fade < 1) {
+      drawMarks(fade);
       view.draw();
     } else {
       g._drillFadeStart = null;
-      view._drawPoints(
-        d,
-        view._map(d.xMeta, x0, x1, d.xAxis),
-        view._map(d.yMeta, y0, y1, d.yAxis)
-      );
+      drawMarks(1);
     }
   } else if (density && density.tex) {
     if (lodHoldPendingDrill(view, g, d)) {
-      // Held marks continue their own entry fade (with the aggregate under
-      // them until it completes) — a hold engaging mid-fade must not snap.
+      // Held marks continue their own entry fade over the backdrop — a hold
+      // engaging mid-fade must not snap.
       lodEnterDrillContinuous(view, g);
       const fade = lodFade(view, g._drillFadeStart);
       g._drillShownAlpha = fade;
+      lodDrawDensityWithFade(view, g, density);
       if (fade < 1) {
-        view._drawDensity(g, density, 1 - fade);
-        view._drawPoints(
-          d,
-          view._map(d.xMeta, x0, x1, d.xAxis),
-          view._map(d.yMeta, y0, y1, d.yAxis),
-          fade
-        );
-        view.draw();
+        drawMarks(fade);
       } else {
         g._drillFadeStart = null;
-        view._drawPoints(
-          d,
-          view._map(d.xMeta, x0, x1, d.xAxis),
-          view._map(d.yMeta, y0, y1, d.yAxis)
-        );
+        drawMarks(1);
       }
-      if (view._viewAnim) view.draw();
+      // A hold is transient — it lives only until the pending refinement lands.
+      // Keep a frame scheduled so the hold re-evaluates every tick: if that
+      // reply never arrives (dropped as stale, coalesced away, or never sent on
+      // the live-drilldown transport) `_lodPendingAt` ages past the hold window
+      // and lodHoldPendingDrill lets go on a later frame, so the exit fade below
+      // restores the aggregate instead of the held marks freezing on screen
+      // forever (the zoom-out "stuck point blob"). Previously this only re-armed
+      // while the view was animating, so a *settled* view whose pending reply
+      // was stranded had nothing to drive it out of the hold.
+      view.draw();
       return;
     }
     const exitingDrill = d && g._drillWasInside;
@@ -640,25 +780,25 @@ export function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
     const exitFade = exitingDrill ? lodDrillExitFade(view, g) : 1;
     if (d) g._drillShownAlpha = exitingDrill && exitFade < 1 ? 1 - exitFade : 0;
     if (exitingDrill && exitFade < 1) {
-      lodDrawDensityWithFade(view, g, density, exitFade);
-      view._drawPoints(
-        d,
-        view._map(d.xMeta, x0, x1, d.xAxis),
-        view._map(d.yMeta, y0, y1, d.yAxis),
-        1 - exitFade
-      );
+      lodDrawDensityWithFade(view, g, density);
+      drawMarks(1 - exitFade);
       view.draw();
     } else {
       if (g._drillDying) lodDropDrill(view, g); // fade done: free the buffers
       else if (exitingDrill) g._drillWasInside = false;
+      // Geometry-only retirement (T11): an entered drill whose exit has
+      // completed frees its buffers once the view outgrows its window past
+      // the drill budget — no kernel reply required, and it must run on the
+      // completion frame itself (a settled view schedules no further frames).
+      // A dying drill was just dropped above; a never-entered prefetch is
+      // exempt (its window is simply ahead of the view).
+      if (g.drill && g._drillEverInside && lodDrillOutgrown(view, g, d)) {
+        lodDropDrill(view, g);
+      }
       lodDrawDensityWithFade(view, g, density);
       view._drawDensitySample(g, x0, x1, y0, y1);
     }
   } else if (d) {
-    view._drawPoints(
-      d,
-      view._map(d.xMeta, x0, x1, d.xAxis),
-      view._map(d.yMeta, y0, y1, d.yAxis)
-    );
+    drawMarks(1);
   }
 }
