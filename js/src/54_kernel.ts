@@ -1,4 +1,5 @@
-import { payloadBuffers, payloadResolve } from "./00_header";
+import { bytesToSpan, payloadBuffers, payloadResolve } from "./00_header";
+import { xyChannelMap } from "./40_gl";
 import { lodApplyDensityUpdate, lodApplyDrill, lodDropDrill, lodRememberDensity } from "./45_lod";
 import { xyCreateRebinWorker } from "./46_worker";
 import { ChartView } from "./50_chartview";
@@ -298,10 +299,184 @@ Object.assign(ChartView.prototype, {
     this.comm.send({ type: "refresh" });
   },
 
+  // Grow one retained payload column by a tail (§4 append_rows): the span
+  // moves into a client-owned capacity-doubling backing on first growth, so
+  // a long stream pays O(N) total copies. `meta.len` counts values, and the
+  // retained span always covers exactly the used bytes — context restore and
+  // _columnView semantics are unchanged.
+  _growColumn(ci, tailBytes, bytesPerVal, addedVals) {
+    const meta = this.spec.columns[ci];
+    const used = meta.len * bytesPerVal;
+    const cur = this._payload[ci];
+    const need = used + tailBytes.byteLength;
+    const caps = (this._payloadCaps ||= Object.create(null));
+    let span;
+    if (caps[ci] !== undefined && cur.byteOffset === 0 && cur.buffer.byteLength >= need) {
+      span = new Uint8Array(cur.buffer, 0, need);
+    } else {
+      const cap = Math.max(need * 2, 4096);
+      const backing = new Uint8Array(cap);
+      backing.set(cur.subarray(0, used));
+      caps[ci] = cap;
+      span = new Uint8Array(backing.buffer, 0, need);
+    }
+    span.set(tailBytes, used);
+    this._payload[ci] = span;
+    meta.len += addedVals;
+    return span;
+  },
+
+  // Write a tail into a per-point GPU buffer, reallocating to the CPU
+  // backing's capacity when the current allocation is too small (amortized:
+  // one full re-upload per doubling, bufferSubData otherwise).
+  _growGpuBuffer(g, role, glBuf, fullSpan, usedBytes, tailBytes) {
+    const gl = this.gl;
+    if (!gl || !glBuf) return;
+    const caps = (g._gpuCaps ||= Object.create(null));
+    const need = usedBytes + tailBytes.byteLength;
+    gl.bindBuffer(gl.ARRAY_BUFFER, glBuf);
+    if ((caps[role] ?? 0) >= need) {
+      gl.bufferSubData(gl.ARRAY_BUFFER, usedBytes, tailBytes);
+      return;
+    }
+    const cap = Math.max(need * 2, 4096);
+    gl.bufferData(gl.ARRAY_BUFFER, cap, gl.DYNAMIC_DRAW);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, new Uint8Array(fullSpan.buffer, fullSpan.byteOffset, need));
+    caps[role] = cap;
+  },
+
+  // O(K) streaming delta (wire-protocol §4 `append_rows`): extend the
+  // affected direct-tier trace's CPU spans and GPU buffers in place with the
+  // K new rows — no payload swap, no rebuild. Any disagreement with what
+  // this client holds (drifted counts, different encode params) falls back
+  // to one `refresh` round-trip rather than writing a torn tail.
+  _applyAppendRows(msg, buffers) {
+    const ts = this.spec && this.spec.traces
+      ? this.spec.traces.find((t) => t.id === msg.trace) : null;
+    const g = this.gpuTraces.find((t) => t.trace.id === msg.trace);
+    const cols = msg.columns || {};
+    const near = (a, b) => Math.abs((a ?? 0) - (b ?? 0)) <= Math.abs(b ?? 0) * 1e-9 + 1e-300;
+    if (
+      !ts || !g || g.tier !== "direct" || !Array.isArray(buffers) ||
+      g.n !== msg.prev_marks || !cols.x || !cols.y ||
+      !near(cols.x.offset, g.xMeta.offset) || !near(cols.x.scale ?? 1, g.xMeta.scale ?? 1) ||
+      !near(cols.y.offset, g.yMeta.offset) || !near(cols.y.scale ?? 1, g.yMeta.scale ?? 1)
+    ) {
+      this._requestRefresh();
+      return;
+    }
+    // Follow policy inputs, read against the OLD home before it moves.
+    const spanEps = (lo, hi) => Math.max(Math.abs(hi - lo), 1e-300) * 1e-9;
+    const ex = spanEps(this.view0.x0, this.view0.x1);
+    const ey = spanEps(this.view0.y0, this.view0.y1);
+    const atHome =
+      Math.abs(this.view.x0 - this.view0.x0) <= ex && Math.abs(this.view.x1 - this.view0.x1) <= ex &&
+      Math.abs(this.view.y0 - this.view0.y0) <= ey && Math.abs(this.view.y1 - this.view0.y1) <= ey;
+    const pinnedRight = !atHome && Math.abs(this.view.x1 - this.view0.x1) <= ex;
+
+    const roles = [
+      ["x", ts.x, "xBuf", 4, "x"],
+      ["y", ts.y, "yBuf", 4, "y"],
+      ["color", ts.color && ts.color.buf, g.rgbaBuf ? "rgbaBuf" : "cBuf",
+        ts.color && ts.color.mode === "direct_rgba" ? 1 : 4, "color"],
+      ["size", ts.size && ts.size.buf, "sBuf", 4, "size"],
+      ["stroke", ts.stroke && ts.stroke.buf, "strokeBuf", 1, "stroke"],
+    ];
+    // Validate every referenced role before touching any state: _growColumn
+    // advances meta.len and swaps the retained span, so a mid-loop failure
+    // would leave earlier columns extended against an unchanged g.n — a torn
+    // tail the pending refresh cannot un-write and a queued delta could then
+    // extend again (its prev_marks check only sees g.n).
+    const writes: any[] = [];
+    for (const [role, ci, bufKey, bpv, cpuKey] of roles) {
+      const ref = cols[role];
+      if (!ref) continue;
+      if (!Number.isInteger(ci) || !buffers[ref.buf]) { this._requestRefresh(); return; }
+      const tail = bytesToSpan(buffers[ref.buf]);
+      if (tail.byteLength !== ref.len * bpv) { this._requestRefresh(); return; }
+      writes.push([role, ci, bufKey, bpv, cpuKey, ref, tail]);
+    }
+    for (const [role, ci, bufKey, bpv, cpuKey, ref, tail] of writes) {
+      const usedBytes = this.spec.columns[ci].len * bpv;
+      const span = this._growColumn(ci, tail, bpv, ref.len);
+      if (!this._glLost && this.gl) {
+        this._growGpuBuffer(g, role, g[bufKey], span, usedBytes, tail);
+      }
+      if (g._cpu && role !== "stroke") {
+        const field = role === "color" && g.rgbaBuf ? "rgba" : cpuKey;
+        if (g._cpu[field]) {
+          const vals = this.spec.columns[ci].len;
+          g._cpu[field] = bpv === 4
+            ? new Float32Array(span.buffer, span.byteOffset, vals)
+            : new Uint8Array(span.buffer, span.byteOffset, span.byteLength);
+        }
+      }
+    }
+    // Any other enabled per-point attribute must keep covering n (WebGL
+    // validates attrib ranges at draw): today that is only the selection
+    // mask — new rows join unselected. Grow the retained CPU mirror
+    // (written by _applySelMask) alongside, so the capacity realloc
+    // re-uploads the live mask instead of wiping existing rows to zero.
+    if (g.selBuf && !this._glLost && this.gl) {
+      const zeros = new Uint8Array(msg.added * 4); // f32 zeros
+      const usedBytes = msg.prev_marks * 4;
+      const grown = new Float32Array(msg.prev_marks + msg.added);
+      if (g._selMask) {
+        grown.set(g._selMask.subarray(0, Math.min(g._selMask.length, msg.prev_marks)));
+        g._selMask = grown;
+      }
+      const full = new Uint8Array(grown.buffer, 0, usedBytes + zeros.byteLength);
+      this._growGpuBuffer(g, "sel", g.selBuf, full, usedBytes, zeros);
+    }
+    g.n = msg.prev_marks + msg.added;
+    ts.n_points = msg.n_points;
+    ts.n_marks = g.n;
+    if (g._dashX && g._cpu && g._cpu.x) { g._dashX = g._cpu.x; g._dashY = g._cpu.y; }
+    if (msg.domains) {
+      if (msg.domains.color && ts.color) {
+        ts.color.domain = msg.domains.color;
+        g.cvalMap = xyChannelMap(ts.color);
+      }
+      if (msg.domains.size && ts.size) {
+        ts.size.domain = msg.domains.size;
+        g.svalMap = xyChannelMap(ts.size);
+      }
+    }
+    // Home follows the fresh per-axis ranges; the view follows append's
+    // policy (refit at home, slide when pinned to the live edge, hold when
+    // inspecting history).
+    if (msg.axes) {
+      for (const [id, raw] of Object.entries(msg.axes)) {
+        if (!Array.isArray(raw)) continue;
+        const range = [...(raw as number[])];
+        if (this.axes[id]) this.axes[id].range = [...range];
+        const axisSpec = this.spec.axes && this.spec.axes[id];
+        if (axisSpec) axisSpec.range = [...range];
+        if (id === "x" && this.spec.x_axis) this.spec.x_axis.range = [...range];
+        if (id === "y" && this.spec.y_axis) this.spec.y_axis.range = [...range];
+      }
+      this.view0 = this._copyView({
+        ranges: Object.fromEntries(
+          Object.entries(this.axes).map(([id, axis]: any) => [id, [...axis.range]]),
+        ),
+      });
+      if (atHome) {
+        this.view = this._copyView(this.view0);
+      } else if (pinnedRight) {
+        const w = this.view.x1 - this.view.x0;
+        this.view = this._viewFrom({ x1: this.view0.x1, x0: this.view0.x1 - w });
+      }
+    }
+    this._refreshPending = false;
+    if (this._glLost || !this.gl) return;
+    this._pickDirty = true;
+    this.draw();
+  },
+
   _onKernelMsg(msg, buffers) {
     if (this._destroyed) return;
     if (!msg) return;
-    if (this._glLost && msg.type !== "append" && msg.type !== "pick_result") return;
+    if (this._glLost && msg.type !== "append" && msg.type !== "append_rows" && msg.type !== "pick_result") return;
     if (msg.type === "tier_update") {
       if (msg.seq !== this.seq) return;
       for (const upd of msg.traces) {
@@ -369,6 +544,8 @@ Object.assign(ChartView.prototype, {
       this.draw();
     } else if (msg.type === "append") {
       this._applyAppend(msg, buffers);
+    } else if (msg.type === "append_rows") {
+      this._applyAppendRows(msg, buffers);
     } else if (msg.type === "pick_result") {
       if (msg.seq !== undefined && msg.seq !== this._pickSeq) return;
       if (!msg.row) { this._hideTooltip(); return; }

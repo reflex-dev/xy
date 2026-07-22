@@ -15,7 +15,10 @@ from __future__ import annotations
 # debounced reopen state while the per-tick push is a custom message again.
 # v7: continuous color/size channels ship raw data-unit f32 (`enc: "raw"`);
 # the client maps them through the spec domain in the vertex shader.
-PROTOCOL_VERSION = 7
+# v8: `append_rows` — direct-tier streaming appends ship only the K new rows
+# as an in-place tail write (O(K) wire), falling back to the full `append`
+# whenever the shipped representation is not a pure extension.
+PROTOCOL_VERSION = 8
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the

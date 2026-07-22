@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 import operator
 import weakref
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
@@ -675,7 +676,7 @@ def append_data(
     alpha: Any = None,
     stroke_width: Any = None,
     symbol: Any = None,
-) -> tuple[dict[str, Any], list[memoryview]]:
+) -> tuple[dict[str, Any], "Sequence[bytes | memoryview]"]:
     """Streaming append (Phase-0): extend a trace's canonical
     columns in place and return the client refresh message.
 
@@ -820,6 +821,15 @@ def append_data(
         "symbol": _style_tail("symbol", symbol),
     }
 
+    if t.x is t.y:
+        # Store dedup can alias x and y to one canonical column (scatter(v, v));
+        # appending x-tail then y-tail to that single column would interleave
+        # them and corrupt both axes. Same Phase-0 contract as cross-trace
+        # sharing: reject before anything mutates.
+        raise ValueError(
+            f"trace {t.id} shares one column between x and y; "
+            "appending to shared columns is not supported"
+        )
     appended = {id(t.x), id(t.y)}
     for other in fig.traces:
         if other.id == t.id:
@@ -867,15 +877,183 @@ def append_data(
         t._pyr_handle = None
     lod.exit_drill(t)
 
+    t.data_rev += 1
+    fig._append_seq += 1
+    seq = fig._append_seq
+
+    # O(K) delta frame first (wire-protocol §4 `append_rows`): a direct-tier
+    # trace whose emission is a pure tail-extension of what the client holds
+    # ships only the K new rows. Any failed precondition falls back to the
+    # full append build below — with the reason recorded on the message (§28).
+    delta, fallback_reason = _append_rows_message(
+        fig, t, seq, ax, ay, color_tail, size_tail, stroke_tail, style_tails
+    )
+    if delta is not None:
+        return delta
+
     # Split layout, same as first paint (§29): per-column borrowed views, no
     # join copy. The append build additionally splices unchanged traces from
     # the emit cache (no re-encode) and ships cid-only entries for columns
     # the client already holds (§4 append reuse). `append.seq` is the apply
     # signal; both hosts push the message via their comm/socket channel and
     # the widget re-syncs full reopen state on a debounce.
-    t.data_rev += 1
-    fig._append_seq += 1
-    seq = fig._append_seq
     spec, buffers = fig.build_append_payload({t.id})
-    spec["append"] = {"seq": seq, "affected": [t.id]}
+    spec["append"] = {"seq": seq, "affected": [t.id], "delta_fallback": fallback_reason}
     return {"type": "append", "affected": [t.id], "spec": spec}, buffers
+
+
+# Precision budget for delta ticks (§4/§16): tails encode with the offset and
+# scale the client already holds. As the domain drifts from that offset the
+# f32 mantissa thins; capped at 1024x the current encoded half-span the worst
+# absolute error stays ~0.25 px at 2048 px, after which one full re-ship
+# re-centers (the same recovery deep zoom uses).
+_DELTA_DRIFT_LIMIT = 1024.0
+
+
+def _append_rows_message(
+    fig: "Figure",
+    t: "Trace",
+    seq: int,
+    ax: np.ndarray,
+    ay: np.ndarray,
+    color_tail: Optional[np.ndarray],
+    size_tail: Optional[np.ndarray],
+    stroke_tail: Optional[np.ndarray],
+    style_tails: dict[str, Optional[np.ndarray]],
+) -> tuple[Optional[tuple[dict[str, Any], list[bytes]]], str]:
+    """Build the `append_rows` delta, or `(None, reason)` when ineligible.
+
+    Eligibility is deliberately strict (every exclusion recorded): the client
+    applies a delta as an in-place tail write, so the shipped representation
+    must be a pure extension — same tier, same offsets, same row order, no
+    row drops, no client-side vertex expansion.
+    """
+    prev = (getattr(fig, "_append_emit_cache", None) or {}).get(t.id)
+    if prev is None:
+        return None, "no-baseline"  # nothing shipped since the last full build
+    frag = prev["frag"]
+    if frag.get("tier") != "direct":
+        return None, "tier"
+    if t.kind == "scatter" and t.use_density():
+        return None, "tier-flip"
+    if t.kind == "line" and t.n_points > DECIMATION_THRESHOLD:
+        return None, "tier-flip"
+    if (
+        t.transition_keys is not None
+        or t.animation is not None
+        or fig.animation_options is not None
+    ):
+        return None, "animation"
+    if any(tail is not None for tail in style_tails.values()) or t.style_channels:
+        return None, "style-channels"
+    style = t.style or {}
+    if style.get("step") or style.get("curve"):
+        return None, "vertex-expansion"  # step/smooth expand rows client-side
+    if fig._axis_scale(t.x_axis) == "log" or fig._axis_scale(t.y_axis) == "log":
+        return None, "log-axis"
+    if t.shipped_sel is not None:
+        return None, "shipped-subset"
+    if not bool(np.all(np.isfinite(ax) & np.isfinite(ay))):
+        return None, "nonfinite-tail"  # a drop would fork shipped row order
+
+    start = prev["start_col"]
+
+    def rec(table_idx: int) -> dict[str, Any]:
+        return prev["records"][int(table_idx) - start][0]
+
+    shipped_spans = prev.get("spans") or {}
+
+    def encode_tail(tail: np.ndarray, meta: dict[str, Any], span_role: str) -> Optional[np.ndarray]:
+        offset = float(meta.get("offset", 0.0))
+        scale = float(meta.get("scale", 1.0))
+        enc = np.asarray((tail - offset) * scale, dtype=np.float32)
+        if not bool(np.all(np.isfinite(enc))):
+            return None
+        # Budget against the half-span the client's buffers were encoded for
+        # (recorded at the last full ship) — the current zones already include
+        # the tail and would never trip the guard.
+        half = float(shipped_spans.get(span_role, 0.0)) * scale / 2.0
+        if not np.isfinite(half) or half <= 0.0:
+            half = 1.0
+        if len(enc) and float(np.max(np.abs(enc))) > _DELTA_DRIFT_LIMIT * half:
+            return None
+        return enc
+
+    x_enc = encode_tail(ax, rec(frag["x"]), "x")
+    y_enc = encode_tail(ay, rec(frag["y"]), "y")
+    if x_enc is None or y_enc is None:
+        return None, "offset-drift"
+
+    writer = lod.BufferWriter()
+    columns: dict[str, dict[str, Any]] = {}
+
+    def geometry(role: str, enc: np.ndarray, meta: dict[str, Any]) -> None:
+        columns[role] = {
+            "buf": writer.add_f32(enc),
+            "len": int(len(enc)),
+            "offset": meta.get("offset", 0.0),
+            "scale": meta.get("scale", 1.0),
+        }
+
+    geometry("x", x_enc, rec(frag["x"]))
+    geometry("y", y_enc, rec(frag["y"]))
+
+    domains: dict[str, list[float]] = {}
+
+    def channel(role: str, cspec: Any, ch: Any, tail: Optional[np.ndarray]) -> bool:
+        """True when the channel is delta-compatible (absent, constant, raw
+        continuous, or direct RGBA); ships the tail when per-point."""
+        if cspec is None or "buf" not in cspec:
+            return True  # constant / match_fill: spec-only, nothing to extend
+        mode = cspec.get("mode")
+        if mode == "continuous":
+            if cspec.get("enc") != "raw" or tail is None or ch is None or ch.domain is None:
+                return False  # unit fallback re-encodes on domain growth
+            domains[role] = [float(ch.domain[0]), float(ch.domain[1])]
+            columns[role] = {
+                "buf": writer.add_f32(kernels.sanitize_f32(tail, float(ch.domain[0]))),
+                "len": int(len(tail)),
+            }
+            return True
+        if mode == "direct_rgba":
+            if tail is None:
+                return False
+            packed = np.rint(np.clip(tail, 0.0, 1.0) * 255.0).astype(np.uint8)
+            columns[role] = {
+                "buf": writer.add_u8(packed.reshape(-1)),
+                "len": int(packed.size),
+                "dtype": "u8",
+            }
+            return True
+        return False  # categorical per-point never reaches here (rejected above)
+
+    if not channel("color", frag.get("color"), t.color_ch, color_tail):
+        return None, "channel-encoding"
+    if not channel("size", frag.get("size"), t.size_ch, size_tail):
+        return None, "channel-encoding"
+    if not channel("stroke", frag.get("stroke"), t.stroke_ch, stroke_tail):
+        return None, "channel-encoding"
+
+    prev_marks = int(prev.get("delta_marks", frag.get("n_marks", 0)))
+    added = int(len(ax))
+    prev["delta_marks"] = prev_marks + added  # baseline for the next tick
+
+    msg = {
+        "type": "append_rows",
+        "affected": [t.id],
+        "seq": seq,
+        "trace": t.id,
+        "prev_marks": prev_marks,
+        "added": added,
+        "n_points": t.n_points,
+        # Fresh axis ranges for the follow policy (home refit / live-edge
+        # slide), shaped exactly like the full spec's axis ranges.
+        "axes": {
+            axis_id: fig._axis_spec(axis_id, fig._range(axis_id))["range"]
+            for axis_id in fig.axis_options
+        },
+        "columns": columns,
+    }
+    if domains:
+        msg["domains"] = domains
+    return (msg, writer.buffers), ""

@@ -809,6 +809,13 @@ Object.assign(ChartView.prototype, {
     if (!g.selBuf) g.selBuf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, g.selBuf);
     gl.bufferData(gl.ARRAY_BUFFER, maskF32, gl.STATIC_DRAW);
+    // Retained mirror + cap sync: append deltas (§4 append_rows) grow this
+    // buffer in place, and a realloc there must re-upload the prefix from
+    // somewhere — this mirror. bufferData just resized the allocation to
+    // exactly the mask, so any capacity recorded by _growGpuBuffer is stale;
+    // record the true size or the next delta would bufferSubData past the end.
+    g._selMask = maskF32;
+    if (g._gpuCaps) g._gpuCaps.sel = maskF32.byteLength;
     g.selActive = true;
   },
 

@@ -142,6 +142,16 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **Streaming appends ship O(K) delta frames (protocol v8).** A direct-tier
+  scatter/line append now sends only the K new rows (`append_rows`): the
+  client extends its GPU buffers and retained CPU spans in place — no
+  payload swap, no trace rebuild. A 100k-point live scatter appending one
+  point drops from ~783 KiB to ~0.4 KiB per tick. Falls back to the full
+  append (reason recorded on the message, §28) for tier flips, keyed
+  animation, per-point style channels, log axes, non-finite tails, and past
+  the offset-drift budget; screen-bounded tiers were already O(pixels).
+  Streaming appends to a trace whose x and y alias one deduplicated column
+  now raise instead of silently corrupting it.
 - **Continuous channels ship raw values; domains map in the shader
   (protocol v7).** Color/size buffers now carry data-unit f32 with
   `enc: "raw"`; the client normalizes through the spec domain as a vertex-
