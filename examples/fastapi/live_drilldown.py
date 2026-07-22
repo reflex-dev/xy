@@ -445,6 +445,111 @@ async def drilldown_endpoint(request: Request) -> JSONResponse:
     return JSONResponse({"error": f"unsupported message type {kind!r}"}, status_code=400)
 
 
+# ---------------------------------------------------------------------------
+# TEMPORARY debug instrumentation (branch: claude/fastapi-drilldown-zoomout-debug)
+# ---------------------------------------------------------------------------
+# A live on-screen panel + a "stranded drill" watchdog, injected into the
+# /drilldown page so it runs in the chart's own scope (the index embeds the
+# chart in an iframe, so a top-window console snippet can't see the view).
+#
+# It answers the open question on the "zoom-out gets stuck" report: when it
+# sticks, is the ENGINE still requesting (reqs climbing)? is the SERVER
+# answering or going STALE/silent? is a drilled-points overlay left drawn while
+# the view has zoomed clear out past its window? The watchdog (on by default;
+# add ?nowatch=1 to observe the raw stuck) force-retires such a stranded drill
+# and re-requests — if that clears the freeze, the drill overlay is the culprit;
+# if it doesn't, the stuck is the density surface / request pipeline instead.
+# Remove this block (and the {diag_js} slot) before merging anything.
+_DRILLDOWN_DEBUG_JS = r"""
+(function () {
+  const view = window.xyLiveDrilldown;
+  if (!view || !view.gpuTraces) return;
+  const g = view.gpuTraces.find((t) => t.tier === "density");
+  if (!g) return;
+  const statusEl = document.getElementById("status");
+  const watchdogOn = new URLSearchParams(location.search).get("nowatch") !== "1";
+  const S = { reqs: 0, lastReqSeq: null, resps: 0, lastResp: "-", lastDrillDrawAt: 0, fired: 0, lastFired: "-" };
+
+  const norm = (w) => w && { x0: Math.min(w.x0, w.x1), x1: Math.max(w.x0, w.x1), y0: Math.min(w.y0, w.y1), y1: Math.max(w.y0, w.y1) };
+  const fmt = (w) => { const n = norm(w); return n ? `[${n.x0.toFixed(2)},${n.x1.toFixed(2)}]` : "null"; };
+  // The view has zoomed OUT past the window: the window sits wholly inside the
+  // view (and the view is strictly larger on at least one side).
+  function viewPast(w) {
+    const win = norm(w); if (!win) return false;
+    const v = view.view;
+    const vx0 = Math.min(v.x0, v.x1), vx1 = Math.max(v.x0, v.x1), vy0 = Math.min(v.y0, v.y1), vy1 = Math.max(v.y0, v.y1);
+    const ex = (vx1 - vx0) * 1e-4, ey = (vy1 - vy0) * 1e-4;
+    const contains = win.x0 >= vx0 - ex && win.x1 <= vx1 + ex && win.y0 >= vy0 - ey && win.y1 <= vy1 + ey;
+    const strictlyBigger = vx0 < win.x0 - ex || vx1 > win.x1 + ex || vy0 < win.y0 - ey || vy1 > win.y1 + ey;
+    return contains && strictlyBigger;
+  }
+
+  if (view.comm && typeof view.comm.send === "function") {
+    const rs = view.comm.send.bind(view.comm);
+    view.comm.send = function (m) {
+      if (m && m.type === "density_view") { S.reqs++; S.lastReqSeq = m.seq; }
+      return rs(m);
+    };
+  }
+  const rf = window.fetch;
+  window.fetch = function (u) {
+    const p = rf.apply(this, arguments);
+    if (String(u).indexOf("drilldown") >= 0) {
+      p.then((r) => r.clone().json()).then((j) => {
+        const msg = j && j.message; const t = msg && msg.traces && msg.traces[0];
+        S.resps++;
+        S.lastResp = (msg && msg.stale ? "STALE" : (t && t.mode) || "empty") + " seq" + (msg && msg.seq);
+      }).catch(() => {});
+    }
+    return p;
+  };
+  const rp = view._drawPoints.bind(view);
+  view._drawPoints = function (d) {
+    if (d === g.drill) S.lastDrillDrawAt = performance.now();
+    return rp.apply(view, arguments);
+  };
+
+  const panel = document.createElement("div");
+  panel.style.cssText = "position:absolute;left:8px;bottom:8px;z-index:20;max-width:60ch;padding:6px 9px;border-radius:5px;background:rgba(15,23,41,.9);color:#d6efff;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre;pointer-events:none;";
+  document.body.appendChild(panel);
+
+  let pastSince = 0;
+  function tick() {
+    const now = performance.now();
+    const d = g.drill;
+    const past = d ? viewPast(d.win) : false;
+    if (d && past) {
+      if (!pastSince) pastSince = now;
+      if (watchdogOn && now - pastSince > 600) {
+        S.fired++; S.lastFired = new Date().toISOString().slice(11, 19);
+        console.warn("[xy-watchdog] retiring stranded drill", fmt(d.win), "view", fmt(view.view));
+        try { view._dropDrill(g); } catch (e) {}
+        if (typeof view._scheduleViewRequest === "function") view._scheduleViewRequest();
+        view.draw();
+        pastSince = 0;
+      }
+    } else {
+      pastSince = 0;
+    }
+    const v = view.view;
+    panel.textContent =
+      `drilldown debug  ·  watchdog ${watchdogOn ? "ON" : "off (?nowatch=1)"}\n` +
+      `view    ${fmt(v)}  span ${(Math.abs(v.x1 - v.x0)).toFixed(2)}  seq ${view.seq}\n` +
+      `engine  reqs ${S.reqs} (lastSeq ${S.lastReqSeq})\n` +
+      `server  resps ${S.resps} (${S.lastResp})\n` +
+      `drill   ${d ? "present " + fmt(d.win) : "none"}` +
+      (d ? `\n        inside=${view._viewInside(d.win)} viewPast=${past} lastDraw=${(now - S.lastDrillDrawAt).toFixed(0)}ms\n` +
+           `        dying=${!!g._drillDying} wasInside=${!!g._drillWasInside} pending=${!!g._lodPendingView}` : "") +
+      `\ncache   ${(g.densityCache || []).length} windows   status "${statusEl ? statusEl.textContent : "?"}"\n` +
+      `watchdog fired ${S.fired}${S.fired ? " (last " + S.lastFired + ")" : ""}`;
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+  console.log("[xy] drilldown debug panel active; watchdog " + (watchdogOn ? "ON" : "OFF"));
+})();
+"""
+
+
 def live_drilldown_html() -> str:
     fig = colored_scatter_figure()
     spec, blob = fig.build_payload()
@@ -464,6 +569,7 @@ def live_drilldown_html() -> str:
     ps_y = _b64(ps.y.tobytes())
     ps_color = _b64(ps.color.tobytes())
     ps_size = _b64(ps.size.tobytes())
+    diag_js = _DRILLDOWN_DEBUG_JS
     return f"""<!doctype html>
 <html>
 <head>
@@ -966,6 +1072,7 @@ view._setView = (next, opts) => {{
   return result;
 }};
 window.xyLiveDrilldown = view;
+{diag_js}
 </script>
 </body>
 </html>"""
