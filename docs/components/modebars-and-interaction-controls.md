@@ -132,12 +132,13 @@ update the chart.
 
 Selection controls include box, lasso, x-range, and y-range modes. The
 `on_select` callback receives a canonical `Selection`; `on_brush` receives the
-box or polygon geometry. While Lasso Select is active, double-click the chart
-to clear the active selection and its editable polygon. Double-click an
-editable vertex to remove it; the minimum three vertices remain protected.
-A plain click outside the polygon leaves it visible and unchanged; it is
-replaced only when a new selection drag crosses the movement threshold. In Pan
-mode, double-click continues to reset the viewport without clearing a selection.
+box or polygon geometry. While any selection mode is active, double-click the
+chart to clear the active selection; for a lasso this also removes its editable
+polygon. Double-click an editable lasso vertex to remove it; the minimum three
+vertices remain protected. A plain click outside the polygon leaves it visible
+and unchanged; it is replaced only when a new selection drag crosses the
+movement threshold. In Pan mode, double-click continues to reset the viewport
+without clearing a selection.
 
 ## Link Viewports
 

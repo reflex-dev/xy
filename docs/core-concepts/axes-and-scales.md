@@ -12,7 +12,7 @@ contract explicit.
 
 ## Scale type and domain
 
-`type_` accepts `"linear"`, `"time"`, or `"log"`. Leave it as `None` to infer
+`type_` accepts `"linear"`, `"time"`, `"log"`, or `"symlog"`. Leave it as `None` to infer
 the scale. The explicit token is `"time"`, not `"datetime"`.
 `domain=(low, high)` pins a data-space window; `reverse=True` flips its display
 direction without changing the source values.
@@ -80,6 +80,13 @@ def tick_controls_demo():
 `tick_label_angle`, `tick_label_min_gap`, and `tick_label_strategy`.
 `label_position`, `label_offset`, and `label_angle` position the axis title.
 
+On fluid browser charts, categorical y-axis labels that exceed the space
+between their tick and the chart edge are ellipsized. Their full value remains
+available through native hover and accessibility metadata; set
+`--chart-tick-label-max-width` on the chart or a host element to choose a
+stricter cap. Fixed-size SVG, PNG, and PDF exports use their explicit canvas
+width and padding instead, so increase `padding` when an export needs more room.
+
 Axis `style=` uses a strict cross-renderer vocabulary for grid, axis, tick, and
 label paint/geometry. See
 [Customize Each Part](/docs/xy/styling/customize/#axes,-grid,-and-ticks)
@@ -124,3 +131,19 @@ def named_axes_demo():
 
 Named axes share the panel but keep their own scale and tick contract. Bindings
 that name an undefined axis fail at chart build time.
+## Zero-inclusive long tails
+
+Use a symmetric logarithmic scale when a long-tailed measure contains zero (or
+negative values). Values remain in their original data units throughout hover,
+selection, pan/zoom callbacks, and linked views:
+
+```python
+xy.chart(
+    xy.scatter(x=employees, y=pay),
+    xy.y_axis(type_="symlog", constant=1_000, format="$,.0f"),
+)
+```
+
+The positive `constant` controls the width of the near-zero linear region and
+defaults to `1`. Outside that region, both positive and negative tails are
+compressed logarithmically. Unlike a `log` axis, `symlog` represents zero.

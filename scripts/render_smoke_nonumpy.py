@@ -580,11 +580,13 @@ try{{
       [xs3.buffer,ys3.buffer,cs3.buffer,ds3.buffer]);
     const drilled=(gd.drill && gd.drill.n===n3 && gd.drill.colorMode===1
       && v._viewInside(gd.drill.win)===true)?1:0;
-    // Color-continuous handoff: the drill carries local density + blend weight,
-    // and the first arrival shows it without a tween-from-zero flash.
+    // Color-continuous handoff: the drill carries local density + blend
+    // weight. Fresh marks ARRIVE wearing the aggregate's colormap (shown
+    // blend seeds at 1 — the texture->marks swap must not recolor even when
+    // a fast zoom skipped levels) and ease toward the kernel's native weight.
     const dblend=(gd.drill && gd.drill.dBuf && gd.drill.dlut
       && Math.abs(gd.drill.lodBlend-0.85)<1e-6
-      && gd.drill.lodBlendShown===gd.drill.lodBlend)?1:0;
+      && gd.drill.lodBlendShown===1)?1:0;
     // Staff-review invariants: subset version stored, stale hover cache
     // invalidated, stale selection masks dropped (wrong index space), and
     // palette LUTs cached (categorical drills leaked a texture per update).
@@ -638,9 +640,10 @@ try{{
     v._drawNow();
     const hit3=v._pickAt(v.plot.w/2, v.plot.h/2);
     const dpick=(hit3 && hit3.trace===gd.trace.id)?1:0;
-    // Tiny drill-to-drill zoom-outs should not flash the broad density texture
-    // while the next point subset is pending. Keep the resident drilled marks
-    // for the short wait when the pending target is still under direct budget.
+    // Tiny drill-to-drill zoom-outs keep the resident drilled marks for the
+    // short wait when the pending target is still under direct budget — over
+    // the aggregate backdrop (T10): the texture never leaves the frame, so
+    // the hold reads as points-over-context, not a swap.
     const holdDensity0=v._drawDensity;
     const holdPoints0=v._drawPoints;
     let holdDensity=0, holdPoints=0;
@@ -652,7 +655,7 @@ try{{
     gd._lodPendingAt=performance.now();
     v.view={{...gd._lodPendingView}};
     v._drawNow();
-    const hold=(holdPoints>0 && holdDensity===0 && gd._drillExitFadeStart==null)?1:0;
+    const hold=(holdPoints>0 && holdDensity>0 && gd._drillExitFadeStart==null)?1:0;
     gd._lodPendingSeq=null;
     gd._lodPendingView=null;
     gd._lodPendingAt=null;

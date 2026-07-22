@@ -41,6 +41,8 @@ from typing import Any, Optional
 
 import reflex as rx
 
+from xy.facets import FacetGrid
+
 from .assets import WRAPPER_TAG, register
 from .payload_asset import payload_asset
 from .registry import _figure_of
@@ -117,6 +119,69 @@ def _tailwind_class_manifest(figure: Any) -> str:
     return " ".join(figure.dom_class_strings())
 
 
+def _facet_grid(grid: Any, *, tooltip: Any, props: dict[str, Any]) -> Any:
+    """Render a core ``FacetGrid`` as a responsive Reflex CSS grid.
+
+    A facet grid intentionally has no single wire payload: every panel is an
+    independent Figure with its own axes and LOD budget.  Preserve that core
+    contract by mounting one static XYChart per panel rather than trying to
+    feed the grid itself to :func:`payload_asset`.
+    """
+    # Semantic handlers belong on every panel. Layout/identity props belong
+    # only on the grid container (notably, duplicating an id would be invalid
+    # HTML), while each panel retains the dimensions chosen by facet_chart.
+    event_props = {key: value for key, value in props.items() if key.startswith("on_")}
+    panels = []
+    # grid.labels needs no separate strip: facet_chart builds every panel
+    # figure with its facet label as the figure title, so the label ships
+    # inside each panel's payload and renders as the panel heading (the same
+    # contract FacetGrid.to_html relies on).
+    for figure in grid.figures:
+        panel_props = dict(event_props)
+        panel_props.update(width="100%", height=f"{grid.panel_height}px")
+        panel_props["src"] = payload_asset(figure)
+        class_manifest = _tailwind_class_manifest(figure)
+        if class_manifest:
+            panel_props["tailwind_class_tokens"] = class_manifest
+        panel = (
+            _component_cls.create(tooltip, **panel_props)
+            if tooltip
+            else _component_cls.create(**panel_props)
+        )
+        panels.append(panel)
+
+    grid_body = rx.box(
+        *panels,
+        class_name="xy-facet-grid",
+        display="grid",
+        grid_template_columns=f"repeat({grid.cols}, minmax(0, 1fr))",
+        gap=f"{grid.gap}px",
+        width="100%",
+    )
+    children = [grid_body]
+    if grid.title:
+        children.insert(
+            0,
+            rx.text(
+                grid.title,
+                class_name="xy-facet-title",
+                height=f"{grid._TITLE_H}px",
+                line_height=f"{grid._TITLE_H}px",
+                text_align="center",
+                font_weight="600",
+            ),
+        )
+    container_props = {key: value for key, value in props.items() if key not in event_props}
+    container_class = container_props.pop("class_name", "")
+    container_props.setdefault("width", "100%")
+    container_props.setdefault("height", f"{grid.grid_height + grid._title_height}px")
+    return rx.box(
+        *children,
+        class_name=f"xy-facet-document {container_class}".strip(),
+        **container_props,
+    )
+
+
 def chart(source: Any, *, tooltip: Any = None, **props: Any) -> Any:
     """Place a xy chart.
 
@@ -138,9 +203,9 @@ def chart(source: Any, *, tooltip: Any = None, **props: Any) -> Any:
     global _component_cls
     if _component_cls is None:
         _component_cls = _build_component_cls()
-    props.setdefault("width", "100%")
-    props.setdefault("height", "420px")
     if isinstance(source, (str, rx.Var)):
+        props.setdefault("width", "100%")
+        props.setdefault("height", "420px")
         props["token"] = source
     elif _is_chart_like(source):
         # Build a public Chart once, then reuse the cached Figure for both the
@@ -150,6 +215,10 @@ def chart(source: Any, *, tooltip: Any = None, **props: Any) -> Any:
         if tooltip is None and callable(getattr(source, "chrome_components", None)):
             tooltip = source.chrome_components().get("tooltip")
         figure = _figure_of(source)
+        if isinstance(figure, FacetGrid):
+            return _facet_grid(figure, tooltip=tooltip, props=props)
+        props.setdefault("width", "100%")
+        props.setdefault("height", "420px")
         props["src"] = payload_asset(figure)
         class_manifest = _tailwind_class_manifest(figure)
         if class_manifest:

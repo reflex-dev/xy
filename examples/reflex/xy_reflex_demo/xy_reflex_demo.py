@@ -262,8 +262,9 @@ class Demo(rx.State):
     @rx.event
     def on_view(self, event: reflex_xy.ViewChangeEvent):
         # `event` is the v1 view-change envelope; `x_domain` is the reported
-        # [x0, x1] window (debounced by the wrapper). Store the window; the
-        # `detail` figure var depends on it and recomputes.
+        # [x0, x1] window (throttled by the wrapper, streaming during the
+        # gesture). Store the window; the `detail` figure var depends on it
+        # and recomputes.
         x_domain = event.get("x_domain") or [0.0, 0.0]
         self.view_x0 = float(x_domain[0])
         self.view_x1 = float(x_domain[1])

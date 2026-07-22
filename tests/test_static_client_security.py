@@ -110,6 +110,13 @@ def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
     assert 'btn.classList.toggle("xy-active"' in _CLIENT_SRC[1]
 
 
+def test_normative_styling_spec_tracks_responsive_theme_tokens() -> None:
+    styling = _read(ROOT / "spec/api/styling.md")
+    assert "--chart-tick-label-max-width" in styling
+    normalized_styling = " ".join(styling.split())
+    assert "badges to `rgba(30,35,44,.88)` bg / `#f8fafc` text" in normalized_styling
+
+
 def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
     """User labels may be hostile strings; the client must never parse them."""
     required_text_sinks = (
@@ -528,7 +535,9 @@ def test_client_refreshes_and_destroys_density_sample_overlays() -> None:
     chartview_required = (
         "_refreshReductionBadges()",
         "_reductionBadgeItems()",
-        "entry.sampleOverlay && entry.sampleOverlay.sample",
+        # Badges report the overlay actually drawn for the current view (T9
+        # window pairing), falling back to the home overlay pre-first-frame.
+        "entry._shownSampleOverlay || entry.sampleOverlay",
         "this._destroyDensitySample(g);",
     )
 

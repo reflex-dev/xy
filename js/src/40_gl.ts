@@ -81,20 +81,23 @@ const AXIS_GLSL = `
 float xyDecode(float encoded, vec2 meta) {
   return encoded / max(abs(meta.y), 1e-30) + meta.x;
 }
-float xyAxisCoord(float encoded, vec2 meta, int mode) {
+float xyAxisCoord(float encoded, vec2 meta, int mode, float constant) {
   float value = xyDecode(encoded, meta);
   if (mode == 1) return value > 0.0 ? log(value) / log(10.0) : -1e30;
+  if (mode == 2) return sign(value) * log(1.0 + abs(value) / constant);
   return value;
 }
-float xyMap(float encoded, vec2 map, vec2 meta, int mode) {
-  return xyAxisCoord(encoded, meta, mode) * map.x + map.y;
+float xyMap(float encoded, vec2 map, vec2 meta, int mode, float constant) {
+  return xyAxisCoord(encoded, meta, mode, constant) * map.x + map.y;
 }
-float xyViewCoord(float value, int mode) {
+float xyViewCoord(float value, int mode, float constant) {
   if (mode == 1) return value > 0.0 ? log(value) / log(10.0) : -1e30;
+  if (mode == 2) return sign(value) * log(1.0 + abs(value) / constant);
   return value;
 }
-float xyViewValue(float coord, int mode) {
+float xyViewValue(float coord, int mode, float constant) {
   if (mode == 1) return pow(10.0, coord);
+  if (mode == 2) return sign(coord) * constant * (exp(abs(coord)) - 1.0);
   return coord;
 }
 `;
@@ -104,7 +107,7 @@ in float ax; in float ay; in float a_prevx; in float a_prevy;
 in float a_cval; in float a_sval; in float a_sel; in float a_dval;
 in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
-uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
+uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange;
 uniform int u_colorMode; uniform float u_dpr; uniform int u_selActive;
 uniform float u_selectedOpacity; uniform float u_unselectedOpacity;
@@ -115,7 +118,7 @@ ${AXIS_GLSL}
 void main() {
   float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
   float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
-  gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode), xyMap(y, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode, u_xconstant), xyMap(y, u_ymap, u_ymeta, u_ymode, u_yconstant), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = sz * u_dpr;
   v_ptSize = sz * u_dpr;
@@ -295,14 +298,14 @@ void main() {
 export const POINT_SIMPLE_VS = `#version 300 es
 in float ax; in float ay; in float a_prevx; in float a_prevy;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
-uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
+uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
 uniform float u_size; uniform float u_dpr;
 uniform float u_transitionProgress; uniform int u_transitionActive;
 ${AXIS_GLSL}
 void main() {
   float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
   float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
-  gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode), xyMap(y, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode, u_xconstant), xyMap(y, u_ymap, u_ymeta, u_ymode, u_yconstant), 0.0, 1.0);
   gl_PointSize = u_size * u_dpr;
 }`;
 
@@ -332,7 +335,7 @@ void main() {
 export const PICK_VS = `#version 300 es
 in float ax; in float ay; in float a_prevx; in float a_prevy; in float a_sval;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
-uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
+uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange; uniform float u_dpr;
 uniform float u_transitionProgress; uniform int u_transitionActive;
 flat out int v_id;
@@ -340,7 +343,7 @@ ${AXIS_GLSL}
 void main() {
   float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
   float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
-  gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode), xyMap(y, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode, u_xconstant), xyMap(y, u_ymap, u_ymeta, u_ymode, u_yconstant), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = max(sz, 6.0) * u_dpr; // enlarge hit target
   v_id = gl_VertexID;
@@ -364,35 +367,40 @@ void main() {
 }`;
 
 // Shared grid-texture vertex stage (density Tier 2 + heatmap): a fullscreen
-// quad; each fragment reconstructs its data-space coordinate from the view
-// range so the fragment shader can sample the grid texture (§5, §F6). Data
-// outside the grid range is transparent — a stale grid stays correctly
-// positioned during pan until the re-bin arrives (§17). The two consumers
-// differ only in their fragment stage (log-density alpha ramp vs byte-
-// quantized heatmap values).
+// quad; the vertex stage emits the *scale coordinate* at each corner (linear
+// across the screen by construction) so each fragment can locate itself in
+// scale space, and — for data-uniform grids — invert back to its data value
+// (§5, §F6). Data outside the grid range is transparent — a stale grid stays
+// correctly positioned during pan until the re-bin arrives (§17). The two
+// consumers differ in their fragment stage: density grids are uniform in
+// scale coordinates (§28) and sample by coordinate directly; heatmap grids
+// are uniform in data space and invert per fragment.
 export const GRID_VS = `#version 300 es
 in vec2 a_corner;
 uniform vec4 u_view; // x0,x1,y0,y1
-uniform int u_xmode; uniform int u_ymode;
-out vec2 v_data;
+uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
+out vec2 v_coord;
 ${AXIS_GLSL}
 void main() {
   gl_Position = vec4(a_corner * 2.0 - 1.0, 0.0, 1.0);
-  float x = mix(xyViewCoord(u_view.x, u_xmode), xyViewCoord(u_view.y, u_xmode), a_corner.x);
-  float y = mix(xyViewCoord(u_view.z, u_ymode), xyViewCoord(u_view.w, u_ymode), a_corner.y);
-  v_data = vec2(xyViewValue(x, u_xmode), xyViewValue(y, u_ymode));
+  float x = mix(xyViewCoord(u_view.x, u_xmode, u_xconstant), xyViewCoord(u_view.y, u_xmode, u_xconstant), a_corner.x);
+  float y = mix(xyViewCoord(u_view.z, u_ymode, u_yconstant), xyViewCoord(u_view.w, u_ymode, u_yconstant), a_corner.y);
+  v_coord = vec2(x, y);
 }`;
 
+// Density grids are binned uniformly in scale coordinates (§28), so
+// u_gridRange arrives as *scale coordinates* of the grid's raw x/y ranges and
+// the fragment's uv is a straight affine map of v_coord — no inverse needed.
 export const DENSITY_FS = `#version 300 es
 precision highp float;
 uniform sampler2D u_grid; uniform sampler2D u_lut;
-uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
+uniform vec4 u_gridRange; // coord(gx0),coord(gx1),coord(gy0),coord(gy1)
 uniform float u_opacity; uniform vec4 u_color; uniform int u_constantColor;
-in vec2 v_data;
+in vec2 v_coord;
 out vec4 outColor;
 void main() {
-  vec2 uv = vec2((v_data.x - u_gridRange.x) / (u_gridRange.y - u_gridRange.x),
-                 (v_data.y - u_gridRange.z) / (u_gridRange.w - u_gridRange.z));
+  vec2 uv = vec2((v_coord.x - u_gridRange.x) / (u_gridRange.y - u_gridRange.x),
+                 (v_coord.y - u_gridRange.z) / (u_gridRange.w - u_gridRange.z));
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
   float t = texture(u_grid, uv).r;
   if (t <= 0.0) discard;
@@ -407,18 +415,25 @@ void main() {
 
 // Heatmap grid: a regular value matrix as one R8 texture. Byte 0 means missing
 // (transparent); bytes 1..255 map back to normalized values [0,1]. Vertex
-// stage is the shared GRID_VS above.
+// stage is the shared GRID_VS above. Cells are uniform in *data* space, so on
+// a nonlinear axis each fragment inverts its scale coordinate back to a data
+// value before sampling — a per-vertex data value interpolated across the
+// quad would place every internal cell edge on a linear stretch instead.
 export const HEATMAP_FS = `#version 300 es
 precision highp float;
+precision highp int; // u_xmode/u_ymode are shared with the vertex stage, which defaults ints to highp
 uniform sampler2D u_grid; uniform sampler2D u_lut;
-uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
+uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1 (raw data units)
+uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
 uniform float u_opacity;
 uniform int u_truecolor;
-in vec2 v_data;
+in vec2 v_coord;
 out vec4 outColor;
+${AXIS_GLSL}
 void main() {
-  vec2 uv = vec2((v_data.x - u_gridRange.x) / (u_gridRange.y - u_gridRange.x),
-                 (v_data.y - u_gridRange.z) / (u_gridRange.w - u_gridRange.z));
+  vec2 data = vec2(xyViewValue(v_coord.x, u_xmode, u_xconstant), xyViewValue(v_coord.y, u_ymode, u_yconstant));
+  vec2 uv = vec2((data.x - u_gridRange.x) / (u_gridRange.y - u_gridRange.x),
+                 (data.y - u_gridRange.z) / (u_gridRange.w - u_gridRange.z));
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
   vec4 sampled = texture(u_grid, uv);
   if (u_truecolor == 1) {
@@ -441,7 +456,7 @@ uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_wi
 uniform int u_colorMode;
 uniform float u_transitionProgress; uniform int u_transitionActive;
 uniform float u_revealProgress; uniform float u_revealSegments;
-uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
+uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
 in float a_len0; in float a_len1;
 out float v_off; out float v_dash;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
@@ -451,8 +466,8 @@ void main() {
   float py0 = u_transitionActive == 1 ? mix(a_prevy, ay0, u_transitionProgress) : ay0;
   float px1 = u_transitionActive == 1 ? mix(a_prevx1, ax1, u_transitionProgress) : ax1;
   float py1 = u_transitionActive == 1 ? mix(a_prevy1, ay1, u_transitionProgress) : ay1;
-  vec2 p0 = vec2(xyMap(px0, u_xmap, u_xmeta, u_xmode), xyMap(py0, u_ymap, u_ymeta, u_ymode));
-  vec2 p1 = vec2(xyMap(px1, u_xmap, u_xmeta, u_xmode), xyMap(py1, u_ymap, u_ymeta, u_ymode));
+  vec2 p0 = vec2(xyMap(px0, u_xmap, u_xmeta, u_xmode, u_xconstant), xyMap(py0, u_ymap, u_ymeta, u_ymode, u_yconstant));
+  vec2 p1 = vec2(xyMap(px1, u_xmap, u_xmeta, u_xmode, u_xconstant), xyMap(py1, u_ymap, u_ymeta, u_ymode, u_yconstant));
   float reveal = clamp(u_revealProgress * u_revealSegments - float(gl_InstanceID), 0.0, 1.0);
   p1 = mix(p0, p1, reveal);
   vec2 pix0 = (p0 * 0.5 + 0.5) * u_res;
@@ -513,13 +528,13 @@ uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_wi
 uniform float u_animationProgress;
 uniform int u_colorMode;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
-uniform int u_x0mode; uniform int u_x1mode; uniform int u_y0mode; uniform int u_y1mode;
+uniform int u_x0mode; uniform float u_x0constant; uniform int u_x1mode; uniform float u_x1constant; uniform int u_y0mode; uniform float u_y0constant; uniform int u_y1mode; uniform float u_y1constant;
 out float v_off; out float v_cval; out float v_dash; out vec4 v_rgba; out vec4 v_style;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
-  vec2 p0 = vec2(xyMap(ax0, u_xmap, u_x0meta, u_x0mode), xyMap(ay0, u_ymap, u_y0meta, u_y0mode));
-  vec2 p1 = vec2(xyMap(ax1, u_xmap, u_x1meta, u_x1mode), xyMap(ay1, u_ymap, u_y1meta, u_y1mode));
+  vec2 p0 = vec2(xyMap(ax0, u_xmap, u_x0meta, u_x0mode, u_x0constant), xyMap(ay0, u_ymap, u_y0meta, u_y0mode, u_y0constant));
+  vec2 p1 = vec2(xyMap(ax1, u_xmap, u_x1meta, u_x1mode, u_x1constant), xyMap(ay1, u_ymap, u_y1meta, u_y1mode, u_y1constant));
   vec2 center = (p0 + p1) * 0.5;
   p0 = mix(center, p0, u_animationProgress);
   p1 = mix(center, p1, u_animationProgress);
@@ -577,8 +592,8 @@ in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_x2meta;
 uniform vec2 u_y0meta; uniform vec2 u_y1meta; uniform vec2 u_y2meta;
-uniform int u_x0mode; uniform int u_x1mode; uniform int u_x2mode;
-uniform int u_y0mode; uniform int u_y1mode; uniform int u_y2mode;
+uniform int u_x0mode; uniform float u_x0constant; uniform int u_x1mode; uniform float u_x1constant; uniform int u_x2mode; uniform float u_x2constant;
+uniform int u_y0mode; uniform float u_y0constant; uniform int u_y1mode; uniform float u_y1constant; uniform int u_y2mode; uniform float u_y2constant;
 uniform int u_colorMode;
 out float v_cval; out vec3 v_bary; out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke;
 ${AXIS_GLSL}
@@ -590,7 +605,9 @@ void main() {
   vec2 ym = vertex == 0 ? u_y0meta : (vertex == 1 ? u_y1meta : u_y2meta);
   int xmode = vertex == 0 ? u_x0mode : (vertex == 1 ? u_x1mode : u_x2mode);
   int ymode = vertex == 0 ? u_y0mode : (vertex == 1 ? u_y1mode : u_y2mode);
-  gl_Position = vec4(xyMap(x, u_xmap, xm, xmode), xyMap(y, u_ymap, ym, ymode), 0.0, 1.0);
+  float xconstant = vertex == 0 ? u_x0constant : (vertex == 1 ? u_x1constant : u_x2constant);
+  float yconstant = vertex == 0 ? u_y0constant : (vertex == 1 ? u_y1constant : u_y2constant);
+  gl_Position = vec4(xyMap(x, u_xmap, xm, xmode, xconstant), xyMap(y, u_ymap, ym, ymode, yconstant), 0.0, 1.0);
   v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   v_bary = vertex == 0 ? vec3(1.,0.,0.) : (vertex == 1 ? vec3(0.,1.,0.) : vec3(0.,0.,1.));
   v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke;
@@ -658,19 +675,19 @@ export const AREA_VS = `#version 300 es
 in float ax0; in float ax1; in float ay0; in float ay1; in float ab0; in float ab1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_bmap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform vec2 u_bmeta;
-uniform int u_xmode; uniform int u_ymode;
+uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
 uniform float u_revealProgress; uniform float u_revealSegments;
 out float v_top; out float v_base; out float v_pos;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
-  float x0 = xyMap(ax0, u_xmap, u_xmeta, u_xmode);
-  float x1 = xyMap(ax1, u_xmap, u_xmeta, u_xmode);
-  float y0 = xyMap(ay0, u_ymap, u_ymeta, u_ymode);
-  float y1 = xyMap(ay1, u_ymap, u_ymeta, u_ymode);
-  float b0 = xyMap(ab0, u_bmap, u_bmeta, u_ymode);
-  float b1 = xyMap(ab1, u_bmap, u_bmeta, u_ymode);
+  float x0 = xyMap(ax0, u_xmap, u_xmeta, u_xmode, u_xconstant);
+  float x1 = xyMap(ax1, u_xmap, u_xmeta, u_xmode, u_xconstant);
+  float y0 = xyMap(ay0, u_ymap, u_ymeta, u_ymode, u_yconstant);
+  float y1 = xyMap(ay1, u_ymap, u_ymeta, u_ymode, u_yconstant);
+  float b0 = xyMap(ab0, u_bmap, u_bmeta, u_ymode, u_yconstant);
+  float b1 = xyMap(ab1, u_bmap, u_bmeta, u_ymode, u_yconstant);
   float reveal = clamp(u_revealProgress * u_revealSegments - float(gl_InstanceID), 0.0, 1.0);
   x1 = mix(x0, x1, reveal);
   y1 = mix(y0, y1, reveal);
@@ -716,7 +733,7 @@ export const RECT_VS = `#version 300 es
 in float ax0; in float ax1; in float ay0; in float ay1;
 uniform vec2 u_x0map; uniform vec2 u_x1map; uniform vec2 u_y0map; uniform vec2 u_y1map;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
-uniform int u_xmode; uniform int u_ymode;
+uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
 uniform vec4 u_edgePad;
 uniform vec2 u_res;
 in float a_cval; in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke; in vec2 a_radius;
@@ -728,10 +745,10 @@ const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1
 ${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
-  float x0 = xyMap(ax0, u_x0map, u_x0meta, u_xmode) + u_edgePad.x;
-  float x1 = xyMap(ax1, u_x1map, u_x1meta, u_xmode) + u_edgePad.y;
-  float y0 = xyMap(ay0, u_y0map, u_y0meta, u_ymode) + u_edgePad.z;
-  float y1 = xyMap(ay1, u_y1map, u_y1meta, u_ymode) + u_edgePad.w;
+  float x0 = xyMap(ax0, u_x0map, u_x0meta, u_xmode, u_xconstant) + u_edgePad.x;
+  float x1 = xyMap(ax1, u_x1map, u_x1meta, u_xmode, u_xconstant) + u_edgePad.y;
+  float y0 = xyMap(ay0, u_y0map, u_y0meta, u_ymode, u_yconstant) + u_edgePad.z;
+  float y1 = xyMap(ay1, u_y1map, u_y1meta, u_ymode, u_yconstant) + u_edgePad.w;
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   // Pixel-space local frame for the rounded-corner/stroke SDF (v_half is
   // constant across the quad; v_local interpolates to the fragment offset).
@@ -754,7 +771,7 @@ in float a_prevx; in float a_prevy; in float a_prevx1;
 in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke; in vec2 a_radius;
 uniform vec2 u_pmap; uniform vec2 u_v0map; uniform vec2 u_v1map;
 uniform vec2 u_pmeta; uniform vec2 u_v0meta; uniform vec2 u_v1meta;
-uniform int u_pmode; uniform int u_vmode;
+uniform int u_pmode; uniform float u_pconstant; uniform int u_vmode; uniform float u_vconstant;
 uniform float u_width; uniform int u_orientation; uniform int u_v0Mode; uniform float u_v0Const;
 uniform float u_v0EdgePad;
 uniform float u_animationProgress;
@@ -768,19 +785,19 @@ const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1
 ${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
-  float nextP = xyMap(a_pos, u_pmap, u_pmeta, u_pmode);
-  float nextV0 = u_v0Mode == 0 ? u_v0Const : xyMap(a_v0, u_v0map, u_v0meta, u_vmode);
-  float nextV1 = xyMap(a_v1, u_v1map, u_v1meta, u_vmode);
+  float nextP = xyMap(a_pos, u_pmap, u_pmeta, u_pmode, u_pconstant);
+  float nextV0 = u_v0Mode == 0 ? u_v0Const : xyMap(a_v0, u_v0map, u_v0meta, u_vmode, u_vconstant);
+  float nextV1 = xyMap(a_v1, u_v1map, u_v1meta, u_vmode, u_vconstant);
   float p = nextP;
   float v0 = nextV0;
   float v1 = nextV1;
   float width = u_width;
   if (u_transitionActive == 1) {
-    p = mix(xyMap(a_prevx, u_pmap, u_pmeta, u_pmode), nextP, u_transitionProgress);
+    p = mix(xyMap(a_prevx, u_pmap, u_pmeta, u_pmode, u_pconstant), nextP, u_transitionProgress);
     // Previous baselines are encoded in the next value column's coordinate
     // system, which lets constant and per-row baselines share one attribute.
-    v0 = mix(xyMap(a_prevx1, u_v1map, u_v1meta, u_vmode), nextV0, u_transitionProgress);
-    v1 = mix(xyMap(a_prevy, u_v1map, u_v1meta, u_vmode), nextV1, u_transitionProgress);
+    v0 = mix(xyMap(a_prevx1, u_v1map, u_v1meta, u_vmode, u_vconstant), nextV0, u_transitionProgress);
+    v1 = mix(xyMap(a_prevy, u_v1map, u_v1meta, u_vmode, u_vconstant), nextV1, u_transitionProgress);
     width = mix(u_prevWidth, u_width, u_transitionProgress);
   }
   v0 += u_v0EdgePad;

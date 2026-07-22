@@ -337,10 +337,10 @@ Object.assign(ChartView.prototype, {
     }, { passive: false });
 
     this._listen(c, "dblclick", () => {
-      if (this.dragMode === "select-lasso") {
+      if (this.dragMode.startsWith("select")) {
         if (this._stateSelection !== null && this._stateSelection !== undefined) {
           this._clearSelection({
-            source: "lasso_double_click",
+            source: "selection_double_click",
             interactionId: ++this._interactionSeq,
           });
           this.draw();

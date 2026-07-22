@@ -158,6 +158,7 @@ output at 200 ticks.
 | --- | --- |
 | linear | Step is the nice step for `(hi - lo) / target` — the smallest of `1, 2, 2.5, 5, 10` times the decade magnitude that covers the rough step. Ticks start at the first multiple of the step at or above `lo`. |
 | log | Decade ticks from `floor(log10(lo))` to `ceil(log10(hi))`; multipliers `1, 2, 5` when the decade span is small, `1` alone otherwise. Only powers of ten are labeled, thinned so roughly `target` labels remain. Non-positive bounds yield no ticks. |
+| symlog | The linear rule applied in symlog-coordinate space, mapped back to data units (tick values are round in transform space, not in data space); `0` is appended when the range spans it. Charts wanting decade-style labels pin them via `tick_values`/`tick_labels`. |
 | category | Every `ceil(visible / target)`-th category index in view. |
 | time | The smallest step in a fixed ladder from 1 ms through 14 days that covers the rough step. Above 14 days per tick, calendar ticks land on UTC month boundaries with a month step from `1, 2, 3, 6, 12, 24, 60, 120`. |
 
@@ -169,12 +170,18 @@ but they fail differently, and only the numeric grammar falls back.
 - **Numeric axes** accept `.Nf` (fixed decimals), `,.Nf` (fixed decimals with
   locale group separators, via the runtime's default locale), and either form
   with a trailing `%`, which multiplies the value by 100 and appends the sign —
-  for example `.2f`, `,.0f`, `.1%`. The trailing `f` is optional. Any other
-  string **falls back**: `fmtNumberSpec` returns `null`
-  (`js/src/30_ticks.ts:168`) and `fmtAxis` takes its `|| fmtLinear(...)` branch
-  (`:209`), so the axis silently reverts to the automatic formatter. On a log
-  axis, a value in `(0, 1)` that the spec would render as `"0"` falls back the
-  same way.
+  for example `.2f`, `,.0f`, `.1%`. The trailing `f` is optional. A literal
+  **prefix and/or suffix** may surround the core when the core names `f` or
+  `%` explicitly — `"$,.0f"` → `$14,741`, `"$,.0fK"` → `$14,741K` — copied
+  through verbatim (the sign stays with the number: `$-14,741`); affixes may
+  not contain `,`, `.`, or `%`, and the bare `.N` core accepts none, so the
+  historical grammar parses identically. Any other string **falls back**:
+  `fmtNumberSpec` returns `null` and `fmtAxis` takes its `|| fmtLinear(...)`
+  branch (`js/src/30_ticks.ts`), so the axis silently reverts to the automatic
+  formatter. On a log axis, a value in `(0, 1)` that the spec would render as
+  `"0"` falls back the same way. The same grammar formats tooltip fields
+  (`xy.tooltip(format=...)`, `js/src/52_tooltip.ts`). Static SVG/PNG exports
+  do not yet consult `format` — automatic labels only (known gap).
 - **Time axes** accept a strftime subset of exactly `%Y %m %d %H %M %S %b %B`.
   All fields are **UTC**; `%b`/`%B` are English month names. A time spec
   **never** falls back: `fmtTimeSpec` (`js/src/30_ticks.ts:180-200`)
@@ -276,6 +283,7 @@ Set them on `.xy` or any ancestor:
 | `--chart-tooltip-bg` / `--chart-tooltip-text` | Tooltip | `rgba(20,24,33,.92)` / `#fff` |
 | `--chart-legend-bg` | Legend background | `rgba(128,128,128,.08)` |
 | `--chart-badge-bg` / `--chart-badge-text` | Reduction badges | `rgba(255,255,255,.82)` / `#0f172a` (light; see below) |
+| `--chart-tick-label-max-width` | Maximum browser width of categorical y-axis tick labels | available space between the transformed label and chart edge |
 | `--chart-modebar-bg` / `--chart-modebar-active` | Modebar / active button | `rgba(255,255,255,.78)` / `rgba(128,128,128,.2)` (light; see below) |
 | `--chart-selection` / `--chart-selection-fill` | Box-select rectangle | `rgba(90,140,240,.9)` / `…,.15)` |
 | `--chart-zoom-selection` / `--chart-zoom-selection-fill` | Box-zoom drag rectangle | `rgba(120,120,120,.9)` / `…,.12)` |
@@ -310,8 +318,8 @@ drag and wheel gestures back to the containing page. Zoom and
 selection modes are grouped into menus; completed lasso selections expose up
 to 16 adaptively simplified handles that can be dragged to refine the selected
 range or double-clicked to remove a vertex down to a three-vertex minimum;
-double-clicking the chart in Lasso Select mode clears that selection. The
-export menu defaults to PNG, SVG, and the chart's resident data as
+double-clicking the chart while any selection mode is active clears the active
+selection. The export menu defaults to PNG, SVG, and the chart's resident data as
 CSV. `xy.export_config(formats=[...])` governs which of `png`, `jpeg`, `webp`,
 `svg`, and `csv` appear and in what order; `pdf` and `html` are Python-side
 formats and are skipped in the client menu. An explicit empty list hides the

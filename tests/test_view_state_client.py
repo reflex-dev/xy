@@ -445,6 +445,24 @@ _LASSO_DOUBLE_CLICK_PROBE = """
     view.draw = () => { redraws += 1; };
     view.canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     view.draw = realDraw;
+    const lassoClearEventEmittedOnce = clearEvents === 1;
+    const lassoHistoryRecordedOnce = view._historyPast.length === historyBeforeClear + 1;
+
+    const doubleClickClearsRangeMode = (mode, d0, d1) => {
+      view._sendSelect(d0, d1, { history: false });
+      view._setDragMode(mode);
+      const historyBefore = view._historyPast.length;
+      const clearEventsBefore = clearEvents;
+      view.canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      return view.root.xy.state().selection === null
+        && view._historyPast.length === historyBefore + 1
+        && clearEvents === clearEventsBefore + 1;
+    };
+    const boxModeCleared = doubleClickClearsRangeMode("select", [0, 0], [2, 4]);
+    const xRangeModeCleared = doubleClickClearsRangeMode(
+      "select-x", [0, view.view.y0], [2, view.view.y1]);
+    const yRangeModeCleared = doubleClickClearsRangeMode(
+      "select-y", [view.view.x0, 0], [view.view.x1, 4]);
 
     document.body.setAttribute("data-xy-lasso-dblclick-probe", JSON.stringify({
       panPreservedSelection,
@@ -460,9 +478,12 @@ _LASSO_DOUBLE_CLICK_PROBE = """
       masksCleared: view.gpuTraces.every((trace) =>
         !trace.selActive && (!trace.drill || !trace.drill.selActive)),
       brushCleared: view._lastBrush === null,
-      clearEventEmittedOnce: clearEvents === 1,
-      historyRecordedOnce: view._historyPast.length === historyBeforeClear + 1,
+      clearEventEmittedOnce: lassoClearEventEmittedOnce,
+      historyRecordedOnce: lassoHistoryRecordedOnce,
       redrawnOnce: redraws === 1,
+      boxModeCleared,
+      xRangeModeCleared,
+      yRangeModeCleared,
     }));
   } catch (err) {
     document.body.setAttribute(
@@ -471,7 +492,7 @@ _LASSO_DOUBLE_CLICK_PROBE = """
 """
 
 
-def test_lasso_mode_double_click_clears_selection(tmp_path: Path) -> None:
+def test_selection_modes_double_click_clear_selection(tmp_path: Path) -> None:
     result = _run(
         tmp_path,
         _chart_html().replace(_RENDER_CALL, _LASSO_DOUBLE_CLICK_PROBE),

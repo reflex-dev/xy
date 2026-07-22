@@ -10,9 +10,20 @@ from __future__ import annotations
 
 import numbers
 import re
-from typing import Optional
+from collections.abc import Iterable, Sequence
+from typing import Any, Optional, TypeGuard, cast
 
 import numpy as np
+
+
+def scalar_float(value: Any) -> float:
+    """``float()`` behind an ``Any`` boundary.
+
+    ``np.isscalar`` narrows to a union that includes ``complex``, which
+    ``float()`` rejects at runtime anyway — keep that runtime behavior
+    without every call site repeating a cast."""
+    return float(value)
+
 
 # matplotlib's default prop cycle (tab10) — series with no explicit color
 # take these in order, so shim output reads like matplotlib.
@@ -268,7 +279,7 @@ def _rgba_floats(value: object) -> tuple[float, float, float, float]:
     return result
 
 
-def _is_color_alpha_pair(value: object) -> bool:
+def _is_color_alpha_pair(value: object) -> TypeGuard[Sequence[Any]]:
     """(color, alpha) where color is a str or RGB(A) sequence — never a bare 2-tuple."""
     if not (isinstance(value, (tuple, list)) and len(value) == 2):
         return False
@@ -323,7 +334,7 @@ def resolve_rgba(value: object) -> tuple[float, float, float, float]:
     alpha: Optional[float] = None
     color = value
     if _is_color_alpha_pair(value):
-        color, raw_alpha = value  # type: ignore[misc]
+        color, raw_alpha = value
         alpha = None if raw_alpha is None else float(raw_alpha)
     css = resolve_color(color)
     if css is None:
@@ -333,9 +344,8 @@ def resolve_rgba(value: object) -> tuple[float, float, float, float]:
     status, parsed = kernels.css_check(kernels.CSS_COLOR, css)
     if status <= 0 or parsed is None:
         raise ValueError(f"color {value!r} cannot be resolved to static RGBA")
-    rgba = tuple(float(channel) for channel in parsed)
-    if alpha is not None:
-        rgba = (rgba[0], rgba[1], rgba[2], alpha)
+    red, green, blue, parsed_alpha = (float(channel) for channel in parsed)
+    rgba = (red, green, blue, parsed_alpha if alpha is None else alpha)
     if not all(np.isfinite(rgba)) or any(channel < 0.0 or channel > 1.0 for channel in rgba):
         raise ValueError(f"RGBA channels must be finite and between 0 and 1, got {value!r}")
     return rgba
@@ -368,7 +378,7 @@ def resolve_rgba_array(values: object, n: int, label: str) -> np.ndarray:
         )
     ):
         return np.tile(np.asarray(resolve_rgba(values), dtype=np.float64), (n, 1))
-    sequence = list(values)  # type: ignore[arg-type]
+    sequence = list(cast("Iterable[Any]", values))
     if len(sequence) != n:
         raise ValueError(f"{label} sequence must have length {n}, got {len(sequence)}")
     return np.asarray([resolve_rgba(item) for item in sequence], dtype=np.float64)

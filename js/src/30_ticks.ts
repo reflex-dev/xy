@@ -160,21 +160,29 @@ export function fmtCategory(v, categories) {
   return i >= 0 && i < categories.length ? String(categories[i]) : "";
 }
 
+// Numeric format grammar (spec/api/styling.md): `<prefix>(,).N[f|%]<suffix>`.
+// The core is the original small subset — `.Nf` fixed decimals, `,` for
+// locale group separators, `%` to scale by 100 and append the sign. Prefix
+// and suffix are literal text copied through verbatim ("$,.0f" → "$14,741",
+// "$,.0fK" → "$14,741K"); they may not contain `,`, `.`, or `%`, and the
+// bare `.N` core (no `f`/`%`) accepts no affixes so the historical grammar
+// parses identically. Anything else returns null and the caller falls back.
 export function fmtNumberSpec(v, format) {
   if (typeof format !== "string" || !Number.isFinite(Number(v))) return null;
-  const percent = format.endsWith("%");
-  const raw = percent ? format.slice(0, -1) : format;
-  const match = raw.match(/^(,)?\.([0-9]+)f?$/);
+  const match = format.match(/^([^,.%]*)(,)?\.([0-9]+)(f?)(%?)([^,.%]*)$/);
   if (!match) return null;
-  const digits = Number(match[2]);
+  const [, prefix, group, digitsText, f, pct, suffix] = match;
+  if (!f && !pct && (prefix || suffix)) return null;
+  const digits = Number(digitsText);
+  const percent = pct === "%";
   const value = percent ? Number(v) * 100 : Number(v);
-  const text = match[1]
+  const text = group
     ? value.toLocaleString(undefined, {
       minimumFractionDigits: digits,
       maximumFractionDigits: digits,
     })
     : value.toFixed(digits);
-  return percent ? `${text}%` : text;
+  return `${prefix}${text}${percent ? "%" : ""}${suffix}`;
 }
 
 function fmtTimeSpec(ms, format) {

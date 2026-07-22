@@ -151,8 +151,8 @@ totality contract). This section records only what is specific to this host.
 
 **`view_change` does not reach the kernel here.** The wrapper intercepts the
 outgoing message and invokes the Reflex `on_view_change` prop directly
-(`python/reflex-xy/reflex_xy/assets/XYChart.jsx:164-169`), because the
-namespace registers no Python-side view callback (§5). Every other request
+(`dispatchView` in `python/reflex-xy/reflex_xy/assets/XYChart.jsx`), because
+the namespace registers no Python-side view callback (§5). Every other request
 type crosses the socket unchanged and is dispatched by the shared
 `handle_message`.
 
@@ -283,6 +283,29 @@ mirroring `rx.asset`'s backend-only guard) and makes the browser cache
 correct for free. What this tier gives up, deliberately: kernel round-trips
 (deep drilldown past the shipped tiers, exact server picks, streaming) and
 semantic events.
+
+`xy.facet_chart(...)` follows the same static tier, but preserves the core
+facet contract: because a `FacetGrid` is a composition of independent Figures
+rather than one Figure with a combined wire payload, the adapter emits a
+responsive CSS grid containing one content-addressed static `XYChart` per
+panel. The grid title, column count, gap, and panel height come from the core
+`FacetGrid`; container props stay on the grid while semantic event handlers
+are forwarded to each panel (with the static tier's event limitations
+unchanged). Facet labels need no extra markup: `facet_chart` builds each
+panel figure with its facet label as the figure title, so the label ships
+inside the panel's payload and the render client draws it as the panel
+heading — the same contract `FacetGrid.to_html` relies on.
+
+Design note: the considered alternative was a composite facet spec rendered
+by the client (one component instance laying out child payloads, as
+Vega-Lite's facet operator does). Per-panel composition was chosen because it
+matches every core composer (`to_html`, `widget()`, PNG export), keeps
+payload assets content-addressed per panel (one changed facet invalidates
+one file), and needs no new spec kind. Revisit the composite-spec approach
+only if facets grow cross-panel chrome (shared legends, row/column label
+strips) that a host-level CSS grid cannot express. Panel count is bounded in
+practice by the render client's shared WebGL context budget, which the
+per-panel path inherits unchanged.
 
 **`inline()` — fixed data that still wants the kernel.**
 `token = reflex_xy.inline(chart)` at **module scope** registers the figure
@@ -497,8 +520,12 @@ def shared(self, event: dict):
 ```
 
 View events are `{version, type: "view_change", token, x_domain, y_domain,
-source, phase: "final"}`. User changes are trailing-edge debounced for 200 ms;
-linked and republish sources are suppressed. Hover events are latest-wins and
+source, phase: "update" | "final"}`. User changes are throttled to one
+dispatch per 120 ms with a leading edge and a latest-wins trailing flush:
+`update`-phase events stream while the gesture is in progress (this is what
+lets an `on_view_change`-computed detail chart track a pan/zoom live), and the
+resting viewport always lands as the last event with `phase: "final"`. Linked
+and republish sources are suppressed. Hover events are latest-wins and
 throttled to one dispatch per 120 ms. For viewport synchronization:
 
 ```python
