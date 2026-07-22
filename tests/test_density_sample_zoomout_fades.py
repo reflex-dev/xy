@@ -135,12 +135,47 @@ _PROBE = """
     const backIn = sampleDrawn();
     const backInBadge = badgeShowsSample();
 
+    // Sticky selection: a near-equal window (5% wider, as successive
+    // locally-served replies produce at a settled zoom) carrying its own
+    // subset must NOT steal the frame from the overlay already on screen —
+    // that flip re-rolled the drawn dots reply after reply ("jumping
+    // around" at a settled zoom). A genuinely finer window still wins.
+    const w2x0 = cx - sx * 0.0525, w2x1 = cx + sx * 0.0525;
+    const w2y0 = cy - sy * 0.0525, w2y1 = cy + sy * 0.0525;
+    const N2 = 400;
+    const xs2 = new Float32Array(N2), ys2 = new Float32Array(N2);
+    for (let i = 0; i < N2; i++) {
+      xs2[i] = w2x0 + (w2x1 - w2x0) * ((i * 0.6180339887) % 1);
+      ys2[i] = w2y0 + (w2y1 - w2y0) * ((i * 0.3141592653) % 1);
+    }
+    view._onKernelMsg({
+      type: "density_update", seq: view.seq, trace: g.trace.id,
+      traces: [{
+        id: g.trace.id, mode: "density", visible: 90000,
+        density: {
+          buf: 0, w: gw, h: gh, max: 3,
+          x_range: [w2x0, w2x1], y_range: [w2y0, w2y1],
+          sample: {
+            n: 90000, visible: 90000,
+            x: { buf: 1, offset: 0, scale: 1, len: N2 },
+            y: { buf: 2, offset: 0, scale: 1, len: N2 },
+            x_range: [w2x0, w2x1], y_range: [w2y0, w2y1],
+          },
+        },
+      }],
+    }, [grid.buffer, xs2.buffer, ys2.buffer]);
+    // Simulate W2's overlay being the one on screen; W (5% smaller) is the
+    // strictly-smallest containing window — without stickiness it would win
+    // and swap the dots.
+    g._shownSampleOverlay = g.density.overlay;
+    const stickyKept = sampleDrawn();
+
     document.body.setAttribute("data-xy-sample-probe", JSON.stringify({
       hasHomeOverlay: !!(g.density && g.densityCache && g.densityCache.some((d) => d && d.overlay)),
       windowN: N,
       atWindow, atWindowBadge, homeTakeover, homeTakeoverBadge,
       fallback, farOut, farOutBadge, zoomedIn, zoomedInBadge,
-      backIn, backInBadge,
+      backIn, backInBadge, stickyKept,
     }));
   } catch (err) {
     document.body.setAttribute(
@@ -215,3 +250,8 @@ def test_drawn_sample_tracks_the_displayed_window(tmp_path: Path) -> None:
     assert result["backIn"]["n"] == n_w
     assert result["backIn"]["alpha"] == 1
     assert result["backInBadge"] is True
+    # Sticky selection: with W2's near-equal overlay on screen, the strictly
+    # smaller W must not steal the frame — the drawn set stays W2's (n=400),
+    # so settled zooms don't re-roll the dots on every reply.
+    assert result["stickyKept"] is not None
+    assert result["stickyKept"]["n"] == 400

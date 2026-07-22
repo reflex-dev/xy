@@ -235,6 +235,16 @@ function lodSampleZoomInAlpha(view, o) {
   );
 }
 
+// A marks-owned frame (drill inside/held) draws no sample overlay; the
+// "sampled n of N" badge must not keep advertising one. The shown pointer is
+// retained for sticky selection continuity across a drill dip.
+function lodSampleNotDrawn(view, g) {
+  if (!g._sampleFadedOut) {
+    g._sampleFadedOut = true;
+    view._refreshReductionBadges();
+  }
+}
+
 // §28 hybrid overlay, window pairing (T9): every sample rides the density
 // window it was computed for, so the points on screen always describe the
 // window being displayed. Selection mirrors lodDensityForView: the smallest
@@ -247,7 +257,7 @@ function lodSampleZoomInAlpha(view, o) {
 export function lodSampleForView(view, g) {
   const cache = g.densityCache || (g.density ? [g.density] : []);
   let contained = null;
-  let containedAlpha = 0;
+  let shownContained = false;
   let fallback = null;
   let fallbackAlpha = 0;
   const seen = new Set();
@@ -256,19 +266,31 @@ export function lodSampleForView(view, g) {
     if (!o || !o.n || !o.win || seen.has(o)) continue;
     seen.add(o);
     if (view._viewInside(o.win)) {
-      if (!contained || lodWindowArea(o.win) < lodWindowArea(contained.win)) {
-        contained = o;
-        containedAlpha = lodSampleZoomInAlpha(view, o);
-      }
+      if (o === g._shownSampleOverlay) shownContained = true;
+      if (!contained || lodWindowArea(o.win) < lodWindowArea(contained.win)) contained = o;
     } else if (view._viewOverlaps(o.win)) {
       const a = lodSampleViewAlpha(view, o);
       if (a > fallbackAlpha) { fallback = o; fallbackAlpha = a; }
     }
   }
-  if (contained && containedAlpha > 0) return { overlay: contained, alpha: containedAlpha };
-  if (!contained && fallback && fallbackAlpha > 0) {
-    return { overlay: fallback, alpha: fallbackAlpha };
+  // Sticky selection: successive locally-served replies at ~the same zoom
+  // produce near-equal cached windows, each carrying its own subset. Letting
+  // every new smallest-window win flipped the drawn point set reply after
+  // reply — dots visibly "jumping around" at a settled zoom. Keep the overlay
+  // already on screen while it still covers the view and is within the drill
+  // hysteresis factor of the best candidate's area; a genuinely finer window
+  // (a real zoom-in) still takes over.
+  const shown = g._shownSampleOverlay;
+  if (contained && shownContained && shown && shown !== contained &&
+      lodWindowArea(shown.win) <= lodWindowArea(contained.win) * 1.15) {
+    contained = shown;
   }
+  if (contained) {
+    const alpha = lodSampleZoomInAlpha(view, contained);
+    if (alpha > 0) return { overlay: contained, alpha };
+    return null;
+  }
+  if (fallback && fallbackAlpha > 0) return { overlay: fallback, alpha: fallbackAlpha };
   return null;
 }
 
@@ -475,30 +497,24 @@ export function lodApplyDrill(view, g, upd, buffers) {
     gl.bufferData(gl.ARRAY_BUFFER, values, gl.STATIC_DRAW);
   }
   view._pointMarkStyle(d, d.trace);
-  // Color-continuous handoff (§5): per-point local log-density + a blend
-  // weight. Fresh at the boundary (blend≈1) the marks wear the aggregate's
-  // colormap, so the texture->marks swap doesn't recolor the chart; deeper
-  // zooms ship smaller blends and the native colors ease in.
+  // Marks render NATIVE, always (T3, anchored-normalization world): the
+  // frame preceding a drill is native-colored sample dots over a dim
+  // anchored texture, so the visual continuity anchor is the dots — and at
+  // every reachable drill boundary (visible ≤ budget) the anchored texture
+  // is dim, so native marks cannot recolor-jump against it. Rendering the
+  // kernel's aggregate-blend weight instead painted a budget-scale drill
+  // (150k sized marks) as a green log-density mottle — "no discernible
+  // points", worse than the texture it replaced. The density_val buffer
+  // stays uploaded (wire unchanged; picks/tooling may read it) but the
+  // blend weight is not worn.
   if (upd.density_val && upd.density_val.buf !== undefined) {
     if (!d.dBuf) d.dBuf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, d.dBuf);
     gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.density_val.buf]), gl.STATIC_DRAW);
     d.dlut = view._lut(upd.density_colormap || "viridis");
-    const first = d.lodBlend === undefined;
-    d.lodBlend = Math.min(1, upd.lod_blend ?? 0);
-    // The kernel's blend weight assumes level-by-level zooms; a fast zoom
-    // skips levels and the first marks land with a mostly-native weight —
-    // a visible recolor at the texture→marks swap. The BOUNDARY is the
-    // transition itself: fresh marks appear wearing the aggregate's colormap
-    // (blend 1) and the tween eases them to the kernel's weight, so the swap
-    // never recolors regardless of how many levels the zoom skipped (§5).
-    d._lodBlendNative = d.lodBlend;
-    if (fresh) d.lodBlendShown = 1;
-    else if (first) d.lodBlendShown = d.lodBlend; // no tween-from-zero on refresh
-  } else {
-    d.lodBlend = 0;
-    d._lodBlendNative = 0;
   }
+  d.lodBlend = 0;
+  d.lodBlendShown = 0;
   // The entry fade runs ONLY on the aggregate→marks transition. Restarting it
   // on every refresh made the marks blink to ~0 alpha after each kernel
   // reply — a steady flash while zooming within a drilled view.
@@ -636,11 +652,6 @@ function lodDrillShownAlpha(view, g) {
 
 // Switch to the entry (fade-in) clock, seeded so it starts at the shown alpha.
 function lodEnterDrillContinuous(view, g) {
-  // A revived/held drill eases back to its native colors (the exit ramp
-  // below may have retargeted the blend at the aggregate's colormap).
-  if (g.drill && g.drill.dBuf && g.drill._lodBlendNative !== undefined) {
-    g.drill.lodBlend = g.drill._lodBlendNative;
-  }
   const alpha = lodDrillShownAlpha(view, g);
   g._drillShownAlpha = alpha;
   g._drillExitFadeStart = null;
@@ -648,13 +659,11 @@ function lodEnterDrillContinuous(view, g) {
     alpha >= 1 ? null : view._now() - LOD_ENTRY_FADE_MS * lodFadeInvert(alpha);
 }
 
-// Switch to the exit (fade-out) clock, seeded the same way.
+// Switch to the exit (fade-out) clock, seeded the same way. Marks keep their
+// native colors through the exit (T3): the alpha crossfade against the
+// incoming texture is the whole transition — recoloring mid-fade is extra
+// motion, and under T4 anchoring the texture at any drill boundary is dim.
 function lodBeginDrillExitContinuous(view, g) {
-  // Exit recolor (§5): dying/exiting marks converge to the aggregate's
-  // colormap as they fade, so they melt INTO the texture instead of a
-  // differently-colored cluster blinking out over it. The blend tween
-  // (τ=90ms) does the easing; revives restore the native weight.
-  if (g.drill && g.drill.dBuf) g.drill.lodBlend = 1;
   if (g._drillExitFadeStart != null) return; // already exiting — keep its clock
   const alpha = lodDrillShownAlpha(view, g);
   g._drillShownAlpha = alpha;
@@ -779,6 +788,7 @@ export function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
     g._drillWasInside = true;
     g._drillEverInside = true; // arms geometry-only retirement (T11)
     g._drillExitFadeStart = null;
+    lodSampleNotDrawn(view, g); // marks own the frame; badge follows the draw
     const fade = lodFade(view, g._drillFadeStart);
     g._drillShownAlpha = fade;
     // The aggregate draws only while it still describes something the marks
@@ -806,6 +816,7 @@ export function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
       // Held marks continue their own entry fade over the backdrop — a hold
       // engaging mid-fade must not snap.
       lodEnterDrillContinuous(view, g);
+      lodSampleNotDrawn(view, g);
       const fade = lodFade(view, g._drillFadeStart);
       g._drillShownAlpha = fade;
       lodDrawDensityWithFade(view, g, density);

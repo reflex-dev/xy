@@ -18,9 +18,11 @@ The fixes, each asserted here against the real client in headless Chromium:
   a background pop), but a SETTLED drill renders every point in its window,
   so the texture leaves the frame — its colors belong to a coarser window's
   normalization and say nothing over exact marks.
-- Fresh marks enter wearing the aggregate's colormap (`lodBlendShown` seeds
-  at 1) and dying/exiting marks re-target blend 1, so both directions of the
-  texture↔marks swap are color-continuous regardless of skipped levels.
+- Marks render native, always (T3 in the anchored world): the continuity
+  anchor across the swap is the native-colored sample dots, and the anchored
+  texture is dim at every reachable drill boundary — wearing the kernel's
+  aggregate-blend weight painted a budget-scale drill as a green log-density
+  mottle ("no discernible points"). density_val still ships; it isn't worn.
 - T4 absolute normalization: grids tone-map against the home anchor, so a
   cell's color means the same points-per-cell at every zoom/pan.
 - A points reply whose window the view has grown far past still applies (the
@@ -75,7 +77,7 @@ _PROBE = """
         y: { buf: 1, offset: 0, scale: 1, len: N },
         x_range: [wx0, wx1], y_range: [wy0, wy1],
         density_val: { buf: 2 },
-        lod_blend: 0.05,  // a deep, mostly-native weight — the fast-zoom case
+        lod_blend: 0.76,  // a budget-scale aggregate weight the client must NOT wear
         density_colormap: "viridis",
       }],
     });
@@ -85,6 +87,7 @@ _PROBE = """
     view._onKernelMsg(pointsReply(view.seq, 1), [xs.buffer, ys.buffer, dv.buffer]);
     const enterBlendShown = g.drill ? g.drill.lodBlendShown : null;
     const enterBlendTarget = g.drill ? g.drill.lodBlend : null;
+    const enterHasDval = !!(g.drill && g.drill.dBuf);
 
     const frameLayers = () => {
       let density = 0, marks = 0;
@@ -161,7 +164,7 @@ _PROBE = """
     const geometryRetired = !g.drill;
 
     document.body.setAttribute("data-xy-transition-probe", JSON.stringify({
-      enterBlendShown, enterBlendTarget, enteringLayers,
+      enterBlendShown, enterBlendTarget, enterHasDval, enteringLayers,
       settledInside, exitBlendTarget, exitLayers, normAnchored,
       departedApplied, departedLayers, departedStillAllocated,
       insideLayers, geometryRetired,
@@ -206,10 +209,14 @@ def test_drill_transitions_are_continuous(tmp_path: Path) -> None:
         label="drill transition continuity probe",
     )
 
-    # Fresh marks enter wearing the aggregate's colormap (shown blend seeds at
-    # 1) and ease toward the kernel's native weight.
-    assert result["enterBlendShown"] == 1
-    assert result["enterBlendTarget"] == pytest.approx(0.05)
+    # Marks render NATIVE, always (T3 in the anchored world): the kernel's
+    # aggregate-blend weight (0.76 here — a budget-scale drill) is not worn —
+    # rendering it painted 150k sized marks as a green log-density mottle
+    # ("no discernible points"). The density_val buffer is still uploaded
+    # (wire unchanged), but both the target and shown weights stay 0.
+    assert result["enterBlendShown"] == 0
+    assert result["enterBlendTarget"] == 0
+    assert result["enterHasDval"] is True
     # T10: the tier swap is a crossfade — mid entry the aggregate is still
     # under the incoming marks…
     assert result["enteringLayers"]["density"] >= 1
@@ -218,8 +225,10 @@ def test_drill_transitions_are_continuous(tmp_path: Path) -> None:
     # leaves the frame (density only shows while unrendered points exist).
     assert result["settledInside"]["density"] == 0
     assert result["settledInside"]["marks"] >= 1
-    # Dying marks re-target the aggregate's colormap for the exit.
-    assert result["exitBlendTarget"] == 1
+    # Dying marks keep their native colors through the exit — the alpha
+    # crossfade against the incoming (dim, anchored) texture is the whole
+    # transition.
+    assert result["exitBlendTarget"] == 0
     # And the exit frame is texture + fading marks, not a hard cut.
     assert result["exitLayers"]["density"] >= 1
     assert result["exitLayers"]["marks"] >= 1

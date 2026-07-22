@@ -542,13 +542,13 @@ try{{
       [xs3.buffer,ys3.buffer,cs3.buffer,ds3.buffer]);
     const drilled=(gd.drill && gd.drill.n===n3 && gd.drill.colorMode===1
       && v._viewInside(gd.drill.win)===true)?1:0;
-    // Color-continuous handoff: the drill carries local density + blend
-    // weight. Fresh marks ARRIVE wearing the aggregate's colormap (shown
-    // blend seeds at 1 — the texture->marks swap must not recolor even when
-    // a fast zoom skipped levels) and ease toward the kernel's native weight.
+    // Marks render NATIVE, always (T3, anchored world): the kernel's blend
+    // weight ships (density_val buffer + LUT retained) but is never worn —
+    // wearing it painted budget-scale drills as a log-density mottle. Both
+    // the target and shown weights must be forced to 0 on apply.
     const dblend=(gd.drill && gd.drill.dBuf && gd.drill.dlut
-      && Math.abs(gd.drill.lodBlend-0.85)<1e-6
-      && gd.drill.lodBlendShown===1)?1:0;
+      && gd.drill.lodBlend===0
+      && gd.drill.lodBlendShown===0)?1:0;
     // Staff-review invariants: subset version stored, stale hover cache
     // invalidated, stale selection masks dropped (wrong index space), and
     // palette LUTs cached (categorical drills leaked a texture per update).

@@ -514,21 +514,25 @@ const presample = {{
 }};
 
 // In-window presample selection: linear scan (~100k rows, well under a ms),
-// then a deterministic stride down to the ship cap (§28 anti-shimmer: the
-// same window always ships the same points).
+// capped at the FIRST ship-cap hits in row order. Row index is a stable
+// per-point priority (rows are a fixed stride over a shuffled source), so
+// this is the §28 anti-shimmer rule: near-equal windows share their prefix
+// (successive replies at a settled zoom don't reshuffle the dots — a
+// stride-thinned selection did, because the stride changed with every hit
+// count), and zooming in only ADDS points (subset-monotone: a shrinking
+// window keeps every previously shown in-window point).
 function presampleWindow(loX, hiX, loY, hiY) {{
   const n = Math.min(PRESAMPLE_META.n, presample.x.length, presample.y.length);
   const hits = [];
-  for (let i = 0; i < n; i++) {{
+  for (let i = 0; i < n && hits.length < PRESAMPLE_SHIP_CAP; i++) {{
     const x = presample.x[i], y = presample.y[i];
     if (x >= loX && x <= hiX && y >= loY && y <= hiY) hits.push(i);
   }}
-  const step = Math.max(1, Math.ceil(hits.length / PRESAMPLE_SHIP_CAP));
-  const count = Math.ceil(hits.length / step);
+  const count = hits.length;
   const xs = new Float32Array(count), ys = new Float32Array(count);
   const cs = new Float32Array(count), ss = new Float32Array(count);
-  for (let o = 0, i = 0; i < hits.length; i += step, o++) {{
-    const src = hits[i];
+  for (let o = 0; o < count; o++) {{
+    const src = hits[o];
     xs[o] = presample.x[src];
     ys[o] = presample.y[src];
     cs[o] = presample.color[src];

@@ -114,10 +114,12 @@ lying is the hard part (§5-F5). Rules, per channel mode:
 4. **Size channel → drop at Tier 2, always say so.** Size has no honest
    per-cell aggregate that isn't just another continuous channel; we already
    ship `channels_dropped: true`. Keep that; render the legend badge from it.
-5. **The drill handoff already solves re-entry:** freshly drilled points wear
-   the density ramp by local log-density (`lod_blend`), easing to native
-   channels as the window shrinks — the same rules make the *outbound*
-   transition honest because both endpoints display the same statistics.
+5. **The drill handoff is anchored on the native encoding (see T3):** the
+   frame preceding a drill shows native-colored sample dots over a dim
+   anchored texture, so freshly drilled points simply keep the native
+   channels — both endpoints of the swap display the same encoding. The
+   `density_val`/`lod_blend` wire fields remain shipped for tooling; the
+   client does not wear the blend weight.
 
 **Invariant L4 (badge):** any active reduction that drops or transforms a
 channel renders a visible "aggregated: mean/majority/…" badge sourced from
@@ -225,17 +227,20 @@ invariants so future kinds don't regress them:
 - **T2 — never hard-cut:** representation changes crossfade (entry fade on
   the aggregate→marks transition only — restarting per refresh reads as
   flashing; exit fade with the "dying" state so buffers outlive the fade).
-- **T3 — color-continuous:** the two sides of a transition display the same
-  statistic at the boundary (lod_blend density-ramp handoff). The kernel's
-  blend weight (`visible/budget`) is only ≈1 when the swap happens at the
-  budget boundary — a fast zoom skips levels and lands marks with a
-  mostly-native weight, a visible recolor at the swap (live-drilldown field
-  capture). The BOUNDARY is therefore the transition itself, client-side:
-  fresh marks arrive with the shown blend seeded at 1 (wearing the
-  aggregate's colormap) and ease to the kernel's native weight, and
-  dying/exiting marks re-target blend 1 so they melt into the texture as
-  they fade (`lodApplyDrill`, `lodBeginDrillExitContinuous`; revives restore
-  the native weight via `lodEnterDrillContinuous`).
+- **T3 — color-continuous, anchored on the native encoding:** marks render
+  their NATIVE channels at all times. Under T4's absolute normalization the
+  texture at every reachable drill boundary (visible ≤ budget) is dim, and
+  under T9's window pairing the frame preceding a drill is native-colored
+  sample dots — so the visual continuity anchor across the texture↔marks
+  swap is the dots, and native marks cannot recolor-jump against either
+  partner. The earlier density-ramp handoff (`lod_blend`: marks wear the
+  aggregate's colormap near the boundary) was designed for the
+  per-window-renormalized world where a bright texture dominated the
+  pre-swap frame; worn today it painted a budget-scale drill (150k sized
+  marks) as a green log-density mottle — "no discernible points". The
+  `density_val`/`lod_blend` wire fields still ship (kernel unchanged;
+  picks/tooling may read them) but the client forces the worn weight to 0
+  (`lodApplyDrill`).
 - **T4 — normalization is absolute, and changes are eased, never stepped:**
   every kernel-served grid tone-maps against the HOME grid's max (the anchor
   `_densityNormAnchor`, set at build), not its own window max. Per-window
@@ -310,11 +315,18 @@ invariants so future kinds don't regress them:
   ≥ `LOD_SAMPLE_EXPECT_FULL` (200), gone at ≤ `LOD_SAMPLE_EXPECT_NONE` (20),
   log-eased (`lodSampleZoomInAlpha`); at or above its own window it is
   always full, so a small-n exact sample is not penalized for being small.
-  Selection and alpha are pure functions of (view, cache): every zoom frame
-  re-derives them, nothing latches. Overlays die with their evicted cache
-  entry (except the home/init overlay, the standalone re-bin worker's
-  CPU-side source), and the "sampled n of N" badge reports the overlay
-  actually drawn.
+  Selection is sticky across near-equal windows: successive replies at a
+  settled zoom produce cached windows within a few percent of each other,
+  each carrying its own subset, and letting every new smallest-window win
+  re-rolled the drawn dots reply after reply ("jumping around" at a settled
+  zoom). The overlay already on screen keeps the frame while it still covers
+  the view and is within the drill hysteresis factor (×1.15 area) of the
+  best candidate; a genuinely finer window still takes over. Otherwise
+  selection and alpha are pure functions of (view, cache) — nothing else
+  latches. Overlays die with their evicted cache entry (except the home/init
+  overlay, the standalone re-bin worker's CPU-side source), and the
+  "sampled n of N" badge reports the overlay actually drawn — a marks-owned
+  frame (drill inside/held) clears the badge with the draw.
 - **T10 — the aggregate draws only while it describes unrendered points:**
   the density texture is the representation of rows the frame does NOT
   render as marks. Aggregate and sampled tiers therefore draw it at full
