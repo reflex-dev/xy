@@ -3100,19 +3100,20 @@ export class ChartView {
     return performance.now();
   }
 
-  // Resolve scatter emphasis entirely from resident view state.  Using the
-  // first usable axis matches the zoom indicator and also makes x-only/y-only
-  // zooms predictable. Interpolation is linear in log zoom, not screen space.
+  // Resolve scatter emphasis entirely from resident view state.  The deepest
+  // of the two axis zooms drives emphasis, so x-only and y-only zooms both
+  // activate it. Interpolation is linear in log zoom, not screen space.
   _pointZoomStyle(g) {
     const style = g.trace?.style || {};
     const baseOpacity = this._fillOpacity(style, 0.8);
+    const baseStrokeOpacity = this._strokeOpacity(style, 0.8);
     const targetSizeFactor = Number(style.zoom_size_factor) || 1;
     const targetOpacity = style.zoom_opacity === undefined
       ? baseOpacity
       : Math.max(0, Math.min(1, Number(style.zoom_opacity)));
     const emphasis = Number(style.zoom_emphasis) || 16;
     if ((targetSizeFactor === 1 && targetOpacity === baseOpacity) || emphasis <= 1) {
-      return { sizeFactor: 1, opacity: baseOpacity };
+      return { sizeFactor: 1, opacity: baseOpacity, strokeOpacity: baseStrokeOpacity };
     }
     const axisZoom = (axisId, lo, hi, homeLo, homeHi) => {
       const axis = this._axis(axisId);
@@ -3124,13 +3125,19 @@ export class ChartView {
         ? homeSpan / span
         : null;
     };
-    const zoom = axisZoom("x", this.view.x0, this.view.x1, this.view0.x0, this.view0.x1)
-      ?? axisZoom("y", this.view.y0, this.view.y1, this.view0.y0, this.view0.y1)
-      ?? 1;
+    const zoom = Math.max(
+      axisZoom("x", this.view.x0, this.view.x1, this.view0.x0, this.view0.x1) ?? 1,
+      axisZoom("y", this.view.y0, this.view.y1, this.view0.y0, this.view0.y1) ?? 1
+    );
     const t = Math.max(0, Math.min(1, Math.log(Math.max(1, zoom)) / Math.log(emphasis)));
+    // zoom_opacity is a shared target: strokes interpolate from their own
+    // stroke_opacity base toward it in step with the fill.
+    const targetStrokeOpacity =
+      style.zoom_opacity === undefined ? baseStrokeOpacity : targetOpacity;
     return {
       sizeFactor: 1 + (targetSizeFactor - 1) * t,
       opacity: baseOpacity + (targetOpacity - baseOpacity) * t,
+      strokeOpacity: baseStrokeOpacity + (targetStrokeOpacity - baseStrokeOpacity) * t,
     };
   }
 
@@ -3186,7 +3193,7 @@ export class ChartView {
     gl.uniform1f(u("u_ptStrokeWidth"), (g.pointStrokeWidth || 0) * this.dpr);
     gl.uniform1i(u("u_ptStrokeFace"), g.pointStrokeFace ? 1 : 0);
     gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
-    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style, 0.8) * opacityScale);
+    gl.uniform1f(u("u_strokeOpacity"), zoomStyle.strokeOpacity * opacityScale);
     // Straight alpha: POINT_FS folds u_strokeOpacity and the per-item alpha
     // stack in and premultiplies there (uniform and buffer strokes alike).
     gl.uniform4f(u("u_ptStroke"), sc ? sc[0] : 0, sc ? sc[1] : 0,
@@ -3332,7 +3339,13 @@ export class ChartView {
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
     this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
-    const adjustedSize = (g.size || 4) * this._pointZoomStyle(g).sizeFactor;
+    // Size-channel points hover at their encoded size, not the scalar default
+    // (sample traces keep no CPU copy of the size column; they fall back).
+    const sVal = g.sizeMode === 1 && g._cpu?.size ? g._cpu.size[index] : null;
+    const baseSize = sVal != null && Number.isFinite(sVal)
+      ? g.sizeRange[0] + (g.sizeRange[1] - g.sizeRange[0]) * sVal
+      : (g.size || 4);
+    const adjustedSize = baseSize * this._pointZoomStyle(g).sizeFactor;
     const defaultSize = Math.max(adjustedSize * 1.75, adjustedSize + 5);
     const size = Math.max(0, this._markStateNumber("hover", "size", defaultSize));
     const opacity = Math.max(0, Math.min(1, this._markStateNumber("hover", "opacity", 0.95)));
