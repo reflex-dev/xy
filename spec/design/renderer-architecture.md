@@ -116,12 +116,19 @@ Ordered by how much each compounds as kinds multiply.
   `_initContextLossRecovery` listens for loss, prevents default eviction
   handling, quiesces draw/animation/re-bin work, and increments the request
   sequence so pre-loss kernel/worker replies cannot mutate the rebuilt state.
-  Streaming appends still replace the retained canonical payload while the
+  The loss handler **preserves the settled view** across the cycle (#156): the
+  retained payload rebuilds the same context, so the user's pan/zoom is still
+  valid and a backgrounded tab or scrolled-away chart returns to where the user
+  left it, not home — an in-flight navigation snaps to its resting target
+  first, since a mid-flight interpolation frame is not a view the user settled
+  on. Streaming appends still replace the retained canonical payload while the
   context is down. Restore drops dead handles, re-runs `_initGl` from that
-  payload, and re-fires the view request to re-sync live tiers; a failed
-  restore remains explicitly failed instead of throwing from the event
+  payload, and re-fires the *preserved* view request to re-sync live tiers; a
+  failed restore remains explicitly failed instead of throwing from the event
   handler. The dependency-free smoke forces three `WEBGL_lose_context`
-  cycles, checks pixel-identical frames after each, and zooms after recovery.
+  cycles, checks pixel-identical frames after each, and zooms after recovery;
+  `tests/test_context_loss_preserves_view.py` guards the view-preservation
+  invariant directly.
 - **R5 — Shader source conventions are informal.** ✅ **Done.** `build.mjs`
   lints every shader at build time: `#version 300 es` first line, every FS
   declares `precision highp float;`, every VS references a `u_*map` uniform
