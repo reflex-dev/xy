@@ -73,8 +73,8 @@ REQUIRED_EXCLUDED_LOCKS = [
             "Immutable historical launch-measurement evidence; it is never installed or "
             "executed by a current subsystem."
         ),
-    }
-    ,{
+    },
+    {
         "path": "examples/reflex/.web/bun.lock",
         "owner": "@reflex-dev/xy",
         "reason": "Example fixture lock is not an installed production subsystem.",
@@ -83,7 +83,7 @@ REQUIRED_EXCLUDED_LOCKS = [
         "path": "examples/reflex/reflex.lock/bun.lock",
         "owner": "@reflex-dev/xy",
         "reason": "Example fixture lock is not an installed production subsystem.",
-    }
+    },
 ]
 TRUSTED_SCANNER = {
     "name": "osv-scanner",
