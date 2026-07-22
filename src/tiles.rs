@@ -91,11 +91,13 @@ pub fn build(
 
 /// Build a pyramid that also carries mean-color planes, for channel-bearing
 /// traces whose density surface wears the mean point color (LOD doc §2).
-/// One fused serial scan accumulates counts and alpha-weighted linear-light
-/// color sums together (exact integer sums, so the result is independent of
-/// row order); count levels are identical to `build`'s. The transient base
-/// accumulator is 40 B/cell (~170 MB at the 2048² default) and is released
-/// before the function returns — builds are one-time per trace and lazy.
+/// One fused scan accumulates counts and alpha-weighted linear-light color
+/// sums together (exact integer sums merged order-independently, so the
+/// result is bitwise identical for any fan-out); count levels are identical
+/// to `build`'s. The scan fans out only when rows outnumber base cells
+/// (points-per-cell gate, capped at 4 workers): each worker's accumulator is
+/// 40 B/cell (~170 MB at the 2048² default), released before returning —
+/// builds are one-time per trace and lazy.
 #[allow(clippy::too_many_arguments)]
 pub fn build_color(
     x: &[f64],

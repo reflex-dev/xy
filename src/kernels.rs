@@ -3335,9 +3335,16 @@ impl MeanColorCell {
     }
 }
 
-/// Serial fused count+color accumulation over a full grid — the pyramid
-/// build's base pass (`tiles::build_color`). Returns the raw accumulator
-/// cells so the caller keeps exact counts alongside the color means.
+/// Fused count+color accumulation over a full grid: the shared core of
+/// `bin_2d_mean_color` and the pyramid build's base pass
+/// (`tiles::build_color`). Returns the raw accumulator cells so callers keep
+/// exact counts alongside the color means.
+///
+/// Fan-out is gated by the points-per-cell ratio (like `bin_2d`) and capped
+/// at 4: each worker's private accumulator is ~10× a count grid (40 B/cell),
+/// so the cap bounds the transient to ~4 grids while still cutting the
+/// pyramid's 100M-row base scan to a quarter. Integer sums merge
+/// order-independently — bitwise deterministic for any thread count.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn bin_2d_mean_color_cells(
     x: &[f64],
@@ -3350,8 +3357,43 @@ pub(crate) fn bin_2d_mean_color_cells(
     w: usize,
     h: usize,
 ) -> Vec<MeanColorCell> {
-    let mut grid = vec![MeanColorCell::default(); w * h];
-    bin_2d_mean_color_accumulate(x, y, colors, 0, x0, x1, y0, y1, w, h, &mut grid);
+    let n = x.len();
+    let cells = w * h;
+    let threads = bin_2d_threads(n, cells).min(4);
+    if threads <= 1 || n < threads {
+        let mut grid = vec![MeanColorCell::default(); cells];
+        bin_2d_mean_color_accumulate(x, y, colors, 0, x0, x1, y0, y1, w, h, &mut grid);
+        return grid;
+    }
+    let chunk = n.div_ceil(threads);
+    let grids: Vec<Vec<MeanColorCell>> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..threads)
+            .map(|t| {
+                let lo = (t * chunk).min(n);
+                let hi = ((t + 1) * chunk).min(n);
+                let (xs, ys) = (&x[lo..hi], &y[lo..hi]);
+                s.spawn(move || {
+                    let mut grid = vec![MeanColorCell::default(); cells];
+                    bin_2d_mean_color_accumulate(xs, ys, colors, lo, x0, x1, y0, y1, w, h, &mut grid);
+                    grid
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|hd| hd.join().expect("bin_2d_mean_color worker panicked"))
+            .collect()
+    });
+    let mut grid = vec![MeanColorCell::default(); cells];
+    for part in &grids {
+        for (acc, cell) in grid.iter_mut().zip(part) {
+            acc.count = acc.count.saturating_add(cell.count);
+            acc.alpha += cell.alpha;
+            acc.red += cell.red;
+            acc.green += cell.green;
+            acc.blue += cell.blue;
+        }
+    }
     grid
 }
 
@@ -3388,50 +3430,7 @@ pub fn bin_2d_mean_color(
         }
         BinColorSource::Rgba(rgba) => assert_eq!(rgba.len(), x.len() * 4),
     }
-    let n = x.len();
-    let cells = w * h;
-    // Each worker's accumulator is ~10× a count grid (40 B/cell), so fan out
-    // more conservatively than `bin_2d`: the points-per-cell ratio still
-    // gates, and a hard cap of 4 bounds the transient to ~4 grids.
-    let threads = bin_2d_threads(n, cells).min(4);
-    let grid = if threads <= 1 || n < threads {
-        let mut grid = vec![MeanColorCell::default(); cells];
-        bin_2d_mean_color_accumulate(x, y, colors, 0, x0, x1, y0, y1, w, h, &mut grid);
-        grid
-    } else {
-        let chunk = n.div_ceil(threads);
-        let grids: Vec<Vec<MeanColorCell>> = std::thread::scope(|s| {
-            let handles: Vec<_> = (0..threads)
-                .map(|t| {
-                    let lo = (t * chunk).min(n);
-                    let hi = ((t + 1) * chunk).min(n);
-                    let (xs, ys) = (&x[lo..hi], &y[lo..hi]);
-                    s.spawn(move || {
-                        let mut grid = vec![MeanColorCell::default(); cells];
-                        bin_2d_mean_color_accumulate(
-                            xs, ys, colors, lo, x0, x1, y0, y1, w, h, &mut grid,
-                        );
-                        grid
-                    })
-                })
-                .collect();
-            handles
-                .into_iter()
-                .map(|hd| hd.join().expect("bin_2d_mean_color worker panicked"))
-                .collect()
-        });
-        let mut grid = vec![MeanColorCell::default(); cells];
-        for part in &grids {
-            for (acc, cell) in grid.iter_mut().zip(part) {
-                acc.count = acc.count.saturating_add(cell.count);
-                acc.alpha += cell.alpha;
-                acc.red += cell.red;
-                acc.green += cell.green;
-                acc.blue += cell.blue;
-            }
-        }
-        grid
-    };
+    let grid = bin_2d_mean_color_cells(x, y, colors, x0, x1, y0, y1, w, h);
     for (cell, quad) in grid.iter().zip(out.chunks_exact_mut(4)) {
         quad.copy_from_slice(&cell.rgba8());
     }
@@ -6299,7 +6298,10 @@ mod tests {
         let (w, h) = (32, 32);
         let mut out = vec![0u8; w * h * 4];
         bin_2d_mean_color(&x, &y, &colors, 0.0, 100.0, 0.0, 100.0, w, h, &mut out);
-        let cells = bin_2d_mean_color_cells(&x, &y, &colors, 0.0, 100.0, 0.0, 100.0, w, h);
+        // The oracle accumulates serially by construction (direct call, one
+        // chunk) — `bin_2d_mean_color_cells` itself fans out at this size.
+        let mut cells = vec![MeanColorCell::default(); w * h];
+        bin_2d_mean_color_accumulate(&x, &y, &colors, 0, 0.0, 100.0, 0.0, 100.0, w, h, &mut cells);
         for (cell_index, cell) in cells.iter().enumerate() {
             assert_eq!(
                 &out[cell_index * 4..cell_index * 4 + 4],
