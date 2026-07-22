@@ -49,10 +49,10 @@ _CHROME_WHERE_RULES = (
     ':where(.xy [data-xy-slot="legend"]){',
     ':where(.xy [data-xy-slot="legend_swatch"]){',
     ':where(.xy [data-xy-slot="modebar"]){',
-    ':where(.xy [data-xy-slot="modebar_button"]){',
+    ':where(.xy) button[data-xy-slot="modebar_button"]{',
     ":where(.xy [data-xy-modebar-menu]){",
-    ":where(.xy [data-xy-modebar-menu-item]){",
-    ':where(.xy [data-xy-slot="modebar_button"].xy-active){',
+    ":where(.xy) button[data-xy-modebar-menu-item]{",
+    ':where(.xy) button[data-xy-slot="modebar_button"].xy-active{',
     ':where(.xy [data-xy-slot="selection"]){',
     ':where(.xy [data-xy-slot="badge_item"]){',
     ':where(.xy [data-xy-slot="tick_label"]){',
@@ -60,6 +60,7 @@ _CHROME_WHERE_RULES = (
     ':where(.xy [data-xy-slot="annotation_label"]){',
     ':where(.xy [data-xy-slot="canvas"]){cursor:',
     ':where(.xy [data-xy-slot="canvas"][data-xy-dragmode="pan"]){cursor:',
+    ':where(.xy [data-xy-slot="canvas"][data-xy-dragmode="none"]){cursor:',
 )
 _CHROME_TOKENS = (
     "--chart-tooltip-bg",
@@ -81,8 +82,8 @@ _BANNED_HTML_SINKS = (
 
 
 def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
-    """Chrome styling lives in a layered, zero-specificity :where() stylesheet
-    so user class_names / styles always win (the CSS+Tailwind contract).
+    """Chrome styling lives in a low-priority layer with reset-resistant buttons,
+    so user class_names / styles still win (the CSS+Tailwind contract).
     Every chrome slot's visual defaults + --chart-* token must be present, and
     the elements must carry only structural inline styles (no inline
     background/color that would beat a utility class)."""
@@ -138,7 +139,7 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
 
         inner_html_lines = [line.strip() for line in text.splitlines() if ".innerHTML" in line]
         assert inner_html_lines == [
-            'grip.innerHTML = this._icon("drag");',
+            'dragPeek.innerHTML = this._icon("drag");',
             "b.innerHTML = this._icon(name);",
             'zoomIndicator.innerHTML = this._icon("chevrondown");',
             'selectModeIcon.innerHTML = this._icon("select");',
@@ -168,7 +169,7 @@ def test_selection_mode_icons_are_crisp_and_the_trigger_tracks_active_mode() -> 
         )
 
     for path, text in THEME_FILES:
-        assert "min-width:42px" in text, f"{path} crowds the selection icon and chevron"
+        assert "min-width:47px" in text, f"{path} crowds the selection icon and chevron"
         assert "[data-xy-modebar-select-icon]" in text, path
 
 
@@ -199,7 +200,7 @@ def test_pointer_capture_tolerates_synthetic_accessibility_clicks() -> None:
         capture_lines = [
             line.strip() for line in text.splitlines() if ".setPointerCapture(" in line
         ]
-        # canvas drag, band select, lasso handle, modebar grip, axis band
+        # canvas drag, band select, lasso handle, modebar surface, axis band
         assert len(capture_lines) == 5, f"{path} has an unexpected capture site"
         assert all(line.startswith("try {") and "catch (_err)" in line for line in capture_lines), (
             f"{path} leaves pointer capture unguarded for synthetic events"
@@ -940,7 +941,7 @@ def test_built_bundles_keep_minification_safe_invariants() -> None:
         assert '[data-xy-slot="selection"][data-xy-band="zoom"]){' in text, (
             f"{path} is missing the defeatable zoom-band :where() default"
         )
-        assert "min-width:42px" in text, path
+        assert "min-width:47px" in text, path
         assert "[data-xy-modebar-select-icon]" in text, path
         # Slot stamping + cross-frame governor machinery still present.
         assert ".dataset.xySlot=" in text, f"{path} no longer stamps data-xy-slot"

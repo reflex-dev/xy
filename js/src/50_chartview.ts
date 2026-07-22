@@ -364,8 +364,11 @@ export class ChartView {
     this._hoverTarget = null;
     this._viewEventRaf = null;
     this._linkedSource = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    // Browser-local active drag action. The configured default resolves after
-    // GL setup, when pickability is known.
+    // pan | none | zoom | internal selection modes. Browser-local active drag
+    // action: the configured default resolves after GL setup, when pickability
+    // is known (§ _resolveDefaultDragAction). Pan is the default outcome; the
+    // modebar can toggle back into `none` so embedded charts do not trap page
+    // scroll.
     this.dragMode = "none";
     this._interactionSeq = 0;
 

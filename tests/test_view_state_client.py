@@ -148,9 +148,15 @@ _HISTORY_PROBE = """
     };
 
     const home = ranges();
+    const zoomTrigger = view.root.querySelector('[data-xy-modebar-menu-trigger]');
+    const zoomMenu = view.root.querySelector('[data-xy-modebar-menu]');
+    const historyGroup = zoomMenu?.querySelector('[data-xy-modebar-view-history]');
     const backBtn = view.root.querySelector('[data-xy-modebar-history="back"]');
     const fwdBtn = view.root.querySelector('[data-xy-modebar-history="forward"]');
     const buttonsExist = !!backBtn && !!fwdBtn;
+    const buttonsGroupedInZoomMenu = !!historyGroup
+      && historyGroup.contains(backBtn) && historyGroup.contains(fwdBtn)
+      && !view.root.querySelector(':scope > [data-xy-modebar-history]');
     const backDisabledAtStart = !!backBtn && backBtn.disabled === true;
 
     // N discrete commands -> exactly N entries.
@@ -168,14 +174,26 @@ _HISTORY_PROBE = """
     flush();
     const wheelGestureOneEntry = depth() === 4;
 
-    // Back restores the pre-gesture ranges; forward returns exactly.
+    // Back/Next restore through the zoom menu without closing it.
     const beforeBack = ranges();
-    handle.back();
+    zoomTrigger.click();
+    backBtn.click();
     flush();
     const backRestored = JSON.stringify(ranges()) !== JSON.stringify(beforeBack);
-    handle.forward();
+    const menuStayedOpenAfterBack = zoomMenu.style.display === "flex"
+      && zoomTrigger.getAttribute("aria-expanded") === "true" && !fwdBtn.disabled;
+    fwdBtn.click();
     flush();
     const forwardRestored = JSON.stringify(ranges()) === JSON.stringify(beforeBack);
+    const menuStayedOpenAfterNext = zoomMenu.style.display === "flex"
+      && zoomTrigger.getAttribute("aria-expanded") === "true";
+
+    // Branching from a restored view clears the now-invalid forward stack.
+    backBtn.click();
+    flush();
+    view._zoomBy(0.5, false);
+    flush();
+    const forwardClearedAfterBranch = view._historyFuture.length === 0 && fwdBtn.disabled;
 
     // Reset is navigation, not amnesia: reset pushes, back undoes it.
     const preReset = ranges();
@@ -206,8 +224,9 @@ _HISTORY_PROBE = """
     const capacityHeld = depth() === 64;
 
     document.body.setAttribute("data-xy-history-probe", JSON.stringify({
-      buttonsExist, backDisabledAtStart, threeCommandsThreeEntries,
+      buttonsExist, buttonsGroupedInZoomMenu, backDisabledAtStart, threeCommandsThreeEntries,
       backEnabledAfterZoom, wheelGestureOneEntry, backRestored, forwardRestored,
+      menuStayedOpenAfterBack, menuStayedOpenAfterNext, forwardClearedAfterBranch,
       resetWentHome, backAfterResetRestores, linkedPushedNothing,
       optOutPushedNothing, capacityHeld,
     }));
@@ -224,6 +243,97 @@ def test_history_stack_contract(tmp_path: Path) -> None:
         _chart_html().replace(_RENDER_CALL, _HISTORY_PROBE),
         "data-xy-history-probe",
         label="view-history probe",
+    )
+    assert result == {key: True for key in result}
+
+
+_MODEBAR_DRAG_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    view.root.dispatchEvent(new PointerEvent("pointerenter", { bubbles: true }));
+    const bar = view._modebar;
+    const handle = bar.querySelector('[data-xy-modebar-drag-handle]');
+    const pan = bar.querySelector('[data-xy-modebar-action="pan"]');
+    const sensor = getComputedStyle(bar, "::before");
+    const handleStyle = getComputedStyle(handle);
+    const barStyle = getComputedStyle(bar);
+    const externalAffordance = handle.tagName !== "BUTTON"
+      && handleStyle.width === "26px" && handleStyle.height === "28px"
+      && sensor.width === "34px" && sensor.height === "40px"
+      && handleStyle.backgroundColor === barStyle.backgroundColor;
+
+    handle.style.transition = "none";
+    pan.focus();
+    const focusedBarRect = bar.getBoundingClientRect();
+    const focusedHandleRect = handle.getBoundingClientRect();
+    const handleGap = bar.dataset.xyModebarDragPeekSide === "right"
+      ? focusedHandleRect.left - focusedBarRect.right
+      : focusedBarRect.left - focusedHandleRect.right;
+    const fourPixelGap = Math.abs(handleGap - 4) < 0.1;
+    pan.blur();
+
+    const startLeft = parseFloat(bar.style.left);
+    const rect = bar.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    bar.dispatchEvent(new PointerEvent("pointerdown", {
+      pointerId: 91, pointerType: "mouse", button: 0, buttons: 1,
+      clientX: x, clientY: y, bubbles: true,
+    }));
+    bar.dispatchEvent(new PointerEvent("pointermove", {
+      pointerId: 91, pointerType: "mouse", button: 0, buttons: 1,
+      clientX: x + 4, clientY: y, bubbles: true,
+    }));
+    const thresholdHeld = Math.abs(parseFloat(bar.style.left) - startLeft) < 0.01;
+    bar.dispatchEvent(new PointerEvent("pointermove", {
+      pointerId: 91, pointerType: "mouse", button: 0, buttons: 1,
+      clientX: x + 40, clientY: y + 20, bubbles: true,
+    }));
+    bar.dispatchEvent(new PointerEvent("pointerup", {
+      pointerId: 91, pointerType: "mouse", button: 0, buttons: 0,
+      clientX: x + 40, clientY: y + 20, bubbles: true,
+    }));
+    const surfaceMoved = parseFloat(bar.style.left) > startLeft + 20
+      && !bar.classList.contains("xy-dragging");
+
+    const beforeButtonGesture = parseFloat(bar.style.left);
+    pan.dispatchEvent(new PointerEvent("pointerdown", {
+      pointerId: 92, pointerType: "mouse", button: 0, buttons: 1,
+      clientX: x, clientY: y, bubbles: true,
+    }));
+    pan.dispatchEvent(new PointerEvent("pointermove", {
+      pointerId: 92, pointerType: "mouse", button: 0, buttons: 1,
+      clientX: x + 60, clientY: y + 30, bubbles: true,
+    }));
+    pan.dispatchEvent(new PointerEvent("pointerup", {
+      pointerId: 92, pointerType: "mouse", button: 0, buttons: 0,
+      clientX: x + 60, clientY: y + 30, bubbles: true,
+    }));
+    const buttonStayedClickOnly = parseFloat(bar.style.left) === beforeButtonGesture;
+
+    view._clampModebar(0, parseFloat(bar.style.top));
+    const flipsRightAtLeftEdge = bar.dataset.xyModebarDragPeekSide === "right";
+    view._clampModebar(view.root.clientWidth - bar.offsetWidth, parseFloat(bar.style.top));
+    const flipsLeftAtRightEdge = bar.dataset.xyModebarDragPeekSide === "left";
+
+    document.body.setAttribute("data-xy-modebar-drag-probe", JSON.stringify({
+      externalAffordance, fourPixelGap, thresholdHeld, surfaceMoved,
+      buttonStayedClickOnly, flipsRightAtLeftEdge, flipsLeftAtRightEdge,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-modebar-drag-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_modebar_surface_drag_and_adaptive_external_handle(tmp_path: Path) -> None:
+    result = _run(
+        tmp_path,
+        _chart_html().replace(_RENDER_CALL, _MODEBAR_DRAG_PROBE),
+        "data-xy-modebar-drag-probe",
+        label="modebar surface-drag probe",
     )
     assert result == {key: True for key in result}
 
@@ -250,6 +360,159 @@ def test_history_switch_disables_buttons_and_snapshots(tmp_path: Path) -> None:
     )
     result = _run(tmp_path, document, "data-xy-history-off-probe", label="history-off probe")
     assert result == {"noButtons": True, "noSnapshots": True}
+
+
+_LASSO_DOUBLE_CLICK_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    const polygon = [[0, 0], [4, 0], [4, 16], [0, 16]];
+    view._sendSelectPolygon(polygon);
+
+    // Pan-mode double-click remains a viewport reset and preserves selection.
+    view._setDragMode("pan");
+    view.canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    const panPreservedSelection = view.root.xy.state().selection?.polygon?.length === 4;
+
+    let clearEvents = 0;
+    view.root.addEventListener("xy:select", (event) => {
+      if (event.detail?.view?.source === "select_clear") clearEvents += 1;
+    });
+    view._setDragMode("select-lasso");
+
+    const clickHandle = (handle, pointerId) => {
+      const clientX = Number(handle.getAttribute("cx"));
+      const clientY = Number(handle.getAttribute("cy"));
+      handle.dispatchEvent(new PointerEvent("pointerdown", {
+        pointerId, pointerType: "mouse", button: 0, buttons: 1,
+        clientX, clientY, bubbles: true,
+      }));
+      handle.dispatchEvent(new PointerEvent("pointerup", {
+        pointerId, pointerType: "mouse", button: 0, buttons: 0,
+        clientX, clientY, bubbles: true,
+      }));
+    };
+
+    const historyBeforeRemoval = view._historyPast.length;
+    const removedPoint = [...polygon[1]];
+    const removableHandle = view.selLassoHandles.children[1];
+    clickHandle(removableHandle, 101);
+    const singleClickDidNothing = view.root.xy.state().selection?.polygon?.length === 4
+      && view._historyPast.length === historyBeforeRemoval;
+    clickHandle(removableHandle, 102);
+    const afterRemoval = view.root.xy.state().selection?.polygon;
+    const handleRemoved = afterRemoval?.length === 3
+      && !afterRemoval.some((point) =>
+        point[0] === removedPoint[0] && point[1] === removedPoint[1])
+      && view.selLassoHandles.childElementCount === 3;
+    const removalRecordedOnce = view._historyPast.length === historyBeforeRemoval + 1;
+
+    // Three vertices are the minimum valid polygon; removing another is a no-op.
+    const historyAtMinimum = view._historyPast.length;
+    const minimumHandle = view.selLassoHandles.children[0];
+    clickHandle(minimumHandle, 103);
+    clickHandle(minimumHandle, 104);
+    const minimumPreserved = view.root.xy.state().selection?.polygon?.length === 3
+      && view._historyPast.length === historyAtMinimum;
+
+    // A click or tiny pointer jitter outside the polygon must not hide it
+    // while the client waits to see whether a replacement drag begins.
+    const canvasRect = view.canvas.getBoundingClientRect();
+    const outsideX = canvasRect.left + 12;
+    const outsideY = canvasRect.top + 12;
+    view.canvas.dispatchEvent(new PointerEvent("pointerdown", {
+      pointerId: 201, pointerType: "mouse", button: 0, buttons: 1,
+      clientX: outsideX, clientY: outsideY, bubbles: true,
+    }));
+    const stayedVisibleOnPointerDown = view.selLasso.style.display === "block"
+      && view._lassoPolygon?.length === 3;
+    view.canvas.dispatchEvent(new PointerEvent("pointermove", {
+      pointerId: 201, pointerType: "mouse", button: 0, buttons: 1,
+      clientX: outsideX + 1, clientY: outsideY + 1, bubbles: true,
+    }));
+    const stayedVisibleThroughJitter = view.selLasso.style.display === "block"
+      && view._lassoPolygon?.length === 3;
+    view.canvas.dispatchEvent(new PointerEvent("pointerup", {
+      pointerId: 201, pointerType: "mouse", button: 0, buttons: 0,
+      clientX: outsideX + 1, clientY: outsideY + 1, bubbles: true,
+    }));
+    const clickPreservedLasso = view.selLasso.style.display === "block"
+      && view.root.xy.state().selection?.polygon?.length === 3;
+
+    const historyBeforeClear = view._historyPast.length;
+    const realDraw = view.draw;
+    let redraws = 0;
+    view.draw = () => { redraws += 1; };
+    view.canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    view.draw = realDraw;
+    const lassoClearEventEmittedOnce = clearEvents === 1;
+    const lassoHistoryRecordedOnce = view._historyPast.length === historyBeforeClear + 1;
+
+    const doubleClickClearsRangeMode = (mode, d0, d1) => {
+      view._sendSelect(d0, d1, { history: false });
+      view._setDragMode(mode);
+      const historyBefore = view._historyPast.length;
+      const clearEventsBefore = clearEvents;
+      // The browser reports a double-click's second press before it emits the
+      // later `dblclick` event. That press must clear every range selection
+      // without starting a replacement brush.
+      view.canvas.dispatchEvent(new PointerEvent("pointerdown", {
+        pointerId: 300, pointerType: "mouse", button: 0, buttons: 1,
+        detail: 2, clientX: outsideX, clientY: outsideY, bubbles: true,
+      }));
+      view.canvas.dispatchEvent(new PointerEvent("pointerup", {
+        pointerId: 300, pointerType: "mouse", button: 0, buttons: 0,
+        detail: 2, clientX: outsideX, clientY: outsideY, bubbles: true,
+      }));
+      view.canvas.dispatchEvent(new MouseEvent("dblclick", {
+        detail: 2, clientX: outsideX, clientY: outsideY, bubbles: true,
+      }));
+      return view.root.xy.state().selection === null
+        && view._historyPast.length === historyBefore + 1
+        && clearEvents === clearEventsBefore + 1;
+    };
+    const boxModeCleared = doubleClickClearsRangeMode("select", [0, 0], [2, 4]);
+    const xRangeModeCleared = doubleClickClearsRangeMode(
+      "select-x", [0, view.view.y0], [2, view.view.y1]);
+    const yRangeModeCleared = doubleClickClearsRangeMode(
+      "select-y", [view.view.x0, 0], [view.view.x1, 4]);
+
+    document.body.setAttribute("data-xy-lasso-dblclick-probe", JSON.stringify({
+      panPreservedSelection,
+      singleClickDidNothing,
+      handleRemoved,
+      removalRecordedOnce,
+      minimumPreserved,
+      stayedVisibleOnPointerDown,
+      stayedVisibleThroughJitter,
+      clickPreservedLasso,
+      selectionCleared: view.root.xy.state().selection === null,
+      overlayCleared: view._lassoPolygon === null && view.selLasso.style.display === "none",
+      masksCleared: view.gpuTraces.every((trace) =>
+        !trace.selActive && (!trace.drill || !trace.drill.selActive)),
+      brushCleared: view._lastBrush === null,
+      clearEventEmittedOnce: lassoClearEventEmittedOnce,
+      historyRecordedOnce: lassoHistoryRecordedOnce,
+      redrawnOnce: redraws === 1,
+      boxModeCleared,
+      xRangeModeCleared,
+      yRangeModeCleared,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-lasso-dblclick-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_selection_modes_double_click_clear_selection(tmp_path: Path) -> None:
+    result = _run(
+        tmp_path,
+        _chart_html().replace(_RENDER_CALL, _LASSO_DOUBLE_CLICK_PROBE),
+        "data-xy-lasso-dblclick-probe",
+        label="lasso double-click clear probe",
+    )
+    assert result == {key: True for key in result}
 
 
 _ROWS_PROBE = """

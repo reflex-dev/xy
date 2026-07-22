@@ -19,8 +19,6 @@ from xy_docs.navbar import xy_docs_navbar
 from xy_docs.sidebar import xy_docs_sidebar
 
 _CHART_STYLE = {
-    "--chart-modebar-bg": "var(--secondary-2)",
-    "--chart-modebar-active": "var(--primary-a4)",
     "--chart-text": "var(--secondary-11)",
     "--chart-grid": "var(--secondary-a5)",
     "--chart-axis": "var(--secondary-a8)",

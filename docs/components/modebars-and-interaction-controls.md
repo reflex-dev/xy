@@ -10,7 +10,18 @@ components:
 
 Interactive charts include a compact modebar by default. It exposes pan, zoom
 in/out, box zoom, reset, selection modes when selection is enabled, and local
-PNG, SVG, and CSV export.
+PNG, SVG, and CSV export. The modebar appears at the plot's top-left on chart
+hover or keyboard focus. Drag its background, padding, gaps, or separators to
+move it within the chart; buttons and menus remain dedicated click targets. A
+small drag affordance appears just outside the toolbar on hover or focus and
+flips sides when the preferred edge would clip.
+
+Pan is enabled by default. Click the active Pan button to disable drag, wheel,
+and double-click navigation; wheel gestures then scroll the containing page.
+Click Pan again—or choose it after a selection mode—to restore navigation.
+Back and Next view-history controls live at the top of the zoom menu. They
+disable automatically at the ends of the history, remain open while stepping
+through views, and a new navigation after going Back clears the forward stack.
 
 Use `modebar()` to hide or style the toolbar:
 
@@ -121,7 +132,13 @@ update the chart.
 
 Selection controls include box, lasso, x-range, and y-range modes. The
 `on_select` callback receives a canonical `Selection`; `on_brush` receives the
-box or polygon geometry.
+box or polygon geometry. While any selection mode is active, double-click the
+chart to clear the active selection; for a lasso this also removes its editable
+polygon. Double-click an editable lasso vertex to remove it; the minimum three
+vertices remain protected. A plain click outside the polygon leaves it visible
+and unchanged; it is replaced only when a new selection drag crosses the
+movement threshold. In Pan mode, double-click continues to reset the viewport
+without clearing a selection.
 
 ## Link Viewports
 

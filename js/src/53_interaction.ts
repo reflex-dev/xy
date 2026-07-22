@@ -32,10 +32,35 @@ Object.assign(ChartView.prototype, {
     this.root.appendChild(this.selLasso);
     this._lassoPolygon = null;
     let lassoHandleDrag = null;
+    let lassoHandleClick = null;
+
+    const removeLassoHandle = (index) => {
+      if (!this._lassoPolygon || this._lassoPolygon.length <= 3
+          || !Number.isInteger(index) || !this._lassoPolygon[index]) return false;
+      const polygon = this._lassoPolygon.filter((_point, pointIndex) => pointIndex !== index);
+      this._sendSelectPolygon(polygon, {
+        source: "lasso_handle_remove",
+        interactionId: ++this._interactionSeq,
+      });
+      return true;
+    };
 
     const moveLassoHandle = (e) => {
       if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId
           || !this._lassoPolygon) return;
+      const distance = Math.hypot(
+        e.clientX - lassoHandleDrag.startX,
+        e.clientY - lassoHandleDrag.startY,
+      );
+      if (!lassoHandleDrag.moved && distance <= 1) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (!lassoHandleDrag.moved) {
+        lassoHandleDrag.moved = true;
+        lassoHandleDrag.interactionId = ++this._interactionSeq;
+      }
       const rect = c.getBoundingClientRect();
       const cssX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
       const cssY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
@@ -54,6 +79,10 @@ Object.assign(ChartView.prototype, {
         pointerId: e.pointerId,
         original: [...this._lassoPolygon[index]],
         handle,
+        startX: e.clientX,
+        startY: e.clientY,
+        moved: false,
+        interactionId: null,
       };
       handle.dataset.xyActive = "";
       this._hideTooltip();
@@ -65,10 +94,27 @@ Object.assign(ChartView.prototype, {
     this._listen(this.selLasso, "pointerup", (e) => {
       if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
       moveLassoHandle(e);
-      const handle = lassoHandleDrag.handle;
+      const completedDrag = lassoHandleDrag;
       lassoHandleDrag = null;
-      delete handle.dataset.xyActive;
-      if (this._lassoPolygon) this._sendSelectPolygon(this._lassoPolygon);
+      delete completedDrag.handle.dataset.xyActive;
+      if (completedDrag.moved && this._lassoPolygon) {
+        lassoHandleClick = null;
+        this._sendSelectPolygon(this._lassoPolygon, {
+          source: "lasso_handle_drag",
+          interactionId: completedDrag.interactionId,
+        });
+        return;
+      }
+      const now = this._now();
+      const doubleClick = lassoHandleClick?.index === completedDrag.index
+        && lassoHandleClick.polygon === this._lassoPolygon
+        && now - lassoHandleClick.at <= 500;
+      lassoHandleClick = doubleClick
+        ? null
+        : { index: completedDrag.index, polygon: this._lassoPolygon, at: now };
+      if (doubleClick) {
+        removeLassoHandle(completedDrag.index);
+      }
     });
     this._listen(this.selLasso, "pointercancel", (e) => {
       if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
@@ -77,6 +123,7 @@ Object.assign(ChartView.prototype, {
       }
       delete lassoHandleDrag.handle.dataset.xyActive;
       lassoHandleDrag = null;
+      lassoHandleClick = null;
       if (this._lassoPolygon) this._renderLassoSelection();
       e.stopPropagation();
     });
@@ -108,9 +155,30 @@ Object.assign(ChartView.prototype, {
         data: this._dataFromCanvas(cssX, cssY),
       };
     };
+    const clearSelectionOnDoubleClick = () => {
+      if (!this.dragMode.startsWith("select")
+          || this._stateSelection === null || this._stateSelection === undefined) {
+        return false;
+      }
+      this._clearSelection({
+        source: "selection_double_click",
+        interactionId: ++this._interactionSeq,
+      });
+      this.draw();
+      return true;
+    };
 
     this._listen(c, "pointerdown", (e) => {
       this._cancelViewAnimation();
+      // A browser reports the click count on the second pointer press, before
+      // it emits `dblclick`. Clear there so range modes cannot start a second
+      // brush gesture that races with (or swallows) the later dblclick event.
+      // Lasso handles own their pointer events above, so their double-click
+      // remains the vertex-removal gesture.
+      if (e.detail >= 2 && clearSelectionOnDoubleClick()) {
+        e.preventDefault();
+        return;
+      }
       const canPan = this._interactionFlag("pan", true);
       const canZoom = this._interactionFlag("zoom", true);
       const canNavigate = this._interactionFlag("navigation", true);
@@ -126,13 +194,13 @@ Object.assign(ChartView.prototype, {
         const previousLasso = mode.startsWith("select") && this._lassoPolygon
           ? this._lassoPolygon.map((point) => [...point])
           : null;
-        if (mode.startsWith("select")) this._clearLassoOverlay();
         const firstLassoPoint = mode === "select-lasso" ? lassoPointAt(e.clientX, e.clientY) : null;
         const d0 = firstLassoPoint ? firstLassoPoint.data : dataAt(e.clientX, e.clientY);
         band = {
           mode, sx: e.clientX, sy: e.clientY, d0,
           points: firstLassoPoint ? [firstLassoPoint] : null,
           previousLasso,
+          replacingLasso: false,
         };
         try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
         this._hideTooltip();
@@ -277,6 +345,7 @@ Object.assign(ChartView.prototype, {
     this._listen(c, "click", (e) => this._click(e));
 
     this._listen(c, "wheel", (e) => {
+      if (this.dragMode !== "pan") return;
       if (!this._interactionFlag("navigation", true)) return;
       if (!this._interactionFlag("zoom", true)) return;
       if (!this._interactionFlag("wheel_zoom", true)) return;
@@ -289,6 +358,11 @@ Object.assign(ChartView.prototype, {
     }, { passive: false });
 
     this._listen(c, "dblclick", () => {
+      if (this.dragMode.startsWith("select")) {
+        clearSelectionOnDoubleClick();
+        return;
+      }
+      if (this.dragMode !== "pan") return;
       if (!this._interactionFlag("navigation", true)) return;
       if (!this._interactionFlag("double_click_reset", true)) return;
       this._resetView(true, "reset");
@@ -502,6 +576,13 @@ Object.assign(ChartView.prototype, {
   _updateBand(band, e) {
     const rect = this.canvas.getBoundingClientRect();
     const rootRect = this.root.getBoundingClientRect();
+    if (band.mode.startsWith("select") && band.previousLasso && !band.replacingLasso) {
+      const movedPastThreshold = Math.abs(e.clientX - band.sx) > 3
+        || Math.abs(e.clientY - band.sy) > 3;
+      if (!movedPastThreshold) return;
+      this._clearLassoOverlay();
+      band.replacingLasso = true;
+    }
     if (band.mode === "select-lasso") {
       const previous = band.points[band.points.length - 1];
       const cssX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
@@ -673,7 +754,12 @@ Object.assign(ChartView.prototype, {
       handle.dataset.xySelectionLassoHandle = String(index);
       handle.setAttribute("cx", String(points[index][0]));
       handle.setAttribute("cy", String(points[index][1]));
-      handle.setAttribute("aria-label", `Lasso point ${index + 1}`);
+      const removable = points.length > 3;
+      const label = `Lasso point ${index + 1}; drag to move${
+        removable ? ", double-click to remove" : ""
+      }`;
+      handle.setAttribute("aria-label", label);
+      handle.setAttribute("title", label);
     });
   },
 
@@ -849,14 +935,14 @@ Object.assign(ChartView.prototype, {
     const maxTop = Math.max(0, this.root.clientHeight - bar.offsetHeight);
     bar.style.left = `${Math.max(0, Math.min(maxLeft, currentLeft))}px`;
     bar.style.top = `${Math.max(0, Math.min(maxTop, currentTop))}px`;
+    this._positionModebarDragPeek?.();
   },
 
   _buildModebar(root) {
     if (this.spec.show_modebar === false) return;
     const bar = document.createElement("div");
-    // The modebar is chrome, so keep it out of the way until the chart is
-    // hovered (or a keyboard user focuses one of its controls). Layout +
-    // visibility state stay inline; the box styling is in the stylesheet.
+    // The modebar is chart chrome: reveal it on hover or keyboard focus while
+    // retaining its top-left placement and draggable position.
     bar.style.cssText =
       `position:absolute;top:${this.plot.y + 4}px;left:${this.plot.x + 4}px;z-index:6;` +
       "display:flex;opacity:0;pointer-events:none;transition:opacity .15s;";
@@ -887,28 +973,32 @@ Object.assign(ChartView.prototype, {
       if (!bar.contains(e.relatedTarget) && !root.matches(":hover")) setVisible(false);
     });
 
-    // One combined grip/menu control avoids a second, visually redundant dots
-    // button. Click opens toolbar options and drag moves the toolbar.
-    const grip = document.createElement("button");
-    grip.type = "button";
-    grip.title = "Click for toolbar options; drag to move";
-    grip.setAttribute("aria-label", "Toolbar options");
-    grip.setAttribute("aria-haspopup", "menu");
-    grip.setAttribute("aria-expanded", "false");
-    grip.dataset.xyModebarDragHandle = "";
-    grip.dataset.xyModebarExport = "";
-    grip.dataset.xyModebarExportTrigger = "";
-    grip.innerHTML = this._icon("drag");
-    grip.style.cssText =
-      "display:flex;align-items:center;justify-content:center;pointer-events:auto;touch-action:none;";
-    this._applySlot(grip, "modebar_button");
-    bar.appendChild(grip);
+    // The toolbar surface itself is the drag target. Interactive descendants
+    // remain click targets; an external peek supplies the visual affordance.
+    const dragPeek = document.createElement("span");
+    dragPeek.dataset.xyModebarDragHandle = "";
+    dragPeek.setAttribute("aria-hidden", "true");
+    dragPeek.innerHTML = this._icon("drag");
+    bar.appendChild(dragPeek);
+    const updateDragPeekSide = () => {
+      if (!bar.isConnected) return;
+      const rootRect = root.getBoundingClientRect();
+      const barRect = bar.getBoundingClientRect();
+      const leftSpace = barRect.left - rootRect.left;
+      const rightSpace = rootRect.right - barRect.right;
+      // 26px handle + 4px gap. Prefer left, but flip when it would clip.
+      bar.dataset.xyModebarDragPeekSide = leftSpace >= 30 || leftSpace >= rightSpace
+        ? "left"
+        : "right";
+    };
+    this._positionModebarDragPeek = updateDragPeekSide;
 
-    const DRAG_THRESHOLD_PX = 6;
+    const DRAG_THRESHOLD_PX = 5;
     let modebarDrag = null;
-    let suppressGripClickUntil = 0;
-    this._listen(grip, "pointerdown", (e) => {
+    this._listen(bar, "pointerdown", (e) => {
       if (e.pointerType === "mouse" && e.button !== 0) return;
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest("button,[data-xy-modebar-menu]")) return;
       e.stopPropagation();
       const barRect = bar.getBoundingClientRect();
       modebarDrag = {
@@ -919,10 +1009,10 @@ Object.assign(ChartView.prototype, {
         dy: e.clientY - barRect.top,
         moved: false,
       };
-      try { grip.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
+      try { bar.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
       setVisible(true);
     });
-    this._listen(grip, "pointermove", (e) => {
+    this._listen(bar, "pointermove", (e) => {
       if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
       const distance = Math.hypot(e.clientX - modebarDrag.startX, e.clientY - modebarDrag.startY);
       if (!modebarDrag.moved) {
@@ -930,6 +1020,7 @@ Object.assign(ChartView.prototype, {
         modebarDrag.moved = true;
         this._modebarDragging = true;
         this._modebarMoved = true;
+        bar.classList.add("xy-dragging");
         bar.style.transition = "none";
         setZoomMenuOpen(false);
         setSelectMenuOpen(false);
@@ -942,32 +1033,25 @@ Object.assign(ChartView.prototype, {
     });
     const endModebarDrag = (e) => {
       if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
-      const moved = modebarDrag.moved;
-      const cancelled = e.type === "pointercancel";
       modebarDrag = null;
       this._modebarDragging = false;
       bar.style.transition = "opacity .15s";
       setVisible(root.matches(":hover"));
-      if (moved || cancelled) {
-        suppressGripClickUntil = performance.now() + 100;
-      }
+      bar.classList.remove("xy-dragging");
+      updateDragPeekSide();
+      try {
+        if (bar.hasPointerCapture(e.pointerId)) bar.releasePointerCapture(e.pointerId);
+      } catch (_err) { /* synthetic event */ }
     };
-    this._listen(grip, "pointerup", endModebarDrag);
-    this._listen(grip, "pointercancel", endModebarDrag);
-    this._listen(grip, "click", (e) => {
-      e.stopPropagation();
-      if (performance.now() <= suppressGripClickUntil) {
-        suppressGripClickUntil = 0;
-        return;
-      }
-      setExportMenuOpen(!this._exportMenuOpen);
-    });
+    this._listen(bar, "pointerup", endModebarDrag);
+    this._listen(bar, "pointercancel", endModebarDrag);
 
-    const mk = (name, title, onClick, toggles?: any) => {
+    const mk = (name, title, onClick, toggles?: any, parent = bar) => {
       const b = document.createElement("button");
       b.type = "button";
       b.title = title;
       b.setAttribute("aria-label", title);
+      b.dataset.xyModebarAction = name;
       if (toggles) b.setAttribute("aria-pressed", "false");
       b.innerHTML = this._icon(name);
       // Box/size/color are stylesheet defaults (--chart-axis); only layout +
@@ -977,7 +1061,7 @@ Object.assign(ChartView.prototype, {
       this._applySlot(b, "modebar_button");
       this._listen(b, "pointerdown", (e) => e.stopPropagation());
       this._listen(b, "click", (e) => { e.stopPropagation(); onClick(); });
-      bar.appendChild(b);
+      parent.appendChild(b);
       if (toggles) this._modeBtns[toggles] = b;
       return b;
     };
@@ -988,7 +1072,36 @@ Object.assign(ChartView.prototype, {
     const canZoomButtons = canZoom && this._interactionFlag("zoom_buttons", true);
     const canBoxZoom = canZoom && this._interactionFlag("box_zoom", true);
     const canReset = canNavigate && this._resetAxisPolicy().length > 0;
-    const hasZoomMenu = canZoomButtons || canBoxZoom || canReset;
+    const canHistory = canNavigate && this._historyEnabled();
+    const hasZoomMenu = canHistory || canZoomButtons || canBoxZoom || canReset;
+    // Pickability is dynamic for density traces (§5: drill-in grants it,
+    // drill-out revokes it), so the Select trigger is built whenever the
+    // interaction flags allow selection and its *visibility* tracks
+    // `_pickable` via _syncModebarSelect below — the button must not freeze
+    // at whatever pickability held when the toolbar was first built.
+    const canSelect = this._interactionFlag("brush", true)
+      && this._interactionFlag("select", true);
+    // Declarative export config (spec.export, from xy.export_config): the
+    // formats list governs menu availability and order. Only the client-safe
+    // subset renders here — pdf/html entries are Python-side formats.
+    const EXPORT_ITEMS = {
+      png: ["Export PNG", () => this._exportRaster("png")],
+      jpeg: ["Export JPEG", () => this._exportRaster("jpeg")],
+      webp: ["Export WebP", () => this._exportRaster("webp")],
+      svg: ["Export SVG", () => this._exportSvg()],
+      csv: ["Export CSV", () => this._exportCsv()],
+    };
+    const configuredFormats = Array.isArray(this._exportConfig().formats)
+      ? this._exportConfig().formats
+      : ["png", "svg", "csv"];
+    const clientExportFormats = configuredFormats.filter((name) => EXPORT_ITEMS[name]);
+    const hasToolGroup = canSelect || canPan || clientExportFormats.length > 0;
+    const appendSeparator = () => {
+      const separator = document.createElement("span");
+      separator.dataset.xyModebarSeparator = "";
+      separator.setAttribute("aria-hidden", "true");
+      bar.appendChild(separator);
+    };
     let zoomTrigger = null;
     let zoomIndicator = null;
     this._zoomMenuButton = null;
@@ -1012,20 +1125,18 @@ Object.assign(ChartView.prototype, {
       zoomTrigger.setAttribute("aria-haspopup", "menu");
       zoomTrigger.setAttribute("aria-expanded", "false");
     }
-    // Pickability is dynamic for density traces (§5: drill-in grants it,
-    // drill-out revokes it), so the Select trigger is built whenever the
-    // interaction flags allow selection and its *visibility* tracks
-    // `_pickable` via _syncModebarSelect below — the button must not freeze
-    // at whatever pickability held when the toolbar was first built.
-    const canSelect = this._interactionFlag("brush", true)
-      && this._interactionFlag("select", true);
+    if (hasZoomMenu && hasToolGroup) appendSeparator();
+
+    const toolGroup = document.createElement("div");
+    toolGroup.dataset.xyModebarToolGroup = "";
+    if (hasToolGroup) bar.appendChild(toolGroup);
     let selectTrigger = null;
     let selectIndicator = null;
     let selectModeIcon = null;
     if (canSelect) {
       selectTrigger = mk("select", "Selection controls", () => {
         setSelectMenuOpen(!this._selectMenuOpen);
-      });
+      }, null, toolGroup);
       selectTrigger.dataset.xyModebarSelect = "";
       selectTrigger.dataset.xyModebarSelectTrigger = "";
       selectTrigger.setAttribute("aria-haspopup", "menu");
@@ -1042,17 +1153,20 @@ Object.assign(ChartView.prototype, {
       this._selectMenuButton = selectTrigger;
       this._selectMenuIcon = selectModeIcon;
     }
-    if (canPan) mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
-    // History navigation (view-state.md §4): client-scoped by construction —
-    // the modebar and the root.xy handle are the only surfaces.
-    if (canNavigate && this._historyEnabled()) {
-      this._historyBackBtn = mk("historyback", "Back to previous view",
-        () => this._historyBack());
-      this._historyBackBtn.dataset.xyModebarHistory = "back";
-      this._historyForwardBtn = mk("historyforward", "Forward to next view",
-        () => this._historyForward());
-      this._historyForwardBtn.dataset.xyModebarHistory = "forward";
-      this._updateHistoryButtons();
+    if (canPan) {
+      mk("pan", "Pan", () => {
+        this._setDragMode(this.dragMode === "pan" ? "none" : "pan");
+      }, "pan", toolGroup);
+    }
+    let exportTrigger = null;
+    if (clientExportFormats.length > 0) {
+      exportTrigger = mk("export", "Export options", () => {
+        setExportMenuOpen(!this._exportMenuOpen);
+      }, null, toolGroup);
+      exportTrigger.dataset.xyModebarExport = "";
+      exportTrigger.dataset.xyModebarExportTrigger = "";
+      exportTrigger.setAttribute("aria-haspopup", "menu");
+      exportTrigger.setAttribute("aria-expanded", "false");
     }
     let zoomMenu = null;
     if (hasZoomMenu) {
@@ -1065,15 +1179,17 @@ Object.assign(ChartView.prototype, {
       bar.appendChild(zoomMenu);
     }
     const zoomMenuItems = [];
-    const mkZoomItem = (name, label, onClick, toggles?: any, separator = false) => {
+    const mkZoomItem = (name, label, onClick, toggles?: any, options: any = {}) => {
       const button = document.createElement("button");
       button.type = "button";
       button.tabIndex = -1;
       button.dataset.xyModebarMenuItem = name;
-      if (separator) button.dataset.xySeparator = "";
       button.setAttribute("role", "menuitem");
-      button.style.cssText =
-        "display:flex;align-items:center;pointer-events:auto;";
+      if (options.title) {
+        button.title = options.title;
+        button.setAttribute("aria-label", options.title);
+      }
+      button.style.cssText = "pointer-events:auto;";
       this._applySlot(button, "modebar_button");
       const icon = document.createElement("span");
       icon.dataset.xyModebarMenuIcon = "";
@@ -1085,29 +1201,65 @@ Object.assign(ChartView.prototype, {
       this._listen(button, "pointerdown", (e) => e.stopPropagation());
       this._listen(button, "click", (e) => {
         e.stopPropagation();
-        setZoomMenuOpen(false, true);
+        if (!options.keepOpen) setZoomMenuOpen(false, true);
         onClick();
       });
-      zoomMenu.appendChild(button);
+      (options.parent || zoomMenu).appendChild(button);
       zoomMenuItems.push(button);
       if (toggles) this._modeBtns[toggles] = button;
       return button;
     };
 
+    const appendZoomMenuSeparator = () => {
+      const menuSeparator = document.createElement("span");
+      menuSeparator.dataset.xyModebarMenuSeparator = "";
+      menuSeparator.setAttribute("role", "separator");
+      zoomMenu.appendChild(menuSeparator);
+    };
+
     if (hasZoomMenu) {
+      if (canHistory) {
+        const viewHistory = document.createElement("div");
+        viewHistory.dataset.xyModebarViewHistory = "";
+        viewHistory.setAttribute("role", "group");
+        viewHistory.setAttribute("aria-label", "View history");
+        zoomMenu.appendChild(viewHistory);
+        this._historyBackBtn = mkZoomItem("historyback", "Back",
+          () => this._historyBack(), null, {
+            parent: viewHistory,
+            keepOpen: true,
+            title: "Back to previous view",
+          });
+        this._historyBackBtn.dataset.xyModebarHistory = "back";
+        this._historyForwardBtn = mkZoomItem("historyforward", "Next",
+          () => this._historyForward(), null, {
+            parent: viewHistory,
+            keepOpen: true,
+            title: "Go to next view",
+          });
+        this._historyForwardBtn.dataset.xyModebarHistory = "forward";
+        this._updateHistoryButtons();
+        if (canZoomButtons || canBoxZoom || canReset) appendZoomMenuSeparator();
+      }
       if (canZoomButtons) {
-        mkZoomItem("zoomin", this._actionLabel("Zoom In", this._axisPolicy("zoom_axes")),
-          () => this._zoomBy(0.5, true, "zoom_in"));
-        mkZoomItem("zoomout", this._actionLabel("Zoom Out", this._axisPolicy("zoom_axes")),
-          () => this._zoomBy(2, true, "zoom_out"));
+        mkZoomItem("zoomin", "Zoom In", () => this._zoomBy(0.5, true, "zoom_in"));
+        mkZoomItem("zoomout", "Zoom Out", () => this._zoomBy(2, true, "zoom_out"));
       }
       if (canBoxZoom) {
-        mkZoomItem("zoom", this._actionLabel("Box Zoom", this._axisPolicy("zoom_axes")),
-          () => this._setDragMode("zoom"), "zoom");
+        mkZoomItem("zoom", "Box Zoom", () => this._setDragMode("zoom"), "zoom");
       }
       if (canReset) {
-        mkZoomItem("reset", this._actionLabel("Reset View", this._resetAxisPolicy()),
-          () => this._resetView(true, "reset"), null, canZoomButtons || canBoxZoom);
+        if (canZoomButtons || canBoxZoom) {
+          appendZoomMenuSeparator();
+        }
+        // Fit Data returns to the home view; Reset View additionally drops any
+        // active selection. Both reset through the view-state layer (§ reset
+        // axis policy + history), unlike the pre-merge direct _setView.
+        mkZoomItem("fit", "Fit Data", () => this._resetView(true, "reset"));
+        mkZoomItem("reset", "Reset View", () => {
+          this._clearSelection();
+          this._resetView(true, "reset");
+        });
       }
     }
 
@@ -1127,7 +1279,7 @@ Object.assign(ChartView.prototype, {
       button.dataset.xyModebarMenuItem = name;
       button.dataset.xyModebarSelectItem = mode;
       button.setAttribute("role", "menuitem");
-      button.style.cssText = "display:flex;align-items:center;pointer-events:auto;";
+      button.style.cssText = "pointer-events:auto;";
       this._applySlot(button, "modebar_button");
       const icon = document.createElement("span");
       icon.dataset.xyModebarMenuIcon = "";
@@ -1157,7 +1309,7 @@ Object.assign(ChartView.prototype, {
     exportMenu.dataset.xyModebarMenu = "";
     exportMenu.dataset.xyModebarExportMenu = "";
     exportMenu.setAttribute("role", "menu");
-    exportMenu.setAttribute("aria-label", "Toolbar options");
+    exportMenu.setAttribute("aria-label", "Export options");
     exportMenu.style.cssText =
       "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
     bar.appendChild(exportMenu);
@@ -1170,7 +1322,7 @@ Object.assign(ChartView.prototype, {
       button.dataset.xyModebarExportItem = name;
       if (separator) button.dataset.xySeparator = "";
       button.setAttribute("role", "menuitem");
-      button.style.cssText = "display:flex;align-items:center;pointer-events:auto;";
+      button.style.cssText = "pointer-events:auto;";
       this._applySlot(button, "modebar_button");
       const icon = document.createElement("span");
       icon.dataset.xyModebarMenuIcon = "";
@@ -1189,26 +1341,12 @@ Object.assign(ChartView.prototype, {
       exportMenuItems.push(button);
       return button;
     };
-    // Declarative export config (spec.export, from xy.export_config): the
-    // formats list governs menu availability and order. Only the client-safe
-    // subset renders here — pdf/html entries are Python-side formats and are
-    // skipped. No config keeps the historical png/svg/csv menu; an explicit
-    // empty list hides the download items entirely.
-    const EXPORT_ITEMS = {
-      png: ["Export PNG", () => this._exportRaster("png")],
-      jpeg: ["Export JPEG", () => this._exportRaster("jpeg")],
-      webp: ["Export WebP", () => this._exportRaster("webp")],
-      svg: ["Export SVG", () => this._exportSvg()],
-      csv: ["Export CSV", () => this._exportCsv()],
-    };
-    const configuredFormats = Array.isArray(this._exportConfig().formats)
-      ? this._exportConfig().formats
-      : ["png", "svg", "csv"];
-    for (const name of configuredFormats) {
+    for (const name of clientExportFormats) {
       const item = EXPORT_ITEMS[name];
-      if (item) mkExportItem(name, item[0], item[1]);
+      mkExportItem(name, item[0], item[1]);
     }
 
+    const MODEBAR_MENU_GAP = 6;
     if (zoomTrigger) {
       setZoomMenuOpen = (open, restoreFocus = false) => {
         const show = Boolean(open);
@@ -1228,11 +1366,14 @@ Object.assign(ChartView.prototype, {
         zoomMenu.style.visibility = "hidden";
         const rootRect = root.getBoundingClientRect();
         const barRect = bar.getBoundingClientRect();
+        const triggerRect = zoomTrigger.getBoundingClientRect();
         const rootLeft = barRect.left - rootRect.left;
         const rootTop = barRect.top - rootRect.top;
-        const below = bar.offsetHeight + 6;
-        const above = -zoomMenu.offsetHeight - 6;
-        const preferredTop = barRect.bottom + 6 + zoomMenu.offsetHeight <= rootRect.bottom
+        const below = triggerRect.bottom - barRect.top + MODEBAR_MENU_GAP - bar.clientTop;
+        const above = triggerRect.top - barRect.top
+          - zoomMenu.offsetHeight - MODEBAR_MENU_GAP - bar.clientTop;
+        const preferredTop = triggerRect.bottom + MODEBAR_MENU_GAP
+          + zoomMenu.offsetHeight <= rootRect.bottom
           ? below
           : above;
         zoomIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
@@ -1262,49 +1403,56 @@ Object.assign(ChartView.prototype, {
       selectMenu.style.visibility = "hidden";
       const rootRect = root.getBoundingClientRect();
       const barRect = bar.getBoundingClientRect();
+      const triggerRect = selectTrigger.getBoundingClientRect();
       const rootLeft = barRect.left - rootRect.left;
       const rootTop = barRect.top - rootRect.top;
-      const below = bar.offsetHeight + 6;
-      const above = -selectMenu.offsetHeight - 6;
-      const preferredTop = barRect.bottom + 6 + selectMenu.offsetHeight <= rootRect.bottom
+      const below = triggerRect.bottom - barRect.top + MODEBAR_MENU_GAP - bar.clientTop;
+      const above = triggerRect.top - barRect.top
+        - selectMenu.offsetHeight - MODEBAR_MENU_GAP - bar.clientTop;
+      const preferredTop = triggerRect.bottom + MODEBAR_MENU_GAP
+        + selectMenu.offsetHeight <= rootRect.bottom
         ? below
         : above;
       selectIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
       const maxLeft = root.clientWidth - rootLeft - selectMenu.offsetWidth;
       const maxTop = root.clientHeight - rootTop - selectMenu.offsetHeight;
-      selectMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, selectTrigger.offsetLeft))}px`;
+      const menuLeft = triggerRect.left - barRect.left - bar.clientLeft;
+      selectMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, menuLeft))}px`;
       selectMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
       selectMenu.style.visibility = "visible";
     };
     setExportMenuOpen = (open, restoreFocus = false) => {
-      // export_config(formats=[]) leaves nothing to show: the grip stays a
-      // pure drag handle rather than opening an empty menu.
-      const show = Boolean(open) && exportMenuItems.length > 0;
+      const show = Boolean(open) && Boolean(exportTrigger) && exportMenuItems.length > 0;
       if (show) {
         setZoomMenuOpen(false);
         setSelectMenuOpen(false);
       }
       this._exportMenuOpen = show;
-      grip.setAttribute("aria-expanded", String(show));
+      exportTrigger?.setAttribute("aria-expanded", String(show));
       if (!show) {
         exportMenu.style.display = "none";
-        if (restoreFocus) grip.focus();
+        if (restoreFocus) exportTrigger?.focus();
         return;
       }
       exportMenu.style.display = "flex";
       exportMenu.style.visibility = "hidden";
       const rootRect = root.getBoundingClientRect();
       const barRect = bar.getBoundingClientRect();
+      const triggerRect = exportTrigger.getBoundingClientRect();
       const rootLeft = barRect.left - rootRect.left;
       const rootTop = barRect.top - rootRect.top;
-      const below = bar.offsetHeight + 6;
-      const above = -exportMenu.offsetHeight - 6;
-      const preferredTop = barRect.bottom + 6 + exportMenu.offsetHeight <= rootRect.bottom
+      const below = triggerRect.bottom - barRect.top + MODEBAR_MENU_GAP - bar.clientTop;
+      const above = triggerRect.top - barRect.top
+        - exportMenu.offsetHeight - MODEBAR_MENU_GAP - bar.clientTop;
+      const preferredTop = triggerRect.bottom + MODEBAR_MENU_GAP
+        + exportMenu.offsetHeight <= rootRect.bottom
         ? below
         : above;
       const maxLeft = root.clientWidth - rootLeft - exportMenu.offsetWidth;
       const maxTop = root.clientHeight - rootTop - exportMenu.offsetHeight;
-      exportMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, grip.offsetLeft))}px`;
+      const triggerRight = triggerRect.right - barRect.left;
+      const menuLeft = triggerRight - exportMenu.offsetWidth - bar.clientLeft;
+      exportMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, menuLeft))}px`;
       exportMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
       exportMenu.style.visibility = "visible";
     };
@@ -1338,8 +1486,9 @@ Object.assign(ChartView.prototype, {
         e.preventDefault();
         e.stopPropagation();
         setZoomMenuOpen(true);
-        const index = e.key === "ArrowDown" ? 0 : zoomMenuItems.length - 1;
-        zoomMenuItems[index].focus();
+        const enabledItems = zoomMenuItems.filter((button) => !button.disabled);
+        const index = e.key === "ArrowDown" ? 0 : enabledItems.length - 1;
+        enabledItems[index]?.focus();
       });
       this._listen(zoomMenu, "keydown", (e) => {
         if (e.key === "Escape") {
@@ -1350,11 +1499,13 @@ Object.assign(ChartView.prototype, {
         }
         if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
         e.preventDefault();
-        const current = zoomMenuItems.indexOf(document.activeElement);
-        let next = e.key === "Home" ? 0 : e.key === "End" ? zoomMenuItems.length - 1 : current;
-        if (e.key === "ArrowDown") next = (current + 1) % zoomMenuItems.length;
-        if (e.key === "ArrowUp") next = (current - 1 + zoomMenuItems.length) % zoomMenuItems.length;
-        zoomMenuItems[next].focus();
+        const enabledItems = zoomMenuItems.filter((button) => !button.disabled);
+        if (!enabledItems.length) return;
+        const current = enabledItems.indexOf(document.activeElement);
+        let next = e.key === "Home" ? 0 : e.key === "End" ? enabledItems.length - 1 : current;
+        if (e.key === "ArrowDown") next = (current + 1) % enabledItems.length;
+        if (e.key === "ArrowUp") next = (current - 1 + enabledItems.length) % enabledItems.length;
+        enabledItems[next].focus();
       });
     }
     if (selectTrigger) {
@@ -1384,17 +1535,16 @@ Object.assign(ChartView.prototype, {
         selectMenuItems[next].focus();
       });
     }
-    this._listen(grip, "keydown", (e) => {
-      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-      // export_config(formats=[]) (or a PDF/HTML-only list) leaves no
-      // client-side items: nothing to open or focus.
-      if (!exportMenuItems.length) return;
-      e.preventDefault();
-      e.stopPropagation();
-      setExportMenuOpen(true);
-      const index = e.key === "ArrowDown" ? 0 : exportMenuItems.length - 1;
-      exportMenuItems[index].focus();
-    });
+    if (exportTrigger) {
+      this._listen(exportTrigger, "keydown", (e) => {
+        if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+        e.preventDefault();
+        e.stopPropagation();
+        setExportMenuOpen(true);
+        const index = e.key === "ArrowDown" ? 0 : exportMenuItems.length - 1;
+        exportMenuItems[index].focus();
+      });
+    }
     this._listen(exportMenu, "keydown", (e) => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -1414,8 +1564,9 @@ Object.assign(ChartView.prototype, {
     });
     root.appendChild(bar);
     this._fitModebar();
-    // The pointer may already be over a chart that mounted beneath it, in
-    // which case no pointerenter fires after these listeners are installed.
+    updateDragPeekSide();
+    // A chart can mount beneath an already-stationary pointer, so initialize
+    // from the current hover state instead of waiting for pointerenter.
     setVisible(root.matches(":hover"));
     this._setDragMode(this.dragMode);
   },
@@ -2177,79 +2328,86 @@ Object.assign(ChartView.prototype, {
   },
 
   _icon(name) {
-    // Inline stroke SVGs (currentColor) — no external assets (§33 no supply chain).
-    const svg = (body) =>
-      `<svg width="15" height="15" viewBox="0 0 20 20" fill="none" ` +
-      `stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ` +
+    // Hugeicons Core path data rendered as dependency-free inline SVGs.
+    const aliases = {
+      zoommenu: "box", zoomin: "zoom-in", zoomout: "zoom-out", zoom: "box",
+      select: "box", selectx: "x-range", selecty: "y-range", pan: "move",
+      chevrondown: "chevron", jpeg: "export", webp: "export",
+    };
+    const paths = {
+      drag: [
+        "M16 6C16 6.552 15.552 7 15 7S14 6.552 14 6s.448-1 1-1 1 .448 1 1Z",
+        "M10 6C10 6.552 9.552 7 9 7S8 6.552 8 6s.448-1 1-1 1 .448 1 1Z",
+        "M16 18C16 18.552 15.552 19 15 19s-1-.448-1-1 .448-1 1-1 1 .448 1 1Z",
+        "M16 12C16 12.552 15.552 13 15 13s-1-.448-1-1 .448-1 1-1 1 .448 1 1Z",
+        "M10 18C10 18.552 9.552 19 9 19s-1-.448-1-1 .448-1 1-1 1 .448 1 1Z",
+        "M10 12C10 12.552 9.552 13 9 13s-1-.448-1-1 .448-1 1-1 1 .448 1 1Z",
+      ],
+      chevron: ["M18 9S13.581 15 12 15 6 9 6 9"],
+      historyback: ["M15 5 8 12 15 19"],
+      historyforward: ["M9 5 16 12 9 19"],
+      "zoom-in": [
+        "M17 17 21 21",
+        "M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z",
+        "M7.5 11h7M11 7.5v7",
+      ],
+      "zoom-out": [
+        "M17 17 21 21",
+        "M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z",
+        "M7.5 11h7",
+      ],
+      box: [
+        "M5 2v6M2 5h6",
+        "M12 5h3M12 22h3M18 5h.5A3.5 3.5 0 0 1 22 8.5V9M22 18v.5a3.5 3.5 0 0 1-3.5 3.5H18M9 22h-.5A3.5 3.5 0 0 1 5 18.5V18M22 12v3M5 12v3",
+      ],
+      fit: [
+        "M3 4v16M21 4v16",
+        "m15.622 9 .878.879C17.5 10.879 18 11.379 18 12s-.5 1.121-1.5 2.121l-.878.879M8.379 9 7.5 9.879C6.5 10.879 6 11.379 6 12s.5 1.121 1.5 2.121l.879.879M6.379 12h11.243",
+      ],
+      reset: [
+        "M20.488 15A9 9 0 1 1 20.294 8.5",
+        "M15 9h3c1.414 0 2.121 0 2.56-.44C21 8.122 21 7.414 21 6V3",
+      ],
+      lasso: [
+        "m16.401 12.815 3.017 1.18c1.74.681 2.61 1.021 2.581 1.562-.028.54-.936.787-2.752 1.283-.541.147-.811.221-.999.408-.187.188-.261.458-.408.999-.496 1.816-.743 2.724-1.283 2.752-.541.029-.881-.841-1.562-2.581l-1.18-3.017c-.713-1.821-1.069-2.732-.608-3.194.462-.461 1.373-.105 3.194.608Z",
+        "M5 17a2 2 0 1 1 0-4 2 2 0 0 1 0 4Zm0 0c0 1.6 1.333 2.667 2 3M21.899 11c.066-.327.101-.66.101-1 0-3.866-4.477-7-10-7S2 6.134 2 10c0 1.32.522 2.554 1.429 3.608M6.846 16A12.7 12.7 0 0 0 10 16.86",
+      ],
+      "x-range": [
+        "M2.5 12c0-4.478 0-6.718 1.391-8.109C5.282 2.5 7.522 2.5 12 2.5s6.718 0 8.109 1.391C21.5 5.282 21.5 7.522 21.5 12s0 6.718-1.391 8.109C18.718 21.5 16.478 21.5 12 21.5s-6.718 0-8.109-1.391C2.5 18.718 2.5 16.478 2.5 12Z",
+        "M6 12h12M6 12c0-.7 1.994-2.008 2.5-2.5M6 12c0 .7 1.994 2.009 2.5 2.5M18 12c0-.7-1.994-2.008-2.5-2.5M18 12c0 .7-1.994 2.009-2.5 2.5",
+      ],
+      "y-range": [
+        "M12 18V6m0 12c.7 0 2.009-1.994 2.5-2.5M12 18c-.7 0-2.008-1.994-2.5-2.5M12 6c.7 0 2.009 1.994 2.5 2.5M12 6c-.7 0-2.008 1.994-2.5 2.5",
+        "M2.5 12c0-4.478 0-6.718 1.391-8.109C5.282 2.5 7.522 2.5 12 2.5s6.718 0 8.109 1.391C21.5 5.282 21.5 7.522 21.5 12s0 6.718-1.391 8.109C18.718 21.5 16.478 21.5 12 21.5s-6.718 0-8.109-1.391C2.5 18.718 2.5 16.478 2.5 12Z",
+      ],
+      move: [
+        "M12 3v6M3 12h6M21 12h-6M12 21v-6.5",
+        "m9 6 1.705-1.952C11.316 3.349 11.621 3 12 3s.685.349 1.295 1.048L15 6",
+        "m15 18-1.705 1.952C12.685 20.651 12.379 21 12 21s-.685-.349-1.295-1.048L9 18",
+        "m18 9 1.952 1.705C20.651 11.315 21 11.621 21 12s-.349.685-1.048 1.295L18 15",
+        "m6 15-1.952-1.705C3.349 12.685 3 12.379 3 12s.349-.685 1.048-1.295L6 9",
+      ],
+      export: [
+        "M20 14v-3.343c0-.818 0-1.226-.152-1.594-.153-.367-.442-.656-1.02-1.235l-4.736-4.736c-.499-.499-.748-.748-1.058-.896-.064-.031-.13-.058-.197-.082C12.514 2 12.161 2 11.456 2 8.211 2 6.588 2 5.489 2.886a4 4 0 0 0-.603.603C4 4.588 4 6.211 4 9.456V14c0 3.771 0 5.657 1.172 6.828C6.343 22 8.229 22 12 22M13 2.5V3c0 2.828 0 4.243.879 5.121C14.757 9 16.172 9 19 9h.5",
+        "M17 22c.607-.59 3-2.16 3-3s-2.393-2.41-3-3M19 19h-7",
+      ],
+      png: [
+        "M20 13v-2.343c0-.818 0-1.226-.152-1.594-.153-.367-.442-.656-1.02-1.235l-4.736-4.736c-.499-.499-.748-.748-1.058-.896-.064-.031-.13-.058-.197-.082C12.514 2 12.161 2 11.456 2 8.211 2 6.588 2 5.489 2.886a4 4 0 0 0-.603.603C4 4.588 4 6.211 4 9.456V13M13 2.5V3c0 2.828 0 4.243.879 5.121C14.757 9 16.172 9 19 9h.5",
+        "M4 22v-6h2a1.5 1.5 0 0 1 0 3H4m16-2a1 1 0 0 0-1-1h-1.5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1H19a1 1 0 0 0 1-1v-1.5h-1M10 22v-6l4 6v-6",
+      ],
+      svg: [
+        "M20 13v-2.343c0-.818 0-1.226-.152-1.594-.153-.367-.442-.656-1.02-1.235l-4.736-4.736c-.499-.499-.748-.748-1.058-.896-.064-.031-.13-.058-.197-.082C12.514 2 12.161 2 11.456 2 8.211 2 6.588 2 5.489 2.886a4 4 0 0 0-.603.603C4 4.588 4 6.211 4 9.456V13M13 2.5V3c0 2.828 0 4.243.879 5.121C14.757 9 16.172 9 19 9h.5",
+        "M7 16H5a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1h1a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1H4M14 16l-1.921 5.763a.347.347 0 0 1-.658 0L9.5 16M20 17a1 1 0 0 0-1-1h-1.5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1H19a1 1 0 0 0 1-1v-1.5h-1",
+      ],
+      csv: [
+        "M7.5 17.22C7.445 16.029 6.622 16 5.505 16 3.785 16 3.5 16.406 3.5 18v2c0 1.594.285 2 2.005 2 1.117 0 1.94-.029 1.995-1.22M20.5 16l-1.777 4.695C18.394 21.565 18.229 22 17.968 22s-.426-.435-.755-1.305L15.436 16m-2.56 0h-1.181c-.472 0-.708 0-.894.076-.634.26-.625.869-.625 1.424 0 .555-.009 1.165.625 1.424.186.076.422.076.894.076s.708 0 .894.076c.634.26.625.869.625 1.424 0 .555-.009 1.165-.625 1.424-.186.076-.422.076-.894.076h-1.286",
+        "M20 13v-2.343c0-.818 0-1.226-.152-1.594-.153-.367-.442-.656-1.02-1.235l-4.736-4.736c-.499-.499-.748-.748-1.058-.896-.064-.031-.13-.058-.197-.082C12.514 2 12.161 2 11.456 2 8.211 2 6.588 2 5.489 2.886a4 4 0 0 0-.603.603C4 4.588 4 6.211 4 9.456V13M13 2.5V3c0 2.828 0 4.243.879 5.121C14.757 9 16.172 9 19 9h.5",
+      ],
+    };
+    const iconPaths = paths[aliases[name] || name] || [];
+    const body = iconPaths.map((path) => `<path d="${path}"/>`).join("");
+    return `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false" ` +
+      `stroke="currentColor" stroke-width="1.8" stroke-linecap="round" ` +
       `stroke-linejoin="round">${body}</svg>`;
-    switch (name) {
-      case "zoomin":
-        return svg('<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5 L17 17"/>' +
-          '<path d="M8.5 6 V11 M6 8.5 H11"/>');
-      case "zoomout":
-        return svg('<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5 L17 17"/>' +
-          '<path d="M6 8.5 H11"/>');
-      case "pan":
-        return svg('<path d="M10 3 V17 M3 10 H17"/><path d="M10 3 L8 5 M10 3 L12 5"/>' +
-          '<path d="M10 17 L8 15 M10 17 L12 15"/><path d="M3 10 L5 8 M3 10 L5 12"/>' +
-          '<path d="M17 10 L15 8 M17 10 L15 12"/>');
-      case "zoom":
-        return svg('<path d="M7 3.5 H3.5 V7 M13 3.5 H16.5 V7 ' +
-          'M3.5 13 V16.5 H7 M16.5 13 V16.5 H13"/>');
-      case "select":
-        return svg('<path d="M7 4 H4 V7 M13 4 H16 V7 M4 13 V16 H7 ' +
-          'M16 13 V16 H13"/><circle cx="7" cy="8" r="1" fill="currentColor" ' +
-          'stroke="none"/><circle cx="12.5" cy="9" r="1" fill="currentColor" stroke="none"/>' +
-          '<circle cx="9.5" cy="13" r="1" fill="currentColor" stroke="none"/>');
-      case "lasso":
-        return svg('<path d="M5 5.5 C7 3 13.5 3.5 15.5 7 C17 10 14 15.5 9 15.5 ' +
-          'C4.5 15.5 2.5 11 4 7.5 Z"/><circle cx="5" cy="5.5" r="1" ' +
-          'fill="currentColor" stroke="none"/><circle cx="15.5" cy="7" r="1" ' +
-          'fill="currentColor" stroke="none"/><circle cx="9" cy="15.5" r="1" ' +
-          'fill="currentColor" stroke="none"/>');
-      case "selectx":
-        return svg('<path d="M5 4 V16 M15 4 V16 M7 10 H13 ' +
-          'M7 10 L9 8 M7 10 L9 12 M13 10 L11 8 M13 10 L11 12"/>');
-      case "selecty":
-        return svg('<path d="M4 5 H16 M4 15 H16 M10 7 V13 ' +
-          'M10 7 L8 9 M10 7 L12 9 M10 13 L8 11 M10 13 L12 11"/>');
-      case "chevrondown":
-        return svg('<path d="M6 8 L10 12 L14 8"/>');
-      case "collapse":
-        return svg('<path d="M4 5 H16 M4 15 H16 M7 8 L10 11 L13 8"/>');
-      case "expand":
-        return svg('<path d="M4 5 H16 M4 15 H16 M7 12 L10 9 L13 12"/>');
-      case "png":
-        return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
-          '<path d="M7 13 L9 10.5 L11 12 L13.5 9 V15 H7 Z"/>');
-      case "jpeg":
-        return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
-          '<circle cx="8.5" cy="10" r="1.2"/><path d="M7 15 L10 12 L13.5 15 Z"/>');
-      case "webp":
-        return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
-          '<path d="M7 11 C8 10 9 10 10 11 C11 12 12 12 13.5 11"/>' +
-          '<path d="M7 14 C8 13 9 13 10 14 C11 15 12 15 13.5 14"/>');
-      case "svg":
-        return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
-          '<path d="M7 13 L9 9 L11 14 L13.5 10"/>');
-      case "csv":
-        return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
-          '<path d="M7 9 H13 M7 12 H13 M7 15 H13 M9 8 V16"/>');
-      case "reset":
-        return svg('<path d="M4 10 a6 6 0 1 1 1.8 4.3"/><path d="M4 6 V10 H8"/>');
-      case "historyback":
-        return svg('<path d="M13 4 L7 10 L13 16"/>');
-      case "historyforward":
-        return svg('<path d="M7 4 L13 10 L7 16"/>');
-      case "drag":
-        return svg('<circle cx="7" cy="5" r=".8" fill="currentColor" stroke="none"/>' +
-          '<circle cx="13" cy="5" r=".8" fill="currentColor" stroke="none"/>' +
-          '<circle cx="7" cy="10" r=".8" fill="currentColor" stroke="none"/>' +
-          '<circle cx="13" cy="10" r=".8" fill="currentColor" stroke="none"/>' +
-          '<circle cx="7" cy="15" r=".8" fill="currentColor" stroke="none"/>' +
-          '<circle cx="13" cy="15" r=".8" fill="currentColor" stroke="none"/>');
-      default:
-        return svg("");
-    }
   },
 });

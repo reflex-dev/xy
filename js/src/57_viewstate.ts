@@ -208,7 +208,6 @@ Object.assign(ChartView.prototype, {
       if (!btn) return;
       btn.disabled = !enabled;
       btn.setAttribute("aria-disabled", String(!enabled));
-      btn.style.opacity = enabled ? "" : "0.4";
     };
     set(this._historyBackBtn, this._historyPast.length > 0);
     set(this._historyForwardBtn, this._historyFuture.length > 0);
