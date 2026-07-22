@@ -98,12 +98,12 @@ there is O(sample), not O(N).
    `astype("U")`-shape conversion) so the existing parallel Rust factorizer
    applies, preserving `category_label` canonicalization for the mixed-object
    remainder. Needs careful parity tests on label semantics.
-2. **Client hover fallback is O(N) per pointer-move for line/bar/rect traces**
-   (`50_chartview.ts:4494` `_nearestCpuIndex`, `_barHover`, `_rectHover`).
-   Only points draw into the pick FBO; a direct 1M-point line linear-scans
-   every vertex on every `pointermove`. Fix: binary-search x (line ingest
-   sorts x) and a sorted position index for bars/rects; linear fallback only
-   while a transition animation is interpolating positions.
+2. **Client bar/rect hover fallback is still O(N) per pointer-move**
+   (`50_chartview.ts` `_barHover`, `_rectHover`). The line half is resolved:
+   sorted-x lines binary-search outside positional transitions, while the
+   transition path remains linear for correctness; point-pickable scatter no
+   longer enters the CPU fallback after an operational GPU miss. A sorted
+   position index for bars/rects remains a separate follow-up.
 
 ### Medium
 

@@ -356,13 +356,24 @@ to the theme-token read path.
 
 **Performance guardrail (why this stays bounded):** CSS-color
 resolution goes through `resolveCssColor`, which appends a probe element and calls
-`getComputedStyle` — a style/layout flush. That is acceptable today because it
-runs only at theme-read time and is effectively cached, never in the draw loop.
+`getComputedStyle` — a style/layout flush. Each `ChartView` therefore owns an
+expression-to-RGBA cache shared by theme reads, mark refreshes, and interaction
+state drawing. `refreshTheme()` clears that cache before re-reading CSS; ordinary
+draw and hover frames never append a color probe.
 Any broadening of class-driven styling must keep resolution out of the hot
 path (cache resolved colors; re-resolve only on explicit theme change, not per
 frame or per hover) and must not reintroduce layout thrash on the tooltip's
 per-hover repositioning — backed by a `scripts/bench.py` TTFR /
 interaction-latency comparison, not assumed.
+
+The same steady-state rule applies to non-color client work. Dashed line and
+segment arc-length buffers are keyed by geometry, axes/view, plot rectangle,
+and DPR; axis/annotation label DOM is keyed by spec, axes/view, plot rectangle,
+and theme epoch (with an 80 ms cadence only while a gesture or view animation
+is active). A settled frame with the same signature reuses both. Hover trusts
+the point-ID framebuffer after an operational GPU miss and binary-searches the
+sorted x column for lines; position transitions retain the linear correctness
+fallback because key interpolation can temporarily change order.
 
 ## Recommended Sequence
 

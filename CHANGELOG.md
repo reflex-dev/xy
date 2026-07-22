@@ -35,6 +35,13 @@ in the README).
   to the internal engine object.
 
 ### Added
+- **Cached client steady-state rendering.** Each chart now memoizes resolved CSS
+  colors until `refreshTheme()`, reuses dashed-line/segment screen-space
+  geometry until data, view, plot, axes, or DPR changes, and preserves axis
+  label DOM when its layout signature is unchanged. Sorted line hover uses a
+  binary search outside position transitions, point-pickable scatter trusts a
+  completed GPU miss instead of rescanning CPU columns, and repeated pointer
+  events inside one device pixel reuse the previous hit or miss.
 - **Export format parity and a unified export API (ENG-10447).**
   `to_image(format=...)` and extension-inferred, atomic `write_image(path)`
   on charts, facet grids, and the internal figure cover PNG, JPEG/JPG, WebP,

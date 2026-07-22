@@ -259,6 +259,11 @@ Object.assign(ChartView.prototype, {
       }
       band = null;
       drag = null;
+      if (this._viewMutationActive) {
+        this._viewMutationActive = false;
+        this._lastLabelDraw = null;
+        this.draw();
+      }
     });
     this._listen(c, "pointerleave", () => this._pointerHoverExit());
     // Backstop for missed canvas pointerleave: browsers skip boundary events
@@ -314,6 +319,7 @@ Object.assign(ChartView.prototype, {
     this._hoverId = -1;
     this._hoverTarget = null;
     this._lastHoverXY = null;
+    this._lastHoverPixel = null;
     this._a11yKeyboardReadout = null;
     this._pickSeq = (this._pickSeq || 0) + 1;
     this._hideTooltip();
@@ -378,6 +384,7 @@ Object.assign(ChartView.prototype, {
       this._hoverId = -1;
       this._hoverTarget = null;
       this._lastHoverXY = null;
+      this._lastHoverPixel = null;
       this._a11yKeyboardReadout = null;
       // Invalidate an exact-value reply already in flight so dismissal cannot
       // reopen the tooltip. Keep _a11yPointIndex: refocusing resumes at the
@@ -468,7 +475,7 @@ Object.assign(ChartView.prototype, {
     const cssX = e.clientX - rect.left;
     const cssY = e.clientY - rect.top;
     const [x, y] = this._dataFromCanvas(cssX, cssY);
-    const hit = this._pickAt(cssX, cssY) || this._hoverAt(cssX, cssY);
+    const hit = this._pickAt(cssX, cssY) || this._hoverAt(cssX, cssY, true);
     const detail = {
       x,
       y,

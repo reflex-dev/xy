@@ -113,7 +113,9 @@ def _core_interaction_figures() -> list[dict[str, Any]]:
     x_line = np.linspace(0.0, 18_000.0, 120_000, dtype=np.float64)
     y_line = np.cumsum(rng.normal(0.0, 0.18, x_line.size)).astype(np.float64, copy=False)
     line = xy.line_chart(
-        xy.line(x=x_line, y=y_line, name="signal", width=1.4),
+        # Dashed on purpose: repeated redraws exercise the client arc-length
+        # cache instead of benchmarking only the solid-line fast path.
+        xy.line(x=x_line, y=y_line, name="signal", width=1.4, dash=(6.0, 3.0)),
         xy.x_axis(label="sample"),
         xy.y_axis(label="signal"),
         width=RENDER_W,
@@ -567,6 +569,10 @@ def _probe_js(reps: int) -> str:
       }}));
       view._clearSelection();
     }});
+    // No new input/state: isolates the steady draw path used by hover-only
+    // highlight frames. This catches accidental label DOM rebuilds and dash
+    // arc-length uploads that the broader gesture metrics can hide.
+    const steadyRedraw = measure(() => {{}});
     view._setView(before, {{animate: false, request: false}});
     settlePixels();
     const nonblank = Math.max(xyNonblankPixels(view), nonblankCanvasPixels());
@@ -597,6 +603,7 @@ def _probe_js(reps: int) -> str:
       crosshair: crosshair,
       box_zoom: box,
       brush_select: brush,
+      steady_redraw: steadyRedraw,
     }});
   }} catch (err) {{
     xyFail("XY_INTERACTION", err);
@@ -627,7 +634,15 @@ def _flatten_probe_metrics(row: dict[str, Any], result: dict[str, Any]) -> None:
     row["brush_select_eligible"] = bool(result.get("brush_select_eligible"))
     row["brush_select_count"] = result.get("brush_select_count")
     row["brush_select_cleared"] = bool(result.get("brush_select_cleared"))
-    for name in ("wheel_zoom", "pan", "hover", "crosshair", "box_zoom", "brush_select"):
+    for name in (
+        "wheel_zoom",
+        "pan",
+        "hover",
+        "crosshair",
+        "box_zoom",
+        "brush_select",
+        "steady_redraw",
+    ):
         stats = result.get(name) or {}
         row[f"{name}_median_ms"] = stats.get("median_ms")
         row[f"{name}_p95_ms"] = stats.get("p95_ms")
@@ -959,16 +974,17 @@ def to_markdown(report: dict[str, Any]) -> str:
         "",
         "## Results",
         "",
-        "| scenario | points | tier | payload | wheel p95 | pan p95 | hover p95 | crosshair p95 | box p95 | brush p95 | box zoom | brush select | blank frames | tick overlaps | color delta | tooltip | status |",
-        "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---|---|",
+        "| scenario | points | tier | payload | steady redraw p95 | wheel p95 | pan p95 | hover p95 | crosshair p95 | box p95 | brush p95 | box zoom | brush select | blank frames | tick overlaps | color delta | tooltip | status |",
+        "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---|---|",
     ]
     for row in report["rows"]:
         lines.append(
-            "| {scenario} | {n:,} | {tier} | {payload} | {wheel} | {pan} | {hover} | {crosshair} | {box} | {brush} | {box_state} | {brush_count} | {blank} | {overlaps} | {color_delta} | {tooltip} | {status} |".format(
+            "| {scenario} | {n:,} | {tier} | {payload} | {steady} | {wheel} | {pan} | {hover} | {crosshair} | {box} | {brush} | {box_state} | {brush_count} | {blank} | {overlaps} | {color_delta} | {tooltip} | {status} |".format(
                 scenario=row["scenario"],
                 n=row["n"],
                 tier=row.get("tier", "—"),
                 payload=_fmt_bytes(row.get("payload_bytes")),
+                steady=_fmt_ms(row.get("steady_redraw_p95_ms")),
                 wheel=_fmt_ms(row.get("wheel_zoom_p95_ms")),
                 pan=_fmt_ms(row.get("pan_p95_ms")),
                 hover=_fmt_ms(row.get("hover_p95_ms")),
@@ -1003,6 +1019,7 @@ def to_markdown(report: dict[str, Any]) -> str:
         "Notes:",
         "",
         "- Timed gestures enter through DOM events, flush queued wheel/animation state, draw, and perform a WebGL readback before the sample stops.",
+        "- `steady redraw` performs the same draw + WebGL readback with no intervening state change; the line scenario is dashed so this row covers dash-cache hits and stable label DOM.",
         "- Scope is standalone client input-to-GPU-finish; widget/backend LOD work is measured by native and workflow rows.",
         "- `nonblank` is a WebGL readback sanity check over the rendered chart canvas.",
         "- Budget verification rejects blank canvases, blank interaction frames, missing view changes, missing crosshair chrome, box zoom that does not narrow/restore the viewport, brush selection that does not select/clear eligible marks, overlapping tick labels, unstable tooltips, oversized frame color jumps, and p95 values over the listed limits.",

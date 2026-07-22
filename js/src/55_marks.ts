@@ -1,5 +1,3 @@
-import { parseColor } from "./20_theme";
-
 // ---------------------------------------------------------------------------
 // Mark-renderer registry — the client-side dispatch for chart kinds.
 //
@@ -51,7 +49,7 @@ const RECT_MARK = {
     );
   },
   refreshColor: (view, g) => {
-    if (!g.colorMode) g.color = parseColor(view.root, g.trace.style.color, g.color);
+    if (!g.colorMode) g.color = view._parseColor(g.trace.style.color, g.color);
     // stroke + gradient stops are CSS-expressed too — re-resolve with the theme.
     view._rectMarkStyleGpu(g, g.trace);
   },
@@ -88,7 +86,7 @@ const BAR_MARK = {
     view._drawBars(g, pmap, v1map, v0map, v0Const, v0EdgePad);
   },
   refreshColor: (view, g) => {
-    if (!g.colorMode) g.color = parseColor(view.root, g.trace.style.color, g.color);
+    if (!g.colorMode) g.color = view._parseColor(g.trace.style.color, g.color);
     // stroke + gradient stops are CSS-expressed too — re-resolve with the theme.
     view._rectMarkStyleGpu(g, g.trace);
   },
@@ -106,7 +104,7 @@ const SEGMENT_MARK = {
     );
   },
   refreshColor: (view, g) => {
-    if (!g.colorMode) g.color = parseColor(view.root, g.trace.style.color, g.color);
+    if (!g.colorMode) g.color = view._parseColor(g.trace.style.color, g.color);
   },
 };
 
@@ -135,8 +133,8 @@ const AREA_MARK = {
     }
   },
   refreshColor: (view, g) => {
-    g.color = parseColor(view.root, g.trace.style.color, g.color);
-    g.lineColor = parseColor(view.root, g.trace.style.line_color || g.trace.style.color, g.lineColor || g.color);
+    g.color = view._parseColor(g.trace.style.color, g.color);
+    g.lineColor = view._parseColor(g.trace.style.line_color || g.trace.style.color, g.lineColor || g.color);
     g.grad = view._resolveMarkFill(g.trace.style, g.color);
   },
 };
@@ -149,9 +147,9 @@ const MESH_MARK = {
     view._drawMesh(g, view._map(g.x0Meta, x0, x1, g.xAxis), view._map(g.y0Meta, y0, y1, g.yAxis));
   },
   refreshColor: (view, g) => {
-    if (g.colorMode === 0 && g.trace.color) g.color = parseColor(view.root, g.trace.color.color, g.color);
+    if (g.colorMode === 0 && g.trace.color) g.color = view._parseColor(g.trace.color.color, g.color);
     const style = g.trace.style || {};
-    g.meshStroke = parseColor(view.root, style.stroke || "transparent", [0, 0, 0, 0]);
+    g.meshStroke = view._parseColor(style.stroke || "transparent", [0, 0, 0, 0]);
   },
 };
 
@@ -175,9 +173,9 @@ export const MARK_KINDS = {
       view._drawMesh(g, view._map(g.x0Meta, x0, x1, g.xAxis), view._map(g.y0Meta, y0, y1, g.yAxis));
     },
     refreshColor: (view, g) => {
-      if (g.colorMode === 0 && g.trace.color) g.color = parseColor(view.root, g.trace.color.color, g.color);
+      if (g.colorMode === 0 && g.trace.color) g.color = view._parseColor(g.trace.color.color, g.color);
       const style = g.trace.style || {};
-      g.meshStroke = parseColor(view.root, style.stroke || "transparent", [0, 0, 0, 0]);
+      g.meshStroke = view._parseColor(style.stroke || "transparent", [0, 0, 0, 0]);
     },
   },
   bar: BAR_MARK,
@@ -197,7 +195,7 @@ export const MARK_KINDS = {
     retainCpu: true,
     refreshColor: (view, g) => {
       if (g.colorMode === 0 && g.trace.color) {
-        g.color = parseColor(view.root, g.trace.color.color, g.color);
+        g.color = view._parseColor(g.trace.color.color, g.color);
       }
       view._pointMarkStyle(g, g.trace);
     },
@@ -210,7 +208,7 @@ export const MARK_KINDS = {
       view._drawLine(g, view._map(g.xMeta, x0, x1, g.xAxis), view._map(g.yMeta, y0, y1, g.yAxis));
     },
     refreshColor: (view, g) => {
-      g.color = parseColor(view.root, g.trace.style.color, g.color);
+      g.color = view._parseColor(g.trace.style.color, g.color);
     },
   },
   area: AREA_MARK,

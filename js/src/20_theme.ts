@@ -2,7 +2,8 @@
 // Colors & theming (§36: chrome inherits CSS; marks read --chart-* tokens)
 // ---------------------------------------------------------------------------
 
-function resolveCssColor(host, expr) {
+function resolveCssColor(host, expr, cache = null) {
+  if (cache && cache.has(expr)) return cache.get(expr);
   const probe = document.createElement("span");
   probe.style.display = "none";
   probe.style.color = expr;
@@ -10,10 +11,15 @@ function resolveCssColor(host, expr) {
   const rgb = getComputedStyle(probe).color;
   host.removeChild(probe);
   const m = rgb.match(/rgba?\(([^)]+)\)/);
-  if (!m) return null;
+  if (!m) {
+    cache?.set(expr, null);
+    return null;
+  }
   const parts = m[1].split(/[,/\s]+/).filter(Boolean).map(Number);
   const [r, g, b, a = 1] = parts;
-  return [r / 255, g / 255, b / 255, a];
+  const out = [r / 255, g / 255, b / 255, a];
+  cache?.set(expr, out);
+  return out;
 }
 
 function cssToken(el, name) {
@@ -32,12 +38,20 @@ export function hexColor(hex) {
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, a];
 }
 
-export function parseColor(host, c, fallback) {
+export function parseColor(host, c, fallback, cache = null) {
   if (!c) return fallback;
   if (typeof c !== "string") return fallback;
   const expr = c.trim();
   if (!expr) return fallback;
-  const out = expr.startsWith("#") ? hexColor(expr) : resolveCssColor(host, expr);
+  let out;
+  if (cache && cache.has(expr)) {
+    out = cache.get(expr);
+  } else {
+    out = expr.startsWith("#") ? hexColor(expr) : resolveCssColor(host, expr, cache);
+    // Hex colors avoid the DOM resolver but still recur across traces and
+    // interaction-state draws, so retain their parsed tuple too.
+    if (expr.startsWith("#")) cache?.set(expr, out);
+  }
   if (out) return out;
   // Validated figures never land here — the Python build gate rejects
   // malformed colors (src/css.rs) — but a hand-written spec can. Say so
@@ -48,12 +62,12 @@ export function parseColor(host, c, fallback) {
   return fallback;
 }
 
-export function readTheme(root) {
-  const text = resolveCssColor(root, "currentColor") || [0.2, 0.2, 0.2, 1];
+export function readTheme(root, cache = null) {
+  const text = resolveCssColor(root, "currentColor", cache) || [0.2, 0.2, 0.2, 1];
   const withA = (c, a) => [c[0], c[1], c[2], a];
   const tok = (name) => {
     const v = cssToken(root, name);
-    return v ? resolveCssColor(root, v) || null : null;
+    return v ? resolveCssColor(root, v, cache) || null : null;
   };
   return {
     bg: tok("--chart-bg"),
