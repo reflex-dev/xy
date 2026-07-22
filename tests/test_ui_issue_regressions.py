@@ -68,8 +68,8 @@ def test_density_badges_follow_dark_theme(tmp_path: Path) -> None:
     )
     result = _probe(chart, script, tmp_path, "dark density badge")
 
-    assert result["color"] == "rgb(229, 231, 235)", result
-    assert result["background"] == "rgba(30, 35, 44, 0.9)", result
+    assert result["color"] == "rgb(248, 250, 252)", result
+    assert result["background"] == "rgba(30, 35, 44, 0.88)", result
 
 
 def test_narrow_annotation_labels_stay_inside_and_do_not_collide(tmp_path: Path) -> None:
