@@ -182,8 +182,9 @@ benchmark tracks this as part of the core 2D payload budget.
   decision with hysteresis, drilled-subset versioning (`drill_seq`), window
   encoding, screen-derived grid shaping, entry/exit fades, the density-source
   cache, and eased normalization. An *aggregating* kind supplies its own
-  aggregate kernel (density uses `bin_2d`; a 1D histogram supplies 1D binning)
-  and reuses this framework around it.
+  aggregate kernel (density uses `bin_2d` for counts plus `bin_2d_mean_color`
+  for the per-cell mean point color, LOD doc §2; a 1D histogram supplies 1D
+  binning) and reuses this framework around it.
 - **Transport**: data-less JSON spec + one binary blob; no JSON numbers (§29).
 - **Ticks / axes / time axis / autorange**: keyed on axis kind, not mark kind.
 

@@ -358,7 +358,13 @@ def decimate_view(
 def _ensure_pyramid(t: Trace) -> int | None:
     """Lazily build the trace's count pyramid (§5 Tier 3). Cached on the
     trace; 0 is remembered as "tried and not applicable" so we never rebuild.
-    Only worth the memory for genuinely large traces."""
+    Only worth the memory for genuinely large traces.
+
+    Channel-bearing traces build mean-color planes alongside the counts
+    (LOD doc §2) so pyramid-served zoom-outs keep the mean point color; those
+    pyramids refuse native appends and are invalidated + lazily rebuilt
+    instead (the appended rows' colors and a possibly moved channel domain
+    both require a rescan)."""
     handle = getattr(t, "_pyr_handle", None)
     if handle is not None:
         return handle or None
@@ -375,8 +381,15 @@ def _ensure_pyramid(t: Trace) -> int | None:
     # (bin_2d's window is half-open).
     x1 += (x1 - x0) * 1e-9
     y1 += (y1 - y0) * 1e-9
-    handle = kernels.pyramid_build(t.x.values, t.y.values, x0, x1, y0, y1, PYRAMID_BASE_DIM)
+    bin_colors = channels.resolve_bin_colors(t.color_ch, None, DEFAULT_PALETTE)
+    if bin_colors is not None:
+        handle = kernels.pyramid_build_color(
+            t.x.values, t.y.values, x0, x1, y0, y1, PYRAMID_BASE_DIM, **bin_colors
+        )
+    else:
+        handle = kernels.pyramid_build(t.x.values, t.y.values, x0, x1, y0, y1, PYRAMID_BASE_DIM)
     t._pyr_handle = handle
+    t._pyr_colored = bool(handle) and bin_colors is not None
     if handle:
         # §27: the pyramid is native-side memory owned by this trace. Tie its
         # lifetime to the Trace object so a discarded Figure (the notebook
@@ -401,12 +414,14 @@ def _free_pyramid(t: Trace) -> None:
     t._pyr_handle = None
 
 
-def _pyramid_resident_bytes(base_dim: int = PYRAMID_BASE_DIM) -> int:
-    """Exact native bytes of one count pyramid: u32 levels from base_dim²
-    halving per side down to 1² (mirrors tiles.rs level construction)."""
+def _pyramid_resident_bytes(base_dim: int = PYRAMID_BASE_DIM, *, colored: bool = False) -> int:
+    """Exact native bytes of one pyramid: u32 count levels from base_dim²
+    halving per side down to 1² (mirrors tiles.rs level construction), plus
+    the [u16; 4] mean-color planes when the trace bins colors."""
+    per_cell = 4 + (8 if colored else 0)
     total, dim = 0, base_dim
     while True:
-        total += dim * dim * 4
+        total += dim * dim * per_cell
         if dim == 1:
             return total
         dim >>= 1
@@ -415,7 +430,11 @@ def _pyramid_resident_bytes(base_dim: int = PYRAMID_BASE_DIM) -> int:
 def pyramid_report_bytes(fig: Any) -> int:
     """Memory-report line (design dossier §27): native bytes held by live
     trace pyramids."""
-    return sum(_pyramid_resident_bytes() for t in fig.traces if getattr(t, "_pyr_handle", 0))
+    return sum(
+        _pyramid_resident_bytes(colored=bool(getattr(t, "_pyr_colored", False)))
+        for t in fig.traces
+        if getattr(t, "_pyr_handle", 0)
+    )
 
 
 def _encode_log_u8(grid: np.ndarray) -> tuple[bytes, float]:
@@ -536,6 +555,8 @@ def density_view(
     # budget we fall through to the exact scan that drilling needs anyway.
     binning = "exact"
     grid = None
+    rgba_grid: np.ndarray | None = None
+    bin_colors = channels.resolve_bin_colors(t.color_ch, None, DEFAULT_PALETTE)
     pyr = None if nonlinear else _ensure_pyramid(t)
     if pyr is not None:
         est = kernels.pyramid_count(pyr, lo_x, hi_x, lo_y, hi_y)
@@ -547,7 +568,17 @@ def density_view(
                 False,
                 aggregate_reduction="pyramid-count",
             )
-            res = kernels.pyramid_compose(pyr, lo_x, hi_x, lo_y, hi_y, plan.grid_w, plan.grid_h)
+            # Colored pyramids compose the mean-color plane with the counts;
+            # both refusals (outresolved window, missing planes) fall through
+            # to the exact scan below.
+            if getattr(t, "_pyr_colored", False):
+                res_color = kernels.pyramid_compose_color(
+                    pyr, lo_x, hi_x, lo_y, hi_y, plan.grid_w, plan.grid_h
+                )
+                res = (res_color[0], res_color[2]) if res_color is not None else None
+                rgba_grid = res_color[1] if res_color is not None else None
+            else:
+                res = kernels.pyramid_compose(pyr, lo_x, hi_x, lo_y, hi_y, plan.grid_w, plan.grid_h)
             if res is not None:
                 grid, level = res
                 visible = plan.visible
@@ -555,6 +586,7 @@ def density_view(
                 binning = f"pyramid-L{level}"
                 lod.exit_drill(t)
     if grid is None:
+        rgba_grid = None
         sel = kernels.range_indices(xv, yv, lo_x, hi_x, lo_y, hi_y)
         plan = lod.plan_view_lod(request, len(sel), SCATTER_DENSITY_THRESHOLD, t.drill_mode)
         visible = plan.visible
@@ -566,6 +598,10 @@ def density_view(
         bx, (bx0, bx1) = fig._binning_coords(t.x_axis, xv, (lo_x, hi_x))
         by, (by0, by1) = fig._binning_coords(t.y_axis, yv, (lo_y, hi_y))
         grid = kernels.bin_2d(bx, by, bx0, bx1, by0, by1, w, h)
+        if bin_colors is not None:
+            # Mean point color per cell (LOD doc §2): same window, same
+            # binning space, occupied cells match the count grid exactly.
+            rgba_grid = kernels.bin_2d_mean_color(bx, by, bx0, bx1, by0, by1, w, h, **bin_colors)
     else:
         plan = lod.plan_view_lod(
             request,
@@ -594,6 +630,9 @@ def density_view(
         "x_range": [lo_x, hi_x],
         "y_range": [lo_y, hi_y],
     }
+    if rgba_grid is not None:
+        density["rgba"] = writer.add_u8(np.ascontiguousarray(rgba_grid).reshape(-1))
+        density["color_agg"] = "mean"
     if t.color_ch and t.color_ch.mode == "constant" and t.color_ch.constant is not None:
         density["color"] = t.color_ch.constant
     if sample is not None:
@@ -634,8 +673,10 @@ def _drill_points(
     ship in the direct-scatter wire shape, normalized over their *global*
     domain so colors/sizes stay stable across views; offsets re-center on the
     window midpoint (§16); each point carries its local log-density plus a
-    `lod_blend` weight (visible/budget) so the density→points handoff is
-    color-continuous instead of a palette jump (§5)."""
+    `lod_blend` weight (visible/budget) so the density→points handoff stays
+    continuous (§5). The surface already wears the mean point color (LOD doc
+    §2), so the handoff is intensity-only: fresh marks enter at their cell's
+    count-alpha and ease to native opacity — hue never jumps."""
     xs, ys = t.x.values[sel], t.y.values[sel]
     writer = lod.BufferWriter()
     x_ref, y_ref = lod.add_window_xy(
@@ -661,13 +702,11 @@ def _drill_points(
     dy, (d_y0, d_y1) = fig._binning_coords(t.y_axis, ys, (lo_y, hi_y))
     dval_buf = writer.add_f32(lod.local_log_density(dx, dy, d_x0, d_x1, d_y0, d_y1, gw, gh))
     drill_seq = lod.enter_drill(t, sel)
-    # 1.0 right at the boundary → density-colored points; →0 as zoom deepens.
+    # 1.0 right at the boundary → points enter at the density surface's
+    # local count-alpha; →0 as zoom deepens. Hue needs no handoff anymore:
+    # the surface already wears the mean point color (LOD doc §2), so the
+    # marks arrive in their native colors and only intensity eases.
     lod_blend = float(min(1.0, visible / SCATTER_DENSITY_THRESHOLD))
-    cmap = (
-        t.color_ch.colormap
-        if (t.color_ch and t.color_ch.mode == "continuous")
-        else channels.DEFAULT_COLORMAP
-    )
     trace_update = {
         "id": t.id,
         "mode": "points",
@@ -686,7 +725,6 @@ def _drill_points(
         "size": size_spec,
         "density_val": {"buf": dval_buf},
         "lod_blend": lod_blend,
-        "density_colormap": cmap,
         "drill_seq": drill_seq,
         "style": dict(t.style),
     }

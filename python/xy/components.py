@@ -3824,11 +3824,10 @@ def _declarative_colorbar_options(mark: Mark, traces: list[Any]) -> Optional[dic
             channel = trace.color_ch
             if channel is None or channel.mode != "continuous":
                 continue
-            # A density-tier scatter colors aggregate counts; its original
-            # per-row color channel is explicitly dropped, so advertising that
-            # channel's domain beside the density ramp would be misleading.
-            if trace.kind == "scatter" and trace.use_density():
-                continue
+            # A density-tier scatter now wears the channel's own colors — each
+            # cell shows the mean of its points' colormapped values (LOD doc
+            # §2) — so the channel's domain⇄colormap legend stays truthful in
+            # both representations and the colorbar renders as requested.
             domain = channel.domain
             colormap = channel.colormap
         if domain is None or colormap is None:

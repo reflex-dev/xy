@@ -3219,6 +3219,268 @@ fn bin_2d_impl(
     });
 }
 
+/// sRGB byte → linear-light u16 (IEC 61966-2-1, scaled to 0..=65535,
+/// round-half-even). A checked-in literal — not computed with `powf` at
+/// runtime — so the mean-color pipeline below is integer-only end to end:
+/// bitwise deterministic for any thread count *and* across platforms/libm
+/// versions. Strictly increasing, so the inverse is an exact search.
+pub(crate) const SRGB_TO_LINEAR_U16: [u16; 256] = [
+    0, 20, 40, 60, 80, 99, 119, 139,
+    159, 179, 199, 219, 241, 264, 288, 313,
+    340, 367, 396, 427, 458, 491, 526, 562,
+    599, 637, 677, 718, 761, 805, 851, 898,
+    947, 997, 1048, 1101, 1156, 1212, 1270, 1330,
+    1391, 1453, 1517, 1583, 1651, 1720, 1790, 1863,
+    1937, 2013, 2090, 2170, 2250, 2333, 2418, 2504,
+    2592, 2681, 2773, 2866, 2961, 3058, 3157, 3258,
+    3360, 3464, 3570, 3678, 3788, 3900, 4014, 4129,
+    4247, 4366, 4488, 4611, 4736, 4864, 4993, 5124,
+    5257, 5392, 5530, 5669, 5810, 5953, 6099, 6246,
+    6395, 6547, 6700, 6856, 7014, 7174, 7335, 7500,
+    7666, 7834, 8004, 8177, 8352, 8528, 8708, 8889,
+    9072, 9258, 9445, 9635, 9828, 10022, 10219, 10417,
+    10619, 10822, 11028, 11235, 11446, 11658, 11873, 12090,
+    12309, 12530, 12754, 12980, 13209, 13440, 13673, 13909,
+    14146, 14387, 14629, 14874, 15122, 15371, 15623, 15878,
+    16135, 16394, 16656, 16920, 17187, 17456, 17727, 18001,
+    18277, 18556, 18837, 19121, 19407, 19696, 19987, 20281,
+    20577, 20876, 21177, 21481, 21787, 22096, 22407, 22721,
+    23038, 23357, 23678, 24002, 24329, 24658, 24990, 25325,
+    25662, 26001, 26344, 26688, 27036, 27386, 27739, 28094,
+    28452, 28813, 29176, 29542, 29911, 30282, 30656, 31033,
+    31412, 31794, 32179, 32567, 32957, 33350, 33745, 34143,
+    34544, 34948, 35355, 35764, 36176, 36591, 37008, 37429,
+    37852, 38278, 38706, 39138, 39572, 40009, 40449, 40891,
+    41337, 41785, 42236, 42690, 43147, 43606, 44069, 44534,
+    45002, 45473, 45947, 46423, 46903, 47385, 47871, 48359,
+    48850, 49344, 49841, 50341, 50844, 51349, 51858, 52369,
+    52884, 53401, 53921, 54445, 54971, 55500, 56032, 56567,
+    57105, 57646, 58190, 58737, 59287, 59840, 60396, 60955,
+    61517, 62082, 62650, 63221, 63795, 64372, 64952, 65535,
+];
+
+/// Nearest sRGB byte for a linear-light u16 — the exact inverse of the table
+/// above (integer search over a strictly increasing sequence; ties round to
+/// the darker byte).
+pub(crate) fn linear_u16_to_srgb_u8(linear: u16) -> u8 {
+    let above = SRGB_TO_LINEAR_U16.partition_point(|&v| v <= linear);
+    if above == 0 {
+        return 0; // unreachable: table[0] == 0 ≤ every u16
+    }
+    if above >= 256 {
+        return 255;
+    }
+    let below_value = SRGB_TO_LINEAR_U16[above - 1];
+    let above_value = SRGB_TO_LINEAR_U16[above];
+    if linear - below_value <= above_value - linear {
+        (above - 1) as u8
+    } else {
+        above as u8
+    }
+}
+
+/// Per-point straight-alpha RGBA8 source for mean-color binning.
+pub enum BinColorSource<'a> {
+    /// One LUT index per point plus an RGBA8 palette/colormap table
+    /// (1..=256 entries). Indices wrap modulo the table length — the
+    /// palette's own repeat rule, so out-of-palette categorical codes bin
+    /// with exactly the color they draw with.
+    Indexed { idx: &'a [u8], lut: &'a [[u8; 4]] },
+    /// Straight-alpha RGBA8, 4 bytes per point (the `direct_rgba` channel).
+    Rgba(&'a [u8]),
+}
+
+/// One cell of the mean-color accumulator: exact integer sums, so the
+/// parallel merge is order-independent (bitwise deterministic for any thread
+/// count, like `bin_2d`). Color sums are alpha-weighted linear-light u16, so
+/// a translucent point contributes proportionally and the mean is the
+/// physically downsampled color of the cell's points.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct MeanColorCell {
+    pub(crate) count: u32,
+    alpha: u64,
+    red: u64,
+    green: u64,
+    blue: u64,
+}
+
+impl MeanColorCell {
+    /// Straight-alpha RGBA8: sRGB mean color + mean point alpha (integer
+    /// rounding, half away from zero — deterministic).
+    fn rgba8(&self) -> [u8; 4] {
+        if self.count == 0 || self.alpha == 0 {
+            return [0, 0, 0, 0];
+        }
+        let mean = |sum: u64| ((sum + self.alpha / 2) / self.alpha).min(u16::MAX as u64) as u16;
+        let alpha =
+            ((self.alpha + u64::from(self.count) / 2) / u64::from(self.count)).min(255) as u8;
+        [
+            linear_u16_to_srgb_u8(mean(self.red)),
+            linear_u16_to_srgb_u8(mean(self.green)),
+            linear_u16_to_srgb_u8(mean(self.blue)),
+            alpha,
+        ]
+    }
+
+    /// Storage form for pyramid color planes: linear-light u16 mean color
+    /// plus the mean straight alpha rescaled to 0..=65535.
+    pub(crate) fn mean_u16x4(&self) -> [u16; 4] {
+        if self.count == 0 || self.alpha == 0 {
+            return [0, 0, 0, 0];
+        }
+        let mean = |sum: u64| ((sum + self.alpha / 2) / self.alpha).min(u16::MAX as u64) as u16;
+        let alpha = ((self.alpha * 257 + u64::from(self.count) / 2) / u64::from(self.count))
+            .min(u16::MAX as u64) as u16;
+        [mean(self.red), mean(self.green), mean(self.blue), alpha]
+    }
+}
+
+/// Serial fused count+color accumulation over a full grid — the pyramid
+/// build's base pass (`tiles::build_color`). Returns the raw accumulator
+/// cells so the caller keeps exact counts alongside the color means.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn bin_2d_mean_color_cells(
+    x: &[f64],
+    y: &[f64],
+    colors: &BinColorSource<'_>,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+) -> Vec<MeanColorCell> {
+    let mut grid = vec![MeanColorCell::default(); w * h];
+    bin_2d_mean_color_accumulate(x, y, colors, 0, x0, x1, y0, y1, w, h, &mut grid);
+    grid
+}
+
+/// Mean-color companion to `bin_2d` (§5 Tier 2, LOD doc §2): average the
+/// *resolved point colors* of each cell so the density surface wears the data
+/// set's own colors while count drives only the alpha channel. `out` is
+/// `w*h*4` straight-alpha RGBA8, row 0 = bottom (same orientation as
+/// `bin_2d`): rgb = alpha-weighted mean point color (averaged in linear
+/// light, quantized back to sRGB), a = plain mean of the points' straight
+/// alpha. Empty cells are fully zeroed; a cell whose points are all alpha-0
+/// keeps rgb 0 too (its display alpha is 0, so no color is ever invented).
+/// In-window/NaN predicates and cell indexing are bit-identical to
+/// `bin_2d_count_scalar`, so occupied cells match the count grid exactly.
+#[allow(clippy::too_many_arguments)] // window (x0,x1,y0,y1) + grid (w,h) + io is irreducible
+pub fn bin_2d_mean_color(
+    x: &[f64],
+    y: &[f64],
+    colors: &BinColorSource<'_>,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    out: &mut [u8],
+) {
+    assert_eq!(x.len(), y.len());
+    assert_eq!(out.len(), w * h * 4);
+    assert!(w > 0 && h > 0 && x1_gt_x0(x0, x1) && x1_gt_x0(y0, y1));
+    match colors {
+        BinColorSource::Indexed { idx, lut } => {
+            assert_eq!(idx.len(), x.len());
+            assert!(!lut.is_empty() && lut.len() <= 256);
+        }
+        BinColorSource::Rgba(rgba) => assert_eq!(rgba.len(), x.len() * 4),
+    }
+    let n = x.len();
+    let cells = w * h;
+    // Each worker's accumulator is ~10× a count grid (40 B/cell), so fan out
+    // more conservatively than `bin_2d`: the points-per-cell ratio still
+    // gates, and a hard cap of 4 bounds the transient to ~4 grids.
+    let threads = bin_2d_threads(n, cells).min(4);
+    let grid = if threads <= 1 || n < threads {
+        let mut grid = vec![MeanColorCell::default(); cells];
+        bin_2d_mean_color_accumulate(x, y, colors, 0, x0, x1, y0, y1, w, h, &mut grid);
+        grid
+    } else {
+        let chunk = n.div_ceil(threads);
+        let grids: Vec<Vec<MeanColorCell>> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..threads)
+                .map(|t| {
+                    let lo = (t * chunk).min(n);
+                    let hi = ((t + 1) * chunk).min(n);
+                    let (xs, ys) = (&x[lo..hi], &y[lo..hi]);
+                    s.spawn(move || {
+                        let mut grid = vec![MeanColorCell::default(); cells];
+                        bin_2d_mean_color_accumulate(
+                            xs, ys, colors, lo, x0, x1, y0, y1, w, h, &mut grid,
+                        );
+                        grid
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|hd| hd.join().expect("bin_2d_mean_color worker panicked"))
+                .collect()
+        });
+        let mut grid = vec![MeanColorCell::default(); cells];
+        for part in &grids {
+            for (acc, cell) in grid.iter_mut().zip(part) {
+                acc.count = acc.count.saturating_add(cell.count);
+                acc.alpha += cell.alpha;
+                acc.red += cell.red;
+                acc.green += cell.green;
+                acc.blue += cell.blue;
+            }
+        }
+        grid
+    };
+    for (cell, quad) in grid.iter().zip(out.chunks_exact_mut(4)) {
+        quad.copy_from_slice(&cell.rgba8());
+    }
+}
+
+/// Shared scan used by the serial and parallel paths (per-point behavior is
+/// identical by construction). `base` offsets the row index into the color
+/// source so parallel chunks read their own colors.
+#[allow(clippy::too_many_arguments)]
+fn bin_2d_mean_color_accumulate(
+    x: &[f64],
+    y: &[f64],
+    colors: &BinColorSource<'_>,
+    base: usize,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    grid: &mut [MeanColorCell],
+) {
+    let sx = w as f64 / (x1 - x0);
+    let sy = h as f64 / (y1 - y0);
+    for i in 0..x.len() {
+        let xv = x[i];
+        let yv = y[i];
+        if !xv.is_finite() || !yv.is_finite() || xv < x0 || xv >= x1 || yv < y0 || yv >= y1 {
+            continue;
+        }
+        let cx = (((xv - x0) * sx) as usize).min(w - 1);
+        let cy = (((yv - y0) * sy) as usize).min(h - 1);
+        let [r, g, b, a] = match colors {
+            BinColorSource::Indexed { idx, lut } => lut[idx[base + i] as usize % lut.len()],
+            BinColorSource::Rgba(rgba) => {
+                let at = (base + i) * 4;
+                [rgba[at], rgba[at + 1], rgba[at + 2], rgba[at + 3]]
+            }
+        };
+        let cell = &mut grid[cy * w + cx];
+        let weight = u64::from(a);
+        cell.count = cell.count.saturating_add(1);
+        cell.alpha += weight;
+        cell.red += weight * u64::from(SRGB_TO_LINEAR_U16[r as usize]);
+        cell.green += weight * u64::from(SRGB_TO_LINEAR_U16[g as usize]);
+        cell.blue += weight * u64::from(SRGB_TO_LINEAR_U16[b as usize]);
+    }
+}
+
 /// Fused density scan (§5 Tier 2): one pass over `x`/`y` producing BOTH the
 /// screen-bounded count grid and the ascending in-window row indices, instead
 /// of `bin_2d` + `range_indices` each re-reading the full columns. The two
@@ -5890,6 +6152,171 @@ mod tests {
         assert_eq!(par_threads_for(PAR_THRESHOLD - 1, 64), 1);
         assert_eq!(par_threads_for(PAR_THRESHOLD, 64), MAX_ROW_THREADS);
         assert_eq!(par_threads_for(PAR_THRESHOLD, 1), 1);
+    }
+
+    #[test]
+    fn srgb_linear_table_roundtrips_every_byte() {
+        for byte in 0..=255usize {
+            assert_eq!(
+                linear_u16_to_srgb_u8(SRGB_TO_LINEAR_U16[byte]),
+                byte as u8,
+                "table entry {byte} must invert exactly"
+            );
+        }
+        assert_eq!(linear_u16_to_srgb_u8(0), 0);
+        assert_eq!(linear_u16_to_srgb_u8(u16::MAX), 255);
+        assert!(
+            SRGB_TO_LINEAR_U16.windows(2).all(|p| p[1] > p[0]),
+            "strictly increasing — the inverse search depends on it"
+        );
+    }
+
+    const MC_RED_BLUE: [[u8; 4]; 2] = [[255, 0, 0, 255], [0, 0, 255, 255]];
+
+    #[test]
+    fn bin_2d_mean_color_places_pure_and_mixed_cells() {
+        // 2×2 grid over the unit square: bottom-left one red point;
+        // bottom-right one red + one blue; NaN and out-of-window skipped.
+        let x = [0.1, 0.6, 0.9, f64::NAN, 2.0];
+        let y = [0.1, 0.1, 0.1, 0.5, 0.5];
+        let idx = [0u8, 0, 1, 0, 1];
+        let colors = BinColorSource::Indexed {
+            idx: &idx,
+            lut: &MC_RED_BLUE,
+        };
+        let mut out = vec![0u8; 2 * 2 * 4];
+        bin_2d_mean_color(&x, &y, &colors, 0.0, 1.0, 0.0, 1.0, 2, 2, &mut out);
+        assert_eq!(&out[0..4], &[255, 0, 0, 255], "pure cell keeps exact color");
+        // Half red + half blue averaged in linear light: 65535/2 → 32768,
+        // whose nearest sRGB byte is 188 — brighter than the sRGB-space
+        // average (128), the physically downsampled mix.
+        assert_eq!(&out[4..8], &[188, 0, 188, 255]);
+        assert_eq!(&out[8..16], &[0u8; 8], "empty cells stay fully zero");
+    }
+
+    #[test]
+    fn bin_2d_mean_color_weights_by_alpha() {
+        // A faint red (alpha 51 = 20%) and an opaque blue share a cell: the
+        // mean must lean blue 5:1, and the cell alpha is the plain mean.
+        let x = [0.5, 0.5];
+        let y = [0.5, 0.5];
+        let lut = [[255, 0, 0, 51], [0, 0, 255, 255]];
+        let idx = [0u8, 1];
+        let colors = BinColorSource::Indexed {
+            idx: &idx,
+            lut: &lut,
+        };
+        let mut out = vec![0u8; 4];
+        bin_2d_mean_color(&x, &y, &colors, 0.0, 1.0, 0.0, 1.0, 1, 1, &mut out);
+        let expected_red = linear_u16_to_srgb_u8(((51u64 * 65535 + 153) / 306) as u16);
+        let expected_blue = linear_u16_to_srgb_u8(((255u64 * 65535 + 153) / 306) as u16);
+        assert_eq!(out, vec![expected_red, 0, expected_blue, 153]);
+        assert!(out[2] > out[0], "opaque blue outweighs faint red");
+
+        // All-invisible cell: count > 0 but zero weight — never invent color.
+        let ghost_lut = [[255, 0, 0, 0]];
+        let ghost_idx = [0u8, 0];
+        let ghost = BinColorSource::Indexed {
+            idx: &ghost_idx,
+            lut: &ghost_lut,
+        };
+        bin_2d_mean_color(&x, &y, &ghost, 0.0, 1.0, 0.0, 1.0, 1, 1, &mut out);
+        assert_eq!(out, vec![0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn bin_2d_mean_color_rgba_source_and_lut_wrap() {
+        let x = [0.5, 0.5];
+        let y = [0.5, 0.5];
+        let rgba: Vec<u8> = vec![255, 0, 0, 255, 0, 0, 255, 255];
+        let mut direct = vec![0u8; 4];
+        bin_2d_mean_color(
+            &x,
+            &y,
+            &BinColorSource::Rgba(&rgba),
+            0.0,
+            1.0,
+            0.0,
+            1.0,
+            1,
+            1,
+            &mut direct,
+        );
+        assert_eq!(direct, vec![188, 0, 188, 255]);
+        // Indices wrap modulo the LUT length (the palette repeat rule): code 2
+        // over a 2-entry LUT wears entry 0.
+        let idx = [2u8, 1];
+        let mut wrapped = vec![0u8; 4];
+        bin_2d_mean_color(
+            &x,
+            &y,
+            &BinColorSource::Indexed {
+                idx: &idx,
+                lut: &MC_RED_BLUE,
+            },
+            0.0,
+            1.0,
+            0.0,
+            1.0,
+            1,
+            1,
+            &mut wrapped,
+        );
+        assert_eq!(wrapped, direct);
+    }
+
+    #[test]
+    fn bin_2d_mean_color_parallel_matches_serial_oracle() {
+        // Enough rows to fan out (PAR_THRESHOLD gate) over a small grid; the
+        // serial cell accumulator is the oracle, so the threaded integer
+        // merge must reproduce it bit-for-bit.
+        let n = PAR_THRESHOLD + 4096;
+        let mut x = Vec::with_capacity(n);
+        let mut y = Vec::with_capacity(n);
+        let mut idx = Vec::with_capacity(n);
+        let mut seed = 0x00C0FFEE_u64;
+        for _ in 0..n {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            x.push((seed % 1000) as f64 / 10.0);
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            y.push((seed % 1000) as f64 / 10.0);
+            idx.push((seed % 4) as u8);
+        }
+        let lut = [
+            [255, 0, 0, 255],
+            [0, 0, 255, 255],
+            [0, 200, 80, 128],
+            [240, 240, 240, 30],
+        ];
+        let colors = BinColorSource::Indexed {
+            idx: &idx,
+            lut: &lut,
+        };
+        let (w, h) = (32, 32);
+        let mut out = vec![0u8; w * h * 4];
+        bin_2d_mean_color(&x, &y, &colors, 0.0, 100.0, 0.0, 100.0, w, h, &mut out);
+        let cells = bin_2d_mean_color_cells(&x, &y, &colors, 0.0, 100.0, 0.0, 100.0, w, h);
+        for (cell_index, cell) in cells.iter().enumerate() {
+            assert_eq!(
+                &out[cell_index * 4..cell_index * 4 + 4],
+                &cell.rgba8(),
+                "cell {cell_index}"
+            );
+        }
+        // Occupancy must match bin_2d exactly (same predicates, same cells).
+        let mut counts = vec![0.0f32; w * h];
+        bin_2d(&x, &y, 0.0, 100.0, 0.0, 100.0, w, h, &mut counts);
+        for (cell_index, count) in counts.iter().enumerate() {
+            assert_eq!(
+                *count > 0.0,
+                out[cell_index * 4 + 3] > 0,
+                "cell {cell_index} occupancy"
+            );
+        }
     }
 
     #[test]

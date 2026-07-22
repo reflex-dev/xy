@@ -219,7 +219,7 @@ float xyMarkerSdf(vec2 d, int shape) {
 export const POINT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
-uniform sampler2D u_dlut; uniform float u_dblend;
+uniform float u_dblend;
 uniform int u_symbol; uniform vec4 u_ptStroke; uniform float u_ptStrokeWidth; uniform int u_ptStrokeFace;
 uniform int u_strokeMode; uniform float u_strokeOpacity;
 uniform int u_selActive; uniform vec4 u_selColor; uniform vec4 u_unselColor;
@@ -248,12 +248,6 @@ void main() {
   if (shapeCov <= 0.001) discard;
   vec4 paint = u_colorMode == 3 ? v_rgba : (u_colorMode == 0 ? u_color : vec4(texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb, 1.0));
   vec3 rgb = paint.rgb;
-  // Drill handoff (§5): near the density boundary, paint by local density with
-  // the density ramp; ease into native colors as the zoom deepens (u_dblend->0).
-  if (u_dblend > 0.001) {
-    vec3 drgb = texture(u_dlut, vec2(clamp(v_dval, 0.0, 1.0), 0.5)).rgb;
-    rgb = mix(rgb, drgb, u_dblend);
-  }
   // §34 selected/unselected recolor: when a selection is active, tint each point
   // toward its state color (.a is the mix weight; 0 = keep native color).
   if (u_selActive == 1) {
@@ -262,6 +256,15 @@ void main() {
   }
   float intrinsicAlpha = paint.a;
   float fillAlpha = (v_style.y >= 0.0 ? v_style.y : intrinsicAlpha) * v_style.x * u_opacity;
+  // Drill handoff (§5): the density surface already wears the mean point
+  // color (LOD doc §2), so hue never jumps at the texture->marks swap — only
+  // intensity hands off. Near the boundary each mark enters at its cell's
+  // count-alpha (v_dval through the texture's own tone curve) and eases to
+  // native opacity as the zoom deepens (u_dblend -> 0).
+  if (u_dblend > 0.001) {
+    float dalpha = clamp(v_dval * 1.35, 0.0, 1.0);
+    fillAlpha *= mix(1.0, dalpha, u_dblend);
+  }
   vec4 px = vec4(rgb * fillAlpha, fillAlpha);   // premultiplied fill
   // Uniform (u_ptStroke) and per-item (v_stroke) stroke paint ship straight
   // alpha and go through the same artist-alpha/opacity stack, so a scalar
@@ -391,18 +394,35 @@ void main() {
 // Density grids are binned uniformly in scale coordinates (§28), so
 // u_gridRange arrives as *scale coordinates* of the grid's raw x/y ranges and
 // the fragment's uv is a straight affine map of v_coord — no inverse needed.
+//
+// Color law (LOD doc §2): the surface wears the DATA's colors, count drives
+// only the alpha. Mean-color grids (u_meanColor) sample a premultiplied RGBA8
+// texture whose rgb is the per-cell mean point color and whose alpha carries
+// the log count tone curve (baked at upload so bilinear filtering weights
+// color by coverage — no dark skirts at occupied/empty seams). Constant-color
+// traces keep the 1-byte count texture and tint with u_color; the LUT branch
+// remains as the fallback for count-only grids that ship neither (hand-built
+// or legacy specs).
 export const DENSITY_FS = `#version 300 es
 precision highp float;
 uniform sampler2D u_grid; uniform sampler2D u_lut;
 uniform vec4 u_gridRange; // coord(gx0),coord(gx1),coord(gy0),coord(gy1)
 uniform float u_opacity; uniform vec4 u_color; uniform int u_constantColor;
+uniform int u_meanColor;
 in vec2 v_coord;
 out vec4 outColor;
 void main() {
   vec2 uv = vec2((v_coord.x - u_gridRange.x) / (u_gridRange.y - u_gridRange.x),
                  (v_coord.y - u_gridRange.z) / (u_gridRange.w - u_gridRange.z));
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
-  float t = texture(u_grid, uv).r;
+  vec4 s = texture(u_grid, uv);
+  if (u_meanColor == 1) {
+    float alpha = s.a * u_opacity;
+    if (alpha <= 0.004) discard;
+    outColor = vec4(s.rgb * u_opacity, alpha);
+    return;
+  }
+  float t = s.r;
   if (t <= 0.0) discard;
   vec4 paint = u_constantColor == 1
     ? u_color

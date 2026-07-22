@@ -28,7 +28,7 @@ pixel-area or overdraw term exists in `python/xy/` or `js/src/` today.
 |---|---|---|---|---|
 | 0 | Direct | every visible mark, exact | O(visible) verts | shipped (all kinds) |
 | 1 | Shape-preserving reduction | per-pixel-column aggregate that IS the mark's meaning (M4 for lines; OHLC-bucket for candles when finance returns; max-bin for bars) | O(px) verts | shipped (line) |
-| 2 | Density / aggregate surface | colormapped count (+channel) texture | O(screen) texels | shipped (scatter) |
+| 2 | Density / aggregate surface | mean-point-color texture, count as alpha (§2) | O(screen) texels | shipped (scatter) |
 | 3 | Out-of-core tiles | Tier-2 pyramid where not all tiles are resident | O(visible tiles) | **this doc** |
 
 **Invariant L1 (recorded reduction):** every update carries `tier`, `mode`,
@@ -44,7 +44,7 @@ real marks with real channels — never a sample, never an aggregate.
 
 | Kind | Tier 0 | Tier 1 | Tier 2 | zoom-in recovery |
 |---|---|---|---|---|
-| scatter | points | — (unordered decimation lies, §28) | density grid (+ channel aggregates, §4 below) | drill-in ships exact visible points + channels (shipped) |
+| scatter | points | — (unordered decimation lies, §28) | mean-color density grid (§2; count planes + color planes, §4 below) | drill-in ships exact visible points + channels (shipped) |
 | line/area | polyline | M4 per column (extrema-exact) | — (M4 already screen-bounded) | re-decimate window (shipped) |
 | heatmap | cell rects | — | mip-style tile reduction of the user grid (max/mean recorded) | finer pyramid level, then exact cells |
 | histogram/bar | rects | re-bin at viewport resolution | — (bins are already aggregates) | re-bin visible window (finer bins = more truth, never less) |
@@ -93,38 +93,71 @@ metadata, or encoded-buffer assembly.
 ## 2. Zoomed-out truthfulness with channels (the "no visual lying" rules)
 
 Aggregating positions is easy; aggregating **color/size/category** without
-lying is the hard part (§5-F5). Rules, per channel mode:
+lying is the hard part (§5-F5). The governing principle, shipped: **the
+density surface wears the data's own colors; count drives only the alpha.**
+A cell's color is what the eye would see if every one of its points were
+drawn sub-pixel — the physically downsampled image — so the aggregate view
+and the point view are two magnifications of the same picture, not two
+different charts. More points → deeper (more opaque) color; fewer points →
+lighter; the color itself always comes from the represented points.
 
-1. **Count is always channel 0.** The density surface's luminance/alpha
-   encodes count (log tone-mapped, shipped). Any additional channel rides on
-   top of count, never instead of it — otherwise sparse-but-extreme cells
-   look as important as dense ones.
-2. **Continuous channel → per-cell MEAN, displayed only with count ≥ floor.**
-   Ship a second grid `sum(channel)`; client computes mean = sum/count in the
-   shader. Cells under a count floor (default 1) render count-only — a mean
-   of one point is exact, a mean of zero is a lie.
-   *Rejected:* per-cell max (overweights outliers silently). Max is offered as
-   an explicit `agg="max"` the user must opt into, and the legend then says
-   "max per cell" (recorded, §28).
-3. **Categorical channel → per-cell MAJORITY + purity.** Ship two grids:
-   `argmax(category)` (palette index) and `purity = max_count/count`.
-   The shader desaturates toward the count ramp as purity → 1/k, so a
-   50/50 cell doesn't masquerade as solidly category A. This is the honest
-   version of datashader's `count_cat` composite.
-   Categories >256 already warn at ingest (LUT width); majority-of-256 is
-   fine because the palette itself caps there.
+1. **Count is always channel 0, and it is the ALPHA channel.** The count
+   grid ships log-tone-mapped (`buf` + `max`, log-u8) and drives opacity
+   exclusively. Color rides on top of count, never instead of it —
+   otherwise sparse-but-extreme cells look as important as dense ones. No
+   shipped path colormaps counts anymore (the client keeps a count→LUT
+   fallback solely for hand-built/legacy count-only specs).
+2. **Per-point colors → per-cell alpha-weighted MEAN of the *resolved*
+   colors, averaged in linear light.** One law for every channel mode —
+   continuous (colormapped value), categorical (palette color), and
+   `direct_rgba` alike: each point contributes the exact sRGB color it draws
+   with, weighted by its straight alpha, summed in linear light (integer
+   pipeline: checked-in sRGB⇄linear-u16 tables, u64 sums — bitwise
+   deterministic across thread counts and platforms), then quantized back to
+   sRGB. Ships as a `w*h*4` straight-alpha RGBA8 plane (`rgba`, mean color +
+   mean point alpha) with `color_agg: "mean"` recorded; displayed alpha =
+   count tone-curve × mean point alpha. A cell of one point shows that
+   point's exact color; an all-invisible (alpha-0) cell never invents one.
+   Constant-color traces ship no plane — the mean of a constant IS the
+   constant, so the wire keeps the 1-byte count grid plus `color` and the
+   client tints (bit-equivalent, 4× cheaper). Cost, recorded: a
+   channel-bearing trace pays one extra O(visible) color pass per exact
+   re-bin (the count grid and sample selection stay fused as before; plain
+   scatters are byte-identical to the pre-color pipeline), +4 B/cell on the
+   wire, and the §4 pyramid's color planes at +8 B/cell.
+   *Why mean-of-colors and not colormap(mean value):* the mean color is
+   representation-agnostic (categories have no mean value), matches the
+   drilled points' downsample exactly (the anti-jarring contract, T3), and
+   never claims a data value that isn't there — a mixed red/blue cell reads
+   as the purple *blend* the points themselves produce, not as a fictitious
+   mid-scale value. The cost, recorded: a mixed cell's color can sit off the
+   palette/colormap gamut; the sample overlay and drill-in disambiguate.
+   *Rejected:* per-cell max (overweights outliers silently); majority+purity
+   (hid minority categories entirely and desaturated toward a count ramp
+   that no longer exists). Linear-light averaging is deliberate — sRGB-space
+   byte averaging darkens mixes (red+blue → 128-purple instead of the
+   physically correct 188-purple).
+3. **Categorical channels beyond the palette fold first.** Codes wider than
+   the 256-entry LUT bin with `code % len(palette)` — exactly the repeat
+   rule the point shader applies — so every point bins with the color it
+   draws with, at any cardinality.
 4. **Size channel → drop at Tier 2, always say so.** Size has no honest
-   per-cell aggregate that isn't just another continuous channel; we already
-   ship `channels_dropped: true`. Keep that; render the legend badge from it.
-5. **The drill handoff already solves re-entry:** freshly drilled points wear
-   the density ramp by local log-density (`lod_blend`), easing to native
-   channels as the window shrinks — the same rules make the *outbound*
-   transition honest because both endpoints display the same statistics.
+   per-cell aggregate that isn't just another continuous channel; we ship
+   `channels_dropped: true` + `dropped_channels` naming it. Color is *not*
+   listed there when it aggregates — `color_agg: "mean"` records the
+   transform instead (aggregated ≠ dropped).
+5. **The drill handoff is intensity-only now:** hue is continuous by
+   construction (both sides show the points' colors), so freshly drilled
+   points arrive in their native colors and only their opacity hands off —
+   entering at the cell's count-alpha (`density_val` through the same tone
+   curve as the texture) and easing to native opacity as `lod_blend` → 0.
+   The same rule runs outbound: exiting marks re-target the aggregate's
+   count-alpha and melt into a surface that already matches their hue.
 
 **Invariant L4 (badge):** any active reduction that drops or transforms a
-channel renders a visible "aggregated: mean/majority/…" badge sourced from
-the spec, not from client guesswork. (Client work item; spec already carries
-the facts.)
+channel renders a visible "aggregated: mean/…" badge sourced from the spec
+(`color_agg`, `dropped_channels`), not from client guesswork. (Client work
+item; spec already carries the facts.)
 
 ---
 
@@ -166,16 +199,24 @@ pyramid replaces per-view scans with per-view *tile composition*.
 
 - **Data-space tiles**, power-of-two levels, 256×256 cells/tile.
   Level 0 covers the full x/y extent with 1 tile; level l has 4^l tiles.
-- Each tile stores channel-aggregate grids per §2: `count`, and per channel
-  `sum` (continuous) or `argmax+purity` (categorical) — f32 planes.
+- Each tile stores the channel aggregates per §2: `count` (u32), and for
+  channel-bearing traces a mean-color plane — per cell `[r, g, b, a]` as
+  linear-light u16 means plus mean straight alpha (u16 scale). Means, not
+  sums: 8 B/cell instead of 24+, at the cost of one re-rounding per level
+  (≤ 0.5 lsb of u16 per level — recorded, invisible).
 - **Build:** one pass over rows bins into the finest level L
   (L ≈ ceil(log4(N / target_points_per_cell / 256²))); levels L-1..0 are 4→1
-  reductions (`count` sums; `sum` sums; majority re-argmaxes from summed
-  per-category counts — which requires keeping per-category counts at build
-  time for the top-k categories, k ≤ 8, "other" bucketed; recorded).
+  reductions (`count`: exact u64 sums saturating to u32; color: exact
+  weighted means, weight = child count × child mean alpha — the same
+  alpha-weighted average the flat kernel computes over raw points).
   Total cost ≈ 1.33 × one full pass; total size ≈ 1.33 × finest level.
 - **Rust owns this** (`tiles.rs`, see rust-engine doc): build_pyramid(),
   tile fetch by (level, tx, ty), append-aware rebuild of dirty tiles.
+  Colored pyramids refuse native appends — the batch's colors are unknown to
+  the count-only append path and an append can move a continuous channel's
+  domain, silently re-coloring every already-binned point — so the caller
+  invalidates and the next density view rebuilds lazily (recorded; count-only
+  pyramids keep O(rows·levels) increments).
 
 ### 4.2 Serving a viewport
 
@@ -199,16 +240,20 @@ reply  = compose(tiles) → one grid ≤ (screen px) — done kernel-side today,
 
 ### 4.3 Truthfulness across levels
 
-Reductions are exact (sums of sums; majority from kept per-category counts),
-so any pyramid level shows the same statistics the raw pass would — modulo
-the "other" bucket for tail categories, which the spec records
-(`categories_bucketed: k`). Level choice is recorded per update
-(`pyramid_level`). No level ever extrapolates.
+Count reductions are exact (sums of sums), so any pyramid level shows the
+same counts the raw pass would. Color reductions are exact weighted means of
+the stored child means, re-quantized to u16 once per level (≤ 0.5 lsb of
+linear-u16 per level; over the 11 levels of the default base that stays
+under one displayable sRGB step — recorded here, invisible in practice).
+Level choice is recorded per update (`binning: "pyramid-L<l>"`). No level
+ever extrapolates.
 
 ### 4.4 Memory & residency
 
 - Finest level for 100M points at 16 pts/cell ≈ 6.25M cells ≈ 25 MB (count
-  f32) + 25 MB/channel. ×1.33 pyramid ≈ 33-66 MB kernel-side. Fine.
+  u32) + 50 MB mean-color plane ([u16; 4]/cell). ×1.33 pyramid ≈ 33-100 MB
+  kernel-side. Fine. (Shipped shape: fixed 2048² base ⇒ 22 MB counts +
+  45 MB color per colored trace, `pyramid_report_bytes`.)
 - 1B points: ~330-660 MB — still kernel-side RAM, but now Tier 3 applies:
   tiles are chunked to disk (Arrow/Parquet row groups per tile, dossier §32),
   LRU-resident under a byte budget, and *only* the ≤ ~12 visible tiles are
@@ -228,16 +273,19 @@ invariants so future kinds don't regress them:
   the aggregate→marks transition only — restarting per refresh reads as
   flashing; exit fade with the "dying" state so buffers outlive the fade).
 - **T3 — color-continuous:** the two sides of a transition display the same
-  statistic at the boundary (lod_blend density-ramp handoff). The kernel's
-  blend weight (`visible/budget`) is only ≈1 when the swap happens at the
-  budget boundary — a fast zoom skips levels and lands marks with a
-  mostly-native weight, a visible recolor at the swap (live-drilldown field
-  capture). The BOUNDARY is therefore the transition itself, client-side:
-  fresh marks arrive with the shown blend seeded at 1 (wearing the
-  aggregate's colormap) and ease to the kernel's native weight, and
-  dying/exiting marks re-target blend 1 so they melt into the texture as
-  they fade (`lodApplyDrill`, `lodBeginDrillExitContinuous`; revives restore
-  the native weight via `lodEnterDrillContinuous`).
+  statistic at the boundary. Hue is continuous *by construction* — the
+  aggregate surface wears the mean point color (§2), so marks and texture
+  agree on color at every zoom — and intensity hands off via the lod_blend
+  count-alpha ramp. The kernel's blend weight (`visible/budget`) is only ≈1
+  when the swap happens at the budget boundary — a fast zoom skips levels
+  and lands marks with a mostly-native weight, a visible intensity pop at
+  the swap (live-drilldown field capture). The BOUNDARY is therefore the
+  transition itself, client-side: fresh marks arrive with the shown blend
+  seeded at 1 (entering at the aggregate's local count-alpha) and ease to
+  the kernel's native weight, and dying/exiting marks re-target blend 1 so
+  they melt into the texture as they fade (`lodApplyDrill`,
+  `lodBeginDrillExitContinuous`; revives restore the native weight via
+  `lodEnterDrillContinuous`).
 - **T4 — normalization is eased, never stepped** (exposure-style normMax).
 - **T5 — stale replies die:** seq on view updates, drill_seq on subsets,
   pending-view hold for prefetched drills.
@@ -333,14 +381,27 @@ contract entry before it lands.
 
 ## 6. Implementation plan
 
-**Phase 1 — channel-truthful density (kernel+client, ~1 wk)**
-1. `bin_2d_channels` kernel: count + sum(channel) [+ top-k category counts]
-   in one pass (native Rust core).
-2. Wire mean/majority+purity grids through `density_view` and the initial
-   emit; extend DENSITY_FS to blend channel color over the count ramp with
-   the purity desaturation; count-floor uniform.
-3. Legend/badge rendering from spec facts; smoke probes: mean-cell color
-   correctness, purity desaturation, badge presence.
+**Phase 1 — channel-truthful density (kernel+client)**
+1. **Done:** `bin_2d_mean_color` kernel — per-cell count + alpha-weighted
+   linear-light color sums in one pass, straight-alpha RGBA8 mean-color grid
+   out (native Rust core; integer tables + integer sums, deterministic for
+   any thread count and across platforms). Color source is either per-point
+   LUT indices + a ≤256-entry RGBA8 LUT (continuous quantizes to the
+   client's 256 texels; categorical passes codes, wide codes fold modulo the
+   palette) or per-point straight RGBA8 (`direct_rgba`) —
+   `channels.resolve_bin_colors` maps every channel mode onto one of the two.
+2. **Done:** mean-color planes wired through the initial emit
+   (`_payload._density_trace_spec`), `density_view` (exact and pyramid
+   paths), the static SVG/PNG exporters, and the standalone re-bin worker;
+   DENSITY_FS gained the `u_meanColor` branch (premultiplied RGBA8 texture,
+   count tone-curve baked into alpha at upload so bilinear filtering weights
+   color by coverage); the drill handoff became intensity-only (§2 rule 5).
+   The colorbar for a continuous channel now stays on density traces — the
+   surface really shows the channel's colors.
+3. Legend/badge rendering from spec facts (`color_agg`, `dropped_channels`)
+   remains a client work item; smoke probes for mean-cell color correctness
+   ship (`render_smoke_nonumpy.py` `meancolor`, `abi_smoke.py` mean-color
+   checks, `tests/test_density_mean_color.py` NumPy oracle).
 
 **Phase 2 — deterministic sampling utilities**
 4. **Done:** `lod.sample_keep_mask(row_ids, level)` SplitMix64 sampler +
@@ -359,16 +420,22 @@ contract entry before it lands.
    by the coverage fade when nothing covers the view.
 
 **Phase 3 — pyramid (build + serve shipped; client cache and bench gate open)**
-6. **Done (count plane only):** `src/tiles.rs` builds a square count pyramid
-   over the trace's full data bounds — finest level is `PYRAMID_BASE_DIM`²
-   (2048², `python/xy/config.py`), each coarser level an exact 4→1 u64 sum
-   saturating to u32, so every level conserves total count. C ABI is
-   `xy_pyramid_build` / `xy_pyramid_append` / `xy_pyramid_count` /
-   `xy_pyramid_compose` / `xy_pyramid_free` (no per-tile fetch entry point;
-   composition happens kernel-side). Handles are slab indices behind a mutex,
-   cached per trace and built lazily by `interaction._ensure_pyramid` on the
-   first density view at ≥ `PYRAMID_MIN_POINTS` (2,000,000), released by a
-   weakref finalizer. Channel planes (§2, §4.1) are not built yet.
+6. **Done (count + mean-color planes):** `src/tiles.rs` builds a square count
+   pyramid over the trace's full data bounds — finest level is
+   `PYRAMID_BASE_DIM`² (2048², `python/xy/config.py`), each coarser level an
+   exact 4→1 u64 sum saturating to u32, so every level conserves total count.
+   Channel-bearing traces build the §4.1 mean-color planes alongside
+   (`xy_pyramid_build_color`, one fused serial scan; +8 B/cell,
+   ~45 MB/colored trace at the default base, reported by
+   `pyramid_report_bytes`) and serve them with `xy_pyramid_compose_color`,
+   whose count grid is bit-identical to `xy_pyramid_compose`. C ABI is
+   `xy_pyramid_build` / `xy_pyramid_build_color` / `xy_pyramid_append` /
+   `xy_pyramid_count` / `xy_pyramid_compose` / `xy_pyramid_compose_color` /
+   `xy_pyramid_free` (no per-tile fetch entry point; composition happens
+   kernel-side). Handles are slab indices behind a mutex, cached per trace
+   and built lazily by `interaction._ensure_pyramid` on the first density
+   view at ≥ `PYRAMID_MIN_POINTS` (2,000,000), released by a weakref
+   finalizer; colored pyramids refuse appends and rebuild lazily (§4.1).
 7. **Done:** `density_view` estimates the window with `pyramid_count` and
    serves it with `pyramid_compose` when that estimate sits safely above the
    drill threshold; `compose` picks the coarsest level that still meets the

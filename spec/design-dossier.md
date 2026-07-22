@@ -48,8 +48,10 @@ Every claim in this dossier is **mode-scoped and testable** — no universal num
 **Outstanding work (F4–F12), the honest to-do list:**
 - **F4** — per-trace f32 offsets (a single viewport origin can't serve traces at wildly
   different coordinate magnitudes). *Augments §4/§16.*
-- **F5** — aggregation algebra for color-by-category / mean / non-count reductions
-  (Tier-2 currently assumes a scalar density). *Augments §5.*
+- **F5** — aggregation algebra for per-point color: **shipped as mean point color**
+  (Tier-2 surfaces wear the per-cell alpha-weighted mean of the resolved point
+  colors, count drives only the alpha — LOD doc §2). Non-color reductions
+  (mean/max of arbitrary value channels as *data*, size) remain unmodeled. *Augments §5.*
 - **F6** — per-*view* colormap normalization domain (else zoom flickers brightness).
   *Augments §5.*
 - **F7** — streaming into the pyramid: `+=`/`-=` across levels; min/max tiles need
@@ -282,7 +284,10 @@ the visible x-range on zoom. Turns 100M points into ~a few thousand drawn vertic
 with no visible difference.
 
 **Tier 2 — multiresolution aggregation (datashader-style, but tiled):** for massive
-scatter and heatmaps, don't draw points — draw a colormapped **density texture**.
+scatter and heatmaps, don't draw points — draw a **density texture** that wears the
+data's own colors: per cell, the alpha-weighted mean of the resolved point colors,
+with the log-tone-mapped count as the alpha channel (LOD doc §2). Constant-color
+traces reduce to a count texture tinted with the constant.
 
 The naive version ("bin all points into a screen-sized texture") is *not* "O(points)
 once": the bin grid depends on the viewport, so every pan/zoom would re-bin the whole
@@ -311,10 +316,12 @@ u64 sum saturating to u32 down to 1². Built lazily on the first density view at
 addressing — the C ABI is `xy_pyramid_build` / `_append` / `_count` / `_compose` /
 `_free`, and composition happens kernel-side over the whole window, refusing past
 `MAX_UPSAMPLE` (2×, `src/tiles.rs`) so below-floor windows fall back to the exact
-`range_indices` + `bin_2d` path. Only the `count` plane exists; the per-channel `sum` /
-`argmax+purity` planes above are not built. *Pending:* tiling proper (per-tile build,
-fetch, and pan-time reuse), so "pan is pure tile reuse" is design, not behavior. See
-`spec/design/lod-architecture.md` §4 for the full design and its shipped-status ledger.
+`range_indices` + `bin_2d` path. Channel-bearing traces build mean-color planes
+alongside the counts (`xy_pyramid_build_color` / `_compose_color`, LOD doc §2/§4.1;
+colored pyramids refuse `_append` and rebuild lazily). *Pending:* tiling proper
+(per-tile build, fetch, and pan-time reuse), so "pan is pure tile reuse" is design,
+not behavior. See `spec/design/lod-architecture.md` §4 for the full design and its
+shipped-status ledger.
 
 So the honest cost model of the tiled design: **O(points) once at build, O(visible tiles) per frame,
 O(visible points) on deep zoom past the pyramid floor.** This is also exactly the
@@ -365,7 +372,7 @@ re-exports several of them as a historic import path and is not listed for those
 | `PROTOCOL_VERSION` | `3` | Wire-spec version stamped on every payload; the client refuses a mismatch loudly (§33). | `_payload.py` |
 | `DECIMATION_THRESHOLD` | `10_000` | Line/area traces with more points than this ship M4-decimated (Tier 1); at or below, raw columns go over the wire. Also gates re-decimation on the interaction path. | `_payload.py`, `interaction.py` |
 | `SCATTER_DENSITY_THRESHOLD` | `200_000` | Tier-0 → Tier-2 count budget for a scatter with **no** per-point channel (`Trace.use_density()`), and the visible-count budget for view-LOD planning and drill decisions. | `_trace.py`, `interaction.py`; mirrored client-side as `LOD_DIRECT_POINT_BUDGET` in `js/src/45_lod.ts` |
-| `DIRECT_SOFT_CEILING` | `2_000_000` | Tier-0 → Tier-2 count budget for a scatter that **does** carry a per-point color or size channel; above it density is forced and the channels are warned about, never silently dropped (§5 F5). | `_trace.py`, `marks.py` |
+| `DIRECT_SOFT_CEILING` | `2_000_000` | Tier-0 → Tier-2 count budget for a scatter that **does** carry a per-point color or size channel; above it density is forced and warned about — the color channel aggregates to the surface's per-cell mean point color (LOD doc §2), every other per-item channel is dropped and named, never silently (§5 F5). | `_trace.py`, `marks.py` |
 | `DENSITY_GRID` | `(512, 384)` | Default density-grid cell dimensions for the initial spec, before the client requests a viewport-matched size via `density_view`. | `_payload.py` |
 | `MAX_SCREEN_DIM` | `4096` | Upper clamp on any browser-supplied pixel dimension, so untrusted widget/comm input cannot inflate decimation buckets or density grids. | `lod.py`, `_native.py` |
 | `MAX_CONTOUR_WORK` | `4_000_000` | Ceiling on contour `cells × levels`; a request over it raises instead of allocating an unbounded segment buffer. | `marks.py`, `_native.py` |
@@ -420,7 +427,9 @@ F3, still pending (above).
 
 - **WebGPU primary, WebGL2 fallback.** One `<canvas>`, everything is GPU primitives.
 - **Instanced draws** for markers/bars/lines — one draw call for millions of marks.
-- **Density textures** for aggregated tiers (§5, Tier 2).
+- **Density textures** for aggregated tiers (§5, Tier 2) — mean point color per
+  cell, count as alpha (LOD doc §2); premultiplied RGBA8 upload for
+  channel-bearing traces, tinted R8 count texture for constant-color ones.
 - **DOM/SVG only for chrome** — axis tick labels, legend, title, tooltip. Little of it,
   and it stays crisp/accessible/selectable.
 - **Retained scene graph**, spec-diff → buffer-diff. Pan/zoom is a view-matrix uniform
@@ -935,7 +944,8 @@ means uniform in the axis's scale coordinates, not in raw data. Concretely:
   rule "cells are uniform in scale coordinates" (wire-protocol.md §3). Without
   this, clusters at x=1 and x=1000 share one cell on a symlog axis despite
   being a third of the screen apart. The drill handoff's per-point
-  `local_log_density` bins in the same space so its colors match the grid's.
+  `local_log_density` bins in the same space so its count-alpha matches the
+  grid's (hue already matches — the grid wears the mean point color, LOD doc §2).
 - **The raw-space tile pyramid** (Tier 3) cannot compose a scale-coordinate
   grid, so traces on a nonlinear axis skip pyramid build/compose and always
   take the exact scan (`binning: "exact"`). Cost: the O(visible) rescan the
@@ -1637,7 +1647,7 @@ haven't measured.
 | F2 | No filtering / selection / linked-brushing model; a static pyramid is stale under any filter | **Critical** | confirmed |
 | F3 | GPU ceilings mis-modeled — fill-rate & the 1 GB single-allocation cap bound Tier 0, not point count | **Major** | confirmed |
 | F4 | A single viewport offset can't serve multiple traces at different coordinate magnitudes | **Major** | plausible |
-| F5 | Tier-2 assumes a scalar density — color-by-category / mean / non-count aggregation unmodeled | **Major** | confirmed |
+| F5 | Tier-2 assumed a scalar density — **resolved for color** (mean-point-color surfaces, LOD doc §2); non-color value aggregations (mean/min/max-as-data, size) remain unmodeled | **Major → residual Moderate** | confirmed, largely addressed |
 | F6 | Colormap normalization domain across pyramid levels is unspecified → brightness flicker on zoom | **Major** | plausible |
 | F7 | Streaming into the pyramid is under-reconciled with multi-level structure + eviction | Moderate | confirmed |
 | F8 | "One core, logically identical" collides with the per-backend implementation matrix | Moderate | confirmed |
@@ -1720,14 +1730,23 @@ viewport origin; a single origin leaves the far trace with catastrophic f32 erro
 the shared view transform stays f64 on CPU and composes with each trace's offset at
 upload. Modest bookkeeping, but the doc doesn't have it and multi-trace is the norm.
 
-### F5 — Tier-2 assumes a scalar density; categorical/aggregation algebra is missing. [Major]
-**Failure scenario.** `scatter(x, y, color=category)` with 12 categories over 50M points.
-One density texture can't carry per-category counts; you need N per-category planes
-(imMens's ∏-bins problem) or a per-bin categorical mode/argmax. `color=mean(value)` needs
-2-channel (sum,count) accumulation; std needs more. The doc's Tier-2 is single-scalar.
-**Fix.** Specify the **aggregation algebra** — count / sum / mean(2-ch) / min / max /
-**categorical-by (N capped planes + "other")** — mirroring datashader's `ds.by`/`ds.mean`,
-with its memory cost (N× the tile, feeding F9) and a category cap that logs truncation.
+### F5 — Tier-2 assumed a scalar density; the color algebra now ships. [Major → residual Moderate]
+**Original failure scenario.** `scatter(x, y, color=category)` with 12 categories over
+50M points: one count texture couldn't carry the colors, so the surface wore a count
+colormap that matched neither the points nor the legend — a jarring recolor at every
+density⇄points transition.
+**Shipped fix (LOD doc §2).** The Tier-2 surface carries the **per-cell alpha-weighted
+mean of the resolved point colors** (one law for continuous, categorical, and
+direct-RGBA channels; linear-light integer pipeline, deterministic), with the
+log-tone-mapped count as the alpha channel. The pyramid grew matching mean-color
+planes (`build_color`/`compose_color`); the drill handoff became intensity-only
+because hue is continuous by construction. `color_agg: "mean"` records the transform.
+**Residual gap.** Aggregating *values as data* — per-cell mean/min/max of a channel
+readable from hover/legend, per-category count planes for filtered queries
+(imMens's ∏-bins), std, etc. — is still unmodeled; size channels still drop. Those
+need the fuller algebra (count / sum / mean(2-ch) / min / max / categorical-by with
+capped planes) mirroring datashader's `ds.by`/`ds.mean`, with its memory cost
+(N× the tile, feeding F9) and a category cap that logs truncation.
 
 ### F6 — Colormap normalization across pyramid levels is unspecified → zoom flicker. [Major]
 **Failure scenario.** Color maps bin-count→hue. Coarse tiles have higher counts than fine

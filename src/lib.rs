@@ -80,7 +80,7 @@ unsafe fn borrowed_byte_spans<'a>(
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 37;
+pub const ABI_VERSION: u32 = 38;
 const FACTORIZE_CAPACITY_EXCEEDED: usize = usize::MAX - 1;
 
 #[no_mangle]
@@ -1639,6 +1639,90 @@ pub unsafe extern "C" fn xy_bin_2d(
     })
 }
 
+/// Marshal the C-side color source for mean-color binning: exactly one of
+/// `idx` (one LUT index per point, with `lut`/`lut_len` as 1..=256 RGBA8
+/// entries) or `rgba` (straight-alpha RGBA8, 4 bytes per point) must be
+/// non-null. Returns `None` for any other shape.
+///
+/// # Safety
+/// Non-null pointers must address the documented lengths for `len` points.
+unsafe fn color_source_from_raw<'a>(
+    len: usize,
+    idx: *const u8,
+    rgba: *const u8,
+    lut: *const u8,
+    lut_len: usize,
+) -> Option<kernels::BinColorSource<'a>> {
+    match (idx.is_null(), rgba.is_null()) {
+        (false, true) => {
+            if lut.is_null() || lut_len == 0 || lut_len > 256 {
+                return None;
+            }
+            Some(kernels::BinColorSource::Indexed {
+                idx: std::slice::from_raw_parts(idx, len),
+                lut: std::slice::from_raw_parts(lut as *const [u8; 4], lut_len),
+            })
+        }
+        (true, false) => Some(kernels::BinColorSource::Rgba(std::slice::from_raw_parts(
+            rgba,
+            len * 4,
+        ))),
+        _ => None,
+    }
+}
+
+/// Mean-color companion grid to `xy_bin_2d` (§5 Tier 2, LOD doc §2): fill
+/// `out` (`w*h*4` straight-alpha RGBA8, row 0 = bottom) with each cell's
+/// alpha-weighted mean point color (linear-light average, sRGB bytes out)
+/// and mean point alpha. Cell membership is bit-identical to `xy_bin_2d`.
+/// Returns 1 on success, 0 on invalid arguments.
+///
+/// # Safety
+/// `x`/`y` must point to `len` readable f64s; the color source pointers must
+/// satisfy `color_source_from_raw`; `out` must address `w*h*4` writable bytes.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn xy_bin_2d_mean_color(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    idx: *const u8,
+    rgba: *const u8,
+    lut: *const u8,
+    lut_len: usize,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    out: *mut u8,
+) -> i32 {
+    if w == 0 || h == 0 || !finite_gt(x0, x1) || !finite_gt(y0, y1) || out.is_null() {
+        return 0;
+    }
+    let Some(grid_len) = w.checked_mul(h).and_then(|n| n.checked_mul(4)) else {
+        return 0;
+    };
+    let out = std::slice::from_raw_parts_mut(out, grid_len);
+    if len == 0 {
+        out.fill(0);
+        return 1;
+    }
+    if x.is_null() || y.is_null() {
+        return 0;
+    }
+    let Some(colors) = color_source_from_raw(len, idx, rgba, lut, lut_len) else {
+        return 0;
+    };
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    ffi_guard(0, || {
+        kernels::bin_2d_mean_color(x, y, &colors, x0, x1, y0, y1, w, h, out);
+        1
+    })
+}
+
 /// Native PNG rasterizer (dossier Phase 3). Paints a Python-built display list
 /// (`cmd[0..cmd_len]`, see `raster.rs`/`_raster.py`) into a caller-owned
 /// straight-alpha RGBA8 framebuffer `out` of `w*h*4` bytes. Returns 1 on
@@ -2732,6 +2816,46 @@ pub unsafe extern "C" fn xy_pyramid_build(
     })
 }
 
+/// Build a pyramid with mean-color planes (LOD doc §2/§4.1) for a
+/// channel-bearing trace. Same handle registry and geometry as
+/// `xy_pyramid_build`; color source as in `xy_bin_2d_mean_color`. Returns the
+/// handle, or 0 on invalid arguments.
+///
+/// # Safety
+/// `x`/`y` must point to `len` readable f64s; color source pointers must
+/// satisfy `color_source_from_raw`.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn xy_pyramid_build_color(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    idx: *const u8,
+    rgba: *const u8,
+    lut: *const u8,
+    lut_len: usize,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    base_dim: u32,
+) -> u64 {
+    if x.is_null() || y.is_null() || len == 0 {
+        return 0;
+    }
+    let Some(colors) = color_source_from_raw(len, idx, rgba, lut, lut_len) else {
+        return 0;
+    };
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    ffi_guard(0, || {
+        match tiles::build_color(x, y, &colors, x0, x1, y0, y1, base_dim as usize) {
+            Some(p) => tiles::reg_insert(p),
+            None => 0,
+        }
+    })
+}
+
 /// Increment a live pyramid from an appended point batch. Returns 1 when the
 /// update was applied, or 0 for a stale/busy handle, invalid pointers/lengths,
 /// or a finite point outside the pyramid's original domain. A rejected update
@@ -2818,6 +2942,52 @@ pub unsafe extern "C" fn xy_pyramid_compose(
     ffi_guard(-1, || {
         match tiles::reg_with(handle, |p| {
             tiles::compose(p, lo_x, hi_x, lo_y, hi_y, w, h, out)
+        }) {
+            Some(Some(level)) => level as i32,
+            Some(None) => -2,
+            None => -1,
+        }
+    })
+}
+
+/// `xy_pyramid_compose` plus the mean-color plane: fills `out` with the same
+/// f32 counts (bit-identical) and `out_rgba` (`w*h*4`, straight-alpha RGBA8)
+/// with the composed mean colors. Returns the level used (>= 0), -1 for bad
+/// arguments/stale handle, or -2 when the window outresolves the pyramid OR
+/// the pyramid carries no color planes — the caller re-bins exactly either way.
+///
+/// # Safety
+/// `out` must address `w*h` writable f32s and `out_rgba` `w*h*4` writable bytes.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn xy_pyramid_compose_color(
+    handle: u64,
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    w: usize,
+    h: usize,
+    out: *mut f32,
+    out_rgba: *mut u8,
+) -> i32 {
+    if out.is_null()
+        || out_rgba.is_null()
+        || w == 0
+        || h == 0
+        || !finite_gt(lo_x, hi_x)
+        || !finite_gt(lo_y, hi_y)
+    {
+        return -1;
+    }
+    let Some(out_len) = w.checked_mul(h) else {
+        return -1;
+    };
+    let out = std::slice::from_raw_parts_mut(out, out_len);
+    let out_rgba = std::slice::from_raw_parts_mut(out_rgba, out_len * 4);
+    ffi_guard(-1, || {
+        match tiles::reg_with(handle, |p| {
+            tiles::compose_color(p, lo_x, hi_x, lo_y, hi_y, w, h, out, out_rgba)
         }) {
             Some(Some(level)) => level as i32,
             Some(None) => -2,

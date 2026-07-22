@@ -522,7 +522,7 @@ try{{
       x_range:[5000,5010],y_range:[5000,5010],
       x:{{buf:0,len:n3,offset:5005,scale:1}},y:{{buf:1,len:n3,offset:5005,scale:1}},
       color:{{mode:"continuous",colormap:"viridis",buf:2}},size:{{mode:"constant",size:8}},
-      density_val:{{buf:3}},lod_blend:0.85,density_colormap:"magma"}}]}},
+      density_val:{{buf:3}},lod_blend:0.85}}]}},
       [xs3.buffer,ys3.buffer,cs3.buffer,ds3.buffer]);
     const pendingDensity0=v._drawDensity;
     const pendingPoints0=v._drawPoints;
@@ -538,15 +538,16 @@ try{{
       x_range:[5000,5010],y_range:[5000,5010],
       x:{{buf:0,len:n3,offset:5005,scale:1}},y:{{buf:1,len:n3,offset:5005,scale:1}},
       color:{{mode:"continuous",colormap:"viridis",buf:2}},size:{{mode:"constant",size:8}},
-      density_val:{{buf:3}},lod_blend:0.85,density_colormap:"magma",drill_seq:5}}]}},
+      density_val:{{buf:3}},lod_blend:0.85,drill_seq:5}}]}},
       [xs3.buffer,ys3.buffer,cs3.buffer,ds3.buffer]);
     const drilled=(gd.drill && gd.drill.n===n3 && gd.drill.colorMode===1
       && v._viewInside(gd.drill.win)===true)?1:0;
-    // Color-continuous handoff: the drill carries local density + blend
-    // weight. Fresh marks ARRIVE wearing the aggregate's colormap (shown
-    // blend seeds at 1 — the texture->marks swap must not recolor even when
-    // a fast zoom skipped levels) and ease toward the kernel's native weight.
-    const dblend=(gd.drill && gd.drill.dBuf && gd.drill.dlut
+    // Intensity-continuous handoff: the drill carries local density + blend
+    // weight. Fresh marks ARRIVE at the aggregate's count-alpha (shown blend
+    // seeds at 1 — the texture->marks swap must not pop even when a fast
+    // zoom skipped levels) and ease toward the kernel's native weight. Hue
+    // needs no handoff: the surface wears the mean point color (LOD doc §2).
+    const dblend=(gd.drill && gd.drill.dBuf
       && Math.abs(gd.drill.lodBlend-0.85)<1e-6
       && gd.drill.lodBlendShown===1)?1:0;
     // Staff-review invariants: subset version stored, stale hover cache
@@ -593,7 +594,7 @@ try{{
       x_range:[5000,5010],y_range:[5000,5010],
       x:{{buf:0,len:n3,offset:5005,scale:1}},y:{{buf:1,len:n3,offset:5005,scale:1}},
       color:{{mode:"continuous",colormap:"viridis",buf:2}},size:{{mode:"constant",size:8}},
-      density_val:{{buf:3}},lod_blend:0.7,density_colormap:"magma",drill_seq:6}}]}},
+      density_val:{{buf:3}},lod_blend:0.7,drill_seq:6}}]}},
       [xs3.buffer,ys3.buffer,cs3.buffer,ds3.buffer]);
     const refresh=(gd.drill && gd.drill.seq===6 && gd._drillFadeStart===null
       && gd._drillDying!==true)?1:0;
@@ -1078,7 +1079,34 @@ try{{
     const gLn=vSm.gpuTraces[0], gAr=vSm.gpuTraces[1];
     const msmooth=(gLn.n===65 && gLn._cpu.x.length===5 && gAr.n===65 && gAr._cpu.base.length===5)?1:0;
     vSm.destroy();holderSm.remove();
-    const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} xonly=${{xonly}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} srestore=${{srestore}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
+    // Mean-color density (LOD doc §2): the surface must wear the shipped
+    // per-cell mean point colors while count drives only the alpha. Two
+    // cells, equal counts: left mean-red, right mean-blue — the drawn pixels
+    // must follow the rgba plane, not any count colormap.
+    const mcBuf=new ArrayBuffer(64); const mcCols=[]; let mcOff=0;
+    const mcu8=(vals)=>{{new Uint8Array(mcBuf,mcOff,vals.length).set(vals);
+      mcCols.push({{byte_offset:mcOff,len:vals.length,dtype:"u8"}});
+      mcOff+=vals.length+(4-(vals.length%4))%4; return mcCols.length-1;}};
+    const mcSpec={{protocol:{PROTOCOL_VERSION},width:200,height:160,title:"",backend:"none",
+      show_legend:false,show_modebar:false,
+      x_axis:{{kind:"linear",label:"",range:[0,2]}},
+      y_axis:{{kind:"linear",label:"",range:[0,1]}},
+      traces:[{{id:0,kind:"scatter",name:"mc",tier:"density",n_points:20,
+        style:{{opacity:1.0}},
+        density:{{buf:mcu8([255,255]),rgba:mcu8([255,0,0,255, 0,0,255,255]),color_agg:"mean",
+          w:2,h:1,max:10.0,enc:"log-u8",colormap:"viridis",
+          x_range:[0,2],y_range:[0,1],channels_dropped:false,dropped_channels:[]}}}}],
+      columns:mcCols}};
+    const holderMc=document.createElement("div");document.body.appendChild(holderMc);
+    const vMc=xy.renderStandalone(holderMc,mcSpec,mcBuf);
+    vMc._drawNow();
+    const gMc=vMc.gl,WM=gMc.drawingBufferWidth,HM=gMc.drawingBufferHeight;
+    const lpx=new Uint8Array(4), rpx=new Uint8Array(4);
+    gMc.readPixels(Math.round(WM*0.35),Math.round(HM*0.5),1,1,gMc.RGBA,gMc.UNSIGNED_BYTE,lpx);
+    gMc.readPixels(Math.round(WM*0.8),Math.round(HM*0.5),1,1,gMc.RGBA,gMc.UNSIGNED_BYTE,rpx);
+    const meancolor=(lpx[0]>60 && lpx[0]>lpx[2]*3 && rpx[2]>60 && rpx[2]>rpx[0]*3)?1:0;
+    vMc.destroy();holderMc.remove();
+    const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} xonly=${{xonly}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} srestore=${{srestore}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}} meancolor=${{meancolor}}`;
     const baseWithStyle=`${{base}} vstyle=${{vstyle}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
@@ -1293,6 +1321,7 @@ try{{
     refresh = int(re.search(r"refresh=(\d+)", title).group(1))
     dying = int(re.search(r"dying=(\d+)", title).group(1))
     density_lit = int(re.search(r"densityLit=(\d+)", title).group(1))
+    meancolor = int(re.search(r"meancolor=(\d+)", title).group(1))
     dpick = int(re.search(r"dpick=(\d+)", title).group(1))
     hold = int(re.search(r"hold=(\d+)", title).group(1))
     zoomout = int(re.search(r"zoomout=(\d+)", title).group(1))
@@ -1465,6 +1494,11 @@ try{{
         )
     if qwire != 1:
         raise SystemExit("log-u8 density decode failed (quantized wire)")
+    if meancolor != 1:
+        raise SystemExit(
+            "mean-color density failed (surface must wear the per-cell mean "
+            "point colors, count as alpha — LOD doc §2)"
+        )
     if stream != 1:
         raise SystemExit(
             "streaming append failed (trace rebuild or follow policy: refit/hold/slide)"
