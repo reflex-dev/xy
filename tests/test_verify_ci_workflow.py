@@ -102,8 +102,7 @@ def test_ci_workflow_requires_retained_pyplot_option_evidence(tmp_path: Path) ->
             "          name: pyplot-option-contract\n"
             "          if-no-files-found: error\n"
             "          path: pyplot-option-contract.json\n",
-            "          name: pyplot-option-contract\n"
-            "          if-no-files-found: warn\n",
+            "          name: pyplot-option-contract\n          if-no-files-found: warn\n",
         ),
         encoding="utf-8",
     )
@@ -220,6 +219,63 @@ def test_ci_workflow_rejects_missing_javascript_semantic_evidence(tmp_path: Path
         and "if: always()" in error
         for error in errors
     )
+
+
+def test_ci_workflow_rejects_soft_python_coverage_gate(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "  python_coverage:\n    name:",
+            "  python_coverage:\n    continue-on-error: true\n    name:",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("python_coverage job must be a hard gate" in error for error in errors)
+
+
+def test_ci_workflow_rejects_line_only_python_coverage(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "coverage run --branch --source=python/xy", "coverage run --source=python/xy", 1
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("python_coverage" in error and "--branch" in error for error in errors)
+
+
+def test_ci_workflow_requires_retained_python_coverage_evidence(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Upload Python coverage evidence\n        if: always()\n",
+            "      - name: Upload Python coverage evidence\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any(
+        "failure-retaining raw, JSON, XML, and ratchet evidence" in error
+        and "if: always()" in error
+        for error in errors
+    )
+
+
+def test_ci_workflow_rejects_python_coverage_outside_required_aggregate(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace("      - python_coverage\n", "", 1), encoding="utf-8")
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("required_ci needs" in error and "python_coverage" in error for error in errors)
 
 
 def test_ci_workflow_rejects_unpinned_dependency_scanner(tmp_path: Path) -> None:

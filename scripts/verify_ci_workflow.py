@@ -31,6 +31,7 @@ REQUIRED_CI_JOBS = {
     "reflex_adapter",
     "matplotlib_reference",
     "native_parity",
+    "python_coverage",
     "test",
     "python_floor",
     "rust_release",
@@ -621,6 +622,62 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "test-results/javascript/",
         "coverage/javascript/",
     )
+    python_coverage = jobs.get("python_coverage", "")
+    if "continue-on-error:" in python_coverage:
+        errors.append("CI python_coverage job must be a hard gate without continue-on-error")
+    _require_job_contains(
+        errors,
+        jobs,
+        "python_coverage",
+        "CI",
+        "branch-aware package/module and changed-line ratchet with retained evidence",
+        "name: Python branch and diff coverage",
+        "timeout-minutes: 15",
+        "fetch-depth: 0",
+        'python-version: "3.13"',
+        "uv sync --frozen --project python/reflex-xy --extra dev",
+        "UV_PROJECT_ENVIRONMENT=python/reflex-xy/.venv",
+        "uv sync --frozen --extra dev --inexact",
+        "coverage run --branch --source=python/xy",
+        "coverage run --branch --append",
+        "--source=python/reflex-xy/reflex_xy",
+        "scripts/run_pytest_no_skips.py -q",
+        "python/reflex-xy/tests",
+        "scripts/coverage_ratchet.py",
+        "spec/testing/coverage-policy.json",
+        "coverage/python/coverage.json",
+        "coverage/python/coverage.xml",
+        "coverage/python/ratchet.json",
+        "github.event.pull_request.base.sha",
+        "github.event.pull_request.head.sha",
+        "Upload Python coverage evidence",
+        "python-coverage-evidence",
+        "retention-days: 30",
+    )
+    _require_step_contains(
+        errors,
+        python_coverage,
+        "Enforce reviewed package, module, and changed-line floors",
+        "branch-aware reports and exact Git comparison",
+        "coverage json -o coverage/python/coverage.json",
+        "coverage xml -o coverage/python/coverage.xml",
+        "scripts/coverage_ratchet.py",
+        '--base "$BASE_SHA" --head "$HEAD_SHA"',
+        "--report coverage/python/ratchet.json",
+    )
+    _require_step_contains(
+        errors,
+        python_coverage,
+        "Upload Python coverage evidence",
+        "failure-retaining raw, JSON, XML, and ratchet evidence",
+        "if: always()",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        "python-coverage-evidence",
+        "if-no-files-found: error",
+        "retention-days: 30",
+        ".coverage",
+        "coverage/python/",
+    )
     reflex_adapter = jobs.get("reflex_adapter", "")
     # This lane is intentionally hard.  Check the forbidden form explicitly
     # rather than relying on absence of a positive token.
@@ -1050,6 +1107,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "javascript_semantics",
         "matplotlib_reference",
         "native_parity",
+        "python_coverage",
         "python_floor",
         "reflex_adapter",
         "rust_release",

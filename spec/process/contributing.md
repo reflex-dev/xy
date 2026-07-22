@@ -126,6 +126,18 @@ make check-pyplot
 This first rejects newly accepted-but-unused pyplot options against the
 reviewed `spec/testing/pyplot-noops.json` contract, then runs the shim suite.
 
+When reviewing coverage evidence or changing a shipped Python branch, validate
+the retained report against the exact comparison range:
+
+```bash
+make check-coverage COVERAGE_JSON=coverage/python/coverage.json \
+  COVERAGE_BASE=origin/main COVERAGE_HEAD=HEAD
+```
+
+Package/module floors and exclusions live in
+`spec/testing/coverage-policy.json`; they are reviewed policy, not generated
+output.
+
 When you change shim rendering performance, run `make check-pyplot-speed`, which
 enforces the per-family 10x static-PNG target via
 `benchmarks/bench_pyplot_vs_matplotlib.py` and requires the `.[bench]` extra.

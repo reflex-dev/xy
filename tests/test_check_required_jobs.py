@@ -28,6 +28,7 @@ def test_required_aggregate_accepts_only_all_success() -> None:
     assert "rust_release" in check_required_jobs.HARD_JOBS
     assert "native_parity" in check_required_jobs.HARD_JOBS
     assert "javascript_semantics" in check_required_jobs.HARD_JOBS
+    assert "python_coverage" in check_required_jobs.HARD_JOBS
     assert check_required_jobs.evaluate_required_jobs(_needs()) == []
 
 

@@ -24,6 +24,7 @@ HARD_JOBS = (
     "javascript_semantics",
     "matplotlib_reference",
     "native_parity",
+    "python_coverage",
     "python_floor",
     "reflex_adapter",
     "rust_release",

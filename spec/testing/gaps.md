@@ -380,9 +380,16 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-029 — Branch and diff-coverage ratchet
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: branch coverage can be measured locally but is neither published
-  nor governed across core, pyplot, adapter, and browser-script environments.
+- Status: `IMPLEMENTED`
+- Evidence: [`coverage.md`](coverage.md),
+  `spec/testing/coverage-policy.json`, `scripts/coverage_ratchet.py`,
+  `tests/test_coverage_ratchet.py`, the hard `python_coverage` job, and its
+  retained `python-coverage-evidence` raw/JSON/XML/ratchet artifact.
+- Current gap: closed for shipped Python and the report-before-ratchet rule.
+  Reviewed package and critical-module line/branch floors cannot regress, every
+  shipped module must be measured, and changed executable lines require 90%
+  coverage. JavaScript already retains its independent V8 report and floors;
+  Rust remains explicitly unratcheted until a pinned Rust coverage report exists.
 - Implemented when: branch-aware artifacts are uploaded, reviewed package/module
   baselines cannot regress, executable changed lines meet a concrete threshold,
   and exclusions are explicit. Rust/JavaScript reports precede ratchets for those

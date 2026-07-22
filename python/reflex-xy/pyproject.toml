@@ -25,6 +25,7 @@ dependencies = [
 # of silently skipping adapter coverage.
 dev = [
     "aiohttp>=3.9",
+    "coverage[toml]>=7.6,<8",
     "hypothesis>=6",
     "pytest>=8",
     "uvicorn>=0.23",

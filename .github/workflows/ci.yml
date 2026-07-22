@@ -151,6 +151,62 @@ jobs:
             test-results/javascript/
             coverage/javascript/
 
+  python_coverage:
+    name: Python branch and diff coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - name: Install locked coverage environment
+        run: |
+          uv sync --frozen --project python/reflex-xy --extra dev
+          UV_PROJECT_ENVIRONMENT=python/reflex-xy/.venv \
+            uv sync --frozen --extra dev --inexact
+      - name: Measure core and pyplot branch coverage
+        run: |
+          python/reflex-xy/.venv/bin/coverage erase
+          python/reflex-xy/.venv/bin/coverage run --branch --source=python/xy \
+            -m pytest -q tests
+      - name: Measure Reflex adapter branch coverage
+        if: ${{ !cancelled() }}
+        run: |
+          python/reflex-xy/.venv/bin/coverage run --branch --append \
+            --source=python/reflex-xy/reflex_xy \
+            scripts/run_pytest_no_skips.py -q \
+            python/reflex-xy/tests
+      - name: Enforce reviewed package, module, and changed-line floors
+        if: ${{ !cancelled() }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p coverage/python
+          python/reflex-xy/.venv/bin/coverage json -o coverage/python/coverage.json
+          python/reflex-xy/.venv/bin/coverage xml -o coverage/python/coverage.xml
+          python/reflex-xy/.venv/bin/python scripts/coverage_ratchet.py \
+            --coverage-json coverage/python/coverage.json \
+            --policy spec/testing/coverage-policy.json \
+            --base "$BASE_SHA" --head "$HEAD_SHA" \
+            --report coverage/python/ratchet.json
+      - name: Upload Python coverage evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-coverage-evidence
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            .coverage
+            coverage/python/
+
   matplotlib_reference:
     name: Matplotlib 3.11 reference compatibility
     runs-on: ubuntu-latest
@@ -1060,6 +1116,7 @@ jobs:
       - javascript_semantics
       - matplotlib_reference
       - native_parity
+      - python_coverage
       - python_floor
       - reflex_adapter
       - rust_release

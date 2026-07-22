@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "coverage_format": "coverage.py-json-v3",
+  "source_roots": [
+    "python/xy",
+    "python/reflex-xy/reflex_xy"
+  ],
+  "packages": [
+    {
+      "name": "core",
+      "path_prefix": "python/xy/",
+      "exclude_prefixes": ["python/xy/pyplot/"],
+      "minimum_line_percent": 87.5,
+      "minimum_branch_percent": 78.5
+    },
+    {
+      "name": "pyplot",
+      "path_prefix": "python/xy/pyplot/",
+      "exclude_prefixes": [],
+      "minimum_line_percent": 80.5,
+      "minimum_branch_percent": 68.0
+    },
+    {
+      "name": "reflex_adapter",
+      "path_prefix": "python/reflex-xy/reflex_xy/",
+      "exclude_prefixes": [],
+      "minimum_line_percent": 91.5,
+      "minimum_branch_percent": 80.5
+    }
+  ],
+  "modules": [
+    {
+      "path": "python/xy/channel.py",
+      "minimum_line_percent": 96.0,
+      "minimum_branch_percent": 87.5
+    },
+    {
+      "path": "python/xy/widget.py",
+      "minimum_line_percent": 97.5,
+      "minimum_branch_percent": 91.0
+    },
+    {
+      "path": "python/xy/pyplot/_axes.py",
+      "minimum_line_percent": 80.5,
+      "minimum_branch_percent": 70.5
+    },
+    {
+      "path": "python/reflex-xy/reflex_xy/component.py",
+      "minimum_line_percent": 97.5,
+      "minimum_branch_percent": 82.0
+    }
+  ],
+  "diff": {
+    "minimum_line_percent": 90.0,
+    "missing_coverage_file": "fail"
+  },
+  "exclusions": [
+    {
+      "pattern": "python/xy/static/**",
+      "rationale": "Generated JavaScript bundles are governed by the separate Node semantic coverage gate and bundle-freshness check."
+    },
+    {
+      "pattern": "tests/**",
+      "rationale": "Test implementation is evidence, while this ratchet governs shipped Python package behavior."
+    },
+    {
+      "pattern": "python/reflex-xy/tests/**",
+      "rationale": "Adapter tests drive the shipped reflex_xy package but are not themselves production code."
+    },
+    {
+      "pattern": "scripts/**",
+      "rationale": "Repository automation has dedicated verifier and mutation gates rather than the shipped-package baseline."
+    },
+    {
+      "pattern": "benchmarks/**",
+      "rationale": "Benchmark harnesses are governed by their schema and methodology gates, not production-package coverage."
+    },
+    {
+      "pattern": "examples/**",
+      "rationale": "Examples are exercised by example and browser checks but are not distributed as the core Python package."
+    }
+  ]
+}

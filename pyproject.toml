@@ -22,6 +22,7 @@ Security = "https://github.com/reflex-dev/xy/blob/main/SECURITY.md"
 
 [project.optional-dependencies]
 dev = [
+    "coverage[toml]>=7.6,<8",
     "pytest>=8",
     "ruff==0.15.8",
     "ty",

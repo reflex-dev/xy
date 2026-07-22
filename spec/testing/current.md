@@ -37,7 +37,7 @@ index. Missing additions are tracked by ID in [`gaps.md`](gaps.md).
 | LOD, precision, streaming, and cache behavior | `tests/test_lod.py`; `tests/test_streaming.py`; density, zoom-precision, bounds, and tier-update tests | Hard root suite plus focused browser smoke | `PARTIALLY IMPLEMENTED` | Core direct/decimated/density and mutation paths are covered; the full axis/action/drill/stream/resource matrix and soak bounds are not. See TST-NI-011 and TST-NI-034. |
 | Wire framing | `tests/test_framing.py`; `tests/test_framing_property.py`; Python-to-JavaScript golden decoding | Hard root suite | `IMPLEMENTED` | Truncation, corrupt headers, padding, metadata, zero-copy, and valid round trips are substantive. A catalog-generated request matrix and property byte mutation remain missing. See TST-NI-028. |
 | Widget/channel dispatch | `tests/test_channel.py`; `tests/test_widget.py`; `tests/test_html_transport.py` | Hard root suite | `IMPLEMENTED` | Valid/malformed dispatch, callbacks, payload splitting, and Python widget behavior are covered. A real notebook frontend mount is not. See TST-NI-018. |
-| Governed branch and diff coverage | Local branch-aware measurement from the root suite is supporting evidence | Not uploaded or governed in CI | `NOT IMPLEMENTED` | The audited aggregate was 82%; no package floor, diff ratchet, or combined core/pyplot/adapter view exists. See TST-NI-029. |
+| Governed branch and diff coverage | `scripts/coverage_ratchet.py`; `spec/testing/coverage-policy.json`; core, pyplot, and zero-skip adapter branch runs | Hard `python_coverage` job with retained raw/JSON/XML/ratchet evidence | `IMPLEMENTED` | Reviewed package and critical-module line/branch floors, exact shipped-file inventory, and a 90% changed-executable-line threshold fail closed. JavaScript retains its independent V8 report; Rust is explicitly not ratcheted before a pinned report. See TST-NI-029. |
 | Mutation score | No mutation lane | None | `NOT IMPLEMENTED` | Oracle strength is inferred from tests and selected negative cases. See TST-NI-030. |
 
 ## Native Rust and JavaScript client
@@ -154,6 +154,7 @@ described above.
 | `make check-claims` | Public performance-claim guardrails |
 | `make check-testing-spec` | Validate this catalog's links, gap IDs, commands, paths, and workflow jobs |
 | `make check-benchmark-harness` | Benchmark metadata, schema, and regression tests |
+| `make check-coverage` | Validate a branch-aware report against reviewed package/module floors and the configured Git diff |
 | `make check-pyplot` | Structured accepted-option audit plus the full `tests/pyplot` suite in the active environment |
 | `make check-pyplot-speed` | Local full pyplot-vs-Matplotlib static-PNG target; requires benchmark dependencies |
 | `make check-sdist` | Build and structurally verify a source archive |
@@ -189,6 +190,7 @@ automation, not whether the helper is valuable.
 | `benchmarks/test_codspeed_*.py` | Kernel, transport, pyplot, and Python animation microbenchmarks | Advisory CodSpeed job; `IMPLEMENTED` |
 | Rust tests in `src/` | Native kernels, encoding, raster, tiles, SIMD, module invariants, and a release-only extreme-window regression | Debug and locked release-profile hard CI |
 | `js/test/*.test.mjs` | Exact-bundle frame, tick/formatter, transform/bounds, theme/style, mark-registry, LOD, ChartView-state, worker-protocol, malformed-input, and mutation-control semantics | Hard Node 22 `javascript_semantics` job with retained JUnit and coverage; `IMPLEMENTED` for TST-NI-007 |
+| `scripts/coverage_ratchet.py` | Exact shipped-file inventory, reviewed core/pyplot/adapter line and branch floors, critical modules, and 90% changed executable lines | Hard `python_coverage` job with retained raw/JSON/XML/ratchet evidence; `IMPLEMENTED` for TST-NI-029 |
 | `scripts/abi_smoke.py` | Exported native C ABI | Hard main CI |
 | `scripts/render_smoke_nonumpy.py` | Dependency-light WebGL marks, pixels, interaction, and context recovery | Hard Chromium CI |
 | `scripts/png_export_smoke.py` | Native and Chromium PNG health | Hard Chromium CI |
