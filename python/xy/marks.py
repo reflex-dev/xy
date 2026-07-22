@@ -798,16 +798,10 @@ def line(
     dash_spec = _validate.dash(dash, "line dash")
     checkpoint = self._checkpoint()
     try:
-        xc, yc = self._ingest_xy(x, y, "line")
-        if not kernels.is_sorted(xc.values):
-            # LOD contract (§28): line x must be sorted; the engine sorts once
-            # at ingest, and says so. The predicate is NaN-safe on purpose:
-            # a NaN fails its pairs, so a NaN-carrying x cannot skip the sort
-            # and violate M4's sorted precondition.
-            # argsort places NaNs last, where the m4 window excludes them.
-            order = np.argsort(xc.values, kind="stable")
-            xc = self.store.ingest(xc.values[order])
-            yc = self.store.ingest(yc.values[order])
+        # LOD contract (§28): line x is sorted once at ingest.  The store
+        # canonicalizes before deriving the stable order, so unsorted source
+        # columns never become orphan canonical entries.
+        xc, yc = self._ingest_sorted_xy(x, y, "line")
         style: dict[str, Any] = {"color": color, "width": width, "opacity": opacity}
         style.update(styles._opacity_channels(css))
         if curve != "linear":
@@ -876,19 +870,17 @@ def area(
     dash_spec = _validate.dash(dash, "area dash")
     checkpoint = self._checkpoint()
     try:
-        xc, yc = self._ingest_xy(x, y, "area")
-        bc = (
-            self.store.ingest(np.full(len(xc), self._finite_scalar(base, "area base")))
-            if np.isscalar(base)
-            else self.store.ingest(base)
-        )
-        if len(bc) != len(xc):
-            raise ValueError(f"area base must have length {len(xc)}, got {len(bc)}")
-        if not kernels.is_sorted(xc.values):
-            order = np.argsort(xc.values, kind="stable")
-            xc = self.store.ingest(xc.values[order])
-            yc = self.store.ingest(yc.values[order])
-            bc = self.store.ingest(bc.values[order])
+        if np.isscalar(base):
+            xc, yc = self._ingest_sorted_xy(x, y, "area")
+            bc = self.store.ingest(np.full(len(xc), self._finite_scalar(base, "area base")))
+        else:
+            xc, yc, bc = self._ingest_sorted_xy(
+                x,
+                y,
+                "area",
+                base,
+                parallel_labels=("area base",),
+            )
         style: dict[str, Any] = {
             "color": color,
             "opacity": opacity,
@@ -955,15 +947,13 @@ def error_band(
     fill_spec = _validate.mark_fill(fill, "error_band fill")
     checkpoint = self._checkpoint()
     try:
-        xc, lc = self._ingest_xy(x, lower, "error_band")
-        uc = self.store.ingest(self._as_1d_float(upper, "error_band upper"))
-        if len(uc) != len(xc):
-            raise ValueError(f"error_band upper must have length {len(xc)}, got {len(uc)}")
-        if not kernels.is_sorted(xc.values):
-            order = np.argsort(xc.values, kind="stable")
-            xc = self.store.ingest(xc.values[order])
-            lc = self.store.ingest(lc.values[order])
-            uc = self.store.ingest(uc.values[order])
+        xc, lc, uc = self._ingest_sorted_xy(
+            x,
+            lower,
+            "error_band",
+            self._as_1d_float(upper, "error_band upper"),
+            parallel_labels=("error_band upper",),
+        )
         style: dict[str, Any] = {
             "color": color,
             "opacity": opacity,

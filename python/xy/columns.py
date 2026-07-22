@@ -35,6 +35,16 @@ ColumnStoreCheckpoint = tuple[int, dict[tuple[int, int, int], int]]
 ZONE_CHUNK = 65_536
 
 
+class _ColumnLengthMismatch(ValueError):
+    """Internal structured error for parallel-column ingest validation."""
+
+    def __init__(self, index: int, expected: int, actual: int) -> None:
+        self.index = index
+        self.expected = expected
+        self.actual = actual
+        super().__init__(f"column {index} must have length {expected}, got {actual}")
+
+
 @dataclass
 class ZoneMaps:
     """Per-chunk column statistics (min/max/counts; design dossier §22)."""
@@ -280,6 +290,19 @@ class ColumnStore:
         y_arr, y_kind, y_copies = _canonicalize(y)
         if len(x_arr) != len(y_arr):
             raise ValueError(f"x and y must have equal length, got {len(x_arr)} and {len(y_arr)}")
+        return self._ingest_canonical_pair(
+            (x_arr, x_kind, x_copies),
+            (y_arr, y_kind, y_copies),
+        )
+
+    def _ingest_canonical_pair(
+        self,
+        x: tuple[npt.NDArray[np.float64], str, int],
+        y: tuple[npt.NDArray[np.float64], str, int],
+    ) -> tuple[Column, Column]:
+        """Ingest two already-canonical columns, fusing their zone scan."""
+        x_arr, x_kind, x_copies = x
+        y_arr, y_kind, y_copies = y
         x_key = self._array_key(x_arr)
         y_key = self._array_key(y_arr)
         x_hit = self._lookup(x_arr, x_key)
@@ -319,6 +342,67 @@ class ColumnStore:
             ZoneMaps(*y_zone_raw),
         )
         return x_col, y_col
+
+    def ingest_sorted(self, x: Any, *parallel: Any) -> tuple[Column, ...]:
+        """Stable-sort parallel columns by ``x`` before their only ingest.
+
+        Every input is canonicalized and length-validated before the store is
+        mutated.  When ``x`` is unsorted, one stable order is gathered across
+        all columns; the gathered arrays retain their canonical kinds and the
+        required copy is included in ingest accounting.  The first two new
+        columns still share the fused zone-map scan used by ``ingest_pair``.
+
+        ``_ColumnLengthMismatch.index`` identifies the mismatching parallel
+        input (``1`` is the first value after ``x``), allowing trace builders
+        to retain their public, mark-specific validation messages.
+        """
+        canonical = [_canonicalize(values) for values in (x, *parallel)]
+        expected = len(canonical[0][0])
+        for index, (arr, _kind, _copies) in enumerate(canonical[1:], start=1):
+            if len(arr) != expected:
+                raise _ColumnLengthMismatch(index, expected, len(arr))
+
+        x_arr = canonical[0][0]
+        if not kernels.is_sorted(x_arr):
+            order = np.argsort(x_arr, kind="stable")
+            gathered: list[tuple[npt.NDArray[np.float64], str, int]] = []
+            gathered_by_key: dict[
+                tuple[int, int, int], tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]
+            ] = {}
+            for arr, kind, copies in canonical:
+                key = self._array_key(arr)
+                cached = gathered_by_key.get(key)
+                if cached is not None and np.shares_memory(cached[0], arr):
+                    sorted_arr = cached[1]
+                else:
+                    sorted_arr = arr[order]
+                    gathered_by_key[key] = (arr, sorted_arr)
+                gathered.append((sorted_arr, kind, copies + 1))
+            canonical = gathered
+
+        if len(canonical) == 1:
+            arr, kind, copies = canonical[0]
+            return (
+                self._ingest_canonical(
+                    arr,
+                    kind,
+                    copies,
+                    defer_zone_maps=False,
+                ),
+            )
+
+        first, second = self._ingest_canonical_pair(canonical[0], canonical[1])
+        columns = [first, second]
+        for arr, kind, copies in canonical[2:]:
+            columns.append(
+                self._ingest_canonical(
+                    arr,
+                    kind,
+                    copies,
+                    defer_zone_maps=False,
+                )
+            )
+        return tuple(columns)
 
     def memory_report(self) -> dict[str, Any]:
         """Canonical bytes per column — if a number isn't in the report, it

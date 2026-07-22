@@ -371,6 +371,38 @@ class Figure(AnnotationsMixin, PayloadMixin):
             self.store.rollback(checkpoint)
             raise
 
+    def _ingest_sorted_xy(
+        self,
+        x: Any,
+        y: Any,
+        kind: str,
+        *parallel: Any,
+        parallel_labels: tuple[str, ...] = (),
+    ) -> tuple[Column, ...]:
+        """Stable-sort line-like parallel columns before their only ingest."""
+        checkpoint = self.store.checkpoint()
+        try:
+            try:
+                return self.store.ingest_sorted(x, y, *parallel)
+            except columns._ColumnLengthMismatch as error:
+                if error.index == 1:
+                    raise ValueError(
+                        f"{kind} x and y must have equal length, got "
+                        f"{error.expected} and {error.actual}"
+                    ) from error
+                label_index = error.index - 2
+                label = (
+                    parallel_labels[label_index]
+                    if label_index < len(parallel_labels)
+                    else f"{kind} column {error.index}"
+                )
+                raise ValueError(
+                    f"{label} must have length {error.expected}, got {error.actual}"
+                ) from error
+        except Exception:
+            self.store.rollback(checkpoint)
+            raise
+
     def _checkpoint(self) -> _FigureCheckpoint:
         return (
             self.store.checkpoint(),

@@ -1705,6 +1705,26 @@ def test_bar_chart_data_keys_and_category_axis():
     assert spec["x_axis"]["categories"] == ["a", "b", "c"]
 
 
+def test_unsorted_line_data_keys_preserve_categorical_order_without_orphans():
+    data = FakeFrame(
+        {
+            "label": np.array(["beta", "alpha", "beta"]),
+            "value": np.array([2.0, 1.0, 3.0]),
+        }
+    )
+
+    fig = xy.line_chart(xy.line(x="label", y="value"), data=data).figure()
+    trace = fig.traces[0]
+    spec, _blob = fig.build_payload()
+
+    assert len(fig.store) == 2
+    assert spec["x_axis"]["kind"] == "category"
+    assert spec["x_axis"]["categories"] == ["beta", "alpha"]
+    np.testing.assert_array_equal(trace.x.values, [0.0, 0.0, 1.0])
+    # Stable sorting keeps both "beta" rows in their source order.
+    np.testing.assert_array_equal(trace.y.values, [2.0, 3.0, 1.0])
+
+
 def test_component_xy_datetime_object_axes_do_not_become_categories():
     x = np.array(
         [

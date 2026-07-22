@@ -190,7 +190,10 @@ The two requirements live primarily in the **data pipeline (§4–§6)**. The re
   *references* (column id + offset + length) into immutable canonical buffers. The
   calc/LOD stages produce *derived* buffers only when they must (e.g. a decimated
   view), never a defensive clone of the raw data. Contrast Plotly's `data` +
-  `_fullData` + `calcdata` triplication.
+  `_fullData` + `calcdata` triplication. Line-like marks canonicalize all parallel
+  columns, derive one stable x-order, and gather that order **before** the store
+  commits them; only the sorted columns become canonical entries, datetime kinds
+  survive the gather, and its unavoidable copy is included in ingest accounting.
 - **Struct-of-Arrays, not Array-of-Structs.** `x[]`, `y[]` as contiguous typed
   arrays — cache-friendly, and each column uploads to the GPU as one vertex buffer
   with no marshalling.

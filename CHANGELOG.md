@@ -142,6 +142,11 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- Unsorted line, area, and error-band inputs now canonicalize and stable-sort
+  their parallel columns before the single column-store commit. This removes
+  the unreferenced unsorted copies and duplicate zone-map scans (halving
+  canonical residency for those traces) while retaining datetime/category
+  metadata and stable duplicate-x ordering.
 - **Responsive, author-defeatable browser chrome.** XY's visual defaults now
   live in a low-priority cascade layer, so Tailwind utilities, ordinary author
   CSS, and slot styles override them without `!important`. Long legends remain

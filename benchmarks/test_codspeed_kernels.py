@@ -782,6 +782,19 @@ def test_first_payload_ingest_flavors(benchmark, kind):
     assert buffers
 
 
+def test_unsorted_line_ingest_medium(benchmark):
+    """Canonicalize, stable-sort, and ingest an unsorted line exactly once."""
+    rng = np.random.default_rng(170)
+    order = rng.permutation(MEDIUM_N)
+    x = np.arange(MEDIUM_N, dtype=np.float64)[order]
+    y = np.sin(np.arange(MEDIUM_N, dtype=np.float64) * 0.001)[order]
+
+    fig = benchmark(lambda: xy.chart(xy.line(x=x, y=y)).figure())
+
+    assert len(fig.store) == 2
+    assert fig.store.memory_report()["canonical_bytes"] == x.nbytes + y.nbytes
+
+
 def test_density_view_exact_pan(benchmark):
     """Steady-state exact pan below the pyramid activation threshold."""
     n = 200_000

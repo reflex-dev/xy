@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 import xy.export as export_module
+from xy import kernels
 from xy._figure import DECIMATION_THRESHOLD, PROTOCOL_VERSION, Figure
 from xy.columns import ColumnStore
 from xy.config import MAX_SCREEN_DIM
@@ -479,21 +480,14 @@ def test_histogram_late_append_failure_rolls_back_state(monkeypatch):
     assert _figure_state(fig) == before
 
 
-def test_sorted_line_late_ingest_failure_preserves_existing_figure_state(monkeypatch):
+def test_sorted_line_ingest_failure_preserves_existing_figure_state(monkeypatch):
     fig = Figure().line([0.0, 1.0], [1.0, 2.0], name="existing")
     before = _figure_state(fig)
-    original = fig.store.ingest
-    calls = {"count": 0}
 
-    def flaky_ingest(values):
-        calls["count"] += 1
-        # x/y now ingest through the paired kernel; this first scalar ingest is
-        # the later sorted-column replacement that must still roll back.
-        if calls["count"] == 1:
-            raise ValueError("synthetic sorted line ingest failure")
-        return original(values)
+    def flaky_ingest_sorted(*_values):
+        raise ValueError("synthetic sorted line ingest failure")
 
-    monkeypatch.setattr(fig.store, "ingest", flaky_ingest)
+    monkeypatch.setattr(fig.store, "ingest_sorted", flaky_ingest_sorted)
 
     with pytest.raises(ValueError, match="synthetic sorted line ingest failure"):
         fig.line([2.0, 0.0, 1.0], [20.0, 0.0, 10.0], name="new")
@@ -503,23 +497,16 @@ def test_sorted_line_late_ingest_failure_preserves_existing_figure_state(monkeyp
     assert [trace["name"] for trace in spec["traces"]] == ["existing"]
 
 
-def test_area_late_base_ingest_failure_preserves_existing_figure_state(monkeypatch):
+def test_area_parallel_ingest_failure_preserves_existing_figure_state(monkeypatch):
     fig = Figure().area([0.0, 1.0], [1.0, 2.0], name="existing")
     before = _figure_state(fig)
-    original = fig.store.ingest
-    calls = {"count": 0}
 
-    def flaky_ingest(values):
-        calls["count"] += 1
-        # x/y now ingest as a pair; the base remains the later independent
-        # column whose failure exercises the enclosing transaction.
-        if calls["count"] == 1:
-            raise ValueError("synthetic area base ingest failure")
-        return original(values)
+    def flaky_ingest_sorted(*_values):
+        raise ValueError("synthetic area parallel ingest failure")
 
-    monkeypatch.setattr(fig.store, "ingest", flaky_ingest)
+    monkeypatch.setattr(fig.store, "ingest_sorted", flaky_ingest_sorted)
 
-    with pytest.raises(ValueError, match="synthetic area base ingest failure"):
+    with pytest.raises(ValueError, match="synthetic area parallel ingest failure"):
         fig.area([0.0, 1.0], [3.0, 4.0], base=[0.0, 0.0], name="new")
 
     assert _figure_state(fig) == before
@@ -1420,6 +1407,113 @@ def test_unsorted_line_sorted_at_ingest():
     tr = fig.traces[0]
     np.testing.assert_array_equal(tr.x.values, [1.0, 2.0, 3.0])
     np.testing.assert_array_equal(tr.y.values, [10.0, 20.0, 30.0])
+
+
+@pytest.mark.parametrize(
+    ("build", "expected_columns"),
+    [
+        (lambda x, a, _b: Figure().line(x, a), 2),
+        (lambda x, a, b: Figure().area(x, a, base=b), 3),
+        (lambda x, a, b: Figure().error_band(x, a, b), 3),
+    ],
+    ids=["line", "area", "error-band"],
+)
+def test_unsorted_line_like_ingest_retains_only_live_columns(build, expected_columns):
+    n = 10_000
+    x = np.arange(n, dtype=np.float64)[::-1].copy()
+    first = np.sin(x * 0.01)
+    second = np.cos(x * 0.01)
+
+    fig = build(x, first, second)
+    trace = fig.traces[0]
+    live = {trace.x.id, trace.y.id}
+    if trace.base is not None:
+        live.add(trace.base.id)
+
+    assert len(fig.store) == expected_columns
+    assert live == set(range(expected_columns))
+    assert fig.memory_report()["canonical_bytes"] == expected_columns * n * 8
+    assert all(column.ingest_copies == 1 for column in fig.store.columns)
+    assert kernels.is_sorted(trace.x.values)
+
+
+def test_unsorted_line_runs_only_one_sorted_paired_zone_scan(monkeypatch):
+    real_pair = kernels.zone_maps_pair
+    real_single = kernels.zone_maps
+    pair_inputs: list[np.ndarray] = []
+    single_calls = 0
+
+    def recording_pair(x, y):
+        pair_inputs.append(x.copy())
+        return real_pair(x, y)
+
+    def recording_single(values):
+        nonlocal single_calls
+        single_calls += 1
+        return real_single(values)
+
+    monkeypatch.setattr(kernels, "zone_maps_pair", recording_pair)
+    monkeypatch.setattr(kernels, "zone_maps", recording_single)
+
+    Figure().line(
+        np.array([3.0, 1.0, 2.0]),
+        np.array([30.0, 10.0, 20.0]),
+    )
+
+    assert single_calls == 0
+    assert len(pair_inputs) == 1
+    np.testing.assert_array_equal(pair_inputs[0], [1.0, 2.0, 3.0])
+
+
+def test_unsorted_line_sort_is_stable_and_preserves_nonfinite_zone_maps():
+    x = np.array([2.0, np.nan, 1.0, 1.0, np.inf, -np.inf])
+    y = np.array([20.0, 99.0, 10.0, 11.0, 88.0, -88.0])
+
+    trace = Figure().line(x, y).traces[0]
+
+    np.testing.assert_array_equal(trace.x.values, [-np.inf, 1.0, 1.0, 2.0, np.inf, np.nan])
+    np.testing.assert_array_equal(trace.y.values, [-88.0, 10.0, 11.0, 20.0, 88.0, 99.0])
+    assert trace.x.zone.count == 3
+    assert trace.x.zone.null_count == 3
+    assert trace.x.min == 1.0
+    assert trace.x.max == 2.0
+
+
+def test_unsorted_datetime_line_retains_time_kind_and_axis_metadata():
+    x = np.array(
+        ["2026-01-03", "NaT", "2026-01-01", "2026-01-02"],
+        dtype="datetime64[D]",
+    )
+    fig = Figure().line(x, [3.0, 99.0, 1.0, 2.0])
+    trace = fig.traces[0]
+
+    expected = x.astype("datetime64[ms]").view(np.int64).astype(np.float64)
+    expected[1] = np.nan
+    order = np.argsort(expected, kind="stable")
+    assert trace.x.kind == "time_ms"
+    np.testing.assert_array_equal(trace.x.values, expected[order])
+    np.testing.assert_array_equal(trace.y.values, np.array([3.0, 99.0, 1.0, 2.0])[order])
+    spec, _blob = fig.build_payload()
+    assert spec["x_axis"]["kind"] == "time"
+    assert spec["columns"][spec["traces"][0]["x"]]["kind"] == "time_ms"
+
+
+def test_sorted_ingest_preserves_identity_dedup_and_copy_accounting():
+    values = np.array([2.0, 0.0, 1.0])
+    store = ColumnStore()
+
+    x_col, y_col = store.ingest_sorted(values, values)
+
+    assert x_col is y_col
+    assert len(store) == 1
+    assert x_col.ingest_copies == 1
+    np.testing.assert_array_equal(x_col.values, [0.0, 1.0, 2.0])
+
+    sorted_values = np.arange(3.0)
+    sorted_store = ColumnStore()
+    sorted_x, sorted_y = sorted_store.ingest_sorted(sorted_values, sorted_values + 1.0)
+    assert sorted_x.ingest_copies == 0
+    assert sorted_y.ingest_copies == 0
 
 
 def test_column_store_dedup():
