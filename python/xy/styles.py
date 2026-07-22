@@ -330,7 +330,7 @@ def _compile_axis_style(
         | _AXIS_LENGTH_PROPERTIES
         | _AXIS_SIZE_PROPERTIES
         | _AXIS_COMPAT_PROPERTIES
-        | {"tick_direction"}
+        | {"tick_direction", "tick_label_anchor"}
     )
     out: dict[str, StyleValue] = {}
     sources: dict[str, str] = {}
@@ -353,6 +353,8 @@ def _compile_axis_style(
                     f"{label}[{css_prop!r}] must be one of {sorted(_AXIS_DASH_STYLES)}"
                 )
             parsed = raw
+        elif prop == "tick_label_anchor":
+            parsed = _validate.axis_tick_label_anchor(raw, f"{label}[{css_prop!r}]")
         else:
             if not isinstance(raw, str) or raw not in _AXIS_DIRECTIONS:
                 raise ValueError(f"{label}[{css_prop!r}] must be one of {sorted(_AXIS_DIRECTIONS)}")

@@ -6,12 +6,17 @@
  * not expected to be byte-identical (§21).
  */
 
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, firefox, webkit } from "playwright";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BUNDLE = join(ROOT, "python", "xy", "static", "standalone.js");
+const protocolSource = readFileSync(join(ROOT, "python", "xy", "config.py"), "utf8");
+const protocolMatch = protocolSource.match(/^PROTOCOL_VERSION\s*=\s*(\d+)\s*$/m);
+if (!protocolMatch) throw new Error("could not read PROTOCOL_VERSION from python/xy/config.py");
+const PROTOCOL_VERSION = Number(protocolMatch[1]);
 const ENGINES = { chromium, firefox, webkit };
 const headless = process.env.XY_CONFORMANCE_HEADFUL !== "1";
 const selected = process.argv.find((arg) => arg.startsWith("--browsers="))?.split("=", 2)[1]
@@ -21,7 +26,7 @@ for (const name of selected) {
 }
 
 const spec = {
-  protocol: 3,
+  protocol: PROTOCOL_VERSION,
   width: 640,
   height: 360,
   title: "Cross-browser conformance",
@@ -142,7 +147,7 @@ async function probe(name) {
     HTMLCanvasElement.prototype.getContext = originalGetContext;
     window.xyConformanceView._drawNow();
   }, { spec, values });
-  await page.locator('[data-fc-slot="canvas"]').focus();
+  await page.locator('[data-xy-slot="canvas"]').focus();
   await page.keyboard.press("Home");
   await page.keyboard.press("ArrowRight");
   await page.evaluate(() => {
@@ -243,8 +248,8 @@ async function probe(name) {
         root: rect(v.root),
         canvas: rect(v.canvas),
         toolbar: rect(v._modebar),
-        title: rect(v.root.querySelector('[data-fc-slot="title"]')),
-        labelPositions: [...v.labels.querySelectorAll('[data-fc-slot="tick_label"], [data-fc-slot="axis_title"]')]
+        title: rect(v.root.querySelector('[data-xy-slot="title"]')),
+        labelPositions: [...v.labels.querySelectorAll('[data-xy-slot="tick_label"], [data-xy-slot="axis_title"]')]
           .map((el) => { const r = rect(el); return [r.x, r.y]; }),
       },
       signature,

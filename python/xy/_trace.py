@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from .channels import ColorChannel, SizeChannel
+from .channels import ColorChannel, SizeChannel, StyleChannel
 from .columns import Column
 from .config import DIRECT_SOFT_CEILING, SCATTER_DENSITY_THRESHOLD
 
@@ -40,7 +40,19 @@ class Trace:
     y0: Optional[Column] = None
     y1: Optional[Column] = None
     color_ch: Optional[ColorChannel] = None  # scatter color encoding
+    # Independent per-mark outline paint.  ``None`` means the mark family has
+    # no outline; a constant ``None`` color inside the channel means
+    # edgecolors="face" and is resolved against color_ch by the renderers.
+    stroke_ch: Optional[ColorChannel] = None
     size_ch: Optional[SizeChannel] = None  # scatter size encoding
+    # Declarative data-transition metadata. Keys are two uint32 words per
+    # canonical row (a deterministic 64-bit digest), kept out of the f64
+    # column store because they are identity rather than numeric geometry.
+    animation: Optional[dict[str, Any]] = None
+    transition_keys: Optional[Any] = None
+    # Direct, final-unit instance attributes (alpha override, opacity, widths,
+    # symbols, corner radii).  Constants stay in ``style`` and cost no buffer.
+    style_channels: dict[str, StyleChannel] = field(default_factory=dict)
     # Tri-state density override: None = auto (threshold), True/False = forced.
     # (A bool here silently ignored density=False — staff-review finding.)
     force_density: Optional[bool] = None
@@ -59,6 +71,11 @@ class Trace:
     # subset is dropped instead of translating indices in the wrong space
     # (§16/§17: exact readout beats stale availability).
     drill_seq: int = 0
+    # Count-pyramid cache (§5 Tier 3), managed by `interaction.py`: None =
+    # never tried, 0 = tried and not applicable, otherwise the native handle.
+    # The finalizer frees the native side when the trace is collected.
+    _pyr_handle: Optional[int] = field(default=None, init=False, repr=False, compare=False)
+    _pyr_finalizer: Optional[Any] = field(default=None, init=False, repr=False, compare=False)
 
     @property
     def n_points(self) -> int:
@@ -66,16 +83,31 @@ class Trace:
             return self.count
         return len(self.x)
 
+    def per_item_channel_names(self) -> tuple[str, ...]:
+        """Names of channels whose values vary independently per rendered item."""
+        names: list[str] = []
+        if self.color_ch is not None and self.color_ch.mode != "constant":
+            names.append("color")
+        if self.stroke_ch is not None and self.stroke_ch.mode not in ("constant", "match_fill"):
+            names.append("stroke")
+        if self.size_ch is not None and self.size_ch.mode != "constant":
+            names.append("size")
+        names.extend(self.style_channels)
+        return tuple(names)
+
+    def has_per_item_channels(self) -> bool:
+        """Whether this trace must preserve independently styled items."""
+        return bool(self.per_item_channel_names())
+
     def use_density(self) -> bool:
         """Whether this scatter renders as a Tier-2 density grid (§5)."""
         if self.kind != "scatter":
             return False
         if self.force_density is not None:
             return self.force_density
-        per_point = (self.color_ch and self.color_ch.mode != "constant") or (
-            self.size_ch and self.size_ch.mode != "constant"
-        )
         # Per-point channels keep direct draw until the hard ceiling; plain
         # scatter aggregates earlier (its whole win is not drawing 10M dots).
-        threshold = DIRECT_SOFT_CEILING if per_point else SCATTER_DENSITY_THRESHOLD
+        threshold = (
+            DIRECT_SOFT_CEILING if self.has_per_item_channels() else SCATTER_DENSITY_THRESHOLD
+        )
         return self.n_points > threshold

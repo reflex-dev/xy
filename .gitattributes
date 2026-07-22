@@ -3,3 +3,4 @@
 # Windows checkouts with autocrlf.
 *.js text eol=lf
 *.mjs text eol=lf
+*.ts text eol=lf

@@ -1141,7 +1141,7 @@ def test_to_html_includes_defensive_csp_before_scripts():
 
 
 def test_to_html_custom_css_injects_into_head_for_utility_classes():
-    css = ".fc-brand-tooltip{background:#123456}"
+    css = ".xy-brand-tooltip{background:#123456}"
     html = Figure(title="css").line([0.0, 1.0], [1.0, 2.0]).to_html(custom_css=css)
     head = html.split("</head>", 1)[0]
     # Injected into the head (so class_names/Tailwind resolve in standalone),
@@ -1904,7 +1904,7 @@ def test_to_png_chromium_threads_custom_css_into_standalone_html(monkeypatch):
 
     monkeypatch.setattr(export, "html_to_png", fake_html_to_png)
     fig = Figure(width=200, height=150).line([0.0, 1.0], [1.0, 2.0])
-    css = '[data-fc-slot="title"] { color: rebeccapurple; }'
+    css = '[data-xy-slot="title"] { color: rebeccapurple; }'
 
     data = fig.to_png(engine=export.Engine.chromium, custom_css=css)
 
@@ -2020,7 +2020,7 @@ def test_html_to_png_retries_without_sandbox_when_browser_crashes(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Mark-level styling (docs/styling.md#styling-the-marks): CSS linear-gradient
+# Mark-level styling (spec/api/styling.md#styling-the-marks): CSS linear-gradient
 # fills, rounded corners + stroke borders on the rect family, smooth curves.
 # ---------------------------------------------------------------------------
 

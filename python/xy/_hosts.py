@@ -30,6 +30,7 @@ class FigureHost(Protocol):
     height: Any
     padding: Any
     tooltip: Optional[dict[str, Any]]
+    animation_options: Optional[dict[str, Any]]
     show_legend: bool
     legend_options: dict[str, Any]
     frame_sides: Optional[list[str]]

@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import xy as fc  # noqa: E402
+import xy  # noqa: E402
 from _browser import find_chromium  # noqa: E402
 from categories import BENCHMARK_CATEGORIES, categories_for  # noqa: E402
 from environment import SCHEMA_VERSION, collect_environment_metadata  # noqa: E402
@@ -175,7 +175,7 @@ def _ingestion_rows(n: int, reps: int) -> list[dict[str, Any]]:
                 family="ingestion",
                 n=n,
                 setup=lambda x=x, y=y: (x, y),
-                operation=lambda state: fc.chart(fc.line(x=state[0], y=state[1])).figure(),
+                operation=lambda state: xy.chart(xy.line(x=state[0], y=state[1])).figure(),
                 reps=reps,
                 category_ids=("input_ingestion",),
                 scope="public-figure-ingest",
@@ -193,7 +193,7 @@ def _streaming_rows(base_n: int, reps: int) -> list[dict[str, Any]]:
     tail_y = np.sin(tail_x * 0.001)
 
     def line_setup() -> Figure:
-        fig = fc.chart(fc.line(x=x, y=y)).figure()
+        fig = xy.chart(xy.line(x=x, y=y)).figure()
         fig.build_payload()
         return fig
 
@@ -222,7 +222,7 @@ def _streaming_rows(base_n: int, reps: int) -> list[dict[str, Any]]:
     append_y = np.linspace(45.0, 55.0, batch_n, dtype=np.float64)
 
     def density_setup() -> Figure:
-        fig = fc.chart(fc.scatter(x=sx, y=sy, density=True)).figure()
+        fig = xy.chart(xy.scatter(x=sx, y=sy, density=True)).figure()
         fig.build_payload()
         assert _ensure_pyramid(fig.traces[0]) is not None
         return fig
@@ -297,7 +297,7 @@ def _export_rows(n: int, reps: int, chromium: str | None) -> list[dict[str, Any]
     y = np.sin(x * 0.002) + np.cos(x * 0.0003)
 
     def figure() -> Figure:
-        return fc.chart(fc.line(x=x, y=y), width=900, height=420).figure()
+        return xy.chart(xy.line(x=x, y=y), width=900, height=420).figure()
 
     rows = []
     for scenario, operation, oracle in (
@@ -319,7 +319,7 @@ def _export_rows(n: int, reps: int, chromium: str | None) -> list[dict[str, Any]
         ),
         (
             "export_png_native_decimated_line",
-            lambda fig: fig.to_png(engine=fc.Engine.default),
+            lambda fig: fig.to_png(engine=xy.Engine.default),
             _png_oracle,
         ),
     ):
@@ -346,7 +346,7 @@ def _export_rows(n: int, reps: int, chromium: str | None) -> list[dict[str, Any]
                     family="export",
                     n=n,
                     setup=figure,
-                    operation=lambda fig: fig.to_png(engine=fc.Engine.chromium),
+                    operation=lambda fig: fig.to_png(engine=xy.Engine.chromium),
                     reps=1,
                     category_ids=("static_export", "payload_export_size"),
                     scope="public-chromium-png-export",

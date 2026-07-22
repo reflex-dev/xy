@@ -33,7 +33,7 @@ REQUIRED_CI_JOBS = {
     "install_without_rust",
 }
 REQUIRED_CODSPEED_JOBS = {"benchmarks"}
-REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "wasm"}
+REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "publish-pyodide", "wasm"}
 
 
 def _job_blocks(text: str) -> dict[str, str]:
@@ -54,6 +54,36 @@ def _job_blocks(text: str) -> dict[str, str]:
         if current is not None:
             blocks[current].append(line)
     return {name: "\n".join(block) for name, block in blocks.items()}
+
+
+def _matrix_include_entries(job_text: str) -> list[dict[str, str]]:
+    """Parse the flat mappings under one job's strategy.matrix.include list."""
+    entries: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    in_include = False
+    for line in job_text.splitlines():
+        if line == "        include:":
+            in_include = True
+            continue
+        if not in_include:
+            continue
+        if line.startswith("          - "):
+            if current is not None:
+                entries.append(current)
+            current = {}
+            item = line.removeprefix("          - ")
+        elif line.startswith("            ") and not line.lstrip().startswith("#"):
+            item = line.removeprefix("            ")
+        elif line.strip() and len(line) - len(line.lstrip()) <= 8:
+            break
+        else:
+            continue
+        match = re.fullmatch(r"([A-Za-z0-9_-]+):\s*(.*?)", item)
+        if match and current is not None:
+            current[match.group(1)] = match.group(2)
+    if current is not None:
+        entries.append(current)
+    return entries
 
 
 def _missing_needles(block: str, needles: tuple[str, ...]) -> list[str]:
@@ -139,6 +169,47 @@ def _require_workflow_contains(
         errors.append(f"{workflow_label} workflow missing {description}: {missing}")
 
 
+def _require_docs_spec_pr_paths_ignored(errors: list[str], text: str, workflow_label: str) -> None:
+    """Require PR-only docs/spec changes to skip an expensive workflow."""
+    lines = text.splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if line == "  pull_request:")
+    except StopIteration:
+        errors.append(f"{workflow_label} workflow missing pull_request trigger")
+        return
+
+    paths_ignore: list[str] | None = None
+    collecting_paths_ignore = False
+    for line in lines[start + 1 :]:
+        indent = len(line) - len(line.lstrip())
+        if line.strip() and indent <= 2:
+            break
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if indent == 4:
+            collecting_paths_ignore = bool(re.fullmatch(r"paths-ignore:\s*(?:#.*)?", stripped))
+            if collecting_paths_ignore:
+                paths_ignore = []
+            continue
+        if not collecting_paths_ignore or indent <= 4:
+            continue
+        item = re.fullmatch(r"-\s+(.+?)\s*", stripped)
+        if item is None or paths_ignore is None:
+            continue
+        value = re.sub(r"\s+#.*$", "", item.group(1)).strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        paths_ignore.append(value)
+
+    required = {"docs/**", "spec/**"}
+    missing = sorted(required - set(paths_ignore or []))
+    if missing:
+        errors.append(
+            f"{workflow_label} pull_request trigger must skip docs/spec-only changes: {missing}"
+        )
+
+
 def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     try:
         text = path.read_text(encoding="utf-8")
@@ -147,6 +218,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
 
     jobs = _job_blocks(text)
     errors: list[str] = []
+    _require_docs_spec_pr_paths_ignored(errors, text, "CI")
     missing_jobs = sorted(REQUIRED_CI_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"CI workflow missing required jobs: {missing_jobs}")
@@ -220,13 +292,13 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         '--browser-reps 12 --chromium "$CHROME" --require-browser --json transport.json',
         "scripts/verify_benchmark_report.py transport.json --kind transport-loopback",
         "scripts/check_regressions.py --scatter scatter.json --kernel kernel.json",
-        "--transport transport.json --emit-md docs/benchmark_metrics.md",
+        "--transport transport.json --emit-md spec/benchmarks/metrics.md",
         "Upload regression benchmark report",
         "if: always()",
         "actions/upload-artifact@",
         "regression-benchmark-report",
         "if-no-files-found: warn",
-        "docs/benchmark_metrics.md",
+        "spec/benchmarks/metrics.md",
         "transport.json",
     )
     _require_job_contains(
@@ -237,7 +309,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "accessibility and three-engine conformance gate",
         'node-version: "22"',
         "npm ci",
-        "actions/cache@5a3ec84eff668545956fd18022155c47e93e2684",
+        "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
         "~/.cache/ms-playwright",
         "playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}",
         "npx playwright install --with-deps chromium firefox webkit",
@@ -261,8 +333,17 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "CI",
         "parallel cross-library benchmark matrix",
         "continue-on-error: true",
+        "timeout-minutes: 10",
         "fail-fast: false",
         "matrix:",
+        "xy: false",
+        "browser: false",
+        "build_js: false",
+        "if: matrix.xy",
+        "if: matrix.browser",
+        "if: matrix.build_js",
+        "--constraint benchmarks/requirements-ci.lock",
+        "CHROMIUM_ARGS=()",
         "--libraries",
         "--max-n",
         "Run cross-library benchmark group",
@@ -272,6 +353,127 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "actions/upload-artifact@",
         "if-no-files-found: warn",
     )
+    cross_library = jobs.get("benchmark_vs", "")
+    expected_matrix = {
+        "native-and-webgl": {
+            "libraries": "xy,plotly_gl,bokeh_webgl,datashader",
+            "packages": "plotly kaleido bokeh datashader psutil",
+            "max_n": "10000000",
+            "xy": "true",
+            "browser": "true",
+            "build_js": "true",
+        },
+        "matplotlib": {
+            "libraries": "matplotlib",
+            "packages": "numpy matplotlib psutil",
+            "max_n": "10000000",
+            "xy": "false",
+            "browser": "false",
+            "build_js": "false",
+        },
+        "seaborn": {
+            "libraries": "seaborn",
+            "packages": "numpy seaborn psutil",
+            "max_n": "10000000",
+            "xy": "false",
+            "browser": "false",
+            "build_js": "false",
+        },
+        "plotly-svg": {
+            "libraries": "plotly_svg",
+            "packages": "numpy plotly kaleido psutil",
+            "max_n": "10000000",
+            "xy": "false",
+            "browser": "true",
+            "build_js": "false",
+        },
+        "bokeh-canvas": {
+            "libraries": "bokeh_canvas",
+            "packages": "numpy bokeh psutil",
+            "max_n": "10000000",
+            "xy": "false",
+            "browser": "true",
+            "build_js": "false",
+        },
+        "html-adapters": {
+            "libraries": "altair,hvplot_bokeh",
+            "packages": "numpy altair hvplot psutil",
+            "max_n": "100000",
+            "xy": "false",
+            "browser": "true",
+            "build_js": "false",
+        },
+    }
+    matrix_entries = _matrix_include_entries(cross_library)
+    matrix_by_name = {
+        entry["name"]: entry for entry in matrix_entries if isinstance(entry.get("name"), str)
+    }
+    matrix_names = [entry.get("name") for entry in matrix_entries]
+    duplicate_names = sorted({name for name in matrix_names if matrix_names.count(name) > 1})
+    if duplicate_names:
+        errors.append(f"CI benchmark_vs matrix has duplicate names: {duplicate_names}")
+    if set(matrix_by_name) != set(expected_matrix):
+        errors.append(
+            "CI benchmark_vs matrix names must exactly match isolated benchmark groups; "
+            f"got {sorted(matrix_by_name)}, expected {sorted(expected_matrix)}"
+        )
+    for name, expected in expected_matrix.items():
+        actual = matrix_by_name.get(name)
+        if actual is None:
+            continue
+        expected_entry = {"name": name, **expected}
+        if actual != expected_entry:
+            errors.append(
+                f"CI benchmark_vs matrix entry {name!r} must exactly equal "
+                f"{expected_entry!r}; got {actual!r}"
+            )
+    if not _step_is_conditioned(cross_library, "dtolnay/rust-toolchain@"):
+        errors.append("CI benchmark_vs Rust toolchain setup must be conditioned on matrix.xy")
+    _require_step_contains(
+        errors,
+        cross_library,
+        "Build native core",
+        "xy-only setup condition",
+        "if: matrix.xy",
+    )
+    _require_step_contains(
+        errors,
+        cross_library,
+        "Install xy",
+        "xy-only constrained install",
+        "if: matrix.xy",
+        'XY_REQUIRE_CARGO: "1"',
+        "--constraint benchmarks/requirements-ci.lock",
+    )
+    _require_step_contains(
+        errors,
+        cross_library,
+        "Install selected competitors",
+        "locked benchmark dependency constraint",
+        "--constraint benchmarks/requirements-ci.lock",
+        "${{ matrix.packages }}",
+    )
+    _require_step_contains(
+        errors,
+        cross_library,
+        "Verify native benchmark backend",
+        "xy-only verification condition",
+        "if: matrix.xy",
+    )
+    _require_step_contains(
+        errors,
+        cross_library,
+        "Install Chromium (Playwright)",
+        "browser-only setup condition",
+        "if: matrix.browser",
+    )
+    _require_step_contains(
+        errors,
+        cross_library,
+        "Build JS client",
+        "xy browser-build condition",
+        "if: matrix.build_js",
+    )
     _require_job_contains(
         errors,
         jobs,
@@ -279,6 +481,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "CI",
         "non-blocking methodology benchmark artifact path",
         "continue-on-error: true",
+        "benchmarks/requirements-ci.lock",
         "Verify native benchmark backend",
         "XY_REQUIRE_CARGO",
         'k.BACKEND == "native"',
@@ -378,6 +581,7 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
 
     jobs = _job_blocks(text)
     errors: list[str] = []
+    _require_docs_spec_pr_paths_ignored(errors, text, "CodSpeed")
     missing_jobs = sorted(REQUIRED_CODSPEED_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"CodSpeed workflow missing required jobs: {missing_jobs}")
@@ -459,6 +663,12 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "actions/upload-artifact@",
         "dist/*.whl",
     )
+    wheels_job = jobs.get("wheels", "")
+    if "continue-on-error:" in wheels_job:
+        errors.append(
+            "release wheels job must block publishing when any native wheel build or "
+            "verification fails"
+        )
     _require_job_contains(
         errors,
         jobs,
@@ -475,6 +685,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "scripts/pyodide_load_smoke.py",
         "scripts/verify_wheel.py",
         "--expect-native",
+        "name: pyodide-wheel",
     )
     wasm_job = jobs.get("wasm", "")
     if "continue-on-error:" in wasm_job:
@@ -513,6 +724,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "dry_run",
         "pypa/gh-action-pypi-publish@",
         "packages-dir: dist/",
+        "skip-existing: true",
     )
     _require_workflow_contains(
         errors,
@@ -524,6 +736,29 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "dry_run:",
         "type: boolean",
         "default: true",
+    )
+    _require_job_contains(
+        errors,
+        jobs,
+        "publish-pyodide",
+        "release",
+        "GitHub Release publication of the runtime-verified Pyodide wheel",
+        "needs: [wheels, sdist, wasm]",
+        "contents: write",
+        "actions/setup-node@",
+        'node-version: "22"',
+        "actions/download-artifact@",
+        "name: pyodide-wheel",
+        "dry_run",
+        "scripts/check_release_version.py",
+        "GH_TOKEN",
+        "gh release upload",
+        "--clobber",
+        "gh release create",
+        "--verify-tag",
+        "steps.publish.outputs.wheel_url",
+        "pyodide@0.29.4",
+        "scripts/pyodide_load_smoke.py",
     )
 
     publish = jobs.get("publish", "")

@@ -10,7 +10,9 @@ from __future__ import annotations
 import warnings
 
 # Wire protocol version: the client refuses a mismatched spec loudly (§33).
-PROTOCOL_VERSION = 3
+# v5: streaming append ships split-layout buffers and, on the widget host,
+# rides the spec/buffers trait update (`spec.append.seq`) with no custom send.
+PROTOCOL_VERSION = 5
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the
@@ -27,6 +29,11 @@ SCATTER_DENSITY_THRESHOLD = 200_000
 # asked for per-point channels (they can't survive count-aggregation without the
 # §5-F5 aggregation algebra — we warn and drop them, never silently mislead).
 DIRECT_SOFT_CEILING = 2_000_000
+
+# Stable-key matching retains a browser-side identity table for only bounded
+# direct traces. Larger/density traces fall back explicitly to index/snap
+# rather than allocating an unbounded JS Map alongside canonical data.
+MAX_ANIMATION_MATCH_ROWS = 200_000
 
 # Default density grid resolution (cells). Screen-bounded (§5); the client
 # requests a viewport-matched size on zoom via density_view.

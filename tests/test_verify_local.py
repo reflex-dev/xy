@@ -20,6 +20,7 @@ def _load_verify_local_module():
 
 verify_local = _load_verify_local_module()
 ROOT = Path(__file__).resolve().parents[1]
+SPEC_DOCS = ROOT / "spec"
 
 
 def test_default_selection_is_quick_checks_only() -> None:
@@ -85,7 +86,7 @@ def test_example_checks_are_known_as_targeted_gate() -> None:
     assert [check.name for check in selected] == ["examples"]
     assert selected[0].command[-2:] == (
         "tests/test_docs_examples.py",
-        "tests/test_reflex_example_assets.py",
+        "tests/test_example_apps.py",
     )
     assert selected[0].requires_modules == ("pytest",)
 
@@ -368,7 +369,7 @@ def test_dry_run_includes_examples_gate(capsys) -> None:
     assert rc == 0
     assert "examples" in out
     assert "tests/test_docs_examples.py" in out
-    assert "tests/test_reflex_example_assets.py" in out
+    assert "tests/test_example_apps.py" in out
 
 
 def test_dry_run_includes_security_export_gate(capsys) -> None:
@@ -467,6 +468,24 @@ def test_makefile_exposes_sdist_verification_shortcut() -> None:
     assert "uv build --sdist" in makefile
     assert "scripts/verify_sdist.py" in makefile
     assert "make check-sdist" in makefile
+
+
+def test_contributor_setup_builds_native_core_and_docs_use_it() -> None:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    setup_recipe = makefile.split("setup:\n", 1)[1].split("\n\n", 1)[0]
+
+    assert "uv venv" in setup_recipe
+    assert 'uv pip install -e ".[dev]"' in setup_recipe
+    assert "cargo build --release" in setup_recipe
+
+    contributor_docs = (
+        (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8"),
+        (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8"),
+        (ROOT / "README.md").read_text(encoding="utf-8"),
+        (ROOT / "docs" / "api-reference" / "contributing.md").read_text(encoding="utf-8"),
+    )
+    for text in contributor_docs:
+        assert "make setup" in text
 
 
 def test_makefile_exposes_wheel_verification_shortcut() -> None:
@@ -587,8 +606,8 @@ def test_makefile_exposes_claim_guardrail_shortcut() -> None:
 
 
 def test_contributor_docs_name_full_gate_toolchain_requirements() -> None:
-    contributing = (ROOT / "docs" / "contributing.md").read_text(encoding="utf-8")
-    production = (ROOT / "docs" / "production-readiness.md").read_text(encoding="utf-8")
+    contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
+    production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
     for text in (contributing, production, readme):
@@ -599,19 +618,19 @@ def test_contributor_docs_name_full_gate_toolchain_requirements() -> None:
 
 
 def test_docs_name_example_verification_shortcut() -> None:
-    contributing = (ROOT / "docs" / "contributing.md").read_text(encoding="utf-8")
-    production = (ROOT / "docs" / "production-readiness.md").read_text(encoding="utf-8")
+    contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
+    production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
     for text in (contributing, production, readme):
         assert "make check-examples" in text
-    assert "docs/api-examples.md" in contributing
+    assert "spec/api/api-examples.md" in contributing
     assert "Reflex example" in contributing
 
 
 def test_docs_name_docs_verification_shortcut() -> None:
-    contributing = (ROOT / "docs" / "contributing.md").read_text(encoding="utf-8")
-    production = (ROOT / "docs" / "production-readiness.md").read_text(encoding="utf-8")
+    contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
+    production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     production_inline = " ".join(production.split())
 
@@ -623,8 +642,8 @@ def test_docs_name_docs_verification_shortcut() -> None:
 
 
 def test_docs_name_security_verification_shortcut() -> None:
-    contributing = (ROOT / "docs" / "contributing.md").read_text(encoding="utf-8")
-    production = (ROOT / "docs" / "production-readiness.md").read_text(encoding="utf-8")
+    contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
+    production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
     for text in (contributing, production, readme):
@@ -635,8 +654,8 @@ def test_docs_name_security_verification_shortcut() -> None:
 
 
 def test_docs_name_error_safety_verification_shortcut() -> None:
-    contributing = (ROOT / "docs" / "contributing.md").read_text(encoding="utf-8")
-    production = (ROOT / "docs" / "production-readiness.md").read_text(encoding="utf-8")
+    contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
+    production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
     for text in (contributing, production, readme):
@@ -650,8 +669,8 @@ def test_docs_name_error_safety_verification_shortcut() -> None:
 
 
 def test_docs_name_api_surface_verification_shortcut() -> None:
-    contributing = (ROOT / "docs" / "contributing.md").read_text(encoding="utf-8")
-    production = (ROOT / "docs" / "production-readiness.md").read_text(encoding="utf-8")
+    contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
+    production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     readme_inline = " ".join(readme.split())
 
@@ -663,8 +682,8 @@ def test_docs_name_api_surface_verification_shortcut() -> None:
 
 
 def test_docs_name_import_budget_verification_shortcut() -> None:
-    contributing = (ROOT / "docs" / "contributing.md").read_text(encoding="utf-8")
-    production = (ROOT / "docs" / "production-readiness.md").read_text(encoding="utf-8")
+    contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
+    production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
     for text in (contributing, production, readme):
@@ -677,8 +696,8 @@ def test_docs_name_import_budget_verification_shortcut() -> None:
 
 
 def test_docs_name_ci_workflow_verification_shortcut() -> None:
-    contributing = (ROOT / "docs" / "contributing.md").read_text(encoding="utf-8")
-    production = (ROOT / "docs" / "production-readiness.md").read_text(encoding="utf-8")
+    contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
+    production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
     for text in (contributing, production, readme):
@@ -689,8 +708,8 @@ def test_docs_name_ci_workflow_verification_shortcut() -> None:
 
 
 def test_docs_name_claim_guardrail_shortcut() -> None:
-    contributing = (ROOT / "docs" / "contributing.md").read_text(encoding="utf-8")
-    production = (ROOT / "docs" / "production-readiness.md").read_text(encoding="utf-8")
+    contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
+    production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
     for text in (contributing, production, readme):
@@ -701,8 +720,8 @@ def test_docs_name_claim_guardrail_shortcut() -> None:
 
 
 def test_docs_name_benchmark_harness_shortcut() -> None:
-    contributing = (ROOT / "docs" / "contributing.md").read_text(encoding="utf-8")
-    production = (ROOT / "docs" / "production-readiness.md").read_text(encoding="utf-8")
+    contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
+    production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
     for text in (contributing, production, readme):

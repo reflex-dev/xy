@@ -14,7 +14,7 @@ dependencies = [
     # Prototype dependency surface. The adapter needs: Component/Var/EventHandler
     # (reflex-base), plus App/State/state_manager access, which today live in the
     # full `reflex` distribution. Revisit when the reflex-base split grows a
-    # public state/app surface (docs/design/reflex-integration.md §4).
+    # public state/app surface (spec/design/reflex-integration.md §4).
     "reflex>=0.9.6",
 ]
 

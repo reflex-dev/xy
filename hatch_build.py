@@ -108,7 +108,11 @@ def _cargo_target() -> Optional[str]:
 
 
 class CustomBuildHook(BuildHookInterface):
+    """Wheel build hook: builds (or reuses) the Rust core cdylib and ships it
+    inside the wheel as a platform artifact."""
+
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
+        """Place the native library into the wheel before it is assembled."""
         if self.target_name != "wheel":
             return
 

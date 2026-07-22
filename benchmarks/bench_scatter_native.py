@@ -46,6 +46,7 @@ sys.path.insert(0, str(ROOT / "python"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from _protocol import PROTOCOL_VERSION  # noqa: E402
 from abi_smoke import load  # noqa: E402
 from categories import BENCHMARK_CATEGORIES, categories_for  # noqa: E402
 from environment import SCHEMA_VERSION, collect_environment_metadata  # noqa: E402
@@ -115,13 +116,13 @@ def gen_numpy_categories(n: int, groups: int) -> Any:
     return np.asarray(list(alphabet[:groups]))[codes]
 
 
-def _warm_production_path(fc: Any, np: Any) -> None:
+def _warm_production_path(xy: Any, np: Any) -> None:
     """Exclude lazy module import/bytecode work from large-row timing."""
     global _PRODUCTION_WARMED
     if _PRODUCTION_WARMED:
         return
     tiny = np.array([0.0, 1.0, 2.0, 3.0])
-    fig = fc.scatter_chart(fc.scatter(x=tiny, y=tiny), width=64, height=48).figure()
+    fig = xy.scatter_chart(xy.scatter(x=tiny, y=tiny), width=64, height=48).figure()
     fig.build_payload()
     _PRODUCTION_WARMED = True
 
@@ -144,7 +145,7 @@ def bench_prep(lib, n: int, x: array, y: array) -> dict:
         grid = array("f", bytes(4 * GRID_W * GRID_H))
         for _ in range(reps):
             t0 = time.perf_counter()
-            lib.fc_bin_2d(
+            lib.xy_bin_2d(
                 _ptr(x, D), _ptr(y, D), n, -2.0, 2.0, -2.0, 2.0, GRID_W, GRID_H, _ptr(grid, F)
             )
             best = min(best, time.perf_counter() - t0)
@@ -155,8 +156,8 @@ def bench_prep(lib, n: int, x: array, y: array) -> dict:
         ey = array("f", bytes(4 * n))
         for _ in range(reps):
             t0 = time.perf_counter()
-            lib.fc_encode_f32(_ptr(x, D), n, 0.0, 1.0, _ptr(ex, F))
-            lib.fc_encode_f32(_ptr(y, D), n, 0.0, 1.0, _ptr(ey, F))
+            lib.xy_encode_f32(_ptr(x, D), n, 0.0, 1.0, _ptr(ex, F))
+            lib.xy_encode_f32(_ptr(y, D), n, 0.0, 1.0, _ptr(ey, F))
             best = min(best, time.perf_counter() - t0)
         wire = 8 * n
         tier = "direct"
@@ -182,9 +183,9 @@ def bench_production(
     """Time the real Figure -> spec/blob path and assert its reduction contract."""
     import numpy as np
 
-    import xy as fc
+    import xy
 
-    _warm_production_path(fc, np)
+    _warm_production_path(xy, np)
 
     # Source generation is outside this region, so repeat through 100M to
     # suppress parallel-scheduler noise without multiplying ceiling-run RAM.
@@ -193,8 +194,8 @@ def bench_production(
     result = None
     for _ in range(reps):
         t0 = time.perf_counter()
-        fig = fc.scatter_chart(
-            fc.scatter(x=x, y=y, color=color),
+        fig = xy.scatter_chart(
+            xy.scatter(x=x, y=y, color=color),
             width=RENDER_W,
             height=RENDER_H,
         ).figure()
@@ -357,7 +358,7 @@ def bench_render(n: int, x: array, y: array) -> dict:
         cols[trace["y"]].update({"offset": 0.0, "scale": 1.0, "kind": "float"})
 
     spec = {
-        "protocol": 3,
+        "protocol": PROTOCOL_VERSION,
         "width": RENDER_W,
         "height": RENDER_H,
         "title": None,
@@ -379,8 +380,8 @@ try{{
   v._drawNow();
   const gl=v.gl; const px=new Uint8Array(4); gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,px);
   const t1=performance.now();
-  document.title=`FC_OK render_ms=${{(t1-t0).toFixed(2)}}`;
-}}catch(e){{document.title="FC_ERROR "+e.message}}
+  document.title=`XY_OK render_ms=${{(t1-t0).toFixed(2)}}`;
+}}catch(e){{document.title="XY_ERROR "+e.message}}
 </script></body></html>"""
 
     with tempfile.TemporaryDirectory() as td:

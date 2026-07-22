@@ -9,6 +9,8 @@ import pytest
 import reflex as rx
 import reflex_xy
 
+import xy
+
 
 class CompState(rx.State):
     last_row: dict = {}
@@ -66,6 +68,53 @@ def test_component_import_is_local_library(app_cwd):
     assert lib[0].startswith("$/public/external/"), "must never be an npm specifier"
 
 
+def test_static_chart_classes_are_visible_to_tailwind_source_scan(app_cwd):
+    """XYBF is opaque to Tailwind, so static chart classes need a JSX literal."""
+    static_chart = xy.chart(
+        xy.line(
+            [0, 1],
+            [1, 2],
+            class_name="stroke-[3px] transition-opacity",
+        ),
+        xy.vline(
+            0.5,
+            text="release",
+            class_name="[&>text]:font-semibold opacity-80",
+        ),
+        xy.legend(class_name="max-h-24 overflow-y-auto"),
+        xy.tooltip(class_name="max-w-64 break-words"),
+        xy.modebar(
+            class_name="rounded-lg shadow-sm",
+            button_class_name="hover:bg-slate-100 focus:ring-2",
+        ),
+        class_name="rounded-xl border border-slate-200",
+        class_names={
+            "title": "text-base font-semibold text-slate-900",
+            "selection": "fill-blue-500/10 stroke-blue-500",
+        },
+    )
+
+    rendered = str(reflex_xy.chart(static_chart, id="tailwind-chart"))
+    assert "tailwindClassTokens" in rendered
+    for class_string in (
+        "rounded-xl border border-slate-200",
+        "text-base font-semibold text-slate-900",
+        "fill-blue-500/10 stroke-blue-500",
+        "stroke-[3px] transition-opacity",
+        "[&>text]:font-semibold opacity-80",
+        "max-h-24 overflow-y-auto",
+        "max-w-64 break-words",
+        "rounded-lg shadow-sm",
+        "hover:bg-slate-100 focus:ring-2",
+    ):
+        assert class_string in rendered
+
+
+def test_live_chart_does_not_claim_runtime_classes_are_compile_time_known(app_cwd):
+    rendered = str(reflex_xy.chart("xyfig-runtime"))
+    assert "tailwindClassTokens" not in rendered
+
+
 def test_component_creation_does_not_touch_repo_root():
     """Outside an app cwd nothing has leaked assets/ into the repo."""
     repo_root = pathlib.Path(reflex_xy.__file__).resolve().parents[3]
@@ -74,3 +123,22 @@ def test_component_creation_does_not_touch_repo_root():
         "symlinks outside an app directory"
     )
     assert os.getcwd() != str(repo_root) or True
+
+
+def test_semantic_event_wrapper_contracts_are_present():
+    source = (
+        pathlib.Path(__file__).parents[2] / "python/reflex-xy/reflex_xy/assets/XYChart.jsx"
+    ).read_text()
+    assert 'm.type === "select_polygon"' in source
+    assert 'lastSelect?.type === "select_polygon" ? lastSelect.points : null' in source
+    assert "interaction.click = true" in source
+    assert "interaction.view_change = true" in source
+    assert "include_rows: true" in source
+    assert "HOVER_THROTTLE_MS = 120" in source
+    assert "VIEW_DEBOUNCE_MS = 200" in source
+    assert "envelope.v = payloadVersion" in source
+    assert "restoreSelectionSeqs.delete(message.seq)" in source
+    assert "restoringSelection" not in source
+    assert 'pointEnvelope("point_click"' in source
+    assert 'type: "select_end"' in source
+    assert 'type: "view_change"' in source

@@ -1,8 +1,15 @@
 # xy / xy
 
 A high-performance charting engine. The authoritative design is
-`docs/design-dossier.md` — **read the relevant § before changing behavior**;
+`spec/design-dossier.md` — **read the relevant § before changing behavior**;
 code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
+
+The entire `spec/` directory is the source of truth for intended behavior,
+architecture, compatibility, benchmarks, release readiness, and contributor
+contracts. Keep it current with every relevant code, configuration, build, and
+release change. A change is incomplete while its affected specification is
+missing, stale, or inconsistent with the implementation; resolve discrepancies
+instead of treating the implementation alone as authoritative.
 
 ## Layout
 
@@ -31,9 +38,9 @@ code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
 - `python/xy/pyplot/` — the matplotlib shim, fully contained
   (one-way dependency onto the public composition API; guardrails in
   `tests/pyplot/test_boundaries.py`). Corpus-defined compatibility:
-  `tests/pyplot/corpus/` + `docs/matplotlib-compat.md`.
+  `tests/pyplot/corpus/` + `spec/matplotlib/compat.md`.
 - `python/reflex-xy/` — the Reflex adapter, a separate distributable
-  package (`reflex_xy`; design: `docs/design/reflex-integration.md`). Chart
+  package (`reflex_xy`; design: `spec/design/reflex-integration.md`). Chart
   data rides the app's own websocket as a second socket.io namespace;
   figures live in a per-process registry rebuilt from Reflex state on miss.
   Depends on `xy` + `reflex`; `xy` itself must never import
@@ -41,10 +48,15 @@ code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
   package at app compile (no second copy to drift), and the adapter stays
   out of the root `xy` sdist (`scripts/verify_sdist.py` enforces it).
   Tests: `tests/reflex_adapter/` (skip unless reflex installed).
-- `js/src/*.js` — the render client as ordered parts (concat order in
-  `js/build.mjs`; exports live only in `60_entries.js`), one dependency-free ES
-  module. **No npm packages.** `node js/build.mjs` copies it to
-  `python/xy/static/` (committed artifacts).
+- `js/src/*.ts` — the render client as TypeScript ES modules (one module per
+  former concat part; `60_entries.ts` is the entry and the only public export
+  surface). `node js/build.mjs` typechecks (`js/tsconfig.json`), lints the
+  shaders, and has vite bundle + minify into `python/xy/static/index.js`
+  (anywidget ESM) and `standalone.js` (IIFE, `window.xy`) — committed,
+  minified artifacts; the minified bundles are what ships to the client.
+  npm devDependencies (vite/typescript/playwright, pinned in
+  `package-lock.json`) are build/test-time only — the shipped client stays
+  runtime-dependency-free. Run `npm ci` once per checkout.
 - `tests/`, `scripts/bench.py` (§12 harness), `scripts/smoke_render.py`
   (headless Chromium pixel probe).
 
@@ -52,7 +64,8 @@ code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
 
 ```bash
 cargo test && cargo build --release   # core
-node js/build.mjs                     # regenerate static/ after JS edits
+npm ci                                # once per checkout: vite + tsc toolchain
+node js/build.mjs                     # typecheck + regenerate minified static/ after JS edits
 python3 scripts/abi_smoke.py          # C-ABI seam, stdlib only (no PyPI needed)
 python3 scripts/render_smoke_nonumpy.py  # WebGL2 render path in headless Chromium
 uv venv && uv pip install -e ".[dev]"

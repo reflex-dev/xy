@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import xy as fc
+import xy
 from xy import kernels
 from xy._figure import Figure
 from xy._raster import _parse_color
@@ -101,12 +101,12 @@ def test_annotation_and_mark_style_colors_validate() -> None:
 
 def test_style_dict_declarations_validate() -> None:
     with pytest.raises(ValueError, match="chart style\\['border-radius'\\]"):
-        fc.scatter_chart(fc.scatter(x=X, y=Y), style={"border-radius": "12px; position:fixed"})
+        xy.scatter_chart(xy.scatter(x=X, y=Y), style={"border-radius": "12px; position:fixed"})
     with pytest.raises(ValueError, match="has an invalid number"):
-        fc.x_axis(style={"font_size": "big"})
+        xy.x_axis(style={"font_size": "big"})
     # The px convention and custom properties stay untouched.
-    fc.scatter_chart(
-        fc.scatter(x=X, y=Y),
+    xy.scatter_chart(
+        xy.scatter(x=X, y=Y),
         style={"font_size": 18, "letter_spacing": "0.02em", "--chart-bg": "#0b1020"},
     )
 
@@ -127,15 +127,15 @@ def test_failed_color_validation_rolls_back_the_figure() -> None:
 def test_color_string_disambiguation_is_exact_both_ways() -> None:
     df = {"x": X, "y": Y, "grp": np.array(list("ab") * 4)}
     # Any named color works as a constant now (the old heuristic knew ~20).
-    fc.scatter_chart(fc.scatter(x=X, y=Y, color="rebeccapurple")).figure()
+    xy.scatter_chart(xy.scatter(x=X, y=Y, color="rebeccapurple")).figure()
     # Column names still resolve.
-    fc.scatter_chart(fc.scatter(x="x", y="y", color="grp", data=df)).figure()
+    xy.scatter_chart(xy.scatter(x="x", y="y", color="grp", data=df)).figure()
     # A color-shaped typo reports the CSS reason, not a column error.
     with pytest.raises(ValueError, match="is not a valid hex color"):
-        fc.scatter_chart(fc.scatter(x=X, y=Y, color="#3b82zz")).figure()
+        xy.scatter_chart(xy.scatter(x=X, y=Y, color="#3b82zz")).figure()
     # A word that is neither stays a column error.
     with pytest.raises(ValueError, match="column 'grpp' not found"):
-        fc.scatter_chart(fc.scatter(x="x", y="y", color="grpp", data=df)).figure()
+        xy.scatter_chart(xy.scatter(x="x", y="y", color="grpp", data=df)).figure()
 
 
 # -- weird strings never escape a declaration context ---------------------------
@@ -155,7 +155,7 @@ def test_hostile_strings_are_rejected_at_build(hostile: str) -> None:
     with pytest.raises(ValueError):
         Figure().line(X, Y, color=hostile)
     with pytest.raises(ValueError):
-        fc.scatter_chart(fc.scatter(x=X, y=Y), style={"background": hostile})
+        xy.scatter_chart(xy.scatter(x=X, y=Y), style={"background": hostile})
 
 
 # -- the raster shares the grammar ----------------------------------------------

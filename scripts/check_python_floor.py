@@ -27,6 +27,7 @@ DEFAULT_PATHS = (
     Path("benchmarks"),
     Path("tests"),
     Path("examples/reflex"),
+    Path("examples/fastapi"),
     Path("hatch_build.py"),
 )
 
@@ -42,7 +43,7 @@ SKIP_PARTS = {
 
 DECLARATION_DOCS = (
     Path("README.md"),
-    Path("docs/production-readiness.md"),
+    Path("spec/process/production-readiness.md"),
 )
 
 

@@ -21,12 +21,13 @@ DEFAULT_DOCS = (
     "README.md",
     "SECURITY.md",
     "CONTRIBUTING.md",
-    "docs/api-examples.md",
-    "docs/benchmark.md",
-    "docs/chart-roadmap.md",
-    "docs/contributing.md",
-    "docs/production-readiness.md",
+    "spec/api/api-examples.md",
+    "spec/benchmarks/results.md",
+    "spec/api/chart-roadmap.md",
+    "spec/process/contributing.md",
+    "spec/process/production-readiness.md",
     "examples/reflex/README.md",
+    "examples/fastapi/README.md",
 )
 
 BROAD_SUPERLATIVE_RE = re.compile(
@@ -82,7 +83,7 @@ QUALIFIER_GROUPS = (
     re.compile(
         r"\b(?:benchmark|measured|documented|ttfr|payload|memory|ms|mb|gb|artifact)\b", re.I
     ),
-    re.compile(r"\b(?:chart type|data size|mode|row|table|docs/benchmark\.md)\b", re.I),
+    re.compile(r"\b(?:chart type|data size|mode|row|table|spec/benchmarks/results\.md)\b", re.I),
 )
 
 
@@ -189,7 +190,13 @@ def check_claims(paths: list[Path]) -> list[Finding]:
 
 
 def _default_paths() -> list[Path]:
-    return [ROOT / item for item in DEFAULT_DOCS]
+    paths = [ROOT / item for item in DEFAULT_DOCS]
+    public_docs = (
+        path
+        for path in sorted((ROOT / "docs").rglob("*.md"))
+        if "app" not in path.relative_to(ROOT / "docs").parts
+    )
+    return list(dict.fromkeys((*paths, *public_docs)))
 
 
 def main(argv: Optional[list[str]] = None) -> int:

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import html as _html
 import re
 import struct
 
 import numpy as np
 import pytest
 
-import xy as fc
+import xy
 from xy.facets import _facet_values, _subset_data
 
 
@@ -28,9 +29,9 @@ def _png_size(png: bytes) -> tuple[int, int]:
 
 
 def test_shared_domain_preserves_axis_options() -> None:
-    grid = fc.facet_chart(
-        fc.line(x="x", y="y"),
-        fc.y_axis(type_="log", label="volts", format=".2f", tick_count=4),
+    grid = xy.facet_chart(
+        xy.line(x="x", y="y"),
+        xy.y_axis(type_="log", label="volts", format=".2f", tick_count=4),
         by="g",
         data=_table(),
     ).figure()
@@ -47,9 +48,9 @@ def test_shared_domain_preserves_axis_options() -> None:
 
 
 def test_reversed_shared_axis_builds_and_stays_reversed() -> None:
-    grid = fc.facet_chart(
-        fc.line(x="x", y="y"),
-        fc.x_axis(reverse=True),
+    grid = xy.facet_chart(
+        xy.line(x="x", y="y"),
+        xy.x_axis(reverse=True),
         by="g",
         data=_table(),
     ).figure()
@@ -73,8 +74,8 @@ def test_mark_level_data_is_subset_per_panel() -> None:
         "mx": [0.0, 1.0, 2.0, 0.0, 1.0, 2.0],
         "my": [5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
     }
-    grid = fc.facet_chart(
-        fc.line(x="mx", y="my", data=mark_data),
+    grid = xy.facet_chart(
+        xy.line(x="mx", y="my", data=mark_data),
         by="g",
         data={"g": _table()["g"]},
     ).figure()
@@ -85,14 +86,14 @@ def test_mark_level_data_is_subset_per_panel() -> None:
 
 def test_raw_array_channels_raise_instead_of_duplicating() -> None:
     with pytest.raises(ValueError, match="pass column names"):
-        fc.facet_chart(
-            fc.line(x=np.arange(6.0), y=np.arange(6.0)),
+        xy.facet_chart(
+            xy.line(x=np.arange(6.0), y=np.arange(6.0)),
             by="g",
             data={"g": _table()["g"]},
         ).figure()
     with pytest.raises(ValueError, match="pass column names"):
-        fc.facet_chart(
-            fc.scatter(x="x", y="y", color=np.arange(6.0)),
+        xy.facet_chart(
+            xy.scatter(x="x", y="y", color=np.arange(6.0)),
             by="g",
             data=_table(),
         ).figure()
@@ -100,8 +101,8 @@ def test_raw_array_channels_raise_instead_of_duplicating() -> None:
 
 def test_short_config_arrays_pass_through() -> None:
     # A 2-element dash pattern must not be confused with row data (n != 2).
-    grid = fc.facet_chart(
-        fc.line(x="x", y="y", dash=[4, 2]),
+    grid = xy.facet_chart(
+        xy.line(x="x", y="y", dash=[4, 2]),
         by="g",
         data=_table(),
     ).figure()
@@ -130,7 +131,7 @@ def test_facet_values_numeric_column_merges_nans() -> None:
 
 
 def test_facet_split_matches_row_membership() -> None:
-    grid = fc.facet_chart(fc.line(x="x", y="y"), by="g", data=_table()).figure()
+    grid = xy.facet_chart(xy.line(x="x", y="y"), by="g", data=_table()).figure()
     assert grid.labels == ("a", "b")
     assert grid.figures[0].traces[0].y.values.tolist() == [1.0, 2.0, 3.0]
     assert grid.figures[1].traces[0].y.values.tolist() == [3.0, 2.0, 1.0]
@@ -172,8 +173,8 @@ def test_subset_data_rejects_ragged_columns() -> None:
 
 
 def test_facet_svg_ids_are_unique_and_refs_resolve() -> None:
-    grid = fc.facet_chart(
-        fc.area(x="x", y="y", fill="linear-gradient(#fff, #000)"),
+    grid = xy.facet_chart(
+        xy.area(x="x", y="y", fill="linear-gradient(#fff, #000)"),
         by="g",
         data=_table(),
     ).figure()
@@ -185,7 +186,7 @@ def test_facet_svg_ids_are_unique_and_refs_resolve() -> None:
 
 
 def test_facet_labels_and_grid_title_render_once() -> None:
-    grid = fc.facet_chart(fc.line(x="x", y="y"), by="g", data=_table(), title="My grid").figure()
+    grid = xy.facet_chart(xy.line(x="x", y="y"), by="g", data=_table(), title="My grid").figure()
     svg = grid.to_svg()
     assert svg.count(">My grid<") == 1
     assert svg.count(">a<") == 1
@@ -198,12 +199,56 @@ def test_facet_labels_and_grid_title_render_once() -> None:
     assert [fig.title for fig in grid.figures] == ["a", "b"]
 
 
+def test_facet_notebook_repr_isolates_standalone_document() -> None:
+    chart = xy.facet_chart(
+        xy.line(x="x", y="y"),
+        by="g",
+        data=_table(),
+        cols=1,
+        width=600,
+        height=200,
+        gap=10,
+        title="Notebook facets",
+    )
+
+    repr_html = chart._repr_html_()
+    document = _html.unescape(repr_html)
+
+    assert repr_html.startswith('<iframe class="xy-notebook-frame"')
+    assert 'sandbox="allow-scripts"' in repr_html
+    assert 'width="600" height="434"' in repr_html
+    assert "<!doctype html>" in document
+    assert '<body class="xy-facet-document">' in document
+    assert "html,body{" not in document
+    assert ".xy-facet-document .xy-facet-grid{" in document
+
+
+def test_facet_ipython_display_uses_isolated_repr(monkeypatch: pytest.MonkeyPatch) -> None:
+    import IPython.display
+
+    displayed: list[tuple[object, bool]] = []
+
+    def record(value: object, *, raw: bool = False) -> None:
+        displayed.append((value, raw))
+
+    monkeypatch.setattr(IPython.display, "display", record)
+    chart = xy.facet_chart(xy.line(x="x", y="y"), by="g", data=_table())
+
+    chart._ipython_display_()
+
+    assert len(displayed) == 1
+    payload, raw = displayed[0]
+    assert raw is True
+    assert isinstance(payload, dict)
+    assert payload["text/html"].startswith('<iframe class="xy-notebook-frame"')
+
+
 # -- PNG geometry -------------------------------------------------------------
 
 
 def test_facet_png_dimensions_and_default_scale() -> None:
-    chart = fc.facet_chart(
-        fc.line(x="x", y="y"),
+    chart = xy.facet_chart(
+        xy.line(x="x", y="y"),
         by="g",
         data=_table(),
         cols=2,
@@ -220,8 +265,8 @@ def test_facet_png_dimensions_and_default_scale() -> None:
 
 
 def test_facet_chart_png_forwards_current_export_options() -> None:
-    chart = fc.facet_chart(
-        fc.line(x="x", y="y"),
+    chart = xy.facet_chart(
+        xy.line(x="x", y="y"),
         by="g",
         data=_table(),
         width=320,
@@ -240,7 +285,7 @@ def test_shared_categorical_axis_uses_union_category_order() -> None:
         "y": [1.0, 2.0, 3.0, 4.0],
         "g": ["g1", "g1", "g2", "g2"],
     }
-    grid = fc.facet_chart(fc.bar(x="x", y="y"), by="g", data=data).figure()
+    grid = xy.facet_chart(xy.bar(x="x", y="y"), by="g", data=data).figure()
     specs = [fig.build_payload()[0] for fig in grid.figures]
     assert [spec["x_axis"]["categories"] for spec in specs] == [
         ["a", "b", "c"],
@@ -249,27 +294,70 @@ def test_shared_categorical_axis_uses_union_category_order() -> None:
     assert specs[0]["x_axis"]["domain"] == specs[1]["x_axis"]["domain"]
 
 
+def test_shared_named_categorical_axis_uses_its_own_union_category_order() -> None:
+    data = {
+        "x": [1.0, 2.0, 3.0, 4.0],
+        "category": ["a", "b", "a", "c"],
+        "y": [1.0, 2.0, 3.0, 4.0],
+        "g": ["g1", "g1", "g2", "g2"],
+    }
+    grid = xy.facet_chart(
+        xy.line(x="x", y="y"),
+        xy.line(x="category", y="y", x_axis="x2"),
+        xy.x_axis(id="x2", side="top"),
+        by="g",
+        data=data,
+    ).figure()
+    specs = [fig.build_payload()[0] for fig in grid.figures]
+
+    assert all("categories" not in spec["axes"]["x"] for spec in specs)
+    assert [spec["axes"]["x2"]["categories"] for spec in specs] == [
+        ["a", "b", "c"],
+        ["a", "b", "c"],
+    ]
+    assert specs[0]["axes"]["x2"]["domain"] == specs[1]["axes"]["x2"]["domain"]
+
+
 # -- interaction linking ------------------------------------------------------
 
 
-def test_shared_axes_link_panels() -> None:
-    grid = fc.facet_chart(fc.line(x="x", y="y"), by="g", data=_table()).figure()
-    groups = {fig.interaction.get("link_group") for fig in grid.figures}
-    assert len(groups) == 1 and None not in groups
-    assert all(fig.interaction["link_axes"] == ["x", "y"] for fig in grid.figures)
+def test_shared_axes_stay_independent_by_default() -> None:
+    grid = xy.facet_chart(xy.line(x="x", y="y"), by="g", data=_table()).figure()
+    assert all("link_group" not in fig.interaction for fig in grid.figures)
 
 
-def test_link_axes_follow_share_flags() -> None:
-    grid = fc.facet_chart(fc.line(x="x", y="y"), by="g", data=_table(), share_y=False).figure()
-    assert all(fig.interaction["link_axes"] == ["x"] for fig in grid.figures)
-    unlinked = fc.facet_chart(
-        fc.line(x="x", y="y"), by="g", data=_table(), share_x=False, share_y=False
+@pytest.mark.parametrize(
+    ("link", "axes"),
+    [("x", ["x"]), ("y", ["y"]), ("both", ["x", "y"]), (True, ["x", "y"])],
+)
+def test_link_is_explicit_and_selectable(link: str | bool, axes: list[str]) -> None:
+    grid = xy.facet_chart(
+        xy.line(x="x", y="y"), by="g", data=_table(), link=link, link_select=True
     ).figure()
-    assert all("link_group" not in fig.interaction for fig in unlinked.figures)
+    assert len({fig.interaction["link_group"] for fig in grid.figures}) == 1
+    assert all(fig.interaction["link_axes"] == axes for fig in grid.figures)
+    assert all(fig.interaction["link_select"] is True for fig in grid.figures)
+
+
+def test_link_false_disables_runtime_axis_linking() -> None:
+    grid = xy.facet_chart(xy.line(x="x", y="y"), by="g", data=_table(), link=False).figure()
+    assert all("link_group" not in fig.interaction for fig in grid.figures)
+
+
+def test_link_implies_initial_domain_sharing() -> None:
+    grid = xy.facet_chart(
+        xy.line(x="x", y="y"), by="g", data=_table(), share_x=False, link="x"
+    ).figure()
+    assert len({fig.x_range() for fig in grid.figures}) == 1
+
+
+def test_invalid_link_rejected() -> None:
+    with pytest.raises(ValueError, match="link must"):
+        xy.facet_chart(xy.line(x="x", y="y"), by="g", data=_table(), link="z")
 
 
 def test_user_link_group_is_not_overridden() -> None:
-    grid = fc.facet_chart(fc.line(x="x", y="y"), by="g", data=_table(), link_group="mine").figure()
+    grid = xy.facet_chart(xy.line(x="x", y="y"), by="g", data=_table(), link_group="mine").figure()
     assert all(fig.interaction["link_group"] == "mine" for fig in grid.figures)
 
 
@@ -278,13 +366,13 @@ def test_user_link_group_is_not_overridden() -> None:
 
 def test_facet_chart_requires_by_eagerly() -> None:
     with pytest.raises(TypeError, match="by="):
-        fc.facet_chart(fc.line(x="x", y="y"), data=_table())
+        xy.facet_chart(xy.line(x="x", y="y"), data=_table())
 
 
 def test_stairs_tooltip_channels_are_not_mislabeled() -> None:
-    chart = fc.stairs_chart(
-        fc.stairs(values="v", edges="e", data={"v": [1.0, 2.0], "e": [0.0, 1.0, 2.0]}),
-        fc.tooltip(),
+    chart = xy.stairs_chart(
+        xy.stairs(values="v", edges="e", data={"v": [1.0, 2.0], "e": [0.0, 1.0, 2.0]}),
+        xy.tooltip(),
     )
     tooltip = chart.figure().tooltip
     assert tooltip is not None

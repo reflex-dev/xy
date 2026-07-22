@@ -5,14 +5,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import xy as fc
+import xy
 from xy import _raster, _svg
 from xy._figure import Figure
 from xy.styles import compile_mark_style, normalize_css_style
 
 
 def test_renderer_style_capabilities_are_not_a_public_schema() -> None:
-    assert not hasattr(fc, "mark_style_schema")
+    assert not hasattr(xy, "mark_style_schema")
 
 
 def test_python_style_aliases_normalize_to_css_names() -> None:
@@ -44,8 +44,8 @@ def test_line_css_compiles_to_existing_renderer_contract() -> None:
 
 
 def test_css_opacity_channels_remain_independent_in_svg() -> None:
-    fig = fc.chart(
-        fc.scatter(
+    fig = xy.chart(
+        xy.scatter(
             x=[0.0],
             y=[1.0],
             size=10,
@@ -67,8 +67,8 @@ def test_css_opacity_channels_remain_independent_in_svg() -> None:
 
 
 def test_css_style_wins_over_legacy_appearance_aliases() -> None:
-    fig = fc.chart(
-        fc.line(
+    fig = xy.chart(
+        xy.line(
             x=[0.0, 1.0],
             y=[1.0, 2.0],
             color="blue",
@@ -83,16 +83,16 @@ def test_css_style_wins_over_legacy_appearance_aliases() -> None:
 
 def test_css_color_is_not_an_alias_for_mark_paint() -> None:
     with pytest.raises(ValueError, match=r"unsupported CSS property.*color"):
-        fc.chart(
-            fc.line(
+        xy.chart(
+            xy.line(
                 x=[0.0, 1.0],
                 y=[1.0, 2.0],
                 style={"color": "red", "stroke": "currentColor"},
             )
         ).figure()
 
-    fig = fc.chart(
-        fc.line(
+    fig = xy.chart(
+        xy.line(
             x=[0.0, 1.0],
             y=[1.0, 2.0],
             color="red",
@@ -103,13 +103,13 @@ def test_css_color_is_not_an_alias_for_mark_paint() -> None:
 
 
 def test_scatter_and_rect_css_use_fill_stroke_and_border_radius() -> None:
-    chart = fc.chart(
-        fc.scatter(
+    chart = xy.chart(
+        xy.scatter(
             x=[0.0, 1.0],
             y=[1.0, 2.0],
             style={"fill": "#22c55e", "stroke": "#052e16", "stroke-width": 2},
         ),
-        fc.bar(
+        xy.bar(
             x=[3.0, 4.0],
             y=[1.0, 2.0],
             style={
@@ -135,8 +135,8 @@ def test_scatter_and_rect_css_use_fill_stroke_and_border_radius() -> None:
 
 
 def test_css_mark_style_reaches_svg_and_native_renderers() -> None:
-    fig = fc.chart(
-        fc.scatter(
+    fig = xy.chart(
+        xy.scatter(
             x=[0.0, 1.0],
             y=[1.0, 2.0],
             size=8,
@@ -160,9 +160,9 @@ def test_css_mark_style_reaches_svg_and_native_renderers() -> None:
 
 
 def test_axis_style_reaches_svg_and_native_renderers() -> None:
-    fig = fc.chart(
-        fc.line(x=[0.0, 1.0], y=[1.0, 2.0]),
-        fc.x_axis(
+    fig = xy.chart(
+        xy.line(x=[0.0, 1.0], y=[1.0, 2.0]),
+        xy.x_axis(
             label="time",
             style={
                 "grid_color": "#ff0000",
@@ -192,11 +192,12 @@ def test_axis_style_reaches_svg_and_native_renderers() -> None:
 
 
 def test_axis_style_is_normalized_and_rejected_before_render() -> None:
-    axis = fc.x_axis(
+    axis = xy.x_axis(
         style={
             "grid-width": "3px",
             "tick_label_size": "13px",
             "tick-direction": "inout",
+            "tick-label-anchor": "right",  # mpl `ha` alias -> canonical "end"
             "label-color": "rebeccapurple",
         }
     )
@@ -204,25 +205,28 @@ def test_axis_style_is_normalized_and_rejected_before_render() -> None:
         "grid_width": 3.0,
         "tick_label_size": 13.0,
         "tick_direction": "inout",
+        "tick_label_anchor": "end",
         "label_color": "rebeccapurple",
     }
 
     with pytest.raises(ValueError, match=r"unsupported property 'box-shadow'"):
-        fc.x_axis(style={"box-shadow": "0 0 2px red"})
+        xy.x_axis(style={"box-shadow": "0 0 2px red"})
     with pytest.raises(ValueError, match=r"finite CSS px length"):
-        fc.x_axis(style={"grid_width": "3em"})
+        xy.x_axis(style={"grid_width": "3em"})
     with pytest.raises(ValueError, match=r"not a recognized CSS color"):
-        fc.y_axis(style={"tick_color": "definitely-not-a-color"})
+        xy.y_axis(style={"tick_color": "definitely-not-a-color"})
     with pytest.raises(ValueError, match=r"must be one of"):
-        fc.y_axis(style={"tick_direction": "sideways"})
+        xy.y_axis(style={"tick_direction": "sideways"})
+    with pytest.raises(ValueError, match=r"must be one of"):
+        xy.x_axis(style={"tick_label_anchor": "sideways"})
 
 
 def test_area_outline_obeys_whole_mark_and_stroke_opacity() -> None:
-    default = fc.chart(fc.area(x=[0.0, 1.0], y=[1.0, 2.0])).figure().to_svg()
+    default = xy.chart(xy.area(x=[0.0, 1.0], y=[1.0, 2.0])).figure().to_svg()
     assert 'stroke-opacity="0.35"' in default
 
-    styled = fc.chart(
-        fc.area(
+    styled = xy.chart(
+        xy.area(
             x=[0.0, 1.0],
             y=[1.0, 2.0],
             opacity=0.4,
@@ -248,8 +252,8 @@ def test_mark_style_rejects_unrenderable_css_before_mutating_figure() -> None:
 
 
 def test_css_variables_remain_reflex_owned_dom_values() -> None:
-    chart = fc.chart(
-        fc.line(x=[0.0, 1.0], y=[1.0, 2.0], style={"stroke": "var(--accent)"}),
+    chart = xy.chart(
+        xy.line(x=[0.0, 1.0], y=[1.0, 2.0], style={"stroke": "var(--accent)"}),
         style={"--accent": "oklch(0.7 0.2 250)"},
     )
     fig = chart.figure()
@@ -260,9 +264,9 @@ def test_css_variables_remain_reflex_owned_dom_values() -> None:
 
 
 def test_static_renderers_resolve_complete_chart_color_tokens() -> None:
-    fig = fc.chart(
-        fc.line(x=[0.0, 1.0], y=[1.0, 2.0], style={"stroke": "var(--accent)"}),
-        fc.line(x=[0.0, 1.0], y=[2.0, 1.0], style={"stroke": "var(--missing, #0ea5e9)"}),
+    fig = xy.chart(
+        xy.line(x=[0.0, 1.0], y=[1.0, 2.0], style={"stroke": "var(--accent)"}),
+        xy.line(x=[0.0, 1.0], y=[2.0, 1.0], style={"stroke": "var(--missing, #0ea5e9)"}),
         style={"--accent": "var(--brand)", "--brand": "#7c3aed"},
     ).figure()
 
@@ -277,8 +281,8 @@ def test_static_renderers_resolve_complete_chart_color_tokens() -> None:
 
 
 def test_scatter_css_fill_survives_density_lod() -> None:
-    fig = fc.chart(
-        fc.scatter(
+    fig = xy.chart(
+        xy.scatter(
             x=[0.0, 1.0, 2.0],
             y=[1.0, 2.0, 3.0],
             density=True,
@@ -295,8 +299,8 @@ def test_scatter_css_fill_survives_density_lod() -> None:
 
 def test_faceting_preserves_concrete_css_style() -> None:
     data = {"x": [0.0, 1.0], "y": [1.0, 2.0], "panel": ["a", "b"]}
-    chart = fc.facet_chart(
-        fc.line(x="x", y="y", data=data, style={"stroke": "#7c3aed"}),
+    chart = xy.facet_chart(
+        xy.line(x="x", y="y", data=data, style={"stroke": "#7c3aed"}),
         data=data,
         by="panel",
     )

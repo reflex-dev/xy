@@ -38,6 +38,7 @@ class DateFormatter(Formatter):
         self._fmt = str(fmt)
 
     def __call__(self, value: float, pos: Optional[int] = None) -> str:
+        """Format an epoch-milliseconds tick value with the strftime format."""
         return _from_ms(value).strftime(self._fmt)
 
 

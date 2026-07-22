@@ -1,0 +1,160 @@
+---
+title: Data and Columns
+description: Bind arrays, mappings, DataFrames, Arrow columns, dates, and categories.
+---
+
+# Data and Columns
+
+Marks accept values directly or string column names resolved through `data=`.
+Put `data` on one mark when it is local to that mark, or on the chart when its
+children share a table.
+
+## Direct arrays
+
+~~~python demo exec
+import numpy as np
+import xy
+
+x = np.linspace(0, 10, 200)
+y = np.sin(x)
+
+chart = xy.line_chart(xy.line(x, y))
+
+
+def direct_arrays_demo():
+    import reflex_xy
+
+    return reflex_xy.chart(chart, height="360px")
+~~~
+
+Regular Python sequences and one-dimensional NumPy arrays use the same API.
+Coordinates must be real numeric, datetime-like, or categorical values that
+the mark supports; boolean and complex coordinate columns are rejected rather
+than silently coerced.
+
+## Named columns
+
+~~~python demo exec
+import xy
+
+data = {
+    "x": [1, 2, 3, 4],
+    "y": [4, 7, 5, 9],
+    "segment": ["A", "A", "B", "B"],
+    "weight": [2, 4, 3, 7],
+}
+
+chart = xy.scatter_chart(
+    xy.scatter(x="x", y="y", color="segment", size="weight"),
+    data=data,
+)
+
+
+def named_columns_demo():
+    import reflex_xy
+
+    return reflex_xy.chart(chart, height="360px")
+~~~
+
+Dictionaries, pandas DataFrames, and other column-indexable objects work with
+this pattern. A mark-level `data=` overrides the chart default for that mark.
+Numeric color values use a continuous colormap; categorical values use a
+discrete palette.
+
+## The canonical column store
+
+XY converts numeric coordinates to contiguous float64 canonical columns in the
+Python process. Derived float32, index, density, and decimated buffers are
+rendering representations—not replacements for the source values. Reusing the
+same NumPy array within a figure reuses the canonical column by array identity.
+
+This separation lets `pick()`, hover, and selections map rendered geometry back
+to exact source rows even when the visible result is decimated or aggregated.
+Call `chart.memory_report()` to inspect canonical bytes, column lengths, null
+counts, and copies paid during ingest.
+
+## Arrow input and zero-copy cases
+
+PyArrow is an optional input format, not an XY runtime dependency. Install it
+separately (`uv add pyarrow` or `pip install pyarrow`) and pass an Array or
+ChunkedArray directly:
+
+~~~python demo exec
+import xy
+
+try:
+    import pyarrow as pa
+except ModuleNotFoundError:
+    pa = None
+
+values_x = [1.0, 2.0, 3.0]
+values_y = [3.0, 5.0, 4.0]
+x = pa.array(values_x) if pa is not None else values_x
+y = pa.array(values_y) if pa is not None else values_y
+chart = xy.scatter_chart(
+    xy.scatter(
+        x,
+        y,
+        color="#6e56cf",
+        size=12,
+        opacity=1,
+        stroke="#ffffff",
+        stroke_width=2,
+    )
+)
+
+
+def arrow_input_demo():
+    import reflex_xy
+
+    return reflex_xy.chart(chart, height="360px")
+~~~
+
+A null-free primitive float64 Arrow Array, or a one-chunk column with that
+layout, can remain a read-only zero-copy view of its Arrow buffer. Integer
+conversion, null materialization, temporal conversion, and combining multiple
+chunks require counted copies. “Arrow support” therefore does not mean every
+Arrow layout is zero-copy; unsupported string/dictionary coordinate arrays are
+rejected by the numeric column store.
+
+## Time handling
+
+Python dates, datetimes, NumPy `datetime64`, and compatible pandas/Arrow time
+columns select time-axis behavior automatically. Canonical time coordinates are
+float64 milliseconds since the Unix epoch; `NaT` becomes a missing value. The
+current contract does not preserve arbitrary nanosecond distinctions end to
+end.
+
+~~~python demo exec
+import numpy as np
+import xy
+
+time = np.array(
+    ["2026-07-01", "2026-07-02", "2026-07-03"],
+    dtype="datetime64[D]",
+)
+chart = xy.line_chart(
+    xy.line(time, [12, 18, 15]),
+    xy.x_axis(label="day", type_="time"),
+)
+
+
+def time_handling_demo():
+    import reflex_xy
+
+    return reflex_xy.chart(chart, height="360px")
+~~~
+
+Missing numeric values break line/area runs or are omitted from point geometry,
+while canonical row indices remain stable.
+
+## Color strings
+
+A valid CSS color such as `"rebeccapurple"`, `"#6e56cf"`, or
+`"var(--accent)"` is a constant color. Another string is treated as a column
+name and resolved through `data=`. A color-shaped typo raises its CSS validation
+error instead of falling through to a misleading missing-column error.
+
+Next, configure [Axes and scales](/docs/xy/core-concepts/axes-and-scales/) or
+learn how the stored columns feed
+[large-data representations](/docs/xy/core-concepts/large-data-and-performance/).

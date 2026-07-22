@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from os import PathLike
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional, overload
 
 import numpy as np
 
@@ -164,6 +164,39 @@ class Figure:
         if kwargs:
             ax.set(**kwargs)
         return ax
+
+    # The 1×1 default (squeeze=True) hands back a bare Axes — the shape almost
+    # every script uses — so type checkers and IDE hover see the real type
+    # instead of the grid union.
+    @overload
+    def subplots(
+        self,
+        nrows: Literal[1] = 1,
+        ncols: Literal[1] = 1,
+        *,
+        sharex: bool = False,
+        sharey: bool = False,
+        squeeze: Literal[True] = True,
+        width_ratios: Any = None,
+        height_ratios: Any = None,
+        gridspec_kw: Optional[dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Axes: ...
+
+    @overload
+    def subplots(
+        self,
+        nrows: int = 1,
+        ncols: int = 1,
+        *,
+        sharex: bool = False,
+        sharey: bool = False,
+        squeeze: bool = True,
+        width_ratios: Any = None,
+        height_ratios: Any = None,
+        gridspec_kw: Optional[dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Any: ...
 
     def subplots(
         self,
@@ -1190,7 +1223,9 @@ class _GridSpec:
 class GridSpec(_GridSpec):
     """plt.GridSpec: figure-optional grid geometry with span support."""
 
-    def __init__(self, nrows: int, ncols: int, figure: Optional[Figure] = None, **kwargs: Any):
+    def __init__(
+        self, nrows: int, ncols: int, figure: Optional[Figure] = None, **kwargs: Any
+    ) -> None:
         super().__init__(figure, nrows, ncols, **kwargs)
 
 

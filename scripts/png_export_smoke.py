@@ -2,7 +2,7 @@
 
 Two engines, both without installing numpy:
 
-- **native** (always runs): drives the Rust rasterizer `fc_rasterize` directly
+- **native** (always runs): drives the Rust rasterizer `xy_rasterize` directly
   via ctypes with a hand-built display-list command buffer, encodes the returned
   framebuffer to PNG, and asserts a real, correctly-sized, non-blank image — the
   end-to-end browser-free `Chart.to_png(engine=Engine.default)` mechanism.
@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "python"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # for abi_smoke.load
 
+from _protocol import PROTOCOL_VERSION  # noqa: E402
 from abi_smoke import load  # noqa: E402
 from xy.export import find_chromium, html_to_png  # noqa: E402
 
@@ -39,7 +40,7 @@ def build_html() -> str:
     # two-point line, f32 offset-encoded (offset 0.5, scale 1) — no numpy.
     blob = struct.pack("<2f", -0.5, 0.5) + struct.pack("<2f", -0.5, 0.5)
     spec = {
-        "protocol": 3,
+        "protocol": PROTOCOL_VERSION,
         "width": W,
         "height": H,
         "title": "png-export-smoke",
@@ -118,7 +119,7 @@ def _encode_truecolor(w: int, h: int, rgba: bytes) -> bytes:
 
 def native_smoke() -> None:
     """Rasterize a hand-built command buffer (bg + rect + text) through
-    `fc_rasterize` and validate the encoded PNG — no browser, no numpy."""
+    `xy_rasterize` and validate the encoded PNG — no browser, no numpy."""
     lib = load()
     w, h = 160, 100
 
@@ -148,9 +149,9 @@ def native_smoke() -> None:
 
     out = (ctypes.c_uint8 * (w * h * 4))()
     cbuf = (ctypes.c_uint8 * len(cmd)).from_buffer_copy(bytes(cmd))
-    ok = lib.fc_rasterize(cbuf, len(cmd), out, w, h)
+    ok = lib.xy_rasterize(cbuf, len(cmd), out, w, h)
     if ok != 1:
-        raise SystemExit("fc_rasterize rejected a valid command buffer")
+        raise SystemExit("xy_rasterize rejected a valid command buffer")
     png = _encode_truecolor(w, h, bytes(out))
     if png[:8] != b"\x89PNG\r\n\x1a\n":
         raise SystemExit("native: not a PNG")

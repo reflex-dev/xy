@@ -29,6 +29,8 @@ import tempfile
 from array import array
 from pathlib import Path
 
+from _protocol import PROTOCOL_VERSION
+
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "python" / "xy" / "static"
 
@@ -92,7 +94,7 @@ def build_payload():
             }
         )
     spec = {
-        "protocol": 3,
+        "protocol": PROTOCOL_VERSION,
         "width": 900,
         "height": 420,
         "title": None,
@@ -130,7 +132,7 @@ def build_payload():
     xs[BIG_PICK_INDEX] = 0.75
     ys[BIG_PICK_INDEX] = 0.75
     spec2 = {
-        "protocol": 3,
+        "protocol": PROTOCOL_VERSION,
         "width": 900,
         "height": 420,
         "title": None,
@@ -174,7 +176,7 @@ PROBE = """
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     return bytes.buffer;
   };
-  const fail = (msg) => { document.title = "FC_FAIL " + msg; };
+  const fail = (msg) => { document.title = "XY_FAIL " + msg; };
   try {
     const v = xy.renderStandalone(document.getElementById("grid"), SPEC, b64ToBuf(BLOB));
     v._drawNow();
@@ -254,7 +256,7 @@ PROBE = """
       return fail(`view change: picked ${hitZoomed && hitZoomed.trace} (want 0)`);
     v._renderPick = renderPick0;
 
-    document.title = `FC_OK slots=${slots.join(",")} big=${hitBig.index} second=${hitSecond.trace}/${hitSecond.index} hoverPickRenders=${sweepRenders} viewRefresh=1`;
+    document.title = `XY_OK slots=${slots.join(",")} big=${hitBig.index} second=${hitSecond.trace}/${hitSecond.index} hoverPickRenders=${sweepRenders} viewRefresh=1`;
   } catch (e) {
     fail(String((e && e.stack) || e).slice(0, 300));
   }
@@ -270,7 +272,7 @@ def main() -> None:
 
     html = (
         "<!doctype html><html><head><meta charset=utf-8>"
-        "<script>window.onerror=(m,s,l,c)=>{document.title='FC_FAIL pageerror '+m+' @'+l+':'+c};</script>"
+        "<script>window.onerror=(m,s,l,c)=>{document.title='XY_FAIL pageerror '+m+' @'+l+':'+c};</script>"
         "</head><body>"
         '<div id="grid"></div><div id="two"></div>'
         f"<script>{standalone}</script>"
@@ -305,7 +307,7 @@ def main() -> None:
 
     m = re.search(r"<title>(.*?)</title>", out.stdout, re.S | re.I)
     title = m.group(1).strip() if m else "(no title)"
-    if not title.startswith("FC_OK"):
+    if not title.startswith("XY_OK"):
         raise SystemExit(f"pick boundary smoke FAILED: {title}")
     print(f"pick boundary smoke OK: {title[6:]}")
 

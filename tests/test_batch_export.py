@@ -44,6 +44,20 @@ def test_write_images_rejects_bad_engine_and_gl(tmp_path):
         export.write_images(
             [_fig(1)],
             [tmp_path / "x.png"],
+            engine=export.Engine.default,
+            custom_css=".xy { color: red; }",
+        )
+
+
+def test_write_images_auto_engine_routes_custom_css_to_browser(tmp_path, monkeypatch):
+    # Engine.auto is deterministic: custom_css needs a real CSS engine, so the
+    # batch resolves to the browser path (and reports the dependency clearly
+    # when no browser is installed) instead of rejecting the argument.
+    monkeypatch.setattr(export, "find_browser", lambda explicit=None: None)
+    with pytest.raises(RuntimeError, match="browser image export"):
+        export.write_images(
+            [_fig(1)],
+            [tmp_path / "x.png"],
             custom_css=".xy { color: red; }",
         )
 
@@ -52,7 +66,7 @@ def test_write_images_chromium_engine_is_deprecated_alias(tmp_path, monkeypatch)
     monkeypatch.setattr(export, "find_browser", lambda explicit=None: None)
     with (
         pytest.warns(DeprecationWarning, match="string export engines"),
-        pytest.raises(RuntimeError, match="browser PNG export"),
+        pytest.raises(RuntimeError, match="browser image export"),
     ):
         export.write_images(
             [_fig(1)],
@@ -70,19 +84,16 @@ def test_write_images_chromium_threads_custom_css(tmp_path, monkeypatch):
         def __init__(self, *_args, **_kwargs):
             pass
 
-        def __enter__(self):
-            return self
+        def close(self):
+            pass
 
-        def __exit__(self, *_args):
-            return None
-
-        def render_png(self, html, _width, _height, *, scale):
-            seen.append((html, scale))
+        def render_image(self, html, _width, _height, *, format, scale, quality, transparent):
+            seen.append((html, format, scale, quality, transparent))
             return b"\x89PNG\r\n\x1a\nbatch"
 
     monkeypatch.setattr(export, "find_browser", lambda explicit=None: "/fake/chrome")
     monkeypatch.setattr(_chromium, "ChromiumSession", FakeSession)
-    css = '[data-fc-slot="title"] { color: rebeccapurple; }'
+    css = '[data-xy-slot="title"] { color: rebeccapurple; }'
     path = tmp_path / "x.png"
 
     result = export.write_images(
@@ -94,4 +105,5 @@ def test_write_images_chromium_threads_custom_css(tmp_path, monkeypatch):
 
     assert result == [path.read_bytes()]
     assert f"<style>{css}</style>" in seen[0][0]
-    assert seen[0][1] == 2.0
+    assert seen[0][1] == "png"
+    assert seen[0][2] == 2.0

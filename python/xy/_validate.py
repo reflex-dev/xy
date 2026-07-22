@@ -21,6 +21,15 @@ from typing import Any, Optional
 import numpy as np
 
 _TICK_LABEL_STRATEGIES = frozenset({"auto", "hide", "rotate", "stagger", "none", "off"})
+# Canonical anchors plus the matplotlib `ha` vocabulary the pyplot shim emits.
+_TICK_LABEL_ANCHORS = {
+    "start": "start",
+    "center": "center",
+    "end": "end",
+    "left": "start",
+    "middle": "center",
+    "right": "end",
+}
 _LABEL_POSITIONS = frozenset(
     {"start", "center", "end", "inside_start", "inside_center", "inside_end"}
 )
@@ -145,6 +154,20 @@ def axis_tick_label_strategy(value: Any, label: str) -> Optional[str]:
     return normalized
 
 
+def axis_tick_label_anchor(value: Any, label: str) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string or None")
+    normalized = _TICK_LABEL_ANCHORS.get(value.lower())
+    if normalized is None:
+        raise ValueError(
+            f"{label} must be one of ['center', 'end', 'start'] "
+            "(or the aliases 'left', 'middle', 'right')"
+        )
+    return normalized
+
+
 def string_mapping(value: dict[str, Any], label: str) -> dict[str, str]:
     if not isinstance(value, dict):
         raise ValueError(f"{label} must be a dict[str, str]")
@@ -156,7 +179,7 @@ def string_mapping(value: dict[str, Any], label: str) -> dict[str, str]:
     return out
 
 
-# fc_css_check error codes -> human reasons (the negated CssErr
+# xy_css_check error codes -> human reasons (the negated CssErr
 # discriminants; keep in sync with src/css.rs).
 _CSS_ERROR_REASONS = {
     -1: "is empty",

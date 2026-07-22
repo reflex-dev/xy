@@ -685,11 +685,11 @@ def test_size_sentinel_detection_matches_platform_usize_width(monkeypatch):
     monkeypatch.setattr(_native, "_USIZE_MAX", sentinel)
     x = np.arange(8.0)
     cases = [
-        ("fc_zone_maps", lambda: _native.zone_maps(x, 4)),
-        ("fc_m4_indices", lambda: _native.m4_indices(x, x, 0.0, 8.0, 2)),
-        ("fc_bin_2d_indices", lambda: _native.bin_2d_indices(x, x, 0.0, 8.0, 0.0, 8.0, 4, 4)),
-        ("fc_histogram_uniform", lambda: _native.histogram_uniform(x, 0.0, 8.0, 4)),
-        ("fc_range_indices", lambda: _native.range_indices(x, x, 0.0, 8.0, 0.0, 8.0)),
+        ("xy_zone_maps", lambda: _native.zone_maps(x, 4)),
+        ("xy_m4_indices", lambda: _native.m4_indices(x, x, 0.0, 8.0, 2)),
+        ("xy_bin_2d_indices", lambda: _native.bin_2d_indices(x, x, 0.0, 8.0, 0.0, 8.0, 4, 4)),
+        ("xy_histogram_uniform", lambda: _native.histogram_uniform(x, 0.0, 8.0, 4)),
+        ("xy_range_indices", lambda: _native.range_indices(x, x, 0.0, 8.0, 0.0, 8.0)),
     ]
     for symbol, call in cases:
         monkeypatch.setattr(_native._lib, symbol, lambda *args, _s=sentinel: _s)
@@ -1190,3 +1190,26 @@ def test_density_rgba_validates_shape_and_domain():
         k.density_rgba(np.zeros(4, dtype=np.uint8), 2, 2, -1.0, stops, 1.0)
     with pytest.raises(ValueError, match="opacity"):
         k.density_rgba(np.zeros(4, dtype=np.uint8), 2, 2, 1.0, stops, 1.1)
+
+
+def test_native_svg_poly_path_format_and_validation():
+    from xy import _native
+
+    assert _native.svg_poly_path([1.0, 2.345, -0.001], [4.5, 6.789, -0.0]) == (
+        "M 1 4.5 L 2.35 6.79 L -0 -0"
+    )
+    with pytest.raises(ValueError, match="non-empty"):
+        _native.svg_poly_path([], [])
+    with pytest.raises(ValueError, match="coordinates"):
+        _native.svg_poly_path([1.0], [np.nan])
+
+
+def test_native_m4_points_matches_index_gather():
+    from xy import _native
+
+    x = np.arange(10_000, dtype=np.float64)
+    y = np.sin(x * 0.01)
+    idx = _native.m4_indices(x, y, 500.0, 9_500.0, 128)
+    selected_x, selected_y = _native.m4_points(x, y, 500.0, 9_500.0, 128)
+    np.testing.assert_array_equal(selected_x, x[idx])
+    np.testing.assert_array_equal(selected_y, y[idx])

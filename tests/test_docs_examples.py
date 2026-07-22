@@ -2,31 +2,62 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from pathlib import Path
+from urllib.parse import unquote
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-API_EXAMPLES = ROOT / "docs" / "api-examples.md"
+SPEC_DOCS = ROOT / "spec"
+API_EXAMPLES = SPEC_DOCS / "api" / "api-examples.md"
 README = ROOT / "README.md"
 CONTRIBUTING = ROOT / "CONTRIBUTING.md"
 SECURITY = ROOT / "SECURITY.md"
-BENCHMARK_DOC = ROOT / "docs" / "benchmark.md"
-PRODUCTION_DOC = ROOT / "docs" / "production-readiness.md"
-REFLEX_SHAPED_API_DOC = ROOT / "docs" / "design" / "reflex-shaped-api.md"
+BENCHMARK_DOC = SPEC_DOCS / "benchmarks" / "results.md"
+PRODUCTION_DOC = SPEC_DOCS / "process" / "production-readiness.md"
+REFLEX_SHAPED_API_DOC = SPEC_DOCS / "design" / "reflex-shaped-api.md"
 EXPECTED_QUICK_REFERENCE = {
-    "Line": ("fc.line_chart", "fc.line"),
-    "Scatter": ("fc.scatter_chart", "fc.scatter"),
-    "Area": ("fc.area_chart", "fc.area"),
-    "Histogram": ("fc.histogram_chart", "fc.histogram"),
-    "Bar": ("fc.bar_chart", "fc.bar"),
-    "Column": ("fc.column_chart", "fc.column"),
-    "Grouped bars": ('mode="grouped"', "fc.bar_chart", "fc.bar"),
-    "Stacked bars": ('mode="stacked"', "fc.bar_chart", "fc.bar"),
-    "Normalized bars": ('mode="normalized"', "fc.bar_chart", "fc.bar"),
-    "Horizontal bars": ('orientation="horizontal"', "fc.bar_chart", "fc.bar"),
-    "Heatmap": ("fc.heatmap_chart", "fc.heatmap"),
+    "Line": ("xy.line_chart", "xy.line"),
+    "Scatter": ("xy.scatter_chart", "xy.scatter"),
+    "Area": ("xy.area_chart", "xy.area"),
+    "Histogram": ("xy.histogram_chart", "xy.histogram"),
+    "Bar": ("xy.bar_chart", "xy.bar"),
+    "Column": ("xy.column_chart", "xy.column"),
+    "Grouped bars": ('mode="grouped"', "xy.bar_chart", "xy.bar"),
+    "Stacked bars": ('mode="stacked"', "xy.bar_chart", "xy.bar"),
+    "Normalized bars": ('mode="normalized"', "xy.bar_chart", "xy.bar"),
+    "Horizontal bars": ('orientation="horizontal"', "xy.bar_chart", "xy.bar"),
+    "Heatmap": ("xy.heatmap_chart", "xy.heatmap"),
 }
+
+LOCAL_MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+
+
+def test_spec_local_links_resolve() -> None:
+    broken: list[str] = []
+    for path in sorted(SPEC_DOCS.rglob("*.md")):
+        in_fence = False
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if line.lstrip().startswith("```"):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            for match in LOCAL_MARKDOWN_LINK_RE.finditer(line):
+                raw_target = match.group(1).strip()
+                if raw_target.startswith("<") and raw_target.endswith(">"):
+                    raw_target = raw_target[1:-1]
+                target = raw_target.split(maxsplit=1)[0]
+                if target.startswith(("#", "/", "http://", "https://", "mailto:")):
+                    continue
+                target_path = unquote(target.split("#", 1)[0].split("?", 1)[0])
+                if not target_path:
+                    continue
+                resolved = (path.parent / target_path).resolve()
+                if not resolved.is_relative_to(ROOT) or not resolved.exists():
+                    broken.append(f"{path.relative_to(ROOT)}:{line_number}: {target}")
+    assert not broken, "broken local spec links:\n" + "\n".join(broken)
 
 
 def _python_examples(path: Path = API_EXAMPLES) -> list[tuple[str, str]]:
@@ -199,7 +230,7 @@ def test_readme_documents_declarative_callback_serialization_boundary() -> None:
     text = " ".join(README.read_text(encoding="utf-8").split())
     required = [
         "The composition contract we are locking is intentionally narrow and durable",
-        "opaque framework objects passed to `fc.legend(...)` / `fc.tooltip(...)`",
+        "opaque framework objects passed to `xy.legend(...)` / `xy.tooltip(...)`",
         "without being serialized into standalone HTML",
         "Python `on_*` callbacks stay widget-side",
         "standalone HTML receives only the safe interaction flags",
@@ -221,8 +252,8 @@ def test_reflex_shaped_api_doc_tracks_locked_composition_contract() -> None:
         "`Chart.to_png(...)`",
         "Static HTML exports with no Python/Reflex runtime",
         "No Reflex import in `xy`",
-        "Neutral `fc.chart(...)`",
-        "`fc.tooltip(...)`, `fc.modebar(...)`, `fc.theme(...)`",
+        "Neutral `xy.chart(...)`",
+        "`xy.tooltip(...)`, `xy.modebar(...)`, `xy.theme(...)`",
         "`class_name`, `class_names`, and `style` props",
         "Python callbacks notebook-only",
         "Pulling full Reflex into any install path",
@@ -245,8 +276,8 @@ def test_api_examples_quick_reference_covers_registered_composition_marks() -> N
 
     rows = "\n".join(_quick_reference_rows().values())
     for mark in sorted(_MARK_APPLIERS):
-        assert f"fc.{mark}" in rows
-        assert f"fc.{mark}_chart" in rows or mark in {"bar"}
+        assert f"xy.{mark}" in rows
+        assert f"xy.{mark}_chart" in rows or mark in {"bar"}
 
 
 def test_security_policy_documents_standalone_html_contract() -> None:
@@ -275,7 +306,7 @@ def test_readme_documents_stability_and_backend_contract() -> None:
         "Composition API",
         "single public chart-building API",
         "Stabilizing alpha",
-        "declarative `fc.chart(...children)`",
+        "declarative `xy.chart(...children)`",
         "CSS/Tailwind hooks",
         "Reflex integration",
         "Adaptive drilldown internals",
@@ -363,7 +394,7 @@ def test_benchmark_docs_name_ci_report_artifacts() -> None:
         "benchmark-report",
         "regression-benchmark-report",
         "docs/benchmark_ci.md",
-        "docs/benchmark_metrics.md",
+        "spec/benchmarks/metrics.md",
         "scatter.json",
         "kernel.json",
         "compact summary",
@@ -394,7 +425,9 @@ def test_benchmark_docs_include_copyable_claim_taxonomy() -> None:
 def test_docs_name_benchmark_harness_shortcut() -> None:
     readme = " ".join(README.read_text(encoding="utf-8").split())
     production = " ".join(PRODUCTION_DOC.read_text(encoding="utf-8").split())
-    contributing = " ".join((ROOT / "docs" / "contributing.md").read_text(encoding="utf-8").split())
+    contributing = " ".join(
+        (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8").split()
+    )
 
     for text in (readme, production, contributing):
         assert "make check-benchmark-harness" in text
@@ -406,7 +439,9 @@ def test_docs_name_benchmark_harness_shortcut() -> None:
 def test_docs_name_claim_guardrail_shortcut() -> None:
     readme = " ".join(README.read_text(encoding="utf-8").split())
     production = " ".join(PRODUCTION_DOC.read_text(encoding="utf-8").split())
-    contributing = " ".join((ROOT / "docs" / "contributing.md").read_text(encoding="utf-8").split())
+    contributing = " ".join(
+        (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8").split()
+    )
 
     for text in (readme, production, contributing):
         assert "make check-claims" in text
@@ -464,7 +499,9 @@ def test_production_docs_name_ci_workflow_gate_shortcut() -> None:
 def test_docs_name_split_browser_hardening_gates() -> None:
     readme = " ".join(README.read_text(encoding="utf-8").split())
     production = " ".join(PRODUCTION_DOC.read_text(encoding="utf-8").split())
-    contributing = " ".join((ROOT / "docs" / "contributing.md").read_text(encoding="utf-8").split())
+    contributing = " ".join(
+        (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8").split()
+    )
 
     step_names = [
         "Browser lifecycle smoke (Chromium)",
@@ -489,9 +526,9 @@ def test_production_docs_define_sdist_wheel_boundary() -> None:
     text = " ".join(PRODUCTION_DOC.read_text(encoding="utf-8").split())
     required = [
         "Source distributions include the release support surface",
-        "Reflex example app source plus generated chart assets",
+        "example apps' source (FastAPI and Reflex)",
         "Wheels must stay package-only",
-        "docs, tests, benchmarks, scripts, and `examples/reflex/` are sdist-only",
+        "docs, tests, benchmarks, scripts, and the `examples/` apps are sdist-only",
         "Platform wheel contains package-only files",
         "No-toolchain wheel contains package-only files",
     ]

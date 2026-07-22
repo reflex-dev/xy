@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "xy"
-version = "0.1.0"
+version = "0.0.1"
 description = "Experimental Python charting engine with a native Rust core, binary columnar transport, and a GPU render client"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,6 +29,14 @@ dev = [
     # Optional *input* format, never a runtime dependency: the Arrow ingest
     # tests importorskip it, so it lives in dev where CI exercises them.
     "pyarrow>=15",
+    # Decode oracle for the native JPEG/WebP encoders, never a runtime
+    # dependency: the image-export tests importorskip it.
+    "pillow>=10",
+    # The FastAPI drilldown example's live_drilldown module imports Starlette at
+    # load (its callback endpoint), never a runtime dependency of xy: the
+    # drilldown pan-alignment browser test importorskips it, so it lives in dev
+    # where CI exercises that test.
+    "starlette>=0.36",
 ]
 # Plotly comparison charts. Matplotlib is deliberately not a project extra:
 # benchmark jobs that compare against it install it explicitly as an external
@@ -61,15 +69,22 @@ include = [
     # and the ban on its reflex.lock frontend pins.
     "python/xy",
     "src",
-    "js/src",
+    # The whole js/ dir (TS sources + build.mjs + tsconfig) plus the npm
+    # manifests, so the sdist can rebuild the client with `npm ci &&
+    # node js/build.mjs` (verify_sdist.py checks the load-bearing files).
+    "js",
+    "package.json",
+    "package-lock.json",
     "benchmarks",
     "docs",
+    "spec",
+    "examples/fastapi/*.py",
+    "examples/fastapi/pyproject.toml",
+    "examples/fastapi/README.md",
+    "examples/reflex/pyproject.toml",
     "examples/reflex/README.md",
-    "examples/reflex/requirements.txt",
     "examples/reflex/rxconfig.py",
-    "examples/reflex/reflex_xy_app/*.py",
-    "examples/reflex/scripts/build_charts.py",
-    "examples/reflex/assets/charts/*.html",
+    "examples/reflex/xy_reflex_demo/*.py",
     "scripts",
     "tests",
     "Cargo.toml",
@@ -83,6 +98,7 @@ include = [
     "CONTRIBUTING.md",
 ]
 exclude = [
+    "/docs/app/**",
     "/.*-venv/**",
     "/.venv/**",
     "/venv/**",
@@ -147,12 +163,14 @@ exclude = ["examples/pdsh/*.ipynb"]
 # helper defs repeat by design.
 "examples/pdsh/*.ipynb" = ["E402", "E731", "E741", "F401", "F811", "I001", "UP030", "UP032", "B007"]
 # Reflex state classes declare mutable defaults by design (reflex deep-copies
-# them per instance); the demo heading's unicode × is intentional prose.
-"python/reflex-xy/examples/**" = ["RUF012", "RUF001"]
+# them per instance); both showcases use intentional unicode (× ∈ · › ⌄) in
+# their page prose and chrome.
+"examples/reflex/**" = ["RUF012", "RUF001"]
+"examples/fastapi/**" = ["RUF001"]
 "tests/reflex_adapter/*.py" = ["RUF012"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["fastcharts", "xy"]
+known-first-party = ["xy"]
 
 [tool.ty.environment]
 python = ".venv"
@@ -160,11 +178,10 @@ python = ".venv"
 [tool.ty.src]
 # Type-check the shippable library; tests/scripts/benchmarks use dynamic
 # patterns (ctypes, deliberately subscripting known-non-None Optionals) that a
-# pre-1.0 checker flags as false positives. The reflex demo app is excluded
-# for the same reason: reflex state vars are Vars at class scope (`.length()`
-# etc.), which a plain `dict` annotation can't express.
+# pre-1.0 checker flags as false positives. The example apps live under
+# examples/ (outside this include) for the same reason: reflex state vars are
+# Vars at class scope (`.length()` etc.), which a plain annotation can't express.
 include = ["python"]
-exclude = ["python/reflex-xy/examples"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,6 +1,6 @@
 """The Reflex component: `reflex_xy.chart(...)`.
 
-One factory, three chart sources (docs/design/reflex-integration.md §5):
+One factory, three chart sources (spec/design/reflex-integration.md §5):
 
     reflex_xy.chart(Dash.chart)            # @reflex_xy.figure state var (live)
     reflex_xy.chart(some_token_string)     # register()/inline() token (live)
@@ -30,9 +30,9 @@ row dicts and selection summaries, never data buffers (§1 of the design):
         height="480px",
     )
 
-Semantic events need the kernel, so they apply to live sources; a static
-chart renders, pans/zooms, and resolves hover tooltips client-side but
-dispatches no backend events.
+Point and selection events need the kernel, so they apply to live sources. A static
+chart renders, pans/zooms, and resolves hover tooltips client-side; its small
+``on_view_change`` payload can use the normal Reflex event prop without a data kernel.
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ import reflex as rx
 
 from .assets import WRAPPER_TAG, register
 from .payload_asset import payload_asset
+from .registry import _figure_of
 
 __all__ = ["chart"]
 
@@ -69,12 +70,27 @@ def _build_component_cls() -> Any:
         # kernel-less.
         src: rx.Var[str]
 
-        # Semantic events out (small JSON by construction — §1). Live mode
-        # only; the static tier has no kernel to resolve rows.
+        # Static charts carry their DOM class strings inside the binary XYBF
+        # payload, where Reflex's TailwindV4Plugin cannot discover them.  This
+        # compile-only prop mirrors those literal strings into the generated
+        # JSX source so Tailwind can emit the corresponding utilities.  The
+        # wrapper destructures and discards it; it never reaches the DOM.
+        tailwind_class_tokens: rx.Var[str]
+
+        # Semantic events out (small JSON by construction — §1). Point and
+        # selection events are live-only because static charts have no row
+        # resolution kernel; view changes are already complete client-side.
         on_point_hover: rx.EventHandler[lambda row: [row]]
         on_point_click: rx.EventHandler[lambda row: [row]]
         on_select_end: rx.EventHandler[lambda selection: [selection]]
         on_view_change: rx.EventHandler[lambda view: [view]]
+        on_animation_start: rx.EventHandler[lambda event: [event]]
+        on_animation_end: rx.EventHandler[lambda event: [event]]
+        # Structured hover payload (view-state.md §7.1): resolved fully in the
+        # browser — cursor px/data coordinates plus the picked points — so it
+        # works on static charts too. `on_point_hover` stays the narrow
+        # legacy row form; new code uses this.
+        on_hover: rx.EventHandler[lambda payload: [payload]]
 
     # The class is created lazily inside this function; reflex derives JS
     # identifiers from __qualname__, and "<locals>" would leak an illegal
@@ -91,13 +107,29 @@ def _is_chart_like(source: Any) -> bool:
     )
 
 
-def chart(source: Any, **props: Any) -> Any:
+def _tailwind_class_manifest(figure: Any) -> str:
+    """Return every static-chart DOM class string as one scan-only literal.
+
+    The inventory itself is core-Figure knowledge and lives on
+    :meth:`xy.Figure.dom_class_strings`; reading the built figure avoids a
+    second payload compilation (which can be expensive for large charts).
+    """
+    return " ".join(figure.dom_class_strings())
+
+
+def chart(source: Any, *, tooltip: Any = None, **props: Any) -> Any:
     """Place a xy chart.
 
     `source` is a figure token (a `@reflex_xy.figure` state var, or a
     `register()`/`inline()` token string) for a live, kernel-backed chart —
     or a `xy` Chart/Figure directly, which renders as a static
     payload asset with client-side interactivity only (see module doc).
+
+    `tooltip=` mounts a Reflex component as the chart tooltip: the render
+    client positions it with the built-in tooltip's placement logic (the
+    built-in tooltip is suppressed while it is mounted) and the `on_hover`
+    payload carries the data to show. A Chart source that declares
+    `xy.tooltip(render=...)` mounts that component automatically.
 
     Sizing: the outer element defaults to `width: 100%` and a 420px height;
     pass `width=`/`height=` (or any style prop) to override. Charts built
@@ -111,11 +143,23 @@ def chart(source: Any, **props: Any) -> Any:
     if isinstance(source, (str, rx.Var)):
         props["token"] = source
     elif _is_chart_like(source):
-        props["src"] = payload_asset(source)
+        # Build a public Chart once, then reuse the cached Figure for both the
+        # payload and its Tailwind scan manifest.  In particular, do not call
+        # build_payload() just to discover classes: that would duplicate the
+        # largest part of static-chart compilation.
+        if tooltip is None and callable(getattr(source, "chrome_components", None)):
+            tooltip = source.chrome_components().get("tooltip")
+        figure = _figure_of(source)
+        props["src"] = payload_asset(figure)
+        class_manifest = _tailwind_class_manifest(figure)
+        if class_manifest:
+            props["tailwind_class_tokens"] = class_manifest
     else:
         msg = (
             "reflex_xy.chart() takes a figure token (state var or string) or a "
             f"xy Chart/Figure, got {type(source).__name__}"
         )
         raise TypeError(msg)
+    if tooltip is not None:
+        return _component_cls.create(tooltip, **props)
     return _component_cls.create(**props)

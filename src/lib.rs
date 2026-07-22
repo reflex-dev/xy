@@ -24,6 +24,7 @@ mod font;
 pub mod kernels;
 pub mod raster;
 mod simd;
+pub mod svg;
 pub mod tiles;
 
 use kernels::ZoneMap;
@@ -79,12 +80,46 @@ unsafe fn borrowed_byte_spans<'a>(
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 34;
+pub const ABI_VERSION: u32 = 37;
 const FACTORIZE_CAPACITY_EXCEEDED: usize = usize::MAX - 1;
 
 #[no_mangle]
-pub extern "C" fn fc_abi_version() -> u32 {
+pub extern "C" fn xy_abi_version() -> u32 {
     ABI_VERSION
+}
+
+/// Serialize parallel f64 screen coordinates into SVG polyline path data.
+/// Returns the required byte count, or `usize::MAX` for invalid inputs. When
+/// `out_cap` is too small no bytes are written, allowing callers to retry.
+///
+/// # Safety
+/// `x` and `y` must point to `len` readable f64s. When `out_cap` is sufficient,
+/// `out` must point to `out_cap` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn xy_svg_poly_path(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    out: *mut u8,
+    out_cap: usize,
+) -> usize {
+    if len == 0 || x.is_null() || y.is_null() {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    let Some(path) = ffi_guard(None, || svg::poly_path(x, y)) else {
+        return usize::MAX;
+    };
+    let required = path.len();
+    if out_cap < required {
+        return required;
+    }
+    if out.is_null() {
+        return usize::MAX;
+    }
+    std::slice::from_raw_parts_mut(out, out_cap)[..required].copy_from_slice(path.as_bytes());
+    required
 }
 
 /// Factor `len` fixed-width records into first-seen u32 codes. Returns the
@@ -94,7 +129,7 @@ pub extern "C" fn fc_abi_version() -> u32 {
 /// `data` must address `len * width` readable bytes. `out_codes` and
 /// `out_unique_indices` must each address `len` writable u32 values.
 #[no_mangle]
-pub unsafe extern "C" fn fc_factorize_fixed(
+pub unsafe extern "C" fn xy_factorize_fixed(
     data: *const u8,
     len: usize,
     width: usize,
@@ -127,7 +162,7 @@ pub unsafe extern "C" fn fc_factorize_fixed(
 /// `data`/`out_codes` address `len * width` readable bytes / `len` writable
 /// bytes. `out_unique_indices` addresses `unique_capacity` writable u32s.
 #[no_mangle]
-pub unsafe extern "C" fn fc_factorize_fixed_u8(
+pub unsafe extern "C" fn xy_factorize_fixed_u8(
     data: *const u8,
     len: usize,
     width: usize,
@@ -161,13 +196,13 @@ pub unsafe extern "C" fn fc_factorize_fixed_u8(
 
 /// Palette-sized fixed-record factorization with exact per-code u64 counts.
 /// Counts use the same first-seen order as `out_unique_indices`. Return and
-/// pointer semantics match [`fc_factorize_fixed_u8`].
+/// pointer semantics match [`xy_factorize_fixed_u8`].
 ///
 /// # Safety
 /// `out_counts` addresses `unique_capacity` writable u64 values in addition
-/// to the spans required by [`fc_factorize_fixed_u8`].
+/// to the spans required by [`xy_factorize_fixed_u8`].
 #[no_mangle]
-pub unsafe extern "C" fn fc_factorize_fixed_u8_counts(
+pub unsafe extern "C" fn xy_factorize_fixed_u8_counts(
     data: *const u8,
     len: usize,
     width: usize,
@@ -204,13 +239,13 @@ pub unsafe extern "C" fn fc_factorize_fixed_u8_counts(
 
 /// Compact factorization for one-codepoint NumPy Unicode records. The bounded
 /// Unicode scalar domain uses direct lookup instead of record hashing. Return
-/// semantics match [`fc_factorize_fixed_u8_counts`].
+/// semantics match [`xy_factorize_fixed_u8_counts`].
 ///
 /// # Safety
 /// `data` addresses `len` readable u32 records. Output spans follow
-/// [`fc_factorize_fixed_u8_counts`].
+/// [`xy_factorize_fixed_u8_counts`].
 #[no_mangle]
-pub unsafe extern "C" fn fc_factorize_unicode1_u8_counts(
+pub unsafe extern "C" fn xy_factorize_unicode1_u8_counts(
     data: *const u32,
     len: usize,
     swap_endian: i32,
@@ -255,7 +290,7 @@ pub unsafe extern "C" fn fc_factorize_unicode1_u8_counts(
 /// `values` addresses `len` writable bytes and `mapping` addresses
 /// `mapping_len` readable bytes.
 #[no_mangle]
-pub unsafe extern "C" fn fc_remap_u8(
+pub unsafe extern "C" fn xy_remap_u8(
     values: *mut u8,
     len: usize,
     mapping: *const u8,
@@ -291,7 +326,7 @@ pub unsafe extern "C" fn fc_remap_u8(
 /// likewise; `prop` may be null only when `prop_len == 0`); `out_rgba`, when
 /// non-null, must point to 4 writable f32s.
 #[no_mangle]
-pub unsafe extern "C" fn fc_css_check(
+pub unsafe extern "C" fn xy_css_check(
     kind: u32,
     prop: *const u8,
     prop_len: usize,
@@ -370,7 +405,7 @@ pub unsafe extern "C" fn fc_css_check(
 /// `data` must point to `len` readable f64s; each out pointer to
 /// `ceil(len/chunk_size)` writable elements; `chunk_size > 0`.
 #[no_mangle]
-pub unsafe extern "C" fn fc_zone_maps(
+pub unsafe extern "C" fn xy_zone_maps(
     data: *const f64,
     len: usize,
     chunk_size: usize,
@@ -438,7 +473,7 @@ pub unsafe extern "C" fn fc_zone_maps(
 /// `x` and `y` address `len` readable f64s; `out_x` and `out_y` address the
 /// required number of writable [`ZoneMap`] records.
 #[no_mangle]
-pub unsafe extern "C" fn fc_zone_maps_pair(
+pub unsafe extern "C" fn xy_zone_maps_pair(
     x: *const f64,
     y: *const f64,
     len: usize,
@@ -476,7 +511,7 @@ pub unsafe extern "C" fn fc_zone_maps_pair(
 /// # Safety
 /// `data` must point to `len` readable f64s, `out` to `len` writable f32s.
 #[no_mangle]
-pub unsafe extern "C" fn fc_encode_f32(
+pub unsafe extern "C" fn xy_encode_f32(
     data: *const f64,
     len: usize,
     offset: f64,
@@ -508,7 +543,7 @@ pub unsafe extern "C" fn fc_encode_f32(
 /// `x`/`y` must point to `len` readable f64s; `out` to `4 * n_buckets`
 /// writable u32s.
 #[no_mangle]
-pub unsafe extern "C" fn fc_m4_indices(
+pub unsafe extern "C" fn xy_m4_indices(
     x: *const f64,
     y: *const f64,
     len: usize,
@@ -526,7 +561,7 @@ pub unsafe extern "C" fn fc_m4_indices(
     if len > u32::MAX as usize {
         return usize::MAX;
     }
-    // Same defensive posture as fc_rasterize: a caller-supplied size product
+    // Same defensive posture as xy_rasterize: a caller-supplied size product
     // must not wrap in release builds into a too-short slice.
     let out_len = match n_buckets.checked_mul(4) {
         Some(n) => n,
@@ -555,6 +590,56 @@ pub unsafe extern "C" fn fc_m4_indices(
     idx.len()
 }
 
+/// Fused M4 decimation for a parallel x/y pair. Unlike `xy_m4_indices`, this
+/// writes the selected values directly and avoids returning an index array for
+/// Python to gather through NumPy. SVG and PNG payload construction both use
+/// this entry point, so their common reduction path stays native.
+///
+/// Returns the number of values written, or `usize::MAX` on invalid input.
+/// `out_x` and `out_y` must each hold `4 * n_buckets` f64 values.
+///
+/// # Safety
+/// `x` and `y` must point to `len` readable f64s; both output pointers must
+/// address the documented writable capacity.
+#[no_mangle]
+pub unsafe extern "C" fn xy_m4_points(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    x0: f64,
+    x1: f64,
+    n_buckets: usize,
+    out_x: *mut f64,
+    out_y: *mut f64,
+) -> usize {
+    if n_buckets == 0 || !finite_gt(x0, x1) || len > u32::MAX as usize {
+        return usize::MAX;
+    }
+    let out_len = match n_buckets.checked_mul(4) {
+        Some(n) => n,
+        None => return usize::MAX,
+    };
+    if len == 0 {
+        return 0;
+    }
+    if x.is_null() || y.is_null() || out_x.is_null() || out_y.is_null() {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    let Some(idx) = ffi_guard(None, || Some(kernels::m4_indices(x, y, x0, x1, n_buckets))) else {
+        return usize::MAX;
+    };
+    let out_x = std::slice::from_raw_parts_mut(out_x, out_len);
+    let out_y = std::slice::from_raw_parts_mut(out_y, out_len);
+    for (dst, &source) in idx.iter().enumerate() {
+        let source = source as usize;
+        out_x[dst] = x[source];
+        out_y[dst] = y[source];
+    }
+    idx.len()
+}
+
 /// Native stacked-series layout. `values`, `out_lower`, and `out_upper` are
 /// row-major `rows * cols` f64 buffers. `baseline` uses the generic engine
 /// layout ids documented by `kernels::stacked_bounds_into`.
@@ -562,7 +647,7 @@ pub unsafe extern "C" fn fc_m4_indices(
 /// # Safety
 /// Every pointer must address `rows * cols` readable/writable f64 values.
 #[no_mangle]
-pub unsafe extern "C" fn fc_stacked_bounds(
+pub unsafe extern "C" fn xy_stacked_bounds(
     values: *const f64,
     rows: usize,
     cols: usize,
@@ -594,7 +679,7 @@ pub unsafe extern "C" fn fc_stacked_bounds(
 /// `out` addresses `(x_edge_len - 1) * (y_edge_len - 1)` writable f64s.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_histogram2d(
+pub unsafe extern "C" fn xy_histogram2d(
     x: *const f64,
     y: *const f64,
     weights: *const f64,
@@ -651,7 +736,7 @@ pub unsafe extern "C" fn fc_histogram2d(
 /// explicit; each output addresses `2 * cell_rows * cell_cols` writable f64s.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_quad_mesh_triangles(
+pub unsafe extern "C" fn xy_quad_mesh_triangles(
     x: *const f64,
     x_len: usize,
     y: *const f64,
@@ -713,7 +798,7 @@ pub unsafe extern "C" fn fc_quad_mesh_triangles(
 /// Inputs address `len` values; non-null outputs address `capacity` f64s each.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_sector_triangles(
+pub unsafe extern "C" fn xy_sector_triangles(
     values: *const f64,
     len: usize,
     explode: *const f64,
@@ -811,7 +896,7 @@ pub unsafe extern "C" fn fc_sector_triangles(
 /// `data` addresses `len` f64s and each output addresses `nfft / 2 + 1` f64s.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_rfft(
+pub unsafe extern "C" fn xy_rfft(
     data: *const f64,
     len: usize,
     nfft: usize,
@@ -851,7 +936,7 @@ pub unsafe extern "C" fn fc_rfft(
 /// Non-null inputs address `len` f64s and all outputs address `nfft / 2 + 1` f64s.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_welch_spectra(
+pub unsafe extern "C" fn xy_welch_spectra(
     x: *const f64,
     y: *const f64,
     len: usize,
@@ -909,7 +994,7 @@ pub unsafe extern "C" fn fc_welch_spectra(
 /// `data` addresses `len` f64s and outputs address the derived sizes.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_spectrogram(
+pub unsafe extern "C" fn xy_spectrogram(
     data: *const f64,
     len: usize,
     nfft: usize,
@@ -961,7 +1046,7 @@ pub unsafe extern "C" fn fc_spectrogram(
 /// Inputs address `len` f64s; outputs address `2 * max_lag + 1` f64s.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_correlation(
+pub unsafe extern "C" fn xy_correlation(
     x: *const f64,
     y: *const f64,
     len: usize,
@@ -1007,7 +1092,7 @@ pub unsafe extern "C" fn fc_correlation(
 /// # Safety
 /// Inputs address `len` readable f64s and outputs address `len` writable f64s.
 #[no_mangle]
-pub unsafe extern "C" fn fc_weighted_ecdf(
+pub unsafe extern "C" fn xy_weighted_ecdf(
     values: *const f64,
     weights: *const f64,
     len: usize,
@@ -1038,7 +1123,7 @@ pub unsafe extern "C" fn fc_weighted_ecdf(
 /// All pointers address the element counts derived from adjacent length arguments.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_indexed_triangles(
+pub unsafe extern "C" fn xy_indexed_triangles(
     x: *const f64,
     y: *const f64,
     vertex_count: usize,
@@ -1102,7 +1187,7 @@ pub unsafe extern "C" fn fc_indexed_triangles(
 /// and each output addresses that same topology length.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_triangle_edges(
+pub unsafe extern "C" fn xy_triangle_edges(
     x: *const f64,
     y: *const f64,
     vertex_count: usize,
@@ -1144,7 +1229,7 @@ pub unsafe extern "C" fn fc_triangle_edges(
 /// # Safety
 /// `x` and `y` address `len` f64s; `out` addresses `capacity * 3` i64s.
 #[no_mangle]
-pub unsafe extern "C" fn fc_delaunay_triangles(
+pub unsafe extern "C" fn xy_delaunay_triangles(
     x: *const f64,
     y: *const f64,
     len: usize,
@@ -1180,7 +1265,7 @@ pub unsafe extern "C" fn fc_delaunay_triangles(
 /// # Safety
 /// `x` and `y` address `len` f64s; `out` addresses `capacity * 3` i64s.
 #[no_mangle]
-pub unsafe extern "C" fn fc_polygon_triangles(
+pub unsafe extern "C" fn xy_polygon_triangles(
     x: *const f64,
     y: *const f64,
     len: usize,
@@ -1217,7 +1302,7 @@ pub unsafe extern "C" fn fc_polygon_triangles(
 /// Inputs and outputs address the element counts described by their length arguments.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_marching_triangles(
+pub unsafe extern "C" fn xy_marching_triangles(
     x: *const f64,
     y: *const f64,
     z: *const f64,
@@ -1292,7 +1377,7 @@ pub unsafe extern "C" fn fc_marching_triangles(
 /// Inputs address `len` f64 values; outputs address `3 * len` writable f64s.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_vector_segments(
+pub unsafe extern "C" fn xy_vector_segments(
     x: *const f64,
     y: *const f64,
     u: *const f64,
@@ -1346,7 +1431,7 @@ pub unsafe extern "C" fn fc_vector_segments(
 /// by `rows`, `cols`, and `capacity`.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_streamlines(
+pub unsafe extern "C" fn xy_streamlines(
     x_coords: *const f64,
     cols: usize,
     y_coords: *const f64,
@@ -1416,7 +1501,7 @@ pub unsafe extern "C" fn fc_streamlines(
 /// is nonzero, every output pointer points to `capacity` writable f64s.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_marching_squares(
+pub unsafe extern "C" fn xy_marching_squares(
     z: *const f64,
     rows: usize,
     cols: usize,
@@ -1513,7 +1598,7 @@ pub unsafe extern "C" fn fc_marching_squares(
 /// `w > 0 && h > 0` and finite increasing bounds.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_bin_2d(
+pub unsafe extern "C" fn xy_bin_2d(
     x: *const f64,
     y: *const f64,
     len: usize,
@@ -1563,7 +1648,7 @@ pub unsafe extern "C" fn fc_bin_2d(
 /// `cmd` must point to `cmd_len` readable bytes (or be null iff `cmd_len == 0`);
 /// `out` must point to `w*h*4` writable bytes.
 #[no_mangle]
-pub unsafe extern "C" fn fc_rasterize(
+pub unsafe extern "C" fn xy_rasterize(
     cmd: *const u8,
     cmd_len: usize,
     out: *mut u8,
@@ -1594,10 +1679,10 @@ pub unsafe extern "C" fn fc_rasterize(
 /// buffer without changing their ownership.
 ///
 /// # Safety
-/// Pointer contracts match `fc_rasterize`; `data` must point to `data_len`
+/// Pointer contracts match `xy_rasterize`; `data` must point to `data_len`
 /// readable bytes, or be null iff `data_len == 0`.
 #[no_mangle]
-pub unsafe extern "C" fn fc_rasterize_data(
+pub unsafe extern "C" fn xy_rasterize_data(
     cmd: *const u8,
     cmd_len: usize,
     data: *const u8,
@@ -1639,9 +1724,9 @@ pub unsafe extern "C" fn fc_rasterize_data(
 /// # Safety
 /// `span_ptrs` and `span_lens` must each contain `span_count` readable entries;
 /// every non-empty span pointer must address its declared readable byte range.
-/// Other pointer contracts match `fc_rasterize`.
+/// Other pointer contracts match `xy_rasterize`.
 #[no_mangle]
-pub unsafe extern "C" fn fc_rasterize_spans(
+pub unsafe extern "C" fn xy_rasterize_spans(
     cmd: *const u8,
     cmd_len: usize,
     span_ptrs: *const *const u8,
@@ -1679,10 +1764,10 @@ pub unsafe extern "C" fn fc_rasterize_spans(
 /// overflow, or `out_capacity` is insufficient.
 ///
 /// # Safety
-/// Pointer contracts match `fc_rasterize`; `out` must point to
+/// Pointer contracts match `xy_rasterize`; `out` must point to
 /// `out_capacity` writable bytes.
 #[no_mangle]
-pub unsafe extern "C" fn fc_rasterize_png(
+pub unsafe extern "C" fn xy_rasterize_png(
     cmd: *const u8,
     cmd_len: usize,
     out: *mut u8,
@@ -1707,13 +1792,13 @@ pub unsafe extern "C" fn fc_rasterize_png(
 }
 
 /// Fused PNG rasterizer with the synchronous external arena accepted by
-/// `fc_rasterize_data`.
+/// `xy_rasterize_data`.
 ///
 /// # Safety
-/// Pointer contracts match `fc_rasterize_data`; `out` must point to
+/// Pointer contracts match `xy_rasterize_data`; `out` must point to
 /// `out_capacity` writable bytes.
 #[no_mangle]
-pub unsafe extern "C" fn fc_rasterize_png_data(
+pub unsafe extern "C" fn xy_rasterize_png_data(
     cmd: *const u8,
     cmd_len: usize,
     data: *const u8,
@@ -1749,10 +1834,10 @@ pub unsafe extern "C" fn fc_rasterize_png_data(
 /// Fused PNG rasterizer backed by multiple synchronous immutable arenas.
 ///
 /// # Safety
-/// Span contracts match `fc_rasterize_spans`; output contracts match
-/// `fc_rasterize_png`.
+/// Span contracts match `xy_rasterize_spans`; output contracts match
+/// `xy_rasterize_png`.
 #[no_mangle]
-pub unsafe extern "C" fn fc_rasterize_png_spans(
+pub unsafe extern "C" fn xy_rasterize_png_spans(
     cmd: *const u8,
     cmd_len: usize,
     span_ptrs: *const *const u8,
@@ -1789,7 +1874,7 @@ pub unsafe extern "C" fn fc_rasterize_png_spans(
 /// `raw` contains `w*h` readable f64 values, `stops` contains
 /// `stop_count*3` readable bytes, and `out` contains `w*h*4` writable bytes.
 #[no_mangle]
-pub unsafe extern "C" fn fc_heatmap_rgba(
+pub unsafe extern "C" fn xy_heatmap_rgba(
     raw: *const f64,
     w: usize,
     h: usize,
@@ -1826,7 +1911,7 @@ pub unsafe extern "C" fn fc_heatmap_rgba(
 /// `encoded` contains `w*h` readable bytes, `stops` contains `stop_count*3`
 /// readable bytes, and `out` contains `w*h*4` writable bytes.
 #[no_mangle]
-pub unsafe extern "C" fn fc_density_rgba(
+pub unsafe extern "C" fn xy_density_rgba(
     encoded: *const u8,
     w: usize,
     h: usize,
@@ -1864,7 +1949,7 @@ pub unsafe extern "C" fn fc_density_rgba(
 /// `grid` addresses `len` readable f32 values, `out` addresses `len` writable
 /// bytes, and `out_max` addresses one writable f64.
 #[no_mangle]
-pub unsafe extern "C" fn fc_density_log_u8(
+pub unsafe extern "C" fn xy_density_log_u8(
     grid: *const f32,
     len: usize,
     out: *mut u8,
@@ -1899,7 +1984,7 @@ pub unsafe extern "C" fn fc_density_log_u8(
 /// `x`/`y` must point to `len` readable f64s; `grid` to `w*h` writable f32s;
 /// `idx` to `len` writable u32s.
 #[no_mangle]
-pub unsafe extern "C" fn fc_bin_2d_indices(
+pub unsafe extern "C" fn xy_bin_2d_indices(
     x: *const f64,
     y: *const f64,
     len: usize,
@@ -1916,7 +2001,7 @@ pub unsafe extern "C" fn fc_bin_2d_indices(
     if bad || grid.is_null() {
         return usize::MAX;
     }
-    // u32 index ceiling + unwrappable grid size — see fc_m4_indices.
+    // u32 index ceiling + unwrappable grid size — see xy_m4_indices.
     if len > u32::MAX as usize {
         return usize::MAX;
     }
@@ -1948,7 +2033,7 @@ pub unsafe extern "C" fn fc_bin_2d_indices(
 
 /// Full-domain density first paint: one traversal writes the `bin_2d` grid
 /// and samples implicit row ids `0..len` with the same SplitMix predicate as
-/// `fc_sample_range_indices`. Returns the exact sample length; rows are copied
+/// `xy_sample_range_indices`. Returns the exact sample length; rows are copied
 /// only when `capacity` is sufficient. `usize::MAX` reports invalid arguments.
 ///
 /// # Safety
@@ -1956,7 +2041,7 @@ pub unsafe extern "C" fn fc_bin_2d_indices(
 /// When `capacity > 0`, `out` must point to `capacity` writable u32s.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_bin_2d_sample_range(
+pub unsafe extern "C" fn xy_bin_2d_sample_range(
     x: *const f64,
     y: *const f64,
     len: usize,
@@ -2003,18 +2088,17 @@ pub unsafe extern "C" fn fc_bin_2d_sample_range(
         grid.fill(0.0);
         return 0;
     }
+    let out_rows = if capacity == 0 {
+        &mut [][..]
+    } else {
+        std::slice::from_raw_parts_mut(out, capacity)
+    };
     ffi_guard(usize::MAX, || {
-        let selected =
-            kernels::bin_2d_sample_range(x, y, x0, x1, y0, y1, w, h, seed, threshold, grid);
-        let written = selected.len();
-        if written > 0 && written <= capacity {
-            std::ptr::copy_nonoverlapping(selected.as_ptr(), out, written);
-        }
-        written
+        kernels::bin_2d_sample_range(x, y, x0, x1, y0, y1, w, h, seed, threshold, grid, out_rows)
     })
 }
 
-/// Categorical counterpart to [`fc_bin_2d_sample_range`]. Exact factorization
+/// Categorical counterpart to [`xy_bin_2d_sample_range`]. Exact factorization
 /// counts define the per-code sampling thresholds and avoid a recount; the
 /// resulting grid and sampled rows match the standalone bin and counted
 /// stratified sampler. Returns `usize::MAX` on malformed arguments/codes.
@@ -2022,10 +2106,10 @@ pub unsafe extern "C" fn fc_bin_2d_sample_range(
 /// # Safety
 /// `x`/`y`/`groups` must point to `len` readable values and `counts` to
 /// `n_groups` readable u64 values. Remaining output contracts match
-/// [`fc_bin_2d_sample_range`].
+/// [`xy_bin_2d_sample_range`].
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_bin_2d_stratified_sample_range_u8_counted(
+pub unsafe extern "C" fn xy_bin_2d_stratified_sample_range_u8_counted(
     x: *const f64,
     y: *const f64,
     groups: *const u8,
@@ -2102,7 +2186,7 @@ pub unsafe extern "C" fn fc_bin_2d_stratified_sample_range_u8_counted(
 /// # Safety
 /// `data` must point to `len` readable f64s (may be null only when `len == 0`).
 #[no_mangle]
-pub unsafe extern "C" fn fc_is_sorted(data: *const f64, len: usize) -> i32 {
+pub unsafe extern "C" fn xy_is_sorted(data: *const f64, len: usize) -> i32 {
     if len < 2 {
         return 1;
     }
@@ -2119,7 +2203,7 @@ pub unsafe extern "C" fn fc_is_sorted(data: *const f64, len: usize) -> i32 {
 /// # Safety
 /// `data` must point to `len` readable f64s; out pointers to one writable f64.
 #[no_mangle]
-pub unsafe extern "C" fn fc_min_max(
+pub unsafe extern "C" fn xy_min_max(
     data: *const f64,
     len: usize,
     out_min: *mut f64,
@@ -2149,7 +2233,7 @@ pub unsafe extern "C" fn fc_min_max(
 /// `data` must point to `len` readable f64s; `out_counts` to `n_bins` writable
 /// f64s; `n_bins > 0` and `lo`/`hi` finite increasing.
 #[no_mangle]
-pub unsafe extern "C" fn fc_histogram_uniform(
+pub unsafe extern "C" fn xy_histogram_uniform(
     data: *const f64,
     len: usize,
     lo: f64,
@@ -2197,7 +2281,7 @@ pub unsafe extern "C" fn fc_histogram_uniform(
 /// # Safety
 /// `data` must point to `len` readable f64s; `out` to `len` writable f32s.
 #[no_mangle]
-pub unsafe extern "C" fn fc_normalize_f32(
+pub unsafe extern "C" fn xy_normalize_f32(
     data: *const f64,
     len: usize,
     lo: f64,
@@ -2228,7 +2312,7 @@ pub unsafe extern "C" fn fc_normalize_f32(
 /// # Safety
 /// `ids` must point to `len` readable u64s; `out` to `len` writable u8s.
 #[no_mangle]
-pub unsafe extern "C" fn fc_sample_mask(
+pub unsafe extern "C" fn xy_sample_mask(
     ids: *const u64,
     len: usize,
     seed: u64,
@@ -2249,13 +2333,13 @@ pub unsafe extern "C" fn fc_sample_mask(
     })
 }
 
-/// `fc_sample_mask` over u32 row indices: each id widens to u64 in-register,
+/// `xy_sample_mask` over u32 row indices: each id widens to u64 in-register,
 /// bit-identical to widening the full array first without that allocation.
 ///
 /// # Safety
 /// `ids` must point to `len` readable u32s; `out` to `len` writable u8s.
 #[no_mangle]
-pub unsafe extern "C" fn fc_sample_mask_u32(
+pub unsafe extern "C" fn xy_sample_mask_u32(
     ids: *const u32,
     len: usize,
     seed: u64,
@@ -2283,7 +2367,7 @@ pub unsafe extern "C" fn fc_sample_mask_u32(
 /// # Safety
 /// When `capacity > 0`, `out` must point to `capacity` writable u32 values.
 #[no_mangle]
-pub unsafe extern "C" fn fc_sample_range_indices(
+pub unsafe extern "C" fn xy_sample_range_indices(
     size: usize,
     seed: u64,
     threshold: u64,
@@ -2293,13 +2377,13 @@ pub unsafe extern "C" fn fc_sample_range_indices(
     if size > u32::MAX as usize || (capacity > 0 && out.is_null()) {
         return usize::MAX;
     }
+    let output = if capacity == 0 {
+        &mut [][..]
+    } else {
+        std::slice::from_raw_parts_mut(out, capacity)
+    };
     ffi_guard(usize::MAX, || {
-        let selected = kernels::sample_range_indices(size, seed, threshold);
-        if !selected.is_empty() && selected.len() <= capacity {
-            let output = std::slice::from_raw_parts_mut(out, capacity);
-            output[..selected.len()].copy_from_slice(&selected);
-        }
-        selected.len()
+        kernels::sample_range_indices_into(size, seed, threshold, output)
     })
 }
 
@@ -2313,7 +2397,7 @@ pub unsafe extern "C" fn fc_sample_range_indices(
 /// `out` must point to `capacity` writable u32 values.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_stratified_sample_range_u8(
+pub unsafe extern "C" fn xy_stratified_sample_range_u8(
     groups: *const u8,
     len: usize,
     n_groups: usize,
@@ -2352,16 +2436,16 @@ pub unsafe extern "C" fn fc_stratified_sample_range_u8(
     })
 }
 
-/// Count-reusing variant of [`fc_stratified_sample_range_u8`]. `counts`
+/// Count-reusing variant of [`xy_stratified_sample_range_u8`]. `counts`
 /// contains `n_groups` exact per-code counts from compact factorization,
 /// avoiding a source-sized recount before sampling.
 ///
 /// # Safety
 /// `counts` must point to `n_groups` readable u64 values. Other spans follow
-/// [`fc_stratified_sample_range_u8`].
+/// [`xy_stratified_sample_range_u8`].
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_stratified_sample_range_u8_counted(
+pub unsafe extern "C" fn xy_stratified_sample_range_u8_counted(
     groups: *const u8,
     len: usize,
     counts: *const u64,
@@ -2418,7 +2502,7 @@ pub unsafe extern "C" fn fc_stratified_sample_range_u8_counted(
 /// `out` to `len` writable u8s.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_stratified_sample_mask(
+pub unsafe extern "C" fn xy_stratified_sample_mask(
     ids: *const u64,
     groups: *const u32,
     len: usize,
@@ -2449,15 +2533,15 @@ pub unsafe extern "C" fn fc_stratified_sample_mask(
     })
 }
 
-/// `fc_stratified_sample_mask` over u32 row indices, with the same in-register
-/// widening contract as [`fc_sample_mask_u32`].
+/// `xy_stratified_sample_mask` over u32 row indices, with the same in-register
+/// widening contract as [`xy_sample_mask_u32`].
 ///
 /// # Safety
 /// `ids` and `groups` must point to `len` readable u32s; `out` to `len`
 /// writable u8s.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_stratified_sample_mask_u32(
+pub unsafe extern "C" fn xy_stratified_sample_mask_u32(
     ids: *const u32,
     groups: *const u32,
     len: usize,
@@ -2498,7 +2582,7 @@ pub unsafe extern "C" fn fc_stratified_sample_mask_u32(
 /// `len` f64 values (a null data pointer is allowed only when `len == 0`).
 /// When `capacity > 0`, `out` must address that many writable u32 values.
 #[no_mangle]
-pub unsafe extern "C" fn fc_valid_indices_f64(
+pub unsafe extern "C" fn xy_valid_indices_f64(
     columns: *const *const f64,
     n_columns: usize,
     len: usize,
@@ -2549,7 +2633,7 @@ pub unsafe extern "C" fn fc_valid_indices_f64(
 /// # Safety
 /// `x`/`y` must point to `len` readable f64s; `out` to `len` writable u32s.
 #[no_mangle]
-pub unsafe extern "C" fn fc_range_indices(
+pub unsafe extern "C" fn xy_range_indices(
     x: *const f64,
     y: *const f64,
     len: usize,
@@ -2562,7 +2646,7 @@ pub unsafe extern "C" fn fc_range_indices(
     if !finite_ordered(lo_x, hi_x) || !finite_ordered(lo_y, hi_y) {
         return usize::MAX;
     }
-    // u32 index ceiling — see fc_m4_indices.
+    // u32 index ceiling — see xy_m4_indices.
     if len > u32::MAX as usize {
         return usize::MAX;
     }
@@ -2587,7 +2671,7 @@ pub unsafe extern "C" fn fc_range_indices(
 /// `x`/`y` must point to `len` readable f64s; `out` to `len` writable f32s.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn fc_local_log_density(
+pub unsafe extern "C" fn xy_local_log_density(
     x: *const f64,
     y: *const f64,
     len: usize,
@@ -2621,11 +2705,11 @@ pub unsafe extern "C" fn fc_local_log_density(
 // -- tile pyramid (§5 Tier 3): opaque u64 handles, engine doc §3.3 ------------
 
 /// Build a count pyramid over the given bounds. Returns a nonzero handle, or
-/// 0 on invalid arguments. The handle must be released with fc_pyramid_free.
+/// 0 on invalid arguments. The handle must be released with xy_pyramid_free.
 /// # Safety
 /// `x`/`y` must point to `len` readable f64s.
 #[no_mangle]
-pub unsafe extern "C" fn fc_pyramid_build(
+pub unsafe extern "C" fn xy_pyramid_build(
     x: *const f64,
     y: *const f64,
     len: usize,
@@ -2656,7 +2740,7 @@ pub unsafe extern "C" fn fc_pyramid_build(
 /// # Safety
 /// `x`/`y` must point to `len` readable f64s (or may be null when `len == 0`).
 #[no_mangle]
-pub unsafe extern "C" fn fc_pyramid_append(
+pub unsafe extern "C" fn xy_pyramid_append(
     handle: u64,
     x: *const f64,
     y: *const f64,
@@ -2685,7 +2769,7 @@ pub unsafe extern "C" fn fc_pyramid_append(
 /// # Safety
 /// `out_count` must point to a writable f64.
 #[no_mangle]
-pub unsafe extern "C" fn fc_pyramid_count(
+pub unsafe extern "C" fn xy_pyramid_count(
     handle: u64,
     lo_x: f64,
     hi_x: f64,
@@ -2713,7 +2797,7 @@ pub unsafe extern "C" fn fc_pyramid_count(
 /// # Safety
 /// `out` must point to `w * h` writable f32s.
 #[no_mangle]
-pub unsafe extern "C" fn fc_pyramid_compose(
+pub unsafe extern "C" fn xy_pyramid_compose(
     handle: u64,
     lo_x: f64,
     hi_x: f64,
@@ -2746,7 +2830,7 @@ pub unsafe extern "C" fn fc_pyramid_compose(
 /// # Safety
 /// No pointer arguments; safe for any handle value.
 #[no_mangle]
-pub unsafe extern "C" fn fc_pyramid_free(handle: u64) -> i32 {
+pub unsafe extern "C" fn xy_pyramid_free(handle: u64) -> i32 {
     ffi_guard(0, || if tiles::reg_remove(handle) { 1 } else { 0 })
 }
 
@@ -2784,7 +2868,7 @@ mod tests {
         let mut grid = [0f32; 4];
         unsafe {
             assert_eq!(
-                fc_m4_indices(
+                xy_m4_indices(
                     x.as_ptr(),
                     y.as_ptr(),
                     too_long,
@@ -2796,7 +2880,7 @@ mod tests {
                 usize::MAX
             );
             assert_eq!(
-                fc_range_indices(
+                xy_range_indices(
                     x.as_ptr(),
                     y.as_ptr(),
                     too_long,
@@ -2809,7 +2893,7 @@ mod tests {
                 usize::MAX
             );
             assert_eq!(
-                fc_valid_indices_f64(
+                xy_valid_indices_f64(
                     validity_columns.as_ptr(),
                     validity_columns.len(),
                     too_long,
@@ -2820,7 +2904,7 @@ mod tests {
                 usize::MAX
             );
             assert_eq!(
-                fc_bin_2d_indices(
+                xy_bin_2d_indices(
                     x.as_ptr(),
                     y.as_ptr(),
                     too_long,
@@ -2836,7 +2920,7 @@ mod tests {
                 usize::MAX
             );
             assert_eq!(
-                fc_bin_2d_sample_range(
+                xy_bin_2d_sample_range(
                     x.as_ptr(),
                     y.as_ptr(),
                     too_long,
@@ -2855,7 +2939,7 @@ mod tests {
                 usize::MAX
             );
             assert_eq!(
-                fc_bin_2d_stratified_sample_range_u8_counted(
+                xy_bin_2d_stratified_sample_range_u8_counted(
                     x.as_ptr(),
                     y.as_ptr(),
                     groups.as_ptr(),
@@ -2885,7 +2969,7 @@ mod tests {
     fn grid_size_products_that_overflow_are_rejected() {
         // In release builds an unchecked `w * h` wraps silently and the slice
         // built from it is shorter than the kernel-side expectation; every
-        // grid entry point must refuse instead (fc_rasterize already did).
+        // grid entry point must refuse instead (xy_rasterize already did).
         let x = [0.5f64];
         let y = [0.5f64];
         let groups = [0u8];
@@ -2895,7 +2979,7 @@ mod tests {
         let mut idx = [0u32; 4];
         unsafe {
             assert_eq!(
-                fc_bin_2d(
+                xy_bin_2d(
                     x.as_ptr(),
                     y.as_ptr(),
                     1,
@@ -2910,7 +2994,7 @@ mod tests {
                 0
             );
             assert_eq!(
-                fc_bin_2d_indices(
+                xy_bin_2d_indices(
                     x.as_ptr(),
                     y.as_ptr(),
                     1,
@@ -2926,7 +3010,7 @@ mod tests {
                 usize::MAX
             );
             assert_eq!(
-                fc_bin_2d_sample_range(
+                xy_bin_2d_sample_range(
                     x.as_ptr(),
                     y.as_ptr(),
                     1,
@@ -2945,7 +3029,7 @@ mod tests {
                 usize::MAX
             );
             assert_eq!(
-                fc_bin_2d_stratified_sample_range_u8_counted(
+                xy_bin_2d_stratified_sample_range_u8_counted(
                     x.as_ptr(),
                     y.as_ptr(),
                     groups.as_ptr(),
@@ -2968,7 +3052,7 @@ mod tests {
                 usize::MAX
             );
             assert_eq!(
-                fc_m4_indices(
+                xy_m4_indices(
                     x.as_ptr(),
                     y.as_ptr(),
                     1,
@@ -2980,7 +3064,7 @@ mod tests {
                 usize::MAX
             );
             assert_eq!(
-                fc_pyramid_compose(0, 0.0, 1.0, 0.0, 1.0, huge, 2, grid.as_mut_ptr()),
+                xy_pyramid_compose(0, 0.0, 1.0, 0.0, 1.0, huge, 2, grid.as_mut_ptr()),
                 -1
             );
         }

@@ -66,7 +66,7 @@ _FACTORIZE_NATIVE_MAX_PROBE_CATEGORIES = 512
 class ColorChannel:
     """Resolved color encoding for a scatter trace."""
 
-    mode: str  # "constant" | "continuous" | "categorical"
+    mode: str  # "constant" | "continuous" | "categorical" | "direct_rgba" | "match_fill"
     # constant:
     constant: Optional[str] = None
     # continuous: per-point value normalized to [0,1] at ship time; domain kept
@@ -80,6 +80,10 @@ class ColorChannel:
     # Exact dense-code counts, fused into native compact factorization. They
     # let full-domain stratified sampling skip a source-sized recount.
     counts: Optional[npt.NDArray[np.uint64]] = None
+    # direct_rgba: canonical straight-alpha float RGBA.  The wire uses packed
+    # normalized RGBA8, while keeping the canonical values here lets pyplot
+    # getters and post-hoc artist mutation retain Matplotlib semantics.
+    rgba: Optional[npt.NDArray[np.float64]] = None
     # Append-only backing storage for streaming continuous channels. Kept out
     # of the wire/spec surface; values remains the exact-length view.
     _buffer: Optional[npt.NDArray[np.float64]] = field(
@@ -87,6 +91,8 @@ class ColorChannel:
     )
 
     def spec(self) -> dict[str, Any]:
+        """The channel's resolved settings as a plain dict, exactly as
+        shipped in the chart spec."""
         if self.mode == "constant":
             return {"mode": "constant", "color": self.constant}
         if self.mode == "continuous":
@@ -95,11 +101,35 @@ class ColorChannel:
                 "colormap": self.colormap,
                 "domain": list(self.domain) if self.domain else None,
             }
+        if self.mode == "direct_rgba":
+            return {"mode": "direct_rgba", "components": 4, "dtype": "u8"}
+        if self.mode == "match_fill":
+            return {"mode": "match_fill"}
         return {"mode": "categorical", "categories": self.categories}
 
 
 @dataclass
+class StyleChannel:
+    """A direct per-mark style channel in final renderer units.
+
+    ``values`` is always canonical f64 except for integer-coded symbols.  The
+    payload compiler chooses compact f32/u8 transport and slices it with the
+    same row selection as geometry and paint.
+    """
+
+    values: np.ndarray
+    components: int = 1
+    dtype: str = "f32"  # "f32" | "u8"
+
+    def spec(self) -> dict[str, Any]:
+        return {"mode": "direct", "components": self.components, "dtype": self.dtype}
+
+
+@dataclass
 class SizeChannel:
+    """A resolved scatter size encoding: constant, or values mapped to a
+    pixel range. Built by `resolve_size`."""
+
     mode: str  # "constant" | "continuous"
     constant: float = 4.0
     values: Optional[npt.NDArray[np.float64]] = None
@@ -111,6 +141,8 @@ class SizeChannel:
     )
 
     def spec(self) -> dict[str, Any]:
+        """The channel's resolved settings as a plain dict, exactly as
+        shipped in the chart spec."""
         if self.mode == "constant":
             return {"mode": "constant", "size": self.constant}
         return {
@@ -384,6 +416,17 @@ def resolve_color(
     if hasattr(color, "to_numpy"):
         color = color.to_numpy()
     arr = np.asarray(color)
+    if arr.ndim == 2 and arr.shape in {(n, 3), (n, 4)}:
+        try:
+            rgba = np.asarray(arr, dtype=np.float64)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("direct RGB/RGBA colors must be real numeric") from exc
+        if not np.isfinite(rgba).all() or np.any((rgba < 0.0) | (rgba > 1.0)):
+            raise ValueError("direct RGB/RGBA colors must contain finite values between 0 and 1")
+        if rgba.shape[1] == 3:
+            rgba = np.column_stack((rgba, np.ones(n, dtype=np.float64)))
+        return ColorChannel(mode="direct_rgba", rgba=np.ascontiguousarray(rgba))
+
     if arr.ndim != 1 or len(arr) != n:
         raise ValueError(f"color array must be 1-D length {n}, got shape {arr.shape}")
 
@@ -434,6 +477,11 @@ def resolve_color(
 
 
 def resolve_size(size: Any, n: int, *, range_px: tuple[float, float] = (2.0, 18.0)) -> SizeChannel:
+    """Resolve a scatter ``size`` input into a `SizeChannel`.
+
+    A scalar (or None) becomes a constant size; a length-``n`` numeric
+    array maps linearly onto ``range_px`` pixels.
+    """
     if size is None:
         return SizeChannel(mode="constant")
     if np.isscalar(size):
@@ -458,8 +506,9 @@ def resolve_size(size: Any, n: int, *, range_px: tuple[float, float] = (2.0, 18.
 
 def normalize_to_unit(values: npt.NDArray[np.float64], domain: tuple[float, float]) -> np.ndarray:
     """Map values to [0,1] over `domain` (for continuous color/size upload).
-    Non-finite (NaN, ±inf) → domain floor so it never poisons a vertex (§19);
-    the validity story tightens with real bitmaps later."""
+    Non-finite (NaN, ±inf) → domain floor so it never poisons a vertex
+    (design dossier §19); the validity story tightens with real bitmaps
+    later."""
     return kernels.normalize_f32(values, domain, nonfinite="zero")
 
 
@@ -471,7 +520,7 @@ def ship_channels(
     palette: list[str],
 ) -> tuple[Any, Any]:
     """Ship a trace's color and size channels in the standard wire shape
-    (§29/§36c): per-point channels carry a `buf` index into the blob; constant
+    (design dossier §29/§36c): per-point channels carry a `buf` index into the blob; constant
     channels ship spec-only. Used by the build path and by drill-in view
     updates for any chart kind with per-mark channels.
 
@@ -480,8 +529,35 @@ def ship_channels(
     normalizing all N rows to ship a 200k window is O(N) work for nothing.
     Returns (color_spec, size_spec)."""
     cc = trace.color_ch or ColorChannel(mode="constant", constant=None)
+    color_spec = ship_color_channel(cc, sel, ship_scalar, ship_u8, palette)
+    sc = trace.size_ch or SizeChannel(mode="constant")
+    size_spec = sc.spec()
+    if sc.mode == "continuous":
+        values = sc.values
+        domain = sc.domain
+        if values is None or domain is None:
+            raise ValueError("continuous size channel missing values or domain")
+        vals = values if sel is None else values[sel]
+        size_spec["buf"] = ship_scalar(normalize_to_unit(vals, domain))
+    return color_spec, size_spec
+
+
+def ship_color_channel(
+    cc: ColorChannel, sel: Any, ship_scalar: Any, ship_u8: Any, palette: list[str]
+) -> dict[str, Any]:
+    """Ship one fill/stroke paint channel in the common wire representation."""
     color_spec = cc.spec()
-    if cc.mode == "continuous":
+    if cc.mode == "direct_rgba":
+        rgba = cc.rgba
+        if rgba is None:
+            raise ValueError("direct RGBA color channel missing values")
+        values = rgba if sel is None else rgba[sel]
+        packed = np.rint(np.clip(values, 0.0, 1.0) * 255.0).astype(np.uint8)
+        color_spec["buf"] = ship_u8(packed.reshape(-1))
+        color_spec["n"] = int(len(values))
+    elif cc.mode == "match_fill":
+        pass
+    elif cc.mode == "continuous":
         values = cc.values
         domain = cc.domain
         if values is None or domain is None:
@@ -505,13 +581,52 @@ def ship_channels(
             color_spec["buf"] = ship_scalar(codes)
         color_spec["palette"] = [palette[i % len(palette)] for i in range(len(categories))]
 
-    sc = trace.size_ch or SizeChannel(mode="constant")
-    size_spec = sc.spec()
-    if sc.mode == "continuous":
-        values = sc.values
-        domain = sc.domain
-        if values is None or domain is None:
-            raise ValueError("continuous size channel missing values or domain")
-        vals = values if sel is None else values[sel]
-        size_spec["buf"] = ship_scalar(normalize_to_unit(vals, domain))
-    return color_spec, size_spec
+    return color_spec
+
+
+def resolve_style_channel(
+    value: Any,
+    n: int,
+    label: str,
+    *,
+    minimum: Optional[float] = None,
+    maximum: Optional[float] = None,
+    components: int = 1,
+) -> tuple[Any, Optional[StyleChannel]]:
+    """Return ``(constant, channel)`` for a scalar-or-direct numeric style."""
+    if value is None or (np.isscalar(value) and components == 1):
+        if value is None:
+            return None, None
+        constant = _finite_scalar(value, label)
+        if minimum is not None and constant < minimum:
+            raise ValueError(f"{label} must be at least {minimum}")
+        if maximum is not None and constant > maximum:
+            raise ValueError(f"{label} must be at most {maximum}")
+        return constant, None
+    arr = np.asarray(value)
+    expected = (n,) if components == 1 else (n, components)
+    if arr.shape != expected:
+        raise ValueError(f"{label} array must have shape {expected}, got {arr.shape}")
+    values = _as_real_array(arr.reshape(-1), f"{label} array").reshape(expected)
+    if not np.isfinite(values).all():
+        raise ValueError(f"{label} array must contain only finite values")
+    if minimum is not None and np.any(values < minimum):
+        raise ValueError(f"{label} array values must be at least {minimum}")
+    if maximum is not None and np.any(values > maximum):
+        raise ValueError(f"{label} array values must be at most {maximum}")
+    return None, StyleChannel(np.ascontiguousarray(values), components=components)
+
+
+def ship_style_channels(
+    style_channels: dict[str, StyleChannel], sel: Any, ship_scalar: Any, ship_u8: Any
+) -> dict[str, Any]:
+    """Ship direct style channels after applying the geometry row selection."""
+    result: dict[str, Any] = {}
+    for name, channel in style_channels.items():
+        values = channel.values if sel is None else channel.values[sel]
+        spec = channel.spec()
+        flat = np.ascontiguousarray(values).reshape(-1)
+        spec["buf"] = ship_u8(flat) if channel.dtype == "u8" else ship_scalar(flat)
+        spec["n"] = int(len(values))
+        result[name] = spec
+    return result

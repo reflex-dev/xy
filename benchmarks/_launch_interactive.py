@@ -92,10 +92,9 @@ function nonblank(gl) {
 
 def xy_probe_html(fig: Any) -> str:
     html = fig.to_html()
-    needle = 'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
+    needle = 'xy.renderStandalone(document.getElementById("chart"), spec, buf);'
     replacement = (
-        "window.__benchView=xy.renderStandalone("
-        'document.getElementById("chart"), spec, bytes.buffer);'
+        'window.__benchView=xy.renderStandalone(document.getElementById("chart"), spec, buf);'
     )
     if needle not in html:
         raise RuntimeError("xy standalone bootstrap changed")
