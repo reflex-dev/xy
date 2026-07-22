@@ -40,7 +40,7 @@ help:
 		'  make lint             run ruff check' \
 		'  make format           run ruff format --check' \
 		'  make typecheck        run ty over the shippable package' \
-		'  make js-check         verify committed JS bundles are fresh' \
+		'  make js-check         build the render client from source' \
 		'  make rust-check       run cargo test and clippy'
 
 setup:
@@ -159,7 +159,7 @@ python-floor:
 	$(PYTHON) scripts/check_python_floor.py
 
 js-check:
-	node js/build.mjs --check
+	node js/build.mjs
 
 rust-check:
 	cargo test

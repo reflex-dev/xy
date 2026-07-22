@@ -184,8 +184,8 @@ def _base_checks(
         Check("pytest", "Python tests", (py, "-m", "pytest", "-q"), requires_modules=("pytest",)),
         Check(
             "js_bundle",
-            "committed JavaScript bundles match source",
-            ("node", "js/build.mjs", "--check"),
+            "render client builds from source",
+            ("node", "js/build.mjs"),
             requires_executables=("node",),
             requires_node_major=18,
         ),

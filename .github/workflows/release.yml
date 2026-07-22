@@ -70,10 +70,6 @@ jobs:
           node-version: "22"
       - name: Install JS build toolchain
         run: npm ci
-      - name: Verify committed JS bundles are fresh
-        run: node js/build.mjs --check
-      - name: Build JS client
-        run: node js/build.mjs
       - name: Cross-compile the native core (zig)
         if: matrix.zig
         env:
@@ -91,8 +87,10 @@ jobs:
       - name: Build the platform wheel
         shell: bash
         env:
-          # The core is prebuilt above; the hook only packs it and stamps the
-          # platform tag. REQUIRE_CARGO keeps a coreless wheel from shipping.
+          # The core is prebuilt above; the hook packs it and stamps the
+          # platform tag, and builds the render client (node) into the wheel.
+          # The client is required by default; REQUIRE_CARGO also forbids the
+          # core from silently going missing.
           XY_REQUIRE_CARGO: "1"
           XY_SKIP_CARGO: "1"
           XY_CARGO_TARGET: ${{ matrix.target }}
@@ -149,10 +147,6 @@ jobs:
           version: "4.0.9"
       - name: Install JS build toolchain
         run: npm ci
-      - name: Verify committed JS bundles are fresh
-        run: node js/build.mjs --check
-      - name: Build JS client
-        run: node js/build.mjs
       - name: Cross-compile the native core (emscripten)
         env:
           # Unwinding imports a __cpp_exception WebAssembly tag that Pyodide's
@@ -199,15 +193,16 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
-      # The sdist carries the committed JS bundle; it builds the Rust core on the
-      # user's machine if they install from sdist and have a toolchain. There is
-      # no fallback: without a toolchain the compute layer raises a clear
-      # ImportError on first use (hatch_build.py). Wheels are the normal path.
+      # The build hook builds the render client (node) into the sdist, so
+      # `pip install <sdist>` needs no Node. It builds the Rust core on the
+      # user's machine if they have a toolchain; without one the compute layer
+      # raises a clear ImportError on first use (hatch_build.py). Wheels are the
+      # normal path.
       - name: Install JS build toolchain
         run: npm ci
-      - name: Verify committed JS bundles are fresh
-        run: node js/build.mjs --check
       - name: Build sdist
+        # The client is required by default, so a published sdist always carries
+        # the prebuilt render client (the build fails otherwise).
         run: uv build --sdist
       - name: Verify sdist contents
         shell: bash

@@ -70,6 +70,13 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: docs/app/uv.lock
+      # `uv sync` builds the editable xy dependency, whose hatch hook builds the
+      # render client from source (generated, not committed; §33). The docs
+      # tests build real reflex_xy components, which link that client out of the
+      # installed xy package. Pin Node so the build uses a vite-compatible one.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
       - name: Install docs dependencies
         run: uv sync --project docs/app --frozen --group dev
       - name: Run docs tests
