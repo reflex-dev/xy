@@ -1,6 +1,11 @@
 ---
 title: Line and Area Charts
 description: Render trends, ranges, baselines, smooth curves, and layered series.
+components:
+  - xy.line_chart
+  - xy.area_chart
+  - xy.step_chart
+  - xy.stairs_chart
 ---
 
 # Line and Area Charts

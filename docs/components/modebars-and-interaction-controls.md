@@ -1,6 +1,9 @@
 ---
 title: Modebars & Controls
 description: Configure XY's toolbar, gestures, selection, exports, and linked viewports.
+components:
+  - xy.modebar
+  - xy.interaction_config
 ---
 
 # Modebars & Controls

@@ -1709,6 +1709,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pytest-codspeed", marker = "extra == 'codspeed'", specifier = ">=5,<6" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.8" },
+    { name = "starlette", marker = "extra == 'dev'", specifier = ">=0.36" },
     { name = "ty", marker = "extra == 'dev'" },
 ]
 provides-extras = ["dev", "bench", "codspeed"]

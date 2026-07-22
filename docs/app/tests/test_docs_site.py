@@ -3,6 +3,7 @@
 import hashlib
 import importlib.util
 import inspect
+import json
 import re
 import tomllib
 import xml.etree.ElementTree as ET
@@ -34,6 +35,7 @@ from reflex_site_shared.docs import render_markdown
 from reflex_site_shared.docs.content import discover_docs
 from rxconfig import config
 from xy_docs.api_reference import (
+    API_REFERENCE_HEADING,
     AXES_AND_ANNOTATIONS,
     CHART_FACTORY_GROUPS,
     CHROME_AND_BEHAVIOR,
@@ -42,6 +44,11 @@ from xy_docs.api_reference import (
     chart_containers_api,
     chart_factories_api,
     chrome_and_behavior_api,
+    component_api_callables,
+    component_api_markdown,
+    component_api_paths,
+    component_api_references,
+    component_page_api,
     marks_api,
 )
 from xy_docs.breadcrumb import _breadcrumb_parts, xy_docs_breadcrumb
@@ -53,7 +60,11 @@ from xy_docs.gallery import (
     _gallery_preview_svg,
     chart_gallery_grid,
 )
-from xy_docs.markdown import XyDocsMarkdownTransformer, render_xy_markdown_page
+from xy_docs.markdown import (
+    XyDocsMarkdownTransformer,
+    page_with_api_reference_toc,
+    render_xy_markdown_page,
+)
 from xy_docs.navbar import XY_GITHUB_STARS, XY_REPOSITORY_URL, xy_docs_navbar
 from xy_docs.sidebar import (
     SIDEBAR_SECTION_GROUPS,
@@ -1629,6 +1640,215 @@ def test_component_api_uses_generated_shared_tables() -> None:
     assert "Description" in factories
 
 
+def test_component_guides_append_frontmatter_driven_api_tables() -> None:
+    """Mirror Reflex library docs by generating component APIs at page end."""
+    expected = {
+        "/components/marks/": tuple(f"xy.{function.__name__}" for function in MARKS),
+        "/components/axes/": ("xy.x_axis", "xy.y_axis"),
+        "/components/legends/": ("xy.legend",),
+        "/components/tooltips/": ("xy.tooltip",),
+        "/components/colorbars/": ("xy.colorbar",),
+        "/components/modebars-and-interaction-controls/": (
+            "xy.modebar",
+            "xy.interaction_config",
+        ),
+        "/components/annotations/": (
+            "xy.vline",
+            "xy.hline",
+            "xy.x_band",
+            "xy.y_band",
+            "xy.threshold",
+            "xy.threshold_zone",
+            "xy.text",
+            "xy.label",
+            "xy.marker",
+            "xy.arrow",
+            "xy.callout",
+        ),
+    }
+    pages = {page.route: page for page in discover_docs(DOCS_CONFIG)}
+
+    for route, component_paths in expected.items():
+        page = pages[route]
+        assert component_api_paths(page.metadata) == component_paths
+        assert (
+            tuple(
+                f"xy.{component.__name__}" for component in component_api_callables(component_paths)
+            )
+            == component_paths
+        )
+        assert page_with_api_reference_toc(page).content.endswith(f"\n\n## {API_REFERENCE_HEADING}")
+
+    overview = pages["/components/"]
+    assert component_api_paths(overview.metadata) == ()
+    assert page_with_api_reference_toc(overview) is overview
+
+    axes_rendered = str(render_xy_markdown_page(pages["/components/axes/"]))
+    api_reference_index = axes_rendered.index(API_REFERENCE_HEADING)
+    assert api_reference_index < axes_rendered.rindex("xy.x_axis")
+    assert axes_rendered.rindex("xy.x_axis") < axes_rendered.rindex("xy.y_axis")
+    assert 'id:"api-reference"' in axes_rendered
+    assert "Props" in axes_rendered
+    assert "Description" in axes_rendered
+    assert "Preview" not in axes_rendered
+
+
+def test_chart_gallery_pages_append_factory_api_tables() -> None:
+    """Generate focused chart-factory tables without changing the gallery index."""
+    expected = {
+        "/charts/line-and-area/": (
+            "xy.line_chart",
+            "xy.area_chart",
+            "xy.step_chart",
+            "xy.stairs_chart",
+        ),
+        "/charts/scatter/": ("xy.scatter_chart",),
+        "/charts/bar-and-column/": ("xy.bar_chart", "xy.column_chart"),
+        "/charts/distributions/": (
+            "xy.histogram_chart",
+            "xy.ecdf_chart",
+            "xy.box_chart",
+            "xy.violin_chart",
+        ),
+        "/charts/density-and-grids/": (
+            "xy.hexbin_chart",
+            "xy.heatmap_chart",
+            "xy.contour_chart",
+        ),
+        "/charts/uncertainty/": ("xy.error_band_chart", "xy.errorbar_chart"),
+        "/charts/specialized/": (
+            "xy.stem_chart",
+            "xy.segments_chart",
+            "xy.triangle_mesh_chart",
+        ),
+        "/charts/facets-and-layers/": ("xy.chart", "xy.facet_chart"),
+    }
+    pages = {page.route: page for page in discover_docs(DOCS_CONFIG)}
+
+    for route, factory_paths in expected.items():
+        page = pages[route]
+        assert component_api_paths(page.metadata) == factory_paths
+        assert page_with_api_reference_toc(page).content.endswith(f"\n\n## {API_REFERENCE_HEADING}")
+
+    gallery = pages["/overview/gallery/"]
+    assert component_api_paths(gallery.metadata) == ()
+    assert page_with_api_reference_toc(gallery) is gallery
+
+    scatter_rendered = str(render_xy_markdown_page(pages["/charts/scatter/"]))
+    assert scatter_rendered.index(API_REFERENCE_HEADING) < scatter_rendered.rindex(
+        "xy.scatter_chart"
+    )
+    assert "Props" in scatter_rendered
+    assert "Preview" not in scatter_rendered
+
+
+def test_chart_factory_api_expands_forwarded_chart_props() -> None:
+    """Document the real Chart kwargs instead of a generic ``**props`` row."""
+    shared_names = tuple(
+        parameter.name
+        for parameter in inspect.signature(xy.Chart).parameters.values()
+        if parameter.name not in {"kind", "children"}
+    )
+
+    line_reference = component_api_references(("xy.line_chart",))[0]
+    line_names = tuple(parameter.name for parameter in line_reference.parameters)
+    assert line_names == ("*children", *shared_names)
+    assert "**props" not in line_names
+    assert line_reference.parameters[0].description == (
+        "Marks, axes, annotations, and chart chrome."
+    )
+    assert line_reference.parameters[line_names.index("width")].description == (
+        'Chart width in pixels or a CSS size such as ``"100%"``.'
+    )
+
+    facet_reference = component_api_references(("xy.facet_chart",))[0]
+    facet_names = tuple(parameter.name for parameter in facet_reference.parameters)
+    assert facet_names[:8] == (
+        "*children",
+        "by",
+        "cols",
+        "share_x",
+        "share_y",
+        "link",
+        "link_select",
+        "gap",
+    )
+    assert facet_names[8:] == shared_names
+    assert "**props" not in facet_names
+    assert len(facet_names) == len(set(facet_names))
+
+    markdown = component_api_markdown((line_reference,))
+    assert "| `title` |" in markdown
+    assert "| `width` |" in markdown
+    assert "| `zoom_limits` |" in markdown
+    assert "| `link_axes` |" in markdown
+
+
+def test_other_api_owned_pages_append_focused_tables() -> None:
+    """Document styling factories and the public Reflex adapter surface in place."""
+    expected = {
+        "/styling/animations/": ("xy.animation", "xy.spring"),
+        "/styling/themes-and-tokens/": ("xy.theme",),
+        "/integrations/reflex/": (
+            "reflex_xy.chart",
+            "reflex_xy.figure",
+            "reflex_xy.inline",
+            "reflex_xy.append",
+        ),
+    }
+    pages = {page.route: page for page in discover_docs(DOCS_CONFIG)}
+
+    for route, api_paths in expected.items():
+        page = pages[route]
+        assert component_api_paths(page.metadata) == api_paths
+        assert page_with_api_reference_toc(page).content.endswith(f"\n\n## {API_REFERENCE_HEADING}")
+
+    adapter_api = str(
+        component_page_api(component_api_references(expected["/integrations/reflex/"]))
+    )
+    for api_path in expected["/integrations/reflex/"]:
+        assert api_path in adapter_api
+    assert "Props" in adapter_api
+    assert "Preview" not in adapter_api
+
+
+@pytest.mark.parametrize(
+    ("metadata", "exception"),
+    (
+        ({"components": "xy.line"}, TypeError),
+        ({"components": ["rx.line"]}, ValueError),
+        ({"components": ["xy.not_a_component"]}, ValueError),
+        ({"components": ["reflex_xy.not_a_component"]}, ValueError),
+        ({"components": ["xy.line", "xy.line"]}, ValueError),
+    ),
+)
+def test_component_api_frontmatter_rejects_invalid_declarations(
+    metadata: dict[str, object],
+    exception: type[Exception],
+) -> None:
+    """Fail docs compilation when component API metadata becomes stale."""
+    with pytest.raises(exception):
+        component_api_references(component_api_paths(metadata))
+
+
+def test_component_api_html_and_markdown_share_cached_metadata() -> None:
+    """Keep website and agent tables in sync without resolving twice."""
+    paths = ("xy.x_axis",)
+    references = component_api_references(paths)
+    assert component_api_references(paths) is references
+
+    rendered_html = str(component_page_api(references))
+    rendered_markdown = component_api_markdown(references)
+    assert rendered_markdown.startswith(f"## {API_REFERENCE_HEADING}\n")
+    assert "### xy.x_axis" in rendered_markdown
+    assert "| Prop | Type | Description |" in rendered_markdown
+    for parameter in references[0].parameters:
+        assert parameter.name in rendered_html
+        assert parameter.name in rendered_markdown
+        assert json.dumps(parameter.description)[1:-1] in rendered_html
+        assert parameter.description in rendered_markdown
+
+
 def test_documented_factories_describe_every_parameter() -> None:
     """Keep generated API descriptions sourced from complete docstrings."""
     factories = (
@@ -1646,3 +1866,11 @@ def test_documented_factories_describe_every_parameter() -> None:
                 factory.__name__,
                 parameter.name,
             )
+
+    chart_docstring = inspect.getdoc(xy.Chart.__init__) or ""
+    assert "Args:" in chart_docstring
+    for parameter in inspect.signature(xy.Chart).parameters.values():
+        assert f"{parameter.name}:" in chart_docstring, (
+            "Chart",
+            parameter.name,
+        )
