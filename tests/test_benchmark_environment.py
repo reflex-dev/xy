@@ -268,7 +268,7 @@ def test_context_governor_reserves_pending_restores() -> None:
 
     assert "view._ctxPendingReservation" in client
     assert "maxPendingRestores: 1" in client
-    assert "this._ctxReleaseEventPending = true" in client
+    assert "this._ctxLostPending = true" in client
     assert "const activeBudget = Math.max(1, this.budget()" in client
     constructor = client[client.index("  constructor(") : client.index("  _listen(")]
     assert 'this.root.textContent = "xy: WebGL2 unavailable in this browser.";' in constructor
@@ -278,7 +278,7 @@ def test_context_governor_reserves_pending_restores() -> None:
     deferred_reserve = client.index(
         "XY_CONTEXT_GOVERNOR.reserve(this, { deferred: true })", recover
     )
-    release_event_wait = client.index("if (this._ctxReleaseEventPending)", recover)
+    release_event_wait = client.index("if (this._ctxReleasedExt && this._ctxLostPending)", recover)
     restore = client.index("ext.restoreContext();", recover)
     assert release_event_wait < deferred_reserve < restore
 
