@@ -192,7 +192,7 @@ def lifecycle_mod():
 
 @pytest.fixture(scope="module")
 def visual_mod():
-    return _load(ROOT / "scripts" / "visual_regression_smoke.py", "visual_regression_smoke")
+    return _load(ROOT / "scripts" / "visual_health_smoke.py", "visual_health_smoke")
 
 
 def test_smokes_cover_the_whole_gallery(lifecycle_mod, visual_mod, charts_mod) -> None:

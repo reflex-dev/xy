@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Screenshot smoke for the example gallery.
+"""Visual-health smoke for the example gallery.
 
 Runs the FastAPI example and, for each chart route plus the drilldown,
 screenshots it in headless Chromium and asserts the render is not blank, flat,
 or collapsed, and that axis tick labels do not overlap.
 
-Usage: python scripts/visual_regression_smoke.py [/path/to/chrome]
+This is deliberately not an image-identity regression oracle. Reviewed visual
+identity lives in ``scripts/visual_baseline.py``; this gate retains the broader
+gallery health, occupancy, and tick-overlap coverage.
+
+Usage: python scripts/visual_health_smoke.py [/path/to/chrome]
 """
 
 from __future__ import annotations
@@ -251,7 +255,7 @@ def main() -> int:
         png, _ = _screenshot_route(session, f"{base_url}{DRILLDOWN_PATH}", "drilldown")
         _assert_visual("drilldown", png)
         print("  drilldown: rendered")
-    print(f"visual regression smoke OK: {len(GALLERY_IDS)} charts + drilldown")
+    print(f"visual health smoke OK: {len(GALLERY_IDS)} charts + drilldown")
     return 0
 
 

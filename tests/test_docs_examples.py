@@ -507,12 +507,14 @@ def test_docs_name_split_browser_hardening_gates() -> None:
 
     step_names = [
         "Browser lifecycle smoke (Chromium)",
-        "Browser visual regression smoke (Chromium)",
+        "Browser visual health smoke (Chromium)",
+        "Reviewed visual baseline (Chromium)",
         "Browser interaction stress smoke (Chromium)",
     ]
     scripts = [
         "scripts/reflex_lifecycle_smoke.py",
-        "scripts/visual_regression_smoke.py",
+        "scripts/visual_health_smoke.py",
+        "scripts/visual_baseline.py",
         "scripts/interaction_stress_smoke.py",
     ]
     for text in (readme, production, contributing):

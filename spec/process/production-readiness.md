@@ -71,12 +71,12 @@ These must pass before publishing or making a broad performance claim.
 | Public API | `__all__`, lazy exports, `__version__`, the source `py.typed` marker, focused type-surface tests, and fresh-process import-time budget stay coherent | `make check-api` |
 | Import-time budget | `xy.__init__`, `dir(xy)`, export helpers, chart construction, and `.widget()` keep their lazy import boundaries | `make check-import` |
 | Claim guardrails | Public docs and package metadata avoid broad, unqualified performance claims | `make check-claims` |
-| CI/release workflows | Hard gates, non-blocking benchmarks, exact-SHA qualification, immutable artifact/image provenance, benchmark artifact upload/download, trusted publishing, and no-Rust clear-error jobs stay wired | `make check-ci` |
-| HTML export safety | Inline JSON/script escaping, atomic path writes, hostile user strings, browser client text-node insertion, standalone CSP enforcement, and wire-level network isolation stay protected | `make check-security` and `make check-browser CHROMIUM=/path/to/chrome` |
+| CI/release workflows | Hard gates, non-blocking benchmarks, best-effort benchmark artifact upload/download, trusted publishing, and no-Rust clear-error jobs stay wired | `make check-ci` |
+| HTML export safety | Inline JSON/script escaping, atomic path writes, hostile user strings, browser client text-node insertion, standalone CSP, and network isolation stay protected | `make check-security` and `make check-browser CHROMIUM=/path/to/chrome` |
 | Python tests | Native backend passes | `pytest -q` |
 | Python style | Library, tests, scripts, and benchmarks lint clean | `ruff check .` and `ruff format --check .` |
 | Matplotlib reference | The reviewed compatibility snapshot matches the pinned released matplotlib reference, and the `xy.pyplot` shim passes its interoperability and dual-engine corpus suites | `python scripts/sync_matplotlib_compat.py --check` and `pytest tests/pyplot` |
-| Rust core | Native kernels pass in debug and optimized profiles, the known release-only regression remains inventoried, and lint stays clean | `cargo test`, hard CI `cargo test --locked --release`, and `cargo clippy --all-targets -- -D warnings` |
+| Rust core | Native kernels pass and lint clean | `cargo test` and `cargo clippy --all-targets -- -D warnings` |
 | Native ABI | C ABI can be loaded from the built core | `python scripts/abi_smoke.py` |
 | JavaScript | Committed bundles match source | `node js/build.mjs --check` |
 | Browser render | WebGL smoke reaches real pixels | `python scripts/render_smoke_nonumpy.py <chromium>` |
@@ -134,20 +134,13 @@ reports, and sharing a single file, but it has a clear security contract:
 - The browser client inserts user-facing text with `textContent` or text nodes;
   HTML parser sinks such as `innerHTML` are reserved for fixed internal icons,
   not titles, labels, legends, categories, or tooltips.
-- The hard runtime-security browser fixture sends hostile markup through title,
-  axis, tick, trace, category, annotation, legend, colorbar, and tooltip text,
-  then requires literal text, no executable user-created DOM or dialogs, an
-  observed CSP block for hostile CSS, and zero requests reaching a loopback
-  HTTP sentinel. This page-content contract is independent of the Chromium
-  process-sandbox launch policy below.
 - Hosts that need nonce/hash-only strict CSP should serve the JavaScript bundle
   as a separate asset and inject data through a nonce/hash-aware wrapper.
 - Static PNG export validates width, height, scale, and timeout options before
   launching Chromium so bad user input produces actionable Python errors, and
-  keeps Chromium's sandbox enabled by default without an automatic downgrade.
-  A sandboxed launch failure is final. Pass `sandbox=False` only as an explicit
-  opt-in for trusted HTML in constrained CI/container environments that cannot
-  launch a sandboxed browser.
+  keeps Chromium's sandbox enabled by default. Pass `sandbox=False` only for
+  trusted HTML in constrained CI/container environments that cannot launch a
+  sandboxed browser.
 - Export tests should include weird strings with `</script>`, HTML entities,
   mixed-case tags, and Unicode line/paragraph separators.
 
@@ -168,7 +161,7 @@ packaging, cross-platform, or exact-SHA release evidence cataloged in the
 | `xy.pyplot` shim behavior, matplotlib interoperability, reference corpus | `make check-pyplot` |
 | Reviewed matplotlib compatibility snapshot (`spec/matplotlib/compat-matrix.md`) | `python scripts/sync_matplotlib_compat.py --check` |
 | `xy.pyplot` speed margin against matplotlib | `make check-pyplot-speed` |
-| Standalone HTML export, path writes, user text, tooltips, legends, browser DOM insertion | `make check-security`; add `make check-browser CHROMIUM=/path/to/chrome` for runtime DOM/CSP/network behavior |
+| Standalone HTML export, path writes, user text, tooltips, legends, browser DOM insertion, CSP, and network isolation | `make check-security` plus `make check-browser CHROMIUM=/path/to/chrome` |
 | Benchmark harness code, environment metadata, report schema, regressions | `make check-benchmark-harness` |
 | Generated benchmark JSON artifacts | `make check-benchmark-report BENCHMARK_JSON=benchmark.json BENCHMARK_KIND=scatter-vs` |
 | CI/release workflows, artifact upload/download, no-Rust clear-error jobs | `make check-ci` |
@@ -191,23 +184,19 @@ make check-docs
 ```
 
 The browser gates are split into app-facing checks that match the CI step
-names: `Runtime standalone security smoke (Chromium)`, `Browser lifecycle smoke
-(Chromium)`, `Browser visual regression smoke (Chromium)`, `Step tier-update
-smoke (Chromium)`, `Animation smoke (Chromium)`, `Pick boundary smoke
-(Chromium)`, `Browser interaction stress smoke (Chromium)`, and `Browser
-dashboard reliability smoke (Chromium)`.
+names: `Browser lifecycle smoke (Chromium)`, `Browser visual health smoke
+(Chromium)`, `Reviewed visual baseline (Chromium)`, `Step tier-update smoke
+(Chromium)`, `Animation smoke (Chromium)`, `Pick boundary smoke (Chromium)`,
+`Browser interaction stress smoke (Chromium)`, and `Browser dashboard
+reliability smoke (Chromium)`.
 `make check-browser` runs all of these except the dashboard reliability smoke,
-which runs in CI only. The runtime-security smoke drives a production
-standalone export with hostile text and custom CSS, asserts literal DOM text
-and no executable user nodes/dialogs, observes the CSP block, and retains a
-wire-level zero-request result from a loopback sentinel. The lifecycle and
-visual smokes both boot the
+which runs in CI only. The lifecycle and visual smokes both boot the
 `examples/fastapi` app under uvicorn and drive Chromium at its live routes (no
 committed HTML): the lifecycle smoke loads every gallery chart and the live
 drilldown and requires each to report nonblank pixels through `initial`,
 `narrow-resize`, `wide-resize`, `visibility-change`, `context-restore`, and
 `restore` (and to keep its runtime DOM slots), then confirms the index page's
-embedded iframes paint; the visual regression smoke screenshots every gallery
+embedded iframes paint; the visual-health smoke screenshots every gallery
 route and checks nonblank/colored/occupancy plus tick-label overlap. The
 `context-restore` phase forces `WEBGL_lose_context` loss/restoration and
 requires the rebuilt chart to remain nonblank. The animation smoke requires
@@ -221,7 +210,7 @@ validates the real `ChartView` wheel zoom, pan, hover, crosshair, box zoom, and
 brush-select paths with p95 budgets plus visual invariants for blank frames,
 tick-label overlap, tooltip stability, crosshair visibility, view changes, box
 zoom narrow/restore behavior, brush select count/clear behavior, lit-pixel
-readback floors, and frame-to-frame color jumps. The visual regression smoke
+readback floors, and frame-to-frame color jumps. The visual-health smoke
 also validates title, plot, x-axis, and y-axis regions plus plot-region
 occupancy, and it screenshots static Reflex-style chrome shells for the custom
 legend/tooltip and annotated heatmap examples. A chart cannot collapse into a
@@ -343,10 +332,19 @@ nonblank. A final pass loads the index page and confirms its embedded iframes
 paint. Empty canvases, destroyed views, shortened lifecycle reports, failed
 context restores, or missing DOM slots fail the gate.
 
-The visual gate runs `scripts/visual_regression_smoke.py`. It boots the same
+The visual-health gate runs `scripts/visual_health_smoke.py`. It boots the same
 app and screenshots every gallery chart route plus `/drilldown`, checking
 nonblank, colored, unique-color, plot-occupancy, and tick-label-overlap
 invariants so a blank, flat, or collapsed chart fails the gate.
+
+The visual-identity gate runs `scripts/visual_baseline.py` against
+`spec/visual-baselines/v1.json` with the Playwright Chromium version, bundled
+font checksum, 900×470 viewport, DPR 1, downsample, semantic geometry, and
+perceptual tolerances pinned. Its required real-browser negative controls alter
+numeric payload values, color, a rendered label, and canvas geometry; every
+mutation must be rejected. CI always retains the evidence plus expected,
+actual, and diff PNGs. Baseline update mode is forbidden in CI and follows the
+independent review procedure in [contributing.md](contributing.md).
 
 The interaction gate runs `scripts/interaction_stress_smoke.py`, which is a
 smaller gated version of `benchmarks/bench_interaction.py`. The smoke validates
@@ -366,22 +364,6 @@ running them. The full local gate expects Node 18+ plus a Rust toolchain with
 `cargo`, `rustc`, and clippy (`rustup component add clippy`). Missing Rust,
 Node, Chrome, `ruff`, `ty`, or `pytest` produce direct install/skip guidance.
 
-## Deployment Qualification and Promotion
-
-Docs deployment uses the same exact-source rule as package publication. Dev
-resolves an immutable 40-character SHA, proves that it is on `main`, and waits
-for the newest `Required CI` job for that SHA before building. Staging and
-production additionally require the CalVer deployment tag to resolve to that
-exact commit. A manual dispatch follows these same dependencies; approval
-cannot bypass qualification.
-
-The reusable build emits maximum BuildKit provenance and resolves each pushed
-multi-platform image's ECR `sha256` digest. Staging Helm values are written as
-`tag@sha256:digest` references. After production approval, the promotion job
-queries ECR again and requires both tags still to resolve to the original build
-digests before opening the production Helm PR. Production therefore promotes
-the staging artifacts rather than rebuilding or trusting a mutable tag.
-
 ## Release Checklist
 
 Before tagging a release:
@@ -390,13 +372,11 @@ Before tagging a release:
   applies.
 - Run `make check-full` for the non-browser layer, then confirm each applicable
   browser, conformance, dashboard, packaging, and host-integration gate in the
-  [current testing inventory](../testing/current.md). Release automation then
-  verifies that the exact tagged commit is on `main`, that its newest
-  `Required CI` run passed, and that tag, package version, and dated changelog
-  agree; manual real publication uses the same preflight.
+  [current testing inventory](../testing/current.md). Exact-SHA automated
+  qualification remains [TST-NI-003](../testing/gaps.md#tst-ni-003--exact-sha-release-deployment-and-provenance-preflight),
+  so this confirmation is manual until that gap is implemented.
 - Run `make check-ci` to confirm CI and release workflow
-  gates still include exact-source qualification, complete-set artifact hash
-  verification, upload/download, docs image digest promotion, and trusted PyPI
+  gates still include artifact verification, upload/download, and trusted PyPI
   publishing.
 - Before the first release after a change to the wheel matrix (new target,
   cross-compile toolchain, or tagging scheme), manually run the release
@@ -408,9 +388,6 @@ Before tagging a release:
 - Confirm CI built and verified native wheels for Linux glibc and musl/Alpine
   (x86-64, aarch64, armv7), macOS (x86-64, Apple Silicon), and Windows (x86, x64,
   arm64).
-- Confirm the hard `rust_release` job ran `cargo test --locked --release` and
-  found the named extreme-window regression in its release-profile inventory;
-  a debug-only Rust pass is not sufficient release evidence.
 - Confirm the Pyodide/Emscripten wheel passes its runtime load gate, not only
   its structural wheel check. The tested toolchain is Rust 1.97.0 with
   `panic=abort`, Emscripten 4.0.9, the `pyodide_2025_0` wheel ABI, and Pyodide
@@ -436,11 +413,6 @@ Before tagging a release:
   file exactly once with matching `sha256` and size fields. Wheels must stay
   package-only: docs, tests, benchmarks, scripts, and the `examples/` apps
   are sdist-only.
-- Confirm the `release-provenance.json` artifact records the qualified source
-  SHA and the exact complete wheel/sdist/Pyodide set. Both publishers download
-  the full set, reject omissions or additions, and verify size and SHA-256
-  before publishing; the manifest is retained with the workflow and attached
-  to the GitHub Release.
 - Confirm the wheel size budget is still below 15 MB.
 - Confirm README examples and `spec/api/api-examples.md` run against the tagged API.
 - Confirm package metadata uses measured, scoped language rather than broad
@@ -511,8 +483,8 @@ Keep pushing these in low-conflict increments:
   now builds and verifies every wheel/sdist/wasm artifact without publishing;
   remaining follow-up is wiring an actual TestPyPI upload into that dry-run
   path (today it only stops short of a real publish, it doesn't yet push to a
-  test index) and tying it to refreshed benchmark reports. Manual real
-  publication already uses the exact-tag/version/changelog preflight.
+  test index), plus tying it to version-bump/tag validation and refreshed
+  benchmark reports.
 - Keep the two example apps focused: `examples/reflex` on the reflex-xy
   integration surfaces (figure vars, events, state-driven and streaming
   updates, `on_view_change`), and `examples/fastapi` on the framework-neutral

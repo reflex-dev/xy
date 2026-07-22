@@ -134,15 +134,6 @@ tooltips, legends, or the browser client DOM code, run:
 make check-security
 ```
 
-If that change can affect runtime DOM insertion, custom CSS, or the standalone
-CSP, also run the real-browser boundary. It exercises a production export with
-hostile text and CSS and fails on executable user DOM, dialogs, or a request
-reaching its loopback sentinel:
-
-```bash
-make check-browser CHROMIUM=/path/to/chrome
-```
-
 When you change validation, public errors, builder rollback behavior, chart
 composition caching, or LOD/drill mutation boundaries, run:
 
@@ -169,7 +160,7 @@ For browser render smoke checks, pass a local Chrome/Chromium executable:
 make check-browser CHROMIUM=/path/to/chrome
 ```
 
-This runs the split browser checks, which CI runs as separate steps:
+This runs split browser checks, which CI runs as separate steps:
 
 | Check | CI step name |
 | --- | --- |
@@ -177,7 +168,8 @@ This runs the split browser checks, which CI runs as separate steps:
 | `smoke_render` | `Real-Figure render smoke (numpy + Chromium)` |
 | `runtime_security_smoke` | `Runtime standalone security smoke (Chromium)` |
 | `reflex_lifecycle_smoke` | `Browser lifecycle smoke (Chromium)` |
-| `visual_regression_smoke` | `Browser visual regression smoke (Chromium)` |
+| `visual_health_smoke` | `Browser visual health smoke (Chromium)` |
+| `visual_baseline` | `Reviewed visual baseline (Chromium)` |
 | `step_tier_smoke` | `Step tier-update smoke (Chromium)` |
 | `interaction_stress_smoke` | `Browser interaction stress smoke (Chromium)` |
 
@@ -210,12 +202,36 @@ nonblank. A final pass loads the index page and confirms its embedded iframes
 paint. A blank, destroyed, shortened lifecycle, failed context restore, or
 missing DOM slot is a failing browser gate.
 
-The visual gate runs `scripts/visual_regression_smoke.py`. It boots the same
+The visual-health gate runs `scripts/visual_health_smoke.py`. It boots the same
 app and screenshots every gallery chart route plus `/drilldown`, checking
 global nonblank/color/unique-color invariants, rejecting collapsed plot
-occupancy, and running tick-label overlap probes. This catches charts that
-render pixels in the wrong place or collapse to nothing while avoiding a fragile
-pixel-perfect golden file.
+occupancy, and running tick-label overlap probes. It remains broad health
+coverage and does not claim image identity.
+
+The reviewed identity gate runs `scripts/visual_baseline.py` against the small
+versioned set in `spec/visual-baselines/v1.json`. It pins Playwright Chromium,
+the repository Instrument Sans font and its checksum, viewport, DPR,
+downsample, and explicit semantic/geometry/perceptual tolerances. Every hard
+run also proves that real-browser corrupted-data, wrong-color, wrong-label, and
+wrong-geometry controls are rejected, and CI retains expected, actual, and diff
+PNGs plus semantic JSON.
+
+Baseline changes are proposals, never self-approval. Generate one only with the
+pinned Playwright executable, a named preparer, and a concrete reason:
+
+```bash
+CHROMIUM="$(node -e "const {chromium}=require('playwright'); process.stdout.write(chromium.executablePath())")"
+python scripts/visual_baseline.py "$CHROMIUM" --update-baselines \
+  --prepared-by "Your Name" --reason "intentional renderer change" \
+  --artifacts visual-baseline-review
+```
+
+Attach `visual-baseline-review/` to the pull request. An independent reviewer
+must inspect the expected/actual/diff images, semantic changes, fixture intent,
+browser/font pins, and tolerances before approving the manifest. In proposal
+artifacts, `expected` is the prior reviewed baseline and `actual` is the new
+candidate. CI refuses update mode; do not refresh a baseline merely to make an
+unexplained failure green.
 
 The interaction gate runs `scripts/interaction_stress_smoke.py`, a smoke-sized
 interaction benchmark that validates p95 budgets and visual invariants for
@@ -256,9 +272,8 @@ the `<CHROMIUM>` placeholder, name it explicitly, for example
 - `import xy` stays lazy and under budget in fresh interpreters; no
   NumPy/native-core import on package import.
 - Standalone HTML handles hostile user strings in every text surface touched by
-  the patch; run `make check-security` for static export/client text-sink changes
-  and `make check-browser CHROMIUM=/path/to/chrome` for runtime DOM/CSP/network
-  behavior.
+  the patch; run `make check-security` for export/client text-sink changes and
+  `make check-browser CHROMIUM=/path/to/chrome` for runtime DOM/CSP changes.
 - Benchmarks label mode truthfully: `direct`, `decimated`, `density`, `sampled`,
   or `adaptive`.
 - README/docs examples still match the current public API.

@@ -52,6 +52,7 @@ setup:
 
 setup-browser:
 	npm install
+	npx playwright install chromium
 
 check:
 	$(PYTHON) scripts/verify_local.py --quick

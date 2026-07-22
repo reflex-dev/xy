@@ -232,9 +232,10 @@ including widget/export boundaries, and `make check-ci` for workflow and
 benchmark artifact wiring.
 
 Browser work uses `make check-browser`, which runs the Browser lifecycle smoke
-(Chromium), Browser visual regression smoke (Chromium), and Browser interaction
-stress smoke (Chromium) gates. The full gate additionally needs Node 18+,
-`cargo`, `rustc`, and clippy (`rustup component add clippy`).
+(Chromium), Browser visual health smoke (Chromium), Reviewed visual baseline
+(Chromium), and Browser interaction stress smoke (Chromium) gates. The full
+gate additionally needs Node 18+, `cargo`, `rustc`, and clippy
+(`rustup component add clippy`).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the contributor workflow.
 

@@ -1,6 +1,6 @@
 """Shared plumbing for the browser smokes that drive the example apps.
 
-`reflex_lifecycle_smoke.py` and `visual_regression_smoke.py` run the FastAPI
+`reflex_lifecycle_smoke.py` and `visual_health_smoke.py` run the FastAPI
 example (`examples/fastapi`) with `uv run` and drive headless Chromium at its
 routes over the DevTools protocol. This module holds the app launcher, the
 Chromium finder, a CDP page `Probe`, and a stdlib PNG reader.
