@@ -448,17 +448,16 @@ async def drilldown_endpoint(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 # TEMPORARY debug instrumentation (branch: claude/fastapi-drilldown-zoomout-debug)
 # ---------------------------------------------------------------------------
-# A live on-screen panel + a "stranded drill" watchdog, injected into the
-# /drilldown page so it runs in the chart's own scope (the index embeds the
-# chart in an iframe, so a top-window console snippet can't see the view).
+# A live on-screen diagnostic panel, injected into the /drilldown page so it
+# runs in the chart's own scope (the index embeds the chart in an iframe, so a
+# top-window console snippet can't see the view). It reports the engine's
+# request/reply/drill/cache state plus render-loop and GL-context health, and
+# force-recovers a genuinely frozen render loop.
 #
-# It answers the open question on the "zoom-out gets stuck" report: when it
-# sticks, is the ENGINE still requesting (reqs climbing)? is the SERVER
-# answering or going STALE/silent? is a drilled-points overlay left drawn while
-# the view has zoomed clear out past its window? The watchdog (on by default;
-# add ?nowatch=1 to observe the raw stuck) force-retires such a stranded drill
-# and re-requests — if that clears the freeze, the drill overlay is the culprit;
-# if it doesn't, the stuck is the density surface / request pipeline instead.
+# The earlier "stranded drill" watchdog is gone: the engine now retires
+# outgrown drills itself (T11) and holds are bounded (T8) — a panel that
+# force-drops drills fights those semantics and manufactures its own flicker
+# (seen firing 28x in one capture while the engine was behaving).
 # Remove this block (and the {diag_js} slot) before merging anything.
 _DRILLDOWN_DEBUG_JS = r"""
 (function () {
@@ -471,7 +470,6 @@ _DRILLDOWN_DEBUG_JS = r"""
   const watchdogOn = params.get("nowatch") !== "1";   // drill + freeze recovery
   const S = {
     reqs: 0, lastReqSeq: null, resps: 0, lastResp: "-", lastDrillDrawAt: 0,
-    fired: 0, lastFired: "-",
     frames: 0, framesPrev: 0, fps: 0, lastDrawAt: 0, lastDrawnSeq: -1,
     ctxLost: 0, ctxRestored: 0, stallFixes: 0, lastErr: "-",
   };
@@ -530,7 +528,7 @@ _DRILLDOWN_DEBUG_JS = r"""
   panel.style.cssText = "position:absolute;left:8px;bottom:8px;z-index:20;max-width:64ch;padding:6px 9px;border-radius:5px;background:rgba(15,23,41,.92);color:#d6efff;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre;pointer-events:none;";
   document.body.appendChild(panel);
 
-  let pastSince = 0, tickPrev = performance.now();
+  let tickPrev = performance.now();
   function tick() {
     const now = performance.now();
     if (now - tickPrev >= 500) { S.fps = Math.round((S.frames - S.framesPrev) * 1000 / (now - tickPrev)); S.framesPrev = S.frames; tickPrev = now; }
@@ -549,32 +547,28 @@ _DRILLDOWN_DEBUG_JS = r"""
         else { view._raf = null; view._drawNow(); if (typeof view._scheduleViewRequest === "function") view._scheduleViewRequest(); }
       } catch (e) { note(e); }
     }
-    // drill-specific watchdog (kept from the first pass)
+    // NOTE: no drill watchdog. The engine retires outgrown drills itself
+    // (T11) and bounds holds (T8); force-dropping here fought those
+    // semantics and manufactured its own density⇄points flicker.
     const d = g.drill;
     const past = d ? viewPast(d.win) : false;
-    if (d && past) {
-      if (!pastSince) pastSince = now;
-      if (watchdogOn && now - pastSince > 600) {
-        S.fired++; S.lastFired = new Date().toISOString().slice(11, 19);
-        try { view._dropDrill(g); if (typeof view._scheduleViewRequest === "function") view._scheduleViewRequest(); view.draw(); } catch (e) { note(e); }
-        pastSince = 0;
-      }
-    } else { pastSince = 0; }
+    const shownSample = g._shownSampleOverlay;
 
     const v = view.view;
     panel.textContent =
-      `drilldown debug  ·  watchdog ${watchdogOn ? "ON" : "off (?nowatch=1)"}\n` +
+      `drilldown debug  ·  stall recovery ${watchdogOn ? "ON" : "off (?nowatch=1)"}\n` +
       `view    ${fmt(v)}  span ${(Math.abs(v.x1 - v.x0)).toFixed(2)}  seq ${view.seq}\n` +
       `render  frames ${S.frames} (${S.fps}/s)  drawnSeq ${S.lastDrawnSeq}${behind ? "  <-- BEHIND view" : ""}\n` +
       `gl      glLost=${glLost}  ctx=${ctxState}  raf=${!!view._raf}  lostEvt=${S.ctxLost} restored=${S.ctxRestored}\n` +
       `engine  reqs ${S.reqs} (lastSeq ${S.lastReqSeq})   server resps ${S.resps} (${S.lastResp})\n` +
       `drill   ${d ? "present " + fmt(d.win) + "  inside=" + view._viewInside(d.win) + " viewPast=" + past + " dying=" + !!g._drillDying : "none"}\n` +
+      `sample  ${shownSample ? "shown " + fmt(shownSample.win) + " n=" + shownSample.n : "none"}\n` +
       `cache   ${(g.densityCache || []).length} win   status "${statusEl ? statusEl.textContent : "?"}"\n` +
-      `recover drillWatch ${S.fired}  stallFix ${S.stallFixes}   lastErr ${S.lastErr}`;
+      `recover stallFix ${S.stallFixes}   lastErr ${S.lastErr}`;
     requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
-  console.log("[xy] drilldown debug panel active; watchdog " + (watchdogOn ? "ON" : "OFF"));
+  console.log("[xy] drilldown debug panel active; stall recovery " + (watchdogOn ? "ON" : "OFF"));
 })();
 """
 
