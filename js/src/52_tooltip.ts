@@ -41,10 +41,10 @@ Object.assign(ChartView.prototype, {
   },
 
   _localRow(hit) {
-    // Approximate readout from the resident f32 (used in standalone export and
-    // as the instant value before the kernel's exact reply, §37). Only present
-    // when CPU copies were retained (renderStandalone); the widget path replaces
-    // this with the kernel's exact f64 row (§16).
+    // Approximate readout from resident wire values (used in standalone export
+    // and as the instant value before the kernel's exact reply, §37). Only
+    // present when CPU copies were retained (renderStandalone); the widget path
+    // replaces this with the kernel's exact f64 row (§16).
     const g = hit.g;
     const cpu = g._cpu;
     const row: any = { trace: g.trace.id, index: hit.index };
@@ -59,7 +59,7 @@ Object.assign(ChartView.prototype, {
       row.y = y;
       if (xKind !== undefined) row.x_kind = xKind;
       if (yKind !== undefined) row.y_kind = yKind;
-      const norm = g._cpuHeatmap.grid[hit.index];
+      const norm = this._heatmapUnit(g, hit.index);
       row.color_value = this._denormalizeUnit(norm, g.trace.color && g.trace.color.domain);
     } else if (g._cpuRect) {
       const r = g._cpuRect;
@@ -130,7 +130,7 @@ Object.assign(ChartView.prototype, {
     }
     if (channel === "color_value") {
       if (g._cpuHeatmap && g._cpuHeatmap.grid && g.trace.color) {
-        return [this._denormalizeUnit(g._cpuHeatmap.grid[index], g.trace.color.domain), undefined];
+        return [this._denormalizeUnit(this._heatmapUnit(g, index), g.trace.color.domain), undefined];
       }
       if (g._cpu && g._cpu.color && g.trace.color) {
         return [this._denormalizeUnit(g._cpu.color[index], g.trace.color.domain), undefined];

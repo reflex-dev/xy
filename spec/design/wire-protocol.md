@@ -219,6 +219,30 @@ Column entries otherwise carry `len`, an optional `dtype` (`"u8"` or `"u32"`;
 absent means f32), and, for offset-encoded geometry,
 `offset`/`scale`/`kind`.
 
+Heatmaps use texture-native byte columns in renderer protocol 5:
+
+- A scalar heatmap carries
+  `heatmap: {buf, enc: "unit-u8", missing: 0, offset: 1, levels: 254,
+  domain, ...}`. `columns[buf]` is `dtype: "u8"`, `len: w*h`. Byte zero is a
+  missing/non-finite cell; bytes 1 through 255 decode to normalized units as
+  `(byte - offset) / levels`. These are exactly the R8 bytes the protocol-4
+  client derived from the normalized f32 grid, including JavaScript
+  `Math.round` half-step behavior. The GPU image is therefore byte-identical
+  while transport falls from four bytes to one byte per cell.
+- A truecolor heatmap carries
+  `heatmap: {rgba_buf, enc: "rgba8", ...}`. `columns[rgba_buf]` is one
+  row-major, interleaved RGBA8 column with `len: 4*w*h`; it replaces the four
+  f32 planes that the client immediately rounded and interleaved. RGB and alpha
+  accept their conventional 0-1 or 0-255 input ranges, alpha is normalized
+  independently, and a non-finite channel becomes byte zero.
+
+Standalone hover and CSV decode the resident scalar byte with `domain`; their
+maximum quantization error is `domain_span / 508`. Live `pick` replies remain
+exact because they read the canonical f64 grid in the kernel. The native static
+PNG path likewise borrows canonical f64 scalar grids, so wire quantization does
+not reduce its export precision; SVG and browser-resident raster readers decode
+the explicit metadata above.
+
 The client picks the layout from the spec, never from the shape of what
 arrived, and **a disagreement is a fatal error, not a fallback**.
 `payloadBuffers` throws when the spec says `split` and the transport delivered
@@ -276,9 +300,9 @@ The reassembled bytes are identical to the source blob, which is what keeps
 
 Two independent version constants:
 
-- **Renderer/spec protocol.** `PROTOCOL_VERSION = 3` (`python/xy/config.py`)
+- **Renderer/spec protocol.** `PROTOCOL_VERSION = 5` (`python/xy/config.py`)
   rides every first-paint spec as `spec["protocol"]`; the client's
-  `PROTOCOL = 3` (`js/src/00_header.ts`) is checked in the `ChartView`
+  `PROTOCOL = 5` (`js/src/00_header.ts`) is checked in the `ChartView`
   constructor. A mismatch replaces the chart element with "update the xy
   package and restart the kernel" and throws. Requests and replies carry no
   version of their own — the handshake happens once, at first paint, before

@@ -142,6 +142,15 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **Heatmap first-paint payloads now match their GPU texture precision.**
+  Scalar grids ship explicit `unit-u8` R8 bytes (zero reserved for missing)
+  instead of normalized f32, and truecolor grids ship one interleaved RGBA8
+  column instead of four f32 planes: 4x less transport in both cases, with
+  byte-identical browser pixels. Packed/split, standalone hover/CSV, SVG, and
+  raster readers decode the new metadata; live picks and native scalar PNG
+  export retain exact canonical f64 values. Truecolor normalization now owns
+  its buffer (no caller mutation) and preserves both 0-1 and 0-255 alpha. The
+  renderer/spec protocol advances to version 5 so cached clients fail loudly.
 - **Responsive, author-defeatable browser chrome.** XY's visual defaults now
   live in a low-priority cascade layer, so Tailwind utilities, ordinary author
   CSS, and slot styles override them without `!important`. Long legends remain

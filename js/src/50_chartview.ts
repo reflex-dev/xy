@@ -2723,10 +2723,14 @@ export class ChartView {
 
   _buildHeatmapMark(g, t, buffer) {
     const h = t.heatmap;
-    const truecolor = Array.isArray(h.rgba_bufs);
-    const grid = truecolor
-      ? h.rgba_bufs.map((index) => this._columnView(buffer, this.spec.columns[index]))
-      : this._columnView(buffer, this.spec.columns[h.buf]);
+    const packedTruecolor = Number.isInteger(h.rgba_buf);
+    const legacyTruecolor = Array.isArray(h.rgba_bufs);
+    const truecolor = packedTruecolor || legacyTruecolor;
+    const grid = packedTruecolor
+      ? this._columnView(buffer, this.spec.columns[h.rgba_buf])
+      : legacyTruecolor
+        ? h.rgba_bufs.map((index) => this._columnView(buffer, this.spec.columns[index]))
+        : this._columnView(buffer, this.spec.columns[h.buf]);
     g.heatmap = {
       w: h.w,
       h: h.h,
@@ -2734,21 +2738,41 @@ export class ChartView {
       yRange: h.y_range,
       colormap: h.colormap,
       truecolor,
-      tex: truecolor ? this._uploadRgbaGrid(grid, h.w, h.h) : this._uploadHeatmapGrid(grid, h.w, h.h),
+      tex: truecolor
+        ? this._uploadRgbaGrid(grid, h.w, h.h)
+        : this._uploadHeatmapGrid(grid, h.w, h.h, h.enc),
       lut: truecolor ? null : this._lut(h.colormap),
     };
-    if (!truecolor) g._cpuHeatmap = { grid };
+    if (!truecolor) {
+      g._cpuHeatmap = {
+        grid,
+        enc: h.enc,
+        missing: h.missing,
+        offset: h.offset,
+        levels: h.levels,
+      };
+    }
   }
 
-  _uploadRgbaGrid(channels, w, h) {
+  _uploadRgbaGrid(source, w, h) {
     const gl = this.gl;
     const tex = gl.createTexture();
-    const data = new Uint8Array(w * h * 4);
-    for (let index = 0; index < w * h; index++) {
-      for (let channel = 0; channel < 4; channel++) {
-        data[index * 4 + channel] = Math.round(255 * Math.max(0, Math.min(1, channels[channel][index])));
+    const expected = w * h * 4;
+    let data;
+    if (source instanceof Uint8Array) {
+      data = source;
+    } else {
+      // Protocol-v4 compatibility for payloads generated before packed RGBA8.
+      data = new Uint8Array(expected);
+      for (let index = 0; index < w * h; index++) {
+        for (let channel = 0; channel < 4; channel++) {
+          data[index * 4 + channel] = Math.round(
+            255 * Math.max(0, Math.min(1, source[channel][index])),
+          );
+        }
       }
     }
+    if (data.length !== expected) throw new RangeError("RGBA8 heatmap payload has wrong length");
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -2765,16 +2789,29 @@ export class ChartView {
     return tex;
   }
 
-  _uploadHeatmapGrid(f32, w, h) {
+  _uploadHeatmapGrid(values, w, h, encoding = null) {
     const gl = this.gl;
     const tex = gl.createTexture();
-    const data = new Uint8Array(f32.length);
-    for (let i = 0; i < f32.length; i++) {
-      const v = f32[i];
-      if (Number.isFinite(v)) {
-        data[i] = Math.max(1, Math.min(255, Math.round(1 + 254 * Math.max(0, Math.min(1, v)))));
+    let data;
+    if (encoding === "unit-u8") {
+      if (!(values instanceof Uint8Array)) {
+        throw new TypeError("unit-u8 heatmap payload must be a Uint8Array");
+      }
+      data = values;
+    } else {
+      // Protocol-v4 compatibility for legacy normalized-f32 grids.
+      data = new Uint8Array(values.length);
+      for (let i = 0; i < values.length; i++) {
+        const v = values[i];
+        if (Number.isFinite(v)) {
+          data[i] = Math.max(
+            1,
+            Math.min(255, Math.round(1 + 254 * Math.max(0, Math.min(1, v)))),
+          );
+        }
       }
     }
+    if (data.length !== w * h) throw new RangeError("scalar heatmap payload has wrong length");
     gl.bindTexture(gl.TEXTURE_2D, tex);
     const align = gl.getParameter(gl.UNPACK_ALIGNMENT);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
@@ -2785,6 +2822,20 @@ export class ChartView {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     return tex;
+  }
+
+  _heatmapUnit(g, index) {
+    const cpu = g && g._cpuHeatmap;
+    if (!cpu || index < 0 || index >= cpu.grid.length) return NaN;
+    const value = Number(cpu.grid[index]);
+    if (cpu.enc !== "unit-u8") return value;
+    const missing = Number.isFinite(Number(cpu.missing)) ? Number(cpu.missing) : 0;
+    if (value === missing) return NaN;
+    const offset = Number.isFinite(Number(cpu.offset)) ? Number(cpu.offset) : 1;
+    const levels = Number.isFinite(Number(cpu.levels)) && Number(cpu.levels) > 0
+      ? Number(cpu.levels)
+      : 254;
+    return Math.max(0, Math.min(1, (value - offset) / levels));
   }
 
   // Grid tone-mapping, exposure normalization, source cache, and the drill

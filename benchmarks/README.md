@@ -102,6 +102,8 @@ These commands match the non-blocking GitHub Actions measurement lane:
 # 64 GiB high-water probe; crosses the u32 total-count boundary.
 .venv/bin/python benchmarks/bench_heatmap_native.py --sides 65536 --reps 1 \
   --json heatmap-4b.json
+# First-paint scalar/truecolor bytes and quantization cost at 1M and 4M cells.
+.venv/bin/python benchmarks/bench_heatmap_wire.py --sides 1000,2000 --reps 3
 .venv/bin/python benchmarks/bench_interaction.py --sizes 1e4,2.5e5 \
   --reps 24 --chromium "$CHROME" --json interaction.json
 .venv/bin/python benchmarks/bench_transport.py --n 1e6 --reps 15 \

@@ -859,7 +859,7 @@ def test_first_payload_heatmap_core_2d(benchmark, core_2d_data):
     assert isinstance(x, np.ndarray)
     assert isinstance(y, np.ndarray)
     payload_bytes = benchmark(_heatmap_payload, z, x, y)
-    assert 0 < payload_bytes < z.nbytes
+    assert payload_bytes == (z.size + 3) // 4 * 4
 
 
 def test_first_payload_statistical_core_2d(benchmark, medium_data):

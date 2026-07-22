@@ -23,7 +23,18 @@ from xy.export import _javascript_for_inline_script, _json_for_inline_script
 def _payload_col(spec, blob, ref):
     meta = spec["columns"][ref]
     start = meta["byte_offset"]
-    return np.frombuffer(blob, dtype=np.float32, count=meta["len"], offset=start), meta
+    dtype = np.uint8 if meta.get("dtype") == "u8" else np.float32
+    return np.frombuffer(blob, dtype=dtype, count=meta["len"], offset=start), meta
+
+
+def _decoded_heatmap_col(spec, blob, heatmap):
+    values, meta = _payload_col(spec, blob, heatmap["buf"])
+    if heatmap.get("enc") != "unit-u8":
+        return values.astype(np.float64), meta
+    decoded = np.full(len(values), np.nan, dtype=np.float64)
+    valid = values != heatmap["missing"]
+    decoded[valid] = (values[valid] - heatmap["offset"]) / heatmap["levels"]
+    return decoded, meta
 
 
 def _decoded_payload_col(spec, blob, ref):
@@ -827,9 +838,72 @@ def test_heatmap_ships_compact_grid_and_continuous_color():
     assert spec["x_axis"]["categories"] == ["low", "mid", "high"]
     assert spec["y_axis"]["kind"] == "category"
     assert spec["y_axis"]["categories"] == ["north", "south"]
-    grid, _ = _payload_col(spec, blob, tr["heatmap"]["buf"])
-    np.testing.assert_allclose(grid[[0, 1, 3, 4, 5]], [0.0, 0.25, 0.5, 0.75, 1.0])
-    assert np.isnan(grid[2])
+    heatmap = tr["heatmap"]
+    encoded, meta = _payload_col(spec, blob, heatmap["buf"])
+    decoded, _ = _decoded_heatmap_col(spec, blob, heatmap)
+    assert meta["dtype"] == "u8"
+    assert heatmap["enc"] == "unit-u8"
+    assert heatmap["missing"] == 0
+    assert heatmap["offset"] == 1
+    assert heatmap["levels"] == 254
+    np.testing.assert_array_equal(encoded, [1, 65, 0, 128, 192, 255])
+    np.testing.assert_allclose(
+        decoded[[0, 1, 3, 4, 5]],
+        [0.0, 64 / 254, 127 / 254, 191 / 254, 1.0],
+    )
+    assert np.isnan(decoded[2])
+
+    split_spec, buffers = fig.build_payload_split()
+    split_heatmap = split_spec["traces"][0]["heatmap"]
+    split_meta = split_spec["columns"][split_heatmap["buf"]]
+    assert split_meta["len"] == 6
+    assert buffers[split_meta["buf"]].nbytes == 8
+    assert b"".join(bytes(buffer) for buffer in buffers) == blob
+
+
+def test_scalar_heatmap_rounding_matches_legacy_javascript_f32_texture_bytes():
+    # This exact half-step rounds differently if the kernel multiplies in f32
+    # or skips the old wire's f64 -> f32 conversion. The browser promoted the
+    # f32 wire value to a JavaScript Number before doing Math.round.
+    boundary = np.float64(0.5 / 254.0)
+    wire_value = float(np.float32(boundary))
+    expected = int(np.floor(1.5 + 254.0 * wire_value))
+    assert expected == 1
+
+    spec, blob = Figure().heatmap([[boundary]], domain=(0.0, 1.0)).build_payload()
+    heatmap = spec["traces"][0]["heatmap"]
+    encoded, _meta = _payload_col(spec, blob, heatmap["buf"])
+
+    np.testing.assert_array_equal(encoded, [expected])
+
+
+def test_scalar_heatmap_wire_matches_legacy_texture_bytes_and_error_bound():
+    from xy import kernels
+
+    rng = np.random.default_rng(164)
+    values = rng.uniform(-4.0, 8.0, size=(17, 19))
+    values[2, 3] = np.nan
+    domain = (-3.0, 7.0)
+    figure = Figure().heatmap(values, domain=domain)
+    spec, blob = figure.build_payload()
+    heatmap = spec["traces"][0]["heatmap"]
+    encoded, _meta = _payload_col(spec, blob, heatmap["buf"])
+
+    normalized = kernels.normalize_f32(values.reshape(-1), domain, nonfinite="nan")
+    expected = np.zeros(len(normalized), dtype=np.uint8)
+    finite = np.isfinite(normalized)
+    expected[finite] = np.floor(
+        1.5 + 254.0 * np.clip(normalized[finite].astype(np.float64), 0.0, 1.0)
+    ).astype(np.uint8)
+    np.testing.assert_array_equal(encoded, expected)
+
+    decoded, _meta = _decoded_heatmap_col(spec, blob, heatmap)
+    resident_values = domain[0] + decoded * (domain[1] - domain[0])
+    clipped = np.clip(values.reshape(-1), *domain)
+    np.testing.assert_array_equal(np.isnan(resident_values), ~np.isfinite(values.reshape(-1)))
+    assert np.max(np.abs(resident_values[finite] - clipped[finite])) <= (
+        (domain[1] - domain[0]) / 508.0 + 1e-6
+    )
 
 
 def test_heatmap_category_axis_normalizes_missing_and_bytes_labels():
@@ -864,8 +938,91 @@ def test_heatmap_constant_values_auto_expands_domain():
     spec, blob = fig.build_payload()
     tr = spec["traces"][0]
     assert tr["heatmap"]["domain"][0] < 7.0 < tr["heatmap"]["domain"][1]
-    grid, _ = _payload_col(spec, blob, tr["heatmap"]["buf"])
-    np.testing.assert_allclose(grid, [0.5] * 4)
+    grid, meta = _payload_col(spec, blob, tr["heatmap"]["buf"])
+    assert meta["dtype"] == "u8"
+    np.testing.assert_array_equal(grid, [128] * 4)
+
+
+def test_truecolor_heatmap_ships_interleaved_rgba8_without_mutating_input():
+    rgba = np.array(
+        [
+            [[255.0, 0.0, 127.5, 128.0], [0.0, 255.0, 0.0, 64.0]],
+            [[np.nan, 0.0, 255.0, np.nan], [32.0, 64.0, 128.0, 255.0]],
+        ],
+        dtype=np.float64,
+    )
+    before = rgba.copy()
+    figure = Figure().heatmap(rgba)
+
+    spec, blob = figure.build_payload()
+    heatmap = spec["traces"][0]["heatmap"]
+    packed, meta = _payload_col(spec, blob, heatmap["rgba_buf"])
+
+    np.testing.assert_array_equal(rgba, before)
+    assert heatmap["enc"] == "rgba8"
+    assert "rgba_bufs" not in heatmap
+    assert meta["dtype"] == "u8"
+    assert meta["len"] == rgba.shape[0] * rgba.shape[1] * 4
+    np.testing.assert_array_equal(
+        packed.reshape(-1, 4),
+        [
+            [255, 0, 128, 128],
+            [0, 255, 0, 64],
+            [0, 0, 255, 0],
+            [32, 64, 128, 255],
+        ],
+    )
+
+    split_spec, buffers = figure.build_payload_split()
+    split_heatmap = split_spec["traces"][0]["heatmap"]
+    split_meta = split_spec["columns"][split_heatmap["rgba_buf"]]
+    assert split_meta["dtype"] == "u8"
+    assert split_meta["len"] == meta["len"]
+    assert b"".join(bytes(buffer) for buffer in buffers) == blob
+
+
+def test_truecolor_heatmap_unit_float_rounding_matches_javascript_texture_bytes():
+    f32_half_step = np.float64(128.5 / 255.0)
+    rgba = np.array(
+        [
+            [
+                [0.5 / 255.0, 1.5 / 255.0, 127.5 / 255.0, 0.5 / 255.0],
+                [0.0, 0.5, 1.0, 0.25],
+                [f32_half_step, f32_half_step, f32_half_step, f32_half_step],
+            ]
+        ]
+    )
+
+    spec, blob = Figure().heatmap(rgba).build_payload()
+    heatmap = spec["traces"][0]["heatmap"]
+    packed, _meta = _payload_col(spec, blob, heatmap["rgba_buf"])
+
+    np.testing.assert_array_equal(
+        packed.reshape(-1, 4),
+        [[1, 2, 128, 1], [0, 128, 255, 64], [128, 128, 128, 128]],
+    )
+
+
+def test_truecolor_heatmap_wire_matches_legacy_four_f32_plane_conversion():
+    rng = np.random.default_rng(165)
+    rgba = rng.uniform(-0.2, 1.0, size=(13, 11, 4))
+    rgba[2, 3, 0] = np.nan
+    rgba[4, 5, 3] = np.nan
+    figure = Figure().heatmap(rgba)
+
+    spec, blob = figure.build_payload()
+    heatmap = spec["traces"][0]["heatmap"]
+    packed, _meta = _payload_col(spec, blob, heatmap["rgba_buf"])
+
+    expected = np.zeros((rgba.shape[0] * rgba.shape[1], 4), dtype=np.uint8)
+    for channel, column in enumerate(figure.traces[0].rgba_grid or ()):
+        legacy_f32 = np.asarray(column.values, dtype=np.float32)
+        finite = np.isfinite(legacy_f32)
+        expected[finite, channel] = np.floor(
+            0.5 + 255.0 * np.clip(legacy_f32[finite].astype(np.float64), 0.0, 1.0)
+        ).astype(np.uint8)
+
+    np.testing.assert_array_equal(packed.reshape(-1, 4), expected)
 
 
 def test_heatmap_reuses_or_defers_grid_zone_scan(monkeypatch):

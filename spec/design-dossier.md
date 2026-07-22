@@ -362,7 +362,7 @@ re-exports several of them as a historic import path and is not listed for those
 
 | Constant | Value | What it gates | Read by |
 | --- | --- | --- | --- |
-| `PROTOCOL_VERSION` | `3` | Wire-spec version stamped on every payload; the client refuses a mismatch loudly (§33). | `_payload.py` |
+| `PROTOCOL_VERSION` | `5` | Wire-spec version stamped on every payload; the client refuses a mismatch loudly (§33). | `_payload.py` |
 | `DECIMATION_THRESHOLD` | `10_000` | Line/area traces with more points than this ship M4-decimated (Tier 1); at or below, raw columns go over the wire. Also gates re-decimation on the interaction path. | `_payload.py`, `interaction.py` |
 | `SCATTER_DENSITY_THRESHOLD` | `200_000` | Tier-0 → Tier-2 count budget for a scatter with **no** per-point channel (`Trace.use_density()`), and the visible-count budget for view-LOD planning and drill decisions. | `_trace.py`, `interaction.py`; mirrored client-side as `LOD_DIRECT_POINT_BUDGET` in `js/src/45_lod.ts` |
 | `DIRECT_SOFT_CEILING` | `2_000_000` | Tier-0 → Tier-2 count budget for a scatter that **does** carry a per-point color or size channel; above it density is forced and the channels are warned about, never silently dropped (§5 F5). | `_trace.py`, `marks.py` |

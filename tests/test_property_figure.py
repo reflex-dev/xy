@@ -72,7 +72,8 @@ def check_payload(fig: Figure) -> None:
     cols = spec["columns"]
     for c in cols:
         assert 0 <= c["byte_offset"] <= len(blob), "P3"
-        assert c["byte_offset"] + 4 * c["len"] <= len(blob), "P3"
+        itemsize = 1 if c.get("dtype") == "u8" else 4
+        assert c["byte_offset"] + itemsize * c["len"] <= len(blob), "P3"
 
     def col_ref(ref):
         assert isinstance(ref, int) and 0 <= ref < len(cols), "P3"

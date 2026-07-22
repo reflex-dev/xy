@@ -107,8 +107,11 @@ def contour_demo():
 ## Expected Data Shape
 
 Heatmaps and contours take a two-dimensional z matrix with optional x and y
-coordinates. Hexbin takes equal-length x and y point arrays and may take a
-third value channel to reduce within each cell.
+coordinates. A heatmap can instead take an RGB or RGBA array shaped
+`(rows, columns, 3|4)`. Truecolor channels may use 0-1 or 0-255 values; alpha
+is normalized independently, so an RGBA8 image keeps its original opacity.
+Hexbin takes equal-length x and y point arrays and may take a third value
+channel to reduce within each cell.
 
 ## Key Options
 
@@ -125,5 +128,8 @@ inferred presentation.
 `hexbin` bins source points in the native engine and ships occupied cell
 centers plus values, so its rendered geometry is bounded by `gridsize`; the
 binning pass still scales with source rows. `heatmap` ships the supplied grid
-as a GPU texture, and contour work scales with grid cells times levels. These
-marks do not use scatter's automatic density tier.
+in GPU texture precision: one byte per scalar cell or four interleaved RGBA
+bytes per truecolor cell. Live hover requests still read exact scalar values
+from the kernel; standalone HTML hover and CSV read the resident texture and
+may differ by at most `domain span / 508`. Contour work scales with grid cells
+times levels. These marks do not use scatter's automatic density tier.
