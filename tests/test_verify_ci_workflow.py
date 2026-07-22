@@ -439,7 +439,8 @@ def test_ci_workflow_rejects_missing_interaction_stress_smoke(tmp_path: Path) ->
     path = tmp_path / "ci.yml"
     path.write_text(
         workflow.replace(
-            '          .venv/bin/python scripts/interaction_stress_smoke.py "$CHROME"\n',
+            '          .venv/bin/python scripts/interaction_stress_smoke.py "$CHROME" \\\n'
+            "            --json interaction-worker-evidence.json\n",
             "",
         ),
         encoding="utf-8",
@@ -448,6 +449,42 @@ def test_ci_workflow_rejects_missing_interaction_stress_smoke(tmp_path: Path) ->
     errors = verify_ci_workflow.validate_workflow(path)
 
     assert any("test job" in error and "interaction_stress_smoke" in error for error in errors)
+
+
+def test_ci_workflow_rejects_optional_interaction_worker(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "            --json interaction-worker-evidence.json\n",
+            "            --json interaction-worker-evidence.json --allow-worker-skip\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("must not allow worker skips" in error for error in errors)
+
+
+def test_ci_workflow_rejects_missing_interaction_worker_evidence_upload(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    block = (
+        "      - name: Upload interaction worker evidence\n"
+        "        if: always()\n"
+        "        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n"
+        "        with:\n"
+        "          name: interaction-worker-evidence\n"
+        "          if-no-files-found: error\n"
+        "          path: interaction-worker-evidence.json\n\n"
+    )
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(block, ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("Upload interaction worker evidence" in error for error in errors)
 
 
 def test_ci_workflow_rejects_missing_animation_smoke(tmp_path: Path) -> None:

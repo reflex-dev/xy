@@ -192,9 +192,15 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-016 — Required standalone-worker evidence
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: the configured interaction smoke can report its worker probe as
-  skipped.
+- Status: `IMPLEMENTED`
+- Owner: unassigned — file a tracking issue before implementation starts
+- Evidence: `benchmarks/bench_interaction.py::run_worker_probe`,
+  `scripts/interaction_stress_smoke.py`,
+  `tests/test_interaction_stress_smoke.py`, and the hard-CI `test` job's
+  `interaction-worker-evidence` artifact.
+- Current gap: closed; the hard browser lane rejects unavailable, skipped,
+  failed, incomplete, blank, or unterminated worker evidence. Only a direct
+  local diagnostic can explicitly opt out with `--allow-worker-skip`.
 - Implemented when: required CI proves worker creation, message/re-bin result,
   nonblank paint, and teardown; unavailable/skipped/failed is blocking in that
   environment, while explicitly optional local use may skip.

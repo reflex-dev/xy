@@ -339,6 +339,9 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "pick-boundary-evidence",
         "if-no-files-found: error",
         "scripts/interaction_stress_smoke.py",
+        "--json interaction-worker-evidence.json",
+        "Upload interaction worker evidence",
+        "interaction-worker-evidence",
         "benchmarks/bench_dashboard.py",
         "--chart-counts 10,20,50",
         "dashboard-smoke.json --kind dashboard-browser",
@@ -401,6 +404,30 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "pick-boundary-evidence",
         "if-no-files-found: error",
         "pick-boundary-evidence.json",
+    )
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Browser interaction stress smoke (Chromium)",
+        "required worker command and diagnostic path",
+        "scripts/interaction_stress_smoke.py",
+        "--json interaction-worker-evidence.json",
+    )
+    interaction_step = _named_step_blocks(hard_test).get(
+        "Browser interaction stress smoke (Chromium)", ""
+    )
+    if "--allow-worker-skip" in interaction_step:
+        errors.append("hard interaction worker CI step must not allow worker skips")
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Upload interaction worker evidence",
+        "failure-retaining worker artifact policy",
+        "if: always()",
+        "actions/upload-artifact@",
+        "interaction-worker-evidence",
+        "if-no-files-found: error",
+        "interaction-worker-evidence.json",
     )
     _require_step_contains(
         errors,

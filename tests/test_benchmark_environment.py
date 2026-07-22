@@ -166,6 +166,10 @@ def test_interaction_browser_gates_cover_scatter_and_core_chart_families() -> No
         "run_worker_probe",
         "omits Chromium's virtual-time flag",
         "WORKER_PROBE_TIMEOUT_S = 60",
+        "worker_terminated",
+        "worker_cleared",
+        "root_removed",
+        "teardown_complete",
         '"family": "line"',
         '"family": "histogram"',
         '"family": "bar"',
@@ -174,7 +178,9 @@ def test_interaction_browser_gates_cover_scatter_and_core_chart_families() -> No
     ]
     for marker in required_markers:
         assert marker in bench
-    assert 'startswith("skipped(")' in smoke
+    assert '"--allow-worker-skip"' in smoke
+    assert "WORKER_REQUIRED_TRUE" in smoke
+    assert "_worker_errors(worker, allow_skip=args.allow_worker_skip)" in smoke
 
 
 def test_interaction_benchmark_completes_gpu_warmup_before_timing() -> None:

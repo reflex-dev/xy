@@ -13,6 +13,8 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import math
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -21,6 +23,21 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import verify_benchmark_report  # noqa: E402
+
+WORKER_REQUIRED_TRUE = (
+    "worker_created",
+    "worker_rebinned",
+    "x_range_changed",
+    "worker_terminated",
+    "worker_cleared",
+    "root_removed",
+    "teardown_complete",
+)
+WORKER_OPTIONAL_UNAVAILABLE = (
+    "skipped(",
+    "failed(Node.js is required",
+    "failed(Playwright is not installed",
+)
 
 
 def _load_bench_interaction():
@@ -33,6 +50,34 @@ def _load_bench_interaction():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _write_json(path: str | None, payload: dict) -> None:
+    if path:
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+
+
+def _worker_errors(worker: dict, *, allow_skip: bool) -> list[str]:
+    status = str(worker.get("status", ""))
+    if allow_skip and status.startswith(WORKER_OPTIONAL_UNAVAILABLE):
+        return []
+    if status != "ok":
+        return [f"status is {status!r}, expected 'ok'"]
+
+    errors = [
+        f"{field} is not true" for field in WORKER_REQUIRED_TRUE if worker.get(field) is not True
+    ]
+    nonblank = worker.get("nonblank_pixels")
+    if (
+        isinstance(nonblank, bool)
+        or not isinstance(nonblank, int | float)
+        or not math.isfinite(nonblank)
+        or nonblank <= 0
+    ):
+        errors.append(f"nonblank_pixels is not positive: {nonblank!r}")
+    return errors
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,9 +96,27 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--json", default=None, help="write the validated JSON report here")
     parser.add_argument("--markdown", default=None, help="write the Markdown report here")
+    parser.add_argument(
+        "--allow-worker-skip",
+        action="store_true",
+        help="local-only escape hatch for an unavailable Node/Playwright worker harness; "
+        "CI and make check-browser intentionally omit it",
+    )
     args = parser.parse_args(argv)
 
     chromium = args.chromium_flag or args.chromium
+    if chromium and not (Path(chromium).is_file() or shutil.which(chromium)):
+        failure = {
+            "kind": "interaction-browser",
+            "status": f"failed(configured chromium not found: {chromium})",
+            "standalone_density_worker": {"status": "not-run"},
+        }
+        _write_json(args.json, failure)
+        print(
+            f"interaction stress smoke FAILED: configured chromium not found: {chromium}",
+            file=sys.stderr,
+        )
+        return 1
     bench_interaction = _load_bench_interaction()
     report = bench_interaction.run(
         sizes=bench_interaction._parse_sizes(args.sizes),
@@ -66,12 +129,10 @@ def main(argv: list[str] | None = None) -> int:
         report_path.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
         errors = verify_benchmark_report.validate_report(report_path, kind="interaction-browser")
 
-    if args.json:
-        Path(args.json).write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
-    if args.markdown:
-        Path(args.markdown).write_text(bench_interaction.to_markdown(report), encoding="utf-8")
-
     if errors:
+        _write_json(args.json, report)
+        if args.markdown:
+            Path(args.markdown).write_text(bench_interaction.to_markdown(report), encoding="utf-8")
         print("interaction stress smoke FAILED:", file=sys.stderr)
         for error in errors[:20]:
             print(f"  - {error}", file=sys.stderr)
@@ -86,13 +147,16 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     worker = bench_interaction.run_worker_probe(chromium=chromium)
+    report["standalone_density_worker"] = worker
+    _write_json(args.json, report)
+    if args.markdown:
+        Path(args.markdown).write_text(bench_interaction.to_markdown(report), encoding="utf-8")
     worker_status = str(worker.get("status", ""))
-    if worker_status != "ok" and not worker_status.startswith("skipped("):
-        print(
-            "interaction stress smoke FAILED: standalone density worker probe "
-            f"returned {worker_status!r}",
-            file=sys.stderr,
-        )
+    worker_errors = _worker_errors(worker, allow_skip=args.allow_worker_skip)
+    if worker_errors:
+        print("interaction stress smoke FAILED: standalone density worker probe", file=sys.stderr)
+        for error in worker_errors:
+            print(f"  - {error}", file=sys.stderr)
         return 1
 
     print(
@@ -113,15 +177,17 @@ def main(argv: list[str] | None = None) -> int:
                 overlaps=row["tick_label_overlap_count"],
             )
         )
-    if worker_status.startswith("skipped("):
-        print(f"  standalone_density_worker: SKIPPED ({worker_status})")
+    if worker_status != "ok":
+        print(f"  standalone_density_worker: SKIPPED BY EXPLICIT LOCAL OPT-IN ({worker_status})")
     else:
         print(
             "  standalone_density_worker: rebinned={rebinned} worker={worker} "
-            "nonblank={nonblank}".format(
+            "nonblank={nonblank} terminated={terminated} teardown={teardown}".format(
                 rebinned=worker.get("worker_rebinned"),
                 worker=worker.get("worker_created"),
                 nonblank=worker.get("nonblank_pixels"),
+                terminated=worker.get("worker_terminated"),
+                teardown=worker.get("teardown_complete"),
             )
         )
     return 0

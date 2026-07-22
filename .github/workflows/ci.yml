@@ -218,7 +218,16 @@ jobs:
       - name: Browser interaction stress smoke (Chromium)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
-          .venv/bin/python scripts/interaction_stress_smoke.py "$CHROME"
+          .venv/bin/python scripts/interaction_stress_smoke.py "$CHROME" \
+            --json interaction-worker-evidence.json
+
+      - name: Upload interaction worker evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: interaction-worker-evidence
+          if-no-files-found: error
+          path: interaction-worker-evidence.json
 
       - name: Browser dashboard reliability smoke (Chromium)
         run: |

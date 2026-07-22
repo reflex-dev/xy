@@ -214,10 +214,10 @@ def _probe_js(reps: int) -> str:
     // virtual time forever: the first density zoom schedules the standalone
     // sample-rebin worker and the page deadlocks until the wall-clock timeout
     // (bisected: real worker + rebin hangs even when the reply is ignored; a
-    // stubbed worker completes). Same class the render smoke already dropped
-    // its worker probe for. Disable the rebin here — density interactions
-    // measure the stretched-overview path, all visual invariants still run;
-    // the worker path itself needs a non-virtual-time harness (see PR notes).
+    // stubbed worker completes). Disable rebin only for this virtual-time page:
+    // density interactions still measure the stretched-overview path and all
+    // visual invariants, while run_worker_probe() below provides the required
+    // real-wall-clock worker, re-bin, paint, and teardown evidence.
     view._sampleRebinDisabled = true;
     view._drawNow();
     const before = {{...view.view}};
@@ -684,25 +684,47 @@ def _worker_probe_js() -> str:
       x0: before.x0 + xSpan * 0.18, x1: before.x0 + xSpan * 0.52,
       y0: before.y0 + ySpan * 0.21, y1: before.y0 + ySpan * 0.61,
     };
+    const finish = (payload) => {
+      const worker = view._rebinWorker;
+      let workerTerminated = false;
+      if (worker) {
+        const terminate = worker.terminate.bind(worker);
+        worker.terminate = () => {
+          workerTerminated = true;
+          return terminate();
+        };
+      }
+      view.destroy();
+      const workerCleared = view._rebinWorker === null;
+      const rootRemoved = !view.root.isConnected;
+      xyReport("XY_WORKER", {
+        ...payload,
+        worker_created: !!worker,
+        worker_terminated: workerTerminated,
+        worker_cleared: workerCleared,
+        root_removed: rootRemoved,
+        teardown_complete: !!worker && workerTerminated && workerCleared && rootRemoved,
+      });
+    };
     const started = performance.now();
     view._setView(target, {animate: false, request: true});
     const poll = () => {
       if (g._sampleRebinned === true) {
         view._drawNow();
-        xyReport("XY_WORKER", {
+        const nonblankPixels = xyNonblankPixels(view);
+        const xRangeChanged = !!(g.density && g.density.xRange &&
+          Math.abs(g.density.xRange[0] - before.x0) > xSpan * 0.05);
+        finish({
           status: "ok",
           worker_rebinned: true,
-          nonblank_pixels: xyNonblankPixels(view),
-          worker_created: !!view._rebinWorker,
-          x_range_changed: !!(g.density && g.density.xRange &&
-            Math.abs(g.density.xRange[0] - before.x0) > xSpan * 0.05),
+          nonblank_pixels: nonblankPixels,
+          x_range_changed: xRangeChanged,
         });
         return;
       }
       if (performance.now() - started >= 12_000) {
-        xyReport("XY_WORKER", {
+        finish({
           status: "failed(timeout)",
-          worker_created: !!view._rebinWorker,
           sample_rebinned: !!g._sampleRebinned,
         });
         return;

@@ -217,6 +217,13 @@ repeated hover sample, missing crosshair chrome, missing view changes, box zoom
 that does not narrow/restore the viewport, brush selection that does not
 select/clear eligible marks, undersized lit-pixel readbacks, and oversized frame
 color jumps.
+The same gate launches the standalone density re-bin path with real wall-clock
+Playwright, and requires proof that a worker was created, returned a re-binned
+nonblank view, changed the requested range, and was terminated and cleared by
+`ChartView.destroy()`. Missing Node/Playwright, skipped workers, incomplete
+evidence, and failed teardown are blocking by default. Only a direct local
+diagnostic run may opt out with `--allow-worker-skip`; `make check-browser` and
+CI never pass that flag.
 
 On macOS, pass the executable inside the app bundle, for example
 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`, not the

@@ -81,6 +81,12 @@ def test_browser_checks_are_known_without_chromium() -> None:
     assert [check.name for check in selected] == ["smoke_render"]
 
 
+def test_hard_local_interaction_worker_does_not_allow_skip() -> None:
+    check = verify_local._base_checks(Path(sys.executable))["interaction_stress_smoke"]
+
+    assert "--allow-worker-skip" not in check.command
+
+
 def test_example_checks_are_known_as_targeted_gate() -> None:
     checks = verify_local._base_checks()
     selected = verify_local.select_checks(checks, only={"examples"})

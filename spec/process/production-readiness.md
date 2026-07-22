@@ -309,8 +309,10 @@ make check-claims
 Browser smoke and package artifact verification need a built bundle, Chromium,
 and wheel/sdist outputs. The interaction gate's real-wall-clock worker probe
 also uses the pinned development-only Playwright driver; install it once with
-`make setup-browser` (or `npm install`). These gates are required in CI and
-release workflows even if they are skipped locally.
+`make setup-browser` (or `npm install`). The worker proof is required by
+`make check-browser` and CI. A direct local diagnostic may explicitly pass
+`--allow-worker-skip` only when the Node/Playwright harness is unavailable;
+the hard suites never pass that option.
 
 For browser checks, pass the local Chromium/Chrome binary explicitly:
 
@@ -340,7 +342,11 @@ interaction budgets for direct scatter, density scatter, line, histogram, bar,
 and heatmap rows so performance regressions are not scatter-only and not
 direct-scatter-only. For pickable rows, tooltip stability means every declared
 repeated hover sample must remain visible, so a tooltip that appears and
-immediately disappears fails the gate.
+immediately disappears fails the gate. Its real-wall-clock standalone density
+probe must also prove worker creation, a returned re-bin with a changed range
+and nonblank pixels, and teardown through worker termination, cleared worker
+state, and a removed chart root. CI retains this evidence even when the gate
+fails.
 
 Use `make list-checks` to see the individual check names, or
 `python scripts/verify_local.py --dry-run --full` to print commands without
