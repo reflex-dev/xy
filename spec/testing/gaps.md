@@ -21,8 +21,11 @@ and retained artifact to the relevant entry before changing its status.
 
 - Status: `NOT IMPLEMENTED`
 - Owner: unassigned — file a tracking issue before implementation starts
-- Current gap: individual jobs run, but `main` has no required-status-check rule
-  and no stable aggregate that evaluates all hard dependencies.
+- Current gap: `required_ci` now evaluates every declared hard dependency on
+  every pull-request path and rejects failed, cancelled, skipped, missing, or
+  unexpected jobs. `main` still has no rule requiring the stable `Required CI`
+  result, so the protection can be bypassed until the repository ruleset is
+  updated.
 - Implemented when: one `required-ci` job uses `if: always()`, runs on every pull
   request path, fails for failed/cancelled/unexpectedly skipped hard jobs, excludes
   advisory timing, and is required by the repository ruleset.

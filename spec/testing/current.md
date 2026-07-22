@@ -113,7 +113,7 @@ index. Missing additions are tracked by ID in [`gaps.md`](gaps.md).
 | Supported Python matrix | Explicit Python 3.11 plus the main runner's incidental Python | Hard CI | `PARTIALLY IMPLEMENTED` | The project declares Python 3.11+ without explicitly testing every currently claimed version or newest supported interpreter. See TST-NI-036. |
 | Cross-platform behavioral parity | Windows, Linux ARM64, and macOS jobs build, install, and import the wheel | Hard CI for build/import only | `NOT IMPLEMENTED` | Python and Rust behavior suites run primarily on Ubuntu; other hosts prove artifact structure and import, not public API, kernel, framing, or export parity. See TST-NI-049. |
 | Dependency reproducibility | Benchmark lock and docs lock; floating root `.[dev]` hard job | Mixed | `PARTIALLY IMPLEMENTED` | The hard root gate is not frozen; there is no separate latest-dependency canary or true minimum-dependency lane. See TST-NI-036. |
-| Required merge gate | Individual workflow jobs | Repository ruleset does not require a status check | `NOT IMPLEMENTED` | A stable aggregate required by `main` is missing. See TST-NI-001. |
+| Required merge gate | `required_ci` evaluates the complete hard-job result map with negative controls for failure, cancellation, skip, omission, and accidental advisory inclusion | Stable all-path result exists; repository ruleset does not yet require it | `PARTIALLY IMPLEMENTED` | The aggregate is executable, but `main` is not protected until the repository ruleset requires `Required CI`. See TST-NI-001. |
 | Exact-SHA release qualification | Artifact builds and a push-only tag/version/changelog script | Human/process and partial workflow checks | `NOT IMPLEMENTED` | Publication does not prove the exact SHA passed the hard suite; manual real publication can bypass the version gate. See TST-NI-003. |
 | Exact-SHA deployment qualification | Dev and stage/production deploy workflows | Deployment can begin before source CI completes | `NOT IMPLEMENTED` | Human approval does not replace exact-SHA automated qualification. See TST-NI-003. |
 | Release provenance | Uploaded artifacts and trusted publishing | No consolidated hash/attestation gate | `NOT IMPLEMENTED` | Immutable promotion evidence, SBOM/attestation, and retry-safe provenance are missing. See TST-NI-003. |
@@ -211,7 +211,7 @@ automation, not whether the helper is valuable.
 
 | Workflow | Current jobs | Testing role |
 |---|---|---|
-| `ci.yml` | `matplotlib_reference`, `test`, `browser_conformance`, `python_floor`, `benchmark_vs`, `benchmark_methodology`, `benchmark`, `sdist`, `wheels`, `install_without_rust` | Main hard and advisory code/package evidence; spec paths excluded |
+| `ci.yml` | `matplotlib_reference`, `test`, `browser_conformance`, `python_floor`, `benchmark_vs`, `benchmark_methodology`, `benchmark`, `sdist`, `wheels`, `install_without_rust`, `required_ci` | Main hard and advisory code/package evidence; stable hard aggregate runs on every pull-request path |
 | `codspeed.yml` | `benchmarks` | Advisory microbenchmark evidence |
 | `docs.yml` | `released-quickstart`, `quality`, `production` | Published-wheel quickstart, docs tests/lint, and production-route matrix |
 | `benchmark-refresh.yml` | `cross-library` | Manual scatter and core-2D refresh evidence |

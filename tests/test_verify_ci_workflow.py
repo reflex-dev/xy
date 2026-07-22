@@ -38,6 +38,64 @@ def test_ci_workflow_accepts_current_gates() -> None:
     assert verify_ci_workflow.validate_ci_workflow() == []
 
 
+def test_ci_workflow_rejects_path_filtered_required_result(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "  pull_request:\n", "  pull_request:\n    paths-ignore:\n      - 'spec/**'\n"
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("must run on every path" in error for error in errors)
+
+
+def test_ci_workflow_rejects_required_aggregate_without_always(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("    if: always()\n    needs:\n", "    needs:\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("required_ci" in error and "if: always()" in error for error in errors)
+
+
+def test_ci_workflow_rejects_required_aggregate_missing_hard_job(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("      - python_floor\n      - sdist\n", "      - python_floor\n"),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("required_ci needs" in error and "sdist" in error for error in errors)
+
+
+def test_ci_workflow_rejects_invalid_embedded_python_indentation(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            '          else:\n              raise SystemExit("expected ImportError without the native core")\n',
+            '          else:\n            raise SystemExit("expected ImportError without the native core")\n',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("invalid Python heredoc" in error for error in errors)
+
+
 def test_reference_gate_commands_must_be_in_the_named_step(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     command = "          .venv/bin/pytest -q tests/pyplot/test_reference_semantics.py\n"

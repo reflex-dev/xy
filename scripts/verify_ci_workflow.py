@@ -31,6 +31,7 @@ REQUIRED_CI_JOBS = {
     "sdist",
     "wheels",
     "install_without_rust",
+    "required_ci",
 }
 REQUIRED_CODSPEED_JOBS = {"benchmarks"}
 REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "publish-pyodide", "wasm"}
@@ -169,8 +170,8 @@ def _require_workflow_contains(
         errors.append(f"{workflow_label} workflow missing {description}: {missing}")
 
 
-def _require_docs_spec_pr_paths_ignored(errors: list[str], text: str, workflow_label: str) -> None:
-    """Require PR-only docs/spec changes to skip an expensive workflow."""
+def _require_pr_all_paths(errors: list[str], text: str, workflow_label: str) -> None:
+    """Require a PR trigger that cannot omit the workflow's stable result."""
     lines = text.splitlines()
     try:
         start = next(i for i, line in enumerate(lines) if line == "  pull_request:")
@@ -178,8 +179,6 @@ def _require_docs_spec_pr_paths_ignored(errors: list[str], text: str, workflow_l
         errors.append(f"{workflow_label} workflow missing pull_request trigger")
         return
 
-    paths_ignore: list[str] | None = None
-    collecting_paths_ignore = False
     for line in lines[start + 1 :]:
         indent = len(line) - len(line.lstrip())
         if line.strip() and indent <= 2:
@@ -187,27 +186,62 @@ def _require_docs_spec_pr_paths_ignored(errors: list[str], text: str, workflow_l
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        if indent == 4:
-            collecting_paths_ignore = bool(re.fullmatch(r"paths-ignore:\s*(?:#.*)?", stripped))
-            if collecting_paths_ignore:
-                paths_ignore = []
-            continue
-        if not collecting_paths_ignore or indent <= 4:
-            continue
-        item = re.fullmatch(r"-\s+(.+?)\s*", stripped)
-        if item is None or paths_ignore is None:
-            continue
-        value = re.sub(r"\s+#.*$", "", item.group(1)).strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-            value = value[1:-1]
-        paths_ignore.append(value)
+        if indent == 4 and re.match(r"paths(?:-ignore)?:", stripped):
+            errors.append(
+                f"{workflow_label} pull_request trigger must run on every path; found {stripped!r}"
+            )
 
-    required = {"docs/**", "spec/**"}
-    missing = sorted(required - set(paths_ignore or []))
-    if missing:
-        errors.append(
-            f"{workflow_label} pull_request trigger must skip docs/spec-only changes: {missing}"
-        )
+
+def _listed_needs(job_text: str) -> set[str]:
+    """Return names from a block-form top-level ``needs`` list."""
+    needs: set[str] = set()
+    collecting = False
+    for line in job_text.splitlines():
+        if line == "    needs:":
+            collecting = True
+            continue
+        if collecting:
+            match = re.fullmatch(r"      - ([A-Za-z0-9_-]+)", line)
+            if match:
+                needs.add(match.group(1))
+                continue
+            if line.strip():
+                break
+    return needs
+
+
+def _python_heredoc_syntax_errors(text: str) -> list[str]:
+    """Compile Python heredocs after applying YAML block-scalar indentation."""
+    lines = text.splitlines()
+    errors: list[str] = []
+    for index, line in enumerate(lines):
+        if not re.search(r"<<-?['\"]?PY['\"]?\s*$", line):
+            continue
+        indent = len(line) - len(line.lstrip())
+        prefix = " " * indent
+        body: list[str] = []
+        for end in range(index + 1, len(lines)):
+            if lines[end] == f"{prefix}PY":
+                source = "\n".join(
+                    candidate[indent:] if candidate.startswith(prefix) else candidate
+                    for candidate in body
+                )
+                try:
+                    compile(source, f"workflow-heredoc:{index + 1}", "exec")
+                except (IndentationError, SyntaxError) as exc:
+                    errors.append(f"invalid Python heredoc at line {index + 1}: {exc.msg}")
+                for offset, candidate in enumerate(source.splitlines(), 1):
+                    leading = len(candidate) - len(candidate.lstrip())
+                    if candidate.strip() and leading % 4:
+                        errors.append(
+                            "invalid Python heredoc indentation at line "
+                            f"{index + offset + 1}: expected a multiple of four spaces"
+                        )
+                break
+            body.append(lines[end])
+        else:
+            errors.append(f"unterminated Python heredoc at line {index + 1}")
+    return errors
 
 
 def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
@@ -217,8 +251,8 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         return [f"cannot read CI workflow {path}: {exc}"]
 
     jobs = _job_blocks(text)
-    errors: list[str] = []
-    _require_docs_spec_pr_paths_ignored(errors, text, "CI")
+    errors = _python_heredoc_syntax_errors(text)
+    _require_pr_all_paths(errors, text, "CI")
     missing_jobs = sorted(REQUIRED_CI_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"CI workflow missing required jobs: {missing_jobs}")
@@ -565,6 +599,35 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "--expect-pure",
         "native Rust core",
     )
+    hard_jobs = {
+        "browser_conformance",
+        "install_without_rust",
+        "matplotlib_reference",
+        "python_floor",
+        "sdist",
+        "test",
+        "wheels",
+    }
+    aggregate = jobs.get("required_ci", "")
+    _require_job_contains(
+        errors,
+        jobs,
+        "required_ci",
+        "CI",
+        "stable hard-gate aggregation",
+        "name: Required CI",
+        "if: always()",
+        "timeout-minutes: 5",
+        "NEEDS_JSON: ${{ toJSON(needs) }}",
+        "scripts/check_required_jobs.py",
+    )
+    if aggregate and _listed_needs(aggregate) != hard_jobs:
+        errors.append(
+            "CI required_ci needs must exactly match hard jobs; "
+            f"got {sorted(_listed_needs(aggregate))}, expected {sorted(hard_jobs)}"
+        )
+    if "continue-on-error:" in aggregate:
+        errors.append("CI required_ci must not use continue-on-error")
     return errors
 
 
@@ -580,8 +643,9 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
         return [f"cannot read CodSpeed workflow {path}: {exc}"]
 
     jobs = _job_blocks(text)
-    errors: list[str] = []
-    _require_docs_spec_pr_paths_ignored(errors, text, "CodSpeed")
+    errors = _python_heredoc_syntax_errors(text)
+    # CodSpeed is advisory and may remain path-filtered; only the stable hard
+    # aggregate in ci.yml is required on every pull request.
     missing_jobs = sorted(REQUIRED_CODSPEED_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"CodSpeed workflow missing required jobs: {missing_jobs}")
@@ -626,7 +690,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         return [f"cannot read release workflow {path}: {exc}"]
 
     jobs = _job_blocks(text)
-    errors: list[str] = []
+    errors = _python_heredoc_syntax_errors(text)
     missing_jobs = sorted(REQUIRED_RELEASE_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"release workflow missing required jobs: {missing_jobs}")

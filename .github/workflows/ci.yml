@@ -3,10 +3,9 @@ name: CI
 on:
   push:
     branches: ["main", "claude/**"]
+  # Keep this unfiltered: `required_ci` is the stable branch-protection result
+  # and must exist even for documentation- or specification-only pull requests.
   pull_request:
-    paths-ignore:
-      - "docs/**"
-      - "spec/**"
   workflow_dispatch:
 
 # Multiple sessions push to two branches in bursts; without this the runner
@@ -723,3 +722,23 @@ jobs:
           else:
               raise SystemExit("expected ImportError without the native core")
           PY
+
+  required_ci:
+    name: Required CI
+    if: always()
+    needs:
+      - browser_conformance
+      - install_without_rust
+      - matplotlib_reference
+      - python_floor
+      - sdist
+      - test
+      - wheels
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require every hard dependency to succeed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: python3 scripts/check_required_jobs.py
