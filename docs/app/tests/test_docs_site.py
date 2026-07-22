@@ -56,6 +56,7 @@ from xy_docs.gallery import (
 from xy_docs.markdown import XyDocsMarkdownTransformer, render_xy_markdown_page
 from xy_docs.navbar import XY_GITHUB_STARS, XY_REPOSITORY_URL, xy_docs_navbar
 from xy_docs.sidebar import (
+    INTEGRATION_LINK_ICONS,
     SIDEBAR_SECTION_GROUPS,
     xy_docs_sidebar,
     xy_docs_sidebar_comp,
@@ -1401,6 +1402,19 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
     assert rendered.count('jsx("summary"') == accordion_count
     assert rendered.count("group/details") == accordion_count
     assert rendered.count("guideMarginClass") == expected_leaf_count
+    assert rendered.count(
+        "absolute left-0 top-1/2 -z-10 h-8 w-full "
+        "-translate-y-1/2 rounded-lg bg-secondary-3"
+    ) == len(INTEGRATION_LINK_ICONS)
+    assert rendered.count(
+        "ml-[2.5rem] flex h-8 w-[calc(100%-2.5rem)] items-center "
+        "justify-start text-secondary-11 transition-colors "
+        "group-hover:text-primary-10 dark:group-hover:text-primary-9 "
+        "xl:max-w-[14rem]"
+    ) == len(INTEGRATION_LINK_ICONS)
+    assert rendered.count("group relative block h-8 w-full no-underline") == len(
+        INTEGRATION_LINK_ICONS
+    )
     assert sorted(section[0] for section in grouped_sections) == sorted(
         section[0] for section in DOCS_SECTIONS
     )
