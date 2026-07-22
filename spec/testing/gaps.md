@@ -1,9 +1,10 @@
 # Testing Gap Register
 
-This is the prioritized list of testing and enforcement that XY wants to add.
-Every entry in this file is `NOT IMPLEMENTED`. Some entries have useful
-supporting tests or scripts, but the named protection is absent until all of its
-completion criteria are automated and [`current.md`](current.md) is updated.
+This is the stable, prioritized implementation register for XY testing and
+enforcement. IDs are never removed or renumbered when work closes. Incomplete
+entries are `NOT IMPLEMENTED`; an entry becomes `IMPLEMENTED` only after all of
+its completion criteria are automated, explicit evidence is recorded here, and
+[`current.md`](current.md) is updated. Supporting scripts alone do not qualify.
 
 Priority means:
 
@@ -66,12 +67,11 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-005 — Specification and testing-catalog validation
 
-- Status: `NOT IMPLEMENTED`
+- Status: `IMPLEMENTED`
 - Owner: unassigned — file a tracking issue before implementation starts
-- Current gap: `scripts/check_testing_spec.py` now validates this catalog, but it
-  only runs when the root suite runs. CI and CodSpeed still ignore `spec/**`, so
-  a specification-only pull request receives no required result, and the checker
-  covers `spec/testing/` rather than the whole specification tree.
+- Evidence: `scripts/check_testing_spec.py::main`, `tests/test_check_testing_spec.py`, `scripts/check_claim_guardrails.py`, `make check-testing-spec`, and the all-path `required_ci` job.
+- Current gap: closed; the whole specification tree and its public claims are
+  checked, and specification-only pull requests receive the stable hard result.
 - Implemented when: spec-only pull requests receive the stable required result
   and validation extends across `spec/` — Markdown links, commands, referenced
   files/symbols/jobs, status vocabulary, evidence rows, claim guardrails, and

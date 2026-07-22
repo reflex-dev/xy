@@ -27,7 +27,7 @@ help:
 		'  make check-import     run import-time and dependency-boundary checks' \
 		'  make check-ci         run CI/release workflow invariant checks' \
 		'  make check-claims     run public performance-claim guardrails' \
-		'  make check-testing-spec validate the spec/testing catalog against the repo' \
+		'  make check-testing-spec validate all specifications, evidence, and public claims' \
 		'  make check-benchmark-harness run benchmark metadata/report/regression tests' \
 		'  make check-pyplot      run the matplotlib-shim suite and compatibility corpus' \
 		'  make check-pyplot-speed enforce the per-family 10x static-PNG target (requires .[bench])' \
@@ -104,7 +104,7 @@ check-claims:
 	$(PYTHON) scripts/verify_local.py --only claim_guardrails
 
 check-testing-spec:
-	$(PYTHON) scripts/verify_local.py --only testing_spec
+	$(PYTHON) scripts/verify_local.py --only testing_spec,claim_guardrails
 
 check-benchmark-harness:
 	$(PYTHON) scripts/verify_local.py --only benchmark_harness

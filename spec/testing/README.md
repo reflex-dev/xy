@@ -16,8 +16,10 @@ The testing specification has three responsibilities:
 
 - [`current.md`](current.md) inventories the current unit, integration,
   browser, benchmark, packaging, workflow, and release evidence.
-- [`gaps.md`](gaps.md) is the prioritized register of coverage and enforcement
-  that we want to add. Every entry is explicitly `NOT IMPLEMENTED`.
+- [`gaps.md`](gaps.md) is the stable, prioritized implementation register for
+  coverage and enforcement. IDs remain in place after completion; incomplete
+  entries are explicitly `NOT IMPLEMENTED`, while closed entries cite their
+  evidence and are marked `IMPLEMENTED`.
 
 ## Status vocabulary
 

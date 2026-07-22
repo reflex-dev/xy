@@ -233,7 +233,7 @@ appear frequently in ordinary scripts and notebooks.
 
 ### Stateful pyplot and figure management
 
-- [x] `plt.clf()` and `Figure.clear()`/`Figure.clf()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_cla_and_clf_clear_current_scope` and `tests/pyplot/test_figure_state.py::test_figure_clear_and_clf_reset_axes`.
+- [x] `plt.clf()` and `Figure.clear()`/`Figure.clf()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_cla_and_clf_clear_current_scope` and `tests/pyplot/test_figure_state.py::test_figure_clear_clf_removes_axes_and_chrome`.
 - [x] `plt.cla()` and `Axes.clear()`/`Axes.cla()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_cla_and_clf_clear_current_scope` clears only the current axes entries.
 - [x] `plt.axes()` and `plt.delaxes()`/`Figure.delaxes()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_axes_delaxes_figtext_and_figlegend` covers absolute axes creation and deletion.
 - [x] `plt.fignum_exists()`, `get_fignums()`, and `get_figlabels()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_figure_registry_and_labels` covers numeric and labeled figures.

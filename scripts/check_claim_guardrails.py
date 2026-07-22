@@ -191,12 +191,13 @@ def check_claims(paths: list[Path]) -> list[Finding]:
 
 def _default_paths() -> list[Path]:
     paths = [ROOT / item for item in DEFAULT_DOCS]
+    specification = sorted((ROOT / "spec").rglob("*.md"))
     public_docs = (
         path
         for path in sorted((ROOT / "docs").rglob("*.md"))
         if "app" not in path.relative_to(ROOT / "docs").parts
     )
-    return list(dict.fromkeys((*paths, *public_docs)))
+    return list(dict.fromkeys((*paths, *specification, *public_docs)))
 
 
 def main(argv: Optional[list[str]] = None) -> int:

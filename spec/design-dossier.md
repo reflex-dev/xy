@@ -1,4 +1,4 @@
-# Building a Faster Charting Engine — Complete Design Dossier
+# XY Charting Engine — Complete Design Dossier
 
 *A single compiled record of the design, the competitive research that validates it,
 the performance estimates, and the full audit trail. Python-only binding.*
@@ -28,7 +28,7 @@ Every claim in this dossier is **mode-scoped and testable** — no universal num
 1. **Part 1 — The Design** (§1–§37): the full specification. §1–§14 are the core; §15–§31
    fold in two prior audit rounds; §32–§37 add the Python-only architecture, distribution,
    filtering, theming, and the transfer protocol.
-2. **Part 2 — Competitive Research**: how the fastest libraries in the field actually
+2. **Part 2 — Competitive Research**: how high-throughput libraries in the field actually
    work, and where each of the six core bets is validated, corrected, or extended. All
    sourced.
 3. **Part 3 — Performance Estimates**: projected standing vs standard Python **and** React
@@ -1271,7 +1271,7 @@ on either side is always safe; worst case is a re-send or re-bin, never wrongnes
 
 # Part 2 — Competitive Research
 
-# How the fastest graphing libraries work — research findings
+# Graphing-library architecture — research findings
 
 Companion to the charting-engine design plan. Every load-bearing design decision was
 checked against production libraries and the academic literature. **Headline: all six
@@ -1436,10 +1436,12 @@ frames. (It's made bearable by Numba + multicore + Dask/CUDA: ~1B points in seco
 in <3 min on 32 cores.) A *separate* offline module, `render_tiles`, does build a
 static power-of-two pyramid — but not in the interactive path.
 
-**Verdict:** for **navigation**, our live data-space pyramid genuinely beats datashader's
-interactive path — **O(visible tiles), no per-frame round-trip, client-side
-compositing, re-bin only below the floor** = strictly lower latency and jitter. It does
-**not** beat datashader's own `render_tiles` in concept (same pyramid idea) and it
+**Research comparison, not a release claim:** for **navigation**, our live data-space
+pyramid has lower algorithmic cost than datashader's interactive path — **O(visible
+tiles), no per-frame round-trip, client-side
+compositing, re-bin only below the floor** = strictly lower latency and jitter. This is
+not a release claim that we beat datashader's own `render_tiles` in concept (same
+pyramid idea), and it
 inherits the **static-pyramid-is-stale-under-filtering** tradeoff. Defensible framing:
 we **unify** them — a *live* pyramid with client compositing — and layer a Falcon-style
 active-dimension index when dynamic filtering is needed.
@@ -1535,7 +1537,7 @@ Two structural notes for React specifically:
 
 ## The verdict that matters
 
-The honest headline is not "N× faster than everything." It is: **no existing Python or
+**Research hypothesis, not a release claim:** no existing Python or
 React library gives you all four of {100M+ points, fully interactive pan/zoom/hover,
 low/bounded memory, one simple API in a notebook or React app} at once.**
 

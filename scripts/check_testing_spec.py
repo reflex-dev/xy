@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Check the testing catalog in spec/testing for internal and repository truth.
+"""Check the complete specification tree for internal and repository truth.
 
 The catalog claims what the repository tests and what it does not. Those claims
 decay silently when a script is renamed, a Make target is retired, or a workflow
 job disappears, so this checker validates the mechanical parts:
 
-- status values come from the documented vocabulary;
+- status values and current-inventory evidence rows use the documented vocabulary;
 - gap IDs are unique, sequentially numbered, and defined exactly once;
 - every referenced gap ID resolves, and every defined gap is reachable from the
   current inventory;
 - relative Markdown links resolve, including heading anchors; and
-- referenced `make` targets, repository paths, and workflow jobs exist.
+- referenced commands, repository paths, Python test symbols, and workflow jobs exist.
 
 It is deliberately mechanical. Whether a row's status is *honest* stays a review
 question; this only rejects claims that are checkably false.
@@ -19,20 +19,16 @@ question; this only rejects claims that are checkably false.
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SPEC_DIR = ROOT / "spec"
 TESTING_DIR = ROOT / "spec" / "testing"
 MAKEFILE = ROOT / "Makefile"
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
-
-# Documents that may link into the testing catalog and reference its gap IDs.
-EXTERNAL_REFERENCES = (
-    ROOT / "spec" / "README.md",
-    ROOT / "spec" / "process" / "production-readiness.md",
-)
 
 STATUS_VOCABULARY = frozenset(
     {
@@ -51,8 +47,13 @@ GAP_HEADING_RE = re.compile(r"^### (TST-NI-\d{3}) — (.+)$")
 STATUS_CLAIM_RE = re.compile(r"`([A-Z][A-Z ]{4,})`")
 MARKDOWN_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 MAKE_TARGET_RE = re.compile(r"`(make [a-z0-9-]+)")
-REPO_PATH_RE = re.compile(r"`((?:scripts|benchmarks|tests|python|js|src|docs)/[^`\s]+)`")
+REPO_PATH_RE = re.compile(
+    r"`((?:\.github|scripts|benchmarks|tests|python|js|src|docs|spec|examples)/[^`\s]+)`"
+)
 WORKFLOW_FILE_RE = re.compile(r"`(_?[a-z0-9-]+\.yml)`")
+LINE_SUFFIX_RE = re.compile(r":\d+(?:-\d+)?$")
+GAP_STATUS_RE = re.compile(r"^- Status: `([^`]+)`\s*$", re.M)
+GENERATED_PATHS = frozenset({"docs/benchmark_ci.md"})
 
 
 class Findings:
@@ -157,20 +158,80 @@ def check_repository_references(path: Path, text: str, findings: Findings) -> No
             findings.add(path, f"`make {target}` is not a Makefile target")
 
     for match in REPO_PATH_RE.finditer(text):
-        candidate = match.group(1)
+        reference = match.group(1)
+        candidate, _, symbol = reference.partition("::")
         # Trailing punctuation and pytest node ids are not part of the path.
-        candidate = candidate.rstrip(".,;").split("::", 1)[0]
+        candidate = LINE_SUFFIX_RE.sub("", candidate.rstrip(".,;:"))
         # `python/reflex-xy[dev]` is an install target, not a path on disk.
         candidate = re.sub(r"\[[^\]]*\]$", "", candidate)
-        if "*" in candidate:
+        if candidate in GENERATED_PATHS:
+            workflows = "\n".join(
+                workflow.read_text(encoding="utf-8")
+                for workflow in sorted(WORKFLOW_DIR.glob("*.yml"))
+            )
+            if candidate not in workflows:
+                findings.add(path, f"generated path {candidate} has no workflow producer")
             continue
-        if not (ROOT / candidate).exists():
+        if "*" in candidate:
+            if not list(ROOT.glob(candidate)):
+                findings.add(path, f"referenced path glob {candidate} matches nothing")
+            continue
+        resolved = ROOT / candidate
+        if not resolved.exists():
             findings.add(path, f"referenced path {candidate} does not exist")
+            continue
+        if symbol and resolved.suffix == ".py":
+            symbol = re.sub(r"\[.*\]$", "", symbol).strip(":")
+            if symbol and symbol not in _python_symbols(resolved):
+                findings.add(path, f"referenced Python symbol {candidate}::{symbol} does not exist")
 
     for match in WORKFLOW_FILE_RE.finditer(text):
         workflow = match.group(1)
         if not (WORKFLOW_DIR / workflow).is_file():
             findings.add(path, f"referenced workflow {workflow} does not exist")
+
+
+def _python_symbols(path: Path) -> set[str]:
+    """Return top-level and class-qualified symbols addressable as pytest node IDs."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError):
+        return set()
+    symbols: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            symbols.add(node.name)
+        if isinstance(node, ast.ClassDef):
+            for child in node.body:
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    symbols.add(f"{node.name}::{child.name}")
+    return symbols
+
+
+def check_evidence_rows(path: Path, text: str, findings: Findings) -> None:
+    """Require complete, vocabulary-backed rows in current.md evidence tables."""
+    in_evidence_table = False
+    for line in text.splitlines():
+        if line.startswith("| Surface |") and "| Status |" in line:
+            in_evidence_table = True
+            continue
+        if not in_evidence_table:
+            continue
+        if not line.startswith("|"):
+            in_evidence_table = False
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if cells and all(set(cell) <= {"-", ":"} for cell in cells):
+            continue
+        if len(cells) != 5:
+            findings.add(path, f"evidence row must have five cells, got {len(cells)}: {line}")
+            continue
+        surface, evidence, enforcement, status_cell, boundary = cells
+        if not all((surface, evidence, enforcement, boundary)):
+            findings.add(path, f"evidence row has an empty required cell: {line}")
+        status_match = re.fullmatch(r"`([^`]+)`", status_cell)
+        if status_match is None or status_match.group(1) not in STATUS_VOCABULARY:
+            findings.add(path, f"evidence row has invalid status cell {status_cell!r}")
 
 
 def check_workflow_registry(path: Path, text: str, findings: Findings) -> None:
@@ -220,19 +281,32 @@ def check_gap_register(findings: Findings) -> None:
             )
             break
 
-    # Every entry must state its status; P0 entries must also name an owner so
-    # release-blocking work cannot sit in the register anonymously.
+    # Stable gap IDs stay in this register after completion. Completed entries
+    # need explicit executable evidence; incomplete entries stay NOT IMPLEMENTED.
     p0_ids = _p0_gap_ids(gaps_text)
     for gap_id, body in _gap_bodies(gaps_text).items():
-        if "- Status: `NOT IMPLEMENTED`" not in body:
-            findings.add(gaps_path, f"{gap_id} does not declare `NOT IMPLEMENTED` status")
+        statuses = GAP_STATUS_RE.findall(body)
+        if len(statuses) != 1:
+            findings.add(gaps_path, f"{gap_id} must declare exactly one status")
+            status = ""
+        else:
+            status = statuses[0]
+        if status not in {"IMPLEMENTED", "NOT IMPLEMENTED"}:
+            findings.add(
+                gaps_path,
+                f"{gap_id} status must be `IMPLEMENTED` or `NOT IMPLEMENTED`, got `{status}`",
+            )
+        if status == "IMPLEMENTED":
+            evidence = re.search(r"^- Evidence:\s+(.+)$", body, re.M)
+            if evidence is None or not evidence.group(1).strip():
+                findings.add(gaps_path, f"{gap_id} is implemented but has no explicit evidence")
         if "- Implemented when:" not in body:
             findings.add(gaps_path, f"{gap_id} has no completion criteria")
         if gap_id in p0_ids and "- Owner:" not in body:
             findings.add(gaps_path, f"{gap_id} is P0 and must name an owner")
 
     referenced: dict[str, set[Path]] = {}
-    for path in sorted(TESTING_DIR.rglob("*.md")) + list(EXTERNAL_REFERENCES):
+    for path in sorted(SPEC_DIR.rglob("*.md")):
         if path == gaps_path or not path.is_file():
             continue
         for match in GAP_ID_RE.finditer(path.read_text(encoding="utf-8")):
@@ -244,11 +318,8 @@ def check_gap_register(findings: Findings) -> None:
                 findings.add(source, f"references undefined gap {gap_id}")
 
     current_path = TESTING_DIR / "current.md"
-    current_refs = {
-        match.group(0)
-        for match in GAP_ID_RE.finditer(current_path.read_text(encoding="utf-8"))
-        if current_path.is_file()
-    }
+    current_text = current_path.read_text(encoding="utf-8") if current_path.is_file() else ""
+    current_refs = {match.group(0) for match in GAP_ID_RE.finditer(current_text)}
     for gap_id in sorted(seen - current_refs):
         findings.add(
             gaps_path,
@@ -290,32 +361,31 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.parse_args(argv)
 
-    if not TESTING_DIR.is_dir():
-        print(f"error: {TESTING_DIR} is missing", file=sys.stderr)
+    if not SPEC_DIR.is_dir():
+        print(f"error: {SPEC_DIR} is missing", file=sys.stderr)
         return 2
 
     findings = Findings()
-    documents = sorted(TESTING_DIR.rglob("*.md"))
+    documents = sorted(SPEC_DIR.rglob("*.md"))
     for path in documents:
-        text = _strip_code_blocks(path.read_text(encoding="utf-8"))
-        check_status_vocabulary(path, text, findings)
-        check_links(path, text, findings)
-        check_repository_references(path, text, findings)
-        check_workflow_registry(path, text, findings)
-
-    for path in EXTERNAL_REFERENCES:
-        if path.is_file():
-            check_links(path, _strip_code_blocks(path.read_text(encoding="utf-8")), findings)
+        raw_text = path.read_text(encoding="utf-8")
+        prose = _strip_code_blocks(raw_text)
+        check_status_vocabulary(path, prose, findings)
+        check_links(path, prose, findings)
+        check_repository_references(path, raw_text, findings)
+        if path == TESTING_DIR / "current.md":
+            check_workflow_registry(path, raw_text, findings)
+            check_evidence_rows(path, raw_text, findings)
 
     check_gap_register(findings)
 
     if not findings.ok():
-        print("testing specification check failed:", file=sys.stderr)
+        print("specification contract check failed:", file=sys.stderr)
         for error in findings.errors:
             print(f"  {error}", file=sys.stderr)
         return 1
 
-    print(f"testing specification OK ({len(documents)} documents)")
+    print(f"specification contract OK ({len(documents)} documents)")
     return 0
 
 

@@ -71,10 +71,10 @@ def fake_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     (workflows / "ci.yml").write_text("jobs:\n  test:\n  sdist:\n", encoding="utf-8")
 
     monkeypatch.setattr(check_testing_spec, "ROOT", tmp_path)
+    monkeypatch.setattr(check_testing_spec, "SPEC_DIR", tmp_path / "spec")
     monkeypatch.setattr(check_testing_spec, "TESTING_DIR", testing)
     monkeypatch.setattr(check_testing_spec, "MAKEFILE", tmp_path / "Makefile")
     monkeypatch.setattr(check_testing_spec, "WORKFLOW_DIR", workflows)
-    monkeypatch.setattr(check_testing_spec, "EXTERNAL_REFERENCES", ())
     return testing
 
 
@@ -82,11 +82,14 @@ def _errors() -> list[str]:
     findings = check_testing_spec.Findings()
     testing_dir = check_testing_spec.TESTING_DIR
     for path in sorted(testing_dir.rglob("*.md")):
-        text = check_testing_spec._strip_code_blocks(path.read_text(encoding="utf-8"))
-        check_testing_spec.check_status_vocabulary(path, text, findings)
-        check_testing_spec.check_links(path, text, findings)
-        check_testing_spec.check_repository_references(path, text, findings)
-        check_testing_spec.check_workflow_registry(path, text, findings)
+        raw_text = path.read_text(encoding="utf-8")
+        prose = check_testing_spec._strip_code_blocks(raw_text)
+        check_testing_spec.check_status_vocabulary(path, prose, findings)
+        check_testing_spec.check_links(path, prose, findings)
+        check_testing_spec.check_repository_references(path, raw_text, findings)
+        if path == testing_dir / "current.md":
+            check_testing_spec.check_workflow_registry(path, raw_text, findings)
+            check_testing_spec.check_evidence_rows(path, raw_text, findings)
     check_testing_spec.check_gap_register(findings)
     return findings.errors
 
@@ -98,6 +101,14 @@ def test_real_testing_specification_passes() -> None:
 def test_fixture_repository_is_clean(fake_repo: Path) -> None:
     # Guards the negative controls below: they must fail for their own reason.
     assert _errors() == []
+
+
+def test_main_rejects_broken_link_outside_testing_spec(fake_repo: Path, capsys) -> None:
+    design = check_testing_spec.SPEC_DIR / "design.md"
+    design.write_text("# Design\n\n[retired contract](missing-contract.md)\n", encoding="utf-8")
+
+    assert check_testing_spec.main([]) == 1
+    assert "spec/design.md: broken link target missing-contract.md" in capsys.readouterr().err
 
 
 def test_github_anchor_slug_keeps_separator_gaps() -> None:
@@ -162,9 +173,7 @@ def test_gap_without_completion_criteria_is_rejected(fake_repo: Path) -> None:
     assert any("no completion criteria" in error for error in _errors())
 
 
-def test_gap_claiming_implementation_is_rejected(fake_repo: Path) -> None:
-    # Every entry in the register is NOT IMPLEMENTED by construction; promoting
-    # one means moving it to current.md, not editing its status in place.
+def test_implemented_gap_without_explicit_evidence_is_rejected(fake_repo: Path) -> None:
     path = fake_repo / "gaps.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
@@ -172,7 +181,23 @@ def test_gap_claiming_implementation_is_rejected(fake_repo: Path) -> None:
         ),
         encoding="utf-8",
     )
-    assert any("does not declare `NOT IMPLEMENTED`" in error for error in _errors())
+    assert any("implemented but has no explicit evidence" in error for error in _errors())
+
+
+def test_implemented_gap_with_evidence_and_inventory_link_is_accepted(fake_repo: Path) -> None:
+    path = fake_repo / "gaps.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        .replace("- Status: `NOT IMPLEMENTED`", "- Status: `IMPLEMENTED`")
+        .replace(
+            "- Current gap: nothing enforces the widget contract.",
+            "- Evidence: `scripts/abi_smoke.py` and the hard `test` job.\n"
+            "- Current gap: closed by the cited evidence.",
+        ),
+        encoding="utf-8",
+    )
+
+    assert _errors() == []
 
 
 def test_p0_gap_without_owner_is_rejected(fake_repo: Path) -> None:
@@ -227,6 +252,29 @@ def test_missing_repository_path_is_rejected(fake_repo: Path) -> None:
         encoding="utf-8",
     )
     assert any("scripts/removed_smoke.py does not exist" in error for error in _errors())
+
+
+def test_missing_python_symbol_is_rejected(fake_repo: Path) -> None:
+    path = fake_repo / "current.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "`scripts/abi_smoke.py`", "`scripts/abi_smoke.py::removed_probe`"
+        ),
+        encoding="utf-8",
+    )
+    assert any("Python symbol" in error and "removed_probe" in error for error in _errors())
+
+
+def test_incomplete_evidence_row_is_rejected(fake_repo: Path) -> None:
+    path = fake_repo / "current.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "| Lint | `ruff check .` | `make lint` | `IMPLEMENTED` | Configured sources. |",
+            "| Lint |  | `make lint` | `IMPLEMENTED` | Configured sources. |",
+        ),
+        encoding="utf-8",
+    )
+    assert any("evidence row has an empty required cell" in error for error in _errors())
 
 
 def test_missing_workflow_job_is_rejected(fake_repo: Path) -> None:

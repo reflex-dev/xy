@@ -551,6 +551,14 @@ def test_makefile_exposes_docs_verification_shortcut() -> None:
     assert "docs examples and public claim guardrails" in makefile
 
 
+def test_makefile_exposes_whole_spec_and_claim_verification_shortcut() -> None:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert "check-testing-spec:" in makefile
+    assert "scripts/verify_local.py --only testing_spec,claim_guardrails" in makefile
+    assert "all specifications, evidence, and public claims" in makefile
+
+
 def test_makefile_exposes_security_verification_shortcut() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
 

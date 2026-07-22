@@ -36,6 +36,10 @@ def test_claim_guardrail_accepts_current_public_docs() -> None:
     assert (
         check_claim_guardrails.ROOT / "docs" / "index.md" in check_claim_guardrails._default_paths()
     )
+    assert all(
+        path in check_claim_guardrails._default_paths()
+        for path in (check_claim_guardrails.ROOT / "spec").rglob("*.md")
+    )
 
 
 def test_claim_guardrail_rejects_broad_fastest_claim(tmp_path: Path) -> None:

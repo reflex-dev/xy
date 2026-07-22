@@ -82,7 +82,7 @@ def _base_checks(
         ),
         Check(
             "testing_spec",
-            "testing catalog links, gap IDs, commands, and workflow jobs",
+            "whole-spec links, evidence, gap IDs, commands, symbols, and workflow jobs",
             (py, "scripts/check_testing_spec.py"),
         ),
         Check(
