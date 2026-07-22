@@ -256,20 +256,19 @@ Object.assign(ChartView.prototype, {
       band = null;
       drag = null;
     });
-    this._listen(c, "pointerleave", () => {
-      const hadHover = this._hoverId !== -1;
-      this._hoverId = -1;
-      this._hoverTarget = null;
-      this._lastHoverXY = null;
-      this._a11yKeyboardReadout = null;
-      this._pickSeq = (this._pickSeq || 0) + 1;
-      this._hideTooltip();
-      this._hideCrosshair();
-      if (this._interactionFlag("hover")) {
-        this._dispatchChartEvent("leave", { view: this._eventView("leave"), active: false });
-      }
-      // Highlight-clear only — the pick snapshot stays valid (§17).
-      if (hadHover) this._drawKeepPick();
+    this._listen(c, "pointerleave", () => this._pointerHoverExit());
+    // Backstop for missed canvas pointerleave: browsers skip boundary events
+    // when the element under a stationary cursor changes (page scroll,
+    // overlay/hit-test churn), which strands a live tooltip and an
+    // `active: true` hover payload while the pointer roams the page. While a
+    // pointer-owned readout is live (`_lastHoverXY` set and no keyboard
+    // prefix — keyboard traversal also stores an XY for exact replies, but
+    // its readout must survive mouse movement elsewhere; Escape owns it),
+    // any pointerover whose target left the chart root runs the same exit.
+    this._listen(document, "pointerover", (e) => {
+      if (!this._lastHoverXY || this._a11yKeyboardReadout) return;
+      if (this.root.contains(e.target)) return;
+      this._pointerHoverExit();
     });
     this._listen(c, "click", (e) => this._click(e));
 
@@ -301,6 +300,25 @@ Object.assign(ChartView.prototype, {
       }
     });
     this._listen(c, "keydown", (e) => this._onA11yKey(e));
+  },
+
+  // Shared exit path for canvas pointerleave and the document-level missed-
+  // leave backstop: clear pointer hover state, hide the tooltip/crosshair,
+  // and dispatch `xy:leave` so framework payloads flip to `active: false`.
+  _pointerHoverExit() {
+    const hadHover = this._hoverId !== -1;
+    this._hoverId = -1;
+    this._hoverTarget = null;
+    this._lastHoverXY = null;
+    this._a11yKeyboardReadout = null;
+    this._pickSeq = (this._pickSeq || 0) + 1;
+    this._hideTooltip();
+    this._hideCrosshair();
+    if (this._interactionFlag("hover")) {
+      this._dispatchChartEvent("leave", { view: this._eventView("leave"), active: false });
+    }
+    // Highlight-clear only — the pick snapshot stays valid (§17).
+    if (hadHover) this._drawKeepPick();
   },
 
   _a11yPointGroups() {

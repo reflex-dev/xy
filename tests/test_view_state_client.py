@@ -710,6 +710,73 @@ def test_hover_payload_is_additive_and_axis_keyed(tmp_path: Path) -> None:
     assert result == {key: True for key in result}
 
 
+_MISSED_LEAVE_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    let leaveDetail = null;
+    view.root.addEventListener("xy:leave", (e) => { leaveDetail = e.detail; });
+
+    // Establish a *pointer* hover (sets _lastHoverXY, unlike keyboard
+    // traversal) by scanning the canvas with pointermoves until a mark hits.
+    const c = view.canvas;
+    const r = c.getBoundingClientRect();
+    const hoverAt = () => {
+      for (let y = 10; y < r.height - 10; y += 4) {
+        for (let x = 10; x < r.width - 10; x += 4) {
+          c.dispatchEvent(new PointerEvent("pointermove", {
+            clientX: r.left + x, clientY: r.top + y, bubbles: true, cancelable: true,
+          }));
+          if (view._hoverId !== -1) return true;
+        }
+      }
+      return false;
+    };
+    const hovered = hoverAt();
+    const tooltipShown = view.tooltip.style.display === "block";
+
+    // A pointerover inside the chart root must NOT clear a live hover.
+    c.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    const insideKept = view._hoverId !== -1 && view.tooltip.style.display === "block";
+
+    // The missed-leave shape (real-browser scroll or hit-test churn skips the
+    // canvas pointerleave): the pointer next surfaces OUTSIDE the root, with
+    // no canvas pointerleave ever fired. The document-level backstop must run
+    // the same exit path.
+    document.body.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    const cleared = view._hoverId === -1 && view._lastHoverXY === null;
+    const tooltipHidden = view.tooltip.style.display === "none";
+    const leaveDispatched = !!leaveDetail && leaveDetail.active === false;
+
+    // Keyboard readouts are not pointer-owned: the backstop must leave them
+    // alone while the mouse roams the page.
+    c.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "ArrowRight", bubbles: true, cancelable: true,
+    }));
+    const keyboardShown = view.tooltip.style.display === "block";
+    document.body.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    const keyboardKept = view.tooltip.style.display === "block";
+
+    document.body.setAttribute("data-xy-missed-leave-probe", JSON.stringify({
+      hovered, tooltipShown, insideKept,
+      cleared, tooltipHidden, leaveDispatched,
+      keyboardShown, keyboardKept,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-missed-leave-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_missed_canvas_leave_backstop_clears_pointer_hover(tmp_path: Path) -> None:
+    document = _chart_html(xy.interaction_config(hover=True)).replace(
+        _RENDER_CALL, _MISSED_LEAVE_PROBE
+    )
+    result = _run(tmp_path, document, "data-xy-missed-leave-probe", label="missed-leave probe")
+    assert result == {key: True for key in result}
+
+
 _TOOLTIP_MOUNT_PROBE = """
   const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
   try {

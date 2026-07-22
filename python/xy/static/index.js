@@ -6929,19 +6929,11 @@ this._renderLassoSelection();
 band = null;
 drag = null;
 });
-this._listen(c, "pointerleave", () => {
-const hadHover = this._hoverId !== -1;
-this._hoverId = -1;
-this._hoverTarget = null;
-this._lastHoverXY = null;
-this._a11yKeyboardReadout = null;
-this._pickSeq = (this._pickSeq || 0) + 1;
-this._hideTooltip();
-this._hideCrosshair();
-if (this._interactionFlag("hover")) {
-this._dispatchChartEvent("leave", { view: this._eventView("leave"), active: false });
-}
-if (hadHover) this._drawKeepPick();
+this._listen(c, "pointerleave", () => this._pointerHoverExit());
+this._listen(document, "pointerover", (e) => {
+if (!this._lastHoverXY || this._a11yKeyboardReadout) return;
+if (this.root.contains(e.target)) return;
+this._pointerHoverExit();
 });
 this._listen(c, "click", (e) => this._click(e));
 this._listen(c, "wheel", (e) => {
@@ -6971,6 +6963,20 @@ e.stopImmediatePropagation();
 }
 });
 this._listen(c, "keydown", (e) => this._onA11yKey(e));
+},
+_pointerHoverExit() {
+const hadHover = this._hoverId !== -1;
+this._hoverId = -1;
+this._hoverTarget = null;
+this._lastHoverXY = null;
+this._a11yKeyboardReadout = null;
+this._pickSeq = (this._pickSeq || 0) + 1;
+this._hideTooltip();
+this._hideCrosshair();
+if (this._interactionFlag("hover")) {
+this._dispatchChartEvent("leave", { view: this._eventView("leave"), active: false });
+}
+if (hadHover) this._drawKeepPick();
 },
 _a11yPointGroups() {
 return (this.gpuTraces || []).filter((g) =>

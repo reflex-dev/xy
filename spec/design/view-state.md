@@ -298,6 +298,14 @@ re-dispatches with `exact: true` when the kernel's f64 pick reply lands, and
 on static/standalone charts `points[].row` comes from browser-resident data
 with no exact upgrade — the same honesty rule the LOD tiers follow.
 
+**The active flag is trustworthy.** `active: true` is always eventually
+followed by an `active: false` when the pointer leaves the chart, even when
+the browser skips the canvas boundary event (page scroll under a stationary
+cursor, overlay/hit-test churn): a document-level backstop watches for the
+pointer surfacing outside the chart root while a pointer-owned readout is
+live and runs the same exit path. Keyboard readouts are exempt — mouse
+movement elsewhere must not dismiss them; `Escape` does.
+
 ### 7.2 Consumers
 
 - `xy:hover` / `xy:leave` gain the payload under `detail` (existing `row`,

@@ -153,7 +153,7 @@ aliases for `ranges.x`/`ranges.y` (`50_chartview.js`, `_eventView`).
 | Event | Detail |
 | --- | --- |
 | `xy:hover` | `{row, trace, index, view}` plus the structured payload `{active: true, cursor: {px, data}, points}` (view-state.md §7.1) — genuinely additive; the kernel's exact-value reply re-dispatches with `exact: true` and a refreshed payload. `cursor.px` is chart-root-relative pixels; `cursor.data` is keyed by **exact axis ID** with one entry per declared axis; each `points[]` entry carries `trace` (series name), `index`, `row`, its `x_axis`/`y_axis` bindings, and the series `color`. |
-| `xy:leave` | `{view, active: false}` with `source: "leave"`. |
+| `xy:leave` | `{view, active: false}` with `source: "leave"`. Dispatched by canvas pointer exit and by a document-level missed-leave backstop: browsers skip boundary events when the element under a stationary cursor changes (page scroll, hit-test churn), so while a pointer-owned readout is live, a `pointerover` whose target left the chart root runs the same exit path (`53_interaction.js` `_pointerHoverExit`). Keyboard readouts are exempt — they survive mouse movement elsewhere and are dismissed by `Escape`. |
 | `xy:click` | `{x, y, view, row, trace, index}`; `row`/`trace`/`index` are `null` when the click hit no mark. |
 | `xy:brush` | `{range: {x0, x1, y0, y1}, view}` for box/axis-range drags, or `{polygon: [[x, y], …], view}` for lasso. |
 | `xy:select` | `{total, view}` — the resolved count after the kernel replies, or `total: 0` on clear. |
