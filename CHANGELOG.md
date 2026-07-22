@@ -196,6 +196,12 @@ in the README).
   assembly retains encoded arrays until the final blob join instead of copying
   every column through `tobytes()` first. Payload bytes and sampling decisions
   remain parity-tested and unchanged.
+- **Zero-copy live-update attachments.** Re-decimation, density/drill, and
+  selection replies now expose owner-retaining contiguous byte `memoryview`s
+  instead of copying every encoded ndarray through `tobytes()`. Anywidget and
+  scatter/gather frame transports borrow the views directly; the Reflex
+  socket.io adapter keeps its one explicit conversion at the owned-bytes wire
+  boundary. Frame bytes and selection masks remain byte-for-byte unchanged.
 - **Stable hybrid density overlays.** Pyramid-served pan/zoom updates now keep
   the retained deterministic point sample when they omit a replacement,
   instead of making the first-paint overlay disappear on interaction. Exact

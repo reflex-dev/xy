@@ -109,7 +109,9 @@ namespace socket re-CONNECTs automatically, and every mounted chart re-`sub`s
 on the `connect` event.
 
 **Wire shape.** Metadata is one small JSON object per event; every data
-column is a `bytes` value inside it, which python-socketio hoists into
+column is converted from the kernel's owner-retaining `memoryview` to a
+`bytes` value at `_buffer_bytes` (the one boundary copy required by
+python-socketio), which python-socketio hoists into
 binary attachments and the browser receives as `ArrayBuffer`s *in place* —
 aligned, zero-copy into `Float32Array`s. No JSON numbers for data, no
 base64, no custom framing (§29 preserved; the socket.io protocol already

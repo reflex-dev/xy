@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
+    from xy._buffers import WireBuffer
     from xy._figure import Figure
 
 __all__ = ["FigureEntry", "FigureRegistry", "registry"]
@@ -77,7 +78,7 @@ class FigureRegistry:
         self._on_publish: Optional[Callable[[str, FigureEntry], Awaitable[None]]] = None
         # async callback(token, message, buffers) -> None for incremental
         # pushes (append) — same seam, message-shaped instead of payload-shaped.
-        self._on_push: Optional[Callable[[str, dict, list[bytes]], Awaitable[None]]] = None
+        self._on_push: Optional[Callable[[str, dict, list[WireBuffer]], Awaitable[None]]] = None
 
     # -- wiring ------------------------------------------------------------
 
@@ -87,7 +88,7 @@ class FigureRegistry:
     def on_publish(self, callback: Callable[[str, FigureEntry], Awaitable[None]]) -> None:
         self._on_publish = callback
 
-    def on_push(self, callback: Callable[[str, dict, list[bytes]], Awaitable[None]]) -> None:
+    def on_push(self, callback: Callable[[str, dict, list[WireBuffer]], Awaitable[None]]) -> None:
         self._on_push = callback
 
     # -- core map ----------------------------------------------------------
@@ -244,7 +245,7 @@ class FigureRegistry:
             asyncio.run_coroutine_threadsafe(_do(), loop)
 
     def push_view_message(
-        self, token: str, build: Callable[["Figure"], tuple[dict, list[bytes]]]
+        self, token: str, build: Callable[["Figure"], tuple[dict, list[WireBuffer]]]
     ) -> None:
         """Build one kernel→client message against a figure and push it
         room-wide (spec/design/view-state.md §5.2).
@@ -312,7 +313,7 @@ class FigureRegistry:
             self.push_view_message(token, lambda fig: fig.selection_rows_message(rows))
             return
 
-        def build(fig: "Figure") -> tuple[dict, list[bytes]]:
+        def build(fig: "Figure") -> tuple[dict, list[WireBuffer]]:
             selection = fig._validated_state_selection(range=range, polygon=polygon)
             if selection is None:
                 msg = "select() needs range=, polygon=, or rows="

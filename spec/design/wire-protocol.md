@@ -19,6 +19,16 @@ emits it (§2).
 returns either `None` or `(message, buffers)`, where `buffers` is a list of
 binary attachments the reply's spec entries index into by position.
 
+Kernel-produced attachments use the internal `WireBuffer = bytes | memoryview`
+type. View-dependent f32/u8 columns and u32 selection masks are C-contiguous
+byte memoryviews that retain their encoded ndarray owner; their bytes are
+therefore backed by valid storage for the attachment lifetime without a second
+`tobytes()` allocation. Senders must not mutate an attachment until its
+transport has consumed it. Anywidget comms and `encode_frame_parts` consume
+those views directly. A transport that requires owned bytes converts at its
+own boundary: the socket.io adapter does so once in
+`reflex_xy.namespace._buffer_bytes`.
+
 - Non-dict `content`, an unknown `type`, a missing required field, or a value
   that fails coercion returns `None`. Client-supplied data never raises;
   exceptions from *user callbacks* do propagate.
@@ -147,6 +157,12 @@ while `total` sums the canonical index counts; Python callbacks receive a
 `Selection` over canonical rows. `on_brush` fires before the masks are
 assembled and `on_select` after — that order is the invariant. An empty
 `traces` list means "clear", and carries no buffers.
+
+All update attachments above are byte-for-byte identical to their owned-bytes
+encoding. If an input array is already C-contiguous and has the wire dtype, the
+view shares it; a non-contiguous or wrong-dtype input first materializes the
+single required contiguous encoded array, then borrows that array without a
+second payload-sized copy.
 
 ## 4. Server push
 

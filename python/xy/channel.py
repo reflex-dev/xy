@@ -32,10 +32,11 @@ Contracts (moved verbatim from `FigureWidget._on_custom_msg`):
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
+from ._buffers import WireBuffer, array_byte_view
 from ._figure import Selection
 from ._framing import (
     DEFAULT_FRAME_LIMITS,
@@ -79,7 +80,7 @@ __all__ = [
 ]
 
 # (reply message, buffers to ship beside it — None when the reply has none).
-Reply = tuple[dict[str, Any], Optional[list[bytes]]]
+Reply = tuple[dict[str, Any], Optional[list[WireBuffer]]]
 
 # Reflex semantic selection events include bounded JSON projections. The
 # complete canonical Selection remains server-side and can be re-resolved.
@@ -120,7 +121,7 @@ def _selection_reply(
     if callbacks.on_brush is not None:
         callbacks.on_brush(brush)
     traces = []
-    out: list[bytes] = []
+    out: list[WireBuffer] = []
     total = 0
     for tid, idx in selected.items():
         # The wire mask speaks shipped-vertex positions; callbacks retain
@@ -134,10 +135,16 @@ def _selection_reply(
                 "drill_seq": fig.traces[tid].drill_seq,
             }
         )
-        out.append(wire_idx.tobytes())
+        out.append(array_byte_view(wire_idx))
         total += len(idx)
     if callbacks.on_select is not None:
-        callbacks.on_select(Selection(fig, selected))
+        # The outgoing memoryviews may borrow `selected` directly when the
+        # canonical and shipped index spaces are identical. Give user code an
+        # isolated callback snapshot so mutation cannot rewrite an attachment
+        # after it was assembled; callback-free transports keep the zero-copy
+        # path and pay no canonical-index copy.
+        callback_selected = {tid: idx.copy() for tid, idx in selected.items()}
+        callbacks.on_select(Selection(fig, callback_selected))
     message: dict[str, Any] = {"type": "selection", "traces": traces, "total": total}
     if seq is not None:
         message["seq"] = seq
@@ -181,7 +188,7 @@ def _selection_reply(
 def handle_message(
     fig: "Figure",
     content: Any,
-    buffers: Optional[list[bytes]] = None,
+    buffers: Optional[Sequence[WireBuffer]] = None,
     callbacks: ChannelCallbacks = _NO_CALLBACKS,
 ) -> Optional[Reply]:
     """Dispatch one client message against a figure.

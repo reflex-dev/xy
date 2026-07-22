@@ -18,6 +18,7 @@ import numpy as np
 from . import _annotations, _validate, channels, columns, export, interaction, kernels, styles
 from . import marks as _marks
 from ._annotations import AnnotationsMixin
+from ._buffers import WireBuffer, array_byte_view
 from ._payload import PayloadMixin
 from ._trace import Trace
 from .channels import ColorChannel, SizeChannel
@@ -1347,7 +1348,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
 
     def density_view(
         self, trace_id: int, x0: float, x1: float, y0: float, y1: float, w: int, h: int
-    ) -> tuple[dict[str, Any], list[bytes]]:
+    ) -> tuple[dict[str, Any], list[WireBuffer]]:
         """Re-bin a density-mode scatter's aggregation grid for a new viewport."""
         return interaction.density_view(self, trace_id, x0, x1, y0, y1, w, h)
 
@@ -1376,7 +1377,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
 
     def decimate_view(
         self, x0: float, x1: float, px_width: int
-    ) -> tuple[dict[str, Any], list[bytes]]:
+    ) -> tuple[dict[str, Any], list[WireBuffer]]:
         """Re-decimate the visible line windows on zoom, re-centering the
         f32 upload offsets so precision holds at deep zoom."""
         return interaction.decimate_view(self, x0, x1, px_width)
@@ -1394,7 +1395,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         alpha: Any = None,
         stroke_width: Any = None,
         symbol: Any = None,
-    ) -> tuple[dict[str, Any], list[bytes]]:
+    ) -> tuple[dict[str, Any], list[WireBuffer]]:
         """Streaming append: extend a scatter/line trace's canonical columns
         and get the client refresh message back. The widget's `append` sends
         it; headless callers can inspect or discard it. Payloads stay
@@ -1506,7 +1507,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             message["axes"] = self._axis_policy(tuple(axes), "reset axes")
         return message
 
-    def selection_rows_message(self, rows: Any) -> tuple[dict[str, Any], list[bytes]]:
+    def selection_rows_message(self, rows: Any) -> tuple[dict[str, Any], list[WireBuffer]]:
         """Kernel-resolve a per-trace row-index selection into the same binary
         mask buffers the gesture selection path ships (§5.1). Rows-selections
         are non-durable by design; the client applies them outside history."""
@@ -1515,7 +1516,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if not isinstance(rows, dict):
             rows = {0: rows}
         traces: list[dict[str, Any]] = []
-        out: list[bytes] = []
+        out: list[WireBuffer] = []
         total = 0
         for trace_id, indices in rows.items():
             tid = int(trace_id)
@@ -1557,7 +1558,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
                     "drill_seq": self.traces[tid].drill_seq,
                 }
             )
-            out.append(wire_idx.tobytes())
+            out.append(array_byte_view(wire_idx))
             # Deduplicated, validated canonical rows — not the raw request
             # length and not only the currently-shipped subset.
             total += int(idx.size)

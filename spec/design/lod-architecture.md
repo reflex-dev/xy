@@ -70,7 +70,12 @@ Tiered chart kinds must enter through the common LOD primitives in
   `encode_window_xy_columns(...)`, `add_window_xy(...)`, and
   `BufferWriter.add_encoded(...)` are the shared geometry wire primitive: f64
   data-space values become finite f32 buffers plus `{offset, scale, len}`
-  metadata in exactly one place.
+  metadata in exactly one place. `BufferWriter` retains each contiguous
+  encoded ndarray through an owner-holding byte `memoryview`; update assembly
+  never follows that required encoding allocation with `ndarray.tobytes()`.
+  The same attachment rule covers log-u8 density grids and u32 selection
+  masks; only transports that require owned bytes may convert at their final
+  boundary.
 - `sample_rows_for_target(...)` is the shared target-bounded subset primitive:
   density overlays and future sampled tiers ask for "about N stable rows from
   this viewport" in one place instead of copying target-fraction math.

@@ -27,6 +27,7 @@ from typing import Any, cast
 import numpy as np
 
 from . import kernels
+from ._buffers import WireBuffer, array_byte_view
 from .config import DENSITY_TARGET_POINTS_PER_CELL, DRILL_EXIT_FACTOR, MAX_SCREEN_DIM
 
 _SPLITMIX_INCREMENT = np.uint64(0x9E3779B97F4A7C15)
@@ -739,19 +740,21 @@ class BufferWriter:
     every tiered chart's incremental updates use."""
 
     def __init__(self) -> None:
-        self.buffers: list[bytes] = []
+        self.buffers: list[WireBuffer] = []
 
     def add_f32(self, arr: np.ndarray) -> int:
         """Append ``arr`` as a contiguous f32 buffer; returns its index."""
-        self.buffers.append(np.ascontiguousarray(arr, dtype=np.float32).tobytes())
+        encoded = np.ascontiguousarray(arr, dtype=np.float32)
+        self.buffers.append(array_byte_view(encoded))
         return len(self.buffers) - 1
 
     def add_u8(self, arr: np.ndarray) -> int:
         """Append ``arr`` as a flat u8 buffer; returns its index."""
-        self.buffers.append(np.ascontiguousarray(arr, dtype=np.uint8).reshape(-1).tobytes())
+        encoded = np.ascontiguousarray(arr, dtype=np.uint8).reshape(-1)
+        self.buffers.append(array_byte_view(encoded))
         return len(self.buffers) - 1
 
-    def add_raw(self, raw: bytes) -> int:
+    def add_raw(self, raw: WireBuffer) -> int:
         """Append pre-encoded bytes untouched; returns their index."""
         self.buffers.append(raw)
         return len(self.buffers) - 1

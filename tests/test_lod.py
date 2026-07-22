@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import gc
+import weakref
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from xy import lod
+from xy.channel import encode_frame, encode_frame_parts
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -256,6 +259,69 @@ def test_encode_f32_values_and_buffer_writer_share_wire_contract() -> None:
     assert column.meta["kind"] == "float"
     assert ref == {"buf": 0, "len": 3, **column.meta}
     assert len(writer.buffers) == 1
+
+
+def test_buffer_writer_views_retain_owner_and_share_matching_input() -> None:
+    source = np.arange(8, dtype=np.float32)
+    source_ref = weakref.ref(source)
+    writer = lod.BufferWriter()
+
+    assert writer.add_f32(source) == 0
+    view = writer.buffers[0]
+
+    assert isinstance(view, memoryview)
+    assert view.format == "B" and view.c_contiguous
+    assert view.obj is source
+    source[3] = 42.5
+    assert np.frombuffer(view, dtype=np.float32)[3] == 42.5
+
+    # The attachment itself owns the ndarray lifetime; callers do not need to
+    # keep either their source name or the writer alive until transport send.
+    del source, writer
+    gc.collect()
+    assert source_ref() is view.obj
+    assert np.frombuffer(view, dtype=np.float32)[3] == 42.5
+    del view
+    gc.collect()
+    assert source_ref() is None
+
+
+def test_buffer_writer_copies_only_required_noncontiguous_conversions() -> None:
+    f32_base = np.arange(24, dtype=np.float64)
+    f32_source = f32_base[::3]
+    u8_base = np.arange(20, dtype=np.uint8)
+    u8_source = u8_base[::2]
+    expected_f32 = np.ascontiguousarray(f32_source, dtype=np.float32).tobytes()
+    expected_u8 = np.ascontiguousarray(u8_source, dtype=np.uint8).reshape(-1).tobytes()
+    writer = lod.BufferWriter()
+
+    writer.add_f32(f32_source)
+    writer.add_u8(u8_source)
+
+    assert all(isinstance(buffer, memoryview) for buffer in writer.buffers)
+    assert all(
+        buffer.c_contiguous and isinstance(buffer.obj, np.ndarray) for buffer in writer.buffers
+    )
+    assert [bytes(buffer) for buffer in writer.buffers] == [expected_f32, expected_u8]
+    f32_base[:] = -1.0
+    u8_base[:] = 255
+    assert [bytes(buffer) for buffer in writer.buffers] == [expected_f32, expected_u8]
+
+
+def test_update_views_preserve_exact_frame_bytes_without_payload_copy() -> None:
+    writer = lod.BufferWriter()
+    writer.add_f32(np.arange(30, dtype=np.float64).reshape(5, 6)[:, ::2])
+    writer.add_u8(np.arange(24, dtype=np.uint8).reshape(4, 6)[:, ::2])
+    owned = [bytes(buffer) for buffer in writer.buffers]
+    message = {"type": "tier_update", "seq": 9, "traces": [{"id": 0}]}
+
+    assert encode_frame(message, writer.buffers) == encode_frame(message, owned)
+    parts = encode_frame_parts(message, writer.buffers)
+    buffer_parts = [part for part in parts if isinstance(part, memoryview)]
+    assert [bytes(part) for part in buffer_parts] == owned
+    assert all(
+        part.obj is buffer.obj for part, buffer in zip(buffer_parts, writer.buffers, strict=True)
+    )
 
 
 def test_add_window_xy_uses_single_shared_buffer_writer_contract() -> None:

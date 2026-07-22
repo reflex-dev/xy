@@ -283,6 +283,43 @@ def test_select_fires_brush_before_select_and_returns_selection_reply():
     assert msg["seq"] == "selection:7"
     assert msg["total"] == 4
     assert buffers is not None and len(buffers) == len(msg["traces"])
+    assert all(isinstance(buffer, memoryview) for buffer in buffers)
+    assert all(isinstance(buffer.obj, np.ndarray) for buffer in buffers)
+
+
+def test_select_callback_mutation_cannot_rewrite_outgoing_attachment() -> None:
+    fig = Figure().scatter(np.arange(10.0), np.arange(10.0))
+    callback_rows = []
+
+    def mutate_selection(selection: Selection) -> None:
+        callback_rows.append(selection.index.copy())
+        selection.per_trace[0][:] = 9
+
+    reply = handle(
+        fig,
+        {"type": "select", "x0": 2.0, "x1": 5.0, "y0": 0.0, "y1": 6.0},
+        on_select=mutate_selection,
+    )
+
+    assert reply is not None
+    message, buffers = reply
+    assert message["total"] == 4
+    assert buffers is not None
+    np.testing.assert_array_equal(callback_rows[0], [2, 3, 4, 5])
+    np.testing.assert_array_equal(np.frombuffer(buffers[0], dtype=np.uint32), [2, 3, 4, 5])
+
+
+def test_select_without_callback_borrows_mask_owner(monkeypatch) -> None:
+    fig = Figure().scatter(np.arange(10.0), np.arange(10.0))
+    canonical = np.asarray([2, 3, 4, 5], dtype=np.uint32)
+    monkeypatch.setattr(fig, "select_range", lambda *_args: {0: canonical})
+
+    reply = handle(fig, {"type": "select", "x0": 2.0, "x1": 5.0, "y0": 0.0, "y1": 6.0})
+
+    assert reply is not None
+    _message, buffers = reply
+    assert buffers is not None
+    assert buffers[0].obj is canonical
 
 
 def test_lasso_select_returns_only_points_inside_polygon():
@@ -338,6 +375,7 @@ def test_select_wire_mask_is_shipped_space_selection_is_canonical():
     # ship time, so canonical rows [0, 2, 4] became shipped [0, 1, 2].
     wire = np.frombuffer(buffers[0], dtype=np.uint32)
     np.testing.assert_array_equal(wire, [1, 2])
+    assert isinstance(buffers[0], memoryview)
     assert msg["traces"][0]["count"] == 2
 
 

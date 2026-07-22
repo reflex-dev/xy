@@ -597,6 +597,8 @@ def test_density_view_rebins():
     # cell, with `max` restoring the scale on decode.
     assert d["enc"] == "log-u8"
     assert len(buffers[0]) == 64 * 48
+    assert isinstance(buffers[0], memoryview)
+    assert isinstance(buffers[0].obj, np.ndarray)
     grid = _decode_log_u8(buffers[0], d["max"])
     assert len(grid) == 64 * 48
     assert grid.max() == pytest.approx(d["max"])  # grid max survives exactly

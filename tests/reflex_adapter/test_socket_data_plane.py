@@ -173,6 +173,7 @@ def test_msg_round_trip_pick_and_select(_fresh_registry):
             assert sel["message"]["type"] == "selection"
             assert sel["message"]["total"] == 8
             assert len(sel["buffers"]) == 1
+            assert isinstance(sel["buffers"][0], (bytes, bytearray))
 
             # malformed messages are dropped silently, never crash the server
             await client.emit("msg", {"fig": token, "m": ["not", "a", "dict"]}, namespace="/_xy")

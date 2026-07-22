@@ -931,6 +931,12 @@ number-parse-shaped; (c) every binding reports its actual copy count at ingest i
 mode, so "zero-copy" regressions are observable rather than folklore; (d) the Jupyter
 live path still has no text encoding of numbers, DOM payload, or main-thread data parse.
 
+For live view updates, the encoded contiguous ndarray is itself the attachment owner:
+Python exposes an owner-retaining byte `memoryview` rather than making an additional
+`ndarray.tobytes()` copy. Anywidget comms and scatter/gather `XYBF` framing consume the
+view directly. A binding whose protocol requires owned bytes (currently python-socketio)
+performs its single explicit conversion at that final transport boundary.
+
 ## 30. Compatibility subset — v1 is a list, not an aspiration
 
 Full Plotly semantics (~40 trace types × transforms × axis quirks × hover rules) is a

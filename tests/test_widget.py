@@ -140,3 +140,4 @@ def test_widget_emits_brush_range_before_selection_callback():
     assert content["type"] == "selection"
     assert content["total"] == 4
     assert buffers is not None
+    assert all(isinstance(buffer, memoryview) for buffer in buffers)

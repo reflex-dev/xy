@@ -132,13 +132,18 @@ def test_selection_rows_message_ships_mask_buffers() -> None:
     # Same buffers the gesture selection path ships: shipped vertex indices.
     expected = fig.to_shipped_indices(0, np.asarray([1, 3, 5]))
     assert buffers[0] == expected.tobytes()
+    assert isinstance(buffers[0], memoryview)
+    assert isinstance(buffers[0].obj, np.ndarray)
 
 
 def test_selection_rows_message_bare_array_is_trace_zero() -> None:
     fig = _figure()
-    msg, _buffers = fig.selection_rows_message([2, 4])
+    source = np.arange(8, dtype=np.uint32)[::2]
+    msg, buffers = fig.selection_rows_message(source)
     assert msg["traces"][0]["id"] == 0
-    assert msg["total"] == 2
+    assert msg["total"] == 4
+    np.testing.assert_array_equal(np.frombuffer(buffers[0], dtype=np.uint32), source)
+    assert isinstance(buffers[0], memoryview) and buffers[0].c_contiguous
 
 
 def test_selection_rows_message_rejects_unknown_trace() -> None:

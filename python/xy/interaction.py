@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Optional
 import numpy as np
 
 from . import channels, columns, kernels, lod
+from ._buffers import WireBuffer, array_byte_view
 from .config import (
     DECIMATION_THRESHOLD,
     DEFAULT_PALETTE,
@@ -307,7 +308,7 @@ def _point_shipped_sel(t: Any) -> Optional[np.ndarray]:
 
 def decimate_view(
     fig: "Figure", x0: float, x1: float, px_width: int
-) -> tuple[dict[str, Any], list[bytes]]:
+) -> tuple[dict[str, Any], list[WireBuffer]]:
     """Re-decimate visible windows for a zoomed view (recompute for the
     visible x-range only; design dossier §28). The offset re-centers on the
     window midpoint — the §16 deep-zoom rule — so f32 precision follows the
@@ -410,15 +411,15 @@ def pyramid_report_bytes(fig: Any) -> int:
     return sum(_pyramid_resident_bytes() for t in fig.traces if getattr(t, "_pyr_handle", 0))
 
 
-def _encode_log_u8(grid: np.ndarray) -> tuple[bytes, float]:
-    """Density grid -> log-encoded u8 wire bytes (client decodes via expm1).
+def _encode_log_u8(grid: np.ndarray) -> tuple[memoryview, float]:
+    """Density grid -> log-encoded u8 wire view (client decodes via expm1).
     Zero cells stay zero; any nonzero cell maps to at least 1 so the "lit if
     occupied" texture contract survives quantization."""
     enc, maximum = kernels.density_log_u8(np.asarray(grid, dtype=np.float32))
-    return enc.tobytes(), maximum
+    return array_byte_view(enc), maximum
 
 
-def _decode_log_u8(buf: bytes, gmax: float) -> np.ndarray:
+def _decode_log_u8(buf: WireBuffer, gmax: float) -> np.ndarray:
     """Inverse of :func:`_encode_log_u8` — the Python twin of the client's
     ``lodDecodeLogU8`` and the executable wire contract for tests. Lossy
     (8-bit in log space, sub-percent per-cell at typical maxima), but zeros
@@ -489,7 +490,7 @@ def _density_sample_update(
 
 def density_view(
     fig: "Figure", trace_id: int, x0: float, x1: float, y0: float, y1: float, w: int, h: int
-) -> tuple[dict[str, Any], list[bytes]]:
+) -> tuple[dict[str, Any], list[WireBuffer]]:
     """Re-aggregate a density-mode scatter for a new viewport (O(visible
     points); the client requests this when pan/zoom leaves the shipped grid).
 
@@ -602,7 +603,7 @@ def _drill_points(
     hi_y: float,
     w: int,
     h: int,
-) -> tuple[dict[str, Any], list[bytes]]:
+) -> tuple[dict[str, Any], list[WireBuffer]]:
     """Ship the visible subset of a Tier-2 scatter as real points (§5 drill-in).
 
     Scatter-specific wiring over the chart-agnostic pieces in `lod`: channels
@@ -675,7 +676,7 @@ def append_data(
     alpha: Any = None,
     stroke_width: Any = None,
     symbol: Any = None,
-) -> tuple[dict[str, Any], list[bytes]]:
+) -> tuple[dict[str, Any], list[WireBuffer]]:
     """Streaming append (Phase-0): extend a trace's canonical
     columns in place and return the client refresh message.
 

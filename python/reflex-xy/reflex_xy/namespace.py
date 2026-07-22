@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from socketio import AsyncNamespace
 
+from xy._buffers import WireBuffer
 from xy.channel import handle_message
 
 from .registry import FigureEntry, FigureRegistry
@@ -185,7 +186,7 @@ class XYNamespace(AsyncNamespace):
     # -- server-side pushes (append/refresh fan-out) ---------------------------
 
     async def broadcast_message(
-        self, token: str, message: dict[str, Any], buffers: Optional[list[bytes]] = None
+        self, token: str, message: dict[str, Any], buffers: Optional[list[WireBuffer]] = None
     ) -> None:
         """Push one channel message to every subscriber of a figure."""
         await self.emit(
