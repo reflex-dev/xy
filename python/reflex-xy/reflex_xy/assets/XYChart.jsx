@@ -42,7 +42,7 @@ import { ChartView, decodeFrame, renderStandalone } from "./xy_client.js";
 // Opt-in console tracing: localStorage.setItem("xy_debug", "1")
 const DEBUG = globalThis.localStorage?.getItem?.("xy_debug") === "1";
 const HOVER_THROTTLE_MS = 120;
-const VIEW_DEBOUNCE_MS = 200;
+const VIEW_THROTTLE_MS = 120;
 const dbg = (...args) =>
   DEBUG &&
   console.log(
@@ -311,26 +311,42 @@ export function XYChart(props) {
       }, HOVER_THROTTLE_MS);
     };
 
-    const dispatchView = (m) => {
-      if (!cbRef.current.onViewChange || m.source === "linked" || m.source === "republish") return;
-      pendingView = m;
-      if (viewTimer !== null) clearTimeout(viewTimer);
+    const emitView = (m) => {
+      if (destroyed || !m || !cbRef.current.onViewChange) return;
+      cbRef.current.onViewChange({
+        version: 1,
+        type: "view_change",
+        token,
+        x_domain: [m.x0, m.x1],
+        y_domain: [m.y0, m.y1],
+        source: m.source,
+        phase: m.phase === "update" ? "update" : "final",
+      });
+    };
+
+    // Leading + trailing throttle, latest-wins: the first event of a gesture
+    // dispatches immediately so on_view_change-driven charts track pan/zoom
+    // live; the trailing flush guarantees the resting "final" view lands.
+    const openViewWindow = () => {
       viewTimer = setTimeout(() => {
         viewTimer = null;
-        const latest = pendingView;
-        pendingView = null;
-        if (!destroyed && latest && cbRef.current.onViewChange) {
-          cbRef.current.onViewChange({
-            version: 1,
-            type: "view_change",
-            token,
-            x_domain: [latest.x0, latest.x1],
-            y_domain: [latest.y0, latest.y1],
-            source: latest.source,
-            phase: "final",
-          });
+        if (pendingView !== null) {
+          const latest = pendingView;
+          pendingView = null;
+          emitView(latest);
+          openViewWindow();
         }
-      }, VIEW_DEBOUNCE_MS);
+      }, VIEW_THROTTLE_MS);
+    };
+
+    const dispatchView = (m) => {
+      if (!cbRef.current.onViewChange || m.source === "linked" || m.source === "republish") return;
+      if (viewTimer === null) {
+        emitView(m);
+        openViewWindow();
+      } else {
+        pendingView = m;
+      }
     };
 
     const comm = {

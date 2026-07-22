@@ -151,8 +151,8 @@ totality contract). This section records only what is specific to this host.
 
 **`view_change` does not reach the kernel here.** The wrapper intercepts the
 outgoing message and invokes the Reflex `on_view_change` prop directly
-(`python/reflex-xy/reflex_xy/assets/XYChart.jsx:164-169`), because the
-namespace registers no Python-side view callback (§5). Every other request
+(`dispatchView` in `python/reflex-xy/reflex_xy/assets/XYChart.jsx`), because
+the namespace registers no Python-side view callback (§5). Every other request
 type crosses the socket unchanged and is dispatched by the shared
 `handle_message`.
 
@@ -497,8 +497,12 @@ def shared(self, event: dict):
 ```
 
 View events are `{version, type: "view_change", token, x_domain, y_domain,
-source, phase: "final"}`. User changes are trailing-edge debounced for 200 ms;
-linked and republish sources are suppressed. Hover events are latest-wins and
+source, phase: "update" | "final"}`. User changes are throttled to one
+dispatch per 120 ms with a leading edge and a latest-wins trailing flush:
+`update`-phase events stream while the gesture is in progress (this is what
+lets an `on_view_change`-computed detail chart track a pan/zoom live), and the
+resting viewport always lands as the last event with `phase: "final"`. Linked
+and republish sources are suppressed. Hover events are latest-wins and
 throttled to one dispatch per 120 ms. For viewport synchronization:
 
 ```python

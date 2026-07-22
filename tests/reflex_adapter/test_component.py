@@ -135,7 +135,7 @@ def test_semantic_event_wrapper_contracts_are_present():
     assert "interaction.view_change = true" in source
     assert "include_rows: true" in source
     assert "HOVER_THROTTLE_MS = 120" in source
-    assert "VIEW_DEBOUNCE_MS = 200" in source
+    assert "VIEW_THROTTLE_MS = 120" in source
     assert "envelope.v = payloadVersion" in source
     assert "restoreSelectionSeqs.delete(message.seq)" in source
     assert "restoringSelection" not in source
