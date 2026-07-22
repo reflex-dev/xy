@@ -5,9 +5,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "python" / "xy" / "static"
 # Line-level markers are asserted against the TypeScript source only: the
-# built bundles are minified (identifiers renamed), and `node js/build.mjs
-# --check` proves they compile from exactly this source, so the contract
-# transfers. String-literal a11y markers are re-checked in the bundles below.
+# built bundles are minified (identifiers renamed), and `node js/build.mjs`
+# compiles them from exactly this source (generated, not committed; §33), so
+# the contract transfers. String-literal a11y markers are re-checked in the
+# bundles below.
 CLIENTS = (
     (
         "source",
