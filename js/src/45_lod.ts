@@ -1,4 +1,6 @@
+import type { ChannelSpec, ColumnMeta, GpuTrace, PayloadBuffers, Rgba, StyleBag } from "./05_types";
 import { parseColor } from "./20_theme";
+import type { ChartView } from "./50_chartview";
 
 // ---------------------------------------------------------------------------
 
@@ -17,7 +19,75 @@ const LOD_DRILL_EXIT_FACTOR = 1.15;
 // and future chart kinds can intercept/override the mark renderer).
 // ---------------------------------------------------------------------------
 
-function lodFade(view, start, duration = 140) {
+/** A data-space rectangle: the window a drilled subset was cut from, or the
+ * view a pending kernel request was issued for. */
+interface LodWindow {
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}
+
+/** One cached aggregate: the decoded grid, its GL texture, and the data-space
+ * range it was binned over. Everything here is a rebuildable cache (§27) and
+ * the producers differ (first paint vs kernel update), so it stays open. */
+interface DensitySource {
+  w: number;
+  h: number;
+  max: number;
+  normMax?: number;
+  colormap?: string;
+  color?: Rgba | null;
+  xRange: number[];
+  yRange: number[];
+  grid: Float32Array;
+  tex: WebGLTexture;
+  [key: string]: any;
+}
+
+/** A kernel "points"-mode reply: the exact subset for the current view, with
+ * channels restored. Every `*.buf` member indexes `buffers`; per-kind channel
+ * extras stay open the way the rest of the wire does. */
+export interface LodDrillUpdate {
+  x: ColumnMeta;
+  y: ColumnMeta;
+  x_range: number[];
+  y_range: number[];
+  visible?: number;
+  drill_seq?: number;
+  style?: StyleBag;
+  color?: ChannelSpec;
+  size?: ChannelSpec;
+  stroke?: ChannelSpec;
+  channels?: Record<string, ChannelSpec>;
+  density_val?: ChannelSpec;
+  density_colormap?: string;
+  lod_blend?: number;
+  [key: string]: any;
+}
+
+/** The grid payload of a kernel "density"-mode reply. `enc === "log-u8"` means
+ * `buf` is quantized and needs `lodDecodeLogU8` before use. */
+interface LodDensityPayload {
+  buf: number;
+  w: number;
+  h: number;
+  max: number;
+  enc?: string;
+  colormap?: string;
+  color?: string;
+  x_range: number[];
+  y_range: number[];
+  sample?: any;
+  [key: string]: any;
+}
+
+interface LodDensityUpdate {
+  density: LodDensityPayload;
+  [key: string]: any;
+}
+
+function lodFade(view: ChartView, start: number | null | undefined, duration = 140) {
   if (start === undefined || start === null || duration <= 0 || view._prefersReducedMotion()) {
     return 1;
   }
@@ -29,7 +99,7 @@ function lodFade(view, start, duration = 140) {
 // to approximate counts so exposure normalization and re-encodes work
 // unchanged. The final texture is 8-bit log anyway, so the round-trip is
 // visually exact; decode is deterministic (no RNG/time).
-export function lodDecodeLogU8(buf, maxVal) {
+export function lodDecodeLogU8(buf: ArrayBuffer | ArrayBufferView, maxVal: number) {
   const u8 = buf instanceof ArrayBuffer ? new Uint8Array(buf) : new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
   const out = new Float32Array(u8.length);
   const denom = Math.log1p(Math.max(0, maxVal || 0));
@@ -41,13 +111,15 @@ export function lodDecodeLogU8(buf, maxVal) {
   return out;
 }
 
-export function lodCopyGrid(f32) {
+// Any numeric column view can back a grid (`_columnView` hands back the raw
+// dtype); only the f32 copy path allocates.
+export function lodCopyGrid(f32: Float32Array | Uint32Array | Uint8Array) {
   return f32.slice ? f32.slice() : new Float32Array(f32);
 }
 
 // Log tone-mapped grid upload (R8): stable perception across renormalization,
 // and the u_max swings between rebins compress logarithmically (§5/§F6).
-export function lodWriteGridTexture(gl, tex, f32, w, h, maxVal) {
+export function lodWriteGridTexture(gl: WebGL2RenderingContext, tex: WebGLTexture, f32: Float32Array | Uint8Array | Uint32Array, w: number, h: number, maxVal: number) {
   const data = new Uint8Array(f32.length);
   const denom = Math.log1p(Math.max(0, maxVal || 0));
   if (denom > 0) {
@@ -72,7 +144,7 @@ export function lodWriteGridTexture(gl, tex, f32, w, h, maxVal) {
 // Treat the color scale like exposure: brighten slowly on drill-in so a
 // smaller aggregate tile does not suddenly go hot, but recover faster when
 // the incoming tile needs more headroom to avoid clipping.
-function lodNormMax(g, nextMax) {
+function lodNormMax(g: GpuTrace, nextMax: number) {
   if (!Number.isFinite(nextMax) || nextMax <= 0) {
     g.densityNormMax = 0;
     return 0;
@@ -87,7 +159,7 @@ function lodNormMax(g, nextMax) {
   return norm;
 }
 
-function lodStartNormAnim(view, g, start, target) {
+function lodStartNormAnim(view: ChartView, g: GpuTrace, start: number, target: number) {
   if (!g.density || !g.density.grid || !Number.isFinite(target) || target <= 0) {
     g._densityNormAnim = null;
     return;
@@ -108,7 +180,7 @@ function lodStartNormAnim(view, g, start, target) {
   };
 }
 
-function lodStepNorm(view, g) {
+function lodStepNorm(view: ChartView, g: GpuTrace) {
   const anim = g._densityNormAnim;
   const d = g.density;
   if (!anim || !d || !d.grid || !d.tex) return;
@@ -133,16 +205,16 @@ function lodStepNorm(view, g) {
 
 // -- density-source cache (multi-window LOD cache, §10) ----------------------
 
-function lodDensityArea(d) {
+function lodDensityArea(d: DensitySource) {
   return Math.abs((d.xRange[1] - d.xRange[0]) * (d.yRange[1] - d.yRange[0]));
 }
 
-function lodWindowArea(win) {
+function lodWindowArea(win: LodWindow | null | undefined) {
   if (!win) return 0;
   return Math.abs((win.x1 - win.x0) * (win.y1 - win.y0));
 }
 
-function lodWindowCenterInside(win, view) {
+function lodWindowCenterInside(win: LodWindow | null | undefined, view: LodWindow | null | undefined) {
   if (!win || !view) return false;
   const cx = (view.x0 + view.x1) / 2;
   const cy = (view.y0 + view.y1) / 2;
@@ -154,7 +226,7 @@ function lodWindowCenterInside(win, view) {
   );
 }
 
-function lodDensityForView(view, g) {
+function lodDensityForView(view: ChartView, g: GpuTrace): DensitySource {
   const cache = g.densityCache || (g.density ? [g.density] : []);
   let best = null;
   let broadest = null;
@@ -167,7 +239,7 @@ function lodDensityForView(view, g) {
   return best || broadest || g.density;
 }
 
-function lodHoldPendingDrill(view, g, d) {
+function lodHoldPendingDrill(view: ChartView, g: GpuTrace, d: GpuTrace | null) {
   const pending = g._lodPendingView;
   if (!d || !pending || g._drillDying) return false;
   if (g._lodPendingSeq !== view.seq) return false;
@@ -190,12 +262,12 @@ function lodHoldPendingDrill(view, g, d) {
 // let its texture be evicted while still referenced; the next crossfade bound
 // the freed handle → "bindTexture: attempt to use a deleted object", a dropped
 // density frame, and drilled points left stranded over a stale surface.
-function lodDensityPinned(g, d) {
+function lodDensityPinned(g: GpuTrace, d: DensitySource) {
   return d === g.density || d === g.prevDensity || d === g._densitySwitchPrev ||
     d === g._shownDensity || d === g._homeDensity;
 }
 
-export function lodRememberDensity(view, g, d) {
+export function lodRememberDensity(view: ChartView, g: GpuTrace, d: DensitySource) {
   if (!d || !d.tex) return;
   d._stamp = ++view._densityStamp;
   if (!g.densityCache) g.densityCache = [];
@@ -224,7 +296,7 @@ export function lodRememberDensity(view, g, d) {
 // The kernel decided this view fits the direct budget and shipped real marks
 // (channels restored). Build/refresh a direct-shaped sibling on the tiered
 // trace; the tier draw uses it until the kernel switches back.
-export function lodApplyDrill(view, g, upd, buffers) {
+export function lodApplyDrill(view: ChartView, g: GpuTrace, upd: LodDrillUpdate, buffers: PayloadBuffers) {
   const gl = view.gl;
   const fresh = !g.drill; // transition INTO drill vs refresh of a live drill
   let d = g.drill;
@@ -286,7 +358,7 @@ export function lodApplyDrill(view, g, upd, buffers) {
     gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.size.buf]), gl.STATIC_DRAW);
     d.sizeRange = upd.size.range_px;
   }
-  const styleChannel = (name) => upd.channels && upd.channels[name];
+  const styleChannel = (name: string) => upd.channels && upd.channels[name];
   const artistScalar = Number(d.trace.style && d.trace.style.artist_alpha);
   if (styleChannel("opacity") || styleChannel("artist_alpha") ||
       styleChannel("stroke_width") || styleChannel("symbol") || Number.isFinite(artistScalar)) {
@@ -297,7 +369,7 @@ export function lodApplyDrill(view, g, upd, buffers) {
       values[i * 4 + 2] = -1;
       values[i * 4 + 3] = -1;
     }
-    const copy = (name, component, scale = 1) => {
+    const copy = (name: string, component: number, scale = 1) => {
       const spec = styleChannel(name);
       if (!spec) return;
       const source = spec.dtype === "u8"
@@ -364,7 +436,7 @@ export function lodApplyDrill(view, g, upd, buffers) {
 // locally from the retained data-space brush (box or lasso). Exact for range
 // predicates — the same containment test the kernel runs (§34 Tier A) — so
 // the eventual kernel mask is a no-op overwrite, not a correction.
-function lodRestoreBrushMask(view, d, xs, ys) {
+function lodRestoreBrushMask(view: ChartView, d: GpuTrace, xs: Float32Array, ys: Float32Array) {
   const b = view._lastBrush;
   if (!b || !d.n) return;
   const ox = d.xMeta.offset, sx = d.xMeta.scale || 1;
@@ -392,7 +464,7 @@ function lodRestoreBrushMask(view, d, xs, ys) {
   view._applySelMask(d, mask);
 }
 
-export function lodDropDrill(view, g) {
+export function lodDropDrill(view: ChartView, g: GpuTrace) {
   const d = g.drill;
   if (!d) return;
   const gl = view.gl;
@@ -420,7 +492,7 @@ export function lodDropDrill(view, g) {
 // window at death: if it was, the kernel explicitly chose density FOR this
 // view (forced density / data change) and the revive path must not override
 // it; if it wasn't, a fast zoom back in may revive the still-exact subset.
-function lodMarkDrillDying(view, g) {
+function lodMarkDrillDying(view: ChartView, g: GpuTrace) {
   if (!g.drill) return;
   g._drillDying = true;
   g._drillDiedInsideWin = view._viewInside(g.drill.win);
@@ -429,7 +501,7 @@ function lodMarkDrillDying(view, g) {
   lodBeginDrillExitContinuous(view, g);
 }
 
-function lodDrillExitFade(view, g) {
+function lodDrillExitFade(view: ChartView, g: GpuTrace) {
   if (g._drillExitFadeStart === undefined || g._drillExitFadeStart === null) {
     g._drillExitFadeStart = view._now();
   }
@@ -452,12 +524,12 @@ const LOD_EXIT_FADE_MS = 120;
 // Exact inverse of smoothstep (s(t) = 3t^2 - 2t^3) via the trisection
 // identity — a linear approximation compounds visible error at the fade
 // ends when clocks hand off repeatedly under rapid zoom thrash.
-function lodFadeInvert(alpha) {
+function lodFadeInvert(alpha: number) {
   const a = Math.min(1, Math.max(0, alpha));
   return 0.5 - Math.sin(Math.asin(1 - 2 * a) / 3);
 }
 
-function lodDrillShownAlpha(view, g) {
+function lodDrillShownAlpha(view: ChartView, g: GpuTrace) {
   if (g._drillExitFadeStart != null) {
     return 1 - lodFade(view, g._drillExitFadeStart, LOD_EXIT_FADE_MS);
   }
@@ -472,7 +544,7 @@ function lodDrillShownAlpha(view, g) {
 }
 
 // Switch to the entry (fade-in) clock, seeded so it starts at the shown alpha.
-function lodEnterDrillContinuous(view, g) {
+function lodEnterDrillContinuous(view: ChartView, g: GpuTrace) {
   const alpha = lodDrillShownAlpha(view, g);
   g._drillShownAlpha = alpha;
   g._drillExitFadeStart = null;
@@ -481,7 +553,7 @@ function lodEnterDrillContinuous(view, g) {
 }
 
 // Switch to the exit (fade-out) clock, seeded the same way.
-function lodBeginDrillExitContinuous(view, g) {
+function lodBeginDrillExitContinuous(view: ChartView, g: GpuTrace) {
   if (g._drillExitFadeStart != null) return; // already exiting — keep its clock
   const alpha = lodDrillShownAlpha(view, g);
   g._drillShownAlpha = alpha;
@@ -494,11 +566,11 @@ function lodBeginDrillExitContinuous(view, g) {
 // Apply a kernel "density"-mode update: new grid texture with eased exposure
 // normalization, previous grid kept for the crossfade, source remembered in
 // the per-trace cache.
-export function lodApplyDensityUpdate(view, g, upd, buffers) {
+export function lodApplyDensityUpdate(view: ChartView, g: GpuTrace, upd: LodDensityUpdate, buffers: PayloadBuffers) {
   lodMarkDrillDying(view, g);
   const d = upd.density;
   const grid = d.enc === "log-u8"
-    ? lodDecodeLogU8(buffers[d.buf], d.max)
+    ? lodDecodeLogU8(buffers[d.buf] as Uint8Array, d.max)
     : lodCopyGrid(view._asF32(buffers[d.buf]));
   const normStart = lodNormMax(g, d.max);
   const normMax = view._prefersReducedMotion() ? d.max : normStart;
@@ -525,7 +597,7 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
   lodRememberDensity(view, g, g.density);
 }
 
-function lodDrawDensityWithFade(view, g, density, opacityScale = 1) {
+function lodDrawDensityWithFade(view: ChartView, g: GpuTrace, density: DensitySource, opacityScale = 1) {
   if (density !== g._shownDensity) {
     // Reversing a crossfade mid-flight (rapid alternation across two cached
     // windows) swaps the roles with a mirrored clock so both textures keep
@@ -560,7 +632,7 @@ function lodDrawDensityWithFade(view, g, density, opacityScale = 1) {
 // window; aggregate + fading marks during transitions (drill-in entry fade,
 // dying drill exit fade); aggregate alone otherwise. Never blank, never a
 // hard cut (§5 smooth transitions).
-export function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
+export function lodDrawDensityTier(view: ChartView, g: GpuTrace, x0: number, x1: number, y0: number, y1: number) {
   lodStepNorm(view, g);
   const d = g.drill;
   // Rapid zoom out→in revive: a dying drill whose window still covers the

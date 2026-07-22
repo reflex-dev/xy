@@ -416,7 +416,7 @@ def test_client_hardens_responsive_visibility_recovery() -> None:
         "new IntersectionObserver",
         "this._io?.disconnect();",
         "const compact = this.size.w < 520;",
-        "_queueResize(cssW = null, cssH = null, measure = false)",
+        "_queueResize(cssW: number | null = null, cssH: number | null = null, measure = false)",
         'this._colorbar.dataset.xyCompact = compactVertical ? "true" : "false";',
     )
 
@@ -559,9 +559,9 @@ def test_client_lod_layer_stays_chart_agnostic_and_renderer_delegated() -> None:
     assert "future heatmap/histogram tier reuses it instead of copy-pasting" in source_lod
 
     lod_required = (
-        "function lodApplyDrill(view, g, upd, buffers)",
-        "function lodApplyDensityUpdate(view, g, upd, buffers)",
-        "function lodDrawDensityTier(view, g, x0, x1, y0, y1)",
+        "function lodApplyDrill(view: ChartView, g: GpuTrace, upd: LodDrillUpdate, buffers: PayloadBuffers)",
+        "function lodApplyDensityUpdate(view: ChartView, g: GpuTrace, upd: LodDensityUpdate, buffers: PayloadBuffers)",
+        "function lodDrawDensityTier(view: ChartView, g: GpuTrace, x0: number, x1: number, y0: number, y1: number)",
         "lodRememberDensity(view, g, g.density);",
         "view._drawDensity(g, density",
         "view._drawPoints(",
@@ -587,7 +587,7 @@ def test_client_lod_layer_stays_chart_agnostic_and_renderer_delegated() -> None:
 
 def test_client_coalesces_wheel_zoom_without_animation_lag() -> None:
     required = (
-        "_queueWheelZoom(factor, fx, fy, axesScope = null)",
+        "_queueWheelZoom(factor: number, fx: number, fy: number, axesScope: string[] | null = null)",
         "this._pendingWheelZoom.factor *= factor;",
         "this._wheelZoomRaf = requestAnimationFrame",
         "this._zoomAt(pending.factor, pending.fx, pending.fy, false, 120, {",
@@ -602,8 +602,8 @@ def test_client_coalesces_wheel_zoom_without_animation_lag() -> None:
 def test_client_can_disable_navigation_without_disabling_hover() -> None:
     required = (
         'if (!this._interactionFlag("navigation", true)) return;',
-        'this._listen(c, "wheel", (e) => {',
-        'this._listen(c, "pointermove", (e) => {',
+        'this._listen(c, "wheel", (e: WheelEvent) => {',
+        'this._listen(c, "pointermove", (e: PointerEvent) => {',
         "this._hover(e);",
     )
 
@@ -643,8 +643,8 @@ def test_client_point_hover_rows_use_category_display_labels() -> None:
 
 def test_client_exposes_axis_style_hooks() -> None:
     required = (
-        "_axisStyleNumber(axis, key, fallback)",
-        "_axisStylePaint(axis, key, fallback)",
+        "_axisStyleNumber(axis: AxisSpec, key: string, fallback: number)",
+        "_axisStylePaint(axis: AxisSpec, key: string, fallback: any)",
         '"grid_color"',
         '"axis_color"',
         '"tick_color"',
@@ -677,14 +677,14 @@ def test_log_axis_uses_separate_readable_label_ticks() -> None:
 
 def test_client_axis_tick_labels_have_collision_layout() -> None:
     required = (
-        "_axisTickTarget(axisId, fallback)",
+        "_axisTickTarget(axisId: string, fallback: number)",
         "_axisTickLabelStrategy(axis)",
         "_axisTickLabelAngle(axis)",
         "_axisTickLabelAnchor(axis)",
-        "_axisTickLabelMinGap(axis, dim)",
-        '_tickLabelsCollide(labels, dim, fontSize, minGap, anchor = "center")',
-        '_downsampleTickLabels(labels, dim, fontSize, minGap, anchor = "center")',
-        "_layoutTickLabels(axis, dim, labels)",
+        '_axisTickLabelMinGap(axis: AxisSpec, dim: "x" | "y")',
+        '_tickLabelsCollide(labels: any[], dim: "x" | "y", fontSize: number, minGap: number, anchor = "center")',
+        '_downsampleTickLabels(labels: any[], dim: "x" | "y", fontSize: number, minGap: number, anchor = "center")',
+        '_layoutTickLabels(axis: AxisSpec, dim: "x" | "y", labels: any[])',
         "tick_label_strategy",
         "tick_label_angle",
         "tick_label_anchor",
@@ -698,8 +698,11 @@ def test_client_axis_tick_labels_have_collision_layout() -> None:
 
 def test_client_draws_first_class_annotation_markers() -> None:
     required = (
-        "_annotationStrokePaint(style, fallback)",
-        "_drawAnnotationMarker(ctx, x, y, style, ann)",
+        "_annotationStrokePaint(style: StyleBag, fallback: Rgba)",
+        "_drawAnnotationMarker(\n"
+        "    ctx: CanvasRenderingContext2D, x: number, y: number,\n"
+        "    style: StyleBag, ann: AnnotationSpec,\n"
+        "  )",
         'ann.kind === "marker"',
         '"circle", "square", "diamond", "cross"',
         "d.style.color = this._annotationLabelPaint(style, this.theme.label)",
@@ -892,9 +895,9 @@ def test_client_named_axes_handle_silent_gutters_and_reversed_ticks() -> None:
         for marker in required:
             assert marker in text, f"{path} lost named-axis range/layout guard {marker!r}"
 
-        label_layout = text.split("_layoutTickLabels(axis, dim, labels)", 1)[1].split(
-            "_axisLabelCss(axis, dim, fallbackCss)", 1
-        )[0]
+        label_layout = text.split(
+            '_layoutTickLabels(axis: AxisSpec, dim: "x" | "y", labels: any[])', 1
+        )[1].split("_axisLabelCss(axis, dim, fallbackCss)", 1)[0]
         assert label_layout.index("strategyValue") < label_layout.index("labels.length <= 1"), (
             f"{path} lets a single label bypass tick_label_strategy='none'"
         )

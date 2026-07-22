@@ -61,7 +61,7 @@ def test_categorical_axes_announce_categories_instead_of_numeric_padding() -> No
 
 def test_keyboard_navigation_reuses_hover_and_tooltip_pipeline() -> None:
     required = (
-        'this._listen(c, "keydown", (e) => this._onA11yKey(e))',
+        'this._listen(c, "keydown", (e: KeyboardEvent) => this._onA11yKey(e))',
         "const hit = { trace: g.trace.id, index: offset, g }",
         "this._showTooltip(hit, clientX, clientY)",
         "this._drawKeepPick()",

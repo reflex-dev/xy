@@ -1,7 +1,19 @@
+import type {
+  AxisSpec,
+  ChartSpec,
+  ColumnMeta,
+  Comm,
+  GpuTrace,
+  PayloadBuffers,
+  Rgba,
+  StyleBag,
+  TraceSpec,
+} from "./05_types";
 import { PROTOCOL, xyByteSpan } from "./00_header";
 import { buildLutData, colormapStops } from "./10_colormaps";
 import { cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
+import type { XyProgram } from "./40_gl";
 import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
 import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodRememberDensity, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
@@ -9,6 +21,31 @@ import { markOf } from "./55_marks";
 // ---------------------------------------------------------------------------
 // ChartView
 // ---------------------------------------------------------------------------
+
+/** A decoded column as `_columnView` returns it: the dtype follows the
+ * column's wire encoding, so every consumer accepts the union. */
+type ColumnView = Float32Array | Uint8Array | Uint32Array;
+
+/** An affine data->clip mapping as `_map` returns it: `[mul, add]`. Pan/zoom
+ * is a uniform update over these, never a buffer rewrite (§7). */
+type AxisMap = number[];
+
+/** A GL buffer tagged with its identity and element type, so a VAO built over
+ * a replaced buffer rebuilds instead of reading stale bytes. */
+interface XyBuffer extends WebGLBuffer {
+  _fcId?: number;
+  _fcType?: number;
+}
+
+/** The client-side view: one data-space range per axis, plus the x/y
+ * shorthands every draw path reads. */
+interface ViewState {
+  ranges: Record<string, number[]>;
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}
 
 // ChartView gains methods via prototype augmentation (51–57) and creates
 // instance fields ad hoc throughout its lifecycle; the merged index signature
@@ -80,14 +117,14 @@ const UNITLESS_STYLE_PROPS = new Set([
 // is safe: it only lowers the effective budget, releasing a few extra
 // off-screen contexts that revive on demand — it never evicts or blanks.
 const XY_CONTEXT_GOVERNOR = {
-  views: new Set(),
+  views: new Set<ChartView>(),
   seq: 1,
-  hiddenReleaseChannel: null,
-  hiddenReleaseQueue: [],
+  hiddenReleaseChannel: null as MessageChannel | null,
+  hiddenReleaseQueue: [] as ChartView[],
   // Cross-frame coordination (initialized lazily on first register()).
-  frameId: null,
-  channel: null,
-  foreign: null, // Map<frameId, liveCount> reported by other same-origin frames
+  frameId: null as string | null,
+  channel: null as BroadcastChannel | null,
+  foreign: null as Map<string, number> | null, // liveCount reported by other same-origin frames
   _announcedLive: -1,
   _crossFrameReady: false,
   _rebalanceScheduled: false,
@@ -97,11 +134,11 @@ const XY_CONTEXT_GOVERNOR = {
     // does not push chart contexts into browser-side eviction.
     return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 12;
   },
-  register(view) {
+  register(view: ChartView) {
     this._initCrossFrame();
     this.views.add(view);
   },
-  unregister(view) {
+  unregister(view: ChartView) {
     view._ctxPendingReservation = false;
     this.views.delete(view);
     this._announceLive();
@@ -110,7 +147,7 @@ const XY_CONTEXT_GOVERNOR = {
   // least-recently-visible off-screen views until the requester fits the
   // budget. If every live view is visible, overflow is allowed — the browser
   // may LRU-evict, and eviction recovery rebuilds on re-entry.
-  reserve(requester) {
+  reserve(requester: ChartView) {
     const live = [];
     let pending = 0;
     for (const view of this.views) {
@@ -142,7 +179,7 @@ const XY_CONTEXT_GOVERNOR = {
       if (view._releaseContext()) over -= 1;
     }
   },
-  acquired(requester) {
+  acquired(requester: ChartView) {
     requester._ctxPendingReservation = false;
     // A context just came live. Shed our own off-screen views if that pushed
     // the shared budget over, then tell peer frames the new count so theirs
@@ -150,7 +187,7 @@ const XY_CONTEXT_GOVERNOR = {
     this._rebalance();
     this._announceLive();
   },
-  cancel(requester) {
+  cancel(requester: ChartView) {
     requester._ctxPendingReservation = false;
   },
   // --- Cross-frame budget sharing over BroadcastChannel (§18) ---------------
@@ -168,7 +205,7 @@ const XY_CONTEXT_GOVERNOR = {
     try {
       this.frameId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
       this.channel = new BroadcastChannel("xy-webgl-context-governor");
-      this.channel.onmessage = (event) => this._onForeignMessage(event.data);
+      this.channel.onmessage = (event: MessageEvent) => this._onForeignMessage(event.data);
       // Announce arrival so already-open frames re-advertise their counts, and
       // drop our contribution from theirs when we go away.
       this._post({ t: "hello", id: this.frameId });
@@ -196,14 +233,14 @@ const XY_CONTEXT_GOVERNOR = {
       this.channel = null; // sandboxed context: stay per-document
     }
   },
-  _post(msg) {
+  _post(msg: any) {
     try {
       if (this.channel) this.channel.postMessage(msg);
     } catch (_err) {
       /* channel closed mid-teardown */
     }
   },
-  _onForeignMessage(msg) {
+  _onForeignMessage(msg: any) {
     if (!msg || !this.foreign || msg.id === this.frameId) return;
     if (msg.t === "live") {
       this.foreign.set(msg.id, msg.n | 0);
@@ -315,7 +352,7 @@ const XY_CONTEXT_GOVERNOR = {
 // arrive asynchronously, but big dashboards create every chart synchronously —
 // the estimate lets reserve() prefer below-the-fold charts immediately. The
 // 25% margin matches the observer's rootMargin (recovery hysteresis).
-function xyInitiallyVisible(el) {
+function xyInitiallyVisible(el: HTMLElement) {
   if (typeof window === "undefined" || !el.getBoundingClientRect) return true;
   const rect = el.getBoundingClientRect();
   if (!rect.width && !rect.height) return false; // hidden boot slot: recoverable
@@ -327,7 +364,7 @@ function xyInitiallyVisible(el) {
 }
 
 export class ChartView {
-  constructor(el, spec, buffer, comm) {
+  constructor(el: HTMLElement, spec: ChartSpec, buffer: PayloadBuffers, comm: Comm | null) {
     if (spec.protocol !== PROTOCOL) {
       el.textContent =
         `xy: protocol mismatch (client speaks ${PROTOCOL}, kernel sent ${spec.protocol}). ` +
@@ -422,7 +459,7 @@ export class ChartView {
       // fallback behind for browsers without WebGL2; recovery attempts catch
       // the same error themselves and therefore never replace their canvas.
       XY_CONTEXT_GOVERNOR.unregister(this);
-      if (String(err && err.message || err) === "webgl2 unavailable") {
+      if (String(err && (err as Error).message || err) === "webgl2 unavailable") {
         this.root.textContent = "xy: WebGL2 unavailable in this browser.";
       }
       throw err;
@@ -471,7 +508,7 @@ export class ChartView {
       }
     }
 
-    this._unsubscribeComm = comm ? comm.onMessage((msg, buffers) => this._onKernelMsg(msg, buffers)) : null;
+    this._unsubscribeComm = comm ? comm.onMessage((msg: any, buffers: PayloadBuffers) => this._onKernelMsg(msg, buffers)) : null;
     if (this._startEntranceAnimation) this._startEntranceAnimation();
     else this.draw();
   }
@@ -531,7 +568,7 @@ export class ChartView {
     };
   }
 
-  _normalizeAxes(spec) {
+  _normalizeAxes(spec: ChartSpec) {
     const axes = { ...(spec.axes || {}) };
     if (spec.x_axis) axes.x = spec.x_axis;
     if (spec.y_axis) axes.y = spec.y_axis;
@@ -541,16 +578,16 @@ export class ChartView {
     return axes;
   }
 
-  _axis(axisId) {
+  _axis(axisId: string) {
     const id = axisId || "x";
     return this.axes[id] || (String(id).startsWith("y") ? this.axes.y : this.axes.x) || {};
   }
 
-  _axisDim(axisId) {
+  _axisDim(axisId: string) {
     return String(axisId || "x").startsWith("y") ? "y" : "x";
   }
 
-  _axisMode(axisId) {
+  _axisMode(axisId: string) {
     return this._axis(axisId).scale === "log" ? 1 : 0;
   }
 
@@ -558,7 +595,7 @@ export class ChartView {
     return Object.keys(this.axes || {});
   }
 
-  _copyView(view) {
+  _copyView(view: any): ViewState {
     const ranges: any = {};
     for (const axisId of this._axisIds()) {
       const range = view?.ranges?.[axisId] || this._axis(axisId).range || [0, 1];
@@ -569,7 +606,7 @@ export class ChartView {
     return { ranges, x0: x[0], x1: x[1], y0: y[0], y1: y[1] };
   }
 
-  _viewFrom(next, base = this.view) {
+  _viewFrom(next: any, base = this.view): ViewState {
     const ranges = {};
     for (const axisId of this._axisIds()) {
       const source = next?.ranges?.[axisId]
@@ -578,12 +615,12 @@ export class ChartView {
         || base?.ranges?.[axisId]
         || this._axis(axisId).range
         || [0, 1];
-      ranges[axisId] = [Number(source[0]), Number(source[1])];
+      (ranges as Record<string, number[]>)[axisId] = [Number(source[0]), Number(source[1])];
     }
     return this._copyView({ ranges });
   }
 
-  _axisPolicy(name) {
+  _axisPolicy(name: string) {
     const configured = this.interaction?.[name];
     if (!Array.isArray(configured) || !configured.length) return this._axisIds();
     const declared = new Set(this._axisIds());
@@ -602,7 +639,7 @@ export class ChartView {
   // mutation keeps its window inside its home extents. Cursor-anchored zoom
   // is a scaling plus a translation, so without containment a zoom-in/out
   // chain at two cursor positions is an exact pan of the "locked" axis.
-  _axisContained(axisId) {
+  _axisContained(axisId: string) {
     if (!this._interactionFlag("navigation", true)) return false;
     if (!this._interactionFlag("zoom", true)) return false;
     if (!this._axisPolicy("zoom_axes").includes(axisId)) return false;
@@ -610,7 +647,7 @@ export class ChartView {
     return !this._axisPolicy("pan_axes").includes(axisId);
   }
 
-  _resolveDefaultDragAction() {
+  _resolveDefaultDragAction(): string {
     const requested = typeof this.interaction?.default_drag_action === "string"
       ? this.interaction.default_drag_action : "auto";
     const canNavigate = this._interactionFlag("navigation", true);
@@ -633,7 +670,7 @@ export class ChartView {
     return requested === "none" ? "none" : this._resolveDefaultDragActionFallback();
   }
 
-  _resolveDefaultDragActionFallback() {
+  _resolveDefaultDragActionFallback(): string {
     const saved = this.interaction.default_drag_action;
     this.interaction.default_drag_action = "auto";
     const resolved = this._resolveDefaultDragAction();
@@ -641,19 +678,19 @@ export class ChartView {
     return resolved;
   }
 
-  _axisCoord(axis, value) {
+  _axisCoord(axis: AxisSpec, value: number) {
     const v = Number(value);
     if (!Number.isFinite(v)) return NaN;
     if (axis && axis.scale === "log") return v > 0 ? Math.log10(v) : NaN;
     return v;
   }
 
-  _axisValue(axis, coord) {
+  _axisValue(axis: AxisSpec, coord: number) {
     if (axis && axis.scale === "log") return Math.pow(10, coord);
     return coord;
   }
 
-  _axisRange(axisId, view = this.view) {
+  _axisRange(axisId: string, view = this.view) {
     const mapped = view?.ranges?.[axisId];
     if (Array.isArray(mapped)) return [mapped[0], mapped[1]];
     if (axisId === "x" && view) return [view.x0, view.x1];
@@ -663,12 +700,12 @@ export class ChartView {
     return [Number(r[0]), Number(r[1])];
   }
 
-  _axisTicks(axisId, target): any {
+  _axisTicks(axisId: string, target: number): any {
     const axis = this._axis(axisId);
     const [lo, hi] = this._axisRange(axisId);
     if (Array.isArray(axis.tick_values)) {
       const a = Math.min(lo, hi), b = Math.max(lo, hi);
-      const ticks = axis.tick_values.map(Number).filter((v) => Number.isFinite(v) && v >= a && v <= b);
+      const ticks = axis.tick_values.map(Number).filter((v: number) => Number.isFinite(v) && v >= a && v <= b);
       return { ticks, labels: ticks, step: ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : 1 };
     }
     if (axis.kind === "time") return timeTicks(lo, hi, target);
@@ -677,15 +714,15 @@ export class ChartView {
     return linearTicks(lo, hi, target);
   }
 
-  _axisTickText(axis, value, step) {
+  _axisTickText(axis: AxisSpec, value: number, step: number) {
     if (Array.isArray(axis.tick_values) && Array.isArray(axis.tick_labels)) {
-      const index = axis.tick_values.findIndex((candidate) => Number(candidate) === Number(value));
+      const index = axis.tick_values.findIndex((candidate: unknown) => Number(candidate) === Number(value));
       if (index >= 0 && index < axis.tick_labels.length) return String(axis.tick_labels[index]);
     }
     return fmtAxis(axis, value, step);
   }
 
-  _axisTickTarget(axisId, fallback) {
+  _axisTickTarget(axisId: string, fallback: number) {
     const axis = this._axis(axisId);
     const requested = Number(axis && axis.tick_count);
     if (Number.isFinite(requested) && requested > 0) {
@@ -694,7 +731,7 @@ export class ChartView {
     return fallback;
   }
 
-  _dataPx(axisId, value) {
+  _dataPx(axisId: string, value: number) {
     const dim = this._axisDim(axisId);
     const axis = this._axis(axisId);
     const [lo, hi] = this._axisRange(axisId);
@@ -706,13 +743,21 @@ export class ChartView {
     return this.plot.y + (1 - (c - c0) / (c1 - c0)) * this.plot.h;
   }
 
-  _listen(target, type, handler, options?: any) {
-    target.addEventListener(type, handler, options);
+  _listen<E extends Event = Event>(
+    target: EventTarget,
+    type: string,
+    handler: (event: E) => void,
+    options?: AddEventListenerOptions | boolean
+  ) {
+    // The DOM signature is invariant in its event type; the generic keeps
+    // call sites precise (PointerEvent, WheelEvent, …) and the cast is the
+    // one place that admits the widening the DOM API requires.
+    target.addEventListener(type, handler as EventListener, options);
     this._listeners.push({ target, type, handler, options });
     return handler;
   }
 
-  _interactionFlag(name, fallback = false) {
+  _interactionFlag(name: string, fallback = false) {
     const value = this.interaction && this.interaction[name];
     return value === undefined ? fallback : value === true;
   }
@@ -730,7 +775,7 @@ export class ChartView {
     };
   }
 
-  _dispatchChartEvent(name, detail) {
+  _dispatchChartEvent(name: string, detail: any) {
     if (!this.root || typeof CustomEvent !== "function") return;
     this.root.dispatchEvent(new CustomEvent(`xy:${name}`, {
       detail,
@@ -777,7 +822,7 @@ export class ChartView {
     if (!group || typeof BroadcastChannel !== "function") return;
     this._linkAxes = this._axisPolicy("link_axes");
     this._linkChannel = new BroadcastChannel(`xy:${group}`);
-    this._linkChannel.onmessage = (event) => {
+    this._linkChannel.onmessage = (event: MessageEvent) => {
       const msg = event.data || {};
       if (msg.source === this._linkedSource) return;
       if (this._interactionFlag("link_select") && msg.selection) {
@@ -787,7 +832,7 @@ export class ChartView {
         if (selection.clear) {
           this._clearSelection({ broadcast: false, dispatch: false });
         } else if (selection.polygon) {
-          this._stateSelection = { polygon: selection.polygon.map((point) => [...point]) };
+          this._stateSelection = { polygon: selection.polygon.map((point: number[]) => [...point]) };
           this._selectLocalPolygon(selection.polygon, { dispatch: false });
         } else if (selection.range) {
           const { x0, x1, y0, y1 } = selection.range;
@@ -820,23 +865,23 @@ export class ChartView {
     };
   }
 
-  _broadcastLinkedView(detail) {
+  _broadcastLinkedView(detail: any) {
     if (!this._linkChannel) return;
-    const axes = (detail.axes || []).filter((axisId) => this._linkAxes.includes(axisId));
+    const axes = (detail.axes || []).filter((axisId: string) => this._linkAxes.includes(axisId));
     if (!axes.length) return;
-    const ranges = Object.fromEntries(axes.map((axisId) => [axisId, detail.ranges[axisId]]));
+    const ranges = Object.fromEntries(axes.map((axisId: string) => [axisId, detail.ranges[axisId]]));
     this._linkChannel.postMessage({
       source: this._linkedSource,
       view: { ...detail, axes, ranges },
     });
   }
 
-  _broadcastLinkedSelection(selection) {
+  _broadcastLinkedSelection(selection: any) {
     if (!this._linkChannel || !this._interactionFlag("link_select")) return;
     this._linkChannel.postMessage({ source: this._linkedSource, selection });
   }
 
-  setView(ranges, opts: any = {}) {
+  setView(ranges: any, opts: any = {}) {
     return this._setView({ ranges }, {
       animate: opts.animate === true,
       source: "programmatic",
@@ -850,14 +895,14 @@ export class ChartView {
     return this._resetView(opts.animate !== false, "reset");
   }
 
-  _applyClass(el, className) {
+  _applyClass(el: HTMLElement, className: string) {
     if (typeof className !== "string") return;
     for (const token of className.split(/\s+/).filter(Boolean)) {
       try { el.classList.add(token); } catch (_) { /* Ignore invalid CSS class tokens. */ }
     }
   }
 
-  _stylePropertyName(key) {
+  _stylePropertyName(key: string) {
     if (key.startsWith("--")) return key;
     // Accept snake_case (the Python API form, e.g. `font_size`), camelCase
     // (React-style `fontSize`), and kebab-case interchangeably, normalizing all
@@ -866,17 +911,17 @@ export class ChartView {
     // the spec, so without it a validated `font_size` reached
     // setProperty("font_size", …) and the browser silently dropped it. It also
     // lets the unitless-property check below see the real (kebab) name.
-    return key.replace(/_/g, "-").replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`);
+    return key.replace(/_/g, "-").replace(/[A-Z]/g, (match: string) => `-${match.toLowerCase()}`);
   }
 
-  _stylePropertyValue(property, value) {
+  _stylePropertyValue(property: string, value: any) {
     if (typeof value !== "number") return String(value);
     if (!Number.isFinite(value)) return null;
     if (property.startsWith("--") || UNITLESS_STYLE_PROPS.has(property)) return String(value);
     return `${value}px`;
   }
 
-  _applyStyle(el, style) {
+  _applyStyle(el: HTMLElement, style: StyleBag) {
     if (!style || typeof style !== "object" || Array.isArray(style)) return;
     for (const [key, value] of Object.entries(style)) {
       if (typeof key !== "string") continue;
@@ -887,7 +932,7 @@ export class ChartView {
     }
   }
 
-  _applySlot(el, slot) {
+  _applySlot(el: HTMLElement, slot: string) {
     if (el && el.dataset) el.dataset.xySlot = slot;
     const dom = this.spec.dom;
     if (!dom || typeof dom !== "object") return;
@@ -901,7 +946,7 @@ export class ChartView {
     }
   }
 
-  _slotStyleValue(slot, property) {
+  _slotStyleValue(slot: string, property: string) {
     const styles = this.spec.dom?.styles;
     const style = styles && typeof styles === "object" ? styles[slot] : null;
     if (!style || typeof style !== "object" || Array.isArray(style)) return null;
@@ -923,7 +968,7 @@ export class ChartView {
     this._queueResize(null, null, true);
   }
 
-  _queueResize(cssW = null, cssH = null, measure = false) {
+  _queueResize(cssW: number | null = null, cssH: number | null = null, measure = false) {
     if (this._destroyed) return;
     if (cssW || cssH) this._pendingResize = { cssW, cssH };
     if (measure) this._resizeNeedsMeasure = true;
@@ -962,20 +1007,20 @@ export class ChartView {
     }
   }
 
-  _markStateValue(state, property, fallback = null) {
+  _markStateValue(state: string, property: string, fallback: any = null) {
     const styles = this.markStyle && typeof this.markStyle === "object" ? this.markStyle[state] : null;
     if (!styles || typeof styles !== "object" || Array.isArray(styles)) return fallback;
     if (Object.prototype.hasOwnProperty.call(styles, property)) return styles[property];
     return fallback;
   }
 
-  _markStateNumber(state, property, fallback) {
+  _markStateNumber(state: string, property: string, fallback: number) {
     const value = this._markStateValue(state, property, fallback);
     if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
     return value;
   }
 
-  _markStatePaint(state, property, fallback) {
+  _markStatePaint(state: string, property: string, fallback: string) {
     const value = this._markStateValue(state, property, fallback);
     return typeof value === "string" ? value : fallback;
   }
@@ -1003,7 +1048,7 @@ export class ChartView {
   // spec + payload, then a fresh view request re-syncs live tiers (kernel
   // updates written into now-dead buffers are gone until it answers).
   _initContextLossRecovery() {
-    this._listen(this.canvas, "webglcontextlost", (e) => {
+    this._listen(this.canvas, "webglcontextlost", (e: Event) => {
       e.preventDefault();
       if (this._destroyed) return;
       const governedRelease = this.canvas.dataset.xyCtx === "released";
@@ -1118,8 +1163,8 @@ export class ChartView {
         const transient =
           !this.gl ||
           this.gl.isContextLost() ||
-          String(err && err.message || err).includes("shader compile: null") ||
-          String(err && err.message || err).startsWith("WebGL error ");
+          String(err && (err as Error).message || err).includes("shader compile: null") ||
+          String(err && (err as Error).message || err).startsWith("WebGL error ");
         if (transient) {
           this._contextRecoveryError = null;
           this._scheduleContextRecovery();
@@ -1285,7 +1330,7 @@ export class ChartView {
     this._rebuildEvictedContext();
   }
 
-  _assertContextFrameReady(stage) {
+  _assertContextFrameReady(stage: string) {
     if (!this.gl) {
       throw new Error(`context lost during ${stage} draw`);
     }
@@ -1426,7 +1471,7 @@ export class ChartView {
   // FBO realloc is deferred to the next actual pick (_renderPick checks dims).
   // The view request re-decimates/re-bins at the new pixel size (§28), so a
   // bigger chart gains real detail, not just stretched pixels.
-  _resize(cssW, cssH) {
+  _resize(cssW: number, cssH: number) {
     const w = this.fluid && cssW ? Math.max(120, Math.round(cssW)) : this.size.w;
     const h = this.fluidH && cssH ? Math.max(120, Math.round(cssH)) : this.size.h;
     // Browser zoom changes devicePixelRatio with no container resize (R7);
@@ -1471,7 +1516,7 @@ export class ChartView {
     this._scheduleViewRequest();
   }
 
-  _buildDom(el) {
+  _buildDom(el: HTMLElement) {
     const s = this.spec;
     const root = document.createElement("div");
     root.className = "xy";
@@ -1569,13 +1614,13 @@ export class ChartView {
     this._buildReductionBadges(root);
   }
 
-  _a11yAxisSummary(axisId, name) {
+  _a11yAxisSummary(axisId: string, name: string) {
     const axis = this._axis(axisId);
     const label = axis.label ? `${name} axis (${axis.label})` : `${name} axis`;
     if (axis.kind === "category") {
       const categories = Array.isArray(axis.categories) ? axis.categories : [];
       if (!categories.length) return `${label} uses categories.`;
-      const shown = categories.slice(0, 6).map((value) => String(value));
+      const shown = categories.slice(0, 6).map((value: number) => String(value));
       const remaining = categories.length - shown.length;
       const suffix = remaining > 0 ? `, and ${remaining} more` : "";
       return `${label} has ${categories.length} categories: ${shown.join(", ")}${suffix}.`;
@@ -1589,7 +1634,7 @@ export class ChartView {
     const traces = Array.isArray(this.spec.traces) ? this.spec.traces : [];
     const parts = [this.spec.title ? `${this.spec.title}.` : "Interactive chart."];
     parts.push(`${traces.length} data series.`);
-    const names = traces.map((trace) => trace && trace.name).filter(Boolean).slice(0, 6);
+    const names = traces.map((trace: TraceSpec | null) => trace && trace.name).filter(Boolean).slice(0, 6);
     if (names.length) parts.push(`Series: ${names.join(", ")}.`);
     const x = this._a11yAxisSummary("x", "X");
     const y = this._a11yAxisSummary("y", "Y");
@@ -1607,7 +1652,7 @@ export class ChartView {
     this.canvas.setAttribute("aria-label", `Plot area.${instruction}`);
   }
 
-  _compactInt(value) {
+  _compactInt(value: number) {
     const n = Number(value);
     if (!Number.isFinite(n)) return "0";
     return Math.round(n).toLocaleString();
@@ -1657,9 +1702,9 @@ export class ChartView {
     this._positionReductionBadges();
   }
 
-  _buildReductionBadges(root) {
+  _buildReductionBadges(root: HTMLElement) {
     const items = this._reductionBadgeItems();
-    const hasDensityTrace = (this.spec.traces || []).some((t) => t.tier === "density");
+    const hasDensityTrace = (this.spec.traces || []).some((t: TraceSpec) => t.tier === "density");
     if (!items.length && !hasDensityTrace) return;
     const box = document.createElement("div");
     box.style.cssText =
@@ -1671,7 +1716,7 @@ export class ChartView {
     this._refreshReductionBadges();
   }
 
-  _buildLegend(root) {
+  _buildLegend(root: HTMLElement) {
     const s = this.spec;
     this._legends = [];
     const items = [];
@@ -1680,7 +1725,7 @@ export class ChartView {
         if (t.tier === "density") {
           items.push({ swatch: "gradient", cmap: t.density.colormap, name: t.name || "density" });
         } else if (t.color && t.color.mode === "categorical") {
-          t.color.categories.forEach((cat, i) =>
+          t.color.categories.forEach((cat: string, i: number) =>
             items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} }));
         } else if (t.color && t.color.mode === "continuous") {
           items.push({ swatch: "gradient", cmap: t.color.colormap, name: t.name || "value" });
@@ -1697,7 +1742,7 @@ export class ChartView {
     // Manually added Legend artists ship explicit items + their own loc, so a
     // second legend (e.g. one per line group) renders as its own box.
     for (const extra of s.extra_legends || []) {
-      const mapped = (extra.items || []).map((it) => ({
+      const mapped = (extra.items || []).map((it: any) => ({
         swatch: it.style && it.style.color,
         name: it.name,
         symbol: it.kind === "scatter" ? (it.style?.symbol || "circle") : null,
@@ -1708,7 +1753,7 @@ export class ChartView {
     }
   }
 
-  _legendBox(root, items, options) {
+  _legendBox(root: HTMLElement, items: any[], options: any) {
     const lg = document.createElement("div");
     const loc = options.loc || "upper right";
     const ncols = Math.max(1, Number(options.ncols) || 1);
@@ -1746,7 +1791,7 @@ export class ChartView {
         svg.setAttribute("width", "18");
         svg.setAttribute("height", "14");
         const path = document.createElementNS(ns, "path");
-        const paths = {
+        const paths: Record<string, string> = {
           square: "M4.5 2.5h9v9h-9z", diamond: "M9 2l5 5-5 5-5-5z",
           thin_diamond: "M9 2l3 5-3 5-3-5z",
           triangle: "M9 2l-5 10h10z", triangle_down: "M9 12L4 2h10z",
@@ -1803,7 +1848,7 @@ export class ChartView {
     return lg;
   }
 
-  _positionLegend(lg, loc) {
+  _positionLegend(lg: HTMLElement, loc: string) {
     if (!lg) return;
     // Responsive anchors flow through private custom properties consumed by a
     // zero-specificity rule. Author classes or component styles can still set
@@ -1824,7 +1869,7 @@ export class ChartView {
     lg.style.setProperty("--xy-legend-transform", `translate(${tx},${ty})`);
   }
 
-  _buildColorbar(root) {
+  _buildColorbar(root: HTMLElement) {
     const cb = this.spec.colorbar;
     if (!cb) return;
     const box = document.createElement("div");
@@ -1914,7 +1959,7 @@ export class ChartView {
     }
   }
 
-  _initGl(buffer) {
+  _initGl(buffer: PayloadBuffers) {
     const dpr = window.devicePixelRatio || 1;
     this.dpr = dpr;
     this.canvas.width = this.plot.w * dpr;
@@ -1961,7 +2006,7 @@ export class ChartView {
     gl.vertexAttribDivisor(ATTR_SLOTS.a_corner, 0);
     gl.bindVertexArray(null);
 
-    this.gpuTraces = this.spec.traces.map((t) => this._buildTrace(buffer, t));
+    this.gpuTraces = this.spec.traces.map((t: TraceSpec) => this._buildTrace(buffer, t));
     this._updatePickable();
   }
 
@@ -1971,12 +2016,12 @@ export class ChartView {
   // trigger tracks the capability instead of freezing at construction time.
   _updatePickable() {
     this._pickable = this.gpuTraces.some(
-      (t) => markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill));
+      (t: GpuTrace) => markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill));
     if (this._pickable && !this.pickFbo) this._initPickTarget();
     this._syncModebarSelect?.();
   }
 
-  _prog(key, vs, fs) {
+  _prog(key: string, vs: string, fs: string) {
     let p = this._progCache.get(key);
     if (!p) {
       p = makeProgram(this.gl, vs, fs);
@@ -1997,7 +2042,7 @@ export class ChartView {
   get densityProg() { return this._prog("density", GRID_VS, DENSITY_FS); }
   get heatmapProg() { return this._prog("heatmap", GRID_VS, HEATMAP_FS); }
 
-  _lut(name) {
+  _lut(name: string) {
     if (this._lutCache.has(name)) return this._lutCache.get(name);
     const gl = this.gl;
     const tex = gl.createTexture();
@@ -2011,7 +2056,7 @@ export class ChartView {
     return tex;
   }
 
-  _paletteLut(palette) {
+  _paletteLut(palette: string[]) {
     // Cached by palette identity: categorical drill updates request this per
     // zoom step, and an uncached texture per call is a steady GL leak.
     const key = "pal:" + palette.join(",");
@@ -2036,7 +2081,7 @@ export class ChartView {
     return tex;
   }
 
-  _buildTrace(buffer, t) {
+  _buildTrace(buffer: PayloadBuffers, t: TraceSpec) {
     const gl = this.gl;
     const g: any = {
       trace: t,
@@ -2088,7 +2133,7 @@ export class ChartView {
   // Shared (x,y) geometry setup for xy-shaped marks (scatter, line, area, …).
   // A mark whose geometry isn't a plain x/y pair (bars/candles have their own
   // vertex layout) skips this and uploads its own buffers in build().
-  _buildXY(g, t, buffer) {
+  _buildXY(g: GpuTrace, t: TraceSpec, buffer: PayloadBuffers) {
     const x = this._columnView(buffer, this.spec.columns[t.x]);
     const y = this._columnView(buffer, this.spec.columns[t.y]);
     g.xMeta = { ...this.spec.columns[t.x] };
@@ -2099,8 +2144,8 @@ export class ChartView {
     g.yBuf = this._upload(y);
   }
 
-  _buildInstanceStyleChannels(g, t, buffer, widthName) {
-    const channel = (name) => t.channels && t.channels[name];
+  _buildInstanceStyleChannels(g: GpuTrace, t: TraceSpec, buffer: PayloadBuffers, widthName: string) {
+    const channel = (name: string) => t.channels && t.channels[name];
     const artistScalar = Number(t.style && t.style.artist_alpha);
     const hasStyle = channel("opacity") || channel("artist_alpha") ||
       channel(widthName) || channel("symbol") || Number.isFinite(artistScalar);
@@ -2112,7 +2157,7 @@ export class ChartView {
         values[i * 4 + 2] = -1;
         values[i * 4 + 3] = -1;
       }
-      const copy = (name, component, scale = 1) => {
+      const copy = (name: string, component: number, scale = 1) => {
         const spec = channel(name);
         if (!spec) return;
         const source = this._columnView(buffer, this.spec.columns[spec.buf]);
@@ -2140,7 +2185,7 @@ export class ChartView {
     }
   }
 
-  _buildScatterMark(g, t, buffer) {
+  _buildScatterMark(g: GpuTrace, t: TraceSpec, buffer: PayloadBuffers) {
     this._buildXY(g, t, buffer);
     g.colorMode = 0;
     g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
@@ -2174,9 +2219,9 @@ export class ChartView {
 
   // Point symbol + stroke (scatter). An omitted stroke color means "face":
   // use each point's resolved LUT/palette color, never a generic trace color.
-  _pointMarkStyle(g, t) {
+  _pointMarkStyle(g: GpuTrace, t: TraceSpec) {
     const s = t.style || {};
-    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 }[s.symbol] || 0;
+    g.symbol = ({ circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 } as Record<string, number>)[s.symbol] || 0;
     g.pointStrokeWidth = Number(s.stroke_width) || 0;
     g.pointStrokeFace = !s.stroke && (!t.stroke || t.stroke.mode === "match_fill");
     g.pointStroke = s.stroke
@@ -2184,7 +2229,7 @@ export class ChartView {
       : null;
   }
 
-  _sampleTraceSpec(parentTrace, sample) {
+  _sampleTraceSpec(parentTrace: TraceSpec, sample: any) {
     return {
       id: parentTrace.id,
       kind: "scatter",
@@ -2202,7 +2247,7 @@ export class ChartView {
     };
   }
 
-  _buildDensitySample(parentTrace, sample, buffer) {
+  _buildDensitySample(parentTrace: TraceSpec, sample: any, buffer: PayloadBuffers) {
     if (!sample || !sample.x || !sample.y || sample.x.col === undefined || sample.y.col === undefined) {
       return null;
     }
@@ -2222,7 +2267,7 @@ export class ChartView {
     return g;
   }
 
-  _destroyDensitySample(g) {
+  _destroyDensitySample(g: GpuTrace) {
     const s = g && g.sampleOverlay;
     if (!s || !this.gl) return;
     for (const b of [s.xBuf, s.yBuf, s.cBuf, s.rgbaBuf, s.sBuf, s.styleBuf,
@@ -2232,7 +2277,7 @@ export class ChartView {
     g.sampleOverlay = null;
   }
 
-  _applyDensitySample(g, sample, buffers) {
+  _applyDensitySample(g: GpuTrace, sample: any, buffers: PayloadBuffers) {
     this._destroyDensitySample(g);
     if (!sample || !sample.x || !sample.y || sample.x.buf === undefined || sample.y.buf === undefined) {
       this._refreshReductionBadges();
@@ -2302,7 +2347,7 @@ export class ChartView {
       gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.size.buf]), gl.STATIC_DRAW);
       s.sizeRange = sample.size.range_px;
     }
-    const channel = (name) => sample.channels && sample.channels[name];
+    const channel = (name: string) => sample.channels && sample.channels[name];
     const artistScalar = Number(trace.style && trace.style.artist_alpha);
     if (channel("opacity") || channel("artist_alpha") || channel("stroke_width") ||
         channel("symbol") || Number.isFinite(artistScalar)) {
@@ -2313,7 +2358,7 @@ export class ChartView {
         values[i * 4 + 2] = -1;
         values[i * 4 + 3] = -1;
       }
-      const copy = (name, component, scale = 1) => {
+      const copy = (name: string, component: number, scale = 1) => {
         const spec = channel(name);
         if (!spec) return;
         const source = spec.dtype === "u8"
@@ -2336,7 +2381,7 @@ export class ChartView {
     this._refreshReductionBadges();
   }
 
-  _drawDensitySample(g, x0, x1, y0, y1, opacityScale = 1) {
+  _drawDensitySample(g: GpuTrace, x0: number, x1: number, y0: number, y1: number, opacityScale = 1) {
     const s = g && g.sampleOverlay;
     // Draw the retained sample whenever it overlaps the view, not only when the
     // view sits fully inside the sample window: a pan or zoom-out must keep the
@@ -2358,11 +2403,11 @@ export class ChartView {
   // one-liner `linear-gradient(currentColor, transparent)` follows the palette
   // and theme. Colors are premultiplied here and interpolated premultiplied in
   // the shader, so fades to transparent keep their hue.
-  _resolveMarkFill(style, markColor) {
+  _resolveMarkFill(style: StyleBag, markColor: Rgba) {
     const fill = style && style.fill;
     if (!fill || !Array.isArray(fill.stops) || fill.stops.length < 2) return null;
     const mode = fill.space === "plot" ? 2 : 1;
-    const dir = { down: 0, up: 1, left: 2, right: 3 }[fill.dir] ?? 0;
+    const dir = ({ down: 0, up: 1, left: 2, right: 3 } as Record<string, number>)[fill.dir] ?? 0;
     const count = Math.min(fill.stops.length, 8);
     const pos = new Float32Array(8);
     const colors = new Float32Array(32);
@@ -2381,9 +2426,9 @@ export class ChartView {
     return { mode, dir, count, pos, colors };
   }
 
-  _setGradientUniforms(prog, grad) {
+  _setGradientUniforms(prog: XyProgram, grad: any) {
     const gl = this.gl;
-    const u = (n) => uniformOf(gl, prog, n);
+    const u = (n: string) => uniformOf(gl, prog, n);
     if (!grad) {
       gl.uniform1i(u("u_gradMode"), 0);
       return;
@@ -2395,20 +2440,20 @@ export class ChartView {
     gl.uniform4fv(u("u_gradColor"), grad.colors);
   }
 
-  _fillOpacity(style, fallback = 1) {
+  _fillOpacity(style: StyleBag, fallback = 1) {
     return Number(style.opacity ?? fallback) * Number(style.fill_opacity ?? 1);
   }
 
-  _strokeOpacity(style, fallback = 1) {
+  _strokeOpacity(style: StyleBag, fallback = 1) {
     return Number(style.opacity ?? fallback) * Number(style.stroke_opacity ?? 1);
   }
 
   // Rect-family styling uniforms (rounded corners, stroke, gradient). Radius
   // and stroke width are CSS px -> device px; the stroke color ships
   // premultiplied to match the shader's blend space.
-  _setRectStyleUniforms(prog, g) {
+  _setRectStyleUniforms(prog: XyProgram, g: GpuTrace) {
     const gl = this.gl;
-    const u = (n) => uniformOf(gl, prog, n);
+    const u = (n: string) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     const cr = g.cornerRadius || [0, 0];
     gl.uniform2f(u("u_radius"), cr[0] * this.dpr, cr[1] * this.dpr);
@@ -2426,14 +2471,14 @@ export class ChartView {
   // stroke, gradient. `corner_radius` is a scalar (all corners) or a
   // [tip, base] pair in mark space — (6, 0) rounds only the value end. A
   // stroke width with no stroke color borders in the mark color at full alpha.
-  _rectMarkStyleGpu(g, t) {
+  _rectMarkStyleGpu(g: GpuTrace, t: TraceSpec) {
     const s = t.style || {};
     const cr = s.corner_radius;
     g.cornerRadius = Array.isArray(cr)
       ? [Number(cr[0]) || 0, Number(cr[1]) || 0]
       : [Number(cr) || 0, Number(cr) || 0];
     g.strokeWidth = Number(s.stroke_width) || 0;
-    const opaque = [g.color[0], g.color[1], g.color[2], 1];
+    const opaque: Rgba = [g.color[0], g.color[1], g.color[2], 1];
     g.strokeColor = s.stroke ? parseColor(this.root, s.stroke, opaque) : opaque;
     g.grad = this._resolveMarkFill(s, g.color);
   }
@@ -2441,7 +2486,7 @@ export class ChartView {
   // curve:"smooth" resample for the polyline marks. Returns null unless the
   // trace opted in and the data qualifies; hover keeps reading the original
   // `_cpu` columns either way (`_nearestCpuIndex` limits to the source length).
-  _smoothArrays(t, x, y, base, n) {
+  _smoothArrays(t: TraceSpec, x: ColumnView, y: ColumnView, base: ColumnView | null, n: number) {
     if (!t.style || t.style.curve !== "smooth") return null;
     return xySmoothResample(x, y, base || null, n, 32768);
   }
@@ -2450,7 +2495,7 @@ export class ChartView {
   // its drawn corner vertices. Runs after smoothing/decimation so canonical
   // inputs stay compact — both the initial build and every LOD tier swap must
   // apply it before upload. Returns null when the trace isn't stepped.
-  _stepArrays(t, x, y, n) {
+  _stepArrays(t: TraceSpec, x: ColumnView, y: ColumnView, n: number) {
     const where = t.style && t.style.step;
     if (!where || n < 2) return null;
     const perGap = where === "mid" ? 3 : 2;
@@ -2477,7 +2522,7 @@ export class ChartView {
     return { x: sx, y: sy, n: m };
   }
 
-  _buildLineMark(g, t, buffer) {
+  _buildLineMark(g: GpuTrace, t: TraceSpec, buffer: PayloadBuffers) {
     const x = this._columnView(buffer, this.spec.columns[t.x]);
     const y = this._columnView(buffer, this.spec.columns[t.y]);
     g.xMeta = { ...this.spec.columns[t.x] };
@@ -2498,7 +2543,7 @@ export class ChartView {
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
   }
 
-  _buildSegmentMark(g, t, buffer) {
+  _buildSegmentMark(g: GpuTrace, t: TraceSpec, buffer: PayloadBuffers) {
     const x0 = this._columnView(buffer, this.spec.columns[t.x0]);
     const x1 = this._columnView(buffer, this.spec.columns[t.x1]);
     const y0 = this._columnView(buffer, this.spec.columns[t.y0]);
@@ -2531,7 +2576,7 @@ export class ChartView {
     g._cpu = { x: x0, y: y1, xMeta: g.x0Meta, yMeta: g.y1Meta };
   }
 
-  _buildMeshMark(g, t, buffer) {
+  _buildMeshMark(g: GpuTrace, t: TraceSpec, buffer: PayloadBuffers) {
     for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) {
       const values = this._columnView(buffer, this.spec.columns[t[name]]);
       g[name + "Meta"] = { ...this.spec.columns[t[name]] };
@@ -2564,7 +2609,7 @@ export class ChartView {
   // encoded space: stored = (value - offset) * scale, so a data-space delta
   // scales by meta.scale and the center columns' metas serve every vertex.
   // The ring must match HEX_RING in python/xy/_svg.py.
-  _buildHexbinMark(g, t, buffer) {
+  _buildHexbinMark(g: GpuTrace, t: TraceSpec, buffer: PayloadBuffers) {
     const cx = this._columnView(buffer, this.spec.columns[t.x]);
     const cy = this._columnView(buffer, this.spec.columns[t.y]);
     const xMeta = { ...this.spec.columns[t.x] };
@@ -2612,7 +2657,7 @@ export class ChartView {
     g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
   }
 
-  _buildAreaMark(g, t, buffer) {
+  _buildAreaMark(g: GpuTrace, t: TraceSpec, buffer: PayloadBuffers) {
     const x = this._columnView(buffer, this.spec.columns[t.x]);
     const y = this._columnView(buffer, this.spec.columns[t.y]);
     const base = this._columnView(buffer, this.spec.columns[t.base]);
@@ -2633,7 +2678,7 @@ export class ChartView {
     g.grad = this._resolveMarkFill(t.style, g.color);
   }
 
-  _buildRectMark(g, t, buffer) {
+  _buildRectMark(g: GpuTrace, t: TraceSpec, buffer: PayloadBuffers) {
     const x0 = this._columnView(buffer, this.spec.columns[t.x0]);
     const x1 = this._columnView(buffer, this.spec.columns[t.x1]);
     const y0 = this._columnView(buffer, this.spec.columns[t.y0]);
@@ -2669,7 +2714,7 @@ export class ChartView {
     this._rectMarkStyleGpu(g, t);
   }
 
-  _buildBarMark(g, t, buffer) {
+  _buildBarMark(g: GpuTrace, t: TraceSpec, buffer: PayloadBuffers) {
     const b = t.bar;
     if (!b) return this._buildRectMark(g, t, buffer);
     const pos = this._columnView(buffer, this.spec.columns[b.pos]);
@@ -2721,11 +2766,11 @@ export class ChartView {
     this._rectMarkStyleGpu(g, t);
   }
 
-  _buildHeatmapMark(g, t, buffer) {
+  _buildHeatmapMark(g: GpuTrace, t: TraceSpec, buffer: PayloadBuffers) {
     const h = t.heatmap;
     const truecolor = Array.isArray(h.rgba_bufs);
     const grid = truecolor
-      ? h.rgba_bufs.map((index) => this._columnView(buffer, this.spec.columns[index]))
+      ? h.rgba_bufs.map((index: number) => this._columnView(buffer, this.spec.columns[index]))
       : this._columnView(buffer, this.spec.columns[h.buf]);
     g.heatmap = {
       w: h.w,
@@ -2740,7 +2785,7 @@ export class ChartView {
     if (!truecolor) g._cpuHeatmap = { grid };
   }
 
-  _uploadRgbaGrid(channels, w, h) {
+  _uploadRgbaGrid(channels: any, w: number, h: number) {
     const gl = this.gl;
     const tex = gl.createTexture();
     const data = new Uint8Array(w * h * 4);
@@ -2758,14 +2803,14 @@ export class ChartView {
     return tex;
   }
 
-  _uploadGrid(f32, w, h, maxVal) {
+  _uploadGrid(f32: ColumnView, w: number, h: number, maxVal: number) {
     const gl = this.gl;
     const tex = gl.createTexture();
     lodWriteGridTexture(gl, tex, f32, w, h, maxVal);
     return tex;
   }
 
-  _uploadHeatmapGrid(f32, w, h) {
+  _uploadHeatmapGrid(f32: ColumnView, w: number, h: number) {
     const gl = this.gl;
     const tex = gl.createTexture();
     const data = new Uint8Array(f32.length);
@@ -2791,7 +2836,7 @@ export class ChartView {
   // lifecycle live in 45_lod.js — chart-agnostic so future tiered kinds
   // (heatmap, histogram) reuse them instead of copy-pasting.
 
-  _columnView(buffer, meta) {
+  _columnView(buffer: PayloadBuffers, meta: ColumnMeta) {
     // Packed layout: one blob, columns addressed by global byte_offset.
     // Split layout (§29 first paint): `buffer` is a list of per-column
     // buffers and the column entry carries `buf`, its list index. A
@@ -2822,7 +2867,7 @@ export class ChartView {
     return new Float32Array(span.buffer, absoluteOffset, length);
   }
 
-  _upload(view) {
+  _upload(view: ArrayBufferView) {
     const gl = this.gl;
     const buf = gl.createBuffer();
     // Identity tag for VAO config signatures: a replaced buffer (data update,
@@ -2845,7 +2890,7 @@ export class ChartView {
   // and because VAOs isolate attribute-enable state per draw, the old
   // "disable every leftover attrib" loops (and their per-frame
   // gl.getParameter(MAX_VERTEX_ATTRIBS) driver round-trip) go away entirely.
-  _bindVao(g, key, parts, setup) {
+  _bindVao(g: GpuTrace, key: string, parts: any[], setup: () => void) {
     const gl = this.gl;
     if (!g._vaos) g._vaos = new Map();
     const sig = parts.join("|");
@@ -2862,7 +2907,7 @@ export class ChartView {
     }
   }
 
-  _deleteVaos(g) {
+  _deleteVaos(g: GpuTrace) {
     if (!g || !g._vaos) return;
     const gl = this.gl;
     if (gl) for (const { vao } of g._vaos.values()) gl.deleteVertexArray(vao);
@@ -2871,7 +2916,7 @@ export class ChartView {
 
   // Enable slot + pointer into `buf` — only ever called inside a _bindVao
   // setup closure, so the state lands in that VAO, not global state.
-  _vaoAttr(slot, buf, byteOffset, divisor, size = 1, normalized = false) {
+  _vaoAttr(slot: number, buf: XyBuffer, byteOffset: number, divisor: number, size = 1, normalized = false) {
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.enableVertexAttribArray(slot);
@@ -2905,7 +2950,7 @@ export class ChartView {
 
   // -- drawing --------------------------------------------------------------
 
-  _map(meta, lo, hi, axisId = null) {
+  _map(meta: ColumnMeta, lo: number, hi: number, axisId: string | null = null) {
     if (!axisId) {
       const mul = 2 / ((hi - lo) * meta.scale);
       const add = ((meta.offset - lo) / (hi - lo)) * 2 - 1;
@@ -2920,7 +2965,7 @@ export class ChartView {
     return [mul, add];
   }
 
-  _mapConst(value, lo, hi, axisId = null) {
+  _mapConst(value: number, lo: number, hi: number, axisId: string | null = null) {
     if (!axisId) return ((value - lo) / (hi - lo)) * 2 - 1;
     const axis = this._axis(axisId);
     const c = this._axisCoord(axis, value);
@@ -2930,7 +2975,7 @@ export class ChartView {
     return ((c - c0) / (c1 - c0)) * 2 - 1;
   }
 
-  _edgePadForValue(value, lo, hi, pixels) {
+  _edgePadForValue(value: number, lo: number, hi: number, pixels: number) {
     if (!Number.isFinite(value) || !Number.isFinite(lo) || !Number.isFinite(hi) || hi === lo) return 0;
     const span = Math.abs(hi - lo);
     const eps = span * 1e-10 + 1e-12;
@@ -2941,9 +2986,9 @@ export class ChartView {
     return 0;
   }
 
-  _setAxisUniforms(prog, prefix, meta, axisId) {
+  _setAxisUniforms(prog: XyProgram, prefix: string, meta: ColumnMeta, axisId: string) {
     const gl = this.gl;
-    const u = (n) => uniformOf(gl, prog, n);
+    const u = (n: string) => uniformOf(gl, prog, n);
     gl.uniform2f(u(`${prefix}meta`), meta && Number.isFinite(meta.offset) ? meta.offset : 0, meta && meta.scale ? meta.scale : 1);
     gl.uniform1i(u(`${prefix}mode`), this._axisMode(axisId));
   }
@@ -2983,7 +3028,7 @@ export class ChartView {
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    const drawTrace = (g) => {
+    const drawTrace = (g: GpuTrace) => {
       if (g.tier === "density") {
         // Tier frame (drill/fades/cache) lives in 45_lod.js — chart-agnostic.
         const [gx0, gx1] = this._axisRange(g.xAxis);
@@ -3017,14 +3062,14 @@ export class ChartView {
   }
 
 
-  _canDrawSimplePoints(g) {
+  _canDrawSimplePoints(g: GpuTrace) {
     return g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
       !g.rgbaBuf && !g.styleBuf && !g.strokeBuf &&
       (g.symbol || 0) === 0 && (g.pointStrokeWidth || 0) <= 0 &&
       Math.max(g.lodBlendShown ?? 0, g.lodBlend ?? 0) <= 0.001;
   }
 
-  _drawPoints(g, xm, ym, opacityScale = 1) {
+  _drawPoints(g: GpuTrace, xm: number[], ym: number[], opacityScale = 1) {
     opacityScale *= g._transitionOpacity ?? 1;
     const animationScale = g._transitionScale ?? 1;
     if (this._canDrawSimplePoints(g)) {
@@ -3034,7 +3079,7 @@ export class ChartView {
     const gl = this.gl;
     const prog = this.pointProg;
     gl.useProgram(prog);
-    const u = (n) => uniformOf(gl, prog, n);
+    const u = (n: string) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
@@ -3052,7 +3097,7 @@ export class ChartView {
     gl.uniform1f(u("u_selectedOpacity"), this._markStateNumber("selected", "opacity", 1));
     gl.uniform1f(u("u_unselectedOpacity"), this._markStateNumber("unselected", "opacity", 0.12));
     // Optional selected/unselected recolor (§34): .a=1 tints, .a=0 keeps native.
-    const stateColor = (loc, expr) => {
+    const stateColor = (loc: WebGLUniformLocation | null, expr: string) => {
       const c = expr ? parseColor(this.root, expr, [0, 0, 0, 1]) : null;
       gl.uniform4f(loc, c ? c[0] : 0, c ? c[1] : 0, c ? c[2] : 0, c ? 1 : 0);
     };
@@ -3151,11 +3196,11 @@ export class ChartView {
     gl.drawArrays(gl.POINTS, 0, g.n);
   }
 
-  _drawSimplePoints(g, xm, ym, opacityScale = 1) {
+  _drawSimplePoints(g: GpuTrace, xm: number[], ym: number[], opacityScale = 1) {
     const gl = this.gl;
     const prog = this.pointSimpleProg;
     gl.useProgram(prog);
-    const u = (n) => uniformOf(gl, prog, n);
+    const u = (n: string) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
@@ -3203,11 +3248,11 @@ export class ChartView {
     );
   }
 
-  _drawHoverPoint(g, index, xm, ym) {
+  _drawHoverPoint(g: GpuTrace, index: number, xm: number[], ym: number[]) {
     const gl = this.gl;
     const prog = this.pointProg;
     gl.useProgram(prog);
-    const u = (n) => uniformOf(gl, prog, n);
+    const u = (n: string) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
@@ -3243,7 +3288,7 @@ export class ChartView {
     gl.drawArrays(gl.POINTS, index, 1);
   }
 
-  _drawDensity(g, density, opacityScale = 1) {
+  _drawDensity(g: GpuTrace, density: any, opacityScale = 1) {
     const gl = this.gl;
     const d = density || g.density;
     // Structural guard: never bind a freed texture. Eviction pins every live
@@ -3255,7 +3300,7 @@ export class ChartView {
     opacityScale *= g._transitionOpacity ?? 1;
     const prog = this.densityProg;
     gl.useProgram(prog);
-    const u = (n) => uniformOf(gl, prog, n);
+    const u = (n: string) => uniformOf(gl, prog, n);
     const { x0, x1, y0, y1 } = this.view;
     const [vx0, vx1] = this._axisRange(g.xAxis);
     const [vy0, vy1] = this._axisRange(g.yAxis);
@@ -3277,13 +3322,13 @@ export class ChartView {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
-  _drawHeatmap(g) {
+  _drawHeatmap(g: GpuTrace) {
     const h = g.heatmap;
     if (!h) return;
     const gl = this.gl;
     const prog = this.heatmapProg;
     gl.useProgram(prog);
-    const u = (n) => uniformOf(gl, prog, n);
+    const u = (n: string) => uniformOf(gl, prog, n);
     const { x0, x1, y0, y1 } = this.view;
     const [vx0, vx1] = this._axisRange(g.xAxis);
     const [vy0, vy1] = this._axisRange(g.yAxis);
@@ -3317,11 +3362,11 @@ export class ChartView {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
-  _drawLine(g, xm, ym, color = null, width = null, opacity = null) {
+  _drawLine(g: GpuTrace, xm: number[], ym: number[], color: Rgba | null = null, width: number | null = null, opacity: number | null = null) {
     if (g.n < 2) return;
     const gl = this.gl;
     gl.useProgram(this.lineProg);
-    const u = (n) => uniformOf(gl, this.lineProg, n);
+    const u = (n: string) => uniformOf(gl, this.lineProg, n);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     this._setAxisUniforms(this.lineProg, "u_x", g.xMeta, g.xAxis);
@@ -3365,12 +3410,12 @@ export class ChartView {
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, segments);
   }
 
-  _drawSegments(g, xm, ym) {
+  _drawSegments(g: GpuTrace, xm: number[], ym: number[]) {
     if (g.n < 1) return;
     const gl = this.gl;
     const prog = this.segmentProg;
     gl.useProgram(prog);
-    const u = (n) => uniformOf(gl, prog, n);
+    const u = (n: string) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     this._setAxisUniforms(prog, "u_x0", g.x0Meta, g.xAxis);
@@ -3420,9 +3465,9 @@ export class ChartView {
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
   }
 
-  _segmentDash(g, prog) {
+  _segmentDash(g: GpuTrace, prog: XyProgram) {
     const gl = this.gl;
-    const u = (n) => uniformOf(gl, prog, n);
+    const u = (n: string) => uniformOf(gl, prog, n);
     const dash = g.trace.style && g.trace.style.dash;
     const cpu = g._segmentCpu;
     if (!dash || !dash.length || !cpu) {
@@ -3436,11 +3481,11 @@ export class ChartView {
       ? g._segmentDashDirections : (g._segmentDashDirections = new Float32Array(n));
     const k0 = new Array(n), k1 = new Array(n), lengths = new Float32Array(n);
     const adjacency = new Map();
-    const add = (key, index) => {
+    const add = (key: string, index: number) => {
       const edges = adjacency.get(key);
       if (edges) edges.push(index); else adjacency.set(key, [index]);
     };
-    const key = (x, y) => `${Math.round(x * 1000)},${Math.round(y * 1000)}`;
+    const key = (x: number, y: number) => `${Math.round(x * 1000)},${Math.round(y * 1000)}`;
     const dpr = this.dpr;
     for (let i = 0; i < n; i++) {
       const x0 = this._dataPx(g.xAxis, this._decodeValue(cpu.x0, g.x0Meta, i));
@@ -3452,10 +3497,10 @@ export class ChartView {
       add(k0[i], i); add(k1[i], i);
     }
     const visited = new Uint8Array(n);
-    const walk = (start) => {
+    const walk = (start: number) => {
       let current = start, accumulated = 0;
       while (true) {
-        const edge = (adjacency.get(current) || []).find((index) => !visited[index]);
+        const edge = (adjacency.get(current) || []).find((index: number) => !visited[index]);
         if (edge === undefined) break;
         visited[edge] = 1;
         if (k0[edge] === current) {
@@ -3472,7 +3517,7 @@ export class ChartView {
     };
     for (const [node, edges] of adjacency) if (edges.length === 1) walk(node);
     for (let i = 0; i < n; i++) if (!visited[i]) walk(k0[i]);
-    const upload = (buffer, values) => {
+    const upload = (buffer: WebGLBuffer | null, values: ArrayBufferView) => {
       if (!buffer) return this._upload(values);
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
       gl.bufferData(gl.ARRAY_BUFFER, values, gl.DYNAMIC_DRAW);
@@ -3493,12 +3538,12 @@ export class ChartView {
     return true;
   }
 
-  _drawMesh(g, xm, ym) {
+  _drawMesh(g: GpuTrace, xm: number[], ym: number[]) {
     if (g.n < 1) return;
     const gl = this.gl;
     const prog = this.meshProg;
     gl.useProgram(prog);
-    const u = (n) => uniformOf(gl, prog, n);
+    const u = (n: string) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     for (const name of ["x0", "x1", "x2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.xAxis);
@@ -3523,7 +3568,7 @@ export class ChartView {
       g.styleBuf ? g.styleBuf._fcId : 0, g.strokeBuf ? g.strokeBuf._fcId : 0);
     this._bindVao(g, "mesh", parts, () => {
       for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) {
-        this._vaoAttr(ATTR_SLOTS["a" + name], g[name + "Buf"], 0, 1);
+        this._vaoAttr(ATTR_SLOTS[("a" + name) as keyof typeof ATTR_SLOTS], g[name + "Buf"], 0, 1);
       }
       if (g.cBuf) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
       if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
@@ -3541,9 +3586,9 @@ export class ChartView {
   // screen-space arc length (device px) for the current view, upload it, and
   // set the dash-pattern uniforms. Returns false (u_dashCount=0) for solid
   // lines. Cost is O(vertices) per draw, dashed traces only.
-  _lineDash(g) {
+  _lineDash(g: GpuTrace) {
     const gl = this.gl;
-    const u = (n) => uniformOf(gl, this.lineProg, n);
+    const u = (n: string) => uniformOf(gl, this.lineProg, n);
     const dash = g.trace.style && g.trace.style.dash;
     if (!dash || !dash.length || !g._dashX) {
       gl.uniform1i(u("u_dashCount"), 0);
@@ -3585,12 +3630,12 @@ export class ChartView {
     return true;
   }
 
-  _drawArea(g, xm, ym, bm) {
+  _drawArea(g: GpuTrace, xm: number[], ym: number[], bm: number[]) {
     if (g.n < 2) return;
     const gl = this.gl;
     const prog = this.areaProg;
     gl.useProgram(prog);
-    const u = (n) => uniformOf(gl, prog, n);
+    const u = (n: string) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     gl.uniform2f(u("u_bmap"), bm[0], bm[1]);
@@ -3616,12 +3661,12 @@ export class ChartView {
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
   }
 
-  _drawRects(g, x0, x1, y0, y1, edgePad = [0, 0, 0, 0]) {
+  _drawRects(g: GpuTrace, x0: AxisMap, x1: AxisMap, y0: AxisMap, y1: AxisMap, edgePad = [0, 0, 0, 0]) {
     if (!g.n) return;
     const gl = this.gl;
     const prog = this.rectProg;
     gl.useProgram(prog);
-    const u = (n) => uniformOf(gl, prog, n);
+    const u = (n: string) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_x0map"), x0[0], x0[1]);
     gl.uniform2f(u("u_x1map"), x1[0], x1[1]);
     gl.uniform2f(u("u_y0map"), y0[0], y0[1]);
@@ -3675,12 +3720,12 @@ export class ChartView {
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
   }
 
-  _drawBars(g, pmap, v1map, v0map, v0Const, v0EdgePad = 0) {
+  _drawBars(g: GpuTrace, pmap: number[], v1map: number[], v0map: number[], v0Const: number, v0EdgePad = 0) {
     if (!g.n) return;
     const gl = this.gl;
     const prog = this.barProg;
     gl.useProgram(prog);
-    const u = (n) => uniformOf(gl, prog, n);
+    const u = (n: string) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_pmap"), pmap[0], pmap[1]);
     gl.uniform2f(u("u_v1map"), v1map[0], v1map[1]);
     gl.uniform2f(u("u_v0map"), v0map ? v0map[0] : 1, v0map ? v0map[1] : 0);
@@ -3761,35 +3806,35 @@ export class ChartView {
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
   }
 
-  _dataPxX(value) {
+  _dataPxX(value: number) {
     return this._dataPx("x", value);
   }
 
-  _dataPxY(value) {
+  _dataPxY(value: number) {
     return this._dataPx("y", value);
   }
 
-  _styleNumber(style, key, fallback) {
+  _styleNumber(style: StyleBag, key: string, fallback: any) {
     if (!style || typeof style !== "object") return fallback;
     const value = Number(style[key]);
     return Number.isFinite(value) ? value : fallback;
   }
 
-  _axisStyleNumber(axis, key, fallback) {
+  _axisStyleNumber(axis: AxisSpec, key: string, fallback: number) {
     return this._styleNumber(axis && axis.style, key, fallback);
   }
 
-  _axisStylePaint(axis, key, fallback) {
+  _axisStylePaint(axis: AxisSpec, key: string, fallback: any) {
     const style = axis && typeof axis.style === "object" ? axis.style : null;
     return safeCssPaint(this.root, style && style[key], fallback);
   }
 
-  _axisStyleValue(axis, key) {
+  _axisStyleValue(axis: AxisSpec, key: string) {
     const style = axis && typeof axis.style === "object" ? axis.style : null;
     return style && Object.prototype.hasOwnProperty.call(style, key) ? style[key] : undefined;
   }
 
-  _axisGridDash(axis) {
+  _axisGridDash(axis: AxisSpec) {
     const value = String(this._axisStyleValue(axis, "grid_dash") || "solid");
     if (value === "dashed") return [6, 4];
     if (value === "dotted") return [1, 3];
@@ -3797,12 +3842,12 @@ export class ChartView {
     return [];
   }
 
-  _axisTickLabelStrategy(axis) {
+  _axisTickLabelStrategy(axis: AxisSpec) {
     const value = String((axis && axis.tick_label_strategy) || "auto").replace(/-/g, "_");
     return ["auto", "hide", "rotate", "stagger", "none", "off"].includes(value) ? value : "auto";
   }
 
-  _axisTickLabelAnchor(axis) {
+  _axisTickLabelAnchor(axis: AxisSpec) {
     const raw = axis && axis.tick_label_anchor !== undefined
       ? axis.tick_label_anchor
       : this._axisStyleValue(axis, "tick_label_anchor");
@@ -3814,22 +3859,22 @@ export class ChartView {
     return null; // unset/unknown: the caller picks its dimension's default
   }
 
-  _axisTickLabelAngle(axis) {
+  _axisTickLabelAngle(axis: AxisSpec) {
     const angle = Number(axis ? axis.tick_label_angle : undefined);
     return Number.isFinite(angle) ? angle : null;
   }
 
-  _axisTickLabelMinGap(axis, dim) {
+  _axisTickLabelMinGap(axis: AxisSpec, dim: "x" | "y") {
     const gap = Number(axis ? axis.tick_label_min_gap : undefined);
     return Number.isFinite(gap) && gap >= 0 ? gap : (dim === "x" ? 8 : 4);
   }
 
-  _estimateTickLabel(text, fontSize) {
+  _estimateTickLabel(text: string, fontSize: number) {
     const s = String(text || "");
     return { w: Math.max(fontSize * 0.7, s.length * fontSize * 0.62), h: fontSize * 1.2 };
   }
 
-  _tickLabelExtent(label, dim, fontSize) {
+  _tickLabelExtent(label: any, dim: "x" | "y", fontSize: number) {
     const size = this._estimateTickLabel(label.text, fontSize);
     const angle = Math.abs(Number(label.angle || 0)) * Math.PI / 180;
     return dim === "y"
@@ -3837,7 +3882,7 @@ export class ChartView {
       : Math.abs(Math.cos(angle)) * size.w + Math.abs(Math.sin(angle)) * size.h;
   }
 
-  _tickLabelsCollide(labels, dim, fontSize, minGap, anchor = "center") {
+  _tickLabelsCollide(labels: any[], dim: "x" | "y", fontSize: number, minGap: number, anchor = "center") {
     const rows = new Map();
     for (const label of labels) {
       const row = Number(label.row || 0);
@@ -3845,7 +3890,7 @@ export class ChartView {
       rows.get(row).push(label);
     }
     for (const rowLabels of rows.values()) {
-      rowLabels.sort((a, b) => a.pos - b.pos);
+      rowLabels.sort((a: any, b: any) => a.pos - b.pos);
       if (dim === "x" && anchor !== "center") {
         // Edge-anchored labels all run the same direction from their tick.
         // Rotated ones are parallel lines: they clear each other when the
@@ -3877,21 +3922,21 @@ export class ChartView {
     return false;
   }
 
-  _downsampleTickLabels(labels, dim, fontSize, minGap, anchor = "center") {
+  _downsampleTickLabels(labels: any[], dim: "x" | "y", fontSize: number, minGap: number, anchor = "center") {
     if (labels.length <= 1) return labels;
     for (let stride = 2; stride <= labels.length; stride++) {
-      const out = labels.filter((_, i) => i % stride === 0);
+      const out = labels.filter((_: any, i: number) => i % stride === 0);
       if (!this._tickLabelsCollide(out, dim, fontSize, minGap, anchor)) return out;
     }
     return labels.slice(0, 1);
   }
 
-  _layoutTickLabels(axis, dim, labels) {
+  _layoutTickLabels(axis: AxisSpec, dim: "x" | "y", labels: any[]) {
     const strategyValue = this._axisTickLabelStrategy(axis);
     if (strategyValue === "none" || strategyValue === "off") return [];
     if (labels.length <= 1) {
       const angle = this._axisTickLabelAngle(axis);
-      return labels.map((label) => ({ ...label, angle: angle === null ? 0 : angle, row: 0 }));
+      return labels.map((label: any) => ({ ...label, angle: angle === null ? 0 : angle, row: 0 }));
     }
     const fontSize = Math.max(
       8,
@@ -3904,7 +3949,7 @@ export class ChartView {
     const anchor = dim === "x" ? (this._axisTickLabelAnchor(axis) ?? "center") : "center";
     const explicitAngle = this._axisTickLabelAngle(axis);
     const baseAngle = explicitAngle === null ? 0 : explicitAngle;
-    const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
+    const withBase = labels.map((label: any) => ({ ...label, angle: baseAngle, row: 0 }));
     let strategy = strategyValue;
     if (strategy === "auto") {
       if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap, anchor)) return withBase;
@@ -3916,9 +3961,9 @@ export class ChartView {
     let out = withBase;
     if (strategy === "rotate" && dim === "x") {
       const angle = explicitAngle === null ? (axis.side === "top" ? 35 : -35) : explicitAngle;
-      out = labels.map((label) => ({ ...label, angle, row: 0 }));
+      out = labels.map((label: any) => ({ ...label, angle, row: 0 }));
     } else if (strategy === "stagger" && dim === "x") {
-      out = labels.map((label, i) => ({ ...label, angle: baseAngle, row: i % 2 }));
+      out = labels.map((label: any, i: number) => ({ ...label, angle: baseAngle, row: i % 2 }));
     }
 
     // Strategies handle collisions; a non-colliding label set stays intact
@@ -3929,7 +3974,7 @@ export class ChartView {
     return out;
   }
 
-  _xTickLabelTransform(axis, angle) {
+  _xTickLabelTransform(axis: AxisSpec, angle: number) {
     const value = Number(angle || 0);
     const side = axis && axis.side === "top" ? "top" : "bottom";
     // An explicit anchor (mpl `ha`) pins that edge as the transform origin,
@@ -3959,7 +4004,7 @@ export class ChartView {
     };
   }
 
-  _axisLabelCss(axis, dim, fallbackCss) {
+  _axisLabelCss(axis: AxisSpec, dim: "x" | "y", fallbackCss: string) {
     const rawPosition = axis && axis.label_position;
     const hasPosition = rawPosition !== undefined && rawPosition !== null;
     const hasOffset = axis && Number.isFinite(Number(axis.label_offset));
@@ -4053,8 +4098,8 @@ export class ChartView {
       this._axisTickTarget("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80))),
     );
     const yt = this._axisTicks("y", this._axisTickTarget("y", Math.max(3, p.h / 45)));
-    const xEdge = (px) => Math.min(p.x + p.w - 0.5, Math.max(p.x + 0.5, Math.round(px) + 0.5));
-    const yEdge = (py) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(py) + 0.5));
+    const xEdge = (px: number) => Math.min(p.x + p.w - 0.5, Math.max(p.x + 0.5, Math.round(px) + 0.5));
+    const yEdge = (py: number) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(py) + 0.5));
 
     ctx.strokeStyle = this._axisStylePaint(xAxis, "grid_color", this.theme.grid);
     ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xAxis, "grid_width", 1));
@@ -4099,7 +4144,7 @@ export class ChartView {
     // the chrome canvas, behind the data). Rebuilt with the labels; static
     // between throttled zoom frames since the plot rect doesn't move on zoom.
     if (updateLabels) {
-      const rule = (styleAxis, left, top, w, h, colorKey = "axis_color") => {
+      const rule = (styleAxis: AxisSpec, left: number, top: number, w: number, h: number, colorKey = "axis_color") => {
         const d = document.createElement("div");
         d.style.cssText =
           `position:absolute;left:${left}px;top:${top}px;width:${w}px;height:${h}px;` +
@@ -4133,7 +4178,7 @@ export class ChartView {
         rule(axis, x, p.y, w, p.h);
       }
 
-      const tickParts = (axis) => {
+      const tickParts = (axis: AxisSpec) => {
         const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
         const width = Math.max(0.5, this._axisStyleNumber(axis, "tick_width", 1));
         const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
@@ -4197,7 +4242,7 @@ export class ChartView {
       }
     }
 
-    const label = (text, css, axis, kind = "tick", extraStyle = null) => {
+    const label = (text: string, css: string, axis: AxisSpec, kind = "tick", extraStyle: StyleBag | null = null) => {
       if (!updateLabels) return;
       const d = document.createElement("div");
       d.textContent = text;
@@ -4297,7 +4342,7 @@ export class ChartView {
     // the transform origin, so a rotated label pivots about the point at the
     // tick. Unset defaults to the tick-side edge — mpl `ha`: "end" left of
     // the plot, "start" right of it — reproducing the classic layout.
-    const yLabelCss = (axis, onRight, item) => {
+    const yLabelCss = (axis: AxisSpec, onRight: boolean, item: any) => {
       const pin = onRight ? p.x + p.w + 8 : p.x - 8;
       const anchor = this._axisTickLabelAnchor(axis) ?? (onRight ? "start" : "end");
       const shift = anchor === "end" ? "-100%" : anchor === "start" ? "0%" : "-50%";
@@ -4349,8 +4394,8 @@ export class ChartView {
     // Data transitions stay pickable: the pick shader follows the same
     // interpolated positions as the visible point shader. View and LOD
     // handoffs still suppress hit-testing while their mapping changes.
-    const activeStart = (v) => v !== undefined && v !== null;
-    return !!this._viewAnim || this.gpuTraces.some((g) =>
+    const activeStart = (v: any) => v !== undefined && v !== null;
+    return !!this._viewAnim || this.gpuTraces.some((g: GpuTrace) =>
       activeStart(g._densityFadeStart) ||
       activeStart(g._densitySwitchFadeStart) ||
       activeStart(g._drillFadeStart) ||
@@ -4373,7 +4418,7 @@ export class ChartView {
     const { x0, x1, y0, y1 } = this.view;
     const prog = this.pickProg;
     gl.useProgram(prog);
-    const u = (n) => uniformOf(gl, prog, n);
+    const u = (n: string) => uniformOf(gl, prog, n);
     gl.uniform1f(u("u_dpr"), this.dpr);
     // Global pick-id space: trace ranges are [pickBase, pickBase + n), bases
     // start at 1 so the all-zero clear stays the background sentinel.
@@ -4434,7 +4479,7 @@ export class ChartView {
     this._pickDirty = false;
   }
 
-  _pickAt(cssX, cssY) {
+  _pickAt(cssX: number, cssY: number) {
     if (
       !this._pickable ||
       this._glLost ||
@@ -4464,18 +4509,18 @@ export class ChartView {
     const id = buf[0] + buf[1] * 0x100 + buf[2] * 0x10000 + buf[3] * 0x1000000;
     if (id === 0) return null;
     const g = this.gpuTraces.find(
-      (t) => t.pickBase > 0 && id >= t.pickBase && id < t.pickBase + t.pickCount
+      (t: TraceSpec) => t.pickBase > 0 && id >= t.pickBase && id < t.pickBase + t.pickCount
     );
     if (!g) return null;
     return { trace: g.trace.id, index: id - g.pickBase, g };
   }
 
-  _decodeValue(values, meta, index) {
+  _decodeValue(values: any, meta: ColumnMeta, index: number) {
     if (!values || !meta || index < 0 || index >= values.length) return NaN;
     return values[index] / (meta.scale || 1) + meta.offset;
   }
 
-  _dataFromCanvas(cssX, cssY, xAxisId = "x", yAxisId = "y") {
+  _dataFromCanvas(cssX: number, cssY: number, xAxisId = "x", yAxisId = "y") {
     const [x0, x1] = this._axisRange(xAxisId);
     const [y0, y1] = this._axisRange(yAxisId);
     const xAxis = this._axis(xAxisId);
@@ -4491,7 +4536,7 @@ export class ChartView {
     ];
   }
 
-  _nearestCpuIndex(g, dataX) {
+  _nearestCpuIndex(g: GpuTrace, dataX: number) {
     const cpu = g && g._cpu;
     if (!cpu || !cpu.x || !cpu.x.length) return -1;
     const xMeta = cpu.xMeta || g.xMeta;
@@ -4516,7 +4561,7 @@ export class ChartView {
     return best;
   }
 
-  _hoverAt(cssX, cssY) {
+  _hoverAt(cssX: number, cssY: number) {
     const maxPx = 12;
     let best = null;
     for (const g of this.gpuTraces) {
@@ -4560,7 +4605,7 @@ export class ChartView {
     return best;
   }
 
-  _barHover(g, dataX, dataY) {
+  _barHover(g: GpuTrace, dataX: number, dataY: number) {
     const cpu = g._cpu;
     const horizontal = g.orientation === 1;
     const limit = Math.min(cpu.x.length, cpu.y.length, g.n || cpu.x.length);
@@ -4583,7 +4628,7 @@ export class ChartView {
     return null;
   }
 
-  _rectHover(g, dataX, dataY) {
+  _rectHover(g: GpuTrace, dataX: number, dataY: number) {
     const r = g._cpuRect;
     const limit = Math.min(r.x0.length, r.x1.length, r.y0.length, r.y1.length, g.n || r.x0.length);
     for (let i = 0; i < limit; i++) {
@@ -4601,7 +4646,7 @@ export class ChartView {
     return null;
   }
 
-  _heatmapHover(g, dataX, dataY) {
+  _heatmapHover(g: GpuTrace, dataX: number, dataY: number) {
     const h = g.heatmap;
     if (!h || !g._cpuHeatmap) return null;
     const [x0, x1] = h.xRange;
@@ -4662,7 +4707,7 @@ export class ChartView {
     this.draw(true);
   }
 
-  _hover(e) {
+  _hover(e: PointerEvent) {
     // Pointer exploration supersedes any positional prefix retained for
     // keyboard readouts and their asynchronous exact-value replies.
     this._a11yKeyboardReadout = null;
@@ -4712,7 +4757,7 @@ export class ChartView {
 
 
 
-  _asF32(b) {
+  _asF32(b: any) {
     if (b instanceof ArrayBuffer) return new Float32Array(b);
     if (b.byteOffset % 4 === 0) {
       return new Float32Array(b.buffer, b.byteOffset, Math.floor(b.byteLength / 4));
@@ -4720,12 +4765,12 @@ export class ChartView {
     return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
   }
 
-  _asU8(b) {
+  _asU8(b: any) {
     if (b instanceof ArrayBuffer) return new Uint8Array(b);
     return new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
   }
 
-  _asU32(b) {
+  _asU32(b: any) {
     if (b instanceof ArrayBuffer) return new Uint32Array(b);
     if (b.byteOffset % 4 === 0) {
       return new Uint32Array(b.buffer, b.byteOffset, Math.floor(b.byteLength / 4));
@@ -4826,7 +4871,7 @@ export class ChartView {
     this.root.remove();
   }
 
-  _deleteBuffers(obj, names) {
+  _deleteBuffers(obj: any, names: string[]) {
     const gl = this.gl;
     if (!gl || !obj) return;
     const seen = new Set();
@@ -4840,7 +4885,7 @@ export class ChartView {
     }
   }
 
-  _destroyTraceResources(g, texSeen) {
+  _destroyTraceResources(g: GpuTrace, texSeen: Set<WebGLTexture>) {
     if (!g) return;
     this._destroyDensitySample(g);
     this._deleteVaos(g);

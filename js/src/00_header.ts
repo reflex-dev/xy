@@ -37,7 +37,25 @@ const XY_FRAME_DEFAULT_LIMITS = Object.freeze({
   maxBufferBytes: 256 * 1024 * 1024,
 });
 
-export function xyByteSpan(value, label = "buffer") {
+/** Per-field caps on an inbound frame; callers may override any subset. */
+export interface FrameLimits {
+  maxFrameBytes?: number;
+  maxMetadataBytes?: number;
+  maxBuffers?: number;
+  maxBufferBytes?: number;
+}
+
+/** A decoded XYBF frame: the JSON metadata message plus zero-copy buffer
+ * spans into the caller's ArrayBuffer, and the envelope facts a caller may
+ * want to log or assert on. */
+export interface DecodedFrame {
+  message: any;
+  buffers: Uint8Array[];
+  version: number;
+  byteLength: number;
+}
+
+export function xyByteSpan(value: unknown, label = "buffer"): Uint8Array {
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   if (ArrayBuffer.isView(value)) {
     return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
@@ -45,7 +63,7 @@ export function xyByteSpan(value, label = "buffer") {
   throw new TypeError(`${label} must be an ArrayBuffer or ArrayBuffer view`);
 }
 
-export function bytesToSpan(b) {
+export function bytesToSpan(b: unknown): Uint8Array {
   const span = xyByteSpan(b, "chart payload");
   // anywidget/third-party callers may hand us an oddly-offset DataView. Keep
   // the normal aligned path zero-copy; preserve compatibility with one narrow
@@ -53,7 +71,7 @@ export function bytesToSpan(b) {
   return span.byteOffset % 4 === 0 ? span : new Uint8Array(span);
 }
 
-function xyFrameLimit(limits, name) {
+function xyFrameLimit(limits: FrameLimits | null, name: keyof FrameLimits): number {
   const fallback = XY_FRAME_DEFAULT_LIMITS[name];
   const value = limits && limits[name] != null ? limits[name] : fallback;
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -62,11 +80,11 @@ function xyFrameLimit(limits, name) {
   return value;
 }
 
-function xyAlign8(value) {
+function xyAlign8(value: number): number {
   return Math.ceil(value / XY_FRAME_ALIGNMENT) * XY_FRAME_ALIGNMENT;
 }
 
-function xyFrameU64(view, offset, label) {
+function xyFrameU64(view: DataView, offset: number, label: string): number {
   const value = view.getBigUint64(offset, true);
   if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new RangeError(`${label} exceeds JavaScript's safe integer range`);
@@ -74,7 +92,7 @@ function xyFrameU64(view, offset, label) {
   return Number(value);
 }
 
-function xyRequireZeroPadding(bytes, start, end, label) {
+function xyRequireZeroPadding(bytes: Uint8Array, start: number, end: number, label: string): void {
   if (end > bytes.byteLength) throw new RangeError(`truncated ${label} padding`);
   for (let i = start; i < end; i++) {
     if (bytes[i] !== 0) throw new RangeError(`non-zero ${label} padding`);
@@ -87,7 +105,7 @@ function xyRequireZeroPadding(bytes, start, end, label) {
  * not copied. Response.arrayBuffer() supplies an aligned base. Passing an
  * unaligned subview is rejected rather than silently slicing the whole frame.
  */
-export function decodeFrame(body, limits = null) {
+export function decodeFrame(body: unknown, limits: FrameLimits | null = null): DecodedFrame {
   const bytes = xyByteSpan(body, "frame body");
   const maxFrameBytes = xyFrameLimit(limits, "maxFrameBytes");
   const maxMetadataBytes = xyFrameLimit(limits, "maxMetadataBytes");

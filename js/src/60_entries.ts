@@ -1,3 +1,4 @@
+import type { ChartSpec, Comm, PayloadBuffers } from "./05_types";
 import { bytesToSpan, decodeFrame } from "./00_header";
 import { ChartView } from "./50_chartview";
 import { MARK_KINDS, markOf } from "./55_marks";
@@ -15,11 +16,19 @@ import "./57_viewstate";
 // Entry points
 // ---------------------------------------------------------------------------
 
+/** The slice of anywidget's model API the widget entry point uses. */
+interface AnywidgetModel {
+  get(key: string): any;
+  send(msg: Record<string, any>): void;
+  on(event: string, handler: (content: any, buffers: any) => void): void;
+  off?(event: string, handler: (content: any, buffers: any) => void): void;
+}
+
 /** First-paint buffers in the shape the spec declares (§29): packed is one
  * blob; split is one span per column. Aligned views stay zero-copy; only a
  * legacy unaligned view pays a narrow view-sized copy. A spec/transport
  * disagreement is a bug, never a fallback. */
-function payloadBuffers(spec, raw) {
+function payloadBuffers(spec: ChartSpec, raw: unknown): PayloadBuffers {
   if (spec.buffer_layout === "split") {
     if (!Array.isArray(raw)) {
       throw new Error("xy: spec says buffer_layout=split but the transport delivered one buffer");
@@ -32,14 +41,14 @@ function payloadBuffers(spec, raw) {
   return bytesToSpan(raw);
 }
 
-export function render({ model, el }) {
+export function render({ model, el }: { model: AnywidgetModel; el: HTMLElement }): () => void {
   const spec = model.get("spec");
   const buffer = payloadBuffers(spec, model.get("buffers"));
   const comm = {
-    send: (msg) => model.send(msg),
+    send: (msg: Record<string, any>) => model.send(msg),
     wantsViewChange: () => spec.interaction?._transport_view_change === true,
-    onMessage: (cb) => {
-      const handler = (content, buffers) => cb(content, buffers);
+    onMessage: (cb: (content: any, buffers?: any) => void) => {
+      const handler = (content: any, buffers: any) => cb(content, buffers);
       model.on("msg:custom", handler);
       return () => model.off?.("msg:custom", handler);
     },
@@ -50,10 +59,10 @@ export function render({ model, el }) {
 
 /** Standalone (static HTML export — no kernel). Retains typed CPU views of
  * shipped channels so hover can read approximate values without a kernel (§37). */
-export function renderStandalone(el, spec, arrayBuffer) {
+export function renderStandalone(el: HTMLElement, spec: ChartSpec, arrayBuffer: unknown): ChartView {
   const buffer = bytesToSpan(arrayBuffer);
   const view = new ChartView(el, spec, buffer, null);
-  const column = (idx) => view._columnView(buffer, spec.columns[idx]);
+  const column = (idx: number) => view._columnView(buffer, spec.columns[idx]);
   for (const g of view.gpuTraces) {
     if (markOf(g.trace.kind).retainCpu && g.tier !== "density") {
       g._cpu = {

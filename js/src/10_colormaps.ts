@@ -3,7 +3,12 @@
 // interpolates a 256-texel LUT texture once per colormap.
 // ---------------------------------------------------------------------------
 
-const COLORMAP_STOPS = {
+/** One colormap as ordered RGB stops in 0..255. */
+type ColorStops = number[][];
+
+/** Compact RGB (0..255) stop lists; `buildLutData` interpolates them into the
+ * 256-texel LUT uploaded per colormap. A `_r` suffix reverses any entry. */
+const COLORMAP_STOPS: Record<string, ColorStops> = {
   binary: [[255, 255, 255], [0, 0, 0]],
   gray: [[0, 0, 0], [25, 25, 25], [51, 51, 51], [76, 76, 76], [102, 102, 102], [128, 128, 128], [153, 153, 153], [179, 179, 179], [204, 204, 204], [230, 230, 230], [255, 255, 255]],
   viridis: [[68, 1, 84], [72, 36, 117], [65, 68, 135], [53, 95, 141], [42, 120, 142], [33, 145, 140], [34, 168, 132], [68, 191, 112], [122, 209, 81], [189, 223, 38], [253, 231, 37]],
@@ -26,14 +31,14 @@ const COLORMAP_STOPS = {
   spectral: [[158, 1, 66], [212, 61, 79], [244, 109, 67], [253, 173, 96], [254, 224, 139], [255, 255, 190], [230, 245, 152], [170, 220, 164], [102, 194, 165], [51, 135, 188], [94, 79, 162]],
 };
 
-export function colormapStops(name) {
+export function colormapStops(name: string): ColorStops {
   const reversed = typeof name === "string" && name.endsWith("_r");
   const base = reversed ? name.slice(0, -2) : name;
   const stops = COLORMAP_STOPS[base] || COLORMAP_STOPS.viridis;
   return reversed ? [...stops].reverse() : stops;
 }
 
-export function buildLutData(name) {
+export function buildLutData(name: string): Uint8Array {
   const stops = colormapStops(name);
   const N = 256;
   const data = new Uint8Array(N * 4);
