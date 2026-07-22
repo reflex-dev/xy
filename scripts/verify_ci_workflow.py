@@ -373,6 +373,13 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "--json interaction-worker-evidence.json",
         "Upload interaction worker evidence",
         "interaction-worker-evidence",
+        "Pan/zoom acceptance matrix (Chromium)",
+        "scripts/pan_zoom_matrix.mjs",
+        "--profile full",
+        "--browsers chromium",
+        "--evidence pan-zoom-matrix-evidence.json",
+        "Upload pan/zoom matrix evidence",
+        "pan-zoom-matrix-evidence",
         "benchmarks/bench_dashboard.py",
         "--chart-counts 10,20,50",
         "dashboard-smoke.json --kind dashboard-browser",
@@ -574,6 +581,28 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     _require_step_contains(
         errors,
         hard_test,
+        "Pan/zoom acceptance matrix (Chromium)",
+        "complete hard Chromium pan/zoom matrix and diagnostic path",
+        "scripts/pan_zoom_matrix.mjs",
+        "--profile full",
+        "--browsers chromium",
+        '--executable-path "$CHROME"',
+        "--evidence pan-zoom-matrix-evidence.json",
+    )
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Upload pan/zoom matrix evidence",
+        "failure-retaining pan/zoom matrix artifact policy",
+        "if: always()",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        "pan-zoom-matrix-evidence",
+        "if-no-files-found: error",
+        "pan-zoom-matrix-evidence.json",
+    )
+    _require_step_contains(
+        errors,
+        hard_test,
         "Upload regression benchmark report",
         "failure-retaining regression artifact policy",
         "if: always()",
@@ -730,11 +759,16 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "reflex run --env prod --single-port",
         "scripts/reflex_ws_smoke.py",
         "--screenshot reflex-e2e.png",
+        "scripts/pan_zoom_matrix.mjs --profile reflex --browsers chromium",
+        "--evidence pan-zoom-reflex-evidence.json",
         "npx playwright install --with-deps chromium",
         "Upload Reflex E2E evidence",
         "reflex-e2e-${{ matrix.name }}",
         "examples/reflex/reflex-e2e.log",
         "examples/reflex/reflex-e2e.png",
+        "Upload Reflex pan/zoom evidence",
+        "reflex-pan-zoom-${{ matrix.name }}",
+        "examples/reflex/pan-zoom-reflex-evidence.json",
     )
     _require_step_contains(
         errors,
@@ -743,6 +777,11 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "browser evidence capture",
         "scripts/reflex_ws_smoke.py",
         "--screenshot reflex-e2e.png",
+        "scripts/pan_zoom_matrix.mjs",
+        "--profile reflex",
+        "--browsers chromium",
+        "--url http://localhost:3100",
+        "--evidence pan-zoom-reflex-evidence.json",
     )
     _require_step_contains(
         errors,
@@ -755,6 +794,17 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "if-no-files-found: warn",
         "examples/reflex/reflex-e2e.log",
         "examples/reflex/reflex-e2e.png",
+    )
+    _require_step_contains(
+        errors,
+        reflex_adapter,
+        "Upload Reflex pan/zoom evidence",
+        "failure-retaining live/static Reflex pan/zoom evidence",
+        "if: always()",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        "reflex-pan-zoom-${{ matrix.name }}",
+        "if-no-files-found: error",
+        "examples/reflex/pan-zoom-reflex-evidence.json",
     )
     _require_job_contains(
         errors,
@@ -770,6 +820,36 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "npx playwright install --with-deps chromium firefox webkit",
         "node js/build.mjs --check",
         "node scripts/browser_conformance.mjs",
+        "Focused pan/zoom matrix (three engines)",
+        "scripts/pan_zoom_matrix.mjs",
+        "--profile focused",
+        "--browsers chromium,firefox,webkit",
+        "--evidence pan-zoom-cross-engine-evidence.json",
+        "Upload cross-engine pan/zoom evidence",
+        "pan-zoom-cross-engine-evidence",
+    )
+    _require_step_contains(
+        errors,
+        jobs.get("browser_conformance", ""),
+        "Focused pan/zoom matrix (three engines)",
+        "hard focused three-engine pan/zoom subset",
+        'XY_PAN_ZOOM_HEADFUL: "1"',
+        "xvfb-run",
+        "scripts/pan_zoom_matrix.mjs",
+        "--profile focused",
+        "--browsers chromium,firefox,webkit",
+        "--evidence pan-zoom-cross-engine-evidence.json",
+    )
+    _require_step_contains(
+        errors,
+        jobs.get("browser_conformance", ""),
+        "Upload cross-engine pan/zoom evidence",
+        "failure-retaining cross-engine pan/zoom artifact policy",
+        "if: always()",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        "pan-zoom-cross-engine-evidence",
+        "if-no-files-found: error",
+        "pan-zoom-cross-engine-evidence.json",
     )
     _require_job_contains(
         errors,

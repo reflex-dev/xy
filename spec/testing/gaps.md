@@ -163,9 +163,16 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-011 — Pan/zoom acceptance matrix
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: focused linear-scatter evidence does not implement the specified
-  action matrix across axis classes and hosts.
+- Status: `IMPLEMENTED`
+- Evidence: `scripts/pan_zoom_matrix.mjs`, `tests/test_pan_zoom_matrix.py`,
+  `make check-pan-zoom`, the hard `Pan/zoom acceptance matrix (Chromium)` and
+  `Focused pan/zoom matrix (three engines)` CI steps, the Reflex floor/latest
+  host matrix, and retained `pan-zoom-matrix-evidence`,
+  `pan-zoom-cross-engine-evidence`, and `reflex-pan-zoom-*` JSON artifacts.
+- Current gap: closed; a bounded catalog drives real pointer, wheel, and
+  modebar input, verifies semantic/layout invariants and failure-safe evidence,
+  and its catalog, evidence schema, local wiring, and workflow gates have
+  negative controls.
 - Implemented when: data-driven browser cases cover drag, wheel, box, toolbar
   zoom, and reset across linear/log/reversed/category/dual/named axes, bounds,
   limits, linking, reduced motion, no-op event/LOD semantics, and live/static

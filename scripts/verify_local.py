@@ -314,6 +314,26 @@ def _base_checks(
             requires_chromium=True,
         ),
         Check(
+            "pan_zoom_matrix",
+            "complete bounded pan/zoom acceptance matrix in Chromium",
+            (
+                "node",
+                "scripts/pan_zoom_matrix.mjs",
+                "--profile",
+                "full",
+                "--browsers",
+                "chromium",
+                "--executable-path",
+                chromium_arg,
+                "--evidence",
+                "/tmp/xy-pan-zoom-matrix-evidence.json",
+            ),
+            requires_executables=("node",),
+            requires_paths=chromium_paths,
+            requires_chromium=True,
+            requires_node_major=18,
+        ),
+        Check(
             "sdist_artifact",
             "source distribution artifact contents",
             (py, "scripts/verify_sdist.py", sdist_arg),
@@ -361,6 +381,7 @@ BROWSER_CHECKS = (
     "animation_smoke",
     "pick_boundary_smoke",
     "interaction_stress_smoke",
+    "pan_zoom_matrix",
 )
 PACKAGING_CHECKS = ("sdist_artifact", "wheel_artifact")
 

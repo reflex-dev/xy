@@ -1166,6 +1166,74 @@ def test_ci_workflow_rejects_missing_cross_browser_conformance(tmp_path: Path) -
     assert any("browser_conformance" in error and "conformance gate" in error for error in errors)
 
 
+def test_ci_workflow_rejects_missing_full_pan_zoom_matrix(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            "      - name: Pan/zoom acceptance matrix (Chromium)\n",
+            "      - name: Removed pan/zoom acceptance matrix\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Pan/zoom acceptance matrix (Chromium)" in error for error in errors)
+
+
+def test_ci_workflow_rejects_missing_pan_zoom_matrix_evidence(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            "      - name: Upload pan/zoom matrix evidence\n",
+            "      - name: Removed pan/zoom matrix evidence\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Upload pan/zoom matrix evidence" in error for error in errors)
+
+
+def test_ci_workflow_rejects_pan_zoom_subset_without_three_engines(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            "--browsers chromium,firefox,webkit \\\n",
+            "--browsers chromium,firefox \\\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("three-engine pan/zoom subset" in error for error in errors)
+
+
+def test_ci_workflow_rejects_missing_cross_engine_pan_zoom_evidence(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            "      - name: Upload cross-engine pan/zoom evidence\n",
+            "      - name: Removed cross-engine pan/zoom evidence\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Upload cross-engine pan/zoom evidence" in error for error in errors)
+
+
 def test_ci_workflow_rejects_missing_reflex_adapter_browser_gate(tmp_path: Path) -> None:
     text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
@@ -1173,7 +1241,7 @@ def test_ci_workflow_rejects_missing_reflex_adapter_browser_gate(tmp_path: Path)
         text.replace(
             "          ../../.venv/bin/python ../../scripts/reflex_ws_smoke.py \\\n"
             '            --frontend http://localhost:3100 --chromium "$CHROME" \\\n'
-            "            --screenshot reflex-e2e.png\n",
+            "            --screenshot reflex-e2e.png || smoke_status=$?\n",
             "",
         ),
         encoding="utf-8",
@@ -1184,11 +1252,43 @@ def test_ci_workflow_rejects_missing_reflex_adapter_browser_gate(tmp_path: Path)
     assert any("reflex_adapter" in error and "reflex_ws_smoke.py" in error for error in errors)
 
 
+def test_ci_workflow_rejects_missing_reflex_pan_zoom_profile(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace("--profile reflex --browsers chromium", "--browsers chromium", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "browser evidence capture" in error and "--profile reflex" in error for error in errors
+    )
+
+
+def test_ci_workflow_rejects_missing_reflex_pan_zoom_evidence(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            "      - name: Upload Reflex pan/zoom evidence\n",
+            "      - name: Removed Reflex pan/zoom evidence\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Upload Reflex pan/zoom evidence" in error for error in errors)
+
+
 def test_ci_workflow_rejects_reflex_adapter_without_screenshot_evidence(tmp_path: Path) -> None:
     text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
     path.write_text(
-        text.replace(" \\\n            --screenshot reflex-e2e.png\n", "\n", 1),
+        text.replace(" \\\n            --screenshot reflex-e2e.png || smoke_status=$?\n", "\n", 1),
         encoding="utf-8",
     )
 

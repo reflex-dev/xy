@@ -74,6 +74,7 @@ def test_browser_checks_are_listed_without_chromium(capsys: pytest.CaptureFixtur
     assert "animation_smoke" in out
     assert "pick_boundary_smoke" in out
     assert "interaction_stress_smoke" in out
+    assert "pan_zoom_matrix" in out
     assert "chromium" in out
 
 
@@ -106,6 +107,22 @@ def test_chart_kind_matrix_is_a_hard_sandboxed_browser_check() -> None:
     check = verify_local._base_checks(Path(sys.executable))["chart_kind_matrix"]
     assert check.command == (sys.executable, "scripts/chart_kind_matrix.py", sys.executable)
     assert "--no-sandbox" not in check.command
+    assert check.requires_chromium is True
+    assert check.requires_executables == ("node",)
+
+
+def test_pan_zoom_matrix_is_a_hard_chromium_browser_check() -> None:
+    check = verify_local._base_checks(Path(sys.executable))["pan_zoom_matrix"]
+    assert check.command[:7] == (
+        "node",
+        "scripts/pan_zoom_matrix.mjs",
+        "--profile",
+        "full",
+        "--browsers",
+        "chromium",
+        "--executable-path",
+    )
+    assert check.command[7] == sys.executable
     assert check.requires_chromium is True
     assert check.requires_executables == ("node",)
 

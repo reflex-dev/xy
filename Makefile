@@ -12,7 +12,7 @@ COVERAGE_BASE ?= origin/main
 COVERAGE_HEAD ?= HEAD
 COVERAGE_REPORT ?= coverage/python/ratchet.json
 
-.PHONY: help setup setup-browser check check-full check-browser check-labels check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-testing-spec check-benchmark-harness check-coverage check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check js-test rust-check abi-smoke
+.PHONY: help setup setup-browser check check-full check-browser check-labels check-pan-zoom check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-testing-spec check-benchmark-harness check-coverage check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check js-test rust-check abi-smoke
 
 help:
 	@printf '%s\n' \
@@ -24,6 +24,7 @@ help:
 		'  make check-full       run JS, Rust, and ABI gates too' \
 		'  make check-browser    run browser smokes, including every chart kind, runtime security, animation, and pick boundaries (set CHROMIUM=/path/to/chrome)' \
 		'  make check-labels     run strict formatter units and rendered-label DOM oracles' \
+		'  make check-pan-zoom   run the complete Chromium pan/zoom acceptance matrix (set CHROMIUM=/path/to/chrome)' \
 		'  make check-conformance run accessibility + Chromium/Firefox/WebKit conformance' \
 		'  make check-docs       run docs examples and public claim guardrails' \
 		'  make check-examples   run README/API examples and Reflex asset registry checks' \
@@ -85,12 +86,27 @@ check-labels:
 	}
 	npm run test:labels
 
+check-pan-zoom:
+	@if [ -z "$(CHROMIUM)" ]; then \
+		echo 'Set CHROMIUM=/path/to/chrome for the pan/zoom matrix.' >&2; \
+		exit 2; \
+	fi
+	@node -e "require.resolve('playwright')" >/dev/null 2>&1 || { \
+		echo 'Playwright is required. Run: make setup-browser' >&2; \
+		exit 2; \
+	}
+	node scripts/pan_zoom_matrix.mjs --profile full --browsers chromium \
+		--executable-path "$(CHROMIUM)" --evidence /tmp/xy-pan-zoom-matrix-evidence.json
+
 check-conformance:
 	@node -e "require.resolve('playwright')" >/dev/null 2>&1 || { \
 		echo 'Playwright is required. Run: make setup-browser && npx playwright install chromium firefox webkit' >&2; \
 		exit 2; \
 	}
 	node scripts/browser_conformance.mjs
+	node scripts/pan_zoom_matrix.mjs --profile focused \
+		--browsers chromium,firefox,webkit \
+		--evidence /tmp/xy-pan-zoom-cross-engine-evidence.json
 
 check-docs:
 	$(PYTHON) scripts/verify_local.py --only examples,claim_guardrails,testing_spec

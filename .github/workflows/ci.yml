@@ -495,6 +495,20 @@ jobs:
           if-no-files-found: error
           path: interaction-worker-evidence.json
 
+      - name: Pan/zoom acceptance matrix (Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          node scripts/pan_zoom_matrix.mjs --profile full --browsers chromium \
+            --executable-path "$CHROME" --evidence pan-zoom-matrix-evidence.json
+
+      - name: Upload pan/zoom matrix evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pan-zoom-matrix-evidence
+          if-no-files-found: error
+          path: pan-zoom-matrix-evidence.json
+
       - name: Browser dashboard reliability smoke (Chromium)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
@@ -587,9 +601,17 @@ jobs:
             cat reflex-e2e.log
             exit 1
           fi
+          matrix_status=0
+          node ../../scripts/pan_zoom_matrix.mjs --profile reflex --browsers chromium \
+            --url http://localhost:3100 --executable-path "$CHROME" \
+            --evidence pan-zoom-reflex-evidence.json || matrix_status=$?
+          smoke_status=0
           ../../.venv/bin/python ../../scripts/reflex_ws_smoke.py \
             --frontend http://localhost:3100 --chromium "$CHROME" \
-            --screenshot reflex-e2e.png
+            --screenshot reflex-e2e.png || smoke_status=$?
+          if [[ "$matrix_status" != "0" || "$smoke_status" != "0" ]]; then
+            exit 1
+          fi
       - name: Upload Reflex E2E evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -599,6 +621,14 @@ jobs:
           path: |
             examples/reflex/reflex-e2e.log
             examples/reflex/reflex-e2e.png
+
+      - name: Upload Reflex pan/zoom evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: reflex-pan-zoom-${{ matrix.name }}
+          if-no-files-found: error
+          path: examples/reflex/pan-zoom-reflex-evidence.json
 
   browser_conformance:
     name: Accessibility + cross-browser conformance
@@ -627,6 +657,24 @@ jobs:
           MOZ_WEBRENDER: "1"
           XY_CONFORMANCE_HEADFUL: "1"
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node scripts/browser_conformance.mjs
+
+      - name: Focused pan/zoom matrix (three engines)
+        env:
+          MOZ_WEBRENDER: "1"
+          XY_PAN_ZOOM_HEADFUL: "1"
+        run: |
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" \
+            node scripts/pan_zoom_matrix.mjs --profile focused \
+            --browsers chromium,firefox,webkit \
+            --evidence pan-zoom-cross-engine-evidence.json
+
+      - name: Upload cross-engine pan/zoom evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pan-zoom-cross-engine-evidence
+          if-no-files-found: error
+          path: pan-zoom-cross-engine-evidence.json
 
   python_floor:
     name: Python 3.11 floor
