@@ -239,6 +239,13 @@ def _base_checks(
             requires_chromium=True,
         ),
         Check(
+            "runtime_security_smoke",
+            "standalone DOM-XSS, CSP, hostile-CSS, and network-isolation smoke in Chromium",
+            (py, "scripts/runtime_security_smoke.py", chromium_arg),
+            requires_paths=chromium_paths,
+            requires_chromium=True,
+        ),
+        Check(
             "reflex_lifecycle_smoke",
             "Reflex example iframe lifecycle smoke in Chromium",
             (py, "scripts/reflex_lifecycle_smoke.py", chromium_arg),
@@ -322,6 +329,7 @@ FULL_EXTRA_CHECKS = (
 BROWSER_CHECKS = (
     "render_smoke_nonumpy",
     "smoke_render",
+    "runtime_security_smoke",
     "reflex_lifecycle_smoke",
     "visual_regression_smoke",
     "step_tier_smoke",

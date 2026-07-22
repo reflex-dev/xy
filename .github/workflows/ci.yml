@@ -228,6 +228,23 @@ jobs:
           export XY_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")"
           .venv/bin/pytest -q
 
+      # Runtime page-content isolation is distinct from the browser process
+      # sandbox policy. This trusted repository fixture opts out explicitly on
+      # the constrained runner; the public export path never retries this way.
+      - name: Runtime standalone security smoke (Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python scripts/runtime_security_smoke.py "$CHROME" --no-sandbox \
+            --evidence runtime-security-evidence.json
+
+      - name: Upload runtime security evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runtime-security-evidence
+          if-no-files-found: error
+          path: runtime-security-evidence.json
+
       # End-to-end: a real Figure (line decimation + scatter) through to_html's
       # exact payload path, rendered in Chromium, pixels read back. Complements
       # the stdlib smoke, which hand-builds payloads. (Was dead code — audit

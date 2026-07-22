@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+from collections import Counter
 from pathlib import Path
 
 from xy.components import CHART_DOM_SLOTS
@@ -124,18 +126,33 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
         for sink in _BANNED_HTML_SINKS:
             assert sink not in text, f"{path} must not use HTML sink {sink}"
 
-        inner_html_lines = [line.strip() for line in text.splitlines() if ".innerHTML" in line]
-        assert inner_html_lines == [
-            'grip.innerHTML = this._icon("drag");',
-            "b.innerHTML = this._icon(name);",
-            'zoomIndicator.innerHTML = this._icon("chevrondown");',
-            'selectModeIcon.innerHTML = this._icon("select");',
-            'selectIndicator.innerHTML = this._icon("chevrondown");',
-            "icon.innerHTML = this._icon(name);",
-            "icon.innerHTML = this._icon(name);",
-            "icon.innerHTML = this._icon(name);",
-            "this._selectMenuIcon.innerHTML = this._icon(iconName);",
-        ]
+        # Every parser sink is structurally confined to the fixed internal
+        # icon factory.  Receiver + icon expression + multiplicity form the
+        # allowlist; adding a user-data RHS cannot hide behind line formatting.
+        assignment = re.compile(
+            r"(?P<receiver>(?:this\.)?[A-Za-z_$][\w$]*)\.innerHTML\s*=\s*"
+            r"this\._icon\((?P<icon>[^()]*)\)\s*;"
+        )
+        matches = assignment.findall(text)
+        all_inner_html = re.findall(r"\.innerHTML\s*=", text)
+        assert len(matches) == len(all_inner_html), f"{path} has a non-icon HTML parser sink"
+        assert Counter(matches) == Counter(
+            {
+                ("grip", '"drag"'): 1,
+                ("b", "name"): 1,
+                ("zoomIndicator", '"chevrondown"'): 1,
+                ("selectModeIcon", '"select"'): 1,
+                ("selectIndicator", '"chevrondown"'): 1,
+                ("icon", "name"): 3,
+                ("this._selectMenuIcon", "iconName"): 1,
+            }
+        ), f"{path} changed the reviewed internal icon sink allowlist"
+        factory_match = re.search(r"_icon\(name\) \{(?P<body>.*?)\n\s*\},", text, re.S)
+        assert factory_match is not None, f"{path} lost the reviewed fixed icon factory"
+        icon_factory = factory_match.group("body")
+        assert "switch (name)" in icon_factory
+        assert "default:" in icon_factory and 'return svg("");' in icon_factory
+        assert "${name}" not in icon_factory
 
 
 def test_selection_mode_icons_are_crisp_and_the_trigger_tracks_active_mode() -> None:

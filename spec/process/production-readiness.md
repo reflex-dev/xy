@@ -72,7 +72,7 @@ These must pass before publishing or making a broad performance claim.
 | Import-time budget | `xy.__init__`, `dir(xy)`, export helpers, chart construction, and `.widget()` keep their lazy import boundaries | `make check-import` |
 | Claim guardrails | Public docs and package metadata avoid broad, unqualified performance claims | `make check-claims` |
 | CI/release workflows | Hard gates, non-blocking benchmarks, exact-SHA qualification, immutable artifact/image provenance, benchmark artifact upload/download, trusted publishing, and no-Rust clear-error jobs stay wired | `make check-ci` |
-| HTML export safety | Inline JSON/script escaping, atomic path writes, hostile user strings, and browser client text-node insertion stay protected | `make check-security` |
+| HTML export safety | Inline JSON/script escaping, atomic path writes, hostile user strings, browser client text-node insertion, standalone CSP enforcement, and wire-level network isolation stay protected | `make check-security` and `make check-browser CHROMIUM=/path/to/chrome` |
 | Python tests | Native backend passes | `pytest -q` |
 | Python style | Library, tests, scripts, and benchmarks lint clean | `ruff check .` and `ruff format --check .` |
 | Matplotlib reference | The reviewed compatibility snapshot matches the pinned released matplotlib reference, and the `xy.pyplot` shim passes its interoperability and dual-engine corpus suites | `python scripts/sync_matplotlib_compat.py --check` and `pytest tests/pyplot` |
@@ -134,6 +134,12 @@ reports, and sharing a single file, but it has a clear security contract:
 - The browser client inserts user-facing text with `textContent` or text nodes;
   HTML parser sinks such as `innerHTML` are reserved for fixed internal icons,
   not titles, labels, legends, categories, or tooltips.
+- The hard runtime-security browser fixture sends hostile markup through title,
+  axis, tick, trace, category, annotation, legend, colorbar, and tooltip text,
+  then requires literal text, no executable user-created DOM or dialogs, an
+  observed CSP block for hostile CSS, and zero requests reaching a loopback
+  HTTP sentinel. This page-content contract is independent of the Chromium
+  process-sandbox launch policy below.
 - Hosts that need nonce/hash-only strict CSP should serve the JavaScript bundle
   as a separate asset and inject data through a nonce/hash-aware wrapper.
 - Static PNG export validates width, height, scale, and timeout options before
@@ -162,7 +168,7 @@ packaging, cross-platform, or exact-SHA release evidence cataloged in the
 | `xy.pyplot` shim behavior, matplotlib interoperability, reference corpus | `make check-pyplot` |
 | Reviewed matplotlib compatibility snapshot (`spec/matplotlib/compat-matrix.md`) | `python scripts/sync_matplotlib_compat.py --check` |
 | `xy.pyplot` speed margin against matplotlib | `make check-pyplot-speed` |
-| Standalone HTML export, path writes, user text, tooltips, legends, browser DOM insertion | `make check-security` |
+| Standalone HTML export, path writes, user text, tooltips, legends, browser DOM insertion | `make check-security`; add `make check-browser CHROMIUM=/path/to/chrome` for runtime DOM/CSP/network behavior |
 | Benchmark harness code, environment metadata, report schema, regressions | `make check-benchmark-harness` |
 | Generated benchmark JSON artifacts | `make check-benchmark-report BENCHMARK_JSON=benchmark.json BENCHMARK_KIND=scatter-vs` |
 | CI/release workflows, artifact upload/download, no-Rust clear-error jobs | `make check-ci` |
@@ -185,12 +191,17 @@ make check-docs
 ```
 
 The browser gates are split into app-facing checks that match the CI step
-names: `Browser lifecycle smoke (Chromium)`, `Browser visual regression smoke
-(Chromium)`, `Step tier-update smoke (Chromium)`, `Animation smoke (Chromium)`,
-`Pick boundary smoke (Chromium)`, `Browser interaction stress smoke
-(Chromium)`, and `Browser dashboard reliability smoke (Chromium)`.
+names: `Runtime standalone security smoke (Chromium)`, `Browser lifecycle smoke
+(Chromium)`, `Browser visual regression smoke (Chromium)`, `Step tier-update
+smoke (Chromium)`, `Animation smoke (Chromium)`, `Pick boundary smoke
+(Chromium)`, `Browser interaction stress smoke (Chromium)`, and `Browser
+dashboard reliability smoke (Chromium)`.
 `make check-browser` runs all of these except the dashboard reliability smoke,
-which runs in CI only. The lifecycle and visual smokes both boot the
+which runs in CI only. The runtime-security smoke drives a production
+standalone export with hostile text and custom CSS, asserts literal DOM text
+and no executable user nodes/dialogs, observes the CSP block, and retains a
+wire-level zero-request result from a loopback sentinel. The lifecycle and
+visual smokes both boot the
 `examples/fastapi` app under uvicorn and drive Chromium at its live routes (no
 committed HTML): the lifecycle smoke loads every gallery chart and the live
 drilldown and requires each to report nonblank pixels through `initial`,

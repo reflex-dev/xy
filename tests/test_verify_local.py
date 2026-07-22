@@ -66,6 +66,7 @@ def test_browser_checks_are_listed_without_chromium(capsys: pytest.CaptureFixtur
     assert rc == 0
     assert "render_smoke_nonumpy" in out
     assert "smoke_render" in out
+    assert "runtime_security_smoke" in out
     assert "reflex_lifecycle_smoke" in out
     assert "visual_regression_smoke" in out
     assert "animation_smoke" in out
@@ -85,6 +86,18 @@ def test_hard_local_interaction_worker_does_not_allow_skip() -> None:
     check = verify_local._base_checks(Path(sys.executable))["interaction_stress_smoke"]
 
     assert "--allow-worker-skip" not in check.command
+
+
+def test_runtime_security_browser_check_is_hard_and_sandboxed_by_default() -> None:
+    check = verify_local._base_checks(Path(sys.executable))["runtime_security_smoke"]
+
+    assert check.command == (
+        sys.executable,
+        "scripts/runtime_security_smoke.py",
+        sys.executable,
+    )
+    assert "--no-sandbox" not in check.command
+    assert check.requires_chromium is True
 
 
 def test_example_checks_are_known_as_targeted_gate() -> None:

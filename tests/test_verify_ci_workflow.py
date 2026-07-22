@@ -634,6 +634,45 @@ def test_ci_workflow_rejects_missing_animation_smoke(tmp_path: Path) -> None:
     assert any("Animation smoke" in error and "animation_smoke.py" in error for error in errors)
 
 
+def test_ci_workflow_rejects_missing_runtime_security_smoke(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            '          .venv/bin/python scripts/runtime_security_smoke.py "$CHROME" --no-sandbox \\\n'
+            "            --evidence runtime-security-evidence.json\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any(
+        "Runtime standalone security smoke" in error and "runtime_security_smoke.py" in error
+        for error in errors
+    )
+
+
+def test_ci_workflow_rejects_missing_runtime_security_evidence_upload(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    block = (
+        "      - name: Upload runtime security evidence\n"
+        "        if: always()\n"
+        "        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n"
+        "        with:\n"
+        "          name: runtime-security-evidence\n"
+        "          if-no-files-found: error\n"
+        "          path: runtime-security-evidence.json\n\n"
+    )
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(block, ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("Upload runtime security evidence" in error for error in errors)
+
+
 def test_ci_workflow_rejects_missing_animation_evidence_upload(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     block = (

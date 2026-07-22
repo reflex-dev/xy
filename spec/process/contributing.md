@@ -134,6 +134,15 @@ tooltips, legends, or the browser client DOM code, run:
 make check-security
 ```
 
+If that change can affect runtime DOM insertion, custom CSS, or the standalone
+CSP, also run the real-browser boundary. It exercises a production export with
+hostile text and CSS and fails on executable user DOM, dialogs, or a request
+reaching its loopback sentinel:
+
+```bash
+make check-browser CHROMIUM=/path/to/chrome
+```
+
 When you change validation, public errors, builder rollback behavior, chart
 composition caching, or LOD/drill mutation boundaries, run:
 
@@ -160,12 +169,13 @@ For browser render smoke checks, pass a local Chrome/Chromium executable:
 make check-browser CHROMIUM=/path/to/chrome
 ```
 
-This runs six split browser checks, which CI runs as separate steps:
+This runs the split browser checks, which CI runs as separate steps:
 
 | Check | CI step name |
 | --- | --- |
 | `render_smoke_nonumpy` | `Headless render smoke (stdlib + Chromium)` |
 | `smoke_render` | `Real-Figure render smoke (numpy + Chromium)` |
+| `runtime_security_smoke` | `Runtime standalone security smoke (Chromium)` |
 | `reflex_lifecycle_smoke` | `Browser lifecycle smoke (Chromium)` |
 | `visual_regression_smoke` | `Browser visual regression smoke (Chromium)` |
 | `step_tier_smoke` | `Step tier-update smoke (Chromium)` |
@@ -246,7 +256,9 @@ the `<CHROMIUM>` placeholder, name it explicitly, for example
 - `import xy` stays lazy and under budget in fresh interpreters; no
   NumPy/native-core import on package import.
 - Standalone HTML handles hostile user strings in every text surface touched by
-  the patch; run `make check-security` for export/client text-sink changes.
+  the patch; run `make check-security` for static export/client text-sink changes
+  and `make check-browser CHROMIUM=/path/to/chrome` for runtime DOM/CSP/network
+  behavior.
 - Benchmarks label mode truthfully: `direct`, `decimated`, `density`, `sampled`,
   or `adaptive`.
 - README/docs examples still match the current public API.

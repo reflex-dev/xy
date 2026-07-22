@@ -62,7 +62,7 @@ index. Missing additions are tracked by ID in [`gaps.md`](gaps.md).
 | Dependency-light WebGL render | `scripts/render_smoke_nonumpy.py <chromium>` | Hard main CI | `IMPLEMENTED` | Exercises representative marks, interaction, context loss, and nonblank pixels without NumPy. It is not an every-kind registry. |
 | Real Figure browser render | `scripts/smoke_render.py <chromium>` | Hard main CI | `IMPLEMENTED` | A composed Figure reaches nonblank Chromium pixels. |
 | Native and browser export | PNG/JPEG/WebP/SVG/PDF unit tests; `scripts/png_export_smoke.py`; image and batch-export tests | Hard root/browser lanes, with optional external PDF tooling | `PARTIALLY IMPLEMENTED` | Broad byte/pixel validation exists. Public persistent browser batch reuse, mixed-format cleanup, and a guaranteed independent PDF oracle are incomplete. See TST-NI-045. |
-| Standalone HTML and text security | `tests/test_static_client_security.py`; HTML transport/CSS and sandbox-policy tests; `make check-security` | Hard root suite | `IMPLEMENTED` | Escaping, CSP, hostile strings, atomic writes, and static sink constraints are strong. Browser export never silently downgrades its sandbox (TST-NI-025); runtime DOM/network isolation remains TST-NI-024. |
+| Standalone HTML and text security | `tests/test_static_client_security.py`; `scripts/runtime_security_smoke.py`; HTML transport/CSS and sandbox-policy tests; `make check-security`; `make check-browser` | Hard root and Chromium CI/browser lanes with retained runtime JSON | `IMPLEMENTED` | Static escaping/sink constraints and real-browser literal text across 16 public surfaces, hostile CSS, CSP blocking, zero executable user nodes/dialogs, and zero loopback requests are enforced (TST-NI-024). Browser launch never silently downgrades its process sandbox (the distinct TST-NI-025 policy). |
 | FastAPI gallery lifecycle | `scripts/reflex_lifecycle_smoke.py` | Hard Chromium CI/browser lane | `IMPLEMENTED` | Exercises gallery routes, resize, visibility, context loss/restore, drilldown, and embedded iframes. The filename is misleading: it serves `examples/fastapi`, not Reflex. |
 | Visual health | `scripts/visual_regression_smoke.py` | Hard Chromium CI/browser lane | `IMPLEMENTED` | Detects blank/collapsed output, occupancy, region, and label-overlap failures. It is not a reviewed image-baseline regression suite. See TST-NI-014. |
 | Step tier replacement | `scripts/step_tier_smoke.py` | Hard Chromium CI/browser lane | `IMPLEMENTED` | Protects step risers across a synthetic tier-buffer replacement. |
@@ -141,7 +141,7 @@ described above.
 |---|---|
 | `make check` | Fast local verifier selection |
 | `make check-full` | Non-browser Python, JavaScript freshness, Rust debug/clippy, Rust release build, and ABI checks; not a release-equivalent suite |
-| `make check-browser CHROMIUM=...` | Configured Chromium smokes including animation and pick-boundary but except dashboard; does not include Reflex or cross-engine conformance |
+| `make check-browser CHROMIUM=...` | Configured Chromium smokes including runtime page-content security, animation, and pick-boundary but except dashboard; does not include Reflex or cross-engine conformance |
 | `make check-conformance` | Focused Chromium/Firefox/WebKit fixture |
 | `make check-docs` | Executable examples and claim guardrails |
 | `make check-examples` | README/API examples and Reflex asset-registry checks |
@@ -190,6 +190,7 @@ automation, not whether the helper is valuable.
 | `scripts/render_smoke_nonumpy.py` | Dependency-light WebGL marks, pixels, interaction, and context recovery | Hard Chromium CI |
 | `scripts/png_export_smoke.py` | Native and Chromium PNG health | Hard Chromium CI |
 | `scripts/smoke_render.py` | Real composed Figure to Chromium pixels | Hard Chromium CI |
+| `scripts/runtime_security_smoke.py` | Production standalone DOM-XSS, CSP, hostile-CSS, dialog, and wire-level network-isolation behavior | Hard Chromium CI/browser lane with retained JSON evidence; `IMPLEMENTED` for TST-NI-024 |
 | `scripts/reflex_lifecycle_smoke.py` | FastAPI gallery lifecycle, drilldown, resize, visibility, context recovery, and iframes | Hard Chromium CI; misleading historical filename |
 | `scripts/visual_regression_smoke.py` | Gallery visual-health invariants | Hard Chromium CI; not reviewed baseline regression |
 | `scripts/step_tier_smoke.py` | Step geometry after tier-buffer replacement | Hard Chromium CI |

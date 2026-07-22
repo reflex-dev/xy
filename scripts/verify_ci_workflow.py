@@ -325,12 +325,17 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "scripts/smoke_render.py",
         "Browser lifecycle smoke",
         "Browser visual regression smoke",
+        "Runtime standalone security smoke",
         "Animation smoke",
         "Pick boundary smoke",
         "Browser interaction stress smoke",
         "Browser dashboard reliability smoke",
         "scripts/reflex_lifecycle_smoke.py",
         "scripts/visual_regression_smoke.py",
+        "scripts/runtime_security_smoke.py",
+        "--evidence runtime-security-evidence.json",
+        "Upload runtime security evidence",
+        "runtime-security-evidence",
         "scripts/animation_smoke.py",
         "--evidence animation-browser-evidence.json",
         "Upload animation browser evidence",
@@ -369,6 +374,26 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "transport.json",
     )
     hard_test = jobs.get("test", "")
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Runtime standalone security smoke (Chromium)",
+        "hard runtime DOM/CSP command and diagnostic path",
+        "scripts/runtime_security_smoke.py",
+        "--no-sandbox",
+        "--evidence runtime-security-evidence.json",
+    )
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Upload runtime security evidence",
+        "failure-retaining runtime security artifact policy",
+        "if: always()",
+        "actions/upload-artifact@",
+        "runtime-security-evidence",
+        "if-no-files-found: error",
+        "runtime-security-evidence.json",
+    )
     _require_step_contains(
         errors,
         hard_test,

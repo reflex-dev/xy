@@ -102,6 +102,29 @@ A sandboxed launch now fails once with an actionable diagnostic and never adds
 assert the exact launch count, sandbox arguments, and failure guidance for the
 one-shot and persistent paths. This closes TST-NI-025.
 
+### XY-SEC-2026-05: Standalone sink and CSP controls lacked runtime proof
+
+Severity: medium regression risk.
+
+The export tests decoded escaped JSON and the client-security tests constrained
+source sinks, but neither observed all public hostile-text surfaces or hostile
+CSS in a browser. A source-only contract could stay green while a later DOM
+composition change parsed text, opened a dialog, or bypassed the standalone
+network boundary.
+
+#### Resolution as of 2026-07-21 (XY-SEC-2026-05)
+
+`scripts/runtime_security_smoke.py` now loads a production standalone export in
+Chromium with hostile strings across 16 title/axis/tick/trace/category/
+annotation/legend/colorbar/tooltip surfaces. It asserts literal text, no
+executable user DOM/script/dialogs, applies hostile custom CSS, observes the
+expected CSP `img-src` violation, and requires that no HTTP request reaches a
+loopback sentinel. CI retains `runtime-security-evidence.json` on every outcome,
+and the only remaining `innerHTML` assignments are structurally allowlisted
+calls to the fixed internal icon factory. This closes TST-NI-024. Chromium's
+process sandbox and any explicit trusted-fixture opt-out remain the separate
+XY-SEC-2026-03 / TST-NI-025 policy.
+
 ### XY-SEC-2026-04: Pyramid native-boundary validation was weaker than other kernels
 
 Severity: low/medium robustness.

@@ -290,9 +290,17 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-024 — Runtime DOM-XSS, CSP, and network-isolation tests
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: text-boundary security is strong, but much of the client sink
-  contract is source-based rather than observed in a browser.
+- Status: `IMPLEMENTED`
+- Evidence: `scripts/runtime_security_smoke.py`,
+  `tests/test_runtime_security_smoke.py`, the structural icon-sink allowlist in
+  `tests/test_static_client_security.py`, `make check-browser`, and the hard-CI
+  `runtime-security-evidence` artifact.
+- Current gap: closed for the standalone page-content boundary. A real
+  production export sends hostile strings through 16 title/axis/tick/trace/
+  category/annotation/legend/colorbar/tooltip surfaces, exercises hostile CSS,
+  and requires literal DOM text, no executable user nodes/script/dialogs, a
+  browser-observed CSP block, and zero loopback HTTP requests. Chromium process
+  sandbox policy remains the separate TST-NI-025 scope.
 - Implemented when: hostile strings flow through every public text surface;
   tests assert literal text, no executable nodes/dialogs, and no network request
   under standalone CSP; hostile CSS is exercised; and fixed internal icon sinks
