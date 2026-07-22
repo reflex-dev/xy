@@ -7,7 +7,7 @@ WHEEL ?=
 BENCHMARK_JSON ?= benchmark.json
 BENCHMARK_KIND ?= auto
 
-.PHONY: help setup setup-browser check check-full check-browser check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
+.PHONY: help setup setup-browser check check-full check-browser check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-testing-spec check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
 
 help:
 	@printf '%s\n' \
@@ -27,6 +27,7 @@ help:
 		'  make check-import     run import-time and dependency-boundary checks' \
 		'  make check-ci         run CI/release workflow invariant checks' \
 		'  make check-claims     run public performance-claim guardrails' \
+		'  make check-testing-spec validate the spec/testing catalog against the repo' \
 		'  make check-benchmark-harness run benchmark metadata/report/regression tests' \
 		'  make check-pyplot      run the matplotlib-shim suite and compatibility corpus' \
 		'  make check-pyplot-speed enforce the per-family 10x static-PNG target (requires .[bench])' \
@@ -76,7 +77,7 @@ check-conformance:
 	node scripts/browser_conformance.mjs
 
 check-docs:
-	$(PYTHON) scripts/verify_local.py --only examples,claim_guardrails
+	$(PYTHON) scripts/verify_local.py --only examples,claim_guardrails,testing_spec
 
 check-examples:
 	$(PYTHON) scripts/verify_local.py --only examples
@@ -101,6 +102,9 @@ check-ci:
 
 check-claims:
 	$(PYTHON) scripts/verify_local.py --only claim_guardrails
+
+check-testing-spec:
+	$(PYTHON) scripts/verify_local.py --only testing_spec
 
 check-benchmark-harness:
 	$(PYTHON) scripts/verify_local.py --only benchmark_harness

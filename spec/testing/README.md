@@ -92,31 +92,25 @@ behavior.
 The target tier and the current enforcement are separate facts. A row is not a
 PR or release gate merely because a product spec says it should be one.
 
-## Last audited evidence
+## Audits
 
-The current inventory was reconciled on 2026-07-21 at commit
-[`47b484c2fdcba8359b1a9214aab34a30596952a5`](https://github.com/reflex-dev/xy/commit/47b484c2fdcba8359b1a9214aab34a30596952a5)
-against [CI run 29878728616](https://github.com/reflex-dev/xy/actions/runs/29878728616).
-Representative observations were:
+Point-in-time reconciliations of this catalog against the repository live in
+[`audits/`](audits/). They record observed numbers on a date and are expected to
+go stale; this document and [`current.md`](current.md) hold the durable rules.
 
-| Evidence | Observed result |
-|---|---|
-| Main Python lane | 2,070 passed, 69 skipped, 3 warnings |
-| Local repository-wide lane | 2,070 passed, 69 skipped, 3 warnings |
-| Last measured local Python branch coverage, at prior commit `eddb2c1` | 82% over 20,538 statements and 7,800 branches |
-| Rust debug / release | 102 / 103 passed |
-| Reflex adapter with dependencies installed | 83 passed |
-| Dashboard 10/20/50 | 10 healthy, 20 governed and recoverable, 50 failed; verifier still passed |
-| Repository merge rule | No required status check; zero required approvals |
-
-These numbers are an evidence snapshot, not permanent thresholds. Stable
-requirements and commands live in [`current.md`](current.md); new required work
-lives in [`gaps.md`](gaps.md).
+- [`audits/2026-07-21.md`](audits/2026-07-21.md) — the reconciliation this
+  catalog was first written against, including the failed 50-chart dashboard row
+  that a green verifier accepted.
 
 ## Maintenance rules
 
 - Update this section in the same pull request as a material test, workflow,
   platform-support, release, or product-contract change.
+- Run `make check-testing-spec` after editing this directory. It validates links
+  and anchors, the status vocabulary, gap-ID uniqueness and reachability, and
+  every referenced `make` target, repository path, and workflow job. The root
+  test suite runs the same checker, so a renamed script or retired target fails
+  a normal pull request rather than rotting here unnoticed.
 - Prefer file, symbol, command, and workflow-job references over volatile line
   numbers or collected-test counts.
 - A skip counts as evidence only when the job declares and enforces that skip as

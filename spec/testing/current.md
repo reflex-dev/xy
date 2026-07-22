@@ -22,7 +22,7 @@ index. Missing additions are tracked by ID in [`gaps.md`](gaps.md).
 | Generated native font freshness | `scripts/gen_font.py`; committed `src/font.rs` | No check mode or comparison gate | `NOT IMPLEMENTED` | The generator relationship is documented in source but cannot fail CI when stale. See TST-NI-043. |
 | Matplotlib compatibility snapshot freshness | `scripts/sync_matplotlib_compat.py --check` | Hard Matplotlib reference job | `IMPLEMENTED` | The generated method inventory is current for the pinned reference. Semantic gaps are separate. |
 | Workflow contract checking | `scripts/verify_ci_workflow.py`; `tests/test_verify_ci_workflow.py` | Hard CI / `make check-ci` | `PARTIALLY IMPLEMENTED` | Checks CI, CodSpeed, and release text/wiring. It is not a semantic dependency validator and omits docs/deploy/reusable workflows. See TST-NI-038. |
-| Specification contract checking | Claim guardrails only; CI and CodSpeed ignore `spec/**`; Docs does not select it | No reliable spec-only PR lane | `NOT IMPLEMENTED` | Links, commands, status vocabulary, referenced symbols/jobs, and testing-catalog consistency are not enforced. See TST-NI-005. |
+| Specification contract checking | Claim guardrails; `scripts/check_testing_spec.py`; `tests/test_check_testing_spec.py` | Hard root suite / `make check-testing-spec` and `make check-docs` | `PARTIALLY IMPLEMENTED` | The testing catalog's links, anchors, status vocabulary, gap-ID integrity, `make` targets, referenced paths, and workflow jobs are enforced whenever the root suite runs. Because CI and CodSpeed ignore `spec/**`, a specification-only pull request still receives no lane, and the rest of `spec/` is unchecked. See TST-NI-005. |
 | Type checking | `ty check python` | Advisory; current CI permits diagnostics | `PARTIALLY IMPLEMENTED` | The latest audit observed 25 accepted diagnostics and an unprovisioned adapter surface. No baseline ratchet exists. See TST-NI-044. |
 
 ## Python API, data, and protocol
@@ -68,6 +68,9 @@ index. Missing additions are tracked by ID in [`gaps.md`](gaps.md).
 | Step tier replacement | `scripts/step_tier_smoke.py` | Hard Chromium CI/browser lane | `IMPLEMENTED` | Protects step risers across a synthetic tier-buffer replacement. |
 | Interaction stress | `scripts/interaction_stress_smoke.py`; focused wheel/pan/zoom/pick tests | Hard Chromium CI/browser lane | `PARTIALLY IMPLEMENTED` | Core wheel, pan, hover, crosshair, box zoom, and brush paths have budgets and visual invariants. The full axis/action matrix, required worker evidence, and pick limits are not wired. See TST-NI-011, TST-NI-012, and TST-NI-016. |
 | Focused cross-browser conformance | `node scripts/browser_conformance.mjs` in Chromium, Firefox, and WebKit | Hard CI / `make check-conformance` | `IMPLEMENTED` | The shared fixture checks one direct linear scatter for semantics, accessibility, layout, and tolerant raster equality. Broader kinds, tiers, DPRs, motion, and axes are not covered. See TST-NI-015. |
+| Browser version support policy | Playwright-pinned current Chromium, Firefox, and WebKit | Hard CI for the pinned versions only | `NOT IMPLEMENTED` | No normative engine/version floor, WebGL2 prerequisite statement, or oldest-claimed-version lane exists, and recorded renderer versions can drift from the docs. See TST-NI-054. |
+| GPU and driver realism | Headless CI lanes running software rendering | Hard Chromium CI on software rasterization | `NOT IMPLEMENTED` | No lane exercises representative hardware WebGL2 drivers or rejects software fallback, so driver-specific defects are invisible. See TST-NI-052. |
+| Renderer failure-mode behavior | Successful context loss/restore paths plus source-marker assertions | Mixed | `PARTIALLY IMPLEMENTED` | Restoration is proved in a real browser, but WebGL2 acquisition, shader/program, and permanent-restore failures are not forced and their user-visible contract is unasserted. See TST-NI-053. |
 | Chart-kind render contract | Core browser smoke plus examples cover common families | Mixed | `PARTIALLY IMPLEMENTED` | The 18-kind registry is not tied to one required payload/browser/static evidence catalog. See TST-NI-009 and TST-NI-010. |
 | Axes, layout, styling, chrome, and facets | Axis/viewport, facets, CSS mark styles, export, legend-resize, and gallery browser tests | Mixed hard evidence | `PARTIALLY IMPLEMENTED` | Representative axes, facets, legends, annotations, colorbars, CSS, and layout behavior are covered, but named/reversed/log/category combinations, formatter semantics, collision behavior, and cross-renderer parity lack one catalog. See TST-NI-008, TST-NI-010, TST-NI-011, and TST-NI-014. |
 | Pan/zoom contract | Focused Python regressions and Chromium interaction smoke | Mixed | `PARTIALLY IMPLEMENTED` | The specified linear/log/reversed/category/dual-axis, bounds, links, no-op, reduced-motion, and Reflex matrix is not implemented. See TST-NI-011. |
@@ -108,6 +111,7 @@ index. Missing additions are tracked by ID in [`gaps.md`](gaps.md).
 | Release wheel matrix | Eleven native platform wheels with structural verification; selected host-native import probes | Release workflow | `PARTIALLY IMPLEMENTED` | Most cross-built artifacts are not run, and no current successful full dry run proves the revised matrix. See TST-NI-023 and TST-NI-003. |
 | Pyodide artifact | Pinned Rust/Emscripten/Pyodide build and runtime load probe | Release workflow | `IMPLEMENTED` | This status applies only to the exact release job; no regular PR/scheduled regression lane builds and runs the WASM artifact. See TST-NI-041. |
 | Supported Python matrix | Explicit Python 3.11 plus the main runner's incidental Python | Hard CI | `PARTIALLY IMPLEMENTED` | The project declares Python 3.11+ without explicitly testing every currently claimed version or newest supported interpreter. See TST-NI-036. |
+| Cross-platform behavioral parity | Windows, Linux ARM64, and macOS jobs build, install, and import the wheel | Hard CI for build/import only | `NOT IMPLEMENTED` | Python and Rust behavior suites run primarily on Ubuntu; other hosts prove artifact structure and import, not public API, kernel, framing, or export parity. See TST-NI-049. |
 | Dependency reproducibility | Benchmark lock and docs lock; floating root `.[dev]` hard job | Mixed | `PARTIALLY IMPLEMENTED` | The hard root gate is not frozen; there is no separate latest-dependency canary or true minimum-dependency lane. See TST-NI-036. |
 | Required merge gate | Individual workflow jobs | Repository ruleset does not require a status check | `NOT IMPLEMENTED` | A stable aggregate required by `main` is missing. See TST-NI-001. |
 | Exact-SHA release qualification | Artifact builds and a push-only tag/version/changelog script | Human/process and partial workflow checks | `NOT IMPLEMENTED` | Publication does not prove the exact SHA passed the hard suite; manual real publication can bypass the version gate. See TST-NI-003. |
@@ -147,6 +151,7 @@ described above.
 | `make check-import` | Import budget and dependency boundaries |
 | `make check-ci` | Current workflow text/wiring invariants |
 | `make check-claims` | Public performance-claim guardrails |
+| `make check-testing-spec` | Validate this catalog's links, gap IDs, commands, paths, and workflow jobs |
 | `make check-benchmark-harness` | Benchmark metadata, schema, and regression tests |
 | `make check-pyplot` | Full `tests/pyplot` suite in the active environment |
 | `make check-pyplot-speed` | Local full pyplot-vs-Matplotlib static-PNG target; requires benchmark dependencies |
@@ -199,6 +204,7 @@ automation, not whether the helper is valuable.
 | `scripts/verify_sdist.py` / `scripts/verify_wheel.py` and tests | Package contents, metadata, tags, hashes, and native/pure expectations | Hard CI/release structural gates |
 | `scripts/verify_benchmark_report.py`, merge/regression scripts, and tests | Benchmark schema, coherence, merge, and deterministic regression policy | Hard harness tests; outcome-integrity mode `NOT IMPLEMENTED` |
 | `scripts/verify_local.py` and tests | Named local-suite composition and execution | Current local command router; release-equivalent aggregation `NOT IMPLEMENTED` |
+| `scripts/check_testing_spec.py` and its tests | This catalog's links, anchors, status vocabulary, gap-ID integrity, and repository references | Hard root suite via `make check-docs`; spec-only pull-request lane `NOT IMPLEMENTED` |
 | Hatch build-hook tests | Native build/no-toolchain build behavior | Repository pytest and packaging jobs |
 
 ## Workflow and job registry

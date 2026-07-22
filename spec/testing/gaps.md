@@ -20,6 +20,7 @@ and retained artifact to the relevant entry before changing its status.
 ### TST-NI-001 — Required hard-CI aggregate and repository rule
 
 - Status: `NOT IMPLEMENTED`
+- Owner: unassigned — file a tracking issue before implementation starts
 - Current gap: individual jobs run, but `main` has no required-status-check rule
   and no stable aggregate that evaluates all hard dependencies.
 - Implemented when: one `required-ci` job uses `if: always()`, runs on every pull
@@ -29,6 +30,7 @@ and retained artifact to the relevant entry before changing its status.
 ### TST-NI-002 — Strict dashboard 10/20/50 health gate
 
 - Status: `NOT IMPLEMENTED`
+- Owner: unassigned — file a tracking issue before implementation starts
 - Current gap: the audited 50-chart row failed while the verifier and workflow
   stayed green.
 - Implemented when: a strict profile requires one healthy row for every requested
@@ -39,6 +41,7 @@ and retained artifact to the relevant entry before changing its status.
 ### TST-NI-003 — Exact-SHA release, deployment, and provenance preflight
 
 - Status: `NOT IMPLEMENTED`
+- Owner: unassigned — file a tracking issue before implementation starts
 - Current gap: publication and deployment do not prove that their exact source
   SHA passed the hard suite; manual production publication can bypass the
   push-only version gate, and dev deployment can race CI.
@@ -50,6 +53,7 @@ and retained artifact to the relevant entry before changing its status.
 ### TST-NI-004 — Required Reflex adapter and browser E2E lane
 
 - Status: `NOT IMPLEMENTED`
+- Owner: unassigned — file a tracking issue before implementation starts
 - Current gap: root CI does not install `reflex` or `reflex_xy`, so one collection
   skip hides the adapter suite; the real `reflex_ws_smoke.py` is unwired.
 - Implemented when: a dedicated job installs root XY and
@@ -60,11 +64,15 @@ and retained artifact to the relevant entry before changing its status.
 ### TST-NI-005 — Specification and testing-catalog validation
 
 - Status: `NOT IMPLEMENTED`
-- Current gap: CI/CodSpeed ignore `spec/**`, Docs does not select it, and no
-  checker validates this testing catalog.
+- Owner: unassigned — file a tracking issue before implementation starts
+- Current gap: `scripts/check_testing_spec.py` now validates this catalog, but it
+  only runs when the root suite runs. CI and CodSpeed still ignore `spec/**`, so
+  a specification-only pull request receives no required result, and the checker
+  covers `spec/testing/` rather than the whole specification tree.
 - Implemented when: spec-only pull requests receive the stable required result
-  and validate Markdown links, commands, referenced files/symbols/jobs, status
-  vocabulary, evidence rows, claim guardrails, and dead or duplicate gap IDs.
+  and validation extends across `spec/` — Markdown links, commands, referenced
+  files/symbols/jobs, status vocabulary, evidence rows, claim guardrails, and
+  dead or duplicate gap IDs.
 
 ## P1 — Product and integration coverage
 

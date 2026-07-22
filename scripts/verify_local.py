@@ -81,6 +81,11 @@ def _base_checks(
             (py, "scripts/check_claim_guardrails.py"),
         ),
         Check(
+            "testing_spec",
+            "testing catalog links, gap IDs, commands, and workflow jobs",
+            (py, "scripts/check_testing_spec.py"),
+        ),
+        Check(
             "benchmark_harness",
             "benchmark metadata, report, regression, and claim guardrail tests",
             (
@@ -280,6 +285,7 @@ QUICK_CHECKS = (
     "python_floor",
     "public_api",
     "claim_guardrails",
+    "testing_spec",
     "ci_workflow",
     "ruff_check",
     "ruff_format",

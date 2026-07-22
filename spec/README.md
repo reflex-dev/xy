@@ -1,7 +1,7 @@
 # Specification
 
 The root-level `spec/` directory is XY's engineering source of truth: intended
-behavior, architecture, compatibility, testing, benchmarks, release readiness,
+behavior, architecture, compatibility, benchmarks, testing, release readiness,
 and contributor contracts. The public documentation lives directly under `docs/`,
 while the Reflex application that renders it lives in `docs/app/`.
 
