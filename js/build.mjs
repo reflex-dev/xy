@@ -81,16 +81,16 @@ const staticDir = join(root, "python", "xy", "static");
 
 const { build } = await import("vite");
 
-/** Build both bundles into outDir. One entry, two formats: the ESM build keeps
- * 60_entries' export shape verbatim; the IIFE build assigns the same namespace
- * to a top-level `var xy`, which is `window.xy` when the bundle runs as the
- * classic inline <script> that `Figure.to_html()` emits. */
+/** Build both bundles into outDir. The ESM build keeps 60_entries' export
+ * shape, including its frozen semantic-test seam. The IIFE build enters through
+ * 61_standalone so only the public namespace is assigned to top-level `var xy`
+ * (`window.xy` in the classic inline <script> emitted by Figure.to_html()). */
 async function buildBundles(outDir) {
   const formats = [
-    { format: "es", fileName: "index.js" },
-    { format: "iife", fileName: "standalone.js" },
+    { format: "es", fileName: "index.js", entry: "60_entries.ts" },
+    { format: "iife", fileName: "standalone.js", entry: "61_standalone.ts" },
   ];
-  for (const { format, fileName } of formats) {
+  for (const { format, fileName, entry } of formats) {
     await build({
       configFile: false,
       root: here,
@@ -109,7 +109,7 @@ async function buildBundles(outDir) {
         // these artifacts ship inside notebooks/HTML, so both formats minify
         // fully. The entry's export shape is preserved verbatim.
         rollupOptions: {
-          input: join(here, "src", "60_entries.ts"),
+          input: join(here, "src", entry),
           preserveEntrySignatures: "strict",
           output: {
             format,

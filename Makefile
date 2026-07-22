@@ -8,7 +8,7 @@ BENCHMARK_JSON ?= benchmark.json
 BENCHMARK_KIND ?= auto
 BENCHMARK_PROFILE ?= baseline
 
-.PHONY: help setup setup-browser check check-full check-browser check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-testing-spec check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
+.PHONY: help setup setup-browser check check-full check-browser check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-testing-spec check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check js-test rust-check abi-smoke
 
 help:
 	@printf '%s\n' \
@@ -43,6 +43,7 @@ help:
 		'  make format           run ruff format --check' \
 		'  make typecheck        run ty over the shippable package' \
 		'  make js-check         verify committed JS bundles are fresh' \
+		'  make js-test          run dependency-free JS semantic units with coverage' \
 		'  make rust-check       run cargo test and clippy'
 
 setup:
@@ -167,6 +168,12 @@ python-floor:
 
 js-check:
 	node js/build.mjs --check
+
+js-test:
+	node --test --experimental-test-coverage \
+		--test-coverage-include=python/xy/static/index.js \
+		--test-coverage-lines=15 --test-coverage-branches=60 \
+		--test-coverage-functions=10 js/test/*.test.mjs
 
 rust-check:
 	cargo test

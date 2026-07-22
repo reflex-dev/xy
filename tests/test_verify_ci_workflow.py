@@ -134,6 +134,94 @@ def test_ci_workflow_rejects_dependency_audit_outside_required_aggregate(
     assert any("required_ci needs" in error and "dependency_audit" in error for error in errors)
 
 
+def test_ci_workflow_rejects_javascript_semantics_outside_required_aggregate(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("      - javascript_semantics\n", "", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("required_ci needs" in error and "javascript_semantics" in error for error in errors)
+
+
+def test_ci_workflow_rejects_soft_javascript_semantic_gate(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "  javascript_semantics:\n    name:",
+            "  javascript_semantics:\n    continue-on-error: true\n    name:",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("javascript_semantics job must be a hard gate" in error for error in errors)
+
+
+def test_ci_workflow_rejects_javascript_semantic_dependency_install(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Run JavaScript semantic unit suite\n",
+            "      - name: Install optional JavaScript dependencies\n"
+            "        run: npm install jsdom\n"
+            "      - name: Run JavaScript semantic unit suite\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("without npm installs" in error for error in errors)
+
+
+def test_ci_workflow_rejects_javascript_semantics_without_coverage(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("node --test --experimental-test-coverage", "node --test", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "Run JavaScript semantic unit suite" in error and "experimental-test-coverage" in error
+        for error in errors
+    )
+
+
+def test_ci_workflow_rejects_missing_javascript_semantic_evidence(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Upload JavaScript semantic evidence\n        if: always()\n",
+            "      - name: Upload JavaScript semantic evidence\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "failure-retaining JavaScript test and coverage artifact policy" in error
+        and "if: always()" in error
+        for error in errors
+    )
+
+
 def test_ci_workflow_rejects_unpinned_dependency_scanner(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
@@ -454,7 +542,16 @@ def test_ci_workflow_rejects_missing_cross_library_job_timeout(tmp_path: Path) -
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
     path.write_text(
-        workflow.replace("    timeout-minutes: 10\n", "", 1),
+        workflow.replace(
+            "  benchmark_vs:\n"
+            "    name: Cross-library benchmark (${{ matrix.name }})\n"
+            "    runs-on: ubuntu-latest\n"
+            "    timeout-minutes: 10\n",
+            "  benchmark_vs:\n"
+            "    name: Cross-library benchmark (${{ matrix.name }})\n"
+            "    runs-on: ubuntu-latest\n",
+            1,
+        ),
         encoding="utf-8",
     )
 

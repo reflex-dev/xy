@@ -2,7 +2,7 @@
 // Ticks (computed in f64 on the CPU — never through f32, §16)
 // ---------------------------------------------------------------------------
 
-function niceStep(rough) {
+export function niceStep(rough) {
   rough = Math.abs(rough);
   if (!Number.isFinite(rough) || rough <= 0) return 1;
   const mag = Math.pow(10, Math.floor(Math.log10(rough)));
@@ -112,7 +112,7 @@ function calendarTicks(lo, hi, rough) {
   return { ticks: out, step: stepM * 30 * MS.d };
 }
 
-function fmtTime(ms, step) {
+export function fmtTime(ms, step) {
   const d = new Date(ms);
   const pad = (n, w = 2) => String(n).padStart(w, "0");
   if (step >= 28 * MS.d) {
@@ -167,6 +167,10 @@ export function fmtNumberSpec(v, format) {
   const match = raw.match(/^(,)?\.([0-9]+)f?$/);
   if (!match) return null;
   const digits = Number(match[2]);
+  // Number#toFixed and Intl.NumberFormat both reject excessive precision.
+  // Treat an out-of-grammar precision as unsupported instead of allowing a
+  // hand-authored spec to throw during chrome paint.
+  if (!Number.isSafeInteger(digits) || digits > 100) return null;
   const value = percent ? Number(v) * 100 : Number(v);
   const text = match[1]
     ? value.toLocaleString(undefined, {
@@ -177,7 +181,7 @@ export function fmtNumberSpec(v, format) {
   return percent ? `${text}%` : text;
 }
 
-function fmtTimeSpec(ms, format) {
+export function fmtTimeSpec(ms, format) {
   if (typeof format !== "string") return null;
   const d = new Date(ms);
   if (!Number.isFinite(d.getTime())) return null;

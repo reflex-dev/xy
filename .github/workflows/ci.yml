@@ -117,6 +117,40 @@ jobs:
           if-no-files-found: error
           path: native-parity-${{ matrix.os }}.json
 
+  javascript_semantics:
+    name: JavaScript semantic unit suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Run JavaScript semantic unit suite
+        shell: bash
+        run: |
+          mkdir -p test-results/javascript coverage/javascript
+          set -o pipefail
+          NODE_V8_COVERAGE=coverage/javascript \
+            node --test --experimental-test-coverage \
+              --test-coverage-include=python/xy/static/index.js \
+              --test-coverage-lines=15 --test-coverage-branches=60 \
+              --test-coverage-functions=10 \
+              --test-reporter=spec --test-reporter-destination=stdout \
+              --test-reporter=junit \
+              --test-reporter-destination=test-results/javascript/junit.xml \
+              js/test/*.test.mjs \
+            | tee test-results/javascript/coverage.txt
+      - name: Upload JavaScript semantic evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: javascript-semantic-evidence
+          if-no-files-found: error
+          path: |
+            test-results/javascript/
+            coverage/javascript/
+
   matplotlib_reference:
     name: Matplotlib 3.11 reference compatibility
     runs-on: ubuntu-latest
@@ -1023,6 +1057,7 @@ jobs:
       - browser_conformance
       - dependency_audit
       - install_without_rust
+      - javascript_semantics
       - matplotlib_reference
       - native_parity
       - python_floor

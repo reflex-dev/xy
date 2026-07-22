@@ -1,4 +1,30 @@
-import { bytesToSpan, decodeFrame } from "./00_header";
+import {
+  XY_FRAME_HEADER_SIZE,
+  XY_FRAME_VERSION,
+  bytesToSpan,
+  decodeFrame,
+} from "./00_header";
+import { cssColor, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
+import {
+  categoryTicks,
+  fmtAxis,
+  fmtGeneral,
+  fmtNumberSpec,
+  fmtTime,
+  fmtTimeSpec,
+  fmtValue,
+  linearTicks,
+  logTicks,
+  niceStep,
+  timeTicks,
+} from "./30_ticks";
+import {
+  LOD_DIRECT_POINT_BUDGET,
+  lodDensityForView,
+  lodHoldPendingDrill,
+  lodNormMax,
+} from "./45_lod";
+import { XY_REBIN_WORKER_SRC } from "./46_worker";
 import { ChartView } from "./50_chartview";
 import { MARK_KINDS, markOf } from "./55_marks";
 // Prototype-augmentation modules: imported for their side effect of attaching
@@ -73,8 +99,39 @@ export function renderStandalone(el, spec, arrayBuffer) {
   return view;
 }
 
+// Named and deliberately absent from the default/public widget entry point.
+// The dependency-free Node semantic suite imports the exact committed ESM
+// artifact through this frozen surface instead of copying production logic
+// into a parallel test implementation. The standalone build uses the public
+// wrapper in 61_standalone.ts, so static exports do not grow a test-only global.
+export const __testing = Object.freeze({
+  XY_FRAME_HEADER_SIZE,
+  XY_FRAME_VERSION,
+  XY_REBIN_WORKER_SRC,
+  LOD_DIRECT_POINT_BUDGET,
+  categoryTicks,
+  cssColor,
+  fmtAxis,
+  fmtGeneral,
+  fmtNumberSpec,
+  fmtTime,
+  fmtTimeSpec,
+  fmtValue,
+  hexColor,
+  linearTicks,
+  lodDensityForView,
+  lodHoldPendingDrill,
+  lodNormMax,
+  logTicks,
+  niceStep,
+  parseColor,
+  readTheme,
+  safeCssPaint,
+  timeTicks,
+});
+
 // Public API. The ESM bundle (static/index.js, anywidget's `_esm`) re-exports
-// these directly; the IIFE bundle (static/standalone.js) exposes the same
-// namespace as `window.xy`.
+// these directly; the IIFE wrapper exposes the same public namespace as
+// `window.xy` without the ESM-only semantic-test seam above.
 export { decodeFrame, ChartView, MARK_KINDS, markOf };
 export default { render, decodeFrame };

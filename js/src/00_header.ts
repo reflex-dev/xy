@@ -27,8 +27,8 @@ export const PROTOCOL = 4;
 // above versions renderer semantics; this separately versions the transport
 // envelope so either layer can fail loudly without coupling their evolution.
 const XY_FRAME_MAGIC = [0x58, 0x59, 0x42, 0x46]; // "XYBF"
-const XY_FRAME_VERSION = 1;
-const XY_FRAME_HEADER_SIZE = 24;
+export const XY_FRAME_VERSION = 1;
+export const XY_FRAME_HEADER_SIZE = 24;
 const XY_FRAME_ALIGNMENT = 8;
 const XY_FRAME_DEFAULT_LIMITS = Object.freeze({
   maxFrameBytes: 512 * 1024 * 1024,

@@ -21,6 +21,7 @@ HARD_JOBS = (
     "browser_conformance",
     "dependency_audit",
     "install_without_rust",
+    "javascript_semantics",
     "matplotlib_reference",
     "native_parity",
     "python_floor",

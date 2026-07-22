@@ -14,7 +14,7 @@
 // stricter CSP) fall back to the old stretched-overview behavior.
 // ---------------------------------------------------------------------------
 
-const XY_REBIN_WORKER_SRC = `
+export const XY_REBIN_WORKER_SRC = `
 const DATA = new Map();
 self.onmessage = (e) => {
   const m = e.data;

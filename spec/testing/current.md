@@ -17,7 +17,7 @@ index. Missing additions are tracked by ID in [`gaps.md`](gaps.md).
 | Public API and annotations | `scripts/check_public_api.py`; `tests/test_public_api.py`; `tests/test_type_surface.py`; `tests/test_api_parity.py` | Hard CI / `make check-api` | `IMPLEMENTED` | Dynamic inventories cover exports, lazy mappings, builder/applier identity, defaults, and the `py.typed` surface. |
 | Python floor syntax and imports | `scripts/check_python_floor.py`; `tests/test_python_floor.py`; `tests/test_import.py`; `tests/test_dependencies.py` | Hard CI / `make python-floor` / `make check-import` | `IMPLEMENTED` | The syntax/import contract is distinct from a full supported-version and minimum-dependency matrix. See TST-NI-036. |
 | Documentation examples and public claims | `tests/test_docs_examples.py`; `tests/test_claim_guardrails.py`; `scripts/check_claim_guardrails.py` scans every specification and public document | Hard all-path CI / `make check-docs` | `IMPLEMENTED` | Public examples and broad benchmark wording are checked, including specification-only changes. See TST-NI-005. |
-| Generated JavaScript bundle freshness | `node js/build.mjs --check`; main-CI ESM/IIFE parse; release freshness check and rebuild | Hard CI and release | `IMPLEMENTED` | This proves source-to-bundle freshness and parseability in main CI, not JavaScript semantics. See TST-NI-007. |
+| Generated JavaScript bundle freshness | `node js/build.mjs --check`; main-CI ESM/IIFE parse; release freshness check and rebuild | Hard CI and release | `IMPLEMENTED` | This proves source-to-bundle freshness and parseability; the dedicated semantic suite below tests the same committed ESM artifact. |
 | Default CodeQL analysis | GitHub default setup for Actions, JavaScript/TypeScript, Python, and Rust | Separate GitHub code-scanning workflow; not required by the main ruleset | `IMPLEMENTED` | This status applies to code scanning, not dependency-vulnerability auditing. |
 | Generated native font freshness | `scripts/gen_font.py`; committed `src/font.rs` | No check mode or comparison gate | `NOT IMPLEMENTED` | The generator relationship is documented in source but cannot fail CI when stale. See TST-NI-043. |
 | Matplotlib compatibility snapshot freshness | `scripts/sync_matplotlib_compat.py --check` | Hard Matplotlib reference job | `IMPLEMENTED` | The generated method inventory is current for the pinned reference. Semantic gaps are separate. |
@@ -52,7 +52,7 @@ index. Missing additions are tracked by ID in [`gaps.md`](gaps.md).
 | Native sanitizers, Miri, and coverage-guided fuzzing | Deterministic randomized tests only | None | `NOT IMPLEMENTED` | There is no sanitizer, Miri, or cargo-fuzz lane. See TST-NI-021. |
 | Native dependency audit | Point-in-time security review | None in regular automation | `NOT IMPLEMENTED` | No `cargo audit` or `cargo deny` policy is enforced. See TST-NI-022. |
 | JavaScript build and syntax | `node js/build.mjs`; main-CI ESM import and IIFE parse checks; release rebuild | Hard main CI plus release build | `IMPLEMENTED` | Main CI proves parseability; release rebuilds the exact artifact after the freshness check. |
-| JavaScript semantic units | Behavior is reached through Python-driven Node checks and browser scripts | No first-class unit command | `NOT IMPLEMENTED` | There is no `node --test` or equivalent suite for frames, ticks, formatters, bounds, registry, LOD, or worker state. See TST-NI-007. |
+| JavaScript semantic units | `js/test/frame.test.mjs`; `js/test/semantics.test.mjs`; `js/test/worker.test.mjs`; `make js-test` | Hard Node 22 `javascript_semantics` job and `required_ci` dependency | `IMPLEMENTED` | The dependency-free suite exercises the exact fresh ESM bundle across frame decode, ticks/formatters, transforms/bounds, theme/style normalization, the 18-kind registry, LOD selection, ChartView state, and the standalone worker protocol. Malformed cases and real mutation controls fail closed; line/branch/function floors gate retained JUnit, coverage text, and raw V8 coverage. |
 | Protocol-version implementation coherence | Python and JavaScript runtime constants currently agree | Indirect tests | `PARTIALLY IMPLEMENTED` | Some specification and smoke fixtures can drift; the animation smoke used protocol 3 while runtime uses 4. See TST-NI-046. |
 
 ## Rendering, interaction, and host integration
@@ -168,6 +168,7 @@ described above.
 | `make public-api` | Direct public API checker |
 | `make python-floor` | Direct Python-floor checker |
 | `make js-check` | Committed JavaScript bundle freshness |
+| `make js-test` | Dependency-free JavaScript semantic units with coverage floors |
 | `make rust-check` | Rust debug tests and clippy |
 | `make abi-smoke` | Direct C ABI smoke |
 
@@ -187,6 +188,7 @@ automation, not whether the helper is valuable.
 | `docs/app/tests` | Documentation application unit/route/content behavior | Docs quality job; `IMPLEMENTED` |
 | `benchmarks/test_codspeed_*.py` | Kernel, transport, pyplot, and Python animation microbenchmarks | Advisory CodSpeed job; `IMPLEMENTED` |
 | Rust tests in `src/` | Native kernels, encoding, raster, tiles, SIMD, module invariants, and a release-only extreme-window regression | Debug and locked release-profile hard CI |
+| `js/test/*.test.mjs` | Exact-bundle frame, tick/formatter, transform/bounds, theme/style, mark-registry, LOD, ChartView-state, worker-protocol, malformed-input, and mutation-control semantics | Hard Node 22 `javascript_semantics` job with retained JUnit and coverage; `IMPLEMENTED` for TST-NI-007 |
 | `scripts/abi_smoke.py` | Exported native C ABI | Hard main CI |
 | `scripts/render_smoke_nonumpy.py` | Dependency-light WebGL marks, pixels, interaction, and context recovery | Hard Chromium CI |
 | `scripts/png_export_smoke.py` | Native and Chromium PNG health | Hard Chromium CI |
@@ -217,7 +219,7 @@ automation, not whether the helper is valuable.
 
 | Workflow | Current jobs | Testing role |
 |---|---|---|
-| `ci.yml` | `rust_release`, `native_parity`, `matplotlib_reference`, `test`, `reflex_adapter`, `browser_conformance`, `python_floor`, `benchmark_vs`, `benchmark_methodology`, `benchmark`, `sdist`, `wheels`, `install_without_rust`, `required_ci` | Main hard and advisory code/package evidence; stable hard aggregate includes optimized Rust, four-host native parity, and Reflex floor/latest evidence on every pull-request path |
+| `ci.yml` | `rust_release`, `native_parity`, `javascript_semantics`, `matplotlib_reference`, `test`, `reflex_adapter`, `browser_conformance`, `python_floor`, `benchmark_vs`, `benchmark_methodology`, `benchmark`, `sdist`, `wheels`, `install_without_rust`, `required_ci` | Main hard and advisory code/package evidence; stable hard aggregate includes optimized Rust, four-host native parity, dependency-free JavaScript semantics, and Reflex floor/latest evidence on every pull-request path |
 | `codspeed.yml` | `benchmarks` | Advisory microbenchmark evidence |
 | `docs.yml` | `released-quickstart`, `quality`, `production` | Published-wheel quickstart, docs tests/lint, and production-route matrix |
 | `benchmark-refresh.yml` | `cross-library` | Manual scatter and core-2D refresh evidence |

@@ -101,9 +101,13 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-007 — First-class JavaScript semantic unit suite
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: JavaScript has build/parse and browser evidence but no unit test
-  command.
+- Status: `IMPLEMENTED`
+- Evidence: `js/test/frame.test.mjs`, `js/test/semantics.test.mjs`,
+  `js/test/worker.test.mjs`, `make js-test`, and the required
+  `javascript_semantics` job's `javascript-semantic-evidence` artifact.
+- Current gap: closed; Node 22 runs the exact fresh ESM bundle with no test
+  dependencies, rejects malformed and deliberately mutated behavior, enforces
+  coverage floors, and retains JUnit, textual coverage, and raw V8 coverage.
 - Implemented when: a pinned `node --test` or equivalent hard lane covers frame
   decode, ticks/formatters, transforms/bounds, theme/style normalization, mark
   registry, LOD choice, ChartView state, and worker protocol with malformed

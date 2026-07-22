@@ -171,13 +171,15 @@ but they fail differently, and only the numeric grammar falls back.
   with a trailing `%`, which multiplies the value by 100 and appends the sign —
   for example `.2f`, `,.0f`, `.1%`. The trailing `f` is optional. Any other
   string **falls back**: `fmtNumberSpec` returns `null`
-  (`js/src/30_ticks.ts:168`) and `fmtAxis` takes its `|| fmtLinear(...)` branch
-  (`:209`), so the axis silently reverts to the automatic formatter. On a log
-  axis, a value in `(0, 1)` that the spec would render as `"0"` falls back the
-  same way.
+  (`js/src/30_ticks.ts:163-181`) and `fmtAxis` takes its `|| fmtLinear(...)`
+  branch (`:213`), so the axis silently reverts to the automatic formatter.
+  A syntactically matching precision above the runtime-supported 0–100 range
+  is unsupported and follows the same fallback instead of throwing during
+  chrome paint. On a log axis, a value in `(0, 1)` that the spec would render
+  as `"0"` falls back the same way.
 - **Time axes** accept a strftime subset of exactly `%Y %m %d %H %M %S %b %B`.
   All fields are **UTC**; `%b`/`%B` are English month names. A time spec
-  **never** falls back: `fmtTimeSpec` (`js/src/30_ticks.ts:180-200`)
+  **never** falls back: `fmtTimeSpec` (`js/src/30_ticks.ts:184-204`)
   substitutes the tokens it knows and copies every other character through
   verbatim, so it always returns a string and the `|| fmtTime(...)` branch at
   `:204` is unreachable. An unrecognized `%` token such as `%y` therefore

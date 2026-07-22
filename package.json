@@ -1,11 +1,16 @@
 {
   "name": "xy-dev-tools",
   "private": true,
+  "type": "module",
   "description": "Development-only dependencies for xy: the vite/typescript client build toolchain and browser test runner",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "build": "node js/build.mjs",
     "check": "node js/build.mjs --check",
-    "typecheck": "tsc -p js/tsconfig.json"
+    "typecheck": "tsc -p js/tsconfig.json",
+    "test:semantic": "node --test --experimental-test-coverage --test-coverage-include=python/xy/static/index.js --test-coverage-lines=15 --test-coverage-branches=60 --test-coverage-functions=10 js/test/*.test.mjs"
   },
   "devDependencies": {
     "playwright": "1.61.1",

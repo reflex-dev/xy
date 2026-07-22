@@ -9,7 +9,7 @@ module per former concat part; explicit imports replaced filename-order
 concatenation), bundled and minified by vite via `js/build.mjs`. The audit
 findings in §2 cover the render path —
 `40_gl.ts`, `45_lod.ts`, `50_chartview.ts`, `55_marks.ts`, `60_entries.ts`.
-The module inventory below covers all 15. Ticks and axis label formatting
+The module inventory below covers all 17. Ticks and axis label formatting
 (`30_ticks.ts`) are specified in §6; the gesture contract in `53_interaction.ts`
 is specified in [interaction.md](../api/interaction.md) §5, and the client half of
 the kernel channel (`54_kernel.ts`) in [wire-protocol.md](wire-protocol.md).
@@ -26,7 +26,7 @@ relative mass, not as a budget (see §3 on why a line count failed as a metric).
 | `00_header.ts` | 172 | Bundle preamble: the client-wide design comment, the `PROTOCOL` version constant, and the binary frame codec (`XY_FRAME_MAGIC` `"XYBF"`, `decodeFrame`, 8-byte alignment). Every inbound frame is validated here — magic/version, u64 fields, zero-padding, and per-field size limits — before any other module sees it. |
 | `10_colormaps.ts` | 51 | The `COLORMAP_STOPS` table (§36 CVD-safe defaults) as compact RGB stop lists, and `buildLutData`, which linearly interpolates a stop list into the 256-texel RGBA LUT uploaded once per colormap as a texture. |
 | `20_theme.ts` | 163 | Resolves chrome and mark colors: arbitrary CSS color expressions and `--chart-*` custom properties are resolved against a live probe element into f32 RGBA for GL, with a fallback on unparseable input. Also owns `XY_CHROME_CSS` and its one-time stylesheet injection. |
-| `30_ticks.ts` | 224 | CPU-side tick generation in f64 for linear, log, category and time axes, plus every axis/colorbar label formatter (automatic and `format=`-driven). Specified in §6. |
+| `30_ticks.ts` | 228 | CPU-side tick generation in f64 for linear, log, category and time axes, plus every axis/colorbar label formatter (automatic and `format=`-driven). Unsupported numeric precision fails closed to automatic formatting rather than throwing. Specified in §6. |
 | `40_gl.ts` | 829 | WebGL2 primitives: shader compile/link, `makeProgram` with its per-program uniform-location memo (R1), the fixed `ATTR_SLOTS` attribute-slot table bound at link time, and the shader inventory itself. The only module that is GPU-API-specific by design (§4). |
 | `45_lod.ts` | 567 | View-dependent level-of-detail orchestration, deliberately chart-agnostic: tier selection, drill enter/exit hysteresis (`LOD_DRILL_EXIT_FACTOR`), cross-tier fades, and the retained tier caches. Calls back into `view._draw*` rather than drawing itself, which is the seam tests intercept. |
 | `46_worker.ts` | 59 | The standalone density re-bin worker: a worker source string carried inside the bundle and booted from a Blob URL. Re-bins the retained sample off the main thread so kernel-less (`to_html`) density charts refine on zoom instead of stretching the overview texture; absence of workers falls back to stretching. |
@@ -37,7 +37,9 @@ relative mass, not as a budget (see §3 on why a line count failed as a metric).
 | `54_kernel.ts` | 437 | The client half of the kernel channel: debounced density/decimated view-requests, streaming `append` handling, the inbound message dispatcher, and the deep-zoom drill lifecycle (§16). Degrades to `46_worker.ts` when there is no comm. The message catalog it consumes is specified in [wire-protocol.md](wire-protocol.md). |
 | `55_marks.ts` | 220 | The `MARK_KINDS` registry — `build`/`draw` per kind plus the `pointPick`/`retainCpu`/`refreshColor` capability flags — mirroring the kernel's `_emit_<kind>` dispatch so adding a 2D chart is an entry here, not a branch in `ChartView`. |
 | `56_animation.ts` | — | Declarative entrance/update/exit state machine, easing/spring evaluation, bounded identity matching, full-payload replacement, interruption, reduced-motion resolution, and lifecycle events. Its normative behavior is in [animation.md](animation.md). |
-| `60_entries.ts` | 76 | Mount/unmount entry points for both hosts (`render` for anywidget, `renderStandalone` for exported HTML) and `payloadBuffers`, which materializes first-paint columns in whichever layout the spec declares. Keeps aligned views zero-copy; a spec/transport disagreement throws. |
+| `57_viewstate.ts` | 574 | Public and internal named-axis view-state operations: copies, bounded updates, reset/history, linking, and lifecycle emission shared by programmatic and gesture navigation. |
+| `60_entries.ts` | 137 | Mount/unmount entry points for both hosts (`render` for anywidget, `renderStandalone` for exported HTML) and `payloadBuffers`, which materializes first-paint columns in whichever layout the spec declares. Keeps aligned views zero-copy; a spec/transport disagreement throws. Its named, frozen `__testing` export gives the dependency-free semantic suite access to production seams in the exact committed ESM bundle without changing the default widget entry point. |
+| `61_standalone.ts` | 11 | Public-only IIFE entry wrapper. It re-exports the runtime namespace used by `window.xy` while deliberately excluding the ESM-only `__testing` seam. |
 
 ## 1. What's structurally right (keep)
 

@@ -2,7 +2,7 @@ import { parseColor } from "./20_theme";
 
 // ---------------------------------------------------------------------------
 
-const LOD_DIRECT_POINT_BUDGET = 200000;
+export const LOD_DIRECT_POINT_BUDGET = 200000;
 const LOD_DRILL_EXIT_FACTOR = 1.15;
 // View-dependent LOD machinery (§5/§28) — chart-agnostic.
 //
@@ -72,7 +72,7 @@ export function lodWriteGridTexture(gl, tex, f32, w, h, maxVal) {
 // Treat the color scale like exposure: brighten slowly on drill-in so a
 // smaller aggregate tile does not suddenly go hot, but recover faster when
 // the incoming tile needs more headroom to avoid clipping.
-function lodNormMax(g, nextMax) {
+export function lodNormMax(g, nextMax) {
   if (!Number.isFinite(nextMax) || nextMax <= 0) {
     g.densityNormMax = 0;
     return 0;
@@ -154,7 +154,7 @@ function lodWindowCenterInside(win, view) {
   );
 }
 
-function lodDensityForView(view, g) {
+export function lodDensityForView(view, g) {
   const cache = g.densityCache || (g.density ? [g.density] : []);
   let best = null;
   let broadest = null;
@@ -167,7 +167,7 @@ function lodDensityForView(view, g) {
   return best || broadest || g.density;
 }
 
-function lodHoldPendingDrill(view, g, d) {
+export function lodHoldPendingDrill(view, g, d) {
   const pending = g._lodPendingView;
   if (!d || !pending || g._drillDying) return false;
   if (g._lodPendingSeq !== view.seq) return false;

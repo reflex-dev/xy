@@ -27,6 +27,7 @@ DEFAULT_WORKFLOW = DEFAULT_CI_WORKFLOW
 REQUIRED_CI_JOBS = {
     "browser_conformance",
     "dependency_audit",
+    "javascript_semantics",
     "reflex_adapter",
     "matplotlib_reference",
     "native_parity",
@@ -564,6 +565,62 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "if-no-files-found: error",
         "dashboard-smoke.json",
     )
+    javascript_semantics = jobs.get("javascript_semantics", "")
+    if "continue-on-error:" in javascript_semantics:
+        errors.append("CI javascript_semantics job must be a hard gate without continue-on-error")
+    if "npm ci" in javascript_semantics or "npm install" in javascript_semantics:
+        errors.append(
+            "CI javascript_semantics job must use only pinned Node built-ins without npm installs"
+        )
+    _require_job_contains(
+        errors,
+        jobs,
+        "javascript_semantics",
+        "CI",
+        "pinned dependency-free semantic units with retained test and coverage evidence",
+        "name: JavaScript semantic unit suite",
+        "timeout-minutes: 10",
+        "actions/setup-node@",
+        'node-version: "22"',
+        "node --test --experimental-test-coverage",
+        "--test-coverage-include=python/xy/static/index.js",
+        "--test-coverage-lines=15",
+        "--test-coverage-branches=60",
+        "--test-coverage-functions=10",
+        "--test-reporter=junit",
+        "test-results/javascript/junit.xml",
+        "NODE_V8_COVERAGE=coverage/javascript",
+        "js/test/*.test.mjs",
+        "Upload JavaScript semantic evidence",
+        "javascript-semantic-evidence",
+    )
+    _require_step_contains(
+        errors,
+        javascript_semantics,
+        "Run JavaScript semantic unit suite",
+        "hard semantic command, coverage thresholds, and JUnit evidence",
+        "set -o pipefail",
+        "NODE_V8_COVERAGE=coverage/javascript",
+        "node --test --experimental-test-coverage",
+        "--test-coverage-lines=15",
+        "--test-coverage-branches=60",
+        "--test-coverage-functions=10",
+        "--test-reporter=junit",
+        "test-results/javascript/junit.xml",
+        "tee test-results/javascript/coverage.txt",
+    )
+    _require_step_contains(
+        errors,
+        javascript_semantics,
+        "Upload JavaScript semantic evidence",
+        "failure-retaining JavaScript test and coverage artifact policy",
+        "if: always()",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        "javascript-semantic-evidence",
+        "if-no-files-found: error",
+        "test-results/javascript/",
+        "coverage/javascript/",
+    )
     reflex_adapter = jobs.get("reflex_adapter", "")
     # This lane is intentionally hard.  Check the forbidden form explicitly
     # rather than relying on absence of a positive token.
@@ -990,6 +1047,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "browser_conformance",
         "dependency_audit",
         "install_without_rust",
+        "javascript_semantics",
         "matplotlib_reference",
         "native_parity",
         "python_floor",
