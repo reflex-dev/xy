@@ -1328,8 +1328,8 @@ return { x: ox, y: oy, extra: oe, n: outN };
 }
 const LOD_DIRECT_POINT_BUDGET = 200000;
 const LOD_DRILL_EXIT_FACTOR = 1.15;
-const LOD_SAMPLE_FADE_COVER_HI = 1 / 16;
-const LOD_SAMPLE_FADE_COVER_LO = 1 / 64;
+const LOD_SAMPLE_FADE_COVER_HI = 1 / 4;
+const LOD_SAMPLE_FADE_COVER_LO = 1 / 32;
 function lodFade(view, start, duration = 140) {
 if (start === undefined || start === null || duration <= 0 || view._prefersReducedMotion()) {
 return 1;
@@ -1446,7 +1446,8 @@ cy >= Math.min(win.y0, win.y1) &&
 cy <= Math.max(win.y0, win.y1)
 );
 }
-function lodSampleViewAlpha(view, win) {
+function lodSampleViewAlpha(view, s) {
+const win = s.win;
 const v = view.view;
 const viewArea = Math.abs((v.x1 - v.x0) * (v.y1 - v.y0));
 const winArea = lodWindowArea(win);
@@ -1455,10 +1456,19 @@ if (!Number.isFinite(winArea) || winArea <= 0) return 0;
 const cover = winArea / viewArea;
 if (cover >= LOD_SAMPLE_FADE_COVER_HI) return 1;
 if (cover <= LOD_SAMPLE_FADE_COVER_LO) return 0;
-return (
+const band =
 Math.log(cover / LOD_SAMPLE_FADE_COVER_LO) /
-Math.log(LOD_SAMPLE_FADE_COVER_HI / LOD_SAMPLE_FADE_COVER_LO)
-);
+Math.log(LOD_SAMPLE_FADE_COVER_HI / LOD_SAMPLE_FADE_COVER_LO);
+const plot = view.plot || {};
+const fx = Math.abs(win.x1 - win.x0) / Math.max(Math.abs(v.x1 - v.x0), 1e-12);
+const fy = Math.abs(win.y1 - win.y0) / Math.max(Math.abs(v.y1 - v.y0), 1e-12);
+const winScreenArea = fx * (plot.w || 0) * fy * (plot.h || 0);
+if (!(winScreenArea > 0)) return 0;
+const dia = s.sizeMode === 1 && s.sizeRange
+? (s.sizeRange[0] + s.sizeRange[1]) / 2
+: s.size || 4;
+const k = (s.n * Math.PI * dia * dia) / (4 * winScreenArea);
+return k > 1 ? 1 - Math.pow(1 - band, 1 / k) : band;
 }
 function lodDensityForView(view, g) {
 const cache = g.densityCache || (g.density ? [g.density] : []);
@@ -3688,7 +3698,7 @@ this._refreshReductionBadges();
 _drawDensitySample(g, x0, x1, y0, y1, opacityScale = 1) {
 const s = g && g.sampleOverlay;
 if (!s || !s.n || !this._viewOverlaps(s.win)) return;
-const alpha = lodSampleViewAlpha(this, s.win);
+const alpha = lodSampleViewAlpha(this, s);
 const faded = alpha <= 0;
 if (faded !== !!g._sampleFadedOut) {
 g._sampleFadedOut = faded;

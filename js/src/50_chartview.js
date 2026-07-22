@@ -2150,9 +2150,10 @@ class ChartView {
     if (!s || !s.n || !this._viewOverlaps(s.win)) return;
     // …but not past the T9 zoom-out bound: far outside its home window the
     // sample overplots into a false dense cluster (the stuck "point blob"), so
-    // it fades with window/view coverage. The badge tracks what is actually
+    // it fades with window/view coverage — overplot-compensated, so the band
+    // value is what actually composites on screen. The badge tracks what is
     // drawn — a hidden overlay must not keep advertising "sampled n of N".
-    const alpha = lodSampleViewAlpha(this, s.win);
+    const alpha = lodSampleViewAlpha(this, s);
     const faded = alpha <= 0;
     if (faded !== !!g._sampleFadedOut) {
       g._sampleFadedOut = faded;

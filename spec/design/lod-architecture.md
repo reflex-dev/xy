@@ -266,10 +266,18 @@ invariants so future kinds don't regress them:
   wire capture: the blob's extent matched the last sample-bearing reply's
   window exactly while the density surface kept updating under it). The
   client therefore fades the retained overlay with the window's share of the
-  view area — full alpha at ≥ `LOD_SAMPLE_FADE_COVER_HI` (1/16), hidden at
-  ≤ `LOD_SAMPLE_FADE_COVER_LO` (1/64), log-eased between (`js/src/45_lod.js`
-  `lodSampleViewAlpha`, applied in `_drawDensitySample`). The alpha is a pure
-  function of (view, window): every zoom frame re-derives it, nothing
+  view area — full alpha at ≥ `LOD_SAMPLE_FADE_COVER_HI` (1/4), hidden at
+  ≤ `LOD_SAMPLE_FADE_COVER_LO` (1/32), log-eased between (`js/src/45_lod.js`
+  `lodSampleViewAlpha`, applied in `_drawDensitySample`). The band value is a
+  *composited* opacity target, not a per-point alpha: mid-band the window's
+  screen footprint has shrunk enough that many points stack per pixel, and
+  compositing k overplotted layers of alpha a reads as 1−(1−a)^k — at k≈10
+  even a=0.2 renders a near-opaque slab (the first cut of this invariant
+  failed in the field exactly this way: a "fading" sample that never looked
+  faded). The per-point alpha is solved as a = 1−(1−band)^(1/k), with k
+  estimated from the drawn count, mean point footprint, and the window's
+  on-screen area; k ≤ 1 degenerates to the band value exactly. The alpha is a
+  pure function of (view, overlay): every zoom frame re-derives it, nothing
   latches. The "sampled n of N" badge tracks what is actually drawn — a
   hidden overlay must not keep advertising its points.
 

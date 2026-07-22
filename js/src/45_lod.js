@@ -3,9 +3,10 @@
 const LOD_DIRECT_POINT_BUDGET = 200000;
 const LOD_DRILL_EXIT_FACTOR = 1.15;
 // Retained-sample zoom-out fade band (T9): full alpha while the sample's home
-// window still covers ≥ HI of the view area, gone below LO (log-eased between).
-const LOD_SAMPLE_FADE_COVER_HI = 1 / 16;
-const LOD_SAMPLE_FADE_COVER_LO = 1 / 64;
+// window still covers ≥ HI of the view area, gone below LO (log-eased between,
+// applied as composited opacity — see lodSampleViewAlpha).
+const LOD_SAMPLE_FADE_COVER_HI = 1 / 4;
+const LOD_SAMPLE_FADE_COVER_LO = 1 / 32;
 // View-dependent LOD machinery (§5/§28) — chart-agnostic.
 //
 // Everything a tiered trace needs client-side, factored out of ChartView so a
@@ -165,10 +166,21 @@ function lodWindowCenterInside(win, view) {
 // servers alike, #24), so the client must bound the retained overlay itself:
 // fade it with the window's share of the view area, from full alpha at
 // COVER_HI down to hidden at COVER_LO. Log-eased so a continuous zoom reads
-// as a linear fade; a pure function of (view, window), so every zoom frame
+// as a linear fade; a pure function of (view, overlay), so every zoom frame
 // re-derives it — no state, no extra frames to schedule. Pans and mild
-// zoom-outs stay inside the band and keep the hybrid "density + points" look.
-function lodSampleViewAlpha(view, win) {
+// zoom-outs stay above the band and keep the hybrid "density + points" look.
+//
+// The band value is a *composited* opacity target, not a per-point alpha:
+// mid-band the window's screen footprint has shrunk enough that many points
+// land on each pixel, and alpha-compositing k overplotted layers of per-point
+// alpha a reads as 1-(1-a)^k — at k≈10 even a=0.2 renders a near-opaque slab
+// (the field failure that motivated this: a fading sample that never *looked*
+// faded). Invert that: estimate k from the drawn count, mean point footprint,
+// and the window's on-screen area, and solve a = 1-(1-band)^(1/k) so the
+// stack composites to ≈band regardless of compression. k≤1 (points still
+// distinguishable) degenerates to a=band exactly.
+function lodSampleViewAlpha(view, s) {
+  const win = s.win;
   const v = view.view;
   const viewArea = Math.abs((v.x1 - v.x0) * (v.y1 - v.y0));
   const winArea = lodWindowArea(win);
@@ -177,10 +189,23 @@ function lodSampleViewAlpha(view, win) {
   const cover = winArea / viewArea;
   if (cover >= LOD_SAMPLE_FADE_COVER_HI) return 1;
   if (cover <= LOD_SAMPLE_FADE_COVER_LO) return 0;
-  return (
+  const band =
     Math.log(cover / LOD_SAMPLE_FADE_COVER_LO) /
-    Math.log(LOD_SAMPLE_FADE_COVER_HI / LOD_SAMPLE_FADE_COVER_LO)
-  );
+    Math.log(LOD_SAMPLE_FADE_COVER_HI / LOD_SAMPLE_FADE_COVER_LO);
+  // Expected overplot: drawn points × mean point footprint ÷ the window's
+  // on-screen pixel area (CSS px on both sides, so dpr cancels). Continuous
+  // size uses the midpoint of its pixel range — an estimate is all the
+  // perceptual correction needs.
+  const plot = view.plot || {};
+  const fx = Math.abs(win.x1 - win.x0) / Math.max(Math.abs(v.x1 - v.x0), 1e-12);
+  const fy = Math.abs(win.y1 - win.y0) / Math.max(Math.abs(v.y1 - v.y0), 1e-12);
+  const winScreenArea = fx * (plot.w || 0) * fy * (plot.h || 0);
+  if (!(winScreenArea > 0)) return 0;
+  const dia = s.sizeMode === 1 && s.sizeRange
+    ? (s.sizeRange[0] + s.sizeRange[1]) / 2
+    : s.size || 4;
+  const k = (s.n * Math.PI * dia * dia) / (4 * winScreenArea);
+  return k > 1 ? 1 - Math.pow(1 - band, 1 / k) : band;
 }
 
 function lodDensityForView(view, g) {

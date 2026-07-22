@@ -13,8 +13,13 @@ blob" pinned by the live-drilldown HAR: the blob's extent matched the last
 kept updating correctly.
 
 The fix bounds the retained overlay by coverage: full alpha while the sample
-window covers ≥ 1/16 of the view area, hidden below 1/64, log-eased between —
-and the "sampled n of N" badge tracks what is actually drawn.
+window covers ≥ 1/4 of the view area, hidden below 1/32, log-eased between —
+and the band value is a *composited* opacity target: the per-point alpha is
+solved against the expected overplot (drawn points × point footprint ÷ the
+window's on-screen area), because alpha-compositing ~10 overlapping layers of
+0.2 renders a near-opaque slab (the original field failure: a "fading" sample
+that never looked faded). The "sampled n of N" badge tracks what is actually
+drawn.
 
 This drives the real client in headless Chromium: it applies a density update
 carrying a small-window sample, then asserts the overlay draws inside/near the
@@ -102,12 +107,21 @@ _PROBE = """
     zoomTo(1);
     const atWindow = sampleDrawn();
     const atWindowBadge = badgeShowsSample();
-    // 2x linear zoom-out (coverage 1/4, above the band): still fully drawn.
-    zoomTo(2);
+    // 1.5x linear zoom-out (coverage 4/9, above the band): still fully drawn.
+    zoomTo(1.5);
     const mildOut = sampleDrawn();
-    // 6x linear (coverage 1/36, inside the band): fading, strictly between.
-    zoomTo(6);
+    // 4x linear (coverage 1/16, mid-band): fading, strictly between. 500
+    // 4px points across 1/16 of a ~420x300 plot sit at the k<=1 boundary, so
+    // the drawn alpha IS the band value, log(2)/log(8) = 1/3.
+    zoomTo(4);
     const fading = sampleDrawn();
+    // Same view, grossly overplotted (fat marks): the compensation solves the
+    // per-point alpha DOWN so the composited stack still reads ~the band value
+    // instead of stacking into an opaque slab.
+    const realSize = g.sampleOverlay.size;
+    g.sampleOverlay.size = 40;
+    const fadingOverplot = sampleDrawn();
+    g.sampleOverlay.size = realSize;
     // 10x linear (coverage 1/100, past the band): hidden, badge off.
     zoomTo(10);
     const farOut = sampleDrawn();
@@ -120,8 +134,8 @@ _PROBE = """
 
     document.body.setAttribute("data-xy-sample-probe", JSON.stringify({
       hasSample: !!g.sampleOverlay,
-      atWindow, atWindowBadge, mildOut, fading, farOut, farOutBadge,
-      backIn, backInBadge,
+      atWindow, atWindowBadge, mildOut, fading, fadingOverplot,
+      farOut, farOutBadge, backIn, backInBadge,
     }));
   } catch (err) {
     document.body.setAttribute(
@@ -167,10 +181,16 @@ def test_retained_sample_fades_past_zoomout_bound(tmp_path: Path) -> None:
     # Inside/at its window the sample owns the hybrid look, badge on.
     assert result["atWindow"] == 1
     assert result["atWindowBadge"] is True
-    # A mild zoom-out (coverage 1/4) keeps it fully drawn (#24 preserved).
+    # A mild zoom-out (coverage 4/9) keeps it fully drawn (#24 preserved).
     assert result["mildOut"] == 1
-    # Inside the fade band it draws at reduced alpha.
-    assert 0 < result["fading"] < 1
+    # Mid-band it draws at the band alpha (1/3 at coverage 1/16; the probe's
+    # point load sits at the k<=1 no-overplot boundary, small tolerance).
+    assert abs(result["fading"] - 1 / 3) < 0.05
+    # Overplotted marks at the same view: the per-point alpha collapses so the
+    # composited stack still reads ~1/3 — without the compensation this drew at
+    # the raw band alpha and 80 layers of it stacked into an opaque slab (the
+    # live-drilldown repro: a "faded" sample rendering as a solid rectangle).
+    assert 0 < result["fadingOverplot"] < result["fading"] / 4
     # Far past the band: not drawn at all — this is the regression (the
     # pre-fix client kept painting it as an opaque blob) — and not badged.
     assert result["farOut"] == 0
