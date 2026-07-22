@@ -574,10 +574,9 @@ jobs:
         run: npm ci
 
       - name: Build sdist
-        # The hatch build hook builds the render client (node) and force-includes
-        # it into the sdist; REQUIRE_NODE keeps an sdist from shipping without it.
-        env:
-          XY_REQUIRE_NODE: "1"
+        # The hatch build hook builds the render client (node) and the artifacts
+        # config carries it into the sdist. The client is required by default, so
+        # a client-less sdist fails the build here rather than shipping broken.
         run: uv build --sdist
 
       - name: Verify sdist contents
@@ -636,12 +635,11 @@ jobs:
         run: npm ci
 
       - name: Build wheel
-        # The hatch build hook builds both artifacts and force-includes them:
-        # REQUIRE_CARGO — a published wheel must carry the native core;
-        # REQUIRE_NODE — and the render client. Neither silently falls back.
+        # The hatch build hook builds both artifacts. The render client is
+        # required by default; REQUIRE_CARGO additionally forbids the native core
+        # from silently falling back to a pure-Python wheel here.
         env:
           XY_REQUIRE_CARGO: "1"
-          XY_REQUIRE_NODE: "1"
         run: uv build --wheel
 
       # A raw linux_x86_64 tag is not installable off this machine and PyPI
@@ -716,10 +714,9 @@ jobs:
           if command -v cargo; then echo "cargo still present"; exit 1; fi
           echo "cargo is gone"
       - name: Build wheel with no toolchain
-        # No Rust (pure-Python wheel), but the render client must still ship:
-        # REQUIRE_NODE without REQUIRE_CARGO exercises exactly that split.
-        env:
-          XY_REQUIRE_NODE: "1"
+        # No Rust (pure-Python wheel), but the render client is required by
+        # default and must still ship — this job exercises exactly that split
+        # (verify_wheel.py --expect-pure below asserts the client is present).
         run: uv build --wheel
       - name: Wheel is pure-Python (py3-none-any)
         shell: bash

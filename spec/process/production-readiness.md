@@ -28,10 +28,14 @@ screen-bounded performance core, but the stable commitments today are narrower:
   into the sdist by the hook, so installing from an sdist needs no Node.
 - Building from a raw source checkout (`pip install` from a clone, or the dev
   workflow) requires a Rust toolchain for the native core and Node/npm for the
-  render client — the same two toolchains CI uses. There is no NumPy fallback: on a
-  platform with no wheel and no local Rust build, importing the compute layer raises
-  a clear, actionable error naming the supported platforms; a missing render client
-  raises a clear error the moment a widget or HTML export needs it.
+  render client — the same two toolchains CI uses. The two differ in strictness:
+  the native core degrades gracefully (no Rust → pure-Python wheel, and importing
+  the compute layer then raises a clear, actionable error naming the supported
+  platforms — there is no NumPy fallback), whereas the render client is **required
+  by default** — a from-source build that can neither find nor build the bundle
+  fails loudly rather than producing a client-less distribution. `XY_SKIP_NODE=1`
+  opts out for a deliberately client-less build (the widget and HTML export then
+  raise a clear error on first use).
 - Standalone HTML exports embed the same render client and data payloads used
   by notebooks.
 - Benchmark reports must label rendering modes explicitly: `direct`,

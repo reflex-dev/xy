@@ -20,6 +20,10 @@ Install ergonomics, by audience (design dossier §33):
   building from a raw clone builds it, needing Node just as the core needs Rust.
   An unpacked sdist already carries the bundle, so `pip install <sdist>` stays
   Node-free — this hook sees the bundle present and returns without touching it.
+  Unlike the native core, the client is **required by default**: every wheel and
+  sdist must ship it (`verify_wheel.py` enforces it even in pure wheels), so a
+  build that can neither find nor produce it is a hard error, never a silent
+  clientless distribution.
 
 Env switches:
 - `XY_SKIP_CARGO=1` — don't invoke cargo; use an already-built lib if
@@ -27,12 +31,10 @@ Env switches:
 - `XY_REQUIRE_CARGO=1` — the native core MUST end up in the wheel; a
   missing toolchain or failed build is an error. CI wheel builds set this so a
   published wheel never silently ships without the core.
-- `XY_SKIP_NODE=1` — don't invoke node; use an already-built JS bundle if
-  present. (Symmetric with XY_SKIP_CARGO for a prebuilt-client CI step.)
-- `XY_REQUIRE_NODE=1` — the render-client bundles MUST end up in the
-  distribution; a missing Node toolchain or failed build (with no bundle already
-  on disk) is an error. CI wheel/sdist builds set this so a published artifact
-  never silently ships without the client.
+- `XY_SKIP_NODE=1` — don't invoke node and don't require the client; use an
+  already-built JS bundle if present, else ship without it. The opt-out from the
+  default "client is required" rule, for a step that prebuilt the bundle (or a
+  deliberately client-less build). Symmetric with XY_SKIP_CARGO.
 - `XY_CARGO_TARGET=<triple>` — cross-compile the core for a Rust target
   triple (e.g. `aarch64-unknown-linux-musl`, `aarch64-pc-windows-msvc`). The
   built lib is looked for under `target/<triple>/release/` instead of
@@ -146,8 +148,12 @@ class CustomBuildHook(BuildHookInterface):
         # Render-client bundles: generated (not committed, §33), needed by both
         # the wheel and the sdist. Build them onto disk here; the `artifacts`
         # config in pyproject.toml is what carries the git-ignored bundles past
-        # the VCS-ignore filter into both distributions.
-        self._provision_js(root, os.environ.get("XY_REQUIRE_NODE") == "1")
+        # the VCS-ignore filter into both distributions. The client is REQUIRED
+        # by default — every wheel/sdist must ship it (unlike the optional
+        # native core; `verify_wheel.py` enforces the client in pure wheels too)
+        # — so a build that can't produce it fails loudly instead of shipping a
+        # broken distribution. XY_SKIP_NODE=1 opts out (prebuilt-bundle steps).
+        self._provision_js(root, require=os.environ.get("XY_SKIP_NODE") != "1")
 
         # The native core is a wheel-only, per-platform artifact.
         if self.target_name != "wheel":
@@ -199,10 +205,10 @@ class CustomBuildHook(BuildHookInterface):
           JS analogue of compiling the Rust core from source. `npm ci` first
           provisions the dev-only toolchain (vite/tsc) when it isn't installed.
 
-        A missing bundle that cannot be built is a hard error only under
-        XY_REQUIRE_NODE (CI distribution builds); otherwise it degrades to a
-        loud skip and the widget/export path raises a clear runtime error on
-        first use (see `xy.widget`, `xy.export`).
+        A missing bundle that cannot be built is a hard error by default (the
+        client is required in every distribution); only XY_SKIP_NODE=1 downgrades
+        that to a loud skip, in which case the widget/export path raises a clear
+        runtime error on first use (see `xy.widget`, `xy.export`).
         """
         static_dir = _static_dir(root)
 
@@ -230,10 +236,12 @@ class CustomBuildHook(BuildHookInterface):
             return static_dir
         if require:
             raise RuntimeError(
-                "XY_REQUIRE_NODE=1 but the render-client bundles are missing and "
-                "could not be built. Install Node (https://nodejs.org) so the hook "
-                "can run `npm ci && node js/build.mjs`, or build from a published "
-                "sdist that already carries them."
+                "The render client is required in every xy wheel/sdist, but its "
+                "bundles are missing and could not be built. Install Node "
+                "(https://nodejs.org) so the hook can run `npm ci && "
+                "node js/build.mjs`, install from a published wheel/sdist that "
+                "already carries them, or set XY_SKIP_NODE=1 to build without the "
+                "client (the widget and HTML export will then be unavailable)."
             )
         print(
             "xy: building WITHOUT the JS render client (node not found or "

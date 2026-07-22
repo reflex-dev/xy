@@ -89,9 +89,9 @@ jobs:
         env:
           # The core is prebuilt above; the hook packs it and stamps the
           # platform tag, and builds the render client (node) into the wheel.
-          # REQUIRE_CARGO/REQUIRE_NODE keep either from silently going missing.
+          # The client is required by default; REQUIRE_CARGO also forbids the
+          # core from silently going missing.
           XY_REQUIRE_CARGO: "1"
-          XY_REQUIRE_NODE: "1"
           XY_SKIP_CARGO: "1"
           XY_CARGO_TARGET: ${{ matrix.target }}
           XY_WHEEL_PLATFORM: ${{ matrix.plat }}
@@ -158,7 +158,6 @@ jobs:
         shell: bash
         env:
           XY_REQUIRE_CARGO: "1"
-          XY_REQUIRE_NODE: "1"
           XY_SKIP_CARGO: "1"
           XY_CARGO_TARGET: wasm32-unknown-emscripten
           XY_WHEEL_PLATFORM: pyodide_2025_0_wasm32
@@ -202,9 +201,8 @@ jobs:
       - name: Install JS build toolchain
         run: npm ci
       - name: Build sdist
-        # REQUIRE_NODE: a published sdist must carry the prebuilt render client.
-        env:
-          XY_REQUIRE_NODE: "1"
+        # The client is required by default, so a published sdist always carries
+        # the prebuilt render client (the build fails otherwise).
         run: uv build --sdist
       - name: Verify sdist contents
         shell: bash
