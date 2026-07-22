@@ -12,6 +12,29 @@ Interactive charts include a compact modebar by default. It exposes pan, zoom
 in/out, box zoom, reset, selection modes when selection is enabled, and local
 PNG, SVG, and CSV export.
 
+### The default toolbar
+
+Every interactive chart gets the modebar for free — hover over the top-right
+corner of this chart to see the pan, zoom, reset, and export controls:
+
+~~~python demo exec
+import numpy as np
+import reflex_xy
+import xy
+
+rng_signal = np.random.default_rng(11)
+signal_walk = np.cumsum(rng_signal.normal(0.0, 1.0, 60)).round(2)
+
+default_toolbar_chart = xy.line_chart(
+    xy.line(list(range(60)), signal_walk, name="signal"),
+    title="Default modebar",
+)
+
+
+def default_toolbar_demo():
+    return reflex_xy.chart(default_toolbar_chart, height="320px")
+~~~
+
 Use `modebar()` to hide or style the toolbar:
 
 ~~~python
@@ -41,6 +64,54 @@ The CSV command exports data resident in the browser representation. On a
 decimated or density-tier chart that is not necessarily every canonical source
 row; export the source table from Python when a complete data extract is
 required.
+
+### Styling or removing the toolbar
+
+The left chart restyles the toolbar surface and every button, while the right
+chart removes the toolbar entirely with `modebar(show=False)`:
+
+~~~python demo exec
+import numpy as np
+import reflex as rx
+import reflex_xy
+import xy
+
+rng_pair = np.random.default_rng(5)
+toolbar_x = list(range(30))
+
+styled_toolbar = xy.line_chart(
+    xy.line(
+        toolbar_x,
+        np.cumsum(rng_pair.normal(0.0, 1.0, 30)).round(2),
+        name="styled",
+    ),
+    xy.modebar(
+        style={"background": "#f8fafc", "border_radius": 8},
+        button_class_name="rounded-md",
+        button_style={"border": "1px solid #d0d5dd"},
+    ),
+    title="Styled toolbar",
+)
+
+hidden_toolbar = xy.line_chart(
+    xy.line(
+        toolbar_x,
+        np.cumsum(rng_pair.normal(0.0, 1.0, 30)).round(2),
+        name="hidden",
+        color="#b45309",
+    ),
+    xy.modebar(show=False),
+    title="modebar(show=False)",
+)
+
+
+def toolbar_visibility_demo():
+    return rx.el.div(
+        reflex_xy.chart(styled_toolbar, height="320px"),
+        reflex_xy.chart(hidden_toolbar, height="320px"),
+        class_name="grid w-full grid-cols-1 gap-5 xl:grid-cols-2",
+    )
+~~~
 
 ## Enable Interaction Behavior
 
@@ -118,6 +189,49 @@ xy.interaction_config(
 Reset is independent from zoom and does not clear selection. `navigation=False`
 blocks local viewport input, but linked and application-driven ranges may still
 update the chart.
+
+### Constrained navigation in practice
+
+The left chart limits box zoom to the x axis with a 16x magnification cap and
+double-click reset, while the right chart disables all local navigation with
+`navigation=False` — its toolbar drops the pan, zoom, and reset commands:
+
+~~~python demo exec
+import numpy as np
+import reflex as rx
+import reflex_xy
+import xy
+
+rng_nav = np.random.default_rng(17)
+nav_x = rng_nav.uniform(0.0, 10.0, 80)
+nav_y = rng_nav.uniform(0.0, 4.0, 80)
+
+x_zoom_only = xy.scatter_chart(
+    xy.scatter(nav_x, nav_y, size=6, color="#2563eb"),
+    xy.interaction_config(
+        default_drag_action="zoom",
+        zoom_axes=("x",),
+        zoom_limits={"x": (1.0, 16.0)},
+        double_click_reset=True,
+        zoom_buttons=True,
+    ),
+    title="X-only box zoom, max 16x",
+)
+
+locked_viewport = xy.scatter_chart(
+    xy.scatter(nav_x, nav_y, size=6, color="#64748b"),
+    xy.interaction_config(navigation=False),
+    title="navigation=False",
+)
+
+
+def navigation_policy_demo():
+    return rx.el.div(
+        reflex_xy.chart(x_zoom_only, height="320px"),
+        reflex_xy.chart(locked_viewport, height="320px"),
+        class_name="grid w-full grid-cols-1 gap-5 xl:grid-cols-2",
+    )
+~~~
 
 Selection controls include box, lasso, x-range, and y-range modes. The
 `on_select` callback receives a canonical `Selection`; `on_brush` receives the
