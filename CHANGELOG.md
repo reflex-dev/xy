@@ -142,6 +142,12 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **Hexbin cells now stay compact through GPU upload.** The WebGL client uses
+  one instanced cell record (encoded x/y center plus color scalar) and generates
+  the shared six-triangle fan in a dedicated vertex shader, replacing seven
+  six-way-expanded CPU arrays and uploads. Resident attribute volume falls from
+  42 to 3 floats per occupied cell (14x / 92.9%) while retaining the exact
+  ring, color, alpha, pan/zoom, theme-refresh, and context-rebuild behavior.
 - **Responsive, author-defeatable browser chrome.** XY's visual defaults now
   live in a low-priority cascade layer, so Tailwind utilities, ordinary author
   CSS, and slot styles override them without `!important`. Long legends remain

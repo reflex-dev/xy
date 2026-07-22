@@ -486,7 +486,7 @@ class PayloadMixin(_Host):
             xv, yv = xv[sel], yv[sel]
         # Cells ship as centers plus one scalar color value. Every hexagon
         # shares the same geometry (style hex_dx/hex_dy), so each renderer
-        # expands the six-triangle fan locally and the wire cost stays
+        # reconstructs the six-triangle fan locally and the wire cost stays
         # O(cells), not O(cells x vertices x channels) (§29).
         entry = {
             "id": t.id,

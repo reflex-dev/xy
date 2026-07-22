@@ -61,13 +61,17 @@ by the string `K` on the wire (`trace.kind`).
 A mark whose cells all share one geometry ships **centers plus channels**, not
 expanded vertices. `_emit_hexbin` (`python/xy/_payload.py:420-447`) ships one
 (x, y) center and one scalar color value per cell; the hexagon itself is a style
-constant (`hex_dx`/`hex_dy`). Each renderer expands the six-triangle fan locally,
-so the wire cost stays O(cells) instead of O(cells × vertices × channels).
+constant (`hex_dx`/`hex_dy`). Each renderer reconstructs the six-triangle fan
+locally, so the wire cost stays O(cells) instead of O(cells × vertices ×
+channels). The WebGL renderer also keeps the resident attribute layout compact:
+it uploads the two center columns and scalar once, then generates the fan from
+`gl_VertexID` in a dedicated instanced vertex shader.
 
-Three renderers expand it today and must agree exactly: `_buildHexbinMark`
-(`js/src/50_chartview.ts:2038`, WebGL), `HEX_RING`/`hexbin_ring()`
-(`python/xy/_svg.py:2074`, the reference ring), and `_emit_hexbin`
-(`python/xy/_raster.py:1413`, raster export, consuming `hexbin_ring`). Only code
+Three renderers reconstruct it today and must agree exactly:
+`HEXBIN_VS`/`_buildHexbinMark` (`js/src/40_gl.ts` and
+`js/src/50_chartview.ts`, WebGL), `HEX_RING`/`hexbin_ring()`
+(`python/xy/_svg.py`, the reference ring), and `_emit_hexbin`
+(`python/xy/_raster.py`, raster export, consuming `hexbin_ring`). Only code
 comments bind them; changing one without the others silently desynchronizes
 exports from the live chart, which has already produced a CI-red payload
 regression once. The rest of this section is normative — a fourth renderer
@@ -124,13 +128,15 @@ whitelists `fill_opacity` and `stroke_opacity` only — so `stroke` and
 `_buildHexbinMark` reads `style.stroke_width`/`style.stroke` and *would* stroke
 if either appeared. Widening the style whitelist therefore diverges the live
 chart from both exports; adding a stroke to hexbin means teaching the two
-exporters first. A triangle renderer emits six triangles
-per cell — `(center, v_k, v_(k+1 mod 6))` — replicating the cell's color across
-all six; a path renderer may emit the six vertices as one closed polygon instead
-(what `_svg.py` does). The coverage is identical.
+exporters first. A triangle renderer emits six logical triangles per cell —
+`(center, v_k, v_(k+1 mod 6))` — and applies the cell's color to all six. It
+need not materialize them: WebGL draws 18 generated vertices per compact cell
+instance. A path renderer may emit the six vertices as one closed polygon
+instead (what `_svg.py` does). The coverage is identical.
 
 **Coordinate space.** The two exporters expand in data space and then apply the
-axis scale. The WebGL client instead expands in the centers' *encoded* space:
+axis scale. The WebGL client instead generates vertices in the centers'
+*encoded* space:
 stored = `(value − offset) × scale`, so a data-space delta scales by the column's
 `scale` alone (the offset cancels) and the center columns' metas serve every
 derived vertex — the vertices inherit the centers' precision center (§16).

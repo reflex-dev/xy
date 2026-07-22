@@ -2182,8 +2182,7 @@ def _trace_paint_rgba(
 
 # The hexagon ring around a hexbin cell center, as fractions of the cell
 # pitch (style hex_dx/hex_dy). Shared by the SVG and raster exporters; the JS
-# client mirrors it in _buildHexbinMark (js/src/50_chartview.ts) — keep them
-# in sync.
+# client mirrors it in HEXBIN_VS (js/src/40_gl.ts) — keep them in sync.
 HEX_RING = (
     (0.0, -1.0 / 3.0),
     (0.5, -1.0 / 6.0),
