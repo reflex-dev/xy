@@ -1125,14 +1125,11 @@ Object.assign(ChartView.prototype, {
 
     if (hasZoomMenu) {
       if (canZoomButtons) {
-        mkZoomItem("zoomin", this._actionLabel("Zoom In", this._axisPolicy("zoom_axes")),
-          () => this._zoomBy(0.5, true, "zoom_in"));
-        mkZoomItem("zoomout", this._actionLabel("Zoom Out", this._axisPolicy("zoom_axes")),
-          () => this._zoomBy(2, true, "zoom_out"));
+        mkZoomItem("zoomin", "Zoom In", () => this._zoomBy(0.5, true, "zoom_in"));
+        mkZoomItem("zoomout", "Zoom Out", () => this._zoomBy(2, true, "zoom_out"));
       }
       if (canBoxZoom) {
-        mkZoomItem("zoom", this._actionLabel("Box Zoom", this._axisPolicy("zoom_axes")),
-          () => this._setDragMode("zoom"), "zoom");
+        mkZoomItem("zoom", "Box Zoom", () => this._setDragMode("zoom"), "zoom");
       }
       if (canReset) {
         if (canZoomButtons || canBoxZoom) {
@@ -1141,8 +1138,14 @@ Object.assign(ChartView.prototype, {
           menuSeparator.setAttribute("role", "separator");
           zoomMenu.appendChild(menuSeparator);
         }
-        mkZoomItem("reset", this._actionLabel("Reset View", this._resetAxisPolicy()),
-          () => this._resetView(true, "reset"));
+        // Fit Data returns to the home view; Reset View additionally drops any
+        // active selection. Both reset through the view-state layer (§ reset
+        // axis policy + history), unlike the pre-merge direct _setView.
+        mkZoomItem("fit", "Fit Data", () => this._resetView(true, "reset"));
+        mkZoomItem("reset", "Reset View", () => {
+          this._clearSelection();
+          this._resetView(true, "reset");
+        });
       }
     }
 
