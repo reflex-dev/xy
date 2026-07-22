@@ -1,6 +1,8 @@
 ---
 title: Tooltips
 description: Configure hover fields, title templates, numeric formats, and replacements.
+components:
+  - xy.tooltip
 ---
 
 # Tooltips

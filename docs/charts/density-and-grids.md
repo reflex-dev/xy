@@ -1,6 +1,10 @@
 ---
 title: Density and Grid Charts
 description: Render matrices, binned point density, and contour fields.
+components:
+  - xy.hexbin_chart
+  - xy.heatmap_chart
+  - xy.contour_chart
 ---
 
 # Density and Grid Charts
