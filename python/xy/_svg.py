@@ -518,6 +518,41 @@ def _density_column(blob: bytes, meta: dict[str, Any], density: dict[str, Any]) 
     return np.expm1((values / 255.0) * np.log1p(maximum))
 
 
+def _heatmap_column(blob: bytes, meta: dict[str, Any], heatmap: dict[str, Any]) -> np.ndarray:
+    """Decode legacy normalized-f32 or the compact unit-u8 scalar wire."""
+    if heatmap.get("enc") != "unit-u8":
+        return _column(blob, meta)
+    values = np.frombuffer(
+        blob, dtype=np.uint8, count=meta["len"], offset=meta["byte_offset"]
+    ).astype(np.float64)
+    missing = int(heatmap.get("missing", 0))
+    offset = float(heatmap.get("offset", 1))
+    levels = float(heatmap.get("levels", 254))
+    decoded = np.full(len(values), np.nan, dtype=np.float64)
+    valid = values != missing
+    decoded[valid] = np.clip((values[valid] - offset) / levels, 0.0, 1.0)
+    return decoded
+
+
+def _heatmap_rgba8(blob: bytes, cols: list, heatmap: dict[str, Any]) -> np.ndarray:
+    """Decode packed RGBA8 or the legacy four-plane truecolor wire."""
+    w, h = int(heatmap["w"]), int(heatmap["h"])
+    if "rgba_buf" in heatmap:
+        meta = cols[heatmap["rgba_buf"]]
+        return (
+            np.frombuffer(
+                blob,
+                dtype=np.uint8,
+                count=w * h * 4,
+                offset=meta["byte_offset"],
+            )
+            .reshape(-1, 4)
+            .copy()
+        )
+    channels = [_column(blob, cols[index]) for index in heatmap["rgba_bufs"]]
+    return np.clip(np.column_stack(channels) * 255.0, 0, 255).astype(np.uint8)
+
+
 class _Scale:
     """value -> px for one axis (linear / time-in-ms / log / category)."""
 
@@ -2490,17 +2525,18 @@ def _density_image(
 
 def _heatmap_image(hm: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict) -> str:
     w, h = int(hm["w"]), int(hm["h"])
-    if "rgba_bufs" in hm:
-        channels = [_column(blob, cols[index]) for index in hm["rgba_bufs"]]
-        rgba_array = np.clip(np.column_stack(channels) * 255.0, 0, 255).astype(np.uint8)
+    if "rgba_buf" in hm or "rgba_bufs" in hm:
+        rgba_array = _heatmap_rgba8(blob, cols, hm)
         rgba_array[:, 3] = (rgba_array[:, 3].astype(np.float64) * _fill_opacity(style)).astype(
             np.uint8
         )
         rgba = rgba_array.reshape(h, w, 4)[::-1].tobytes()
         return _grid_image(w, h, rgba, hm["x_range"], hm["y_range"], sx, sy)
-    raw = _column(blob, cols[hm["buf"]]).reshape(h, w)
+    raw = _heatmap_column(blob, cols[hm["buf"]], hm).reshape(h, w)
     t = np.clip(raw, 0.0, 1.0)
-    rgb = _lut(hm.get("colormap", "viridis"), t.reshape(-1)).reshape(h, w, 3)
+    rgb = _lut(hm.get("colormap", "viridis"), np.nan_to_num(t, nan=0.0).reshape(-1)).reshape(
+        h, w, 3
+    )
     alpha = np.full((h, w), int(255 * _fill_opacity(style, 0.95)), dtype=np.uint8)
     alpha[~np.isfinite(raw)] = 0
     rgba = np.dstack([rgb, alpha])[::-1].tobytes()

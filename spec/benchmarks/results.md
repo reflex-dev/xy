@@ -58,7 +58,7 @@ commit so CI artifacts are quick to inspect from logs.
 | `huge_line_time_series` | Huge line / time series | tracked | Common observability and finance workload; Plotly-resampler sets the bar here. | decimation time, zoom re-decimation latency, TTFR, extrema preservation | `benchmarks/bench.py`, `bench_native.py`, `bench_interaction.py`, `test_decimate_view` | Screen-bounded line payloads with extrema-preserving decimation and fast zoom refresh. |
 | `many_chart_dashboards` | Many-chart dashboards | tracked | Plotly-class apps often fail from total page weight and many live canvases, not one chart. | payload prep, navigation readiness, JS heap, redraw submission, scroll visibility, context loss/restore, stable chart-count ceiling | `benchmarks/bench_dashboard.py` | Measure the 10-50 chart scaling curve and expose LRU context eviction without discarding partial-row metrics. |
 | `interaction_smoothness` | Interaction smoothness | tracked | Users judge performance by pan/zoom/hover, not just export time. | pan/zoom FPS, wheel latency, hover latency, tooltip stability, selection latency, frame color delta | `benchmarks/bench_interaction.py`; `benchmarks/bench_transport.py` | Stay responsive during interaction, avoid blank/flickering frames, then refine view after interaction settles. |
-| `payload_export_size` | Payload/export size | tracked | Notebooks, static HTML, docs, and dashboards pay for every byte shipped. | standalone HTML bytes, binary payload bytes, bundle bytes | `bench_vs.py`, `bench_scatter_native.py`, `bench_transport.py`, `test_codspeed_transport.py`, `test_first_payload_density_large`, `test_memory_report_density_medium`, example app asset sizes | Keep data payloads binary and screen-bounded where possible; warn when exact export would be huge. |
+| `payload_export_size` | Payload/export size | tracked | Notebooks, static HTML, docs, and dashboards pay for every byte shipped. | standalone HTML bytes, binary payload bytes, bundle bytes | `bench_vs.py`, `bench_scatter_native.py`, `bench_heatmap_wire.py`, `bench_transport.py`, `test_codspeed_transport.py`, `test_first_payload_density_large`, `test_memory_report_density_medium`, example app asset sizes | Keep data payloads binary and screen-bounded where possible; warn when exact export would be huge. |
 | `core_2d_chart_breadth` | Core 2D chart breadth | tracked | The library needs to stay fast beyond the scatter wedge: bars, histograms, areas, and heatmaps are everyday chart workloads. | payload-prep time, payload bytes, standalone HTML bytes, TTFR | `benchmarks/bench_2d_charts.py` vs Plotly/Seaborn; `benchmarks/bench_pyplot_vs_matplotlib.py`; `bench_interaction.py`; CodSpeed core-2D rows | Beat Plotly on user-visible first paint for common 2D charts while tracking Matplotlib/Seaborn raster baselines where applicable. |
 | — (not in `benchmarks/categories.py`) | Core launch scatter baseline | tracked outside the registry | Launch claims need an immutable, apples-to-apples record of default product behavior from small charts through the 1B-point capacity case. | static PNG time/RSS; interactive TTFR and Python/browser RSS; hardware and SwiftShader kept separate | `benchmarks/bench_launch_scatter.py` vs Plotly and Matplotlib at 10k, 100k, 1M, 10M, and 1B | Preserve the fixed launch contracts and add versioned environment baselines rather than overwriting prior results. |
 | `input_ingestion` | Input ingestion | tracked | Real applications provide converted, strided, datetime, list, pandas, and Arrow inputs rather than only contiguous f64 arrays. | ingest latency, copies, peak Python memory | `benchmarks/bench_workflows.py` ingestion rows | Keep zero-copy inputs cheap and make unavoidable conversions visible. |
@@ -77,6 +77,13 @@ Mode labels in benchmark output should stay explicit: `direct`, `decimated`,
 `density`, `sampled`, or `adaptive`. A 10M density result is a real large-data
 visualization result, but it is not the same claim as 10M individually styled
 markers. The benchmark reports should make that distinction impossible to miss.
+
+`bench_heatmap_wire.py` isolates first-paint heatmap payload construction at
+1000² and 2000² cells. Its exact byte oracles require scalar grids to fall from
+4 bytes/cell to 1 (4x) and truecolor grids from 16 bytes/cell to 4 (4x), while
+also checking that packed and split layouts are byte-identical. Fixture and
+figure construction are excluded; the timed stage is repeated payload
+quantization and assembly.
 
 ## Interaction, drilldown, and dashboard probes
 

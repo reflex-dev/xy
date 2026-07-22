@@ -2144,7 +2144,7 @@ Object.assign(ChartView.prototype, {
           const col = i % h.w;
           const x = h.xRange[0] + (col + 0.5) * ((h.xRange[1] - h.xRange[0]) / h.w);
           const y = h.yRange[0] + (row + 0.5) * ((h.yRange[1] - h.yRange[0]) / h.h);
-          const value = this._denormalizeUnit(g._cpuHeatmap.grid[i], trace.color?.domain);
+          const value = this._denormalizeUnit(this._heatmapUnit(g, i), trace.color?.domain);
           rows.push([...prefix, i, clean(x), clean(y), "", "", "", "", clean(value)]);
         }
         continue;

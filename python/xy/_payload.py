@@ -35,10 +35,10 @@ class _PayloadWriter:
     """Accumulates the binary blob + column table for `build_payload`.
 
     The single place that knows the wire encoding, so every chart type ships
-    columns the same way (§29): `ship` for offset-encoded geometry (§4), and
-    `ship_scalar` for raw f32 channels/grids already in final units, and
-    `ship_u8` for byte-precision categorical/density values. Adding a chart
-    means calling these, not re-implementing the encoding.
+    columns the same way (§29): `ship` for offset-encoded geometry (§4),
+    `ship_scalar` for raw f32 channels already in final units, and `ship_u8`
+    for byte-precision categorical/density/heatmap values. Adding a chart means
+    calling these, not re-implementing the encoding.
     """
 
     def __init__(self, *, split: bool = False, borrow_heatmaps: bool = False) -> None:
@@ -158,6 +158,39 @@ class _PayloadWriter:
             memoryview(c).cast("B") if isinstance(c, bytes) else c.data.cast("B")
             for c in self._chunks
         ]
+
+
+def _quantize_heatmap_unit_u8(values: np.ndarray) -> np.ndarray:
+    """Match the client's scalar R8 conversion exactly, with zero as missing."""
+    source = np.asarray(values, dtype=np.float32).reshape(-1)
+    encoded = np.zeros(len(source), dtype=np.uint8)
+    finite = np.isfinite(source)
+    if np.any(finite):
+        # The legacy client read f32 wire values into JavaScript Numbers before
+        # multiplying. Promote here as well: doing the arithmetic in f32 moves
+        # values immediately below a half-step to the next byte.
+        normalized = np.clip(source[finite].astype(np.float64), 0.0, 1.0)
+        # JavaScript's Math.round is floor(x + 0.5) for these positive
+        # values.  np.rint uses ties-to-even and differs at exact half steps.
+        encoded[finite] = np.floor(1.5 + 254.0 * normalized).astype(np.uint8)
+    return encoded
+
+
+def _quantize_heatmap_rgba8(
+    columns: tuple[Column, Column, Column, Column],
+) -> np.ndarray:
+    """Interleave canonical RGBA planes as the exact bytes WebGL consumed."""
+    count = len(columns[0])
+    packed = np.zeros((count, 4), dtype=np.uint8)
+    for channel, column in enumerate(columns):
+        # Preserve the old four-plane path exactly: canonical f64 was first
+        # shipped as f32, then converted to a JavaScript Number for rounding.
+        values = np.asarray(column.values, dtype=np.float32)
+        finite = np.isfinite(values)
+        if np.any(finite):
+            unit = np.clip(values[finite].astype(np.float64), 0.0, 1.0)
+            packed[finite, channel] = np.floor(0.5 + 255.0 * unit).astype(np.uint8)
+    return packed.reshape(-1)
 
 
 class PayloadMixin(_Host):
@@ -527,6 +560,7 @@ class PayloadMixin(_Host):
             raise ValueError("heatmap trace missing grid column")
         rows, cols = t.grid_shape
         if t.rgba_grid is not None:
+            packed = _quantize_heatmap_rgba8(t.rgba_grid)
             return {
                 "id": t.id,
                 "kind": "heatmap",
@@ -538,7 +572,8 @@ class PayloadMixin(_Host):
                 "x_axis": t.x_axis,
                 "y_axis": t.y_axis,
                 "heatmap": {
-                    "rgba_bufs": [pw.ship_scalar(column.values) for column in t.rgba_grid],
+                    "rgba_buf": pw.ship_u8(packed),
+                    "enc": "rgba8",
                     "w": int(cols),
                     "h": int(rows),
                     "x_range": list(t.style["x_range"]),
@@ -551,8 +586,8 @@ class PayloadMixin(_Host):
             encoding = "canonical-f64"
         else:
             norm = kernels.normalize_f32(t.grid.values, domain, nonfinite="nan")
-            buffer_index = pw.ship_scalar(norm)
-            encoding = None
+            buffer_index = pw.ship_u8(_quantize_heatmap_unit_u8(norm))
+            encoding = "unit-u8"
         cmap = t.style.get("colormap", channels.DEFAULT_COLORMAP)
         return {
             "id": t.id,
@@ -572,7 +607,8 @@ class PayloadMixin(_Host):
                 "y_range": list(t.style["y_range"]),
                 "colormap": cmap,
                 "domain": list(domain),
-                **({"enc": encoding} if encoding is not None else {}),
+                "enc": encoding,
+                **({"missing": 0, "offset": 1, "levels": 254} if encoding == "unit-u8" else {}),
             },
             "color": {"mode": "continuous", "colormap": cmap, "domain": list(domain)},
         }

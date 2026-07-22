@@ -15,7 +15,14 @@ from typing import Any
 
 import numpy as np
 
-from ._svg import _column, _density_column, _lut, _monotone_tangents
+from ._svg import (
+    _density_column,
+    _fill_opacity,
+    _heatmap_column,
+    _heatmap_rgba8,
+    _lut,
+    _monotone_tangents,
+)
 
 # Samples per smooth Bézier span when flattening to a polyline for the raster
 # filler. The curve is screen-bounded (M4-decimated), so this stays cheap and
@@ -90,10 +97,18 @@ def grid_rgba(kind: str, g: dict, blob: bytes, cols: list, style: dict) -> tuple
         )
         alpha[tnorm <= 0] = 0
     else:  # heatmap
-        raw = _column(blob, cols[g["buf"]]).reshape(h, w)
+        if "rgba_buf" in g or "rgba_bufs" in g:
+            rgba = _heatmap_rgba8(blob, cols, g).reshape(h, w, 4)
+            rgba[..., 3] = (rgba[..., 3].astype(np.float64) * _fill_opacity(style, 0.95)).astype(
+                np.uint8
+            )
+            return np.ascontiguousarray(rgba[::-1]), g["x_range"], g["y_range"]
+        raw = _heatmap_column(blob, cols[g["buf"]], g).reshape(h, w)
         t = np.clip(raw, 0.0, 1.0)
-        rgb = _lut(g.get("colormap", "viridis"), t.reshape(-1)).reshape(h, w, 3)
-        alpha = np.full((h, w), int(255 * float(style.get("opacity", 0.95))), dtype=np.uint8)
+        rgb = _lut(g.get("colormap", "viridis"), np.nan_to_num(t, nan=0.0).reshape(-1)).reshape(
+            h, w, 3
+        )
+        alpha = np.full((h, w), int(255 * _fill_opacity(style, 0.95)), dtype=np.uint8)
         alpha[~np.isfinite(raw)] = 0
     rgba = np.dstack([rgb, alpha])[::-1]  # flip: row 0 is the top of the image
     return np.ascontiguousarray(rgba, dtype=np.uint8), g["x_range"], g["y_range"]

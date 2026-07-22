@@ -1702,10 +1702,12 @@ def heatmap(
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
-    """A rectangular heatmap from a two-dimensional matrix.
+    """A rectangular heatmap from a scalar or RGB(A) matrix.
 
     Args:
-        z: Two-dimensional values or a column name resolved from ``data``.
+        z: Two-dimensional scalar values, a ``(rows, columns, 3|4)`` RGB(A)
+            array, or a column name resolved from ``data``. Truecolor channels
+            accept 0-1 or 0-255 values; alpha is normalized independently.
         x: Optional x coordinates or a column name.
         y: Optional y coordinates or a column name.
         data: Table used to resolve column-name inputs.

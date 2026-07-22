@@ -625,6 +625,21 @@ def test_client_heatmap_hover_rows_use_axis_display_values() -> None:
             assert marker in text, f"{path} no longer exposes heatmap display marker {marker!r}"
 
 
+def test_client_reads_compact_heatmap_textures_and_decodes_resident_values() -> None:
+    required = (
+        "Number.isInteger(h.rgba_buf)",
+        "this._uploadHeatmapGrid(grid, h.w, h.h, h.enc)",
+        'if (encoding === "unit-u8")',
+        "_heatmapUnit(g, index)",
+        "this._heatmapUnit(g, hit.index)",
+        "this._denormalizeUnit(this._heatmapUnit(g, i), trace.color?.domain)",
+    )
+
+    for path, text in CLIENT_FILES:
+        for marker in required:
+            assert marker in text, f"{path} no longer handles compact heatmap marker {marker!r}"
+
+
 def test_client_point_hover_rows_use_category_display_labels() -> None:
     """Categorical tooltips expose labels instead of zero-based axis codes."""
     required = (
@@ -935,3 +950,7 @@ def test_built_bundles_keep_minification_safe_invariants() -> None:
         )
         # §28: reductions stay badged in the shipped client.
         assert "zoom re-binned from sample" in text, f"{path} lost the re-bin badge"
+        assert "unit-u8" in text, f"{path} lost scalar heatmap wire decoding"
+        assert "RGBA8 heatmap payload has wrong length" in text, (
+            f"{path} lost packed truecolor heatmap validation"
+        )

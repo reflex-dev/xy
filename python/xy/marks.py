@@ -2332,8 +2332,11 @@ def heatmap(
 ) -> "Figure":
     """Add a rectangular heatmap from a 2D value matrix.
 
-    `z` is shaped `(rows, columns)`. Optional `x` and `y` arrays name the
-    column/row centers; string/object arrays become categorical axes.
+    `z` is shaped `(rows, columns)` for scalar color or `(rows, columns, 3|4)`
+    for RGB(A). Truecolor channels accept 0-1 or 0-255 values, with alpha
+    normalized independently and without mutating the input. Optional `x` and
+    `y` arrays name the column/row centers; string/object arrays become
+    categorical axes.
     """
     css = styles.compile_mark_style("heatmap", style)
     opacity = css.get("opacity", opacity)
@@ -2346,12 +2349,19 @@ def heatmap(
     if not truecolor and arr.ndim != 2:
         raise ValueError(f"heatmap z must be 2-D or RGB(A), got shape {arr.shape}")
     if truecolor:
-        rgba = np.asarray(arr, dtype=np.float64)
-        if np.nanmax(rgba[..., :3]) > 1.0:
+        # Own the normalization buffer: float64 user arrays must never be
+        # modified when 0-255 RGB values are converted to unit channels.
+        rgba = np.array(arr, dtype=np.float64, copy=True)
+        finite_rgb = rgba[..., :3][np.isfinite(rgba[..., :3])]
+        if finite_rgb.size and finite_rgb.max() > 1.0:
             rgba[..., :3] /= 255.0
+        if rgba.shape[-1] == 4:
+            finite_alpha = rgba[..., 3][np.isfinite(rgba[..., 3])]
+            if finite_alpha.size and finite_alpha.max() > 1.0:
+                rgba[..., 3] /= 255.0
         if rgba.shape[-1] == 3:
             rgba = np.dstack((rgba, np.ones(rgba.shape[:2], dtype=np.float64)))
-        rgba = np.clip(rgba, 0.0, 1.0)
+        np.clip(rgba, 0.0, 1.0, out=rgba)
         rows, cols = rgba.shape[:2]
         zv = rgba[..., 0]
     else:

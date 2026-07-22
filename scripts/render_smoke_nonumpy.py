@@ -85,6 +85,13 @@ def build_payload():
         blob.extend(raw)
         return len(cols) - 1
 
+    def ship_u8(vals):
+        raw = bytes(vals)
+        cols.append({"byte_offset": len(blob), "len": len(vals), "dtype": "u8"})
+        blob.extend(raw)
+        blob.extend(b"\x00" * (-len(blob) % 4))
+        return len(cols) - 1
+
     # continuous color = normalized index; variable size = |sin|.
     m = n // 20
     cvals = [i / (m - 1) for i in range(m)]
@@ -97,7 +104,8 @@ def build_payload():
     for i in range(gw * gh):
         grid[i] += i % 3
     density_buf = ship_scalar(grid)
-    heat_buf = ship_scalar([0.1, 0.45, 0.7, 1.0])
+    # unit-u8: zero is missing; 1..255 decode as (byte - 1) / 254.
+    heat_buf = ship_u8([26, 115, 179, 255])
 
     traces = [
         {
@@ -203,6 +211,10 @@ def build_payload():
                 "buf": heat_buf,
                 "w": 2,
                 "h": 2,
+                "enc": "unit-u8",
+                "missing": 0,
+                "offset": 1,
+                "levels": 254,
                 "x_range": [100.0, 340.0],
                 "y_range": [5.5, 7.5],
                 "colormap": "turbo",
@@ -228,8 +240,11 @@ def build_payload():
 def main() -> None:
     standalone = (STATIC / "standalone.js").read_text(encoding="utf-8")
     spec, blob = build_payload()
-    # sanity: blob is 4 bytes per shipped f32
-    assert len(blob) == sum(c["len"] for c in spec["columns"]) * 4
+    # Sanity: f32 columns use four bytes; compact u8 columns fold their
+    # four-byte alignment padding into the wire span.
+    assert len(blob) == sum(
+        ((c["len"] * (1 if c.get("dtype") == "u8" else 4) + 3) // 4) * 4 for c in spec["columns"]
+    )
     struct.unpack_from("<f", blob, 0)  # decodes as little-endian f32
 
     # Mirrors xy.export._STANDALONE_CSP (this script is stdlib-only by
@@ -902,8 +917,11 @@ try{{
     const splitSpec = JSON.parse(JSON.stringify(spec));
     splitSpec.buffer_layout = "split";
     splitSpec.columns = splitSpec.columns.map((c, i) => ({{ ...c, buf: i, byte_offset: 0 }}));
-    const splitBufs = spec.columns.map((c) =>
-      bytes.buffer.slice(c.byte_offset, c.byte_offset + c.len * 4));
+    const splitBufs = spec.columns.map((c) => {{
+      const width = c.dtype === "u8" ? 1 : 4;
+      const padded = Math.ceil(c.len * width / 4) * 4;
+      return bytes.buffer.slice(c.byte_offset, c.byte_offset + padded);
+    }});
     const sv1 = new xy.ChartView(mk(), splitSpec, splitBufs, null);
     sv1._sampleRebinDisabled = true;
     if (sv1.gpuTraces) for (const gg of sv1.gpuTraces) gg._densityNormAnim = null;

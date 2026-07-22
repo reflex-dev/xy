@@ -1836,12 +1836,8 @@ def _emit_grid(
 ) -> None:
     if kind == "heatmap":
         w, h = int(g["w"]), int(g["h"])
-        if "rgba_bufs" in g:
-            channels = [_column(blob, cols[index]) for index in g["rgba_bufs"]]
-            rgba = np.clip(np.column_stack(channels) * 255.0, 0, 255).astype(np.uint8)
-            rgba[:, 3] = (rgba[:, 3].astype(np.float64) * _fill_opacity(style)).astype(np.uint8)
-            rgba = rgba.reshape(h, w, 4)[::-1]
-            xr, yr = g["x_range"], g["y_range"]
+        if "rgba_buf" in g or "rgba_bufs" in g or g.get("enc") == "unit-u8":
+            rgba, xr, yr = _scene.grid_rgba(kind, g, blob, cols, style)
             dx, dy, dw, dh = _scene.grid_dest_rect(xr, yr, sx, sy)
             cmd.image(dx, dy, dw, dh, w, h, rgba.tobytes(), nearest=True)
             return

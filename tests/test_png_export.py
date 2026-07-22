@@ -5,10 +5,13 @@ the shared layout with the SVG exporter."""
 
 from __future__ import annotations
 
+import base64
+import re
 import struct
 import zlib
 
 import numpy as np
+import pytest
 
 import xy
 from xy import _png, _raster
@@ -276,6 +279,122 @@ def test_colormap_matches_lut() -> None:
     viridis_top = np.array([253, 231, 37])  # last viridis stop (_svg.COLORMAP_STOPS)
     dist = np.abs(rgba[:, :, :3].astype(int) - viridis_top).sum(axis=2)
     assert int(dist.min()) < 20, f"hottest cell not viridis-top (dist {int(dist.min())})"
+
+
+def test_packed_truecolor_heatmap_is_read_byte_exactly_by_static_renderers() -> None:
+    from xy import _scene
+
+    source = np.array(
+        [
+            [[255, 0, 128, 255], [0, 255, 64, 128]],
+            [[16, 32, 255, 64], [240, 224, 208, 0]],
+        ],
+        dtype=np.uint8,
+    )
+    figure = Figure(width=240, height=160).heatmap(source, opacity=1.0)
+    spec, blob = figure.build_payload()
+    trace = spec["traces"][0]
+    heatmap = trace["heatmap"]
+
+    rgba, _xr, _yr = _scene.grid_rgba("heatmap", heatmap, blob, spec["columns"], trace["style"])
+    np.testing.assert_array_equal(rgba, source[::-1])
+
+    svg = figure.to_svg()
+    match = re.search(r'data:image/png;base64,([^"\s]+)', svg)
+    assert match is not None
+    embedded = _decode_rgba(base64.b64decode(match.group(1)))
+    np.testing.assert_array_equal(embedded, source[::-1])
+
+
+def test_chromium_compact_heatmap_wire_is_pixel_identical_to_legacy_f32() -> None:
+    import copy
+
+    from xy import export, kernels
+
+    if export.find_browser() is None:
+        pytest.skip("no supported browser for Chromium heatmap export")
+
+    scalar = np.array([[0.0, 0.35], [0.7, 1.0]], dtype=np.float64)
+    truecolor = np.array(
+        [
+            [[255, 0, 0, 255], [0, 255, 0, 255]],
+            [[0, 0, 255, 255], [255, 255, 0, 255]],
+        ],
+        dtype=np.uint8,
+    )
+    figure = Figure(width=360, height=220).heatmap(
+        scalar, x=[0.0, 1.0], colormap="turbo", domain=(0.0, 1.0), opacity=1.0
+    )
+    figure.heatmap(truecolor, x=[3.0, 4.0], opacity=1.0)
+    compact_spec, compact_blob = figure.build_payload()
+
+    # Reconstruct the protocol-4 representation: one normalized f32 scalar
+    # grid and four planar f32 truecolor channels. The protocol-5 client keeps
+    # this reader solely as a parity oracle / compatibility path.
+    legacy_spec = copy.deepcopy(compact_spec)
+    legacy_columns: list[dict[str, int]] = []
+    legacy_chunks: list[bytes] = []
+    position = 0
+
+    def ship_f32(values: np.ndarray) -> int:
+        nonlocal position
+        encoded = np.ascontiguousarray(values, dtype="<f4").reshape(-1)
+        ref = len(legacy_columns)
+        legacy_columns.append({"byte_offset": position, "len": len(encoded)})
+        chunk = encoded.tobytes()
+        legacy_chunks.append(chunk)
+        position += len(chunk)
+        return ref
+
+    scalar_trace = figure.traces[0]
+    scalar_heatmap = legacy_spec["traces"][0]["heatmap"]
+    scalar_heatmap["buf"] = ship_f32(
+        kernels.normalize_f32(scalar_trace.grid.values, (0.0, 1.0), nonfinite="nan")
+    )
+    for key in ("enc", "missing", "offset", "levels"):
+        scalar_heatmap.pop(key)
+
+    truecolor_trace = figure.traces[1]
+    truecolor_heatmap = legacy_spec["traces"][1]["heatmap"]
+    truecolor_heatmap["rgba_bufs"] = [
+        ship_f32(column.values) for column in truecolor_trace.rgba_grid or ()
+    ]
+    truecolor_heatmap.pop("rgba_buf")
+    truecolor_heatmap.pop("enc")
+    legacy_spec["columns"] = legacy_columns
+    legacy_blob = b"".join(legacy_chunks)
+
+    class PayloadFigure:
+        width = figure.width
+        height = figure.height
+        title = figure.title
+
+        def __init__(self, spec: dict, blob: bytes) -> None:
+            self.spec = spec
+            self.blob = blob
+
+        def build_payload(self) -> tuple[dict, bytes]:
+            return copy.deepcopy(self.spec), self.blob
+
+    compact_html = export.to_html(PayloadFigure(compact_spec, compact_blob))
+    legacy_html = export.to_html(PayloadFigure(legacy_spec, legacy_blob))
+    compact_png = export.html_to_png(compact_html, 360, 220, scale=1.0)
+    legacy_png = export.html_to_png(legacy_html, 360, 220, scale=1.0)
+    compact_image = _decode_rgba(compact_png)
+    legacy_image = _decode_rgba(legacy_png)
+
+    np.testing.assert_array_equal(compact_image, legacy_image)
+    assert compact_image.shape == (220, 360, 4)
+    red = (
+        (compact_image[..., 0] > 200) & (compact_image[..., 1] < 60) & (compact_image[..., 2] < 60)
+    )
+    green = (
+        (compact_image[..., 0] < 60) & (compact_image[..., 1] > 200) & (compact_image[..., 2] < 60)
+    )
+    blue = (
+        (compact_image[..., 0] < 60) & (compact_image[..., 1] < 60) & (compact_image[..., 2] > 200)
+    )
+    assert min(int(red.sum()), int(green.sum()), int(blue.sum())) > 500
 
 
 def test_png_encoder_selects_indexed_for_few_colors() -> None:
@@ -837,7 +956,7 @@ def test_direct_heatmap_command_matches_expanded_image() -> None:
     )
 
 
-def test_raster_payload_borrows_canonical_heatmap_with_exact_pixels() -> None:
+def test_raster_payload_borrows_canonical_heatmap_without_wire_quantization() -> None:
     values = np.linspace(-3.0, 7.0, 31 * 17, dtype=np.float64).reshape(17, 31)
     values[2, 5] = np.nan
     figure = Figure(width=320, height=180).heatmap(values, domain=(-2.0, 6.0), opacity=0.73)
@@ -848,8 +967,12 @@ def test_raster_payload_borrows_canonical_heatmap_with_exact_pixels() -> None:
     raster_grid = raster_spec["traces"][0]["heatmap"]
     raster_meta = raster_spec["columns"][raster_grid["buf"]]
 
-    assert "enc" not in browser_grid
-    assert len(browser_blob) == values.size * 4
+    browser_meta = browser_spec["columns"][browser_grid["buf"]]
+    assert browser_grid["enc"] == "unit-u8"
+    assert browser_grid["missing"] == 0
+    assert browser_meta["dtype"] == "u8"
+    assert browser_meta["len"] == values.size
+    assert len(browser_blob) == (values.size + 3) // 4 * 4
     assert raster_grid["enc"] == "canonical-f64"
     assert raster_meta == {
         "span": 1,
@@ -868,7 +991,11 @@ def test_raster_payload_borrows_canonical_heatmap_with_exact_pixels() -> None:
         scale=1,
         borrowed=borrowed,
     )
-    np.testing.assert_array_equal(direct, expanded)
+    # Native export deliberately keeps exact canonical f64 values. The live /
+    # standalone wire uses the same 254-level R8 texture the browser already
+    # rendered, so its colormap result can differ by at most two byte levels.
+    np.testing.assert_array_equal(direct[..., 3], expanded[..., 3])
+    assert np.abs(direct[..., :3].astype(int) - expanded[..., :3].astype(int)).max() <= 2
 
 
 def test_public_native_heatmap_png_skips_browser_normalization(monkeypatch) -> None:

@@ -184,9 +184,15 @@ def test_truecolor_imshow_keeps_rgba_channels_in_payload() -> None:
     _fig, ax = plt.subplots()
     image = np.array([[[255, 0, 0, 255], [0, 255, 0, 128]]], dtype=np.uint8)
     ax.imshow(image, interpolation="nearest")
-    spec, _ = ax._build_chart(320, 200).figure().build_payload()
+    spec, blob = ax._build_chart(320, 200).figure().build_payload()
     heatmap = spec["traces"][0]["heatmap"]
-    assert len(heatmap["rgba_bufs"]) == 4
+    meta = spec["columns"][heatmap["rgba_buf"]]
+    packed = np.frombuffer(blob, dtype=np.uint8, count=meta["len"], offset=meta["byte_offset"])
+    assert heatmap["enc"] == "rgba8"
+    assert meta["dtype"] == "u8"
+    assert meta["len"] == heatmap["w"] * heatmap["h"] * 4
+    assert packed.reshape(-1, 4).tolist().count([255, 0, 0, 255]) == 2
+    assert packed.reshape(-1, 4).tolist().count([0, 255, 0, 128]) == 2
     assert "buf" not in heatmap
     assert heatmap["h"] == 2
 

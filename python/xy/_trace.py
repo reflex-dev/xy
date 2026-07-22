@@ -26,8 +26,8 @@ class Trace:
     # Area-style marks keep an explicit baseline column; rectangle-like marks
     # use x0/x1/y0/y1 below.
     base: Optional[Column] = None
-    # Grid-like marks (heatmap/image) ship one scalar grid plus metadata instead
-    # of four rectangle columns per cell.
+    # Grid-like marks keep canonical scalar / RGBA planes here; heatmap payloads
+    # quantize them to one R8 scalar grid or one interleaved RGBA8 texture.
     grid: Optional[Column] = None
     rgba_grid: Optional[tuple[Column, Column, Column, Column]] = None
     grid_shape: Optional[tuple[int, int]] = None  # (rows, columns)

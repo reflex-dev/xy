@@ -888,6 +888,7 @@ def test_pick_out_of_range():
 
 def test_pick_heatmap_cell_returns_grid_readout():
     z = np.arange(12, dtype=float).reshape(3, 4)
+    z[1, 2] = np.pi  # deliberately not representable by the unit-u8 wire
     fig = Figure().heatmap(z)
     idx = 1 * 4 + 2
 
