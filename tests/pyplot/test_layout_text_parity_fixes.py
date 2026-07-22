@@ -92,7 +92,7 @@ def test_subplots_adjust_positions_grid_panels_in_every_exporter() -> None:
         ax.text(0.5, 0.5, str((2, 3, i)), fontsize=18, ha="center")
     html = fig._to_html()
     assert len(re.findall(r'style="position:absolute;left:', html)) == 6
-    assert _png_pixels(fig).shape[:2] == (960, 1280)  # the full 640x480 canvas at 2x
+    assert _png_pixels(fig).shape[:2] == (480, 640)  # the requested 640x480 canvas
     assert _svg(fig).count("<svg x=") == 6
 
 

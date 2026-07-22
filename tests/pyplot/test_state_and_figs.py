@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import struct
 from pathlib import Path
 
 import numpy as np
@@ -91,12 +92,16 @@ def test_savefig_png_svg_html(tmp_path: Path) -> None:
 
 
 def test_grid_savefig_png_stitches(tmp_path: Path) -> None:
-    _fig, axes = plt.subplots(1, 2)
+    fig, axes = plt.subplots(1, 2)
     axes[0].plot([0, 1], [1, 2])
     axes[1].bar(["a", "b"], [2, 1])
     target = tmp_path / "grid.png"
     plt.savefig(target)
-    assert target.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    data = target.read_bytes()
+    assert data.startswith(b"\x89PNG\r\n\x1a\n")
+    assert struct.unpack(">II", data[16:24]) == tuple(
+        round(value * fig.get_dpi()) for value in fig.get_size_inches()
+    )
 
 
 def test_add_axes_png_uses_native_facecolor_parser() -> None:
