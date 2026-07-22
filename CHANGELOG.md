@@ -60,10 +60,13 @@ in the README).
   the window or a refinement goes pending), the colored pyramid's base scan
   fans out (≤4 workers, points-per-cell gated) so the first zoom-out on a
   100M-point trace builds in about a quarter of the time, and the FastAPI
-  live-drilldown demo stopped hand-building count-only density replies — its
-  browser-local re-bin now aggregates the shipped mean-color plane and its
-  server path serves everything through `Figure.density_view`, so no zoom
-  level flashes back to count-colormapped colors.
+  live-drilldown demo dropped its pre-pyramid density machinery outright —
+  the integral-image overview (server-side and ~350 lines of page JS: local
+  re-bins, request parking, per-client staleness maps) could only aggregate
+  counts and flashed count-colormapped grids between zoom levels. Every
+  window is now served through `Figure.density_view` (pyramid warmed at
+  startup) and the page JS shrank to a thin POST transport plus a status
+  badge.
 
 ### Added
 - **Export format parity and a unified export API (ENG-10447).**
