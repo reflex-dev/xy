@@ -456,7 +456,14 @@ Object.assign(ChartView.prototype, {
       drag = null;
       band.style.cursor = this._axisBandCursor(axisId, dim);
       if (finished.mode === "span") this.selRect.style.display = "none";
-      if (e.type === "pointercancel") return;
+      if (e.type === "pointercancel") {
+        if (this._viewMutationActive) {
+          this._viewMutationActive = false;
+          this._lastLabelDraw = null;
+          this.draw();
+        }
+        return;
+      }
       if (finished.mode === "pan" && finished.changedAxes.length) {
         this._emitViewChange("pan_drag", {
           axes: finished.changedAxes,

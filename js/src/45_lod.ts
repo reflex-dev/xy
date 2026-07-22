@@ -1,5 +1,3 @@
-import { parseColor } from "./20_theme";
-
 // ---------------------------------------------------------------------------
 
 const LOD_DIRECT_POINT_BUDGET = 200000;
@@ -258,7 +256,7 @@ export function lodApplyDrill(view, g, upd, buffers) {
   view._hoverId = -1;
   view._lastRow = null;
   d.colorMode = 0;
-  d.color = parseColor(view.root, upd.color && upd.color.color, [0.3, 0.47, 0.66, 1]);
+  d.color = view._parseColor(upd.color && upd.color.color, [0.3, 0.47, 0.66, 1]);
   if (upd.color && upd.color.buf !== undefined) {
     d.colorMode = upd.color.mode === "continuous" ? 1 :
       (upd.color.mode === "categorical" ? 2 : 3);
@@ -507,7 +505,7 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
   g._densityFadeStart = view._now();
   g.density = {
     w: d.w, h: d.h, max: d.max, normMax, colormap: d.colormap || g.density.colormap,
-    color: d.color ? parseColor(view.root, d.color, [0.3, 0.47, 0.66, 1]) : g.density.color,
+    color: d.color ? view._parseColor(d.color, [0.3, 0.47, 0.66, 1]) : g.density.color,
     xRange: d.x_range, yRange: d.y_range,
     grid,
     tex: view._uploadGrid(grid, d.w, d.h, normMax),

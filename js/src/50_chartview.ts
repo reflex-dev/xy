@@ -351,6 +351,10 @@ export class ChartView {
     this._wheelZoomRaf = null;
     this._pendingWheelZoom = null;
     this._lastLabelDraw = null;
+    this._labelDomSignature = null;
+    this._viewMutationActive = false;
+    this._themeEpoch = 0;
+    this._colorCache = new Map();
     this._lutCache = new Map();
     this._listeners = [];
     this._glPrograms = [];
@@ -362,6 +366,7 @@ export class ChartView {
     this._resizeNeedsMeasure = false;
     this._hoverId = -1;
     this._hoverTarget = null;
+    this._lastHoverPixel = null;
     this._viewEventRaf = null;
     this._linkedSource = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     // Browser-local active drag action. The configured default resolves after
@@ -393,7 +398,8 @@ export class ChartView {
     // webviews attach asynchronously) would freeze on fallback theme colors —
     // gray grid over a themed card. Track staleness and heal on the first
     // frame (or visibility change) after connection.
-    this.theme = readTheme(this.root);
+    this.theme = readTheme(this.root, this._colorCache);
+    this._themeEpoch += 1;
     this._themeStale = !this.root.isConnected;
     // Retained for GL context restore: the payload is screen-bounded (§29) so
     // keeping it is cheap, and every GPU object is rebuildable from
@@ -742,11 +748,21 @@ export class ChartView {
   _emitViewChange(source = "view", opts: any = {}) {
     if (this._destroyed) return;
     const broadcast = opts.broadcast !== false;
+    const phase = opts.phase || "end";
+    const wasMutating = this._viewMutationActive;
+    this._viewMutationActive = phase === "update";
+    if (wasMutating && phase === "end") {
+      // A drag/wheel stream may have throttled its most recent DOM tick set.
+      // Force one settled rebuild even when the end event shares a frame with
+      // the final update.
+      this._lastLabelDraw = null;
+      this.draw();
+    }
     this._pendingViewEvent = {
       source,
       broadcast,
       axes: Array.isArray(opts.axes) ? [...opts.axes] : [],
-      phase: opts.phase || "end",
+      phase,
       interaction_id: opts.interactionId ?? ++this._interactionSeq,
     };
     if (this._viewEventRaf) return;
@@ -2054,7 +2070,7 @@ export class ChartView {
       g.densityNormMax = d.max;
       g.density = {
         w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
-        color: d.color ? parseColor(this.root, d.color, [0.3, 0.47, 0.66, 1]) : null,
+        color: d.color ? this._parseColor(d.color, [0.3, 0.47, 0.66, 1]) : null,
         xRange: d.x_range, yRange: d.y_range,
         grid: lodCopyGrid(grid),
         tex: this._uploadGrid(grid, d.w, d.h, d.max),
@@ -2143,7 +2159,7 @@ export class ChartView {
   _buildScatterMark(g, t, buffer) {
     this._buildXY(g, t, buffer);
     g.colorMode = 0;
-    g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
+    g.color = this._parseColor(t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
     if (t.color && t.color.mode === "continuous") {
       g.colorMode = 1;
       g._cpu.color = this._columnView(buffer, this.spec.columns[t.color.buf]);
@@ -2180,7 +2196,7 @@ export class ChartView {
     g.pointStrokeWidth = Number(s.stroke_width) || 0;
     g.pointStrokeFace = !s.stroke && (!t.stroke || t.stroke.mode === "match_fill");
     g.pointStroke = s.stroke
-      ? parseColor(this.root, s.stroke, [g.color[0], g.color[1], g.color[2], 1])
+      ? this._parseColor(s.stroke, [g.color[0], g.color[1], g.color[2], 1])
       : null;
   }
 
@@ -2269,7 +2285,7 @@ export class ChartView {
       sample: { n: sample.n, visible: sample.visible },
       selActive: false,
       colorMode: 0,
-      color: parseColor(this.root, sample.color && sample.color.color, [0.3, 0.47, 0.66, 1]),
+      color: this._parseColor(sample.color && sample.color.color, [0.3, 0.47, 0.66, 1]),
       sizeMode: 0,
       size: (sample.size && sample.size.size) || 4.0,
       sizeRange: [2, 18],
@@ -2372,7 +2388,7 @@ export class ChartView {
       const expr = String(stop[1] || "").trim();
       const c = expr.toLowerCase() === "currentcolor"
         ? markColor
-        : parseColor(this.root, expr, markColor);
+        : this._parseColor(expr, markColor);
       colors[i * 4] = c[0] * c[3];
       colors[i * 4 + 1] = c[1] * c[3];
       colors[i * 4 + 2] = c[2] * c[3];
@@ -2434,7 +2450,7 @@ export class ChartView {
       : [Number(cr) || 0, Number(cr) || 0];
     g.strokeWidth = Number(s.stroke_width) || 0;
     const opaque = [g.color[0], g.color[1], g.color[2], 1];
-    g.strokeColor = s.stroke ? parseColor(this.root, s.stroke, opaque) : opaque;
+    g.strokeColor = s.stroke ? this._parseColor(s.stroke, opaque) : opaque;
     g.grad = this._resolveMarkFill(s, g.color);
   }
 
@@ -2484,6 +2500,15 @@ export class ChartView {
     g.yMeta = { ...this.spec.columns[t.y] };
     g.n = Math.min(x.length, y.length);
     g._cpu = { x, y, xMeta: g.xMeta, yMeta: g.yMeta };
+    // Python ingest guarantees this; the one-time check keeps hand-authored
+    // standalone specs correct and lets hover select binary vs linear once.
+    g._cpuXSorted = true;
+    for (let i = 1; i < g.n; i++) {
+      if (!Number.isFinite(x[i]) || x[i] < x[i - 1]) {
+        g._cpuXSorted = false;
+        break;
+      }
+    }
     const sm = this._smoothArrays(t, x, y, null, g.n);
     const src = sm || { x, y, n: g.n };
     const st = this._stepArrays(t, src.x, src.y, src.n);
@@ -2495,7 +2520,7 @@ export class ChartView {
     // Drawn (offset-encoded) vertices kept for the screen-space dash arc length.
     g._dashX = drawX;
     g._dashY = drawY;
-    g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+    g.color = this._parseColor(t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
   }
 
   _buildSegmentMark(g, t, buffer) {
@@ -2513,7 +2538,7 @@ export class ChartView {
     g.y0Buf = this._upload(y0);
     g.y1Buf = this._upload(y1);
     g._segmentCpu = { x0, x1, y0, y1 };
-    g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+    g.color = this._parseColor(t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
     g.colorMode = 0;
     if (t.color && t.color.mode === "continuous") {
       g.colorMode = 1;
@@ -2538,7 +2563,7 @@ export class ChartView {
       g[name + "Buf"] = this._upload(values);
       g.n = g.n === undefined ? values.length : Math.min(g.n, values.length);
     }
-    g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
+    g.color = this._parseColor(t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
     g.colorMode = 0;
     if (t.color && t.color.mode === "continuous") {
       g.colorMode = 1;
@@ -2555,7 +2580,7 @@ export class ChartView {
     this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
     const style = t.style || {};
     g.meshStrokeWidth = Number(style.stroke_width) || 0;
-    g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
+    g.meshStroke = this._parseColor(style.stroke || "transparent", [0, 0, 0, 0]);
   }
 
   // Hexbin ships cell centers plus one color value per cell; every hexagon
@@ -2598,7 +2623,7 @@ export class ChartView {
       g[name + "Buf"] = this._upload(parts[name]);
     }
     g.n = n * 6;
-    g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
+    g.color = this._parseColor(t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
     g.colorMode = 0;
     if (t.color && (t.color.mode === "continuous" || t.color.mode === "categorical")) {
       g.colorMode = t.color.mode === "continuous" ? 1 : 2;
@@ -2609,7 +2634,7 @@ export class ChartView {
       g.lut = t.color.mode === "continuous" ? this._lut(t.color.colormap) : this._paletteLut(t.color.palette);
     }
     g.meshStrokeWidth = Number(style.stroke_width) || 0;
-    g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
+    g.meshStroke = this._parseColor(style.stroke || "transparent", [0, 0, 0, 0]);
   }
 
   _buildAreaMark(g, t, buffer) {
@@ -2628,8 +2653,8 @@ export class ChartView {
     if (sm) g.n = sm.n;
     g._dashX = sm ? sm.x : x;
     g._dashY = sm ? sm.y : y;
-    g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
-    g.lineColor = parseColor(this.root, t.style && (t.style.line_color || t.style.color), g.color);
+    g.color = this._parseColor(t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+    g.lineColor = this._parseColor(t.style && (t.style.line_color || t.style.color), g.color);
     g.grad = this._resolveMarkFill(t.style, g.color);
   }
 
@@ -2651,7 +2676,7 @@ export class ChartView {
     g.x1Buf = this._upload(x1);
     g.y0Buf = this._upload(y0);
     g.y1Buf = this._upload(y1);
-    g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+    g.color = this._parseColor(t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
     g.colorMode = 0;
     if (t.color && t.color.mode === "continuous") {
       g.colorMode = 1;
@@ -2703,7 +2728,7 @@ export class ChartView {
     g._cpu = g.orientation === 1
       ? { x: v1, y: pos, xMeta: g.value1Meta, yMeta: g.posMeta, value0: g._cpuValue0 }
       : { x: pos, y: v1, xMeta: g.posMeta, yMeta: g.value1Meta, value0: g._cpuValue0 };
-    g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+    g.color = this._parseColor(t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
     g.colorMode = 0;
     if (t.color && t.color.mode === "continuous") {
       g.colorMode = 1;
@@ -3002,7 +3027,13 @@ export class ChartView {
     this._repositionTooltip();
     // Hover-only frames leave the pick snapshot valid (see draw()); direct
     // _drawNow() callers never set the flag, so they invalidate as before.
-    if (!this._rafKeepPick) this._pickDirty = true;
+    if (!this._rafKeepPick) {
+      this._pickDirty = true;
+      // A non-hover frame changed geometry, view, or payload. A subsequent
+      // pointermove in the same device pixel must pick again rather than reuse
+      // the previous frame's hit/miss.
+      this._lastHoverPixel = null;
+    }
     this._rafKeepPick = false;
     this._drawChrome();
     this._renderLassoSelection?.();
@@ -3053,7 +3084,7 @@ export class ChartView {
     gl.uniform1f(u("u_unselectedOpacity"), this._markStateNumber("unselected", "opacity", 0.12));
     // Optional selected/unselected recolor (§34): .a=1 tints, .a=0 keeps native.
     const stateColor = (loc, expr) => {
-      const c = expr ? parseColor(this.root, expr, [0, 0, 0, 1]) : null;
+      const c = expr ? this._parseColor(expr, [0, 0, 0, 1]) : null;
       gl.uniform4f(loc, c ? c[0] : 0, c ? c[1] : 0, c ? c[2] : 0, c ? 1 : 0);
     };
     stateColor(u("u_selColor"), this._markStateValue("selected", "color"));
@@ -3215,8 +3246,7 @@ export class ChartView {
     const defaultSize = Math.max((g.size || 4) * 1.75, (g.size || 4) + 5);
     const size = Math.max(0, this._markStateNumber("hover", "size", defaultSize));
     const opacity = Math.max(0, Math.min(1, this._markStateNumber("hover", "opacity", 0.95)));
-    const color = parseColor(
-      this.root,
+    const color = this._parseColor(
       this._markStatePaint("hover", "color", "rgba(15,23,42,.92)"),
       [0.06, 0.09, 0.16, 0.92]
     );
@@ -3420,6 +3450,35 @@ export class ChartView {
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
   }
 
+  _sameSignature(a, b) {
+    return !!a && a.length === b.length && a.every((value, i) => Object.is(value, b[i]));
+  }
+
+  _dashGeometrySignature(parts, channels) {
+    const p = this.plot;
+    const signature = [...parts, this.dpr, p.x, p.y, p.w, p.h];
+    for (const [axisId, meta] of channels) {
+      const axis = this._axis(axisId);
+      const [lo, hi] = this._axisRange(axisId);
+      signature.push(axis, axisId, lo, hi, meta?.offset ?? 0, meta?.scale ?? 1);
+    }
+    return signature;
+  }
+
+  _dashPattern(g, dash) {
+    const values = Array.from(dash).slice(0, 8).map(Number);
+    const signature = `${this.dpr}|${values.join(",")}`;
+    if (g._dashPattern?.signature === signature) return g._dashPattern;
+    const array = new Float32Array(8);
+    let period = 0;
+    for (let i = 0; i < values.length; i++) {
+      array[i] = values[i] * this.dpr;
+      period += array[i];
+    }
+    g._dashPattern = { signature, array, count: values.length, period };
+    return g._dashPattern;
+  }
+
   _segmentDash(g, prog) {
     const gl = this.gl;
     const u = (n) => uniformOf(gl, prog, n);
@@ -3430,66 +3489,67 @@ export class ChartView {
       return false;
     }
     const n = g.n;
-    const offsets = g._segmentDashOffsets?.length === n
-      ? g._segmentDashOffsets : (g._segmentDashOffsets = new Float32Array(n));
-    const directions = g._segmentDashDirections?.length === n
-      ? g._segmentDashDirections : (g._segmentDashDirections = new Float32Array(n));
-    const k0 = new Array(n), k1 = new Array(n), lengths = new Float32Array(n);
-    const adjacency = new Map();
-    const add = (key, index) => {
-      const edges = adjacency.get(key);
-      if (edges) edges.push(index); else adjacency.set(key, [index]);
-    };
-    const key = (x, y) => `${Math.round(x * 1000)},${Math.round(y * 1000)}`;
-    const dpr = this.dpr;
-    for (let i = 0; i < n; i++) {
-      const x0 = this._dataPx(g.xAxis, this._decodeValue(cpu.x0, g.x0Meta, i));
-      const x1 = this._dataPx(g.xAxis, this._decodeValue(cpu.x1, g.x1Meta, i));
-      const y0 = this._dataPx(g.yAxis, this._decodeValue(cpu.y0, g.y0Meta, i));
-      const y1 = this._dataPx(g.yAxis, this._decodeValue(cpu.y1, g.y1Meta, i));
-      k0[i] = key(x0, y0); k1[i] = key(x1, y1);
-      lengths[i] = Math.hypot(x1 - x0, y1 - y0) * dpr;
-      add(k0[i], i); add(k1[i], i);
-    }
-    const visited = new Uint8Array(n);
-    const walk = (start) => {
-      let current = start, accumulated = 0;
-      while (true) {
-        const edge = (adjacency.get(current) || []).find((index) => !visited[index]);
-        if (edge === undefined) break;
-        visited[edge] = 1;
-        if (k0[edge] === current) {
-          offsets[edge] = accumulated;
-          directions[edge] = 1;
-          current = k1[edge];
-        } else {
-          offsets[edge] = accumulated + lengths[edge];
-          directions[edge] = -1;
-          current = k0[edge];
-        }
-        accumulated += lengths[edge];
+    const signature = this._dashGeometrySignature(
+      [cpu.x0, cpu.x1, cpu.y0, cpu.y1, g.x0Buf, g.x1Buf, g.y0Buf, g.y1Buf, n],
+      [[g.xAxis, g.x0Meta], [g.xAxis, g.x1Meta],
+        [g.yAxis, g.y0Meta], [g.yAxis, g.y1Meta]],
+    );
+    if (!this._sameSignature(g._segmentDashSignature, signature)) {
+      const offsets = g._segmentDashOffsets?.length === n
+        ? g._segmentDashOffsets : (g._segmentDashOffsets = new Float32Array(n));
+      const directions = g._segmentDashDirections?.length === n
+        ? g._segmentDashDirections : (g._segmentDashDirections = new Float32Array(n));
+      const k0 = new Array(n), k1 = new Array(n), lengths = new Float32Array(n);
+      const adjacency = new Map();
+      const add = (key, index) => {
+        const edges = adjacency.get(key);
+        if (edges) edges.push(index); else adjacency.set(key, [index]);
+      };
+      const key = (x, y) => `${Math.round(x * 1000)},${Math.round(y * 1000)}`;
+      for (let i = 0; i < n; i++) {
+        const x0 = this._dataPx(g.xAxis, this._decodeValue(cpu.x0, g.x0Meta, i));
+        const x1 = this._dataPx(g.xAxis, this._decodeValue(cpu.x1, g.x1Meta, i));
+        const y0 = this._dataPx(g.yAxis, this._decodeValue(cpu.y0, g.y0Meta, i));
+        const y1 = this._dataPx(g.yAxis, this._decodeValue(cpu.y1, g.y1Meta, i));
+        k0[i] = key(x0, y0); k1[i] = key(x1, y1);
+        lengths[i] = Math.hypot(x1 - x0, y1 - y0) * this.dpr;
+        add(k0[i], i); add(k1[i], i);
       }
-    };
-    for (const [node, edges] of adjacency) if (edges.length === 1) walk(node);
-    for (let i = 0; i < n; i++) if (!visited[i]) walk(k0[i]);
-    const upload = (buffer, values) => {
-      if (!buffer) return this._upload(values);
-      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      gl.bufferData(gl.ARRAY_BUFFER, values, gl.DYNAMIC_DRAW);
-      return buffer;
-    };
-    g._segmentDashOffsetBuf = upload(g._segmentDashOffsetBuf, offsets);
-    g._segmentDashDirBuf = upload(g._segmentDashDirBuf, directions);
-    const pattern = new Float32Array(8);
-    const count = Math.min(dash.length, 8);
-    let period = 0;
-    for (let i = 0; i < count; i++) {
-      pattern[i] = Number(dash[i]) * dpr;
-      period += pattern[i];
+      const visited = new Uint8Array(n);
+      const walk = (start) => {
+        let current = start, accumulated = 0;
+        while (true) {
+          const edge = (adjacency.get(current) || []).find((index) => !visited[index]);
+          if (edge === undefined) break;
+          visited[edge] = 1;
+          if (k0[edge] === current) {
+            offsets[edge] = accumulated;
+            directions[edge] = 1;
+            current = k1[edge];
+          } else {
+            offsets[edge] = accumulated + lengths[edge];
+            directions[edge] = -1;
+            current = k0[edge];
+          }
+          accumulated += lengths[edge];
+        }
+      };
+      for (const [node, edges] of adjacency) if (edges.length === 1) walk(node);
+      for (let i = 0; i < n; i++) if (!visited[i]) walk(k0[i]);
+      const upload = (buffer, values) => {
+        if (!buffer) return this._upload(values);
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, values, gl.DYNAMIC_DRAW);
+        return buffer;
+      };
+      g._segmentDashOffsetBuf = upload(g._segmentDashOffsetBuf, offsets);
+      g._segmentDashDirBuf = upload(g._segmentDashDirBuf, directions);
+      g._segmentDashSignature = signature;
     }
-    gl.uniform1i(u("u_dashCount"), count);
-    gl.uniform1fv(u("u_dashArr"), pattern);
-    gl.uniform1f(u("u_dashPeriod"), Math.max(period, 1e-3));
+    const pattern = this._dashPattern(g, dash);
+    gl.uniform1i(u("u_dashCount"), pattern.count);
+    gl.uniform1fv(u("u_dashArr"), pattern.array);
+    gl.uniform1f(u("u_dashPeriod"), Math.max(pattern.period, 1e-3));
     return true;
   }
 
@@ -3537,10 +3597,9 @@ export class ChartView {
     gl.drawArraysInstanced(gl.TRIANGLES, 0, 3, g.n);
   }
 
-  // Dash setup for a line/area outline: recompute per-vertex cumulative
-  // screen-space arc length (device px) for the current view, upload it, and
-  // set the dash-pattern uniforms. Returns false (u_dashCount=0) for solid
-  // lines. Cost is O(vertices) per draw, dashed traces only.
+  // Dash setup for a line/area outline. Screen-space arc length depends on
+  // geometry, view, plot, axis metadata, and DPR — but not hover/highlight
+  // state. Cache that exact signature so steady redraws only set uniforms.
   _lineDash(g) {
     const gl = this.gl;
     const u = (n) => uniformOf(gl, this.lineProg, n);
@@ -3550,38 +3609,38 @@ export class ChartView {
       return false;
     }
     const n = g.n;
-    if (!g._lenArr || g._lenArr.length !== n) g._lenArr = new Float32Array(n);
-    const lens = g._lenArr;
-    const dpr = this.dpr;
-    let px = this._dataPx(g.xAxis, this._decodeValue(g._dashX, g.xMeta, 0));
-    let py = this._dataPx(g.yAxis, this._decodeValue(g._dashY, g.yMeta, 0));
-    let acc = 0;
-    lens[0] = 0;
-    for (let i = 1; i < n; i++) {
-      const nx = this._dataPx(g.xAxis, this._decodeValue(g._dashX, g.xMeta, i));
-      const ny = this._dataPx(g.yAxis, this._decodeValue(g._dashY, g.yMeta, i));
-      if (Number.isFinite(nx) && Number.isFinite(ny) && Number.isFinite(px) && Number.isFinite(py)) {
-        acc += Math.hypot(nx - px, ny - py) * dpr;
+    const signature = this._dashGeometrySignature(
+      [g._dashX, g._dashY, g.xBuf, g.yBuf, n],
+      [[g.xAxis, g.xMeta], [g.yAxis, g.yMeta]],
+    );
+    if (!this._sameSignature(g._lineDashSignature, signature)) {
+      if (!g._lenArr || g._lenArr.length !== n) g._lenArr = new Float32Array(n);
+      const lens = g._lenArr;
+      let px = this._dataPx(g.xAxis, this._decodeValue(g._dashX, g.xMeta, 0));
+      let py = this._dataPx(g.yAxis, this._decodeValue(g._dashY, g.yMeta, 0));
+      let acc = 0;
+      lens[0] = 0;
+      for (let i = 1; i < n; i++) {
+        const nx = this._dataPx(g.xAxis, this._decodeValue(g._dashX, g.xMeta, i));
+        const ny = this._dataPx(g.yAxis, this._decodeValue(g._dashY, g.yMeta, i));
+        if (Number.isFinite(nx) && Number.isFinite(ny) && Number.isFinite(px) && Number.isFinite(py)) {
+          acc += Math.hypot(nx - px, ny - py) * this.dpr;
+        }
+        lens[i] = acc;
+        px = nx;
+        py = ny;
       }
-      lens[i] = acc;
-      px = nx;
-      py = ny;
+      if (!g._lenBuf) g._lenBuf = this._upload(lens);
+      else {
+        gl.bindBuffer(gl.ARRAY_BUFFER, g._lenBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, lens, gl.DYNAMIC_DRAW);
+      }
+      g._lineDashSignature = signature;
     }
-    if (!g._lenBuf) g._lenBuf = this._upload(lens);
-    else {
-      gl.bindBuffer(gl.ARRAY_BUFFER, g._lenBuf);
-      gl.bufferData(gl.ARRAY_BUFFER, lens, gl.DYNAMIC_DRAW);
-    }
-    const arr = new Float32Array(8);
-    let period = 0;
-    const count = Math.min(dash.length, 8);
-    for (let i = 0; i < count; i++) {
-      arr[i] = dash[i] * dpr;
-      period += arr[i];
-    }
-    gl.uniform1i(u("u_dashCount"), count);
-    gl.uniform1fv(u("u_dashArr"), arr);
-    gl.uniform1f(u("u_dashPeriod"), Math.max(period, 1e-3));
+    const pattern = this._dashPattern(g, dash);
+    gl.uniform1i(u("u_dashCount"), pattern.count);
+    gl.uniform1fv(u("u_dashArr"), pattern.array);
+    gl.uniform1f(u("u_dashPeriod"), Math.max(pattern.period, 1e-3));
     return true;
   }
 
@@ -4016,6 +4075,19 @@ export class ChartView {
 
 
 
+  _labelDomStateSignature() {
+    const p = this.plot;
+    const signature = [
+      this.spec, this.axes, this._themeEpoch,
+      this.size.w, this.size.h, p.x, p.y, p.w, p.h,
+    ];
+    for (const axisId of this._axisIds()) {
+      const [lo, hi] = this._axisRange(axisId);
+      signature.push(axisId, lo, hi);
+    }
+    return signature;
+  }
+
   _drawChrome() {
     const s = this.spec;
     const dpr = this.dpr;
@@ -4023,13 +4095,18 @@ export class ChartView {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, this.size.w, this.size.h);
     const now = this._now();
-    const labelCadenceMs = this._viewAnim ? 80 : 0;
-    const updateLabels = labelCadenceMs === 0
-      || this._lastLabelDraw === null
-      || now - this._lastLabelDraw >= labelCadenceMs;
+    const labelSignature = this._labelDomStateSignature();
+    const labelsDirty = this._lastLabelDraw === null ||
+      !this._sameSignature(this._labelDomSignature, labelSignature);
+    const labelCadenceMs = this._viewAnim || this._viewMutationActive ? 80 : 0;
+    const updateLabels = labelsDirty && (
+      this._lastLabelDraw === null || labelCadenceMs === 0 ||
+      now - this._lastLabelDraw >= labelCadenceMs
+    );
     if (updateLabels) {
       this.labels.textContent = "";
       this._lastLabelDraw = now;
+      this._labelDomSignature = labelSignature;
     }
 
     const p = this.plot;
@@ -4497,12 +4574,21 @@ export class ChartView {
     const xMeta = cpu.xMeta || g.xMeta;
     const axis = this._axis(g.xAxis);
     const target = this._axisCoord(axis, dataX);
+    const limit = Math.min(cpu.x.length, g.n || cpu.x.length);
+    const starts = g._transitionPrevXValues;
+    const progress = g._transitionPositionProgress;
+    // Line ingest sorts x once. Away from positional transitions, monotonic
+    // x means the nearest point in any monotonic axis transform is one of the
+    // two insertion neighbours: O(log N), not a pointermove-time full scan.
+    // Interpolated animation positions deliberately retain the linear path —
+    // key matching can change their ordering mid-transition.
+    if (g.trace?.kind === "line" && g._cpuXSorted !== false &&
+        !(starts && Number.isFinite(progress))) {
+      return this._nearestSortedCpuIndex(cpu.x, xMeta, axis, target, limit);
+    }
     let best = -1;
     let bestDist = Infinity;
-    const limit = Math.min(cpu.x.length, g.n || cpu.x.length);
     for (let i = 0; i < limit; i++) {
-      const starts = g._transitionPrevXValues;
-      const progress = g._transitionPositionProgress;
       const xEncoded = starts && Number.isFinite(progress)
         ? starts[i] + (cpu.x[i] - starts[i]) * progress
         : cpu.x[i];
@@ -4516,11 +4602,57 @@ export class ChartView {
     return best;
   }
 
-  _hoverAt(cssX, cssY) {
+  _nearestSortedCpuIndex(values, meta, axis, target, limit) {
+    if (!Number.isFinite(target) || limit <= 0) return -1;
+    const scale = meta.scale || 1;
+    const offset = meta.offset || 0;
+    const valueAt = (i) => values[i] / scale + offset;
+    const first = valueAt(0);
+    const last = valueAt(limit - 1);
+    // Hand-written client specs do not pass through the Python sorted-ingest
+    // gate. Preserve correctness for those instead of assuming the contract.
+    if (!Number.isFinite(first) || !Number.isFinite(last) || first > last) {
+      let best = -1;
+      let bestDist = Infinity;
+      for (let i = 0; i < limit; i++) {
+        const d = Math.abs(this._axisCoord(axis, valueAt(i)) - target);
+        if (d < bestDist) { bestDist = d; best = i; }
+      }
+      return best;
+    }
+    const targetValue = this._axisValue(axis, target);
+    let lo = 0;
+    let hi = limit;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (valueAt(mid) < targetValue) lo = mid + 1;
+      else hi = mid;
+    }
+    let best = -1;
+    let bestDist = Infinity;
+    for (const i of [lo - 1, lo]) {
+      if (i < 0 || i >= limit) continue;
+      const d = Math.abs(this._axisCoord(axis, valueAt(i)) - target);
+      if (d < bestDist) { bestDist = d; best = i; }
+    }
+    return best;
+  }
+
+  _hoverAt(cssX, cssY, gpuPickMiss = false) {
     const maxPx = 12;
     let best = null;
+    const gpuPickOperational = gpuPickMiss && this._pickable && !this._glLost &&
+      !!this.gl && !this.gl.isContextLost();
     for (const g of this.gpuTraces) {
       if (g.tier === "density") continue;
+      // `_pickAt` already rendered every point-pickable trace with a minimum
+      // six-device-pixel target. Once that working pass reports background,
+      // a second O(N) CPU scan cannot improve point identity reliably (and its
+      // fixed 12px radius disagreed with rendered per-point sizes).
+      if (
+        gpuPickOperational && markOf(g.trace.kind).pointPick &&
+        g.pickBase > 0 && g.pickCount > 0
+      ) continue;
       const [dataX, dataY] = this._dataFromCanvas(cssX, cssY, g.xAxis, g.yAxis);
       if (!Number.isFinite(dataX) || !Number.isFinite(dataY)) continue;
       if (g.heatmap && g._cpuHeatmap) {
@@ -4671,6 +4803,7 @@ export class ChartView {
       this._hoverId = -1;
       this._hoverTarget = null;
       this._lastHoverXY = null;
+      this._lastHoverPixel = null;
       this._pickSeq = (this._pickSeq || 0) + 1;
       this._hideTooltip();
       if (hadHover) this.draw();
@@ -4679,7 +4812,17 @@ export class ChartView {
     const rect = this.canvas.getBoundingClientRect();
     const cssX = e.clientX - rect.left;
     const cssY = e.clientY - rect.top;
-    const hit = this._pickAt(cssX, cssY) || this._hoverAt(cssX, cssY);
+    const hoverPixel = `${Math.round(cssX * this.dpr)}:` +
+      `${Math.round((this.plot.h - cssY) * this.dpr)}`;
+    if (hoverPixel === this._lastHoverPixel) {
+      if (this._hoverTarget) {
+        this._lastHoverXY = { clientX: e.clientX, clientY: e.clientY };
+        if (!this._tooltipAnchor) this._renderTooltip(this._lastRow, e.clientX, e.clientY);
+      }
+      return;
+    }
+    this._lastHoverPixel = hoverPixel;
+    const hit = this._pickAt(cssX, cssY) || this._hoverAt(cssX, cssY, true);
     if (!hit) {
       const hadHover = this._hoverId !== -1;
       this._hoverId = -1;
@@ -4733,8 +4876,17 @@ export class ChartView {
     return new Uint32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
   }
 
+  _parseColor(expr, fallback) {
+    return parseColor(this.root, expr, fallback, this._colorCache);
+  }
+
   _applyTheme() {
-    this.theme = readTheme(this.root);
+    // CSS expressions are host-relative. A scheme/class/token mutation is the
+    // sole invalidation boundary for this view's color cache, keeping ordinary
+    // draw/hover frames free of probe elements and forced style resolution.
+    this._colorCache.clear();
+    this._themeEpoch += 1;
+    this.theme = readTheme(this.root, this._colorCache);
     // A theme read on a detached root saw no computed styles; stay flagged
     // stale until the element connects and _healStaleTheme re-reads.
     this._themeStale = !this.root.isConnected;
@@ -4849,6 +5001,7 @@ export class ChartView {
       "xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "baseBuf",
       "x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf",
       "posBuf", "value1Buf", "value0Buf",
+      "_lenBuf", "_segmentDashOffsetBuf", "_segmentDashDirBuf",
       "_transitionPrevXBuf", "_transitionPrevYBuf",
       "_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",
     ]);
