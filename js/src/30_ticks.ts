@@ -12,7 +12,7 @@ function niceStep(rough) {
   return 10 * mag;
 }
 
-function linearTicks(lo, hi, target = 6) {
+export function linearTicks(lo, hi, target = 6) {
   if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { ticks: [], step: 1 };
   const a = Math.min(lo, hi);
   const b = Math.max(lo, hi);
@@ -26,7 +26,7 @@ function linearTicks(lo, hi, target = 6) {
   return { ticks: out, step };
 }
 
-function logTicks(lo, hi, target = 6) {
+export function logTicks(lo, hi, target = 6) {
   if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { ticks: [], step: 1 };
   const a = Math.min(lo, hi);
   const b = Math.max(lo, hi);
@@ -52,7 +52,7 @@ function logTicks(lo, hi, target = 6) {
   return { ticks: out, labels: labels.length ? labels : out, step: 1, log: true };
 }
 
-function categoryTicks(lo, hi, categories, target = 6) {
+export function categoryTicks(lo, hi, categories, target = 6) {
   if (!categories || !categories.length) return { ticks: [], step: 1 };
   const start = Math.max(0, Math.ceil(Math.min(lo, hi)));
   const stop = Math.min(categories.length - 1, Math.floor(Math.max(lo, hi)));
@@ -73,7 +73,7 @@ const TIME_STEPS = [
   MS.d, 2 * MS.d, 7 * MS.d, 14 * MS.d,
 ];
 
-function timeTicks(lo, hi, target = 6) {
+export function timeTicks(lo, hi, target = 6) {
   if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { ticks: [], step: MS.d };
   const a = Math.min(lo, hi);
   const b = Math.max(lo, hi);
@@ -126,7 +126,7 @@ function fmtTime(ms, step) {
   return `${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}.${pad(d.getUTCMilliseconds(), 3)}`;
 }
 
-function fmtLinear(v, step) {
+export function fmtLinear(v, step) {
   const av = Math.abs(v);
   if (av >= 1e6 || (av !== 0 && av < 1e-4)) return v.toExponential(1).replace("e+", "e");
   let dec = step ? Math.max(0, Math.ceil(-Math.log10(Math.abs(step)))) : 0;
@@ -137,7 +137,7 @@ function fmtLinear(v, step) {
 // Match Python's default ``:g`` formatting used by the SVG/native colorbar
 // exporters. Explicit ticks are authored values, so their precision must not
 // be inferred from the unrelated automatic tick step for the whole domain.
-function fmtGeneral(v, precision = 6) {
+export function fmtGeneral(v, precision = 6) {
   const value = Number(v);
   if (!Number.isFinite(value)) return String(v);
   if (value === 0) return Object.is(value, -0) ? "-0" : "0";
@@ -155,12 +155,12 @@ function fmtGeneral(v, precision = 6) {
   return text;
 }
 
-function fmtCategory(v, categories) {
+export function fmtCategory(v, categories) {
   const i = Math.round(v);
   return i >= 0 && i < categories.length ? String(categories[i]) : "";
 }
 
-function fmtNumberSpec(v, format) {
+export function fmtNumberSpec(v, format) {
   if (typeof format !== "string" || !Number.isFinite(Number(v))) return null;
   const percent = format.endsWith("%");
   const raw = percent ? format.slice(0, -1) : format;
@@ -199,7 +199,7 @@ function fmtTimeSpec(ms, format) {
   });
 }
 
-function fmtAxis(axis, v, tickStep) {
+export function fmtAxis(axis, v, tickStep) {
   if (axis && axis.kind === "category") return fmtCategory(v, axis.categories || []);
   if (axis && axis.kind === "time") return fmtTimeSpec(v, axis.format) || fmtTime(v, tickStep);
   const formatted = fmtNumberSpec(v, axis && axis.format);
@@ -209,7 +209,7 @@ function fmtAxis(axis, v, tickStep) {
   return formatted || fmtLinear(v, tickStep);
 }
 
-function fmtValue(v, kind) {
+export function fmtValue(v, kind?: any) {
   if (kind === "time_ms") {
     const d = new Date(v);
     return d.toISOString().replace("T", " ").replace(".000Z", "Z");

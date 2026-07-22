@@ -1,6 +1,8 @@
 ---
 title: Legends
 description: Label named series and configure built-in or framework-rendered legends.
+components:
+  - xy.legend
 ---
 
 # Legends

@@ -30,7 +30,7 @@ clear ImportError when it can't load, with no pure-Python fallback.
 | static display-list raster, row-banded polyline/point/segment paint, batched fill+stroke triangle meshes, affine scatter projection plus typed color/size resolution, density/heatmap colormap and sampling | Rust (ABI v36) | correct — commands borrow f32/u8 payload or canonical spans synchronously; compact stratified sampling reuses factorization counts; batched/banded output is byte-identical |
 | signal processing: `xy_rfft`, `xy_welch_spectra`, `xy_spectrogram` | Rust (ABI v36) | correct — O(N) transforms over sample columns; window/segment policy stays in Python |
 | geometry/triangulation: `xy_delaunay_triangles`, `xy_polygon_triangles`, `xy_marching_squares`, `xy_marching_triangles`, `xy_streamlines`, `xy_vector_segments`, `xy_quad_mesh_triangles`, `xy_sector_triangles`, `xy_indexed_triangles`, `xy_triangle_edges` | Rust (ABI v36) | correct — output is screen-bounded index/vertex buffers; level choice and styling stay in Python |
-| statistics: `xy_correlation`, `xy_weighted_ecdf`, `xy_histogram2d`, `xy_stacked_bounds` | Rust (ABI v36) | correct — row-scan reductions; binning policy and labels stay in Python |
+| statistics: `xy_correlation`, `xy_weighted_ecdf`, `xy_histogram2d`, `xy_stacked_bounds` | Rust (ABI v36) | correct — row-scan reductions; binning policy and labels stay in Python. Unweighted `xy_histogram2d` fans out with per-worker u64 grids (integer merge, thread-count invariant); the weighted case stays serial because f64 accumulation order must not vary with core count (§21) |
 | style/text helpers: `xy_css_check` (`css.rs`), `xy_svg_poly_path` (`svg.rs`) | Rust (ABI v36) | correct by a different rule — not O(rows) but O(points)/per-value on the export and validation paths, where per-item Python object churn dominates; error *messages* still assembled in Python |
 | ohlc_decimate (when finance returns) | was NumPy-in-kernels.py | acceptable stopgap **only** because candles decimate to ≤px buckets; promote to Rust with the pyramid work |
 | tier decisions, hysteresis, drill_seq, spec/emitters, channel resolution | Python | correct — keep |
@@ -282,8 +282,10 @@ from-scratch ingest). `Figure.append(trace_id, x, y, color=, size=)`
 validates atomically (line appends must continue the sorted series;
 categorical channels and shared columns are rejected for now), frees the
 trace's pyramid for lazy rebuild, exits any drill, and returns an `append`
-message carrying a complete fresh payload — screen-bounded by construction
-(§29), so the wire never needs deltas. The client rebuilds only the traces
+message carrying a complete fresh payload in the split layout — screen-bounded
+by construction (§29), so the wire never needs deltas, and shipped exactly
+once per tick (wire-protocol §4: the widget host rides the spec/buffers trait
+update; the socket host pushes a `msg`). The client rebuilds only the traces
 named in `affected`, applies the follow policy (refit when at home, slide
 when pinned to the live right edge, hold when inspecting history), and
 refines tiered traces to its current window through the normal

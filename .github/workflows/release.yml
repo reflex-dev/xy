@@ -68,6 +68,8 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
+      - name: Install JS build toolchain
+        run: npm ci
       - name: Verify committed JS bundles are fresh
         run: node js/build.mjs --check
       - name: Build JS client
@@ -145,6 +147,8 @@ jobs:
         with:
           # Pyodide 0.29.x / pyodide_2025_0 ABI compiler version.
           version: "4.0.9"
+      - name: Install JS build toolchain
+        run: npm ci
       - name: Verify committed JS bundles are fresh
         run: node js/build.mjs --check
       - name: Build JS client
@@ -199,6 +203,8 @@ jobs:
       # user's machine if they install from sdist and have a toolchain. There is
       # no fallback: without a toolchain the compute layer raises a clear
       # ImportError on first use (hatch_build.py). Wheels are the normal path.
+      - name: Install JS build toolchain
+        run: npm ci
       - name: Verify committed JS bundles are fresh
         run: node js/build.mjs --check
       - name: Build sdist

@@ -1,6 +1,26 @@
 ---
 title: Marks
 description: Bind data to XY marks, channels, axes, styles, and layers.
+components:
+  - xy.line
+  - xy.scatter
+  - xy.area
+  - xy.bar
+  - xy.column
+  - xy.histogram
+  - xy.box
+  - xy.violin
+  - xy.ecdf
+  - xy.heatmap
+  - xy.hexbin
+  - xy.contour
+  - xy.errorbar
+  - xy.error_band
+  - xy.step
+  - xy.stairs
+  - xy.stem
+  - xy.segments
+  - xy.triangle_mesh
 ---
 
 # Marks

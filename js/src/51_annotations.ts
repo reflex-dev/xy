@@ -1,3 +1,6 @@
+import { safeCssPaint } from "./20_theme";
+import { ChartView } from "./50_chartview";
+
 // ChartView annotation layer (§ chrome): reference lines/zones already draw
 // in _drawChrome; this part owns the 2D-canvas overlay — markers, arrows,
 // shape fills, and collision-nudged labels. Split out of 50_chartview.js;

@@ -73,6 +73,8 @@ jobs:
         with:
           toolchain: 1.97.0
 
+      - name: Install JS build toolchain
+        run: npm ci
       - name: Verify committed render client
         run: node js/build.mjs --check
 

@@ -55,6 +55,8 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install JS build toolchain
+        run: npm ci
       - name: Verify committed JS bundles are fresh
         run: node js/build.mjs --check
 
@@ -334,6 +336,9 @@ jobs:
         if: matrix.browser || matrix.build_js
         with:
           node-version: "22"
+      - name: Install JS build toolchain
+        if: matrix.build_js
+        run: npm ci
       - name: Build native core
         if: matrix.xy
         run: cargo build --release
@@ -402,6 +407,8 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
+      - name: Install JS build toolchain
+        run: npm ci
       - name: Build core + JS client
         run: |
           node js/build.mjs
@@ -548,6 +555,8 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install JS build toolchain
+        run: npm ci
       - name: Verify committed JS bundles are fresh
         run: node js/build.mjs --check
 
@@ -606,6 +615,8 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install JS build toolchain
+        run: npm ci
       - name: Verify committed JS bundles are fresh
         run: node js/build.mjs --check
 

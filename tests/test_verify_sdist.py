@@ -9,27 +9,23 @@ from typing import Optional, Union
 
 import pytest
 
+# Shaped like the real minified vite bundles: export aliases in the ESM,
+# a `var xy` IIFE namespace in the standalone build.
 INDEX_JS = (
-    "class ChartView {}\n"
-    "function render() {}\n"
-    "function renderStandalone() {}\n"
-    "function decodeFrame() {}\n"
-    "const padding = '" + ("x" * 1000) + "';\n"
-    "export { render, renderStandalone, decodeFrame, ChartView };\n"
+    "var C=class{};function r(){}function s(){}function d(){}"
+    "var p=`" + ("x" * 1000) + "`;"
+    "export{C as ChartView,d as decodeFrame,r as render,s as renderStandalone};"
 )
 STANDALONE_JS = (
-    "class ChartView {}\n"
-    "function render() {}\n"
-    "function renderStandalone() {}\n"
-    "function decodeFrame() {}\n"
-    "const padding = '" + ("x" * 1000) + "';\n"
-    "window.xy = { render, renderStandalone, decodeFrame, ChartView };\n"
+    "var xy=(function(e){var p=`" + ("x" * 1000) + "`;"
+    "return e.ChartView=class{},e.decodeFrame=()=>{},e.render=()=>{},"
+    "e.renderStandalone=()=>{},e})({});"
 )
 ENTRIES_JS = (
-    "function render() {}\n"
-    "function renderStandalone() {}\n"
+    "export function render() {}\n"
+    "export function renderStandalone() {}\n"
     "const padding = '" + ("x" * 1000) + "';\n"
-    "// ---- exports ----\n"
+    "export default { render, decodeFrame };\n"
 )
 README_MD = (
     "# xy\n\n"
@@ -176,7 +172,7 @@ def _write_sdist(
                 data = INDEX_JS.encode("utf-8")
             elif name == "python/xy/static/standalone.js":
                 data = STANDALONE_JS.encode("utf-8")
-            elif name == "js/src/60_entries.js":
+            elif name == "js/src/60_entries.ts":
                 data = ENTRIES_JS.encode("utf-8")
             elif name == "README.md":
                 data = README_MD.encode("utf-8")
@@ -522,9 +518,9 @@ def test_verify_sdist_rejects_corrupt_static_bundle(tmp_path: Path) -> None:
 
 def test_verify_sdist_rejects_corrupt_source_entry_bundle(tmp_path: Path) -> None:
     sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(sdist, replacements={"js/src/60_entries.js": "not the source client"})
+    _write_sdist(sdist, replacements={"js/src/60_entries.ts": "not the source client"})
 
-    with pytest.raises(AssertionError, match=r"60_entries\.js"):
+    with pytest.raises(AssertionError, match=r"60_entries\.ts"):
         verify_sdist.verify_sdist(str(sdist))
 
 

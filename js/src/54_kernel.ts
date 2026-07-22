@@ -1,10 +1,15 @@
+import { payloadBuffers } from "./00_header";
+import { lodApplyDensityUpdate, lodApplyDrill, lodDropDrill, lodRememberDensity } from "./45_lod";
+import { xyCreateRebinWorker } from "./46_worker";
+import { ChartView } from "./50_chartview";
+
 // ChartView <-> kernel comm: debounced density view-requests, streaming
 // appends, the inbound message handler, and the deep-zoom drill lifecycle
 // (§16). Split out of 50_chartview.js; augments the prototype so `this.*`
 // is unchanged.
 
 Object.assign(ChartView.prototype, {
-  _scheduleViewRequest(viewOverride = this.view, opts = {}) {
+  _scheduleViewRequest(viewOverride = this.view, opts: any = {}) {
     if (this._destroyed || this._glLost) return;
     if (!this.comm) {
       // Kernel-less (standalone HTML): density traces refine via the bundled
@@ -75,7 +80,7 @@ Object.assign(ChartView.prototype, {
   // Standalone (kernel-less) density refinement. Debounced like the kernel
   // request path, then the retained §28 sample re-bins in the bundled worker —
   // off the main thread — and applies like a density_update.
-  _scheduleSampleRebin(viewOverride = this.view, opts = {}) {
+  _scheduleSampleRebin(viewOverride = this.view, opts: any = {}) {
     if (this._destroyed || this._glLost || this._sampleRebinDisabled) return;
     const targets = (this.gpuTraces || []).filter(
       (g) => g.tier === "density" && g.sampleOverlay && g.sampleOverlay._cpu
@@ -192,12 +197,15 @@ Object.assign(ChartView.prototype, {
   // matter how much data has accumulated — and names the traces whose data
   // changed. Only those GPU traces rebuild; everything else keeps its state.
   // Tiered traces then refine to the *current* window through the normal
-  // stale-while-revalidate request path (§17).
+  // stale-while-revalidate request path (§17). The payload arrives in
+  // whichever layout the spec declares — split (per-column buffers, the
+  // current kernel) or a legacy packed blob from an older saved state.
   _applyAppend(msg, buffers) {
     const spec = msg.spec;
-    const blobRaw = buffers && buffers[0];
-    if (!spec || !blobRaw || !spec.traces) return;
-    const blob = bytesToSpan(blobRaw);
+    if (!spec || !spec.traces) return;
+    const raw = spec.buffer_layout === "split" ? buffers : buffers && buffers[0];
+    if (raw == null) return;
+    const payload = payloadBuffers(spec, raw);
     // Follow policy, decided against the OLD home view before it moves:
     // - at home (never zoomed, or axes reset): the chart follows its data —
     //   refit both axes to the new domain, the live-dashboard default.
@@ -223,7 +231,7 @@ Object.assign(ChartView.prototype, {
       nextView = { ...this.view, x1: nextHome.x1, x0: nextHome.x1 - w };
     }
     const animated = !!spec.animation || spec.traces.some((trace) => !!trace.animation);
-    if (animated && !this._glLost && this.gl && this.updatePayload(spec, blob)) {
+    if (animated && !this._glLost && this.gl && this.updatePayload(spec, payload)) {
       // updatePayload owns previous/next GPU lifetime and matching. Preserve
       // append's follow policy instead of always animating to the new home
       // domain (history inspection must remain stationary).
@@ -236,9 +244,9 @@ Object.assign(ChartView.prototype, {
     // rebuilds the streamed state, not the initial one.
     this.spec = spec;
     this.axes = this._normalizeAxes(spec);
-    this._payload = blob;
+    this._payload = payload;
     this.view0 = this._copyView({
-      ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]) => [id, [...axis.range]])),
+      ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]: any) => [id, [...axis.range]])),
     });
     if (atHome) {
       this.view = this._copyView(this.view0);
@@ -257,7 +265,7 @@ Object.assign(ChartView.prototype, {
       const ts = spec.traces.find((t) => t.id === id);
       if (i < 0 || !ts) continue;
       this._destroyTraceResources(this.gpuTraces[i], texSeen);
-      this.gpuTraces[i] = this._buildTrace(blob, ts);
+      this.gpuTraces[i] = this._buildTrace(payload, ts);
     }
     this._updatePickable();
     this._scheduleViewRequest(this.view, { delay: 0 });

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from reflex_site_shared.docs import discover_docs
 from xy_docs.config import DOCS_CONFIG
+from xy_docs.plugins import page_markdown_with_api_reference
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 BUILD_ROOT = APP_ROOT / ".web" / "build" / "client" / "docs" / "xy"
@@ -26,10 +27,13 @@ def markdown_paths(route: str, *, is_index: bool) -> tuple[Path, Path]:
 
 
 def main() -> None:
-    """Check that every public source page has byte-identical Markdown URLs."""
+    """Check every Markdown URL against its authored and generated content."""
     pages = discover_docs(DOCS_CONFIG)
     for page in pages:
-        source = page.source_path.read_bytes()
+        expected = page_markdown_with_api_reference(
+            page,
+            include_frontmatter=True,
+        ).encode()
         paths = markdown_paths(
             page.route,
             is_index=page.relative_path.stem.lower() == "index",
@@ -39,8 +43,8 @@ def main() -> None:
             if not output_path.is_file():
                 msg = f"Missing Markdown asset: {output_path}"
                 raise RuntimeError(msg)
-            if output_path.read_bytes() != source:
-                msg = f"Markdown asset differs from its source: {output_path}"
+            if output_path.read_bytes() != expected:
+                msg = f"Markdown asset differs from generated content: {output_path}"
                 raise RuntimeError(msg)
 
 

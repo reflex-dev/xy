@@ -48,10 +48,15 @@ instead of treating the implementation alone as authoritative.
   package at app compile (no second copy to drift), and the adapter stays
   out of the root `xy` sdist (`scripts/verify_sdist.py` enforces it).
   Tests: `tests/reflex_adapter/` (skip unless reflex installed).
-- `js/src/*.js` — the render client as ordered parts (concat order in
-  `js/build.mjs`; exports live only in `60_entries.js`), one dependency-free ES
-  module. **No npm packages.** `node js/build.mjs` copies it to
-  `python/xy/static/` (committed artifacts).
+- `js/src/*.ts` — the render client as TypeScript ES modules (one module per
+  former concat part; `60_entries.ts` is the entry and the only public export
+  surface). `node js/build.mjs` typechecks (`js/tsconfig.json`), lints the
+  shaders, and has vite bundle + minify into `python/xy/static/index.js`
+  (anywidget ESM) and `standalone.js` (IIFE, `window.xy`) — committed,
+  minified artifacts; the minified bundles are what ships to the client.
+  npm devDependencies (vite/typescript/playwright, pinned in
+  `package-lock.json`) are build/test-time only — the shipped client stays
+  runtime-dependency-free. Run `npm ci` once per checkout.
 - `tests/`, `scripts/bench.py` (§12 harness), `scripts/smoke_render.py`
   (headless Chromium pixel probe).
 
@@ -59,7 +64,8 @@ instead of treating the implementation alone as authoritative.
 
 ```bash
 cargo test && cargo build --release   # core
-node js/build.mjs                     # regenerate static/ after JS edits
+npm ci                                # once per checkout: vite + tsc toolchain
+node js/build.mjs                     # typecheck + regenerate minified static/ after JS edits
 python3 scripts/abi_smoke.py          # C-ABI seam, stdlib only (no PyPI needed)
 python3 scripts/render_smoke_nonumpy.py  # WebGL2 render path in headless Chromium
 uv venv && uv pip install -e ".[dev]"

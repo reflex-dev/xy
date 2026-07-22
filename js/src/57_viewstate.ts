@@ -1,3 +1,5 @@
+import { ChartView } from "./50_chartview";
+
 // Unified view state (spec/design/view-state.md): the canonical durable-state
 // document, the single apply-a-state-patch implementation every writer calls,
 // the client-local history stack, axis-band gesture scoping, and the
@@ -22,7 +24,7 @@ Object.assign(ChartView.prototype, {
     // The whole public JS control surface (§5.3) — one object on the chart
     // root, identical in notebook, Reflex, and standalone HTML mounts.
     this.root.xy = {
-      applyState: (patch, opts = {}) => this._applyStatePatch(patch, {
+      applyState: (patch, opts: any = {}) => this._applyStatePatch(patch, {
         source: "api",
         animate: opts.animate === true,
         history: opts.history !== false,
@@ -106,7 +108,7 @@ Object.assign(ChartView.prototype, {
   // The one implementation of "apply a state patch" (§3): merge-patch
   // semantics, every entry point in view-state.md is a caller. Returns
   // true when the patch was accepted (even if it was a no-op).
-  _applyStatePatch(patch, opts = {}) {
+  _applyStatePatch(patch, opts: any = {}) {
     if (this._destroyed) return false;
     const error = this._validateStatePatch(patch);
     if (error) {
@@ -159,7 +161,7 @@ Object.assign(ChartView.prototype, {
   // mutation that is about to commit). Called from the §3 mutation path;
   // linked and history-sourced writes never push, and all phases of one
   // gesture (same interaction id) coalesce into one entry.
-  _historyRecord(opts = {}) {
+  _historyRecord(opts: any = {}) {
     if (!this._historyPast || !this._historyEnabled() || this._destroyed) return;
     if (opts.history === false) return;
     if (opts.source === "linked" || opts.source === "history") return;
@@ -192,7 +194,7 @@ Object.assign(ChartView.prototype, {
     // A stored snapshot mentions everything, but a rows-selection snapshot
     // carries only the opaque marker — restore the geometry it can express
     // and leave the marker out (rows-selections are non-durable, §5.1).
-    const patch = { v: 1, ranges: snapshot.ranges };
+    const patch: any = { v: 1, ranges: snapshot.ranges };
     if (!snapshot.selection || !snapshot.selection.rows) {
       patch.selection = snapshot.selection ?? null;
     }
@@ -296,7 +298,7 @@ Object.assign(ChartView.prototype, {
     if (!this._axisBands) return;
     const OUT = 24; // strip breadth outside the plot box
     const IN = 6; //  gutter inside the plot box
-    for (const [axisId, band] of Object.entries(this._axisBands)) {
+    for (const [axisId, band] of Object.entries<any>(this._axisBands)) {
       const dim = this._axisDim(axisId);
       const side = this._axis(axisId).side;
       if (dim === "x") {
@@ -529,7 +531,7 @@ Object.assign(ChartView.prototype, {
       y_axis: (g && g.yAxis) || "y",
       color: this._seriesColorCss(g),
     }] : [];
-    const payload = {
+    const payload: any = {
       active: true,
       cursor: {
         px: [clientX - rootRect.left, clientY - rootRect.top],

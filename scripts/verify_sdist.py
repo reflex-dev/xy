@@ -65,15 +65,19 @@ REQUIRED_FILES = {
     "spec/assets/launch-benchmark-comparison.svg",
     "hatch_build.py",
     "pyproject.toml",
-    "js/src/00_header.js",
-    "js/src/10_colormaps.js",
-    "js/src/20_theme.js",
-    "js/src/30_ticks.js",
-    "js/src/40_gl.js",
-    "js/src/45_lod.js",
-    "js/src/50_chartview.js",
-    "js/src/55_marks.js",
-    "js/src/60_entries.js",
+    "js/build.mjs",
+    "js/tsconfig.json",
+    "js/src/00_header.ts",
+    "js/src/10_colormaps.ts",
+    "js/src/20_theme.ts",
+    "js/src/30_ticks.ts",
+    "js/src/40_gl.ts",
+    "js/src/45_lod.ts",
+    "js/src/50_chartview.ts",
+    "js/src/55_marks.ts",
+    "js/src/60_entries.ts",
+    "package.json",
+    "package-lock.json",
     "python/xy/__init__.py",
     "python/xy/_framing.py",
     "python/xy/_native.py",
@@ -328,19 +332,27 @@ def verify_sdist(path: str) -> None:
         path,
         root,
         "python/xy/static/index.js",
-        {"export { render", "function render(", "function decodeFrame(", "class ChartView"},
+        # The bundle is minified (identifiers renamed), so markers are the
+        # export aliases the minifier must preserve.
+        {"as render", "as renderStandalone", "as decodeFrame", "as ChartView"},
     )
     _require_file_contains(
         path,
         root,
         "python/xy/static/standalone.js",
-        {"window.xy", "function renderStandalone(", "function decodeFrame(", "class ChartView"},
+        # Minified IIFE: a top-level `var xy` namespace (window.xy in the
+        # classic <script> that to_html emits) carrying the public surface.
+        {"var xy=", ".renderStandalone=", ".decodeFrame=", ".ChartView="},
     )
     _require_file_contains(
         path,
         root,
-        "js/src/60_entries.js",
-        {"function render(", "function renderStandalone(", "// ---- exports ----"},
+        "js/src/60_entries.ts",
+        {
+            "export function render(",
+            "export function renderStandalone(",
+            "export default { render, decodeFrame };",
+        },
     )
     _require_file_contains(
         path,

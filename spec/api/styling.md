@@ -171,13 +171,13 @@ but they fail differently, and only the numeric grammar falls back.
   with a trailing `%`, which multiplies the value by 100 and appends the sign —
   for example `.2f`, `,.0f`, `.1%`. The trailing `f` is optional. Any other
   string **falls back**: `fmtNumberSpec` returns `null`
-  (`js/src/30_ticks.js:168`) and `fmtAxis` takes its `|| fmtLinear(...)` branch
+  (`js/src/30_ticks.ts:168`) and `fmtAxis` takes its `|| fmtLinear(...)` branch
   (`:209`), so the axis silently reverts to the automatic formatter. On a log
   axis, a value in `(0, 1)` that the spec would render as `"0"` falls back the
   same way.
 - **Time axes** accept a strftime subset of exactly `%Y %m %d %H %M %S %b %B`.
   All fields are **UTC**; `%b`/`%B` are English month names. A time spec
-  **never** falls back: `fmtTimeSpec` (`js/src/30_ticks.js:180-200`)
+  **never** falls back: `fmtTimeSpec` (`js/src/30_ticks.ts:180-200`)
   substitutes the tokens it knows and copies every other character through
   verbatim, so it always returns a string and the `|| fmtTime(...)` branch at
   `:204` is unreachable. An unrecognized `%` token such as `%y` therefore
@@ -275,7 +275,7 @@ Set them on `.xy` or any ancestor:
 | `--chart-axis` | Axis lines (canvas) | `currentColor` @ 55% |
 | `--chart-tooltip-bg` / `--chart-tooltip-text` | Tooltip | `rgba(20,24,33,.92)` / `#fff` |
 | `--chart-legend-bg` | Legend background | `rgba(128,128,128,.08)` |
-| `--chart-badge-bg` / `--chart-badge-text` | Reduction badges | `rgba(255,255,255,.82)` / `#0f172a` |
+| `--chart-badge-bg` / `--chart-badge-text` | Reduction badges | `rgba(255,255,255,.82)` / `#0f172a` (light; see below) |
 | `--chart-modebar-bg` / `--chart-modebar-active` | Modebar / active button | `rgba(255,255,255,.78)` / `rgba(128,128,128,.2)` (light; see below) |
 | `--chart-selection` / `--chart-selection-fill` | Box-select rectangle | `rgba(90,140,240,.9)` / `…,.15)` |
 | `--chart-zoom-selection` / `--chart-zoom-selection-fill` | Box-zoom drag rectangle | `rgba(120,120,120,.9)` / `…,.12)` |
@@ -284,11 +284,13 @@ Set them on `.xy` or any ancestor:
 | `--chart-cursor` / `--chart-cursor-pan` | Plot cursor (box-zoom / pan) | `crosshair` / `grab` |
 | `--chart-focus` | Keyboard focus ring on the plot canvas and modebar buttons | `#2563eb` |
 
-The modebar defaults are **scheme-aware**: a `.dark` class on the chart root or
-any ancestor flips the internal fallbacks to `rgba(37,42,52,.9)` /
-`rgba(255,255,255,.16)`. The public `--chart-modebar-*` tokens override both
-schemes; the modebar's border and shadow have no public token and are internal
-`--xy-modebar-*` defaults only. `--chart-focus` is likewise not carried into
+The modebar and badge defaults are **scheme-aware**: a `.dark` class on the
+chart root or any ancestor flips the internal fallbacks — modebar to
+`rgba(37,42,52,.9)` / `rgba(255,255,255,.16)`, badges to `rgba(30,35,44,.88)`
+bg / `#f8fafc` text. The public `--chart-modebar-*` and `--chart-badge-*`
+tokens override both schemes; the modebar's border and shadow and the badge's
+shadow have no public token and are internal `--xy-modebar-*` /
+`--xy-badge-shadow` defaults only. `--chart-focus` is likewise not carried into
 client-side PNG/SVG export, which snapshots the other `--chart-*` tokens.
 
 The **figure background** (matplotlib's `figure.facecolor` — the whole card

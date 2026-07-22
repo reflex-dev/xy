@@ -7,7 +7,7 @@ grid, so a 100M-point figure exports as a few-hundred-KB, resolution-
 independent SVG in milliseconds — no browser, no extra dependencies.
 
 Layout, tick math, colormaps, and mark styling mirror the JS client
-(`30_ticks.js`, `10_colormaps.js`, `50_chartview.js`); tests assert the
+(`30_ticks.ts`, `10_colormaps.ts`, `50_chartview.ts`); tests assert the
 ported tables stay in sync with the JS parts. Known static-export
 approximations, documented in spec/api/styling.md: area mark-space gradients use
 the area's bounding box (SVG has no per-column gradient); complete chart color
@@ -43,7 +43,7 @@ def _stroke_opacity(style: dict[str, Any], default: float = 1.0) -> float:
     return float(style.get("opacity", default)) * float(style.get("stroke_opacity", 1.0))
 
 
-# Mirrors js/src/10_colormaps.js COLORMAP_STOPS (§36) — test-guarded.
+# Mirrors js/src/10_colormaps.ts COLORMAP_STOPS (§36) — test-guarded.
 COLORMAP_STOPS: dict[str, list[tuple[int, int, int]]] = {
     "binary": [(255, 255, 255), (0, 0, 0)],
     "gray": [
@@ -311,7 +311,7 @@ _AXIS_GRID_DASHES = {
 
 
 # ---------------------------------------------------------------------------
-# Tick math — ports of 30_ticks.js (f64 throughout, §16)
+# Tick math — ports of 30_ticks.ts (f64 throughout, §16)
 # ---------------------------------------------------------------------------
 
 
@@ -2182,7 +2182,7 @@ def _trace_paint_rgba(
 
 # The hexagon ring around a hexbin cell center, as fractions of the cell
 # pitch (style hex_dx/hex_dy). Shared by the SVG and raster exporters; the JS
-# client mirrors it in _buildHexbinMark (js/src/50_chartview.js) — keep them
+# client mirrors it in _buildHexbinMark (js/src/50_chartview.ts) — keep them
 # in sync.
 HEX_RING = (
     (0.0, -1.0 / 3.0),

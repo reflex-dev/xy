@@ -142,6 +142,14 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **Streaming append ships once, split, per tick (protocol v5).** The
+  `append` refresh now uses the same split buffer layout as first paint (no
+  packed join copy), and on the notebook widget it rides the single
+  `spec`/`buffers` trait update — which doubles as reopen state — instead of
+  being transmitted twice (trait re-sync plus a custom message). The client
+  applies appends when `spec.append.seq` advances; the Reflex socket push is
+  unchanged in shape apart from the split buffers. Halves streaming wire
+  bytes and removes two full-payload copies per tick.
 - **Responsive, author-defeatable browser chrome.** XY's visual defaults now
   live in a low-priority cascade layer, so Tailwind utilities, ordinary author
   CSS, and slot styles override them without `!important`. Long legends remain

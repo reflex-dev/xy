@@ -673,16 +673,16 @@ def test_density_and_heatmap_embed_png_rasters() -> None:
 
 
 def test_colormap_stops_stay_in_sync_with_js_client() -> None:
-    """The Python tables are ports of 10_colormaps.js — every stop must appear
+    """The Python tables are ports of 10_colormaps.ts — every stop must appear
     verbatim in the JS source, and the map names must match."""
-    js = (ROOT / "js" / "src" / "10_colormaps.js").read_text(encoding="utf-8")
+    js = (ROOT / "js" / "src" / "10_colormaps.ts").read_text(encoding="utf-8")
     body = js.split("COLORMAP_STOPS = {", 1)[1].split("};", 1)[0]
     js_names = set(re.findall(r"^\s*(\w+): \[", body, re.MULTILINE))
-    assert js_names == set(COLORMAP_STOPS), "colormap names diverged from 10_colormaps.js"
+    assert js_names == set(COLORMAP_STOPS), "colormap names diverged from 10_colormaps.ts"
     for name, stops in COLORMAP_STOPS.items():
         for r, g, b in stops:
             assert f"[{r}, {g}, {b}]" in body, (
-                f"{name} stop ({r},{g},{b}) missing in 10_colormaps.js"
+                f"{name} stop ({r},{g},{b}) missing in 10_colormaps.ts"
             )
 
 

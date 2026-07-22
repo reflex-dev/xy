@@ -1,6 +1,9 @@
 ---
 title: Axes
 description: Configure XY scale types, domains, ticks, labels, and named axes.
+components:
+  - xy.x_axis
+  - xy.y_axis
 ---
 
 # Axes

@@ -1,6 +1,8 @@
 ---
 title: Themes and Export
 description: Build reusable chart themes and keep colors, fonts, and chrome predictable across HTML, SVG, and PNG output.
+components:
+  - xy.theme
 ---
 
 # Themes and Export
