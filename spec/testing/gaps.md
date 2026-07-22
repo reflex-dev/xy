@@ -176,9 +176,14 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-014 — Reviewed visual regression baselines
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: the current visual smoke detects health/occupancy failures but
-  does not compare visual identity.
+- Status: `IMPLEMENTED`
+- Evidence: `scripts/visual_health_smoke.py`, `scripts/visual_baseline.py`,
+  `tests/test_visual_baseline.py`, `spec/visual-baselines/v1.json`, the hard
+  `Reviewed visual baseline (Chromium)` CI step, and its retained expected/
+  actual/diff artifacts.
+- Current gap: closed; the health probe remains separate while the reviewed,
+  pinned baseline gate checks semantic identity and tolerant pixels and rejects
+  corrupted data, color, label, and geometry controls.
 - Implemented when: the health smoke is retained and honestly named, while a
   small versioned baseline set uses pinned browser/font/viewport/DPR, semantic
   plus perceptual diff, explicit tolerances, corrupted-data/color/label/geometry
