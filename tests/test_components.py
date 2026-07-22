@@ -2205,7 +2205,10 @@ def test_declarative_chart_live_roundtrip():
     assert brushes == [{"x0": 2.0, "x1": 5.0, "y0": 0.0, "y1": 6.0}]  # normalized, before select
     np.testing.assert_array_equal(sels[0].index, [2, 3, 4, 5])
     kinds = [c["type"] for c, _ in sent]
-    assert kinds == ["pick_result", "selection", "append"]  # malformed select added nothing
-    assert w.spec["traces"][0]["n_points"] == 11  # trait re-sync carried the append
+    # Malformed select added nothing; append sends no custom message — the
+    # spec/buffers trait update is its only transmission (wire-protocol §4).
+    assert kinds == ["pick_result", "selection"]
+    assert w.spec["traces"][0]["n_points"] == 11  # the trait update carried the append
+    assert w.spec["append"]["affected"] == [0]  # and named it for the client
     assert len(chart.figure().traces[0].x.values) == 11
     assert chart.pick(0, 10)["x"] == 10.0  # readout sees the streamed row

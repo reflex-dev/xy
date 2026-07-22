@@ -8,7 +8,9 @@ recorded in the shipped spec, never silent (§28).
 from __future__ import annotations
 
 # Wire protocol version: the client refuses a mismatched spec loudly (§33).
-PROTOCOL_VERSION = 4
+# v5: streaming append ships split-layout buffers and, on the widget host,
+# rides the spec/buffers trait update (`spec.append.seq`) with no custom send.
+PROTOCOL_VERSION = 5
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the

@@ -327,10 +327,11 @@ absorbs newer publishes and always ships the latest payload.
   the previous, smaller home (`ChartView.updatePayload`, `js/src/56_animation.ts`).
 - **Streaming**: `reflex_xy.append(token, x=..., y=...)` from any handler,
   background task, or thread → `Figure.append` under the figure lock (worker
-  thread) → the same `append` message the notebook widget ships, pushed
-  room-wide as a `msg` event. The client applies it with the existing follow
-  policy (refit at home, slide when pinned to the live edge, hold when
-  inspecting history).
+  thread) → the same `append` message the kernel builds for the notebook
+  widget (which delivers it as its spec/buffers trait update, wire-protocol
+  §4), pushed room-wide as a `msg` event with split-layout buffers. The
+  client applies it with the existing follow policy (refit at home, slide
+  when pinned to the live edge, hold when inspecting history).
 - **Interaction** (pan/zoom/hover/select): `msg` round-trips into the
   kernel, exactly the anywidget flow — tier updates, density re-bins, exact
   f64 pick rows, selection masks as binary buffers.
