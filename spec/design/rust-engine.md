@@ -291,6 +291,10 @@ when pinned to the live right edge, hold when inspecting history), and
 refines tiered traces to its current window through the normal
 stale-while-revalidate request path (§17).
 
+**Landed since (Python-side):** O(K) `append_rows` delta frames for
+direct-tier traces — only the appended rows cross the wire, with recorded
+fallbacks and an offset-drift budget (wire-protocol §4).
+
 **Still future (`stream.rs`):** Rust-owned chunked append buffers with
 zone maps computed on seal, and — the important one — appends marking
 intersecting pyramid tiles dirty with lazy per-tile rebuild (bounded: a

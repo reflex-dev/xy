@@ -513,12 +513,24 @@ class PayloadMixin(_Host):
             ctx["next"][t.id] = cached
             return copy.deepcopy(cached["frag"])
         entry, record = self._emit_trace_scoped(t, pw, xr, yr, px_width)
-        ctx["next"][t.id] = {
+        cached_out: dict[str, Any] = {
             "key": key,
             "start_col": start_col,
             "frag": copy.deepcopy(entry),
             "records": record,
         }
+        # Geometry spans at ship time (zone-map reads, O(1)): the delta
+        # path's offset-drift budget must measure against what the client's
+        # buffers were encoded for — the current zones grow with every tail
+        # and would never trip the guard.
+        if t.x is not None and t.y is not None:
+            xs = float(t.x.max) - float(t.x.min)
+            ys = float(t.y.max) - float(t.y.min)
+            cached_out["spans"] = {
+                "x": xs if np.isfinite(xs) else 0.0,
+                "y": ys if np.isfinite(ys) else 0.0,
+            }
+        ctx["next"][t.id] = cached_out
         return entry
 
     def _base_entry(

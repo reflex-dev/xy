@@ -53,7 +53,11 @@ def test_widget_append_sends_partial_push_and_full_reopen_state():
     assert len(sent) == 1
     msg, buffers = sent[0]
     assert msg["type"] == "append"
-    assert msg["spec"]["append"] == {"seq": 1, "affected": [tid]}
+    assert msg["spec"]["append"] == {
+        "seq": 1,
+        "affected": [tid],
+        "delta_fallback": "no-baseline",  # first tick after paint (§28: recorded)
+    }
     assert all(isinstance(b, memoryview) for b in buffers)
 
     # Reopen state: full split payload, no append tag (it is state, not a push).
