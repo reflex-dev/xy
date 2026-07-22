@@ -177,7 +177,12 @@ class SelectEndEvent(TypedDict):
 
 
 class ViewChangeEvent(TypedDict):
-    """``on_view_change`` — debounced final viewport after pan/zoom.
+    """``on_view_change`` — throttled viewport stream during and after pan/zoom.
+
+    Dispatches are leading+trailing throttled (latest-wins): ``update``-phase
+    events stream while the gesture is in progress so dependent charts track
+    it live, and the resting viewport always arrives as a final ``final``-phase
+    event. Handlers that only care about settled views can filter on ``phase``.
 
     Shape::
 
@@ -188,7 +193,7 @@ class ViewChangeEvent(TypedDict):
             "x_domain": [x0, x1],       # f64 data-space window
             "y_domain": [y0, y1],
             "source": str,              # gesture: pan/zoom/keyboard/...
-            "phase": "final",
+            "phase": "update" | "final",
         }
     """
 
@@ -198,4 +203,4 @@ class ViewChangeEvent(TypedDict):
     x_domain: list[float]  # [x0, x1]
     y_domain: list[float]  # [y0, y1]
     source: str  # gesture that produced the view (pan/zoom/keyboard/...)
-    phase: Literal["final"]
+    phase: Literal["update", "final"]
