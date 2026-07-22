@@ -108,11 +108,18 @@ rejects non-finite values and clamps to `[16, MAX_SCREEN_DIM]`.
 ## 3. Replies (Python → client)
 
 **`tier_update`** — `{type, seq, traces}` plus one f32 buffer per column ref.
-Each entry is `{id, x, y, base?}`, where each column ref is
+Each entry is `{id, x, y, base?}` or `{id, x, y, base_const}`, where each column ref is
 `{buf, len, offset, scale}`: `buf` indexes the attachment list, and the client
 recovers data space as `value * scale + offset`. The `x` offset re-centers on
 the requested window midpoint so f32 precision follows the viewport. The
-client drops the message unless `msg.seq === this.seq`.
+client drops the message unless `msg.seq === this.seq`. `base_const` is a
+finite data-space scalar and consumes no attachment; the client binds it using
+zero encoded values plus that scalar offset.
+
+For each retained GPU buffer, the client uses `bufferSubData` only when the
+incoming typed-array byte length exactly equals the tracked allocation. A
+length change falls back to `bufferData` and records the new allocation size,
+so refinement neither writes beyond storage nor leaves a stale active tail.
 
 **`density_update`** — `{type, seq, traces}`. Each entry carries a `mode` that
 states which representation this view resolved to:
@@ -208,10 +215,11 @@ spec's `columns` table is the addressing scheme, and it comes in two layouts:
   by static HTML export and by streaming-refresh reopen state.
 - **Split** (`build_payload_split`) — one wire buffer per column. The spec
   sets `buffer_layout: "split"`, and every column entry carries `buf` (its
-  index into the buffer list) with `byte_offset: 0`. The alignment padding for
-  a `u8` column is folded into that column's own buffer, and `len` still
-  counts only real values, so split is a byte-identical repack of packed. This
-  is what both live hosts ship at first paint — `FigureWidget`
+  index into the buffer list) with `byte_offset: 0`. Each buffer contains
+  exactly `len × itemsize` meaningful bytes. Packed-only tail padding after a
+  `u8` column is omitted because the next split buffer is independently
+  aligned; decoded columns remain byte-identical while dead transport bytes
+  are not copied. This is what both live hosts ship at first paint — `FigureWidget`
   (`python/xy/widget.py:76`) and the `/_xy` namespace
   (`python/reflex-xy/reflex_xy/namespace.py:135`, `:197`) — with no join copy.
 

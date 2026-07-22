@@ -280,7 +280,12 @@ into the web build, so the file ships with every compile — including
 backend running. Content addressing makes writes idempotent across workers
 and recompiles (prod workers re-evaluate stateful pages but skip writing,
 mirroring `rx.asset`'s backend-only guard) and makes the browser cache
-correct for free. What this tier gives up, deliberately: kernel round-trips
+correct for free. The writer consumes `_framing.encode_frame_parts` directly:
+it hashes and writes each header/metadata/payload segment incrementally into a
+unique sibling temp, then atomically renames it. The resulting frame and digest
+are byte-for-byte identical to `encode_frame`, without allocating a second
+whole-frame join; racing workers cannot expose or overwrite a partial temp.
+What this tier gives up, deliberately: kernel round-trips
 (deep drilldown past the shipped tiers, exact server picks, streaming) and
 semantic events.
 

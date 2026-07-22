@@ -472,6 +472,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         color_ch: Optional[ColorChannel] = None,
         stroke_ch: Optional[ColorChannel] = None,
         style_channels: Optional[dict[str, Any]] = None,
+        x_center: Optional[np.ndarray] = None,
     ) -> None:
         if orientation == "vertical":
             self._append_rect_trace(
@@ -489,6 +490,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 color_ch=color_ch,
                 stroke_ch=stroke_ch,
                 style_channels=style_channels,
+                x_center=x_center,
             )
         else:
             self._append_rect_trace(
@@ -936,6 +938,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         style_channels: Optional[dict[str, Any]] = None,
         count: Optional[int] = None,
         extra_style: Optional[dict[str, Any]] = None,
+        x_center: Optional[np.ndarray] = None,
     ) -> None:
         name = self._optional_text(name, f"{kind} name")
         opacity = self._opacity(opacity, f"{kind} opacity")
@@ -945,6 +948,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             self._rect_edge_len(y0, f"{kind} y0"),
             self._rect_edge_len(y1, f"{kind} y1"),
         }
+        if x_center is not None:
+            lengths.add(self._rect_edge_len(x_center, f"{kind} x center"))
         if len(lengths) != 1:
             raise ValueError(f"{kind} rectangle columns must have equal length")
         checkpoint = self._checkpoint()
@@ -953,7 +958,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
             x1c = self.store.ingest(x1)
             y0c = self.store.ingest(y0)
             y1c = self.store.ingest(y1)
-            xc = self.store.ingest(x0c.values + (x1c.values - x0c.values) / 2.0)
+            center = (
+                x_center if x_center is not None else self._rect_midpoint(x0c.values, x1c.values)
+            )
+            xc = self.store.ingest(center)
             yc = self.store.ingest(y1c.values)
             style: dict[str, Any] = {"color": color, "opacity": opacity, "role": role}
             if orientation is not None:
@@ -982,6 +990,19 @@ class Figure(AnnotationsMixin, PayloadMixin):
         except Exception:
             self._rollback(checkpoint)
             raise
+
+    @staticmethod
+    def _rect_midpoint(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+        """Overflow-safe midpoint with one owned temporary.
+
+        Keep the historical operation order (`left + (right-left)/2`) so
+        encoded bytes do not drift, but reuse the subtraction output for the
+        divide and add instead of materializing three full-size temporaries.
+        """
+        center = np.subtract(right, left)
+        np.divide(center, 2.0, out=center)
+        np.add(left, center, out=center)
+        return center
 
     @staticmethod
     def _rect_edge_len(values: Any, label: str) -> int:
@@ -1014,6 +1035,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
             for col in self._range_columns(t, axis_id):
                 lo = min(lo, col.min)
                 hi = max(hi, col.max)
+            base_const = self._range_base_const(t, axis_id)
+            if base_const is not None:
+                lo = min(lo, base_const)
+                hi = max(hi, base_const)
         if not np.isfinite(lo) or not np.isfinite(hi):
             lo, hi = 0.0, 1.0
         scale = self._axis_scale(axis_id)
@@ -1025,6 +1050,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
                     if np.isfinite(col.zone.positive_min):
                         positive_los.append(col.zone.positive_min)
                         positive_his.append(col.zone.positive_max)
+                base_const = self._range_base_const(t, axis_id)
+                if base_const is not None and base_const > 0:
+                    positive_los.append(base_const)
+                    positive_his.append(base_const)
             if not positive_los:
                 raise ValueError(f"{axis_id} log axis requires at least one positive value")
             lo, hi = min(positive_los), max(positive_his)
@@ -1203,6 +1232,19 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if t.x0 is not None and t.x1 is not None and t.y0 is not None and t.y1 is not None:
             return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1]
         return [t.x if axis == "x" else t.y]
+
+    def _range_base_const(self, t: Trace, axis_id: str) -> Optional[float]:
+        """Scalar area baseline contributing to a matching y-axis range."""
+        if (
+            self._axis_dim(axis_id) == "y"
+            and t.y_axis == axis_id
+            and t.kind in {"area", "error_band"}
+            and t.base is None
+            and t.base_const is not None
+            and t.n_points > 0
+        ):
+            return t.base_const
+        return None
 
     # -- payload --------------------------------------------------------------
 
@@ -1642,7 +1684,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
 
     def _repr_html_(self) -> str:
         """Notebook HTML repr isolated from the host document's styles."""
-        return export.notebook_iframe(self.to_html(), width=self.width, height=self.height)
+        return export.notebook_figure_iframe(self, width=self.width, height=self.height)
 
     def to_svg(
         self,
@@ -1768,7 +1810,6 @@ class Figure(AnnotationsMixin, PayloadMixin):
         """Every byte class itemized; if it isn't in the report it isn't real."""
         from . import interaction  # method-local: no load-time cycle
 
-        spec, blob = self.build_payload()
         report = self.store.memory_report()
         channel_arrays: list[np.ndarray] = []
         store_arrays = [column.values for column in self.store.columns]
@@ -1798,9 +1839,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
                     seen_channels.add(key)
                     channel_arrays.append(array)
         report["channel_bytes"] = int(sum(array.nbytes for array in channel_arrays))
-        report["transport_bytes_first_paint"] = len(blob)
+        transport_bytes = self.payload_nbytes()
+        report["transport_bytes_first_paint"] = transport_bytes
         n_total = sum(t.n_points for t in self.traces) or 1
-        report["transport_bytes_per_point"] = len(blob) / n_total
+        report["transport_bytes_per_point"] = transport_bytes / n_total
         report["pyramid_bytes"] = interaction.pyramid_report_bytes(self)
         report["resident_array_bytes"] = (
             report["canonical_bytes"] + report["channel_bytes"] + report["pyramid_bytes"]

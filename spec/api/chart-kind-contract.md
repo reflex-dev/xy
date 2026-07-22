@@ -80,7 +80,7 @@ needs:
 | --- | --- |
 | `kind` | `"hexbin"` |
 | `tier` | always `"direct"`; hexbin aggregates at build time and is never re-tiered, decimated, or view-updated — `Trace.use_density()` returns `False` for every non-`scatter` kind (`_trace.py:74-77`), and the view-update path returns no traces without it (`interaction.py:456`) |
-| `x`, `y` | column indices for the cell centers, one entry per occupied cell, offset-encoded f32 (§4/§16). Shipped via `pw.ship_values`, not `pw.ship` — the centers are derived geometry with no canonical `Column` behind them, so the offset is the midpoint of their own bounds |
+| `x`, `y` | column indices for the cell centers, one entry per occupied cell, offset-encoded f32 (§4/§16). The derived centers are retained as canonical `Column`s by the hexbin builder, so `_emit_hexbin` uses `pw.ship` and reuses their materialized zone-map bounds instead of scanning min/max again |
 | `n_marks` | occupied cell count — the length of `x`/`y` |
 | `n_points` | input row count before binning; reporting only |
 | `color` | channel record from `_ship_channels`: `constant`, `continuous` (`buf` + `colormap`), or `categorical` (`buf` + `palette`), one value per **cell** |
@@ -165,6 +165,13 @@ The rectangle family deliberately has two wire shapes:
 
 Do not regress bars back to full rectangles for convenience; the 10k-category
 benchmark tracks this as part of the core 2D payload budget.
+
+Area-family marks follow the same constant-baseline rule. Their trace carries
+either `base` (an offset-encoded f32 column) or `base_const` (one finite data-
+space scalar), never both. Scalar `area(base=...)` does not create a canonical
+N-row baseline; constant lower bounds discovered on an `error_band` reuse the
+canonical column's zone maps and omit only its redundant wire column. Browser,
+SVG, raster, and tier-update consumers reconstruct the scalar form explicitly.
 
 ## What you get for free (do not re-implement)
 

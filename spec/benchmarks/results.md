@@ -109,7 +109,11 @@ scope, not the kernels module alone. The suite asserts `xy.kernels.BACKEND ==
   the heatmap row protects the direct external arena sampler rather than only
   payload preparation.
 - Zoom refresh with `test_m4_indices_zoom` and `test_decimate_view`.
-- Memory/payload accounting with `test_memory_report_density_medium`.
+- Memory/payload accounting with `test_memory_report_density_medium` and
+  `test_memory_report_counts_without_payload_blob`; fixed-unit time conversion
+  with `test_datetime_seconds_fused_one_copy_ingest`; steady hexbin center
+  encoding with `test_hexbin_payload_reuses_precomputed_center_bounds`; and
+  streamed notebook embedding with `test_notebook_repr_line_streams_escaped_document`.
 - The native adaptive drilldown cycle with
   `test_adaptive_drilldown_cycle`: a warmed large scatter viewport moves from
   density overview, to exact visible points, and back out to density.

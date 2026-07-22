@@ -1539,7 +1539,11 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         elif kind in ("area", "error_band"):
             xv = _column(blob, cols[t["x"]])
             yv = _column(blob, cols[t["y"]])
-            bv = _column(blob, cols[t["base"]])
+            bv = (
+                _column(blob, cols[t["base"]])
+                if "base" in t
+                else np.full(xv.shape, float(t["base_const"]), dtype=np.float64)
+            )
             smooth = style.get("curve") == "smooth"
             top_path = _curve_path(xv, yv, trace_sx, trace_sy, smooth)
             base_path = _curve_path(xv[::-1], bv[::-1], trace_sx, trace_sy, smooth)

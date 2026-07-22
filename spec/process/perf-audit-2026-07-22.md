@@ -164,6 +164,53 @@ there is O(sample), not O(N).
     (`46_worker.ts:21`) — f32 halves a fixed-size buffer; per-bin math does
     not need f64.
 
+## Client follow-up measurements (#176)
+
+The client findings were rerun in real headless Chromium/SwiftShader with
+`benchmarks/bench_client_transport_quick_wins.py`; the benchmark includes
+semantic oracles, so a faster identity function that changes matches is
+reported as rejected rather than as a win. The focused browser regressions are
+in `tests/test_client_transport_quick_wins.py`.
+
+- **Instance style packing implemented.** The normal trace, retained density
+  sample, and mutable drill paths now share one packer. Shaders reconstruct
+  `[opacity, artist_alpha, width, symbol]` from a uniform base and a packed-slot
+  map. One/two/three dynamic channels use 4/8/12 B per item; four still use
+  16 B; scalar-only artist alpha uses no per-item buffer. Actual WebGL
+  `BUFFER_SIZE`, successful shader draws, and `NO_ERROR` status were checked
+  across the shader-drawn point, segment, mesh, compact-bar, rectangle, and
+  retained density-sample paths; point alpha was also sampled from rendered
+  pixels. Separately, one reusable drill-shaped object was repacked through
+  every single slot, 2/3/4-channel layouts, and uniform-only buffer teardown;
+  this is a lifecycle oracle, not a draw claim. At 1M one-channel items the
+  browser benchmark measured 16 MB -> 4 MB and a median
+  build+upload time of 2.6 ms -> 1.5 ms (7 alternating repetitions).
+- **Append decimal keys deliberately retained.** Replacing
+  `value.toPrecision(12)` with an allocation-free numeric bucket moved identity
+  boundaries: `8.952695812915` and `8.95269581290906` must match but did not;
+  `1234567890125` and `1234567890124.9973` must differ but one candidate
+  collided. The issue's exact `Math.fround`/reusable-f32-bit candidates are
+  also explicit benchmark oracles: on 200k offset-encoded epoch values spaced
+  1024 apart, both collapsed the 200k legacy identities to 1,563 keys and
+  mapped only 1,563 new rows to the correct old index (even
+  `1700000000000` and `1700000001024` collide). Parsing the same decimal
+  string into a numeric Map key preserved the relation but retained the string
+  allocation and was slower at 200k rows (median 41.5 ms vs 36.6 ms, 7
+  repetitions). No change was safe or faster, so the string key remains and
+  the counterexamples are regression-tested.
+- **Synchronous 1x1 picking retained; unnecessary redraw removed.** A clean
+  synchronous readback measured at or below 0.1 ms median at both 250k and 1M
+  points. The dirty path was 23.0 ms and 98.7 ms respectively because it
+  redrew every point. A fenced pixel-pack-buffer prototype submitted without blocking but
+  completed in 4.0 ms median and missed first-task availability in 13/14
+  trials, which would add tooltip latency and cancellation state. The client
+  therefore reuses one four-byte read buffer and stays synchronous. The
+  native-color density tween now schedules a keep-pick continuation because it
+  changes fragment color only. `_drawNow` consumes the current frame's policy
+  before drawing, so a geometry-changing frame still invalidates even when it
+  queues that color-only continuation; the next frame alone preserves the new
+  snapshot. True view/tier transitions continue suppressing hover reads.
+
 Non-findings recorded to prevent re-litigating: `bin_2d`'s per-thread u32
 grids and re-read merge are a documented, bounded tradeoff (`bin_2d_threads`
 caps fan-out by points-per-cell; integer merge keeps output thread-count

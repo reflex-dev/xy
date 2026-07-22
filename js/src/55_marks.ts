@@ -126,7 +126,7 @@ const AREA_MARK = {
         const yBuf = g.yBuf, yMeta = g.yMeta, dashY = g._dashY;
         g.yBuf = g.baseBuf;
         g.yMeta = g.baseMeta;
-        g._dashY = g._cpu.base;
+        g._dashY = g._dashBase;
         view._drawLine(g, xm, ym, g.lineColor, g.trace.style.line_width, g.trace.style.line_opacity ?? 1);
         g.yBuf = yBuf;
         g.yMeta = yMeta;

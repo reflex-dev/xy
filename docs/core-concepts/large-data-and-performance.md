@@ -98,9 +98,13 @@ def memory_report_demo():
 ~~~
 
 Tier decisions are also recorded in the built payload rather than being
-silent. Use the memory report for many-chart dashboards and long-running append
-workloads, and use the committed benchmark harness before publishing a
-performance comparison.
+silent. The report computes exact first-paint byte counts through a counting
+writer: it makes the same tier decisions but does not allocate offset-encoded
+geometry columns or join a payload blob merely to measure it. Channel-specific
+preparation such as continuous normalization or direct-RGBA packing still runs
+so the count stays exact. Use the memory report for many-chart dashboards and
+long-running append workloads, and use the committed benchmark harness before
+publishing a performance comparison.
 
 See the [benchmark snapshot](/docs/xy/overview/benchmarks/) for a measured
 example, or [Interactions and selections](/docs/xy/core-concepts/interactions/)

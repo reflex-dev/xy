@@ -537,7 +537,7 @@ def ship_color_channel(
         if rgba is None:
             raise ValueError("direct RGBA color channel missing values")
         values = rgba if sel is None else rgba[sel]
-        packed = np.rint(np.clip(values, 0.0, 1.0) * 255.0).astype(np.uint8)
+        packed = _pack_direct_rgba(values, source=rgba)
         color_spec["buf"] = ship_u8(packed.reshape(-1))
         color_spec["n"] = int(len(values))
     elif cc.mode == "match_fill":
@@ -567,6 +567,29 @@ def ship_color_channel(
         color_spec["palette"] = [palette[i % len(palette)] for i in range(len(categories))]
 
     return color_spec
+
+
+def _pack_direct_rgba(
+    values: npt.NDArray[np.float64], *, source: npt.NDArray[np.float64]
+) -> npt.NDArray[np.uint8]:
+    """Pack canonical straight-alpha floats to RGBA8 with bounded scratch.
+
+    A fancy-indexed row selection is already a detached temporary, so it can
+    serve as the float scratch. Full columns and slice views still belong to
+    the canonical channel and must never be mutated. Clipping stays in place
+    to preserve the defensive behavior if internal channel storage is edited
+    after validation, and `rint` keeps the existing round-to-even bytes.
+    """
+    if values.flags.writeable and not np.shares_memory(values, source):
+        scaled = values
+        np.clip(scaled, 0.0, 1.0, out=scaled)
+    else:
+        scaled = np.empty_like(values)
+        np.clip(values, 0.0, 1.0, out=scaled)
+    np.multiply(scaled, 255.0, out=scaled)
+    packed = np.empty(scaled.shape, dtype=np.uint8)
+    np.rint(scaled, out=packed, casting="unsafe")
+    return packed
 
 
 def resolve_style_channel(

@@ -26,6 +26,11 @@ class Trace:
     # Area-style marks keep an explicit baseline column; rectangle-like marks
     # use x0/x1/y0/y1 below.
     base: Optional[Column] = None
+    # Scalar area baselines stay scalar end-to-end: no N-length canonical
+    # column and no N-length wire buffer. A constant error-band lower column
+    # may retain ``base`` for canonical/reporting purposes while also exposing
+    # this wire optimization.
+    base_const: Optional[float] = None
     # Grid-like marks (heatmap/image) ship one scalar grid plus metadata instead
     # of four rectangle columns per cell.
     grid: Optional[Column] = None
@@ -82,6 +87,17 @@ class Trace:
         if self.count is not None:
             return self.count
         return len(self.x)
+
+    def resolved_base_const(self) -> Optional[float]:
+        """Return a safe scalar baseline without rescanning canonical data."""
+        if self.base_const is not None:
+            return self.base_const
+        if self.base is None or len(self.base) == 0:
+            return None
+        zone = self.base.zone
+        if zone.null_count == 0 and zone.count == len(self.base) and self.base.min == self.base.max:
+            return self.base.min
+        return None
 
     def per_item_channel_names(self) -> tuple[str, ...]:
         """Names of channels whose values vary independently per rendered item."""

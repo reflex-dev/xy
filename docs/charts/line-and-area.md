@@ -110,7 +110,10 @@ def step_and_stairs_demo():
 ## Expected Data Shape
 
 Pass one-dimensional x and y arrays of equal length, or pass column names with
-`data=`. `area` also accepts a scalar, array, or named-column `base`. Missing
+`data=`. `area` also accepts a scalar, array, or named-column `base`. A scalar
+baseline stays scalar in canonical memory and on the wire; a constant baseline
+array is recognized from its existing zone maps and also ships as one scalar.
+Missing
 numeric values create line gaps. `step` uses the same x/y shape. `stairs` takes
 one value per bin and, when supplied, one more edge than values.
 
