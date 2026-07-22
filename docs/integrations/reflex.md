@@ -180,6 +180,19 @@ points without rebuilding the component:
 reflex_xy.append(token, x=[next_x], y=[next_y])
 ~~~
 
+Constant renderer styles can likewise change without rebuilding or re-shipping
+the chart's binary columns:
+
+~~~python
+reflex_xy.restyle(token, 0, {"fill": "#dc2626", "opacity": 0.7}, size=7)
+~~~
+
+The strict `style` subset matches the corresponding XY mark. Geometry and
+data-driven channels deliberately stay on the state-driven full-payload path.
+For full recomputes, the adapter encodes once per figure-version/64 px width
+bucket and sends only columns absent from that socket's immediately preceding
+content-hash manifest.
+
 See [Real-time and streaming data](/docs/xy/guides/real-time-and-streaming-data/)
 for the mutation and snapshot contract.
 

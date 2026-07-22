@@ -20,7 +20,7 @@ Events, client -> server:
     msg     {fig, m}      one channel.handle_message dispatch, reply `msg`
 
 Events, server -> client:
-    payload {fig, version, spec, buffers}   first paint / full refresh
+    payload {fig, mid?, version, spec, buffer_hashes, buffers} first paint / sparse refresh
     msg     {fig, message, buffers}         handle_message reply or push
     err     {fig, error}                    token unknown/foreign, rebuild failed
 
@@ -57,6 +57,8 @@ XY_NAMESPACE = "/_xy"
 # the transport's fail-closed backstop, not a tuning knob.
 _MAX_PX_HINT = 8192
 _MIN_PX_HINT = 16
+_PX_BUCKET = 64
+_MAX_PAYLOAD_BUCKETS = 8
 
 # An async callable(token) -> Figure | None: given a parseable figure token,
 # rebuild the figure from Reflex state (wired by app.setup; see state_bridge).
@@ -101,6 +103,14 @@ class XYNamespace(AsyncNamespace):
         super().__init__(namespace)
         self.registry = registry
         self._rebuild = rebuild
+        # Per-mount transport state. Only hashes from the immediately
+        # preceding payload are considered reusable, which bounds both ends
+        # to one current screen-sized payload and makes eviction implicit.
+        # `mid` is part of the key: two mounts of the same token share one
+        # Socket.IO sid but have independent browser-side column caches.
+        self._client_columns: dict[tuple[str, str, Optional[str]], set[str]] = {}
+        self._subscription_px: dict[tuple[str, str, Optional[str]], Optional[int]] = {}
+        self._payload_locks: dict[tuple[str, str, Optional[str]], asyncio.Lock] = {}
 
     # -- connection lifecycle ------------------------------------------------
 
@@ -122,6 +132,10 @@ class XYNamespace(AsyncNamespace):
         network) must not destroy server-side figures — the client
         resubscribes with the same tokens on reconnect.
         """
+        for key in [key for key in self._subscription_px if key[0] == sid]:
+            self._client_columns.pop(key, None)
+            self._subscription_px.pop(key, None)
+            self._payload_locks.pop(key, None)
 
     # -- subscription ----------------------------------------------------------
 
@@ -130,24 +144,28 @@ class XYNamespace(AsyncNamespace):
         if token is None or entry is None:
             return
         px = self._px_hint(data)
+        mid = self._mount_id(data)
+        key = (sid, token, mid)
+        self._subscription_px[key] = px
         await self.enter_room(sid, self._room(token))
-        async with entry.lock:
-            spec, raw = await asyncio.to_thread(entry.figure.build_payload_split, px)
-        await self.emit(
-            "payload",
-            {
-                "fig": token,
-                "version": entry.version,
-                "spec": spec,
-                "buffers": _buffer_bytes(raw),
-            },
-            to=sid,
-        )
+        spec, raw = await self._cached_payload(entry, px)
+        await self._emit_payload(sid, token, entry.version, spec, raw, mid=mid)
 
     async def on_unsub(self, sid: str, data: Any) -> None:
         token = self._token_of(data)
         if token is not None:
-            await self.leave_room(sid, self._room(token))
+            mid = self._mount_id(data)
+            keys = (
+                [key for key in self._subscription_px if key[:2] == (sid, token)]
+                if mid is None
+                else [(sid, token, mid)]
+            )
+            for key in keys:
+                self._client_columns.pop(key, None)
+                self._subscription_px.pop(key, None)
+                self._payload_locks.pop(key, None)
+            if not any(key[:2] == (sid, token) for key in self._subscription_px):
+                await self.leave_room(sid, self._room(token))
 
     # -- interaction round-trips ----------------------------------------------
 
@@ -200,18 +218,93 @@ class XYNamespace(AsyncNamespace):
 
     async def broadcast_payload(self, token: str, entry: FigureEntry) -> None:
         """Push a full refreshed payload (figure rebuilt) to subscribers."""
+        subscriptions = [
+            (sid, mid, px)
+            for (sid, subscribed_token, mid), px in list(self._subscription_px.items())
+            if subscribed_token == token
+        ]
+        by_bucket: dict[int, tuple[dict[str, Any], list[memoryview]]] = {}
+        for sid, mid, px in subscriptions:
+            bucket = self._px_bucket(px)
+            payload = by_bucket.get(bucket)
+            if payload is None:
+                payload = await self._cached_payload(entry, px)
+                by_bucket[bucket] = payload
+            await self._emit_payload(sid, token, entry.version, *payload, mid=mid)
+
+    @staticmethod
+    def _px_bucket(px: Optional[int]) -> int:
+        if px is None:
+            return 0
+        return min(_MAX_PX_HINT, ((px + _PX_BUCKET - 1) // _PX_BUCKET) * _PX_BUCKET)
+
+    async def _cached_payload(
+        self, entry: FigureEntry, px: Optional[int]
+    ) -> tuple[dict[str, Any], list[memoryview]]:
+        """Build once per figure version/rounded screen width."""
+        bucket = self._px_bucket(px)
+        key = (entry.version, bucket)
         async with entry.lock:
-            spec, raw = await asyncio.to_thread(entry.figure.build_payload_split)
-        await self.emit(
-            "payload",
-            {
+            cached = entry.payload_cache.get(key)
+            if cached is not None:
+                return cached
+            built = await asyncio.to_thread(
+                entry.figure.build_payload_split,
+                None if bucket == 0 else bucket,
+            )
+            entry.payload_cache[key] = built
+            while len(entry.payload_cache) > _MAX_PAYLOAD_BUCKETS:
+                entry.payload_cache.pop(next(iter(entry.payload_cache)))
+            return built
+
+    async def _emit_payload(
+        self,
+        sid: str,
+        token: str,
+        version: int,
+        spec: dict[str, Any],
+        raw: list[memoryview],
+        *,
+        mid: Optional[str] = None,
+    ) -> None:
+        """Emit only columns absent from this socket's previous payload.
+
+        Socket.IO is ordered and reliable within a connection. Serializing
+        this `(sid, figure)` stream therefore makes the prior manifest a safe
+        acknowledgement: a reconnect gets a new sid and starts from empty.
+        """
+        state_key = (sid, token, mid)
+        lock = self._payload_locks.setdefault(state_key, asyncio.Lock())
+        async with lock:
+            known = self._client_columns.get(state_key, set())
+            current: set[str] = set()
+            outgoing_hashes: list[str] = []
+            outgoing_buffers: list[memoryview] = []
+            selected: set[str] = set()
+            for column in spec.get("columns", []):
+                content_hash = column.get("hash")
+                buffer_index = column.get("buf")
+                if not isinstance(content_hash, str) or not isinstance(buffer_index, int):
+                    raise RuntimeError("split payload column is missing hash/buffer identity")
+                if not 0 <= buffer_index < len(raw):
+                    raise RuntimeError("split payload column references an unknown buffer")
+                current.add(content_hash)
+                if content_hash in known or content_hash in selected:
+                    continue
+                selected.add(content_hash)
+                outgoing_hashes.append(content_hash)
+                outgoing_buffers.append(raw[buffer_index])
+            envelope = {
                 "fig": token,
-                "version": entry.version,
+                "version": version,
                 "spec": spec,
-                "buffers": _buffer_bytes(raw),
-            },
-            room=self._room(token),
-        )
+                "buffer_hashes": outgoing_hashes,
+                "buffers": _buffer_bytes(outgoing_buffers),
+            }
+            if mid is not None:
+                envelope["mid"] = mid
+            await self.emit("payload", envelope, to=sid)
+            self._client_columns[state_key] = current
 
     # -- internals ---------------------------------------------------------------
 
@@ -235,6 +328,11 @@ class XYNamespace(AsyncNamespace):
         except (AttributeError, TypeError, ValueError):
             return None
         return max(_MIN_PX_HINT, min(_MAX_PX_HINT, px))
+
+    @staticmethod
+    def _mount_id(data: Any) -> Optional[str]:
+        mid = data.get("mid") if isinstance(data, dict) else None
+        return mid if isinstance(mid, str) and len(mid) <= 64 else None
 
     async def _entry_for(
         self, sid: str, data: Any, *, allow_rebuild: bool

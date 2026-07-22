@@ -196,8 +196,9 @@ export const MARK_KINDS = {
     pointPick: true,
     retainCpu: true,
     refreshColor: (view, g) => {
-      if (g.colorMode === 0 && g.trace.color) {
-        g.color = parseColor(view.root, g.trace.color.color, g.color);
+      if (g.colorMode === 0) {
+        const color = g.trace.style?.color ?? g.trace.color?.color;
+        if (color) g.color = parseColor(view.root, color, g.color);
       }
       view._pointMarkStyle(g, g.trace);
     },

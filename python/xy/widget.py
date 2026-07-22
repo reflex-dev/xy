@@ -142,6 +142,44 @@ class FigureWidget(anywidget.AnyWidget):
         """Navigate to the home ranges (None = the configured reset_axes)."""
         self.send(self._figure.view_nav_message(axes))
 
+    def restyle(self, trace_id: int, style: Any = None, *, size: Any = None) -> None:
+        """Update renderer-backed mark style without re-shipping data buffers.
+
+        ``style`` accepts the same strict CSS subset as the mark builder.
+        ``size`` changes a constant-size scatter channel.  The synced spec is
+        patched in place (for notebook-save/reopen state) without assigning
+        the trait and triggering a full payload refresh.
+        """
+        kwargs = {} if size is None else {"size": size}
+        msg = self._figure.restyle_message(trace_id, style, **kwargs)
+        trace = next(
+            (item for item in self.spec.get("traces", []) if item.get("id") == trace_id), None
+        )
+        if trace is not None:
+            trace.setdefault("style", {}).update(msg["style"])
+            if "size" in msg and trace.get("size", {}).get("mode") == "constant":
+                trace["size"]["size"] = msg["size"]
+            density = trace.get("density")
+            sample = density.get("sample") if isinstance(density, dict) else None
+            if (
+                "size" in msg
+                and isinstance(sample, dict)
+                and sample.get("size", {}).get("mode") == "constant"
+            ):
+                sample["size"]["size"] = msg["size"]
+            color = msg["style"].get("color")
+            if color is not None:
+                if trace.get("color", {}).get("mode") == "constant":
+                    trace["color"]["color"] = color
+                if isinstance(density, dict):
+                    density["color"] = color
+                    if (
+                        isinstance(sample, dict)
+                        and sample.get("color", {}).get("mode") == "constant"
+                    ):
+                        sample["color"]["color"] = color
+        self.send(msg)
+
     def select(
         self,
         *,

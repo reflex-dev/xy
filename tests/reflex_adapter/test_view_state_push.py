@@ -44,6 +44,7 @@ def _wired(registry: FigureRegistry):
 def test_set_view_pushes_state_patch(_fresh_registry):
     registry = _fresh_registry
     token = registry.register(make_figure())
+    registry.get(token).payload_cache[(1, 640)] = ({}, [])
     run, pushed = _wired(registry)
     run(lambda: registry.set_view(token, {"x": (0.2, 0.8)}, animate=False))
     ((pushed_token, message, buffers),) = pushed
@@ -66,6 +67,38 @@ def test_reset_view_and_clear_selection_push(_fresh_registry):
     assert kinds == ["view_nav", "state_patch"]
     assert pushed[0][1] == {"type": "view_nav", "op": "reset", "axes": ["x"]}
     assert pushed[1][1]["state"]["selection"] is None
+
+
+def test_restyle_pushes_json_only_and_keeps_full_payload_version(_fresh_registry):
+    registry = _fresh_registry
+    token = registry.register(make_figure())
+    run, pushed = _wired(registry)
+    run(lambda: registry.restyle(token, 0, {"fill": "tomato", "opacity": 0.25}, size=8))
+
+    ((pushed_token, message, buffers),) = pushed
+    assert pushed_token == token
+    assert message == {
+        "type": "restyle",
+        "trace": 0,
+        "style": {"color": "tomato", "opacity": 0.25},
+        "size": 8.0,
+    }
+    assert buffers == []
+    entry = registry.get(token)
+    assert entry.version == 1
+    assert entry.payload_cache == {}
+    assert entry.figure.traces[0].color_ch.constant == "tomato"
+    assert entry.figure.traces[0].size_ch.constant == 8.0
+
+
+def test_restyle_unwired_validates_before_mutation(_fresh_registry):
+    registry = _fresh_registry
+    token = registry.register(make_figure())
+    with pytest.raises(ValueError, match="unsupported CSS"):
+        registry.restyle(token, 0, {"curve": "smooth"})
+    with pytest.raises(KeyError):
+        registry.restyle("missing", 0, {"opacity": 0.5})
+    assert registry.get(token).figure.traces[0].style["opacity"] == 0.8
 
 
 def test_select_geometric_and_rows(_fresh_registry):
@@ -120,6 +153,7 @@ def test_module_level_wrappers(_fresh_registry):
     # The public functions are thin aliases over the process registry.
     reflex_xy.set_view(token, {"x": (0.1, 0.9)})
     reflex_xy.reset_view(token)
+    reflex_xy.restyle(token, 0, {"opacity": 0.6})
     reflex_xy.clear_selection(token)
     with pytest.raises(KeyError):
         reflex_xy.select("missing", range=(0, 1, 0, 1))

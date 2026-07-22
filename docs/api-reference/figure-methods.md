@@ -84,6 +84,7 @@ session for Chromium-resolved files, atomic per-file writes.
 ~~~python
 chart.memory_report() -> dict
 chart.append(trace_id, x, y, *, color=None, size=None) -> None
+chart.restyle(trace_id, style=None, *, size=None) -> None
 chart.pick(trace_id, index) -> dict | None
 chart.select_range(x0, x1, y0, y1, trace_id=None) -> xy.Selection
 ~~~
@@ -91,6 +92,9 @@ chart.select_range(x0, x1, y0, y1, trace_id=None) -> xy.Selection
 - `memory_report()` describes canonical, derived, and payload allocations.
 - `append()` extends supported scatter or line traces. It mutates chart data,
   not structure; already-exported HTML files remain snapshots.
+- `restyle()` updates renderer-owned constant paint/opacity/stroke properties,
+  or a constant scatter size, through a small JSON message. Geometry and
+  data-driven color/size channels still require a normal chart rebuild.
 - `pick()` translates a shipped vertex index to an exact canonical row when
   possible and returns `None` for an invalid index.
 - `select_range()` performs a Python-side box selection over scatter traces.

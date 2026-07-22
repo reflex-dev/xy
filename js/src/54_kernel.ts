@@ -1,12 +1,84 @@
 import { bytesToSpan } from "./00_header";
+import { parseColor } from "./20_theme";
 import { lodApplyDensityUpdate, lodApplyDrill, lodDropDrill, lodRememberDensity } from "./45_lod";
 import { xyCreateRebinWorker } from "./46_worker";
 import { ChartView } from "./50_chartview";
+import { markOf } from "./55_marks";
 
 // ChartView <-> kernel comm: debounced density view-requests, streaming
 // appends, the inbound message handler, and the deep-zoom drill lifecycle
 // (§16). Split out of 50_chartview.js; augments the prototype so `this.*`
 // is unchanged.
+
+const RESTYLE_NUMBERS = new Set([
+  "opacity", "fill_opacity", "stroke_opacity", "width", "line_width",
+  "line_opacity", "stroke_width", "corner_radius",
+]);
+const RESTYLE_PAINTS = new Set(["color", "line_color", "stroke"]);
+const RESTYLE_KEYS = new Set([
+  ...RESTYLE_NUMBERS, ...RESTYLE_PAINTS, "dash", "fill",
+]);
+
+function validRestyleStyle(style) {
+  if (!style || typeof style !== "object" || Array.isArray(style)) return false;
+  const entries = Object.entries(style);
+  if (!entries.length) return true; // a size-only restyle is valid
+  for (const [key, value] of entries) {
+    if (!RESTYLE_KEYS.has(key)) return false;
+    if (RESTYLE_NUMBERS.has(key)) {
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return false;
+      if ((key === "opacity" || key.endsWith("_opacity")) && value > 1) return false;
+    } else if (RESTYLE_PAINTS.has(key)) {
+      if (typeof value !== "string" || !value) return false;
+    } else if (key === "dash") {
+      if (value !== null && (!Array.isArray(value) || value.length < 2 || value.length > 8 ||
+          value.some((item) => typeof item !== "number" || !Number.isFinite(item) || item <= 0))) {
+        return false;
+      }
+    } else if (key === "fill") {
+      if (value !== null && (typeof value !== "object" || Array.isArray(value))) return false;
+    }
+  }
+  return true;
+}
+
+function patchConstantTrace(trace, style, size) {
+  trace.style = { ...(trace.style || {}), ...style };
+  if (Object.prototype.hasOwnProperty.call(style, "color") && trace.color?.mode === "constant") {
+    trace.color = { ...trace.color, color: style.color };
+  }
+  if (Object.prototype.hasOwnProperty.call(style, "color") && trace.density) {
+    trace.density = { ...trace.density, color: style.color };
+    if (trace.density.sample?.color?.mode === "constant") {
+      trace.density.sample = {
+        ...trace.density.sample,
+        color: { ...trace.density.sample.color, color: style.color },
+      };
+    }
+  }
+  if (size !== undefined && trace.size?.mode === "constant") {
+    trace.size = { ...trace.size, size };
+  }
+  if (size !== undefined && trace.density?.sample?.size?.mode === "constant") {
+    trace.density = {
+      ...trace.density,
+      sample: {
+        ...trace.density.sample,
+        size: { ...trace.density.sample.size, size },
+      },
+    };
+  }
+}
+
+function refreshRestyledGpu(view, g, style, size) {
+  if (!g) return;
+  patchConstantTrace(g.trace, style, size);
+  if (size !== undefined && g.trace.kind === "scatter") g.size = size;
+  if (g.trace.kind === "triangle_mesh") {
+    g.meshStrokeWidth = Number(g.trace.style.stroke_width) || 0;
+  }
+  markOf(g.trace.kind).refreshColor?.(view, g);
+}
 
 Object.assign(ChartView.prototype, {
   _scheduleViewRequest(viewOverride = this.view, opts: any = {}) {
@@ -272,7 +344,8 @@ Object.assign(ChartView.prototype, {
   _onKernelMsg(msg, buffers) {
     if (this._destroyed) return;
     if (!msg) return;
-    if (this._glLost && msg.type !== "append" && msg.type !== "pick_result") return;
+    if (this._glLost && msg.type !== "append" && msg.type !== "pick_result" &&
+        msg.type !== "restyle") return;
     if (msg.type === "tier_update") {
       if (msg.seq !== this.seq) return;
       for (const upd of msg.traces) {
@@ -416,7 +489,67 @@ Object.assign(ChartView.prototype, {
       if (msg.op === "reset") this._navReset(msg.axes);
     } else if (msg.type === "selection_rows") {
       this._applyRowsSelection(msg, buffers);
+    } else if (msg.type === "restyle") {
+      this._applyRestyle(msg);
     }
+  },
+
+  // Spec-only mark update. The server validates against the Python style
+  // grammar; this second fail-closed boundary protects direct comm callers
+  // and prevents geometry/resource fields from entering a no-buffer message.
+  // Canonical `this.spec` is patched even during context loss so the normal
+  // restore path rebuilds the requested appearance.
+  _applyRestyle(msg) {
+    const id = msg && msg.trace;
+    const style = msg && msg.style;
+    const size = msg && msg.size;
+    if (!Number.isInteger(id) || id < 0 || !validRestyleStyle(style)) return false;
+    if (size !== undefined && (typeof size !== "number" || !Number.isFinite(size) || size <= 0)) {
+      return false;
+    }
+    const trace = this.spec?.traces?.find((item) => item.id === id);
+    if (!trace) return false;
+    if (Object.prototype.hasOwnProperty.call(style, "color")) {
+      const color = trace.color || trace.density?.sample?.color;
+      if (color && color.mode !== "constant") return false;
+      if (!color && trace.density && typeof trace.density.color !== "string") return false;
+    }
+    const sizeChannel = trace.size || trace.density?.sample?.size;
+    if (size !== undefined && (
+      trace.kind !== "scatter" ||
+      (sizeChannel && sizeChannel.mode !== "constant") ||
+      (!sizeChannel && !trace.density)
+    )) {
+      return false;
+    }
+    patchConstantTrace(trace, style, size);
+
+    if (this._glLost || !this.gl) return true;
+    const groups = [this.gpuTraces || [], this._transitionOldTraces || []];
+    const seen = new Set();
+    for (const group of groups) {
+      for (const g of group) {
+        if (!g || g.trace?.id !== id || seen.has(g)) continue;
+        seen.add(g);
+        if (g.tier === "density") {
+          patchConstantTrace(g.trace, style, size);
+          if (Object.prototype.hasOwnProperty.call(style, "color")) {
+            const color = parseColor(this.root, style.color, [0.3, 0.47, 0.66, 1]);
+            const densities = new Set([
+              g.density, g._homeDensity, g._shownDensity, g.prevDensity,
+              ...(g.densityCache || []),
+            ]);
+            for (const density of densities) if (density) density.color = color;
+          }
+          refreshRestyledGpu(this, g.sampleOverlay, style, size);
+          refreshRestyledGpu(this, g.drill, style, size);
+        } else {
+          refreshRestyledGpu(this, g, style, size);
+        }
+      }
+    }
+    this.draw();
+    return true;
   },
 
   // Shared mask application for kernel "selection" replies and pushed

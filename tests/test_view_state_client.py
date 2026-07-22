@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 import xy
@@ -496,6 +497,235 @@ def test_kernel_messages_apply_through_mutation_path(tmp_path: Path) -> None:
         _chart_html().replace(_RENDER_CALL, _KERNEL_MSG_PROBE),
         "data-xy-kernelmsg-probe",
         label="kernel state-message probe",
+    )
+    assert result == {key: True for key in result}
+
+
+_RESTYLE_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    const g = view.gpuTraces[0];
+    const xBuffer = g.xBuf;
+    const yBuffer = g.yBuf;
+    const payload = view._payload;
+    const beforeColumns = JSON.stringify(view.spec.columns);
+
+    view._onKernelMsg({
+      type: "restyle", trace: 0,
+      style: { color: "#ef4444", opacity: 0.35, stroke: "#111827", stroke_width: 2 },
+      size: 9,
+    }, []);
+    const applied = g.trace.style.color === "#ef4444"
+      && g.trace.style.opacity === 0.35 && g.size === 9 && g.pointStrokeWidth === 2;
+    const buffersReused = g.xBuf === xBuffer && g.yBuf === yBuffer
+      && view.gl.isBuffer(xBuffer) && view.gl.isBuffer(yBuffer);
+    const payloadReused = view._payload === payload
+      && JSON.stringify(view.spec.columns) === beforeColumns;
+    const specPersisted = view.spec.traces[0].style.color === "#ef4444"
+      && view.spec.traces[0].size.size === 9;
+
+    const beforeMalformed = JSON.stringify(g.trace.style);
+    const structuralRejected = view._applyRestyle({
+      type: "restyle", trace: 0, style: { curve: "smooth" },
+    }) === false && JSON.stringify(g.trace.style) === beforeMalformed;
+    const badSizeRejected = view._applyRestyle({
+      type: "restyle", trace: 0, style: {}, size: -1,
+    }) === false && g.size === 9;
+
+    // A real WebGL context-loss event takes the same early path. The patch
+    // must still land in retained spec so restore rebuilds from it.
+    view._glLost = true;
+    const acceptedWhileLost = view._applyRestyle({
+      type: "restyle", trace: 0, style: { opacity: 0.2 },
+    }) === true && view.spec.traces[0].style.opacity === 0.2;
+    view._glLost = false;
+
+    document.body.setAttribute("data-xy-restyle-probe", JSON.stringify({
+      applied, buffersReused, payloadReused, specPersisted,
+      structuralRejected, badSizeRejected, acceptedWhileLost,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-restyle-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_restyle_message_updates_constants_without_gpu_reupload(tmp_path: Path) -> None:
+    result = _run(
+        tmp_path,
+        _chart_html().replace(_RENDER_CALL, _RESTYLE_PROBE),
+        "data-xy-restyle-probe",
+        label="buffer-less restyle probe",
+    )
+    assert result == {key: True for key in result}
+
+
+_DENSITY_RESTYLE_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    const g = view.gpuTraces[0];
+    const texture = g.density.tex;
+    const sampleX = g.sampleOverlay && g.sampleOverlay.xBuf;
+    view._onKernelMsg({
+      type: "restyle", trace: 0,
+      style: { color: "#00ff00", opacity: 0.4 }, size: 7,
+    }, []);
+    const aggregateUpdated = g.trace.style.opacity === 0.4
+      && Math.abs(g.density.color[0]) < 1e-6
+      && Math.abs(g.density.color[1] - 1) < 1e-6
+      && Math.abs(g.density.color[2]) < 1e-6;
+    const sampleUpdated = !g.sampleOverlay || (
+      g.sampleOverlay.trace.style.color === "#00ff00" && g.sampleOverlay.size === 7);
+    const resourcesReused = g.density.tex === texture && view.gl.isTexture(texture)
+      && (!sampleX || (g.sampleOverlay.xBuf === sampleX && view.gl.isBuffer(sampleX)));
+    const retainedSpecUpdated = view.spec.traces[0].density.color === "#00ff00"
+      && view.spec.traces[0].style.opacity === 0.4;
+    document.body.setAttribute("data-xy-density-restyle-probe", JSON.stringify({
+      aggregateUpdated, sampleUpdated, resourcesReused, retainedSpecUpdated,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-density-restyle-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_density_restyle_updates_cached_tiers_without_rebuild(tmp_path: Path) -> None:
+    rng = np.random.default_rng(163)
+    chart = xy.scatter_chart(
+        xy.scatter(
+            rng.normal(size=20_000),
+            rng.normal(size=20_000),
+            color="#2563eb",
+            size=4,
+            density=True,
+        ),
+        width=480,
+        height=360,
+    )
+    result = _run(
+        tmp_path,
+        chart.to_html().replace(_RENDER_CALL, _DENSITY_RESTYLE_PROBE),
+        "data-xy-density-restyle-probe",
+        label="density restyle lifecycle probe",
+    )
+    assert result == {key: True for key in result}
+
+
+_COLUMN_CACHE_PROBE = """
+  try {
+    const cache = new Map();
+    const firstSpec = { buffer_layout: "split", columns: [
+      { buf: 0, byte_offset: 0, len: 4, hash: "h:x" },
+      { buf: 1, byte_offset: 0, len: 4, hash: "h:y1" },
+    ]};
+    const x = new Uint8Array([1, 2, 3, 4]);
+    const y1 = new Uint8Array([5, 6, 7, 8]);
+    const first = xy.resolveColumnBuffers(firstSpec, [x, y1], ["h:x", "h:y1"], cache);
+    const oldX = first[0];
+
+    const secondSpec = { buffer_layout: "split", columns: [
+      { buf: 0, byte_offset: 0, len: 4, hash: "h:x" },
+      { buf: 1, byte_offset: 0, len: 4, hash: "h:y2" },
+      { buf: 2, byte_offset: 0, len: 4, hash: "h:x" },
+    ]};
+    const y2 = new Uint8Array([9, 10, 11, 12]);
+    const second = xy.resolveColumnBuffers(secondSpec, [y2], ["h:y2"], cache);
+    const unchangedResolved = second[0] === oldX && second[2] === oldX;
+    const changedResolved = second[1][0] === 9 && second[1][3] === 12;
+    const boundedToCurrent = cache.size === 2 && cache.has("h:x") && cache.has("h:y2");
+
+    const keysBeforeFailure = JSON.stringify([...cache.keys()].sort());
+    let missingRejected = false;
+    try {
+      xy.resolveColumnBuffers(
+        { buffer_layout: "split", columns: [
+          { buf: 0, byte_offset: 0, len: 4, hash: "h:missing" },
+        ]},
+        [],
+        [],
+        cache,
+      );
+    } catch (_err) {
+      missingRejected = true;
+    }
+    const failureTransactional = missingRejected
+      && JSON.stringify([...cache.keys()].sort()) === keysBeforeFailure;
+
+    let duplicateRejected = false;
+    try {
+      xy.resolveColumnBuffers(firstSpec, [x, x], ["h:x", "h:x"], cache);
+    } catch (_err) {
+      duplicateRejected = true;
+    }
+    const malformedTransactional = duplicateRejected
+      && JSON.stringify([...cache.keys()].sort()) === keysBeforeFailure;
+
+    document.body.setAttribute("data-xy-column-cache-probe", JSON.stringify({
+      unchangedResolved, changedResolved, boundedToCurrent,
+      failureTransactional, malformedTransactional,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-column-cache-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_content_addressed_manifest_reconstructs_sparse_payloads(tmp_path: Path) -> None:
+    result = _run(
+        tmp_path,
+        _chart_html().replace(_RENDER_CALL, _COLUMN_CACHE_PROBE),
+        "data-xy-column-cache-probe",
+        label="content-addressed column manifest probe",
+    )
+    assert result == {key: True for key in result}
+
+
+_GPU_COLUMN_CACHE_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    const old = view.gpuTraces[0];
+    const oldX = old.xBuf;
+    const oldY = old.yBuf;
+    const cachePopulated = view._gpuColumnCache.size >= 2;
+    const updated = view.updatePayload(structuredClone(view.spec), view._payload) === true;
+    const fresh = view.gpuTraces[0];
+    const gpuBuffersReused = fresh.xBuf === oldX && fresh.yBuf === oldY
+      && view.gl.isBuffer(oldX) && view.gl.isBuffer(oldY);
+    const refsBalanced = [...view._gpuColumnCache.values()].every((entry) => entry.refs === 1);
+
+    const decimatedHost = document.body.appendChild(document.createElement("div"));
+    const decimatedSpec = structuredClone(spec);
+    decimatedSpec.traces[0].tier = "decimated";
+    const decimated = xy.renderStandalone(decimatedHost, decimatedSpec, buf);
+    const mutableTierExcluded = decimated._gpuColumnCache.size === 0;
+    decimated.destroy();
+
+    view._destroyGlResources();
+    const teardownCleared = view._gpuColumnCache.size === 0
+      && !view.gl.isBuffer(oldX) && !view.gl.isBuffer(oldY);
+    document.body.setAttribute("data-xy-gpu-column-cache-probe", JSON.stringify({
+      cachePopulated, updated, gpuBuffersReused, refsBalanced,
+      mutableTierExcluded, teardownCleared,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-gpu-column-cache-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_unchanged_direct_columns_reuse_gpu_buffers_and_balance_lifetime(tmp_path: Path) -> None:
+    result = _run(
+        tmp_path,
+        _chart_html().replace(_RENDER_CALL, _GPU_COLUMN_CACHE_PROBE),
+        "data-xy-gpu-column-cache-probe",
+        label="GPU column cache lifecycle probe",
     )
     assert result == {key: True for key in result}
 

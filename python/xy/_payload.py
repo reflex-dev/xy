@@ -6,6 +6,7 @@ concrete `Figure` via the MRO (§29: data moves as typed binary buffers)."""
 
 from __future__ import annotations
 
+import hashlib
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
@@ -75,6 +76,7 @@ class _PayloadWriter:
     def ship_u8(self, values: np.ndarray) -> int:
         """Raw byte column, padded so every later f32 column stays aligned."""
         enc = np.ascontiguousarray(values, dtype=np.uint8).reshape(-1)
+        content_hash = self._content_hash(enc)
         index = len(self.columns)
         if self._split:
             # One buffer per column: fold the alignment padding into the u8
@@ -83,12 +85,25 @@ class _PayloadWriter:
             padding = (-len(enc)) % 4
             padded = np.concatenate([enc, np.zeros(padding, np.uint8)]) if padding else enc
             self.columns.append(
-                {"buf": len(self._chunks), "byte_offset": 0, "len": int(len(enc)), "dtype": "u8"}
+                {
+                    "buf": len(self._chunks),
+                    "byte_offset": 0,
+                    "len": int(len(enc)),
+                    "dtype": "u8",
+                    "hash": content_hash,
+                }
             )
             self._chunks.append(padded)
             self._pos += padded.nbytes
             return index
-        self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), "dtype": "u8"})
+        self.columns.append(
+            {
+                "byte_offset": self._pos,
+                "len": int(len(enc)),
+                "dtype": "u8",
+                "hash": content_hash,
+            }
+        )
         self._chunks.append(enc)
         self._pos += enc.nbytes
         padding = (-self._pos) % 4
@@ -133,18 +148,44 @@ class _PayloadWriter:
         # once into the final bytes object, rather than once in `tobytes()` and
         # again by `join` — and split mode ships these views with no copy at all.
         enc = np.ascontiguousarray(enc)
+        content_hash = self._content_hash(enc)
         idx = len(self.columns)
         if self._split:
             # `buf` indexes the wire buffer list (== `_chunks`), which can
             # drift from the column table (`borrow_f64` columns own no chunk).
             self.columns.append(
-                {"buf": len(self._chunks), "byte_offset": 0, "len": int(len(enc)), **meta}
+                {
+                    "buf": len(self._chunks),
+                    "byte_offset": 0,
+                    "len": int(len(enc)),
+                    "hash": content_hash,
+                    **meta,
+                }
             )
         else:
-            self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), **meta})
+            self.columns.append(
+                {
+                    "byte_offset": self._pos,
+                    "len": int(len(enc)),
+                    "hash": content_hash,
+                    **meta,
+                }
+            )
         self._chunks.append(enc)
         self._pos += enc.nbytes
         return idx
+
+    @staticmethod
+    def _content_hash(enc: np.ndarray) -> str:
+        """Stable content address for one logical encoded column.
+
+        Hash the meaningful bytes only (not split-layout u8 tail padding), so
+        packed/split layouts and future transport repacks name the same
+        column. BLAKE2b-128 keeps metadata compact while retaining a
+        collision margin far beyond the process/GPU cache's lifetime.
+        """
+        digest = hashlib.blake2b(memoryview(enc).cast("B"), digest_size=16).hexdigest()
+        return f"b2-128:{digest}"
 
     def blob(self) -> bytes:
         return b"".join(

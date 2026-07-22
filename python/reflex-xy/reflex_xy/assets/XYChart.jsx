@@ -37,7 +37,9 @@ import io from "socket.io-client";
 import env from "$/env.json";
 import reflexEnvironment from "$/reflex.json";
 import { getBackendURL, getToken } from "$/utils/state";
-import { ChartView, decodeFrame, renderStandalone } from "./xy_client.js";
+import {
+  ChartView, decodeFrame, renderStandalone, resolveColumnBuffers,
+} from "./xy_client.js";
 
 // Opt-in console tracing: localStorage.setItem("xy_debug", "1")
 const DEBUG = globalThis.localStorage?.getItem?.("xy_debug") === "1";
@@ -272,6 +274,11 @@ export function XYChart(props) {
     let selectionSeq = 0;
     const restoreSelectionSeqs = new Set();
     const viewCallbacks = [];
+    // Content-addressed CPU spans for the current payload only. Typed arrays
+    // retained by transition/hover state keep their own backing stores after
+    // eviction, so bounding this map to the latest manifest is both safe and
+    // sufficient for consecutive state-driven diffs.
+    const columnCache = new Map();
 
     const subscribe = () => {
       socket.emit("sub", { fig: token, px: el.clientWidth || null, mid });
@@ -377,22 +384,26 @@ export function XYChart(props) {
       },
     };
 
-    const toSpans = (spec, buffers) => {
-      const spans = (buffers || []).map((b) => new Uint8Array(b));
-      return spec.buffer_layout === "split" ? spans : spans[0];
+    const toSpans = (spec, buffers, bufferHashes) => {
+      return resolveColumnBuffers(spec, buffers, bufferHashes, columnCache);
     };
 
     const onPayload = (data) => {
       if (destroyed || !data || data.fig !== token) return;
+      if (data.mid !== undefined && data.mid !== null && data.mid !== mid) return;
       const previousView = view?._eventView?.("republish") || null;
       const homeView = view?.view0 || null;
       const viewChanged = previousView && homeView && ["x0", "x1", "y0", "y1"].some(
         (key) => previousView[key] !== homeView[key],
       );
       const selectionToRestore = lastSelect;
-      payloadVersion = Number.isInteger(data.version) ? data.version : null;
+      const nextPayloadVersion = Number.isInteger(data.version) ? data.version : null;
       const spec = withHoverFlag(eventSpec(data.spec, cbRef.current));
-      const nextBuffers = toSpans(data.spec, data.buffers);
+      const nextBuffers = toSpans(data.spec, data.buffers, data.buffer_hashes);
+      // Advance the request guard only after the sparse manifest resolved.
+      // A malformed/missing delta leaves both the previous cache and version
+      // intact instead of pairing an old view with a new server version.
+      payloadVersion = nextPayloadVersion;
       if (view?.updatePayload?.(spec, nextBuffers)) {
         // updatePayload re-homes the viewport and rebuilds trace state, so pin
         // the domain and re-request the selection mask after the in-place swap.
@@ -521,6 +532,7 @@ export function XYChart(props) {
       pendingClickInput = null;
       clickInputs.clear();
       restoreSelectionSeqs.clear();
+      columnCache.clear();
       socket.off("payload", onPayload);
       socket.off("msg", onMsg);
       socket.off("err", onErr);
@@ -528,10 +540,12 @@ export function XYChart(props) {
       const remaining = (subCounts.get(token) || 1) - 1;
       if (remaining <= 0) {
         subCounts.delete(token);
-        if (socket.connected) socket.emit("unsub", { fig: token, mid });
       } else {
         subCounts.set(token, remaining);
       }
+      // Server-side sparse manifests are mount-addressed: every mount owns an
+      // independent column cache even when several share this socket/token.
+      if (socket.connected) socket.emit("unsub", { fig: token, mid });
       reclaimTooltipSlot();
       if (view) view.destroy();
       view = null;

@@ -177,3 +177,53 @@ export function decodeFrame(body, limits = null) {
   }
   return { message, buffers, version: XY_FRAME_VERSION, byteLength: bytes.byteLength };
 }
+
+/** Resolve a live split payload from its content-addressed delta manifest.
+ *
+ * `cache` contains only the preceding payload's logical columns. The returned
+ * list is in the writer's original `column.buf` index space, even when the
+ * server attached fewer unique buffers. Cache replacement is transactional:
+ * malformed/missing input throws without discarding the last good manifest.
+ */
+export function resolveColumnBuffers(spec, buffers, bufferHashes, cache = new Map()) {
+  const spans = (buffers || []).map(bytesToSpan);
+  if (!Array.isArray(bufferHashes)) {
+    if (spec.buffer_layout === "split") return spans;
+    return spans[0];
+  }
+  if (spec.buffer_layout !== "split" || bufferHashes.length !== spans.length) {
+    throw new Error("xy: invalid content-addressed payload manifest");
+  }
+  if (!Array.isArray(spec.columns)) {
+    throw new Error("xy: split payload is missing its column table");
+  }
+  const delivered = new Map();
+  for (let i = 0; i < bufferHashes.length; i++) {
+    const hash = bufferHashes[i];
+    if (typeof hash !== "string" || !hash) throw new Error("xy: invalid column content hash");
+    if (delivered.has(hash)) throw new Error("xy: duplicate delivered column content hash");
+    delivered.set(hash, spans[i]);
+  }
+  const resolved = [];
+  const nextCache = new Map();
+  for (const column of spec.columns) {
+    const hash = column.hash;
+    const index = column.buf;
+    if (typeof hash !== "string" || !Number.isInteger(index) || index < 0) {
+      throw new Error("xy: split column is missing content identity");
+    }
+    const span = delivered.get(hash) || cache.get(hash);
+    if (!span) throw new Error(`xy: server omitted uncached column ${hash}`);
+    if (resolved[index] && resolved[index] !== span) {
+      throw new Error("xy: one wire buffer has conflicting content hashes");
+    }
+    resolved[index] = span;
+    nextCache.set(hash, span);
+  }
+  for (const hash of delivered.keys()) {
+    if (!nextCache.has(hash)) throw new Error(`xy: delivered unreferenced column ${hash}`);
+  }
+  cache.clear();
+  for (const [hash, span] of nextCache) cache.set(hash, span);
+  return resolved;
+}
