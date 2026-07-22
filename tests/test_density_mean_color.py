@@ -203,8 +203,15 @@ def test_density_view_pyramid_path_ships_mean_colors():
     right = rgba[:, d["w"] // 2 :][lit[:, d["w"] // 2 :]]
     assert (left == palette[0]).all()
     assert (right == palette[1]).all()
-    counts = _decode_log_u8(bufs[d["buf"]], d["max"]).reshape(d["h"], d["w"])
-    assert np.array_equal(lit, counts > 0.5)
+    # The area-weighted compose (#153) spreads a cluster-edge source cell
+    # across every output bin its extent overlaps, so boundary bins can carry
+    # a fractional sliver of count — lit in the color plane while the log-u8
+    # count plane rounds the sliver to 0 or 1. The planes must still agree on
+    # where mass exists: any bin the count plane shows nonzero is lit, and an
+    # unlit bin never shows count.
+    enc = np.frombuffer(bufs[d["buf"]], dtype=np.uint8).reshape(d["h"], d["w"])
+    assert lit[enc > 0].all()
+    assert (enc[~lit] == 0).all()
 
 
 def test_colored_pyramid_append_invalidates_for_lazy_rebuild():
