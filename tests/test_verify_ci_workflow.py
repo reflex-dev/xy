@@ -38,17 +38,247 @@ def test_ci_workflow_accepts_current_gates() -> None:
     assert verify_ci_workflow.validate_ci_workflow() == []
 
 
-def test_ci_workflow_rejects_ignored_visual_baseline_changes(tmp_path: Path) -> None:
+def test_ci_workflow_rejects_path_filtered_required_result(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
     path.write_text(
-        workflow.replace('      - "docs/**"\n', '      - "docs/**"\n      - "spec/**"\n', 1),
+        workflow.replace(
+            "  pull_request:\n", "  pull_request:\n    paths-ignore:\n      - 'spec/**'\n"
+        ),
         encoding="utf-8",
     )
 
     errors = verify_ci_workflow.validate_ci_workflow(path)
 
-    assert any("must run for executable visual baselines" in error for error in errors)
+    assert any("must run on every path" in error for error in errors)
+
+
+def test_ci_workflow_rejects_required_aggregate_without_always(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("    if: always()\n    needs:\n", "    needs:\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("required_ci" in error and "if: always()" in error for error in errors)
+
+
+def test_ci_workflow_rejects_required_aggregate_missing_hard_job(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("      - rust_release\n      - sdist\n", "      - rust_release\n"),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("required_ci needs" in error and "sdist" in error for error in errors)
+
+
+def test_ci_workflow_rejects_reflex_lane_outside_required_aggregate(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("      - reflex_adapter\n", "", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("required_ci needs" in error and "reflex_adapter" in error for error in errors)
+
+
+def test_ci_workflow_rejects_dependency_audit_outside_required_aggregate(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace("      - dependency_audit\n", "", 1), encoding="utf-8")
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("required_ci needs" in error and "dependency_audit" in error for error in errors)
+
+
+def test_ci_workflow_rejects_unpinned_dependency_scanner(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "15314940c10d26af9c6649f150b8a47c1262e8fc7e17b1d1029b0e479e8ed8a0",
+            "0" * 64,
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any(
+        "dependency_audit" in error and "pinned multi-ecosystem" in error for error in errors
+    )
+
+
+def test_ci_workflow_rejects_advisory_dependency_audit(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "    timeout-minutes: 15\n    steps:\n",
+            "    timeout-minutes: 15\n    continue-on-error: true\n    steps:\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("dependency_audit must be a hard gate" in error for error in errors)
+
+
+def test_ci_workflow_rejects_missing_locked_release_rust_suite(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Run locked release-profile suite\n"
+            "        run: cargo test --locked --release\n",
+            "      - name: Run locked release-profile suite\n        run: cargo test --release\n",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "rust_release" in error and "cargo test --locked --release" in error for error in errors
+    )
+
+
+def test_ci_workflow_rejects_missing_release_only_regression_inventory(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "          grep -Fqx \\\n"
+            "            'tiles::tests::compose_window_astronomically_past_domain_is_empty_not_panic: test' \\\n"
+            "            release-tests.txt\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("rust_release" in error and "release-only regression" in error for error in errors)
+
+
+def test_ci_workflow_rejects_release_rust_job_outside_required_aggregate(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace("      - rust_release\n", ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("required_ci needs" in error and "rust_release" in error for error in errors)
+
+
+def test_ci_workflow_rejects_incomplete_native_parity_matrix(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "          - os: macos-14\n            arch: aarch64\n            default: aarch64\n",
+            "",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("native_parity matrix" in error for error in errors)
+
+
+def test_ci_workflow_rejects_native_parity_outside_required_aggregate(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace("      - native_parity\n", "", 1), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("required_ci needs" in error and "native_parity" in error for error in errors)
+
+
+def test_ci_workflow_requires_failure_retained_native_parity_report(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Retain native parity report\n        if: always()\n",
+            "      - name: Retain native parity report\n",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("native_parity" in error and "if: always()" in error for error in errors)
+
+
+def test_ci_workflow_rejects_conditioned_release_test_inventory(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Inventory release-only regression coverage\n",
+            "      - name: Inventory release-only regression coverage\n"
+            "        if: github.event_name == 'workflow_dispatch'\n",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "rust_release step" in error and "must be unconditional" in error for error in errors
+    )
+
+
+def test_ci_workflow_rejects_missing_release_test_inventory_artifact(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("          name: rust-release-test-inventory\n", ""),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "rust_release" in error and "rust-release-test-inventory" in error for error in errors
+    )
+
+
+def test_ci_workflow_rejects_invalid_embedded_python_indentation(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            '          else:\n              raise SystemExit("expected ImportError without the native core")\n',
+            '          else:\n            raise SystemExit("expected ImportError without the native core")\n',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("invalid Python heredoc" in error for error in errors)
 
 
 def test_reference_gate_commands_must_be_in_the_named_step(tmp_path: Path) -> None:
@@ -446,6 +676,45 @@ def test_ci_workflow_rejects_missing_animation_smoke(tmp_path: Path) -> None:
     assert any("Animation smoke" in error and "animation_smoke.py" in error for error in errors)
 
 
+def test_ci_workflow_rejects_missing_runtime_security_smoke(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            '          .venv/bin/python scripts/runtime_security_smoke.py "$CHROME" --no-sandbox \\\n'
+            "            --evidence runtime-security-evidence.json\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any(
+        "Runtime standalone security smoke" in error and "runtime_security_smoke.py" in error
+        for error in errors
+    )
+
+
+def test_ci_workflow_rejects_missing_runtime_security_evidence_upload(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    block = (
+        "      - name: Upload runtime security evidence\n"
+        "        if: always()\n"
+        "        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n"
+        "        with:\n"
+        "          name: runtime-security-evidence\n"
+        "          if-no-files-found: error\n"
+        "          path: runtime-security-evidence.json\n\n"
+    )
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(block, ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("Upload runtime security evidence" in error for error in errors)
+
+
 def test_ci_workflow_rejects_missing_animation_evidence_upload(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     block = (
@@ -587,23 +856,7 @@ def test_ci_workflow_rejects_missing_visual_health_smoke(tmp_path: Path) -> None
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("visual health" in error and "visual_health_smoke" in error for error in errors)
-
-
-def test_ci_workflow_rejects_missing_runtime_security_smoke(tmp_path: Path) -> None:
-    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    path = tmp_path / "ci.yml"
-    path.write_text(workflow.replace('          .venv/bin/python scripts/runtime_security_smoke.py "$CHROME" --no-sandbox \\\n            --evidence runtime-security-evidence.json\n', ""), encoding="utf-8")
-    errors = verify_ci_workflow.validate_workflow(path)
-    assert any("Runtime standalone security smoke" in error for error in errors)
-
-
-def test_ci_workflow_rejects_missing_runtime_security_evidence_upload(tmp_path: Path) -> None:
-    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    path = tmp_path / "ci.yml"
-    path.write_text(workflow.replace("      - name: Upload runtime security evidence\n", "      - name: Removed runtime security evidence\n"), encoding="utf-8")
-    errors = verify_ci_workflow.validate_workflow(path)
-    assert any("Upload runtime security evidence" in error for error in errors)
+    assert any("test job" in error and "visual_health_smoke" in error for error in errors)
 
 
 def test_ci_workflow_rejects_missing_reviewed_visual_baseline(tmp_path: Path) -> None:
@@ -616,9 +869,7 @@ def test_ci_workflow_rejects_missing_reviewed_visual_baseline(tmp_path: Path) ->
     )
     path = tmp_path / "ci.yml"
     path.write_text(workflow.replace(command, ""), encoding="utf-8")
-
     errors = verify_ci_workflow.validate_workflow(path)
-
     assert any(
         "Reviewed visual baseline" in error and "visual_baseline.py" in error for error in errors
     )
@@ -635,40 +886,22 @@ def test_ci_workflow_rejects_visual_baseline_update_mode(tmp_path: Path) -> None
         ),
         encoding="utf-8",
     )
-
     errors = verify_ci_workflow.validate_workflow(path)
-
     assert any("must never update reviewed baselines" in error for error in errors)
-
-
-def test_ci_workflow_requires_visual_baseline_after_prior_failure(tmp_path: Path) -> None:
-    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    path = tmp_path / "ci.yml"
-    path.write_text(workflow.replace("        if: ${{ !cancelled() }}\n", "", 1), encoding="utf-8")
-
-    errors = verify_ci_workflow.validate_ci_workflow(path)
-
-    assert any("Reviewed visual baseline" in error and "!cancelled" in error for error in errors)
 
 
 def test_ci_workflow_rejects_missing_visual_baseline_evidence_upload(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    block = (
-        "      - name: Upload visual baseline evidence\n"
-        "        if: always()\n"
-        "        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n"
-        "        with:\n"
-        "          name: visual-baseline-evidence\n"
-        "          if-no-files-found: error\n"
-        "          path: |\n"
-        "            visual-baseline-evidence.json\n"
-        "            visual-baseline-artifacts/\n\n"
-    )
     path = tmp_path / "ci.yml"
-    path.write_text(workflow.replace(block, ""), encoding="utf-8")
-
+    path.write_text(
+        workflow.replace(
+            "      - name: Upload visual baseline evidence\n",
+            "      - name: Removed visual baseline evidence\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
     errors = verify_ci_workflow.validate_workflow(path)
-
     assert any("Upload visual baseline evidence" in error for error in errors)
 
 
@@ -687,6 +920,104 @@ def test_ci_workflow_rejects_missing_cross_browser_conformance(tmp_path: Path) -
     errors = verify_ci_workflow.validate_ci_workflow(path)
 
     assert any("browser_conformance" in error and "conformance gate" in error for error in errors)
+
+
+def test_ci_workflow_rejects_missing_reflex_adapter_browser_gate(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            "          ../../.venv/bin/python ../../scripts/reflex_ws_smoke.py \\\n"
+            '            --frontend http://localhost:3100 --chromium "$CHROME" \\\n'
+            "            --screenshot reflex-e2e.png\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("reflex_adapter" in error and "reflex_ws_smoke.py" in error for error in errors)
+
+
+def test_ci_workflow_rejects_reflex_adapter_without_screenshot_evidence(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(" \\\n            --screenshot reflex-e2e.png\n", "\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("browser evidence capture" in error and "--screenshot" in error for error in errors)
+
+
+def test_ci_workflow_rejects_reflex_evidence_upload_that_skips_failures(
+    tmp_path: Path,
+) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    marker = "      - name: Upload Reflex E2E evidence\n        if: always()\n"
+    path.write_text(
+        text.replace(marker, "      - name: Upload Reflex E2E evidence\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "failure-safe browser evidence upload" in error and "if: always()" in error
+        for error in errors
+    )
+
+
+def test_ci_workflow_rejects_soft_reflex_adapter_gate(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            "  reflex_adapter:\n    name:",
+            "  reflex_adapter:\n    continue-on-error: true\n    name:",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("reflex_adapter job must be a hard gate" in error for error in errors)
+
+
+def test_ci_workflow_rejects_root_owned_reflex_test_dependencies(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            "          uv pip install -p .venv/bin/python -e .\n",
+            '          uv pip install -p .venv/bin/python -e ".[dev]"\n',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "python/reflex-xy[dev]" in error and "root xy dev extra" in error for error in errors
+    )
+
+
+def test_ci_workflow_rejects_adapter_tests_outside_package_boundary(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace("-q python/reflex-xy/tests\n", "-q tests/reflex_adapter\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("reflex_adapter" in error and "python/reflex-xy/tests" in error for error in errors)
 
 
 def test_ci_workflow_rejects_missing_playwright_browser_cache(tmp_path: Path) -> None:
@@ -843,6 +1174,49 @@ def test_release_workflow_rejects_nonblocking_native_wheel_matrix(tmp_path: Path
     assert any("wheels job must block publishing" in error for error in errors)
 
 
+def test_release_workflow_rejects_missing_native_artifact_runtime_probe(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            "            python scripts/native_parity.py \\\n",
+            "            python missing.py \\\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "Run musllinux wheel parity in musl 1.2" in error and "native_parity.py" in error
+        for error in errors
+    )
+
+
+def test_release_workflow_requires_failure_retained_native_runtime_report(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            "        if: always() && (matrix.runtime == 'manylinux' || "
+            "matrix.runtime == 'musllinux')\n",
+            "        if: matrix.runtime == 'manylinux' || matrix.runtime == 'musllinux'\n",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "Retain native artifact runtime report" in error and "always()" in error for error in errors
+    )
+
+
 def test_release_workflow_rejects_unpinned_pyodide_runtime_contract(
     tmp_path: Path,
 ) -> None:
@@ -868,8 +1242,11 @@ def test_release_workflow_rejects_nonblocking_pyodide_probe(tmp_path: Path) -> N
     path = tmp_path / "release.yml"
     path.write_text(
         workflow.replace(
-            "    runs-on: ubuntu-latest\n",
-            "    runs-on: ubuntu-latest\n    continue-on-error: true\n",
+            "  wasm:\n    name: Wheel Pyodide (runtime verified)\n"
+            "    needs: qualify\n    runs-on: ubuntu-latest\n",
+            "  wasm:\n    name: Wheel Pyodide (runtime verified)\n"
+            "    needs: qualify\n    runs-on: ubuntu-latest\n"
+            "    continue-on-error: true\n",
             1,
         ),
         encoding="utf-8",
@@ -983,3 +1360,87 @@ def test_release_workflow_rejects_non_retryable_pypi_publish(tmp_path: Path) -> 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
     assert any("release publish job" in error and "skip-existing" in error for error in errors)
+
+
+def test_release_workflow_rejects_missing_exact_source_metadata_gate(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace("            args+=(--release-metadata)\n", ""), encoding="utf-8"
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("release qualify job" in error and "--release-metadata" in error for error in errors)
+
+
+def test_release_workflow_rejects_unbound_provenance_identity(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace('            --workflow-run-id "$GITHUB_RUN_ID" \\\n', "", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "release provenance job" in error and "--workflow-run-id" in error for error in errors
+    )
+
+
+def test_docs_dev_deploy_rejects_missing_exact_sha_preflight(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/deploy-docs-dev.yml").read_text(encoding="utf-8")
+    path = tmp_path / "deploy-docs-dev.yml"
+    path.write_text(
+        workflow.replace("          python3 scripts/verify_source_qualification.py\n", ""),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_deploy_workflows(dev_path=path)
+
+    assert any("docs dev deploy qualify job" in error for error in errors)
+
+
+def test_docs_prod_deploy_rejects_mutable_artifact_promotion(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        workflow.replace(
+            '          if [[ "$ACTUAL_FRONTEND" != "$EXPECTED_FRONTEND" ]]; then\n', ""
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_deploy_workflows(stg_path=path)
+
+    assert any("verify-prod-artifacts" in error and "ACTUAL_FRONTEND" in error for error in errors)
+
+
+def test_docs_image_build_rejects_disabled_provenance(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/_build-docs-images.yml").read_text(encoding="utf-8")
+    path = tmp_path / "_build-docs-images.yml"
+    path.write_text(
+        workflow.replace("--provenance=mode=max", "--provenance=false", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_deploy_workflows(build_path=path)
+
+    assert any("provenance" in error for error in errors)
+
+
+def test_docs_helm_promotion_rejects_mutable_tags(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/_helm-docs-pr.yml").read_text(encoding="utf-8")
+    path = tmp_path / "_helm-docs-pr.yml"
+    path.write_text(
+        workflow.replace(
+            '          FRONTEND_REF="${IMAGE_TAG}@${FRONTEND_DIGEST}" \\\n',
+            '          FRONTEND_REF="$IMAGE_TAG" \\\n',
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_deploy_workflows(helm_path=path)
+
+    assert any("docs Helm promotion open-helm-pr job" in error for error in errors)

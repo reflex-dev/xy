@@ -19,6 +19,7 @@ from typing import Any
 
 HARD_JOBS = (
     "browser_conformance",
+    "dependency_audit",
     "install_without_rust",
     "matplotlib_reference",
     "native_parity",
