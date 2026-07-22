@@ -78,7 +78,7 @@ def test_gallery_builders_render_standalone_and_introspect(charts_mod) -> None:
     for chart_id in ("business-overview", "line-walk", "composed-layers", "annotated-heatmap"):
         html = charts_mod.BY_ID[chart_id].builder().to_html()
         assert "renderStandalone" in html, chart_id
-        assert "window.xy = {" in html, chart_id
+        assert "var xy=" in html, chart_id  # minified IIFE namespace (window.xy)
 
 
 # --- FastAPI app routes (needs fastapi + httpx) -----------------------------

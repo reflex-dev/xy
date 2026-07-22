@@ -12,24 +12,71 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-# The hand-written client is split across ordered js/src parts — 50_chartview.js
+# The client source is TypeScript ES modules under js/src — 50_chartview.ts
 # was decomposed into 50 (core) + 51_annotations/52_tooltip/53_interaction/
-# 54_kernel. Assert source-level invariants against the whole concatenation so a
-# further split never silently drops a check, plus each built bundle separately.
+# 54_kernel/56_animation/57_viewstate. Assert source-level invariants against
+# the whole concatenation so a further split never silently drops a check.
 # (label, text) pairs: the label only names the source in failure messages.
+#
+# The built bundles under python/xy/static are MINIFIED by vite (identifiers
+# renamed, whitespace collapsed), so exact source lines cannot be asserted
+# against them. Only string-literal / property-name invariants are (see
+# test_built_bundles_keep_minification_safe_invariants); every source-level
+# check still transfers to the shipped bundles because `node js/build.mjs
+# --check` (CI + `make js-check`) proves the committed bundles are compiled
+# from exactly this source.
 _CLIENT_SRC = (
-    "js/src/*.js",
-    "\n".join(_read(p) for p in sorted((ROOT / "js" / "src").glob("*.js"))),
+    "js/src/*.ts",
+    "\n".join(_read(p) for p in sorted((ROOT / "js" / "src").glob("*.ts"))),
 )
 _INDEX = ("static/index.js", _read(_STATIC / "index.js"))
 _STANDALONE = ("static/standalone.js", _read(_STATIC / "standalone.js"))
 
-CLIENT_FILES = (_CLIENT_SRC, _INDEX, _STANDALONE)
-FORMATTER_FILES = (("js/src/30_ticks.js", _read(ROOT / "js/src/30_ticks.js")), _INDEX, _STANDALONE)
-LOD_FILES = (("js/src/45_lod.js", _read(ROOT / "js/src/45_lod.js")), _INDEX, _STANDALONE)
-# The chrome default stylesheet lives in the theme part; both built bundles
-# concatenate it.
-THEME_FILES = (("js/src/20_theme.js", _read(ROOT / "js/src/20_theme.js")), _INDEX, _STANDALONE)
+CLIENT_FILES = (_CLIENT_SRC,)
+BUNDLES = (_INDEX, _STANDALONE)
+FORMATTER_FILES = (("js/src/30_ticks.ts", _read(ROOT / "js/src/30_ticks.ts")),)
+LOD_FILES = (("js/src/45_lod.ts", _read(ROOT / "js/src/45_lod.ts")),)
+# The chrome default stylesheet lives in the theme part; its rules are string
+# literals, so the bundle-level test re-asserts them in both built bundles.
+THEME_FILES = (("js/src/20_theme.ts", _read(ROOT / "js/src/20_theme.ts")),)
+
+# Chrome styling contract (§36) — shared between the source-level test and the
+# minification-safe bundle test: these all live inside string literals, which
+# the minifier preserves verbatim.
+_CHROME_WHERE_RULES = (
+    ':where(.xy [data-xy-slot="tooltip"]){',
+    ':where(.xy [data-xy-slot="legend"]){',
+    ':where(.xy [data-xy-slot="legend_swatch"]){',
+    ':where(.xy [data-xy-slot="modebar"]){',
+    ':where(.xy [data-xy-slot="modebar_button"]){',
+    ":where(.xy [data-xy-modebar-menu]){",
+    ":where(.xy [data-xy-modebar-menu-item]){",
+    ':where(.xy [data-xy-slot="modebar_button"].xy-active){',
+    ':where(.xy [data-xy-slot="selection"]){',
+    ':where(.xy [data-xy-slot="badge_item"]){',
+    ':where(.xy [data-xy-slot="tick_label"]){',
+    ':where(.xy [data-xy-slot="axis_title"]){',
+    ':where(.xy [data-xy-slot="annotation_label"]){',
+    ':where(.xy [data-xy-slot="canvas"]){cursor:',
+    ':where(.xy [data-xy-slot="canvas"][data-xy-dragmode="pan"]){cursor:',
+)
+_CHROME_TOKENS = (
+    "--chart-tooltip-bg",
+    "--chart-tooltip-text",
+    "--chart-legend-bg",
+    "--chart-modebar-bg",
+    "--chart-modebar-active",
+    "--chart-selection",
+    "--chart-selection-fill",
+    "--chart-crosshair",
+    "--chart-badge-bg",
+    "--chart-badge-text",
+)
+_BANNED_HTML_SINKS = (
+    "insertAdjacentHTML",
+    "outerHTML",
+    "document.write",
+)
 
 
 def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
@@ -38,52 +85,23 @@ def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
     Every chrome slot's visual defaults + --chart-* token must be present, and
     the elements must carry only structural inline styles (no inline
     background/color that would beat a utility class)."""
-    where_rules = (
-        ':where(.xy [data-xy-slot="tooltip"]){',
-        ':where(.xy [data-xy-slot="legend"]){',
-        ':where(.xy [data-xy-slot="legend_swatch"]){',
-        ':where(.xy [data-xy-slot="modebar"]){',
-        ':where(.xy [data-xy-slot="modebar_button"]){',
-        ":where(.xy [data-xy-modebar-menu]){",
-        ":where(.xy [data-xy-modebar-menu-item]){",
-        ':where(.xy [data-xy-slot="modebar_button"].xy-active){',
-        ':where(.xy [data-xy-slot="selection"]){',
-        ':where(.xy [data-xy-slot="badge_item"]){',
-        ':where(.xy [data-xy-slot="tick_label"]){',
-        ':where(.xy [data-xy-slot="axis_title"]){',
-        ':where(.xy [data-xy-slot="annotation_label"]){',
-        ':where(.xy [data-xy-slot="canvas"]){cursor:',
-        ':where(.xy [data-xy-slot="canvas"][data-xy-dragmode="pan"]){cursor:',
-    )
-    tokens = (
-        "--chart-tooltip-bg",
-        "--chart-tooltip-text",
-        "--chart-legend-bg",
-        "--chart-modebar-bg",
-        "--chart-modebar-active",
-        "--chart-selection",
-        "--chart-selection-fill",
-        "--chart-crosshair",
-        "--chart-badge-bg",
-        "--chart-badge-text",
-    )
     for path, text in THEME_FILES:
         assert "@layer base{" in text, (
             f"{path} leaves XY defaults unlayered, which outranks Tailwind utilities"
         )
-        for rule in where_rules:
+        for rule in _CHROME_WHERE_RULES:
             assert rule in text, f"{path} missing defeatable chrome rule {rule!r}"
-        for token in tokens:
+        for token in _CHROME_TOKENS:
             assert token in text, f"{path} no longer themes {token!r} in the stylesheet"
         assert "ensureChromeStylesheet" in text
 
     # The inline tooltip/legend/modebar cssText must not re-set themeable
     # properties (that would beat utility classes on specificity).
-    chartview = (ROOT / "js/src/50_chartview.js").read_text(encoding="utf-8")
+    chartview = (ROOT / "js/src/50_chartview.ts").read_text(encoding="utf-8")
     assert "ensureChromeStylesheet(root);" in chartview
     assert "background:var(--chart-tooltip-bg" not in chartview
     # modebar active state is a class toggle, never inline (its builder now lives
-    # in 53_interaction.js, so assert against the whole client source).
+    # in 53_interaction.ts, so assert against the whole client source).
     assert 'btn.classList.toggle("xy-active"' in _CLIENT_SRC[1]
 
 
@@ -97,18 +115,13 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
         "this.tooltip.appendChild(document.createTextNode(ln));",
     )
     required_style_sinks = ("sw.style.background = safeCssPaint(this.root, bg);",)
-    banned_html_sinks = (
-        "insertAdjacentHTML",
-        "outerHTML",
-        "document.write",
-    )
 
     for path, text in CLIENT_FILES:
         for sink in required_text_sinks:
             assert sink in text, f"{path} no longer protects {sink!r}"
         for sink in required_style_sinks:
             assert sink in text, f"{path} no longer sanitizes {sink!r}"
-        for sink in banned_html_sinks:
+        for sink in _BANNED_HTML_SINKS:
             assert sink not in text, f"{path} must not use HTML sink {sink}"
 
         inner_html_lines = [line.strip() for line in text.splitlines() if ".innerHTML" in line]
@@ -300,11 +313,9 @@ def test_standalone_tooltips_retain_encoded_color_and_size_channels() -> None:
             "row.size_value = this._denormalizeUnit(cpu.size[hit.index], size.domain);" in text
         ), f"{path} drops size_value"
 
-    standalone = (ROOT / "js/src/60_entries.js").read_text(encoding="utf-8")
-    generated = (ROOT / "python/xy/static/standalone.js").read_text(encoding="utf-8")
-    for text in (standalone, generated):
-        assert "g._cpu.color = column(g.trace.color.buf);" in text
-        assert "g._cpu.size = column(g.trace.size.buf);" in text
+    entries = (ROOT / "js/src/60_entries.ts").read_text(encoding="utf-8")
+    assert "g._cpu.color = column(g.trace.color.buf);" in entries
+    assert "g._cpu.size = column(g.trace.size.buf);" in entries
 
 
 def test_client_tooltip_value_formatter_preserves_strings() -> None:
@@ -332,7 +343,7 @@ def test_client_exposes_first_class_interaction_events() -> None:
         'this._dispatchChartEvent("brush",',
         'this._dispatchChartEvent("select",',
         'this.comm.send({ type: "view_change", ...detail });',
-        'const msg = { type: "click", trace: hit.trace, index: hit.index, screen, modifiers };',
+        'const msg: any = { type: "click", trace: hit.trace, index: hit.index, screen, modifiers };',
         "new BroadcastChannel(`xy:${group}`)",
     )
 
@@ -520,15 +531,9 @@ def test_client_refreshes_and_destroys_density_sample_overlays() -> None:
         for marker in chartview_required:
             assert marker in text, f"{path} no longer maintains density sample marker {marker!r}"
 
-    lod_files = (
-        ROOT / "js/src/45_lod.js",
-        ROOT / "python/xy/static/index.js",
-        ROOT / "python/xy/static/standalone.js",
-    )
-    for path in lod_files:
-        text = path.read_text(encoding="utf-8")
-        assert 'Object.prototype.hasOwnProperty.call(d, "sample")' in text
-        assert "view._applyDensitySample(g, d.sample, buffers);" in text
+    lod = (ROOT / "js/src/45_lod.ts").read_text(encoding="utf-8")
+    assert 'Object.prototype.hasOwnProperty.call(d, "sample")' in lod
+    assert "view._applyDensitySample(g, d.sample, buffers);" in lod
 
 
 def test_client_refreshes_theme_when_framework_theme_classes_change() -> None:
@@ -545,7 +550,7 @@ def test_client_refreshes_theme_when_framework_theme_classes_change() -> None:
 
 
 def test_client_lod_layer_stays_chart_agnostic_and_renderer_delegated() -> None:
-    source_lod = (ROOT / "js/src/45_lod.js").read_text(encoding="utf-8")
+    source_lod = (ROOT / "js/src/45_lod.ts").read_text(encoding="utf-8")
     assert "trace.kind" not in source_lod
     assert "markOf(" not in source_lod
 
@@ -707,21 +712,39 @@ def test_client_draws_first_class_annotation_markers() -> None:
             assert marker in text, f"{path} no longer draws annotation marker primitives"
 
 
-def test_widget_bundle_is_valid_esm_not_leaking_marker_prose() -> None:
-    """index.js is anywidget's `_esm` (widget.py). The bundler splits 60_entries
-    on `// ---- exports ----`; any text trailing that marker on its line would
-    land as bare, unparseable code in the module. Guard the exact regression:
-    the ESM must carry no marker prose and must tail with `export` statements."""
+def test_widget_bundle_is_valid_esm_and_standalone_is_a_window_global() -> None:
+    """index.js is anywidget's `_esm` (widget.py): the minified module must
+    still export the full public namespace by name. standalone.js is inlined
+    as a classic <script> by `Figure.to_html()`: it must be export-free and
+    define a top-level `var xy` namespace (window.xy) with the same surface."""
     index_text = _read(_STATIC / "index.js")
-    assert "stripped for the IIFE build" not in index_text, (
-        "index.js leaked the export-marker comment prose as bare code"
+    for alias in (
+        "as render",
+        "as renderStandalone",
+        "as decodeFrame",
+        "as ChartView",
+        "as MARK_KINDS",
+        "as markOf",
+        "as default",
+    ):
+        assert alias in index_text, f"index.js no longer exports {alias.split()[-1]!r}"
+
+    standalone_text = _read(_STATIC / "standalone.js")
+    assert "export {" not in standalone_text and "export{" not in standalone_text, (
+        "standalone.js must be a classic script (no ES exports)"
     )
-    tail = [ln for ln in index_text.splitlines() if ln.strip()][-2:]
-    assert all(ln.startswith("export ") for ln in tail), (
-        f"index.js must end with export statements, got {tail!r}"
+    assert standalone_text.startswith("var xy="), (
+        "standalone.js must define the window.xy namespace via a top-level var"
     )
-    # The IIFE bundle is export-free (exports are illegal in a Function body).
-    assert "export {" not in _read(_STATIC / "standalone.js")
+    for prop in (
+        ".render=",
+        ".renderStandalone=",
+        ".decodeFrame=",
+        ".ChartView=",
+        ".MARK_KINDS=",
+        ".markOf=",
+    ):
+        assert prop in standalone_text, f"standalone.js namespace lost {prop!r}"
 
 
 def test_annotation_labels_and_cursor_stay_css_defeatable() -> None:
@@ -735,7 +758,7 @@ def test_annotation_labels_and_cursor_stay_css_defeatable() -> None:
 
     # Annotation label font is a stylesheet default, not inline (only the
     # position/transform structural bits and an *explicit* color stay inline).
-    annotations = _read(ROOT / "js/src/51_annotations.js")
+    annotations = _read(ROOT / "js/src/51_annotations.ts")
     assert "font-size:11px;line-height:1.2;font-weight:500;" not in annotations, (
         "annotation label pins font inline; move it to the :where() stylesheet"
     )
@@ -747,8 +770,8 @@ def test_annotation_labels_and_cursor_stay_css_defeatable() -> None:
     assert "d.style.opacity = String(Math.max(0, Math.min(1, labelOpacity)));" in annotations
 
     # Cursor is attribute-driven, never inline (inline cursor beats cursor-* utils).
-    chartview = _read(ROOT / "js/src/50_chartview.js")
-    interaction = _read(ROOT / "js/src/53_interaction.js")
+    chartview = _read(ROOT / "js/src/50_chartview.ts")
+    interaction = _read(ROOT / "js/src/53_interaction.ts")
     assert "cursor:" not in chartview, "canvas re-pins cursor inline"
     assert "this.canvas.style.cursor" not in interaction, "drag-mode re-pins cursor inline"
     assert "this.canvas.dataset.xyDragmode = mode;" in interaction
@@ -875,3 +898,40 @@ def test_client_named_axes_handle_silent_gutters_and_reversed_ticks() -> None:
         assert label_layout.index("strategyValue") < label_layout.index("labels.length <= 1"), (
             f"{path} lets a single label bypass tick_label_strategy='none'"
         )
+
+
+def test_built_bundles_keep_minification_safe_invariants() -> None:
+    """Defense-in-depth on the shipped artifacts. The bundles are minified, so
+    only invariants that survive minification are asserted here: string-literal
+    content (the chrome stylesheet, channel names, badges) and property-name
+    sinks. Everything line-level is asserted against js/src/*.ts above and
+    transfers because `node js/build.mjs --check` proves the committed bundles
+    are compiled from exactly that source."""
+    src_inner_html = _CLIENT_SRC[1].count(".innerHTML")
+    for path, text in BUNDLES:
+        # Security: no HTML-parsing sinks, and no innerHTML sites beyond the
+        # audited icon-injection ones counted in the source.
+        for sink in _BANNED_HTML_SINKS:
+            assert sink not in text, f"{path} must not use HTML sink {sink}"
+        assert text.count(".innerHTML") == src_inner_html, (
+            f"{path} innerHTML site count diverged from js/src (audited sites)"
+        )
+        # The §36 chrome contract ships intact: layered zero-specificity
+        # defaults and every --chart-* token.
+        assert "@layer base{" in text, f"{path} lost the layered chrome stylesheet"
+        for rule in _CHROME_WHERE_RULES:
+            assert rule in text, f"{path} missing defeatable chrome rule {rule!r}"
+        for token in _CHROME_TOKENS:
+            assert token in text, f"{path} no longer themes {token!r}"
+        assert '[data-xy-slot="selection"][data-xy-band="zoom"]){' in text, (
+            f"{path} is missing the defeatable zoom-band :where() default"
+        )
+        assert "min-width:42px" in text, path
+        assert "[data-xy-modebar-select-icon]" in text, path
+        # Slot stamping + cross-frame governor machinery still present.
+        assert ".dataset.xySlot=" in text, f"{path} no longer stamps data-xy-slot"
+        assert "xy-webgl-context-governor" in text, (
+            f"{path} lost the cross-frame WebGL context governor channel"
+        )
+        # §28: reductions stay badged in the shipped client.
+        assert "zoom re-binned from sample" in text, f"{path} lost the re-bin badge"

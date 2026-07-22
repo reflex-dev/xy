@@ -181,7 +181,7 @@ panes is layout the Figure grid owns.
 plus two cross-chart linking props. Every switch defaults to `None`, meaning
 "unset"; the renderer resolves an unset switch through
 `ChartView._interactionFlag(name, fallback)`
-(`js/src/50_chartview.js:436`), which treats only the literal `true` as on:
+(`js/src/50_chartview.ts:436`), which treats only the literal `true` as on:
 
 | Switch | Default when unset | Effect |
 | --- | --- | --- |
@@ -201,7 +201,7 @@ the source toggles `wheel_zoom`/`box_zoom`/`zoom_buttons`/`double_click_reset`;
 [pan-and-zoom-configuration.md](pan-and-zoom-configuration.md) on their design.
 
 `navigation` is checked before `pan` and `zoom` at each gesture site
-(`js/src/53_interaction.js:112`, `:240`, `:251`), so it disables pointer
+(`js/src/53_interaction.ts:112`, `:240`, `:251`), so it disables pointer
 navigation wholesale while leaving `pan`/`zoom` as the finer-grained
 switches.
 
@@ -222,7 +222,7 @@ skips the per-viewport server round-trip entirely.
 
 **Cross-chart linking.** `link_group` is an opaque identifier; charts sharing
 one join the `BroadcastChannel` named `` `xy:${group}` ``
-(`js/src/50_chartview.js:487`). `link_axes` defaults to every declared axis and
+(`js/src/50_chartview.ts:487`). `link_axes` defaults to every declared axis and
 is filtered to declared axis IDs at runtime; only those dimensions of the
 broadcast view are copied onto the receiving chart. Semantics that matter:
 
@@ -237,7 +237,7 @@ broadcast view are copied onto the receiving chart. Semantics that matter:
   even when no `on_view_change` listener is attached — it broadcasts locally
   without sending to the server.
 - Selections propagate only under the separate `link_select` wire flag
-  (range, polygon, or clear — `js/src/50_chartview.js:491`), applied without
+  (range, polygon, or clear — `js/src/50_chartview.ts:491`), applied without
   re-dispatching events so linked charts do not feed back. `link_select` is
   public through `Figure.set_interaction(link_select=…)` (`_figure.py:257`,
   applied at `:270`) and through `facet_chart(link_select=True)`

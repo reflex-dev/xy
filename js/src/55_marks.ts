@@ -1,3 +1,5 @@
+import { parseColor } from "./20_theme";
+
 // ---------------------------------------------------------------------------
 // Mark-renderer registry — the client-side dispatch for chart kinds.
 //
@@ -153,7 +155,7 @@ const MESH_MARK = {
   },
 };
 
-const MARK_KINDS = {
+export const MARK_KINDS = {
   histogram: RECT_MARK,
   box: RECT_MARK,
   violin: RECT_MARK,
@@ -215,6 +217,6 @@ const MARK_KINDS = {
 };
 
 // Registry lookup with the scatter fallback every dispatch site shares.
-function markOf(kind) {
+export function markOf(kind) {
   return MARK_KINDS[kind] || MARK_KINDS.scatter;
 }

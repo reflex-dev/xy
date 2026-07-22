@@ -69,7 +69,12 @@ include = [
     # and the ban on its reflex.lock frontend pins.
     "python/xy",
     "src",
-    "js/src",
+    # The whole js/ dir (TS sources + build.mjs + tsconfig) plus the npm
+    # manifests, so the sdist can rebuild the client with `npm ci &&
+    # node js/build.mjs` (verify_sdist.py checks the load-bearing files).
+    "js",
+    "package.json",
+    "package-lock.json",
     "benchmarks",
     "docs",
     "spec",

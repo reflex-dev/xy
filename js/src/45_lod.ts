@@ -1,3 +1,5 @@
+import { parseColor } from "./20_theme";
+
 // ---------------------------------------------------------------------------
 
 const LOD_DIRECT_POINT_BUDGET = 200000;
@@ -27,7 +29,7 @@ function lodFade(view, start, duration = 140) {
 // to approximate counts so exposure normalization and re-encodes work
 // unchanged. The final texture is 8-bit log anyway, so the round-trip is
 // visually exact; decode is deterministic (no RNG/time).
-function lodDecodeLogU8(buf, maxVal) {
+export function lodDecodeLogU8(buf, maxVal) {
   const u8 = buf instanceof ArrayBuffer ? new Uint8Array(buf) : new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
   const out = new Float32Array(u8.length);
   const denom = Math.log1p(Math.max(0, maxVal || 0));
@@ -39,13 +41,13 @@ function lodDecodeLogU8(buf, maxVal) {
   return out;
 }
 
-function lodCopyGrid(f32) {
+export function lodCopyGrid(f32) {
   return f32.slice ? f32.slice() : new Float32Array(f32);
 }
 
 // Log tone-mapped grid upload (R8): stable perception across renormalization,
 // and the u_max swings between rebins compress logarithmically (§5/§F6).
-function lodWriteGridTexture(gl, tex, f32, w, h, maxVal) {
+export function lodWriteGridTexture(gl, tex, f32, w, h, maxVal) {
   const data = new Uint8Array(f32.length);
   const denom = Math.log1p(Math.max(0, maxVal || 0));
   if (denom > 0) {
@@ -193,7 +195,7 @@ function lodDensityPinned(g, d) {
     d === g._shownDensity || d === g._homeDensity;
 }
 
-function lodRememberDensity(view, g, d) {
+export function lodRememberDensity(view, g, d) {
   if (!d || !d.tex) return;
   d._stamp = ++view._densityStamp;
   if (!g.densityCache) g.densityCache = [];
@@ -222,7 +224,7 @@ function lodRememberDensity(view, g, d) {
 // The kernel decided this view fits the direct budget and shipped real marks
 // (channels restored). Build/refresh a direct-shaped sibling on the tiered
 // trace; the tier draw uses it until the kernel switches back.
-function lodApplyDrill(view, g, upd, buffers) {
+export function lodApplyDrill(view, g, upd, buffers) {
   const gl = view.gl;
   const fresh = !g.drill; // transition INTO drill vs refresh of a live drill
   let d = g.drill;
@@ -390,7 +392,7 @@ function lodRestoreBrushMask(view, d, xs, ys) {
   view._applySelMask(d, mask);
 }
 
-function lodDropDrill(view, g) {
+export function lodDropDrill(view, g) {
   const d = g.drill;
   if (!d) return;
   const gl = view.gl;
@@ -492,7 +494,7 @@ function lodBeginDrillExitContinuous(view, g) {
 // Apply a kernel "density"-mode update: new grid texture with eased exposure
 // normalization, previous grid kept for the crossfade, source remembered in
 // the per-trace cache.
-function lodApplyDensityUpdate(view, g, upd, buffers) {
+export function lodApplyDensityUpdate(view, g, upd, buffers) {
   lodMarkDrillDying(view, g);
   const d = upd.density;
   const grid = d.enc === "log-u8"
@@ -558,7 +560,7 @@ function lodDrawDensityWithFade(view, g, density, opacityScale = 1) {
 // window; aggregate + fading marks during transitions (drill-in entry fade,
 // dying drill exit fade); aggregate alone otherwise. Never blank, never a
 // hard cut (§5 smooth transitions).
-function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
+export function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
   lodStepNorm(view, g);
   const d = g.drill;
   // Rapid zoom out→in revive: a dying drill whose window still covers the

@@ -1,3 +1,7 @@
+import { XY_CHROME_CSS } from "./20_theme";
+import { ChartView } from "./50_chartview";
+import { markOf } from "./55_marks";
+
 // ChartView interaction: pointer/drag/wheel wiring, crosshair, box + lasso
 // selection, the modebar, and the animated view (pan/zoom) state machine.
 // Split out of 50_chartview.js; augments the prototype so `this.*` is
@@ -358,7 +362,7 @@ Object.assign(ChartView.prototype, {
       };
       this._dispatchChartEvent("click", detail);
       if (this.comm) {
-        const msg = { type: "click", trace: hit.trace, index: hit.index, screen, modifiers };
+        const msg: any = { type: "click", trace: hit.trace, index: hit.index, screen, modifiers };
         const g = hit.g;
         if (g && g.tier === "density" && g.drill && g.drill.seq !== undefined) {
           msg.drill_seq = g.drill.seq;
@@ -475,7 +479,7 @@ Object.assign(ChartView.prototype, {
     };
     this._dispatchChartEvent("click", detail);
     if (hit && this.comm) {
-      const msg = {
+      const msg: any = {
         type: "click",
         trace: hit.trace,
         index: hit.index,
@@ -673,7 +677,7 @@ Object.assign(ChartView.prototype, {
     });
   },
 
-  _sendSelect(d0, d1, opts = {}) {
+  _sendSelect(d0, d1, opts: any = {}) {
     this._clearLassoOverlay();
     const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
     const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
@@ -699,7 +703,7 @@ Object.assign(ChartView.prototype, {
     }
   },
 
-  _sendSelectPolygon(points, opts = {}) {
+  _sendSelectPolygon(points, opts: any = {}) {
     if (!Array.isArray(points) || points.length < 3) return;
     const polygon = points.map((point) => [point[0], point[1]]);
     if (!polygon.every((point) => point.every(Number.isFinite))) return;
@@ -724,7 +728,7 @@ Object.assign(ChartView.prototype, {
     }
   },
 
-  _selectLocalPolygon(points, opts = {}) {
+  _selectLocalPolygon(points, opts: any = {}) {
     const xs = points.map((point) => point[0]);
     const ys = points.map((point) => point[1]);
     const minX = Math.min(...xs), maxX = Math.max(...xs);
@@ -770,7 +774,7 @@ Object.assign(ChartView.prototype, {
   },
 
   // Standalone selection (no kernel): mask the retained CPU f32 columns (§37).
-  _selectLocal(x0, x1, y0, y1, opts = {}) {
+  _selectLocal(x0, x1, y0, y1, opts: any = {}) {
     let total = 0;
     for (const g of this.gpuTraces) {
       // _cpu only exists where the standalone entry retained copies (retainCpu).
@@ -808,7 +812,7 @@ Object.assign(ChartView.prototype, {
     g.selActive = true;
   },
 
-  _clearSelection(opts = {}) {
+  _clearSelection(opts: any = {}) {
     this._clearLassoOverlay();
     // Clearing a durable selection is itself a durable-state change; linked
     // applies (dispatch: false) and no-op clears push nothing.
@@ -862,9 +866,9 @@ Object.assign(ChartView.prototype, {
     this._modebar = bar;
     this._modeBtns = {};
     this._modebarMoved = false;
-    let setZoomMenuOpen = () => {};
-    let setSelectMenuOpen = () => {};
-    let setExportMenuOpen = () => {};
+    let setZoomMenuOpen: any = () => {};
+    let setSelectMenuOpen: any = () => {};
+    let setExportMenuOpen: any = () => {};
 
     const setVisible = (visible) => {
       const show = visible || this._modebarDragging || bar.contains(document.activeElement);
@@ -959,7 +963,7 @@ Object.assign(ChartView.prototype, {
       setExportMenuOpen(!this._exportMenuOpen);
     });
 
-    const mk = (name, title, onClick, toggles) => {
+    const mk = (name, title, onClick, toggles?: any) => {
       const b = document.createElement("button");
       b.type = "button";
       b.title = title;
@@ -1061,7 +1065,7 @@ Object.assign(ChartView.prototype, {
       bar.appendChild(zoomMenu);
     }
     const zoomMenuItems = [];
-    const mkZoomItem = (name, label, onClick, toggles, separator = false) => {
+    const mkZoomItem = (name, label, onClick, toggles?: any, separator = false) => {
       const button = document.createElement("button");
       button.type = "button";
       button.tabIndex = -1;
@@ -1446,7 +1450,7 @@ Object.assign(ChartView.prototype, {
     if (this.canvas) this.canvas.dataset.xyDragmode = mode;
     // Active state is a class (defeatable via the stylesheet's :where rule /
     // --chart-modebar-active), not an inline background that would beat classes.
-    for (const [name, btn] of Object.entries(this._modeBtns || {})) {
+    for (const [name, btn] of Object.entries<any>(this._modeBtns || {})) {
       btn.classList.toggle("xy-active", name === mode);
       btn.setAttribute("aria-pressed", String(name === mode));
     }
@@ -1513,7 +1517,7 @@ Object.assign(ChartView.prototype, {
     this._viewAnim = null;
   },
 
-  _setView(next, opts = {}) {
+  _setView(next, opts: any = {}) {
     if (this._destroyed) return [];
     const target = this._clampView(this._viewFrom(next), { anchors: opts.anchors });
     const changedAxes = this._axisIds().filter((axisId) => {
@@ -1712,7 +1716,7 @@ Object.assign(ChartView.prototype, {
     return [this._axisValue(axis, first), this._axisValue(axis, second)];
   },
 
-  _clampView(view, opts = {}) {
+  _clampView(view, opts: any = {}) {
     const candidate = this._viewFrom(view, this.view0);
     const ranges = {};
     for (const axisId of this._axisIds()) {
@@ -1787,7 +1791,7 @@ Object.assign(ChartView.prototype, {
     ];
   },
 
-  _zoomAt(f, fx, fy, animate = false, duration = 120, opts = {}) {
+  _zoomAt(f, fx, fy, animate = false, duration = 120, opts: any = {}) {
     const base = this._viewAnim ? this._viewAnim.target : this.view;
     // An axis-band gesture scopes the zoom to the hovered axis (§6 of
     // view-state.md); the policy still filters, never grants.
@@ -1889,7 +1893,7 @@ Object.assign(ChartView.prototype, {
 
   // Box-zoom: fit the view to the dragged data rectangle (§16 precision floor;
   // ignore degenerate drags that would collapse a span below f32 resolution).
-  _zoomToBox(d0, d1, animate = false, opts = {}) {
+  _zoomToBox(d0, d1, animate = false, opts: any = {}) {
     const axes = this._zoomAxes();
     const fractions = {};
     for (const dim of ["x", "y"]) {
@@ -2064,7 +2068,7 @@ Object.assign(ChartView.prototype, {
     const config = this._exportConfig();
     const mime = { png: "image/png", jpeg: "image/jpeg", webp: "image/webp" }[format];
     if (!mime) return Promise.reject(new Error(`unsupported raster export ${format}`));
-    return new Promise((resolve, reject) => {
+    return new Promise<void>((resolve, reject) => {
       image.onload = () => {
         const scale = Number.isFinite(config.scale) && config.scale > 0
           ? config.scale

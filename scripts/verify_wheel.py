@@ -335,12 +335,14 @@ def verify_wheel(path: Path, *, expect_native: Optional[bool]) -> None:
         _require_static_bundle(
             "xy/static/index.js",
             zf.read("xy/static/index.js"),
-            {"export { render", "function render(", "function decodeFrame(", "class ChartView"},
+            # Minified bundle: assert the export aliases, not source lines.
+            {"as render", "as renderStandalone", "as decodeFrame", "as ChartView"},
         )
         _require_static_bundle(
             "xy/static/standalone.js",
             zf.read("xy/static/standalone.js"),
-            {"window.xy", "function renderStandalone(", "function decodeFrame(", "class ChartView"},
+            # Minified IIFE namespace: `var xy` is window.xy in a classic script.
+            {"var xy=", ".renderStandalone=", ".decodeFrame=", ".ChartView="},
         )
 
     forbidden = sorted(

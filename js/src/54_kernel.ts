@@ -1,10 +1,15 @@
+import { bytesToSpan } from "./00_header";
+import { lodApplyDensityUpdate, lodApplyDrill, lodDropDrill, lodRememberDensity } from "./45_lod";
+import { xyCreateRebinWorker } from "./46_worker";
+import { ChartView } from "./50_chartview";
+
 // ChartView <-> kernel comm: debounced density view-requests, streaming
 // appends, the inbound message handler, and the deep-zoom drill lifecycle
 // (§16). Split out of 50_chartview.js; augments the prototype so `this.*`
 // is unchanged.
 
 Object.assign(ChartView.prototype, {
-  _scheduleViewRequest(viewOverride = this.view, opts = {}) {
+  _scheduleViewRequest(viewOverride = this.view, opts: any = {}) {
     if (this._destroyed || this._glLost) return;
     if (!this.comm) {
       // Kernel-less (standalone HTML): density traces refine via the bundled
@@ -75,7 +80,7 @@ Object.assign(ChartView.prototype, {
   // Standalone (kernel-less) density refinement. Debounced like the kernel
   // request path, then the retained §28 sample re-bins in the bundled worker —
   // off the main thread — and applies like a density_update.
-  _scheduleSampleRebin(viewOverride = this.view, opts = {}) {
+  _scheduleSampleRebin(viewOverride = this.view, opts: any = {}) {
     if (this._destroyed || this._glLost || this._sampleRebinDisabled) return;
     const targets = (this.gpuTraces || []).filter(
       (g) => g.tier === "density" && g.sampleOverlay && g.sampleOverlay._cpu
@@ -238,7 +243,7 @@ Object.assign(ChartView.prototype, {
     this.axes = this._normalizeAxes(spec);
     this._payload = blob;
     this.view0 = this._copyView({
-      ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]) => [id, [...axis.range]])),
+      ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]: any) => [id, [...axis.range]])),
     });
     if (atHome) {
       this.view = this._copyView(this.view0);

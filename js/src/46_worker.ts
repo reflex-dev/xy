@@ -45,13 +45,13 @@ self.onmessage = (e) => {
 };
 `;
 
-function xyCreateRebinWorker() {
+export function xyCreateRebinWorker() {
   try {
     const url = URL.createObjectURL(
       new Blob([XY_REBIN_WORKER_SRC], { type: "application/javascript" })
     );
     const worker = new Worker(url);
-    worker._fcUrl = url; // revoked on terminate (destroy)
+    (worker as any)._fcUrl = url; // revoked on terminate (destroy)
     return worker;
   } catch (e) {
     return null; // no Worker/blob support: keep the stretched overview

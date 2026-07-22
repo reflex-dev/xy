@@ -21,7 +21,7 @@ function cssToken(el, name) {
   return v || null;
 }
 
-function hexColor(hex) {
+export function hexColor(hex) {
   const h = hex.replace("#", "");
   if (!/^(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(h)) {
     return null;
@@ -32,7 +32,7 @@ function hexColor(hex) {
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, a];
 }
 
-function parseColor(host, c, fallback) {
+export function parseColor(host, c, fallback) {
   if (!c) return fallback;
   if (typeof c !== "string") return fallback;
   const expr = c.trim();
@@ -48,7 +48,7 @@ function parseColor(host, c, fallback) {
   return fallback;
 }
 
-function readTheme(root) {
+export function readTheme(root) {
   const text = resolveCssColor(root, "currentColor") || [0.2, 0.2, 0.2, 1];
   const withA = (c, a) => [c[0], c[1], c[2], a];
   const tok = (name) => {
@@ -63,7 +63,7 @@ function readTheme(root) {
   };
 }
 
-function cssColor([r, g, b, a]) {
+export function cssColor([r, g, b, a]: any) {
   return `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${a})`;
 }
 
@@ -84,7 +84,7 @@ function cssColor([r, g, b, a]) {
 // light icons on white; the override keeps the toolbar readable in both modes.
 // These are still zero-specificity :where() rules, so a host --chart-modebar-*
 // token or utility class overrides them in either scheme.
-const XY_CHROME_CSS = `
+export const XY_CHROME_CSS = `
 @layer base{
 :where(.xy [data-xy-slot="title"]){text-align:center;font-size:14px;font-weight:600;color:var(--chart-text,inherit)}
 :where(.xy [data-xy-slot="tooltip"]){max-width:calc(100% - 8px);max-height:calc(100% - 8px);box-sizing:border-box;white-space:normal;overflow-wrap:anywhere;overflow:auto;background:var(--chart-tooltip-bg,rgba(20,24,33,.92));color:var(--chart-tooltip-text,#fff);padding:5px 8px;border-radius:4px;font-size:11px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,.3)}
@@ -141,7 +141,7 @@ const XY_CHROME_CSS = `
 
 // Inject XY_CHROME_CSS once per DOM root (document head or shadow root), so
 // multiple charts on one page share a single stylesheet.
-function ensureChromeStylesheet(node) {
+export function ensureChromeStylesheet(node) {
   let root = node && node.getRootNode ? node.getRootNode() : document;
   const isShadow = typeof ShadowRoot !== "undefined" && root instanceof ShadowRoot;
   if (!isShadow && !(root instanceof Document)) root = document; // detached subtree
@@ -154,7 +154,7 @@ function ensureChromeStylesheet(node) {
   scope.appendChild(style);
 }
 
-function safeCssPaint(host, expr, fallback = [0.5, 0.5, 0.5, 1]) {
+export function safeCssPaint(host, expr, fallback = [0.5, 0.5, 0.5, 1]) {
   const parsed = parseColor(host, expr, fallback);
   const color = Array.isArray(parsed) && parsed.length >= 4 && parsed.every(Number.isFinite)
     ? parsed

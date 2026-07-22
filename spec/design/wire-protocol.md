@@ -2,7 +2,7 @@
 
 Status: **shipped**. This document specifies the message catalog dispatched by
 `xy.channel.handle_message` (`python/xy/channel.py`) and consumed by
-`js/src/54_kernel.js`, plus the first-paint buffer layouts and the version
+`js/src/54_kernel.ts`, plus the first-paint buffer layouts and the version
 handshake. The transport envelopes that carry these messages are separate:
 the anywidget comm (`python/xy/widget.py`), the `/_xy` socket.io namespace
 ([reflex-integration.md](reflex-integration.md) §2), and the `XYBF` binary
@@ -278,7 +278,7 @@ Two independent version constants:
 
 - **Renderer/spec protocol.** `PROTOCOL_VERSION = 3` (`python/xy/config.py`)
   rides every first-paint spec as `spec["protocol"]`; the client's
-  `PROTOCOL = 3` (`js/src/00_header.js`) is checked in the `ChartView`
+  `PROTOCOL = 3` (`js/src/00_header.ts`) is checked in the `ChartView`
   constructor. A mismatch replaces the chart element with "update the xy
   package and restart the kernel" and throws. Requests and replies carry no
   version of their own — the handshake happens once, at first paint, before
