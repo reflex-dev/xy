@@ -13,6 +13,14 @@ use std::time::Instant;
 
 use osmpbf_nodes::sort::spatial_sort;
 
+const USAGE: &str =
+    "usage: osm-sort <lon.f64> <lat.f64> <out_prefix> [--grid G] [--partitions P] [--extent x0 x1 y0 y1]";
+
+fn usage(msg: &str) -> ExitCode {
+    eprintln!("error: {msg}\n{USAGE}");
+    ExitCode::FAILURE
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let mut pos: Vec<&str> = Vec::new();
@@ -21,30 +29,45 @@ fn main() -> ExitCode {
     // Default to the full planet extent; nodes fall within it.
     let (mut x0, mut x1, mut y0, mut y1) = (-180.0, 180.0, -90.0, 90.0);
     let mut i = 1;
+    // Every option reads its values through `args.get(..).parse()`, so a flag at
+    // the end of argv or a non-numeric value is a clean usage error — never an
+    // out-of-bounds index or `unwrap` panic.
     while i < args.len() {
         match args[i].as_str() {
-            "--grid" => {
-                i += 1;
-                g = args[i].parse().unwrap_or(g);
-            }
-            "--partitions" => {
-                i += 1;
-                parts = args[i].parse().unwrap_or(parts);
-            }
+            "--grid" => match args.get(i + 1).and_then(|s| s.parse().ok()) {
+                Some(v) => {
+                    g = v;
+                    i += 2;
+                }
+                None => return usage("--grid needs a positive integer"),
+            },
+            "--partitions" => match args.get(i + 1).and_then(|s| s.parse().ok()) {
+                Some(v) => {
+                    parts = v;
+                    i += 2;
+                }
+                None => return usage("--partitions needs a positive integer"),
+            },
             "--extent" => {
-                x0 = args[i + 1].parse().unwrap();
-                x1 = args[i + 2].parse().unwrap();
-                y0 = args[i + 3].parse().unwrap();
-                y1 = args[i + 4].parse().unwrap();
-                i += 4;
+                let vals: Option<Vec<f64>> = (1..=4)
+                    .map(|k| args.get(i + k).and_then(|s| s.parse().ok()))
+                    .collect();
+                match vals {
+                    Some(v) => {
+                        (x0, x1, y0, y1) = (v[0], v[1], v[2], v[3]);
+                        i += 5;
+                    }
+                    None => return usage("--extent needs four numbers: x0 x1 y0 y1"),
+                }
             }
-            other => pos.push(other),
+            other => {
+                pos.push(other);
+                i += 1;
+            }
         }
-        i += 1;
     }
     if pos.len() != 3 {
-        eprintln!("usage: osm-sort <lon.f64> <lat.f64> <out_prefix> [--grid G] [--partitions P]");
-        return ExitCode::FAILURE;
+        return usage("expected exactly three positional args: <lon.f64> <lat.f64> <out_prefix>");
     }
     eprintln!("sorting into {g}x{g} grid, {parts} partitions, extent ({x0},{x1},{y0},{y1})…");
     let t0 = Instant::now();
