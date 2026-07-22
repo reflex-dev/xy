@@ -214,6 +214,14 @@ the "other" bucket for tail categories, which the spec records
   LRU-resident under a byte budget, and *only* the ≤ ~12 visible tiles are
   ever needed per frame. The client never holds more than screen-bounded
   textures regardless.
+- **Canonical out-of-core (landed).** Independently of the aggregate tiles,
+  the *canonical* x/y columns can themselves exceed RAM. On native they are
+  backed by a disk `np.memmap` (dossier §27 rule 5): the pyramid build,
+  `bin_2d`, `range_indices`, and zone maps scan them straight from disk via the
+  OS page cache, so building/serving the pyramid never requires the raw rows to
+  be resident. Columns too large to build in RAM are streamed to disk by
+  `xy._ooc.MemmapF64Builder`; `tests/test_ooc.py` covers ingest-without-copy and
+  screen-bounded density rendering over a memmap-backed scatter.
 
 ---
 

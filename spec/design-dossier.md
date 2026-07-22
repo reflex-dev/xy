@@ -109,7 +109,7 @@ Our design negates each row directly.
 | 100k point scatter | sluggish pan/zoom (SVG) | 60fps, <10 MB resident |
 | 1M point line | often unusable | 60fps via decimation, <20 MB |
 | 10M point scatter | OOM / crash | 60fps via GPU aggregation, <100 MB |
-| 100M+ / out-of-core | impossible | interactive via viewport tiling, bounded RAM |
+| 100M+ / out-of-core | impossible | interactive via viewport tiling, bounded RAM — **realized**: disk-backed canonical `mmap` store (§27) renders a large scatter with 0 RAM-resident canonical bytes and a screen-sized engine-resident set (the density pyramid), not data-bounded |
 | Resident bytes/point | ~40–100+ | **mode-dependent — see below** |
 | Streaming append | full re-serialize | O(appended), ring buffer, constant memory |
 
@@ -903,6 +903,24 @@ Rules that make the mode targets in §2 real:
    API call that returns the freed bytes and records the trace as `degraded` —
    visible in the debug HUD and in `chart.memory_report()`, which itemizes all five
    classes per trace. If a memory number isn't in the report, it isn't real.
+5. **Canonical may be out-of-core (native `mmap`).** The "mmap (native)" cell in the
+   table above is realized: a canonical column may be backed by a disk `np.memmap`
+   instead of RAM. Because a memmap is a transparent `ndarray` — same dedup key, same
+   raw buffer pointer to the ctypes kernels — the store, zone maps (§22), `bin_2d`, the
+   density pyramid (§5/§28) and drill-in all consume it **unchanged**; the OS pages the
+   file in on demand and evicts clean pages under pressure, so resident memory stays
+   screen-bounded (the pyramid + grids), never data-bounded. `memory_report()` counts
+   these bytes under `canonical_mapped_bytes` (disk-backed, reclaimable), kept distinct
+   from `canonical_bytes` (RAM-resident) — an all-RAM figure reports `mapped = 0`
+   unchanged. Building a column too large for RAM is the one operation that needs a
+   dedicated path: `xy._ooc.MemmapF64Builder` streams canonical f64 to disk one batch
+   at a time (peak RAM = one batch), and `xy._ooc.open_f64` reopens a column from
+   disk. `tests/test_ooc.py` pins the contract: a memmap column ingests with no RAM
+   copy, flows through the ordinary `scatter(..., density=True)` API, and renders
+   density first-paint with 0 RAM-resident canonical bytes. This is the native
+   counterpart to the browser's Tier-3 tile spill (§4.4 of the LOD architecture doc /
+   dossier §32); the two compose (canonical on disk, screen-bounded aggregates over
+   the wire).
 
 ## 28. LOD / Tiling Contract — exact rules per trace kind
 

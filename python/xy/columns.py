@@ -26,7 +26,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
-from . import kernels
+from . import _ooc, kernels
 
 ColumnStoreCheckpoint = tuple[int, dict[tuple[int, int, int], int]]
 
@@ -323,20 +323,40 @@ class ColumnStore:
     def memory_report(self) -> dict[str, Any]:
         """Canonical bytes per column — if a number isn't in the report, it
         isn't real (design dossier §27). Derived/GPU classes are added as
-        those caches land."""
-        return {
-            "canonical_bytes": int(sum(c.values.nbytes for c in self._columns)),
-            "columns": [
+        those caches land.
+
+        Out-of-core columns (disk-backed ``np.memmap``, §27's "mmap (native)"
+        row) are counted under ``canonical_mapped_bytes``, *not*
+        ``canonical_bytes``: their bytes live on disk and are paged in by the
+        OS as a reclaimable cache, so they do not sit in the process's resident
+        set the way an in-RAM column does. ``canonical_bytes`` therefore stays
+        the honest RAM-resident canonical figure (unchanged for all-RAM
+        figures, where ``canonical_mapped_bytes`` is 0)."""
+        resident = 0
+        mapped = 0
+        columns = []
+        for c in self._columns:
+            nbytes = int(c.values.nbytes)
+            memmapped = _ooc.is_memmapped(c.values)
+            if memmapped:
+                mapped += nbytes
+            else:
+                resident += nbytes
+            columns.append(
                 {
                     "id": c.id,
                     "kind": c.kind,
                     "len": len(c),
-                    "bytes": int(c.values.nbytes),
+                    "bytes": nbytes,
+                    "backing": "memmap" if memmapped else "ram",
                     "ingest_copies": c.ingest_copies,
                     "null_count": c.zone.null_count,
                 }
-                for c in self._columns
-            ],
+            )
+        return {
+            "canonical_bytes": resident,
+            "canonical_mapped_bytes": mapped,
+            "columns": columns,
         }
 
 
