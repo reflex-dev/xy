@@ -1403,8 +1403,7 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
     assert rendered.count("group/details") == accordion_count
     assert rendered.count("guideMarginClass") == expected_leaf_count
     assert rendered.count(
-        "absolute left-0 top-1/2 -z-10 h-8 w-full "
-        "-translate-y-1/2 rounded-lg bg-secondary-3"
+        "absolute left-0 top-1/2 -z-10 h-8 w-full -translate-y-1/2 rounded-lg bg-secondary-3"
     ) == len(INTEGRATION_LINK_ICONS)
     assert rendered.count(
         "ml-[2.5rem] flex h-8 w-[calc(100%-2.5rem)] items-center "
