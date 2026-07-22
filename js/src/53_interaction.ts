@@ -851,6 +851,7 @@ Object.assign(ChartView.prototype, {
     const maxTop = Math.max(0, this.root.clientHeight - bar.offsetHeight);
     bar.style.left = `${Math.max(0, Math.min(maxLeft, currentLeft))}px`;
     bar.style.top = `${Math.max(0, Math.min(maxTop, currentTop))}px`;
+    this._positionModebarDragPeek?.();
   },
 
   _buildModebar(root) {
@@ -888,25 +889,33 @@ Object.assign(ChartView.prototype, {
       if (!bar.contains(e.relatedTarget) && !root.matches(":hover")) setVisible(false);
     });
 
-    // Keep dragging distinct from commands: the grip only moves the toolbar,
-    // while export has its own named menu trigger at the other end.
-    const grip = document.createElement("button");
-    grip.type = "button";
-    grip.title = "Drag toolbar";
-    grip.setAttribute("aria-label", "Drag toolbar");
-    grip.dataset.xyModebarDragHandle = "";
-    grip.innerHTML = this._icon("drag");
-    grip.style.cssText =
-      "display:flex;align-items:center;justify-content:center;pointer-events:auto;touch-action:none;";
-    this._applySlot(grip, "modebar_button");
-    bar.appendChild(grip);
+    // The toolbar surface itself is the drag target. Interactive descendants
+    // remain click targets; an external peek supplies the visual affordance.
+    const dragPeek = document.createElement("span");
+    dragPeek.dataset.xyModebarDragHandle = "";
+    dragPeek.setAttribute("aria-hidden", "true");
+    dragPeek.innerHTML = this._icon("drag");
+    bar.appendChild(dragPeek);
+    const updateDragPeekSide = () => {
+      if (!bar.isConnected) return;
+      const rootRect = root.getBoundingClientRect();
+      const barRect = bar.getBoundingClientRect();
+      const leftSpace = barRect.left - rootRect.left;
+      const rightSpace = rootRect.right - barRect.right;
+      // 26px handle + 4px gap. Prefer left, but flip when it would clip.
+      bar.dataset.xyModebarDragPeekSide = leftSpace >= 30 || leftSpace >= rightSpace
+        ? "left"
+        : "right";
+    };
+    this._positionModebarDragPeek = updateDragPeekSide;
 
-    const DRAG_THRESHOLD_PX = 6;
+    const DRAG_THRESHOLD_PX = 5;
     let modebarDrag = null;
-    this._listen(grip, "pointerdown", (e) => {
+    this._listen(bar, "pointerdown", (e) => {
       if (e.pointerType === "mouse" && e.button !== 0) return;
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest("button,[data-xy-modebar-menu]")) return;
       e.stopPropagation();
-      grip.classList.add("xy-dragging");
       const barRect = bar.getBoundingClientRect();
       modebarDrag = {
         pointerId: e.pointerId,
@@ -916,10 +925,10 @@ Object.assign(ChartView.prototype, {
         dy: e.clientY - barRect.top,
         moved: false,
       };
-      try { grip.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
+      try { bar.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
       setVisible(true);
     });
-    this._listen(grip, "pointermove", (e) => {
+    this._listen(bar, "pointermove", (e) => {
       if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
       const distance = Math.hypot(e.clientX - modebarDrag.startX, e.clientY - modebarDrag.startY);
       if (!modebarDrag.moved) {
@@ -927,6 +936,7 @@ Object.assign(ChartView.prototype, {
         modebarDrag.moved = true;
         this._modebarDragging = true;
         this._modebarMoved = true;
+        bar.classList.add("xy-dragging");
         bar.style.transition = "none";
         setZoomMenuOpen(false);
         setSelectMenuOpen(false);
@@ -939,16 +949,18 @@ Object.assign(ChartView.prototype, {
     });
     const endModebarDrag = (e) => {
       if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
-      const moved = modebarDrag.moved;
       modebarDrag = null;
       this._modebarDragging = false;
       bar.style.transition = "opacity .15s";
       setVisible(root.matches(":hover"));
-      grip.classList.remove("xy-dragging");
-      if (!moved && e.type !== "pointercancel") grip.focus();
+      bar.classList.remove("xy-dragging");
+      updateDragPeekSide();
+      try {
+        if (bar.hasPointerCapture(e.pointerId)) bar.releasePointerCapture(e.pointerId);
+      } catch (_err) { /* synthetic event */ }
     };
-    this._listen(grip, "pointerup", endModebarDrag);
-    this._listen(grip, "pointercancel", endModebarDrag);
+    this._listen(bar, "pointerup", endModebarDrag);
+    this._listen(bar, "pointercancel", endModebarDrag);
 
     const mk = (name, title, onClick, toggles?: any, parent = bar) => {
       const b = document.createElement("button");
@@ -976,7 +988,8 @@ Object.assign(ChartView.prototype, {
     const canZoomButtons = canZoom && this._interactionFlag("zoom_buttons", true);
     const canBoxZoom = canZoom && this._interactionFlag("box_zoom", true);
     const canReset = canNavigate && this._resetAxisPolicy().length > 0;
-    const hasZoomMenu = canZoomButtons || canBoxZoom || canReset;
+    const canHistory = canNavigate && this._historyEnabled();
+    const hasZoomMenu = canHistory || canZoomButtons || canBoxZoom || canReset;
     // Pickability is dynamic for density traces (§5: drill-in grants it,
     // drill-out revokes it), so the Select trigger is built whenever the
     // interaction flags allow selection and its *visibility* tracks
@@ -984,7 +997,6 @@ Object.assign(ChartView.prototype, {
     // at whatever pickability held when the toolbar was first built.
     const canSelect = this._interactionFlag("brush", true)
       && this._interactionFlag("select", true);
-    const canHistory = canNavigate && this._historyEnabled();
     // Declarative export config (spec.export, from xy.export_config): the
     // formats list governs menu availability and order. Only the client-safe
     // subset renders here — pdf/html entries are Python-side formats.
@@ -999,15 +1011,13 @@ Object.assign(ChartView.prototype, {
       ? this._exportConfig().formats
       : ["png", "svg", "csv"];
     const clientExportFormats = configuredFormats.filter((name) => EXPORT_ITEMS[name]);
-    const hasToolGroup = canSelect || canPan || canHistory || clientExportFormats.length > 0;
+    const hasToolGroup = canSelect || canPan || clientExportFormats.length > 0;
     const appendSeparator = () => {
       const separator = document.createElement("span");
       separator.dataset.xyModebarSeparator = "";
       separator.setAttribute("aria-hidden", "true");
       bar.appendChild(separator);
     };
-    if (hasZoomMenu || hasToolGroup) appendSeparator();
-
     let zoomTrigger = null;
     let zoomIndicator = null;
     this._zoomMenuButton = null;
@@ -1064,17 +1074,6 @@ Object.assign(ChartView.prototype, {
         this._setDragMode(this.dragMode === "pan" ? "none" : "pan");
       }, "pan", toolGroup);
     }
-    // History navigation (view-state.md §4): client-scoped by construction —
-    // the modebar and the root.xy handle are the only surfaces.
-    if (canHistory) {
-      this._historyBackBtn = mk("historyback", "Back to previous view",
-        () => this._historyBack(), null, toolGroup);
-      this._historyBackBtn.dataset.xyModebarHistory = "back";
-      this._historyForwardBtn = mk("historyforward", "Forward to next view",
-        () => this._historyForward(), null, toolGroup);
-      this._historyForwardBtn.dataset.xyModebarHistory = "forward";
-      this._updateHistoryButtons();
-    }
     let exportTrigger = null;
     if (clientExportFormats.length > 0) {
       exportTrigger = mk("export", "Export options", () => {
@@ -1096,12 +1095,16 @@ Object.assign(ChartView.prototype, {
       bar.appendChild(zoomMenu);
     }
     const zoomMenuItems = [];
-    const mkZoomItem = (name, label, onClick, toggles?: any) => {
+    const mkZoomItem = (name, label, onClick, toggles?: any, options: any = {}) => {
       const button = document.createElement("button");
       button.type = "button";
       button.tabIndex = -1;
       button.dataset.xyModebarMenuItem = name;
       button.setAttribute("role", "menuitem");
+      if (options.title) {
+        button.title = options.title;
+        button.setAttribute("aria-label", options.title);
+      }
       button.style.cssText = "pointer-events:auto;";
       this._applySlot(button, "modebar_button");
       const icon = document.createElement("span");
@@ -1114,16 +1117,46 @@ Object.assign(ChartView.prototype, {
       this._listen(button, "pointerdown", (e) => e.stopPropagation());
       this._listen(button, "click", (e) => {
         e.stopPropagation();
-        setZoomMenuOpen(false, true);
+        if (!options.keepOpen) setZoomMenuOpen(false, true);
         onClick();
       });
-      zoomMenu.appendChild(button);
+      (options.parent || zoomMenu).appendChild(button);
       zoomMenuItems.push(button);
       if (toggles) this._modeBtns[toggles] = button;
       return button;
     };
 
+    const appendZoomMenuSeparator = () => {
+      const menuSeparator = document.createElement("span");
+      menuSeparator.dataset.xyModebarMenuSeparator = "";
+      menuSeparator.setAttribute("role", "separator");
+      zoomMenu.appendChild(menuSeparator);
+    };
+
     if (hasZoomMenu) {
+      if (canHistory) {
+        const viewHistory = document.createElement("div");
+        viewHistory.dataset.xyModebarViewHistory = "";
+        viewHistory.setAttribute("role", "group");
+        viewHistory.setAttribute("aria-label", "View history");
+        zoomMenu.appendChild(viewHistory);
+        this._historyBackBtn = mkZoomItem("historyback", "Back",
+          () => this._historyBack(), null, {
+            parent: viewHistory,
+            keepOpen: true,
+            title: "Back to previous view",
+          });
+        this._historyBackBtn.dataset.xyModebarHistory = "back";
+        this._historyForwardBtn = mkZoomItem("historyforward", "Next",
+          () => this._historyForward(), null, {
+            parent: viewHistory,
+            keepOpen: true,
+            title: "Go to next view",
+          });
+        this._historyForwardBtn.dataset.xyModebarHistory = "forward";
+        this._updateHistoryButtons();
+        if (canZoomButtons || canBoxZoom || canReset) appendZoomMenuSeparator();
+      }
       if (canZoomButtons) {
         mkZoomItem("zoomin", "Zoom In", () => this._zoomBy(0.5, true, "zoom_in"));
         mkZoomItem("zoomout", "Zoom Out", () => this._zoomBy(2, true, "zoom_out"));
@@ -1133,10 +1166,7 @@ Object.assign(ChartView.prototype, {
       }
       if (canReset) {
         if (canZoomButtons || canBoxZoom) {
-          const menuSeparator = document.createElement("span");
-          menuSeparator.dataset.xyModebarMenuSeparator = "";
-          menuSeparator.setAttribute("role", "separator");
-          zoomMenu.appendChild(menuSeparator);
+          appendZoomMenuSeparator();
         }
         // Fit Data returns to the home view; Reset View additionally drops any
         // active selection. Both reset through the view-state layer (§ reset
@@ -1372,8 +1402,9 @@ Object.assign(ChartView.prototype, {
         e.preventDefault();
         e.stopPropagation();
         setZoomMenuOpen(true);
-        const index = e.key === "ArrowDown" ? 0 : zoomMenuItems.length - 1;
-        zoomMenuItems[index].focus();
+        const enabledItems = zoomMenuItems.filter((button) => !button.disabled);
+        const index = e.key === "ArrowDown" ? 0 : enabledItems.length - 1;
+        enabledItems[index]?.focus();
       });
       this._listen(zoomMenu, "keydown", (e) => {
         if (e.key === "Escape") {
@@ -1384,11 +1415,13 @@ Object.assign(ChartView.prototype, {
         }
         if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
         e.preventDefault();
-        const current = zoomMenuItems.indexOf(document.activeElement);
-        let next = e.key === "Home" ? 0 : e.key === "End" ? zoomMenuItems.length - 1 : current;
-        if (e.key === "ArrowDown") next = (current + 1) % zoomMenuItems.length;
-        if (e.key === "ArrowUp") next = (current - 1 + zoomMenuItems.length) % zoomMenuItems.length;
-        zoomMenuItems[next].focus();
+        const enabledItems = zoomMenuItems.filter((button) => !button.disabled);
+        if (!enabledItems.length) return;
+        const current = enabledItems.indexOf(document.activeElement);
+        let next = e.key === "Home" ? 0 : e.key === "End" ? enabledItems.length - 1 : current;
+        if (e.key === "ArrowDown") next = (current + 1) % enabledItems.length;
+        if (e.key === "ArrowUp") next = (current - 1 + enabledItems.length) % enabledItems.length;
+        enabledItems[next].focus();
       });
     }
     if (selectTrigger) {
@@ -1447,6 +1480,7 @@ Object.assign(ChartView.prototype, {
     });
     root.appendChild(bar);
     this._fitModebar();
+    updateDragPeekSide();
     // A chart can mount beneath an already-stationary pointer, so initialize
     // from the current hover state instead of waiting for pointerenter.
     setVisible(root.matches(":hover"));

@@ -305,6 +305,9 @@ try{{
     const exportMenu = bar && bar.querySelector("[data-xy-modebar-export-menu]");
     const zoomPercent = zoomTrigger && zoomTrigger.querySelector("[data-xy-modebar-zoom-percent]");
     const zoomIndicator = zoomTrigger && zoomTrigger.querySelector("[data-xy-modebar-menu-indicator] svg");
+    const viewHistory = zoomMenu && zoomMenu.querySelector("[data-xy-modebar-view-history]");
+    const historyBack = zoomMenu && zoomMenu.querySelector('[data-xy-modebar-history="back"]');
+    const historyNext = zoomMenu && zoomMenu.querySelector('[data-xy-modebar-history="forward"]');
     const panInitiallyEnabled = panButton && v.dragMode === "pan"
       && panButton.getAttribute("aria-pressed") === "true"
       && panButton.classList.contains("xy-active");
@@ -319,7 +322,8 @@ try{{
     if (zoomTrigger) zoomTrigger.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
     const menuOpened = zoomMenu && zoomMenu.style.display === "flex"
       && zoomTrigger.getAttribute("aria-expanded") === "true"
-      && zoomMenu.querySelectorAll("[data-xy-modebar-menu-item]").length === 5
+      && zoomMenu.querySelectorAll("[data-xy-modebar-menu-item]").length === 7
+      && viewHistory && historyBack && historyNext
       && zoomMenu.querySelector("[data-xy-modebar-menu-separator]");
     if (zoomMenu) zoomMenu.dispatchEvent(new KeyboardEvent("keydown", {{key:"Escape",bubbles:true}}));
     const modebarMenu = menuOpened && zoomMenu.style.display === "none"
@@ -333,9 +337,9 @@ try{{
         clientX:gr.left+gr.width/2+80,clientY:gr.top+gr.height/2+40,bubbles:true}}));
       grip.dispatchEvent(new PointerEvent("pointerup", {{pointerId:71,pointerType:"mouse",button:0,
         clientX:gr.left+gr.width/2+80,clientY:gr.top+gr.height/2+40,bubbles:true}}));
-      grip.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
     }}
-    const modebarDrag = grip && parseFloat(bar.style.left) > barLeft0 + 20
+    const modebarDrag = grip && grip.tagName !== "BUTTON"
+      && parseFloat(bar.style.left) > barLeft0 + 20
       && bar.querySelectorAll("button[hidden]").length === 0 ? 1 : 0;
     if (selectButton) selectButton.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
     const selectItems = selectMenu
@@ -1396,7 +1400,7 @@ try{{
     if modebar_menu != 1:
         raise SystemExit("modebar zoom dropdown did not open and close")
     if modebar_drag != 1:
-        raise SystemExit("modebar drag handle did not move the toolbar")
+        raise SystemExit("modebar external drag handle did not move the toolbar")
     if modebar_select != 1:
         raise SystemExit("modebar select button did not activate selection mode")
     if lasso_edit != 1:

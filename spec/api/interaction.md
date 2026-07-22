@@ -55,12 +55,12 @@ the switch is never set. The non-boolean viewport keys — `default_drag_action`
 | `crosshair` | off | The two guide elements are created only when the flag is true, at init (`53_interaction.ts:80`). Not togglable after mount. |
 | `navigation` | on | Master gate on pointer-drag pan, wheel zoom, box-zoom drags, dblclick reset, and every modebar viewport control. |
 | `pan` | on | Plain-drag pan is ignored, the modebar Pan button is not built, and every zoom-enabled axis is contained (§2.2). Requires `navigation`. Pans `pan_axes` (§2.1). |
-| `zoom` | on | Master zoom gate: wheel zoom, box zoom, and the modebar zoom menu are all ignored. Requires `navigation`. Zooms `zoom_axes` (§2.1). |
+| `zoom` | on | Master zoom gate: wheel zoom, box zoom, and the zoom actions inside the modebar menu are all ignored. The same dropdown can remain for view history when `history` is on. Requires `navigation`. Zooms `zoom_axes` (§2.1). |
 | `wheel_zoom` | on | Cursor-anchored wheel/trackpad zoom is ignored and the page keeps scrolling; box and button zoom are unaffected. Requires `navigation` and `zoom` (`53_interaction.ts:271-273`). |
 | `box_zoom` | on | Box-zoom drags and the modebar Box Zoom button are removed, and `default_drag_action="zoom"` has no usable drag tool. Requires `navigation` and `zoom` (`53_interaction.ts:112-113`, `50_chartview.ts:419`). |
 | `zoom_buttons` | on | The modebar Zoom In (×0.5) / Zoom Out (×2) commands are removed; wheel and box zoom keep working. Requires `navigation` and `zoom` (`53_interaction.ts:883`). |
 | `double_click_reset` | on | Double-click no longer resets the view. The modebar Reset View button is unaffected. Requires `navigation` only — reset is independent of `zoom` (`53_interaction.ts:283-284`). |
-| `history` | on | Removes the modebar Back/Forward buttons and stops durable-state snapshotting entirely (`57_viewstate.ts`). The full history contract is [`../design/view-state.md`](../design/view-state.md) §4: a client-local 64-entry stack of durable-state snapshots, coalesced per gesture by `interaction_id`; linked and history-sourced writes never push; reset pushes (Back undoes a double-click). |
+| `history` | on | Removes Back/Next from the modebar zoom menu and stops durable-state snapshotting entirely (`57_viewstate.ts`). The full history contract is [`../design/view-state.md`](../design/view-state.md) §4: a client-local 64-entry stack of durable-state snapshots, coalesced per gesture by `interaction_id`; linked and history-sourced writes never push; reset pushes (Back undoes a double-click). |
 | `link_group` | unset | See §4. |
 | `link_axes` | all declared axes | See §4. |
 
@@ -318,9 +318,9 @@ boundaries:
 Box zoom is bounded separately: a drag whose data rectangle would collapse a
 span below f32 resolution is ignored as degenerate.
 
-The modebar exposes the same actions: Pan; Back/Forward view-history buttons
-(when `history` is on — enabled only when the corresponding stack side is
-non-empty); a zoom menu with Zoom In (×0.5),
+The modebar exposes the same actions: Pan; a zoom menu containing Back/Next
+view history (when `history` is on — enabled only when the corresponding stack
+side is non-empty), Zoom In (×0.5),
 Zoom Out (×2), Box Zoom, and Reset View; and a selection menu with Box
 Select, Lasso Select, X Range, and Y Range. Each menu is built only when its
 flags allow it, and the whole bar is hidden when it does not fit inside the

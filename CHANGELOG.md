@@ -72,9 +72,11 @@ in the README).
   `reflex_xy.chart()` now mirror their embedded class tokens into generated JSX
   so Reflex's Tailwind plugin can discover them at compile time.
 - **Compact chart toolbar and editable lasso selection.** The client toolbar
-  appears on chart hover or keyboard focus, can be dragged within the chart,
-  groups zoom and selection modes into accessible menus, and exports PNG, SVG,
-  or resident data as CSV. Completed lasso selections expose up to 16 adaptive
+  appears on chart hover or keyboard focus and can be dragged by its
+  non-interactive surface, with an adaptive external drag affordance. Back/Next
+  history now lives in the zoom menu, alongside the grouped zoom and selection
+  controls, and the toolbar exports PNG, SVG, or resident data as CSV.
+  Completed lasso selections expose up to 16 adaptive
   RDP handles for range adjustment, and client SVG/PNG export snapshots the
   chart's computed theme tokens and typography so host light/dark themes carry
   into downloaded images.

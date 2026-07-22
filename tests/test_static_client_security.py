@@ -127,7 +127,7 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
 
         inner_html_lines = [line.strip() for line in text.splitlines() if ".innerHTML" in line]
         assert inner_html_lines == [
-            'grip.innerHTML = this._icon("drag");',
+            'dragPeek.innerHTML = this._icon("drag");',
             "b.innerHTML = this._icon(name);",
             'zoomIndicator.innerHTML = this._icon("chevrondown");',
             'selectModeIcon.innerHTML = this._icon("select");',
@@ -188,7 +188,7 @@ def test_pointer_capture_tolerates_synthetic_accessibility_clicks() -> None:
         capture_lines = [
             line.strip() for line in text.splitlines() if ".setPointerCapture(" in line
         ]
-        # canvas drag, band select, lasso handle, modebar grip, axis band
+        # canvas drag, band select, lasso handle, modebar surface, axis band
         assert len(capture_lines) == 5, f"{path} has an unexpected capture site"
         assert all(line.startswith("try {") and "catch (_err)" in line for line in capture_lines), (
             f"{path} leaves pointer capture unguarded for synthetic events"

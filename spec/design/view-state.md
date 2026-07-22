@@ -144,9 +144,10 @@ history works in notebooks, Reflex, and standalone HTML export identically.
   selection per PR #117.
 - **Capacity** is 64 entries, oldest evicted. Snapshots are a handful of
   floats; memory is not a concern, predictability is.
-- **Surface.** Two modebar buttons, Back and Forward, enabled only when the
-  corresponding stack side is non-empty, subject to the existing modebar fit
-  rule; and the static handle's `back()`/`forward()` (§5.3). History
+- **Surface.** Back and Next live at the top of the modebar zoom menu, enabled
+  only when the corresponding stack side is non-empty. The menu stays open
+  while either action is used. They remain subject to the existing modebar fit
+  rule; the static handle also exposes `back()`/`forward()` (§5.3). History
   navigation is *client-scoped by construction* — there is deliberately no
   Python-side `view_back()`: stacks live in each client, clients in one
   Reflex room (or views of one notebook model) accumulate different stacks
@@ -373,7 +374,7 @@ Locked in before implementation, in the PR #117 fail-first style:
 - **Loop safety:** a state bridge that echoes `on_view_change` back into
   `set_view` converges (source filtering documented and probed).
 - **Headless-Chromium probes:** axis-band wheel mutates only the hovered
-  axis; Back button state tracks stack emptiness; custom tooltip component
+  axis; Back/Next menu state tracks stack emptiness; custom tooltip component
   receives a payload with `cursor.px` on a static page.
 
 ## 10. What this unlocks (recorded, not promised)
@@ -389,7 +390,7 @@ without new primitives.
 | --- | --- | --- |
 | 0 | PR #117 lands | per-axis ranges, clamps, semantic events (dependency) |
 | 1 | §2 state object, §3 client controller, §5 Python + `reflex_xy` + static handle, §8 messages | #121 |
-| 2 | §4 history, modebar Back/Forward, reset-as-navigation | #110 |
+| 2 | §4 history, modebar Back/Next menu controls, reset-as-navigation | #110 |
 | 3 | §6 axis-band gestures | #120 |
 | 4 | §7 hover payload + adapter tooltip mount | #111 |
 
