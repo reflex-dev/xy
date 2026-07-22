@@ -49,6 +49,7 @@ marching_triangles = _impl.marching_triangles
 is_sorted = _impl.is_sorted
 min_max = _impl.min_max
 bin_2d = _impl.bin_2d
+bin_2d_f32 = _impl.bin_2d_f32
 bin_2d_indices = _impl.bin_2d_indices
 bin_2d_sample_range = _impl.bin_2d_sample_range
 bin_2d_stratified_sample_range_u8_counted = _impl.bin_2d_stratified_sample_range_u8_counted
@@ -91,6 +92,7 @@ __all__ = [
     "CSS_LENGTH",
     "CSS_NUMBER",
     "bin_2d",
+    "bin_2d_f32",
     "bin_2d_indices",
     "bin_2d_sample_range",
     "bin_2d_stratified_sample_range_u8_counted",

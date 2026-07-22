@@ -31,9 +31,12 @@ pub struct Pyramid {
     y1: f64,
 }
 
-/// Max upsampling allowed before compose refuses: rendering source cells
-/// into an output grid finer than 2x reads as blur/blocks — beyond that the
-/// exact path must run (and at drill-scale windows it does anyway).
+/// The production default upsample bound (callers pass their own via the ABI;
+/// see `xy_pyramid_compose`). Rendering source cells into an output grid finer
+/// than 2x reads as blur/blocks, so normal traces refuse past it and re-bin
+/// exactly; huge/out-of-core traces pass a large bound to avoid the O(N) scan.
+/// Only the Rust tests reference it directly.
+#[cfg(test)]
 const MAX_UPSAMPLE: usize = 2;
 
 pub fn build(
@@ -176,6 +179,7 @@ pub fn compose(
     hi_y: f64,
     w: usize,
     h: usize,
+    max_upsample: usize,
     out: &mut [f32],
 ) -> Option<usize> {
     if w == 0 || h == 0 || out.len() != w * h {
@@ -186,8 +190,10 @@ pub fn compose(
     }
     // Pick the coarsest level that still meets the render resolution without
     // upsampling (fewest cells to walk, no blur). Only when even level 0
-    // cannot meet it, tolerate up to MAX_UPSAMPLE before refusing — beyond
-    // that the exact path must run.
+    // cannot meet it, tolerate up to `max_upsample` before refusing — beyond
+    // that the exact path must run. Callers over huge/out-of-core columns pass
+    // a large `max_upsample` so the finest level is served (progressively
+    // blurry) rather than triggering an O(N) rescan of the whole column (§28).
     let mut chosen: Option<usize> = None;
     for level in (0..p.levels.len()).rev() {
         let dim = p.dims[level];
@@ -202,7 +208,10 @@ pub fn compose(
         let dim = p.dims[0];
         let (cx0, cx1) = center_range(lo_x, hi_x, p.x0, p.x1, dim);
         let (cy0, cy1) = center_range(lo_y, hi_y, p.y0, p.y1, dim);
-        if (cx1 - cx0) * MAX_UPSAMPLE >= w && (cy1 - cy0) * MAX_UPSAMPLE >= h {
+        // Saturating multiply so a huge `max_upsample` can't overflow usize.
+        if (cx1 - cx0).saturating_mul(max_upsample) >= w
+            && (cy1 - cy0).saturating_mul(max_upsample) >= h
+        {
             chosen = Some(0);
         }
     }
@@ -218,12 +227,35 @@ pub fn compose(
     let sy = h as f64 / (hi_y - lo_y);
     let (cx0, cx1) = center_range(lo_x, hi_x, p.x0, p.x1, dim);
     let (cy0, cy1) = center_range(lo_y, hi_y, p.y0, p.y1, dim);
-    // center_range can yield cx1 < cx0 for windows astronomically past the
-    // domain (the isize+1 in it wraps); the indexed loop iterated that as
-    // empty, but slicing would panic — keep the empty-window behavior.
-    if cx0 < cx1 {
-        // ox depends only on cx: hoist the center→output-bin math (same f64
-        // expression, so identical bins) out of the per-row loop.
+    // Upsampling when the window spans fewer source cells than output pixels on
+    // either axis: pushing each source cell to its center pixel would leave a
+    // sparse lattice of lit dots on black (the "grid of points" artifact). Pull
+    // instead — every output pixel samples the source cell under it — so a
+    // coarse level renders as filled blocks, a proper (if blocky) density.
+    let upsampling = (cx1 - cx0) < w || (cy1 - cy0) < h;
+    if upsampling {
+        let inv_cell_x = 1.0 / cell_x;
+        let inv_cell_y = 1.0 / cell_y;
+        for (oy, out_row) in out.chunks_exact_mut(w).enumerate() {
+            let ydata = lo_y + (oy as f64 + 0.5) / sy;
+            let cy = ((ydata - p.y0) * inv_cell_y) as isize;
+            if cy < 0 || cy as usize >= dim {
+                continue;
+            }
+            let base = cy as usize * dim;
+            for (ox, o) in out_row.iter_mut().enumerate() {
+                let xdata = lo_x + (ox as f64 + 0.5) / sx;
+                let cx = ((xdata - p.x0) * inv_cell_x) as isize;
+                if cx >= 0 && (cx as usize) < dim {
+                    *o = lvl[base + cx as usize] as f32;
+                }
+            }
+        }
+    } else if cx0 < cx1 {
+        // Downsample / 1:1 — push-accumulate is count-conserving (§5). ox
+        // depends only on cx: hoist the center→output-bin math out of the loop.
+        // center_range can yield cx1 < cx0 for windows astronomically past the
+        // domain; the guard keeps the empty-window behavior (no slice panic).
         let ox_of: Vec<u32> = (cx0..cx1)
             .map(|cx| {
                 let xcen = p.x0 + (cx as f64 + 0.5) * cell_x;
@@ -359,7 +391,7 @@ mod tests {
         let dim = 64;
         let p = build(&x, &y, 0.0, 100.0, 0.0, 100.0, dim).unwrap();
         let mut composed = vec![0.0f32; dim * dim];
-        let level = compose(&p, 0.0, 100.0, 0.0, 100.0, dim, dim, &mut composed).unwrap();
+        let level = compose(&p, 0.0, 100.0, 0.0, 100.0, dim, dim, MAX_UPSAMPLE, &mut composed).unwrap();
         assert_eq!(level, 0);
         let mut direct = vec![0.0f32; dim * dim];
         kernels::bin_2d(&x, &y, 0.0, 100.0, 0.0, 100.0, dim, dim, &mut direct);
@@ -377,7 +409,7 @@ mod tests {
         // window aligned to level-0 cell edges: [25,75)² = cells 16..48
         let (w, h) = (32, 32);
         let mut composed = vec![0.0f32; w * h];
-        let level = compose(&p, 25.0, 75.0, 25.0, 75.0, w, h, &mut composed).unwrap();
+        let level = compose(&p, 25.0, 75.0, 25.0, 75.0, w, h, MAX_UPSAMPLE, &mut composed).unwrap();
         assert_eq!(level, 0);
         let mut direct = vec![0.0f32; w * h];
         kernels::bin_2d(&x, &y, 25.0, 75.0, 25.0, 75.0, w, h, &mut direct);
@@ -390,7 +422,7 @@ mod tests {
         let p = build(&x, &y, 0.0, 100.0, 0.0, 100.0, 64).unwrap();
         let (w, h) = (16, 16);
         let mut g = vec![0.0f32; w * h];
-        let lvl = compose(&p, 10.0, 60.0, 20.0, 70.0, w, h, &mut g).unwrap();
+        let lvl = compose(&p, 10.0, 60.0, 20.0, 70.0, w, h, MAX_UPSAMPLE, &mut g).unwrap();
         let total: f64 = g.iter().map(|&c| c as f64).sum();
         // count() reads level 0; compose may use a coarser level whose edge
         // cells differ slightly — whole-cell approximation, small at the rim.
@@ -405,7 +437,27 @@ mod tests {
         );
         // deeper than level 0 can resolve at 2x upsample -> refused
         let mut tiny = vec![0.0f32; 512 * 512];
-        assert!(compose(&p, 50.0, 51.0, 50.0, 51.0, 512, 512, &mut tiny).is_none());
+        assert!(compose(&p, 50.0, 51.0, 50.0, 51.0, 512, 512, MAX_UPSAMPLE, &mut tiny).is_none());
+    }
+
+    #[test]
+    fn compose_upsample_fills_block_instead_of_dotting() {
+        // A window finer than level 0 refuses at 2x, but with a large upsample
+        // bound (the huge/out-of-core policy) serves the finest level FILLED:
+        // every output pixel takes its covering source cell, so a lit region has
+        // no interior black gaps — the "grid of dots" artifact is gone.
+        let n = 10_000usize;
+        let x: Vec<f64> = (0..n).map(|i| (i % 100) as f64 + 0.5).collect();
+        let y: Vec<f64> = (0..n).map(|i| ((i / 100) % 100) as f64 + 0.5).collect();
+        let p = build(&x, &y, 0.0, 100.0, 0.0, 100.0, 64).unwrap();
+        let (w, h) = (256, 256); // ~2-unit window heavily upsamples ~1.3 cells
+        let mut refused = vec![0.0f32; w * h];
+        assert!(compose(&p, 49.0, 51.0, 49.0, 51.0, w, h, 2, &mut refused).is_none());
+        let mut filled = vec![0.0f32; w * h];
+        let lvl = compose(&p, 49.0, 51.0, 49.0, 51.0, w, h, 1 << 20, &mut filled).unwrap();
+        assert_eq!(lvl, 0);
+        let nz = filled.iter().filter(|&&c| c > 0.0).count();
+        assert!(nz > w * h / 2, "upsample must fill the block, got {nz}/{}", w * h);
     }
 
     #[test]
@@ -454,13 +506,13 @@ mod tests {
         // all-zero grid with a level, exactly like the pre-slicing code.
         let (w, h) = (2, 2);
         let mut g = vec![7.0f32; w * h];
-        let level = compose(&p, 50.0, 1.0e21, 0.0, 100.0, w, h, &mut g);
+        let level = compose(&p, 50.0, 1.0e21, 0.0, 100.0, w, h, MAX_UPSAMPLE, &mut g);
         assert!(level.is_some());
         assert!(g.iter().all(|&c| c == 0.0), "wrapped window composes empty");
         // nanosecond-epoch-scale garbage coordinates over a small domain
         // (realistic bad input) must also never panic.
         let mut g2 = vec![0.0f32; w * h];
-        let _ = compose(&p, 1.0e18, 1.75e18, 0.0, 100.0, w, h, &mut g2);
+        let _ = compose(&p, 1.0e18, 1.75e18, 0.0, 100.0, w, h, MAX_UPSAMPLE, &mut g2);
     }
 
     #[test]

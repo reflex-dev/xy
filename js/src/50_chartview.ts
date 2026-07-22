@@ -2093,12 +2093,13 @@ export class ChartView {
       const raw = this._columnView(buffer, meta);
       const grid = d.enc === "log-u8" ? lodDecodeLogU8(raw, d.max) : raw;
       g.densityNormMax = d.max;
+      const filter = d.filter || "linear";
       g.density = {
         w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
         color: d.color ? parseColor(this.root, d.color, [0.3, 0.47, 0.66, 1]) : null,
         xRange: d.x_range, yRange: d.y_range,
-        grid: lodCopyGrid(grid),
-        tex: this._uploadGrid(grid, d.w, d.h, d.max),
+        grid: lodCopyGrid(grid), filter,
+        tex: this._uploadGrid(grid, d.w, d.h, d.max, filter),
         lut: this._lut(d.colormap),
       };
       g.sampleOverlay = this._buildDensitySample(t, d.sample, buffer);
@@ -2841,10 +2842,10 @@ export class ChartView {
     return tex;
   }
 
-  _uploadGrid(f32, w, h, maxVal) {
+  _uploadGrid(f32, w, h, maxVal, filter) {
     const gl = this.gl;
     const tex = gl.createTexture();
-    lodWriteGridTexture(gl, tex, f32, w, h, maxVal);
+    lodWriteGridTexture(gl, tex, f32, w, h, maxVal, filter);
     return tex;
   }
 

@@ -52,7 +52,7 @@ export function lodCopyGrid(f32) {
 
 // Log tone-mapped grid upload (R8): stable perception across renormalization,
 // and the u_max swings between rebins compress logarithmically (§5/§F6).
-export function lodWriteGridTexture(gl, tex, f32, w, h, maxVal) {
+export function lodWriteGridTexture(gl, tex, f32, w, h, maxVal, filter) {
   const data = new Uint8Array(f32.length);
   const denom = Math.log1p(Math.max(0, maxVal || 0));
   if (denom > 0) {
@@ -68,8 +68,11 @@ export function lodWriteGridTexture(gl, tex, f32, w, h, maxVal) {
   gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, data);
   gl.pixelStorei(gl.UNPACK_ALIGNMENT, align);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  // "nearest" for a full-screen-resolution grid (exact deep-zoom detail — crisp,
+  // no interpolation bleed); "linear" (default) smooths an upsampled aggregate.
+  const gf = filter === "nearest" ? gl.NEAREST : gl.LINEAR;
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gf);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gf);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 }
@@ -102,7 +105,9 @@ function lodStartNormAnim(view, g, start, target) {
     g._densityNormAnim = null;
     g.density.normMax = target;
     g.densityNormMax = target;
-    lodWriteGridTexture(view.gl, g.density.tex, g.density.grid, g.density.w, g.density.h, target);
+    lodWriteGridTexture(
+      view.gl, g.density.tex, g.density.grid, g.density.w, g.density.h, target, g.density.filter
+    );
     return;
   }
   g._densityNormAnim = {
@@ -125,7 +130,7 @@ function lodStepNorm(view, g) {
   if (rel > 0.004 || t >= 1) {
     d.normMax = norm;
     g.densityNormMax = norm;
-    lodWriteGridTexture(view.gl, d.tex, d.grid, d.w, d.h, norm);
+    lodWriteGridTexture(view.gl, d.tex, d.grid, d.w, d.h, norm, d.filter);
   }
   if (t < 1) {
     view.draw();
@@ -646,12 +651,13 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
   g.densityNormMax = normMax;
   g.prevDensity = g.density;
   g._densityFadeStart = view._now();
+  const filter = d.filter || "linear";
   g.density = {
     w: d.w, h: d.h, max: d.max, normMax, colormap: d.colormap || g.density.colormap,
     color: d.color ? parseColor(view.root, d.color, [0.3, 0.47, 0.66, 1]) : g.density.color,
     xRange: d.x_range, yRange: d.y_range,
-    grid,
-    tex: view._uploadGrid(grid, d.w, d.h, normMax),
+    grid, filter,
+    tex: view._uploadGrid(grid, d.w, d.h, normMax, filter),
     lut: g.density.lut,
   };
   // Exact scans include a view-specific sample and replace the overlay.

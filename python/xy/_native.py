@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
-ABI_VERSION = 37
+ABI_VERSION = 39
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -425,6 +425,19 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,
         ctypes.c_void_p,
     ]
+    lib.xy_bin_2d_f32.restype = ctypes.c_int32
+    lib.xy_bin_2d_f32.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+    ]
     lib.xy_bin_2d_indices.restype = ctypes.c_size_t
     lib.xy_bin_2d_indices.argtypes = [
         ctypes.c_void_p,
@@ -606,6 +619,7 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_size_t,
         ctypes.c_size_t,
+        ctypes.c_size_t,  # max_upsample
         ctypes.c_void_p,
     ]
     lib.xy_pyramid_free.restype = ctypes.c_int32
@@ -973,7 +987,9 @@ def _pyramid_handle(value: int) -> int:
 
 
 def _pyramid_base_dim(value: int) -> int:
-    out = _bounded_positive_int(value, "base_dim")
+    # Pyramid dims are decoupled from MAX_SCREEN_DIM: a large trace's finest
+    # level is far finer than any screen (65536² u32 ≈ 16 GB is the sanity cap).
+    out = _bounded_positive_int(value, "base_dim", max_value=1 << 16)
     if out < 2 or out & (out - 1):
         raise ValueError("base_dim must be a power-of-two integer >= 2")
     return out
@@ -1985,6 +2001,50 @@ def bin_2d(
     return out
 
 
+def bin_2d_f32(
+    x: npt.NDArray[np.float32],
+    y: npt.NDArray[np.float32],
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    w: int,
+    h: int,
+) -> npt.NDArray[np.float32]:
+    """2D density grid from f32 inputs — the out-of-core spatial-index path.
+
+    Same result as :func:`bin_2d` over the same points cast to f64, but bins the
+    memmap'd f32 columns directly (no f64 widening copy, which otherwise
+    dominates a windowed gather). Row 0 = bottom (§5 Tier 2)."""
+    w = _bounded_positive_int(w, "w")
+    h = _bounded_positive_int(h, "h")
+    x0, x1 = _finite_increasing(x0, x1, "x range")
+    y0, y1 = _finite_increasing(y0, y1, "y range")
+    x = np.ascontiguousarray(x, dtype=np.float32)
+    y = np.ascontiguousarray(y, dtype=np.float32)
+    if x.ndim != 1 or y.ndim != 1:
+        raise ValueError("x and y must be 1-D")
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    out = np.zeros((h, w), dtype=np.float32)
+    if len(x):
+        ok = _lib.xy_bin_2d_f32(
+            x.ctypes.data,
+            y.ctypes.data,
+            len(x),
+            x0,
+            x1,
+            y0,
+            y1,
+            w,
+            h,
+            out.ctypes.data,
+        )
+        if not ok:
+            raise ValueError("invalid bin_2d_f32 arguments")
+    return out
+
+
 def bin_2d_indices(
     x: npt.NDArray[np.float64],
     y: npt.NDArray[np.float64],
@@ -2598,15 +2658,26 @@ def pyramid_count(handle: int, lo_x: float, hi_x: float, lo_y: float, hi_y: floa
 
 
 def pyramid_compose(
-    handle: int, lo_x: float, hi_x: float, lo_y: float, hi_y: float, w: int, h: int
+    handle: int,
+    lo_x: float,
+    hi_x: float,
+    lo_y: float,
+    hi_y: float,
+    w: int,
+    h: int,
+    max_upsample: int = 2,
 ) -> tuple[npt.NDArray[np.float32], int] | None:
     """(grid f32 [h*w], level) from the pyramid, or None when the window
-    outresolves it (caller falls back to an exact re-bin, §28)."""
+    outresolves it beyond ``max_upsample`` (caller falls back to an exact
+    re-bin, §28). Callers over huge/out-of-core columns pass a large
+    ``max_upsample`` so the finest level is served upsampled instead of
+    triggering an O(N) rescan."""
     handle = _pyramid_handle(handle)
     lo_x, hi_x = _finite_increasing(lo_x, hi_x, "x range")
     lo_y, hi_y = _finite_increasing(lo_y, hi_y, "y range")
     w = _bounded_positive_int(w, "w")
     h = _bounded_positive_int(h, "h")
+    max_upsample = _positive_int(max_upsample, "max_upsample")
     out = np.zeros(w * h, dtype=np.float32)
     level = _lib.xy_pyramid_compose(
         ctypes.c_uint64(handle),
@@ -2616,6 +2687,7 @@ def pyramid_compose(
         hi_y,
         w,
         h,
+        max_upsample,
         out.ctypes.data,
     )
     if level < 0:

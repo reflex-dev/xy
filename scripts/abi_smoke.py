@@ -1332,6 +1332,7 @@ def main() -> None:
         ctypes.c_double,
         ctypes.c_size_t,
         ctypes.c_size_t,
+        ctypes.c_size_t,  # max_upsample: cap on per-axis upsample before refusing
         ctypes.POINTER(ctypes.c_float),
     ]
     lib.xy_pyramid_free.restype = ctypes.c_int32
@@ -1377,17 +1378,17 @@ def main() -> None:
     )
     grid_p = array("f", bytes(4 * 8 * 8))
     lvl = lib.xy_pyramid_compose(
-        ctypes.c_uint64(handle), 0.0, 8.0, 0.0, 8.0, 8, 8, _ptr(grid_p, ctypes.c_float)
+        ctypes.c_uint64(handle), 0.0, 8.0, 0.0, 8.0, 8, 8, 2, _ptr(grid_p, ctypes.c_float)
     )
     ok(lvl == 0, "full-window compose uses level 0")
     ok(sum(grid_p) == float(n_p + len(append_x)), "compose conserves the appended count")
     tiny = array("f", bytes(4 * 64 * 64))
     ok(
         lib.xy_pyramid_compose(
-            ctypes.c_uint64(handle), 3.0, 3.1, 3.0, 3.1, 64, 64, _ptr(tiny, ctypes.c_float)
+            ctypes.c_uint64(handle), 3.0, 3.1, 3.0, 3.1, 64, 64, 2, _ptr(tiny, ctypes.c_float)
         )
         == -2,
-        "outresolving window is refused, not faked",
+        "outresolving window is refused at max_upsample=2, not faked",
     )
     ok(lib.xy_pyramid_free(ctypes.c_uint64(handle)) == 1, "pyramid free")
     ok(lib.xy_pyramid_free(ctypes.c_uint64(handle)) == 0, "double free is an error code")
