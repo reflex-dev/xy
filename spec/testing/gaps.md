@@ -219,9 +219,22 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-015 — Broader cross-browser, DPR, and motion conformance
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: the hard three-engine fixture is one direct linear scatter at a
-  narrow configuration.
+- Status: `IMPLEMENTED`
+- Owner: renderer maintainers
+- Evidence: `spec/testing/browser-conformance-policy.md`, `scripts/browser_conformance.mjs`, `tests/test_browser_conformance.py`, and the hard `browser_conformance` CI job's retained `browser-conformance-evidence` JSON artifact.
+- Current gap: closed; the exact six-case catalog runs 18 browser contexts and
+  spans direct/decimated/density tiers, scatter/line/bar/heatmap/mesh families,
+  DPR 1/2, both motion preferences, and linear/log/category/named axes.
+- Environment: Node 22, package-pinned Playwright `1.61.1`, bundled Chromium/
+  Firefox/WebKit, Ubuntu Xvfb at 1920×1200, and a 760×480 CSS viewport.
+- Oracle and negative control: each engine must satisfy semantic, layout, DPR,
+  motion, axis-binding, and nonblank-pixel assertions before live cross-engine
+  tolerant comparison; missing-catalog, corrupted-signature, and shifted-layout
+  mutations must fail.
+- Command / gate / artifact: `make check-conformance`; required
+  `browser_conformance` job; always-retained `browser-conformance-evidence.json`.
+- Skip policy: none; missing engines, launch/WebGL2 failures, page errors, or
+  incomplete cases are blocking.
 - Implemented when: a bounded matrix spans direct/decimated/density and
   representative line/bar/heatmap/mesh, DPR 1/2, reduced/no-preference motion,
   and linear/log/category/named axes in Chromium, Firefox, and WebKit, while

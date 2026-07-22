@@ -25,7 +25,7 @@ help:
 		'  make check-browser    run browser smokes, including every chart kind, runtime security, animation, and pick boundaries (set CHROMIUM=/path/to/chrome)' \
 		'  make check-labels     run strict formatter units and rendered-label DOM oracles' \
 		'  make check-pan-zoom   run the complete Chromium pan/zoom acceptance matrix (set CHROMIUM=/path/to/chrome)' \
-		'  make check-conformance run accessibility + Chromium/Firefox/WebKit conformance' \
+		'  make check-conformance run the bounded accessibility/DPR/motion matrix in Chromium, Firefox, and WebKit' \
 		'  make check-docs       run docs examples and public claim guardrails' \
 		'  make check-examples   run README/API examples and Reflex asset registry checks' \
 		'  make check-security   run standalone HTML safety and client text-sink checks' \

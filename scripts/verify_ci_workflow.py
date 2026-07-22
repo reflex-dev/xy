@@ -820,6 +820,10 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "npx playwright install --with-deps chromium firefox webkit",
         "node js/build.mjs --check",
         "node scripts/browser_conformance.mjs",
+        "--evidence browser-conformance-evidence.json",
+        "Upload browser conformance evidence",
+        "browser-conformance-evidence",
+        "if-no-files-found: error",
         "Focused pan/zoom matrix (three engines)",
         "scripts/pan_zoom_matrix.mjs",
         "--profile focused",
@@ -828,9 +832,35 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "Upload cross-engine pan/zoom evidence",
         "pan-zoom-cross-engine-evidence",
     )
+    browser_conformance = jobs.get("browser_conformance", "")
     _require_step_contains(
         errors,
-        jobs.get("browser_conformance", ""),
+        browser_conformance,
+        "Run accessibility and cross-browser conformance",
+        "bounded three-engine matrix and retained evidence command",
+        'server-args="-screen 0 1920x1200x24"',
+        "node scripts/browser_conformance.mjs",
+        "--evidence browser-conformance-evidence.json",
+    )
+    conformance_step = _named_step_blocks(browser_conformance).get(
+        "Run accessibility and cross-browser conformance", ""
+    )
+    if "--browsers" in conformance_step:
+        errors.append("hard browser_conformance step must run all three engines")
+    _require_step_contains(
+        errors,
+        browser_conformance,
+        "Upload browser conformance evidence",
+        "failure-retaining conformance evidence policy",
+        "if: always()",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        "browser-conformance-evidence",
+        "if-no-files-found: error",
+        "browser-conformance-evidence.json",
+    )
+    _require_step_contains(
+        errors,
+        browser_conformance,
         "Focused pan/zoom matrix (three engines)",
         "hard focused three-engine pan/zoom subset",
         'XY_PAN_ZOOM_HEADFUL: "1"',
@@ -842,7 +872,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     )
     _require_step_contains(
         errors,
-        jobs.get("browser_conformance", ""),
+        browser_conformance,
         "Upload cross-engine pan/zoom evidence",
         "failure-retaining cross-engine pan/zoom artifact policy",
         "if: always()",

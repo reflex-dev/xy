@@ -633,6 +633,7 @@ jobs:
   browser_conformance:
     name: Accessibility + cross-browser conformance
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -656,7 +657,18 @@ jobs:
         env:
           MOZ_WEBRENDER: "1"
           XY_CONFORMANCE_HEADFUL: "1"
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node scripts/browser_conformance.mjs
+        run: >-
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1200x24"
+          node scripts/browser_conformance.mjs
+          --evidence browser-conformance-evidence.json
+
+      - name: Upload browser conformance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-conformance-evidence
+          if-no-files-found: error
+          path: browser-conformance-evidence.json
 
       - name: Focused pan/zoom matrix (three engines)
         env:
