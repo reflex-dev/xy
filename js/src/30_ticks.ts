@@ -160,29 +160,81 @@ export function fmtCategory(v, categories) {
   return i >= 0 && i < categories.length ? String(categories[i]) : "";
 }
 
+const NUMERIC_FORMAT_RE = /^([$€£¥]?)(,)?\.([0-9]{1,2})(?:f([ A-Za-z0-9/_-]*))?(%)?$/;
+const TIME_FORMAT_TOKENS = new Set(["Y", "m", "d", "H", "M", "S", "b", "B"]);
+
+function formatError(kind, format) {
+  return new Error(`xy: unsupported ${kind} format ${JSON.stringify(format)}`);
+}
+
+function parseNumberFormat(format) {
+  if (typeof format !== "string" || !format) throw formatError("numeric", format);
+  const match = format.match(NUMERIC_FORMAT_RE);
+  if (!match) throw formatError("numeric", format);
+  const digits = Number(match[3]);
+  const suffix = match[4] || "";
+  const percent = Boolean(match[5]);
+  if (digits > 20 || (percent && suffix)) throw formatError("numeric", format);
+  return {
+    prefix: match[1] || "",
+    grouped: Boolean(match[2]),
+    digits,
+    suffix,
+    percent,
+  };
+}
+
+function parseTimeFormat(format) {
+  if (typeof format !== "string" || !format) throw formatError("UTC time", format);
+  let sawToken = false;
+  for (let index = 0; index < format.length; index++) {
+    if (format[index] !== "%") continue;
+    const token = format[index + 1];
+    if (!TIME_FORMAT_TOKENS.has(token)) throw formatError("UTC time", format);
+    sawToken = true;
+    index += 1;
+  }
+  if (!sawToken) throw formatError("UTC time", format);
+  return format;
+}
+
+export function validateValueFormat(format, context = "value") {
+  try {
+    parseNumberFormat(format);
+    return "numeric";
+  } catch (_numericError) {
+    try {
+      parseTimeFormat(format);
+      return "time";
+    } catch (_timeError) {
+      throw formatError(context, format);
+    }
+  }
+}
+
+export function validateAxisFormat(axis) {
+  if (!axis || axis.format === undefined || axis.format === null) return;
+  if (axis.kind === "category") throw formatError("category-axis", axis.format);
+  if (axis.kind === "time") parseTimeFormat(axis.format);
+  else parseNumberFormat(axis.format);
+}
+
 export function fmtNumberSpec(v, format) {
-  if (typeof format !== "string" || !Number.isFinite(Number(v))) return null;
-  const percent = format.endsWith("%");
-  const raw = percent ? format.slice(0, -1) : format;
-  const match = raw.match(/^(,)?\.([0-9]+)f?$/);
-  if (!match) return null;
-  const digits = Number(match[2]);
-  // Number#toFixed and Intl.NumberFormat both reject excessive precision.
-  // Treat an out-of-grammar precision as unsupported instead of allowing a
-  // hand-authored spec to throw during chrome paint.
-  if (!Number.isSafeInteger(digits) || digits > 100) return null;
-  const value = percent ? Number(v) * 100 : Number(v);
-  const text = match[1]
+  if (format === undefined || format === null) return null;
+  const parsed = parseNumberFormat(format);
+  if (!Number.isFinite(Number(v))) return null;
+  const value = parsed.percent ? Number(v) * 100 : Number(v);
+  const text = parsed.grouped
     ? value.toLocaleString(undefined, {
-      minimumFractionDigits: digits,
-      maximumFractionDigits: digits,
+      minimumFractionDigits: parsed.digits,
+      maximumFractionDigits: parsed.digits,
     })
-    : value.toFixed(digits);
-  return percent ? `${text}%` : text;
+    : value.toFixed(parsed.digits);
+  return `${parsed.prefix}${text}${parsed.suffix}${parsed.percent ? "%" : ""}`;
 }
 
 export function fmtTimeSpec(ms, format) {
-  if (typeof format !== "string") return null;
+  parseTimeFormat(format);
   const d = new Date(ms);
   if (!Number.isFinite(d.getTime())) return null;
   const pad = (n, w = 2) => String(n).padStart(w, "0");
@@ -204,8 +256,13 @@ export function fmtTimeSpec(ms, format) {
 }
 
 export function fmtAxis(axis, v, tickStep) {
+  validateAxisFormat(axis);
   if (axis && axis.kind === "category") return fmtCategory(v, axis.categories || []);
-  if (axis && axis.kind === "time") return fmtTimeSpec(v, axis.format) || fmtTime(v, tickStep);
+  if (axis && axis.kind === "time") {
+    return axis.format !== undefined && axis.format !== null
+      ? fmtTimeSpec(v, axis.format)
+      : fmtTime(v, tickStep);
+  }
   const formatted = fmtNumberSpec(v, axis && axis.format);
   if (axis && axis.scale === "log" && Number(v) > 0 && Number(v) < 1 && formatted === "0") {
     return fmtLinear(v, tickStep);

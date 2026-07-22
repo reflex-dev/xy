@@ -225,7 +225,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
             "domain": domain,
             "bounds": bounds,
             "reverse": self._bool_param(reverse, f"{axis_id} axis reverse"),
-            "format": self._optional_text(format, f"{axis_id} axis format"),
+            "format": _validate.value_format(
+                format,
+                f"{axis_id} axis format",
+                type_ if type_ in {"linear", "log", "time"} else None,
+            ),
             "tick_count": self._optional_positive_int(tick_count, f"{axis_id} axis tick_count"),
             "tick_values": values,
             "tick_labels": labels,
@@ -1175,8 +1179,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
             bounds = self._range(axis_id, use_domain=False)
         if bounds is not None:
             spec["bounds"] = sorted(bounds)
-        if opts.get("format") is not None:
-            spec["format"] = opts["format"]
+        axis_format = _validate.value_format(opts.get("format"), f"{axis_id} axis format", kind)
+        if axis_format is not None:
+            spec["format"] = axis_format
         style = styles.compile_axis_style(opts.get("style"), f"{axis_id} axis style")
         if style:
             spec["style"] = style

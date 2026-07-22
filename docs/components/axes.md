@@ -54,6 +54,12 @@ let the renderer adapt the axis to a dashboard or publication layout. Exact
 option names and defaults are in the
 [generated component reference](/docs/xy/api-reference/marks-and-components/).
 
+Numeric formats use fixed precision with optional locale grouping (`.2f`,
+`,.0f`), a literal currency prefix (`$,.2f`), a unit after `f` (`.3f GiB`),
+or percent scaling (`.1%`). Time formats use the UTC-only token subset `%Y`,
+`%m`, `%d`, `%H`, `%M`, `%S`, `%b`, and `%B`. Unsupported formats raise;
+category axes reject `format=` and use `tick_labels` for replacements.
+
 ## Bind Marks to Named Axes
 
 Use named axes for different units in one panel. An x-axis identifier must

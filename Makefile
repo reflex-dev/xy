@@ -12,7 +12,7 @@ COVERAGE_BASE ?= origin/main
 COVERAGE_HEAD ?= HEAD
 COVERAGE_REPORT ?= coverage/python/ratchet.json
 
-.PHONY: help setup setup-browser check check-full check-browser check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-testing-spec check-benchmark-harness check-coverage check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check js-test rust-check abi-smoke
+.PHONY: help setup setup-browser check check-full check-browser check-labels check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-testing-spec check-benchmark-harness check-coverage check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check js-test rust-check abi-smoke
 
 help:
 	@printf '%s\n' \
@@ -23,6 +23,7 @@ help:
 		'  make check            run the fast local verification gate' \
 		'  make check-full       run JS, Rust, and ABI gates too' \
 		'  make check-browser    run browser smokes, including every chart kind, runtime security, animation, and pick boundaries (set CHROMIUM=/path/to/chrome)' \
+		'  make check-labels     run strict formatter units and rendered-label DOM oracles' \
 		'  make check-conformance run accessibility + Chromium/Firefox/WebKit conformance' \
 		'  make check-docs       run docs examples and public claim guardrails' \
 		'  make check-examples   run README/API examples and Reflex asset registry checks' \
@@ -76,6 +77,13 @@ check-browser:
 		exit 2; \
 	}
 	$(PYTHON) scripts/verify_local.py --browser --chromium "$(CHROMIUM)"
+
+check-labels:
+	@node -e "require.resolve('playwright')" >/dev/null 2>&1 || { \
+		echo 'Playwright is required. Run: make setup-browser' >&2; \
+		exit 2; \
+	}
+	npm run test:labels
 
 check-conformance:
 	@node -e "require.resolve('playwright')" >/dev/null 2>&1 || { \

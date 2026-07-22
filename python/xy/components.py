@@ -2248,7 +2248,11 @@ def x_axis(
         domain=_axis_domain(domain, "x_axis domain"),
         bounds=_axis_bounds(bounds, "x_axis bounds"),
         reverse=_strict_bool(reverse, "x_axis reverse"),
-        format=_optional_string(format, "x_axis format"),
+        format=_validate.value_format(
+            format,
+            "x_axis format",
+            type_ if type_ in {"linear", "log", "time"} else None,
+        ),
         tick_count=_optional_positive_int(tick_count, "x_axis tick_count"),
         tick_values=values,
         tick_labels=labels,
@@ -2333,7 +2337,11 @@ def y_axis(
         domain=_axis_domain(domain, "y_axis domain"),
         bounds=_axis_bounds(bounds, "y_axis bounds"),
         reverse=_strict_bool(reverse, "y_axis reverse"),
-        format=_optional_string(format, "y_axis format"),
+        format=_validate.value_format(
+            format,
+            "y_axis format",
+            type_ if type_ in {"linear", "log", "time"} else None,
+        ),
         tick_count=_optional_positive_int(tick_count, "y_axis tick_count"),
         tick_values=values,
         tick_labels=labels,
@@ -2411,7 +2419,7 @@ def tooltip(
         show=_strict_bool(show, "tooltip show"),
         fields=_string_list(fields, "tooltip fields"),
         title=_optional_string(title, "tooltip title"),
-        format=_string_dict(format, "tooltip format"),
+        format={} if format is None else _validate.format_mapping(format, "tooltip format"),
         class_name=_optional_string(class_name, "tooltip class_name"),
         style=_style_dict(style, "tooltip style"),
         render=render,
@@ -3926,7 +3934,7 @@ def _tooltip_spec(
     if node.title is not None:
         spec["title"] = node.title
     if node.format:
-        spec["format"] = dict(node.format)
+        spec["format"] = _validate.format_mapping(node.format, "tooltip format")
     if aliases:
         spec["aliases"] = dict(aliases)
     if sources:

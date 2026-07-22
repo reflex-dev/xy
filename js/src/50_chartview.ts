@@ -1,7 +1,7 @@
 import { PROTOCOL, xyByteSpan } from "./00_header";
 import { buildLutData, colormapStops } from "./10_colormaps";
 import { cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
-import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
+import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks, validateAxisFormat, validateValueFormat } from "./30_ticks";
 import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
 import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodRememberDensity, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
@@ -349,6 +349,16 @@ export class ChartView {
     this.interaction = spec.interaction || {};
     this.markStyle = spec.mark_style || {};
     this.axes = this._normalizeAxes(spec);
+    for (const axis of Object.values(this.axes)) validateAxisFormat(axis);
+    const tooltipFormats = spec.tooltip?.format;
+    if (tooltipFormats !== undefined && tooltipFormats !== null) {
+      if (typeof tooltipFormats !== "object" || Array.isArray(tooltipFormats)) {
+        throw new Error("xy: tooltip format must be an object");
+      }
+      for (const [field, format] of Object.entries(tooltipFormats)) {
+        validateValueFormat(format, `tooltip field ${field}`);
+      }
+    }
     this.comm = comm;
     this.seq = 0;
     this._densityStamp = 0;

@@ -115,9 +115,21 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-008 — Rendered-label and formatter oracle
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: several tests assert serialized specs or source markers rather
-  than labels a user sees; unsupported formatting can silently fall back.
+- Status: `IMPLEMENTED`
+- Owner: renderer maintainers
+- Evidence: `spec/testing/rendered-label-policy.md`, `js/tests/rendered_labels.test.mjs`, `tests/test_rendered_label_formats.py`, and the hard `Rendered label and formatter oracle (Chromium)` CI step with retained `rendered-label-evidence` JSON.
+- Current gap: closed; Python and raw-spec validation reject unsupported or
+  kind-mismatched formats, while unit and real-DOM oracles cover the declared
+  label surface in two non-UTC locale/time-zone contexts.
+- Environment: Node 22 in CI, package-pinned Playwright `1.61.1` Chromium,
+  `en-US` / `America/Los_Angeles`, and `de-DE` / `Asia/Tokyo`.
+- Oracle and negative control: exact DOM text is independent of serialized
+  specs; malformed raw axis/tooltip formats must throw, and a corrupted DOM
+  label must make the comparator fail.
+- Command / gate / artifact: `npm run test:labels` and `make check-labels`; hard
+  main-CI `test` job; always-retained `rendered-label-evidence.json`.
+- Skip policy: package-owned dependencies are required; missing Playwright or
+  Chromium fails, with no `importorskip`, optional-import, or browser skip path.
 - Implemented when: policy explicitly supports or rejects each format and unit/
   DOM tests assert numeric, grouping, currency-or-error, percent, time, log,
   category, named-axis, tooltip, and colorbar labels under at least two locales

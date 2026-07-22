@@ -163,29 +163,22 @@ output at 200 ticks.
 
 `xy.x_axis(format=...)` and `xy.y_axis(format=...)` take a format string whose
 grammar depends on the axis kind. Both are deliberately small subsets, not full
-d3-format or strftime, and neither raises on a spec it does not understand —
-but they fail differently, and only the numeric grammar falls back.
+d3-format or strftime. Unsupported and kind-mismatched formats raise at Python
+construction/build time and throw when a raw browser spec bypasses Python.
 
-- **Numeric axes** accept `.Nf` (fixed decimals), `,.Nf` (fixed decimals with
-  locale group separators, via the runtime's default locale), and either form
-  with a trailing `%`, which multiplies the value by 100 and appends the sign —
-  for example `.2f`, `,.0f`, `.1%`. The trailing `f` is optional. Any other
-  string **falls back**: `fmtNumberSpec` returns `null`
-  (`js/src/30_ticks.ts:163-181`) and `fmtAxis` takes its `|| fmtLinear(...)`
-  branch (`:213`), so the axis silently reverts to the automatic formatter.
-  A syntactically matching precision above the runtime-supported 0–100 range
-  is unsupported and follows the same fallback instead of throwing during
-  chrome paint. On a log axis, a value in `(0, 1)` that the spec would render
-  as `"0"` falls back the same way.
-- **Time axes** accept a strftime subset of exactly `%Y %m %d %H %M %S %b %B`.
-  All fields are **UTC**; `%b`/`%B` are English month names. A time spec
-  **never** falls back: `fmtTimeSpec` (`js/src/30_ticks.ts:184-204`)
-  substitutes the tokens it knows and copies every other character through
-  verbatim, so it always returns a string and the `|| fmtTime(...)` branch at
-  `:204` is unreachable. An unrecognized `%` token such as `%y` therefore
-  renders literally as `%y`. The automatic time formatter is reached only when
-  `format` is absent or not a string.
-- **Category axes** ignore `format=` and render the category label.
+- **Numeric and log axes** accept fixed precision with optional locale grouping
+  (`.2f`, `,.0f`), one literal currency prefix (`$`, `€`, `£`, or `¥`), a
+  literal unit after `f` (`.3f GiB`, `,.0fK`), or percent scaling (`.1%`,
+  `.0f%`). Precision is 0 through 20. A unit and percent cannot be combined.
+- **Time axes** accept exactly `%Y %m %d %H %M %S %b %B` plus literal text.
+  All fields are UTC and month names are English, so output is invariant across
+  host locales and time zones. Unknown or incomplete `%` tokens are rejected.
+- **Category axes** reject `format=` and render the category label. Use matching
+  `tick_values` / `tick_labels` for explicit replacements.
+
+The complete grammar, tooltip behavior, colorbar rule, locale contract, and
+ executable evidence are normative in
+ [`rendered-label-policy.md`](../testing/rendered-label-policy.md).
 
 ## Slot reference
 

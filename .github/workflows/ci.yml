@@ -286,6 +286,20 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
+
+      - name: Rendered label and formatter oracle (Chromium)
+        env:
+          XY_LABEL_EVIDENCE: rendered-label-evidence.json
+        run: npm run test:labels
+
+      - name: Upload rendered label evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rendered-label-evidence
+          if-no-files-found: error
+          path: rendered-label-evidence.json
+
       - name: Headless render smoke (stdlib + Chromium)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")

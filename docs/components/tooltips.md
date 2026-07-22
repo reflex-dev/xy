@@ -40,9 +40,11 @@ chart = xy.scatter_chart(
 ~~~
 
 Braced field names in `title` are replaced from the hovered row. `format` maps
-field names to the client's numeric format strings. A source column that is not
-bound to a rendered channel is not shipped merely because its name appears in
-`fields`.
+field names to the same strict value formats as axes: fixed/grouped/currency/
+unit/percent numeric forms, or `%Y %m %d %H %M %S %b %B` for UTC time fields.
+Unsupported formats and formats applied to the wrong value kind raise instead
+of silently falling back. A source column that is not bound to a rendered
+channel is not shipped merely because its name appears in `fields`.
 
 ## Exact and Resident Readout
 

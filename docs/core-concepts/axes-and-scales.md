@@ -76,7 +76,10 @@ def tick_controls_demo():
     return reflex_xy.chart(chart, height="360px")
 ~~~
 
-`format` controls numeric labels. For crowded labels, use
+`format` uses the strict axis value grammar: fixed/grouped/currency/unit/percent
+forms for numeric and log axes, or the UTC tokens `%Y`, `%m`, `%d`, `%H`, `%M`,
+`%S`, `%b`, and `%B` for time axes. Unsupported formats raise rather than
+falling back. For crowded labels, use
 `tick_label_angle`, `tick_label_min_gap`, and `tick_label_strategy`.
 `label_position`, `label_offset`, and `label_angle` position the axis title.
 

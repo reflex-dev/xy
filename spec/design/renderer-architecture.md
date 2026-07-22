@@ -23,21 +23,21 @@ relative mass, not as a budget (see §3 on why a line count failed as a metric).
 
 | Module | Lines | Responsibility |
 | --- | ---: | --- |
-| `00_header.ts` | 172 | Bundle preamble: the client-wide design comment, the `PROTOCOL` version constant, and the binary frame codec (`XY_FRAME_MAGIC` `"XYBF"`, `decodeFrame`, 8-byte alignment). Every inbound frame is validated here — magic/version, u64 fields, zero-padding, and per-field size limits — before any other module sees it. |
+| `00_header.ts` | 179 | Bundle preamble: the client-wide design comment, the `PROTOCOL` version constant, and the binary frame codec (`XY_FRAME_MAGIC` `"XYBF"`, `decodeFrame`, 8-byte alignment). Every inbound frame is validated here — magic/version, u64 fields, zero-padding, and per-field size limits — before any other module sees it. |
 | `10_colormaps.ts` | 51 | The `COLORMAP_STOPS` table (§36 CVD-safe defaults) as compact RGB stop lists, and `buildLutData`, which linearly interpolates a stop list into the 256-texel RGBA LUT uploaded once per colormap as a texture. |
 | `20_theme.ts` | 163 | Resolves chrome and mark colors: arbitrary CSS color expressions and `--chart-*` custom properties are resolved against a live probe element into f32 RGBA for GL, with a fallback on unparseable input. Also owns `XY_CHROME_CSS` and its one-time stylesheet injection. |
-| `30_ticks.ts` | 228 | CPU-side tick generation in f64 for linear, log, category and time axes, plus every axis/colorbar label formatter (automatic and `format=`-driven). Unsupported numeric precision fails closed to automatic formatting rather than throwing. Specified in §6. |
-| `40_gl.ts` | 829 | WebGL2 primitives: shader compile/link, `makeProgram` with its per-program uniform-location memo (R1), the fixed `ATTR_SLOTS` attribute-slot table bound at link time, and the shader inventory itself. The only module that is GPU-API-specific by design (§4). |
-| `45_lod.ts` | 567 | View-dependent level-of-detail orchestration, deliberately chart-agnostic: tier selection, drill enter/exit hysteresis (`LOD_DRILL_EXIT_FACTOR`), cross-tier fades, and the retained tier caches. Calls back into `view._draw*` rather than drawing itself, which is the seam tests intercept. |
+| `30_ticks.ts` | 285 | CPU-side tick generation in f64 for linear, log, category and time axes, plus strict axis/colorbar/tooltip format validation and every rendered label formatter. Specified in §6 and the normative rendered-label policy. |
+| `40_gl.ts` | 938 | WebGL2 primitives: shader compile/link, `makeProgram` with its per-program uniform-location memo (R1), the fixed `ATTR_SLOTS` attribute-slot table bound at link time, and the shader inventory itself. The only module that is GPU-API-specific by design (§4). |
+| `45_lod.ts` | 664 | View-dependent level-of-detail orchestration, deliberately chart-agnostic: tier selection, drill enter/exit hysteresis (`LOD_DRILL_EXIT_FACTOR`), cross-tier fades, and the retained tier caches. Calls back into `view._draw*` rather than drawing itself, which is the seam tests intercept. |
 | `46_worker.ts` | 59 | The standalone density re-bin worker: a worker source string carried inside the bundle and booted from a Blob URL. Re-bins the retained sample off the main thread so kernel-less (`to_html`) density charts refine on zoom instead of stretching the overview texture; absence of workers falls back to stretching. |
-| `50_chartview.ts` | 4175 | The `ChartView` class: the four drawing surfaces, scale/view state, chrome (background, grid, axes, legend, colorbar), GL buffer and VAO management (R2), and pick orchestration. Modules 51–54 extend this same class. |
-| `51_annotations.ts` | 591 | The 2D overlay canvas above the marks canvas: annotation markers, arrows, shape fills, and collision-nudged labels. Separates canvas shape style keys from label CSS so annotation styling never leaks into the DOM label. |
-| `52_tooltip.ts` | 321 | Hit → source row → tooltip DOM. Anchors the tooltip at the picked point's data coordinates and reprojects it every draw ([interaction.md](../api/interaction.md) §7). Renders the local f32-decoded row immediately, then replaces it with the kernel's exact f64 row when that reply arrives (sequence- and `drill_seq`-guarded); composes text nodes, never HTML. |
-| `53_interaction.ts` | 1820 | The entire user-facing interaction surface: pointer/drag/wheel wiring, crosshair, box select, box zoom, lasso, the modebar and its export menu, and the animated pan/zoom view state machine. The gesture→action mapping, the modebar tool inventory and the `interaction_config` switches are specified in [interaction.md](../api/interaction.md) §2 and §5. |
-| `54_kernel.ts` | 437 | The client half of the kernel channel: debounced density/decimated view-requests, streaming `append` handling, the inbound message dispatcher, and the deep-zoom drill lifecycle (§16). Degrades to `46_worker.ts` when there is no comm. The message catalog it consumes is specified in [wire-protocol.md](wire-protocol.md). |
-| `55_marks.ts` | 220 | The `MARK_KINDS` registry — `build`/`draw` per kind plus the `pointPick`/`retainCpu`/`refreshColor` capability flags — mirroring the kernel's `_emit_<kind>` dispatch so adding a 2D chart is an entry here, not a branch in `ChartView`. |
-| `56_animation.ts` | — | Declarative entrance/update/exit state machine, easing/spring evaluation, bounded identity matching, full-payload replacement, interruption, reduced-motion resolution, and lifecycle events. Its normative behavior is in [animation.md](animation.md). |
-| `57_viewstate.ts` | 574 | Public and internal named-axis view-state operations: copies, bounded updates, reset/history, linking, and lifecycle emission shared by programmatic and gesture navigation. |
+| `50_chartview.ts` | 4941 | The `ChartView` class: the four drawing surfaces, scale/view state, chrome (background, grid, axes, legend, colorbar), GL buffer and VAO management (R2), and pick orchestration. Modules 51–54 and 57 extend this same class. |
+| `51_annotations.ts` | 594 | The 2D overlay canvas above the marks canvas: annotation markers, arrows, shape fills, and collision-nudged labels. Separates canvas shape style keys from label CSS so annotation styling never leaks into the DOM label. |
+| `52_tooltip.ts` | 332 | Hit → source row → tooltip DOM. Anchors the tooltip at the picked point's data coordinates and reprojects it every draw ([interaction.md](../api/interaction.md) §7). Renders the local f32-decoded row immediately, then replaces it with the kernel's exact f64 row when that reply arrives (sequence- and `drill_seq`-guarded); composes text nodes, never HTML. |
+| `53_interaction.ts` | 2255 | The entire user-facing interaction surface: pointer/drag/wheel wiring, crosshair, box select, box zoom, lasso, the modebar and its export menu, and the animated pan/zoom view state machine. The gesture→action mapping, the modebar tool inventory and the `interaction_config` switches are specified in [interaction.md](../api/interaction.md) §2 and §5. |
+| `54_kernel.ts` | 496 | The client half of the kernel channel: debounced density/decimated view-requests, streaming `append` handling, the inbound message dispatcher, and the deep-zoom drill lifecycle (§16). Degrades to `46_worker.ts` when there is no comm. The message catalog it consumes is specified in [wire-protocol.md](wire-protocol.md). |
+| `55_marks.ts` | 222 | The `MARK_KINDS` registry — `build`/`draw` per kind plus the `pointPick`/`retainCpu`/`refreshColor` capability flags — mirroring the kernel's `_emit_<kind>` dispatch so adding a 2D chart is an entry here, not a branch in `ChartView`. |
+| `56_animation.ts` | 504 | Declarative entrance/update/exit state machine, easing/spring evaluation, bounded identity matching, full-payload replacement, interruption, reduced-motion resolution, and lifecycle events. Its normative behavior is in [animation.md](animation.md). |
+| `57_viewstate.ts` | 574 | The canonical durable view-state document and state-patch application path, including local history, linked-chart synchronization, axis-band gesture scoping, and the structured hover payload. Its normative behavior is in [view-state.md](view-state.md). |
 | `60_entries.ts` | 137 | Mount/unmount entry points for both hosts (`render` for anywidget, `renderStandalone` for exported HTML) and `payloadBuffers`, which materializes first-paint columns in whichever layout the spec declares. Keeps aligned views zero-copy; a spec/transport disagreement throws. Its named, frozen `__testing` export gives the dependency-free semantic suite access to production seams in the exact committed ESM bundle without changing the default widget entry point. |
 | `61_standalone.ts` | 11 | Public-only IIFE entry wrapper. It re-exports the runtime namespace used by `window.xy` while deliberately excluding the ESM-only `__testing` seam. |
 
@@ -198,8 +198,8 @@ Ordered by how much each compounds as kinds multiply.
   document states *normatively* is the DOM that implements them: the
   `role="region"` root with its `aria-label`/`aria-describedby` summary, the
   `role="status"` `aria-live="polite"` readout, the `role="img"` focusable
-  canvas (`50_chartview.ts:1110-1147`, `:1212`), and the modebar's
-  toolbar/menu roles and roving `tabIndex` (`53_interaction.ts:718-1000`).
+  canvas (`50_chartview.ts:1538-1575`), and the modebar's toolbar/menu roles
+  and roving `tabIndex` (`53_interaction.ts:864-1172`).
   Those citations are accurate but descriptive — dossier §20 sketches the
   intent, production-readiness.md tracks the status, and this paragraph
   inventories the attributes. None of the three binds an implementer, so a
@@ -294,8 +294,8 @@ subset:
 ## 6. Axis ticks and label formatting (`30_ticks.ts`)
 
 Ticks are computed on the CPU in f64 and never round-trip through the f32
-render path (§16). `ChartView._ticksFor` dispatches on the axis
-(`50_chartview.ts:395–398`), checking in this order: `kind === "time"` →
+render path (§16). `ChartView._axisTicks` dispatches on the axis
+(`50_chartview.ts:681-692`), checking in this order: `kind === "time"` →
 `timeTicks`, `kind === "category"` → `categoryTicks`, `scale === "log"` →
 `logTicks`, otherwise `linearTicks`. Every generator takes `(lo, hi, target)`
 with `target = 6` by default and returns `{ ticks, step }`; `logTicks` adds
@@ -360,54 +360,48 @@ With no `format=` on the axis, labels come from the step:
 - `fmtGeneral` reproduces Python's `:g` (default 6 significant digits) and is
   used for *explicit* colorbar ticks, whose precision is authored and must not
   be inferred from an unrelated automatic step. The colorbar itself ticks with
-  `linearTicks(lo, hi, 8)` (`50_chartview.ts:1467`).
+  `linearTicks(lo, hi, 8)` (`50_chartview.ts:1895`).
 
 ### 6.3 The `format=` mini-language
 
-`fmtAxis` consults the axis's `format` string before falling back to the
-automatic formatter. The two accepted grammars are narrow.
+`fmtAxis` consults the axis's `format` string only after the Python builder and
+the raw-spec browser boundary validate it. The accepted grammars are narrow;
+an invalid or kind-mismatched string throws and never selects an automatic
+fallback.
 
-**Numeric axes** (`fmtNumberSpec`). One optional trailing `%` is stripped
-first; the remainder must match exactly
+**Numeric and log axes** (`fmtNumberSpec`) match
 
 ```
-/^(,)?\.([0-9]+)f?$/
+/^([$€£¥]?)(,)?\.([0-9]{1,2})(?:f([ A-Za-z0-9/_-]*))?(%)?$/
 ```
 
-That is: an optional thousands-separator comma, a literal `.`, one or more
-digits of precision, and an optional trailing `f`. The comma selects
-`toLocaleString` with fixed fraction digits; without it the value goes through
-`toFixed`. A `%` suffix multiplies by 100 and re-appends `%`. So `.2f`,
-`,.0f`, `.1%` and `,.2f%` are the entire accepted surface. There is no
-currency prefix, no sign flag, no `e`/`g`/`s` type, no explicit width or fill.
+with a semantic precision check from 0 through 20 and a check that a literal
+unit suffix and percent are not combined. The first group is a literal currency
+prefix, the second selects locale grouping/decimal separators, the third is
+fixed precision, the fourth is a literal unit suffix following `f`, and the
+last multiplies by 100 and appends `%`. `.2f`, `,.0f`, `$,.2f`, `.3f GiB`,
+`$,.0fK`, `.1%`, and `.0f%` are accepted. Width, alignment, sign policy,
+scientific notation, arbitrary prefixes, and broader d3/Python syntax are not.
 
-**Time axes** (`fmtTimeSpec`). A strftime *subset* substituted by
-`/%[YmdHMSbB]/g`: `%Y`, `%m`, `%d`, `%H`, `%M`, `%S`, `%b` (short month name),
-`%B` (long month name). All fields are UTC — there is no timezone support and
-no `%j`, `%p`, `%I`, `%Z` or literal-`%%` escape. Any other text in the string
-passes through verbatim, which means an unrecognized token such as `%y` renders
-literally as `%y` rather than falling back.
+**Time axes** (`fmtTimeSpec`) require at least one token from `%Y`, `%m`, `%d`,
+`%H`, `%M`, `%S`, `%b`, or `%B`; other text is literal. All fields are UTC and
+month names are English. Unknown/incomplete `%` tokens, local-time tokens, and
+`%%` are rejected, so output is invariant across host locale and time zone.
+
+**Category axes** reject `format=`. Their category strings remain the labels;
+explicit tick labels are a separate authored replacement surface.
 
 **Log-axis carve-out.** On a log axis, a value in `(0, 1)` that a numeric
 format renders as the string `"0"` is re-rendered with `fmtLinear` instead, so
 a low decade is not labelled as a row of zeros.
 
-### 6.4 Sharp edge: silent fallback on unmatched formats
+### 6.4 Validation and rendered oracle
 
-`fmtNumberSpec` returns `null` on anything the regex rejects, and `fmtAxis`
-treats that as "no format" — it silently uses the automatic formatter. No
-warning is raised anywhere on the path: the Python side stores `format` as free
-text with no validation (`python/xy/_figure.py:204` via `_optional_text`), so
-an unsupported spec survives the whole pipeline and simply does nothing.
+`python/xy/_validate.py` is the public-builder/build boundary and
+`validateAxisFormat` / `validateValueFormat` are the raw browser-spec boundary.
+Tooltip fields are checked again against their resolved numeric or `time_ms`
+kind. The `$,.0f` example therefore renders its currency prefix instead of
+silently losing it, while a typo such as `.2q` fails loudly.
 
-The in-tree example is `tests/test_components.py:555`, which sets
-`format="$,.0f"` on a y-axis. The leading `$` cannot match the regex, so the
-whole format is discarded and the axis renders with `fmtLinear` — the `$` never
-appears. The test does not catch this because it asserts on the emitted spec,
-not on rendered labels.
-
-Two consequences to keep in mind when extending this: the failure mode for a
-typo'd numeric format is a *plausible-looking wrong label*, not an error; and
-the two grammars fail differently, since an unrecognized `%`-token on a time
-axis is echoed literally instead of triggering the fallback. Making either loud
-is a behavior change, not a doc fix, and is not proposed here.
+The normative grammar and two-locale/non-UTC DOM evidence are in
+[`rendered-label-policy.md`](../testing/rendered-label-policy.md).

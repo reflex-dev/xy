@@ -28,7 +28,10 @@ test("ticks and formatters preserve f64, category, log, and UTC semantics", () =
   assert.equal(__testing.fmtTime(instant, 60_000), "07:08");
   assert.equal(__testing.fmtNumberSpec(0.125, ".1%"), "12.5%");
   assert.equal(__testing.fmtNumberSpec(1234.5, ",.1f"), "1,234.5");
-  assert.equal(__testing.fmtNumberSpec(1, ".999f"), null);
+  assert.throws(
+    () => __testing.fmtNumberSpec(1, ".999f"),
+    /unsupported numeric format/,
+  );
   assert.equal(__testing.fmtGeneral(999999.5), "1e+06");
   assert.equal(__testing.fmtAxis({ kind: "category", categories: ["zero", "one"] }, 1, 1), "one");
   assert.equal(__testing.fmtAxis({ scale: "log", format: ".0f" }, 0.01, 0.01), "0.01");

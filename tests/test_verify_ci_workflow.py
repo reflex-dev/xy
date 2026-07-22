@@ -575,6 +575,35 @@ def test_ci_workflow_rejects_unconditional_cross_library_browser_setup(
     )
 
 
+def test_ci_workflow_rejects_missing_rendered_label_oracle(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace("        run: npm run test:labels\n", "", 1), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Rendered label and formatter oracle" in error for error in errors)
+
+
+def test_ci_workflow_rejects_missing_rendered_label_evidence_upload(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    block = (
+        "      - name: Upload rendered label evidence\n"
+        "        if: always()\n"
+        "        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n"
+        "        with:\n"
+        "          name: rendered-label-evidence\n"
+        "          if-no-files-found: error\n"
+        "          path: rendered-label-evidence.json\n\n"
+    )
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(block, ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Upload rendered label evidence" in error for error in errors)
+
+
 def test_ci_workflow_rejects_unconditional_cross_library_native_build(
     tmp_path: Path,
 ) -> None:

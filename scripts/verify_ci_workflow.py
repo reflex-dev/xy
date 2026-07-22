@@ -346,6 +346,11 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "--evidence visual-baseline-evidence.json",
         "Upload visual baseline evidence",
         "visual-baseline-evidence",
+        "Rendered label and formatter oracle (Chromium)",
+        "npm run test:labels",
+        "XY_LABEL_EVIDENCE: rendered-label-evidence.json",
+        "Upload rendered label evidence",
+        "rendered-label-evidence",
         "Every chart-kind render matrix",
         "scripts/chart_kind_matrix.py",
         "--evidence chart-kind-matrix-evidence.json",
@@ -393,6 +398,25 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "transport.json",
     )
     hard_test = jobs.get("test", "")
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Rendered label and formatter oracle (Chromium)",
+        "hard rendered-label DOM and formatter oracle",
+        "npm run test:labels",
+        "XY_LABEL_EVIDENCE: rendered-label-evidence.json",
+    )
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Upload rendered label evidence",
+        "failure-retaining rendered-label artifact policy",
+        "if: always()",
+        "actions/upload-artifact@",
+        "rendered-label-evidence",
+        "if-no-files-found: error",
+        "rendered-label-evidence.json",
+    )
     _require_step_contains(
         errors,
         hard_test,

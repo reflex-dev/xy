@@ -10,7 +10,8 @@
     "build": "node js/build.mjs",
     "check": "node js/build.mjs --check",
     "typecheck": "tsc -p js/tsconfig.json",
-    "test:semantic": "node --test --experimental-test-coverage --test-coverage-include=python/xy/static/index.js --test-coverage-lines=15 --test-coverage-branches=60 --test-coverage-functions=10 js/test/*.test.mjs"
+    "test:semantic": "node --test --experimental-test-coverage --test-coverage-include=python/xy/static/index.js --test-coverage-lines=15 --test-coverage-branches=60 --test-coverage-functions=10 js/test/*.test.mjs",
+    "test:labels": "node --test js/tests/rendered_labels.test.mjs"
   },
   "devDependencies": {
     "playwright": "1.61.1",

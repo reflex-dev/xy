@@ -1,4 +1,4 @@
-import { fmtCategory, fmtNumberSpec, fmtValue } from "./30_ticks";
+import { fmtCategory, fmtNumberSpec, fmtTimeSpec, fmtValue } from "./30_ticks";
 import { ChartView } from "./50_chartview";
 
 // ChartView tooltip resolution: map a hovered vertex back to its source
@@ -199,9 +199,12 @@ Object.assign(ChartView.prototype, {
   },
 
   _formatTooltipValue(value, kind, format) {
-    const formatted = fmtNumberSpec(value, format);
-    if (formatted !== null) return formatted;
-    return fmtValue(value, kind);
+    if (format === undefined || format === null) return fmtValue(value, kind);
+    if (typeof value === "string" || !Number.isFinite(Number(value))) {
+      throw new Error(`xy: format ${JSON.stringify(format)} requires a numeric or time value`);
+    }
+    if (kind === "time_ms") return fmtTimeSpec(value, format);
+    return fmtNumberSpec(value, format);
   },
 
   _tooltipLines(row) {

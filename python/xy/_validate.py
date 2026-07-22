@@ -15,8 +15,9 @@ raises `ValueError` (occasionally `TypeError`) naming `label`.
 from __future__ import annotations
 
 import itertools
+import re
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import numpy as np
 
@@ -41,6 +42,15 @@ _FILL_SPACES = frozenset({"mark", "plot"})
 # across the plot box in screen directions. Angles and corner keywords are
 # rejected — GPU marks get the four axis-aligned directions.
 _GRADIENT_DIRS = {"to top": "up", "to bottom": "down", "to left": "left", "to right": "right"}
+
+# Browser-visible value formats are intentionally a small, shared grammar.
+# Keep these rules in sync with ``js/src/30_ticks.ts``: accepting a string in
+# Python that the client later ignores is worse than rejecting it here.
+_NUMERIC_VALUE_FORMAT = re.compile(
+    r"^(?P<prefix>[$€£¥]?)(?P<group>,)?\.(?P<digits>[0-9]{1,2})"
+    r"(?:f(?P<suffix>[ A-Za-z0-9/_-]*))?(?P<percent>%)?$"
+)
+_TIME_VALUE_TOKENS = frozenset("YmdHMSbB")
 
 
 def finite_scalar(value: Any, label: str) -> float:
@@ -131,6 +141,70 @@ def optional_text(value: Any, label: str) -> Optional[str]:
     if value is None or isinstance(value, str):
         return value
     raise ValueError(f"{label} must be a string or None")
+
+
+def _is_numeric_value_format(value: str) -> bool:
+    match = _NUMERIC_VALUE_FORMAT.fullmatch(value)
+    if match is None or int(match.group("digits")) > 20:
+        return False
+    # ``f`` may carry a literal unit suffix, while percent is a scale
+    # operation. Combining both would make the order ambiguous.
+    return not (match.group("percent") and match.group("suffix"))
+
+
+def _is_time_value_format(value: str) -> bool:
+    saw_token = False
+    index = 0
+    while index < len(value):
+        if value[index] != "%":
+            index += 1
+            continue
+        if index + 1 >= len(value) or value[index + 1] not in _TIME_VALUE_TOKENS:
+            return False
+        saw_token = True
+        index += 2
+    return saw_token
+
+
+def value_format(value: Any, label: str, kind: Optional[str] = None) -> Optional[str]:
+    """Validate the rendered-label mini-language.
+
+    ``kind`` is ``linear``/``log``/``time``/``category`` when the axis kind is
+    known.  Tooltip declarations and auto-detected axes pass ``None`` and are
+    accepted only when they match one complete grammar; the resolved runtime
+    kind is checked again before rendering.
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label} must be a non-empty supported format string or None")
+    numeric = _is_numeric_value_format(value)
+    time = _is_time_value_format(value)
+    if kind == "category":
+        raise ValueError(f"{label} is not supported for category labels")
+    if kind == "time":
+        if not time:
+            raise ValueError(
+                f"{label} must use only UTC time tokens %Y, %m, %d, %H, %M, %S, %b, or %B"
+            )
+        return value
+    if kind in {"linear", "log"}:
+        if not numeric:
+            raise ValueError(f"{label} is not a supported numeric format")
+        return value
+    if not (numeric or time):
+        raise ValueError(f"{label} is not a supported numeric or UTC time format")
+    return value
+
+
+def format_mapping(value: Any, label: str) -> dict[str, str]:
+    """A string mapping whose values obey :func:`value_format`."""
+
+    mapping = string_mapping(value, label)
+    return {
+        key: cast(str, value_format(item, f"{label}[{key!r}]")) for key, item in mapping.items()
+    }
 
 
 def axis_id(value: Any, label: str) -> str:

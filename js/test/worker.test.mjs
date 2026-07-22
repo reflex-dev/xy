@@ -95,7 +95,7 @@ test("negative control: worker oracle rejects a real binning mutation", () => {
 test("negative control: formatter and registry oracles reject broken doubles", () => {
   const formatterOracle = (format) => {
     assert.equal(format(0.125, ".1%"), "12.5%");
-    assert.equal(format(1, ".999f"), null);
+    assert.throws(() => format(1, ".999f"), /unsupported numeric format/);
   };
   formatterOracle(__testing.fmtNumberSpec);
   assert.throws(() => formatterOracle(() => "12%"));
