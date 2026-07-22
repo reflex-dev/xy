@@ -641,6 +641,22 @@ try{{
     v._drawNow();
     const hit3=v._pickAt(v.plot.w/2, v.plot.h/2);
     const dpick=(hit3 && hit3.trace===gd.trace.id)?1:0;
+    // T10 retirement: settled inside the drilled window the aggregate
+    // backdrop eases out and STOPS drawing (the marks are exact; a mean-color
+    // wash under them reads as data). Mid-ease it still draws; fully retired
+    // it must not. The hold/exit probes below then draw it again (restore).
+    let retireDraws=0;
+    const retire0=v._drawDensity;
+    v._drawDensity=function(gg,dd,op){{if(gg===gd)retireDraws++;return retire0.call(this,gg,dd,op);}};
+    gd._drillBackdropShown=0.5; gd._drillBackdropTick=0; // mid-retire: still painted
+    v._drawNow();
+    const retireMid=retireDraws;
+    gd._drillBackdropShown=0; gd._drillBackdropTick=0;   // retired: skipped
+    retireDraws=0;
+    v._drawNow();
+    const retireDone=retireDraws;
+    v._drawDensity=retire0;
+    const dretire=(retireMid>0 && retireDone===0 && gd._drillBackdropShown===0)?1:0;
     // Tiny drill-to-drill zoom-outs keep the resident drilled marks for the
     // short wait when the pending target is still under direct budget — over
     // the aggregate backdrop (T10): the texture never leaves the frame, so
@@ -1144,7 +1160,7 @@ try{{
     gMc.readPixels(Math.round(WM*0.8),Math.round(HM*0.5),1,1,gMc.RGBA,gMc.UNSIGNED_BYTE,rpx);
     const meancolor=(lpx[0]>60 && lpx[0]>lpx[2]*3 && rpx[2]>60 && rpx[2]>rpx[0]*3)?1:0;
     vMc.destroy();holderMc.remove();
-    const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHiddenAtRest}} modebarTopLeft=${{modebarTopLeft}} modebarHover=${{modebarHoverReveal}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} panToggle=${{panToggle}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} xonly=${{xonly}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} srestore=${{srestore}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}} meancolor=${{meancolor}}`;
+    const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHiddenAtRest}} modebarTopLeft=${{modebarTopLeft}} modebarHover=${{modebarHoverReveal}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} panToggle=${{panToggle}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} xonly=${{xonly}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} srestore=${{srestore}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}} meancolor=${{meancolor}} dretire=${{dretire}}`;
     const baseWithStyle=`${{base}} vstyle=${{vstyle}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
@@ -1362,6 +1378,7 @@ try{{
     dying = int(re.search(r"dying=(\d+)", title).group(1))
     density_lit = int(re.search(r"densityLit=(\d+)", title).group(1))
     meancolor = int(re.search(r"meancolor=(\d+)", title).group(1))
+    dretire = int(re.search(r"dretire=(\d+)", title).group(1))
     dpick = int(re.search(r"dpick=(\d+)", title).group(1))
     hold = int(re.search(r"hold=(\d+)", title).group(1))
     zoomout = int(re.search(r"zoomout=(\d+)", title).group(1))
@@ -1542,6 +1559,11 @@ try{{
         raise SystemExit(
             "mean-color density failed (surface must wear the per-cell mean "
             "point colors, count as alpha — LOD doc §2)"
+        )
+    if dretire != 1:
+        raise SystemExit(
+            "settled drill kept its aggregate backdrop painted (T10: the "
+            "backdrop retires once the marks are exact for the window)"
         )
     if stream != 1:
         raise SystemExit(

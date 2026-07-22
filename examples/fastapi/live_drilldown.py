@@ -5,7 +5,6 @@ import json
 import os
 import threading
 import warnings
-from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Union
 
@@ -19,8 +18,6 @@ import xy
 # drill bookkeeping), so it works on the internal figure compiled from the
 # public composition API via `Chart.figure()`.
 from xy._figure import Figure
-from xy.config import DRILL_EXIT_FACTOR, SCATTER_DENSITY_THRESHOLD
-from xy.lod import grid_shape
 from xy.widget import bundled_js
 
 _DEFAULT_LIVE_POINTS = 100_000_000
@@ -52,9 +49,6 @@ def _live_points() -> int:
 # Point count for the drilldown demo; override with XY_LIVE_POINTS.
 LIVE_SCATTER_POINTS = _live_points()
 LIVE_DRILLDOWN_ROUTE = "/api/xy/drilldown"
-DENSITY_OVERVIEW_BINS = 6144
-DENSITY_OVERVIEW_CHUNK = 1_000_000
-OVERVIEW_EXACT_FACTOR = 4.0
 _FIGURE_LOCK = threading.Lock()
 _DENSITY_SEQ_LOCK = threading.Lock()
 _LATEST_DENSITY_SEQ: dict[str, int] = {}
@@ -123,115 +117,7 @@ def colored_scatter_figure(
 
 @lru_cache(maxsize=1)
 def live_figure() -> Figure:
-    return live_store().figure
-
-
-@dataclass(frozen=True)
-class DensityOverview:
-    integral: np.ndarray
-    x_range: tuple[float, float]
-    y_range: tuple[float, float]
-    width: int
-    height: int
-
-    @classmethod
-    def build(cls, fig: Figure, trace_id: int = 0) -> "DensityOverview":
-        t = fig.traces[trace_id]
-        x0, x1 = fig.x_range()
-        y0, y1 = fig.y_range()
-        w = h = DENSITY_OVERVIEW_BINS
-        grid = np.zeros((h, w), dtype=np.uint32)
-        flat_grid = grid.reshape(-1)
-        x_scale = w / (x1 - x0)
-        y_scale = h / (y1 - y0)
-        xv = t.x.values
-        yv = t.y.values
-
-        for start in range(0, t.n_points, DENSITY_OVERVIEW_CHUNK):
-            end = min(start + DENSITY_OVERVIEW_CHUNK, t.n_points)
-            xs = xv[start:end]
-            ys = yv[start:end]
-            valid = np.isfinite(xs) & np.isfinite(ys)
-            valid &= (xs >= x0) & (xs < x1) & (ys >= y0) & (ys < y1)
-            if not np.any(valid):
-                continue
-            ix = ((xs[valid] - x0) * x_scale).astype(np.int64)
-            iy = ((ys[valid] - y0) * y_scale).astype(np.int64)
-            np.clip(ix, 0, w - 1, out=ix)
-            np.clip(iy, 0, h - 1, out=iy)
-            counts = np.bincount(iy * w + ix)
-            flat_grid[: len(counts)] += counts.astype(np.uint32, copy=False)
-
-        summed = np.cumsum(grid, axis=0, dtype=np.uint32)
-        summed = np.cumsum(summed, axis=1, dtype=np.uint32)
-        integral = np.zeros((h + 1, w + 1), dtype=np.uint32)
-        integral[1:, 1:] = summed
-        return cls(integral=integral, x_range=(x0, x1), y_range=(y0, y1), width=w, height=h)
-
-    def _edges(
-        self, lo: float, hi: float, domain: tuple[float, float], cells: int, bins: int
-    ) -> np.ndarray:
-        d0, d1 = domain
-        span = d1 - d0
-        edges = (np.linspace(lo, hi, cells + 1) - d0) * (bins / span)
-        return np.clip(np.floor(edges).astype(np.int64), 0, bins)
-
-    def _view_bounds(self, x0: float, x1: float, y0: float, y1: float) -> tuple[int, int, int, int]:
-        bx0, bx1 = self._edges(x0, x1, self.x_range, 1, self.width)
-        by0, by1 = self._edges(y0, y1, self.y_range, 1, self.height)
-        return int(bx0), int(bx1), int(by0), int(by1)
-
-    def count(self, x0: float, x1: float, y0: float, y1: float) -> int:
-        bx0, bx1, by0, by1 = self._view_bounds(x0, x1, y0, y1)
-        if bx1 <= bx0 or by1 <= by0:
-            return 0
-        ii = self.integral
-        return int(ii[by1, bx1]) - int(ii[by0, bx1]) - int(ii[by1, bx0]) + int(ii[by0, bx0])
-
-    def density(
-        self,
-        x0: float,
-        x1: float,
-        y0: float,
-        y1: float,
-        w: int,
-        h: int,
-        visible: int,
-    ) -> np.ndarray | None:
-        bx0, bx1, by0, by1 = self._view_bounds(x0, x1, y0, y1)
-        source_w = bx1 - bx0
-        source_h = by1 - by0
-        if source_w < 16 or source_h < 16:
-            return None
-        w, h = grid_shape(w, h, visible)
-        w = max(16, min(w, source_w))
-        h = max(16, min(h, source_h))
-        x_edges = self._edges(x0, x1, self.x_range, w, self.width)
-        y_edges = self._edges(y0, y1, self.y_range, h, self.height)
-        ii = self.integral
-        x_lo = x_edges[:-1]
-        x_hi = x_edges[1:]
-        y_lo = y_edges[:-1]
-        y_hi = y_edges[1:]
-        grid = (
-            ii[y_hi[:, None], x_hi[None, :]].astype(np.int64)
-            - ii[y_lo[:, None], x_hi[None, :]].astype(np.int64)
-            - ii[y_hi[:, None], x_lo[None, :]].astype(np.int64)
-            + ii[y_lo[:, None], x_lo[None, :]].astype(np.int64)
-        )
-        return grid.astype(np.float32, copy=False)
-
-
-@dataclass(frozen=True)
-class LiveStore:
-    figure: Figure
-    overview: DensityOverview
-
-
-@lru_cache(maxsize=1)
-def live_store() -> LiveStore:
-    fig = colored_scatter_figure()
-    return LiveStore(figure=fig, overview=DensityOverview.build(fig))
+    return colored_scatter_figure()
 
 
 def _b64(buf: bytes) -> str:
@@ -277,53 +163,6 @@ def _response(message: dict[str, Any], buffers: list[bytes] | None = None) -> JS
     )
 
 
-def _live_density_view(
-    store: LiveStore, trace_id: int, x0: float, x1: float, y0: float, y1: float, w: int, h: int
-) -> tuple[dict[str, Any], list[bytes]]:
-    fig = store.figure
-    if trace_id != 0:
-        return fig.density_view(trace_id, x0, x1, y0, y1, w, h)
-    t = fig.traces[trace_id]
-    if not t.use_density():
-        return {"traces": []}, []
-
-    lo_x, hi_x = min(x0, x1), max(x0, x1)
-    lo_y, hi_y = min(y0, y1), max(y0, y1)
-    budget = SCATTER_DENSITY_THRESHOLD * (DRILL_EXIT_FACTOR if t.drill_mode else 1.0)
-    visible = store.overview.count(lo_x, hi_x, lo_y, hi_y)
-    if visible <= budget * OVERVIEW_EXACT_FACTOR:
-        return fig.density_view(trace_id, lo_x, hi_x, lo_y, hi_y, w, h)
-
-    grid = store.overview.density(lo_x, hi_x, lo_y, hi_y, w, h, visible)
-    if grid is None:
-        return fig.density_view(trace_id, lo_x, hi_x, lo_y, hi_y, w, h)
-
-    if t.drill_mode:
-        t.drill_seq += 1
-    t.drill_mode = False
-    t.shipped_sel = None
-    return (
-        {
-            "traces": [
-                {
-                    "id": trace_id,
-                    "mode": "density",
-                    "visible": visible,
-                    "density": {
-                        "buf": 0,
-                        "w": int(grid.shape[1]),
-                        "h": int(grid.shape[0]),
-                        "max": float(grid.max()) if grid.size else 0.0,
-                        "x_range": [lo_x, hi_x],
-                        "y_range": [lo_y, hi_y],
-                    },
-                }
-            ]
-        },
-        [grid.reshape(-1).astype(np.float32, copy=False).tobytes()],
-    )
-
-
 async def drilldown_endpoint(request: Request) -> JSONResponse:
     try:
         content = await request.json()
@@ -337,8 +176,7 @@ async def drilldown_endpoint(request: Request) -> JSONResponse:
         density_client_id, density_seq = _mark_latest_density(content)
 
     with _FIGURE_LOCK:
-        store = live_store()
-        fig = store.figure
+        fig = live_figure()
         if kind == "density_view":
             try:
                 if _density_is_stale(density_client_id or "default", density_seq):
@@ -351,8 +189,15 @@ async def drilldown_endpoint(request: Request) -> JSONResponse:
                             "traces": [],
                         }
                     )
-                update, buffers = _live_density_view(
-                    store,
+                # The engine serves every window itself: wide windows come
+                # from the kernel's mean-color pyramid in O(visible cells)
+                # (LOD doc §2/§4 — counts AND per-cell mean point colors, so
+                # the aggregate always wears the data's own colors), and
+                # near-budget windows drill to exact points. The demo's old
+                # integral-image overview predated the pyramid and could only
+                # re-bin counts, which is exactly the colorless surface the
+                # engine no longer draws.
+                update, buffers = fig.density_view(
                     int(content["trace"]),
                     float(content["x0"]),
                     float(content["x1"]),
@@ -427,6 +272,7 @@ const DIRECT_POINT_BUDGET = 200000;
 const LOCAL_DENSITY_EXACT_FACTOR = 4;
 let overviewIntegral = null;
 let overviewDensityBuffer = null;
+let overviewRgbaBuffer = null;
 
 function overviewData() {{
   if (!overviewTrace || !overviewTrace.density) return null;
@@ -446,15 +292,40 @@ function overviewData() {{
   }} else {{
     values = new Float32Array(initialBytes.buffer, col.byte_offset || 0, col.len);
   }}
+  // Mean point color plane (LOD doc §2): local re-bins aggregate it alongside
+  // the counts, so browser-served grids wear the data's colors exactly like
+  // kernel-served ones — count only ever drives the alpha.
+  let rgba = null;
+  if (density.rgba !== undefined && spec.columns[density.rgba]) {{
+    const rcol = spec.columns[density.rgba];
+    rgba = new Uint8Array(initialBytes.buffer, rcol.byte_offset || 0, rcol.len);
+  }}
   return {{
     density,
     values,
+    rgba,
     width: density.w,
     height: density.h,
   }};
 }}
 
 const overview = overviewData();
+
+// sRGB <-> linear-light for mean-color aggregation — the same law as the
+// kernel's bin_2d_mean_color, so a locally re-binned cell matches what the
+// server would ship for the same window.
+const SRGB_LIN = (() => {{
+  const table = new Float64Array(256);
+  for (let i = 0; i < 256; i++) {{
+    const c = i / 255;
+    table[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  }}
+  return table;
+}})();
+function linearToSrgb8(v) {{
+  const c = v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+  return Math.max(0, Math.min(255, Math.round(c * 255)));
+}}
 
 function b64ToArrayBuffer(b64) {{
   const binary = atob(b64);
@@ -538,11 +409,37 @@ function overviewDensityArrayBuffer() {{
   return overviewDensityBuffer;
 }}
 
+function overviewRgbaArrayBuffer() {{
+  if (!overview || !overview.rgba) return null;
+  if (!overviewRgbaBuffer) {{
+    overviewRgbaBuffer = overview.rgba.buffer.slice(
+      overview.rgba.byteOffset,
+      overview.rgba.byteOffset + overview.rgba.byteLength,
+    );
+  }}
+  return overviewRgbaBuffer;
+}}
+
 function initialOverviewUpdate(msg) {{
   if (!overview || !overviewTrace || !overviewTrace.density) return null;
   const buffer = overviewDensityArrayBuffer();
   if (!buffer) return null;
   const density = overviewTrace.density;
+  // Re-serve the home grid with its mean-color plane — dropping it here would
+  // flip the overview back to a count-colormapped surface on the way out.
+  const rgbaBuffer = overviewRgbaArrayBuffer();
+  const densityOut = {{
+    buf: 0,
+    w: density.w,
+    h: density.h,
+    max: density.max,
+    x_range: density.x_range,
+    y_range: density.y_range,
+  }};
+  if (rgbaBuffer) {{
+    densityOut.rgba = 1;
+    densityOut.color_agg = "mean";
+  }}
   return {{
     visible: overviewTrace.n_points,
     message: {{
@@ -552,17 +449,10 @@ function initialOverviewUpdate(msg) {{
         id: Number(msg.trace),
         mode: "density",
         visible: overviewTrace.n_points,
-        density: {{
-          buf: 0,
-          w: density.w,
-          h: density.h,
-          max: density.max,
-          x_range: density.x_range,
-          y_range: density.y_range,
-        }},
+        density: densityOut,
       }}],
     }},
-    buffers: [buffer],
+    buffers: rgbaBuffer ? [buffer, rgbaBuffer] : [buffer],
   }};
 }}
 
@@ -647,6 +537,11 @@ function localDensityUpdate(msg) {{
   const outW = Math.max(16, Math.min(requestedW, width, sourceW));
   const outH = Math.max(16, Math.min(requestedH, height, sourceH));
   const grid = new Float32Array(outW * outH);
+  // Mean point color per output cell (LOD doc §2): the weighted mean of the
+  // covered source cells' mean colors, weight = count × mean point alpha —
+  // the same aggregation the kernel's pyramid compose applies, in linear
+  // light. Total work is one pass over the covered source cells.
+  const meanRgba = overview.rgba ? new Uint8Array(outW * outH * 4) : null;
   let max = 0;
   for (let y = 0; y < outH; y++) {{
     const y0 = Math.floor(by0 + (sourceH * y) / outH);
@@ -657,7 +552,44 @@ function localDensityUpdate(msg) {{
       const value = overviewSum(built.integral, built.stride, x0, x1, y0, y1);
       grid[y * outW + x] = value;
       if (value > max) max = value;
+      if (!meanRgba || value <= 0) continue;
+      let weight = 0, r = 0, g = 0, b = 0, alphaSum = 0, countSum = 0;
+      for (let sy = y0; sy < y1; sy++) {{
+        for (let sx = x0; sx < x1; sx++) {{
+          const count = overview.values[sy * width + sx];
+          if (!(count > 0)) continue;
+          const at = (sy * width + sx) * 4;
+          const cellAlpha = overview.rgba[at + 3];
+          const w2 = count * cellAlpha;
+          countSum += count;
+          alphaSum += w2;
+          if (w2 <= 0) continue;
+          weight += w2;
+          r += w2 * SRGB_LIN[overview.rgba[at]];
+          g += w2 * SRGB_LIN[overview.rgba[at + 1]];
+          b += w2 * SRGB_LIN[overview.rgba[at + 2]];
+        }}
+      }}
+      if (weight > 0 && countSum > 0) {{
+        const at = (y * outW + x) * 4;
+        meanRgba[at] = linearToSrgb8(r / weight);
+        meanRgba[at + 1] = linearToSrgb8(g / weight);
+        meanRgba[at + 2] = linearToSrgb8(b / weight);
+        meanRgba[at + 3] = Math.max(0, Math.min(255, Math.round(alphaSum / countSum)));
+      }}
     }}
+  }}
+  const densityOut = {{
+    buf: 0,
+    w: outW,
+    h: outH,
+    max,
+    x_range: [gridX0, gridX1],
+    y_range: [gridY0, gridY1],
+  }};
+  if (meanRgba) {{
+    densityOut.rgba = 1;
+    densityOut.color_agg = "mean";
   }}
   return {{
     visible,
@@ -668,17 +600,10 @@ function localDensityUpdate(msg) {{
         id: Number(msg.trace),
         mode: "density",
         visible: Math.round(visible),
-        density: {{
-          buf: 0,
-          w: outW,
-          h: outH,
-          max,
-          x_range: [gridX0, gridX1],
-          y_range: [gridY0, gridY1],
-        }},
+        density: densityOut,
       }}],
     }},
-    buffers: [grid.buffer],
+    buffers: meanRgba ? [grid.buffer, meanRgba.buffer] : [grid.buffer],
   }};
 }}
 
@@ -807,7 +732,7 @@ const comm = {{
       if (local) {{
         pendingDensityMsg = null;
         for (const cb of callbacks) cb(local.message, local.buffers);
-        setDensityStatus(local.visible);
+        setDensityStatus(Math.round(local.visible));
         return;
       }}
       pendingDensityMsg = msg;

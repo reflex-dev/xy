@@ -382,19 +382,25 @@ invariants so future kinds don't regress them:
   latches. Overlays die with their evicted cache entry (except the home/init
   overlay, the standalone re-bin worker's CPU-side source), and the
   "sampled n of N" badge reports the overlay actually drawn.
-- **T10 — the aggregate backdrop is continuous:** the density texture draws
-  under the marks in EVERY drill state — entering, settled inside, held,
-  exiting — never only until the entry fade completes. The background of a
-  drilled frame and a density frame is the same texture, so every drill
-  transition is a marks-layer fade over a stable context, not a full-frame
-  swap. (Previously marks "owned the frame" once their entry fade finished:
-  the backdrop flipped to the blank chart background, and interleaved
-  density/points replies during a continuous zoom flashed
-  green-texture ⇄ points-on-blank — the live-drilldown flicker. It also
-  kept the aggregate context visible while drilled, which is the §28 hybrid
-  intent.) `lodDrawDensityTier` routes every branch's backdrop through
-  `lodDrawDensityWithFade`, so cached-window crossfades stay continuous
-  while drilled too.
+- **T10 — the aggregate backdrop is continuous through transitions, and
+  retires when the drill settles:** the density texture draws under the
+  marks in every TRANSITIONAL drill state — entering, held, dying, exiting —
+  so every representation change is a marks-layer fade over a stable
+  context, never a full-frame swap or a blank. (Previously marks "owned the
+  frame" once their entry fade finished: the backdrop flipped to the blank
+  chart background, and interleaved density/points replies during a
+  continuous zoom flashed green-texture ⇄ points-on-blank — the
+  live-drilldown flicker.) Once a drill is SETTLED inside its window —
+  entry fade landed, no exit/hold/death in flight — the backdrop eases out
+  (`lodDrillBackdropScale`): the marks are exact for that window, so the
+  aggregate adds no information the marks don't already carry, and leaving
+  it painted washes exact points with mean color that reads as data
+  (field-reported against the mean-color surface). It eases back FAST the
+  moment the view leaves the window, a refinement goes pending, or the
+  drill dies — so zoom-outs still never blank (T1) and per-reply refreshes
+  inside a settled drill never re-flash it. `lodDrawDensityTier` routes
+  every branch's backdrop through `lodDrawDensityWithFade`, so
+  cached-window crossfades stay continuous while drilled too.
 - **T11 — an exited drill is a bounded revive cache:** a drill whose entry
   completed and whose exit fade has finished is retained so a rapid zoom
   back into its window hands the exact marks back with no kernel round-trip
@@ -461,9 +467,11 @@ contract entry before it lands.
    `PYRAMID_BASE_DIM`² (2048², `python/xy/config.py`), each coarser level an
    exact 4→1 u64 sum saturating to u32, so every level conserves total count.
    Channel-bearing traces build the §4.1 mean-color planes alongside
-   (`xy_pyramid_build_color`, one fused serial scan; +8 B/cell,
-   ~45 MB/colored trace at the default base, reported by
-   `pyramid_report_bytes`) and serve them with `xy_pyramid_compose_color`,
+   (`xy_pyramid_build_color`, one fused scan — fan-out gated by the
+   points-per-cell ratio and capped at 4 workers, ~170 MB transient
+   accumulator each; +8 B/cell stored, ~45 MB/colored trace at the default
+   base, reported by `pyramid_report_bytes`) and serve them with
+   `xy_pyramid_compose_color`,
    whose count grid is bit-identical to `xy_pyramid_compose`. C ABI is
    `xy_pyramid_build` / `xy_pyramid_build_color` / `xy_pyramid_append` /
    `xy_pyramid_count` / `xy_pyramid_compose` / `xy_pyramid_compose_color` /

@@ -577,6 +577,8 @@ export function lodDropDrill(view, g) {
   g._drillShownAlpha = null;
   g._drillDying = false;
   g._drillDiedInsideWin = false;
+  g._drillBackdropShown = 1; // next drill enters over a full backdrop (T10)
+  g._drillBackdropTick = 0;
   view._hoverId = -1; // drilled indices are dead; don't reuse a cached row
   view._lastRow = null;
   // The freed drill may have been the only pickable geometry (a density-only
@@ -744,17 +746,45 @@ function lodDrawDensityWithFade(view, g, density, opacityScale = 1) {
   view._drawDensity(g, density, opacityScale);
 }
 
-// The tier's frame: the aggregate texture is the CONTINUOUS BACKDROP at every
-// state (T10) — marks draw over it while the view sits inside a live drilled
-// window, fade over it during transitions (drill-in entry fade, dying drill
-// exit fade, stale-while-revalidate hold), and it stands alone otherwise.
-// Never blank, never a hard cut (§5 smooth transitions): the background of a
-// drilled frame and a density frame is the same texture, so every drill
-// transition is a marks-layer fade, not a full-frame swap. (Previously marks
-// "owned the frame" once their entry fade completed — the backdrop flipped to
-// the blank chart background, and interleaved density/points replies during a
-// continuous zoom flashed green-texture ⇄ points-on-blank, the live-drilldown
-// flicker.)
+// The drilled frame's backdrop opacity, eased continuously (T10). The
+// aggregate texture stays the continuous backdrop through every TRANSITION —
+// entry fade, hold, exit fade, revive — but RETIRES once a drill is settled
+// inside its window: the marks are exact for that window, so the aggregate
+// adds no information the marks don't already carry; leaving it painted
+// washes the exact points with mean color the user reads as data. Ease out
+// gently after the entry fade lands; ease back FAST the moment the drill
+// exits, holds, or dies, so zoom-outs never blank (T1) and interleaved
+// replies never flash (the original T10 bug). Time-based exponential decay,
+// same shape as the lod_blend tween; reduced motion snaps.
+function lodDrillBackdropScale(view, g, target) {
+  let shown = g._drillBackdropShown;
+  if (shown === undefined || shown === null) shown = 1;
+  if (Math.abs(shown - target) <= 0.005 || view._prefersReducedMotion()) {
+    g._drillBackdropShown = target;
+    g._drillBackdropTick = 0;
+    return target;
+  }
+  const now = view._now();
+  const dt = g._drillBackdropTick ? Math.min(100, now - g._drillBackdropTick) : 16;
+  g._drillBackdropTick = now;
+  const tau = target > shown ? 45 : 80;
+  shown += (target - shown) * (1 - Math.exp(-dt / tau));
+  g._drillBackdropShown = shown;
+  view.draw(); // keep the retire/restore animating on settled views
+  return shown;
+}
+
+// The tier's frame: the aggregate texture is the CONTINUOUS BACKDROP through
+// every TRANSITION (T10) — marks fade over it entering, held, dying, and
+// exiting — and it stands alone otherwise. Once a drill is settled inside its
+// window the backdrop retires (lodDrillBackdropScale above): the marks are
+// exact, and the §28 aggregate context returns the instant the view leaves
+// the window or a refinement is pending. Never blank, never a hard cut (§5
+// smooth transitions): representation changes remain layer fades over a
+// stable frame, not full-frame swaps. (Previously marks "owned the frame"
+// once their entry fade completed — the backdrop flipped to the blank chart
+// background, and interleaved density/points replies during a continuous
+// zoom flashed green-texture ⇄ points-on-blank, the live-drilldown flicker.)
 export function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
   lodStepNorm(view, g);
   const d = g.drill;
@@ -786,7 +816,12 @@ export function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
     g._drillExitFadeStart = null;
     const fade = lodFade(view, g._drillFadeStart);
     g._drillShownAlpha = fade;
-    if (density && density.tex) lodDrawDensityWithFade(view, g, density);
+    // Settled (entry fade landed): the marks are exact — retire the backdrop.
+    // Refreshes inside a settled drill keep it retired (no per-reply flash).
+    const backdrop = lodDrillBackdropScale(view, g, fade >= 1 ? 0 : 1);
+    if (density && density.tex && backdrop > 0.004) {
+      lodDrawDensityWithFade(view, g, density, backdrop);
+    }
     if (fade < 1) {
       drawMarks(fade);
       view.draw();
@@ -797,11 +832,12 @@ export function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
   } else if (density && density.tex) {
     if (lodHoldPendingDrill(view, g, d)) {
       // Held marks continue their own entry fade over the backdrop — a hold
-      // engaging mid-fade must not snap.
+      // engaging mid-fade must not snap. The backdrop eases back in if the
+      // settled drill had retired it (the view has left the exact window).
       lodEnterDrillContinuous(view, g);
       const fade = lodFade(view, g._drillFadeStart);
       g._drillShownAlpha = fade;
-      lodDrawDensityWithFade(view, g, density);
+      lodDrawDensityWithFade(view, g, density, lodDrillBackdropScale(view, g, 1));
       if (fade < 1) {
         drawMarks(fade);
       } else {
@@ -827,7 +863,9 @@ export function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
     const exitFade = exitingDrill ? lodDrillExitFade(view, g) : 1;
     if (d) g._drillShownAlpha = exitingDrill && exitFade < 1 ? 1 - exitFade : 0;
     if (exitingDrill && exitFade < 1) {
-      lodDrawDensityWithFade(view, g, density);
+      // A retired backdrop (settled drill) eases back in under the exiting
+      // marks — the fast restore keeps the frame from ever reading blank.
+      lodDrawDensityWithFade(view, g, density, lodDrillBackdropScale(view, g, 1));
       drawMarks(1 - exitFade);
       view.draw();
     } else {
@@ -842,7 +880,14 @@ export function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
       if (g.drill && g._drillEverInside && lodDrillOutgrown(view, g, d)) {
         lodDropDrill(view, g);
       }
-      lodDrawDensityWithFade(view, g, density);
+      // Ease toward full while a (retired) drill lingers; without one the
+      // aggregate owns the frame outright.
+      const backdrop = g.drill ? lodDrillBackdropScale(view, g, 1) : 1;
+      if (!g.drill) {
+        g._drillBackdropShown = 1;
+        g._drillBackdropTick = 0;
+      }
+      lodDrawDensityWithFade(view, g, density, backdrop);
       view._drawDensitySample(g, x0, x1, y0, y1);
     }
   } else if (d) {

@@ -54,6 +54,16 @@ in the README).
   points wire). The color channel is no longer listed in `dropped_channels`
   at Tier 2, and a continuous-channel density scatter renders its colorbar
   again. C ABI v38 (`xy_bin_2d_mean_color` + pyramid color entry points).
+  Field fixes from the first 100M-point run: the aggregate backdrop now
+  retires once a drill is settled inside its window (T10 — exact points no
+  longer sit on a mean-color wash; it eases back the moment the view leaves
+  the window or a refinement goes pending), the colored pyramid's base scan
+  fans out (≤4 workers, points-per-cell gated) so the first zoom-out on a
+  100M-point trace builds in about a quarter of the time, and the FastAPI
+  live-drilldown demo stopped hand-building count-only density replies — its
+  browser-local re-bin now aggregates the shipped mean-color plane and its
+  server path serves everything through `Figure.density_view`, so no zoom
+  level flashes back to count-colormapped colors.
 
 ### Added
 - **Export format parity and a unified export API (ENG-10447).**
