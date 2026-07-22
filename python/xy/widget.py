@@ -124,6 +124,56 @@ class FigureWidget(anywidget.AnyWidget):
         self.buffers = buffers[0]
         self.send(msg, buffers=buffers)
 
+    # -- programmatic view state (spec/design/view-state.md §5.1) ------------
+
+    def set_view(
+        self,
+        ranges: Any = None,
+        *,
+        animate: bool = True,
+        history: bool = True,
+    ) -> None:
+        """Apply a partial per-axis ranges patch through the client's single
+        clamped mutation path (merge-patch: absent axes are untouched)."""
+        msg = self._figure.state_patch_message(ranges=ranges, animate=animate, history=history)
+        self.send(msg)
+
+    def reset_view(self, axes: Any = None) -> None:
+        """Navigate to the home ranges (None = the configured reset_axes)."""
+        self.send(self._figure.view_nav_message(axes))
+
+    def select(
+        self,
+        *,
+        range: Any = None,
+        polygon: Any = None,
+        rows: Any = None,
+        history: bool = True,
+    ) -> None:
+        """Programmatic selection. Geometric forms (`range=`/`polygon=`) ship
+        to the client and resolve exactly like a gesture; `rows=` resolves
+        kernel-side into mask buffers and is non-durable (history is ignored
+        for it, and `view_state()` reports only the opaque rows marker)."""
+        if rows is not None:
+            if range is not None or polygon is not None:
+                raise ValueError("pass rows= alone, or range=/polygon= without rows=")
+            msg, buffers = self._figure.selection_rows_message(rows)
+            self._figure._record_selection({"rows": True})
+            self.send(msg, buffers=buffers)
+            return
+        selection = self._figure._validated_state_selection(range=range, polygon=polygon)
+        if selection is None:
+            raise ValueError("select() needs range=, polygon=, or rows=")
+        self.send(self._figure.state_patch_message(selection=selection, history=history))
+
+    def clear_selection(self) -> None:
+        """Clear any selection (durable: history records it)."""
+        self.send(self._figure.state_patch_message(selection=None))
+
+    def view_state(self) -> dict[str, Any]:
+        """Last committed durable view state (kernel-side cache, §5.1)."""
+        return self._figure.view_state()
+
     def _on_custom_msg(self, widget: Any, content: Any, msg_buffers: Any) -> None:
         # All dispatch and callback semantics live in channel.handle_message
         # (reflex-integration §3.1) — this widget is one transport among

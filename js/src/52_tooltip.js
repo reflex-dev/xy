@@ -9,11 +9,14 @@ Object.assign(ChartView.prototype, {
     this._setTooltipAnchor(hit, row, clientX, clientY);
     this._renderTooltip(row, clientX, clientY);
     if (this._interactionFlag("hover")) {
+      // Existing row/trace/index/view keys stay; the §7.1 structured payload
+      // (active/cursor/points) is genuinely additive on the same detail.
       this._dispatchChartEvent("hover", {
         row,
         trace: hit.trace,
         index: hit.index,
         view: this._eventView("hover"),
+        ...this._hoverPayload(row, hit, clientX, clientY),
       });
     }
     if (this.comm) {
@@ -291,13 +294,15 @@ Object.assign(ChartView.prototype, {
       return;
     }
     const lines = this._tooltipLines(row);
-    // Text nodes, not innerHTML: category labels are user data and must never
-    // be parsed as markup (a category named "<img onerror=…>" is just a label).
-    this.tooltip.textContent = "";
-    lines.forEach((ln, i) => {
-      if (i) this.tooltip.appendChild(document.createElement("br"));
-      this.tooltip.appendChild(document.createTextNode(ln));
-    });
+    if (!this._customTooltip) {
+      // Text nodes, not innerHTML: category labels are user data and must never
+      // be parsed as markup (a category named "<img onerror=…>" is just a label).
+      this.tooltip.textContent = "";
+      lines.forEach((ln, i) => {
+        if (i) this.tooltip.appendChild(document.createElement("br"));
+        this.tooltip.appendChild(document.createTextNode(ln));
+      });
+    }
     if (this.a11yLive && options.announce !== false) {
       const prefix = this._a11yKeyboardReadout;
       const detail = lines.join(", ");

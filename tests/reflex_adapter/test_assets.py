@@ -66,7 +66,10 @@ def test_wrapper_speaks_the_namespace_protocol():
     # static tier: fetch the payload asset, decode the XYBF frame, render
     # kernel-less via the same entry point static HTML exports use
     assert "decodeFrame" in jsx
-    assert "renderStandalone(el, fitSpecToElement(frame.message), frame.buffers[0])" in jsx
+    assert (
+        "renderStandalone(\n"
+        "          el, withHoverFlag(fitSpecToElement(frame.message)), frame.buffers[0])"
+    ) in jsx
     assert "fetch(src)" in jsx
 
 
@@ -76,8 +79,24 @@ def test_wrapper_sizes_static_and_live_charts_to_the_reflex_mount():
 
     assert 'width: "100%"' in jsx
     assert 'height: "100%"' in jsx
-    assert "renderStandalone(el, fitSpecToElement(frame.message)" in jsx
-    assert "const spec = eventSpec(data.spec, cbRef.current)" in jsx
+    # static tier: fitted spec plus the local hover flag for on_hover
+    assert "withHoverFlag(fitSpecToElement(frame.message))" in jsx
+    # live tier: eventSpec (fits + enables click/view_change per callbacks)
+    # composed with the same hover flag
+    assert "const spec = withHoverFlag(eventSpec(data.spec, cbRef.current))" in jsx
+
+
+def test_wrapper_feeds_hover_payload_to_custom_tooltip_children():
+    """xy.tooltip(render=...) children must receive the live §7.1 payload as
+    props client-side (Recharts-style cloneElement) — a statically rendered
+    slot would show frozen content and defeat the whole contract."""
+    jsx = (ADAPTER_ASSETS / "XYChart.jsx").read_text(encoding="utf-8")
+    assert "cloneElement(child, {" in jsx
+    assert "active: tooltipPayload.active" in jsx
+    assert "cursor: tooltipPayload.cursor" in jsx
+    assert "points: tooltipPayload.points" in jsx
+    # driven by state per hover, not a one-shot render
+    assert "setHoverPayload(payload)" in jsx
 
 
 def test_wrapper_discards_tailwind_scan_manifest_before_dom_props():

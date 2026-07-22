@@ -43,7 +43,7 @@ import hashlib
 import json
 from typing import Any
 
-from .app import XYPlugin, append, setup
+from .app import XYPlugin, append, clear_selection, reset_view, select, set_view, setup
 from .component import chart
 from .events import (
     CanonicalRowIdGroup,
@@ -81,12 +81,16 @@ __all__ = [
     "XYPlugin",
     "append",
     "chart",
+    "clear_selection",
     "figure",
     "inline",
     "register",
     "registry",
     "release",
+    "reset_view",
     "resolve_selection",
+    "select",
+    "set_view",
     "setup",
 ]
 

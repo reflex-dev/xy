@@ -76,13 +76,16 @@ rather than to a row in a dead index space.
 `source` string (default `"view"`, stringified kernel-side), the changed `axes`,
 a `phase` (default `"end"`), and an `interaction_id`; a legacy `{x0, x1, y0, y1}`
 message with no `ranges` is still accepted and normalized kernel-side. There is
-no `view_change` interaction flag: the client sends it rAF-coalesced only when
-an `on_view_change` listener exists, and the kernel returns immediately when no
-callback is wired. This is the one request
+no `view_change` interaction flag: the client sends `phase: "end"` events
+unconditionally (rAF-coalesced — one message per gesture; they feed the
+kernel's `view_state()` cache, view-state.md §5.1) and streams `"update"`
+phases only when an `on_view_change` listener exists. The kernel folds every
+well-formed event into the figure's durable-state cache before the callback
+gate. This is the one request
 type a host may withhold: on the Reflex host it never reaches the kernel,
 because `XYChart.jsx` intercepts the outgoing message and invokes the
 `on_view_change` prop directly
-(`python/reflex-xy/reflex_xy/assets/XYChart.jsx:164-169`) — that namespace
+(`python/reflex-xy/reflex_xy/assets/XYChart.jsx`) — that namespace
 registers no Python-side view callback.
 
 **`select`** — box select. Edges are ordered by `lod.normalize_window` with
@@ -159,6 +162,40 @@ home/live-edge/history follow policy. Unsupported layouts snap to the new
 representation without an opacity animation.
 The widget also re-syncs its `spec`/`buffers` traits so a re-rendered output
 shows the streamed state.
+
+**`state_patch`** — `{type, state, animate, history}`, no buffers. `state` is
+one view-state document (view-state.md §2: `v: 1`, optional partial `ranges`,
+optional `selection`) applied by the client as a merge-patch through the same
+validate → clamp → commit → emit path as a gesture, with `source: "api"`.
+`animate` selects the animated transition; `history: false` opts the write
+out of the client's history stack. A document the client cannot validate
+(higher `v`, unknown axis or key, non-finite number) is rejected whole and
+logged — never partially applied. Built by `Figure.state_patch_message`;
+senders are `FigureWidget.set_view`/`select`/`clear_selection` (anywidget
+comm) and `reflex_xy.set_view`/`select`/`clear_selection` (room-wide on the
+`/_xy` namespace).
+
+**`view_nav`** — `{type, op: "reset", axes?}`, no buffers. Navigation to the
+home ranges, well-defined for every receiver because home ranges are
+client-known; `axes` (validated against declared axes kernel-side) narrows
+the reset, absent means the client's configured `reset_axes`. `"reset"` is
+the only `op`: history back/forward have **no wire message** — stacks are
+client-local (view-state.md §4/§5.2).
+
+**`selection_rows`** — `{type, traces, total}` plus one u32 buffer per trace,
+byte-identical in shape to the `selection` reply (same
+`fig.to_shipped_indices` mask space, same `{id, count, buf, drill_seq}`
+entries). Kernel-resolved from caller-supplied per-trace row indices
+(`Figure.selection_rows_message`), which validates canonical indices
+(bounds, integrality) and deduplicates before encoding, so `total` counts
+validated unique rows. The client applies the document as a **non-durable**
+*replacement* selection — every existing mask deactivates first, so traces
+omitted from the message clear; never pushed to history, reported by
+`state()`/`view_state()` only as the opaque `{"rows": true}` marker
+(view-state.md §5.1).
+
+All three ride the existing `msg` envelope in both transports (anywidget
+comm and the `/_xy` socket.io namespace) behind the version handshake.
 
 ## 5. First-paint buffer layout: packed vs split
 

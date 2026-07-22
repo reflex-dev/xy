@@ -271,8 +271,10 @@ class ChartView {
     this.root.dataset.xyContextState = "ready";
     this._initContextLossRecovery();
     this._armContextVisibilityWatch();
+    this._initViewState(); // durable-state controller + history before gestures
     this._initInteraction();
     this._buildModebar(this.root); // after theme (icon color) + canvas (cursor)
+    this._initAxisBands(); // after modebar so bands sit under its z-order
 
     if ((this.fluid || this.fluidH) && typeof ResizeObserver !== "undefined") {
       this._ro = new ResizeObserver((entries) => {
@@ -593,7 +595,11 @@ class ChartView {
         interaction_id: pending.interaction_id,
       };
       this._dispatchChartEvent("view_change", detail);
-      if (this.comm && (!this.comm.wantsViewChange || this.comm.wantsViewChange())) {
+      // End-phase events always ship: they feed the kernel's view_state()
+      // cache (view-state.md §5.1) at one message per gesture. Update-phase
+      // streams stay gated on listener presence.
+      if (this.comm && (pending.phase === "end"
+          || !this.comm.wantsViewChange || this.comm.wantsViewChange())) {
         this.comm.send({ type: "view_change", ...detail });
       }
       if (pending.broadcast) this._broadcastLinkedView(detail);
@@ -610,11 +616,17 @@ class ChartView {
       if (msg.source === this._linkedSource) return;
       if (this._interactionFlag("link_select") && msg.selection) {
         const selection = msg.selection;
-        if (selection.clear) this._clearSelection({ broadcast: false, dispatch: false });
-        else if (selection.polygon) this._selectLocalPolygon(selection.polygon, { dispatch: false });
-        else if (selection.range) {
+        // Linked applies update the durable-state mirror but never push
+        // history (view-state.md §4) — dispatch: false already skips it.
+        if (selection.clear) {
+          this._clearSelection({ broadcast: false, dispatch: false });
+        } else if (selection.polygon) {
+          this._stateSelection = { polygon: selection.polygon.map((point) => [...point]) };
+          this._selectLocalPolygon(selection.polygon, { dispatch: false });
+        } else if (selection.range) {
           const { x0, x1, y0, y1 } = selection.range;
           if ([x0, x1, y0, y1].every(Number.isFinite)) {
+            this._stateSelection = { range: { x0, x1, y0, y1 } };
             this._selectLocal(x0, x1, y0, y1, { dispatch: false });
           }
         }
@@ -1248,6 +1260,7 @@ class ChartView {
     this._positionReductionBadges();
     this._positionColorbar();
     this._fitModebar();
+    this._layoutAxisBands();
     this._pickDirty = true;
     // Changing a canvas backing-store dimension clears it immediately. Resize
     // work is already coalesced into one animation frame, so paint in that same

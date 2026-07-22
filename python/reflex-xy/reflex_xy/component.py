@@ -86,6 +86,11 @@ def _build_component_cls() -> Any:
         on_view_change: rx.EventHandler[lambda view: [view]]
         on_animation_start: rx.EventHandler[lambda event: [event]]
         on_animation_end: rx.EventHandler[lambda event: [event]]
+        # Structured hover payload (view-state.md §7.1): resolved fully in the
+        # browser — cursor px/data coordinates plus the picked points — so it
+        # works on static charts too. `on_point_hover` stays the narrow
+        # legacy row form; new code uses this.
+        on_hover: rx.EventHandler[lambda payload: [payload]]
 
     # The class is created lazily inside this function; reflex derives JS
     # identifiers from __qualname__, and "<locals>" would leak an illegal
@@ -112,13 +117,19 @@ def _tailwind_class_manifest(figure: Any) -> str:
     return " ".join(figure.dom_class_strings())
 
 
-def chart(source: Any, **props: Any) -> Any:
+def chart(source: Any, *, tooltip: Any = None, **props: Any) -> Any:
     """Place a xy chart.
 
     `source` is a figure token (a `@reflex_xy.figure` state var, or a
     `register()`/`inline()` token string) for a live, kernel-backed chart —
     or a `xy` Chart/Figure directly, which renders as a static
     payload asset with client-side interactivity only (see module doc).
+
+    `tooltip=` mounts a Reflex component as the chart tooltip: the render
+    client positions it with the built-in tooltip's placement logic (the
+    built-in tooltip is suppressed while it is mounted) and the `on_hover`
+    payload carries the data to show. A Chart source that declares
+    `xy.tooltip(render=...)` mounts that component automatically.
 
     Sizing: the outer element defaults to `width: 100%` and a 420px height;
     pass `width=`/`height=` (or any style prop) to override. Charts built
@@ -136,6 +147,8 @@ def chart(source: Any, **props: Any) -> Any:
         # payload and its Tailwind scan manifest.  In particular, do not call
         # build_payload() just to discover classes: that would duplicate the
         # largest part of static-chart compilation.
+        if tooltip is None and callable(getattr(source, "chrome_components", None)):
+            tooltip = source.chrome_components().get("tooltip")
         figure = _figure_of(source)
         props["src"] = payload_asset(figure)
         class_manifest = _tailwind_class_manifest(figure)
@@ -147,4 +160,6 @@ def chart(source: Any, **props: Any) -> Any:
             f"xy Chart/Figure, got {type(source).__name__}"
         )
         raise TypeError(msg)
+    if tooltip is not None:
+        return _component_cls.create(tooltip, **props)
     return _component_cls.create(**props)

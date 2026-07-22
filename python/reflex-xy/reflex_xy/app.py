@@ -29,7 +29,15 @@ from .namespace import XYNamespace
 from .registry import registry
 from .state_bridge import make_rebuild_hook
 
-__all__ = ["XYPlugin", "append", "setup"]
+__all__ = [
+    "XYPlugin",
+    "append",
+    "clear_selection",
+    "reset_view",
+    "select",
+    "set_view",
+    "setup",
+]
 
 _namespace: Optional[XYNamespace] = None
 
@@ -96,6 +104,40 @@ def append(
     contract.
     """
     registry.append(token, x, y, color=color, size=size, trace=trace)
+
+
+def set_view(token: str, ranges: Any, *, animate: bool = True, history: bool = True) -> None:
+    """Out-of-band programmatic view patch (view-state.md §5.2).
+
+    Mirrors `append`: callable from any event handler, background task, or
+    thread; one wire message pushed room-wide, applied by every client
+    through the same clamped mutation path as a gesture, `source: "api"`.
+    """
+    registry.set_view(token, ranges, animate=animate, history=history)
+
+
+def reset_view(token: str, axes: Any = None) -> None:
+    """Out-of-band navigation to the home ranges (room-wide)."""
+    registry.reset_view(token, axes)
+
+
+def select(
+    token: str,
+    *,
+    range: Any = None,
+    polygon: Any = None,
+    rows: Any = None,
+    history: bool = True,
+) -> None:
+    """Out-of-band programmatic selection (room-wide). Geometric forms
+    resolve client-side like a gesture; `rows=` resolves kernel-side and is
+    non-durable (see view-state.md §5.1)."""
+    registry.select(token, range=range, polygon=polygon, rows=rows, history=history)
+
+
+def clear_selection(token: str) -> None:
+    """Out-of-band selection clear (room-wide)."""
+    registry.clear_selection(token)
 
 
 def reset_setup_for_tests() -> None:

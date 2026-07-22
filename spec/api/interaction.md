@@ -60,6 +60,7 @@ the switch is never set. The non-boolean viewport keys — `default_drag_action`
 | `box_zoom` | on | Box-zoom drags and the modebar Box Zoom button are removed, and `default_drag_action="zoom"` has no usable drag tool. Requires `navigation` and `zoom` (`53_interaction.js:112-113`, `50_chartview.js:419`). |
 | `zoom_buttons` | on | The modebar Zoom In (×0.5) / Zoom Out (×2) commands are removed; wheel and box zoom keep working. Requires `navigation` and `zoom` (`53_interaction.js:883`). |
 | `double_click_reset` | on | Double-click no longer resets the view. The modebar Reset View button is unaffected. Requires `navigation` only — reset is independent of `zoom` (`53_interaction.js:283-284`). |
+| `history` | on | Removes the modebar Back/Forward buttons and stops durable-state snapshotting entirely (`57_viewstate.js`). The full history contract is [`../design/view-state.md`](../design/view-state.md) §4: a client-local 64-entry stack of durable-state snapshots, coalesced per gesture by `interaction_id`; linked and history-sourced writes never push; reset pushes (Back undoes a double-click). |
 | `link_group` | unset | See §4. |
 | `link_axes` | all declared axes | See §4. |
 
@@ -151,8 +152,8 @@ aliases for `ranges.x`/`ranges.y` (`50_chartview.js`, `_eventView`).
 
 | Event | Detail |
 | --- | --- |
-| `xy:hover` | `{row, trace, index, view}`; the kernel's exact-value reply re-dispatches with `exact: true`. |
-| `xy:leave` | `{view}` with `source: "leave"`. |
+| `xy:hover` | `{row, trace, index, view}` plus the structured payload `{active: true, cursor: {px, data}, points}` (view-state.md §7.1) — genuinely additive; the kernel's exact-value reply re-dispatches with `exact: true` and a refreshed payload. `cursor.px` is chart-root-relative pixels; `cursor.data` is keyed by **exact axis ID** with one entry per declared axis; each `points[]` entry carries `trace` (series name), `index`, `row`, its `x_axis`/`y_axis` bindings, and the series `color`. |
+| `xy:leave` | `{view, active: false}` with `source: "leave"`. Dispatched by canvas pointer exit and by a document-level missed-leave backstop: browsers skip boundary events when the element under a stationary cursor changes (page scroll, hit-test churn), so while a pointer-owned readout is live, a `pointerover` whose target left the chart root runs the same exit path (`53_interaction.js` `_pointerHoverExit`). Keyboard readouts are exempt — they survive mouse movement elsewhere and are dismissed by `Escape`. |
 | `xy:click` | `{x, y, view, row, trace, index}`; `row`/`trace`/`index` are `null` when the click hit no mark. |
 | `xy:brush` | `{range: {x0, x1, y0, y1}, view}` for box/axis-range drags, or `{polygon: [[x, y], …], view}` for lasso. |
 | `xy:select` | `{total, view}` — the resolved count after the kernel replies, or `total: 0` on clear. |
@@ -160,7 +161,10 @@ aliases for `ranges.x`/`ranges.y` (`50_chartview.js`, `_eventView`).
 
 A view event carries four fields beyond `ranges`/aliases. `source` names the
 input that caused the change — exactly one of `pan_drag`, `wheel_zoom`,
-`box_zoom`, `zoom_in`, `zoom_out`, `reset`, `linked`, or `programmatic`. `axes`
+`box_zoom`, `zoom_in`, `zoom_out`, `reset`, `linked`, `programmatic`, `api`
+(a `state_patch` write, view-state.md §5), or `history` (Back/Forward). A
+handler that must not react to its own writes filters on `source` — the
+loop-safety discipline for `on_view_change` → `set_view` bridges. `axes`
 lists only the axis IDs that actually changed after clamping, so a one-axis
 zoom on a dual-axis chart reports one ID. `phase` is `update` during a
 continuous gesture and `end` on its final frame (`start` is reserved but not
@@ -170,12 +174,15 @@ every event of one continuous gesture. The kernel coerces `source` and `phase`
 with `str(...)`, defaulting to `"view"`/`"end"` when absent
 (`channel.py:246-253`).
 
-Local DOM `xy:view_change` events are always dispatched. Notebook and Reflex
-transport of the same payload is gated on *listener presence*, not a switch:
-the kernel handler returns immediately unless an `on_view_change` callback is
-registered (`channel.py:218`), and the anywidget path ships view events only
-when Python sets the derived `_transport_view_change` flag — which it does iff a
-callback exists (`widget.py:83-87`). There is no public `view_change`
+Local DOM `xy:view_change` events are always dispatched. On the wire,
+`phase: "end"` events always ship (one rAF-coalesced message per gesture —
+they feed the kernel's `view_state()` cache, view-state.md §5.1); `"update"`
+phases are gated on *listener presence*, not a switch: the anywidget path
+streams them only when Python sets the derived `_transport_view_change` flag
+— which it does iff an `on_view_change` callback exists (`widget.py`). The
+kernel folds every well-formed view event into the figure's durable-state
+cache and then invokes the callback when one is registered (`channel.py`).
+There is no public `view_change`
 configuration flag; linked-figure broadcast is separate again (§4).
 
 Three further events report GL context lifecycle rather than user intent.
@@ -207,13 +214,26 @@ Kernel-side callbacks (`python/xy/channel.py`), wired through
   `on_brush` always fires before `on_select` for the same gesture; that
   ordering is an invariant and is tested.
 
-Reflex props (`python/reflex-xy/reflex_xy/component.py:82-85`) are the live-mode
+Reflex props (`python/reflex-xy/reflex_xy/component.py`) are the live-mode
 mirror: `on_point_hover(row)`, `on_point_click(row)`,
 `on_select_end({total, x0, x1, y0, y1, polygon, cleared})`, and
 `on_view_change(msg)`. `on_view_change` is resolved in the browser and never
 reaches the kernel — `XYChart.jsx` intercepts the outgoing `view_change`
 message and invokes the handler directly, because the socket namespace
-registers no Python-side view callback.
+registers no Python-side view callback. `on_hover(payload)` receives the
+full structured §7.1 payload (view-state.md), resolved entirely in the
+browser, so it works on static charts too; passing it flips the client's
+`hover` interaction flag for that mount. `on_point_hover` remains the
+narrow legacy row form — its argument shape is unchanged by design.
+
+Programmatic control is the write-side mirror of these events: kernel-connected
+charts expose `set_view` / `reset_view` / `select` / `clear_selection` /
+`view_state` (Chart and `FigureWidget`), and `reflex_xy` exposes the same
+verbs out-of-band by token, room-wide. The full contract — the durable state
+document, clamping identical to gestures, `source: "api"` tagging, and why
+rows-selections are non-durable — is
+[`../design/view-state.md`](../design/view-state.md) §5; the wire messages
+are in [`../design/wire-protocol.md`](../design/wire-protocol.md) §4.
 
 ## 4. Linking
 
@@ -262,6 +282,10 @@ renderer reads anywhere in `js/src/`.
 | Double click | Reset `reset_axes` to home (animated); does **not** clear selection | `navigation` and `double_click_reset` |
 | Click without drag | Pick; a drag past threshold sets `_ignoreNextClick` and swallows the click | `click` |
 | Pointer down on a lasso vertex handle | Drag that vertex; re-runs the selection on release | an existing lasso |
+| Hover an axis band (tick strip + 6 px plot-side gutter) | Resize cursor (`ew-resize` x, `ns-resize` y) when the axis can zoom; a pan-only axis shows a grab hand (`grabbing` while dragging) | axis navigable: `navigation` and (`pan` ∧ in `pan_axes`, or `zoom` ∧ in `zoom_axes`) |
+| Wheel over an axis band | Cursor-anchored zoom of **that axis only** | `navigation`, `zoom`, `wheel_zoom`, axis in `zoom_axes` |
+| Drag **along** an axis band | Pan that axis only (containment clamps as in §2.2) | `navigation`, and `pan` ∧ in `pan_axes` (or contained) |
+| Drag **across** an axis band | Marks a span along the axis, box-zooms to it on release (the one-axis `select-x`/`select-y` shape) | `navigation`, `zoom`, `box_zoom`, axis in `zoom_axes` |
 | `ArrowRight`/`ArrowDown`, `ArrowLeft`/`ArrowUp`, `Home`, `End` | Keyboard traversal of pickable points in data order | pickable points |
 | `Escape` | Dismiss the readout and invalidate the in-flight pick | — |
 
@@ -270,8 +294,13 @@ least 3 sampled vertices, sampled at 3 px spacing and capped at 2048. In
 `select-x` the y bounds are replaced with the full current view and in
 `select-y` the x bounds are, so those modes brush one axis.
 
+Axis bands are geometric scopes, not new state: secondary axes get their band
+on their own side (`y` left, `y2` right, top-side x axes on top), so scoping
+needs no modifier keys, and a band gesture is an ordinary interaction with a
+one-axis `axes` list — history and events see nothing new.
+
 **Zoom limits.** Every factor zoom — wheel, modebar Zoom In/Out — goes
-through `_zoomAxisRange` (`53_interaction.js:1439`) and stops at two
+through `_zoomAxisRange` (`53_interaction.js:1661`) and stops at two
 boundaries:
 
 - *Zooming in* stops at the dossier §16 precision floor: if either axis's
@@ -289,7 +318,9 @@ boundaries:
 Box zoom is bounded separately: a drag whose data rectangle would collapse a
 span below f32 resolution is ignored as degenerate.
 
-The modebar exposes the same actions: Pan; a zoom menu with Zoom In (×0.5),
+The modebar exposes the same actions: Pan; Back/Forward view-history buttons
+(when `history` is on — enabled only when the corresponding stack side is
+non-empty); a zoom menu with Zoom In (×0.5),
 Zoom Out (×2), Box Zoom, and Reset View; and a selection menu with Box
 Select, Lasso Select, X Range, and Y Range. Each menu is built only when its
 flags allow it, and the whole bar is hidden when it does not fit inside the
