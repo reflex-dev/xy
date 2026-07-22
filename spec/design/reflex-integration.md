@@ -546,8 +546,12 @@ python/reflex-xy/
 examples/reflex/  (repo root) reflex-xy showcase: figure-var drilldown with
                              hover/click/select events, a slider-driven +
                              cross-filtered histogram, a streaming line, an
-                             on_view_change-computed detail chart, and both
-                             fixed-data tiers (direct Chart + inline() token)
+                             on_view_change-computed detail chart, both
+                             fixed-data tiers (direct Chart + inline() token),
+                             and the fastapi live drilldown served adapter-
+                             natively from an inline() token (same data and
+                             XY_LIVE_POINTS override, zero transport code —
+                             the cross-host A/B for that chart)
 examples/fastapi/ (repo root) the same charts + a live 100M drilldown served
                              from a plain FastAPI app (no committed HTML)
 tests/reflex_adapter/        69 tests: token/registry/var/bridge/payload-asset

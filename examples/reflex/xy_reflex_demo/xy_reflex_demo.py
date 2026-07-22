@@ -1,6 +1,6 @@
 """reflex-xy showcase: ways to link chart data into a Reflex app.
 
-One page of five sections; each has a "Code" accordion showing its own source
+One page of six sections; each has a "Code" accordion showing its own source
 via `inspect.getsource`.
 
 1. **Live figure var + events.** A 1M-point drillable scatter from an
@@ -17,6 +17,10 @@ via `inspect.getsource`.
 5. **Fixed data, two ways.** A ``xy.Chart`` passed straight to
    ``reflex_xy.chart`` (static payload tier) and a ``reflex_xy.inline`` token
    (fixed data served through the kernel).
+6. **The FastAPI drilldown, adapter-native.** The 100M-point live drilldown
+   scatter from ``examples/fastapi`` — identical data and mark config — as one
+   ``reflex_xy.inline`` token with zero transport code, for A/B-ing the two
+   hosts. ``XY_LIVE_POINTS`` resizes it (both apps honor the same override).
 
 Run from ``examples/reflex``::
 
@@ -27,6 +31,8 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
+import warnings
 from functools import lru_cache
 from typing import Any
 
@@ -110,6 +116,79 @@ def orbits_chart() -> xy.Chart:
 # Registered at import; the content-addressed token resolves on any backend
 # worker.
 ORBITS_TOKEN = reflex_xy.inline(orbits_chart())
+
+
+# --- the FastAPI live drilldown, adapter-native (§6) --------------------------
+
+
+def _drilldown_points() -> int:
+    """Point count for the §6 drilldown chart, from ``XY_LIVE_POINTS`` — the
+    same override ``examples/fastapi`` honors, so both apps build the identical
+    dataset at any size."""
+    raw = os.environ.get("XY_LIVE_POINTS")
+    if raw is None:
+        return 100_000_000
+    try:
+        points = int(raw)
+    except ValueError:
+        points = 0
+    if points < 1:
+        warnings.warn(
+            f"XY_LIVE_POINTS={raw!r} is not a positive integer; using 100,000,000",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return 100_000_000
+    return points
+
+
+DRILLDOWN_POINTS = _drilldown_points()
+
+
+def _point_label(n: int) -> str:
+    if n % 1_000_000 == 0:
+        return f"{n // 1_000_000}M"
+    if n % 1_000 == 0:
+        return f"{n // 1_000}k"
+    return f"{n:,}"
+
+
+def drilldown_chart(n: int = DRILLDOWN_POINTS) -> xy.Chart:
+    """The ``examples/fastapi`` live-drilldown scatter: same seed, same chunked
+    generation, same mark config — and none of that app's transport code (no
+    callback endpoint, no comm bridge, no hand-built density-overview cache).
+    The kernel's density tiers answer every pan/zoom over the app websocket."""
+    rng = np.random.default_rng(11)
+    x = np.empty(n, dtype=np.float64)
+    y = np.empty(n, dtype=np.float64)
+    color = np.empty(n, dtype=np.float64)
+    size = np.empty(n, dtype=np.float64)
+    chunk = 1_000_000
+    for start in range(0, n, chunk):
+        end = min(start + chunk, n)
+        xs = rng.normal(0, 1.0, end - start)
+        ys = rng.normal(0, 0.55, end - start)
+        ys += xs * 0.55
+        ss = rng.normal(6, 2.5, end - start)
+        np.abs(ss, out=ss)
+        np.clip(ss, 2, 16, out=ss)
+        x[start:end] = xs
+        y[start:end] = ys
+        np.hypot(xs, ys, out=color[start:end])
+        size[start:end] = ss
+    return xy.scatter_chart(
+        xy.scatter(x, y, color=color, size=size, colormap="viridis", opacity=0.72, density=True),
+        xy.x_axis(label="feature A"),
+        xy.y_axis(label="feature B"),
+        title=f"{_point_label(n)} live drilldown scatter",
+        width="100%",
+        height=430,
+    )
+
+
+# One shared kernel-backed figure for every viewer — the sharing the FastAPI
+# app builds a process-global store for, expressed as a single inline() token.
+DRILLDOWN_TOKEN = reflex_xy.inline(drilldown_chart())
 
 
 # --- state ------------------------------------------------------------------
@@ -434,6 +513,11 @@ def fixed_view() -> rx.Component:
     )
 
 
+# §6 wiring — the whole drilldown integration is this one line
+def drilldown_view() -> rx.Component:
+    return reflex_xy.chart(DRILLDOWN_TOKEN, height="430px", id="drilldown")
+
+
 def index() -> rx.Component:
     return rx.container(
         rx.vstack(
@@ -522,6 +606,16 @@ def index() -> rx.Component:
                 "fixed data answers hover/pick from the kernel.",
                 fixed_view(),
                 code_accordion(sparkline_chart, orbits_chart, fixed_view),
+            ),
+            section(
+                f"6 · The FastAPI {_point_label(DRILLDOWN_POINTS)} drilldown, adapter-native",
+                "The live drilldown scatter from examples/fastapi — same data, "
+                "same mark config — with the adapter replacing that app's custom "
+                "transport (callback endpoint, HTTP comm bridge, density-overview "
+                "cache). Zoom until the density surface drills into exact points; "
+                "XY_LIVE_POINTS resizes both apps for side-by-side comparison.",
+                drilldown_view(),
+                code_accordion(drilldown_chart, drilldown_view),
             ),
             spacing="5",
             width="100%",
