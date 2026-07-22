@@ -686,8 +686,12 @@ try{{
     const dback=(!gd.drill && gd._drillDying!==true)?1:0;
     if(gd._densityNormAnim) gd._densityNormAnim.startedAt-=gd._densityNormAnim.duration+1;
     v._drawNow();
-    const dnormDone=(gd.density && Math.abs(gd.density.normMax-gd.density.max)<1e-6
-      && !gd._densityNormAnim)?1:0;
+    // T4 absolute normalization: the settled target is the HOME anchor (this
+    // window's max of 1 is far below it), so colors keep meaning the same
+    // points-per-cell at every zoom instead of re-saturating per window.
+    const dnormTarget=Math.max(gd._densityNormAnchor||0, gd.density.max);
+    const dnormDone=(gd.density && Math.abs(gd.density.normMax-dnormTarget)<1e-6
+      && dnormTarget>gd.density.max && !gd._densityNormAnim)?1:0;
     v.seq=12;
     v._onKernelMsg({{type:"density_update",seq:11,traces:[{{id:gd.trace.id,mode:"points",visible:n3,
       x:{{buf:0,len:n3,offset:5005,scale:1}},y:{{buf:1,len:n3,offset:5005,scale:1}},

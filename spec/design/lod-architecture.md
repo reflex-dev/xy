@@ -236,7 +236,18 @@ invariants so future kinds don't regress them:
   dying/exiting marks re-target blend 1 so they melt into the texture as
   they fade (`lodApplyDrill`, `lodBeginDrillExitContinuous`; revives restore
   the native weight via `lodEnterDrillContinuous`).
-- **T4 — normalization is eased, never stepped** (exposure-style normMax).
+- **T4 — normalization is absolute, and changes are eased, never stepped:**
+  every kernel-served grid tone-maps against the HOME grid's max (the anchor
+  `_densityNormAnchor`, set at build), not its own window max. Per-window
+  renormalization made the same cell count change color at every zoom level
+  — the texture read as permanently saturated, and colors carried no meaning
+  across views ("what does that green represent?"). Anchored, a cell's color
+  means the same points-per-cell everywhere: panning is stable, and zooming
+  in dims the surface as cells genuinely hold fewer points — an honest
+  "running out of aggregation" signal. A reply whose max exceeds the anchor
+  still eases up to cover it (exposure-style `lodNormMax`), and the
+  standalone worker re-bin path keeps its own relative normalization — its
+  sample-space counts are not comparable to full-data counts.
 - **T5 — stale replies die:** seq on view updates, drill_seq on subsets,
   pending-view hold for prefetched drills.
 - **T6 — invalid requests do not mutate:** malformed viewport/screen requests
@@ -291,24 +302,35 @@ invariants so future kinds don't regress them:
   near-opaque slab (a "fading" sample that never looked faded). The
   per-point alpha is solved as a = 1−(1−band)^(1/k), with k estimated from
   the drawn count, mean point footprint, and the window's on-screen area;
-  k ≤ 1 degenerates to the band value exactly. Selection and alpha are pure
-  functions of (view, cache): every zoom frame re-derives them, nothing
-  latches. Overlays die with their evicted cache entry (except the home/init
-  overlay, the standalone re-bin worker's CPU-side source), and the
-  "sampled n of N" badge reports the overlay actually drawn.
-- **T10 — the aggregate backdrop is continuous:** the density texture draws
-  under the marks in EVERY drill state — entering, settled inside, held,
-  exiting — never only until the entry fade completes. The background of a
-  drilled frame and a density frame is the same texture, so every drill
-  transition is a marks-layer fade over a stable context, not a full-frame
-  swap. (Previously marks "owned the frame" once their entry fade finished:
-  the backdrop flipped to the blank chart background, and interleaved
-  density/points replies during a continuous zoom flashed
-  green-texture ⇄ points-on-blank — the live-drilldown flicker. It also
-  kept the aggregate context visible while drilled, which is the §28 hybrid
-  intent.) `lodDrawDensityTier` routes every branch's backdrop through
-  `lodDrawDensityWithFade`, so cached-window crossfades stay continuous
-  while drilled too.
+  k ≤ 1 degenerates to the band value exactly. A covering overlay is bounded
+  in the OTHER direction too: deep inside its window the fixed sampling
+  fraction leaves only a handful of in-view points, and a few dots standing
+  in for tens of thousands of real rows lies the mirror-image way from the
+  zoom-out blob. The overlay fades by its expected in-view count — full at
+  ≥ `LOD_SAMPLE_EXPECT_FULL` (200), gone at ≤ `LOD_SAMPLE_EXPECT_NONE` (20),
+  log-eased (`lodSampleZoomInAlpha`); at or above its own window it is
+  always full, so a small-n exact sample is not penalized for being small.
+  Selection and alpha are pure functions of (view, cache): every zoom frame
+  re-derives them, nothing latches. Overlays die with their evicted cache
+  entry (except the home/init overlay, the standalone re-bin worker's
+  CPU-side source), and the "sampled n of N" badge reports the overlay
+  actually drawn.
+- **T10 — the aggregate draws only while it describes unrendered points:**
+  the density texture is the representation of rows the frame does NOT
+  render as marks. Aggregate and sampled tiers therefore draw it at full
+  alpha (most rows are unrendered), and drill transitions crossfade it under
+  the moving marks — entry eases it out exactly as the marks ease in, exit
+  mirrors that, and the stale-while-revalidate hold keeps it full (the held
+  window's marks cover only part of the view). But a SETTLED drill renders
+  every point in its window: the texture then says nothing the marks don't —
+  and its colors belong to a coarser window anyway — so it leaves the frame
+  ("what does that green represent?" — nothing, over exact marks). Both
+  failure modes are field-pinned: marks-own-the-frame-from-entry flashed
+  green-texture ⇄ points-on-blank as interleaved density/points replies
+  landed mid-zoom, and the later always-on backdrop painted a meaningless
+  saturated wash under a handful of exact points. Every backdrop draw routes
+  through `lodDrawDensityWithFade`, so cached-window crossfades stay
+  continuous through transitions too.
 - **T11 — an exited drill is a bounded revive cache:** a drill whose entry
   completed and whose exit fade has finished is retained so a rapid zoom
   back into its window hands the exact marks back with no kernel round-trip

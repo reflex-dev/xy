@@ -55,6 +55,11 @@ LIVE_DRILLDOWN_ROUTE = "/api/xy/drilldown"
 DENSITY_OVERVIEW_BINS = 6144
 DENSITY_OVERVIEW_CHUNK = 1_000_000
 OVERVIEW_EXACT_FACTOR = 4.0
+# Rows in the deterministic global presample shipped to the browser (~1.5 MB
+# of f32 x/y/color/size). Locally served windows hold > budget×OVERVIEW_EXACT_
+# FACTOR points, so their in-window presample count stays ≥ target×(that
+# fraction of the source) ≈ 750 — above the client's representativeness floor.
+PRESAMPLE_TARGET = 98_304
 _FIGURE_LOCK = threading.Lock()
 _DENSITY_SEQ_LOCK = threading.Lock()
 _LATEST_DENSITY_SEQ: dict[str, int] = {}
@@ -223,15 +228,67 @@ class DensityOverview:
 
 
 @dataclass(frozen=True)
+class Presample:
+    """A deterministic global subsample shipped to the browser.
+
+    The client's local integral-image fast path answers wide zoom-out/mid
+    windows without a server round trip — but the integral image holds only
+    counts, so those replies used to ship no point sample and the chart
+    showed nothing between the home overview and the server's exact-scan
+    threshold ("no drilldown points until >600% zoom"). This presample fills
+    that gap: a fixed-stride (deterministic, anti-shimmer §28) subsample of
+    the full source, with the trace's color/size channels, from which the
+    client selects the in-window points for every locally served density
+    reply. Windows served locally have visible > budget*OVERVIEW_EXACT_FACTOR
+    points, so at PRESAMPLE_TARGET rows the in-window presample count stays
+    comfortably above the client's representativeness floor.
+    """
+
+    x: np.ndarray
+    y: np.ndarray
+    color: np.ndarray  # unit-normalized, like every shipped continuous channel
+    size: np.ndarray  # unit-normalized against the channel domain
+    colormap: str
+    size_range_px: tuple[float, float]
+
+    @classmethod
+    def build(cls, fig: Figure, trace_id: int = 0, target: int = PRESAMPLE_TARGET) -> "Presample":
+        t = fig.traces[trace_id]
+        n = t.n_points
+        step = max(1, n // target)
+        idx = np.arange(0, n, step)[:target]
+
+        def unit(values: np.ndarray, domain: tuple[float, float] | None) -> np.ndarray:
+            vals = np.asarray(values, dtype=np.float64)[idx]
+            d0, d1 = domain or (float(vals.min()), float(vals.max()))
+            span = (d1 - d0) or 1.0
+            return np.clip((vals - d0) / span, 0.0, 1.0).astype(np.float32)
+
+        return cls(
+            x=t.x.values[idx].astype(np.float32),
+            y=t.y.values[idx].astype(np.float32),
+            color=unit(t.color_ch.values, t.color_ch.domain),
+            size=unit(t.size_ch.values, t.size_ch.domain),
+            colormap=t.color_ch.colormap,
+            size_range_px=(float(t.size_ch.range_px[0]), float(t.size_ch.range_px[1])),
+        )
+
+
+@dataclass(frozen=True)
 class LiveStore:
     figure: Figure
     overview: DensityOverview
+    presample: Presample
 
 
 @lru_cache(maxsize=1)
 def live_store() -> LiveStore:
     fig = colored_scatter_figure()
-    return LiveStore(figure=fig, overview=DensityOverview.build(fig))
+    return LiveStore(
+        figure=fig,
+        overview=DensityOverview.build(fig),
+        presample=Presample.build(fig),
+    )
 
 
 def _b64(buf: bytes) -> str:
@@ -395,6 +452,18 @@ def live_drilldown_html() -> str:
     b64 = _b64(blob)
     route = LIVE_DRILLDOWN_ROUTE
     js = bundled_js("standalone")
+    ps = live_store().presample
+    presample_meta = json.dumps(
+        {
+            "n": int(len(ps.x)),
+            "colormap": ps.colormap,
+            "size_range_px": list(ps.size_range_px),
+        }
+    )
+    ps_x = _b64(ps.x.tobytes())
+    ps_y = _b64(ps.y.tobytes())
+    ps_color = _b64(ps.color.tobytes())
+    ps_size = _b64(ps.size.tobytes())
     return f"""<!doctype html>
 <html>
 <head>
@@ -427,6 +496,46 @@ const DIRECT_POINT_BUDGET = 200000;
 const LOCAL_DENSITY_EXACT_FACTOR = 4;
 let overviewIntegral = null;
 let overviewDensityBuffer = null;
+
+// Deterministic global presample (see Presample server-side): real points,
+// with the trace's color/size channels, selected in-window and shipped with
+// every locally served density reply — so the chart shows representative
+// points at EVERY zoom level instead of nothing between the home overview
+// and the server's exact-scan threshold.
+const PRESAMPLE_META = {presample_meta};
+const PRESAMPLE_SHIP_CAP = 8192;
+const presampleF32 = (b64s) =>
+  new Float32Array(Uint8Array.from(atob(b64s), (c) => c.charCodeAt(0)).buffer);
+const presample = {{
+  x: presampleF32("{ps_x}"),
+  y: presampleF32("{ps_y}"),
+  color: presampleF32("{ps_color}"),
+  size: presampleF32("{ps_size}"),
+}};
+
+// In-window presample selection: linear scan (~100k rows, well under a ms),
+// then a deterministic stride down to the ship cap (§28 anti-shimmer: the
+// same window always ships the same points).
+function presampleWindow(loX, hiX, loY, hiY) {{
+  const n = Math.min(PRESAMPLE_META.n, presample.x.length, presample.y.length);
+  const hits = [];
+  for (let i = 0; i < n; i++) {{
+    const x = presample.x[i], y = presample.y[i];
+    if (x >= loX && x <= hiX && y >= loY && y <= hiY) hits.push(i);
+  }}
+  const step = Math.max(1, Math.ceil(hits.length / PRESAMPLE_SHIP_CAP));
+  const count = Math.ceil(hits.length / step);
+  const xs = new Float32Array(count), ys = new Float32Array(count);
+  const cs = new Float32Array(count), ss = new Float32Array(count);
+  for (let o = 0, i = 0; i < hits.length; i += step, o++) {{
+    const src = hits[i];
+    xs[o] = presample.x[src];
+    ys[o] = presample.y[src];
+    cs[o] = presample.color[src];
+    ss[o] = presample.size[src];
+  }}
+  return {{ n: count, xs, ys, cs, ss }};
+}}
 
 function overviewData() {{
   if (!overviewTrace || !overviewTrace.density) return null;
@@ -659,6 +768,12 @@ function localDensityUpdate(msg) {{
       if (value > max) max = value;
     }}
   }}
+  // Real in-window points ride every local reply: the engine pairs them with
+  // this density window (T9) and draws them over the surface, so refinement
+  // is visible at every zoom level, not only past the server's exact-scan
+  // threshold. Colors/sizes are the trace's own channels (unit-normalized,
+  // the shipped-continuous-channel wire shape).
+  const pts = presampleWindow(loX, hiX, loY, hiY);
   return {{
     visible,
     message: {{
@@ -675,10 +790,22 @@ function localDensityUpdate(msg) {{
           max,
           x_range: [gridX0, gridX1],
           y_range: [gridY0, gridY1],
+          sample: pts.n
+            ? {{
+                n: pts.n,
+                visible: Math.round(visible),
+                x: {{ buf: 1, offset: 0, scale: 1, len: pts.n }},
+                y: {{ buf: 2, offset: 0, scale: 1, len: pts.n }},
+                x_range: [gridX0, gridX1],
+                y_range: [gridY0, gridY1],
+                color: {{ mode: "continuous", colormap: PRESAMPLE_META.colormap, buf: 3 }},
+                size: {{ mode: "continuous", range_px: PRESAMPLE_META.size_range_px, buf: 4 }},
+              }}
+            : null,
         }},
       }}],
     }},
-    buffers: [grid.buffer],
+    buffers: [grid.buffer, pts.xs.buffer, pts.ys.buffer, pts.cs.buffer, pts.ss.buffer],
   }};
 }}
 

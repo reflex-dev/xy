@@ -13,11 +13,16 @@ while zooming across the drill boundary:
 
 The fixes, each asserted here against the real client in headless Chromium:
 
-- T10 continuous backdrop: the aggregate texture draws under the marks in
-  every drill state — entering, settled, held, exiting.
+- T10 backdrop-by-necessity: the aggregate draws only while it describes
+  unrendered points. Transitions crossfade it in/out under the marks (never
+  a background pop), but a SETTLED drill renders every point in its window,
+  so the texture leaves the frame — its colors belong to a coarser window's
+  normalization and say nothing over exact marks.
 - Fresh marks enter wearing the aggregate's colormap (`lodBlendShown` seeds
   at 1) and dying/exiting marks re-target blend 1, so both directions of the
   texture↔marks swap are color-continuous regardless of skipped levels.
+- T4 absolute normalization: grids tone-map against the home anchor, so a
+  cell's color means the same points-per-cell at every zoom/pan.
 - A points reply whose window the view has grown far past still applies (the
   kernel may prefetch), but its marks are not drawn for a view that never
   entered the window — the frame stays on the aggregate.
@@ -81,8 +86,6 @@ _PROBE = """
     const enterBlendShown = g.drill ? g.drill.lodBlendShown : null;
     const enterBlendTarget = g.drill ? g.drill.lodBlend : null;
 
-    // Settle the entry fade, then check a settled inside frame draws the
-    // aggregate UNDER the marks (T10) — previously marks owned the frame.
     const frameLayers = () => {
       let density = 0, marks = 0;
       const rd = view._drawDensity, rp = view._drawPoints;
@@ -93,7 +96,14 @@ _PROBE = """
       view._drawPoints = rp;
       return { density, marks };
     };
-    view._drawNow(); clk += 500; view._drawNow();
+    // Mid entry fade the aggregate is still under the incoming marks (the
+    // tier swap is a crossfade)…
+    clk += 30;
+    const enteringLayers = frameLayers();
+    // …but a settled drill renders EVERY point in the window, so the texture
+    // says nothing the marks don't and it leaves the frame (T10: density
+    // shows only while unrendered points exist).
+    clk += 500; view._drawNow();
     const settledInside = frameLayers();
 
     // A density update arrives (zoom-out swap): the dying marks re-target the
@@ -110,6 +120,11 @@ _PROBE = """
     }, [grid.buffer]);
     const exitBlendTarget = g.drill ? g.drill.lodBlend : null;
     const exitLayers = frameLayers(); // mid exit fade: texture + fading marks
+    // Absolute normalization (T4): the reply's own max (3) is far below the
+    // home grid's — the texture keeps tone-mapping against the anchor, so a
+    // zoomed-in window dims instead of re-saturating to its local max.
+    const normAnchored = g.density.normMax === g._densityNormAnchor
+      && g._densityNormAnchor > 3;
     clk += 500; view._drawNow(); // fade completes, drill frees
 
     // A late points reply for a window the view has far outgrown (fast
@@ -146,8 +161,8 @@ _PROBE = """
     const geometryRetired = !g.drill;
 
     document.body.setAttribute("data-xy-transition-probe", JSON.stringify({
-      enterBlendShown, enterBlendTarget,
-      settledInside, exitBlendTarget, exitLayers,
+      enterBlendShown, enterBlendTarget, enteringLayers,
+      settledInside, exitBlendTarget, exitLayers, normAnchored,
       departedApplied, departedLayers, departedStillAllocated,
       insideLayers, geometryRetired,
     }));
@@ -195,15 +210,22 @@ def test_drill_transitions_are_continuous(tmp_path: Path) -> None:
     # 1) and ease toward the kernel's native weight.
     assert result["enterBlendShown"] == 1
     assert result["enterBlendTarget"] == pytest.approx(0.05)
-    # T10: a settled inside frame still draws the aggregate under the marks —
-    # the backdrop never flips to the blank chart background.
-    assert result["settledInside"]["density"] >= 1
+    # T10: the tier swap is a crossfade — mid entry the aggregate is still
+    # under the incoming marks…
+    assert result["enteringLayers"]["density"] >= 1
+    assert result["enteringLayers"]["marks"] >= 1
+    # …but a settled drill renders every point in the window, so the texture
+    # leaves the frame (density only shows while unrendered points exist).
+    assert result["settledInside"]["density"] == 0
     assert result["settledInside"]["marks"] >= 1
     # Dying marks re-target the aggregate's colormap for the exit.
     assert result["exitBlendTarget"] == 1
     # And the exit frame is texture + fading marks, not a hard cut.
     assert result["exitLayers"]["density"] >= 1
     assert result["exitLayers"]["marks"] >= 1
+    # T4 absolute normalization: the zoomed-in reply keeps tone-mapping
+    # against the home anchor instead of re-saturating to its own max.
+    assert result["normAnchored"] is True
     # A points reply for a window the view has far outgrown applies (wire
     # contract — the kernel may prefetch) but the frame stays density-only:
     # no marks flip for a departed view.

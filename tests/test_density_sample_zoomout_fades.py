@@ -122,6 +122,13 @@ _PROBE = """
     zoomTo(400);
     const farOut = sampleDrawn();
     const farOutBadge = badgeShowsSample();
+    // Deep INSIDE W (view 1/100 of the window's area): the fixed sampling
+    // fraction leaves ~5 expected in-view points — a handful of dots standing
+    // in for the window's real rows lies in the other direction, so the
+    // zoom-in bound hides the overlay (and its badge) too.
+    zoomTo(0.1);
+    const zoomedIn = sampleDrawn();
+    const zoomedInBadge = badgeShowsSample();
     // Zoom back into W: its overlay and badge return (pure function of the
     // view and the cache, no stuck state).
     zoomTo(1);
@@ -132,7 +139,8 @@ _PROBE = """
       hasHomeOverlay: !!(g.density && g.densityCache && g.densityCache.some((d) => d && d.overlay)),
       windowN: N,
       atWindow, atWindowBadge, homeTakeover, homeTakeoverBadge,
-      fallback, farOut, farOutBadge, backIn, backInBadge,
+      fallback, farOut, farOutBadge, zoomedIn, zoomedInBadge,
+      backIn, backInBadge,
     }));
   } catch (err) {
     document.body.setAttribute(
@@ -197,6 +205,11 @@ def test_drawn_sample_tracks_the_displayed_window(tmp_path: Path) -> None:
     # Far past the band: nothing drawn, badge off.
     assert result["farOut"] is None
     assert result["farOutBadge"] is False
+    # Deep inside W the zoom-in bound hides the overlay: ~5 expected in-view
+    # points must not masquerade as "the data" (the mirror-image lie of the
+    # zoom-out blob), and the badge goes with it.
+    assert result["zoomedIn"] is None
+    assert result["zoomedInBadge"] is False
     # Back inside W: its overlay and badge return; nothing latched.
     assert result["backIn"] is not None
     assert result["backIn"]["n"] == n_w

@@ -210,17 +210,44 @@ function lodSampleViewAlpha(view, s) {
   return k > 1 ? 1 - Math.pow(1 - band, 1 / k) : band;
 }
 
+// Zoom-in bound on a covering overlay (T9): a sample is representative near
+// its OWN window's scale. Deep inside that window its fixed sampling
+// fraction leaves only a handful of in-view points — 7 dots standing in for
+// tens of thousands of real rows reads as "the data", which is a lie in the
+// other direction from the zoom-out blob. Fade by the expected in-view
+// count: full at ≥ EXPECT_FULL, gone at ≤ EXPECT_NONE (log-eased). At or
+// above its own window the overlay is always full — a small-n exact sample
+// is not penalized for being small.
+const LOD_SAMPLE_EXPECT_FULL = 200;
+const LOD_SAMPLE_EXPECT_NONE = 20;
+
+function lodSampleZoomInAlpha(view, o) {
+  const v = view.view;
+  const viewArea = Math.abs((v.x1 - v.x0) * (v.y1 - v.y0));
+  const winArea = lodWindowArea(o.win);
+  if (!Number.isFinite(viewArea) || !Number.isFinite(winArea) || winArea <= 0) return 1;
+  const expected = o.n * Math.min(1, viewArea / winArea);
+  if (expected >= o.n || expected >= LOD_SAMPLE_EXPECT_FULL) return 1;
+  if (expected <= LOD_SAMPLE_EXPECT_NONE) return 0;
+  return (
+    Math.log(expected / LOD_SAMPLE_EXPECT_NONE) /
+    Math.log(LOD_SAMPLE_EXPECT_FULL / LOD_SAMPLE_EXPECT_NONE)
+  );
+}
+
 // §28 hybrid overlay, window pairing (T9): every sample rides the density
 // window it was computed for, so the points on screen always describe the
 // window being displayed. Selection mirrors lodDensityForView: the smallest
-// cached window whose sample covers the whole view wins at full alpha (deep
-// zoom-out lands on the overview sample — the point cloud comes back instead
-// of a stale drilled cluster). Only when NO cached window covers the view
-// (pan off-cache, zoom-out past home) does the best partial overlay draw,
-// bounded by the T9 coverage fade so it can never read as a false cluster.
+// cached window whose sample covers the whole view wins (deep zoom-out lands
+// on the overview sample — the point cloud comes back instead of a stale
+// drilled cluster), bounded on the way IN by the expected-count fade above.
+// Only when NO cached window covers the view (pan off-cache, zoom-out past
+// home) does the best partial overlay draw, bounded by the T9 coverage fade
+// so it can never read as a false cluster.
 export function lodSampleForView(view, g) {
   const cache = g.densityCache || (g.density ? [g.density] : []);
   let contained = null;
+  let containedAlpha = 0;
   let fallback = null;
   let fallbackAlpha = 0;
   const seen = new Set();
@@ -229,14 +256,19 @@ export function lodSampleForView(view, g) {
     if (!o || !o.n || !o.win || seen.has(o)) continue;
     seen.add(o);
     if (view._viewInside(o.win)) {
-      if (!contained || lodWindowArea(o.win) < lodWindowArea(contained.win)) contained = o;
+      if (!contained || lodWindowArea(o.win) < lodWindowArea(contained.win)) {
+        contained = o;
+        containedAlpha = lodSampleZoomInAlpha(view, o);
+      }
     } else if (view._viewOverlaps(o.win)) {
       const a = lodSampleViewAlpha(view, o);
       if (a > fallbackAlpha) { fallback = o; fallbackAlpha = a; }
     }
   }
-  if (contained) return { overlay: contained, alpha: 1 };
-  if (fallback && fallbackAlpha > 0) return { overlay: fallback, alpha: fallbackAlpha };
+  if (contained && containedAlpha > 0) return { overlay: contained, alpha: containedAlpha };
+  if (!contained && fallback && fallbackAlpha > 0) {
+    return { overlay: fallback, alpha: fallbackAlpha };
+  }
   return null;
 }
 
@@ -641,8 +673,18 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
   const grid = d.enc === "log-u8"
     ? lodDecodeLogU8(buffers[d.buf], d.max)
     : lodCopyGrid(view._asF32(buffers[d.buf]));
-  const normStart = lodNormMax(g, d.max);
-  const normMax = view._prefersReducedMotion() ? d.max : normStart;
+  // Absolute normalization (T4): every kernel-served grid tone-maps against
+  // the HOME grid's max (the anchor set at build), not its own window max.
+  // Per-window renormalization made the same cell count change color with
+  // every zoom level — the texture read as "always saturated", and colors
+  // meant nothing across views. Anchored, a cell's color means the same
+  // points-per-cell everywhere: panning is stable, and zooming in dims the
+  // surface as cells genuinely hold fewer points — an honest "running out
+  // of aggregation" signal. (A reply whose max exceeds the anchor — denser
+  // than anything the home grid resolved — still eases up to cover it.)
+  const target = Math.max(g._densityNormAnchor ?? 0, d.max);
+  const normStart = lodNormMax(g, target);
+  const normMax = view._prefersReducedMotion() ? target : normStart;
   g.densityNormMax = normMax;
   g.prevDensity = g.density;
   g._densityFadeStart = view._now();
@@ -662,7 +704,7 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
   if (Object.prototype.hasOwnProperty.call(d, "sample")) {
     view._applyDensitySample(g, d.sample, buffers);
   }
-  lodStartNormAnim(view, g, normMax, d.max);
+  lodStartNormAnim(view, g, normMax, target);
   lodRememberDensity(view, g, g.density);
 }
 
@@ -739,12 +781,24 @@ export function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
     g._drillExitFadeStart = null;
     const fade = lodFade(view, g._drillFadeStart);
     g._drillShownAlpha = fade;
-    if (density && density.tex) lodDrawDensityWithFade(view, g, density);
-    if (fade < 1) {
+    // The aggregate draws only while it still describes something the marks
+    // do not (T10): a drill is exact — every point in the window is rendered
+    // — so once the entry fade completes the texture says nothing the marks
+    // don't already say (its colors also belong to a coarser window's
+    // normalization: "what does that green represent?" — nothing, here).
+    // During the fade the texture eases out as the marks ease in, so the
+    // tier swap is a crossfade, never a background pop.
+    if (fade < 1 && density && density.tex) {
+      lodDrawDensityWithFade(view, g, density, 1 - fade);
       drawMarks(fade);
       view.draw();
     } else {
       g._drillFadeStart = null;
+      // Settled exact frame owns its background; reset the switch machinery
+      // so a later exit crossfades in from nothing instead of a stale pair.
+      g._shownDensity = null;
+      g._densitySwitchPrev = null;
+      g._densitySwitchFadeStart = null;
       drawMarks(1);
     }
   } else if (density && density.tex) {
@@ -780,7 +834,10 @@ export function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
     const exitFade = exitingDrill ? lodDrillExitFade(view, g) : 1;
     if (d) g._drillShownAlpha = exitingDrill && exitFade < 1 ? 1 - exitFade : 0;
     if (exitingDrill && exitFade < 1) {
-      lodDrawDensityWithFade(view, g, density);
+      // Mirror of the entry crossfade: the aggregate eases back in exactly as
+      // the exact marks ease out (leaving the window means unrendered points
+      // exist again, so the texture regains meaning).
+      lodDrawDensityWithFade(view, g, density, exitFade);
       drawMarks(1 - exitFade);
       view.draw();
     } else {

@@ -2054,6 +2054,9 @@ export class ChartView {
       const raw = this._columnView(buffer, meta);
       const grid = d.enc === "log-u8" ? lodDecodeLogU8(raw, d.max) : raw;
       g.densityNormMax = d.max;
+      // The home grid's max anchors ALL later tone-mapping (T4 absolute
+      // normalization): colors mean the same points-per-cell at every zoom.
+      g._densityNormAnchor = d.max;
       g.density = {
         w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
         color: d.color ? parseColor(this.root, d.color, [0.3, 0.47, 0.66, 1]) : null,
