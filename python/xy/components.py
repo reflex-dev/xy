@@ -1,6 +1,6 @@
 """A declarative, composition-based component API.
 
-The *feel* is Reflex's (reflex.dev) Recharts components — a chart container with
+The *feel* is Reflex's (reflex.dev) chart components — a chart container with
 mark and axis children, snake_case keyword props, `data=` + column-name
 resolution, and `on_*` event props — but xy does **not** import or depend
 on Reflex. It's the same ergonomics on top of the xy engine (`Figure`):
@@ -18,8 +18,8 @@ on Reflex. It's the same ergonomics on top of the xy engine (`Figure`):
     )
 
 Marks accept `x`/`y`/`color`/`size` as arrays *or* as string column names into
-`data` (a DataFrame, dict, or anything indexable) — the Reflex/Recharts
-`data_key` idiom, read more directly. Everything composes into a `Figure`, so a
+`data` (a DataFrame, dict, or anything indexable) — a string-column key
+idiom, read more directly. Everything composes into a `Figure`, so a
 chart renders in notebooks and exports to HTML exactly like the fluent API.
 
 The declarative layer is the core: `marks.py` holds the single implementation
@@ -31,10 +31,12 @@ behavior, signatures, or defaults (asserted by tests/test_api_parity.py).
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import math
 import re
 import uuid
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from os import PathLike
 from typing import Any, Literal, Optional, TypeAlias, Union
@@ -60,6 +62,7 @@ _optional_nonnegative_number = _validate.optional_nonnegative_scalar
 
 __all__ = [
     "CHART_DOM_SLOTS",
+    "Animation",
     "Annotation",
     "Axis",
     "Chart",
@@ -71,8 +74,10 @@ __all__ = [
     "Legend",
     "Mark",
     "Modebar",
+    "Spring",
     "Theme",
     "Tooltip",
+    "animation",
     "area",
     "area_chart",
     "arrow",
@@ -114,6 +119,7 @@ __all__ = [
     "scatter_chart",
     "segments",
     "segments_chart",
+    "spring",
     "stairs",
     "stairs_chart",
     "stem",
@@ -143,6 +149,11 @@ StyleValue: TypeAlias = str | int | float
 CoordinateLike: TypeAlias = Union[Scalar, str, dt.datetime, dt.date, np.datetime64]
 AxisLabelPosition: TypeAlias = str | dict[str, StyleValue]
 AxisTickLabelStrategy: TypeAlias = str
+DefaultDragAction: TypeAlias = Literal[
+    "auto", "none", "pan", "zoom", "select", "select-x", "select-y", "select-lasso"
+]
+ZoomLimit: TypeAlias = tuple[Optional[float], Optional[float]]
+ZoomLimits: TypeAlias = Union[ZoomLimit, Mapping[str, ZoomLimit]]
 
 # ---------------------------------------------------------------------------
 # Component tree (lightweight declarative specs — no rendering here)
@@ -168,6 +179,8 @@ class Mark(Component):
     name: Optional[str] = None
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
+    key: Any = None
+    animation: "Animation | bool | None" = None
     props: dict[str, Any] = field(default_factory=dict)
 
 
@@ -299,10 +312,184 @@ class Interaction(Component):
     crosshair: Optional[bool] = None
     navigation: Optional[bool] = None
     pan: Optional[bool] = None
+    pan_axes: Optional[tuple[str, ...]] = None
     zoom: Optional[bool] = None
-    view_change: Optional[bool] = None
+    default_drag_action: Optional[DefaultDragAction] = None
+    zoom_axes: Optional[tuple[str, ...]] = None
+    zoom_limits: Optional[ZoomLimits] = None
+    wheel_zoom: Optional[bool] = None
+    box_zoom: Optional[bool] = None
+    zoom_buttons: Optional[bool] = None
+    double_click_reset: Optional[bool] = None
+    reset_axes: Optional[tuple[str, ...]] = None
     link_group: Optional[str] = None
-    link_axes: tuple[str, ...] = ("x", "y")
+    link_axes: Optional[tuple[str, ...]] = None
+    history: Optional[bool] = None
+
+
+@dataclass(frozen=True)
+class Spring:
+    """A bounded, serializable spring easing policy."""
+
+    stiffness: float = 170.0
+    damping: float = 26.0
+    mass: float = 1.0
+
+    def to_spec(self) -> dict[str, float | str]:
+        return {
+            "type": "spring",
+            "stiffness": _positive_animation_number(self.stiffness, "spring stiffness"),
+            "damping": _positive_animation_number(self.damping, "spring damping"),
+            "mass": _positive_animation_number(self.mass, "spring mass"),
+        }
+
+
+@dataclass
+class Animation(Component):
+    """Declarative browser transition policy built by :func:`animation`."""
+
+    enabled: bool | Literal["auto"] = "auto"
+    delay: float = 0.0
+    duration: float = 400.0
+    easing: str | tuple[float, float, float, float] | Spring = "ease-out"
+    match: Literal["index", "append", "key"] = "index"
+    enter: str = "auto"
+    update: str = "interpolate"
+    interpolate: tuple[str, ...] = ("position", "size", "color", "domain")
+    on_start: Optional[Callable[[dict], None]] = field(default=None, repr=False, compare=False)
+    on_end: Optional[Callable[[dict], None]] = field(default=None, repr=False, compare=False)
+
+    def to_spec(self) -> dict[str, Any]:
+        enabled = self.enabled
+        if enabled != "auto" and not isinstance(enabled, bool):
+            raise ValueError("animation enabled must be False, True, or 'auto'")
+        match = _animation_choice(self.match, "match", {"index", "append", "key"})
+        enter = _animation_choice(self.enter, "enter", {"auto", "none", "scale", "grow", "reveal"})
+        update = _animation_choice(self.update, "update", {"none", "interpolate"})
+        easing: Any
+        if isinstance(self.easing, Spring):
+            easing = self.easing.to_spec()
+        elif isinstance(self.easing, str):
+            allowed = {"linear", "ease", "ease-in", "ease-out", "ease-in-out", "spring"}
+            easing = _animation_choice(self.easing, "easing", allowed)
+            if easing == "spring":
+                easing = Spring().to_spec()
+        elif isinstance(self.easing, (tuple, list)):
+            if len(self.easing) != 4:
+                raise ValueError("animation cubic Bézier easing must contain four numbers")
+            easing = [
+                _finite_number(value, f"animation easing[{i}]")
+                for i, value in enumerate(self.easing)
+            ]
+            if not (0.0 <= easing[0] <= 1.0 and 0.0 <= easing[2] <= 1.0):
+                raise ValueError("animation cubic Bézier x control points must be between 0 and 1")
+        else:
+            raise ValueError(
+                "animation easing must be a named easing, four-number cubic Bézier, or spring"
+            )
+        try:
+            policies = tuple(self.interpolate)
+        except TypeError as exc:
+            raise ValueError("animation interpolate must be a sequence of named policies") from exc
+        allowed_policies = {"position", "size", "color", "domain"}
+        if (
+            not policies
+            or any(p not in allowed_policies for p in policies)
+            or len(set(policies)) != len(policies)
+        ):
+            raise ValueError(
+                "animation interpolate must contain unique named policies from "
+                f"{sorted(allowed_policies)}"
+            )
+        for callback, label in ((self.on_start, "on_start"), (self.on_end, "on_end")):
+            if callback is not None and not callable(callback):
+                raise ValueError(f"animation {label} must be callable or None")
+        return {
+            "enabled": enabled,
+            "delay": _nonnegative_animation_number(self.delay, "animation delay"),
+            "duration": _nonnegative_animation_number(self.duration, "animation duration"),
+            "easing": easing,
+            "match": match,
+            "enter": enter,
+            "update": update,
+            "interpolate": list(policies),
+        }
+
+
+def _positive_animation_number(value: Any, label: str) -> float:
+    number = _finite_number(value, label)
+    if number <= 0:
+        raise ValueError(f"{label} must be positive")
+    return number
+
+
+def _nonnegative_animation_number(value: Any, label: str) -> float:
+    number = _finite_number(value, label)
+    if number < 0:
+        raise ValueError(f"{label} must be non-negative")
+    return number
+
+
+def _animation_choice(value: Any, label: str, allowed: set[str]) -> str:
+    if not isinstance(value, str) or value not in allowed:
+        raise ValueError(f"animation {label} must be one of {sorted(allowed)}")
+    return value
+
+
+def spring(*, stiffness: float = 170.0, damping: float = 26.0, mass: float = 1.0) -> Spring:
+    """Build a serializable spring easing policy.
+
+    Args:
+        stiffness: Spring stiffness; larger values respond more quickly.
+        damping: Resistance that settles the spring and limits overshoot.
+        mass: Spring mass; larger values respond more slowly.
+    """
+    value = Spring(stiffness=stiffness, damping=damping, mass=mass)
+    value.to_spec()
+    return value
+
+
+def animation(
+    *,
+    enabled: bool | Literal["auto"] = "auto",
+    delay: float = 0,
+    duration: float = 400,
+    easing: str | tuple[float, float, float, float] | Spring = "ease-out",
+    match: Literal["index", "append", "key"] = "index",
+    enter: str = "auto",
+    update: str = "interpolate",
+    interpolate: Sequence[str] = ("position", "size", "color", "domain"),
+    on_start: Optional[Callable[[dict], None]] = None,
+    on_end: Optional[Callable[[dict], None]] = None,
+) -> Animation:
+    """Configure entrance and data-update motion without per-frame callbacks.
+
+    Args:
+        enabled: ``"auto"`` honors reduced motion; a boolean explicitly enables or disables.
+        delay: Non-negative delay before motion begins, in milliseconds.
+        duration: Non-negative animation duration, in milliseconds.
+        easing: Named easing, four-number cubic Bézier tuple, or ``spring()`` policy.
+        match: Row identity strategy: ``"index"``, ``"append"``, or ``"key"``.
+        enter: Entrance effect, such as ``"auto"``, ``"scale"``, or ``"reveal"``.
+        update: Update effect; use ``"interpolate"`` or ``"none"``.
+        interpolate: Unique channels to interpolate during updates.
+        on_start: Optional live-host callback receiving the animation-start event.
+        on_end: Optional live-host callback receiving the animation-end event.
+    """
+    value = Animation(
+        enabled=enabled,
+        delay=delay,
+        duration=duration,
+        easing=easing,
+        match=match,
+        enter=enter,
+        update=update,
+        interpolate=tuple(interpolate),
+        on_start=on_start,
+        on_end=on_end,
+    )
+    value.to_spec()
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -321,13 +508,16 @@ def scatter(
     colormap: str = channels.DEFAULT_COLORMAP,
     color_domain: Optional[tuple[float, float]] = None,
     size_range: tuple[float, float] = (2.0, 18.0),
-    opacity: float = 0.8,
+    opacity: Any = 0.8,
     density: Optional[bool] = None,
-    symbol: str = "circle",
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    symbol: Any = "circle",
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    _artist_alpha: Any = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
+    key: Any = None,
+    animation: Animation | bool | None = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
@@ -348,8 +538,11 @@ def scatter(
         symbol: Marker symbol name.
         stroke: Optional marker outline color.
         stroke_width: Marker outline width in pixels.
+        _artist_alpha: Internal Matplotlib alpha override, scalar or per marker.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
+        key: Stable row identities, or a column name resolved from ``data``.
+        animation: Per-mark animation override; ``False`` disables animation.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -360,6 +553,8 @@ def scatter(
         data=data,
         name=name,
         class_name=class_name,
+        key=key,
+        animation=animation,
         style=_mark_style_dict(style, "scatter style"),
         props={
             "color": color,
@@ -372,6 +567,7 @@ def scatter(
             "symbol": symbol,
             "stroke": stroke,
             "stroke_width": stroke_width,
+            "_artist_alpha": _artist_alpha,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -391,6 +587,8 @@ def line(
     dash: Union[str, Sequence[float], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
+    key: Any = None,
+    animation: Animation | bool | None = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
@@ -408,6 +606,8 @@ def line(
         dash: Optional line dash pattern.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
+        key: Stable row identities, or a column name resolved from ``data``.
+        animation: Per-mark animation override; ``False`` disables animation.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -418,6 +618,8 @@ def line(
         data=data,
         name=name,
         class_name=class_name,
+        key=key,
+        animation=animation,
         style=_mark_style_dict(style, "line style"),
         props={
             "color": color,
@@ -449,6 +651,8 @@ def area(
     dash: Union[str, Sequence[float], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
+    key: Any = None,
+    animation: Animation | bool | None = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
@@ -471,6 +675,8 @@ def area(
         dash: Optional outline dash pattern.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
+        key: Stable row identities, or a column name resolved from ``data``.
+        animation: Per-mark animation override; ``False`` disables animation.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -481,6 +687,8 @@ def area(
         data=data,
         name=name,
         class_name=class_name,
+        key=key,
+        animation=animation,
         style=_mark_style_dict(style, "area style"),
         props={
             "base": base,
@@ -513,6 +721,8 @@ def error_band(
     fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
+    key: Any = None,
+    animation: Animation | bool | None = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
@@ -531,6 +741,8 @@ def error_band(
         fill: CSS fill value or linear gradient.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
+        key: Stable row identities, or a column name resolved from ``data``.
+        animation: Per-mark animation override; ``False`` disables animation.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -541,6 +753,8 @@ def error_band(
         data=data,
         name=name,
         class_name=class_name,
+        key=key,
+        animation=animation,
         style=_mark_style_dict(style, "error_band style"),
         props={
             "upper": upper,
@@ -569,6 +783,8 @@ def errorbar(
     opacity: float = 1.0,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
+    key: Any = None,
+    animation: Animation | bool | None = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
@@ -587,6 +803,8 @@ def errorbar(
         opacity: Stroke opacity from zero to one.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
+        key: Stable row identities, or a column name resolved from ``data``.
+        animation: Per-mark animation override; ``False`` disables animation.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -597,6 +815,8 @@ def errorbar(
         data=data,
         name=name,
         class_name=class_name,
+        key=key,
+        animation=animation,
         style=_mark_style_dict(style, "errorbar style"),
         props={
             "yerr": yerr,
@@ -622,8 +842,8 @@ def segments(
     color: Union[str, ColorLike, ArrayLike, None] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
-    width: float = 1.2,
-    opacity: float = 1.0,
+    width: Any = 1.2,
+    opacity: Any = 1.0,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -683,9 +903,9 @@ def triangle_mesh(
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     name: Optional[str] = None,
-    opacity: float = 1.0,
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    opacity: Any = 1.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -1201,11 +1421,12 @@ def histogram(
     density: bool = False,
     cumulative: bool = False,
     name: Optional[str] = None,
-    color: Optional[str] = None,
-    opacity: float = 0.85,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    color: Any = None,
+    opacity: Any = 0.85,
+    corner_radius: Any = 0.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    _artist_alpha: Any = None,
     fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
@@ -1227,6 +1448,7 @@ def histogram(
         corner_radius: Bar corner radius in pixels.
         stroke: Optional bar outline color.
         stroke_width: Bar outline width in pixels.
+        _artist_alpha: Internal Matplotlib alpha override, scalar or per bin.
         fill: CSS fill value or linear gradient.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
@@ -1250,6 +1472,7 @@ def histogram(
             "corner_radius": corner_radius,
             "stroke": stroke,
             "stroke_width": stroke_width,
+            "_artist_alpha": _artist_alpha,
             "fill": fill,
             "x_axis": x_axis,
             "y_axis": y_axis,
@@ -1266,11 +1489,12 @@ def hist(
     density: bool = False,
     cumulative: bool = False,
     name: Optional[str] = None,
-    color: Optional[str] = None,
-    opacity: float = 0.85,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    color: Any = None,
+    opacity: Any = 0.85,
+    corner_radius: Any = 0.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    _artist_alpha: Any = None,
     fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
@@ -1291,6 +1515,7 @@ def hist(
         corner_radius=corner_radius,
         stroke=stroke,
         stroke_width=stroke_width,
+        _artist_alpha=_artist_alpha,
         fill=fill,
         style=style,
         class_name=class_name,
@@ -1305,20 +1530,23 @@ def bar(
     *,
     data: TableLike = None,
     name: Optional[str] = None,
-    color: Union[str, Sequence[str], None] = None,
+    color: Any = None,
     colors: Optional[list[str]] = None,
     width: float = 0.8,
     base: Union[str, Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
     series: Optional[list[str]] = None,
-    opacity: float = 0.85,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    opacity: Any = 0.85,
+    corner_radius: Any = 0.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    _artist_alpha: Any = None,
     fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
+    key: Any = None,
+    animation: Animation | bool | None = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
@@ -1340,9 +1568,12 @@ def bar(
         corner_radius: Bar corner radius in pixels.
         stroke: Optional bar outline color.
         stroke_width: Bar outline width in pixels.
+        _artist_alpha: Internal Matplotlib alpha override, scalar or per bar.
         fill: CSS fill value or linear gradient.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
+        key: Stable row identities, or a column name resolved from ``data``.
+        animation: Per-mark animation override; ``False`` disables animation.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -1353,6 +1584,8 @@ def bar(
         data=data,
         name=name,
         class_name=class_name,
+        key=key,
+        animation=animation,
         style=_mark_style_dict(style, "bar style"),
         props={
             "color": color,
@@ -1366,6 +1599,7 @@ def bar(
             "corner_radius": corner_radius,
             "stroke": stroke,
             "stroke_width": stroke_width,
+            "_artist_alpha": _artist_alpha,
             "fill": fill,
             "x_axis": x_axis,
             "y_axis": y_axis,
@@ -1393,6 +1627,8 @@ def column(
     fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
+    key: Any = None,
+    animation: Animation | bool | None = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
@@ -1417,6 +1653,8 @@ def column(
         fill: CSS fill value or linear gradient.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
+        key: Stable row identities, or a column name resolved from ``data``.
+        animation: Per-mark animation override; ``False`` disables animation.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -1427,6 +1665,8 @@ def column(
         data=data,
         name=name,
         class_name=class_name,
+        key=key,
+        animation=animation,
         style=_mark_style_dict(style, "column style"),
         props={
             "color": color,
@@ -2430,10 +2670,19 @@ def interaction_config(
     crosshair: Optional[bool] = None,
     navigation: Optional[bool] = None,
     pan: Optional[bool] = None,
+    pan_axes: Optional[tuple[str, ...]] = None,
     zoom: Optional[bool] = None,
-    view_change: Optional[bool] = None,
+    default_drag_action: Optional[DefaultDragAction] = None,
+    zoom_axes: Optional[tuple[str, ...]] = None,
+    zoom_limits: Optional[ZoomLimits] = None,
+    wheel_zoom: Optional[bool] = None,
+    box_zoom: Optional[bool] = None,
+    zoom_buttons: Optional[bool] = None,
+    double_click_reset: Optional[bool] = None,
+    reset_axes: Optional[tuple[str, ...]] = None,
     link_group: Optional[str] = None,
-    link_axes: tuple[str, ...] = ("x", "y"),
+    link_axes: Optional[tuple[str, ...]] = None,
+    history: Optional[bool] = None,
 ) -> Interaction:
     """Configure browser interaction chrome and event emission.
 
@@ -2445,13 +2694,39 @@ def interaction_config(
         crosshair: Whether plot-aligned hover guides are shown.
         navigation: Whether pointer drag and wheel gestures pan or zoom the chart.
         pan: Whether plain-drag pan is enabled. ``False`` ignores plain-drag
-            pan gestures. The default keeps panning enabled.
+            pan gestures and contains every zoom-enabled axis to its home
+            window. The default keeps panning enabled.
+        pan_axes: Concrete declared axis IDs pan gestures translate freely.
+            The default includes every declared axis. An excluded axis that
+            zoom can still navigate is contained: its window slides inside
+            the axis's home extents (plain drag keeps working on a zoomed-in
+            view) but never extends past them, on any mutation path.
         zoom: Whether viewport zoom is enabled. ``False`` ignores wheel and
             box zoom, double-click reset, and modebar zoom controls. The
             default keeps zooming enabled.
-        view_change: Whether pan, zoom, and reset emit range events.
+        default_drag_action: Initial action performed by a plain plot drag.
+            ``"auto"`` is the default and chooses pan first; ``"zoom"`` draws
+            a rectangle and zooms to its bounds. Selection actions make their
+            corresponding gesture the default without requiring Shift. The
+            modebar can change the active action without changing this
+            configured default.
+        zoom_axes: Axis dimensions changed by wheel, modebar, and box zoom.
+            Use ``("x",)`` for x-only zoom. Secondary IDs such as ``"y2"``
+            are independent. The default includes every declared axis.
+        zoom_limits: Minimum and maximum magnification relative to the home
+            range, either one pair for all zoom axes or a mapping by axis ID.
+            Missing configuration defaults to ``(1.0, None)`` per zoom axis.
+        wheel_zoom: Whether wheel and trackpad zoom is available.
+        box_zoom: Whether box zoom is available as a drag action.
+        zoom_buttons: Whether toolbar Zoom In/Out commands are available.
+        double_click_reset: Whether double-click restores ``reset_axes``.
+        reset_axes: Concrete declared axis IDs restored by reset. The default
+            is the union of enabled pan and zoom axes.
         link_group: Identifier used to synchronize charts in the browser.
         link_axes: Axes synchronized within the link group.
+        history: Whether the client keeps a view-history stack with modebar
+            Back/Forward buttons. Enabled by default; ``False`` removes the
+            buttons and stops snapshotting.
     """
     return Interaction(
         hover=hover,
@@ -2461,10 +2736,19 @@ def interaction_config(
         crosshair=crosshair,
         navigation=navigation,
         pan=pan,
+        pan_axes=pan_axes,
         zoom=zoom,
-        view_change=view_change,
+        default_drag_action=default_drag_action,
+        zoom_axes=zoom_axes,
+        zoom_limits=zoom_limits,
+        wheel_zoom=wheel_zoom,
+        box_zoom=box_zoom,
+        zoom_buttons=zoom_buttons,
+        double_click_reset=double_click_reset,
+        reset_axes=reset_axes,
         link_group=link_group,
         link_axes=link_axes,
+        history=history,
     )
 
 
@@ -2568,10 +2852,18 @@ class Chart(Component):
         crosshair: Optional[bool] = None,
         navigation: Optional[bool] = None,
         pan: Optional[bool] = None,
+        pan_axes: Optional[tuple[str, ...]] = None,
         zoom: Optional[bool] = None,
-        view_change: Optional[bool] = None,
+        default_drag_action: Optional[DefaultDragAction] = None,
+        zoom_axes: Optional[tuple[str, ...]] = None,
+        zoom_limits: Optional[ZoomLimits] = None,
+        wheel_zoom: Optional[bool] = None,
+        box_zoom: Optional[bool] = None,
+        zoom_buttons: Optional[bool] = None,
+        double_click_reset: Optional[bool] = None,
+        reset_axes: Optional[tuple[str, ...]] = None,
         link_group: Optional[str] = None,
-        link_axes: tuple[str, ...] = ("x", "y"),
+        link_axes: Optional[tuple[str, ...]] = None,
     ) -> None:
         self.kind = kind
         self.children = children
@@ -2591,13 +2883,24 @@ class Chart(Component):
         self.on_view_change = on_view_change
         self.hover = hover
         self.click = click
-        self.select = select
+        # Stored under a private name: the public `select` kwarg would
+        # otherwise shadow the programmatic `Chart.select()` method on every
+        # instance (instance attributes beat class methods).
+        self._select_switch = select
         self.brush = brush
         self.crosshair = crosshair
         self.navigation = navigation
         self.pan = pan
+        self.pan_axes = pan_axes
         self.zoom = zoom
-        self.view_change = view_change
+        self.default_drag_action = default_drag_action
+        self.zoom_axes = zoom_axes
+        self.zoom_limits = zoom_limits
+        self.wheel_zoom = wheel_zoom
+        self.box_zoom = box_zoom
+        self.zoom_buttons = zoom_buttons
+        self.double_click_reset = double_click_reset
+        self.reset_axes = reset_axes
         self.link_group = link_group
         self.link_axes = link_axes
         self._figure: Optional[Figure] = None
@@ -2626,6 +2929,7 @@ class Chart(Component):
         export_configs = [c for c in self.children if isinstance(c, ExportConfig)]
         themes = [c for c in self.children if isinstance(c, Theme)]
         interactions = [c for c in self.children if isinstance(c, Interaction)]
+        animations = [c for c in self.children if isinstance(c, Animation)]
         legend_shows = [_strict_bool(c.show, "legend show") for c in legends]
         known = (
             Mark,
@@ -2638,12 +2942,13 @@ class Chart(Component):
             ExportConfig,
             Theme,
             Interaction,
+            Animation,
         )
         unknown = [c for c in self.children if not isinstance(c, known)]
         if unknown:
             raise TypeError(
                 f"{self.kind}() children must be marks/annotations/axes/legend/tooltip/"
-                f"colorbar/modebar/export_config/theme/interaction_config, got "
+                f"colorbar/modebar/export_config/theme/interaction_config/animation, got "
                 f"{[type(c).__name__ for c in unknown]}"
             )
 
@@ -2691,30 +2996,49 @@ class Chart(Component):
         for theme_node in themes:
             fig.style.update(theme_node.style)
         fig.style.update(self.style)
+        chart_animation = animations[-1] if animations else None
+        if chart_animation is not None:
+            fig.animation_options = chart_animation.to_spec()
         for slot, slot_style in self.styles.items():
             fig.chrome_styles[slot] = {**fig.chrome_styles.get(slot, {}), **slot_style}
         if (
             self.hover is not None
             or self.click is not None
-            or self.select is not None
+            or self._select_switch is not None
             or self.brush is not None
             or self.crosshair is not None
             or self.navigation is not None
             or self.pan is not None
+            or self.pan_axes is not None
             or self.zoom is not None
-            or self.view_change is not None
+            or self.default_drag_action is not None
+            or self.zoom_axes is not None
+            or self.zoom_limits is not None
+            or self.wheel_zoom is not None
+            or self.box_zoom is not None
+            or self.zoom_buttons is not None
+            or self.double_click_reset is not None
+            or self.reset_axes is not None
             or self.link_group is not None
         ):
             fig.set_interaction(
                 hover=self.hover,
                 click=self.click,
-                select=self.select,
+                select=self._select_switch,
                 brush=self.brush,
                 crosshair=self.crosshair,
                 navigation=self.navigation,
                 pan=self.pan,
+                pan_axes=self.pan_axes,
                 zoom=self.zoom,
-                view_change=self.view_change,
+                default_drag_action=self.default_drag_action,
+                zoom_axes=self.zoom_axes,
+                zoom_limits=self.zoom_limits,
+                wheel_zoom=self.wheel_zoom,
+                box_zoom=self.box_zoom,
+                zoom_buttons=self.zoom_buttons,
+                double_click_reset=self.double_click_reset,
+                reset_axes=self.reset_axes,
                 link_group=self.link_group,
                 link_axes=self.link_axes,
             )
@@ -2727,17 +3051,25 @@ class Chart(Component):
                 crosshair=node.crosshair,
                 navigation=node.navigation,
                 pan=node.pan,
+                pan_axes=node.pan_axes,
                 zoom=node.zoom,
-                view_change=node.view_change,
+                default_drag_action=node.default_drag_action,
+                zoom_axes=node.zoom_axes,
+                zoom_limits=node.zoom_limits,
+                wheel_zoom=node.wheel_zoom,
+                box_zoom=node.box_zoom,
+                zoom_buttons=node.zoom_buttons,
+                double_click_reset=node.double_click_reset,
+                reset_axes=node.reset_axes,
                 link_group=node.link_group,
                 link_axes=node.link_axes,
+                history=node.history,
             )
         fig.set_interaction(
             hover=True if self.on_hover is not None else None,
             click=True if self.on_click is not None else None,
             brush=True if self.on_brush is not None else None,
             select=True if self.on_brush is not None or self.on_select is not None else None,
-            view_change=True if self.on_view_change is not None else None,
         )
         tooltip_aliases: dict[str, str] = {}
         tooltip_sources: dict[str, list[dict[str, Any]]] = {}
@@ -2759,6 +3091,13 @@ class Chart(Component):
             for trace in new_traces:
                 trace.x_axis = x_axis_id
                 trace.y_axis = y_axis_id
+            _apply_mark_transition_metadata(
+                fig,
+                m,
+                data,
+                new_traces,
+                fig.animation_options,
+            )
             if m.class_name is not None:
                 class_name = _optional_string(m.class_name, f"{m.kind} class_name")
                 for trace in new_traces:
@@ -2856,6 +3195,7 @@ class Chart(Component):
                     if node_ticks is not None:
                         options["ticks"] = node_ticks
                     fig.colorbar_options = options
+        fig._validate_interaction()
         self._figure = fig
         return fig
 
@@ -2894,19 +3234,82 @@ class Chart(Component):
         if self._widget is None:
             from .widget import FigureWidget
 
-            self._widget = FigureWidget(
-                self.figure(),
-                on_hover=self.on_hover,
-                on_click=self.on_click,
-                on_brush=self.on_brush,
-                on_select=self.on_select,
-                on_view_change=self.on_view_change,
-            )
+            animations = [c for c in self.children if isinstance(c, Animation)]
+            animation_node = animations[-1] if animations else None
+            mark_animations = [
+                c.animation
+                for c in self.children
+                if isinstance(c, Mark) and isinstance(c.animation, Animation)
+            ]
+
+            def animation_callback(name: str) -> Optional[Callable[[dict], None]]:
+                callbacks = []
+                if animation_node is not None:
+                    callback = getattr(animation_node, name)
+                    if callback is not None:
+                        callbacks.append(callback)
+                for node in mark_animations:
+                    callback = getattr(node, name)
+                    if callback is not None and callback not in callbacks:
+                        callbacks.append(callback)
+                if not callbacks:
+                    return None
+
+                def dispatch(event: dict) -> None:
+                    for callback in callbacks:
+                        callback(event)
+
+                return dispatch
+
+            widget_kwargs: dict[str, Any] = {
+                "on_hover": self.on_hover,
+                "on_click": self.on_click,
+                "on_brush": self.on_brush,
+                "on_select": self.on_select,
+                "on_view_change": self.on_view_change,
+            }
+            on_animation_start = animation_callback("on_start")
+            on_animation_end = animation_callback("on_end")
+            if on_animation_start is not None:
+                widget_kwargs["on_animation_start"] = on_animation_start
+            if on_animation_end is not None:
+                widget_kwargs["on_animation_end"] = on_animation_end
+            self._widget = FigureWidget(self.figure(), **widget_kwargs)
         return self._widget
 
     def show(self) -> Any:
         """Display the chart: returns the live widget (see `widget`)."""
         return self.widget()
+
+    # -- programmatic view state (kernel-connected; view-state.md §5.1) ------
+
+    def set_view(self, ranges: Any = None, *, animate: bool = True, history: bool = True) -> None:
+        """Apply a partial per-axis ranges patch (the write-side mirror of the
+        ``on_view_change`` payload) through the client's clamped mutation path."""
+        self.widget().set_view(ranges, animate=animate, history=history)
+
+    def reset_view(self, axes: Any = None) -> None:
+        """Navigate to the home ranges (None = the configured reset_axes)."""
+        self.widget().reset_view(axes)
+
+    def select(
+        self,
+        *,
+        range: Any = None,
+        polygon: Any = None,
+        rows: Any = None,
+        history: bool = True,
+    ) -> None:
+        """Programmatic selection; see `FigureWidget.select`."""
+        self.widget().select(range=range, polygon=polygon, rows=rows, history=history)
+
+    def clear_selection(self) -> None:
+        """Clear any selection."""
+        self.widget().clear_selection()
+
+    def view_state(self) -> dict[str, Any]:
+        """Last committed durable view state (kernel-side cache)."""
+        return self.widget().view_state()
 
     def _ipython_display_(self) -> None:
         from IPython.display import display  # type: ignore[import-not-found]
@@ -2918,21 +3321,31 @@ class Chart(Component):
         path: Optional[str | PathLike[str]] = None,
         *,
         custom_css: Optional[str] = None,
+        animation_progress: Optional[float] = None,
     ) -> str:
         """A self-contained HTML document for the chart.
 
         Writes it to ``path`` when given; returns the HTML either way.
         """
-        return self.figure().to_html(path, custom_css=custom_css)
+        return self.figure().to_html(
+            path,
+            custom_css=custom_css,
+            animation_progress=animation_progress,
+        )
 
     def html(
         self,
         path: Optional[str | PathLike[str]] = None,
         *,
         custom_css: Optional[str] = None,
+        animation_progress: Optional[float] = None,
     ) -> str:
         """Alias of `to_html`."""
-        return self.to_html(path, custom_css=custom_css)
+        return self.to_html(
+            path,
+            custom_css=custom_css,
+            animation_progress=animation_progress,
+        )
 
     def _repr_html_(self) -> str:
         return self.figure()._repr_html_()
@@ -3185,6 +3598,137 @@ def _resolve_color(data: Any, color: Any, *, context: Optional[str] = None) -> A
             # misleading column-lookup error.
             _validate.css_color(color, context or "color")
         raise
+
+
+def _transition_key_token(value: Any, index: int) -> bytes:
+    """Canonical, type-sensitive bytes for one supported stable key."""
+    if isinstance(value, np.generic):
+        value = value.item()
+    if value is None or value.__class__.__name__ in {"NAType", "NaTType"}:
+        raise ValueError(f"animation key is missing at row {index}")
+    if isinstance(value, bool):
+        return b"b:1" if value else b"b:0"
+    if isinstance(value, int):
+        return f"i:{value}".encode("ascii")
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"animation key must be finite at row {index}")
+        return b"f:" + value.hex().encode("ascii")
+    if isinstance(value, str):
+        return b"s:" + value.encode("utf-8")
+    if isinstance(value, bytes):
+        return b"y:" + value
+    if isinstance(value, (dt.datetime, dt.date)):
+        return ("t:" + value.isoformat()).encode("utf-8")
+    raise ValueError(
+        "animation key values must be strings, finite numbers, booleans, bytes, or dates; "
+        f"row {index} has {type(value).__name__}"
+    )
+
+
+def _encode_transition_keys(value: Any, expected: int, label: str) -> np.ndarray:
+    arr = np.asarray(value, dtype=object)
+    if arr.ndim != 1:
+        raise ValueError(f"{label} must be one-dimensional")
+    if len(arr) != expected:
+        raise ValueError(f"{label} must have length {expected}, got {len(arr)}")
+    result = np.empty((expected, 2), dtype=np.uint32)
+    seen: dict[bytes, int] = {}
+    digests: dict[bytes, bytes] = {}
+    for index, raw in enumerate(arr):
+        token = _transition_key_token(raw, index)
+        previous = seen.get(token)
+        if previous is not None:
+            raise ValueError(f"{label} contains duplicate value at rows {previous} and {index}")
+        seen[token] = index
+        digest = hashlib.blake2s(token, digest_size=8, person=b"xykeyv1").digest()
+        collision = digests.get(digest)
+        if collision is not None and collision != token:
+            raise ValueError(f"{label} produced an identity digest collision")
+        digests[digest] = token
+        result[index, 0] = int.from_bytes(digest[:4], "little")
+        result[index, 1] = int.from_bytes(digest[4:], "little")
+    return result
+
+
+def _original_mark_positions(
+    fig: Figure, mark: Mark, data: Any, expected: int
+) -> np.ndarray | None:
+    """Return pre-sort numeric x positions for sorted line-like marks."""
+    try:
+        raw = _resolve(data, mark.x, context=f"{mark.kind}.x")
+        arr = np.asarray(raw)
+    except (TypeError, ValueError, KeyError):
+        return None
+    if arr.ndim != 1 or len(arr) != expected:
+        return None
+    if np.issubdtype(arr.dtype, np.number) or np.issubdtype(arr.dtype, np.datetime64):
+        try:
+            return (
+                arr.astype("datetime64[ns]").astype(np.int64)
+                if np.issubdtype(arr.dtype, np.datetime64)
+                else arr.astype(np.float64)
+            )
+        except (TypeError, ValueError):
+            return None
+    axis_id = str(mark.props.get("x_axis", "x"))
+    categories = fig._axis_categories.get(axis_id, [])
+    lookup = {value: i for i, value in enumerate(categories)}
+    try:
+        return np.asarray([lookup[value] for value in arr], dtype=np.float64)
+    except (KeyError, TypeError):
+        return None
+
+
+def _apply_mark_transition_metadata(
+    fig: Figure,
+    mark: Mark,
+    data: Any,
+    traces: list[Any],
+    chart_spec: Optional[dict[str, Any]],
+) -> None:
+    override = mark.animation
+    if override is None:
+        mark_spec = None
+    elif isinstance(override, bool):
+        mark_spec = {"enabled": override}
+    elif isinstance(override, Animation):
+        mark_spec = override.to_spec()
+    else:
+        raise ValueError(f"{mark.kind} animation must be xy.animation(...), bool, or None")
+    effective = {**(chart_spec or {}), **(mark_spec or {})}
+    if (
+        effective.get("enabled") is not False
+        and effective.get("match") == "key"
+        and mark.key is None
+    ):
+        raise ValueError(f"{mark.kind} animation match='key' requires key=")
+    keys: np.ndarray | None = None
+    if mark.key is not None:
+        raw = (
+            _resolve(data, mark.key, context=f"{mark.kind}.key")
+            if isinstance(mark.key, str)
+            else mark.key
+        )
+        if not traces:
+            raise ValueError(
+                f"{mark.kind} key cannot be attached because the mark emitted no traces"
+            )
+        expected = int(traces[0].n_points)
+        keys = _encode_transition_keys(raw, expected, f"{mark.kind} key")
+        if mark.kind in {"line", "area", "error_band"}:
+            positions = _original_mark_positions(fig, mark, data, expected)
+            if positions is not None:
+                keys = keys[np.argsort(positions, kind="stable")]
+    for trace in traces:
+        trace.animation = None if mark_spec is None else dict(mark_spec)
+        if keys is not None:
+            if trace.n_points != len(keys):
+                raise ValueError(
+                    f"{mark.kind} key has {len(keys)} rows but emitted trace {trace.id} "
+                    f"has {trace.n_points} logical rows"
+                )
+            trace.transition_keys = keys
 
 
 def _colorbar_source_title(mark: Mark) -> Optional[str]:
@@ -3920,6 +4464,7 @@ def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
             symbol=m.props["symbol"],
             stroke=m.props["stroke"],
             stroke_width=m.props["stroke_width"],
+            _artist_alpha=m.props.get("_artist_alpha"),
             style=m.style,
         )
     except Exception:
@@ -4175,6 +4720,7 @@ def _apply_histogram(fig: Figure, m: Mark, data: Any) -> None:
         corner_radius=m.props["corner_radius"],
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
+        _artist_alpha=m.props.get("_artist_alpha"),
         fill=m.props["fill"],
         style=m.style,
     )
@@ -4210,6 +4756,7 @@ def _apply_bar(fig: Figure, m: Mark, data: Any) -> None:
         corner_radius=m.props["corner_radius"],
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
+        _artist_alpha=m.props.get("_artist_alpha"),
         fill=m.props["fill"],
         style=m.style,
     )

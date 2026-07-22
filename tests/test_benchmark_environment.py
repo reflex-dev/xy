@@ -224,7 +224,7 @@ def test_dashboard_benchmark_reports_eviction_and_scroll_telemetry() -> None:
 def test_context_governor_reserves_pending_restores() -> None:
     """Concurrent visibility callbacks must count restores before their
     asynchronous ``webglcontextrestored`` events acquire the contexts."""
-    client = (ROOT / "js" / "src" / "50_chartview.js").read_text(encoding="utf-8")
+    client = (ROOT / "js" / "src" / "50_chartview.ts").read_text(encoding="utf-8")
 
     assert "view._ctxPendingReservation" in client
     constructor = client[client.index("  constructor(") : client.index("  _listen(")]
@@ -300,7 +300,7 @@ def test_context_governor_reserves_pending_restores() -> None:
 
 
 def test_triangle_mesh_resource_cleanup_deletes_every_coordinate_buffer() -> None:
-    client = (ROOT / "js" / "src" / "50_chartview.js").read_text(encoding="utf-8")
+    client = (ROOT / "js" / "src" / "50_chartview.ts").read_text(encoding="utf-8")
     cleanup = client[client.index("_destroyTraceResources(g, texSeen)") :]
     cleanup = cleanup[: cleanup.index("_destroyGlResources()")]
     for name in ("x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf"):

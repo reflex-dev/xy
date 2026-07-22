@@ -171,13 +171,13 @@ but they fail differently, and only the numeric grammar falls back.
   with a trailing `%`, which multiplies the value by 100 and appends the sign —
   for example `.2f`, `,.0f`, `.1%`. The trailing `f` is optional. Any other
   string **falls back**: `fmtNumberSpec` returns `null`
-  (`js/src/30_ticks.js:168`) and `fmtAxis` takes its `|| fmtLinear(...)` branch
+  (`js/src/30_ticks.ts:168`) and `fmtAxis` takes its `|| fmtLinear(...)` branch
   (`:209`), so the axis silently reverts to the automatic formatter. On a log
   axis, a value in `(0, 1)` that the spec would render as `"0"` falls back the
   same way.
 - **Time axes** accept a strftime subset of exactly `%Y %m %d %H %M %S %b %B`.
   All fields are **UTC**; `%b`/`%B` are English month names. A time spec
-  **never** falls back: `fmtTimeSpec` (`js/src/30_ticks.js:180-200`)
+  **never** falls back: `fmtTimeSpec` (`js/src/30_ticks.ts:180-200`)
   substitutes the tokens it knows and copies every other character through
   verbatim, so it always returns a string and the `|| fmtTime(...)` branch at
   `:204` is unreachable. An unrecognized `%` token such as `%y` therefore
@@ -403,6 +403,46 @@ Whole-mark opacity applies to an area's outline as well as its fill. Therefore
 the default area `opacity=0.35` produces a `0.35`-alpha outline. For a faint
 fill with an opaque outline, keep whole-mark opacity at `1` and set
 `style={"fill-opacity": 0.35, "stroke-opacity": 1}`.
+
+### Vectorized instance styles
+
+Instanced 2-D primitives accept scalar or per-item styles without splitting a
+collection into one trace per mark:
+
+| Mark | Direct paint | Numeric/glyph channels |
+| --- | --- | --- |
+| scatter | `color`, `stroke`: `(N, 3)` RGB or `(N, 4)` RGBA | `opacity`, `size`, `stroke_width`, `symbol` |
+| bar, column, histogram, rectangles | `color`, `stroke`: `(N, 3|4)` | `opacity`, `stroke_width`, `corner_radius` (`N` or `N × 2`) |
+| independent segments | `color`: `(N, 3|4)` | `opacity`, `width` |
+| triangle mesh | `color`, `stroke`: `(N, 3|4)` | `opacity`, `stroke_width` |
+
+Multi-series bars accept `(S, N, 3|4)` paint and `(S, N)` numeric channels.
+A one-series `(N, …)` value never broadcasts into a differently shaped series;
+shape mismatches fail before the figure is mutated. Direct RGBA is packed as
+four normalized bytes per item. Scalar constants remain spec-only, while
+semantic one-dimensional numeric/categorical color channels keep using a
+scalar plus a lookup table and may produce a colorbar.
+
+An outline that follows its item fill ships as the buffer-free `match_fill`
+paint mode; it does not duplicate direct RGBA bytes.
+
+Alpha composition is ordered and shared by WebGL, PNG, and SVG:
+
+1. the paint contributes intrinsic alpha;
+2. a Matplotlib artist-alpha override replaces that intrinsic alpha (`None`
+   restores it);
+3. core `opacity`, component `fill_opacity`/`stroke_opacity`, and selection
+   opacity multiply the result.
+
+A scalar `style={...}` declaration is intentionally scalar-only and overrides
+the corresponding typed scalar/vector argument. Dense scatter aggregation can
+discard exact instance styles above the direct-render ceiling; its warning
+lists every dropped channel.
+
+Streaming append accepts matching `color`, `size`, `stroke`, `opacity`,
+`alpha`, `stroke_width`, and `symbol` tails for an existing per-item scatter
+channel. All tail shapes are validated before geometry or style storage is
+mutated, so a rejected append cannot leave channel lengths out of sync.
 
 ### Scatter markers — `symbol`, `stroke`, `stroke_width`
 

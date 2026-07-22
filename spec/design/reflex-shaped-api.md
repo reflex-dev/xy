@@ -450,7 +450,7 @@ Event payloads:
 |---|---|
 | `on_hover` | One row/readout dict |
 | `on_select` | An `xy.Selection`: `.per_trace` (trace id to index array), `.index` (concatenated indices), `len()`, and `.xy(trace_id)` for the selected `(x, y)` arrays |
-| `on_view_change` | `{x0, x1, y0, y1, source}` — the view edges in data space plus the gesture label (`channel.py:216-233`). No pixel shape, no sequence id. |
+| `on_view_change` | `{ranges, source, axes, phase, interaction_id}` — the per-axis view (`ranges` map) plus the gesture label, the axes that changed, the phase, and the gesture id, with `x0`/`x1`/`y0`/`y1` aliases for the primary axes (`channel.py:217-258`). No pixel shape. |
 
 Render target behavior:
 

@@ -182,34 +182,23 @@ same expansion. It renders a decimated `step` chart, feeds the view a synthetic
 `tier_update` exactly as the kernel would ship it, and asserts the re-uploaded
 vertex stream still contains the step risers.
 
-The lifecycle gate runs `scripts/reflex_lifecycle_smoke.py`: every committed
-XY demo asset is loaded repeatedly, and each child chart must stay
-nonblank through the named
-`initial`, `hash-navigation`, `narrow-resize`, `wide-resize`, `scroll-bottom`,
-`fast-scroll`, `visibility-change`, `context-restore`, and `restore` phases.
-The `context-restore` phase forces `WEBGL_lose_context` loss/restoration and
-requires the rebuilt chart to remain nonblank. The iframe shell also exercises
-hash navigation, fast scrolling, resize and visibility events, a full iframe
-remount, an in-place iframe reload, and a hidden-boot/reveal pass where charts
-initialize at zero-sized iframe dimensions before becoming visible. The custom
-chrome, business overview, retention cohort, and the two live drilldown assets
-(`live_drilldown_10m.html`, `live_drilldown_100m.html`) are tracked as critical
-reports in every shell phase. Critical assets are enforced per shell asset group
-rather than across one flat asset set: the live drilldown assets form their own
-group, and each group requires only its own critical assets in every phase. A
-blank, destroyed, shortened lifecycle, failed context restore, or missing
-critical asset/phase pair is a failing browser gate.
+The lifecycle gate runs `scripts/reflex_lifecycle_smoke.py`: it boots the
+`examples/fastapi` app under uvicorn and drives Chromium at each gallery chart
+route plus `/drilldown`, injecting a probe over CDP before the chart client
+loads. Each chart must stay nonblank through the `initial`, `narrow-resize`,
+`wide-resize`, `visibility-change`, `context-restore`, and `restore` phases and
+keep its runtime DOM slots. The `context-restore` phase forces
+`WEBGL_lose_context` loss/restoration and requires the rebuilt chart to remain
+nonblank. A final pass loads the index page and confirms its embedded iframes
+paint. A blank, destroyed, shortened lifecycle, failed context restore, or
+missing DOM slot is a failing browser gate.
 
-The visual gate runs `scripts/visual_regression_smoke.py`. It is layout-aware:
-beyond global nonblank/color checks, it verifies title, plot, x-axis, and y-axis
-regions, rejects collapsed plot occupancy, and still runs tick-label overlap
-probes. It screenshots the generated core-family cases plus every committed
-XY Reflex gallery asset; the Plotly comparison page is intentionally
-excluded because it does not use XY' DOM or tick-label probes. It also
-screenshots static Reflex-style chrome shells for the custom legend/tooltip and
-annotated heatmap examples, requiring their external chrome DOM to be present
-and visible. This catches charts that render pixels in the wrong place or lose
-browser chrome while avoiding a fragile pixel-perfect golden file.
+The visual gate runs `scripts/visual_regression_smoke.py`. It boots the same
+app and screenshots every gallery chart route plus `/drilldown`, checking
+global nonblank/color/unique-color invariants, rejecting collapsed plot
+occupancy, and running tick-label overlap probes. This catches charts that
+render pixels in the wrong place or collapse to nothing while avoiding a fragile
+pixel-perfect golden file.
 
 The interaction gate runs `scripts/interaction_stress_smoke.py`, a smoke-sized
 interaction benchmark that validates p95 budgets and visual invariants for

@@ -49,9 +49,10 @@ def test_axis_bounds_validation(factory) -> None:
 
 
 def test_client_clamps_pan_zoom_and_reversed_log_ranges() -> None:
-    source = (ROOT / "js/src/53_interaction.js").read_text(encoding="utf-8")
+    source = (ROOT / "js/src/53_interaction.ts").read_text(encoding="utf-8")
 
-    assert "_clampAxisRange(axisId, lo, hi)" in source
+    assert "_clampAxisRange(axisId, lo, hi, anchorFrac = 0.5)" in source
     assert "const reverse = c1 < c0" in source
     assert "const target = this._clampView(" in source
-    assert '}, { source: "pan" });' in source
+    assert 'source: "pan_drag"' in source
+    assert "opts.anchors?.[axisId] ?? 0.5" in source

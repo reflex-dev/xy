@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    // The client targets evergreen WebGL2 browsers (design dossier §32);
+    // Vite/esbuild does the emit, tsc is typecheck-only.
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker.ImportScripts"],
+    "noEmit": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    // Migration posture: the source was converted from untyped concat-order JS
+    // (see git history of js/src/*.js). Params and `this` in augmentation
+    // literals stay implicitly `any` until annotated; tighten these flags as
+    // real types land.
+    "strict": false,
+    "noImplicitAny": false,
+    "noImplicitThis": false
+  },
+  "include": ["src/**/*.ts"]
+}

@@ -139,8 +139,9 @@ async computed vars.
 
 ## Events and Streaming
 
-`on_point_hover`, `on_point_click`, `on_select_end`, and `on_view_change`
-dispatch small semantic payloads through normal Reflex event handlers. Large
+`on_point_hover`, `on_point_click`, `on_select_end`, `on_view_change`,
+`on_animation_start`, and `on_animation_end` dispatch small semantic payloads
+through normal Reflex event handlers. Large
 chart buffers never enter those payloads. These props belong on the outer
 `reflex_xy.chart(...)` component and work only with a live token source, such
 as an `inline()` token or an `@reflex_xy.figure` var.
@@ -158,12 +159,19 @@ component props:
 | `on_brush` | No dedicated prop | — |
 | `on_select` | `on_select_end` | JSON-safe summary with `total`, optional bounds, and `cleared` |
 | `on_view_change` | `on_view_change` | View dictionary |
+| `xy.animation(on_start=...)` | `on_animation_start` | Animation phase/view dictionary |
+| `xy.animation(on_end=...)` | `on_animation_end` | Animation phase/view dictionary, with `cancelled` on interruption |
 
 In particular, notebook `on_select` receives an `xy.Selection` with canonical
 row indices, while Reflex `on_select_end` receives a compact summary suitable
 for an ordinary Reflex event. See
 [Interactions and selections](/docs/xy/core-concepts/interactions/) for the
 core callback contract.
+
+State-driven full payloads update the existing browser view in place, so
+stable mark `key=` values and an `xy.animation(match="key")` child preserve
+identity across a Reflex recompute. See
+[Animations and data transitions](/docs/xy/styling/animations/).
 
 To extend a registered chart from an event or background task, append new
 points without rebuilding the component:

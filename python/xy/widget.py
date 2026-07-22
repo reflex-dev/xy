@@ -63,6 +63,8 @@ class FigureWidget(anywidget.AnyWidget):
         on_brush: Any = None,
         on_select: Any = None,
         on_view_change: Any = None,
+        on_animation_start: Any = None,
+        on_animation_end: Any = None,
         **kwargs: Any,
     ) -> None:
         self._figure = figure
@@ -72,19 +74,105 @@ class FigureWidget(anywidget.AnyWidget):
             on_brush=on_brush,
             on_select=on_select,
             on_view_change=on_view_change,
+            on_animation_start=on_animation_start,
+            on_animation_end=on_animation_end,
         )
         spec, bufs = figure.build_payload_split()
+        self._configure_transport(spec)
         super().__init__(spec=spec, buffers=bufs, **kwargs)
         self.on_msg(self._on_custom_msg)
 
-    def append(self, trace_id: int, x: Any, y: Any, *, color: Any = None, size: Any = None) -> None:
+    def _configure_transport(self, spec: dict[str, Any]) -> None:
+        """Attach private subscriptions without changing browser behavior."""
+        if self._callbacks.on_view_change is not None:
+            spec["interaction"] = {
+                **spec.get("interaction", {}),
+                "_transport_view_change": True,
+            }
+
+    def append(
+        self,
+        trace_id: int,
+        x: Any,
+        y: Any,
+        *,
+        color: Any = None,
+        size: Any = None,
+        stroke: Any = None,
+        opacity: Any = None,
+        alpha: Any = None,
+        stroke_width: Any = None,
+        symbol: Any = None,
+    ) -> None:
         """Streaming append: extend a trace's data and push the refresh to the
         client. Also refreshes the synced spec/buffers traits so a re-rendered
         output (notebook reopen) shows the streamed state, not the initial one."""
-        msg, buffers = self._figure.append(trace_id, x, y, color=color, size=size)
+        msg, buffers = self._figure.append(
+            trace_id,
+            x,
+            y,
+            color=color,
+            size=size,
+            stroke=stroke,
+            opacity=opacity,
+            alpha=alpha,
+            stroke_width=stroke_width,
+            symbol=symbol,
+        )
+        self._configure_transport(msg["spec"])
         self.spec = msg["spec"]
         self.buffers = buffers[0]
         self.send(msg, buffers=buffers)
+
+    # -- programmatic view state (spec/design/view-state.md §5.1) ------------
+
+    def set_view(
+        self,
+        ranges: Any = None,
+        *,
+        animate: bool = True,
+        history: bool = True,
+    ) -> None:
+        """Apply a partial per-axis ranges patch through the client's single
+        clamped mutation path (merge-patch: absent axes are untouched)."""
+        msg = self._figure.state_patch_message(ranges=ranges, animate=animate, history=history)
+        self.send(msg)
+
+    def reset_view(self, axes: Any = None) -> None:
+        """Navigate to the home ranges (None = the configured reset_axes)."""
+        self.send(self._figure.view_nav_message(axes))
+
+    def select(
+        self,
+        *,
+        range: Any = None,
+        polygon: Any = None,
+        rows: Any = None,
+        history: bool = True,
+    ) -> None:
+        """Programmatic selection. Geometric forms (`range=`/`polygon=`) ship
+        to the client and resolve exactly like a gesture; `rows=` resolves
+        kernel-side into mask buffers and is non-durable (history is ignored
+        for it, and `view_state()` reports only the opaque rows marker)."""
+        if rows is not None:
+            if range is not None or polygon is not None:
+                raise ValueError("pass rows= alone, or range=/polygon= without rows=")
+            msg, buffers = self._figure.selection_rows_message(rows)
+            self._figure._record_selection({"rows": True})
+            self.send(msg, buffers=buffers)
+            return
+        selection = self._figure._validated_state_selection(range=range, polygon=polygon)
+        if selection is None:
+            raise ValueError("select() needs range=, polygon=, or rows=")
+        self.send(self._figure.state_patch_message(selection=selection, history=history))
+
+    def clear_selection(self) -> None:
+        """Clear any selection (durable: history records it)."""
+        self.send(self._figure.state_patch_message(selection=None))
+
+    def view_state(self) -> dict[str, Any]:
+        """Last committed durable view state (kernel-side cache, §5.1)."""
+        return self._figure.view_state()
 
     def _on_custom_msg(self, widget: Any, content: Any, msg_buffers: Any) -> None:
         # All dispatch and callback semantics live in channel.handle_message

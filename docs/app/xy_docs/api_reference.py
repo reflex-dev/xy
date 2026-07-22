@@ -82,6 +82,8 @@ CHROME_AND_BEHAVIOR = (
     xy.modebar,
     xy.theme,
     xy.interaction_config,
+    xy.animation,
+    xy.spring,
 )
 
 

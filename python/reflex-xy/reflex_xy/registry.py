@@ -243,6 +243,88 @@ class FigureRegistry:
         else:
             asyncio.run_coroutine_threadsafe(_do(), loop)
 
+    def push_view_message(
+        self, token: str, build: Callable[["Figure"], tuple[dict, list[bytes]]]
+    ) -> None:
+        """Build one kernel→client message against a figure and push it
+        room-wide (spec/design/view-state.md §5.2).
+
+        Mirrors `append`'s threading contract: callable from anywhere. The
+        message is built (and its input validated — errors raise to the
+        caller) in the calling thread; a wired app then fans the finished
+        bytes out on the serving loop as one `msg` event. Unlike `append`
+        there is no figure mutation to serialize, so no lock is held and the
+        figure payload and version are untouched — a view write is not a
+        data write.
+        """
+        entry = self.get(token)
+        if entry is None:
+            msg = f"unknown figure token: {token!r}"
+            raise KeyError(msg)
+        message, buffers = build(entry.figure)
+        loop = self._loop
+        push = self._on_push
+        if loop is None or push is None:
+            return  # unwired (tests, headless): validated, nobody to push to
+
+        async def _do() -> None:
+            await push(token, message, list(buffers))
+
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            loop.create_task(_do())
+        else:
+            asyncio.run_coroutine_threadsafe(_do(), loop)
+
+    def set_view(
+        self, token: str, ranges: Any, *, animate: bool = True, history: bool = True
+    ) -> None:
+        """Room-wide programmatic view patch; see view-state.md §5.2."""
+        self.push_view_message(
+            token,
+            lambda fig: (
+                fig.state_patch_message(ranges=ranges, animate=animate, history=history),
+                [],
+            ),
+        )
+
+    def reset_view(self, token: str, axes: Any = None) -> None:
+        """Room-wide navigation to the home ranges."""
+        self.push_view_message(token, lambda fig: (fig.view_nav_message(axes), []))
+
+    def select(
+        self,
+        token: str,
+        *,
+        range: Any = None,
+        polygon: Any = None,
+        rows: Any = None,
+        history: bool = True,
+    ) -> None:
+        """Room-wide programmatic selection (geometric or rows-resolved)."""
+        if rows is not None:
+            if range is not None or polygon is not None:
+                msg = "pass rows= alone, or range=/polygon= without rows="
+                raise ValueError(msg)
+            self.push_view_message(token, lambda fig: fig.selection_rows_message(rows))
+            return
+
+        def build(fig: "Figure") -> tuple[dict, list[bytes]]:
+            selection = fig._validated_state_selection(range=range, polygon=polygon)
+            if selection is None:
+                msg = "select() needs range=, polygon=, or rows="
+                raise ValueError(msg)
+            return fig.state_patch_message(selection=selection, history=history), []
+
+        self.push_view_message(token, build)
+
+    def clear_selection(self, token: str) -> None:
+        """Room-wide selection clear."""
+        self.push_view_message(token, lambda fig: (fig.state_patch_message(selection=None), []))
+
     # -- TTL sweep -----------------------------------------------------------
 
     def sweep(self, *, now: Optional[float] = None) -> list[str]:

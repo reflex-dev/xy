@@ -13,6 +13,28 @@ from reflex_site_shared.views.hosting_banner import HostingBannerState
 
 from xy_docs.examples import chart_example_demo
 
+# A demo fence may split its hardcoded data from the chart code with this
+# divider on its own line. Everything above is shown in the "Data" tab, the rest
+# in "Code"; the whole fence still executes for the preview (leading data is
+# plain literals, so it is valid before the imports below the divider).
+_DEMO_DATA_DIVIDER = "# --- chart ---"
+
+
+def _split_demo_data(content: str) -> tuple[str | None, str]:
+    """Split a demo fence into (data, code) around ``_DEMO_DATA_DIVIDER``.
+
+    Returns ``(None, content)`` when the divider is absent, so demos without a
+    dedicated data section keep the two-tab Preview/Code layout.
+    """
+    lines = content.split("\n")
+    for index, line in enumerate(lines):
+        if line.strip() == _DEMO_DATA_DIVIDER:
+            data = "\n".join(lines[:index]).strip("\n")
+            code = "\n".join(lines[index + 1 :]).strip("\n")
+            return (data or None), code
+    return None, content
+
+
 _HEADING_PRESENTATION = {
     1: ("h1", "4", "lg:text-4xl text-3xl font-semibold"),
     2: ("h2", "8", "lg:text-2xl text-xl font-semibold"),
@@ -103,10 +125,12 @@ class XyDocsMarkdownTransformer(ReflexDocTransformer):
                 class_name="flex w-full flex-col gap-4 py-4",
             )
 
+        data, code = _split_demo_data(content)
         return chart_example_demo(
-            content,
+            code,
             preview,
             component_id=component_id,
+            data=data,
         )
 
 

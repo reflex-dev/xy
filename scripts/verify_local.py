@@ -118,14 +118,14 @@ def _base_checks(
         ),
         Check(
             "examples",
-            "README/API examples and Reflex asset registry",
+            "README/API examples and example-app checks",
             (
                 py,
                 "-m",
                 "pytest",
                 "-q",
                 "tests/test_docs_examples.py",
-                "tests/test_reflex_example_assets.py",
+                "tests/test_example_apps.py",
             ),
             requires_modules=("pytest",),
         ),
