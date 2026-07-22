@@ -16,7 +16,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from ._colors import resolve_color, resolve_rgba_array
+from ._colors import resolve_color, resolve_rgba_array, scalar_float
 from ._rc import rcParams
 from ._transforms import Bbox, IdentityTransform
 
@@ -425,7 +425,7 @@ class PathCollection(Artist):
         if alpha is None:
             self._entry["kwargs"].pop("_artist_alpha", None)
         elif np.isscalar(alpha):
-            self._entry["kwargs"]["_artist_alpha"] = float(alpha)
+            self._entry["kwargs"]["_artist_alpha"] = scalar_float(alpha)
         else:
             values = np.asarray(alpha, dtype=np.float64).reshape(-1)
             if len(values) != self._count():
@@ -676,7 +676,7 @@ class BarContainer(Artist):
             self._entry["kwargs"].pop("_artist_alpha", None)
         else:
             self._entry["kwargs"]["_artist_alpha"] = (
-                float(alpha) if np.isscalar(alpha) else np.asarray(alpha, dtype=np.float64)
+                scalar_float(alpha) if np.isscalar(alpha) else np.asarray(alpha, dtype=np.float64)
             )
         self._touch()
 
@@ -780,7 +780,7 @@ class BarPatch:
     def set_alpha(self, alpha: Optional[float]) -> None:
         current = self._entry["kwargs"].get("_artist_alpha")
         if current is None or np.isscalar(current):
-            initial = -1.0 if current is None else float(current)
+            initial = -1.0 if current is None else scalar_float(current)
             values = np.full(self._count(), initial, dtype=np.float64)
         else:
             values = np.asarray(current, dtype=np.float64).copy()
@@ -792,13 +792,17 @@ class BarPatch:
         current = self._entry["kwargs"].get("_artist_alpha")
         if current is None:
             return None
-        value = float(current) if np.isscalar(current) else float(np.asarray(current)[self._index])
+        value = (
+            scalar_float(current)
+            if np.isscalar(current)
+            else float(np.asarray(current)[self._index])
+        )
         return None if value < 0.0 else value
 
     def set_linewidth(self, width: float) -> None:
         current = self._entry["kwargs"].get("stroke_width", 0.0)
         values = (
-            np.full(self._count(), float(current), dtype=np.float64)
+            np.full(self._count(), scalar_float(current), dtype=np.float64)
             if np.isscalar(current)
             else np.asarray(current, dtype=np.float64).copy()
         )
@@ -810,7 +814,11 @@ class BarPatch:
 
     def get_linewidth(self) -> float:
         current = self._entry["kwargs"].get("stroke_width", 0.0)
-        return float(current) if np.isscalar(current) else float(np.asarray(current)[self._index])
+        return (
+            scalar_float(current)
+            if np.isscalar(current)
+            else float(np.asarray(current)[self._index])
+        )
 
 
 class StepPatch(Artist):

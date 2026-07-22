@@ -20,7 +20,9 @@
  * title, axis tick labels, legend, tooltip (§7).
  */
 
-export const PROTOCOL = 5;
+// v6: symlog axis scale (`scale: "symlog"` + `constant`) and scale-coordinate
+// density grids — a v5 client would render both silently wrong.
+export const PROTOCOL = 6;
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
 // python/xy/_framing.py). The chart spec's PROTOCOL

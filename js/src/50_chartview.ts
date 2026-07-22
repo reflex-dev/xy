@@ -551,7 +551,13 @@ export class ChartView {
   }
 
   _axisMode(axisId) {
-    return this._axis(axisId).scale === "log" ? 1 : 0;
+    const scale = this._axis(axisId).scale;
+    return scale === "log" ? 1 : scale === "symlog" ? 2 : 0;
+  }
+
+  _axisConstant(axisId) {
+    const constant = Number(this._axis(axisId).constant);
+    return Number.isFinite(constant) && constant > 0 ? constant : 1;
   }
 
   _axisIds() {
@@ -645,11 +651,19 @@ export class ChartView {
     const v = Number(value);
     if (!Number.isFinite(v)) return NaN;
     if (axis && axis.scale === "log") return v > 0 ? Math.log10(v) : NaN;
+    if (axis && axis.scale === "symlog") {
+      const c = Number(axis.constant) || 1;
+      return Math.sign(v) * Math.log1p(Math.abs(v) / c);
+    }
     return v;
   }
 
   _axisValue(axis, coord) {
     if (axis && axis.scale === "log") return Math.pow(10, coord);
+    if (axis && axis.scale === "symlog") {
+      const c = Number(axis.constant) || 1;
+      return Math.sign(coord) * c * Math.expm1(Math.abs(coord));
+    }
     return coord;
   }
 
@@ -674,6 +688,14 @@ export class ChartView {
     if (axis.kind === "time") return timeTicks(lo, hi, target);
     if (axis.kind === "category") return categoryTicks(lo, hi, axis.categories || [], target);
     if (axis.scale === "log") return logTicks(lo, hi, target);
+    if (axis.scale === "symlog") {
+      const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+      const made = linearTicks(c0, c1, target);
+      const ticks = made.ticks.map((v) => this._axisValue(axis, v));
+      if (Math.min(lo, hi) <= 0 && Math.max(lo, hi) >= 0 && !ticks.some((v) => Math.abs(v) < 1e-12)) ticks.push(0);
+      ticks.sort((a, b) => lo <= hi ? a - b : b - a);
+      return { ticks, labels: ticks, step: Math.abs(this._axisValue(axis, made.step)) };
+    }
     return linearTicks(lo, hi, target);
   }
 
@@ -2990,6 +3012,7 @@ export class ChartView {
     const u = (n) => uniformOf(gl, prog, n);
     gl.uniform2f(u(`${prefix}meta`), meta && Number.isFinite(meta.offset) ? meta.offset : 0, meta && meta.scale ? meta.scale : 1);
     gl.uniform1i(u(`${prefix}mode`), this._axisMode(axisId));
+    gl.uniform1f(u(`${prefix}constant`), this._axisConstant(axisId));
   }
 
   // `keepPick` marks a frame whose ONLY trigger is hover-highlight state: the
@@ -3305,8 +3328,18 @@ export class ChartView {
     const [vy0, vy1] = this._axisRange(g.yAxis);
     gl.uniform4f(u("u_view"), vx0 ?? x0, vx1 ?? x1, vy0 ?? y0, vy1 ?? y1);
     gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
+    gl.uniform1f(u("u_xconstant"), this._axisConstant(g.xAxis));
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
-    gl.uniform4f(u("u_gridRange"), d.xRange[0], d.xRange[1], d.yRange[0], d.yRange[1]);
+    gl.uniform1f(u("u_yconstant"), this._axisConstant(g.yAxis));
+    // Density grids are uniform in scale coordinates (§28): the shader's uv
+    // is an affine map of the interpolated coordinate, so the grid range
+    // ships to the GPU already transformed (f64 here, cheap — 4 scalars).
+    const xAxis = this._axis(g.xAxis), yAxis = this._axis(g.yAxis);
+    gl.uniform4f(
+      u("u_gridRange"),
+      this._axisCoord(xAxis, d.xRange[0]), this._axisCoord(xAxis, d.xRange[1]),
+      this._axisCoord(yAxis, d.yRange[0]), this._axisCoord(yAxis, d.yRange[1]),
+    );
     gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * opacityScale);
     const constant = d.color;
     gl.uniform1i(u("u_constantColor"), constant ? 1 : 0);
@@ -3333,7 +3366,9 @@ export class ChartView {
     const [vy0, vy1] = this._axisRange(g.yAxis);
     gl.uniform4f(u("u_view"), vx0 ?? x0, vx1 ?? x1, vy0 ?? y0, vy1 ?? y1);
     gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
+    gl.uniform1f(u("u_xconstant"), this._axisConstant(g.xAxis));
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
+    gl.uniform1f(u("u_yconstant"), this._axisConstant(g.yAxis));
     // Grid row/column 0 anchors to the bottom/left edge of the grid rect in
     // *display* orientation — the raster/SVG exporters' convention (the shim's
     // imshow pre-flips rows for origin='upper' assuming it). A reversed axis
@@ -3675,7 +3710,9 @@ export class ChartView {
     this._setAxisUniforms(prog, "u_y0", g.y0Meta, g.yAxis);
     this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis);
     gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
+    gl.uniform1f(u("u_xconstant"), this._axisConstant(g.xAxis));
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
+    gl.uniform1f(u("u_yconstant"), this._axisConstant(g.yAxis));
     gl.uniform4f(u("u_edgePad"), edgePad[0], edgePad[1], edgePad[2], edgePad[3]);
     const [r, gg, b, a] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a);
@@ -3734,7 +3771,9 @@ export class ChartView {
     this._setAxisUniforms(prog, "u_v1", g.value1Meta, vAxis);
     this._setAxisUniforms(prog, "u_v0", g.value0Meta, vAxis);
     gl.uniform1i(u("u_pmode"), this._axisMode(pAxis));
+    gl.uniform1f(u("u_pconstant"), this._axisConstant(pAxis));
     gl.uniform1i(u("u_vmode"), this._axisMode(vAxis));
+    gl.uniform1f(u("u_vconstant"), this._axisConstant(vAxis));
     gl.uniform1f(u("u_width"), g.width);
     gl.uniform1i(u("u_orientation"), g.orientation);
     gl.uniform1i(u("u_v0Mode"), g.value0Mode);

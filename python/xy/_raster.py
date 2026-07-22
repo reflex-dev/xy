@@ -37,6 +37,7 @@ from ._svg import (
     _column,
     _corner_radii,
     _css,
+    _heatmap_rgba_grid,
     _legend_layout,
     _lut,
     _px_size,
@@ -49,6 +50,7 @@ from ._svg import (
     axis_ticks,
     hexbin_ring,
     layout,
+    warp_grid_rgba,
 )
 
 # Opcodes — must match src/raster.rs.
@@ -754,7 +756,9 @@ def render_raster(
         elif kind in ("bar", "column") and t.get("bar"):
             _emit_bars(cmd, t, blob, cols, trace_sx, trace_sy, style, color, plot)
         elif kind == "heatmap" and t.get("heatmap"):
-            _emit_grid(cmd, "heatmap", t["heatmap"], blob, cols, trace_sx, trace_sy, style)
+            _emit_grid(
+                cmd, "heatmap", t["heatmap"], blob, cols, trace_sx, trace_sy, style, borrowed
+            )
         elif kind == "triangle_mesh":
             _emit_triangle_mesh(cmd, t, blob, cols, trace_sx, trace_sy, style, color)
         elif all(k in t for k in ("x0", "x1", "y0", "y1")):
@@ -1833,9 +1837,26 @@ def _emit_grid(
     sx: _Scale,
     sy: _Scale,
     style: dict[str, Any],
+    borrowed: tuple[np.ndarray, ...] = (),
 ) -> None:
     if kind == "heatmap":
         w, h = int(g["w"]), int(g["h"])
+        if not (sx.affine and sy.affine):
+            # Heatmap cells are uniform in *data* space, but the native image
+            # ops stretch linearly across the dest rect — on a nonlinear axis
+            # the grid must first be resampled to scale coordinates (the same
+            # `_svg.warp_grid_rgba` the SVG exporter uses). Density grids are
+            # already scale-coordinate-uniform (§28) and skip this.
+            xr, yr = g["x_range"], g["y_range"]
+            rgba = warp_grid_rgba(
+                _heatmap_rgba_grid(g, blob, cols, style, borrowed), xr, yr, sx, sy
+            )
+            oh, ow = rgba.shape[:2]
+            dx, dy, dw, dh = _scene.grid_dest_rect(xr, yr, sx, sy)
+            cmd.image(
+                dx, dy, dw, dh, ow, oh, np.ascontiguousarray(rgba[::-1]).tobytes(), nearest=True
+            )
+            return
         if "rgba_bufs" in g:
             channels = [_column(blob, cols[index]) for index in g["rgba_bufs"]]
             rgba = np.clip(np.column_stack(channels) * 255.0, 0, 255).astype(np.uint8)

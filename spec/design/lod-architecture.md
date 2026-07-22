@@ -66,11 +66,13 @@ Tiered chart kinds must enter through the common LOD primitives in
   kernel, cache, or trace drill-state mutation sees them.
 - `plan_view_lod(...)` records the direct-vs-aggregate decision, hysteresis,
   screen-bounded grid shape, `mode`, `tier`, `visible`, and `reduction`.
-- `EncodedColumn`, `encode_f32_values(...)`,
+- `EncodedColumn`, `encode_f32_values(...)`, `geometry_offset(...)`,
   `encode_window_xy_columns(...)`, `add_window_xy(...)`, and
   `BufferWriter.add_encoded(...)` are the shared geometry wire primitive: f64
   data-space values become finite f32 buffers plus `{offset, scale, len}`
-  metadata in exactly one place.
+  metadata in exactly one place. `geometry_offset` is the one offset policy:
+  window/domain midpoint on linear axes, pinned 0.0 on log-family axes
+  (dossier §16).
 - `sample_rows_for_target(...)` is the shared target-bounded subset primitive:
   density overlays and future sampled tiers ask for "about N stable rows from
   this viewport" in one place instead of copying target-fraction math.
@@ -373,6 +375,9 @@ contract entry before it lands.
    render resolution and refuses beyond `MAX_UPSAMPLE` (2×), so below-floor
    and near-drill windows fall through to the exact `range_indices` +
    `bin_2d` path. Level is recorded per update as `binning: "pyramid-L<l>"`.
+   Traces on a nonlinear (log/symlog) axis skip the pyramid entirely — its
+   raw-space levels cannot compose a scale-coordinate grid (dossier §28) —
+   and always take the exact path.
 8. Client: tile-keyed cache replaces window-keyed `densityCache` (same
    eviction, same crossfades). Still pending — `js/src/45_lod.ts` keys the
    cache by density window, and no client code reads the served level.
