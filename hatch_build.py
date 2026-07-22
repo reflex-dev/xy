@@ -12,12 +12,14 @@ Install ergonomics, by audience (design dossier §33):
   error (see `xy.kernels`). Install a Rust toolchain, or use a published
   wheel, for a working compute backend.
 - The JS client (`python/xy/static/*.js`) is a **generated artifact, not
-  committed to git** (§33): this hook builds it with `node js/build.mjs` when a
-  Node toolchain is present and force-includes it into the wheel and sdist —
-  exactly as it does the Rust core. So a *published* wheel or sdist carries the
-  client already built (end users still need no Node), while building from a raw
-  clone needs Node just as it needs Rust. An unpacked sdist already carries the
-  bundle, so `pip install <sdist>` needs no Node even though this hook re-runs.
+  committed to git** (§33): this hook builds it with `node js/build.mjs` when
+  it's missing (running `npm ci` first if needed), and the `artifacts` config in
+  pyproject.toml carries the git-ignored bundles into both the wheel and sdist —
+  the JS analogue of compiling the Rust core from source. So a *published* wheel
+  or sdist carries the client already built (end users need no Node), while
+  building from a raw clone builds it, needing Node just as the core needs Rust.
+  An unpacked sdist already carries the bundle, so `pip install <sdist>` stays
+  Node-free — this hook sees the bundle present and returns without touching it.
 
 Env switches:
 - `XY_SKIP_CARGO=1` — don't invoke cargo; use an already-built lib if
@@ -186,39 +188,52 @@ class CustomBuildHook(BuildHookInterface):
         """Return the directory holding the render-client bundles, if available.
 
         The bundles (`static/index.js`, `static/standalone.js`) are generated,
-        not committed (§33). Build them with `node js/build.mjs` when a Node
-        toolchain is installed; otherwise reuse a copy already on disk — e.g.
-        one carried inside an unpacked sdist, which is what lets
-        `pip install <sdist>` work with no Node. Missing bundles that cannot be
-        built is a hard error only under XY_REQUIRE_NODE (CI distribution
-        builds); otherwise it degrades to a loud skip and the widget/export path
-        raises a clear runtime error on first use (see `xy.widget`).
+        not committed (§33). The rule is: **if they're already on disk, use them
+        as-is; otherwise build them from the `js/` source.**
+
+        - A published wheel/sdist carries them, so `pip install xy` and
+          `pip install <sdist>` are completely Node-free — this method returns
+          immediately without touching Node or npm.
+        - Building from a source checkout (a clone, an editable install, an
+          `sdist`/`wheel` built in CI) has no bundle yet, so we build it — the
+          JS analogue of compiling the Rust core from source. `npm ci` first
+          provisions the dev-only toolchain (vite/tsc) when it isn't installed.
+
+        A missing bundle that cannot be built is a hard error only under
+        XY_REQUIRE_NODE (CI distribution builds); otherwise it degrades to a
+        loud skip and the widget/export path raises a clear runtime error on
+        first use (see `xy.widget`, `xy.export`).
         """
         static_dir = _static_dir(root)
 
-        if os.environ.get("XY_SKIP_NODE") != "1" and shutil.which("node") is not None:
-            # Build only when the dev/build-time toolchain is installed (npm ci
-            # pulls vite/tsc into node_modules); the shipped client itself stays
-            # runtime-dependency-free.
+        # Present already (published dist, or a prior dev/CI build): use as-is.
+        # This is the branch every end-user install takes — never runs Node.
+        if _bundles_present(static_dir):
+            return static_dir
+
+        # Building from source: build the client. Provision vite/tsc first if
+        # node_modules isn't there yet. Only attempts this when Node is on PATH
+        # and the js/ source tree is present (it isn't in edge cases like a
+        # bundle-stripped tree with no sources).
+        build_script = root / "js" / "build.mjs"
+        if (
+            os.environ.get("XY_SKIP_NODE") != "1"
+            and build_script.is_file()
+            and shutil.which("node")
+        ):
+            if not (root / "node_modules").is_dir() and shutil.which("npm") is not None:
+                self._run_build_step(["npm", "ci"], root, require)
             if (root / "node_modules").is_dir():
-                try:
-                    subprocess.run(["node", "js/build.mjs"], cwd=root, check=True)
-                except (subprocess.CalledProcessError, OSError) as e:
-                    if require:
-                        raise RuntimeError(f"node js/build.mjs failed: {e}") from e
-            elif require:
-                raise RuntimeError(
-                    "XY_REQUIRE_NODE=1 but node_modules is missing — run "
-                    "`npm ci` before building the distribution."
-                )
+                self._run_build_step(["node", "js/build.mjs"], root, require)
 
         if _bundles_present(static_dir):
             return static_dir
         if require:
             raise RuntimeError(
                 "XY_REQUIRE_NODE=1 but the render-client bundles are missing and "
-                "could not be built. Install Node (https://nodejs.org) and run "
-                "`npm ci && node js/build.mjs`, or build from a published sdist."
+                "could not be built. Install Node (https://nodejs.org) so the hook "
+                "can run `npm ci && node js/build.mjs`, or build from a published "
+                "sdist that already carries them."
             )
         print(
             "xy: building WITHOUT the JS render client (node not found or "
@@ -228,6 +243,19 @@ class CustomBuildHook(BuildHookInterface):
             file=sys.stderr,
         )
         return None
+
+    @staticmethod
+    def _run_build_step(cmd: list[str], root: Path, require: bool) -> None:
+        """Run one render-client build step (`npm ci` / `node js/build.mjs`),
+        re-raising only when the client is required (CI distribution builds).
+        A soft failure leaves the bundle absent, handled by the caller."""
+        try:
+            subprocess.run(cmd, cwd=root, check=True)
+        except (subprocess.CalledProcessError, OSError) as e:
+            if require:
+                raise RuntimeError(
+                    f"{' '.join(cmd)} failed while building the render client: {e}"
+                ) from e
 
     def _provision_native(
         self, root: Path, lib_name: str, dest: Path, require: bool
