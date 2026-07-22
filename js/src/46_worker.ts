@@ -37,10 +37,25 @@ self.onmessage = (e) => {
     const v = ++grid[(cy | 0) * w + (cx | 0)];
     if (v > max) max = v;
   }
+  // The main thread and its multi-window cache retain the same compact
+  // log-u8 representation as kernel density updates. The f32 count grid is a
+  // worker-local scratch allocation only; never transfer four bytes per cell
+  // merely to encode them again while applying the result.
+  const encoded = new Uint8Array(grid.length);
+  const denom = Math.log1p(Math.max(0, max));
+  if (denom > 0) {
+    for (let i = 0; i < grid.length; i++) {
+      const count = grid[i];
+      if (count > 0) {
+        encoded[i] = Math.max(1, Math.min(255, Math.round(255 * Math.log1p(count) / denom)));
+      }
+    }
+  }
   self.postMessage(
     { type: "grid", seq: m.seq, trace: m.trace, w, h, max,
-      x0: m.x0, x1: m.x1, y0: m.y0, y1: m.y1, grid: grid.buffer },
-    [grid.buffer]
+      enc: "log-u8", x0: m.x0, x1: m.x1, y0: m.y0, y1: m.y1,
+      grid: encoded.buffer },
+    [encoded.buffer]
   );
 };
 `;

@@ -189,6 +189,21 @@ def test_interaction_benchmark_completes_gpu_warmup_before_timing() -> None:
     assert "gl.readPixels(" in bench[settle_start:settle_end]
 
 
+def test_density_normalization_benchmark_tracks_uploads_worker_and_cache() -> None:
+    bench = (ROOT / "benchmarks" / "bench_density_normalization.py").read_text(encoding="utf-8")
+
+    for marker in (
+        "view._requestSampleRebin",
+        "worker_result_compact",
+        "gl.texImage2D=(...args)",
+        "tex_image_2d_calls",
+        "cpu_cache_bytes:g.densityCacheBytes",
+        "legacy_requantize_per_frame_ms",
+        "view._drawNow(); gl.finish();",
+    ):
+        assert marker in bench
+
+
 def test_dashboard_benchmark_reports_eviction_and_scroll_telemetry() -> None:
     bench = (ROOT / "benchmarks" / "bench_dashboard.py").read_text(encoding="utf-8")
 

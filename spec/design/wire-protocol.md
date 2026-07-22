@@ -121,6 +121,10 @@ states which representation this view resolved to:
   `density` is `{buf, w, h, max, enc: "log-u8", x_range, y_range}` plus
   optional `color` (a constant-channel color) and `sample` (the retained
   point-sample overlay). `binning` is `"exact"` or `"pyramid-L<level>"`.
+  The client uploads these bytes directly to R8; its bounded window cache keeps
+  the texture and metadata, not a CPU copy. Per-view normalization is a draw uniform; it
+  neither decodes the attachment to f32 nor re-uploads the texture. The
+  standalone re-bin worker emits this same `enc: "log-u8"` representation.
 - `mode: "points"` — the deep-zoom drill:
   `{id, mode, tier: "direct", visible, reduction: "none", x_range, y_range,
   x, y, color, size, density_val, lod_blend, density_colormap, drill_seq,

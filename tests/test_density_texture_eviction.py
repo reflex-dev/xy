@@ -44,7 +44,7 @@ _PROBE = r"""
     };
     // Distinct grids that differ only in covered area (drives LRU's area rule).
     const mkDensity = (side) => ({
-      w: 2, h: 2, max: 1, normMax: 1, grid: new Float32Array([1, 2, 3, 4]),
+      w: 2, h: 2, max: 1, normMax: 1,
       tex: mkTex(), lut: g.density.lut, colormap: "viridis",
       xRange: [0, side], yRange: [0, side],
     });
@@ -61,6 +61,13 @@ _PROBE = r"""
 
     const shownTexAlive = gl.isTexture(shown.tex);
     const inCache = (g.densityCache || []).includes(shown);
+    const computedCacheBytes = (g.densityCache || []).reduce(
+      (total, density) => total
+        + (density.encoded?.byteLength || 0) + (density.grid?.byteLength || 0), 0,
+    );
+    const compactCache = (g.densityCache || []).every(
+      (density) => !("encoded" in density) && !("grid" in density),
+    );
 
     // Drawing the retained (crossfade-source) grid must not raise a GL error.
     while (gl.getError() !== gl.NO_ERROR) { /* drain */ }
@@ -71,6 +78,10 @@ _PROBE = r"""
       hasDensity: !!g,
       shownTexAlive,
       inCache,
+      cacheEntries: g.densityCache.length,
+      cacheBytes: g.densityCacheBytes,
+      computedCacheBytes,
+      compactCache,
       drawError,
       invalidOp: drawError === GL_INVALID_OPERATION,
     }));
@@ -116,6 +127,10 @@ def test_density_cache_eviction_keeps_shown_texture(tmp_path: Path) -> None:
     # eviction; the pre-fix bug freed it (isTexture false) and left it evicted.
     assert result["inCache"] is True
     assert result["shownTexAlive"] is True
+    assert result["cacheEntries"] <= 8
+    assert result["compactCache"] is True
+    assert result["cacheBytes"] == result["computedCacheBytes"]
+    assert result["cacheBytes"] == 0
     # Drawing the retained grid raises no "deleted object" error.
     assert result["invalidOp"] is False, result
     assert result["drawError"] == 0, result

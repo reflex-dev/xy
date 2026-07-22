@@ -1694,6 +1694,11 @@ this reason.
 `eq_hist`/log) over the *composed visible tiles* each frame — O(visible tiles), cheap.
 State this, and expose linear/log/eq_hist at composite time (which, per research, is
 where datashader does it too — validating "colormap at composite" but not the domain).
+The shipped log-density composite retains each grid as log-u8 and animates its
+per-view norm with `log1p(source_max) / log1p(display_norm)` in the fragment
+shader. Four texels are requantized before bilinear blending, preserving R8
+LINEAR semantics without a grid-sized CPU decode/re-encode or texture upload
+on each exposure frame.
 
 ### F7 — Streaming into the pyramid is under-reconciled. [Moderate]
 **Failure scenario.** 100k pts/s appended. §28 says "incremental tile update for touched

@@ -3,7 +3,7 @@ import { buildLutData, colormapStops } from "./10_colormaps";
 import { cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
 import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
-import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodRememberDensity, lodWriteGridTexture } from "./45_lod";
+import { lodDensityNormScale, lodDrawDensityTier, lodEncodeLogU8, lodRememberDensity, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
 
 // ---------------------------------------------------------------------------
@@ -2050,14 +2050,15 @@ export class ChartView {
       const d = t.density;
       const meta = this.spec.columns[d.buf];
       const raw = this._columnView(buffer, meta);
-      const grid = d.enc === "log-u8" ? lodDecodeLogU8(raw, d.max) : raw;
+      const encoded = d.enc === "log-u8"
+        ? raw // retained canonical payload already owns this view: zero-copy first paint
+        : lodEncodeLogU8(raw, d.max);
       g.densityNormMax = d.max;
       g.density = {
         w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
         color: d.color ? parseColor(this.root, d.color, [0.3, 0.47, 0.66, 1]) : null,
         xRange: d.x_range, yRange: d.y_range,
-        grid: lodCopyGrid(grid),
-        tex: this._uploadGrid(grid, d.w, d.h, d.max),
+        tex: this._uploadDensityGrid(encoded, d.w, d.h),
         lut: this._lut(d.colormap),
       };
       g.sampleOverlay = this._buildDensitySample(t, d.sample, buffer);
@@ -2758,10 +2759,10 @@ export class ChartView {
     return tex;
   }
 
-  _uploadGrid(f32, w, h, maxVal) {
+  _uploadDensityGrid(encoded, w, h) {
     const gl = this.gl;
     const tex = gl.createTexture();
-    lodWriteGridTexture(gl, tex, f32, w, h, maxVal);
+    lodWriteGridTexture(gl, tex, encoded, w, h);
     return tex;
   }
 
@@ -3263,6 +3264,7 @@ export class ChartView {
     gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     gl.uniform4f(u("u_gridRange"), d.xRange[0], d.xRange[1], d.yRange[0], d.yRange[1]);
+    gl.uniform1f(u("u_normScale"), lodDensityNormScale(d.max, d.normMax || d.max));
     gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * opacityScale);
     const constant = d.color;
     gl.uniform1i(u("u_constantColor"), constant ? 1 : 0);
@@ -4868,6 +4870,7 @@ export class ChartView {
     g.density = null;
     g._shownDensity = null;
     g.densityCache = [];
+    g.densityCacheBytes = 0;
     g.heatmap = null;
     g._cpu = null;
   }

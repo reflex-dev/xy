@@ -142,6 +142,16 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **Density normalization is now uniform-only and CPU-cache-free.** The browser
+  uploads first-paint, live-update, and worker-rebinned log-u8 sources directly
+  into R8 textures, then releases transient attachments; cached/home density
+  windows retain their texture and metadata, not a second CPU grid.
+  Exposure easing now changes a shader scalar instead of decoding to f32,
+  requantizing every cell, and calling `texImage2D` on every animation frame.
+  The shader normalizes and rounds the four source texels before a manual
+  bilinear blend, preserving the former CPU-requantized LINEAR visual order;
+  settled frames keep their single hardware-LINEAR lookup, and cache
+  accounting reports zero retained CPU grid bytes.
 - **Responsive, author-defeatable browser chrome.** XY's visual defaults now
   live in a low-priority cascade layer, so Tailwind utilities, ordinary author
   CSS, and slot styles override them without `!important`. Long legends remain

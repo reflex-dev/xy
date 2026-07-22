@@ -37,10 +37,22 @@ window.xyLiveDrilldown = view;
     const domX = ov.x_range, domY = ov.y_range;
     const v0 = view.view0 || view.view;
     const homeRange = { x: g.density.xRange.slice(), y: g.density.yRange.slice() };
+    // Density cache entries are intentionally GPU-only. Capture the transient
+    // local-rebin upload in the probe so alignment can still inspect its mass
+    // without making production retain a second CPU grid.
+    const uploaded = new WeakMap();
+    const realUploadDensityGrid = view._uploadDensityGrid;
+    view._uploadDensityGrid = (bytes, w, h) => {
+      const texture = realUploadDensityGrid.call(view, bytes, w, h);
+      uploaded.set(texture, bytes.slice());
+      return texture;
+    };
 
     // Density mass centroid in DATA coordinates, using the reported grid range.
     const centroid = (d) => {
-      const { grid, w, h, xRange, yRange } = d;
+      const { w, h, xRange, yRange } = d;
+      const grid = uploaded.get(d.tex);
+      if (!grid) throw new Error("panned density upload was not observed");
       let sx = 0, sy = 0, sw = 0;
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
         const v = grid[y * w + x] || 0; if (v <= 0) continue;
@@ -62,6 +74,7 @@ window.xyLiveDrilldown = view;
     view._drawNow(); view._raf = null;
 
     const c = centroid(g.density);
+    view._uploadDensityGrid = realUploadDensityGrid;
     document.body.setAttribute("data-drill-pan", JSON.stringify({
       hasDensity: !!g,
       domX, domY,

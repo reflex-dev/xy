@@ -28,8 +28,8 @@ relative mass, not as a budget (see §3 on why a line count failed as a metric).
 | `20_theme.ts` | 163 | Resolves chrome and mark colors: arbitrary CSS color expressions and `--chart-*` custom properties are resolved against a live probe element into f32 RGBA for GL, with a fallback on unparseable input. Also owns `XY_CHROME_CSS` and its one-time stylesheet injection. |
 | `30_ticks.ts` | 224 | CPU-side tick generation in f64 for linear, log, category and time axes, plus every axis/colorbar label formatter (automatic and `format=`-driven). Specified in §6. |
 | `40_gl.ts` | 829 | WebGL2 primitives: shader compile/link, `makeProgram` with its per-program uniform-location memo (R1), the fixed `ATTR_SLOTS` attribute-slot table bound at link time, and the shader inventory itself. The only module that is GPU-API-specific by design (§4). |
-| `45_lod.ts` | 567 | View-dependent level-of-detail orchestration, deliberately chart-agnostic: tier selection, drill enter/exit hysteresis (`LOD_DRILL_EXIT_FACTOR`), cross-tier fades, and the retained tier caches. Calls back into `view._draw*` rather than drawing itself, which is the seam tests intercept. |
-| `46_worker.ts` | 59 | The standalone density re-bin worker: a worker source string carried inside the bundle and booted from a Blob URL. Re-bins the retained sample off the main thread so kernel-less (`to_html`) density charts refine on zoom instead of stretching the overview texture; absence of workers falls back to stretching. |
+| `45_lod.ts` | 567 | View-dependent level-of-detail orchestration, deliberately chart-agnostic: tier selection, drill enter/exit hysteresis (`LOD_DRILL_EXIT_FACTOR`), cross-tier fades, compact log-u8 density caches, and uniform-only exposure clocks. Calls back into `view._draw*` rather than drawing itself, which is the seam tests intercept. |
+| `46_worker.ts` | 59 | The standalone density re-bin worker: a worker source string carried inside the bundle and booted from a Blob URL. Re-bins the retained sample off the main thread, log-u8-encodes its result before transfer, and lets kernel-less (`to_html`) density charts refine on zoom instead of stretching the overview texture; absence of workers falls back to stretching. |
 | `50_chartview.ts` | 4175 | The `ChartView` class: the four drawing surfaces, scale/view state, chrome (background, grid, axes, legend, colorbar), GL buffer and VAO management (R2), and pick orchestration. Modules 51–54 extend this same class. |
 | `51_annotations.ts` | 591 | The 2D overlay canvas above the marks canvas: annotation markers, arrows, shape fills, and collision-nudged labels. Separates canvas shape style keys from label CSS so annotation styling never leaks into the DOM label. |
 | `52_tooltip.ts` | 321 | Hit → source row → tooltip DOM. Anchors the tooltip at the picked point's data coordinates and reprojects it every draw ([interaction.md](../api/interaction.md) §7). Renders the local f32-decoded row immediately, then replaces it with the kernel's exact f64 row when that reply arrives (sequence- and `drill_seq`-guarded); composes text nodes, never HTML. |
@@ -57,6 +57,12 @@ relative mass, not as a budget (see §3 on why a line count failed as a metric).
 - **Uniform-only pan/zoom**: geometry is static offset-encoded f32; view
   changes touch two vec2 uniforms per mark (`_map`). This is why interaction
   is cheap; nothing below may regress it.
+- **Uniform-only density exposure**: density attachments upload directly as
+  log-u8 R8 textures and cached/home windows retain no CPU grid. Easing changes
+  `u_normScale`; the fragment shader requantizes four
+  fetched texels before its bilinear blend, so no animation frame allocates a
+  grid-sized buffer or calls `texImage2D` and the old LINEAR visual ordering is
+  retained. Settled scale=1 frames keep the native single-fetch LINEAR path.
 - **Bounded inputs in the aggregated tiers**: decimated ships M4 output
   bounded by the plot's pixel width; density ships a fixed grid. Direct-tier
   traces still ship O(N) columns — the bound there is the tier threshold, not

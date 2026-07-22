@@ -104,6 +104,9 @@ These commands match the non-blocking GitHub Actions measurement lane:
   --json heatmap-4b.json
 .venv/bin/python benchmarks/bench_interaction.py --sizes 1e4,2.5e5 \
   --reps 24 --chromium "$CHROME" --json interaction.json
+.venv/bin/python benchmarks/bench_density_normalization.py \
+  --points 500000 --frames 240 --chromium "$CHROME" \
+  --json density-normalization.json
 .venv/bin/python benchmarks/bench_transport.py --n 1e6 --reps 15 \
   --browser-reps 12 --chromium "$CHROME" --require-browser \
   --json transport.json
@@ -150,6 +153,14 @@ cross-library, and fresh-install workloads remain in the benchmark-refresh
 workflow because they need a real browser, separate processes/virtual
 environments, or wall-clock timing. They are still measured in CI, but are not
 reported as CodSpeed simulation benchmarks.
+
+`bench_density_normalization.py` drives the real density exposure clock for a
+settled log-u8 surface, calls `gl.finish()` around every measured draw, and
+reports frame median/p95/max, `texImage2D` calls, and retained CPU cache bytes. Its
+comparison arm runs the removed f32-to-log-u8 grid loop in the same JavaScript
+runtime without uploading, attributing the O(cells) CPU work separately. A
+valid uniform-only run has zero texture-image calls and zero retained CPU grid
+bytes; hardware and SwiftShader reports remain separate.
 
 The suite includes the million-row fixed-width categorical factorizer and the
 allocation-bounded implicit-row stratified sampler as standalone kernel rows,

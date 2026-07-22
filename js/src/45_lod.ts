@@ -25,29 +25,16 @@ function lodFade(view, start, duration = 140) {
   return t * t * (3 - 2 * t);
 }
 
-// Quantized wire (density grids as log-encoded u8, ~4x smaller): decode back
-// to approximate counts so exposure normalization and re-encodes work
-// unchanged. The final texture is 8-bit log anyway, so the round-trip is
-// visually exact; decode is deterministic (no RNG/time).
-export function lodDecodeLogU8(buf, maxVal) {
-  const u8 = buf instanceof ArrayBuffer ? new Uint8Array(buf) : new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
-  const out = new Float32Array(u8.length);
-  const denom = Math.log1p(Math.max(0, maxVal || 0));
-  if (denom > 0) {
-    for (let i = 0; i < u8.length; i++) {
-      if (u8[i] > 0) out[i] = Math.expm1((u8[i] / 255) * denom);
-    }
-  }
-  return out;
+function lodU8View(buf) {
+  return buf instanceof ArrayBuffer
+    ? new Uint8Array(buf)
+    : new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
 }
 
-export function lodCopyGrid(f32) {
-  return f32.slice ? f32.slice() : new Float32Array(f32);
-}
-
-// Log tone-mapped grid upload (R8): stable perception across renormalization,
-// and the u_max swings between rebins compress logarithmically (§5/§F6).
-export function lodWriteGridTexture(gl, tex, f32, w, h, maxVal) {
+// Legacy f32 density payloads and the standalone worker's count buffer cross
+// this compatibility seam once. Shipping density grids are already log-u8 and
+// bypass it; exposure animation never calls it.
+export function lodEncodeLogU8(f32, maxVal) {
   const data = new Uint8Array(f32.length);
   const denom = Math.log1p(Math.max(0, maxVal || 0));
   if (denom > 0) {
@@ -57,6 +44,29 @@ export function lodWriteGridTexture(gl, tex, f32, w, h, maxVal) {
         data[i] = Math.max(1, Math.min(255, Math.round(255 * Math.log1p(c) / denom)));
       }
     }
+  }
+  return data;
+}
+
+// A source byte q was encoded as q/255 = log1p(count)/log1p(sourceMax).
+// Displaying that source at another exposure norm therefore multiplies q by
+// this scalar. The fragment shader rounds/clamps each texel before its manual
+// bilinear blend, exactly matching the former CPU-requantized LINEAR texture.
+export function lodDensityNormScale(sourceMax, normMax) {
+  const source = Math.log1p(Math.max(0, Number(sourceMax) || 0));
+  const norm = Math.log1p(Math.max(0, Number(normMax) || 0));
+  const scale = source > 0 && norm > 0 ? source / norm : 1;
+  return Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
+// Upload already-log-encoded bytes once. Settled exposure keeps hardware
+// LINEAR sampling; changed normalization is implemented manually in
+// DENSITY_FS because it must round/clamp *before* interpolation (texelFetch
+// ignores these filter parameters).
+export function lodWriteGridTexture(gl, tex, encoded, w, h) {
+  const data = encoded instanceof Uint8Array ? encoded : lodU8View(encoded);
+  if (data.byteLength !== w * h) {
+    throw new RangeError("density grid byte length must equal width * height");
   }
   gl.bindTexture(gl.TEXTURE_2D, tex);
   const align = gl.getParameter(gl.UNPACK_ALIGNMENT);
@@ -88,7 +98,7 @@ function lodNormMax(g, nextMax) {
 }
 
 function lodStartNormAnim(view, g, start, target) {
-  if (!g.density || !g.density.grid || !Number.isFinite(target) || target <= 0) {
+  if (!g.density || !g.density.tex || !Number.isFinite(target) || target <= 0) {
     g._densityNormAnim = null;
     return;
   }
@@ -97,7 +107,6 @@ function lodStartNormAnim(view, g, start, target) {
     g._densityNormAnim = null;
     g.density.normMax = target;
     g.densityNormMax = target;
-    lodWriteGridTexture(view.gl, g.density.tex, g.density.grid, g.density.w, g.density.h, target);
     return;
   }
   g._densityNormAnim = {
@@ -111,7 +120,7 @@ function lodStartNormAnim(view, g, start, target) {
 function lodStepNorm(view, g) {
   const anim = g._densityNormAnim;
   const d = g.density;
-  if (!anim || !d || !d.grid || !d.tex) return;
+  if (!anim || !d || !d.tex) return;
   const t = Math.min(1, Math.max(0, (view._now() - anim.startedAt) / anim.duration));
   const k = t * t * (3 - 2 * t);
   const norm = anim.start + (anim.target - anim.start) * k;
@@ -120,7 +129,6 @@ function lodStepNorm(view, g) {
   if (rel > 0.004 || t >= 1) {
     d.normMax = norm;
     g.densityNormMax = norm;
-    lodWriteGridTexture(view.gl, d.tex, d.grid, d.w, d.h, norm);
   }
   if (t < 1) {
     view.draw();
@@ -195,6 +203,18 @@ function lodDensityPinned(g, d) {
     d === g._shownDensity || d === g._homeDensity;
 }
 
+export function lodDensityCacheBytes(g) {
+  let bytes = 0;
+  for (const d of g.densityCache || []) {
+    // Density cache entries should own GPU textures only. Keep this accounting
+    // generic so a future regression that retains either representation is
+    // immediately visible to tests and the real-browser benchmark.
+    if (d?.encoded) bytes += d.encoded.byteLength;
+    if (d?.grid) bytes += d.grid.byteLength;
+  }
+  return bytes;
+}
+
 export function lodRememberDensity(view, g, d) {
   if (!d || !d.tex) return;
   d._stamp = ++view._densityStamp;
@@ -217,6 +237,9 @@ export function lodRememberDensity(view, g, d) {
     const old = g.densityCache.splice(drop, 1)[0];
     if (!lodDensityPinned(g, old)) view.gl.deleteTexture(old.tex);
   }
+  // Kept on the trace for diagnostics/benchmarks: cached density windows own
+  // textures, not CPU grids. Any non-zero value is a lifecycle regression.
+  g.densityCacheBytes = lodDensityCacheBytes(g);
 }
 
 // -- drill lifecycle ----------------------------------------------------------
@@ -497,9 +520,9 @@ function lodBeginDrillExitContinuous(view, g) {
 export function lodApplyDensityUpdate(view, g, upd, buffers) {
   lodMarkDrillDying(view, g);
   const d = upd.density;
-  const grid = d.enc === "log-u8"
-    ? lodDecodeLogU8(buffers[d.buf], d.max)
-    : lodCopyGrid(view._asF32(buffers[d.buf]));
+  const encoded = d.enc === "log-u8"
+    ? lodU8View(buffers[d.buf])
+    : lodEncodeLogU8(view._asF32(buffers[d.buf]), d.max);
   const normStart = lodNormMax(g, d.max);
   const normMax = view._prefersReducedMotion() ? d.max : normStart;
   g.densityNormMax = normMax;
@@ -509,8 +532,7 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
     w: d.w, h: d.h, max: d.max, normMax, colormap: d.colormap || g.density.colormap,
     color: d.color ? parseColor(view.root, d.color, [0.3, 0.47, 0.66, 1]) : g.density.color,
     xRange: d.x_range, yRange: d.y_range,
-    grid,
-    tex: view._uploadGrid(grid, d.w, d.h, normMax),
+    tex: view._uploadDensityGrid(encoded, d.w, d.h),
     lut: g.density.lut,
   };
   // Exact scans include a view-specific sample and replace the overlay.

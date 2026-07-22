@@ -1,5 +1,5 @@
 import { bytesToSpan } from "./00_header";
-import { lodApplyDensityUpdate, lodApplyDrill, lodDropDrill, lodRememberDensity } from "./45_lod";
+import { lodApplyDensityUpdate, lodApplyDrill, lodDropDrill, lodEncodeLogU8, lodRememberDensity } from "./45_lod";
 import { xyCreateRebinWorker } from "./46_worker";
 import { ChartView } from "./50_chartview";
 
@@ -120,11 +120,10 @@ Object.assign(ChartView.prototype, {
       viewSpanX >= homeSpanX * (1 - 1e-6) && viewSpanY >= homeSpanY * (1 - 1e-6);
     if (notZoomedIn) {
       if (g.density !== g._homeDensity) {
-        const hd = g._homeDensity;
-        this._applySampleRebinGrid(g, {
-          ...hd,
-          tex: this._uploadGrid(hd.grid, hd.w, hd.h, hd.normMax || hd.max || 1),
-        }, false);
+        // `_homeDensity` is pinned in the cache, so its compact bytes and R8
+        // texture are both still live. Restore the object directly: a pan at
+        // home zoom must not allocate or upload another full grid.
+        this._applySampleRebinGrid(g, g._homeDensity, false);
       }
       return;
     }
@@ -167,13 +166,14 @@ Object.assign(ChartView.prototype, {
     if (this._destroyed || this._glLost || !msg || msg.type !== "grid" || msg.seq !== this.seq) return;
     const g = this.gpuTraces.find((t) => t.trace.id === msg.trace && t.tier === "density");
     if (!g) return;
-    const grid = new Float32Array(msg.grid);
+    const encoded = msg.enc === "log-u8"
+      ? new Uint8Array(msg.grid)
+      : lodEncodeLogU8(new Float32Array(msg.grid), msg.max);
     this._applySampleRebinGrid(g, {
       w: msg.w, h: msg.h, max: msg.max, normMax: msg.max,
       colormap: g.density.colormap,
       xRange: [msg.x0, msg.x1], yRange: [msg.y0, msg.y1],
-      grid,
-      tex: this._uploadGrid(grid, msg.w, msg.h, msg.max || 1),
+      tex: this._uploadDensityGrid(encoded, msg.w, msg.h),
       lut: g.density.lut,
     }, true);
   },

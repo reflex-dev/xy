@@ -714,8 +714,8 @@ try{{
     const stale=(staleReply && staleQueued && staleAnim)?1:0;
     v.view=oldView;
     v._drawNow();
-    // Quantized wire: a log-u8 density update must decode to approximate
-    // counts (max restored), draw lit, and be 4x smaller than f32.
+    // Quantized wire: a log-u8 density update stays byte-identical in the
+    // CPU cache, uploads directly to R8, and is 4x smaller than f32.
     const qmax=9.0;
     const qenc=new Uint8Array(64);
     for(let i=0;i<64;i++){{const c=(i%4===0)?9:(i%7===0?1:0);
@@ -723,12 +723,10 @@ try{{
     v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"density",visible:12345,
       binning:"pyramid-L2",
       density:{{buf:0,w:8,h:8,max:qmax,enc:"log-u8",x_range:[0,100],y_range:[0,100]}}}}]}},[qenc.buffer]);
-    const qg=gd.density&&gd.density.grid;
-    let qok=qg&&qg.length===64?1:0;
+    const qg=gd.density&&gd.density.encoded;
+    let qok=qg instanceof Uint8Array&&qg.length===64&&!('grid' in gd.density)?1:0;
     if(qok){{
-      for(let i=0;i<64;i++){{const c=(i%4===0)?9:(i%7===0?1:0);
-        if(c===0&&qg[i]!==0)qok=0;
-        if(c>0&&Math.abs(qg[i]-c)/c>0.08)qok=0;}}
+      for(let i=0;i<64;i++){{if(qg[i]!==qenc[i])qok=0;}}
     }}
     const qwire=(qok && Math.abs(gd.density.max-qmax)<1e-9)?1:0;
     // --- Rapid zoom in/out torture (drill thrash): the marks/density alphas
@@ -1461,7 +1459,7 @@ try{{
             "pixel-identical to packed and reject spec/transport mismatches)"
         )
     if qwire != 1:
-        raise SystemExit("log-u8 density decode failed (quantized wire)")
+        raise SystemExit("log-u8 density bytes were not retained compactly")
     if stream != 1:
         raise SystemExit(
             "streaming append failed (trace rebuild or follow policy: refit/hold/slide)"

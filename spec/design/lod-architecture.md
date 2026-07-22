@@ -228,6 +228,14 @@ invariants so future kinds don't regress them:
 - **T3 — color-continuous:** the two sides of a transition display the same
   statistic at the boundary (lod_blend density-ramp handoff).
 - **T4 — normalization is eased, never stepped** (exposure-style normMax).
+  A density source remains in its wire-native log-u8 encoding, where byte `q`
+  was encoded against source maximum `M`. Display at norm `N` uses the scalar
+  `log1p(M) / log1p(N)` in `DENSITY_FS`; each of the four fetched source
+  texels is rounded/clamped to u8 *before* manual bilinear interpolation. This
+  ordering is the exact semantic equivalent of the former CPU-requantized R8
+  texture with LINEAR filtering; at scalar 1 the settled fast path uses that
+  single hardware-LINEAR lookup directly. Normalization frames must not call
+  `texImage2D` or perform work proportional to grid cells.
 - **T5 — stale replies die:** seq on view updates, drill_seq on subsets,
   pending-view hold for prefetched drills.
 - **T6 — invalid requests do not mutate:** malformed viewport/screen requests
@@ -244,8 +252,15 @@ invariants so future kinds don't regress them:
   that drops the density frame and strands drilled points over a stale surface.
   Every `_drawDensity` also skips a grid whose texture is not `gl.isTexture`, so
   the invariant can never surface as a GL error even if a new reference is added.
+- **T8 — cached density sources are GPU-only:** first paint,
+  `density_update`, and standalone-worker log-u8 bytes are transient upload
+  sources. Cached windows and `_homeDensity` retain the resulting R8 texture
+  plus metadata, never an encoded or decoded CPU grid. `densityCacheBytes`
+  therefore remains zero (shared LUTs and GPU R8 textures are excluded). A
+  home restore reuses its pinned object/texture rather than cloning and
+  re-uploading it; context recovery rebuilds home from the canonical payload.
 
-Any new tiered kind must state how it satisfies T1–T7 in its chart-kind
+Any new tiered kind must state how it satisfies T1–T8 in its chart-kind
 contract entry before it lands.
 
 ---

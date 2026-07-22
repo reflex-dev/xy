@@ -387,14 +387,46 @@ export const DENSITY_FS = `#version 300 es
 precision highp float;
 uniform sampler2D u_grid; uniform sampler2D u_lut;
 uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
+uniform float u_normScale; // log1p(encoded max) / log1p(display norm)
 uniform float u_opacity; uniform vec4 u_color; uniform int u_constantColor;
 in vec2 v_data;
 out vec4 outColor;
+
+// Density sources arrive already quantized in log space.  Exposure animation
+// used to decode the whole grid, requantize it for the current norm, upload a
+// new R8 texture, and let LINEAR filtering blend those new byte values.  The
+// order matters: scaling a filtered source is not equivalent because each
+// texel is rounded/clamped before interpolation.  Reproduce that order here,
+// one of four texels at a time, so a frame changes one scalar and no texture.
+float normalizedDensity(ivec2 texel) {
+  float encoded = floor(texelFetch(u_grid, texel, 0).r * 255.0 + 0.5);
+  if (encoded <= 0.0) return 0.0;
+  return clamp(floor(encoded * u_normScale + 0.5), 1.0, 255.0) / 255.0;
+}
+
+float sampleDensity(vec2 uv) {
+  ivec2 size = textureSize(u_grid, 0);
+  ivec2 last = size - ivec2(1);
+  vec2 position = uv * vec2(size) - 0.5;
+  ivec2 lo = ivec2(floor(position));
+  ivec2 hi = lo + ivec2(1);
+  vec2 amount = fract(position);
+  ivec2 p00 = clamp(lo, ivec2(0), last);
+  ivec2 p10 = clamp(ivec2(hi.x, lo.y), ivec2(0), last);
+  ivec2 p01 = clamp(ivec2(lo.x, hi.y), ivec2(0), last);
+  ivec2 p11 = clamp(hi, ivec2(0), last);
+  float bottom = mix(normalizedDensity(p00), normalizedDensity(p10), amount.x);
+  float top = mix(normalizedDensity(p01), normalizedDensity(p11), amount.x);
+  return mix(bottom, top, amount.y);
+}
+
 void main() {
   vec2 uv = vec2((v_data.x - u_gridRange.x) / (u_gridRange.y - u_gridRange.x),
                  (v_data.y - u_gridRange.z) / (u_gridRange.w - u_gridRange.z));
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
-  float t = texture(u_grid, uv).r;
+  // Settled exposure is the overwhelmingly common frame. Keep its single
+  // hardware-LINEAR lookup; only a changed norm needs four ordered fetches.
+  float t = u_normScale == 1.0 ? texture(u_grid, uv).r : sampleDensity(uv);
   if (t <= 0.0) discard;
   vec4 paint = u_constantColor == 1
     ? u_color
