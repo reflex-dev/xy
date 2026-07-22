@@ -226,8 +226,9 @@ and tier discipline applies to them rather than a threshold.
 wall time, so browser, install, and cross-library process benchmarks stay out of
 it — those live in `benchmark-refresh.yml`, and the workflow says so inline.
 
-The glob collects three modules — `test_codspeed_kernels.py`,
-`test_codspeed_pyplot.py`, and `test_codspeed_transport.py` — for 94 rows
+The glob collects five modules — `test_codspeed_animation.py`,
+`test_codspeed_kernels.py`, `test_codspeed_pyplot.py`,
+`test_codspeed_selection.py`, and `test_codspeed_transport.py` — for 102 rows
 total. These are trend-tracked in CodSpeed, not gated: none of them feed
 `scripts/check_regressions.py`, whose three inputs are §7's.
 
@@ -276,6 +277,31 @@ zero-copy `memoryview`s; `decode_frame` on both fixtures, asserting the decoded
 buffers alias the original body rather than copying it; and base64-JSON
 encode/decode comparators on the direct fixture, so the codec's advantage stays
 a continuously tracked ratio rather than a remembered one.
+
+**`benchmarks/test_codspeed_animation.py` — 3 rows.** Attribution for the
+declarative animation data plane: 100k stable-key encoding
+(`_encode_transition_keys`), the plain 100k scatter first payload, and the same
+payload with keyed transition columns. The payload pair builds
+`build_payload_split` — the widget's production first-paint transport — so the
+keyed-minus-plain gap is exactly the two shipped u32 identity columns, without
+the packed layout's join copy (which production never pays; the packed path
+stays tracked by the kernels module's `test_build_payload` and export rows).
+The module collects first alphabetically, so it carries its own native-backend
+assertion and lazy-import warmup fixture. Browser `updatePayload` time,
+animation-frame pacing, heap delta, and the previous+next scene bound stay in
+`bench_animation.py`.
+
+**`benchmarks/test_codspeed_selection.py` — 5 rows.** The backend
+interaction/selection handlers the client's gesture messages resolve to
+(design-dossier §17/§34): hover pick with a categorical channel readout;
+zone-pruned box select over a 1% window of a monotone-x 1M scatter; the full
+box-select and lasso gesture units through `channel.handle_message` on a
+uniform 1M scatter — full scan, polygon ray casting, and the wire-mask reply;
+and the cross-filter rows-to-shipped-mask encoding (view-state.md §5.1) over a
+NaN-dropped trace, so the canonical-to-shipped `searchsorted` translation is
+the path measured rather than the identity fast path. Browser input-to-pixel
+latency stays in `bench_interaction.py`; before this module a selection
+regression could only surface as browser wall-clock noise.
 
 **`benchmarks/test_codspeed_kernels.py` — 73 rows** (70 functions; two are
 parametrized, over 2 ingest flavors and 3 `bin_2d` thread-cap regimes). This is

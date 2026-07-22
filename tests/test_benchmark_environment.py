@@ -118,6 +118,46 @@ def test_codspeed_suite_covers_native_core_hardening_workloads() -> None:
         assert "benchmark" in args, f"{name} must be timed by pytest-codspeed"
 
 
+def test_codspeed_suite_covers_backend_selection_workloads() -> None:
+    source = (ROOT / "benchmarks" / "test_codspeed_selection.py").read_text(encoding="utf-8")
+    required_markers = [
+        "SELECT_N = 1_000_000",
+        "PICK_N = 100_000",
+        "CROSSFILTER_N = 100_000",
+        "require_native_backend",
+        'k.BACKEND == "native"',
+    ]
+    for marker in required_markers:
+        assert marker in source
+
+    module = ast.parse(source)
+    functions = {node.name: node for node in module.body if isinstance(node, ast.FunctionDef)}
+    required_benchmarks = {
+        "test_pick_hover_categorical_readout",
+        "test_select_box_zone_pruned_1m",
+        "test_select_box_message_full_scan_1m",
+        "test_select_lasso_message_1m",
+        "test_selection_rows_message_crossfilter",
+    }
+    missing = sorted(required_benchmarks - set(functions))
+    assert missing == []
+
+    for name in sorted(required_benchmarks):
+        args = {arg.arg for arg in functions[name].args.args}
+        assert "benchmark" in args, f"{name} must be timed by pytest-codspeed"
+
+
+def test_codspeed_animation_module_guards_backend_and_split_transport() -> None:
+    source = (ROOT / "benchmarks" / "test_codspeed_animation.py").read_text(encoding="utf-8")
+    # This module collects first alphabetically, so it must carry its own
+    # backend assertion and lazy-import warmup, and its payload pair must
+    # track the widget's production split transport.
+    assert "require_native_backend" in source
+    assert 'k.BACKEND == "native"' in source
+    assert "warm_lazy_modules" in source
+    assert "build_payload_split" in source
+
+
 def test_codspeed_dependency_is_declared_and_shared_by_ci_and_runbook() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     workflow = (ROOT / ".github" / "workflows" / "codspeed.yml").read_text(encoding="utf-8")
