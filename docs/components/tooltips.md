@@ -1,11 +1,11 @@
 ---
-title: Tooltips
+title: Tooltips in Python
 description: Configure hover fields, title templates, numeric formats, and replacements.
 components:
   - xy.tooltip
 ---
 
-# Tooltips
+# Tooltips in Python
 
 XY shows a built-in hover tooltip by default. With no tooltip component it
 reports the available x/y values and encoded color or size values. Add
@@ -70,3 +70,30 @@ for the complete integration boundary.
 See [Events and callbacks](/docs/xy/api-reference/events-and-callbacks/) for
 hover payloads and [Marks and components reference](/docs/xy/api-reference/marks-and-components/)
 for the exact tooltip signature.
+
+## FAQ
+
+### How do I show values on hover in a Python chart?
+
+XY shows a built-in hover tooltip by default — with no configuration it reports
+the available x/y values plus any encoded color or size values. Add
+`xy.tooltip()` as a chart child only when you want to choose fields, formats,
+or a title template.
+
+### How do I customize which fields a tooltip shows and how numbers are formatted?
+
+Pass `fields=` and `format=` to `xy.tooltip()`, e.g.
+`xy.tooltip(fields=["revenue", "growth"], format={"revenue": ",.0f", "growth": ".1%"})`.
+Only source columns bound to a rendered channel (x, y, color, size, or
+heatmap value) can be used as tooltip fields.
+
+### How do I put data values in the tooltip title?
+
+Use braced field names in `title=`, e.g. `xy.tooltip(title="Month {month}")` —
+each placeholder is replaced with the value from the hovered row.
+
+### How do I disable tooltips on a chart?
+
+Add `xy.tooltip(show=False)` to the chart. When several tooltip components are
+present, the last one supplies the effective configuration, so a final
+`show=False` wins.

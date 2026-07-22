@@ -1,9 +1,9 @@
 ---
-title: Components
-description: Compose marks, axes, annotations, legends, tooltips, colorbars, and controls.
+title: Chart Components in Python
+description: Compose marks, axes, annotations, legends, tooltips, colorbars, facets, triangle meshes, and interaction controls.
 ---
 
-# Components
+# Chart Components in Python
 
 Components are lightweight Python specifications passed to a chart container.
 They describe data geometry, coordinate systems, annotations, and browser
@@ -34,6 +34,8 @@ the last declaration as their effective configuration.
 | [Colorbars](/docs/xy/components/colorbars/) | Inferred continuous scales, orientation, ticks, slots, and custom replacements |
 | [Modebars and interaction controls](/docs/xy/components/modebars-and-interaction-controls/) | Pan, zoom, selection, export controls, and linked viewports |
 | [Annotations](/docs/xy/components/annotations/) | Rules, bands, text, markers, arrows, thresholds, and callouts |
+| [Triangle Mesh](/docs/xy/components/triangle-mesh/) | Explicit per-triangle geometry, value or constant color, and stroke |
+| [Facets and Layers](/docs/xy/components/facets-and-layers/) | Small multiples, shared axes, and layered mark composition |
 
 These pages explain how to use the components. Exact signatures and defaults
 live in [Marks and components reference](/docs/xy/api-reference/marks-and-components/).

@@ -1,5 +1,5 @@
 ---
-title: Annotations
+title: Annotations in Python
 description: Add rules, bands, labels, markers, arrows, thresholds, and callouts.
 components:
   - xy.vline
@@ -15,7 +15,7 @@ components:
   - xy.callout
 ---
 
-# Annotations
+# Annotations in Python
 
 Annotations are chart children painted above data marks. Their anchors use data
 coordinates, so they stay aligned while users pan and zoom. Text offsets such
@@ -224,3 +224,34 @@ and native PNG.
 If more than one annotation occupies the same coordinate, declaration order
 controls their paint order. Exact signatures and defaults are in
 [Marks and components reference](/docs/xy/api-reference/marks-and-components/).
+
+## FAQ
+
+### How do I add a horizontal line to a chart in Python?
+
+Add `xy.hline(y)` as a chart child, e.g.
+`xy.hline(55, text="SLO", color="#2563eb", width=2)`; `xy.vline(x)` is the
+vertical equivalent. For a reference boundary with semantic intent on either
+axis, use `xy.threshold(value, axis="y", text="target")` instead.
+
+### How do I shade a region or band on a chart?
+
+Use `xy.x_band(x0, x1)` or `xy.y_band(y0, y1)` to shade an interval on the
+corresponding axis, with `text`, `color`, and `opacity` to label and style it.
+`xy.threshold_zone(start, end, axis=...)` does the same for a semantic
+"acceptable range" style zone on either axis.
+
+### How do I label a data point and draw an arrow to it on a chart?
+
+`xy.callout(x, y, "note", dx=-60, dy=-30)` pins explanatory text to a point
+with a connector, while `xy.arrow(x0, y0, x1, y1, text=...)` draws a
+free-standing arrow between two coordinates. For text alone use
+`xy.label(x, y, "peak", dy=-16)` or `xy.text(x, y, "note")`, and
+`xy.marker(x, y, text=...)` adds a point symbol with an optional label.
+
+### Why do my annotations stay aligned when I pan or zoom the chart?
+
+Annotation anchors use data coordinates, so rules, bands, markers, and callouts
+track the data as the viewport changes. Only the text offsets `dx` and `dy` are
+screen-space pixels, which keeps labels legible without moving their data
+anchor.

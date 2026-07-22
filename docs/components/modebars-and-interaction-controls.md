@@ -1,12 +1,12 @@
 ---
-title: Modebars & Controls
+title: Modebars & Controls in Python
 description: Configure XY's toolbar, gestures, selection, exports, and linked viewports.
 components:
   - xy.modebar
   - xy.interaction_config
 ---
 
-# Modebars & Controls
+# Modebars & Controls in Python
 
 Interactive charts include a compact modebar by default. It exposes pan, zoom
 in/out, box zoom, reset, selection modes when selection is enabled, and local
@@ -145,3 +145,37 @@ documented under
 [Limitations and alpha status](/docs/xy/api-reference/limitations-and-alpha-status/).
 For callback payloads, see
 [Events and callbacks](/docs/xy/api-reference/events-and-callbacks/).
+
+## FAQ
+
+### How do I disable zoom and pan on a chart?
+
+Add `xy.interaction_config(navigation=False)` — it is the master switch that
+blocks all local pan, zoom, and reset input (linked and application-driven
+ranges can still update the chart). To disable selectively, use `pan=False`,
+`zoom=False`, or `wheel_zoom=False`, or restrict an action to specific axes
+with `pan_axes=` and `zoom_axes=`, e.g. `zoom_axes=("x",)` for x-only zoom.
+
+### How do I reset a chart to its original view after zooming?
+
+The modebar's Reset View command restores the view, and
+`double_click_reset=True` lets a double-click do the same; `reset_axes=` names
+exactly which axes are restored. Zooming out past the original window is
+already prevented by the default `zoom_limits` of `(1.0, None)` on every zoom
+axis, and reset does not clear an active selection.
+
+### How do I hide or customize the chart toolbar?
+
+Add `xy.modebar(show=False)` to remove the toolbar entirely. To restyle it,
+`class_name` and `style` target the toolbar while `button_class_name` and
+`button_style` target every control (the `modebar` and `modebar_button` chart
+slots expose the same surfaces), and `zoom_buttons=` in
+`xy.interaction_config()` controls whether the Zoom In and Zoom Out commands
+appear.
+
+### Can users export a chart as PNG, SVG, or CSV from the toolbar?
+
+Yes — the default modebar includes local PNG, SVG, and CSV export commands.
+Note that CSV exports the data resident in the browser representation, so on a
+decimated or density-tier chart that is not necessarily every canonical source
+row; export the source table from Python when a complete extract is required.

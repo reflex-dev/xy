@@ -1,12 +1,12 @@
 ---
-title: Axes
+title: Axes in Python
 description: Configure XY scale types, domains, ticks, labels, and named axes.
 components:
   - xy.x_axis
   - xy.y_axis
 ---
 
-# Axes
+# Axes in Python
 
 Add `x_axis()` and `y_axis()` children when a chart needs an explicit scale or
 presentation contract. Without them, XY infers ordinary numeric, datetime, and
@@ -96,3 +96,30 @@ style for output that must agree across HTML, SVG, and native PNG.
 For the scale model, including datetime and category handling, see
 [Axes and scales](/docs/xy/core-concepts/axes-and-scales/). For styling, see
 [Customize Each Part](/docs/xy/styling/customize/#axes,-grid,-and-ticks).
+
+## FAQ
+
+### How do I set the axis range in Python?
+
+Pass `domain=(min, max)` to `xy.x_axis()` or `xy.y_axis()`, e.g.
+`xy.y_axis(domain=(0, 100))`. Explicit domains must be finite and increasing,
+and a `type_="log"` axis additionally requires a positive domain.
+
+### How do I rotate or format axis tick labels?
+
+Use `format=` with a numeric format string (e.g.
+`xy.x_axis(format=",.0f")` or `format=".0%"`) and `tick_label_angle=` to rotate
+the labels. For full control, supply exact `tick_values=` with matching
+`tick_labels=` strings instead of the adaptive `tick_count=`.
+
+### How do I add a second y-axis to a chart?
+
+Declare a named axis such as `xy.y_axis(id="y2", side="right")` and bind marks
+to it with `y_axis="y2"`. Y-axis identifiers must start with `y` (x identifiers
+with `x`), and every named binding needs a matching axis component in the
+chart.
+
+### How do I reverse an axis in Python?
+
+Pass `reverse=True`, e.g. `xy.y_axis(domain=(0, 100), reverse=True)`. This
+flips the display direction only — the source data values are not rewritten.

@@ -1,11 +1,11 @@
 ---
-title: Legends
+title: Legends in Python
 description: Label named series and configure built-in or framework-rendered legends.
 components:
   - xy.legend
 ---
 
-# Legends
+# Legends in Python
 
 Marks with a `name=` participate in the chart legend. Add `legend()` to control
 the built-in legend's placement, columns, title, visibility, and DOM styling.
@@ -73,3 +73,28 @@ using safe built-in chrome, and the same object is also available through
 
 Exact parameters and defaults are in
 [Marks and components reference](/docs/xy/api-reference/marks-and-components/).
+
+## FAQ
+
+### How do I add a legend to a chart in Python?
+
+Give each mark a `name=`, e.g. `xy.line(x, y, name="Actual")` — a chart with
+named series shows the built-in legend by default. Add `xy.legend()` only when
+you want to configure placement, columns, title, visibility, or styling.
+
+### How do I change where the legend appears?
+
+Pass `loc=` to `xy.legend()`, e.g. `xy.legend(loc="upper right")`. If more than
+one `legend()` component is present, the last one supplies the effective
+configuration.
+
+### How do I arrange legend entries in multiple columns?
+
+Set `ncols=` on the legend, e.g. `xy.legend(ncols=2, title="Series")`, which
+lays the entries out in two columns under an optional legend title.
+
+### How do I hide the legend or keep a series out of it?
+
+Use `xy.legend(show=False)` to suppress the legend entirely. Only marks with a
+`name=` participate in the legend, so omitting `name=` on a mark keeps that
+series out.
