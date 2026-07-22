@@ -48,10 +48,27 @@ _PROBE = """
     view.canvas.dispatchEvent(lostEvent);
     const afterLoss = { x: range("x"), y: range("y") };
 
+    // Second scenario: context loss *during* an active domain transition, whose
+    // resting target the kernel follow path stores as a FLAT {x0,x1,y0,y1}
+    // object with no `ranges` map (54_kernel.ts). The loss handler must read it
+    // through `_axisRange` (shape-normalizing) rather than `_copyView` alone, or
+    // the flat target degrades to each axis's home range. Re-arm the handler
+    // (the synthetic loss left `_glLost` set), stage a flat interior target as
+    // the in-flight transition's resting view, and lose the context again.
+    view._glLost = false;
+    view.canvas.dataset.xyCtx = "live";
+    const flatTarget = { x0: 1.5, x1: 2.5, y0: 3.0, y1: 9.0 };
+    view._transitionView = { from: { ...view.view }, to: flatTarget };
+    const lostEvent2 = new Event("webglcontextlost", { cancelable: true });
+    view.canvas.dispatchEvent(lostEvent2);
+    const afterFlatLoss = { x: range("x"), y: range("y") };
+
     document.body.setAttribute("data-xy-ctxloss-probe", JSON.stringify({
       home,
       zoomed,
       afterLoss,
+      flatTarget,
+      afterFlatLoss,
       glLost: view._glLost === true,
       lossPrevented: lostEvent.defaultPrevented === true,
     }));
@@ -106,3 +123,12 @@ def test_context_loss_preserves_the_zoomed_view(tmp_path: Path) -> None:
     assert after["x"] == pytest.approx(zoomed["x"], rel=1e-9)
     assert after["y"] == pytest.approx(zoomed["y"], rel=1e-9)
     assert after["x"] != pytest.approx(home["x"], rel=1e-6)
+
+    # Losing the context mid-domain-transition preserves the transition's
+    # resting target even when that target is a flat {x0,x1,y0,y1} (the kernel
+    # follow shape) — reading it through `_axisRange` keeps the coordinates
+    # instead of degrading each axis to its home range.
+    flat, after_flat = result["flatTarget"], result["afterFlatLoss"]
+    assert after_flat["x"] == pytest.approx([flat["x0"], flat["x1"]], rel=1e-9)
+    assert after_flat["y"] == pytest.approx([flat["y0"], flat["y1"]], rel=1e-9)
+    assert after_flat["x"] != pytest.approx(home["x"], rel=1e-6)

@@ -1071,9 +1071,18 @@ export class ChartView {
       // interpolation frame, though, so snap any in-progress navigation (view
       // animation or domain transition) to its resting target — the view the
       // user actually settled on — before tearing those animations down.
+      // Read the source per-axis through `_axisRange`, which normalizes every
+      // view shape (`_transitionView.to` in particular can be a *flat*
+      // {x0,x1,y0,y1} from the kernel follow path — feeding that straight to
+      // `_copyView`, which only reads `.ranges`, would fall back to each axis's
+      // home range and defeat the very preservation this block exists for).
       const settledView = this._viewAnim?.target || this._transitionView?.to || this.view;
       this._transitionView = null;
-      this.view = this._copyView(settledView || this.view0);
+      this.view = this._copyView({
+        ranges: Object.fromEntries(
+          this._axisIds().map((axisId) => [axisId, this._axisRange(axisId, settledView)]),
+        ),
+      });
       this._cancelViewAnimation();
       clearTimeout(this._viewTimer);
       this._viewTimer = null;
