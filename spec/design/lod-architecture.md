@@ -256,8 +256,24 @@ invariants so future kinds don't regress them:
   drive it out of the hold, so the drilled subset stayed painted and the full
   point cloud never returned. (Complements T7, which fixes the same visible
   symptom from the texture-lifetime side.)
+- **T9 — a retained sample is bounded by its window:** the deterministic
+  point sample shipped with an exact-scan density reply represents *its*
+  window only. It is retained across replies that omit a sample (pyramid and
+  integral-image zoom-out paths ship none by design — Phase 2 item 5) so the
+  hybrid "density + points" look survives pans and mild zoom-outs, but far
+  past its window the same ~8k points compress and overplot into a solid
+  false cluster (the zoom-out "stuck point blob", pinned by a live-drilldown
+  wire capture: the blob's extent matched the last sample-bearing reply's
+  window exactly while the density surface kept updating under it). The
+  client therefore fades the retained overlay with the window's share of the
+  view area — full alpha at ≥ `LOD_SAMPLE_FADE_COVER_HI` (1/16), hidden at
+  ≤ `LOD_SAMPLE_FADE_COVER_LO` (1/64), log-eased between (`js/src/45_lod.js`
+  `lodSampleViewAlpha`, applied in `_drawDensitySample`). The alpha is a pure
+  function of (view, window): every zoom frame re-derives it, nothing
+  latches. The "sampled n of N" badge tracks what is actually drawn — a
+  hidden overlay must not keep advertising its points.
 
-Any new tiered kind must state how it satisfies T1–T8 in its chart-kind
+Any new tiered kind must state how it satisfies T1–T9 in its chart-kind
 contract entry before it lands.
 
 ---
@@ -283,7 +299,9 @@ contract entry before it lands.
 5. **Done for exact density views:** hybrid scatter mode renders density plus
    deterministic sampled exact points, with a visible "sampled n of N" badge.
    Pyramid-served density views still need tile-aware sample overlays so the
-   same anti-shimmer contract holds without rescanning raw rows.
+   same anti-shimmer contract holds without rescanning raw rows. Until they
+   exist, sample-less zoom-out replies retain the previous overlay, bounded
+   by the T9 coverage fade so it can never persist as a false cluster.
 
 **Phase 3 — pyramid (build + serve shipped; client cache and bench gate open)**
 6. **Done (count plane only):** `src/tiles.rs` builds a square count pyramid

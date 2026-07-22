@@ -1432,7 +1432,10 @@ class ChartView {
       const sample = entry.sampleOverlay && entry.sampleOverlay.sample
         ? entry.sampleOverlay.sample
         : t.density.sample;
-      if (sample && Number(sample.n) > 0) {
+      // A sample past its T9 zoom-out bound is not drawn; badging it would
+      // claim points that are not on screen (_drawDensitySample keeps
+      // _sampleFadedOut in sync and re-refreshes on every flip).
+      if (sample && Number(sample.n) > 0 && !entry._sampleFadedOut) {
         items.push(`sampled ${this._compactInt(sample.n)} of ${this._compactInt(sample.visible)}`);
       }
       // Standalone zoom refinement re-bins the sample in the worker — a
@@ -2023,6 +2026,7 @@ class ChartView {
   }
 
   _destroyDensitySample(g) {
+    if (g) g._sampleFadedOut = false; // T9 fade state belongs to the overlay
     const s = g && g.sampleOverlay;
     if (!s || !this.gl) return;
     for (const b of [s.xBuf, s.yBuf, s.cBuf, s.rgbaBuf, s.sBuf, s.styleBuf,
@@ -2144,11 +2148,22 @@ class ChartView {
     // the view crosses the sample's home extent (the density grid stays, so the
     // points have to as well). Off-screen points are clipped by the GPU.
     if (!s || !s.n || !this._viewOverlaps(s.win)) return;
+    // …but not past the T9 zoom-out bound: far outside its home window the
+    // sample overplots into a false dense cluster (the stuck "point blob"), so
+    // it fades with window/view coverage. The badge tracks what is actually
+    // drawn — a hidden overlay must not keep advertising "sampled n of N".
+    const alpha = lodSampleViewAlpha(this, s.win);
+    const faded = alpha <= 0;
+    if (faded !== !!g._sampleFadedOut) {
+      g._sampleFadedOut = faded;
+      this._refreshReductionBadges();
+    }
+    if (faded) return;
     this._drawPoints(
       s,
       this._map(s.xMeta, x0, x1, s.xAxis),
       this._map(s.yMeta, y0, y1, s.yAxis),
-      opacityScale
+      opacityScale * alpha
     );
   }
 

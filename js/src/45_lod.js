@@ -2,6 +2,10 @@
 
 const LOD_DIRECT_POINT_BUDGET = 200000;
 const LOD_DRILL_EXIT_FACTOR = 1.15;
+// Retained-sample zoom-out fade band (T9): full alpha while the sample's home
+// window still covers ≥ HI of the view area, gone below LO (log-eased between).
+const LOD_SAMPLE_FADE_COVER_HI = 1 / 16;
+const LOD_SAMPLE_FADE_COVER_LO = 1 / 64;
 // View-dependent LOD machinery (§5/§28) — chart-agnostic.
 //
 // Everything a tiered trace needs client-side, factored out of ChartView so a
@@ -149,6 +153,33 @@ function lodWindowCenterInside(win, view) {
     cx <= Math.max(win.x0, win.x1) &&
     cy >= Math.min(win.y0, win.y1) &&
     cy <= Math.max(win.y0, win.y1)
+  );
+}
+
+// §28 hybrid overlay, zoom-out bound (T9): the retained sample is
+// representative of *its* window only. Once the view grows far past that
+// window, the same ~8k points compress into a small screen region and
+// overplot into a solid false cluster (the zoom-out "stuck point blob") —
+// at that scale the aggregate alone is truthful. Zoom-out density replies
+// intentionally ship no replacement sample (pyramid and integral-image
+// servers alike, #24), so the client must bound the retained overlay itself:
+// fade it with the window's share of the view area, from full alpha at
+// COVER_HI down to hidden at COVER_LO. Log-eased so a continuous zoom reads
+// as a linear fade; a pure function of (view, window), so every zoom frame
+// re-derives it — no state, no extra frames to schedule. Pans and mild
+// zoom-outs stay inside the band and keep the hybrid "density + points" look.
+function lodSampleViewAlpha(view, win) {
+  const v = view.view;
+  const viewArea = Math.abs((v.x1 - v.x0) * (v.y1 - v.y0));
+  const winArea = lodWindowArea(win);
+  if (!Number.isFinite(viewArea) || viewArea <= 0) return 1;
+  if (!Number.isFinite(winArea) || winArea <= 0) return 0;
+  const cover = winArea / viewArea;
+  if (cover >= LOD_SAMPLE_FADE_COVER_HI) return 1;
+  if (cover <= LOD_SAMPLE_FADE_COVER_LO) return 0;
+  return (
+    Math.log(cover / LOD_SAMPLE_FADE_COVER_LO) /
+    Math.log(LOD_SAMPLE_FADE_COVER_HI / LOD_SAMPLE_FADE_COVER_LO)
   );
 }
 

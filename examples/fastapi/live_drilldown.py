@@ -734,10 +734,36 @@ async function sendMessage(msg) {{
   }}
 }}
 
+// A parked message can go stale while the previous request is in flight: a
+// newer request supersedes it (seq moved on), or the view moved *without* a
+// new request — the engine deliberately skips re-requesting while the current
+// drill covers the view, so seq alone is not a complete staleness token here.
+// Sending such a message anyway asks the server about a window nobody is
+// looking at (observed in the wire capture: a zoomed-in window request fired
+// long after zooming out); the exact-points reply then churns server drill
+// state and, when the seq still matches, installs a drill that is instantly
+// dying. Drop it at send time instead.
+function parkedMsgStale(msg) {{
+  const view = window.xyLiveDrilldown;
+  if (!view || !msg || msg.seq === undefined) return false;
+  if (msg.seq !== view.seq) return true;
+  // Compare against where the view is headed, not a mid-animation frame —
+  // a parked request for the animation target is current, not stale.
+  const v = view._viewAnim && view._viewAnim.target ? view._viewAnim.target : view.view;
+  return !(
+    sameRange(Number(msg.x0), Number(msg.x1), Math.min(v.x0, v.x1), Math.max(v.x0, v.x1)) &&
+    sameRange(Number(msg.y0), Number(msg.y1), Math.min(v.y0, v.y1), Math.max(v.y0, v.y1))
+  );
+}}
+
 async function pumpDensity() {{
   if (densityInFlight || !pendingDensityMsg) return;
   const msg = pendingDensityMsg;
   pendingDensityMsg = null;
+  if (parkedMsgStale(msg)) {{
+    clearStaleUpdatingStatus();
+    return;
+  }}
   densityInFlight = true;
   try {{
     await sendMessage(msg);

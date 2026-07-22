@@ -1328,6 +1328,8 @@ return { x: ox, y: oy, extra: oe, n: outN };
 }
 const LOD_DIRECT_POINT_BUDGET = 200000;
 const LOD_DRILL_EXIT_FACTOR = 1.15;
+const LOD_SAMPLE_FADE_COVER_HI = 1 / 16;
+const LOD_SAMPLE_FADE_COVER_LO = 1 / 64;
 function lodFade(view, start, duration = 140) {
 if (start === undefined || start === null || duration <= 0 || view._prefersReducedMotion()) {
 return 1;
@@ -1442,6 +1444,20 @@ cx >= Math.min(win.x0, win.x1) &&
 cx <= Math.max(win.x0, win.x1) &&
 cy >= Math.min(win.y0, win.y1) &&
 cy <= Math.max(win.y0, win.y1)
+);
+}
+function lodSampleViewAlpha(view, win) {
+const v = view.view;
+const viewArea = Math.abs((v.x1 - v.x0) * (v.y1 - v.y0));
+const winArea = lodWindowArea(win);
+if (!Number.isFinite(viewArea) || viewArea <= 0) return 1;
+if (!Number.isFinite(winArea) || winArea <= 0) return 0;
+const cover = winArea / viewArea;
+if (cover >= LOD_SAMPLE_FADE_COVER_HI) return 1;
+if (cover <= LOD_SAMPLE_FADE_COVER_LO) return 0;
+return (
+Math.log(cover / LOD_SAMPLE_FADE_COVER_LO) /
+Math.log(LOD_SAMPLE_FADE_COVER_HI / LOD_SAMPLE_FADE_COVER_LO)
 );
 }
 function lodDensityForView(view, g) {
@@ -3027,7 +3043,7 @@ if (t.tier !== "density" || !t.density) continue;
 const sample = entry.sampleOverlay && entry.sampleOverlay.sample
 ? entry.sampleOverlay.sample
 : t.density.sample;
-if (sample && Number(sample.n) > 0) {
+if (sample && Number(sample.n) > 0 && !entry._sampleFadedOut) {
 items.push(`sampled ${this._compactInt(sample.n)} of ${this._compactInt(sample.visible)}`);
 }
 if (entry._sampleRebinned) items.push("zoom re-binned from sample");
@@ -3557,6 +3573,7 @@ g.sample = { n: sample.n, visible: sample.visible };
 return g;
 }
 _destroyDensitySample(g) {
+if (g) g._sampleFadedOut = false;
 const s = g && g.sampleOverlay;
 if (!s || !this.gl) return;
 for (const b of [s.xBuf, s.yBuf, s.cBuf, s.rgbaBuf, s.sBuf, s.styleBuf,
@@ -3671,11 +3688,18 @@ this._refreshReductionBadges();
 _drawDensitySample(g, x0, x1, y0, y1, opacityScale = 1) {
 const s = g && g.sampleOverlay;
 if (!s || !s.n || !this._viewOverlaps(s.win)) return;
+const alpha = lodSampleViewAlpha(this, s.win);
+const faded = alpha <= 0;
+if (faded !== !!g._sampleFadedOut) {
+g._sampleFadedOut = faded;
+this._refreshReductionBadges();
+}
+if (faded) return;
 this._drawPoints(
 s,
 this._map(s.xMeta, x0, x1, s.xAxis),
 this._map(s.yMeta, y0, y1, s.yAxis),
-opacityScale
+opacityScale * alpha
 );
 }
 _resolveMarkFill(style, markColor) {
