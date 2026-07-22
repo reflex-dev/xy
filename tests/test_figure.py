@@ -95,6 +95,8 @@ def test_build_payload_split_matches_packed():
         drop_p = {k: v for k, v in col_p.items() if k != "byte_offset"}
         drop_s = {k: v for k, v in col_s.items() if k not in ("buf", "byte_offset")}
         assert drop_s == drop_p
+        assert col_s["hash"].startswith("b2-128:")
+        assert len(col_s["hash"]) == len("b2-128:") + 32
     strip_p = {k: v for k, v in spec_p.items() if k != "columns"}
     strip_s = {k: v for k, v in spec_s.items() if k not in ("columns", "buffer_layout")}
     assert strip_s == strip_p
@@ -133,6 +135,37 @@ def test_build_payload_split_folds_u8_alignment_padding_into_column_buffer():
     assert meta["byte_offset"] == 0
     assert bufs[meta["buf"]].nbytes == 8
     assert b"".join(bytes(buf) for buf in bufs) == blob
+
+
+def test_column_hashes_are_content_addressed_across_payloads_and_layouts():
+    x = np.linspace(-1.0, 1.0, 1_000)
+    first = Figure().scatter(x, np.sin(x))
+    second = Figure().scatter(x, np.cos(x))
+
+    packed, _blob = first.build_payload()
+    split, _buffers = first.build_payload_split()
+    changed, _changed_buffers = second.build_payload_split()
+
+    assert [column["hash"] for column in packed["columns"]] == [
+        column["hash"] for column in split["columns"]
+    ]
+    assert changed["columns"][0]["hash"] == split["columns"][0]["hash"]
+    assert changed["columns"][1]["hash"] != split["columns"][1]["hash"]
+
+
+def test_column_hash_names_logical_u8_bytes_not_split_padding():
+    figure = Figure().scatter(
+        np.arange(5.0),
+        np.arange(5.0),
+        color=np.array(["a", "b", "a", "b", "a"]),
+    )
+    packed, _blob = figure.build_payload()
+    split, buffers = figure.build_payload_split()
+    color_index = split["traces"][0]["color"]["buf"]
+    split_meta = split["columns"][color_index]
+
+    assert buffers[split_meta["buf"]].nbytes == 8  # 5 values + transport alignment
+    assert split_meta["hash"] == packed["columns"][color_index]["hash"]
 
 
 def test_offset_encoding_roundtrip():

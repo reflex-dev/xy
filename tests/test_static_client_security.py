@@ -437,7 +437,8 @@ def test_client_quiesces_and_rebuilds_repeated_context_loss() -> None:
         "clearTimeout(this._rebinTimer);",
         "if (this._destroyed || this._glLost || !this.gl) return;",
         "if (this._destroyed || this._contextRecoveryError) return;",
-        'if (this._glLost && msg.type !== "append" && msg.type !== "pick_result") return;',
+        'if (this._glLost && msg.type !== "append" && msg.type !== "pick_result" &&',
+        'msg.type !== "restyle") return;',
     )
 
     for path, text in CLIENT_FILES:

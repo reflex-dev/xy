@@ -28,6 +28,7 @@ from reflex_xy.registry import registry
 from reflex_xy.tokens import build_state_token
 
 import xy
+from xy._figure import Figure
 
 CLIENT_TOKEN = "11111111-2222-4333-8444-555566667777"
 OTHER_TOKEN = "99999999-8888-4777-8666-555544443333"
@@ -123,6 +124,7 @@ def test_sub_delivers_spec_and_binary_columns(_fresh_registry):
         assert spec["buffer_layout"] == "split"
         assert len(spec["traces"]) == 1
         buffers = payload["buffers"]
+        assert payload["buffer_hashes"] == [column["hash"] for column in spec["columns"]]
         # Binary columns arrive as raw bytes (the JS client sees ArrayBuffers):
         # no base64, no JSON numbers (§29 preserved across this transport).
         assert all(isinstance(b, (bytes, bytearray)) for b in buffers)
@@ -342,6 +344,114 @@ def test_publish_broadcasts_to_subscribers(_fresh_registry):
             assert second["version"] == 2
             xcol = np.frombuffer(second["buffers"][0], dtype=np.float32)
             assert len(xcol) == 48
+            await client.disconnect()
+
+    run(main())
+
+
+def test_publish_sends_only_changed_content_addressed_columns(_fresh_registry):
+    """One changed y column does not re-send the unchanged x column."""
+
+    def figure(y, color="blue"):
+        x = np.linspace(-2.0, 2.0, len(y))
+        return xy.scatter_chart(xy.scatter(x, y, color=color), width=640, height=400).figure()
+
+    async def main():
+        y1 = np.sin(np.linspace(-2.0, 2.0, 256))
+        y2 = np.cos(np.linspace(-2.0, 2.0, 256))
+        token = registry.register(figure(y1))
+        async with data_plane_server() as (url, _):
+            client = await connect_client(url)
+            collector = Collector(client)
+            await client.emit("sub", {"fig": token, "px": 640}, namespace="/_xy")
+            first = await collector.next(collector.payloads)
+            assert len(first["buffers"]) == 2
+
+            registry.publish(token, figure(y2))
+            changed = await collector.next(collector.payloads)
+            assert changed["version"] == 2
+            assert len(changed["buffers"]) == 1
+            assert len(changed["buffer_hashes"]) == 1
+            old_hashes = {column["hash"] for column in first["spec"]["columns"]}
+            new_hashes = {column["hash"] for column in changed["spec"]["columns"]}
+            assert len(old_hashes & new_hashes) == 1
+            assert changed["buffer_hashes"][0] in new_hashes - old_hashes
+
+            # A state-driven style-only rebuild is a zero-buffer payload.
+            registry.publish(token, figure(y2, color="tomato"))
+            styled = await collector.next(collector.payloads)
+            assert styled["version"] == 3
+            assert styled["buffers"] == []
+            assert styled["buffer_hashes"] == []
+            assert styled["spec"]["traces"][0]["color"]["color"] == "tomato"
+            await client.disconnect()
+
+    run(main())
+
+
+def test_subscribers_share_px_bucket_encoding_but_receive_own_initial_bytes(_fresh_registry):
+    class CountingFigure(Figure):
+        builds = 0
+
+        def build_payload_split(self, px_width=None):
+            self.builds += 1
+            return super().build_payload_split(px_width)
+
+    x = np.linspace(0.0, 1.0, 128)
+    figure = CountingFigure(width=640, height=400).scatter(x, np.sin(x))
+
+    async def main():
+        token = registry.register(figure)
+        async with data_plane_server() as (url, _):
+            first_client = await connect_client(url)
+            second_client = await connect_client(url)
+            first_collector = Collector(first_client)
+            second_collector = Collector(second_client)
+            # Both widths round up to the same 64px bucket (704).
+            await asyncio.gather(
+                first_client.emit("sub", {"fig": token, "px": 641}, namespace="/_xy"),
+                second_client.emit("sub", {"fig": token, "px": 650}, namespace="/_xy"),
+            )
+            first, second = await asyncio.gather(
+                first_collector.next(first_collector.payloads),
+                second_collector.next(second_collector.payloads),
+            )
+            assert figure.builds == 1
+            assert first["spec"] == second["spec"]
+            # A new sid has no acknowledged prior manifest, so it still gets
+            # complete initial bytes even though the expensive encode is shared.
+            assert len(first["buffers"]) == len(second["buffers"]) == 2
+            assert first["buffer_hashes"] == second["buffer_hashes"]
+            await first_client.disconnect()
+            await second_client.disconnect()
+
+    run(main())
+
+
+def test_same_socket_mounts_have_independent_manifests_and_unsubscribe(_fresh_registry):
+    """Two mounts can share one sid/token without borrowing each other's cache."""
+
+    async def main():
+        token = registry.register(make_figure(128))
+        async with data_plane_server() as (url, _):
+            client = await connect_client(url)
+            collector = Collector(client)
+
+            await client.emit("sub", {"fig": token, "mid": "mount-a", "px": 640}, namespace="/_xy")
+            first = await collector.next(collector.payloads)
+            await client.emit("sub", {"fig": token, "mid": "mount-b", "px": 640}, namespace="/_xy")
+            second = await collector.next(collector.payloads)
+            assert first["mid"] == "mount-a"
+            assert second["mid"] == "mount-b"
+            assert len(first["buffers"]) == len(second["buffers"]) == 2
+
+            await client.emit("unsub", {"fig": token, "mid": "mount-a"}, namespace="/_xy")
+            await asyncio.sleep(0.05)
+            registry.publish(token, make_figure(128))
+            remaining = await collector.next(collector.payloads)
+            assert remaining["mid"] == "mount-b"
+            with pytest.raises(asyncio.TimeoutError):
+                await Collector.next(collector.payloads, timeout=0.15)
             await client.disconnect()
 
     run(main())

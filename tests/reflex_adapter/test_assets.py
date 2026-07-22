@@ -22,7 +22,9 @@ def test_client_source_is_the_installed_bundle():
     source = _client_source()
     assert source == pathlib.Path(xy.__file__).resolve().parent / "static" / "index.js"
     text = source.read_text(encoding="utf-8")
-    for marker in ("function renderStandalone(", "function decodeFrame(", "class ChartView"):
+    # Production bundles are minified; exported names are the stable contract,
+    # not local function/class spellings.
+    for marker in ("as renderStandalone", "as decodeFrame", "as ChartView"):
         assert marker in text
 
 
@@ -59,8 +61,10 @@ def test_wrapper_speaks_the_namespace_protocol():
     # server -> client events
     for needle in ('"payload"', '"msg"', '"err"'):
         assert f"socket.on({needle}" in jsx
-    # binary columns go straight into typed arrays — never through JSON numbers
-    assert "new Uint8Array(b)" in jsx
+    # Binary columns resolve directly from ArrayBuffer attachments through the
+    # content-addressed manifest — never through JSON numbers/base64.
+    assert "resolveColumnBuffers" in jsx
+    assert "data.buffer_hashes" in jsx
     # the wrapper imports the sibling client copy, not a CDN or npm package
     assert 'from "./xy_client.js"' in jsx
     # static tier: fetch the payload asset, decode the XYBF frame, render

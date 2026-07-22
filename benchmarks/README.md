@@ -180,6 +180,11 @@ with keyed transition columns. Run `bench_animation.py` for real-Chrome
 previous+next scene bound; browser clocks and GPU work do not belong in
 CodSpeed simulation.
 
+`test_codspeed_restyle.py` keeps the buffer-less JSON restyle for a 200k-point
+direct scatter beside its full split-payload comparator. Real-Chromium tests
+remain authoritative for unchanged WebGL-buffer identity and context-loss
+recovery; these rows isolate the Python control-plane and content-hash cost.
+
 ## Reference Hardware
 
 Set `XY_BENCH_HARDWARE_GL=1` to disable the benchmark helpers' SwiftShader

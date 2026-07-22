@@ -125,7 +125,7 @@ client -> server (namespace /_xy)
   msg     {fig, mid, m}         one xy.channel.handle_message dispatch
 
 server -> client
-  payload {fig, version, spec, buffers}   first paint / full refresh
+  payload {fig, mid?, version, spec, buffer_hashes, buffers}  first paint / sparse refresh
   msg     {fig, mid?, message, buffers}   reply (mid echoed) or push (no mid)
   err     {fig, error}                    unknown/foreign token, rebuild failed
 ```
@@ -139,6 +139,20 @@ Rust kernels release the GIL) under a per-figure lock.
 Inbound handlers are total: malformed input drops or answers `err`, never
 raises — `channel.py`'s "hostile client must not crash the kernel" contract
 extended to the transport.
+
+Split-payload columns carry a BLAKE2b-128 content address. A mount retains only
+the immediately preceding manifest per mount; a refresh attaches each distinct column
+that is not in that manifest and reconstructs the writer's original `buf`
+index space transactionally before `updatePayload`. The server caches complete
+encoded payloads per `(figure version, width rounded up to 64 px)` with an
+eight-bucket bound, so subscribers at equivalent screen widths share encoding
+work while each new socket still receives every byte needed for first paint.
+
+The renderer's hash-to-WebGL-buffer cache is limited to immutable `direct`
+tier columns. Decimated tier buffers are generation-local because
+`tier_update` overwrites them; density textures, retained samples, and
+`drill_seq` subsets keep their existing bounded lifecycle and never enter the
+column cache. Full trace teardown and WebGL context loss release the cache.
 
 ### 2.1 Message catalog (specified in wire-protocol.md)
 

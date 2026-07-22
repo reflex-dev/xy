@@ -45,6 +45,15 @@ _FigureCheckpoint: TypeAlias = tuple[ColumnStoreCheckpoint, int, dict[str, list[
 # there (clear the selection), so absence needs its own marker.
 _STATE_UNSET: Any = object()
 
+# Public mark kinds and a few renderer-internal helper traces share the same
+# style grammar.  Keeping this mapping beside the restyle boundary makes the
+# accepted patch surface explicit: geometry-bearing fields (curve/step/etc.)
+# never enter the buffer-less update path.
+_RESTYLE_KIND = {
+    "box_median": "segments",
+    "box_whisker": "segments",
+}
+
 
 class Selection:
     """The payload handed to an `on_select` callback. Holds the selected
@@ -1497,6 +1506,69 @@ class Figure(AnnotationsMixin, PayloadMixin):
             "animate": bool(animate),
             "history": bool(history),
         }
+
+    def restyle_message(
+        self,
+        trace_id: Any,
+        style: Any = None,
+        *,
+        size: Any = _STATE_UNSET,
+    ) -> dict[str, Any]:
+        """Apply a buffer-less renderer-style patch to one trace.
+
+        ``style`` is the same strict CSS subset accepted by mark builders.
+        Only properties that can be consumed by draw-time uniforms or the
+        mark's small constant-style record are accepted; geometry, data
+        channels, axes, and LOD policy remain full-payload changes.  ``size``
+        is additionally available for a constant-size scatter channel.
+
+        The canonical trace is mutated before the message is returned so a
+        notebook reopen, WebGL context restore, or Reflex reconnect rebuilds
+        the same appearance without retaining the incremental message.
+        """
+        if isinstance(trace_id, (bool, np.bool_)) or not isinstance(trace_id, (int, np.integer)):
+            raise ValueError("restyle trace_id must be an integer")
+        tid = int(trace_id)
+        if not 0 <= tid < len(self.traces):
+            raise ValueError(f"unknown trace id {trace_id!r}")
+        trace = self.traces[tid]
+        kind = _RESTYLE_KIND.get(trace.kind, trace.kind)
+        compiled = styles.compile_mark_style(kind, style, f"{trace.kind} restyle")
+        if "fill" in compiled:
+            compiled["fill"] = _validate.mark_fill(compiled["fill"], f"{trace.kind} restyle fill")
+
+        # A constant paint may be represented as a channel (scatter/mesh/
+        # rect families).  Overriding a varying channel would silently hide
+        # data semantics, so reject it instead of pretending this is a cheap
+        # scalar restyle.
+        if "color" in compiled and trace.color_ch is not None and trace.color_ch.mode != "constant":
+            raise ValueError(
+                f"{trace.kind} color is data-driven; changing it requires a full payload"
+            )
+
+        message: dict[str, Any] = {
+            "type": "restyle",
+            "trace": tid,
+            "style": compiled,
+        }
+        point_size: Optional[float] = None
+        if size is not _STATE_UNSET:
+            if trace.kind != "scatter" or trace.size_ch is None:
+                raise ValueError("restyle size is only supported by scatter traces")
+            if trace.size_ch.mode != "constant":
+                raise ValueError("scatter size is data-driven; changing it requires a full payload")
+            point_size = self._positive_scalar(size, "scatter restyle size")
+            message["size"] = point_size
+        if not compiled and "size" not in message:
+            raise ValueError("restyle must change style or size")
+        # Commit only after every requested facet validated, so a bad size
+        # cannot leave a successfully parsed color half-applied.
+        if "color" in compiled and trace.color_ch is not None:
+            trace.color_ch.constant = compiled["color"]
+        if point_size is not None and trace.size_ch is not None:
+            trace.size_ch.constant = point_size
+        trace.style.update(compiled)
+        return message
 
     def view_nav_message(self, axes: Any = None) -> dict[str, Any]:
         """Build the §8 ``view_nav`` reset message (axes=None → the client's

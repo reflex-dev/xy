@@ -34,6 +34,7 @@ __all__ = [
     "append",
     "clear_selection",
     "reset_view",
+    "restyle",
     "select",
     "set_view",
     "setup",
@@ -119,6 +120,16 @@ def set_view(token: str, ranges: Any, *, animate: bool = True, history: bool = T
 def reset_view(token: str, axes: Any = None) -> None:
     """Out-of-band navigation to the home ranges (room-wide)."""
     registry.reset_view(token, axes)
+
+
+def restyle(token: str, trace: int, style: Any = None, *, size: Any = None) -> None:
+    """Room-wide mark restyle with no binary payload refresh.
+
+    ``style`` is XY's strict renderer-backed CSS subset; ``size`` updates a
+    constant-size scatter channel. The canonical registered figure is updated
+    so reconnects retain the result.
+    """
+    registry.restyle(token, trace, style, size=size)
 
 
 def select(

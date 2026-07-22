@@ -35,6 +35,14 @@ in the README).
   to the internal engine object.
 
 ### Added
+- **Buffer-less restyle and content-addressed payload reuse (#163).**
+  `Chart.restyle(...)`, `FigureWidget.restyle(...)`, and
+  `reflex_xy.restyle(...)` update constant renderer style/size through JSON
+  without re-shipping data. Every encoded column now carries a stable content
+  hash; Reflex caches full encodes by figure-version/64 px width bucket and
+  sends sparse consecutive manifests, while the client reuses unchanged
+  direct-tier WebGL buffers with reference-counted teardown. Mutable decimated
+  tiers, density textures, and drill subsets remain generation-local.
 - **Export format parity and a unified export API (ENG-10447).**
   `to_image(format=...)` and extension-inferred, atomic `write_image(path)`
   on charts, facet grids, and the internal figure cover PNG, JPEG/JPG, WebP,

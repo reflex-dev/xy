@@ -3292,6 +3292,14 @@ class Chart(Component):
         """Navigate to the home ranges (None = the configured reset_axes)."""
         self.widget().reset_view(axes)
 
+    def restyle(self, trace_id: int, style: Any = None, *, size: Any = None) -> None:
+        """Update one mark's constant renderer style without re-shipping data.
+
+        ``style`` accepts the same strict CSS subset as the mark builder;
+        ``size`` is available for constant-size scatter marks.
+        """
+        self.widget().restyle(trace_id, style, size=size)
+
     def select(
         self,
         *,

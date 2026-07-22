@@ -352,6 +352,10 @@ export class ChartView {
     this._pendingWheelZoom = null;
     this._lastLabelDraw = null;
     this._lutCache = new Map();
+    // Immutable direct-tier columns are content-addressed across full payload
+    // updates. Entries are reference-counted because an animated old/new pair
+    // can intentionally share one WebGLBuffer until the transition retires.
+    this._gpuColumnCache = new Map();
     this._listeners = [];
     this._glPrograms = [];
     this._progCache = new Map();
@@ -2068,7 +2072,17 @@ export class ChartView {
 
     // Per-mark GPU setup is dispatched through MARK_KINDS (55_marks.js) so a
     // new chart kind is an entry in that registry, not another branch here.
-    markOf(t.kind).build(this, g, t, buffer);
+    // Only direct-tier input columns are immutable for the lifetime of their
+    // content hash. Decimated tiers overwrite their initial x/y(/base)
+    // buffers on every `tier_update`, so letting those handles enter the
+    // content cache would mutate another trace/update that shares the hash.
+    const previousCacheInputColumns = this._cacheInputColumns;
+    this._cacheInputColumns = t.tier === "direct";
+    try {
+      markOf(t.kind).build(this, g, t, buffer);
+    } finally {
+      this._cacheInputColumns = previousCacheInputColumns;
+    }
     if (t.keys && Number.isInteger(t.keys.lo) && Number.isInteger(t.keys.hi)) {
       const lo = this._columnView(buffer, this.spec.columns[t.keys.lo]);
       const hi = this._columnView(buffer, this.spec.columns[t.keys.hi]);
@@ -2225,10 +2239,10 @@ export class ChartView {
   _destroyDensitySample(g) {
     const s = g && g.sampleOverlay;
     if (!s || !this.gl) return;
-    for (const b of [s.xBuf, s.yBuf, s.cBuf, s.rgbaBuf, s.sBuf, s.styleBuf,
-      s.strokeBuf, s.selBuf, s.dBuf]) {
-      if (b) this.gl.deleteBuffer(b);
-    }
+    this._deleteBuffers(s, [
+      "xBuf", "yBuf", "cBuf", "rgbaBuf", "sBuf", "styleBuf",
+      "strokeBuf", "selBuf", "dBuf",
+    ]);
     g.sampleOverlay = null;
   }
 
@@ -2489,8 +2503,12 @@ export class ChartView {
     const st = this._stepArrays(t, src.x, src.y, src.n);
     const drawX = st ? st.x : src.x;
     const drawY = st ? st.y : src.y;
-    g.xBuf = this._upload(drawX);
-    g.yBuf = this._upload(drawY);
+    // Decimated columns are mutable: tier_update overwrites these buffers as
+    // the visible window moves. Never place them in the immutable content
+    // cache (direct columns, including smooth/step-derived arrays, are safe).
+    const cacheColumns = t.tier === "direct";
+    g.xBuf = this._upload(drawX, cacheColumns);
+    g.yBuf = this._upload(drawY, cacheColumns);
     g.n = st ? st.n : src.n;
     // Drawn (offset-encoded) vertices kept for the screen-space dash arc length.
     g._dashX = drawX;
@@ -2622,9 +2640,10 @@ export class ChartView {
     g.n = Math.min(x.length, y.length, base.length);
     g._cpu = { x, y, base, xMeta: g.xMeta, yMeta: g.yMeta };
     const sm = this._smoothArrays(t, x, y, base, g.n);
-    g.xBuf = this._upload(sm ? sm.x : x);
-    g.yBuf = this._upload(sm ? sm.y : y);
-    g.baseBuf = this._upload(sm ? sm.extra : base);
+    const cacheColumns = t.tier === "direct";
+    g.xBuf = this._upload(sm ? sm.x : x, cacheColumns);
+    g.yBuf = this._upload(sm ? sm.y : y, cacheColumns);
+    g.baseBuf = this._upload(sm ? sm.extra : base, cacheColumns);
     if (sm) g.n = sm.n;
     g._dashX = sm ? sm.x : x;
     g._dashY = sm ? sm.y : y;
@@ -2817,13 +2836,29 @@ export class ChartView {
     const end = relativeOffset + length * bytesPerElement;
     if (end > span.byteLength) throw new RangeError("column extends past chart payload");
     if (absoluteOffset % bytesPerElement !== 0) throw new RangeError("column is misaligned");
-    if (meta.dtype === "u8") return new Uint8Array(span.buffer, absoluteOffset, length);
-    if (meta.dtype === "u32") return new Uint32Array(span.buffer, absoluteOffset, length);
-    return new Float32Array(span.buffer, absoluteOffset, length);
+    let view;
+    if (meta.dtype === "u8") view = new Uint8Array(span.buffer, absoluteOffset, length);
+    else if (meta.dtype === "u32") view = new Uint32Array(span.buffer, absoluteOffset, length);
+    else view = new Float32Array(span.buffer, absoluteOffset, length);
+    if (this._cacheInputColumns && typeof meta.hash === "string" && meta.hash) {
+      // Include interpretation in the GPU key: identical zero bytes can be a
+      // u8 or f32 column, but vertexAttribPointer's type belongs to the owner.
+      (view as any)._fcGpuKey = `${meta.dtype || "f32"}:${meta.hash}`;
+    }
+    return view;
   }
 
-  _upload(view) {
+  _upload(view, cache = true) {
     const gl = this.gl;
+    const cacheKey = cache ? (view as any)._fcGpuKey : null;
+    if (cacheKey) {
+      const hit = this._gpuColumnCache.get(cacheKey);
+      if (hit && gl.isBuffer(hit.buffer)) {
+        hit.refs += 1;
+        return hit.buffer;
+      }
+      if (hit) this._gpuColumnCache.delete(cacheKey);
+    }
     const buf = gl.createBuffer();
     // Identity tag for VAO config signatures: a replaced buffer (data update,
     // drill swap) gets a new id, so any VAO built over the old one rebuilds.
@@ -2831,6 +2866,10 @@ export class ChartView {
     buf._fcType = view instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.bufferData(gl.ARRAY_BUFFER, view, gl.STATIC_DRAW);
+    if (cacheKey) {
+      buf._fcCacheKey = cacheKey;
+      this._gpuColumnCache.set(cacheKey, { buffer: buf, refs: 1 });
+    }
     return buf;
   }
 
@@ -4826,15 +4865,30 @@ export class ChartView {
     this.root.remove();
   }
 
-  _deleteBuffers(obj, names) {
+  _releaseBuffer(buf) {
     const gl = this.gl;
-    if (!gl || !obj) return;
+    if (!gl || !buf) return false;
+    const key = buf._fcCacheKey;
+    const cached = key && this._gpuColumnCache.get(key);
+    if (cached && cached.buffer === buf) {
+      cached.refs -= 1;
+      if (cached.refs > 0) return false;
+      this._gpuColumnCache.delete(key);
+    }
+    gl.deleteBuffer(buf);
+    return true;
+  }
+
+  _deleteBuffers(obj, names) {
+    if (!this.gl || !obj) return;
     const seen = new Set();
     for (const name of names) {
       const buf = obj[name];
       if (buf && !seen.has(buf)) {
-        seen.add(buf);
-        gl.deleteBuffer(buf);
+        // A shared hashed buffer has one ref per `_upload` owner. Do not mark
+        // it seen until the last ref deletes it: two equal columns on this
+        // same trace must each release the ref they acquired.
+        if (this._releaseBuffer(buf)) seen.add(buf);
       }
       obj[name] = null;
     }
@@ -4846,13 +4900,18 @@ export class ChartView {
     this._deleteVaos(g);
     this._deleteVaos(g.drill);
     this._deleteBuffers(g, [
-      "xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "baseBuf",
+      "xBuf", "yBuf", "cBuf", "rgbaBuf", "sBuf", "styleBuf", "strokeBuf",
+      "radiusBuf", "selBuf", "baseBuf", "_lenBuf",
       "x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf",
       "posBuf", "value1Buf", "value0Buf",
+      "_segmentDashOffsetBuf", "_segmentDashDirBuf",
       "_transitionPrevXBuf", "_transitionPrevYBuf",
       "_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",
     ]);
-    this._deleteBuffers(g.drill, ["xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "dBuf"]);
+    this._deleteBuffers(g.drill, [
+      "xBuf", "yBuf", "cBuf", "rgbaBuf", "sBuf", "styleBuf", "strokeBuf",
+      "selBuf", "dBuf",
+    ]);
     const textures = [];
     if (g.heatmap) textures.push(g.heatmap.tex);
     for (const d of g.densityCache || []) textures.push(d && d.tex);
@@ -4896,6 +4955,13 @@ export class ChartView {
       if (p) gl.deleteProgram(p);
     }
     if (this._progCache) this._progCache.clear();
+    // Defensive backstop for interrupted builds: normal trace teardown drops
+    // every reference, but a partially constructed trace may never have been
+    // installed in `gpuTraces`.
+    for (const entry of this._gpuColumnCache.values()) {
+      if (entry.buffer && gl.isBuffer(entry.buffer)) gl.deleteBuffer(entry.buffer);
+    }
+    this._gpuColumnCache.clear();
     this._glPrograms = this._progCache;
     this.gpuTraces = [];
   }

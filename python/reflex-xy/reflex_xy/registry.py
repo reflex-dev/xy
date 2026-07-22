@@ -52,6 +52,13 @@ class FigureEntry:
     # recipe elsewhere (module-level `inline()` charts) live as long as the
     # process, or a sweep would break them permanently after idling.
     pinned: bool = False
+    # Full split payloads are encoded once per (version, screen-width bucket)
+    # and reused across subscribers. Values are owned encoded arrays/views;
+    # the namespace performs only the unavoidable per-socket bytes copy for
+    # columns that client does not already hold by content hash.
+    payload_cache: dict[tuple[int, int], tuple[dict[str, Any], list[memoryview]]] = field(
+        default_factory=dict
+    )
 
     def touch(self) -> None:
         self.last_access = time.monotonic()
@@ -119,6 +126,7 @@ class FigureRegistry:
                 if changed:
                     entry.figure = figure
                     entry.version += 1
+                    entry.payload_cache.clear()
                 entry.pinned = entry.pinned or pinned
                 entry.touch()
         if broadcast and changed:
@@ -159,6 +167,7 @@ class FigureRegistry:
             if entry is None:
                 return None
             entry.version += 1
+            entry.payload_cache.clear()
             entry.touch()
             return entry
 
@@ -294,6 +303,26 @@ class FigureRegistry:
     def reset_view(self, token: str, axes: Any = None) -> None:
         """Room-wide navigation to the home ranges."""
         self.push_view_message(token, lambda fig: (fig.view_nav_message(axes), []))
+
+    def restyle(self, token: str, trace: int, style: Any = None, *, size: Any = None) -> None:
+        """Mutate one trace's constant renderer style and push it room-wide.
+
+        The figure stays canonical for reconnect/context restore, while the
+        current clients receive only a JSON message: no payload build, buffer
+        attachment, or full-payload version bump occurs.
+        """
+        kwargs = {} if size is None else {"size": size}
+        entry = self.get(token)
+        if entry is None:
+            msg = f"unknown figure token: {token!r}"
+            raise KeyError(msg)
+        message = entry.figure.restyle_message(trace, style, **kwargs)
+        # Same full-payload version (existing clients need not advance their
+        # message guard), but a later subscriber must build a spec containing
+        # the new constants rather than reuse a pre-restyle cached spec.
+        with self._mutex:
+            entry.payload_cache.clear()
+        self.push_view_message(token, lambda _fig: (message, []))
 
     def select(
         self,

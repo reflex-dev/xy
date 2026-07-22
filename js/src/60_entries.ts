@@ -1,4 +1,4 @@
-import { bytesToSpan, decodeFrame } from "./00_header";
+import { bytesToSpan, decodeFrame, resolveColumnBuffers } from "./00_header";
 import { ChartView } from "./50_chartview";
 import { MARK_KINDS, markOf } from "./55_marks";
 // Prototype-augmentation modules: imported for their side effect of attaching
@@ -76,5 +76,5 @@ export function renderStandalone(el, spec, arrayBuffer) {
 // Public API. The ESM bundle (static/index.js, anywidget's `_esm`) re-exports
 // these directly; the IIFE bundle (static/standalone.js) exposes the same
 // namespace as `window.xy`.
-export { decodeFrame, ChartView, MARK_KINDS, markOf };
+export { decodeFrame, resolveColumnBuffers, ChartView, MARK_KINDS, markOf };
 export default { render, decodeFrame };
