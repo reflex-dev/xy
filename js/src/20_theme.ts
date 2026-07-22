@@ -75,15 +75,12 @@ export function cssColor([r, g, b, a]: any) {
 // color, padding, border, font, and box-shadow stay overridable here.
 // All colors flow through --chart-* tokens so container theming still cascades.
 //
-// The modebar's own default surface (its background/border/shadow, which have
-// no public --chart-* token) is scheme-aware: it reads internal --xy-modebar-*
-// defaults that flip to a dark palette whenever a `.dark` class sits on the
-// chart root or any ancestor — the class-on-root convention every host we
-// target uses (Reflex/next-themes, Radix Themes, Tailwind). Icon color already
-// follows currentColor, so on a dark page the light default bar would have hit
-// light icons on white; the override keeps the toolbar readable in both modes.
-// These are still zero-specificity :where() rules, so a host --chart-modebar-*
-// token or utility class overrides them in either scheme.
+// The reduction badges and modebar's own surface defaults are scheme-aware:
+// they read internal --xy-* defaults that flip to a dark palette whenever a
+// `.dark` class sits on the chart root or any ancestor — the class-on-root
+// convention every host we target uses (Reflex/next-themes, Radix Themes,
+// Tailwind). These remain zero-specificity :where() rules, so public
+// --chart-badge-* / --chart-modebar-* tokens or utility classes override them.
 export const XY_CHROME_CSS = `
 @layer base{
 :where(.xy [data-xy-slot="title"]){text-align:center;font-size:14px;font-weight:600;color:var(--chart-text,inherit)}
@@ -94,9 +91,9 @@ export const XY_CHROME_CSS = `
 :where(.xy [data-xy-slot="colorbar_bar"]){background:var(--xy-colorbar-gradient);border:1px solid currentColor;box-sizing:border-box}
 :where(.xy [data-xy-slot="colorbar_title"]){font-weight:500}
 :where(.xy [data-xy-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
-:where(.xy [data-xy-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
-:where(.xy){--xy-modebar-bg:rgba(255,255,255,.78);--xy-modebar-menu-bg:rgba(255,255,255,.94);--xy-modebar-border:rgba(128,128,128,.18);--xy-modebar-menu-border:rgba(128,128,128,.22);--xy-modebar-active:rgba(128,128,128,.2);--xy-modebar-shadow:0 1px 4px rgba(0,0,0,.08);--xy-modebar-menu-shadow:0 5px 18px rgba(15,23,42,.18)}
-:where(.dark .xy,.xy.dark){--xy-modebar-bg:rgba(37,42,52,.9);--xy-modebar-menu-bg:rgba(30,35,44,.97);--xy-modebar-border:rgba(255,255,255,.14);--xy-modebar-menu-border:rgba(255,255,255,.16);--xy-modebar-active:rgba(255,255,255,.16);--xy-modebar-shadow:0 1px 4px rgba(0,0,0,.5);--xy-modebar-menu-shadow:0 8px 24px rgba(0,0,0,.6)}
+:where(.xy [data-xy-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,var(--xy-badge-text));background:var(--chart-badge-bg,var(--xy-badge-bg));box-shadow:var(--xy-badge-shadow)}
+:where(.xy){--xy-badge-text:#0f172a;--xy-badge-bg:rgba(255,255,255,.82);--xy-badge-shadow:0 1px 4px rgba(15,23,42,.14);--xy-modebar-bg:rgba(255,255,255,.78);--xy-modebar-menu-bg:rgba(255,255,255,.94);--xy-modebar-border:rgba(128,128,128,.18);--xy-modebar-menu-border:rgba(128,128,128,.22);--xy-modebar-active:rgba(128,128,128,.2);--xy-modebar-shadow:0 1px 4px rgba(0,0,0,.08);--xy-modebar-menu-shadow:0 5px 18px rgba(15,23,42,.18)}
+:where(.dark .xy,.xy.dark){--xy-badge-text:#e5e7eb;--xy-badge-bg:rgba(30,35,44,.9);--xy-badge-shadow:0 1px 4px rgba(0,0,0,.5);--xy-modebar-bg:rgba(37,42,52,.9);--xy-modebar-menu-bg:rgba(30,35,44,.97);--xy-modebar-border:rgba(255,255,255,.14);--xy-modebar-menu-border:rgba(255,255,255,.16);--xy-modebar-active:rgba(255,255,255,.16);--xy-modebar-shadow:0 1px 4px rgba(0,0,0,.5);--xy-modebar-menu-shadow:0 8px 24px rgba(0,0,0,.6)}
 :where(.xy [data-xy-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,var(--xy-modebar-bg));border:1px solid var(--xy-modebar-border);border-radius:4px;padding:1px;box-shadow:var(--xy-modebar-shadow)}
 :where(.xy [data-xy-slot="modebar_button"]){width:24px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-text,currentColor);cursor:pointer}
 :where(.xy [data-xy-modebar-drag-handle]){position:relative;width:22px;margin-right:4px;cursor:move}

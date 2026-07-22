@@ -293,6 +293,7 @@ move together across the whole chart.
 | `--chart-tooltip-bg` / `--chart-tooltip-text` | Tooltip | dark translucent / white |
 | `--chart-legend-bg` | Legend background | faint neutral fill |
 | `--chart-badge-bg` / `--chart-badge-text` | Reduction badges | light / dark |
+| `--chart-tick-label-max-width` | Maximum browser width of categorical y-axis tick labels | available edge space |
 | `--chart-modebar-bg` / `--chart-modebar-active` | Toolbar and active button | light or dark translucent (follows a `.dark` root class) / neutral |
 | `--chart-selection` / `--chart-selection-fill` | Selection outline/fill | blue outline / translucent blue |
 | `--chart-zoom-selection` / `--chart-zoom-selection-fill` | Box-zoom outline/fill | neutral outline/fill |

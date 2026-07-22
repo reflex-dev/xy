@@ -296,7 +296,7 @@ Object.assign(ChartView.prototype, {
     ctx.beginPath();
     ctx.rect(p.x, p.y, p.w, p.h);
     ctx.clip();
-    for (const ann of annotations) {
+    for (const [annotationIndex, ann] of annotations.entries()) {
       const style = ann && typeof ann.style === "object" ? ann.style : {};
       if (ann.kind === "band") {
         const vertical = ann.axis === "x";
@@ -353,8 +353,9 @@ Object.assign(ChartView.prototype, {
       } else if (ann.kind === "callout") {
         const px = this._dataPxX(Number(ann.x));
         const py = this._dataPxY(Number(ann.y));
-        const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
-        const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
+        const resolved = this._resolvedAnnotationOffsets?.get(annotationIndex);
+        const dx = resolved?.dx ?? (Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0);
+        const dy = resolved?.dy ?? (Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0);
         this._drawArrowLine(ctx, px + dx, py + dy, px, py, style);
       } else if (ann.kind === "marker") {
         this._drawAnnotationMarker(
@@ -374,7 +375,9 @@ Object.assign(ChartView.prototype, {
     const annotations = Array.isArray(this.spec.annotations) ? this.spec.annotations : [];
     if (!annotations.length) return;
     const p = this.plot;
-    for (const ann of annotations) {
+    const laidOut = [];
+    this._resolvedAnnotationOffsets = new Map();
+    for (const [annotationIndex, ann] of annotations.entries()) {
       const text = typeof ann.text === "string" ? ann.text : "";
       if (!text) continue;
       const style = ann && typeof ann.style === "object" ? ann.style : {};
@@ -589,6 +592,75 @@ Object.assign(ChartView.prototype, {
         if (pullX) d.style.left = `${px + dx + pullX / scale}px`;
         if (pullY) d.style.top = `${py + dy + pullY / scale}px`;
       }
+      laidOut.push({ d, ann, annotationIndex, px, py });
+    }
+
+    // Explicitly positioned labels are obstacles, not candidates for automatic
+    // staggering. Auto rule/band labels then take deterministic rows/columns,
+    // which avoids resize flashing and preserves user-provided anchor/offsets.
+    const bounds = this.labels.getBoundingClientRect();
+    if (bounds.width > 0 && bounds.height > 0) {
+      const scaleX = bounds.width / this.size.w;
+      const scaleY = bounds.height / this.size.h;
+      const occupied = [];
+      const automatic = (item) =>
+        (item.ann.kind === "rule" || item.ann.kind === "band") &&
+        item.ann.anchor === undefined && item.ann.dx === undefined && item.ann.dy === undefined;
+      const ordered = [...laidOut].sort((a, b) => Number(automatic(a)) - Number(automatic(b)));
+      const overlaps = (a, b) =>
+        a.left < b.right + 3 && a.right > b.left - 3 &&
+        a.top < b.bottom + 3 && a.bottom > b.top - 3;
+      const inside = (rect) =>
+        rect.left >= bounds.left - 0.5 && rect.right <= bounds.right + 0.5 &&
+        rect.top >= bounds.top - 0.5 && rect.bottom <= bounds.bottom + 0.5;
+      const shifted = (rect, dx, dy) => ({
+        left: rect.left + dx,
+        right: rect.right + dx,
+        top: rect.top + dy,
+        bottom: rect.bottom + dy,
+        width: rect.width,
+        height: rect.height,
+      });
+      for (const item of ordered) {
+        const baseLeft = parseFloat(item.d.style.left) || 0;
+        const baseTop = parseFloat(item.d.style.top) || 0;
+        let finalRect = item.d.getBoundingClientRect();
+        if (automatic(item)) {
+          const step = (item.ann.axis === "x" ? finalRect.height : finalRect.width) + 5;
+          const candidates = [0];
+          for (let row = 1; row <= 12; row++) candidates.push(row, -row);
+          let placed = false;
+          for (const candidate of candidates) {
+            const dx = item.ann.axis === "x" ? 0 : candidate * step;
+            const dy = item.ann.axis === "x" ? candidate * step : 0;
+            const candidateRect = shifted(finalRect, dx, dy);
+            if (inside(candidateRect) && !occupied.some((other) => overlaps(candidateRect, other))) {
+              if (dx) item.d.style.left = `${baseLeft + dx / scaleX}px`;
+              if (dy) item.d.style.top = `${baseTop + dy / scaleY}px`;
+              finalRect = candidateRect;
+              placed = true;
+              break;
+            }
+          }
+          if (!placed) {
+            item.d.style.left = `${baseLeft}px`;
+            item.d.style.top = `${baseTop}px`;
+          }
+        }
+        occupied.push(finalRect);
+      }
+    }
+
+    // The pointer begins at the callout's final text anchor. Edge clamping can
+    // change that anchor, so cache the resolved offset for the canvas pass.
+    for (const item of laidOut) {
+      if (item.ann.kind !== "callout") continue;
+      const left = parseFloat(item.d.style.left);
+      const top = parseFloat(item.d.style.top);
+      this._resolvedAnnotationOffsets.set(item.annotationIndex, {
+        dx: (Number.isFinite(left) ? left : item.px) - item.px,
+        dy: (Number.isFinite(top) ? top : item.py) - item.py,
+      });
     }
   },
 });
