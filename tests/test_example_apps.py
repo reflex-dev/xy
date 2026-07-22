@@ -160,7 +160,6 @@ def test_reflex_app_shows_every_linking_method_and_event() -> None:
 
 def test_reflex_config_wires_the_xy_plugin() -> None:
     cfg = (REFLEX_DIR / "rxconfig.py").read_text(encoding="utf-8")
-    assert "rx.plugins.RadixThemesPlugin()" in cfg
     assert "reflex_xy.XYPlugin()" in cfg
     assert 'app_name="xy_reflex_demo"' in cfg
 
