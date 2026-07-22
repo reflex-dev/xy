@@ -80,12 +80,112 @@ unsafe fn borrowed_byte_spans<'a>(
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 37;
+pub const ABI_VERSION: u32 = 38;
 const FACTORIZE_CAPACITY_EXCEEDED: usize = usize::MAX - 1;
 
 #[no_mangle]
 pub extern "C" fn xy_abi_version() -> u32 {
     ABI_VERSION
+}
+
+/// Convert NumPy datetime64 integer ticks to canonical whole milliseconds.
+///
+/// `numerator / denominator` is the source dtype's milliseconds-per-tick
+/// ratio.  The conversion stays in i128 until the final f64 store so finer
+/// units use exact Euclidean division (matching NumPy's datetime cast for
+/// negative pre-epoch values) and coarser units cannot overflow i64 on the
+/// way to the engine's documented f64 representation. `i64::MIN` is NumPy's
+/// NaT sentinel and maps to NaN.
+///
+/// Returns 1 on success, -1 when the whole-ms result would overflow NumPy's
+/// signed i64 datetime representation, and 0 for invalid pointers/ratio/stride
+/// arithmetic.
+///
+/// # Safety
+/// `data` must address `len` readable i64 values separated by `stride_bytes`;
+/// `out` must address `len` writable f64 values. Empty inputs may use null
+/// pointers.
+#[no_mangle]
+pub unsafe extern "C" fn xy_datetime64_to_ms(
+    data: *const i64,
+    len: usize,
+    stride_bytes: isize,
+    numerator: i64,
+    denominator: i64,
+    out: *mut f64,
+) -> i32 {
+    if len == 0 {
+        return 1;
+    }
+    if data.is_null() || out.is_null() || numerator <= 0 || denominator <= 0 {
+        return 0;
+    }
+    ffi_guard(0, || {
+        #[inline]
+        fn convert(raw: i64, numerator: i64, denominator: i64) -> Result<f64, ()> {
+            if raw == i64::MIN {
+                return Ok(f64::NAN);
+            }
+            if denominator == 1 {
+                return raw
+                    .checked_mul(numerator)
+                    // i64::MIN is NumPy's reserved NaT bit pattern, so a real
+                    // datetime may not convert to that value either.
+                    .filter(|&milliseconds| milliseconds != i64::MIN)
+                    .map(|milliseconds| milliseconds as f64)
+                    .ok_or(());
+            }
+            if numerator == 1 {
+                return Ok(raw.div_euclid(denominator) as f64);
+            }
+            let milliseconds =
+                ((raw as i128) * (numerator as i128)).div_euclid(denominator as i128);
+            if milliseconds <= i64::MIN as i128 || milliseconds > i64::MAX as i128 {
+                return Err(());
+            }
+            Ok((milliseconds as i64) as f64)
+        }
+
+        let output = std::slice::from_raw_parts_mut(out, len);
+        if stride_bytes == std::mem::size_of::<i64>() as isize
+            && data.align_offset(std::mem::align_of::<i64>()) == 0
+        {
+            let input = std::slice::from_raw_parts(data, len);
+            if denominator == 1 && numerator == 1 {
+                // The already-ms path needs no arithmetic and remains an easy
+                // vectorizable cast while preserving NaT.
+                for (dst, &raw) in output.iter_mut().zip(input) {
+                    *dst = if raw == i64::MIN {
+                        f64::NAN
+                    } else {
+                        raw as f64
+                    };
+                }
+                return 1;
+            }
+            for (dst, &raw) in output.iter_mut().zip(input) {
+                let Ok(value) = convert(raw, numerator, denominator) else {
+                    return -1;
+                };
+                *dst = value;
+            }
+            return 1;
+        }
+        for i in 0..len {
+            let Some(byte_offset) = isize::try_from(i)
+                .ok()
+                .and_then(|index| index.checked_mul(stride_bytes))
+            else {
+                return 0;
+            };
+            let raw = std::ptr::read_unaligned(data.cast::<u8>().offset(byte_offset).cast::<i64>());
+            let Ok(value) = convert(raw, numerator, denominator) else {
+                return -1;
+            };
+            output[i] = value;
+        }
+        1
+    })
 }
 
 /// Serialize parallel f64 screen coordinates into SVG polyline path data.
@@ -2849,6 +2949,106 @@ mod tests {
         std::panic::set_hook(hook);
         assert_eq!(got, usize::MAX);
         assert_eq!(ffi_guard(0i32, || 1i32), 1);
+    }
+
+    #[test]
+    fn datetime64_to_ms_is_exact_for_fixed_units_nat_and_negative_ticks() {
+        let seconds = [-2i64, 0, 1, i64::MIN];
+        let mut second_ms = [0.0f64; 4];
+        unsafe {
+            assert_eq!(
+                xy_datetime64_to_ms(
+                    seconds.as_ptr(),
+                    seconds.len(),
+                    std::mem::size_of::<i64>() as isize,
+                    1000,
+                    1,
+                    second_ms.as_mut_ptr(),
+                ),
+                1
+            );
+        }
+        assert_eq!(&second_ms[..3], &[-2000.0, 0.0, 1000.0]);
+        assert!(second_ms[3].is_nan());
+
+        let micros = [-1i64, -1000, -1001, 1001];
+        let mut micro_ms = [0.0f64; 4];
+        unsafe {
+            assert_eq!(
+                xy_datetime64_to_ms(
+                    micros.as_ptr(),
+                    micros.len(),
+                    std::mem::size_of::<i64>() as isize,
+                    1,
+                    1000,
+                    micro_ms.as_mut_ptr(),
+                ),
+                1
+            );
+        }
+        assert_eq!(micro_ms, [-1.0, -1.0, -2.0, 1.0]);
+
+        // The stride is part of the ABI so a sliced datetime64 input does not
+        // need a contiguous staging copy before the one canonical output.
+        let interleaved = [1i64, 99, 2, 99, 3];
+        let mut strided_ms = [0.0f64; 3];
+        unsafe {
+            assert_eq!(
+                xy_datetime64_to_ms(
+                    interleaved.as_ptr(),
+                    3,
+                    (2 * std::mem::size_of::<i64>()) as isize,
+                    1000,
+                    1,
+                    strided_ms.as_mut_ptr(),
+                ),
+                1
+            );
+        }
+        assert_eq!(strided_ms, [1000.0, 2000.0, 3000.0]);
+
+        // Preserve NumPy's conversion boundary: whole-ms values live in an
+        // i64 before the canonical f64 cast, and i64::MIN remains reserved for
+        // NaT rather than becoming a valid converted timestamp.
+        let overflow_seconds = [i64::MAX, i64::MIN + 1];
+        let mut overflow_ms = [0.0f64; 2];
+        unsafe {
+            assert_eq!(
+                xy_datetime64_to_ms(
+                    overflow_seconds.as_ptr(),
+                    overflow_seconds.len(),
+                    std::mem::size_of::<i64>() as isize,
+                    1000,
+                    1,
+                    overflow_ms.as_mut_ptr(),
+                ),
+                -1
+            );
+        }
+
+        // Multiply as an integer before the one f64 cast. Multiplying already-
+        // rounded f64 operands differs by 1024 ms for this in-range tick.
+        let boundary_seconds = [9_223_372_036_037_367i64];
+        let mut boundary_ms = [0.0f64; 1];
+        unsafe {
+            assert_eq!(
+                xy_datetime64_to_ms(
+                    boundary_seconds.as_ptr(),
+                    boundary_seconds.len(),
+                    std::mem::size_of::<i64>() as isize,
+                    1000,
+                    1,
+                    boundary_ms.as_mut_ptr(),
+                ),
+                1
+            );
+        }
+        let exact_ms = (boundary_seconds[0] * 1000) as f64;
+        assert_eq!(boundary_ms[0].to_bits(), exact_ms.to_bits());
+        assert_ne!(
+            boundary_ms[0].to_bits(),
+            (boundary_seconds[0] as f64 * 1000.0).to_bits()
+        );
     }
 
     #[test]

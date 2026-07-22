@@ -35,6 +35,7 @@ css_check = _impl.css_check
 correlation = _impl.correlation
 density_rgba = _impl.density_rgba
 density_log_u8 = _impl.density_log_u8
+datetime64_to_ms = _impl.datetime64_to_ms
 delaunay_triangles = _impl.delaunay_triangles
 zone_maps = _impl.zone_maps
 zone_maps_pair = _impl.zone_maps_pair
@@ -96,6 +97,7 @@ __all__ = [
     "bin_2d_stratified_sample_range_u8_counted",
     "correlation",
     "css_check",
+    "datetime64_to_ms",
     "delaunay_triangles",
     "density_log_u8",
     "density_rgba",

@@ -887,18 +887,16 @@ def area(
     checkpoint = self._checkpoint()
     try:
         xc, yc = self._ingest_xy(x, y, "area")
-        bc = (
-            self.store.ingest(np.full(len(xc), self._finite_scalar(base, "area base")))
-            if np.isscalar(base)
-            else self.store.ingest(base)
-        )
-        if len(bc) != len(xc):
+        base_const = self._finite_scalar(base, "area base") if np.isscalar(base) else None
+        bc = None if base_const is not None else self.store.ingest(base)
+        if bc is not None and len(bc) != len(xc):
             raise ValueError(f"area base must have length {len(xc)}, got {len(bc)}")
         if not kernels.is_sorted(xc.values):
             order = np.argsort(xc.values, kind="stable")
             xc = self.store.ingest(xc.values[order])
             yc = self.store.ingest(yc.values[order])
-            bc = self.store.ingest(bc.values[order])
+            if bc is not None:
+                bc = self.store.ingest(bc.values[order])
         style: dict[str, Any] = {
             "color": color,
             "opacity": opacity,
@@ -922,6 +920,7 @@ def area(
                 x=xc,
                 y=yc,
                 base=bc,
+                base_const=base_const,
                 name=name,
                 style=style,
             )
@@ -991,6 +990,14 @@ def error_band(
                 x=xc,
                 y=uc,
                 base=lc,
+                base_const=(
+                    lc.min
+                    if len(lc)
+                    and lc.zone.null_count == 0
+                    and lc.zone.count == len(lc)
+                    and lc.min == lc.max
+                    else None
+                ),
                 name=name,
                 style=style,
             )

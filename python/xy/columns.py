@@ -19,6 +19,7 @@ Phase 0 contract:
 from __future__ import annotations
 
 import datetime as dt
+import math
 from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
@@ -426,6 +427,22 @@ def _datetime_to_float_ms(
     arr: npt.NDArray[Any], copies: int
 ) -> tuple[npt.NDArray[np.float64], int]:
     """Canonicalize datetime-like columns to f64 ms, preserving nulls as NaN."""
+    if np.issubdtype(arr.dtype, np.datetime64) and arr.dtype.isnative:
+        ratio = _fixed_datetime_ms_ratio(arr.dtype)
+        if ratio is not None:
+            numerator, denominator = ratio
+            try:
+                # The native loop consumes the datetime array's i64 view at
+                # its original stride and writes canonical f64 ms directly:
+                # one full-size output, rather than datetime64[ms] plus f64.
+                return (
+                    kernels.datetime64_to_ms(arr.view(np.int64), numerator, denominator),
+                    copies + 1,
+                )
+            except ValueError:
+                # Exotic dtype multipliers outside the int64 ABI ratio keep
+                # NumPy's general calendar-aware fallback below.
+                pass
     try:
         dt_ms, copies = _astype_counted(arr, "datetime64[ms]", copies)
     except (TypeError, ValueError) as e:
@@ -435,6 +452,39 @@ def _datetime_to_float_ms(
     if np.any(nat):
         out[nat] = np.nan
     return out, copies
+
+
+_FIXED_DATETIME_MS_RATIOS: dict[str, tuple[int, int]] = {
+    "W": (7 * 24 * 60 * 60 * 1000, 1),
+    "D": (24 * 60 * 60 * 1000, 1),
+    "h": (60 * 60 * 1000, 1),
+    "m": (60 * 1000, 1),
+    "s": (1000, 1),
+    "ms": (1, 1),
+    "us": (1, 1000),
+    "ns": (1, 1_000_000),
+    "ps": (1, 1_000_000_000),
+    "fs": (1, 1_000_000_000_000),
+    "as": (1, 1_000_000_000_000_000),
+}
+
+
+def _fixed_datetime_ms_ratio(dtype: np.dtype[Any]) -> tuple[int, int] | None:
+    """Milliseconds per datetime tick for fixed-duration NumPy units.
+
+    Years and months deliberately return ``None``: their conversion is
+    calendar-dependent, so NumPy remains the correctness oracle for them.
+    """
+    unit, step = np.datetime_data(dtype)
+    base = _FIXED_DATETIME_MS_RATIOS.get(unit)
+    if base is None:
+        return None
+    numerator = int(base[0]) * int(step)
+    denominator = int(base[1])
+    # Reduce before crossing the fixed-width C ABI. This also handles dtypes
+    # such as datetime64[1000us] as the exact 1 ms/tick ratio.
+    divisor = math.gcd(numerator, denominator)
+    return numerator // divisor, denominator // divisor
 
 
 def _astype_counted(arr: npt.NDArray[Any], dtype: Any, copies: int) -> tuple[npt.NDArray[Any], int]:

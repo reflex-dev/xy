@@ -1035,6 +1035,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
             for col in self._range_columns(t, axis_id):
                 lo = min(lo, col.min)
                 hi = max(hi, col.max)
+            base_const = self._range_base_const(t, axis_id)
+            if base_const is not None:
+                lo = min(lo, base_const)
+                hi = max(hi, base_const)
         if not np.isfinite(lo) or not np.isfinite(hi):
             lo, hi = 0.0, 1.0
         scale = self._axis_scale(axis_id)
@@ -1046,6 +1050,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
                     if np.isfinite(col.zone.positive_min):
                         positive_los.append(col.zone.positive_min)
                         positive_his.append(col.zone.positive_max)
+                base_const = self._range_base_const(t, axis_id)
+                if base_const is not None and base_const > 0:
+                    positive_los.append(base_const)
+                    positive_his.append(base_const)
             if not positive_los:
                 raise ValueError(f"{axis_id} log axis requires at least one positive value")
             lo, hi = min(positive_los), max(positive_his)
@@ -1224,6 +1232,19 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if t.x0 is not None and t.x1 is not None and t.y0 is not None and t.y1 is not None:
             return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1]
         return [t.x if axis == "x" else t.y]
+
+    def _range_base_const(self, t: Trace, axis_id: str) -> Optional[float]:
+        """Scalar area baseline contributing to a matching y-axis range."""
+        if (
+            self._axis_dim(axis_id) == "y"
+            and t.y_axis == axis_id
+            and t.kind in {"area", "error_band"}
+            and t.base is None
+            and t.base_const is not None
+            and t.n_points > 0
+        ):
+            return t.base_const
+        return None
 
     # -- payload --------------------------------------------------------------
 
@@ -1663,7 +1684,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
 
     def _repr_html_(self) -> str:
         """Notebook HTML repr isolated from the host document's styles."""
-        return export.notebook_iframe(self.to_html(), width=self.width, height=self.height)
+        return export.notebook_figure_iframe(self, width=self.width, height=self.height)
 
     def to_svg(
         self,
@@ -1789,7 +1810,6 @@ class Figure(AnnotationsMixin, PayloadMixin):
         """Every byte class itemized; if it isn't in the report it isn't real."""
         from . import interaction  # method-local: no load-time cycle
 
-        spec, blob = self.build_payload()
         report = self.store.memory_report()
         channel_arrays: list[np.ndarray] = []
         store_arrays = [column.values for column in self.store.columns]
@@ -1819,9 +1839,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
                     seen_channels.add(key)
                     channel_arrays.append(array)
         report["channel_bytes"] = int(sum(array.nbytes for array in channel_arrays))
-        report["transport_bytes_first_paint"] = len(blob)
+        transport_bytes = self.payload_nbytes()
+        report["transport_bytes_first_paint"] = transport_bytes
         n_total = sum(t.n_points for t in self.traces) or 1
-        report["transport_bytes_per_point"] = len(blob) / n_total
+        report["transport_bytes_per_point"] = transport_bytes / n_total
         report["pyramid_bytes"] = interaction.pyramid_report_bytes(self)
         report["resident_array_bytes"] = (
             report["canonical_bytes"] + report["channel_bytes"] + report["pyramid_bytes"]

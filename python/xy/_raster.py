@@ -1221,7 +1221,11 @@ def _emit_area(
 ) -> None:
     xv = _column(blob, cols[t["x"]])
     yv = _column(blob, cols[t["y"]])
-    bv = _column(blob, cols[t["base"]])
+    bv = (
+        _column(blob, cols[t["base"]])
+        if "base" in t
+        else np.full(xv.shape, float(t["base_const"]), dtype=np.float64)
+    )
     smooth = style.get("curve") == "smooth"
     top = _scene.curve_points(xv, yv, sx, sy, smooth)
     base = _scene.curve_points(xv[::-1], bv[::-1], sx, sy, smooth)

@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import xy._payload as payload_module
 import xy.export as export_module
 from xy._figure import DECIMATION_THRESHOLD, PROTOCOL_VERSION, Figure
 from xy.columns import ColumnStore
@@ -204,7 +205,72 @@ def test_column_store_datetime_copy_accounting_tracks_unit_conversion():
     ms = np.arange("2024-01-01", "2024-01-04", dtype="datetime64[ms]")
     seconds = np.arange("2024-01-01", "2024-01-04", dtype="datetime64[s]")
     assert ColumnStore().ingest(ms).ingest_copies == 1
-    assert ColumnStore().ingest(seconds).ingest_copies == 2
+    assert ColumnStore().ingest(seconds).ingest_copies == 1
+
+
+@pytest.mark.parametrize("unit", ["W", "D", "h", "m", "s", "ms", "us", "ns", "ps", "fs", "as"])
+def test_column_store_fixed_datetime_units_use_one_exact_output(unit: str):
+    # Include pre-epoch values, sub-ms values and NaT: the fused path must be
+    # bit-for-bit equivalent to NumPy's datetime64[ms] truncation policy.
+    raw = np.array([-2001, -1001, -1, 0, 1, 1001, "NaT"], dtype=f"datetime64[{unit}]")
+    expected_i64 = raw.astype("datetime64[ms]").view(np.int64)
+    expected = expected_i64.astype(np.float64)
+    expected[expected_i64 == np.iinfo(np.int64).min] = np.nan
+    col = ColumnStore().ingest(raw)
+    assert col.ingest_copies == 1
+    np.testing.assert_array_equal(col.values, expected)
+
+
+def test_column_store_strided_datetime_avoids_contiguous_staging_copy():
+    source = np.arange(-20, 20, dtype=np.int64).astype("datetime64[us]")
+    values = source[::-3]
+    col = ColumnStore().ingest(values)
+    expected_i64 = values.astype("datetime64[ms]").view(np.int64)
+    assert col.ingest_copies == 1
+    np.testing.assert_array_equal(col.values, expected_i64.astype(np.float64))
+
+
+def test_column_store_unaligned_datetime_avoids_unsafe_contiguous_read():
+    backing = bytearray(1 + 3 * np.dtype(np.int64).itemsize)
+    ticks = np.ndarray(3, dtype=np.int64, buffer=backing, offset=1)
+    ticks[:] = [-2, 0, 3]
+    values = ticks.view("datetime64[s]")
+    assert not values.flags.aligned
+    col = ColumnStore().ingest(values)
+    assert col.ingest_copies == 1
+    np.testing.assert_array_equal(col.values, np.array([-2000.0, 0.0, 3000.0]))
+
+
+def test_column_store_non_native_endian_datetime_uses_safe_numpy_fallback():
+    values = np.array([1, -1, np.iinfo(np.int64).min], dtype=">i8").view(">M8[ms]")
+    col = ColumnStore().ingest(values)
+    assert col.ingest_copies == 2
+    np.testing.assert_array_equal(col.values[:2], np.array([1.0, -1.0]))
+    assert np.isnan(col.values[2])
+
+
+def test_column_store_fixed_datetime_preserves_numpy_overflow_rejection():
+    values = np.array([np.iinfo(np.int64).max], dtype="datetime64[s]")
+    with pytest.raises(OverflowError, match="Overflow when converting between datetime64 units"):
+        ColumnStore().ingest(values)
+
+
+def test_column_store_coarse_datetime_casts_integer_ms_once_at_precision_boundary():
+    values = np.array([9_223_372_036_037_367], dtype="datetime64[s]")
+    expected = values.astype("datetime64[ms]").view(np.int64).astype(np.float64)
+    rounded_first = values.view(np.int64).astype(np.float64) * 1000.0
+    assert expected[0].view(np.uint64) != rounded_first[0].view(np.uint64)
+    col = ColumnStore().ingest(values)
+    assert col.ingest_copies == 1
+    np.testing.assert_array_equal(col.values, expected)
+
+
+def test_calendar_datetime_units_keep_numpy_fallback():
+    values = np.arange("1968", "1973", dtype="datetime64[Y]")
+    col = ColumnStore().ingest(values)
+    expected = values.astype("datetime64[ms]").view(np.int64).astype(np.float64)
+    assert col.ingest_copies == 2
+    np.testing.assert_array_equal(col.values, expected)
 
 
 def test_column_store_rejects_bad_shape_before_canonical_conversion():
@@ -295,10 +361,10 @@ def test_long_area_with_no_finite_points_ships_empty_buffers():
     assert tr["n_marks"] == 0
     xbuf, _xm = _payload_col(spec, blob, tr["x"])
     ybuf, _ym = _payload_col(spec, blob, tr["y"])
-    bbuf, _bm = _payload_col(spec, blob, tr["base"])
+    assert tr["base_const"] == 0.0
+    assert "base" not in tr
     assert len(xbuf) == 0
     assert len(ybuf) == 0
-    assert len(bbuf) == 0
 
 
 def test_short_line_ships_direct():
@@ -319,6 +385,44 @@ def test_area_ships_baseline_column_and_autorange():
     np.testing.assert_allclose(base.astype(np.float64) + bm["offset"], [-1.0, -3.0, -2.0])
     assert spec["y_axis"]["range"][0] < -3.0
     assert spec["y_axis"]["range"][1] > 4.0
+
+
+def test_scalar_area_baseline_stays_scalar_in_store_and_wire():
+    n = 1000
+    x = np.arange(n, dtype=np.float64)
+    fig = Figure().area(x, x + 5.0, base=-3.0)
+    trace = fig.traces[0]
+    assert trace.base is None
+    assert trace.base_const == -3.0
+    assert len(fig.store) == 2
+
+    spec, blob = fig.build_payload()
+    wire = spec["traces"][0]
+    assert wire["base_const"] == -3.0
+    assert "base" not in wire
+    assert len(spec["columns"]) == 2
+    assert len(blob) == n * 2 * np.dtype(np.float32).itemsize
+    assert fig.y_range()[0] < -3.0 < fig.y_range()[1]
+    assert fig.memory_report()["canonical_bytes"] == n * 2 * np.dtype(np.float64).itemsize
+
+
+def test_constant_error_band_lower_bound_uses_scalar_wire_form():
+    x = np.arange(8, dtype=np.float64)
+    fig = Figure().error_band(x, np.full(8, 2.5), x + 4.0)
+    assert fig.traces[0].base is not None  # public lower data remains canonical
+    assert fig.traces[0].base_const == 2.5
+    spec, blob = fig.build_payload()
+    trace = spec["traces"][0]
+    assert trace["base_const"] == 2.5
+    assert "base" not in trace
+    assert len(blob) == 8 * 2 * np.dtype(np.float32).itemsize
+
+
+def test_scalar_area_log_baseline_must_be_positive_to_ship_marks():
+    fig = Figure().area([1.0, 2.0], [2.0, 3.0], base=0.0)
+    fig.set_axis("y", type_="log")
+    spec, _ = fig.build_payload()
+    assert spec["traces"][0]["n_marks"] == 0
 
 
 def test_histogram_ships_rect_columns():
@@ -1312,14 +1416,23 @@ def test_figure_dom_slots_are_validated_before_export():
     assert spec["dom"]["styles"] == {"tooltip": {"background": "#111827"}}
 
 
-def test_figure_html_alias_and_repr_isolate_standalone_export(tmp_path: Path):
+def test_figure_html_alias_and_repr_isolate_standalone_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     target = tmp_path / "chart-alias.html"
     fig = Figure(title="notebook html").line([0.0, 1.0], [1.0, 2.0])
 
     html = fig.html(target)
+    expected_repr = export_module.notebook_iframe(html, width=fig.width, height=fig.height)
+
+    def fail_materialized_html(*_args, **_kwargs):
+        raise AssertionError("notebook repr must stream directly into escaped srcdoc")
+
+    monkeypatch.setattr(fig, "to_html", fail_materialized_html)
     repr_html = fig._repr_html_()
 
     assert target.read_text(encoding="utf-8") == html
+    assert repr_html == expected_repr
     assert html.startswith("<!doctype html>")
     assert repr_html.startswith('<iframe class="xy-notebook-frame"')
     assert 'sandbox="allow-scripts"' in repr_html
@@ -1670,6 +1783,17 @@ def test_decimate_view_updates_area_base_column():
     assert decoded_base.max() <= base.max() + 1e-3
 
 
+def test_decimate_view_keeps_scalar_area_baseline_bufferless():
+    n = DECIMATION_THRESHOLD + 1
+    x = np.arange(n, dtype=np.float64)
+    fig = Figure().area(x, np.sin(x * 0.01) + 2.0, base=1.25)
+    update, buffers = fig.decimate_view(200.0, 800.0, 128)
+    trace = update["traces"][0]
+    assert trace["base_const"] == 1.25
+    assert "base" not in trace
+    assert len(buffers) == 2
+
+
 def test_decimate_view_rejects_invalid_windows_and_screen_width():
     n = DECIMATION_THRESHOLD + 1
     fig = Figure().line(np.arange(n, dtype=np.float64), np.arange(n, dtype=np.float64))
@@ -1738,6 +1862,58 @@ def test_memory_report_accounts_for_bytes():
     assert report["transport_bytes_per_point"] == pytest.approx(8.0)
 
 
+@pytest.mark.parametrize(
+    "fig",
+    [
+        Figure().scatter(np.arange(5.0), np.arange(5.0), color=["a", "b", "a", "b", "a"]),
+        Figure().scatter(
+            np.arange(4.0),
+            np.arange(4.0),
+            color=np.array(
+                [
+                    [1.0, 0.0, 0.0, 0.25],
+                    [0.0, 1.0, 0.0, 0.50],
+                    [0.0, 0.0, 1.0, 0.75],
+                    [1.0, 1.0, 1.0, 1.00],
+                ]
+            ),
+            size=np.linspace(2.0, 8.0, 4),
+        ),
+        Figure().area(np.arange(12.0), np.arange(12.0) + 1.0, base=0.0),
+        Figure().area(np.arange(12.0), np.arange(12.0) + 1.0, base=np.arange(12.0)),
+        Figure().bar([0.0, 1.0, 2.0], [2.0, 3.0, 4.0]),
+        Figure().heatmap(np.arange(12.0).reshape(3, 4)),
+    ],
+)
+def test_payload_size_counter_matches_packed_blob_exactly(fig: Figure):
+    _spec, blob = fig.build_payload()
+    assert fig.payload_nbytes() == len(blob)
+    assert fig.memory_report()["transport_bytes_first_paint"] == len(blob)
+
+
+@pytest.mark.parametrize(
+    "fig",
+    [
+        Figure().scatter(np.arange(100_000.0), np.arange(100_000.0)),
+        Figure().scatter(
+            np.arange(10_000.0),
+            np.arange(10_000.0),
+            color=np.tile(np.array([[0.2, 0.4, 0.6, 0.8]]), (10_000, 1)),
+            size=np.linspace(2.0, 8.0, 10_000),
+        ),
+    ],
+)
+def test_memory_report_does_not_build_or_join_a_payload(fig: Figure, monkeypatch):
+    expected = fig.payload_nbytes()
+
+    def fail_build(*_args, **_kwargs):
+        raise AssertionError("memory_report must not build a payload blob")
+
+    monkeypatch.setattr(fig, "build_payload", fail_build)
+    report = fig.memory_report()
+    assert report["transport_bytes_first_paint"] == expected
+
+
 def test_memory_report_counts_compact_categorical_channel_storage() -> None:
     n = 100_000
     x = np.arange(n, dtype=np.float64)
@@ -1768,6 +1944,23 @@ def test_histogram_memory_report_uses_source_count_not_bin_count():
     assert tr["n_marks"] == 10
     report = fig.memory_report()
     assert report["transport_bytes_per_point"] == pytest.approx(len(blob) / 1000)
+
+
+def test_hexbin_payload_reuses_center_zone_maps_without_minmax_rescan(monkeypatch):
+    rng = np.random.default_rng(123)
+    fig = Figure().hexbin(rng.normal(size=20_000), rng.normal(size=20_000), gridsize=48)
+    calls = 0
+
+    def forbidden_rescan(_values):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("hexbin center payload must reuse Column zone maps")
+
+    monkeypatch.setattr(payload_module.kernels, "min_max", forbidden_rescan)
+    packed_spec, blob = fig.build_payload()
+    split_spec, buffers = fig.build_payload_split()
+    assert calls == 0
+    _assert_split_columns_match_packed(packed_spec, blob, split_spec, buffers)
 
 
 def test_scatter_soft_ceiling_warns():

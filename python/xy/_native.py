@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
-ABI_VERSION = 37
+ABI_VERSION = 38
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -146,6 +146,15 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,
         ctypes.c_size_t,
         ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.xy_datetime64_to_ms.restype = ctypes.c_int32
+    lib.xy_datetime64_to_ms.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_ssize_t,
+        ctypes.c_int64,
+        ctypes.c_int64,
         ctypes.c_void_p,
     ]
     lib.xy_encode_f32.restype = ctypes.c_int32
@@ -1101,6 +1110,42 @@ def zone_maps_pair(
         )
 
     return unpack(x_records), unpack(y_records)
+
+
+def datetime64_to_ms(
+    values: npt.NDArray[np.int64], numerator: int, denominator: int
+) -> npt.NDArray[np.float64]:
+    """Convert datetime ticks to whole-ms f64 with one output allocation.
+
+    ``values`` may be strided (including reversed); the native loop reads the
+    source view directly. NumPy's NaT sentinel maps to NaN and finer-than-ms
+    units use exact floor division, including for negative pre-epoch values.
+    """
+    arr = np.asarray(values)
+    if arr.ndim != 1 or arr.dtype != np.dtype(np.int64):
+        raise ValueError("datetime64 ticks must be a 1-D int64 array")
+    try:
+        numerator = int(numerator)
+        denominator = int(denominator)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("datetime64 conversion ratio must be positive int64") from exc
+    i64_max = np.iinfo(np.int64).max
+    if not (0 < numerator <= i64_max and 0 < denominator <= i64_max):
+        raise ValueError("datetime64 conversion ratio must be positive int64")
+    out = np.empty(len(arr), dtype=np.float64)
+    status = _lib.xy_datetime64_to_ms(
+        arr.ctypes.data,
+        len(arr),
+        arr.strides[0],
+        numerator,
+        denominator,
+        out.ctypes.data,
+    )
+    if status == -1:
+        raise OverflowError("Overflow when converting between datetime64 units")
+    if status != 1:
+        raise ValueError("invalid datetime64 conversion arguments")
+    return out
 
 
 def encode_f32(

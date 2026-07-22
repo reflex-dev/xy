@@ -24,6 +24,17 @@ _PROBE = """
   try {
     view._drawNow();
     const g = view.gpuTraces[0];
+    const read = (buffer, n) => {
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      const out = new Float32Array(n);
+      gl.getBufferSubData(gl.ARRAY_BUFFER, 0, out);
+      return [...out];
+    };
+    const initialScalarBase = g.trace.base === undefined
+      && Number.isFinite(g.trace.base_const)
+      && g.baseMeta.offset === g.trace.base_const
+      && g.baseMeta.scale === 1
+      && JSON.stringify(read(g.baseBuf, 4)) === JSON.stringify([0, 0, 0, 0]);
     const originalBuffers = [g.xBuf, g.yBuf, g.baseBuf];
     const update = (x, y, base) => view._onKernelMsg({
       type: "tier_update",
@@ -35,13 +46,6 @@ _PROBE = """
         base: { buf: 2, len: base.length, offset: 30, scale: 4 },
       }],
     }, [x.buffer, y.buffer, base.buffer]);
-    const read = (buffer, n) => {
-      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      const out = new Float32Array(n);
-      gl.getBufferSubData(gl.ARRAY_BUFFER, 0, out);
-      return [...out];
-    };
-
     const x4 = new Float32Array([1, 2, 3, 4]);
     const y4 = new Float32Array([5, 6, 7, 8]);
     const b4 = new Float32Array([9, 10, 11, 12]);
@@ -64,13 +68,28 @@ _PROBE = """
     dataCalls = 0; subCalls = 0;
     update(x5, y5, b5);
     const resizedStorageThenReused = subCalls === 3 && dataCalls === 0;
+    dataCalls = 0; subCalls = 0;
+    view._onKernelMsg({
+      type: "tier_update",
+      seq: view.seq,
+      traces: [{
+        id: g.trace.id,
+        x: { buf: 0, len: x5.length, offset: 10, scale: 2 },
+        y: { buf: 1, len: y5.length, offset: 20, scale: 3 },
+        base_const: 1.25,
+      }],
+    }, [x5.buffer, y5.buffer]);
+    const scalarTierUpdateReusedStorage = subCalls === 3 && dataCalls === 0
+      && g.baseMeta.offset === 1.25 && g.baseMeta.scale === 1
+      && JSON.stringify(read(g.baseBuf, 5)) === JSON.stringify([0, 0, 0, 0, 0]);
     const identitiesStable = originalBuffers[0] === g.xBuf
       && originalBuffers[1] === g.yBuf && originalBuffers[2] === g.baseBuf;
     const trackedSizesExact = [g.xBuf, g.yBuf, g.baseBuf].every((b) => b._fcBytes === 20);
 
     document.body.setAttribute("data-xy-tier-buffer-probe", JSON.stringify({
-      sameSizeUsedSubData, sameSizeBytesExact, changedSizeReallocated,
-      changedSizeBytesExact, resizedStorageThenReused, identitiesStable,
+      initialScalarBase, sameSizeUsedSubData, sameSizeBytesExact, changedSizeReallocated,
+      changedSizeBytesExact, resizedStorageThenReused, scalarTierUpdateReusedStorage,
+      identitiesStable,
       trackedSizesExact,
     }));
   } catch (err) {
@@ -88,7 +107,7 @@ def test_tier_updates_reuse_only_exactly_sized_gpu_storage(tmp_path: Path) -> No
     if chromium is None:
         pytest.skip("Chromium unavailable")
     chart = xy.chart(
-        xy.area([0.0, 1.0, 2.0, 3.0], [1.0, 3.0, 2.0, 4.0], base=[0.0] * 4),
+        xy.area([0.0, 1.0, 2.0, 3.0], [1.0, 3.0, 2.0, 4.0], base=[1.25] * 4),
         width=480,
         height=320,
     )

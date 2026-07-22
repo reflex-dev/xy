@@ -108,11 +108,13 @@ rejects non-finite values and clamps to `[16, MAX_SCREEN_DIM]`.
 ## 3. Replies (Python → client)
 
 **`tier_update`** — `{type, seq, traces}` plus one f32 buffer per column ref.
-Each entry is `{id, x, y, base?}`, where each column ref is
+Each entry is `{id, x, y, base?}` or `{id, x, y, base_const}`, where each column ref is
 `{buf, len, offset, scale}`: `buf` indexes the attachment list, and the client
 recovers data space as `value * scale + offset`. The `x` offset re-centers on
 the requested window midpoint so f32 precision follows the viewport. The
-client drops the message unless `msg.seq === this.seq`.
+client drops the message unless `msg.seq === this.seq`. `base_const` is a
+finite data-space scalar and consumes no attachment; the client binds it using
+zero encoded values plus that scalar offset.
 
 For each retained GPU buffer, the client uses `bufferSubData` only when the
 incoming typed-array byte length exactly equals the tracked allocation. A

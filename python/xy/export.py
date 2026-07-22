@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import tempfile
 import warnings
+from collections.abc import Iterator
 from contextlib import suppress
 from enum import StrEnum
 from os import PathLike
@@ -262,22 +263,13 @@ def _custom_css_block(custom_css: Optional[str]) -> str:
     return f"<style>{custom_css}</style>\n"
 
 
-def to_html(
+def _standalone_parts(
     fig: "Figure",
-    path: Optional[str | PathLike[str]] = None,
     *,
     custom_css: Optional[str] = None,
     animation_progress: Optional[float] = None,
-) -> str:
-    """Render `fig` to a standalone interactive HTML string (optionally saved).
-
-    User strings (title, names, labels) ride inside <script>/<title> blocks:
-    HTML-sensitive JSON characters are escaped so user text cannot alter the
-    script parse state, and the <title> text is entity-escaped.
-
-    `custom_css` injects an author stylesheet into the document <head> so the
-    utility classes referenced by `class_names` (e.g. Tailwind) resolve in the
-    standalone export; it must not contain a `</style>` breakout sequence."""
+) -> Iterator[str]:
+    """Yield one standalone document without first joining its large parts."""
     spec, blob = fig.build_payload()
     if animation_progress is not None:
         progress = float(animation_progress)
@@ -304,10 +296,7 @@ def to_html(
     # valid JS string literal verbatim and can never close the <script>. Quote
     # it directly rather than via `json.dumps`, whose full-string escape scan
     # dominated small-chart export cost.
-    chunk_scripts = "\n".join(
-        f'<script>__xyChunks.push("{c}");</script>' for c in _base64_chunks(blob)
-    )
-    doc = f"""<!doctype html>
+    yield f"""<!doctype html>
 <html>
 <head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="{_STANDALONE_CSP}">
@@ -319,10 +308,14 @@ html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;
 {_custom_css_block(custom_css)}</head>
 <body>
 <div id="chart"></div>
-<script>{client_js}</script>
+<script>"""
+    yield client_js
+    yield """</script>
 <script>var __xyChunks = [];</script>
-{chunk_scripts}
-<script>
+"""
+    for chunk in _base64_chunks(blob):
+        yield f'<script>__xyChunks.push("{chunk}");</script>\n'
+    yield f"""<script>
   {_DECODE_B64_JS}
   const spec = {spec_js};
   const buf = xyDecodeB64(__xyChunks, {len(blob)});
@@ -331,6 +324,31 @@ html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;
 </script>
 </body>
 </html>"""
+
+
+def to_html(
+    fig: "Figure",
+    path: Optional[str | PathLike[str]] = None,
+    *,
+    custom_css: Optional[str] = None,
+    animation_progress: Optional[float] = None,
+) -> str:
+    """Render `fig` to a standalone interactive HTML string (optionally saved).
+
+    User strings (title, names, labels) ride inside <script>/<title> blocks:
+    HTML-sensitive JSON characters are escaped so user text cannot alter the
+    script parse state, and the <title> text is entity-escaped.
+
+    `custom_css` injects an author stylesheet into the document <head> so the
+    utility classes referenced by `class_names` (e.g. Tailwind) resolve in the
+    standalone export; it must not contain a `</style>` breakout sequence."""
+    doc = "".join(
+        _standalone_parts(
+            fig,
+            custom_css=custom_css,
+            animation_progress=animation_progress,
+        )
+    )
     if path is not None:
         _atomic_write_text(path, doc)
     return doc
@@ -359,19 +377,42 @@ def notebook_iframe(doc: str, *, width: object, height: object) -> str:
     ``srcdoc`` gives the export a real document boundary while preserving the
     self-contained, offline display path.
     """
+    source = _html.escape(doc, quote=True)
+    return _notebook_iframe_prefix(width, height) + source + '"></iframe>'
+
+
+def _notebook_iframe_prefix(width: object, height: object) -> str:
+    """Opening iframe tag shared by materialized and streaming repr paths."""
     width_css, fixed_width = _notebook_dimension(width, 900)
     height_css, _ = _notebook_dimension(height, 420)
     width_attr = width_css.removesuffix("px")
     height_attr = height_css.removesuffix("px")
-    source = _html.escape(doc, quote=True)
     width_style = f"width:100%;max-width:{width_css}" if fixed_width else f"width:{width_css}"
     return (
         '<iframe class="xy-notebook-frame" sandbox="allow-scripts" '
         f'width="{width_attr}" height="{height_attr}" '
         f'style="display:block;{width_style};height:{height_css};margin-left:8px;'
         'border:0;background:transparent" '
-        f'srcdoc="{source}"></iframe>'
+        'srcdoc="'
     )
+
+
+def notebook_figure_iframe(fig: "Figure", *, width: object, height: object) -> str:
+    """Build a notebook repr directly into its escaped ``srcdoc`` output.
+
+    Escaping fixed-size slices avoids retaining both a complete standalone
+    document and a second complete escaped copy. The returned HTML is byte-for-
+    byte identical to ``notebook_iframe(to_html(fig), ...)``.
+    """
+    parts = [_notebook_iframe_prefix(width, height)]
+    escape_chunk = 64 * 1024
+    for part in _standalone_parts(fig):
+        parts.extend(
+            _html.escape(part[start : start + escape_chunk], quote=True)
+            for start in range(0, len(part), escape_chunk)
+        )
+    parts.append('"></iframe>')
+    return "".join(parts)
 
 
 def _installed_browser(candidate: object) -> Optional[str]:

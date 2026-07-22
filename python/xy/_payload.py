@@ -160,6 +160,55 @@ class _PayloadWriter:
         ]
 
 
+class _PayloadSizeWriter:
+    """Count packed first-paint bytes without encoding geometry or joining.
+
+    Emitters still make the same tier/selection decisions, so the report is
+    exact rather than a source-row estimate. Offset-encoded geometry arrays and
+    the joined payload blob are skipped. Emitters may still prepare temporary
+    channel values (for example continuous normalization or RGBA8 packing)
+    before passing their lengths to this shared writer.
+    """
+
+    def __init__(self) -> None:
+        self.columns: list[dict[str, Any]] = []
+        self.nbytes = 0
+        self.borrow_heatmaps = False
+
+    def _append_count(self, length: int, itemsize: int, dtype: str | None = None) -> int:
+        index = len(self.columns)
+        meta: dict[str, Any] = {"byte_offset": self.nbytes, "len": int(length)}
+        if dtype is not None:
+            meta["dtype"] = dtype
+        self.columns.append(meta)
+        self.nbytes += int(length) * itemsize
+        return index
+
+    def ship(self, values: np.ndarray, col: "Column") -> int:
+        del col
+        return self._append_count(np.asarray(values).size, 4)
+
+    def ship_scalar(self, values: np.ndarray) -> int:
+        return self._append_count(np.asarray(values).size, 4)
+
+    def ship_u8(self, values: np.ndarray) -> int:
+        index = self._append_count(np.asarray(values).size, 1, "u8")
+        self.nbytes += (-self.nbytes) % 4
+        return index
+
+    def ship_u32(self, values: np.ndarray) -> int:
+        return self._append_count(np.asarray(values).size, 4, "u32")
+
+    def ship_values(self, values: np.ndarray, *, kind: str = "float") -> int:
+        del kind
+        return self._append_count(np.asarray(values).size, 4)
+
+    def borrow_f64(self, values: np.ndarray) -> int:
+        # Not used by ordinary first paint; keep the interface complete for a
+        # future emitter shared with raster-only payloads.
+        return self._append_count(np.asarray(values).size, 8, "f64")
+
+
 class PayloadMixin(_Host):
     def build_payload(self, px_width: Optional[int] = None) -> tuple[dict[str, Any], bytes]:
         """Encode every trace for first paint: (spec, binary buffer blob).
@@ -191,6 +240,12 @@ class PayloadMixin(_Host):
         spec = self._payload_spec(pw, self._resolve_px_width(px_width))
         spec["buffer_layout"] = "split"
         return spec, pw.buffers()
+
+    def payload_nbytes(self, px_width: Optional[int] = None) -> int:
+        """Exact packed bytes without geometry encoding or a joined blob."""
+        pw = _PayloadSizeWriter()
+        self._payload_spec(pw, self._resolve_px_width(px_width))
+        return pw.nbytes
 
     def _build_raster_payload(
         self, px_width: Optional[int] = None
@@ -432,18 +487,35 @@ class PayloadMixin(_Host):
     def _emit_area(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
     ) -> dict[str, Any]:
-        if t.base is None:
+        base_const = t.resolved_base_const()
+        if t.base is None and base_const is None:
             raise ValueError("area trace missing baseline column")
-        tier, (xv, yv, bv) = self._m4_decimate(
-            t, xr, px_width, t.x.values, t.y.values, t.base.values
-        )
-        sel = np.flatnonzero(self._log_visible_mask(t, xv, yv, bv))
-        if len(sel) != len(xv):
-            xv, yv, bv = xv[sel], yv[sel], bv[sel]
+        if base_const is not None:
+            tier, (xv, yv) = self._m4_decimate(t, xr, px_width, t.x.values, t.y.values)
+            visible = self._log_visible_mask(t, xv, yv)
+            if self._axis_scale(t.y_axis) == "log" and base_const <= 0:
+                visible &= False
+            bv = None
+        else:
+            assert t.base is not None
+            tier, (xv, yv, bv) = self._m4_decimate(
+                t, xr, px_width, t.x.values, t.y.values, t.base.values
+            )
+            visible = self._log_visible_mask(t, xv, yv, bv)
+        sel = None
+        if not bool(np.all(visible)):
+            sel = np.flatnonzero(visible)
+            xv, yv = xv[sel], yv[sel]
+            if bv is not None:
+                bv = bv[sel]
         entry = self._base_entry(t, pw, xv, yv, tier, self._default_styled(t))
         if t.transition_keys is not None:
             self._transition_entry(entry, t, pw, sel)
-        entry["base"] = pw.ship(bv, t.base)
+        if base_const is not None:
+            entry["base_const"] = float(base_const)
+        else:
+            assert bv is not None and t.base is not None
+            entry["base"] = pw.ship(bv, t.base)
         return entry
 
     def _emit_error_band(
@@ -498,8 +570,11 @@ class PayloadMixin(_Host):
             "n_marks": int(len(xv)),
             "x_axis": t.x_axis,
             "y_axis": t.y_axis,
-            "x": pw.ship_values(xv),
-            "y": pw.ship_values(yv),
+            # Hexbin centers already live in canonical Columns with materialized
+            # zone maps; reuse their offset/bounds instead of scanning min/max
+            # again in ``ship_values``.
+            "x": pw.ship(xv, t.x),
+            "y": pw.ship(yv, t.y),
         }
         entry["color"], _size = self._ship_channels(t, sel, pw.ship_scalar, pw.ship_u8)
         return entry

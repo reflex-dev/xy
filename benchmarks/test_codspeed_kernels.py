@@ -18,6 +18,7 @@ import pytest
 import xy
 from xy import kernels as k
 from xy._figure import Figure  # harness type annotations only
+from xy.columns import ColumnStore
 
 # Small/medium/large sizes keep CodSpeed honest across normal dashboard charts,
 # exact WebGL workloads, and screen-bounded large-data paths without turning it
@@ -644,6 +645,12 @@ def _hexbin_payload(x: np.ndarray, y: np.ndarray) -> int:
     return sum(b.nbytes for b in buffers)
 
 
+def _datetime_seconds_ingest(values: np.ndarray) -> int:
+    col = ColumnStore().ingest(values)
+    assert col.ingest_copies == 1
+    return col.values.nbytes
+
+
 def _contour_payload(z: np.ndarray) -> int:
     fig = xy.chart(xy.contour(z=z, levels=12, filled=True)).figure()
     _spec, buffers = fig.build_payload_split(N_BUCKETS)
@@ -844,6 +851,30 @@ def test_memory_report_density_medium(benchmark, medium_data):
     assert report["transport_bytes_per_point"] > 0
 
 
+def test_memory_report_counts_without_payload_blob(benchmark, medium_data):
+    """Exact channel-rich accounting skips geometry encoding and packed join."""
+    x, y = medium_data
+    rgba = np.column_stack(
+        (
+            np.linspace(0.0, 1.0, len(x)),
+            np.linspace(1.0, 0.0, len(x)),
+            np.full(len(x), 0.5),
+            np.full(len(x), 0.25),
+        )
+    )
+    size = 4.0 + 3.0 * np.abs(np.cos(x * 0.0003))
+    fig = xy.chart(xy.scatter(x=x, y=y, color=rgba, size=size)).figure()
+    expected = fig.payload_nbytes()
+    report = benchmark(fig.memory_report)
+    assert report["transport_bytes_first_paint"] == expected
+
+
+def test_datetime_seconds_fused_one_copy_ingest(benchmark):
+    """Non-ms datetime ticks convert directly into one canonical f64 output."""
+    values = np.datetime64("2026-01-01", "s") + np.arange(MEDIUM_N).astype("timedelta64[s]")
+    assert benchmark(_datetime_seconds_ingest, values) == values.nbytes
+
+
 def test_first_payload_histogram_core_2d(benchmark, core_2d_data):
     """Core 2D payload prep: histogram binning plus rectangle transport."""
     values = core_2d_data["hist_values"]
@@ -922,6 +953,19 @@ def test_first_payload_hexbin_core_2d(benchmark, medium_data):
     max_payload_bytes = max_cells * 3 * np.dtype(np.float32).itemsize
     assert 0 < payload_bytes <= max_payload_bytes
     assert payload_bytes < x.nbytes + y.nbytes
+
+
+def test_hexbin_payload_reuses_precomputed_center_bounds(benchmark, medium_data):
+    """Steady payload encode reuses canonical center zone maps (no min/max scan)."""
+    x, y = medium_data
+    fig = xy.chart(xy.hexbin(x=x, y=y, gridsize=HEXBIN_GRIDSIZE)).figure()
+
+    def encode_centers():
+        return fig.build_payload_split(N_BUCKETS)
+
+    spec, buffers = benchmark(encode_centers)
+    assert spec["traces"][0]["n_marks"] > 0
+    assert buffers
 
 
 def test_first_payload_errorbar_large(benchmark, data):
@@ -1019,6 +1063,14 @@ def test_html_export_line(benchmark, export_data):
     fig = xy.chart(xy.line(x=x, y=y)).figure()
     html = benchmark(fig.to_html)
     assert "<html" in html.lower()
+
+
+def test_notebook_repr_line_streams_escaped_document(benchmark, export_data):
+    """Notebook repr avoids retaining standalone + escaped full documents."""
+    x, y = export_data
+    fig = xy.chart(xy.line(x=x, y=y)).figure()
+    html = benchmark(fig._repr_html_)
+    assert html.startswith('<iframe class="xy-notebook-frame"')
 
 
 def test_stream_line_append(benchmark, append_data):

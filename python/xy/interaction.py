@@ -320,19 +320,28 @@ def decimate_view(
     for t in fig.traces:
         if t.kind not in {"line", "area"} or t.n_points <= DECIMATION_THRESHOLD:
             continue
-        if t.kind == "area" and t.base is None:
+        base_const = t.resolved_base_const() if t.kind == "area" else None
+        if t.kind == "area" and t.base is None and base_const is None:
             continue
         idx = kernels.m4_indices(t.x.values, t.y.values, lo_x, hi_x, max(16, px_width))
         if len(idx):
             xv, yv = t.x.values[idx], t.y.values[idx]
-            bv = t.base.values[idx] if t.kind == "area" and t.base is not None else None
+            bv = (
+                t.base.values[idx]
+                if t.kind == "area" and t.base is not None and base_const is None
+                else None
+            )
             if bv is not None:
                 sel = np.flatnonzero(np.isfinite(bv))
                 if len(sel) != len(xv):
                     xv, yv, bv = xv[sel], yv[sel], bv[sel]
         else:
             xv, yv = t.x.values[:0], t.y.values[:0]
-            bv = t.base.values[:0] if t.kind == "area" and t.base is not None else None
+            bv = (
+                t.base.values[:0]
+                if t.kind == "area" and t.base is not None and base_const is None
+                else None
+            )
         x_col = lod.encode_f32_values(xv, (lo_x + hi_x) / 2.0, lo_x, hi_x)
         y_col = lod.encode_f32_values(yv, t.y.suggest_offset(), t.y.min, t.y.max)
         update = {
@@ -343,6 +352,8 @@ def decimate_view(
         if bv is not None and t.base is not None:
             b_col = lod.encode_f32_values(bv, t.base.suggest_offset(), t.base.min, t.base.max)
             update["base"] = writer.add_encoded(b_col)
+        elif base_const is not None:
+            update["base_const"] = float(base_const)
         updates.append(update)
     return {"traces": updates}, writer.buffers
 

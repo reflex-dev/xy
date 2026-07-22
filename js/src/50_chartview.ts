@@ -2615,10 +2615,16 @@ export class ChartView {
   _buildAreaMark(g, t, buffer) {
     const x = this._columnView(buffer, this.spec.columns[t.x]);
     const y = this._columnView(buffer, this.spec.columns[t.y]);
-    const base = this._columnView(buffer, this.spec.columns[t.base]);
     g.xMeta = { ...this.spec.columns[t.x] };
     g.yMeta = { ...this.spec.columns[t.y] };
-    g.baseMeta = { ...this.spec.columns[t.base] };
+    const baseConst = Number(t.base_const);
+    const scalarBase = t.base === undefined && Number.isFinite(baseConst);
+    const base = scalarBase
+      ? new Float32Array(Math.min(x.length, y.length))
+      : this._columnView(buffer, this.spec.columns[t.base]);
+    g.baseMeta = scalarBase
+      ? { offset: baseConst, scale: 1 }
+      : { ...this.spec.columns[t.base] };
     g.n = Math.min(x.length, y.length, base.length);
     g._cpu = { x, y, base, xMeta: g.xMeta, yMeta: g.yMeta };
     const sm = this._smoothArrays(t, x, y, base, g.n);
@@ -2628,6 +2634,7 @@ export class ChartView {
     if (sm) g.n = sm.n;
     g._dashX = sm ? sm.x : x;
     g._dashY = sm ? sm.y : y;
+    g._dashBase = sm ? sm.extra : base;
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
     g.lineColor = parseColor(this.root, t.style && (t.style.line_color || t.style.color), g.color);
     g.grad = this._resolveMarkFill(t.style, g.color);

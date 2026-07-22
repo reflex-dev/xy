@@ -280,9 +280,13 @@ Object.assign(ChartView.prototype, {
         if (!g) continue;
         const xArr = this._asF32(buffers[upd.x.buf]);
         const yArr = this._asF32(buffers[upd.y.buf]);
-        const bArr = upd.base && g.baseBuf ? this._asF32(buffers[upd.base.buf]) : null;
         let n = Math.min(upd.x.len, upd.y.len);
-        if (bArr) n = Math.min(n, upd.base.len);
+        const baseConst = Number(upd.base_const);
+        const scalarBase = !upd.base && g.baseBuf && Number.isFinite(baseConst);
+        const bArr = upd.base && g.baseBuf
+          ? this._asF32(buffers[upd.base.buf])
+          : scalarBase ? new Float32Array(n) : null;
+        if (upd.base && bArr) n = Math.min(n, upd.base.len);
         // curve:"smooth" traces re-smooth every refined window, so the curve
         // survives zoom-driven re-decimation instead of snapping to segments.
         // style.step traces likewise re-expand so the step corners survive
@@ -298,7 +302,10 @@ Object.assign(ChartView.prototype, {
         g._dashY = st ? st.y : src.y;
         if (bArr) {
           this._uploadTierBuffer(g.baseBuf, sm ? sm.extra : bArr);
-          g.baseMeta = { ...g.baseMeta, offset: upd.base.offset, scale: upd.base.scale };
+          g.baseMeta = scalarBase
+            ? { offset: baseConst, scale: 1 }
+            : { ...g.baseMeta, offset: upd.base.offset, scale: upd.base.scale };
+          g._dashBase = sm ? sm.extra : bArr;
         }
         g.n = st ? st.n : src.n;
       }

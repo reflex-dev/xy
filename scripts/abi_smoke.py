@@ -142,6 +142,15 @@ def load() -> ctypes.CDLL:
     lib.xy_min_max.argtypes = [F64P, ctypes.c_size_t, F64P, F64P]
     lib.xy_is_sorted.restype = ctypes.c_int32
     lib.xy_is_sorted.argtypes = [F64P, ctypes.c_size_t]
+    lib.xy_datetime64_to_ms.restype = ctypes.c_int32
+    lib.xy_datetime64_to_ms.argtypes = [
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.c_size_t,
+        ctypes.c_ssize_t,
+        ctypes.c_int64,
+        ctypes.c_int64,
+        F64P,
+    ]
     D = ctypes.c_double
     Z = ctypes.c_size_t
     lib.xy_bin_2d.restype = ctypes.c_int32
@@ -380,11 +389,13 @@ def main() -> None:
     U64P = ctypes.POINTER(ctypes.c_uint64)
     U32P = ctypes.POINTER(ctypes.c_uint32)
     U8P = ctypes.POINTER(ctypes.c_uint8)
+    I64P = ctypes.POINTER(ctypes.c_int64)
     null_f64 = F64P()
     null_f32 = F32P()
     null_u64 = U64P()
     null_u32 = U32P()
     null_u8 = U8P()
+    null_i64 = I64P()
 
     def ok(cond: bool, msg: str) -> None:
         nonlocal checks
@@ -394,6 +405,43 @@ def main() -> None:
 
     ok(lib.xy_abi_version() == ABI_VERSION, "abi version")
     ok(ctypes.sizeof(CZoneMap) == 64, "ZoneMap repr(C) size")
+
+    datetime_ticks = array("q", [-1001, 0, 1001, -(2**63)])
+    datetime_ms = array("d", [0.0] * len(datetime_ticks))
+    ok(
+        lib.xy_datetime64_to_ms(
+            _ptr(datetime_ticks, ctypes.c_int64),
+            len(datetime_ticks),
+            ctypes.sizeof(ctypes.c_int64),
+            1,
+            1000,
+            _ptr(datetime_ms, ctypes.c_double),
+        )
+        == 1,
+        "datetime64 fused conversion status",
+    )
+    ok(
+        list(datetime_ms[:3]) == [-2.0, 0.0, 1.0] and math.isnan(datetime_ms[3]),
+        "datetime64 fused conversion values/NaT",
+    )
+    ok(
+        lib.xy_datetime64_to_ms(null_i64, 1, 8, 1, 1, null_f64) == 0,
+        "datetime64 fused conversion rejects null non-empty spans",
+    )
+    overflow_tick = array("q", [2**63 - 1])
+    overflow_out = array("d", [0.0])
+    ok(
+        lib.xy_datetime64_to_ms(
+            _ptr(overflow_tick, ctypes.c_int64),
+            1,
+            ctypes.sizeof(ctypes.c_int64),
+            1000,
+            1,
+            _ptr(overflow_out, ctypes.c_double),
+        )
+        == -1,
+        "datetime64 fused conversion reports whole-ms overflow",
+    )
 
     ok(
         lib.xy_factorize_fixed(null_u8, 0, 0, null_u32, null_u32) == 0,

@@ -123,7 +123,10 @@ Python dates, datetimes, NumPy `datetime64`, and compatible pandas/Arrow time
 columns select time-axis behavior automatically. Canonical time coordinates are
 float64 milliseconds since the Unix epoch; `NaT` becomes a missing value. The
 current contract does not preserve arbitrary nanosecond distinctions end to
-end.
+end. Native-endian fixed-duration NumPy units (`W` through `as`) convert
+directly from their original ticks into the one canonical float64 allocation,
+including strided views. Calendar-dependent year/month and non-native-endian
+inputs keep NumPy's general conversion.
 
 ~~~python demo exec
 import numpy as np
