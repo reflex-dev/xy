@@ -414,6 +414,15 @@ contract entry before it lands.
    traces, which are served upsampled from an adaptively finer finest level
    (`~sqrt(N/target)`, capped `PYRAMID_MAX_DIM`) rather than rescanned. Level
    and mode are recorded per update as `binning: "pyramid-L<l>[-upsampled]"`.
+   When *downsampling* (the coarsest adequate level packs 1–2 source cells per
+   output bin), `compose` **area-weights** each source cell across the bins its
+   extent overlaps rather than assigning it to the bin under its center;
+   center-only assignment handed adjacent bins 1 vs 2 cells apiece — a beat
+   against the output grid that showed as vertical banding in interim aggregate
+   frames while zooming a dense cloud (#153). Weights within a snap tolerance of
+   a bin edge collapse to one bin, so cell-aligned windows stay bit-exact. When
+   *upsampling*, every output pixel instead pulls the source cell beneath it
+   (filled blocks, no sparse "grid of points").
    Traces on a nonlinear (log/symlog) axis skip the pyramid entirely — its
    raw-space levels cannot compose a scale-coordinate grid (dossier §28) —
    and always take the exact path.

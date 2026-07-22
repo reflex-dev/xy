@@ -7,10 +7,14 @@
 //! conserves total count bit-exactly.
 //!
 //! `compose` fills a render grid for a view window from the coarsest level
-//! that still meets the render resolution (bounded upsampling), assigning
-//! each source cell to the output bin containing its center — deterministic
-//! and count-conserving over whole cells; windows that outresolve level 0
-//! are refused (caller falls back to an exact re-bin, disclosed per §28).
+//! that still meets the render resolution (bounded upsampling). Downsampling
+//! area-weights each source cell across the output bins its extent overlaps —
+//! deterministic and count-conserving, and free of the beat banding a
+//! center-only assignment shows when the level packs 1–2 source cells per
+//! output bin (#153); upsampling instead pulls the source cell under each
+//! output pixel (filled blocks, no sparse "grid of points"). Windows that
+//! outresolve the finest level past `max_upsample` are refused (caller falls
+//! back to an exact re-bin, disclosed per §28).
 //!
 //! No unsafe here; the C-ABI shell in lib.rs owns marshaling. Handles are
 //! slab indices behind a Mutex (engine doc §3.3): stale/double-freed handles
@@ -251,31 +255,104 @@ pub fn compose(
                 }
             }
         }
-    } else if cx0 < cx1 {
-        // Downsample / 1:1 — push-accumulate is count-conserving (§5). ox
-        // depends only on cx: hoist the center→output-bin math out of the loop.
-        // center_range can yield cx1 < cx0 for windows astronomically past the
-        // domain; the guard keeps the empty-window behavior (no slice panic).
-        let ox_of: Vec<u32> = (cx0..cx1)
-            .map(|cx| {
-                let xcen = p.x0 + (cx as f64 + 0.5) * cell_x;
-                (((xcen - lo_x) * sx) as usize).min(w - 1) as u32
-            })
-            .collect();
-        for cy in cy0..cy1 {
-            let ycen = p.y0 + (cy as f64 + 0.5) * cell_y;
-            let oy = (((ycen - lo_y) * sy) as usize).min(h - 1);
+    } else if cx0 < cx1 && cy0 < cy1 {
+        // Downsample / 1:1 — area-weighted resampling (§28, #153): a source cell
+        // straddling an output-bin edge splits its count across both bins in
+        // proportion to overlap, rather than dumping the whole count into the
+        // bin under its center. Not upsampling means the window holds between w
+        // and 2w source cells (source→output ratio in [1, 2)); assigning by
+        // center alone then hands adjacent output bins 1 vs 2 source cells
+        // apiece — a beat against the output grid that reads as the
+        // vertical/horizontal banding seen in a zoom's interim aggregate frames.
+        // Count-conserving (weights sum to 1 per interior cell). The split
+        // depends only on the axis index, so it is hoisted per axis; weights
+        // within COMPOSE_SNAP_EPS of a bin edge collapse to one bin, keeping
+        // cell-aligned windows exact. center_range can yield an empty range for
+        // windows astronomically past the domain; the guard avoids a slice panic.
+        let none = u32::MAX;
+        let xw = axis_weights(cx0, cx1, p.x0, cell_x, lo_x, sx, w);
+        let yw = axis_weights(cy0, cy1, p.y0, cell_y, lo_y, sy, h);
+        for (cy, &(by, wpy, nby, wny)) in (cy0..cy1).zip(yw.iter()) {
             let row = &lvl[cy * dim + cx0..cy * dim + cx1];
-            let out_row = &mut out[oy * w..(oy + 1) * w];
-            for (&c, &ox) in row.iter().zip(ox_of.iter()) {
+            let by = by as usize;
+            for (&c, &(bx, wpx, nbx, wnx)) in row.iter().zip(xw.iter()) {
                 if c == 0 {
                     continue;
                 }
-                out_row[ox as usize] += c as f32;
+                let cf = c as f32;
+                let bx = bx as usize;
+                out[by * w + bx] += cf * wpx * wpy;
+                if nbx != none {
+                    out[by * w + nbx as usize] += cf * wnx * wpy;
+                }
+                if nby != none {
+                    let nby = nby as usize;
+                    out[nby * w + bx] += cf * wpx * wny;
+                    if nbx != none {
+                        out[nby * w + nbx as usize] += cf * wnx * wny;
+                    }
+                }
             }
         }
     }
     Some(level)
+}
+
+/// Edges within this output-space distance of a bin boundary collapse a source
+/// cell onto a single bin, so cell-aligned windows (source→output ratio of one)
+/// stay bit-exact against `bin_2d` despite f64 rounding in the edge mapping.
+/// Genuine straddles in the banding regime split by fractions far larger than
+/// this, so the snap never blurs the fix it protects.
+const COMPOSE_SNAP_EPS: f64 = 1e-6;
+
+/// Area-weighted split of each source cell along one axis into the output grid.
+/// Returns, per cell in `[c0, c1)`, `(primary_bin, primary_weight,
+/// neighbor_bin, neighbor_weight)`, where `neighbor_bin == u32::MAX` means the
+/// cell lands within a single bin. `compose` chooses a level with ≥ n_out cells
+/// across the window, so a source cell is ≤ 1 output bin wide and spills into at
+/// most one neighbor; splitting proportionally is what removes the #153 banding.
+/// A spill whose neighbor falls outside the window keeps the whole cell on its
+/// center bin (the rim whole-cell approximation §28 already tolerates).
+fn axis_weights(
+    c0: usize,
+    c1: usize,
+    full_lo: f64,
+    cell: f64,
+    lo: f64,
+    s: f64,
+    n_out: usize,
+) -> Vec<(u32, f32, u32, f32)> {
+    let none = u32::MAX;
+    let mut v = Vec::with_capacity(c1.saturating_sub(c0));
+    for c in c0..c1 {
+        let left = (full_lo + c as f64 * cell - lo) * s;
+        let right = (full_lo + (c as f64 + 1.0) * cell - lo) * s;
+        let width = right - left;
+        let center = 0.5 * (left + right);
+        let b = (center.floor().max(0.0) as usize).min(n_out - 1);
+        let bf = b as f64;
+        // Only one side can spill: width ≤ 1 and the center sits in [b, b+1).
+        let lo_spill = bf - left;
+        let hi_spill = right - (bf + 1.0);
+        let (nb, spill) = if lo_spill >= hi_spill {
+            (b as isize - 1, lo_spill)
+        } else {
+            (b as isize + 1, hi_spill)
+        };
+        let frac = if width > 0.0 {
+            (spill / width).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        if frac > COMPOSE_SNAP_EPS && nb >= 0 && (nb as usize) < n_out {
+            v.push((b as u32, (1.0 - frac) as f32, nb as u32, frac as f32));
+        } else {
+            // Contained, negligible spill, or a spill off the window edge:
+            // the whole cell rides its center bin.
+            v.push((b as u32, 1.0, none, 0.0));
+        }
+    }
+    v
 }
 
 // -- handle registry (engine doc §3.3) ---------------------------------------
@@ -414,6 +491,48 @@ mod tests {
         let mut direct = vec![0.0f32; w * h];
         kernels::bin_2d(&x, &y, 25.0, 75.0, 25.0, 75.0, w, h, &mut direct);
         assert_eq!(composed, direct, "cell-aligned windows are exact");
+    }
+
+    #[test]
+    fn compose_unaligned_ratio_has_no_banding() {
+        // #153: a uniform field must compose to a uniform grid even when the
+        // source→output ratio is non-integer. One point per level-0 cell makes
+        // every cell count 1; composing the full domain to a width that lands
+        // the ratio in (1, 2) (64 source cols → 48 output cols, ratio 1.33)
+        // is exactly the regime where center-only assignment beats between
+        // bins. Area weighting keeps every interior column near the mean;
+        // nearest-bin would alternate columns at ~1:2.
+        let dim = 64;
+        let mut x = Vec::new();
+        let mut y = Vec::new();
+        let cell = 100.0 / dim as f64;
+        for i in 0..dim {
+            for j in 0..dim {
+                x.push((i as f64 + 0.5) * cell);
+                y.push((j as f64 + 0.5) * cell);
+            }
+        }
+        let p = build(&x, &y, 0.0, 100.0, 0.0, 100.0, dim).unwrap();
+        let (w, h) = (48, 48);
+        let mut g = vec![0.0f32; w * h];
+        let level = compose(&p, 0.0, 100.0, 0.0, 100.0, w, h, MAX_UPSAMPLE, &mut g).unwrap();
+        assert_eq!(level, 0, "no coarser level meets 48-wide resolution");
+        // Column totals (sum over rows): uniform input ⇒ each of w columns
+        // should hold ≈ total / w. Every interior column stays within 12% of
+        // the mean; a center-only mapping would swing to ~2× on doubled bins.
+        let total: f64 = g.iter().map(|&c| c as f64).sum();
+        let mean_col = total / w as f64;
+        for col in 1..w - 1 {
+            let col_sum: f64 = (0..h).map(|row| g[row * w + col] as f64).sum();
+            assert!(
+                (col_sum - mean_col).abs() <= mean_col * 0.12,
+                "column {col} = {col_sum} beats against the mean {mean_col} (banding)"
+            );
+        }
+        assert!(
+            (total - (dim * dim) as f64).abs() <= 1.0,
+            "area weighting conserves the total count"
+        );
     }
 
     #[test]
