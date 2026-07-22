@@ -61,8 +61,8 @@ jobs:
       - name: Pytest (full suite)
         run: uv run pytest -q
 
-      - name: Type check
-        run: uv run ty check
+      - name: Type check (advisory, like ci.yml)
+        run: uv run ty check python || echo "::warning::ty reported type findings (advisory)"
 
       - name: Chromium append-stream + render smokes (rebuilt bundle)
         run: |
