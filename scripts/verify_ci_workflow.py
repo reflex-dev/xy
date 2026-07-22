@@ -30,6 +30,7 @@ REQUIRED_CI_JOBS = {
     "matplotlib_reference",
     "test",
     "python_floor",
+    "rust_release",
     "benchmark_vs",
     "benchmark_methodology",
     "benchmark",
@@ -736,6 +737,38 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     _require_job_contains(
         errors,
         jobs,
+        "rust_release",
+        "CI",
+        "locked release-profile suite and release-only regression inventory",
+        "name: Rust release-profile tests",
+        "timeout-minutes: 15",
+        "dtolnay/rust-toolchain@",
+        "Inventory release-only regression coverage",
+        "cargo test --locked --release -- --list",
+        "release-tests.txt",
+        "grep -Fqx",
+        "tiles::tests::compose_window_astronomically_past_domain_is_empty_not_panic: test",
+        "Run locked release-profile suite",
+        "run: cargo test --locked --release",
+        "Upload release-profile test inventory",
+        "if: always()",
+        "actions/upload-artifact@",
+        "name: rust-release-test-inventory",
+        "if-no-files-found: error",
+        "path: release-tests.txt",
+    )
+    release_tests = jobs.get("rust_release", "")
+    if "continue-on-error:" in release_tests:
+        errors.append("CI rust_release must be a hard gate without continue-on-error")
+    for step_name in (
+        "Inventory release-only regression coverage",
+        "Run locked release-profile suite",
+    ):
+        if _step_is_conditioned(release_tests, step_name):
+            errors.append(f"CI rust_release step {step_name!r} must be unconditional")
+    _require_job_contains(
+        errors,
+        jobs,
         "sdist",
         "CI",
         "source artifact verification",
@@ -772,6 +805,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "matplotlib_reference",
         "python_floor",
         "reflex_adapter",
+        "rust_release",
         "sdist",
         "test",
         "wheels",

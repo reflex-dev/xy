@@ -240,9 +240,15 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-020 — Rust release tests
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: main CI runs debug `cargo test`; at least one regression is
-  compiled only without debug assertions.
+- Status: `IMPLEMENTED`
+- Owner: unassigned — file a tracking issue before implementation starts
+- Evidence: the hard `rust_release` job and its retained
+  `rust-release-test-inventory` artifact, `scripts/verify_ci_workflow.py`,
+  `tests/test_verify_ci_workflow.py`, and
+  `src/tiles.rs::compose_window_astronomically_past_domain_is_empty_not_panic`.
+- Current gap: closed; locked release-profile tests are a required aggregate
+  dependency, and CI inventories the named release-only regression before
+  running the full optimized suite.
 - Implemented when: `cargo test --locked --release` is a hard job, workflow
   validation requires it, and release-only test coverage cannot silently drop.
 

@@ -70,7 +70,7 @@ def test_ci_workflow_rejects_required_aggregate_missing_hard_job(tmp_path: Path)
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
     path.write_text(
-        workflow.replace("      - reflex_adapter\n      - sdist\n", "      - reflex_adapter\n"),
+        workflow.replace("      - rust_release\n      - sdist\n", "      - rust_release\n"),
         encoding="utf-8",
     )
 
@@ -90,6 +90,91 @@ def test_ci_workflow_rejects_reflex_lane_outside_required_aggregate(tmp_path: Pa
     errors = verify_ci_workflow.validate_ci_workflow(path)
 
     assert any("required_ci needs" in error and "reflex_adapter" in error for error in errors)
+
+
+def test_ci_workflow_rejects_missing_locked_release_rust_suite(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Run locked release-profile suite\n"
+            "        run: cargo test --locked --release\n",
+            "      - name: Run locked release-profile suite\n        run: cargo test --release\n",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "rust_release" in error and "cargo test --locked --release" in error for error in errors
+    )
+
+
+def test_ci_workflow_rejects_missing_release_only_regression_inventory(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "          grep -Fqx \\\n"
+            "            'tiles::tests::compose_window_astronomically_past_domain_is_empty_not_panic: test' \\\n"
+            "            release-tests.txt\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("rust_release" in error and "release-only regression" in error for error in errors)
+
+
+def test_ci_workflow_rejects_release_rust_job_outside_required_aggregate(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace("      - rust_release\n", ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("required_ci needs" in error and "rust_release" in error for error in errors)
+
+
+def test_ci_workflow_rejects_conditioned_release_test_inventory(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Inventory release-only regression coverage\n",
+            "      - name: Inventory release-only regression coverage\n"
+            "        if: github.event_name == 'workflow_dispatch'\n",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "rust_release step" in error and "must be unconditional" in error for error in errors
+    )
+
+
+def test_ci_workflow_rejects_missing_release_test_inventory_artifact(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("          name: rust-release-test-inventory\n", ""),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "rust_release" in error and "rust-release-test-inventory" in error for error in errors
+    )
 
 
 def test_ci_workflow_rejects_invalid_embedded_python_indentation(tmp_path: Path) -> None:

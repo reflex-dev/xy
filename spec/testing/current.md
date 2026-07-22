@@ -45,7 +45,7 @@ index. Missing additions are tracked by ID in [`gaps.md`](gaps.md).
 | Surface | Current executable evidence | Enforcement | Status | Current boundary / gap |
 |---|---|---|---|---|
 | Rust debug correctness | `cargo test` | Hard main CI / `make rust-check` | `IMPLEMENTED` | Includes deterministic randomized kernel and scalar/native parity cases. |
-| Hard Rust release-test gate | `cargo test --release` can run locally and includes a release-only regression | Not in the main gate | `NOT IMPLEMENTED` | The executable local test is supporting evidence; the required automated protection is absent. See TST-NI-020. |
+| Hard Rust release-test gate | `cargo test --locked --release`; release-test inventory requires `compose_window_astronomically_past_domain_is_empty_not_panic` | Hard `rust_release` job and `required_ci` dependency | `IMPLEMENTED` | The optimized suite cannot pass by silently compiling out the known release-only regression. See TST-NI-020. |
 | Rust lint | `cargo clippy --all-targets -- -D warnings` | Hard main CI | `IMPLEMENTED` | Covers configured targets on the main Linux host. |
 | Native C ABI | `scripts/abi_smoke.py` | Hard main CI / `make abi-smoke` | `IMPLEMENTED` | Loads the built core and checks the exported ABI surface. |
 | SIMD and architecture parity | Fixed-seed parity tests, host wheel import probes | Mixed | `PARTIALLY IMPLEMENTED` | AVX2 can be unavailable without explicit capability evidence; ARM, Windows, and macOS do not run a common kernel/FFI matrix. See TST-NI-023. |
@@ -185,7 +185,7 @@ automation, not whether the helper is valuable.
 | `python/reflex-xy/tests/` | Adapter assets, components, vars, socket plane, state bridge, and tokens | Package-owned dev environment plus zero-skip Reflex floor/latest job; `IMPLEMENTED` |
 | `docs/app/tests` | Documentation application unit/route/content behavior | Docs quality job; `IMPLEMENTED` |
 | `benchmarks/test_codspeed_*.py` | Kernel, transport, pyplot, and Python animation microbenchmarks | Advisory CodSpeed job; `IMPLEMENTED` |
-| Rust tests in `src/` | Native kernels, encoding, raster, tiles, SIMD, and module invariants | Debug hard CI; release gate `NOT IMPLEMENTED` |
+| Rust tests in `src/` | Native kernels, encoding, raster, tiles, SIMD, module invariants, and a release-only extreme-window regression | Debug and locked release-profile hard CI |
 | `scripts/abi_smoke.py` | Exported native C ABI | Hard main CI |
 | `scripts/render_smoke_nonumpy.py` | Dependency-light WebGL marks, pixels, interaction, and context recovery | Hard Chromium CI |
 | `scripts/png_export_smoke.py` | Native and Chromium PNG health | Hard Chromium CI |
@@ -213,7 +213,7 @@ automation, not whether the helper is valuable.
 
 | Workflow | Current jobs | Testing role |
 |---|---|---|
-| `ci.yml` | `matplotlib_reference`, `test`, `reflex_adapter`, `browser_conformance`, `python_floor`, `benchmark_vs`, `benchmark_methodology`, `benchmark`, `sdist`, `wheels`, `install_without_rust`, `required_ci` | Main hard and advisory code/package evidence; stable hard aggregate runs on every pull-request path |
+| `ci.yml` | `rust_release`, `matplotlib_reference`, `test`, `reflex_adapter`, `browser_conformance`, `python_floor`, `benchmark_vs`, `benchmark_methodology`, `benchmark`, `sdist`, `wheels`, `install_without_rust`, `required_ci` | Main hard and advisory code/package evidence; stable hard aggregate includes locked optimized Rust tests and the Reflex floor/latest lane on every pull-request path |
 | `codspeed.yml` | `benchmarks` | Advisory microbenchmark evidence |
 | `docs.yml` | `released-quickstart`, `quality`, `production` | Published-wheel quickstart, docs tests/lint, and production-route matrix |
 | `benchmark-refresh.yml` | `cross-library` | Manual scatter and core-2D refresh evidence |

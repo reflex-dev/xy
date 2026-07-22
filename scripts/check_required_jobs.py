@@ -23,6 +23,7 @@ HARD_JOBS = (
     "matplotlib_reference",
     "python_floor",
     "reflex_adapter",
+    "rust_release",
     "sdist",
     "test",
     "wheels",

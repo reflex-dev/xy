@@ -76,7 +76,7 @@ These must pass before publishing or making a broad performance claim.
 | Python tests | Native backend passes | `pytest -q` |
 | Python style | Library, tests, scripts, and benchmarks lint clean | `ruff check .` and `ruff format --check .` |
 | Matplotlib reference | The reviewed compatibility snapshot matches the pinned released matplotlib reference, and the `xy.pyplot` shim passes its interoperability and dual-engine corpus suites | `python scripts/sync_matplotlib_compat.py --check` and `pytest tests/pyplot` |
-| Rust core | Native kernels pass and lint clean | `cargo test` and `cargo clippy --all-targets -- -D warnings` |
+| Rust core | Native kernels pass in debug and optimized profiles, the known release-only regression remains inventoried, and lint stays clean | `cargo test`, hard CI `cargo test --locked --release`, and `cargo clippy --all-targets -- -D warnings` |
 | Native ABI | C ABI can be loaded from the built core | `python scripts/abi_smoke.py` |
 | JavaScript | Committed bundles match source | `node js/build.mjs --check` |
 | Browser render | WebGL smoke reaches real pixels | `python scripts/render_smoke_nonumpy.py <chromium>` |
@@ -396,6 +396,9 @@ Before tagging a release:
 - Confirm CI built and verified native wheels for Linux glibc and musl/Alpine
   (x86-64, aarch64, armv7), macOS (x86-64, Apple Silicon), and Windows (x86, x64,
   arm64).
+- Confirm the hard `rust_release` job ran `cargo test --locked --release` and
+  found the named extreme-window regression in its release-profile inventory;
+  a debug-only Rust pass is not sufficient release evidence.
 - Confirm the Pyodide/Emscripten wheel passes its runtime load gate, not only
   its structural wheel check. The tested toolchain is Rust 1.97.0 with
   `panic=abort`, Emscripten 4.0.9, the `pyodide_2025_0` wheel ABI, and Pyodide

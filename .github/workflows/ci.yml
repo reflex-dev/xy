@@ -16,6 +16,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  rust_release:
+    name: Rust release-profile tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - name: Inventory release-only regression coverage
+        run: |
+          cargo test --locked --release -- --list | tee release-tests.txt
+          grep -Fqx \
+            'tiles::tests::compose_window_astronomically_past_domain_is_empty_not_panic: test' \
+            release-tests.txt
+      - name: Run locked release-profile suite
+        run: cargo test --locked --release
+      - name: Upload release-profile test inventory
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-release-test-inventory
+          if-no-files-found: error
+          path: release-tests.txt
+
   matplotlib_reference:
     name: Matplotlib 3.11 reference compatibility
     runs-on: ubuntu-latest
@@ -863,6 +886,7 @@ jobs:
       - matplotlib_reference
       - python_floor
       - reflex_adapter
+      - rust_release
       - sdist
       - test
       - wheels
