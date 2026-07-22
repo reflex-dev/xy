@@ -116,6 +116,19 @@ def is_memmapped(arr: Any) -> bool:
     return False
 
 
+def backing_path(arr: Any) -> str | None:
+    """Filesystem path of the ``np.memmap`` backing ``arr``, or ``None`` when
+    ``arr`` is not disk-backed. Walks the ``.base`` chain like
+    :func:`is_memmapped` (a contiguity/astype view still shares the mapping)."""
+    seen = arr
+    while seen is not None:
+        if isinstance(seen, np.memmap):
+            name = getattr(seen, "filename", None)
+            return os.fspath(name) if name is not None else None
+        seen = getattr(seen, "base", None)
+    return None
+
+
 def open_f64(path: str | os.PathLike[str]) -> np.memmap:
     """Reopen an existing canonical f64 file as a read-only memmap column."""
     path = os.fspath(path)

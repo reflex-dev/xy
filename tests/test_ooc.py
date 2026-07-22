@@ -111,3 +111,49 @@ def test_scatter_density_screen_bounded_out_of_core(tmp_path):
     full = fig.memory_report()
     assert full["canonical_bytes"] == 0
     assert full["resident_array_bytes"] < n * 8  # << canonical data size
+
+
+def test_zone_map_cache_roundtrip_and_staleness(tmp_path):
+    """A memmapped column persists its zone-map fold to a sidecar and reloads it
+    bit-identically, so an out-of-core figure build never rescans the file twice
+    (§22/§27); a changed source file invalidates the cache."""
+    from xy import columns
+    from xy.columns import _load_zone_cache, _zone_cache_path
+
+    rng = np.random.default_rng(1)
+    vals = rng.normal(0, 5, 200_000)
+    vals[::7919] = np.nan  # exercise null_counts
+    col = _build(tmp_path, "z.f64", vals, capacity=len(vals))
+
+    assert _load_zone_cache(col) is None  # cold: no sidecar yet
+    zm1 = columns._zone_maps_for(col)  # computes + writes sidecar
+    assert _zone_cache_path(col) and __import__("os").path.exists(_zone_cache_path(col))
+    zm2 = _load_zone_cache(col)  # warm reload
+    assert zm2 is not None
+    for f in (
+        "mins",
+        "maxs",
+        "sums",
+        "sum_sqs",
+        "positive_mins",
+        "positive_maxs",
+        "counts",
+        "null_counts",
+    ):
+        assert np.array_equal(getattr(zm1, f), getattr(zm2, f), equal_nan=True), f
+    assert zm2.min == zm1.min and zm2.max == zm1.max and zm2.null_count == zm1.null_count
+    assert abs(zm2.min - float(np.nanmin(vals))) < 1e-9
+
+    # An in-RAM array never caches (no backing file) and never errors.
+    assert _zone_cache_path(np.asarray(vals)) is None
+    assert _load_zone_cache(np.asarray(vals)) is None
+
+    # Staleness: rewrite the source with a different mtime → cache rejected.
+    import os
+
+    with open(tmp_path / "z.f64", "r+b") as fh:
+        fh.seek(0)
+        fh.write(np.float64(99999.0).tobytes())
+    os.utime(tmp_path / "z.f64", ns=(0, 0))
+    reopened = open_f64(tmp_path / "z.f64")
+    assert _load_zone_cache(reopened) is None
