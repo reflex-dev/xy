@@ -20,7 +20,7 @@
  * title, axis tick labels, legend, tooltip (§7).
  */
 
-export const PROTOCOL = 5;
+export const PROTOCOL = 6;
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
 // python/xy/_framing.py). The chart spec's PROTOCOL
@@ -53,27 +53,44 @@ export function bytesToSpan(b) {
   return span.byteOffset % 4 === 0 ? span : new Uint8Array(span);
 }
 
-/** True when every column in the spec fits inside the supplied buffers.
- * Trait-transported appends can observe a torn update on hosts that set
- * spec and buffers non-atomically (one change event fires between the two
- * writes); a torn pair must be deferred to the other change event, not
- * applied and not treated as fatal. Message- and first-paint transports
- * deliver the pair together, so for them a mismatch stays a loud
- * `payloadBuffers`/`_columnView` error, never this soft check. */
-export function payloadCoherent(spec, raw) {
-  const cols = spec?.columns;
-  if (!Array.isArray(cols)) return false;
-  const size = (c) => (c.dtype === "u8" ? 1 : 4);
-  if (spec.buffer_layout === "split") {
-    if (!Array.isArray(raw)) return false;
-    return cols.every((c) => {
-      if (!Number.isInteger(c.buf)) return true; // raster-only borrowed span
-      const b = raw[c.buf];
-      return !!b && c.len * size(c) <= b.byteLength;
-    });
+/** Resolve a split payload whose column table may reference bytes the
+ * client already holds (§4 append reuse): entries with `buf` read from the
+ * wire list, entries with only `cid` read from `cache` (cid → span from the
+ * previously applied payload). Returns `{resolved, missing}`; on success the
+ * spec's entries are rewritten to `buf: i` so every downstream consumer
+ * (_columnView, context restore) sees one uniform per-column array. Nothing
+ * is mutated when any cid is missing — the caller falls back to a `refresh`
+ * round-trip instead of applying a torn table. */
+export function payloadResolve(spec, wire, cache) {
+  const cols = Array.isArray(spec?.columns) ? spec.columns : null;
+  if (!cols || !Array.isArray(wire)) return { resolved: null, missing: ["<shape>"] };
+  const spans = new Array(cols.length);
+  const missing = [];
+  for (let i = 0; i < cols.length; i++) {
+    const c = cols[i];
+    let span = null;
+    if (Number.isInteger(c.buf)) {
+      const b = wire[c.buf];
+      span = b == null ? null : bytesToSpan(b);
+    } else if (c.cid != null && cache) {
+      span = cache.get(c.cid) || null;
+    }
+    // A span shorter than the column's declared extent counts as missing:
+    // letting it through would tear the client later, when _columnView
+    // throws mid-apply — after the spec and retained payload have already
+    // been swapped and trace resources destroyed — instead of falling back
+    // to the refresh round-trip here.
+    if (span) {
+      const need = (Number(c.byte_offset) || 0) +
+        Number(c.len) * (c.dtype === "u8" ? 1 : 4);
+      if (Number.isFinite(need) && need > span.byteLength) span = null;
+    }
+    if (!span) missing.push(c.cid ?? String(i));
+    spans[i] = span;
   }
-  if (Array.isArray(raw) || !raw) return false;
-  return cols.every((c) => c.byte_offset + c.len * size(c) <= raw.byteLength);
+  if (missing.length) return { resolved: null, missing };
+  for (let i = 0; i < cols.length; i++) cols[i].buf = i;
+  return { resolved: spans, missing };
 }
 
 /** Wire buffers in the shape the spec declares (§29): packed is one blob;

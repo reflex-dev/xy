@@ -282,10 +282,10 @@ from-scratch ingest). `Figure.append(trace_id, x, y, color=, size=)`
 validates atomically (line appends must continue the sorted series;
 categorical channels and shared columns are rejected for now), frees the
 trace's pyramid for lazy rebuild, exits any drill, and returns an `append`
-message carrying a complete fresh payload in the split layout — screen-bounded
-by construction (§29), so the wire never needs deltas, and shipped exactly
-once per tick (wire-protocol §4: the widget host rides the spec/buffers trait
-update; the socket host pushes a `msg`). The client rebuilds only the traces
+message carrying a complete fresh spec with **partial** split buffers —
+screen-bounded by construction (§29), so the wire never needs row deltas,
+and unchanged traces cost neither re-encode (per-trace emit cache) nor bytes
+(cid reuse; wire-protocol §4). The client rebuilds only the traces
 named in `affected`, applies the follow policy (refit when at home, slide
 when pinned to the live right edge, hold when inspecting history), and
 refines tiered traces to its current window through the normal

@@ -32,7 +32,7 @@ Contracts (moved verbatim from `FigureWidget._on_custom_msg`):
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -79,7 +79,7 @@ __all__ = [
 ]
 
 # (reply message, buffers to ship beside it — None when the reply has none).
-Reply = tuple[dict[str, Any], Optional[list[bytes]]]
+Reply = tuple[dict[str, Any], Optional[Sequence[bytes | memoryview]]]
 
 # Reflex semantic selection events include bounded JSON projections. The
 # complete canonical Selection remains server-side and can be re-resolved.
@@ -205,6 +205,15 @@ def handle_message(
                 event["cancelled"] = content["cancelled"]
             callback(event)
         return None
+    if kind == "refresh":
+        # Append-reuse recovery (§4): the client hit a cid it does not hold
+        # (missed push, evicted cache). Reply with a complete fresh split
+        # payload shaped like an append naming every trace, so it applies
+        # through the same path and rebuilds a coherent baseline.
+        spec, full_buffers = fig.build_payload_split()
+        all_ids = [t.id for t in fig.traces]
+        spec["append"] = {"seq": int(fig._append_seq), "affected": all_ids}
+        return {"type": "append", "affected": all_ids, "spec": spec}, full_buffers
     if kind == "view":
         # Zoom/pan crossed what the shipped decimation can serve: recompute
         # for the visible window only (§28), stale-while-revalidate on the

@@ -8,8 +8,10 @@ no CDN (§33.2, airgapped notebooks).
 
 from __future__ import annotations
 
+import asyncio
 import pathlib
-from typing import TYPE_CHECKING, Any
+import time
+from typing import TYPE_CHECKING, Any, Optional
 
 import anywidget
 import traitlets
@@ -47,12 +49,14 @@ class FigureWidget(anywidget.AnyWidget):
 
     # Data-less spec (§9) — tiny JSON, sync'd as a trait.
     spec = traitlets.Dict().tag(sync=True)
-    # Encoded columns — raw binary, never JSON. First paint and streaming
-    # append both ship the split layout: a list of per-column memoryviews,
-    # each transported as its own binary comm frame with no join copy (§29).
-    # The trait stays Any so the client picks the layout from
-    # `spec.buffer_layout`, not the trait shape (older saved outputs may
-    # still hold a packed blob).
+    # Encoded columns — raw binary, never JSON, split layout: a list of
+    # per-column memoryviews, each transported as its own binary comm frame
+    # with no join copy (§29). The traits always hold a *complete* payload —
+    # they are the notebook-reopen state, re-synced on a debounce during
+    # streaming; the per-tick append push is a custom message with partial
+    # buffers (§4 append reuse). The trait stays Any so the client picks the
+    # layout from `spec.buffer_layout`, not the trait shape (older saved
+    # outputs may still hold a packed blob).
     buffers = traitlets.Any().tag(sync=True)
 
     def __init__(
@@ -80,6 +84,8 @@ class FigureWidget(anywidget.AnyWidget):
         )
         spec, bufs = figure.build_payload_split()
         self._configure_transport(spec)
+        self._reopen_synced_at = time.monotonic()
+        self._reopen_sync_handle: Optional[Any] = None
         super().__init__(spec=spec, buffers=bufs, **kwargs)
         self.on_msg(self._on_custom_msg)
 
@@ -108,11 +114,19 @@ class FigureWidget(anywidget.AnyWidget):
         """Streaming append: extend a trace's data and push the refresh to the
         client.
 
-        The refresh is the trait update itself: one comm message carrying the
-        fresh spec plus split-layout buffers, which the client applies when
-        `spec.append.seq` advances — and which doubles as the notebook-reopen
-        state. The payload crosses the wire exactly once per tick; there is no
-        separate custom-message send."""
+        The per-tick push is the (small) append message: split buffers only
+        for columns the client does not already hold — unchanged traces ship
+        as cid-only addressing (§4 append reuse). Notebook-reopen state (the
+        synced spec/buffers traits) re-syncs as a complete payload on a
+        debounce, so a saved output is at most `REOPEN_SYNC_INTERVAL_S` stale
+        instead of paying a full-payload trait sync every tick.
+
+        The debounce timer needs an asyncio event loop running in the
+        *calling* thread (the Jupyter kernel's main thread always has one).
+        Without one — plain scripts, worker threads — there is nothing to
+        defer to, so every append re-syncs the reopen state inline: still
+        correct, but the stream pays a full-payload trait sync per tick, so
+        high-rate producers should append from the loop thread."""
         msg, buffers = self._figure.append(
             trace_id,
             x,
@@ -126,9 +140,46 @@ class FigureWidget(anywidget.AnyWidget):
             symbol=symbol,
         )
         self._configure_transport(msg["spec"])
+        self.send(msg, buffers=buffers)
+        self._schedule_reopen_sync()
+
+    # Reopen-state debounce (§4): full trait re-syncs are capped at one per
+    # interval; a trailing timer (when an event loop is running — the Jupyter
+    # kernel always has one) syncs the final state after the stream quiets.
+    # Without a loop the sync happens inline, keeping headless use exact.
+    REOPEN_SYNC_INTERVAL_S = 1.0
+
+    def _sync_reopen_state(self) -> None:
+        self._reopen_sync_handle = None
+        self._reopen_synced_at = time.monotonic()
+        spec, bufs = self._figure.build_payload_split()
+        self._configure_transport(spec)
         with self.hold_sync():
-            self.spec = msg["spec"]
-            self.buffers = buffers
+            self.spec = spec
+            self.buffers = bufs
+
+    def _schedule_reopen_sync(self) -> None:
+        if self._reopen_sync_handle is not None:
+            return  # trailing sync already armed
+        elapsed = time.monotonic() - self._reopen_synced_at
+        if elapsed >= self.REOPEN_SYNC_INTERVAL_S:
+            self._sync_reopen_state()
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._sync_reopen_state()  # no loop to defer to: stay exact
+            return
+        self._reopen_sync_handle = loop.call_later(
+            self.REOPEN_SYNC_INTERVAL_S - elapsed, self._sync_reopen_state
+        )
+
+    def close(self) -> None:
+        handle = self._reopen_sync_handle
+        if handle is not None:
+            handle.cancel()
+            self._reopen_sync_handle = None
+        super().close()
 
     # -- programmatic view state (spec/design/view-state.md §5.1) ------------
 

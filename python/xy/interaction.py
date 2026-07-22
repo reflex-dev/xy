@@ -868,12 +868,14 @@ def append_data(
     lod.exit_drill(t)
 
     # Split layout, same as first paint (§29): per-column borrowed views, no
-    # join copy. The spec itself names the append — `append.seq` is the apply
-    # signal for the widget host, where the refresh rides the spec+buffers
-    # trait update as one comm message that doubles as notebook-reopen state.
-    # The socket.io host wraps the same spec in an `append` message push.
+    # join copy. The append build additionally splices unchanged traces from
+    # the emit cache (no re-encode) and ships cid-only entries for columns
+    # the client already holds (§4 append reuse). `append.seq` is the apply
+    # signal; both hosts push the message via their comm/socket channel and
+    # the widget re-syncs full reopen state on a debounce.
+    t.data_rev += 1
     fig._append_seq += 1
     seq = fig._append_seq
-    spec, buffers = fig.build_payload_split()
+    spec, buffers = fig.build_append_payload({t.id})
     spec["append"] = {"seq": seq, "affected": [t.id]}
     return {"type": "append", "affected": [t.id], "spec": spec}, buffers

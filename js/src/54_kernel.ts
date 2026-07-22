@@ -1,4 +1,4 @@
-import { payloadBuffers } from "./00_header";
+import { payloadBuffers, payloadResolve } from "./00_header";
 import { lodApplyDensityUpdate, lodApplyDrill, lodDropDrill, lodRememberDensity } from "./45_lod";
 import { xyCreateRebinWorker } from "./46_worker";
 import { ChartView } from "./50_chartview";
@@ -203,9 +203,25 @@ Object.assign(ChartView.prototype, {
   _applyAppend(msg, buffers) {
     const spec = msg.spec;
     if (!spec || !spec.traces) return;
-    const raw = spec.buffer_layout === "split" ? buffers : buffers && buffers[0];
-    if (raw == null) return;
-    const payload = payloadBuffers(spec, raw);
+    let payload;
+    if (spec.buffer_layout === "split") {
+      // Partial message (§4 append reuse): cid-only columns resolve from the
+      // previously applied payload. A miss means this client's baseline
+      // drifted (missed push, fresh mount mid-stream) — request a full
+      // refresh instead of applying a torn table.
+      if (!Array.isArray(buffers)) return;
+      const res = payloadResolve(spec, buffers, this._cidSpans);
+      if (!res.resolved) {
+        this._requestRefresh();
+        return;
+      }
+      payload = res.resolved;
+    } else {
+      const raw = buffers && buffers[0];
+      if (raw == null) return;
+      payload = payloadBuffers(spec, raw);
+    }
+    this._refreshPending = false;
     // Follow policy, decided against the OLD home view before it moves:
     // - at home (never zoomed, or axes reset): the chart follows its data —
     //   refit both axes to the new domain, the live-dashboard default.
@@ -245,6 +261,7 @@ Object.assign(ChartView.prototype, {
     this.spec = spec;
     this.axes = this._normalizeAxes(spec);
     this._payload = payload;
+    this._reseedCidSpans();
     this.view0 = this._copyView({
       ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]: any) => [id, [...axis.range]])),
     });
@@ -270,6 +287,15 @@ Object.assign(ChartView.prototype, {
     this._updatePickable();
     this._scheduleViewRequest(this.view, { delay: 0 });
     this.draw();
+  },
+
+  // Append-reuse recovery (§4): ask the kernel for a complete fresh payload
+  // when a partial append referenced a cid this client does not hold. One
+  // outstanding request at a time; the flag clears when any append applies.
+  _requestRefresh() {
+    if (!this.comm || this._refreshPending) return;
+    this._refreshPending = true;
+    this.comm.send({ type: "refresh" });
   },
 
   _onKernelMsg(msg, buffers) {
