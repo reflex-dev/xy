@@ -80,6 +80,13 @@ def tick_controls_demo():
 `tick_label_angle`, `tick_label_min_gap`, and `tick_label_strategy`.
 `label_position`, `label_offset`, and `label_angle` position the axis title.
 
+On fluid browser charts, categorical y-axis labels that exceed the space
+between their tick and the chart edge are ellipsized. Their full value remains
+available through native hover and accessibility metadata; set
+`--chart-tick-label-max-width` on the chart or a host element to choose a
+stricter cap. Fixed-size SVG, PNG, and PDF exports use their explicit canvas
+width and padding instead, so increase `padding` when an export needs more room.
+
 Axis `style=` uses a strict cross-renderer vocabulary for grid, axis, tick, and
 label paint/geometry. See
 [Customize Each Part](/docs/xy/styling/customize/#axes,-grid,-and-ticks)

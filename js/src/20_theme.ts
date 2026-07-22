@@ -75,15 +75,12 @@ export function cssColor([r, g, b, a]: any) {
 // color, padding, border, font, and box-shadow stay overridable here.
 // All colors flow through --chart-* tokens so container theming still cascades.
 //
-// The modebar's own default surface (its background/border/shadow, which have
-// no public --chart-* token) is scheme-aware: it reads internal --xy-modebar-*
-// defaults that flip to a dark palette whenever a `.dark` class sits on the
-// chart root or any ancestor — the class-on-root convention every host we
-// target uses (Reflex/next-themes, Radix Themes, Tailwind). Icon color already
-// follows currentColor, so on a dark page the light default bar would have hit
-// light icons on white; the override keeps the toolbar readable in both modes.
-// These are still zero-specificity :where() rules, so a host --chart-modebar-*
-// token or utility class overrides them in either scheme.
+// The reduction badges and modebar's own surface defaults are scheme-aware:
+// they read internal --xy-* defaults that flip to a dark palette whenever a
+// `.dark` class sits on the chart root or any ancestor — the class-on-root
+// convention every host we target uses (Reflex/next-themes, Radix Themes,
+// Tailwind). These remain zero-specificity :where() rules, so public
+// --chart-badge-* / --chart-modebar-* tokens or utility classes override them.
 export const XY_CHROME_CSS = `
 @layer base{
 :where(.xy [data-xy-slot="title"]){text-align:center;font-size:14px;font-weight:600;color:var(--chart-text,inherit)}

@@ -1,5 +1,6 @@
 """Tests for the standalone XY documentation application."""
 
+import ast
 import hashlib
 import importlib.util
 import inspect
@@ -754,6 +755,42 @@ def test_public_docs_use_the_xy_namespace_without_the_legacy_alias() -> None:
     ]
 
     assert not violations, "\n".join(violations)
+
+
+def test_public_python_fences_are_valid_python() -> None:
+    """Keep every Python-labelled source block syntactically copyable."""
+    fence_pattern = re.compile(
+        r"^(?P<fence>`{3}|~{3})python[^\n]*\n(?P<body>.*?)^(?P=fence)\s*$",
+        re.MULTILINE | re.DOTALL,
+    )
+    failures: list[str] = []
+
+    for path in _markdown_files(DOCS_ROOT):
+        for match in fence_pattern.finditer(path.read_text(encoding="utf-8")):
+            try:
+                ast.parse(match.group("body"), filename=path.as_posix())
+            except SyntaxError as error:
+                failures.append(f"{path.relative_to(DOCS_ROOT)}: {error}")
+
+    assert not failures, "\n".join(failures)
+
+
+def test_handwritten_output_reference_tracks_the_public_api() -> None:
+    """Keep the handwritten Engine and Chart method reference synchronized."""
+    method_reference = (DOCS_ROOT / "api-reference/figure-methods.md").read_text(encoding="utf-8")
+    method_blocks = [
+        block for block in parse_document(method_reference).blocks if isinstance(block, CodeBlock)
+    ]
+
+    assert len(method_blocks) == 4
+    assert all(block.language == "python" for block in method_blocks)
+    assert "animation_progress=None" in method_blocks[0].content
+    for method in (xy.Chart.to_html, xy.Chart.html):
+        assert "animation_progress" in inspect.signature(method).parameters
+
+    type_reference = (DOCS_ROOT / "api-reference/public-types.md").read_text(encoding="utf-8")
+    for engine in xy.Engine:
+        assert f"`{engine.__class__.__name__}.{engine.name}`" in type_reference
 
 
 def test_live_preview_markdown_builds_real_xy_components(
