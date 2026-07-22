@@ -45,10 +45,21 @@ def test_builder_roundtrip_and_growth(tmp_path):
     assert np.array_equal(np.asarray(open_f64(tmp_path / "x.f64")), data)
 
 
-def test_empty_builder(tmp_path):
+def test_empty_builder_roundtrips_to_zero_rows(tmp_path):
+    # An empty column is a 0-byte file: a memmap can't map an empty file, and an
+    # 8-byte placeholder would reopen as a phantom `0.0` row (open_f64 derives
+    # the length from the file size). 0 bytes round-trips to 0 rows.
     view = MemmapF64Builder(tmp_path / "e.f64").finalize()
     assert len(view) == 0
-    assert is_memmapped(view)
+    assert (tmp_path / "e.f64").stat().st_size == 0
+    reopened = open_f64(tmp_path / "e.f64")
+    assert len(reopened) == 0  # no resurrected row
+
+    # A genuine single 0.0 row stays one row across a reopen (the case an 8-byte
+    # placeholder would have been confused with).
+    one = _build(tmp_path, "one.f64", np.array([0.0]), capacity=1)
+    assert len(one) == 1
+    assert len(open_f64(tmp_path / "one.f64")) == 1
 
 
 def test_ingest_is_zero_copy_and_disk_backed(tmp_path):

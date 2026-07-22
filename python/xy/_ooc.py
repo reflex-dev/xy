@@ -80,22 +80,26 @@ class MemmapF64Builder:
         self._mm[self.n : self.n + m] = arr
         self.n += m
 
-    def finalize(self) -> np.memmap:
+    def finalize(self) -> npt.NDArray[np.float64]:
         """Flush, truncate to the written length, and return a read-only view.
 
         The returned array is a canonical f64 column: contiguous, single-copy,
         disk-backed. Hand it to :meth:`xy.Figure.scatter` /
         ``ColumnStore.ingest`` exactly like an in-RAM array.
+
+        An empty column truncates the file to **0 bytes** and returns a plain
+        empty array: a memmap can't map an empty file, and — crucially — an
+        8-byte placeholder would be indistinguishable from one real ``0.0`` row
+        on reopen (:func:`open_f64` derives the length from the file size), so
+        it would resurrect a phantom row. 0 bytes round-trips to 0 rows.
         """
         if self._mm is not None:
             self._mm.flush()
             self._mm = None
         if self.n == 0:
-            # An empty column still needs a valid (zero-length) mapping; keep a
-            # single f64 slot on disk so the memmap open succeeds, view is [:0].
             with open(self.path, "r+b") as f:
-                f.truncate(_F64_BYTES)
-            return np.memmap(self.path, dtype=np.float64, mode="r", shape=(0,))
+                f.truncate(0)
+            return np.empty(0, dtype=np.float64)
         with open(self.path, "r+b") as f:
             f.truncate(self.n * _F64_BYTES)
         return np.memmap(self.path, dtype=np.float64, mode="r", shape=(self.n,))
@@ -129,10 +133,18 @@ def backing_path(arr: Any) -> str | None:
     return None
 
 
-def open_f64(path: str | os.PathLike[str]) -> np.memmap:
-    """Reopen an existing canonical f64 file as a read-only memmap column."""
+def open_f64(path: str | os.PathLike[str]) -> npt.NDArray[np.float64]:
+    """Reopen an existing canonical f64 file as a read-only memmap column.
+
+    A 0-byte file is the canonical empty column (see
+    :meth:`MemmapF64Builder.finalize`) and returns a plain empty array — a
+    memmap can't map an empty file.
+    """
     path = os.fspath(path)
-    n, rem = divmod(os.path.getsize(path), _F64_BYTES)
+    size = os.path.getsize(path)
+    if size == 0:
+        return np.empty(0, dtype=np.float64)
+    n, rem = divmod(size, _F64_BYTES)
     if rem:
         raise ValueError(f"{path!r} is not a whole number of f64 values")
     return np.memmap(path, dtype=np.float64, mode="r", shape=(int(n),))
