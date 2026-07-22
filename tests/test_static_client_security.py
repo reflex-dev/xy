@@ -94,6 +94,10 @@ def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
             assert rule in text, f"{path} missing defeatable chrome rule {rule!r}"
         for token in _CHROME_TOKENS:
             assert token in text, f"{path} no longer themes {token!r} in the stylesheet"
+        assert "--xy-badge-text:#0f172a" in text
+        assert "--xy-badge-text:#f8fafc" in text
+        assert "var(--chart-badge-text,var(--xy-badge-text))" in text
+        assert "var(--chart-badge-bg,var(--xy-badge-bg))" in text
         assert "ensureChromeStylesheet" in text
 
     # The inline tooltip/legend/modebar cssText must not re-set themeable

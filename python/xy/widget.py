@@ -47,11 +47,12 @@ class FigureWidget(anywidget.AnyWidget):
 
     # Data-less spec (§9) — tiny JSON, sync'd as a trait.
     spec = traitlets.Dict().tag(sync=True)
-    # Encoded columns — raw binary, never JSON. First paint ships the split
-    # layout: a list of per-column memoryviews, each transported as its own
-    # binary comm frame with no join copy (§29). Streaming-refresh reopen
-    # state re-syncs a single packed blob, so the trait is Any: the client
-    # picks the layout from `spec.buffer_layout`, not the trait shape.
+    # Encoded columns — raw binary, never JSON. First paint and streaming
+    # append both ship the split layout: a list of per-column memoryviews,
+    # each transported as its own binary comm frame with no join copy (§29).
+    # The trait stays Any so the client picks the layout from
+    # `spec.buffer_layout`, not the trait shape (older saved outputs may
+    # still hold a packed blob).
     buffers = traitlets.Any().tag(sync=True)
 
     def __init__(
@@ -105,8 +106,13 @@ class FigureWidget(anywidget.AnyWidget):
         symbol: Any = None,
     ) -> None:
         """Streaming append: extend a trace's data and push the refresh to the
-        client. Also refreshes the synced spec/buffers traits so a re-rendered
-        output (notebook reopen) shows the streamed state, not the initial one."""
+        client.
+
+        The refresh is the trait update itself: one comm message carrying the
+        fresh spec plus split-layout buffers, which the client applies when
+        `spec.append.seq` advances — and which doubles as the notebook-reopen
+        state. The payload crosses the wire exactly once per tick; there is no
+        separate custom-message send."""
         msg, buffers = self._figure.append(
             trace_id,
             x,
@@ -120,9 +126,9 @@ class FigureWidget(anywidget.AnyWidget):
             symbol=symbol,
         )
         self._configure_transport(msg["spec"])
-        self.spec = msg["spec"]
-        self.buffers = buffers[0]
-        self.send(msg, buffers=buffers)
+        with self.hold_sync():
+            self.spec = msg["spec"]
+            self.buffers = buffers
 
     # -- programmatic view state (spec/design/view-state.md §5.1) ------------
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import reflex as rx
 from reflex_docgen.markdown import HeadingBlock, parse_document
@@ -11,6 +12,12 @@ from reflex_site_shared.docs.markdown import ReflexDocTransformer, _spans_to_pla
 from reflex_site_shared.docs.models import DocsPage
 from reflex_site_shared.views.hosting_banner import HostingBannerState
 
+from xy_docs.api_reference import (
+    API_REFERENCE_HEADING,
+    component_api_paths,
+    component_api_references,
+    component_page_api,
+)
 from xy_docs.examples import chart_example_demo
 
 # A demo fence may split its hardcoded data from the chart code with this
@@ -142,7 +149,34 @@ def render_xy_markdown_page(page: DocsPage) -> rx.Component:
         virtual_filepath=str(source_path),
         filename=str(source_path),
     )
-    return transformer.transform(document)
+    content = transformer.transform(document)
+    component_paths = component_api_paths(page.metadata)
+    if not component_paths:
+        return content
+    references = component_api_references(component_paths)
+    return rx.fragment(
+        content,
+        _heading_link(API_REFERENCE_HEADING, 2),
+        component_page_api(references),
+    )
 
 
-__all__ = ["XyDocsMarkdownTransformer", "render_xy_markdown_page"]
+def page_with_api_reference_toc(page: DocsPage) -> DocsPage:
+    """Include an auto-generated API section in the shared page TOC.
+
+    The rendered tables remain generated components; this synthetic Markdown
+    heading is used only by the shared layout's source-based TOC parser.
+    """
+    if not component_api_paths(page.metadata):
+        return page
+    return replace(
+        page,
+        content=f"{page.content}\n\n## {API_REFERENCE_HEADING}",
+    )
+
+
+__all__ = [
+    "XyDocsMarkdownTransformer",
+    "page_with_api_reference_toc",
+    "render_xy_markdown_page",
+]

@@ -1,6 +1,8 @@
 ---
 title: Colorbars
 description: Author, orient, and style built-in continuous-scale colorbars or replace them in a custom adapter.
+components:
+  - xy.colorbar
 ---
 
 # Colorbars

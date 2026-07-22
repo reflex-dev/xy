@@ -1,6 +1,11 @@
 ---
 title: Reflex
 description: Render fixed and state-backed XY charts as first-class Reflex components.
+components:
+  - reflex_xy.chart
+  - reflex_xy.figure
+  - reflex_xy.inline
+  - reflex_xy.append
 ---
 
 # Reflex

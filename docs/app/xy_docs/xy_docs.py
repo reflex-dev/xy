@@ -11,7 +11,7 @@ from xy_docs.breadcrumb import xy_docs_breadcrumb
 from xy_docs.config import DOCS_CONFIG, DOCS_REDIRECTS
 from xy_docs.constants import PUBLIC_DOCS_URL, SOCIAL_IMAGE_URL
 from xy_docs.footer import xy_docs_footer
-from xy_docs.markdown import render_xy_markdown_page
+from xy_docs.markdown import page_with_api_reference_toc, render_xy_markdown_page
 from xy_docs.navbar import xy_docs_navbar
 from xy_docs.sidebar import xy_docs_sidebar
 
@@ -55,7 +55,7 @@ def xy_docs_layout(page, content, navigation) -> rx.Component:
     """Render the shared docs layout with Reflex's TOC scroll highlighter."""
     return rx.box(
         docs_layout(
-            page,
+            page_with_api_reference_toc(page),
             content,
             navigation,
             config=_LAYOUT_CONFIG,
