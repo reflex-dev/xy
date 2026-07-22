@@ -70,6 +70,7 @@ def test_browser_checks_are_listed_without_chromium(capsys: pytest.CaptureFixtur
     assert "reflex_lifecycle_smoke" in out
     assert "visual_health_smoke" in out
     assert "visual_baseline" in out
+    assert "chart_kind_matrix" in out
     assert "animation_smoke" in out
     assert "pick_boundary_smoke" in out
     assert "interaction_stress_smoke" in out
@@ -99,6 +100,14 @@ def test_runtime_security_browser_check_is_hard_and_sandboxed_by_default() -> No
     )
     assert "--no-sandbox" not in check.command
     assert check.requires_chromium is True
+
+
+def test_chart_kind_matrix_is_a_hard_sandboxed_browser_check() -> None:
+    check = verify_local._base_checks(Path(sys.executable))["chart_kind_matrix"]
+    assert check.command == (sys.executable, "scripts/chart_kind_matrix.py", sys.executable)
+    assert "--no-sandbox" not in check.command
+    assert check.requires_chromium is True
+    assert check.requires_executables == ("node",)
 
 
 def test_example_checks_are_known_as_targeted_gate() -> None:

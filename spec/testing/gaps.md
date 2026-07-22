@@ -122,9 +122,14 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-009 — Registry-driven every-chart-kind render matrix
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: the chart-kind contract requires a render probe per kind, while
-  the core smoke covers only common families.
+- Status: `IMPLEMENTED`
+- Evidence: `scripts/chart_kind_matrix.py`, `tests/test_chart_kind_matrix.py`,
+  the hard `Every chart-kind render matrix (Chromium)` CI step, and retained
+  `chart-kind-matrix-evidence` JSON.
+- Current gap: closed; 16 public-builder fixtures exactly cover all 18 shipped
+  registry kinds, validate payload kind/tier/counts and live GPU geometry, and
+  require independently measured colored pixels. Missing-kind, wrong-kind, and
+  blank-render controls are rejected.
 - Implemented when: a fixture catalog keyed to the public mark registry requires
   payload/tier and nonblank semantic geometry/pixel evidence for every primitive,
   including error, step/stem/segment, box/violin, contour/hexbin, and triangle

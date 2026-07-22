@@ -340,6 +340,11 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "--evidence visual-baseline-evidence.json",
         "Upload visual baseline evidence",
         "visual-baseline-evidence",
+        "Every chart-kind render matrix",
+        "scripts/chart_kind_matrix.py",
+        "--evidence chart-kind-matrix-evidence.json",
+        "Upload chart-kind matrix evidence",
+        "chart-kind-matrix-evidence",
         "scripts/runtime_security_smoke.py",
         "--evidence runtime-security-evidence.json",
         "Upload runtime security evidence",
@@ -414,6 +419,26 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "if-no-files-found: error",
         "visual-baseline-evidence.json",
         "visual-baseline-artifacts/",
+    )
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Every chart-kind render matrix (Chromium)",
+        "registry-complete browser render command",
+        "scripts/chart_kind_matrix.py",
+        "--no-sandbox",
+        "--evidence chart-kind-matrix-evidence.json",
+    )
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Upload chart-kind matrix evidence",
+        "failure-retaining chart-kind evidence artifact",
+        "if: always()",
+        "actions/upload-artifact@",
+        "chart-kind-matrix-evidence",
+        "if-no-files-found: error",
+        "chart-kind-matrix-evidence.json",
     )
     _require_step_contains(
         errors,

@@ -275,6 +275,15 @@ def _base_checks(
             requires_chromium=True,
         ),
         Check(
+            "chart_kind_matrix",
+            "registry-complete payload, GPU-geometry, and pixel matrix in Chromium",
+            (py, "scripts/chart_kind_matrix.py", chromium_arg),
+            requires_modules=("numpy",),
+            requires_executables=("node",),
+            requires_paths=chromium_paths,
+            requires_chromium=True,
+        ),
+        Check(
             "step_tier_smoke",
             "step traces stay step-shaped through kernel tier updates",
             (py, "scripts/step_tier_smoke.py", chromium_arg),
@@ -347,6 +356,7 @@ BROWSER_CHECKS = (
     "reflex_lifecycle_smoke",
     "visual_health_smoke",
     "visual_baseline",
+    "chart_kind_matrix",
     "step_tier_smoke",
     "animation_smoke",
     "pick_boundary_smoke",

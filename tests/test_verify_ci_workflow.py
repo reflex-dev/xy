@@ -905,6 +905,36 @@ def test_ci_workflow_rejects_missing_visual_baseline_evidence_upload(tmp_path: P
     assert any("Upload visual baseline evidence" in error for error in errors)
 
 
+def test_ci_workflow_rejects_missing_chart_kind_matrix(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            '          .venv/bin/python scripts/chart_kind_matrix.py "$CHROME" --no-sandbox \\\n',
+            "",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_workflow(path)
+    assert any("Every chart-kind render matrix" in error for error in errors)
+
+
+def test_ci_workflow_rejects_missing_chart_kind_evidence_upload(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Upload chart-kind matrix evidence\n",
+            "      - name: Removed chart-kind matrix evidence\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_workflow(path)
+    assert any("Upload chart-kind matrix evidence" in error for error in errors)
+
+
 def test_ci_workflow_rejects_missing_cross_browser_conformance(tmp_path: Path) -> None:
     text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"

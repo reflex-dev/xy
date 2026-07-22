@@ -72,7 +72,7 @@ These must pass before publishing or making a broad performance claim.
 | Import-time budget | `xy.__init__`, `dir(xy)`, export helpers, chart construction, and `.widget()` keep their lazy import boundaries | `make check-import` |
 | Claim guardrails | Public docs and package metadata avoid broad, unqualified performance claims | `make check-claims` |
 | CI/release workflows | Hard gates, non-blocking benchmarks, best-effort benchmark artifact upload/download, trusted publishing, and no-Rust clear-error jobs stay wired | `make check-ci` |
-| HTML export safety | Inline JSON/script escaping, atomic path writes, hostile user strings, browser client text-node insertion, standalone CSP, and network isolation stay protected | `make check-security` and `make check-browser CHROMIUM=/path/to/chrome` |
+| HTML export safety | Inline JSON/script escaping, atomic path writes, hostile user strings, and browser client text-node insertion stay protected; standalone CSP and network isolation are also enforced | `make check-security` and `make check-browser CHROMIUM=/path/to/chrome` |
 | Python tests | Native backend passes | `pytest -q` |
 | Python style | Library, tests, scripts, and benchmarks lint clean | `ruff check .` and `ruff format --check .` |
 | Matplotlib reference | The reviewed compatibility snapshot matches the pinned released matplotlib reference, and the `xy.pyplot` shim passes its interoperability and dual-engine corpus suites | `python scripts/sync_matplotlib_compat.py --check` and `pytest tests/pyplot` |
@@ -185,7 +185,8 @@ make check-docs
 
 The browser gates are split into app-facing checks that match the CI step
 names: `Browser lifecycle smoke (Chromium)`, `Browser visual health smoke
-(Chromium)`, `Reviewed visual baseline (Chromium)`, `Step tier-update smoke
+(Chromium)`, `Reviewed visual baseline (Chromium)`, `Every chart-kind render
+matrix (Chromium)`, `Step tier-update smoke
 (Chromium)`, `Animation smoke (Chromium)`, `Pick boundary smoke (Chromium)`,
 `Browser interaction stress smoke (Chromium)`, and `Browser dashboard
 reliability smoke (Chromium)`.

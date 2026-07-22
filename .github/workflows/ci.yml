@@ -319,6 +319,20 @@ jobs:
             visual-baseline-evidence.json
             visual-baseline-artifacts/
 
+      - name: Every chart-kind render matrix (Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python scripts/chart_kind_matrix.py "$CHROME" --no-sandbox \
+            --evidence chart-kind-matrix-evidence.json
+
+      - name: Upload chart-kind matrix evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chart-kind-matrix-evidence
+          if-no-files-found: error
+          path: chart-kind-matrix-evidence.json
+
       - name: Step tier-update smoke (Chromium)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")

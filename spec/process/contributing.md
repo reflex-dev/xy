@@ -170,6 +170,7 @@ This runs split browser checks, which CI runs as separate steps:
 | `reflex_lifecycle_smoke` | `Browser lifecycle smoke (Chromium)` |
 | `visual_health_smoke` | `Browser visual health smoke (Chromium)` |
 | `visual_baseline` | `Reviewed visual baseline (Chromium)` |
+| `chart_kind_matrix` | `Every chart-kind render matrix (Chromium)` |
 | `step_tier_smoke` | `Step tier-update smoke (Chromium)` |
 | `interaction_stress_smoke` | `Browser interaction stress smoke (Chromium)` |
 
