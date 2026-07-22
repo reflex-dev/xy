@@ -42,7 +42,7 @@ import { ChartView, decodeFrame, renderStandalone } from "./xy_client.js";
 // Opt-in console tracing: localStorage.setItem("xy_debug", "1")
 const DEBUG = globalThis.localStorage?.getItem?.("xy_debug") === "1";
 const HOVER_THROTTLE_MS = 120;
-const VIEW_DEBOUNCE_MS = 200;
+const VIEW_THROTTLE_MS = 50;
 const dbg = (...args) =>
   DEBUG &&
   console.log(
@@ -313,8 +313,13 @@ export function XYChart(props) {
 
     const dispatchView = (m) => {
       if (!cbRef.current.onViewChange || m.source === "linked" || m.source === "republish") return;
+      // Latest-wins throttle, not a trailing debounce: a gesture streams view
+      // changes continuously, and a per-event timer reset starves handlers
+      // until the pointer settles (#158). The gesture's last event is always
+      // delivered ("end" maps to phase "final"). Apps wanting fewer backend
+      // round trips compose Reflex's .throttle/.debounce event actions.
       pendingView = m;
-      if (viewTimer !== null) clearTimeout(viewTimer);
+      if (viewTimer !== null) return;
       viewTimer = setTimeout(() => {
         viewTimer = null;
         const latest = pendingView;
@@ -327,10 +332,10 @@ export function XYChart(props) {
             x_domain: [latest.x0, latest.x1],
             y_domain: [latest.y0, latest.y1],
             source: latest.source,
-            phase: "final",
+            phase: latest.phase === "end" ? "final" : "update",
           });
         }
-      }, VIEW_DEBOUNCE_MS);
+      }, VIEW_THROTTLE_MS);
     };
 
     const comm = {

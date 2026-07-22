@@ -113,7 +113,9 @@ def index():
 
 Selection JSON is capped and reports `total_count` plus `truncated`; call
 `reflex_xy.resolve_selection(event)` in the handler when all canonical rows
-are required. Hover is latest-wins throttled, view changes are debounced, and
+are required. Hover and view changes are latest-wins throttled (view events
+stream `phase: "update"` while a gesture moves and settle with `"final"`;
+rate-limit further with Reflex's `.throttle`/`.debounce` event actions), and
 view/selection state survives dependent republishes without feedback events.
 The complete envelopes, limits, clear/shared-handler/viewport examples, and
 static-versus-live availability are documented in

@@ -135,7 +135,12 @@ def test_semantic_event_wrapper_contracts_are_present():
     assert "interaction.view_change = true" in source
     assert "include_rows: true" in source
     assert "HOVER_THROTTLE_MS = 120" in source
-    assert "VIEW_DEBOUNCE_MS = 200" in source
+    # View changes are latest-wins throttled (issue #158: a trailing debounce
+    # starved handlers for the whole gesture), and the settled "end" event
+    # ships as phase "final".
+    assert "VIEW_THROTTLE_MS = 50" in source
+    assert "VIEW_DEBOUNCE_MS" not in source
+    assert 'phase: latest.phase === "end" ? "final" : "update"' in source
     assert "envelope.v = payloadVersion" in source
     assert "restoreSelectionSeqs.delete(message.seq)" in source
     assert "restoringSelection" not in source

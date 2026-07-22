@@ -177,7 +177,14 @@ class SelectEndEvent(TypedDict):
 
 
 class ViewChangeEvent(TypedDict):
-    """``on_view_change`` — debounced final viewport after pan/zoom.
+    """``on_view_change`` — the viewport, streaming through pan/zoom.
+
+    Dispatches are latest-wins throttled to one per 50 ms so dependent
+    state can track a gesture in real time; ``phase`` is ``"update"``
+    while the gesture is still moving and ``"final"`` once it settles
+    (the settled view is always delivered). To trade liveness for fewer
+    backend round trips, wrap the handler with Reflex's built-in
+    ``.throttle``/``.debounce`` event actions.
 
     Shape::
 
@@ -188,7 +195,7 @@ class ViewChangeEvent(TypedDict):
             "x_domain": [x0, x1],       # f64 data-space window
             "y_domain": [y0, y1],
             "source": str,              # gesture: pan/zoom/keyboard/...
-            "phase": "final",
+            "phase": "update" | "final",
         }
     """
 
@@ -198,4 +205,4 @@ class ViewChangeEvent(TypedDict):
     x_domain: list[float]  # [x0, x1]
     y_domain: list[float]  # [y0, y1]
     source: str  # gesture that produced the view (pan/zoom/keyboard/...)
-    phase: Literal["final"]
+    phase: Literal["update", "final"]

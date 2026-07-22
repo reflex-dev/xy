@@ -496,9 +496,15 @@ def shared(self, event: dict):
 ```
 
 View events are `{version, type: "view_change", token, x_domain, y_domain,
-source, phase: "final"}`. User changes are trailing-edge debounced for 200 ms;
-linked and republish sources are suppressed. Hover events are latest-wins and
-throttled to one dispatch per 120 ms. For viewport synchronization:
+source, phase}`. User changes are latest-wins throttled to one dispatch per
+50 ms so state computed from the view tracks a gesture in real time; `phase`
+is `"update"` while the gesture is moving and `"final"` once it settles, and
+the settled view is always delivered. Linked and republish sources are
+suppressed. Hover events are latest-wins and throttled to one dispatch per
+120 ms. The wrapper deliberately has no debounce knob: a handler that only
+wants the settled view checks `phase`, and an app that wants fewer backend
+round trips composes Reflex's built-in `.throttle`/`.debounce` event actions
+on the trigger or handler. For viewport synchronization:
 
 ```python
 @rx.event
