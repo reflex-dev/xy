@@ -142,6 +142,10 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- Standalone `to_html(path)` now streams base64 payload blocks through its
+  atomic temporary file and releases the packed blob before reading the
+  compatibility return string, avoiding the former payload-scale chunk-list
+  and joined-script allocations.
 - **Responsive, author-defeatable browser chrome.** XY's visual defaults now
   live in a low-priority cascade layer, so Tailwind utilities, ordinary author
   CSS, and slot styles override them without `!important`. Long legends remain

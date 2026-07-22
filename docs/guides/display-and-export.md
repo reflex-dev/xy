@@ -114,6 +114,9 @@ chart.to_html("chart.html")
 HTML export is self-contained: it includes the chart spec, binary data, and
 bundled render client. It keeps zoom, pan, hover, selection, and built-in chart
 chrome and does not need a browser or network connection at export time.
+When a path is supplied, payload chunks stream through the atomic output file
+instead of being retained together in memory; the returned string remains
+identical to the written document for compatibility.
 
 Pass `custom_css=` to include author CSS for chrome classes and tokens in the
 exported document. Standalone HTML uses inline scripts and styles by design;

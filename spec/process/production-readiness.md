@@ -105,9 +105,10 @@ reports, and sharing a single file, but it has a clear security contract:
   `</script>` inside future client source cannot terminate the script element.
 - The export rejects `NaN` and infinity in JSON metadata instead of emitting
   browser-dependent invalid JavaScript.
-- Path-based exports write through a same-directory temporary file and only
-  replace the target after the full document is flushed, so failed writes do
-  not corrupt the previous standalone artifact.
+- Path-based exports stream base64 blocks through a same-directory temporary
+  file and only replace the target after the full document is flushed, so
+  payload-scale text is not retained twice and failed writes do not corrupt
+  the previous standalone artifact.
 - The standalone file emits a defensive `Content-Security-Policy` meta tag that
   blocks network fetches, external worker scripts, objects, forms, and external
   images, and pins `base-uri 'none'`, while allowing the inline scripts/styles

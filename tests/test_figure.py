@@ -1221,6 +1221,45 @@ def test_to_html_path_writes_exact_document(tmp_path: Path):
     assert decoded["title"] == 'export "quoted" & <safe>'
 
 
+def test_to_html_path_streams_chunks_without_materializing_chunk_list(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    target = tmp_path / "streamed.html"
+    fig = Figure(title="streamed export").line(np.arange(32.0), np.arange(32.0))
+    monkeypatch.setattr(export_module, "_B64_CHUNK_BYTES", 3)
+    expected = fig.to_html()
+
+    def unexpected_chunk_list(_blob: bytes) -> list[str]:
+        raise AssertionError("path export must stream base64 instead of building a chunk list")
+
+    monkeypatch.setattr(export_module, "_base64_chunks", unexpected_chunk_list)
+    actual = fig.to_html(target)
+
+    assert actual == expected
+    assert target.read_text(encoding="utf-8") == expected
+
+
+def test_to_html_stream_failure_preserves_existing_file_and_cleans_temp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    target = tmp_path / "stream-failure.html"
+    target.write_text("old chart artifact", encoding="utf-8")
+    fig = Figure().line(np.arange(32.0), np.arange(32.0))
+
+    def fail_encode(_view: memoryview) -> bytes:
+        raise OSError("synthetic base64 failure")
+
+    monkeypatch.setattr(export_module.base64, "b64encode", fail_encode)
+
+    with pytest.raises(OSError, match="synthetic base64 failure"):
+        fig.to_html(target)
+
+    assert target.read_text(encoding="utf-8") == "old chart artifact"
+    assert not list(tmp_path.glob(".stream-failure.html.*.tmp"))
+
+
 def test_to_html_path_keeps_existing_file_on_atomic_replace_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

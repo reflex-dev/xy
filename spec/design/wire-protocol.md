@@ -264,6 +264,11 @@ the packed blob as chunked base64:
   chunking removes. Base64 text (`[A-Za-z0-9+/=]`) contains no quote,
   backslash, newline, or `<`, so it is quoted verbatim and can never close the
   element.
+- Path exports write those blocks directly to the same-directory atomic temp
+  file one at a time. They retain neither the full base64 chunk list nor a
+  joined scripts string, and release the packed blob before reading back the
+  completed document required by the `to_html(path) -> str` compatibility
+  contract. In-memory `to_html()` necessarily assembles its returned string.
 - `xyDecodeB64(chunks, total)` allocates `Uint8Array(total)` and prefers
   `setFromBase64`, falling back to an `atob` + `charCodeAt` loop into the
   preallocated array.

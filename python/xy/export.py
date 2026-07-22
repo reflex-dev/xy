@@ -176,6 +176,27 @@ def _base64_chunks(blob: bytes) -> list[str]:
     return [base64.b64encode(view[i : i + step]).decode("ascii") for i in range(0, len(view), step)]
 
 
+_B64_SCRIPT_PREFIX = b'<script>__xyChunks.push("'
+_B64_SCRIPT_SUFFIX = b'");</script>'
+
+
+def _write_base64_chunk_scripts(stream: Any, blob: bytes) -> None:
+    """Write payload script blocks without retaining base64 text chunks.
+
+    Path exports use a binary temporary file so the encoded bytes can be
+    written directly: no ASCII decode, chunk list, or joined scripts string.
+    """
+    if not blob:
+        return
+    view = memoryview(blob)
+    for index, start in enumerate(range(0, len(view), _B64_CHUNK_BYTES)):
+        if index:
+            stream.write(b"\n")
+        stream.write(_B64_SCRIPT_PREFIX)
+        stream.write(base64.b64encode(view[start : start + _B64_CHUNK_BYTES]))
+        stream.write(_B64_SCRIPT_SUFFIX)
+
+
 # Inline decoder for the chunked base64 payload. Prefers the native Uint8Array
 # base64 decoder (baseline across browsers since 2025) and falls back to a tight
 # `atob` + `charCodeAt` loop into a preallocated array — far cheaper than
@@ -304,10 +325,8 @@ def to_html(
     # valid JS string literal verbatim and can never close the <script>. Quote
     # it directly rather than via `json.dumps`, whose full-string escape scan
     # dominated small-chart export cost.
-    chunk_scripts = "\n".join(
-        f'<script>__xyChunks.push("{c}");</script>' for c in _base64_chunks(blob)
-    )
-    doc = f"""<!doctype html>
+    blob_len = len(blob)
+    head = f"""<!doctype html>
 <html>
 <head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="{_STANDALONE_CSP}">
@@ -321,19 +340,52 @@ html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;
 <div id="chart"></div>
 <script>{client_js}</script>
 <script>var __xyChunks = [];</script>
-{chunk_scripts}
+"""
+    tail = f"""
 <script>
   {_DECODE_B64_JS}
   const spec = {spec_js};
-  const buf = xyDecodeB64(__xyChunks, {len(blob)});
+  const buf = xyDecodeB64(__xyChunks, {blob_len});
   __xyChunks.length = 0;
   xy.renderStandalone(document.getElementById("chart"), spec, buf);
 </script>
 </body>
 </html>"""
-    if path is not None:
-        _atomic_write_text(path, doc)
-    return doc
+    if path is None:
+        chunk_scripts = "\n".join(
+            f'<script>__xyChunks.push("{chunk}");</script>' for chunk in _base64_chunks(blob)
+        )
+        return head + chunk_scripts + tail
+
+    # Stream the payload-scale portion through an atomic same-directory temp
+    # file. Only after the packed blob is released do we read the completed
+    # document required by the longstanding `to_html(path) -> str` contract.
+    target = Path(path)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            fd = -1
+            stream.write(head.encode("utf-8"))
+            _write_base64_chunk_scripts(stream, blob)
+            stream.write(tail.encode("utf-8"))
+            stream.flush()
+            os.fsync(stream.fileno())
+        del blob
+        doc = tmp_path.read_text(encoding="utf-8")
+        os.replace(tmp_path, target)
+        return doc
+    except Exception:
+        if fd != -1:
+            with suppress(OSError):
+                os.close(fd)
+        with suppress(FileNotFoundError):
+            tmp_path.unlink()
+        raise
 
 
 _NOTEBOOK_DIMENSION_RE = _re.compile(r"^[0-9]+(?:\.[0-9]+)?(?:px|%|vw|vh|rem|em)?$")
