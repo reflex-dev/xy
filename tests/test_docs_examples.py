@@ -475,8 +475,10 @@ def test_production_docs_include_focused_gate_matrix() -> None:
         "`make check-ci`",
         "Source distributions and wheels",
         "`make check-sdist` and `make check-wheel`",
-        "Production-facing PR",
+        "Production-facing non-browser change",
         "`make check-full`",
+        "the full non-browser local gate",
+        "it is not equivalent to the browser, host-integration, packaging, cross-platform, or exact-SHA release evidence",
     ]
     for marker in required:
         assert marker in text

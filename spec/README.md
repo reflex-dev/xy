@@ -1,8 +1,8 @@
 # Specification
 
 The root-level `spec/` directory is XY's engineering source of truth: intended
-behavior, architecture, compatibility, benchmarks, release readiness, and
-contributor contracts. The public documentation lives directly under `docs/`,
+behavior, architecture, compatibility, testing, benchmarks, release readiness,
+and contributor contracts. The public documentation lives directly under `docs/`,
 while the Reflex application that renders it lives in `docs/app/`.
 
 Keep this tree current with every relevant code, configuration, build, and
@@ -85,6 +85,18 @@ Measured numbers and the rules that make them defensible.
   Emitted by `scripts/check_regressions.py --emit-md` in CI; do not hand-edit.
 - [`methodology.md`](benchmarks/methodology.md) — how numbers are produced:
   mode-scoped, reproducible, oracle-checked, and publishing the cases we lose.
+
+## testing/
+
+The living test contract: what is enforced today and what remains to be built.
+
+- [`README.md`](testing/README.md) — status vocabulary, evidence layers, gate
+  tiers, and rules for promoting planned coverage.
+- [`current.md`](testing/current.md) — current test surfaces, commands,
+  enforcement, and the boundary of each existing protection.
+- [`gaps.md`](testing/gaps.md) — prioritized additions with explicit completion
+  criteria. Every entry remains `NOT IMPLEMENTED` until its automated evidence
+  and intended gate exist.
 
 ## process/
 

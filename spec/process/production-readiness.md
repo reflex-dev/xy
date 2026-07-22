@@ -4,6 +4,11 @@ This is the release bar for xy while the core renderer is still moving.
 It separates hard gates from advisory measurements so performance claims,
 packaging promises, and API stability do not depend on memory or vibes.
 
+The canonical [testing specification](../testing/README.md) inventories the
+evidence behind this release bar. It distinguishes checks enforced today from
+partial coverage and planned work; a planned test is not a release protection
+until that specification marks it `IMPLEMENTED` with automated evidence.
+
 ## Current Contract
 
 xy is early alpha. The goal is Plotly-class chart breadth with a
@@ -85,6 +90,12 @@ These must pass before publishing or making a broad performance claim.
 | Wheel size | Platform wheel remains small enough for notebook installs | CI budget: 15 MB |
 | Benchmark artifact | JSON benchmark reports carry schema, environment, categories, row status, and finite non-negative metrics; native reports must declare the native backend | `python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs`; repeat for line, install, core-2D, pyplot-vs-matplotlib, native, interaction, dashboard, and workflow artifacts |
 
+The dashboard row is the intended release contract, but current automation does
+not yet satisfy it. The 2026-07-21 evidence recorded a failed 50-chart row that
+the verifier accepted. Until [TST-NI-002](../testing/gaps.md#tst-ni-002--strict-dashboard-102050-health-gate)
+is implemented, a green dashboard step is `PARTIALLY IMPLEMENTED` evidence and
+must be inspected rather than treated as proof that this release gate passed.
+
 Type checking is **advisory, not release-blocking**. CI runs `ty check python`
 and reports findings without failing the build, and `scripts/verify_local.py`
 registers the same check with `advisory=True`, so `make check-full` prints
@@ -129,8 +140,10 @@ reports, and sharing a single file, but it has a clear security contract:
 
 ## Local Verification Shortcut
 
-Use the focused gates below while iterating, then run the full gate before a
-production-facing push:
+Use the focused gates below while iterating. `make check-full` is the full
+non-browser local gate; it is not equivalent to the browser, host-integration,
+packaging, cross-platform, or exact-SHA release evidence cataloged in the
+[testing specification](../testing/current.md).
 
 | Changed surface | Focused gate |
 |---|---|
@@ -149,9 +162,9 @@ production-facing push:
 | Source distributions and wheels | `make check-sdist` and `make check-wheel` |
 | Existing release artifacts | `make check-artifacts SDIST=/path/to/xy.tar.gz WHEEL=/path/to/xy.whl` |
 | Browser render/lifecycle/interaction smoke | `make check-browser CHROMIUM=/path/to/chrome` |
-| Production-facing PR | `make check-full` |
+| Production-facing non-browser change | `make check-full` |
 
-Use this before pushing production-facing changes:
+Use this before pushing production-facing non-browser changes:
 
 ```bash
 make check-full
@@ -321,8 +334,11 @@ Before tagging a release:
 
 - Refresh benchmark reports or explicitly document why the previous report still
   applies.
-- Run `make check-full` locally or confirm the equivalent
-  CI gates passed on the release commit.
+- Run `make check-full` for the non-browser layer, then confirm each applicable
+  browser, conformance, dashboard, packaging, and host-integration gate in the
+  [current testing inventory](../testing/current.md). Exact-SHA automated
+  qualification remains [TST-NI-003](../testing/gaps.md#tst-ni-003--exact-sha-release-deployment-and-provenance-preflight),
+  so this confirmation is manual until that gap is implemented.
 - Run `make check-ci` to confirm CI and release workflow
   gates still include artifact verification, upload/download, and trusted PyPI
   publishing.
