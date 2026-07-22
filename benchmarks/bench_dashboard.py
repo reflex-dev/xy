@@ -39,6 +39,9 @@ DASHBOARD_CATEGORY_IDS = (
     "payload_export_size",
 )
 RENDER_W, RENDER_H = 420, 280
+DASHBOARD_BASE_VIRTUAL_TIME_MS = 15_000
+DASHBOARD_SETTLE_VIRTUAL_TIME_MS_PER_CHART = 500
+DASHBOARD_PROBE_TIMEOUT_S = 180
 
 
 def _parse_counts(text: str) -> list[int]:
@@ -147,14 +150,14 @@ def _probe_js() -> str:
       try {
         const view = xy.renderStandalone(cell, payload.spec, xyBytesFromPayload(payload));
         const state = {lost: false};
-        view.canvas.addEventListener("webglcontextlost", () => {
+        view.root.addEventListener("xy:context_lost", (event) => {
           state.lost = true;
           contextEvents.push({
             id: payload.id, type: "lost", phase, at_ms: performance.now() - t0,
-            governed: view.canvas.dataset.xyCtx === "released",
+            governed: event.detail?.governed === true,
           });
         });
-        view.canvas.addEventListener("webglcontextrestored", () => {
+        view.root.addEventListener("xy:context_restored", () => {
           state.lost = false;
           contextEvents.push({id: payload.id, type: "restored", phase, at_ms: performance.now() - t0});
         });
@@ -210,6 +213,10 @@ def _probe_js() -> str:
     // recovery latency for a chart scrolled back into view.
     for (const slot of slots) {
       slot.cell.scrollIntoView({block: "center", inline: "center"});
+      // Model an actual visit, not only a programmatic scroll. Pointer entry
+      // is the product's explicit demand signal for a governed snapshot and
+      // promotes the requested chart in the context-governor LRU.
+      slot.view?.root.dispatchEvent(new PointerEvent("pointerenter"));
       const arriveMs = performance.now();
       let lit = nonblankPixels(slot) > 0;
       while (!lit && performance.now() - arriveMs < 400) {
@@ -330,7 +337,20 @@ def run(*, chart_counts: list[int], chromium: str | None = None) -> dict[str, An
                 ".chart-cell{width:420px;height:280px;border:1px solid #dde3ec;}"
             ),
         )
-        result = run_json_probe(html, marker="XY_DASHBOARD", chromium=chromium)
+        # The page may spend up to 400 ms settling each scroll visit.  A fixed
+        # 15-second virtual-time budget can therefore expire before a healthy
+        # 50-chart page reaches xyReport, yielding the misleading
+        # ``failed(no probe title)`` row seen in CI.  Scale the virtual budget
+        # with the requested work while retaining a real wall-clock timeout.
+        result = run_json_probe(
+            html,
+            marker="XY_DASHBOARD",
+            chromium=chromium,
+            virtual_time_ms=(
+                DASHBOARD_BASE_VIRTUAL_TIME_MS + count * DASHBOARD_SETTLE_VIRTUAL_TIME_MS_PER_CHART
+            ),
+            timeout_s=DASHBOARD_PROBE_TIMEOUT_S,
+        )
         row: dict[str, Any] = {
             "scenario": f"dashboard_{count}",
             "chart_count": count,

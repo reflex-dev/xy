@@ -318,6 +318,10 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "benchmarks/bench_dashboard.py",
         "--chart-counts 10,20,50",
         "dashboard-smoke.json --kind dashboard-browser",
+        "--profile strict",
+        "Upload dashboard health evidence",
+        "dashboard-health-evidence",
+        "if-no-files-found: error",
         "--sizes 1e5,1e6,1e7 --production --json scatter.json",
         "scripts/bench_native.py --sizes 1e6,1e7 --json kernel.json",
         "scripts/verify_benchmark_report.py scatter.json --kind scatter-native",
@@ -334,6 +338,26 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "if-no-files-found: warn",
         "spec/benchmarks/metrics.md",
         "transport.json",
+    )
+    hard_test = jobs.get("test", "")
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Upload regression benchmark report",
+        "failure-retaining regression artifact policy",
+        "if: always()",
+        "regression-benchmark-report",
+        "if-no-files-found: warn",
+    )
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Upload dashboard health evidence",
+        "failure-retaining dashboard artifact policy",
+        "if: always()",
+        "dashboard-health-evidence",
+        "if-no-files-found: error",
+        "dashboard-smoke.json",
     )
     _require_job_contains(
         errors,

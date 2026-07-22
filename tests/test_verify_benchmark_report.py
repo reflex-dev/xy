@@ -895,6 +895,124 @@ def test_dashboard_report_accepts_governed_rows(tmp_path: Path) -> None:
     assert errors == []
 
 
+def test_dashboard_strict_profile_accepts_complete_and_governed_rows(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    _set_dashboard_governed(payload["rows"][1])
+    _set_dashboard_governed(payload["rows"][2])
+    payload["chart_count_ceiling"] = 10
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(
+        path, kind="dashboard-browser", profile="strict"
+    )
+
+    assert errors == []
+
+
+def test_dashboard_strict_profile_rejects_failed_requested_row(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    payload["rows"][-1] = {
+        "scenario": "dashboard_50",
+        "chart_count": 50,
+        "benchmark_categories": [
+            "many_chart_dashboards",
+            "small_data_startup",
+            "payload_export_size",
+        ],
+        "total_payload_bytes": 262_144,
+        "html_bytes": 524_288,
+        "status": "failed(no probe title)",
+    }
+    payload["chart_count_ceiling"] = 20
+    payload["visible_stable_chart_ceiling"] = 20
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(
+        path, kind="dashboard-browser", profile="strict"
+    )
+
+    assert any(
+        "strict dashboard 50-chart row" in error and "status 'ok'" in error for error in errors
+    )
+
+
+def test_dashboard_strict_profile_rejects_missing_requested_row(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    payload["rows"] = payload["rows"][:-1]
+    payload["attempted_chart_counts"] = [10, 20]
+    payload["chart_count_ceiling"] = 20
+    payload["visible_stable_chart_ceiling"] = 20
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(
+        path, kind="dashboard-browser", profile="strict"
+    )
+
+    assert any("exactly one 50-chart row; found 0" in error for error in errors)
+
+
+def test_dashboard_strict_profile_rejects_failed_extra_requested_row(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    payload["attempted_chart_counts"].append(75)
+    payload["rows"].append(
+        {
+            "scenario": "dashboard_75",
+            "chart_count": 75,
+            "benchmark_categories": [
+                "many_chart_dashboards",
+                "small_data_startup",
+                "payload_export_size",
+            ],
+            "total_payload_bytes": 262_144,
+            "html_bytes": 524_288,
+            "status": "failed(timeout)",
+        }
+    )
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(
+        path, kind="dashboard-browser", profile="strict"
+    )
+
+    assert any(
+        "strict dashboard 75-chart row" in error and "status 'ok'" in error for error in errors
+    )
+
+
+def test_dashboard_strict_profile_rejects_partial_or_blank_visit(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    _set_dashboard_partial(payload["rows"][-1], nonblank=49)
+    payload["chart_count_ceiling"] = 20
+    payload["visible_stable_chart_ceiling"] = 20
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(
+        path, kind="dashboard-browser", profile="strict"
+    )
+
+    assert any("must be complete or governed" in error for error in errors)
+    assert any("must prove every chart nonblank when visited" in error for error in errors)
+
+
+def test_dashboard_strict_profile_rejects_unexplained_context_loss(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    row = payload["rows"][-1]
+    _set_dashboard_governed(row)
+    row["context_events"][0]["governed"] = False
+    row["governed_context_lost_events"] -= 1
+    row["currently_lost_chart_ids"] = list(row["currently_lost_chart_ids"])
+    row["released_chart_ids"].remove(row["currently_lost_chart_ids"][0])
+    payload["chart_count_ceiling"] = 20
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(
+        path, kind="dashboard-browser", profile="strict"
+    )
+
+    assert any("ungoverned context-loss event" in error for error in errors)
+    assert any("without governed release" in error for error in errors)
+
+
 def test_dashboard_report_accepts_pending_release_event(tmp_path: Path) -> None:
     payload = _dashboard_browser_report()
     row = payload["rows"][1]

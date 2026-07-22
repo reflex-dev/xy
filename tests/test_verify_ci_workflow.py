@@ -446,7 +446,7 @@ def test_ci_workflow_rejects_missing_dashboard_reliability_smoke(tmp_path: Path)
         "          .venv/bin/python benchmarks/bench_dashboard.py \\\n"
         '            --chart-counts 10,20,50 --chromium "$CHROME" --json dashboard-smoke.json\n'
         "          .venv/bin/python scripts/verify_benchmark_report.py \\\n"
-        "            dashboard-smoke.json --kind dashboard-browser\n\n"
+        "            dashboard-smoke.json --kind dashboard-browser --profile strict\n\n"
     )
     path = tmp_path / "ci.yml"
     path.write_text(workflow.replace(block, ""), encoding="utf-8")
@@ -454,6 +454,42 @@ def test_ci_workflow_rejects_missing_dashboard_reliability_smoke(tmp_path: Path)
     errors = verify_ci_workflow.validate_workflow(path)
 
     assert any("test job" in error and "dashboard reliability" in error for error in errors)
+
+
+def test_ci_workflow_rejects_non_strict_dashboard_reliability_smoke(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "dashboard-smoke.json --kind dashboard-browser --profile strict",
+            "dashboard-smoke.json --kind dashboard-browser",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("test job" in error and "--profile strict" in error for error in errors)
+
+
+def test_ci_workflow_rejects_missing_dashboard_failure_evidence(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    block = (
+        "      - name: Upload dashboard health evidence\n"
+        "        if: always()\n"
+        "        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n"
+        "        with:\n"
+        "          name: dashboard-health-evidence\n"
+        "          if-no-files-found: error\n"
+        "          path: dashboard-smoke.json\n\n"
+    )
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(block, ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("test job" in error and "dashboard-health-evidence" in error for error in errors)
 
 
 def test_ci_workflow_rejects_missing_reflex_lifecycle_smoke(tmp_path: Path) -> None:
@@ -609,7 +645,10 @@ def test_ci_workflow_rejects_regression_upload_that_skips_after_failures(
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "if: always()" in error for error in errors)
+    assert any(
+        "Upload regression benchmark report" in error and "if: always()" in error
+        for error in errors
+    )
 
 
 def test_ci_workflow_rejects_missing_wheel_upload(tmp_path: Path) -> None:

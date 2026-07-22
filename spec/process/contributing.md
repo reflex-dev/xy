@@ -81,6 +81,13 @@ numbers into docs or posts:
 make check-benchmark-report BENCHMARK_JSON=benchmark.json BENCHMARK_KIND=scatter-vs
 ```
 
+For the dashboard release contract, select outcome enforcement explicitly:
+
+```bash
+make check-benchmark-report BENCHMARK_JSON=dashboard.json \
+  BENCHMARK_KIND=dashboard-browser BENCHMARK_PROFILE=strict
+```
+
 `BENCHMARK_KIND` accepts `auto`, `scatter-vs`, `core-2d`,
 `pyplot-vs-matplotlib`, `scatter-native`, `heatmap-native`, `kernel-native`,
 `interaction-browser`, `dashboard-browser`, `workflow-native`,

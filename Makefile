@@ -6,6 +6,7 @@ SDIST ?=
 WHEEL ?=
 BENCHMARK_JSON ?= benchmark.json
 BENCHMARK_KIND ?= auto
+BENCHMARK_PROFILE ?= baseline
 
 .PHONY: help setup setup-browser check check-full check-browser check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-testing-spec check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
 
@@ -34,7 +35,7 @@ help:
 		'  make check-sdist      build and verify the source distribution' \
 		'  make check-wheel      build and verify a wheel (set WHEEL_EXPECT=--expect-native)' \
 		'  make check-artifacts  verify prebuilt artifacts (set SDIST=... WHEEL=...)' \
-		'  make check-benchmark-report validate BENCHMARK_JSON (scatter-vs, pyplot-vs-matplotlib, line-decimation, install-footprint, core-2d, scatter-native, heatmap-native, kernel-native, interaction-browser, dashboard-browser, workflow-native)' \
+		'  make check-benchmark-report validate BENCHMARK_JSON (scatter-vs, pyplot-vs-matplotlib, line-decimation, install-footprint, core-2d, scatter-native, heatmap-native, kernel-native, interaction-browser, dashboard-browser, workflow-native); set BENCHMARK_PROFILE=strict for dashboard release health' \
 		'                        override UV_CACHE_DIR if your uv cache lives elsewhere' \
 		'  make list-checks      list verifier check names' \
 		'  make test             run pytest' \
@@ -139,7 +140,7 @@ check-artifacts:
 	$(PYTHON) scripts/verify_local.py --packaging --sdist "$(SDIST)" --wheel "$(WHEEL)" $(WHEEL_EXPECT)
 
 check-benchmark-report:
-	$(PYTHON) scripts/verify_benchmark_report.py "$(BENCHMARK_JSON)" --kind "$(BENCHMARK_KIND)"
+	$(PYTHON) scripts/verify_benchmark_report.py "$(BENCHMARK_JSON)" --kind "$(BENCHMARK_KIND)" --profile "$(BENCHMARK_PROFILE)"
 
 list-checks:
 	$(PYTHON) scripts/verify_local.py --list

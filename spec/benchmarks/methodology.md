@@ -133,10 +133,13 @@ reported).
 7. `dashboard_scale`: `benchmarks/bench_dashboard.py` attempts 10/20/50 mixed
    charts, checks every canvas initially and while scrolling, and records payload
    prep, navigation readiness, JS heap, redraw-submission p95, per-chart context
-   loss/restoration events, and the stable loss-free chart-count ceiling. Partial
-   dashboards remain successful measurement rows rather than losing their metrics.
-   CI hard-gates the 10-chart row as loss-free/nonblank and applies deliberately
-   loose catastrophic budgets to its render, scroll, and redraw timings.
+   loss/restoration events, and the stable loss-free chart-count ceiling. Baseline
+   report validation retains coherent partial dashboards rather than losing their
+   metrics. Hard CI selects the strict outcome profile: 10 must be loss-free, and
+   20/50 must be complete or governed with every chart created and nonblank when
+   visited; failed, partial, browser-evicted, and unexplained-loss rows fail. The
+   10-chart row also has deliberately loose catastrophic render, scroll, and
+   redraw budgets.
 8. `install_import`: lower-bound distribution size plus opt-in fresh-venv total
    site-packages, transitive distribution count, install time, and cold import.
 9. `public_workflows`: `benchmarks/bench_workflows.py` tracks ingestion shapes,

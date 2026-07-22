@@ -83,18 +83,23 @@ These must pass before publishing or making a broad performance claim.
 | Accessibility / cross-browser | Semantic interaction checks plus tolerant WebGL/layout comparison pass in Chromium, Firefox, and WebKit | `make check-conformance` |
 | Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
 | Step tier update | A decimated `step` chart keeps its risers after a synthetic kernel `tier_update` replaces the vertex buffers | `python scripts/step_tier_smoke.py <chromium>` |
-| Dashboard reliability | 10/20/50-chart dashboards stay nonblank under the render client's context governor | `python benchmarks/bench_dashboard.py --chart-counts 10,20,50 --chromium <chromium> --json dashboard-smoke.json` then `python scripts/verify_benchmark_report.py dashboard-smoke.json --kind dashboard-browser` |
+| Dashboard reliability | 10/20/50-chart dashboards stay nonblank under the render client's context governor | `python benchmarks/bench_dashboard.py --chart-counts 10,20,50 --chromium <chromium> --json dashboard-smoke.json` then `python scripts/verify_benchmark_report.py dashboard-smoke.json --kind dashboard-browser --profile strict` |
 | sdist | Source archive contains required source/bundles, benchmark regression harness/baseline, release docs/tests/scripts, the example apps' source, `PKG-INFO` version/dependencies matching `pyproject.toml`, no duplicate members, and no generated junk | `python scripts/verify_sdist.py dist/*.tar.gz` |
 | Native wheel | Platform wheel contains package-only files, exactly one native library, `METADATA` version/dependencies matching `pyproject.toml`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
 | Fallback wheel | No-toolchain wheel contains package-only files, `METADATA` version/dependencies matching `pyproject.toml`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
 | Wheel size | Platform wheel remains small enough for notebook installs | CI budget: 15 MB |
 | Benchmark artifact | JSON benchmark reports carry schema, environment, categories, row status, and finite non-negative metrics; native reports must declare the native backend | `python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs`; repeat for line, install, core-2D, pyplot-vs-matplotlib, native, interaction, dashboard, and workflow artifacts |
 
-The dashboard row is the intended release contract, but current automation does
-not yet satisfy it. The 2026-07-21 evidence recorded a failed 50-chart row that
-the verifier accepted. Until [TST-NI-002](../testing/gaps.md#tst-ni-002--strict-dashboard-102050-health-gate)
-is implemented, a green dashboard step is `PARTIALLY IMPLEMENTED` evidence and
-must be inspected rather than treated as proof that this release gate passed.
+Dashboard reports have two validation modes. The default `baseline` profile
+keeps coherent partial/failed measurement rows publishable. Hard CI selects
+`--profile strict`: exactly one 10-, 20-, and 50-chart row must be present; each
+must be complete or governed, every chart must be created and prove nonblank
+when visited, and failed, partial, browser-evicted, or otherwise unexplained
+context-loss rows fail the step. The probe's virtual-time budget scales with
+chart count so the 50-chart visit contract cannot outlive the harness itself;
+the independent wall-clock timeout remains blocking. CI uploads the generated
+`dashboard-smoke.json` with `if: always()` so failed/partial row telemetry is
+retained even when strict verification stops the job.
 
 Type checking is **advisory, not release-blocking**. CI runs `ty check python`
 and reports findings without failing the build, and `scripts/verify_local.py`
@@ -412,9 +417,9 @@ Not yet safe:
 - Cross-browser/perceptual rendering conformance.
 - Exact-marker interaction for every possible 100M-point zoom path.
 - Production Reflex state integration as a first-class API.
-- More than ~12 charts *simultaneously in view* holding live WebGL contexts.
+- More than ~10 charts *simultaneously in view* holding live WebGL contexts.
   Browsers cap live contexts per page (~16 in Chrome); the render client's
-  context governor keeps xy inside a budget (default 12) by having
+  context governor keeps xy inside a budget (default 10) by having
   the least-recently-visible off-screen chart release its context and
   re-acquire on scroll-into-view. Measured (`benchmarks/bench_dashboard.py`,
   2026-07-09, Chrome/macOS): 10/20/50-chart dashboards are all fully usable —

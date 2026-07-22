@@ -179,6 +179,12 @@ count. Partial rows retain their timing and memory metrics. `bench_workflows.py`
 updates, and separate HTML/SVG/native-PNG/Chromium-PNG export rows. All three emit schema-versioned JSON with
 environment metadata and benchmark category IDs.
 
+Use `--profile strict` when verifying the dashboard artifact for CI or release
+health. That profile requires healthy 10/20/50 rows and rejects missing, failed,
+partial, visited-blank, browser-evicted, and unexplained context-loss outcomes;
+the default profile continues to validate and retain non-healthy measurement
+rows without presenting them as release evidence.
+
 ## Copyable claim taxonomy
 
 Use these shapes when turning benchmark rows into README text, release notes, or

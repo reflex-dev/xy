@@ -32,6 +32,7 @@ KNOWN_KINDS = (
     "install-footprint",
     "transport-loopback",
 )
+VALIDATION_PROFILES = ("baseline", "strict")
 ROW_STATUSES = ("ok", "unavailable", "skipped", "failed")
 COMPARISON_VERDICTS = {"pass", "watch", "fail", "no-plotly"}
 INTERACTION_BUDGET_KEYS = (
@@ -1502,7 +1503,9 @@ def _validate_interaction_visual_budget_block(
     return valid
 
 
-def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> None:
+def _validate_dashboard_browser(
+    report: dict[str, Any], errors: list[str], *, profile: str = "baseline"
+) -> None:
     _require_keys(
         report,
         {
@@ -1678,6 +1681,81 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
                     f"dashboard {DASHBOARD_MIN_LOSS_FREE_CHARTS}-chart {metric} "
                     f"{value:.3g} ms exceeds hard smoke budget {limit:.3g} ms"
                 )
+    if profile == "strict":
+        _validate_dashboard_strict(rows, report.get("attempted_chart_counts"), errors)
+
+
+def _validate_dashboard_strict(
+    rows: list[Any], attempted_chart_counts: Any, errors: list[str]
+) -> None:
+    """Enforce the release-health contract, not just report coherence.
+
+    Baseline validation intentionally preserves measurements from partial and
+    failed benchmark rows.  The strict profile is the hard-CI policy: every
+    10/20/50 row must be present exactly once and must be either loss-free or
+    governed/recoverable, with every chart proven nonblank when visited.
+    """
+    rows_by_count: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        count = row.get("chart_count")
+        if isinstance(count, int) and not isinstance(count, bool):
+            rows_by_count.setdefault(count, []).append(row)
+
+    requested_counts = set(DASHBOARD_REQUIRED_COUNTS)
+    if isinstance(attempted_chart_counts, list):
+        requested_counts.update(
+            count
+            for count in attempted_chart_counts
+            if isinstance(count, int) and not isinstance(count, bool) and count > 0
+        )
+
+    for count in sorted(requested_counts):
+        matching = rows_by_count.get(count, [])
+        if len(matching) != 1:
+            errors.append(
+                f"strict dashboard profile requires exactly one {count}-chart row; "
+                f"found {len(matching)}"
+            )
+            continue
+        row = matching[0]
+        path = f"strict dashboard {count}-chart row"
+        status = _status_kind(row.get("status"))
+        if status != "ok":
+            errors.append(f"{path} must have status 'ok'; got {row.get('status')!r}")
+            continue
+        render_status = row.get("render_status")
+        if render_status not in {"complete", "governed"}:
+            errors.append(f"{path} must be complete or governed; got {render_status!r}")
+        if row.get("created_charts") != count or row.get("creation_failed_charts") != 0:
+            errors.append(f"{path} must create all {count} charts without failures")
+        if row.get("scroll_nonblank_charts") != count or row.get("scroll_blank_chart_ids") != []:
+            errors.append(f"{path} must prove every chart nonblank when visited")
+
+        # A governed row may release off-screen contexts, but browser evictions,
+        # ungoverned loss events, and still-lost contexts without a release
+        # marker are unexplained losses and therefore release-blocking.
+        if render_status == "governed":
+            if row.get("evicted_chart_ids") != []:
+                errors.append(f"{path} contains unexplained browser-evicted charts")
+            events = row.get("context_events")
+            if isinstance(events, list) and any(
+                isinstance(event, dict)
+                and event.get("type") == "lost"
+                and event.get("governed") is not True
+                for event in events
+            ):
+                errors.append(f"{path} contains an ungoverned context-loss event")
+            currently_lost = row.get("currently_lost_chart_ids")
+            released = row.get("released_chart_ids")
+            if isinstance(currently_lost, list) and isinstance(released, list):
+                unexplained = sorted(set(currently_lost) - set(released))
+                if unexplained:
+                    errors.append(
+                        f"{path} contains currently lost charts without governed release: "
+                        f"{unexplained}"
+                    )
 
 
 def _dashboard_id_list(
@@ -2111,8 +2189,10 @@ def summarize_report(report: dict[str, Any], *, kind: str) -> list[str]:
     return summary
 
 
-def validate_report(path: Path, *, kind: str = "auto") -> list[str]:
+def validate_report(path: Path, *, kind: str = "auto", profile: str = "baseline") -> list[str]:
     errors: list[str] = []
+    if profile not in VALIDATION_PROFILES:
+        return [f"unknown validation profile: {profile!r}"]
     try:
         report = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -2142,7 +2222,7 @@ def validate_report(path: Path, *, kind: str = "auto") -> list[str]:
     elif selected == "interaction-browser":
         _validate_interaction_browser(report, errors)
     elif selected == "dashboard-browser":
-        _validate_dashboard_browser(report, errors)
+        _validate_dashboard_browser(report, errors, profile=profile)
     elif selected == "workflow-native":
         _validate_workflow_native(report, errors)
     elif selected == "transport-loopback":
@@ -2158,9 +2238,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("report", type=Path)
     parser.add_argument("--kind", choices=KNOWN_KINDS, default="auto")
+    parser.add_argument(
+        "--profile",
+        choices=VALIDATION_PROFILES,
+        default="baseline",
+        help="strict makes dashboard outcome health release-blocking; baseline validates artifact coherence",
+    )
     args = parser.parse_args(argv)
 
-    errors = validate_report(args.report, kind=args.kind)
+    errors = validate_report(args.report, kind=args.kind, profile=args.profile)
     if errors:
         print(f"benchmark report verification failed for {args.report}:", file=sys.stderr)
         for error in errors:

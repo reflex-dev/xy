@@ -1,4 +1,237 @@
-var xy=(function(e){Object.defineProperties(e,{__esModule:{value:!0},[Symbol.toStringTag]:{value:`Module`}});var t=[88,89,66,70],n=1,r=24,i=8,a=Object.freeze({maxFrameBytes:512*1024*1024,maxMetadataBytes:8*1024*1024,maxBuffers:4096,maxBufferBytes:256*1024*1024});function o(e,t=`buffer`){if(e instanceof ArrayBuffer)return new Uint8Array(e);if(ArrayBuffer.isView(e))return new Uint8Array(e.buffer,e.byteOffset,e.byteLength);throw TypeError(`${t} must be an ArrayBuffer or ArrayBuffer view`)}function s(e){let t=o(e,`chart payload`);return t.byteOffset%4==0?t:new Uint8Array(t)}function c(e,t){let n=a[t],r=e&&e[t]!=null?e[t]:n;if(!Number.isSafeInteger(r)||r<=0)throw RangeError(`${t} must be a positive safe integer`);return r}function l(e){return Math.ceil(e/i)*i}function u(e,t,n){let r=e.getBigUint64(t,!0);if(r>BigInt(2**53-1))throw RangeError(`${n} exceeds JavaScript's safe integer range`);return Number(r)}function d(e,t,n,r){if(n>e.byteLength)throw RangeError(`truncated ${r} padding`);for(let i=t;i<n;i++)if(e[i]!==0)throw RangeError(`non-zero ${r} padding`)}function f(e,a=null){let s=o(e,`frame body`),f=c(a,`maxFrameBytes`),p=c(a,`maxMetadataBytes`),m=c(a,`maxBuffers`),h=c(a,`maxBufferBytes`);if(p>f)throw RangeError(`maxMetadataBytes cannot exceed maxFrameBytes`);if(h>f)throw RangeError(`maxBufferBytes cannot exceed maxFrameBytes`);if(s.byteOffset%i!==0)throw RangeError(`frame body must start on an 8-byte boundary`);if(s.byteLength>f)throw RangeError(`frame length ${s.byteLength} exceeds limit ${f}`);if(s.byteLength<r)throw RangeError(`truncated frame header`);let g=new DataView(s.buffer,s.byteOffset,s.byteLength);for(let e=0;e<t.length;e++)if(g.getUint8(e)!==t[e])throw RangeError(`invalid frame magic`);let _=g.getUint8(4);if(_!==n)throw RangeError(`unsupported frame version ${_}`);let v=g.getUint8(5);if(v!==0)throw RangeError(`unsupported frame flags 0x${v.toString(16)}`);let y=g.getUint16(6,!0);if(y!==r)throw RangeError(`unsupported frame header size ${y}`);let b=g.getUint32(8,!0),x=g.getUint32(12,!0),S=u(g,16,`declared frame length`);if(S!==s.byteLength)throw RangeError(`declared frame length ${S} does not match body length ${s.byteLength}`);if(b>p)throw RangeError(`metadata length ${b} exceeds limit ${p}`);if(x>m)throw RangeError(`buffer count ${x} exceeds limit ${m}`);let C=r+b;if(C>s.byteLength)throw RangeError(`truncated frame metadata`);let w;try{let e=new Uint8Array(s.buffer,s.byteOffset+r,b);w=JSON.parse(new TextDecoder(`utf-8`,{fatal:!0}).decode(e))}catch(e){throw RangeError(`invalid frame metadata JSON: ${e}`)}if(!w||Array.isArray(w)||typeof w!=`object`)throw RangeError(`frame metadata must decode to an object`);let T=l(C);d(s,C,T,`metadata`);let E=[];for(let e=0;e<x;e++){if(T+8>s.byteLength)throw RangeError(`truncated buffer ${e} length`);let t=u(g,T,`buffer ${e} length`);if(T+=8,t>h)throw RangeError(`buffer ${e} length ${t} exceeds limit ${h}`);let n=T+t;if(n>s.byteLength)throw RangeError(`truncated buffer ${e}`);let r=s.byteOffset+T;if(r%i!==0)throw RangeError(`buffer ${e} is not 8-byte aligned`);E.push(new Uint8Array(s.buffer,r,t));let a=l(n);d(s,n,a,`buffer ${e}`),T=a}if(T!==s.byteLength)throw RangeError(`frame has ${s.byteLength-T} trailing bytes`);return{message:w,buffers:E,version:n,byteLength:s.byteLength}}var p={binary:[[255,255,255],[0,0,0]],gray:[[0,0,0],[25,25,25],[51,51,51],[76,76,76],[102,102,102],[128,128,128],[153,153,153],[179,179,179],[204,204,204],[230,230,230],[255,255,255]],viridis:[[68,1,84],[72,36,117],[65,68,135],[53,95,141],[42,120,142],[33,145,140],[34,168,132],[68,191,112],[122,209,81],[189,223,38],[253,231,37]],plasma:[[13,8,135],[65,4,157],[106,0,168],[143,13,164],[177,42,144],[204,71,120],[225,100,98],[242,132,75],[252,166,54],[252,206,37],[240,249,33]],inferno:[[0,0,4],[22,11,57],[66,10,104],[106,23,110],[147,38,103],[188,55,84],[221,81,58],[243,120,25],[252,165,10],[246,215,70],[252,255,164]],magma:[[0,0,4],[20,14,54],[59,15,112],[100,26,128],[140,41,129],[183,55,121],[222,73,104],[247,112,92],[254,159,109],[254,207,146],[252,253,191]],cividis:[[0,34,78],[8,51,112],[53,69,108],[79,87,108],[102,105,112],[125,124,120],[148,142,119],[174,163,113],[200,184,102],[229,207,82],[254,232,56]],coolwarm:[[59,76,192],[89,119,227],[123,159,249],[158,190,255],[192,212,245],[221,220,220],[242,203,183],[247,172,142],[238,132,104],[214,82,68],[180,4,38]],turbo:[[48,18,59],[69,89,203],[62,155,254],[25,213,205],[70,248,132],[164,252,60],[225,221,55],[254,164,49],[240,91,18],[195,37,3],[122,4,3]],rainbow:[[128,0,255],[78,77,252],[25,150,243],[24,205,228],[77,243,206],[128,255,180],[178,243,150],[230,205,115],[255,150,79],[255,77,39],[255,0,0]],jet:[[0,0,128],[0,0,241],[0,76,255],[0,176,255],[41,255,206],[125,255,122],[206,255,41],[255,196,0],[255,104,0],[241,8,0],[128,0,0]],rdgy:[[103,0,31],[177,24,43],[214,96,77],[243,164,129],[253,219,199],[254,254,254],[224,224,224],[185,185,185],[135,135,135],[76,76,76],[26,26,26]],rdbu:[[103,0,31],[177,24,43],[214,96,77],[243,164,129],[253,219,199],[246,247,247],[209,229,240],[144,196,221],[67,147,195],[32,101,171],[5,48,97]],blues:[[247,251,255],[227,238,249],[208,225,242],[183,212,234],[148,196,223],[106,174,214],[74,152,201],[46,126,188],[23,100,171],[8,74,145],[8,48,107]],purples:[[252,251,253],[242,240,247],[226,226,239],[206,207,229],[182,182,216],[158,154,200],[134,131,189],[114,98,172],[97,64,155],[79,31,139],[63,0,125]],pubu:[[255,247,251],[240,234,244],[219,218,235],[192,201,226],[156,185,217],[115,169,207],[66,149,195],[24,124,182],[5,103,162],[4,83,130],[2,56,88]],piyg:[[142,1,82],[196,26,124],[222,119,174],[241,181,217],[253,224,239],[247,247,246],[230,245,208],[183,224,133],[127,188,65],[76,145,33],[39,100,25]],prgn:[[64,0,75],[117,41,130],[153,112,171],[193,164,206],[231,212,232],[246,247,246],[217,240,211],[165,218,159],[90,174,97],[26,119,54],[0,68,27]],rdylgn:[[165,0,38],[214,47,39],[244,109,67],[253,173,96],[254,224,139],[254,255,190],[217,239,139],[165,216,106],[102,189,99],[25,151,80],[0,104,55]],spectral:[[158,1,66],[212,61,79],[244,109,67],[253,173,96],[254,224,139],[255,255,190],[230,245,152],[170,220,164],[102,194,165],[51,135,188],[94,79,162]]};function m(e){let t=typeof e==`string`&&e.endsWith(`_r`),n=p[t?e.slice(0,-2):e]||p.viridis;return t?[...n].reverse():n}function h(e){let t=m(e),n=new Uint8Array(256*4);for(let e=0;e<256;e++){let r=e/255*(t.length-1),i=Math.floor(r),a=Math.min(i+1,t.length-1),o=r-i;for(let r=0;r<3;r++)n[e*4+r]=Math.round(t[i][r]*(1-o)+t[a][r]*o);n[e*4+3]=255}return n}function g(e,t){let n=document.createElement(`span`);n.style.display=`none`,n.style.color=t,e.appendChild(n);let r=getComputedStyle(n).color;e.removeChild(n);let i=r.match(/rgba?\(([^)]+)\)/);if(!i)return null;let[a,o,s,c=1]=i[1].split(/[,/\s]+/).filter(Boolean).map(Number);return[a/255,o/255,s/255,c]}function _(e,t){return getComputedStyle(e).getPropertyValue(t).trim()||null}function v(e){let t=e.replace(`#`,``);if(!/^(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(t))return null;let n=t.length===3||t.length===4?[...t].map(e=>e+e).join(``):t,r=parseInt(n.slice(0,6),16),i=n.length===8?parseInt(n.slice(6,8),16)/255:1;return[(r>>16&255)/255,(r>>8&255)/255,(r&255)/255,i]}function y(e,t,n){if(!t||typeof t!=`string`)return n;let r=t.trim();return r?(r.startsWith(`#`)?v(r):g(e,r))||(typeof console<`u`&&console.warn&&console.warn(`xy: unresolvable color ${JSON.stringify(r)}; using fallback`),n):n}function b(e){let t=g(e,`currentColor`)||[.2,.2,.2,1],n=(e,t)=>[e[0],e[1],e[2],t],r=t=>{let n=_(e,t);return n&&g(e,n)||null};return{bg:r(`--chart-bg`),grid:r(`--chart-grid`)||n(t,.14),axis:r(`--chart-axis`)||n(t,.55),label:r(`--chart-text`)||n(t,.85)}}function x([e,t,n,r]){return`rgba(${Math.round(e*255)},${Math.round(t*255)},${Math.round(n*255)},${r})`}var S=`
+(() => {
+
+"use strict";
+const PROTOCOL = 4;
+const XY_FRAME_MAGIC = [0x58, 0x59, 0x42, 0x46];
+const XY_FRAME_VERSION = 1;
+const XY_FRAME_HEADER_SIZE = 24;
+const XY_FRAME_ALIGNMENT = 8;
+const XY_FRAME_DEFAULT_LIMITS = Object.freeze({
+maxFrameBytes: 512 * 1024 * 1024,
+maxMetadataBytes: 8 * 1024 * 1024,
+maxBuffers: 4096,
+maxBufferBytes: 256 * 1024 * 1024,
+});
+function xyByteSpan(value, label = "buffer") {
+if (value instanceof ArrayBuffer) return new Uint8Array(value);
+if (ArrayBuffer.isView(value)) {
+return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+}
+throw new TypeError(`${label} must be an ArrayBuffer or ArrayBuffer view`);
+}
+function xyFrameLimit(limits, name) {
+const fallback = XY_FRAME_DEFAULT_LIMITS[name];
+const value = limits && limits[name] != null ? limits[name] : fallback;
+if (!Number.isSafeInteger(value) || value <= 0) {
+throw new RangeError(`${name} must be a positive safe integer`);
+}
+return value;
+}
+function xyAlign8(value) {
+return Math.ceil(value / XY_FRAME_ALIGNMENT) * XY_FRAME_ALIGNMENT;
+}
+function xyFrameU64(view, offset, label) {
+const value = view.getBigUint64(offset, true);
+if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+throw new RangeError(`${label} exceeds JavaScript's safe integer range`);
+}
+return Number(value);
+}
+function xyRequireZeroPadding(bytes, start, end, label) {
+if (end > bytes.byteLength) throw new RangeError(`truncated ${label} padding`);
+for (let i = start; i < end; i++) {
+if (bytes[i] !== 0) throw new RangeError(`non-zero ${label} padding`);
+}
+}
+
+function decodeFrame(body, limits = null) {
+const bytes = xyByteSpan(body, "frame body");
+const maxFrameBytes = xyFrameLimit(limits, "maxFrameBytes");
+const maxMetadataBytes = xyFrameLimit(limits, "maxMetadataBytes");
+const maxBuffers = xyFrameLimit(limits, "maxBuffers");
+const maxBufferBytes = xyFrameLimit(limits, "maxBufferBytes");
+if (maxMetadataBytes > maxFrameBytes) {
+throw new RangeError("maxMetadataBytes cannot exceed maxFrameBytes");
+}
+if (maxBufferBytes > maxFrameBytes) {
+throw new RangeError("maxBufferBytes cannot exceed maxFrameBytes");
+}
+if (bytes.byteOffset % XY_FRAME_ALIGNMENT !== 0) {
+throw new RangeError("frame body must start on an 8-byte boundary");
+}
+if (bytes.byteLength > maxFrameBytes) {
+throw new RangeError(`frame length ${bytes.byteLength} exceeds limit ${maxFrameBytes}`);
+}
+if (bytes.byteLength < XY_FRAME_HEADER_SIZE) throw new RangeError("truncated frame header");
+const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+for (let i = 0; i < XY_FRAME_MAGIC.length; i++) {
+if (view.getUint8(i) !== XY_FRAME_MAGIC[i]) throw new RangeError("invalid frame magic");
+}
+const version = view.getUint8(4);
+if (version !== XY_FRAME_VERSION) throw new RangeError(`unsupported frame version ${version}`);
+const flags = view.getUint8(5);
+if (flags !== 0) throw new RangeError(`unsupported frame flags 0x${flags.toString(16)}`);
+const headerSize = view.getUint16(6, true);
+if (headerSize !== XY_FRAME_HEADER_SIZE) {
+throw new RangeError(`unsupported frame header size ${headerSize}`);
+}
+const metadataLength = view.getUint32(8, true);
+const bufferCount = view.getUint32(12, true);
+const totalLength = xyFrameU64(view, 16, "declared frame length");
+if (totalLength !== bytes.byteLength) {
+throw new RangeError(
+`declared frame length ${totalLength} does not match body length ${bytes.byteLength}`
+);
+}
+if (metadataLength > maxMetadataBytes) {
+throw new RangeError(`metadata length ${metadataLength} exceeds limit ${maxMetadataBytes}`);
+}
+if (bufferCount > maxBuffers) {
+throw new RangeError(`buffer count ${bufferCount} exceeds limit ${maxBuffers}`);
+}
+const metadataEnd = XY_FRAME_HEADER_SIZE + metadataLength;
+if (metadataEnd > bytes.byteLength) throw new RangeError("truncated frame metadata");
+let message;
+try {
+const metadataBytes = new Uint8Array(
+bytes.buffer,
+bytes.byteOffset + XY_FRAME_HEADER_SIZE,
+metadataLength
+);
+message = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(metadataBytes));
+} catch (error) {
+throw new RangeError(`invalid frame metadata JSON: ${error}`);
+}
+if (!message || Array.isArray(message) || typeof message !== "object") {
+throw new RangeError("frame metadata must decode to an object");
+}
+let position = xyAlign8(metadataEnd);
+xyRequireZeroPadding(bytes, metadataEnd, position, "metadata");
+const buffers = [];
+for (let i = 0; i < bufferCount; i++) {
+if (position + 8 > bytes.byteLength) throw new RangeError(`truncated buffer ${i} length`);
+const bufferLength = xyFrameU64(view, position, `buffer ${i} length`);
+position += 8;
+if (bufferLength > maxBufferBytes) {
+throw new RangeError(`buffer ${i} length ${bufferLength} exceeds limit ${maxBufferBytes}`);
+}
+const end = position + bufferLength;
+if (end > bytes.byteLength) throw new RangeError(`truncated buffer ${i}`);
+const absoluteOffset = bytes.byteOffset + position;
+if (absoluteOffset % XY_FRAME_ALIGNMENT !== 0) {
+throw new RangeError(`buffer ${i} is not 8-byte aligned`);
+}
+buffers.push(new Uint8Array(bytes.buffer, absoluteOffset, bufferLength));
+const paddedEnd = xyAlign8(end);
+xyRequireZeroPadding(bytes, end, paddedEnd, `buffer ${i}`);
+position = paddedEnd;
+}
+if (position !== bytes.byteLength) {
+throw new RangeError(`frame has ${bytes.byteLength - position} trailing bytes`);
+}
+return { message, buffers, version: XY_FRAME_VERSION, byteLength: bytes.byteLength };
+}
+const COLORMAP_STOPS = {
+binary: [[255, 255, 255], [0, 0, 0]],
+gray: [[0, 0, 0], [25, 25, 25], [51, 51, 51], [76, 76, 76], [102, 102, 102], [128, 128, 128], [153, 153, 153], [179, 179, 179], [204, 204, 204], [230, 230, 230], [255, 255, 255]],
+viridis: [[68, 1, 84], [72, 36, 117], [65, 68, 135], [53, 95, 141], [42, 120, 142], [33, 145, 140], [34, 168, 132], [68, 191, 112], [122, 209, 81], [189, 223, 38], [253, 231, 37]],
+plasma: [[13, 8, 135], [65, 4, 157], [106, 0, 168], [143, 13, 164], [177, 42, 144], [204, 71, 120], [225, 100, 98], [242, 132, 75], [252, 166, 54], [252, 206, 37], [240, 249, 33]],
+inferno: [[0, 0, 4], [22, 11, 57], [66, 10, 104], [106, 23, 110], [147, 38, 103], [188, 55, 84], [221, 81, 58], [243, 120, 25], [252, 165, 10], [246, 215, 70], [252, 255, 164]],
+magma: [[0, 0, 4], [20, 14, 54], [59, 15, 112], [100, 26, 128], [140, 41, 129], [183, 55, 121], [222, 73, 104], [247, 112, 92], [254, 159, 109], [254, 207, 146], [252, 253, 191]],
+cividis: [[0, 34, 78], [8, 51, 112], [53, 69, 108], [79, 87, 108], [102, 105, 112], [125, 124, 120], [148, 142, 119], [174, 163, 113], [200, 184, 102], [229, 207, 82], [254, 232, 56]],
+coolwarm: [[59, 76, 192], [89, 119, 227], [123, 159, 249], [158, 190, 255], [192, 212, 245], [221, 220, 220], [242, 203, 183], [247, 172, 142], [238, 132, 104], [214, 82, 68], [180, 4, 38]],
+turbo: [[48, 18, 59], [69, 89, 203], [62, 155, 254], [25, 213, 205], [70, 248, 132], [164, 252, 60], [225, 221, 55], [254, 164, 49], [240, 91, 18], [195, 37, 3], [122, 4, 3]],
+rainbow: [[128, 0, 255], [78, 77, 252], [25, 150, 243], [24, 205, 228], [77, 243, 206], [128, 255, 180], [178, 243, 150], [230, 205, 115], [255, 150, 79], [255, 77, 39], [255, 0, 0]],
+jet: [[0, 0, 128], [0, 0, 241], [0, 76, 255], [0, 176, 255], [41, 255, 206], [125, 255, 122], [206, 255, 41], [255, 196, 0], [255, 104, 0], [241, 8, 0], [128, 0, 0]],
+rdgy: [[103, 0, 31], [177, 24, 43], [214, 96, 77], [243, 164, 129], [253, 219, 199], [254, 254, 254], [224, 224, 224], [185, 185, 185], [135, 135, 135], [76, 76, 76], [26, 26, 26]],
+rdbu: [[103, 0, 31], [177, 24, 43], [214, 96, 77], [243, 164, 129], [253, 219, 199], [246, 247, 247], [209, 229, 240], [144, 196, 221], [67, 147, 195], [32, 101, 171], [5, 48, 97]],
+blues: [[247, 251, 255], [227, 238, 249], [208, 225, 242], [183, 212, 234], [148, 196, 223], [106, 174, 214], [74, 152, 201], [46, 126, 188], [23, 100, 171], [8, 74, 145], [8, 48, 107]],
+purples: [[252, 251, 253], [242, 240, 247], [226, 226, 239], [206, 207, 229], [182, 182, 216], [158, 154, 200], [134, 131, 189], [114, 98, 172], [97, 64, 155], [79, 31, 139], [63, 0, 125]],
+pubu: [[255, 247, 251], [240, 234, 244], [219, 218, 235], [192, 201, 226], [156, 185, 217], [115, 169, 207], [66, 149, 195], [24, 124, 182], [5, 103, 162], [4, 83, 130], [2, 56, 88]],
+piyg: [[142, 1, 82], [196, 26, 124], [222, 119, 174], [241, 181, 217], [253, 224, 239], [247, 247, 246], [230, 245, 208], [183, 224, 133], [127, 188, 65], [76, 145, 33], [39, 100, 25]],
+prgn: [[64, 0, 75], [117, 41, 130], [153, 112, 171], [193, 164, 206], [231, 212, 232], [246, 247, 246], [217, 240, 211], [165, 218, 159], [90, 174, 97], [26, 119, 54], [0, 68, 27]],
+rdylgn: [[165, 0, 38], [214, 47, 39], [244, 109, 67], [253, 173, 96], [254, 224, 139], [254, 255, 190], [217, 239, 139], [165, 216, 106], [102, 189, 99], [25, 151, 80], [0, 104, 55]],
+spectral: [[158, 1, 66], [212, 61, 79], [244, 109, 67], [253, 173, 96], [254, 224, 139], [255, 255, 190], [230, 245, 152], [170, 220, 164], [102, 194, 165], [51, 135, 188], [94, 79, 162]],
+};
+function colormapStops(name) {
+const reversed = typeof name === "string" && name.endsWith("_r");
+const base = reversed ? name.slice(0, -2) : name;
+const stops = COLORMAP_STOPS[base] || COLORMAP_STOPS.viridis;
+return reversed ? [...stops].reverse() : stops;
+}
+function buildLutData(name) {
+const stops = colormapStops(name);
+const N = 256;
+const data = new Uint8Array(N * 4);
+for (let i = 0; i < N; i++) {
+const t = (i / (N - 1)) * (stops.length - 1);
+const lo = Math.floor(t);
+const hi = Math.min(lo + 1, stops.length - 1);
+const f = t - lo;
+for (let c = 0; c < 3; c++) {
+data[i * 4 + c] = Math.round(stops[lo][c] * (1 - f) + stops[hi][c] * f);
+}
+data[i * 4 + 3] = 255;
+}
+return data;
+}
+function resolveCssColor(host, expr) {
+const probe = document.createElement("span");
+probe.style.display = "none";
+probe.style.color = expr;
+host.appendChild(probe);
+const rgb = getComputedStyle(probe).color;
+host.removeChild(probe);
+const m = rgb.match(/rgba?\(([^)]+)\)/);
+if (!m) return null;
+const parts = m[1].split(/[,/\s]+/).filter(Boolean).map(Number);
+const [r, g, b, a = 1] = parts;
+return [r / 255, g / 255, b / 255, a];
+}
+function cssToken(el, name) {
+const v = getComputedStyle(el).getPropertyValue(name).trim();
+return v || null;
+}
+function hexColor(hex) {
+const h = hex.replace("#", "");
+if (!/^(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(h)) {
+return null;
+}
+const full = h.length === 3 || h.length === 4 ? [...h].map((c) => c + c).join("") : h;
+const n = parseInt(full.slice(0, 6), 16);
+const a = full.length === 8 ? parseInt(full.slice(6, 8), 16) / 255 : 1;
+return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, a];
+}
+function parseColor(host, c, fallback) {
+if (!c) return fallback;
+if (typeof c !== "string") return fallback;
+const expr = c.trim();
+if (!expr) return fallback;
+const out = expr.startsWith("#") ? hexColor(expr) : resolveCssColor(host, expr);
+if (out) return out;
+if (typeof console !== "undefined" && console.warn) {
+console.warn(`xy: unresolvable color ${JSON.stringify(expr)}; using fallback`);
+}
+return fallback;
+}
+function readTheme(root) {
+const text = resolveCssColor(root, "currentColor") || [0.2, 0.2, 0.2, 1];
+const withA = (c, a) => [c[0], c[1], c[2], a];
+const tok = (name) => {
+const v = cssToken(root, name);
+return v ? resolveCssColor(root, v) || null : null;
+};
+return {
+bg: tok("--chart-bg"),
+grid: tok("--chart-grid") || withA(text, 0.14),
+axis: tok("--chart-axis") || withA(text, 0.55),
+label: tok("--chart-text") || withA(text, 0.85),
+};
+}
+function cssColor([r, g, b, a]) {
+return `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${a})`;
+}
+const XY_CHROME_CSS = `
 @layer base{
 :where(.xy [data-xy-slot="title"]){text-align:center;font-size:14px;font-weight:600;color:var(--chart-text,inherit)}
 :where(.xy [data-xy-slot="tooltip"]){max-width:calc(100% - 8px);max-height:calc(100% - 8px);box-sizing:border-box;white-space:normal;overflow-wrap:anywhere;overflow:auto;background:var(--chart-tooltip-bg,rgba(20,24,33,.92));color:var(--chart-tooltip-text,#fff);padding:5px 8px;border-radius:4px;font-size:11px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,.3)}
@@ -51,8 +284,279 @@ var xy=(function(e){Object.defineProperties(e,{__esModule:{value:!0},[Symbol.toS
    carries higher specificity; it stays outside the base layer because it
    overrides host CSS rather than providing an overridable default. */
 .cell-output-ipywidget-background:has(.xy[data-xy-own-bg]){background:transparent!important}
-`;function C(e){let t=e&&e.getRootNode?e.getRootNode():document,n=typeof ShadowRoot<`u`&&t instanceof ShadowRoot;!n&&!(t instanceof Document)&&(t=document);let r=n?t:t.head||document.head||t.documentElement;if(!r||!r.querySelector||r.querySelector(`style[data-xy-chrome]`))return;let i=document.createElement(`style`);i.setAttribute(`data-xy-chrome`,``),i.textContent=S,r.appendChild(i)}function w(e,t,n=[.5,.5,.5,1]){let r=y(e,t,n);return x(Array.isArray(r)&&r.length>=4&&r.every(Number.isFinite)?r:n)}function T(e){if(e=Math.abs(e),!Number.isFinite(e)||e<=0)return 1;let t=10**Math.floor(Math.log10(e));for(let n of[1,2,2.5,5,10])if(e<=n*t*1.000000000001)return n*t;return 10*t}function E(e,t,n=6){if(!Number.isFinite(e)||!Number.isFinite(t))return{ticks:[],step:1};let r=Math.min(e,t),i=Math.max(e,t);if(r===i)return{ticks:[r],step:1};let a=T((i-r)/n),o=Math.ceil(r/a)*a,s=[];for(let e=o;e<=i+a*1e-9&&s.length<200;e+=a)s.push(Math.abs(e)<a*1e-9?0:e);return{ticks:s,step:a}}function D(e,t,n=6){if(!Number.isFinite(e)||!Number.isFinite(t))return{ticks:[],step:1};let r=Math.min(e,t),i=Math.max(e,t);if(r<=0||i<=0)return{ticks:[],step:1};let a=Math.floor(Math.log10(r)),o=Math.ceil(Math.log10(i)),s=Math.max(1,o-a)<=Math.max(2,n)?[1,2,5]:[1],c=[],l=[],u=Math.max(1,Math.ceil((o-a+1)/Math.max(1,n)));for(let e=a;e<=o&&c.length<200;e++){let t=10**e;for(let n of s){let o=n*t;if(o>=r*.999999999999&&o<=i*1.000000000001&&(c.push(o),n===1&&(e-a)%u===0&&l.push(o)),c.length>=200)break}}return{ticks:c,labels:l.length?l:c,step:1,log:!0}}function O(e,t,n,r=6){if(!n||!n.length)return{ticks:[],step:1};let i=Math.max(0,Math.ceil(Math.min(e,t))),a=Math.min(n.length-1,Math.floor(Math.max(e,t)));if(a<i)return{ticks:[],step:1};let o=a-i+1,s=Math.max(1,Math.ceil(o/Math.max(1,r))),c=[];for(let e=i;e<=a&&c.length<200;e+=s)c.push(e);return{ticks:c,step:s}}var k={s:1e3,m:6e4,h:36e5,d:864e5},A=[1,2,5,10,20,50,100,200,500,k.s,2*k.s,5*k.s,10*k.s,15*k.s,30*k.s,k.m,2*k.m,5*k.m,10*k.m,15*k.m,30*k.m,k.h,2*k.h,3*k.h,6*k.h,12*k.h,k.d,2*k.d,7*k.d,14*k.d];function j(e,t,n=6){if(!Number.isFinite(e)||!Number.isFinite(t))return{ticks:[],step:k.d};let r=Math.min(e,t),i=Math.max(e,t),a=(i-r)/n;if(a>14*k.d)return ee(r,i,a);let o=A[A.length-1];for(let e of A)if(e>=a){o=e;break}let s=Math.ceil(r/o)*o,c=[];for(let e=s;e<=i&&c.length<200;e+=o)c.push(e);return{ticks:c,step:o}}function ee(e,t,n){let r=n/(30*k.d),i=[1,2,3,6,12,24,60,120],a=i[i.length-1];for(let e of i)if(e>=r){a=e;break}let o=new Date(e),s=o.getUTCFullYear(),c=o.getUTCMonth();c=Math.ceil(c/a)*a;let l=[];for(;;){let n=Date.UTC(s+Math.floor(c/12),c%12,1);if(n>t||(n>=e&&l.push(n),c+=a,l.length>1e3))break}return{ticks:l,step:a*30*k.d}}function te(e,t){let n=new Date(e),r=(e,t=2)=>String(e).padStart(t,`0`);return t>=28*k.d?n.getUTCMonth()===0?String(n.getUTCFullYear()):`${n.toLocaleString(`en`,{month:`short`,timeZone:`UTC`})} ${n.getUTCFullYear()}`:t>=k.d?`${n.toLocaleString(`en`,{month:`short`,timeZone:`UTC`})} ${r(n.getUTCDate())}`:t>=k.m?`${r(n.getUTCHours())}:${r(n.getUTCMinutes())}`:t>=k.s?`${r(n.getUTCHours())}:${r(n.getUTCMinutes())}:${r(n.getUTCSeconds())}`:`${r(n.getUTCMinutes())}:${r(n.getUTCSeconds())}.${r(n.getUTCMilliseconds(),3)}`}function M(e,t){let n=Math.abs(e);if(n>=1e6||n!==0&&n<1e-4)return e.toExponential(1).replace(`e+`,`e`);let r=t?Math.max(0,Math.ceil(-Math.log10(Math.abs(t)))):0;for(;r<8&&Math.abs(Number(t.toFixed(r))-t)>Math.abs(t)/1e3;)r++;return e.toFixed(Math.min(r,8))}function ne(e,t=6){let n=Number(e);if(!Number.isFinite(n))return String(e);if(n===0)return Object.is(n,-0)?`-0`:`0`;let[r,i]=n.toExponential(t-1).split(`e`),a=Number(i);if(a<-4||a>=t)return r=r.replace(/0+$/,``).replace(/\.$/,``),`${r}e${a>=0?`+`:`-`}${String(Math.abs(a)).padStart(2,`0`)}`;let o=Math.max(0,t-a-1),s=Number(n.toPrecision(t)).toFixed(o);return s.includes(`.`)&&(s=s.replace(/0+$/,``).replace(/\.$/,``)),s}function re(e,t){let n=Math.round(e);return n>=0&&n<t.length?String(t[n]):``}function ie(e,t){if(typeof t!=`string`||!Number.isFinite(Number(e)))return null;let n=t.endsWith(`%`),r=(n?t.slice(0,-1):t).match(/^(,)?\.([0-9]+)f?$/);if(!r)return null;let i=Number(r[2]),a=n?Number(e)*100:Number(e),o=r[1]?a.toLocaleString(void 0,{minimumFractionDigits:i,maximumFractionDigits:i}):a.toFixed(i);return n?`${o}%`:o}function ae(e,t){if(typeof t!=`string`)return null;let n=new Date(e);if(!Number.isFinite(n.getTime()))return null;let r=(e,t=2)=>String(e).padStart(t,`0`),i=n.toLocaleString(`en`,{month:`short`,timeZone:`UTC`}),a=n.toLocaleString(`en`,{month:`long`,timeZone:`UTC`});return t.replace(/%[YmdHMSbB]/g,e=>{switch(e){case`%Y`:return String(n.getUTCFullYear());case`%m`:return r(n.getUTCMonth()+1);case`%d`:return r(n.getUTCDate());case`%H`:return r(n.getUTCHours());case`%M`:return r(n.getUTCMinutes());case`%S`:return r(n.getUTCSeconds());case`%b`:return i;case`%B`:return a;default:return e}})}function oe(e,t,n){if(e&&e.kind===`category`)return re(t,e.categories||[]);if(e&&e.kind===`time`)return ae(t,e.format)||te(t,n);let r=ie(t,e&&e.format);return e&&e.scale===`log`&&Number(t)>0&&Number(t)<1&&r===`0`?M(t,n):r||M(t,n)}function N(e,t){if(t===`time_ms`)return new Date(e).toISOString().replace(`T`,` `).replace(`.000Z`,`Z`);if(typeof e==`string`)return e;let n=Number(e);if(!Number.isFinite(n))return String(e);if(n===0)return`0`;let r=Math.abs(n);return r>=1e6||r<1e-4?n.toExponential(3):(Math.round(n*1e4)/1e4).toString()}function se(e,t,n){let r=e.createShader(t);if(e.shaderSource(r,n),e.compileShader(r),!e.getShaderParameter(r,e.COMPILE_STATUS))throw Error(`shader compile: `+e.getShaderInfoLog(r)+`
-`+n);return r}var P={ax:0,ay:1,ax0:0,ax1:1,ay0:2,ay1:3,ax2:4,ay2:5,ab0:4,ab1:5,a_pos:0,a_v1:1,a_v0:2,a_corner:0,a_cval:6,a_sval:7,a_sel:8,a_dval:9,a_len0:10,a_len1:11,a_dash0:10,a_dashDir:11,a_prevx:4,a_prevy:5,a_prevx1:7,a_prevy1:8,a_rgba:12,a_style:13,a_stroke:14,a_radius:15};function ce(e,t,n){let r=e.createProgram(),i=se(e,e.VERTEX_SHADER,t),a=se(e,e.FRAGMENT_SHADER,n);e.attachShader(r,i),e.attachShader(r,a);for(let[t,n]of Object.entries(P))e.bindAttribLocation(r,n,t);e.linkProgram(r);let o=e.getProgramParameter(r,e.LINK_STATUS),s=e.getProgramInfoLog(r);if(e.detachShader(r,i),e.detachShader(r,a),e.deleteShader(i),e.deleteShader(a),!o)throw e.deleteProgram(r),Error(`program link: `+s);return r._u=Object.create(null),r}function F(e,t,n){let r=t._u[n];return r===void 0&&(r=e.getUniformLocation(t,n),t._u[n]=r),r}var I=`
+`;
+function ensureChromeStylesheet(node) {
+let root = node && node.getRootNode ? node.getRootNode() : document;
+const isShadow = typeof ShadowRoot !== "undefined" && root instanceof ShadowRoot;
+if (!isShadow && !(root instanceof Document)) root = document;
+const scope = isShadow ? root : (root.head || document.head || root.documentElement);
+if (!scope || !scope.querySelector) return;
+if (scope.querySelector("style[data-xy-chrome]")) return;
+const style = document.createElement("style");
+style.setAttribute("data-xy-chrome", "");
+style.textContent = XY_CHROME_CSS;
+scope.appendChild(style);
+}
+function safeCssPaint(host, expr, fallback = [0.5, 0.5, 0.5, 1]) {
+const parsed = parseColor(host, expr, fallback);
+const color = Array.isArray(parsed) && parsed.length >= 4 && parsed.every(Number.isFinite)
+? parsed
+: fallback;
+return cssColor(color);
+}
+function niceStep(rough) {
+rough = Math.abs(rough);
+if (!Number.isFinite(rough) || rough <= 0) return 1;
+const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+for (const m of [1, 2, 2.5, 5, 10]) {
+if (rough <= m * mag * (1 + 1e-12)) return m * mag;
+}
+return 10 * mag;
+}
+function linearTicks(lo, hi, target = 6) {
+if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { ticks: [], step: 1 };
+const a = Math.min(lo, hi);
+const b = Math.max(lo, hi);
+if (a === b) return { ticks: [a], step: 1 };
+const step = niceStep((b - a) / target);
+const first = Math.ceil(a / step) * step;
+const out = [];
+for (let v = first; v <= b + step * 1e-9 && out.length < 200; v += step) {
+out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+}
+return { ticks: out, step };
+}
+function logTicks(lo, hi, target = 6) {
+if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { ticks: [], step: 1 };
+const a = Math.min(lo, hi);
+const b = Math.max(lo, hi);
+if (a <= 0 || b <= 0) return { ticks: [], step: 1 };
+const e0 = Math.floor(Math.log10(a));
+const e1 = Math.ceil(Math.log10(b));
+const span = Math.max(1, e1 - e0);
+const mults = span <= Math.max(2, target) ? [1, 2, 5] : [1];
+const out = [];
+const labels = [];
+const labelEvery = Math.max(1, Math.ceil((e1 - e0 + 1) / Math.max(1, target)));
+for (let e = e0; e <= e1 && out.length < 200; e++) {
+const base = Math.pow(10, e);
+for (const m of mults) {
+const v = m * base;
+if (v >= a * (1 - 1e-12) && v <= b * (1 + 1e-12)) {
+out.push(v);
+if (m === 1 && (e - e0) % labelEvery === 0) labels.push(v);
+}
+if (out.length >= 200) break;
+}
+}
+return { ticks: out, labels: labels.length ? labels : out, step: 1, log: true };
+}
+function categoryTicks(lo, hi, categories, target = 6) {
+if (!categories || !categories.length) return { ticks: [], step: 1 };
+const start = Math.max(0, Math.ceil(Math.min(lo, hi)));
+const stop = Math.min(categories.length - 1, Math.floor(Math.max(lo, hi)));
+if (stop < start) return { ticks: [], step: 1 };
+const visible = stop - start + 1;
+const step = Math.max(1, Math.ceil(visible / Math.max(1, target)));
+const out = [];
+for (let v = start; v <= stop && out.length < 200; v += step) out.push(v);
+return { ticks: out, step };
+}
+const MS = { s: 1e3, m: 6e4, h: 36e5, d: 864e5 };
+const TIME_STEPS = [
+1, 2, 5, 10, 20, 50, 100, 200, 500,
+MS.s, 2 * MS.s, 5 * MS.s, 10 * MS.s, 15 * MS.s, 30 * MS.s,
+MS.m, 2 * MS.m, 5 * MS.m, 10 * MS.m, 15 * MS.m, 30 * MS.m,
+MS.h, 2 * MS.h, 3 * MS.h, 6 * MS.h, 12 * MS.h,
+MS.d, 2 * MS.d, 7 * MS.d, 14 * MS.d,
+];
+function timeTicks(lo, hi, target = 6) {
+if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { ticks: [], step: MS.d };
+const a = Math.min(lo, hi);
+const b = Math.max(lo, hi);
+const span = b - a;
+const rough = span / target;
+if (rough > 14 * MS.d) return calendarTicks(a, b, rough);
+let step = TIME_STEPS[TIME_STEPS.length - 1];
+for (const s of TIME_STEPS) {
+if (s >= rough) { step = s; break; }
+}
+const first = Math.ceil(a / step) * step;
+const out = [];
+for (let v = first; v <= b && out.length < 200; v += step) out.push(v);
+return { ticks: out, step };
+}
+function calendarTicks(lo, hi, rough) {
+const monthsRough = rough / (30 * MS.d);
+const monthSteps = [1, 2, 3, 6, 12, 24, 60, 120];
+let stepM = monthSteps[monthSteps.length - 1];
+for (const s of monthSteps) {
+if (s >= monthsRough) { stepM = s; break; }
+}
+const d = new Date(lo);
+let y = d.getUTCFullYear();
+let m = d.getUTCMonth();
+m = Math.ceil(m / stepM) * stepM;
+const out = [];
+for (;;) {
+const t = Date.UTC(y + Math.floor(m / 12), m % 12, 1);
+if (t > hi) break;
+if (t >= lo) out.push(t);
+m += stepM;
+if (out.length > 1000) break;
+}
+return { ticks: out, step: stepM * 30 * MS.d };
+}
+function fmtTime(ms, step) {
+const d = new Date(ms);
+const pad = (n, w = 2) => String(n).padStart(w, "0");
+if (step >= 28 * MS.d) {
+const mo = d.getUTCMonth();
+return mo === 0 ? String(d.getUTCFullYear())
+: `${d.toLocaleString("en", { month: "short", timeZone: "UTC" })} ${d.getUTCFullYear()}`;
+}
+if (step >= MS.d) return `${d.toLocaleString("en", { month: "short", timeZone: "UTC" })} ${pad(d.getUTCDate())}`;
+if (step >= MS.m) return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+if (step >= MS.s) return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+return `${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}.${pad(d.getUTCMilliseconds(), 3)}`;
+}
+function fmtLinear(v, step) {
+const av = Math.abs(v);
+if (av >= 1e6 || (av !== 0 && av < 1e-4)) return v.toExponential(1).replace("e+", "e");
+let dec = step ? Math.max(0, Math.ceil(-Math.log10(Math.abs(step)))) : 0;
+while (dec < 8 && Math.abs(Number(step.toFixed(dec)) - step) > Math.abs(step) / 1000) dec++;
+return v.toFixed(Math.min(dec, 8));
+}
+function fmtGeneral(v, precision = 6) {
+const value = Number(v);
+if (!Number.isFinite(value)) return String(v);
+if (value === 0) return Object.is(value, -0) ? "-0" : "0";
+let [coefficient, exponentText] = value.toExponential(precision - 1).split("e");
+const exponent = Number(exponentText);
+if (exponent < -4 || exponent >= precision) {
+coefficient = coefficient.replace(/0+$/, "").replace(/\.$/, "");
+return `${coefficient}e${exponent >= 0 ? "+" : "-"}${String(Math.abs(exponent)).padStart(2, "0")}`;
+}
+const decimals = Math.max(0, precision - exponent - 1);
+let text = Number(value.toPrecision(precision)).toFixed(decimals);
+if (text.includes(".")) text = text.replace(/0+$/, "").replace(/\.$/, "");
+return text;
+}
+function fmtCategory(v, categories) {
+const i = Math.round(v);
+return i >= 0 && i < categories.length ? String(categories[i]) : "";
+}
+function fmtNumberSpec(v, format) {
+if (typeof format !== "string" || !Number.isFinite(Number(v))) return null;
+const percent = format.endsWith("%");
+const raw = percent ? format.slice(0, -1) : format;
+const match = raw.match(/^(,)?\.([0-9]+)f?$/);
+if (!match) return null;
+const digits = Number(match[2]);
+const value = percent ? Number(v) * 100 : Number(v);
+const text = match[1]
+? value.toLocaleString(undefined, {
+minimumFractionDigits: digits,
+maximumFractionDigits: digits,
+})
+: value.toFixed(digits);
+return percent ? `${text}%` : text;
+}
+function fmtTimeSpec(ms, format) {
+if (typeof format !== "string") return null;
+const d = new Date(ms);
+if (!Number.isFinite(d.getTime())) return null;
+const pad = (n, w = 2) => String(n).padStart(w, "0");
+const shortMonth = d.toLocaleString("en", { month: "short", timeZone: "UTC" });
+const longMonth = d.toLocaleString("en", { month: "long", timeZone: "UTC" });
+return format.replace(/%[YmdHMSbB]/g, (token) => {
+switch (token) {
+case "%Y": return String(d.getUTCFullYear());
+case "%m": return pad(d.getUTCMonth() + 1);
+case "%d": return pad(d.getUTCDate());
+case "%H": return pad(d.getUTCHours());
+case "%M": return pad(d.getUTCMinutes());
+case "%S": return pad(d.getUTCSeconds());
+case "%b": return shortMonth;
+case "%B": return longMonth;
+default: return token;
+}
+});
+}
+function fmtAxis(axis, v, tickStep) {
+if (axis && axis.kind === "category") return fmtCategory(v, axis.categories || []);
+if (axis && axis.kind === "time") return fmtTimeSpec(v, axis.format) || fmtTime(v, tickStep);
+const formatted = fmtNumberSpec(v, axis && axis.format);
+if (axis && axis.scale === "log" && Number(v) > 0 && Number(v) < 1 && formatted === "0") {
+return fmtLinear(v, tickStep);
+}
+return formatted || fmtLinear(v, tickStep);
+}
+function fmtValue(v, kind) {
+if (kind === "time_ms") {
+const d = new Date(v);
+return d.toISOString().replace("T", " ").replace(".000Z", "Z");
+}
+if (typeof v === "string") return v;
+const n = Number(v);
+if (!Number.isFinite(n)) return String(v);
+if (n === 0) return "0";
+const av = Math.abs(n);
+if (av >= 1e6 || av < 1e-4) return n.toExponential(3);
+return (Math.round(n * 1e4) / 1e4).toString();
+}
+function compile(gl, type, src) {
+const sh = gl.createShader(type);
+gl.shaderSource(sh, src);
+gl.compileShader(sh);
+if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+throw new Error("shader compile: " + gl.getShaderInfoLog(sh) + "\n" + src);
+}
+return sh;
+}
+const ATTR_SLOTS = {
+ax: 0, ay: 1,
+ax0: 0, ax1: 1, ay0: 2, ay1: 3, ax2: 4, ay2: 5, ab0: 4, ab1: 5,
+a_pos: 0, a_v1: 1, a_v0: 2,
+a_corner: 0,
+a_cval: 6, a_sval: 7, a_sel: 8, a_dval: 9,
+a_len0: 10, a_len1: 11,
+a_dash0: 10, a_dashDir: 11,
+a_prevx: 4, a_prevy: 5, a_prevx1: 7, a_prevy1: 8,
+a_rgba: 12, a_style: 13, a_stroke: 14, a_radius: 15,
+};
+function makeProgram(gl, vs, fs) {
+const p = gl.createProgram();
+const vsh = compile(gl, gl.VERTEX_SHADER, vs);
+const fsh = compile(gl, gl.FRAGMENT_SHADER, fs);
+gl.attachShader(p, vsh);
+gl.attachShader(p, fsh);
+for (const [name, slot] of Object.entries(ATTR_SLOTS)) {
+gl.bindAttribLocation(p, slot, name);
+}
+gl.linkProgram(p);
+const ok = gl.getProgramParameter(p, gl.LINK_STATUS);
+const info = gl.getProgramInfoLog(p);
+gl.detachShader(p, vsh);
+gl.detachShader(p, fsh);
+gl.deleteShader(vsh);
+gl.deleteShader(fsh);
+if (!ok) {
+gl.deleteProgram(p);
+throw new Error("program link: " + info);
+}
+p._u = Object.create(null);
+return p;
+}
+function uniformOf(gl, prog, name) {
+let loc = prog._u[name];
+if (loc === undefined) {
+loc = gl.getUniformLocation(prog, name);
+prog._u[name] = loc;
+}
+return loc;
+}
+const AXIS_GLSL = `
 float xyDecode(float encoded, vec2 meta) {
   return encoded / max(abs(meta.y), 1e-30) + meta.x;
 }
@@ -72,7 +576,8 @@ float xyViewValue(float coord, int mode) {
   if (mode == 1) return pow(10.0, coord);
   return coord;
 }
-`,le=`#version 300 es
+`;
+const POINT_VS = `#version 300 es
 in float ax; in float ay; in float a_prevx; in float a_prevy;
 in float a_cval; in float a_sval; in float a_sel; in float a_dval;
 in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke;
@@ -84,7 +589,7 @@ uniform float u_selectedOpacity; uniform float u_unselectedOpacity;
 uniform float u_transitionProgress; uniform int u_transitionActive;
 out float v_lutCoord; out float v_dim; out float v_dval; out float v_ptSize; out float v_sel;
 out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke;
-${I}
+${AXIS_GLSL}
 void main() {
   float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
   float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
@@ -103,17 +608,8 @@ void main() {
   v_dval = a_dval;
   // Unselected marks dim when a selection is active (§34 selected/unselected styling).
   v_dim = u_selActive == 1 ? mix(u_unselectedOpacity, u_selectedOpacity, step(0.5, a_sel)) : 1.0;
-}`,ue=`#version 300 es
-precision highp float; precision highp int;
-uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
-uniform sampler2D u_dlut; uniform float u_dblend;
-uniform int u_symbol; uniform vec4 u_ptStroke; uniform float u_ptStrokeWidth; uniform int u_ptStrokeFace;
-uniform int u_strokeMode; uniform float u_strokeOpacity;
-uniform int u_selActive; uniform vec4 u_selColor; uniform vec4 u_unselColor;
-in float v_lutCoord; in float v_dim; in float v_dval; in float v_ptSize; in float v_sel;
-in vec4 v_rgba; in vec4 v_style; in vec4 v_stroke;
-out vec4 outColor;
-
+}`;
+const MARKER_SDF_GLSL = `
 float xySegmentDistance(vec2 p, vec2 a, vec2 b) {
   vec2 e = b - a;
   return length(p - a - e * clamp(dot(p - a, e) / dot(e, e), 0.0, 1.0));
@@ -189,7 +685,18 @@ float xyMarkerSdf(vec2 d, int shape) {
   if (shape == 13) return max(abs(d.x), abs(d.y)) - 0.5;            // snapped pixel
   if (shape == 14) return (abs(d.x) / 0.6 + abs(d.y)) - 0.5;        // thin diamond
   return length(d) - 0.5;                                           // circle
-}
+}`;
+const POINT_FS = `#version 300 es
+precision highp float; precision highp int;
+uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
+uniform sampler2D u_dlut; uniform float u_dblend;
+uniform int u_symbol; uniform vec4 u_ptStroke; uniform float u_ptStrokeWidth; uniform int u_ptStrokeFace;
+uniform int u_strokeMode; uniform float u_strokeOpacity;
+uniform int u_selActive; uniform vec4 u_selColor; uniform vec4 u_unselColor;
+in float v_lutCoord; in float v_dim; in float v_dval; in float v_ptSize; in float v_sel;
+in vec4 v_rgba; in vec4 v_style; in vec4 v_stroke;
+out vec4 outColor;
+${MARKER_SDF_GLSL}
 void main() {
   vec2 d = gl_PointCoord - 0.5;
   float sd;
@@ -251,19 +758,21 @@ void main() {
     return;
   }
   outColor = px * (shapeCov * v_dim);
-}`,de=`#version 300 es
+}`;
+const POINT_SIMPLE_VS = `#version 300 es
 in float ax; in float ay; in float a_prevx; in float a_prevy;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 uniform float u_size; uniform float u_dpr;
 uniform float u_transitionProgress; uniform int u_transitionActive;
-${I}
+${AXIS_GLSL}
 void main() {
   float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
   float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
   gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode), xyMap(y, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   gl_PointSize = u_size * u_dpr;
-}`,fe=`#version 300 es
+}`;
+const POINT_SIMPLE_FS = `#version 300 es
 precision highp float;
 uniform vec4 u_color;
 out vec4 outColor;
@@ -273,14 +782,15 @@ void main() {
   float coverage = clamp(0.5 - sd / aa, 0.0, 1.0);
   if (coverage <= 0.001) discard;
   outColor = vec4(u_color.rgb * u_color.a, u_color.a) * coverage;
-}`,pe=`#version 300 es
+}`;
+const PICK_VS = `#version 300 es
 in float ax; in float ay; in float a_prevx; in float a_prevy; in float a_sval;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange; uniform float u_dpr;
 uniform float u_transitionProgress; uniform int u_transitionActive;
 flat out int v_id;
-${I}
+${AXIS_GLSL}
 void main() {
   float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
   float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
@@ -288,7 +798,8 @@ void main() {
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = max(sz, 6.0) * u_dpr; // enlarge hit target
   v_id = gl_VertexID;
-}`,me=`#version 300 es
+}`;
+const PICK_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform int u_pick_base;
 flat in int v_id;
@@ -303,18 +814,20 @@ void main() {
     float((id >> 16) & 255) / 255.0,
     float((id >> 24) & 255) / 255.0
   );
-}`,he=`#version 300 es
+}`;
+const GRID_VS = `#version 300 es
 in vec2 a_corner;
 uniform vec4 u_view; // x0,x1,y0,y1
 uniform int u_xmode; uniform int u_ymode;
 out vec2 v_data;
-${I}
+${AXIS_GLSL}
 void main() {
   gl_Position = vec4(a_corner * 2.0 - 1.0, 0.0, 1.0);
   float x = mix(xyViewCoord(u_view.x, u_xmode), xyViewCoord(u_view.y, u_xmode), a_corner.x);
   float y = mix(xyViewCoord(u_view.z, u_ymode), xyViewCoord(u_view.w, u_ymode), a_corner.y);
   v_data = vec2(xyViewValue(x, u_xmode), xyViewValue(y, u_ymode));
-}`,ge=`#version 300 es
+}`;
+const DENSITY_FS = `#version 300 es
 precision highp float;
 uniform sampler2D u_grid; uniform sampler2D u_lut;
 uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
@@ -334,7 +847,8 @@ void main() {
   float alpha = u_opacity * paint.a * clamp(t * 1.35, 0.0, 1.0);
   if (alpha <= 0.01) discard;
   outColor = vec4(rgb * alpha, alpha);
-}`,_e=`#version 300 es
+}`;
+const HEATMAP_FS = `#version 300 es
 precision highp float;
 uniform sampler2D u_grid; uniform sampler2D u_lut;
 uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
@@ -358,7 +872,8 @@ void main() {
   float t = clamp((raw * 255.0 - 1.0) / 254.0, 0.0, 1.0);
   vec3 rgb = texture(u_lut, vec2(t, 0.5)).rgb;
   outColor = vec4(rgb * u_opacity, u_opacity);
-}`,ve=`#version 300 es
+}`;
+const LINE_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1;
 in float a_prevx; in float a_prevy; in float a_prevx1; in float a_prevy1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
@@ -369,7 +884,7 @@ uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_y
 in float a_len0; in float a_len1;
 out float v_off; out float v_dash;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
-${I}
+${AXIS_GLSL}
 void main() {
   float px0 = u_transitionActive == 1 ? mix(a_prevx, ax0, u_transitionProgress) : ax0;
   float py0 = u_transitionActive == 1 ? mix(a_prevy, ay0, u_transitionProgress) : ay0;
@@ -394,7 +909,8 @@ void main() {
   // CPU-computed per-vertex lengths so dashes stay continuous across segments
   // and constant on screen through zoom.
   v_dash = mix(a_len0, mix(a_len0, a_len1, reveal), c.x);
-}`,ye=`#version 300 es
+}`;
+const LINE_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform float u_width;
 uniform int u_dashCount; uniform float u_dashArr[8]; uniform float u_dashPeriod;
@@ -422,7 +938,8 @@ void main() {
   }
   if (alpha <= 0.001) discard;
   outColor = vec4(u_color.rgb * alpha, alpha);
-}`,be=`#version 300 es
+}`;
+const SEGMENT_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1; in float a_cval; in vec4 a_rgba; in vec4 a_style;
 in float a_dash0; in float a_dashDir;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
@@ -432,7 +949,7 @@ uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec
 uniform int u_x0mode; uniform int u_x1mode; uniform int u_y0mode; uniform int u_y1mode;
 out float v_off; out float v_cval; out float v_dash; out vec4 v_rgba; out vec4 v_style;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
-${I}
+${AXIS_GLSL}
 void main() {
   vec2 p0 = vec2(xyMap(ax0, u_xmap, u_x0meta, u_x0mode), xyMap(ay0, u_ymap, u_y0meta, u_y0mode));
   vec2 p1 = vec2(xyMap(ax1, u_xmap, u_x1meta, u_x1mode), xyMap(ay1, u_ymap, u_y1meta, u_y1mode));
@@ -454,7 +971,8 @@ void main() {
   v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   v_dash = a_dash0 + c.x * len * a_dashDir;
   v_rgba = a_rgba; v_style = a_style;
-}`,xe=`#version 300 es
+}`;
+const SEGMENT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform float u_width; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
 uniform int u_dashCount; uniform float u_dashArr[8]; uniform float u_dashPeriod;
@@ -481,7 +999,8 @@ void main() {
   }
   if (alpha <= 0.001) discard;
   outColor = vec4(rgb * alpha, alpha);
-}`,Se=`#version 300 es
+}`;
+const MESH_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1; in float ax2; in float ay2; in float a_cval;
 in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
@@ -491,7 +1010,7 @@ uniform int u_x0mode; uniform int u_x1mode; uniform int u_x2mode;
 uniform int u_y0mode; uniform int u_y1mode; uniform int u_y2mode;
 uniform int u_colorMode;
 out float v_cval; out vec3 v_bary; out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke;
-${I}
+${AXIS_GLSL}
 void main() {
   int vertex = gl_VertexID % 3;
   float x = vertex == 0 ? ax0 : (vertex == 1 ? ax1 : ax2);
@@ -504,7 +1023,8 @@ void main() {
   v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   v_bary = vertex == 0 ? vec3(1.,0.,0.) : (vertex == 1 ? vec3(0.,1.,0.) : vec3(0.,0.,1.));
   v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke;
-}`,Ce=`#version 300 es
+}`;
+const MESH_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
 uniform vec4 u_stroke; uniform float u_strokeWidth; uniform int u_strokeMode; uniform float u_strokeOpacity;
@@ -527,7 +1047,8 @@ void main() {
   } else {
     outColor = fill;
   }
-}`,we=`
+}`;
+const GRAD_GLSL = `
 uniform int u_gradMode; uniform int u_gradDir; uniform int u_gradCount;
 uniform float u_gradPos[8]; uniform vec4 u_gradColor[8];
 vec4 xyGradSample(float t) {
@@ -550,7 +1071,8 @@ float xyGradT(float markT, vec2 res) {
     t = u_gradDir == 0 ? 1.0 - markT : markT;
   }
   return clamp(t, 0.0, 1.0);
-}`,Te=`#version 300 es
+}`;
+const AREA_VS = `#version 300 es
 in float ax0; in float ax1; in float ay0; in float ay1; in float ab0; in float ab1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_bmap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform vec2 u_bmeta;
@@ -558,7 +1080,7 @@ uniform int u_xmode; uniform int u_ymode;
 uniform float u_revealProgress; uniform float u_revealSegments;
 out float v_top; out float v_base; out float v_pos;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
-${I}
+${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
   float x0 = xyMap(ax0, u_xmap, u_xmeta, u_xmode);
@@ -583,13 +1105,14 @@ void main() {
   v_base = base;
   v_pos = clipY;
   gl_Position = vec4(mix(x0, x1, c.x), clipY, 0.0, 1.0);
-}`,Ee=`#version 300 es
+}`;
+const AREA_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color;
 uniform vec2 u_res;
 in float v_top; in float v_base; in float v_pos;
 out vec4 outColor;
-${we}
+${GRAD_GLSL}
 void main() {
   vec4 premult = vec4(u_color.rgb * u_color.a, u_color.a);
   if (u_gradMode != 0) {
@@ -601,7 +1124,8 @@ void main() {
   }
   if (premult.a <= 0.001) discard;
   outColor = premult;
-}`,De=`#version 300 es
+}`;
+const RECT_VS = `#version 300 es
 in float ax0; in float ax1; in float ay0; in float ay1;
 uniform vec2 u_x0map; uniform vec2 u_x1map; uniform vec2 u_y0map; uniform vec2 u_y1map;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
@@ -614,7 +1138,7 @@ out float v_lutCoord;
 out vec2 v_local; out vec2 v_half; out float v_t;
 out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke; out vec2 v_radius;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
-${I}
+${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
   float x0 = xyMap(ax0, u_x0map, u_x0meta, u_xmode) + u_edgePad.x;
@@ -631,7 +1155,8 @@ void main() {
   v_t = c.y;
   v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke; v_radius = a_radius;
   gl_Position = vec4(mix(x0, x1, c.x), mix(y0, y1, c.y), 0.0, 1.0);
-}`,Oe=`#version 300 es
+}`;
+const BAR_VS = `#version 300 es
 in float a_pos; in float a_v0; in float a_v1; in float a_cval;
 in float a_prevx; in float a_prevy; in float a_prevx1;
 in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke; in vec2 a_radius;
@@ -648,7 +1173,7 @@ out float v_lutCoord;
 out vec2 v_local; out vec2 v_half; out float v_t;
 out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke; out vec2 v_radius;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
-${I}
+${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
   float nextP = xyMap(a_pos, u_pmap, u_pmeta, u_pmode);
@@ -687,7 +1212,8 @@ void main() {
   v_half = abs(pB - pA) * 0.5;
   v_local = vec2(mix(pA.x, pB.x, c.x), mix(pA.y, pB.y, c.y)) - (pA + pB) * 0.5;
   v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke; v_radius = a_radius;
-}`,ke=`#version 300 es
+}`;
+const RECT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut;
 uniform vec2 u_radius; uniform float u_strokeWidth; uniform vec4 u_stroke;
@@ -698,7 +1224,7 @@ in float v_lutCoord;
 in vec2 v_local; in vec2 v_half; in float v_t;
 in vec4 v_rgba; in vec4 v_style; in vec4 v_stroke; in vec2 v_radius;
 out vec4 outColor;
-${we}
+${GRAD_GLSL}
 void main() {
   vec4 paint = u_colorMode == 3 ? v_rgba : (u_colorMode == 0 ? u_color : vec4(texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb, 1.0));
   float alpha = (v_style.y >= 0.0 ? v_style.y : paint.a) * v_style.x * u_opacity;
@@ -735,10 +1261,591 @@ void main() {
   }
   if (premult.a <= 0.001) discard;
   outColor = premult;
-}`;function Ae(e,t,n){let r=new Float64Array(n-1),i=new Float64Array(n);for(let i=0;i<n-1;i++){let n=e[i+1]-e[i];r[i]=n>0?(t[i+1]-t[i])/n:0}i[0]=r[0],i[n-1]=r[n-2];for(let e=1;e<n-1;e++)i[e]=r[e-1]*r[e]<=0?0:(r[e-1]+r[e])*.5;for(let e=0;e<n-1;e++){if(r[e]===0){i[e]=0,i[e+1]=0;continue}let t=i[e]/r[e],n=i[e+1]/r[e],a=t*t+n*n;if(a>9){let o=3/Math.sqrt(a);i[e]=o*t*r[e],i[e+1]=o*n*r[e]}}return i}function je(e,t,n,r,i){if(r<3)return null;let a=Math.max(1,Math.min(16,Math.floor(i/r)));if(a<=1)return null;for(let i=0;i<r;i++)if(!Number.isFinite(e[i])||!Number.isFinite(t[i])||i>0&&e[i]<e[i-1]||n&&!Number.isFinite(n[i]))return null;let o=Ae(e,t,r),s=n?Ae(e,n,r):null,c=(r-1)*a+1,l=new Float32Array(c),u=new Float32Array(c),d=n?new Float32Array(c):null,f=0;for(let i=0;i<r-1;i++){let r=e[i+1]-e[i];for(let c=0;c<a;c++){let p=c/a;if(l[f]=e[i]+r*p,r>0){let e=p*p,a=e*p,c=2*a-3*e+1,l=a-2*e+p,m=-2*a+3*e,h=a-e;u[f]=c*t[i]+l*r*o[i]+m*t[i+1]+h*r*o[i+1],d&&(d[f]=c*n[i]+l*r*s[i]+m*n[i+1]+h*r*s[i+1])}else u[f]=t[i],d&&(d[f]=n[i]);f++}}return l[f]=e[r-1],u[f]=t[r-1],d&&(d[f]=n[r-1]),{x:l,y:u,extra:d,n:c}}var Me=2e5,Ne=1.15;function L(e,t,n=140){if(t==null||n<=0||e._prefersReducedMotion())return 1;let r=Math.min(1,Math.max(0,(e._now()-t)/n));return r*r*(3-2*r)}function Pe(e,t){let n=e instanceof ArrayBuffer?new Uint8Array(e):new Uint8Array(e.buffer,e.byteOffset,e.byteLength),r=new Float32Array(n.length),i=Math.log1p(Math.max(0,t||0));if(i>0)for(let e=0;e<n.length;e++)n[e]>0&&(r[e]=Math.expm1(n[e]/255*i));return r}function Fe(e){return e.slice?e.slice():new Float32Array(e)}function R(e,t,n,r,i,a){let o=new Uint8Array(n.length),s=Math.log1p(Math.max(0,a||0));if(s>0)for(let e=0;e<n.length;e++){let t=n[e];t>0&&Number.isFinite(t)&&(o[e]=Math.max(1,Math.min(255,Math.round(255*Math.log1p(t)/s))))}e.bindTexture(e.TEXTURE_2D,t);let c=e.getParameter(e.UNPACK_ALIGNMENT);e.pixelStorei(e.UNPACK_ALIGNMENT,1),e.texImage2D(e.TEXTURE_2D,0,e.R8,r,i,0,e.RED,e.UNSIGNED_BYTE,o),e.pixelStorei(e.UNPACK_ALIGNMENT,c),e.texParameteri(e.TEXTURE_2D,e.TEXTURE_MIN_FILTER,e.LINEAR),e.texParameteri(e.TEXTURE_2D,e.TEXTURE_MAG_FILTER,e.LINEAR),e.texParameteri(e.TEXTURE_2D,e.TEXTURE_WRAP_S,e.CLAMP_TO_EDGE),e.texParameteri(e.TEXTURE_2D,e.TEXTURE_WRAP_T,e.CLAMP_TO_EDGE)}function Ie(e,t){if(!Number.isFinite(t)||t<=0)return e.densityNormMax=0,0;let n=Number.isFinite(e.densityNormMax)&&e.densityNormMax>0?e.densityNormMax:t,r=t>n?n*.3+t*.7:Math.max(t,n*.86);return e.densityNormMax=r,r}function Le(e,t,n,r){if(!t.density||!t.density.grid||!Number.isFinite(r)||r<=0){t._densityNormAnim=null;return}let i=Math.abs(Math.log(Math.max(n,1e-12)/Math.max(r,1e-12)));if(e._prefersReducedMotion()||i<.02){t._densityNormAnim=null,t.density.normMax=r,t.densityNormMax=r,R(e.gl,t.density.tex,t.density.grid,t.density.w,t.density.h,r);return}t._densityNormAnim={start:n,target:r,startedAt:e._now(),duration:r<n?420:260}}function Re(e,t){let n=t._densityNormAnim,r=t.density;if(!n||!r||!r.grid||!r.tex)return;let i=Math.min(1,Math.max(0,(e._now()-n.startedAt)/n.duration)),a=i*i*(3-2*i),o=n.start+(n.target-n.start)*a,s=r.normMax||0;if((Math.abs(o-s)/Math.max(Math.abs(o),Math.abs(s),1)>.004||i>=1)&&(r.normMax=o,t.densityNormMax=o,R(e.gl,r.tex,r.grid,r.w,r.h,o)),i<1){e.draw();return}r.normMax=n.target,t.densityNormMax=n.target,t._densityNormAnim=null}function z(e){return Math.abs((e.xRange[1]-e.xRange[0])*(e.yRange[1]-e.yRange[0]))}function ze(e){return e?Math.abs((e.x1-e.x0)*(e.y1-e.y0)):0}function Be(e,t){if(!e||!t)return!1;let n=(t.x0+t.x1)/2,r=(t.y0+t.y1)/2;return n>=Math.min(e.x0,e.x1)&&n<=Math.max(e.x0,e.x1)&&r>=Math.min(e.y0,e.y1)&&r<=Math.max(e.y0,e.y1)}function Ve(e,t){let n=t.densityCache||(t.density?[t.density]:[]),r=null,i=null;for(let t of n)!t||!t.tex||((!i||z(t)>z(i))&&(i=t),e._viewInsideRange(t.xRange,t.yRange)&&(!r||z(t)<z(r))&&(r=t));return r||i||t.density}function He(e,t,n){let r=t._lodPendingView;if(!n||!r||t._drillDying||t._lodPendingSeq!==e.seq||t._lodPendingAt&&e._now()-t._lodPendingAt>1200||!Be(n.win,r))return!1;let i=ze(n.win),a=ze(r);if(!Number.isFinite(i)||!Number.isFinite(a)||i<=0)return!1;let o=Number.isFinite(n.visible)?n.visible:n.n;return!Number.isFinite(o)||o<=0?!1:o*Math.max(1,a/i)<=Me*Ne}function Ue(e,t){return t===e.density||t===e.prevDensity||t===e._densitySwitchPrev||t===e._shownDensity||t===e._homeDensity}function B(e,t,n){if(!(!n||!n.tex))for(n._stamp=++e._densityStamp,t.densityCache||=[],t.densityCache.includes(n)||t.densityCache.push(n);t.densityCache.length>8;){let n=-1;for(let e=0;e<t.densityCache.length;e++){let r=t.densityCache[e];if(Ue(t,r))continue;if(n<0){n=e;continue}let i=z(t.densityCache[n]),a=z(r);(a<i||a===i&&r._stamp<t.densityCache[n]._stamp)&&(n=e)}if(n<0)break;let r=t.densityCache.splice(n,1)[0];Ue(t,r)||e.gl.deleteTexture(r.tex)}}function We(e,t,n,r){let i=e.gl,a=!t.drill,o=t.drill;o||=t.drill={trace:t.trace,xBuf:i.createBuffer(),yBuf:i.createBuffer()},o.trace={...t.trace,style:n.style||t.trace.style||{}},o.xAxis=t.xAxis,o.yAxis=t.yAxis;let s=e._asF32(r[n.x.buf]),c=e._asF32(r[n.y.buf]);if(i.bindBuffer(i.ARRAY_BUFFER,o.xBuf),i.bufferData(i.ARRAY_BUFFER,s,i.STATIC_DRAW),i.bindBuffer(i.ARRAY_BUFFER,o.yBuf),i.bufferData(i.ARRAY_BUFFER,c,i.STATIC_DRAW),o.xMeta={offset:n.x.offset,scale:n.x.scale},o.yMeta={offset:n.y.offset,scale:n.y.scale},o.win={x0:n.x_range[0],x1:n.x_range[1],y0:n.y_range[0],y1:n.y_range[1]},o.n=Math.min(n.x.len,n.y.len),o.visible=n.visible??o.n,o.seq=n.drill_seq,o.selActive=!1,Ge(e,o,s,c),e._hoverId=-1,e._lastRow=null,o.colorMode=0,o.color=y(e.root,n.color&&n.color.color,[.3,.47,.66,1]),n.color&&n.color.buf!==void 0){o.colorMode=n.color.mode===`continuous`?1:n.color.mode===`categorical`?2:3;let t=n.color.dtype===`u8`?e._asU8(r[n.color.buf]):e._asF32(r[n.color.buf]),a=o.colorMode===3?`rgbaBuf`:`cBuf`;o[a]||(o[a]=i.createBuffer()),o[a]._fcType=t instanceof Uint8Array?i.UNSIGNED_BYTE:i.FLOAT,i.bindBuffer(i.ARRAY_BUFFER,o[a]),i.bufferData(i.ARRAY_BUFFER,t,i.STATIC_DRAW),o.colorMode!==3&&(o.lut=n.color.mode===`continuous`?e._lut(n.color.colormap):e._paletteLut(n.color.palette))}o.sizeMode=0,o.size=n.size&&n.size.size||4,o.sizeRange=[2,18],n.size&&n.size.mode===`continuous`&&(o.sizeMode=1,o.sBuf||=i.createBuffer(),i.bindBuffer(i.ARRAY_BUFFER,o.sBuf),i.bufferData(i.ARRAY_BUFFER,e._asF32(r[n.size.buf]),i.STATIC_DRAW),o.sizeRange=n.size.range_px);let l=e=>n.channels&&n.channels[e],u=Number(o.trace.style&&o.trace.style.artist_alpha);if(l(`opacity`)||l(`artist_alpha`)||l(`stroke_width`)||l(`symbol`)||Number.isFinite(u)){let t=new Float32Array(o.n*4);for(let e=0;e<o.n;e++)t[e*4]=1,t[e*4+1]=Number.isFinite(u)?u:-1,t[e*4+2]=-1,t[e*4+3]=-1;let n=(n,i,a=1)=>{let s=l(n);if(!s)return;let c=s.dtype===`u8`?e._asU8(r[s.buf]):e._asF32(r[s.buf]),u=s.components||1;for(let e=0;e<o.n;e++)t[e*4+i]=c[e*u]*a};n(`opacity`,0),n(`artist_alpha`,1),n(`stroke_width`,2,e.dpr),n(`symbol`,3),o.styleBuf||=i.createBuffer(),o.styleBuf._fcType=i.FLOAT,i.bindBuffer(i.ARRAY_BUFFER,o.styleBuf),i.bufferData(i.ARRAY_BUFFER,t,i.STATIC_DRAW)}if(n.stroke&&n.stroke.mode===`direct_rgba`){let t=e._asU8(r[n.stroke.buf]);o.strokeBuf||=i.createBuffer(),o.strokeBuf._fcType=i.UNSIGNED_BYTE,i.bindBuffer(i.ARRAY_BUFFER,o.strokeBuf),i.bufferData(i.ARRAY_BUFFER,t,i.STATIC_DRAW)}if(e._pointMarkStyle(o,o.trace),n.density_val&&n.density_val.buf!==void 0){o.dBuf||=i.createBuffer(),i.bindBuffer(i.ARRAY_BUFFER,o.dBuf),i.bufferData(i.ARRAY_BUFFER,e._asF32(r[n.density_val.buf]),i.STATIC_DRAW),o.dlut=e._lut(n.density_colormap||`viridis`);let t=o.lodBlend===void 0;o.lodBlend=Math.min(1,n.lod_blend??0),t&&(o.lodBlendShown=o.lodBlend)}else o.lodBlend=0;if(a){t._drillFadeStart=e._now(),t._drillWasInside=!1,t._drillShownAlpha=0,t._drillExitFadeStart=null,t._drillDying=!1,t._drillDiedInsideWin=!1;return}(t._drillDying||t._drillExitFadeStart!=null)&&U(e,t),t._drillDying=!1,t._drillDiedInsideWin=!1}function Ge(e,t,n,r){let i=e._lastBrush;if(!i||!t.n)return;let a=t.xMeta.offset,o=t.xMeta.scale||1,s=t.yMeta.offset,c=t.yMeta.scale||1,l=new Float32Array(t.n);if(i.mode===`box`)for(let e=0;e<t.n;e++){let t=n[e]/o+a,u=r[e]/c+s;t>=i.x0&&t<=i.x1&&u>=i.y0&&u<=i.y1&&(l[e]=1)}else if(i.mode===`poly`&&Array.isArray(i.points)&&i.points.length>=3){let e=i.points;for(let i=0;i<t.n;i++){let t=n[i]/o+a,u=r[i]/c+s,d=!1;for(let n=0,r=e.length-1;n<e.length;r=n++){let[i,a]=e[n],[o,s]=e[r];a>u!=s>u&&t<(o-i)*(u-a)/(s-a)+i&&(d=!d)}d&&(l[i]=1)}}else return;e._applySelMask(t,l)}function Ke(e,t){let n=t.drill;if(!n)return;let r=e.gl;e._deleteVaos(n);for(let e of[n.xBuf,n.yBuf,n.cBuf,n.rgbaBuf,n.sBuf,n.styleBuf,n.strokeBuf,n.selBuf,n.dBuf])e&&r.deleteBuffer(e);t.drill=null,t._drillFadeStart=null,t._drillExitFadeStart=null,t._drillWasInside=!1,t._drillShownAlpha=null,t._drillDying=!1,t._drillDiedInsideWin=!1,e._hoverId=-1,e._lastRow=null,e._updatePickable()}function qe(e,t){t.drill&&(t._drillDying=!0,t._drillDiedInsideWin=e._viewInside(t.drill.win),Ze(e,t))}function Je(e,t){(t._drillExitFadeStart===void 0||t._drillExitFadeStart===null)&&(t._drillExitFadeStart=e._now());let n=L(e,t._drillExitFadeStart,V);return n>=1&&(t._drillExitFadeStart=null),n}var Ye=140,V=120;function H(e){return .5-Math.sin(Math.asin(1-2*Math.min(1,Math.max(0,e)))/3)}function Xe(e,t){return t._drillExitFadeStart==null?t._drillFadeStart==null?t._drillShownAlpha==null?+!!t._drillWasInside:t._drillShownAlpha:L(e,t._drillFadeStart,Ye):1-L(e,t._drillExitFadeStart,V)}function U(e,t){let n=Xe(e,t);t._drillShownAlpha=n,t._drillExitFadeStart=null,t._drillFadeStart=n>=1?null:e._now()-Ye*H(n)}function Ze(e,t){if(t._drillExitFadeStart!=null)return;let n=Xe(e,t);t._drillShownAlpha=n,t._drillFadeStart=null,t._drillExitFadeStart=e._now()-V*H(1-n)}function Qe(e,t,n,r){qe(e,t);let i=n.density,a=i.enc===`log-u8`?Pe(r[i.buf],i.max):Fe(e._asF32(r[i.buf])),o=Ie(t,i.max),s=e._prefersReducedMotion()?i.max:o;t.densityNormMax=s,t.prevDensity=t.density,t._densityFadeStart=e._now(),t.density={w:i.w,h:i.h,max:i.max,normMax:s,colormap:i.colormap||t.density.colormap,color:i.color?y(e.root,i.color,[.3,.47,.66,1]):t.density.color,xRange:i.x_range,yRange:i.y_range,grid:a,tex:e._uploadGrid(a,i.w,i.h,s),lut:t.density.lut},Object.prototype.hasOwnProperty.call(i,`sample`)&&e._applyDensitySample(t,i.sample,r),Le(e,t,s,i.max),B(e,t,t.density)}function $e(e,t,n,r=1){if(n!==t._shownDensity){if(n===t._densitySwitchPrev&&t._densitySwitchFadeStart!=null){let n=L(e,t._densitySwitchFadeStart,140);t._densitySwitchFadeStart=e._now()-140*H(1-n)}else t._densitySwitchFadeStart=e._now();t._densitySwitchPrev=t._shownDensity,t._shownDensity=n}let i=t._densitySwitchPrev,a=i&&i.tex?L(e,t._densitySwitchFadeStart,140):1;if(a<1){e._drawDensity(t,i,(1-a)*r),e._drawDensity(t,n,a*r),e.draw();return}a>=1&&(t.prevDensity===t._densitySwitchPrev&&(t.prevDensity=null),t._densitySwitchPrev=null,t._densitySwitchFadeStart=null,n===t.density&&(t._densityFadeStart=null)),e._drawDensity(t,n,r)}function et(e,t,n,r,i,a){Re(e,t);let o=t.drill;o&&t._drillDying&&!t._drillDiedInsideWin&&e._viewInside(o.win)&&(t._drillDying=!1,U(e,t),t._drillWasInside=!0);let s=o&&!t._drillDying&&e._viewInside(o.win),c=Ve(e,t);if(s){(!t._drillWasInside||t._drillExitFadeStart!=null)&&U(e,t),t._drillWasInside=!0,t._drillExitFadeStart=null;let s=L(e,t._drillFadeStart);t._drillShownAlpha=s,t._shownDensity=s<1?c:null,t._densitySwitchPrev=null,t._densitySwitchFadeStart=null,s<1&&c&&c.tex?(e._drawDensity(t,c,1-s),e._drawPoints(o,e._map(o.xMeta,n,r,o.xAxis),e._map(o.yMeta,i,a,o.yAxis),s),e.draw()):(t._drillFadeStart=null,e._drawPoints(o,e._map(o.xMeta,n,r,o.xAxis),e._map(o.yMeta,i,a,o.yAxis)))}else if(c&&c.tex){if(He(e,t,o)){U(e,t);let s=L(e,t._drillFadeStart);t._drillShownAlpha=s,s<1?(e._drawDensity(t,c,1-s),e._drawPoints(o,e._map(o.xMeta,n,r,o.xAxis),e._map(o.yMeta,i,a,o.yAxis),s),e.draw()):(t._drillFadeStart=null,e._drawPoints(o,e._map(o.xMeta,n,r,o.xAxis),e._map(o.yMeta,i,a,o.yAxis))),e._viewAnim&&e.draw();return}let s=o&&t._drillWasInside;s&&Ze(e,t);let l=s?Je(e,t):1;o&&(t._drillShownAlpha=s&&l<1?1-l:0),s&&l<1?($e(e,t,c,l),e._drawPoints(o,e._map(o.xMeta,n,r,o.xAxis),e._map(o.yMeta,i,a,o.yAxis),1-l),e.draw()):(t._drillDying?Ke(e,t):s&&(t._drillWasInside=!1),$e(e,t,c),e._drawDensitySample(t,n,r,i,a))}else o&&e._drawPoints(o,e._map(o.xMeta,n,r,o.xAxis),e._map(o.yMeta,i,a,o.yAxis))}var W={build:(e,t,n,r)=>e._buildRectMark(t,n,r),draw:(e,t)=>{let[n,r]=e._axisRange(t.xAxis),[i,a]=e._axisRange(t.yAxis),o=t.trace.kind===`histogram`?[0,0,e._edgePadForValue(0,i,a,e.canvas.height),0]:[0,0,0,0];e._drawRects(t,e._map(t.x0Meta,n,r,t.xAxis),e._map(t.x1Meta,n,r,t.xAxis),e._map(t.y0Meta,i,a,t.yAxis),e._map(t.y1Meta,i,a,t.yAxis),o)},refreshColor:(e,t)=>{t.colorMode||(t.color=y(e.root,t.trace.style.color,t.color)),e._rectMarkStyleGpu(t,t.trace)}},tt={build:(e,t,n,r)=>e._buildBarMark(t,n,r),draw:(e,t)=>{if(!t.trace.bar){W.draw(e,t);return}let n=t.orientation===1,r=n?t.yAxis:t.xAxis,i=n?t.xAxis:t.yAxis,[a,o]=e._axisRange(r),[s,c]=e._axisRange(i),l=e._map(t.posMeta,a,o,r),u=e._map(t.value1Meta,s,c,i),d=t.value0Mode===1?e._map(t.value0Meta,s,c,i):null,f=t.value0Mode===0?e._mapConst(t.value0Const,s,c,i):null,p=t.value0Mode===0?e._edgePadForValue(t.value0Const,s,c,n?e.canvas.width:e.canvas.height):0;e._drawBars(t,l,u,d,f,p)},refreshColor:(e,t)=>{t.colorMode||(t.color=y(e.root,t.trace.style.color,t.color)),e._rectMarkStyleGpu(t,t.trace)}},G={build:(e,t,n,r)=>e._buildSegmentMark(t,n,r),draw:(e,t)=>{let[n,r]=e._axisRange(t.xAxis),[i,a]=e._axisRange(t.yAxis);e._drawSegments(t,e._map(t.x0Meta,n,r,t.xAxis),e._map(t.y0Meta,i,a,t.yAxis))},refreshColor:(e,t)=>{t.colorMode||(t.color=y(e.root,t.trace.style.color,t.color))}},nt={build:(e,t,n,r)=>e._buildAreaMark(t,n,r),draw:(e,t)=>{let[n,r]=e._axisRange(t.xAxis),[i,a]=e._axisRange(t.yAxis),o=e._map(t.xMeta,n,r,t.xAxis),s=e._map(t.yMeta,i,a,t.yAxis);if(e._drawArea(t,o,s,e._map(t.baseMeta,i,a,t.yAxis)),(t.trace.style.line_width??0)>0&&(e._drawLine(t,o,s,t.lineColor,t.trace.style.line_width,t.trace.style.line_opacity??1),t.trace.style.stroke_perimeter)){let n=t.yBuf,r=t.yMeta,i=t._dashY;t.yBuf=t.baseBuf,t.yMeta=t.baseMeta,t._dashY=t._cpu.base,e._drawLine(t,o,s,t.lineColor,t.trace.style.line_width,t.trace.style.line_opacity??1),t.yBuf=n,t.yMeta=r,t._dashY=i}},refreshColor:(e,t)=>{t.color=y(e.root,t.trace.style.color,t.color),t.lineColor=y(e.root,t.trace.style.line_color||t.trace.style.color,t.lineColor||t.color),t.grad=e._resolveMarkFill(t.trace.style,t.color)}},K={histogram:W,box:W,violin:W,errorbar:G,stem:G,box_whisker:G,box_median:G,contour:G,segments:G,triangle_mesh:{build:(e,t,n,r)=>e._buildMeshMark(t,n,r),draw:(e,t)=>{let[n,r]=e._axisRange(t.xAxis),[i,a]=e._axisRange(t.yAxis);e._drawMesh(t,e._map(t.x0Meta,n,r,t.xAxis),e._map(t.y0Meta,i,a,t.yAxis))},refreshColor:(e,t)=>{t.colorMode===0&&t.trace.color&&(t.color=y(e.root,t.trace.color.color,t.color));let n=t.trace.style||{};t.meshStroke=y(e.root,n.stroke||`transparent`,[0,0,0,0])}},error_band:nt,hexbin:{build:(e,t,n,r)=>e._buildHexbinMark(t,n,r),draw:(e,t)=>{let[n,r]=e._axisRange(t.xAxis),[i,a]=e._axisRange(t.yAxis);e._drawMesh(t,e._map(t.x0Meta,n,r,t.xAxis),e._map(t.y0Meta,i,a,t.yAxis))},refreshColor:(e,t)=>{t.colorMode===0&&t.trace.color&&(t.color=y(e.root,t.trace.color.color,t.color));let n=t.trace.style||{};t.meshStroke=y(e.root,n.stroke||`transparent`,[0,0,0,0])}},bar:tt,column:tt,heatmap:{build:(e,t,n,r)=>e._buildHeatmapMark(t,n,r),draw:(e,t)=>e._drawHeatmap(t)},scatter:{build:(e,t,n,r)=>e._buildScatterMark(t,n,r),draw:(e,t)=>{let[n,r]=e._axisRange(t.xAxis),[i,a]=e._axisRange(t.yAxis);e._drawPoints(t,e._map(t.xMeta,n,r,t.xAxis),e._map(t.yMeta,i,a,t.yAxis))},pointPick:!0,retainCpu:!0,refreshColor:(e,t)=>{t.colorMode===0&&t.trace.color&&(t.color=y(e.root,t.trace.color.color,t.color)),e._pointMarkStyle(t,t.trace)}},line:{build:(e,t,n,r)=>e._buildLineMark(t,n,r),draw:(e,t)=>{let[n,r]=e._axisRange(t.xAxis),[i,a]=e._axisRange(t.yAxis);e._drawLine(t,e._map(t.xMeta,n,r,t.xAxis),e._map(t.yMeta,i,a,t.yAxis))},refreshColor:(e,t)=>{t.color=y(e.root,t.trace.style.color,t.color)}},area:nt};function q(e){return K[e]||K.scatter}var J={l:62,r:14,t:10,b:42},Y=18,rt=24,it=8,at=0,ot=`position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;`,st=new Set([`animation-iteration-count`,`aspect-ratio`,`border-image-outset`,`border-image-slice`,`border-image-width`,`column-count`,`flex`,`flex-grow`,`flex-shrink`,`font-weight`,`line-height`,`opacity`,`order`,`orphans`,`tab-size`,`widows`,`z-index`,`zoom`,`fill-opacity`,`flood-opacity`,`stop-opacity`,`stroke-miterlimit`,`stroke-opacity`]),X={views:new Set,seq:1,hiddenReleaseChannel:null,hiddenReleaseQueue:[],frameId:null,channel:null,foreign:null,_announcedLive:-1,_crossFrameReady:!1,_rebalanceScheduled:!1,budget(){let e=typeof window<`u`?window.XY_CONTEXT_BUDGET:null;return Number.isFinite(e)&&e>=1?Math.floor(e):12},register(e){this._initCrossFrame(),this.views.add(e)},unregister(e){e._ctxPendingReservation=!1,this.views.delete(e),this._announceLive()},reserve(e){let t=[],n=0;for(let r of this.views)r!==e&&r.gl&&!r._glLost&&!r._destroyed&&t.push(r),r!==e&&r._ctxPendingReservation&&!r._destroyed&&(n+=1);let r=!e._ctxPendingReservation;e._ctxPendingReservation=!0;let i=t.length+n+ +!!r-this.budget();if(i<=0)return;let a=t.filter(e=>!e._ctxVisible).sort((e,t)=>(e._ctxSeenSeq||0)-(t._ctxSeenSeq||0));for(let e of a){if(i<=0)break;e._releaseContext()&&--i}if(i<=0)return;let o=t.filter(e=>e._ctxVisible).sort((e,t)=>(e._ctxSeenSeq||0)-(t._ctxSeenSeq||0));for(let e of o){if(i<=0)break;e._releaseContext()&&--i}},acquired(e){e._ctxPendingReservation=!1,this._rebalance(),this._announceLive()},cancel(e){e._ctxPendingReservation=!1},_initCrossFrame(){if(!this._crossFrameReady&&(this._crossFrameReady=!0,this.foreign=new Map,!(typeof BroadcastChannel>`u`)))try{this.frameId=`${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,this.channel=new BroadcastChannel(`xy-webgl-context-governor`),this.channel.onmessage=e=>this._onForeignMessage(e.data),this._post({t:`hello`,id:this.frameId}),typeof window<`u`&&window.addEventListener&&(window.addEventListener(`pagehide`,()=>this._post({t:`bye`,id:this.frameId})),window.addEventListener(`pageshow`,e=>{!e||!e.persisted||(this.foreign.clear(),this._announcedLive=-1,this._post({t:`hello`,id:this.frameId}),this._announceLive(!0))}))}catch{this.channel=null}},_post(e){try{this.channel&&this.channel.postMessage(e)}catch{}},_onForeignMessage(e){!e||!this.foreign||e.id===this.frameId||(e.t===`live`?(this.foreign.set(e.id,e.n|0),this._rebalance()):e.t===`hello`?this._announceLive(!0):e.t===`bye`&&this.foreign.delete(e.id))},localLive(){let e=0;for(let t of this.views)t.gl&&!t._glLost&&!t._destroyed&&(e+=1);return e},foreignLive(){let e=0;if(this.foreign)for(let t of this.foreign.values())e+=t;return e},_announceLive(e=!1){if(!this.channel)return;let t=this.localLive();!e&&t===this._announcedLive||(this._announcedLive=t,this._post({t:`live`,id:this.frameId,n:t}))},_rebalance(){if(this.localLive()+this.foreignLive()-this.budget()<=0)return;let e=null;for(let t of this.views)t.gl&&!t._glLost&&!t._destroyed&&!t._ctxVisible&&(!e||(t._ctxSeenSeq||0)<(e._ctxSeenSeq||0))&&(e=t);!e||!e._releaseContext()||this.localLive()+this.foreignLive()-this.budget()>0&&!this._rebalanceScheduled&&(this._rebalanceScheduled=!0,setTimeout(()=>{this._rebalanceScheduled=!1,this._rebalance()},0))},scheduleHiddenReleases(){if(this.hiddenReleaseChannel!==null)return;this.hiddenReleaseQueue=Array.from(this.views);let e=new MessageChannel;this.hiddenReleaseChannel=e,e.port1.onmessage=()=>{if(typeof document>`u`||document.visibilityState!==`hidden`){this.cancelHiddenReleases();return}let t=null;for(;this.hiddenReleaseQueue.length&&!t;){let e=this.hiddenReleaseQueue.shift();!e._destroyed&&e.gl&&!e._glLost&&!e.gl.isContextLost()&&(t=e)}if(!t){this.cancelHiddenReleases();return}t._releaseContext(),e.port2.postMessage(null)},e.port2.postMessage(null)},cancelHiddenReleases(){this.hiddenReleaseChannel?.port1.close(),this.hiddenReleaseChannel?.port2.close(),this.hiddenReleaseChannel=null,this.hiddenReleaseQueue=[]}};function ct(e){if(typeof window>`u`||!e.getBoundingClientRect)return!0;let t=e.getBoundingClientRect();if(!t.width&&!t.height)return!1;let n=window.innerHeight||0,r=window.innerWidth||0;return t.bottom>-.25*n&&t.top<1.25*n&&t.right>-.25*r&&t.left<1.25*r}var Z=class{constructor(e,t,n,r){if(t.protocol!==4)throw e.textContent=`xy: protocol mismatch (client speaks 4, kernel sent ${t.protocol}). Update the xy package and restart the kernel.`,Error(`protocol mismatch`);this.spec=t,this.interaction=t.interaction||{},this.markStyle=t.mark_style||{},this.axes=this._normalizeAxes(t),this.comm=r,this.seq=0,this._densityStamp=0,this._viewRequestBurstStart=null,this._viewAnim=null,this._animRaf=null,this._dataAnim=null,this._dataAnimRaf=null,this._transitionOldTraces=null,this._transitionView=null,this._wheelZoomRaf=null,this._pendingWheelZoom=null,this._lastLabelDraw=null,this._lutCache=new Map,this._listeners=[],this._glPrograms=[],this._progCache=new Map,this._bufSeq=0,this._destroyed=!1,this._resizeRaf=null,this._pendingResize=null,this._resizeNeedsMeasure=!1,this._hoverId=-1,this._hoverTarget=null,this._viewEventRaf=null,this._linkedSource=`${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,this.dragMode=`none`,this._interactionSeq=0,this.fluid=t.width===`100%`,this.fluidH=t.height===`100%`;let i=this.fluid||this.fluidH?e.getBoundingClientRect():null,a=this.fluid?Math.round(i.width)||640:t.width,o=this.fluidH?Math.round(i.height)||420:t.height;this.size={w:Math.max(this.fluid?120:48,a),h:Math.max(this.fluidH?120:48,o)},this._layout(),this._buildDom(e),this.theme=b(this.root),this._themeStale=!this.root.isConnected,this._payload=n,this._glLost=!1,this._ctxReleasedExt=null,this._ctxReleases=0,this._ctxRecoveries=0,this._ctxLostPending=!1,this._ctxRecoverRequested=!1,this._ctxVisible=ct(e),X.register(this),this._ctxVisible&&(this._ctxSeenSeq=X.seq++),this._contextLossCount=0,this._contextRestoreCount=0,this._contextRecoveryError=null;try{this._initGl(n)}catch(e){throw X.unregister(this),String(e&&e.message||e)===`webgl2 unavailable`&&(this.root.textContent=`xy: WebGL2 unavailable in this browser.`),e}if(this.canvas.dataset.xyCtx=`live`,this.view0=this._clampView({ranges:Object.fromEntries(Object.entries(this.axes).map(([e,t])=>[e,[...t.range]]))}),this.view=this._copyView(this.view0),this.dragMode=this._resolveDefaultDragAction(),this._initA11y(),this.root.dataset.xyContextState=`ready`,this._initContextLossRecovery(),this._armContextVisibilityWatch(),this._initViewState(),this._initInteraction(),this._buildModebar(this.root),this._initAxisBands(),(this.fluid||this.fluidH)&&typeof ResizeObserver<`u`&&(this._ro=new ResizeObserver(e=>{let t=e[e.length-1].contentRect;(t.width||t.height)&&this._queueResize(t.width,t.height)}),this._ro.observe(this.root)),this._armVisibilityResizeWatch(),this._armDprWatch(),this._initLinkedCharts(),this._themeWatch=window.matchMedia(`(prefers-color-scheme: dark)`),this._onScheme=()=>this.refreshTheme(),this._themeWatch.addEventListener?.(`change`,this._onScheme),typeof MutationObserver<`u`){this._themeMutationObserver=new MutationObserver(()=>this.refreshTheme());for(let e=this.root;e;e=e.parentElement)this._themeMutationObserver.observe(e,{attributes:!0,attributeFilter:[`class`,`style`]})}this._unsubscribeComm=r?r.onMessage((e,t)=>this._onKernelMsg(e,t)):null,this._startEntranceAnimation?this._startEntranceAnimation():this.draw()}_layout(){let e=this.size.w<520,t=Array.isArray(this.spec.padding)?this.spec.padding:null,n=this.spec.colorbar,r=n&&n.orientation!==`horizontal`,i=n&&n.orientation===`horizontal`,a=this.fluid&&e&&t,o=t?a?Math.min(t[3],46):t[3]:e?46:J.l;this._compactVerticalColorbar=!!(this.fluid&&e&&r);let s=r?this._compactVerticalColorbar?34:86+(n.label?18:0):0,c=i?38+(n.label?16:0):0,l=(t?a?Math.min(t[1],8):t[1]:e?8:J.r)+s,u=t?t[0]:e?6:J.t,d=(t?t[2]:e?36:J.b)+c,f=Object.values(this.axes||{}).some(e=>e&&String(e.id||``).startsWith(`x`)&&e.side!==`top`&&this._axisTickLabelStrategy(e)!==`none`);this._bottomAxisRoom=f?e?36:J.b:0;let p=Object.values(this.axes||{}).some(e=>e&&String(e.id||``).startsWith(`x`)&&e.side===`top`&&this._axisTickLabelStrategy(e)!==`none`)?e?26:32:0,m=u+(this.spec.title?e?26:30:0)+p,h=Object.values(this.axes||{}).filter(e=>e&&String(e.id||``).startsWith(`y`)&&e.side===`right`&&this._axisTickLabelStrategy(e)!==`none`);this._rightAxisRoom=h.length?e?42:54:0;let g=l+this._rightAxisRoom;this.plot={x:o,y:m,w:Math.max(40,this.size.w-o-g),h:Math.max(40,this.size.h-m-d)}}_normalizeAxes(e){let t={...e.axes||{}};e.x_axis&&(t.x=e.x_axis),e.y_axis&&(t.y=e.y_axis);for(let[e,n]of Object.entries(t))n&&typeof n==`object`&&!n.id&&(n.id=e);return t}_axis(e){let t=e||`x`;return this.axes[t]||(String(t).startsWith(`y`)?this.axes.y:this.axes.x)||{}}_axisDim(e){return String(e||`x`).startsWith(`y`)?`y`:`x`}_axisMode(e){return+(this._axis(e).scale===`log`)}_axisIds(){return Object.keys(this.axes||{})}_copyView(e){let t={};for(let n of this._axisIds()){let r=e?.ranges?.[n]||this._axis(n).range||[0,1];t[n]=[Number(r[0]),Number(r[1])]}let n=t.x||[0,1],r=t.y||[0,1];return{ranges:t,x0:n[0],x1:n[1],y0:r[0],y1:r[1]}}_viewFrom(e,t=this.view){let n={};for(let r of this._axisIds()){let i=e?.ranges?.[r]||(r===`x`&&e?.x0!==void 0?[e.x0,e.x1]:null)||(r===`y`&&e?.y0!==void 0?[e.y0,e.y1]:null)||t?.ranges?.[r]||this._axis(r).range||[0,1];n[r]=[Number(i[0]),Number(i[1])]}return this._copyView({ranges:n})}_axisPolicy(e){let t=this.interaction?.[e];if(!Array.isArray(t)||!t.length)return this._axisIds();let n=new Set(this._axisIds());return[...new Set(t.filter(e=>n.has(e)))]}_resetAxisPolicy(){if(Array.isArray(this.interaction?.reset_axes))return this._axisPolicy(`reset_axes`);let e=[];return this._interactionFlag(`pan`,!0)&&e.push(...this._axisPolicy(`pan_axes`)),this._interactionFlag(`zoom`,!0)&&e.push(...this._axisPolicy(`zoom_axes`)),[...new Set(e)]}_axisContained(e){return!this._interactionFlag(`navigation`,!0)||!this._interactionFlag(`zoom`,!0)||!this._axisPolicy(`zoom_axes`).includes(e)?!1:!this._interactionFlag(`pan`,!0)||!this._axisPolicy(`pan_axes`).includes(e)}_resolveDefaultDragAction(){let e=typeof this.interaction?.default_drag_action==`string`?this.interaction.default_drag_action:`auto`,t=this._interactionFlag(`navigation`,!0),n=t&&this._interactionFlag(`pan`,!0),r=t&&this._interactionFlag(`zoom`,!0)&&this._interactionFlag(`box_zoom`,!0),i=this._pickable&&this._interactionFlag(`select`,!0)&&this._interactionFlag(`brush`,!0);return e===`auto`?n?`pan`:r?`zoom`:i?`select`:`none`:e===`pan`?n?`pan`:this._resolveDefaultDragActionFallback():e===`zoom`?r?`zoom`:this._resolveDefaultDragActionFallback():e.startsWith(`select`)?i?e:this._resolveDefaultDragActionFallback():e===`none`?`none`:this._resolveDefaultDragActionFallback()}_resolveDefaultDragActionFallback(){let e=this.interaction.default_drag_action;this.interaction.default_drag_action=`auto`;let t=this._resolveDefaultDragAction();return this.interaction.default_drag_action=e,t}_axisCoord(e,t){let n=Number(t);return Number.isFinite(n)?e&&e.scale===`log`?n>0?Math.log10(n):NaN:n:NaN}_axisValue(e,t){return e&&e.scale===`log`?10**t:t}_axisRange(e,t=this.view){let n=t?.ranges?.[e];if(Array.isArray(n))return[n[0],n[1]];if(e===`x`&&t)return[t.x0,t.x1];if(e===`y`&&t)return[t.y0,t.y1];let r=this._axis(e).range||[0,1];return[Number(r[0]),Number(r[1])]}_axisTicks(e,t){let n=this._axis(e),[r,i]=this._axisRange(e);if(Array.isArray(n.tick_values)){let e=Math.min(r,i),t=Math.max(r,i),a=n.tick_values.map(Number).filter(n=>Number.isFinite(n)&&n>=e&&n<=t);return{ticks:a,labels:a,step:a.length>1?Math.abs(a[1]-a[0]):1}}return n.kind===`time`?j(r,i,t):n.kind===`category`?O(r,i,n.categories||[],t):n.scale===`log`?D(r,i,t):E(r,i,t)}_axisTickText(e,t,n){if(Array.isArray(e.tick_values)&&Array.isArray(e.tick_labels)){let n=e.tick_values.findIndex(e=>Number(e)===Number(t));if(n>=0&&n<e.tick_labels.length)return String(e.tick_labels[n])}return oe(e,t,n)}_axisTickTarget(e,t){let n=this._axis(e),r=Number(n&&n.tick_count);return Number.isFinite(r)&&r>0?Math.max(1,Math.min(200,r)):t}_dataPx(e,t){let n=this._axisDim(e),r=this._axis(e),[i,a]=this._axisRange(e),o=this._axisCoord(r,i),s=this._axisCoord(r,a),c=this._axisCoord(r,t);return![o,s,c].every(Number.isFinite)||s===o?NaN:n===`x`?this.plot.x+(c-o)/(s-o)*this.plot.w:this.plot.y+(1-(c-o)/(s-o))*this.plot.h}_listen(e,t,n,r){return e.addEventListener(t,n,r),this._listeners.push({target:e,type:t,handler:n,options:r}),n}_interactionFlag(e,t=!1){let n=this.interaction&&this.interaction[e];return n===void 0?t:n===!0}_eventView(e=`view`){return{ranges:Object.fromEntries(this._axisIds().map(e=>[e,[...this._axisRange(e)]])),x0:this.view.x0,x1:this.view.x1,y0:this.view.y0,y1:this.view.y1,source:e}}_dispatchChartEvent(e,t){!this.root||typeof CustomEvent!=`function`||this.root.dispatchEvent(new CustomEvent(`xy:${e}`,{detail:t,bubbles:!0,composed:!0}))}_emitViewChange(e=`view`,t={}){if(this._destroyed)return;let n=t.broadcast!==!1;this._pendingViewEvent={source:e,broadcast:n,axes:Array.isArray(t.axes)?[...t.axes]:[],phase:t.phase||`end`,interaction_id:t.interactionId??++this._interactionSeq},!this._viewEventRaf&&(this._viewEventRaf=requestAnimationFrame(()=>{this._viewEventRaf=null;let t=this._pendingViewEvent||{source:e,broadcast:n};this._pendingViewEvent=null;let r={...this._eventView(t.source),axes:t.axes,phase:t.phase,interaction_id:t.interaction_id};this._dispatchChartEvent(`view_change`,r),this.comm&&(t.phase===`end`||!this.comm.wantsViewChange||this.comm.wantsViewChange())&&this.comm.send({type:`view_change`,...r}),t.broadcast&&this._broadcastLinkedView(r)}))}_initLinkedCharts(){let e=this.interaction&&this.interaction.link_group;!e||typeof BroadcastChannel!=`function`||(this._linkAxes=this._axisPolicy(`link_axes`),this._linkChannel=new BroadcastChannel(`xy:${e}`),this._linkChannel.onmessage=e=>{let t=e.data||{};if(t.source===this._linkedSource)return;if(this._interactionFlag(`link_select`)&&t.selection){let e=t.selection;if(e.clear)this._clearSelection({broadcast:!1,dispatch:!1});else if(e.polygon)this._stateSelection={polygon:e.polygon.map(e=>[...e])},this._selectLocalPolygon(e.polygon,{dispatch:!1});else if(e.range){let{x0:t,x1:n,y0:r,y1:i}=e.range;[t,n,r,i].every(Number.isFinite)&&(this._stateSelection={range:{x0:t,x1:n,y0:r,y1:i}},this._selectLocal(t,n,r,i,{dispatch:!1}))}return}if(!t.view||t.source===this._linkedSource)return;let n=t.view.ranges||{},r=Object.fromEntries(this._axisIds().map(e=>[e,[...this._axisRange(e)]]));for(let e of this._linkAxes){let i=n[e]||(e===`x`?[t.view.x0,t.view.x1]:null)||(e===`y`?[t.view.y0,t.view.y1]:null);Array.isArray(i)&&i.length===2&&i.every(Number.isFinite)&&(r[e]=[Number(i[0]),Number(i[1])])}this._setView({ranges:r},{animate:!1,source:`linked`,phase:`end`,broadcast:!1})})}_broadcastLinkedView(e){if(!this._linkChannel)return;let t=(e.axes||[]).filter(e=>this._linkAxes.includes(e));if(!t.length)return;let n=Object.fromEntries(t.map(t=>[t,e.ranges[t]]));this._linkChannel.postMessage({source:this._linkedSource,view:{...e,axes:t,ranges:n}})}_broadcastLinkedSelection(e){!this._linkChannel||!this._interactionFlag(`link_select`)||this._linkChannel.postMessage({source:this._linkedSource,selection:e})}setView(e,t={}){return this._setView({ranges:e},{animate:t.animate===!0,source:`programmatic`,phase:`end`,interactionId:++this._interactionSeq,broadcast:t.broadcast===!0})}resetView(e={}){return this._resetView(e.animate!==!1,`reset`)}_applyClass(e,t){if(typeof t==`string`)for(let n of t.split(/\s+/).filter(Boolean))try{e.classList.add(n)}catch{}}_stylePropertyName(e){return e.startsWith(`--`)?e:e.replace(/_/g,`-`).replace(/[A-Z]/g,e=>`-${e.toLowerCase()}`)}_stylePropertyValue(e,t){return typeof t==`number`?Number.isFinite(t)?e.startsWith(`--`)||st.has(e)?String(t):`${t}px`:null:String(t)}_applyStyle(e,t){if(!(!t||typeof t!=`object`||Array.isArray(t)))for(let[n,r]of Object.entries(t)){if(typeof n!=`string`||typeof r!=`string`&&typeof r!=`number`)continue;let t=this._stylePropertyName(n),i=this._stylePropertyValue(t,r);i!=null&&e.style.setProperty(t,i)}}_applySlot(e,t){e&&e.dataset&&(e.dataset.xySlot=t);let n=this.spec.dom;!n||typeof n!=`object`||(t===`root`&&this._applyClass(e,n.class_name),n.class_names&&typeof n.class_names==`object`&&this._applyClass(e,n.class_names[t]),t===`root`&&this._applyStyle(e,n.style),n.styles&&typeof n.styles==`object`&&this._applyStyle(e,n.styles[t]))}_slotStyleValue(e,t){let n=this.spec.dom?.styles,r=n&&typeof n==`object`?n[e]:null;if(!r||typeof r!=`object`||Array.isArray(r))return null;let i=this._stylePropertyName(t);for(let e of Object.keys(r))if(this._stylePropertyName(e)===i)return r[e];return null}_syncContainerSize(){this._destroyed||!(this.fluid||this.fluidH)||!this.root||this._queueResize(null,null,!0)}_queueResize(e=null,t=null,n=!1){this._destroyed||((e||t)&&(this._pendingResize={cssW:e,cssH:t}),n&&(this._resizeNeedsMeasure=!0),!this._resizeRaf&&(this._resizeRaf=requestAnimationFrame(()=>{this._resizeRaf=null;let e=this._pendingResize;if(this._pendingResize=null,this._resizeNeedsMeasure&&this.root){let t=this.root.getBoundingClientRect();(t.width||t.height)&&(e={cssW:t.width,cssH:t.height})}this._resizeNeedsMeasure=!1,e&&(e.cssW||e.cssH)&&this._resize(e.cssW,e.cssH)})))}_armVisibilityResizeWatch(){if(!(this.fluid||this.fluidH))return;let e=()=>{this._destroyed||this._syncContainerSize()};this._listen(window,`resize`,e),this._listen(window,`pageshow`,e),this._listen(document,`visibilitychange`,e),typeof IntersectionObserver<`u`&&(this._io=new IntersectionObserver(t=>{t.some(e=>e.isIntersecting||e.intersectionRatio>0)&&e()}),this._io.observe(this.root))}_markStateValue(e,t,n=null){let r=this.markStyle&&typeof this.markStyle==`object`?this.markStyle[e]:null;return!r||typeof r!=`object`||Array.isArray(r)?n:Object.prototype.hasOwnProperty.call(r,t)?r[t]:n}_markStateNumber(e,t,n){let r=this._markStateValue(e,t,n);return typeof r!=`number`||!Number.isFinite(r)?n:r}_markStatePaint(e,t,n){let r=this._markStateValue(e,t,n);return typeof r==`string`?r:n}_armDprWatch(){if(typeof window.matchMedia!=`function`)return;this._dprMq?.removeEventListener?.(`change`,this._onDprChange);let e=window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);this._onDprChange=()=>{this._destroyed||(this._resize(this.size.w,this.size.h),this._armDprWatch())},e.addEventListener?.(`change`,this._onDprChange,{once:!0}),this._dprMq=e}_initContextLossRecovery(){this._listen(this.canvas,`webglcontextlost`,e=>{if(e.preventDefault(),this._destroyed)return;let t=this.canvas.dataset.xyCtx===`released`;if(this._glLost&&!t)return;this._glLost=!0,this._ctxLostPending=!1,t||(this.canvas.dataset.xyCtx=`lost`),X._announceLive(),this._contextLossCount+=1,this._contextRecoveryError=null,this.root.dataset.xyContextState=`lost`,this.seq+=1,this._raf&&cancelAnimationFrame(this._raf),this._raf=null,this._wheelZoomRaf&&cancelAnimationFrame(this._wheelZoomRaf),this._wheelZoomRaf=null,this._pendingWheelZoom=null,clearTimeout(this._wheelZoomEndTimer),this._wheelZoomEndTimer=null,this._wheelGesture=null,this._dataAnimRaf&&cancelAnimationFrame(this._dataAnimRaf),this._dataAnimRaf=null,this._dataAnim&&this._emitAnimationLifecycle?.(`end`,this._dataAnim.phase,{cancelled:!0}),this._dataAnim=null,this._transitionOldTraces=null,this._transitionView=null,this.view0&&(this.view={...this.view0}),this._cancelViewAnimation(),clearTimeout(this._viewTimer),this._viewTimer=null,clearTimeout(this._rebinTimer),this._rebinTimer=null,this._viewRequestBurstStart=null,this._dispatchChartEvent(`context_lost`,{loss_count:this._contextLossCount});let n=typeof document>`u`||!document.visibilityState||document.visibilityState===`visible`;!t&&this._ctxVisible&&n&&setTimeout(()=>{!this._destroyed&&this._glLost&&this.canvas.dataset.xyCtx===`lost`&&this._ctxVisible&&this._recoverContext()},0),t&&this._ctxRecoverRequested&&!this._destroyed&&this._ctxVisible&&(this._ctxRecoverRequested=!1,setTimeout(()=>{!this._destroyed&&this._glLost&&this._ctxVisible&&this._recoverContext()},0))}),this._listen(this.canvas,`webglcontextrestored`,()=>{if(!(this._destroyed||this._contextRecoveryError)){this._lutCache.clear(),this.pickFbo=null,this.pickTex=null;try{this._initGl(this._payload),this._glLost=!1,this._drawNow(),this._assertContextFrameReady(`restore`)}catch(e){if(this._glLost=!0,this.canvas.dataset.xyCtx=`lost`,this.root.dataset.xyContextState=`lost`,!this.gl||this.gl.isContextLost()||String(e&&e.message||e).includes(`shader compile: null`)||String(e&&e.message||e).startsWith(`WebGL error `)){this._contextRecoveryError=null,this._scheduleContextRecovery();return}this._contextRecoveryError=e,this.root.dataset.xyContextState=`failed`;try{this._destroyGlResources()}catch{}this.gl=null,this._dispatchChartEvent(`context_restore_failed`,{loss_count:this._contextLossCount,message:e instanceof Error?e.message:String(e)}),this.root.textContent=`xy: WebGL2 context could not be restored.`;return}this._contextRestoreCount+=1,this._contextRecoveryError=null,this._ctxRecoveryDelay=0,this.canvas.dataset.xyCtx=`live`,this.root.dataset.xyContextState=`ready`,X._announceLive(),this._scheduleViewRequest(this.view,{delay:0}),this._dropContextSnapshot(),this._dispatchChartEvent(`context_restored`,{loss_count:this._contextLossCount,restore_count:this._contextRestoreCount})}})}_releaseContext(){if(this._destroyed||!this.gl||this._glLost||this.gl.isContextLost())return!1;let e=this.gl.getExtension(`WEBGL_lose_context`);return e?(this._snapshotBeforeRelease(),this._ctxReleasedExt=e,this._ctxReleases+=1,this._glLost=!0,this._ctxLostPending=!0,this.canvas.dataset.xyCtx=`released`,this._raf&&cancelAnimationFrame(this._raf),this._raf=null,e.loseContext(),X._announceLive(),!0):!1}_snapshotBeforeRelease(){try{this._raf&&cancelAnimationFrame(this._raf),this._raf=null,this._rafKeepPick=!0,this._drawNow();let e=this._ctxSnapshot;e||(e=this._ctxSnapshot=document.createElement(`canvas`),e.dataset.xyCtxSnapshot=``),e.width=this.canvas.width,e.height=this.canvas.height,e.style.cssText=this.canvas.style.cssText,e.style.pointerEvents=`none`;let t=this.gl,n=this.canvas.width,r=this.canvas.height;t.finish();let i=new Uint8Array(n*r*4);t.readPixels(0,0,n,r,t.RGBA,t.UNSIGNED_BYTE,i);let a=e.getContext(`2d`),o=a.createImageData(n,r),s=o.data;for(let e=0;e<r;e++){let t=e*n*4,a=t+n*4,o=(r-1-e)*n*4;for(;t<a;t+=4,o+=4){let e=i[t+3],n=i[t],r=i[t+1],a=i[t+2];if(e>0&&e<255){let t=255/e;n=Math.min(255,Math.round(n*t)),r=Math.min(255,Math.round(r*t)),a=Math.min(255,Math.round(a*t))}s[o]=n,s[o+1]=r,s[o+2]=a,s[o+3]=e}}a.putImageData(o,0,0),this.canvas.before(e),this.canvas.style.visibility=`hidden`}catch{this._dropContextSnapshot()}}_dropContextSnapshot(){this.canvas.style.visibility=``,this._ctxSnapshot&&this._ctxSnapshot.remove(),this._ctxSnapshot=null}_recoverContext(){if(!(this._destroyed||!this._glLost)){if(this._ctxReleasedExt&&this._ctxLostPending){this._ctxRecoverRequested=!0;return}if(this._ctxRecoveries+=1,this._ctxReleasedExt){let e=this._ctxReleasedExt;this._ctxReleasedExt=null;try{X.reserve(this),e.restoreContext();return}catch{X.cancel(this)}}this._rebuildEvictedContext()}}_assertContextFrameReady(e){if(!this.gl||(this.gl.finish(),this.gl.isContextLost()))throw Error(`context lost during ${e} draw`);let t=this.gl.getError();if(t!==this.gl.NO_ERROR)throw Error(`WebGL error ${t} during ${e} draw`)}_scheduleContextRecovery(){if(this._ctxRecoveryTimer||this._destroyed||!this._ctxVisible||typeof document<`u`&&document.visibilityState&&document.visibilityState!==`visible`)return;let e=this._ctxRecoveryDelay||50;this._ctxRecoveryDelay=Math.min(1e3,e*2),this._ctxRecoveryTimer=setTimeout(()=>{this._ctxRecoveryTimer=null,this._glLost&&!this._destroyed&&this._ctxVisible&&this._recoverContext()},e)}_rebuildEvictedContext(){if(this.gl&&!this.gl.isContextLost())try{this.gl.getExtension(`WEBGL_lose_context`)?.loseContext()}catch{}let e=this.canvas.cloneNode(!1);for(let t of this._listeners)t.target===this.canvas&&(this.canvas.removeEventListener(t.type,t.handler,t.options),e.addEventListener(t.type,t.handler,t.options),t.target=e);this.canvas.replaceWith(e),this.canvas=e,this._glLost=!1,this._lutCache.clear(),this.pickFbo=null,this.pickTex=null;try{this._initGl(this._payload),this._glLost=!1,this._drawNow(),this._assertContextFrameReady(`rebuild`)}catch{this._glLost=!0,this.canvas.dataset.xyCtx=`lost`,this._scheduleContextRecovery();return}this._ctxRecoveryDelay=0,this.canvas.dataset.xyCtx=`live`,X._announceLive(),this._scheduleViewRequest(this.view,{delay:0}),this._dropContextSnapshot()}_armContextVisibilityWatch(){if(this._listen(this.root,`pointerenter`,()=>{this._glLost&&!this._destroyed&&this._recoverContext()}),typeof document<`u`&&this._listen(document,`visibilitychange`,()=>{if(document.visibilityState===`hidden`){X.scheduleHiddenReleases();return}X.cancelHiddenReleases(),document.visibilityState===`visible`&&this._ctxVisible&&this._glLost&&!this._destroyed&&this._recoverContext()}),typeof IntersectionObserver>`u`){this._ctxVisible=!0;return}this._ctxIo=new IntersectionObserver(e=>{let t=e[e.length-1];this._ctxVisible=t.isIntersecting||t.intersectionRatio>0,this._ctxVisible?(this._ctxSeenSeq=X.seq++,this._glLost&&!this._destroyed&&this._recoverContext(),this._healStaleTheme()&&this.draw()):this._destroyed||X._rebalance()},{rootMargin:`25% 0px 25% 0px`}),this._ctxIo.observe(this.root)}_resize(e,t){let n=this.fluid&&e?Math.max(120,Math.round(e)):this.size.w,r=this.fluidH&&t?Math.max(120,Math.round(t)):this.size.h,i=window.devicePixelRatio||1;if(n===this.size.w&&r===this.size.h&&i===this.dpr)return;this.dpr=i,this.size.w=n,this.size.h=r,this._layout();let a=this.plot;this.root.style.setProperty(`--xy-legend-max-width`,Math.max(40,a.w-12)+`px`),this.root.style.setProperty(`--xy-legend-max-height`,Math.max(40,a.h-12)+`px`),this.canvas.style.left=a.x+`px`,this.canvas.style.top=a.y+`px`,this.canvas.style.width=a.w+`px`,this.canvas.style.height=a.h+`px`,this.canvas.width=a.w*this.dpr,this.canvas.height=a.h*this.dpr,this.chrome.style.width=this.size.w+`px`,this.chrome.style.height=this.size.h+`px`,this.chrome.width=this.size.w*this.dpr,this.chrome.height=this.size.h*this.dpr,this.overlay.style.width=this.size.w+`px`,this.overlay.style.height=this.size.h+`px`,this.overlay.width=this.size.w*this.dpr,this.overlay.height=this.size.h*this.dpr;for(let e of this._legends||[])this._positionLegend(e,e.dataset.xyLegendLoc||`upper right`);this._positionReductionBadges(),this._positionColorbar(),this._fitModebar(),this._layoutAxisBands(),this._pickDirty=!0,this._raf&&cancelAnimationFrame(this._raf),this._raf=null,this._drawNow(),this._scheduleViewRequest()}_buildDom(e){let t=this.spec,n=document.createElement(`div`);n.className=`xy`,n.style.cssText=`position:relative;width:${this.fluid?`100%`:this.size.w+`px`};height:${this.fluidH?`100%`:this.size.h+`px`};--xy-legend-max-width:${Math.max(40,this.plot.w-12)}px;--xy-legend-max-height:${Math.max(40,this.plot.h-12)}px;`+(this.fluidH?`min-height:120px;`:``)+`font:12px system-ui,sans-serif;user-select:none;`,this._applySlot(n,`root`),(n.style.background||n.style.backgroundColor)&&(n.dataset.xyOwnBg=``),e.appendChild(n),this.root=n,C(n);let r;do r=`xy-a11y-${++at}`;while(document.getElementById(`${r}-summary`)||document.getElementById(`${r}-live`));if(n.setAttribute(`role`,`region`),n.setAttribute(`aria-label`,t.title?`Chart: ${t.title}`:`Interactive chart`),this.a11ySummary=document.createElement(`div`),this.a11ySummary.id=`${r}-summary`,this.a11ySummary.style.cssText=ot,n.setAttribute(`aria-describedby`,this.a11ySummary.id),n.appendChild(this.a11ySummary),this.a11yLive=document.createElement(`div`),this.a11yLive.id=`${r}-live`,this.a11yLive.setAttribute(`role`,`status`),this.a11yLive.setAttribute(`aria-live`,`polite`),this.a11yLive.setAttribute(`aria-atomic`,`true`),this.a11yLive.style.cssText=ot,n.appendChild(this.a11yLive),t.title){let e=document.createElement(`div`);e.textContent=t.title,e.style.cssText=`position:absolute;top:6px;left:0;right:0;`,this._applySlot(e,`title`),n.appendChild(e)}this.chrome=document.createElement(`canvas`),this.chrome.style.cssText=`position:absolute;inset:0;pointer-events:none;`,this._applySlot(this.chrome,`chrome`),n.appendChild(this.chrome),this.canvas=document.createElement(`canvas`),this.canvas.style.cssText=`position:absolute;left:${this.plot.x}px;top:${this.plot.y}px;width:${this.plot.w}px;height:${this.plot.h}px;touch-action:none;`,this._applySlot(this.canvas,`canvas`),this.canvas.tabIndex=0,this.canvas.setAttribute(`role`,`img`),this.canvas.setAttribute(`aria-describedby`,this.a11ySummary.id),n.appendChild(this.canvas),this.overlay=document.createElement(`canvas`),this.overlay.style.cssText=`position:absolute;inset:0;pointer-events:none;`,n.appendChild(this.overlay),this.labels=document.createElement(`div`),this.labels.style.cssText=`position:absolute;inset:0;pointer-events:none;`,this._applySlot(this.labels,`labels`),n.appendChild(this.labels),this.tooltip=document.createElement(`div`),this.tooltip.style.cssText=`position:absolute;display:none;pointer-events:none;z-index:5;`,this._applySlot(this.tooltip,`tooltip`),this.tooltip.setAttribute(`aria-hidden`,`true`),n.appendChild(this.tooltip),this._buildLegend(n),this._buildColorbar(n),this._buildReductionBadges(n)}_a11yAxisSummary(e,t){let n=this._axis(e),r=n.label?`${t} axis (${n.label})`:`${t} axis`;if(n.kind===`category`){let e=Array.isArray(n.categories)?n.categories:[];if(!e.length)return`${r} uses categories.`;let t=e.slice(0,6).map(e=>String(e)),i=e.length-t.length,a=i>0?`, and ${i} more`:``;return`${r} has ${e.length} categories: ${t.join(`, `)}${a}.`}let i=n.range||[];return i.length<2?null:`${r} ranges from ${N(i[0],n.kind)} to ${N(i[1],n.kind)}.`}_a11ySummaryText(){let e=Array.isArray(this.spec.traces)?this.spec.traces:[],t=[this.spec.title?`${this.spec.title}.`:`Interactive chart.`];t.push(`${e.length} data series.`);let n=e.map(e=>e&&e.name).filter(Boolean).slice(0,6);n.length&&t.push(`Series: ${n.join(`, `)}.`);let r=this._a11yAxisSummary(`x`,`X`),i=this._a11yAxisSummary(`y`,`Y`);return r&&t.push(r),i&&t.push(i),t.join(` `)}_initA11y(){if(!this.a11ySummary||!this.canvas)return;this.a11ySummary.textContent=this._a11ySummaryText();let e=this._pickable?` Use Arrow keys to explore data points in series data order; Home and End jump to the first and last point; Escape closes the readout.`:``;this.canvas.setAttribute(`aria-label`,`Plot area.${e}`)}_compactInt(e){let t=Number(e);return Number.isFinite(t)?Math.round(t).toLocaleString():`0`}_positionReductionBadges(){if(!this._badges)return;let e=this.size.w-(this.plot.x+this.plot.w),t=this.size.h-(this.plot.y+this.plot.h);this._badges.style.right=`${e+6}px`,this._badges.style.bottom=`${t+6}px`}_reductionBadgeItems(){let e=[],t=this.gpuTraces&&this.gpuTraces.length?this.gpuTraces:this.spec.traces||[];for(let n of t){let t=n.trace||n;if(t.tier!==`density`||!t.density)continue;let r=n.sampleOverlay&&n.sampleOverlay.sample?n.sampleOverlay.sample:t.density.sample;r&&Number(r.n)>0&&e.push(`sampled ${this._compactInt(r.n)} of ${this._compactInt(r.visible)}`),n._sampleRebinned&&e.push(`zoom re-binned from sample`),t.density.channels_dropped&&e.push(`aggregated channels`)}return e}_refreshReductionBadges(){if(!this._badges)return;let e=this._reductionBadgeItems();this._badges.textContent=``,this._badges.hidden=e.length===0;for(let t of e){let e=document.createElement(`div`);e.textContent=t,this._applySlot(e,`badge_item`),this._badges.appendChild(e)}this._positionReductionBadges()}_buildReductionBadges(e){let t=this._reductionBadgeItems(),n=(this.spec.traces||[]).some(e=>e.tier===`density`);if(!t.length&&!n)return;let r=document.createElement(`div`);r.style.cssText=`position:absolute;display:flex;flex-direction:column;align-items:flex-end;pointer-events:none;z-index:4;`,this._applySlot(r,`badge`),e.appendChild(r),this._badges=r,this._refreshReductionBadges()}_buildLegend(e){let t=this.spec;this._legends=[];let n=[];if(t.show_legend!==!1){for(let e of t.traces)if(e.tier===`density`)n.push({swatch:`gradient`,cmap:e.density.colormap,name:e.name||`density`});else if(e.color&&e.color.mode===`categorical`)e.color.categories.forEach((t,r)=>n.push({swatch:e.color.palette[r],name:t,symbol:e.kind===`scatter`?e.style?.symbol||`circle`:null,style:e.style||{}}));else if(e.color&&e.color.mode===`continuous`)n.push({swatch:`gradient`,cmap:e.color.colormap,name:e.name||`value`});else if(e.name){let t=e.color&&e.color.color||e.style&&e.style.color,r=[`line`,`segments`,`step`,`stairs`,`errorbar`].includes(e.kind);n.push({swatch:t,name:e.name,symbol:e.kind===`scatter`?e.style?.symbol||`circle`:null,line:r,style:e.style||{}})}n.length&&this._legendBox(e,n,t.legend||{})}for(let n of t.extra_legends||[]){let t=(n.items||[]).map(e=>({swatch:e.style&&e.style.color,name:e.name,symbol:e.kind===`scatter`?e.style?.symbol||`circle`:null,line:[`line`,`segments`,`step`,`stairs`,`errorbar`].includes(e.kind),style:e.style||{}}));t.length&&this._legendBox(e,t,n)}}_legendBox(e,t,n){let r=document.createElement(`div`),i=n.loc||`upper right`,a=Math.max(1,Number(n.ncols)||1),o=a>1;if(r.style.cssText=`position:absolute;display:grid;grid-template-columns:repeat(${o?a:1},max-content);overflow:auto;`,r.dataset.xyLegendLoc=i,this._positionLegend(r,i),this._applySlot(r,`legend`),n.title){let e=document.createElement(`div`);e.textContent=String(n.title),e.style.fontWeight=`600`,e.style.gridColumn=`1 / span ${o?a:1}`,r.appendChild(e)}for(let e of t){let t=document.createElement(`div`);this._applySlot(t,`legend_item`);let n=document.createElement(`span`);n.style.display=`inline-block`,n.style.verticalAlign=`-1px`;let i=e.swatch;if(e.swatch===`gradient`)i=`linear-gradient(90deg,${m(e.cmap).map(e=>`rgb(${e[0]},${e[1]},${e[2]})`).join(`,`)})`,n.style.background=i;else if(e.symbol){let t=`http://www.w3.org/2000/svg`,r=document.createElementNS(t,`svg`);r.setAttribute(`viewBox`,`0 0 18 14`),r.setAttribute(`width`,`18`),r.setAttribute(`height`,`14`);let a=document.createElementNS(t,`path`),o={square:`M4.5 2.5h9v9h-9z`,diamond:`M9 2l5 5-5 5-5-5z`,thin_diamond:`M9 2l3 5-3 5-3-5z`,triangle:`M9 2l-5 10h10z`,triangle_down:`M9 12L4 2h10z`,triangle_left:`M4 7L14 2v10z`,triangle_right:`M14 7L4 2v10z`,plus_line:`M9 2v10M4 7h10`,x_line:`M5 3l8 8M13 3l-8 8`,cross:`M7.5 2h3v3.5H14v3h-3.5V12h-3V8.5H4v-3h3.5z`,x:`M5.5 2L9 5.5 12.5 2 14 3.5 10.5 7 14 10.5 12.5 12 9 8.5 5.5 12 4 10.5 7.5 7 4 3.5z`,pentagon:`M9 2.5L13.28 5.61 11.65 10.64H6.35L4.72 5.61z`,hexagon:`M9 2L13.3 4.5v5L9 12l-4.3-2.5v-5z`,star:`M9 2l1.5 3.1 3.5.5-2.5 2.5.6 3.5L9 10l-3.1 1.6.6-3.5L4 5.6l3.5-.5z`},s=w(this.root,i);e.symbol===`circle`||e.symbol===`point`||e.symbol===`pixel`?e.symbol===`pixel`?a.setAttribute(`d`,`M8.5 6.5h1v1h-1z`):a.setAttribute(`d`,`M9 ${e.symbol===`point`?4.75:2.5}a${e.symbol===`point`?2.25:4.5} ${e.symbol===`point`?2.25:4.5} 0 1 0 0 ${e.symbol===`point`?4.5:9}a${e.symbol===`point`?2.25:4.5} ${e.symbol===`point`?2.25:4.5} 0 1 0 0 -${e.symbol===`point`?4.5:9}`):a.setAttribute(`d`,o[e.symbol]||o.square),a.setAttribute(`fill`,e.symbol.endsWith(`_line`)?`none`:s),a.setAttribute(`stroke`,s),a.setAttribute(`stroke-width`,String(e.style?.stroke_width||1)),r.appendChild(a),n.appendChild(r),n.style.width=`18px`,n.style.height=`14px`}else if(e.line){let t=`http://www.w3.org/2000/svg`,r=document.createElementNS(t,`svg`);r.setAttribute(`viewBox`,`0 0 22 12`),r.setAttribute(`width`,`22`),r.setAttribute(`height`,`12`);let a=document.createElementNS(t,`line`);a.setAttribute(`x1`,`1`),a.setAttribute(`y1`,`6`),a.setAttribute(`x2`,`21`),a.setAttribute(`y2`,`6`),a.setAttribute(`stroke`,w(this.root,i)),a.setAttribute(`stroke-width`,String(e.style?.width??1.5)),e.style?.dash&&e.style.dash.length&&a.setAttribute(`stroke-dasharray`,e.style.dash.join(` `)),r.appendChild(a),n.appendChild(r),n.style.width=`22px`,n.style.height=`12px`}else n.style.background=w(this.root,i);this._applySlot(n,`legend_swatch`),t.appendChild(n),t.appendChild(document.createTextNode(e.name)),r.appendChild(t)}return e.appendChild(r),this._legends.push(r),r}_positionLegend(e,t){if(!e)return;let n=this.size.w-(this.plot.x+this.plot.w),r=t.includes(`left`)?`left`:t.includes(`right`)?`right`:`center`,i=t.includes(`upper`)?`upper`:t.includes(`lower`)?`lower`:`center`,a=r===`left`?this.plot.x+6:r===`center`?this.plot.x+this.plot.w/2:null,o=r===`right`?n+6:null,s=i===`upper`?this.plot.y+6:i===`center`?this.plot.y+this.plot.h/2:null,c=i===`lower`?this.size.h-(this.plot.y+this.plot.h)+6:null;e.style.setProperty(`--xy-legend-left`,a==null?`auto`:a+`px`),e.style.setProperty(`--xy-legend-right`,o==null?`auto`:o+`px`),e.style.setProperty(`--xy-legend-top`,s==null?`auto`:s+`px`),e.style.setProperty(`--xy-legend-bottom`,c==null?`auto`:c+`px`);let l=r===`center`?`-50%`:`0`,u=i===`center`?`-50%`:`0`;e.style.setProperty(`--xy-legend-transform`,`translate(${l},${u})`)}_buildColorbar(e){let t=this.spec.colorbar;if(!t)return;let n=document.createElement(`div`),r=t.orientation===`horizontal`;n.style.cssText=`position:absolute;pointer-events:none;z-index:4;`,this._applySlot(n,`colorbar`);let i=document.createElement(`div`),a=Math.max(0,Number(t.levels)||0),o;if(a>0){let e=h(t.colormap||`viridis`),n=[];for(let t=0;t<a;t++){let r=Math.min(255,Math.round(255*(t+.5)/a)),i=`rgb(${e[r*4]},${e[r*4+1]},${e[r*4+2]})`;n.push(`${i} ${100*t/a}% ${100*(t+1)/a}%`)}o=`linear-gradient(to ${r?`right`:`top`},${n.join(`,`)})`}else{let e=m(t.colormap||`viridis`);o=`linear-gradient(to ${r?`right`:`top`},${e.map(e=>`rgb(${e[0]},${e[1]},${e[2]})`).join(`,`)})`}i.style.cssText=r?`position:absolute;inset:0 0 auto 0;height:${Y}px;`:`position:absolute;inset:0 auto 0 0;width:${Y}px;`,i.style.setProperty(`--xy-colorbar-gradient`,o),this._applySlot(i,`colorbar_bar`),n.appendChild(i);let s=t.domain||[0,1],c=Number(s[0]),l=Number(s[1]),u=l-c||1,d=E(c,l,8),f=Array.isArray(t.ticks),p=f?t.ticks:d.ticks,g=d.step;for(let e of p){let t=Number(e);if(!Number.isFinite(t)||t<Math.min(c,l)||t>Math.max(c,l))continue;let i=document.createElement(`span`);i.textContent=f?ne(t):M(t,g);let a=(t-c)/u;i.style.cssText=r?`position:absolute;left:${100*a}%;top:20px;transform:translateX(-50%);white-space:nowrap;`:`position:absolute;left:23px;top:${100*(1-a)}%;transform:translateY(-50%);white-space:nowrap;`,this._applySlot(i,`colorbar_tick`),n.appendChild(i)}if(t.label){let e=document.createElement(`span`);e.textContent=String(t.label),e.style.cssText=r?`position:absolute;left:50%;top:36px;transform:translateX(-50%);white-space:nowrap;`:`position:absolute;left:58px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`,this._applySlot(e,`colorbar_title`),n.appendChild(e)}n.title=`${t.label?t.label+`: `:``}${s[0]} – ${s[1]}`,e.appendChild(n),this._colorbar=n,this._colorbarHorizontal=r,this._positionColorbar()}_positionColorbar(){if(!this._colorbar)return;let e=this._colorbarHorizontal,t=!e&&this._compactVerticalColorbar,n=t?it:rt;this._colorbar.style.left=(e?this.plot.x:this.plot.x+this.plot.w+this._rightAxisRoom+n)+`px`,this._colorbar.style.top=(e?this.plot.y+this.plot.h+(this._bottomAxisRoom||8):this.plot.y)+`px`,this._colorbar.style.width=(e?this.plot.w:t?Y:66)+`px`,this._colorbar.style.height=(e?50:Math.max(24,this.plot.h))+`px`,this._colorbar.dataset.xyCompact=t?`true`:`false`;for(let e of this._colorbar.querySelectorAll(`[data-xy-slot="colorbar_tick"], [data-xy-slot="colorbar_title"]`))e.hidden=t}_initGl(e){let t=window.devicePixelRatio||1;this.dpr=t,this.canvas.width=this.plot.w*t,this.canvas.height=this.plot.h*t,this.chrome.width=this.size.w*t,this.chrome.height=this.size.h*t,this.chrome.style.width=this.size.w+`px`,this.chrome.style.height=this.size.h+`px`,this.overlay.width=this.size.w*t,this.overlay.height=this.size.h*t,this.overlay.style.width=this.size.w+`px`,this.overlay.style.height=this.size.h+`px`,X.reserve(this);let n=this.canvas.getContext(`webgl2`,{antialias:!1,premultipliedAlpha:!0,alpha:!0});if(!n)throw X.cancel(this),Error(`webgl2 unavailable`);this.gl=n,X.acquired(this),n.enable(n.BLEND),n.blendFunc(n.ONE,n.ONE_MINUS_SRC_ALPHA),this._progCache=new Map,this._glPrograms=this._progCache,this.quad=n.createBuffer(),this.quad._fcId=++this._bufSeq,n.bindBuffer(n.ARRAY_BUFFER,this.quad),n.bufferData(n.ARRAY_BUFFER,new Float32Array([0,0,1,0,0,1,1,1]),n.STATIC_DRAW),this.quadVao=n.createVertexArray(),n.bindVertexArray(this.quadVao),n.enableVertexAttribArray(P.a_corner),n.vertexAttribPointer(P.a_corner,2,n.FLOAT,!1,0,0),n.vertexAttribDivisor(P.a_corner,0),n.bindVertexArray(null),this.gpuTraces=this.spec.traces.map(t=>this._buildTrace(e,t)),this._updatePickable()}_updatePickable(){this._pickable=this.gpuTraces.some(e=>q(e.trace.kind).pointPick&&(e.tier!==`density`||e.drill)),this._pickable&&!this.pickFbo&&this._initPickTarget(),this._syncModebarSelect?.()}_prog(e,t,n){let r=this._progCache.get(e);return r||(r=ce(this.gl,t,n),this._progCache.set(e,r)),r}get pointProg(){return this._prog(`point`,le,ue)}get pointSimpleProg(){return this._prog(`point-simple`,de,fe)}get lineProg(){return this._prog(`line`,ve,ye)}get segmentProg(){return this._prog(`segment`,be,xe)}get meshProg(){return this._prog(`mesh`,Se,Ce)}get areaProg(){return this._prog(`area`,Te,Ee)}get rectProg(){return this._prog(`rect`,De,ke)}get barProg(){return this._prog(`bar`,Oe,ke)}get pickProg(){return this._prog(`pick`,pe,me)}get densityProg(){return this._prog(`density`,he,ge)}get heatmapProg(){return this._prog(`heatmap`,he,_e)}_lut(e){if(this._lutCache.has(e))return this._lutCache.get(e);let t=this.gl,n=t.createTexture();return t.bindTexture(t.TEXTURE_2D,n),t.texImage2D(t.TEXTURE_2D,0,t.RGBA,256,1,0,t.RGBA,t.UNSIGNED_BYTE,h(e)),t.texParameteri(t.TEXTURE_2D,t.TEXTURE_MIN_FILTER,t.NEAREST),t.texParameteri(t.TEXTURE_2D,t.TEXTURE_MAG_FILTER,t.NEAREST),t.texParameteri(t.TEXTURE_2D,t.TEXTURE_WRAP_S,t.CLAMP_TO_EDGE),t.texParameteri(t.TEXTURE_2D,t.TEXTURE_WRAP_T,t.CLAMP_TO_EDGE),this._lutCache.set(e,n),n}_paletteLut(e){let t=`pal:`+e.join(`,`);if(this._lutCache.has(t))return this._lutCache.get(t);let n=this.gl,r=new Uint8Array(256*4);for(let t=0;t<256;t++){let n=v(e[t%e.length]);r[t*4]=n[0]*255,r[t*4+1]=n[1]*255,r[t*4+2]=n[2]*255,r[t*4+3]=255}let i=n.createTexture();return n.bindTexture(n.TEXTURE_2D,i),n.texImage2D(n.TEXTURE_2D,0,n.RGBA,256,1,0,n.RGBA,n.UNSIGNED_BYTE,r),n.texParameteri(n.TEXTURE_2D,n.TEXTURE_MIN_FILTER,n.NEAREST),n.texParameteri(n.TEXTURE_2D,n.TEXTURE_MAG_FILTER,n.NEAREST),n.texParameteri(n.TEXTURE_2D,n.TEXTURE_WRAP_S,n.CLAMP_TO_EDGE),n.texParameteri(n.TEXTURE_2D,n.TEXTURE_WRAP_T,n.CLAMP_TO_EDGE),this._lutCache.set(t,i),i}_buildTrace(e,t){this.gl;let n={trace:t,tier:t.tier,color:[.3,.47,.66,1],xAxis:typeof t.x_axis==`string`?t.x_axis:`x`,yAxis:typeof t.y_axis==`string`?t.y_axis:`y`};if(t.tier===`density`){let r=t.density,i=this.spec.columns[r.buf],a=this._columnView(e,i),o=r.enc===`log-u8`?Pe(a,r.max):a;return n.densityNormMax=r.max,n.density={w:r.w,h:r.h,max:r.max,normMax:r.max,colormap:r.colormap,color:r.color?y(this.root,r.color,[.3,.47,.66,1]):null,xRange:r.x_range,yRange:r.y_range,grid:Fe(o),tex:this._uploadGrid(o,r.w,r.h,r.max),lut:this._lut(r.colormap)},n.sampleOverlay=this._buildDensitySample(t,r.sample,e),n._shownDensity=n.density,B(this,n,n.density),n}if(q(t.kind).build(this,n,t,e),t.keys&&Number.isInteger(t.keys.lo)&&Number.isInteger(t.keys.hi)){let r=this._columnView(e,this.spec.columns[t.keys.lo]),i=this._columnView(e,this.spec.columns[t.keys.hi]),a=Math.min(n.n||0,r.length,i.length);n._transitionKeys=Array(a),n._transitionKeyIndex=new Map;for(let e=0;e<a;e++){let t=`${i[e]}:${r[e]}`;if(n._transitionKeyIndex.has(t))throw Error(`xy: duplicate binary animation key`);n._transitionKeys[e]=t,n._transitionKeyIndex.set(t,e)}}return n}_buildXY(e,t,n){let r=this._columnView(n,this.spec.columns[t.x]),i=this._columnView(n,this.spec.columns[t.y]);e.xMeta={...this.spec.columns[t.x]},e.yMeta={...this.spec.columns[t.y]},e.n=Math.min(r.length,i.length),e._cpu={x:r,y:i,xMeta:e.xMeta,yMeta:e.yMeta},e.xBuf=this._upload(r),e.yBuf=this._upload(i)}_buildInstanceStyleChannels(e,t,n,r){let i=e=>t.channels&&t.channels[e],a=Number(t.style&&t.style.artist_alpha);if(i(`opacity`)||i(`artist_alpha`)||i(r)||i(`symbol`)||Number.isFinite(a)){let t=new Float32Array(e.n*4);for(let n=0;n<e.n;n++)t[n*4]=1,t[n*4+1]=Number.isFinite(a)?a:-1,t[n*4+2]=-1,t[n*4+3]=-1;let o=(r,a,o=1)=>{let s=i(r);if(!s)return;let c=this._columnView(n,this.spec.columns[s.buf]);for(let n=0;n<e.n;n++)t[n*4+a]=c[n*(s.components||1)]*o};o(`opacity`,0),o(`artist_alpha`,1),o(r,2,this.dpr),o(`symbol`,3),e.styleBuf=this._upload(t)}let o=i(`corner_radius`);if(o){let t=this._columnView(n,this.spec.columns[o.buf]),r=o.components||1,i=new Float32Array(e.n*2);for(let n=0;n<e.n;n++)i[n*2]=t[n*r]*this.dpr,i[n*2+1]=(r>1?t[n*r+1]:t[n*r])*this.dpr;e.radiusBuf=this._upload(i)}t.stroke&&t.stroke.mode===`direct_rgba`&&(e.strokeBuf=this._upload(this._columnView(n,this.spec.columns[t.stroke.buf])))}_buildScatterMark(e,t,n){this._buildXY(e,t,n),e.colorMode=0,e.color=y(this.root,t.color&&t.color.color,[.3,.47,.66,1]),t.color&&t.color.mode===`continuous`?(e.colorMode=1,e._cpu.color=this._columnView(n,this.spec.columns[t.color.buf]),e.cBuf=this._upload(e._cpu.color),e.lut=this._lut(t.color.colormap)):t.color&&t.color.mode===`categorical`?(e.colorMode=2,e._cpu.color=this._columnView(n,this.spec.columns[t.color.buf]),e.cBuf=this._upload(e._cpu.color),e.lut=this._paletteLut(t.color.palette)):t.color&&t.color.mode===`direct_rgba`&&(e.colorMode=3,e._cpu.rgba=this._columnView(n,this.spec.columns[t.color.buf]),e.rgbaBuf=this._upload(e._cpu.rgba)),e.sizeMode=0,e.size=t.size&&t.size.size||4,e.sizeRange=[2,18],t.size&&t.size.mode===`continuous`&&(e.sizeMode=1,e._cpu.size=this._columnView(n,this.spec.columns[t.size.buf]),e.sBuf=this._upload(e._cpu.size),e.sizeRange=t.size.range_px),this._buildInstanceStyleChannels(e,t,n,`stroke_width`),this._pointMarkStyle(e,t)}_pointMarkStyle(e,t){let n=t.style||{};e.symbol={circle:0,square:1,diamond:2,triangle:3,cross:4,hexagon:5,pentagon:6,star:7,triangle_down:8,triangle_left:9,triangle_right:10,x:11,point:12,pixel:13,thin_diamond:14,plus_line:15,x_line:16}[n.symbol]||0,e.pointStrokeWidth=Number(n.stroke_width)||0,e.pointStrokeFace=!n.stroke&&(!t.stroke||t.stroke.mode===`match_fill`),e.pointStroke=n.stroke?y(this.root,n.stroke,[e.color[0],e.color[1],e.color[2],1]):null}_sampleTraceSpec(e,t){return{id:e.id,kind:`scatter`,name:e.name,style:t.style||e.style||{},tier:`sampled`,x:t.x&&t.x.col,y:t.y&&t.y.col,x_axis:e.x_axis,y_axis:e.y_axis,color:t.color,size:t.size,stroke:t.stroke,channels:t.channels}}_buildDensitySample(e,t,n){if(!t||!t.x||!t.y||t.x.col===void 0||t.y.col===void 0)return null;let r=this._sampleTraceSpec(e,t),i={trace:r,tier:`sampled`,xAxis:typeof e.x_axis==`string`?e.x_axis:`x`,yAxis:typeof e.y_axis==`string`?e.y_axis:`y`};return this._buildScatterMark(i,r,n),i.win={x0:t.x_range[0],x1:t.x_range[1],y0:t.y_range[0],y1:t.y_range[1]},i.sample={n:t.n,visible:t.visible},i}_destroyDensitySample(e){let t=e&&e.sampleOverlay;if(!(!t||!this.gl)){for(let e of[t.xBuf,t.yBuf,t.cBuf,t.rgbaBuf,t.sBuf,t.styleBuf,t.strokeBuf,t.selBuf,t.dBuf])e&&this.gl.deleteBuffer(e);e.sampleOverlay=null}}_applyDensitySample(e,t,n){if(this._destroyDensitySample(e),!t||!t.x||!t.y||t.x.buf===void 0||t.y.buf===void 0){this._refreshReductionBadges();return}let r=this.gl,i={id:e.trace.id,kind:`scatter`,name:e.trace.name,style:t.style||e.trace.style||{},tier:`sampled`,x_axis:e.trace.x_axis,y_axis:e.trace.y_axis,color:t.color,size:t.size,stroke:t.stroke,channels:t.channels},a={trace:i,tier:`sampled`,xAxis:e.xAxis,yAxis:e.yAxis,xBuf:r.createBuffer(),yBuf:r.createBuffer(),xMeta:{offset:t.x.offset,scale:t.x.scale},yMeta:{offset:t.y.offset,scale:t.y.scale},n:Math.min(t.x.len,t.y.len),win:{x0:t.x_range[0],x1:t.x_range[1],y0:t.y_range[0],y1:t.y_range[1]},sample:{n:t.n,visible:t.visible},selActive:!1,colorMode:0,color:y(this.root,t.color&&t.color.color,[.3,.47,.66,1]),sizeMode:0,size:t.size&&t.size.size||4,sizeRange:[2,18]};if(r.bindBuffer(r.ARRAY_BUFFER,a.xBuf),r.bufferData(r.ARRAY_BUFFER,this._asF32(n[t.x.buf]),r.STATIC_DRAW),r.bindBuffer(r.ARRAY_BUFFER,a.yBuf),r.bufferData(r.ARRAY_BUFFER,this._asF32(n[t.y.buf]),r.STATIC_DRAW),t.color&&t.color.buf!==void 0){a.colorMode=t.color.mode===`continuous`?1:t.color.mode===`categorical`?2:3;let e=t.color.dtype===`u8`?this._asU8(n[t.color.buf]):this._asF32(n[t.color.buf]),i=a.colorMode===3?`rgbaBuf`:`cBuf`;a[i]=r.createBuffer(),a[i]._fcType=e instanceof Uint8Array?r.UNSIGNED_BYTE:r.FLOAT,r.bindBuffer(r.ARRAY_BUFFER,a[i]),r.bufferData(r.ARRAY_BUFFER,e,r.STATIC_DRAW),a.colorMode!==3&&(a.lut=t.color.mode===`continuous`?this._lut(t.color.colormap):this._paletteLut(t.color.palette))}t.size&&t.size.mode===`continuous`&&(a.sizeMode=1,a.sBuf=r.createBuffer(),r.bindBuffer(r.ARRAY_BUFFER,a.sBuf),r.bufferData(r.ARRAY_BUFFER,this._asF32(n[t.size.buf]),r.STATIC_DRAW),a.sizeRange=t.size.range_px);let o=e=>t.channels&&t.channels[e],s=Number(i.style&&i.style.artist_alpha);if(o(`opacity`)||o(`artist_alpha`)||o(`stroke_width`)||o(`symbol`)||Number.isFinite(s)){let e=new Float32Array(a.n*4);for(let t=0;t<a.n;t++)e[t*4]=1,e[t*4+1]=Number.isFinite(s)?s:-1,e[t*4+2]=-1,e[t*4+3]=-1;let t=(t,r,i=1)=>{let s=o(t);if(!s)return;let c=s.dtype===`u8`?this._asU8(n[s.buf]):this._asF32(n[s.buf]),l=s.components||1;for(let t=0;t<a.n;t++)e[t*4+r]=c[t*l]*i};t(`opacity`,0),t(`artist_alpha`,1),t(`stroke_width`,2,this.dpr),t(`symbol`,3),a.styleBuf=this._upload(e)}t.stroke&&t.stroke.mode===`direct_rgba`&&(a.strokeBuf=this._upload(this._asU8(n[t.stroke.buf]))),this._pointMarkStyle(a,i),e.sampleOverlay=a,this._refreshReductionBadges()}_drawDensitySample(e,t,n,r,i,a=1){let o=e&&e.sampleOverlay;!o||!o.n||!this._viewOverlaps(o.win)||this._drawPoints(o,this._map(o.xMeta,t,n,o.xAxis),this._map(o.yMeta,r,i,o.yAxis),a)}_resolveMarkFill(e,t){let n=e&&e.fill;if(!n||!Array.isArray(n.stops)||n.stops.length<2)return null;let r=n.space===`plot`?2:1,i={down:0,up:1,left:2,right:3}[n.dir]??0,a=Math.min(n.stops.length,8),o=new Float32Array(8),s=new Float32Array(32);for(let e=0;e<a;e++){let r=n.stops[e]||[];o[e]=Math.min(Math.max(Number(r[0])||0,0),1);let i=String(r[1]||``).trim(),a=i.toLowerCase()===`currentcolor`?t:y(this.root,i,t);s[e*4]=a[0]*a[3],s[e*4+1]=a[1]*a[3],s[e*4+2]=a[2]*a[3],s[e*4+3]=a[3]}return{mode:r,dir:i,count:a,pos:o,colors:s}}_setGradientUniforms(e,t){let n=this.gl,r=t=>F(n,e,t);if(!t){n.uniform1i(r(`u_gradMode`),0);return}n.uniform1i(r(`u_gradMode`),t.mode),n.uniform1i(r(`u_gradDir`),t.dir),n.uniform1i(r(`u_gradCount`),t.count),n.uniform1fv(r(`u_gradPos`),t.pos),n.uniform4fv(r(`u_gradColor`),t.colors)}_fillOpacity(e,t=1){return Number(e.opacity??t)*Number(e.fill_opacity??1)}_strokeOpacity(e,t=1){return Number(e.opacity??t)*Number(e.stroke_opacity??1)}_setRectStyleUniforms(e,t){let n=this.gl,r=t=>F(n,e,t);n.uniform2f(r(`u_res`),this.canvas.width,this.canvas.height);let i=t.cornerRadius||[0,0];n.uniform2f(r(`u_radius`),i[0]*this.dpr,i[1]*this.dpr),n.uniform1f(r(`u_strokeWidth`),(t.strokeWidth||0)*this.dpr);let a=t.strokeColor||[0,0,0,0];n.uniform4f(r(`u_stroke`),a[0],a[1],a[2],a[3]),n.uniform1i(r(`u_strokeMode`),+!!t.strokeBuf),n.uniform1f(r(`u_strokeOpacity`),this._strokeOpacity(t.trace.style||{})),this._setGradientUniforms(e,t.grad)}_rectMarkStyleGpu(e,t){let n=t.style||{},r=n.corner_radius;e.cornerRadius=Array.isArray(r)?[Number(r[0])||0,Number(r[1])||0]:[Number(r)||0,Number(r)||0],e.strokeWidth=Number(n.stroke_width)||0;let i=[e.color[0],e.color[1],e.color[2],1];e.strokeColor=n.stroke?y(this.root,n.stroke,i):i,e.grad=this._resolveMarkFill(n,e.color)}_smoothArrays(e,t,n,r,i){return!e.style||e.style.curve!==`smooth`?null:je(t,n,r||null,i,32768)}_stepArrays(e,t,n,r){let i=e.style&&e.style.step;if(!i||r<2)return null;let a=i===`mid`?3:2,o=1+(r-1)*a,s=new Float32Array(o),c=new Float32Array(o);s[0]=t[0],c[0]=n[0];let l=1;for(let e=1;e<r;e++)if(i===`pre`)s[l]=t[e-1],c[l]=n[e],l++,s[l]=t[e],c[l]=n[e],l++;else if(i===`mid`){let r=(t[e-1]+t[e])*.5;s[l]=r,c[l]=n[e-1],l++,s[l]=r,c[l]=n[e],l++,s[l]=t[e],c[l]=n[e],l++}else s[l]=t[e],c[l]=n[e-1],l++,s[l]=t[e],c[l]=n[e],l++;return{x:s,y:c,n:o}}_buildLineMark(e,t,n){let r=this._columnView(n,this.spec.columns[t.x]),i=this._columnView(n,this.spec.columns[t.y]);e.xMeta={...this.spec.columns[t.x]},e.yMeta={...this.spec.columns[t.y]},e.n=Math.min(r.length,i.length),e._cpu={x:r,y:i,xMeta:e.xMeta,yMeta:e.yMeta};let a=this._smoothArrays(t,r,i,null,e.n)||{x:r,y:i,n:e.n},o=this._stepArrays(t,a.x,a.y,a.n),s=o?o.x:a.x,c=o?o.y:a.y;e.xBuf=this._upload(s),e.yBuf=this._upload(c),e.n=o?o.n:a.n,e._dashX=s,e._dashY=c,e.color=y(this.root,t.style&&t.style.color,[.3,.47,.66,1])}_buildSegmentMark(e,t,n){let r=this._columnView(n,this.spec.columns[t.x0]),i=this._columnView(n,this.spec.columns[t.x1]),a=this._columnView(n,this.spec.columns[t.y0]),o=this._columnView(n,this.spec.columns[t.y1]);e.x0Meta={...this.spec.columns[t.x0]},e.x1Meta={...this.spec.columns[t.x1]},e.y0Meta={...this.spec.columns[t.y0]},e.y1Meta={...this.spec.columns[t.y1]},e.n=Math.min(r.length,i.length,a.length,o.length),e.x0Buf=this._upload(r),e.x1Buf=this._upload(i),e.y0Buf=this._upload(a),e.y1Buf=this._upload(o),e._segmentCpu={x0:r,x1:i,y0:a,y1:o},e.color=y(this.root,t.style&&t.style.color,[.3,.47,.66,1]),e.colorMode=0,t.color&&t.color.mode===`continuous`?(e.colorMode=1,e.cBuf=this._upload(this._columnView(n,this.spec.columns[t.color.buf])),e.lut=this._lut(t.color.colormap)):t.color&&t.color.mode===`categorical`?(e.colorMode=2,e.cBuf=this._upload(this._columnView(n,this.spec.columns[t.color.buf])),e.lut=this._paletteLut(t.color.palette)):t.color&&t.color.mode===`direct_rgba`&&(e.colorMode=3,e.rgbaBuf=this._upload(this._columnView(n,this.spec.columns[t.color.buf]))),this._buildInstanceStyleChannels(e,t,n,`width`),e._cpu={x:r,y:o,xMeta:e.x0Meta,yMeta:e.y1Meta}}_buildMeshMark(e,t,n){for(let r of[`x0`,`x1`,`x2`,`y0`,`y1`,`y2`]){let i=this._columnView(n,this.spec.columns[t[r]]);e[r+`Meta`]={...this.spec.columns[t[r]]},e[r+`Buf`]=this._upload(i),e.n=e.n===void 0?i.length:Math.min(e.n,i.length)}e.color=y(this.root,t.color&&t.color.color,[.3,.47,.66,1]),e.colorMode=0,t.color&&t.color.mode===`continuous`?(e.colorMode=1,e.cBuf=this._upload(this._columnView(n,this.spec.columns[t.color.buf])),e.lut=this._lut(t.color.colormap)):t.color&&t.color.mode===`categorical`?(e.colorMode=2,e.cBuf=this._upload(this._columnView(n,this.spec.columns[t.color.buf])),e.lut=this._paletteLut(t.color.palette)):t.color&&t.color.mode===`direct_rgba`&&(e.colorMode=3,e.rgbaBuf=this._upload(this._columnView(n,this.spec.columns[t.color.buf]))),this._buildInstanceStyleChannels(e,t,n,`stroke_width`);let r=t.style||{};e.meshStrokeWidth=Number(r.stroke_width)||0,e.meshStroke=y(this.root,r.stroke||`transparent`,[0,0,0,0])}_buildHexbinMark(e,t,n){let r=this._columnView(n,this.spec.columns[t.x]),i=this._columnView(n,this.spec.columns[t.y]),a={...this.spec.columns[t.x]},o={...this.spec.columns[t.y]},s=Math.min(r.length,i.length),c=t.style||{},l=(Number(c.hex_dx)||0)*(a.scale||1),u=(Number(c.hex_dy)||0)*(o.scale||1),d=[0,l/2,l/2,0,-l/2,-l/2,0],f=[-u/3,-u/6,u/6,u/3,u/6,-u/6,-u/3],p={};for(let e of[`x0`,`x1`,`x2`,`y0`,`y1`,`y2`])p[e]=new Float32Array(s*6);for(let e=0;e<s;e++){let t=r[e],n=i[e];for(let r=0;r<6;r++){let i=e*6+r;p.x0[i]=t,p.y0[i]=n,p.x1[i]=t+d[r],p.y1[i]=n+f[r],p.x2[i]=t+d[r+1],p.y2[i]=n+f[r+1]}}for(let t of[`x0`,`x1`,`x2`])e[t+`Meta`]={...a},e[t+`Buf`]=this._upload(p[t]);for(let t of[`y0`,`y1`,`y2`])e[t+`Meta`]={...o},e[t+`Buf`]=this._upload(p[t]);if(e.n=s*6,e.color=y(this.root,t.color&&t.color.color,[.3,.47,.66,1]),e.colorMode=0,t.color&&(t.color.mode===`continuous`||t.color.mode===`categorical`)){e.colorMode=t.color.mode===`continuous`?1:2;let r=this._columnView(n,this.spec.columns[t.color.buf]),i=new Float32Array(s*6);for(let e=0;e<s;e++)i.fill(r[e],e*6,e*6+6);e.cBuf=this._upload(i),e.lut=t.color.mode===`continuous`?this._lut(t.color.colormap):this._paletteLut(t.color.palette)}e.meshStrokeWidth=Number(c.stroke_width)||0,e.meshStroke=y(this.root,c.stroke||`transparent`,[0,0,0,0])}_buildAreaMark(e,t,n){let r=this._columnView(n,this.spec.columns[t.x]),i=this._columnView(n,this.spec.columns[t.y]),a=this._columnView(n,this.spec.columns[t.base]);e.xMeta={...this.spec.columns[t.x]},e.yMeta={...this.spec.columns[t.y]},e.baseMeta={...this.spec.columns[t.base]},e.n=Math.min(r.length,i.length,a.length),e._cpu={x:r,y:i,base:a,xMeta:e.xMeta,yMeta:e.yMeta};let o=this._smoothArrays(t,r,i,a,e.n);e.xBuf=this._upload(o?o.x:r),e.yBuf=this._upload(o?o.y:i),e.baseBuf=this._upload(o?o.extra:a),o&&(e.n=o.n),e._dashX=o?o.x:r,e._dashY=o?o.y:i,e.color=y(this.root,t.style&&t.style.color,[.3,.47,.66,1]),e.lineColor=y(this.root,t.style&&(t.style.line_color||t.style.color),e.color),e.grad=this._resolveMarkFill(t.style,e.color)}_buildRectMark(e,t,n){let r=this._columnView(n,this.spec.columns[t.x0]),i=this._columnView(n,this.spec.columns[t.x1]),a=this._columnView(n,this.spec.columns[t.y0]),o=this._columnView(n,this.spec.columns[t.y1]);e.x0Meta={...this.spec.columns[t.x0]},e.x1Meta={...this.spec.columns[t.x1]},e.y0Meta={...this.spec.columns[t.y0]},e.y1Meta={...this.spec.columns[t.y1]},e.n=Math.min(r.length,i.length,a.length,o.length),e._cpuRect={x0:r,x1:i,y0:a,y1:o,x0Meta:e.x0Meta,x1Meta:e.x1Meta,y0Meta:e.y0Meta,y1Meta:e.y1Meta},e.x0Buf=this._upload(r),e.x1Buf=this._upload(i),e.y0Buf=this._upload(a),e.y1Buf=this._upload(o),e.color=y(this.root,t.style&&t.style.color,[.3,.47,.66,1]),e.colorMode=0,t.color&&t.color.mode===`continuous`?(e.colorMode=1,e.cBuf=this._upload(this._columnView(n,this.spec.columns[t.color.buf])),e.lut=this._lut(t.color.colormap)):t.color&&t.color.mode===`categorical`?(e.colorMode=2,e.cBuf=this._upload(this._columnView(n,this.spec.columns[t.color.buf])),e.lut=this._paletteLut(t.color.palette)):t.color&&t.color.mode===`direct_rgba`&&(e.colorMode=3,e.rgbaBuf=this._upload(this._columnView(n,this.spec.columns[t.color.buf]))),this._buildInstanceStyleChannels(e,t,n,`stroke_width`),this._rectMarkStyleGpu(e,t)}_buildBarMark(e,t,n){let r=t.bar;if(!r)return this._buildRectMark(e,t,n);let i=this._columnView(n,this.spec.columns[r.pos]),a=this._columnView(n,this.spec.columns[r.value1]);if(e.posMeta={...this.spec.columns[r.pos]},e.value1Meta={...this.spec.columns[r.value1]},e.n=Math.min(i.length,a.length),e.posBuf=this._upload(i),e.value1Buf=this._upload(a),e.orientation=+(r.orientation===`horizontal`),e.value0Const=r.value0_const??0,e.value0Mode=r.value0===void 0?0:1,e.width=r.width,e.value0Mode===1){let t=this._columnView(n,this.spec.columns[r.value0]);e.value0Meta={...this.spec.columns[r.value0]},e.n=Math.min(e.n,t.length),e._cpuValue0=t,e.value0Buf=this._upload(t)}e._cpuBar={pos:i,value1:a,value0:e._cpuValue0||null,posMeta:e.posMeta,value1Meta:e.value1Meta,value0Meta:e.value0Meta||null,value0Const:e.value0Const,width:e.width},e._cpu=e.orientation===1?{x:a,y:i,xMeta:e.value1Meta,yMeta:e.posMeta,value0:e._cpuValue0}:{x:i,y:a,xMeta:e.posMeta,yMeta:e.value1Meta,value0:e._cpuValue0},e.color=y(this.root,t.style&&t.style.color,[.3,.47,.66,1]),e.colorMode=0,t.color&&t.color.mode===`continuous`?(e.colorMode=1,e.cBuf=this._upload(this._columnView(n,this.spec.columns[t.color.buf])),e.lut=this._lut(t.color.colormap)):t.color&&t.color.mode===`categorical`?(e.colorMode=2,e.cBuf=this._upload(this._columnView(n,this.spec.columns[t.color.buf])),e.lut=this._paletteLut(t.color.palette)):t.color&&t.color.mode===`direct_rgba`&&(e.colorMode=3,e.rgbaBuf=this._upload(this._columnView(n,this.spec.columns[t.color.buf]))),this._buildInstanceStyleChannels(e,t,n,`stroke_width`),this._rectMarkStyleGpu(e,t)}_buildHeatmapMark(e,t,n){let r=t.heatmap,i=Array.isArray(r.rgba_bufs),a=i?r.rgba_bufs.map(e=>this._columnView(n,this.spec.columns[e])):this._columnView(n,this.spec.columns[r.buf]);e.heatmap={w:r.w,h:r.h,xRange:r.x_range,yRange:r.y_range,colormap:r.colormap,truecolor:i,tex:i?this._uploadRgbaGrid(a,r.w,r.h):this._uploadHeatmapGrid(a,r.w,r.h),lut:i?null:this._lut(r.colormap)},i||(e._cpuHeatmap={grid:a})}_uploadRgbaGrid(e,t,n){let r=this.gl,i=r.createTexture(),a=new Uint8Array(t*n*4);for(let r=0;r<t*n;r++)for(let t=0;t<4;t++)a[r*4+t]=Math.round(255*Math.max(0,Math.min(1,e[t][r])));return r.bindTexture(r.TEXTURE_2D,i),r.texImage2D(r.TEXTURE_2D,0,r.RGBA,t,n,0,r.RGBA,r.UNSIGNED_BYTE,a),r.texParameteri(r.TEXTURE_2D,r.TEXTURE_MIN_FILTER,r.NEAREST),r.texParameteri(r.TEXTURE_2D,r.TEXTURE_MAG_FILTER,r.NEAREST),r.texParameteri(r.TEXTURE_2D,r.TEXTURE_WRAP_S,r.CLAMP_TO_EDGE),r.texParameteri(r.TEXTURE_2D,r.TEXTURE_WRAP_T,r.CLAMP_TO_EDGE),i}_uploadGrid(e,t,n,r){let i=this.gl,a=i.createTexture();return R(i,a,e,t,n,r),a}_uploadHeatmapGrid(e,t,n){let r=this.gl,i=r.createTexture(),a=new Uint8Array(e.length);for(let t=0;t<e.length;t++){let n=e[t];Number.isFinite(n)&&(a[t]=Math.max(1,Math.min(255,Math.round(1+254*Math.max(0,Math.min(1,n))))))}r.bindTexture(r.TEXTURE_2D,i);let o=r.getParameter(r.UNPACK_ALIGNMENT);return r.pixelStorei(r.UNPACK_ALIGNMENT,1),r.texImage2D(r.TEXTURE_2D,0,r.R8,t,n,0,r.RED,r.UNSIGNED_BYTE,a),r.pixelStorei(r.UNPACK_ALIGNMENT,o),r.texParameteri(r.TEXTURE_2D,r.TEXTURE_MIN_FILTER,r.NEAREST),r.texParameteri(r.TEXTURE_2D,r.TEXTURE_MAG_FILTER,r.NEAREST),r.texParameteri(r.TEXTURE_2D,r.TEXTURE_WRAP_S,r.CLAMP_TO_EDGE),r.texParameteri(r.TEXTURE_2D,r.TEXTURE_WRAP_T,r.CLAMP_TO_EDGE),i}_columnView(e,t){let n=Array.isArray(e);if(n!==Number.isInteger(t.buf))throw Error(n?`xy: transport delivered a buffer list but the spec column has no wire-buffer index`:`xy: spec column carries a wire-buffer index but the transport delivered one blob`);let r=o(n?e[t.buf]:e,`chart payload`),i=Number(t.byte_offset),a=Number(t.len);if(!Number.isSafeInteger(i)||i<0||!Number.isSafeInteger(a)||a<0)throw RangeError(`column offset/length must be non-negative safe integers`);let s=t.dtype===`u8`?1:4,c=r.byteOffset+i;if(i+a*s>r.byteLength)throw RangeError(`column extends past chart payload`);if(c%s!==0)throw RangeError(`column is misaligned`);return t.dtype===`u8`?new Uint8Array(r.buffer,c,a):t.dtype===`u32`?new Uint32Array(r.buffer,c,a):new Float32Array(r.buffer,c,a)}_upload(e){let t=this.gl,n=t.createBuffer();return n._fcId=++this._bufSeq,n._fcType=e instanceof Uint8Array?t.UNSIGNED_BYTE:t.FLOAT,t.bindBuffer(t.ARRAY_BUFFER,n),t.bufferData(t.ARRAY_BUFFER,e,t.STATIC_DRAW),n}_bindVao(e,t,n,r){let i=this.gl;e._vaos||=new Map;let a=n.join(`|`),o=e._vaos.get(t);if(!o||o.sig!==a){o&&i.deleteVertexArray(o.vao);let n=i.createVertexArray();i.bindVertexArray(n),r(),o={vao:n,sig:a},e._vaos.set(t,o)}else i.bindVertexArray(o.vao)}_deleteVaos(e){if(!e||!e._vaos)return;let t=this.gl;if(t)for(let{vao:n}of e._vaos.values())t.deleteVertexArray(n);e._vaos=null}_vaoAttr(e,t,n,r,i=1,a=!1){let o=this.gl;o.bindBuffer(o.ARRAY_BUFFER,t),o.enableVertexAttribArray(e),o.vertexAttribPointer(e,i,t._fcType||o.FLOAT,a,0,n),o.vertexAttribDivisor(e,r)}_initPickTarget(){let e=this.gl;this.pickTex=e.createTexture(),this._allocPickTex(),this.pickFbo=e.createFramebuffer(),e.bindFramebuffer(e.FRAMEBUFFER,this.pickFbo),e.framebufferTexture2D(e.FRAMEBUFFER,e.COLOR_ATTACHMENT0,e.TEXTURE_2D,this.pickTex,0),e.bindFramebuffer(e.FRAMEBUFFER,null),this._pickDirty=!0}_allocPickTex(){let e=this.gl;e.bindTexture(e.TEXTURE_2D,this.pickTex),e.texImage2D(e.TEXTURE_2D,0,e.RGBA8,this.canvas.width,this.canvas.height,0,e.RGBA,e.UNSIGNED_BYTE,null),e.texParameteri(e.TEXTURE_2D,e.TEXTURE_MIN_FILTER,e.NEAREST),e.texParameteri(e.TEXTURE_2D,e.TEXTURE_MAG_FILTER,e.NEAREST),this._pickW=this.canvas.width,this._pickH=this.canvas.height}_map(e,t,n,r=null){if(!r)return[2/((n-t)*e.scale),(e.offset-t)/(n-t)*2-1];let i=this._axis(r),a=this._axisCoord(i,t),o=this._axisCoord(i,n);if(![a,o].every(Number.isFinite)||o===a)return[0,-2];let s=2/(o-a);return[s,-1-a*s]}_mapConst(e,t,n,r=null){if(!r)return(e-t)/(n-t)*2-1;let i=this._axis(r),a=this._axisCoord(i,e),o=this._axisCoord(i,t),s=this._axisCoord(i,n);return![a,o,s].every(Number.isFinite)||s===o?-2:(a-o)/(s-o)*2-1}_edgePadForValue(e,t,n,r){if(!Number.isFinite(e)||!Number.isFinite(t)||!Number.isFinite(n)||n===t)return 0;let i=Math.abs(n-t)*1e-10+1e-12,a=Math.max(1,r||1),o=Math.max(2,Math.ceil(this.dpr||1));return Math.abs(e-t)<=i?-(2*o)/a:Math.abs(e-n)<=i?2*o/a:0}_setAxisUniforms(e,t,n,r){let i=this.gl,a=t=>F(i,e,t);i.uniform2f(a(`${t}meta`),n&&Number.isFinite(n.offset)?n.offset:0,n&&n.scale?n.scale:1),i.uniform1i(a(`${t}mode`),this._axisMode(r))}draw(e=!1){if(!(this._destroyed||this._glLost||!this.gl)){if(this._updateZoomMenuLabel?.(),this._raf){this._rafKeepPick=this._rafKeepPick&&e;return}this._rafKeepPick=e,this._raf=requestAnimationFrame(()=>{this._raf=null,!this._destroyed&&this._drawNow()})}}_drawNow(){if(this._destroyed||!this.gl||this._glLost)return;this._healStaleTheme();let e=this.gl,{x0:t,x1:n,y0:r,y1:i}=this.view;e.bindFramebuffer(e.FRAMEBUFFER,null),e.viewport(0,0,this.canvas.width,this.canvas.height),e.clearColor(0,0,0,0),e.clear(e.COLOR_BUFFER_BIT);let a=e=>{if(e.tier===`density`){let[t,n]=this._axisRange(e.xAxis),[r,i]=this._axisRange(e.yAxis);et(this,e,t,n,r,i);return}q(e.trace.kind).draw(this,e,t,n,r,i)};for(let e of this._transitionOldTraces||[])a(e);for(let e of this.gpuTraces)a(e);this._drawHoverState(),this._repositionTooltip(),this._rafKeepPick||(this._pickDirty=!0),this._rafKeepPick=!1,this._drawChrome(),this._renderLassoSelection?.()}_now(){return performance.now()}_canDrawSimplePoints(e){return e.colorMode===0&&e.sizeMode===0&&!e.selActive&&!e.rgbaBuf&&!e.styleBuf&&!e.strokeBuf&&(e.symbol||0)===0&&(e.pointStrokeWidth||0)<=0&&Math.max(e.lodBlendShown??0,e.lodBlend??0)<=.001}_drawPoints(e,t,n,r=1){r*=e._transitionOpacity??1;let i=e._transitionScale??1;if(this._canDrawSimplePoints(e)){this._drawSimplePoints(e,t,n,r);return}let a=this.gl,o=this.pointProg;a.useProgram(o);let s=e=>F(a,o,e);a.uniform2f(s(`u_xmap`),t[0],t[1]),a.uniform2f(s(`u_ymap`),n[0],n[1]),this._setAxisUniforms(o,`u_x`,e.xMeta,e.xAxis),this._setAxisUniforms(o,`u_y`,e.yMeta,e.yAxis),a.uniform1f(s(`u_dpr`),this.dpr);let c=!!(e._transitionPrevXBuf&&e._transitionPrevYBuf);a.uniform1i(s(`u_transitionActive`),+!!c),a.uniform1f(s(`u_transitionProgress`),e._transitionPositionProgress??1),a.uniform1f(s(`u_size`),e.size*i),a.uniform1i(s(`u_sizeMode`),e.sizeMode),a.uniform2f(s(`u_sizeRange`),e.sizeRange[0]*i,e.sizeRange[1]*i),a.uniform1i(s(`u_colorMode`),e.colorMode);let l=this._fillOpacity(e.trace.style,.8)*r;a.uniform1f(s(`u_opacity`),l),a.uniform1f(s(`u_selectedOpacity`),this._markStateNumber(`selected`,`opacity`,1)),a.uniform1f(s(`u_unselectedOpacity`),this._markStateNumber(`unselected`,`opacity`,.12));let u=(e,t)=>{let n=t?y(this.root,t,[0,0,0,1]):null;a.uniform4f(e,n?n[0]:0,n?n[1]:0,n?n[2]:0,+!!n)};u(s(`u_selColor`),this._markStateValue(`selected`,`color`)),u(s(`u_unselColor`),this._markStateValue(`unselected`,`color`));let[d,f,p,m]=e.color;a.uniform4f(s(`u_color`),d,f,p,m),a.uniform1i(s(`u_symbol`),e.symbol||0);let h=e.pointStroke;a.uniform1f(s(`u_ptStrokeWidth`),(e.pointStrokeWidth||0)*this.dpr),a.uniform1i(s(`u_ptStrokeFace`),+!!e.pointStrokeFace),a.uniform1i(s(`u_strokeMode`),+!!e.strokeBuf),a.uniform1f(s(`u_strokeOpacity`),this._strokeOpacity(e.trace.style,.8)*r),a.uniform4f(s(`u_ptStroke`),h?h[0]:0,h?h[1]:0,h?h[2]:0,h?h[3]:0),a.uniform1i(s(`u_selActive`),+!!e.selActive);let g=e.colorMode!==0&&e.cBuf,_=e.sizeMode===1&&e.sBuf,v=e.selActive&&e.selBuf,b=e.colorMode===3&&e.rgbaBuf,x=!!e.styleBuf,S=!!e.strokeBuf;e.lut&&(a.activeTexture(a.TEXTURE0),a.bindTexture(a.TEXTURE_2D,e.lut),a.uniform1i(s(`u_lut`),0));let C=e.lodBlend??0,w=e.lodBlendShown??C;if(Math.abs(w-C)>.005&&!this._prefersReducedMotion()){let t=this._now(),n=e._blendTick?Math.min(100,t-e._blendTick):16;e._blendTick=t,w+=(C-w)*(1-Math.exp(-n/90)),e.lodBlendShown=w,this.draw()}else e.lodBlendShown=w=C,e._blendTick=0;a.uniform1f(s(`u_dblend`),w);let T=w>.001&&e.dBuf&&e.dlut;T&&(a.activeTexture(a.TEXTURE1),a.bindTexture(a.TEXTURE_2D,e.dlut)),a.uniform1i(s(`u_dlut`),1),this._bindVao(e,`points`,[e.xBuf._fcId,e.yBuf._fcId,g?e.cBuf._fcId:0,_?e.sBuf._fcId:0,v?e.selBuf._fcId:0,T?e.dBuf._fcId:0,c?e._transitionPrevXBuf._fcId:0,c?e._transitionPrevYBuf._fcId:0,b?e.rgbaBuf._fcId:0,x?e.styleBuf._fcId:0,S?e.strokeBuf._fcId:0],()=>{this._vaoAttr(P.ax,e.xBuf,0,0),this._vaoAttr(P.ay,e.yBuf,0,0),g&&this._vaoAttr(P.a_cval,e.cBuf,0,0),_&&this._vaoAttr(P.a_sval,e.sBuf,0,0),v&&this._vaoAttr(P.a_sel,e.selBuf,0,0),T&&this._vaoAttr(P.a_dval,e.dBuf,0,0),c&&(this._vaoAttr(P.a_prevx,e._transitionPrevXBuf,0,0),this._vaoAttr(P.a_prevy,e._transitionPrevYBuf,0,0)),b&&this._vaoAttr(P.a_rgba,e.rgbaBuf,0,0,4,!0),x&&this._vaoAttr(P.a_style,e.styleBuf,0,0,4),S&&this._vaoAttr(P.a_stroke,e.strokeBuf,0,0,4,!0)}),g||a.vertexAttrib1f(P.a_cval,0),_||a.vertexAttrib1f(P.a_sval,.5),v||a.vertexAttrib1f(P.a_sel,1),T||a.vertexAttrib1f(P.a_dval,0),b||a.vertexAttrib4f(P.a_rgba,d,f,p,m),x||a.vertexAttrib4f(P.a_style,1,-1,-1,-1),S||a.vertexAttrib4f(P.a_stroke,d,f,p,m),a.drawArrays(a.POINTS,0,e.n)}_drawSimplePoints(e,t,n,r=1){let i=this.gl,a=this.pointSimpleProg;i.useProgram(a);let o=e=>F(i,a,e);i.uniform2f(o(`u_xmap`),t[0],t[1]),i.uniform2f(o(`u_ymap`),n[0],n[1]),this._setAxisUniforms(a,`u_x`,e.xMeta,e.xAxis),this._setAxisUniforms(a,`u_y`,e.yMeta,e.yAxis),i.uniform1f(o(`u_dpr`),this.dpr);let s=!!(e._transitionPrevXBuf&&e._transitionPrevYBuf);i.uniform1i(o(`u_transitionActive`),+!!s),i.uniform1f(o(`u_transitionProgress`),e._transitionPositionProgress??1),i.uniform1f(o(`u_size`),e.size*(e._transitionScale??1));let[c,l,u,d]=e.color;i.uniform4f(o(`u_color`),c,l,u,d*this._fillOpacity(e.trace.style,.8)*r),this._bindVao(e,`points-simple`,[e.xBuf._fcId,e.yBuf._fcId,s?e._transitionPrevXBuf._fcId:0,s?e._transitionPrevYBuf._fcId:0],()=>{this._vaoAttr(P.ax,e.xBuf,0,0),this._vaoAttr(P.ay,e.yBuf,0,0),s&&(this._vaoAttr(P.a_prevx,e._transitionPrevXBuf,0,0),this._vaoAttr(P.a_prevy,e._transitionPrevYBuf,0,0))}),i.drawArrays(i.POINTS,0,e.n)}_drawHoverState(){let e=this._hoverTarget;if(!e||!e.g)return;let t=e.g;if(t.trace.kind!==`scatter`||t.tier===`density`||!Number.isInteger(e.index)||e.index<0||e.index>=t.n)return;let[n,r]=this._axisRange(t.xAxis),[i,a]=this._axisRange(t.yAxis);this._drawHoverPoint(t,e.index,this._map(t.xMeta,n,r,t.xAxis),this._map(t.yMeta,i,a,t.yAxis))}_drawHoverPoint(e,t,n,r){let i=this.gl,a=this.pointProg;i.useProgram(a);let o=e=>F(i,a,e);i.uniform2f(o(`u_xmap`),n[0],n[1]),i.uniform2f(o(`u_ymap`),r[0],r[1]),this._setAxisUniforms(a,`u_x`,e.xMeta,e.xAxis),this._setAxisUniforms(a,`u_y`,e.yMeta,e.yAxis);let s=Math.max((e.size||4)*1.75,(e.size||4)+5),c=Math.max(0,this._markStateNumber(`hover`,`size`,s)),l=Math.max(0,Math.min(1,this._markStateNumber(`hover`,`opacity`,.95))),u=y(this.root,this._markStatePaint(`hover`,`color`,`rgba(15,23,42,.92)`),[.06,.09,.16,.92]);i.uniform1f(o(`u_dpr`),this.dpr),i.uniform1f(o(`u_size`),c),i.uniform1i(o(`u_sizeMode`),0),i.uniform2f(o(`u_sizeRange`),c,c),i.uniform1i(o(`u_colorMode`),0),i.uniform1f(o(`u_opacity`),l),i.uniform1f(o(`u_selectedOpacity`),1),i.uniform1f(o(`u_unselectedOpacity`),1),i.uniform4f(o(`u_color`),u[0],u[1],u[2],1),i.uniform1i(o(`u_selActive`),0),i.uniform1f(o(`u_dblend`),0),this._bindVao(e,`hover`,[e.xBuf._fcId,e.yBuf._fcId],()=>{this._vaoAttr(P.ax,e.xBuf,0,0),this._vaoAttr(P.ay,e.yBuf,0,0)}),i.vertexAttrib1f(P.a_cval,0),i.vertexAttrib1f(P.a_sval,.5),i.vertexAttrib1f(P.a_sel,1),i.vertexAttrib1f(P.a_dval,0),i.drawArrays(i.POINTS,t,1)}_drawDensity(e,t,n=1){let r=this.gl,i=t||e.density;if(!i||!i.tex||!r.isTexture(i.tex))return;n*=e._transitionOpacity??1;let a=this.densityProg;r.useProgram(a);let o=e=>F(r,a,e),{x0:s,x1:c,y0:l,y1:u}=this.view,[d,f]=this._axisRange(e.xAxis),[p,m]=this._axisRange(e.yAxis);r.uniform4f(o(`u_view`),d??s,f??c,p??l,m??u),r.uniform1i(o(`u_xmode`),this._axisMode(e.xAxis)),r.uniform1i(o(`u_ymode`),this._axisMode(e.yAxis)),r.uniform4f(o(`u_gridRange`),i.xRange[0],i.xRange[1],i.yRange[0],i.yRange[1]),r.uniform1f(o(`u_opacity`),this._fillOpacity(e.trace.style)*n);let h=i.color;r.uniform1i(o(`u_constantColor`),+!!h),r.uniform4f(o(`u_color`),...h||[1,1,1,1]),r.activeTexture(r.TEXTURE0),r.bindTexture(r.TEXTURE_2D,i.tex),r.uniform1i(o(`u_grid`),0),r.activeTexture(r.TEXTURE1),r.bindTexture(r.TEXTURE_2D,i.lut),r.uniform1i(o(`u_lut`),1),r.bindVertexArray(this.quadVao),r.drawArrays(r.TRIANGLE_STRIP,0,4)}_drawHeatmap(e){let t=e.heatmap;if(!t)return;let n=this.gl,r=this.heatmapProg;n.useProgram(r);let i=e=>F(n,r,e),{x0:a,x1:o,y0:s,y1:c}=this.view,[l,u]=this._axisRange(e.xAxis),[d,f]=this._axisRange(e.yAxis);n.uniform4f(i(`u_view`),l??a,u??o,d??s,f??c),n.uniform1i(i(`u_xmode`),this._axisMode(e.xAxis)),n.uniform1i(i(`u_ymode`),this._axisMode(e.yAxis));let p=(l??a)>(u??o),m=(d??s)>(f??c);n.uniform4f(i(`u_gridRange`),t.xRange[+!!p],t.xRange[+!p],t.yRange[+!!m],t.yRange[+!m]),n.uniform1f(i(`u_opacity`),this._fillOpacity(e.trace.style)*(e._transitionOpacity??1)),n.uniform1i(i(`u_truecolor`),+!!t.truecolor),n.activeTexture(n.TEXTURE0),n.bindTexture(n.TEXTURE_2D,t.tex),n.uniform1i(i(`u_grid`),0),t.truecolor||(n.activeTexture(n.TEXTURE1),n.bindTexture(n.TEXTURE_2D,t.lut),n.uniform1i(i(`u_lut`),1)),n.bindVertexArray(this.quadVao),n.drawArrays(n.TRIANGLE_STRIP,0,4)}_drawLine(e,t,n,r=null,i=null,a=null){if(e.n<2)return;let o=this.gl;o.useProgram(this.lineProg);let s=e=>F(o,this.lineProg,e);o.uniform2f(s(`u_xmap`),t[0],t[1]),o.uniform2f(s(`u_ymap`),n[0],n[1]),this._setAxisUniforms(this.lineProg,`u_x`,e.xMeta,e.xAxis),this._setAxisUniforms(this.lineProg,`u_y`,e.yMeta,e.yAxis),o.uniform2f(s(`u_res`),this.canvas.width,this.canvas.height);let c=!!(e._transitionPrevXBuf&&e._transitionPrevYBuf);o.uniform1i(s(`u_transitionActive`),+!!c),o.uniform1f(s(`u_transitionProgress`),e._transitionPositionProgress??1);let l=Math.max(0,Math.min(1,e._transitionReveal??1));o.uniform1f(s(`u_revealProgress`),l),o.uniform1f(s(`u_revealSegments`),e.n-1),o.uniform1f(s(`u_width`),(i??e.trace.style.width??1.5)*this.dpr);let[u,d,f,p]=r||e.color,m=this._strokeOpacity(e.trace.style)*(a??1)*(e._transitionOpacity??1);o.uniform4f(s(`u_color`),u,d,f,p*m);let h=this._lineDash(e);this._bindVao(e,`line`,[e.xBuf._fcId,e.yBuf._fcId,h?e._lenBuf._fcId:0,c?e._transitionPrevXBuf._fcId:0,c?e._transitionPrevYBuf._fcId:0],()=>{this._vaoAttr(P.ax0,e.xBuf,0,1),this._vaoAttr(P.ax1,e.xBuf,4,1),this._vaoAttr(P.ay0,e.yBuf,0,1),this._vaoAttr(P.ay1,e.yBuf,4,1),h&&(this._vaoAttr(P.a_len0,e._lenBuf,0,1),this._vaoAttr(P.a_len1,e._lenBuf,4,1)),c&&(this._vaoAttr(P.a_prevx,e._transitionPrevXBuf,0,1),this._vaoAttr(P.a_prevy,e._transitionPrevYBuf,0,1),this._vaoAttr(P.a_prevx1,e._transitionPrevXBuf,4,1),this._vaoAttr(P.a_prevy1,e._transitionPrevYBuf,4,1))});let g=Math.max(0,Math.min(e.n-1,Math.ceil((e.n-1)*l)));o.drawArraysInstanced(o.TRIANGLE_STRIP,0,4,g)}_drawSegments(e,t,n){if(e.n<1)return;let r=this.gl,i=this.segmentProg;r.useProgram(i);let a=e=>F(r,i,e);r.uniform2f(a(`u_xmap`),t[0],t[1]),r.uniform2f(a(`u_ymap`),n[0],n[1]),this._setAxisUniforms(i,`u_x0`,e.x0Meta,e.xAxis),this._setAxisUniforms(i,`u_x1`,e.x1Meta,e.xAxis),this._setAxisUniforms(i,`u_y0`,e.y0Meta,e.yAxis),this._setAxisUniforms(i,`u_y1`,e.y1Meta,e.yAxis),r.uniform2f(a(`u_res`),this.canvas.width,this.canvas.height),r.uniform1f(a(`u_width`),(e.trace.style.width??1.5)*this.dpr),r.uniform1f(a(`u_animationProgress`),e._transitionScale??1);let[o,s,c,l]=e.color;r.uniform4f(a(`u_color`),o,s,c,l),r.uniform1f(a(`u_opacity`),this._strokeOpacity(e.trace.style)*(e._transitionOpacity??1)),r.uniform1i(a(`u_colorMode`),e.colorMode||0);let u=this._segmentDash(e,i);e.colorMode&&e.lut&&(r.activeTexture(r.TEXTURE0),r.bindTexture(r.TEXTURE_2D,e.lut),r.uniform1i(a(`u_lut`),0)),this._bindVao(e,`segment`,[e.x0Buf._fcId,e.x1Buf._fcId,e.y0Buf._fcId,e.y1Buf._fcId,e.colorMode&&e.cBuf?e.cBuf._fcId:0,e.rgbaBuf?e.rgbaBuf._fcId:0,e.styleBuf?e.styleBuf._fcId:0,u?e._segmentDashOffsetBuf._fcId:0,u?e._segmentDashDirBuf._fcId:0],()=>{this._vaoAttr(P.ax0,e.x0Buf,0,1),this._vaoAttr(P.ax1,e.x1Buf,0,1),this._vaoAttr(P.ay0,e.y0Buf,0,1),this._vaoAttr(P.ay1,e.y1Buf,0,1),e.colorMode&&e.cBuf&&this._vaoAttr(P.a_cval,e.cBuf,0,1),e.rgbaBuf&&this._vaoAttr(P.a_rgba,e.rgbaBuf,0,1,4,!0),e.styleBuf&&this._vaoAttr(P.a_style,e.styleBuf,0,1,4),u&&(this._vaoAttr(P.a_dash0,e._segmentDashOffsetBuf,0,1),this._vaoAttr(P.a_dashDir,e._segmentDashDirBuf,0,1))}),e.cBuf||r.vertexAttrib1f(P.a_cval,0),e.rgbaBuf||r.vertexAttrib4f(P.a_rgba,o,s,c,l),e.styleBuf||r.vertexAttrib4f(P.a_style,1,-1,-1,-1);let d=Math.max(0,Math.min(e.n,Math.ceil(e.n*(e._transitionReveal??1))));r.drawArraysInstanced(r.TRIANGLE_STRIP,0,4,d)}_segmentDash(e,t){let n=this.gl,r=e=>F(n,t,e),i=e.trace.style&&e.trace.style.dash,a=e._segmentCpu;if(!i||!i.length||!a)return n.uniform1i(r(`u_dashCount`),0),!1;let o=e.n,s=e._segmentDashOffsets?.length===o?e._segmentDashOffsets:e._segmentDashOffsets=new Float32Array(o),c=e._segmentDashDirections?.length===o?e._segmentDashDirections:e._segmentDashDirections=new Float32Array(o),l=Array(o),u=Array(o),d=new Float32Array(o),f=new Map,p=(e,t)=>{let n=f.get(e);n?n.push(t):f.set(e,[t])},m=(e,t)=>`${Math.round(e*1e3)},${Math.round(t*1e3)}`,h=this.dpr;for(let t=0;t<o;t++){let n=this._dataPx(e.xAxis,this._decodeValue(a.x0,e.x0Meta,t)),r=this._dataPx(e.xAxis,this._decodeValue(a.x1,e.x1Meta,t)),i=this._dataPx(e.yAxis,this._decodeValue(a.y0,e.y0Meta,t)),o=this._dataPx(e.yAxis,this._decodeValue(a.y1,e.y1Meta,t));l[t]=m(n,i),u[t]=m(r,o),d[t]=Math.hypot(r-n,o-i)*h,p(l[t],t),p(u[t],t)}let g=new Uint8Array(o),_=e=>{let t=e,n=0;for(;;){let e=(f.get(t)||[]).find(e=>!g[e]);if(e===void 0)break;g[e]=1,l[e]===t?(s[e]=n,c[e]=1,t=u[e]):(s[e]=n+d[e],c[e]=-1,t=l[e]),n+=d[e]}};for(let[e,t]of f)t.length===1&&_(e);for(let e=0;e<o;e++)g[e]||_(l[e]);let v=(e,t)=>e?(n.bindBuffer(n.ARRAY_BUFFER,e),n.bufferData(n.ARRAY_BUFFER,t,n.DYNAMIC_DRAW),e):this._upload(t);e._segmentDashOffsetBuf=v(e._segmentDashOffsetBuf,s),e._segmentDashDirBuf=v(e._segmentDashDirBuf,c);let y=new Float32Array(8),b=Math.min(i.length,8),x=0;for(let e=0;e<b;e++)y[e]=Number(i[e])*h,x+=y[e];return n.uniform1i(r(`u_dashCount`),b),n.uniform1fv(r(`u_dashArr`),y),n.uniform1f(r(`u_dashPeriod`),Math.max(x,.001)),!0}_drawMesh(e,t,n){if(e.n<1)return;let r=this.gl,i=this.meshProg;r.useProgram(i);let a=e=>F(r,i,e);r.uniform2f(a(`u_xmap`),t[0],t[1]),r.uniform2f(a(`u_ymap`),n[0],n[1]);for(let t of[`x0`,`x1`,`x2`])this._setAxisUniforms(i,`u_`+t,e[t+`Meta`],e.xAxis);for(let t of[`y0`,`y1`,`y2`])this._setAxisUniforms(i,`u_`+t,e[t+`Meta`],e.yAxis);r.uniform1i(a(`u_colorMode`),e.colorMode||0),r.uniform1f(a(`u_opacity`),this._fillOpacity(e.trace.style)),r.uniform4f(a(`u_color`),e.color[0],e.color[1],e.color[2],e.color[3]);let o=e.meshStroke||[0,0,0,0];r.uniform4f(a(`u_stroke`),o[0],o[1],o[2],o[3]),r.uniform1f(a(`u_strokeWidth`),e.meshStrokeWidth||0),r.uniform1i(a(`u_strokeMode`),+!!e.strokeBuf),r.uniform1f(a(`u_strokeOpacity`),this._strokeOpacity(e.trace.style)),e.colorMode&&e.lut&&(r.activeTexture(r.TEXTURE0),r.bindTexture(r.TEXTURE_2D,e.lut),r.uniform1i(a(`u_lut`),0));let s=[`x0`,`x1`,`x2`,`y0`,`y1`,`y2`].map(t=>e[t+`Buf`]._fcId);s.push(e.cBuf?e.cBuf._fcId:0,e.rgbaBuf?e.rgbaBuf._fcId:0,e.styleBuf?e.styleBuf._fcId:0,e.strokeBuf?e.strokeBuf._fcId:0),this._bindVao(e,`mesh`,s,()=>{for(let t of[`x0`,`x1`,`x2`,`y0`,`y1`,`y2`])this._vaoAttr(P[`a`+t],e[t+`Buf`],0,1);e.cBuf&&this._vaoAttr(P.a_cval,e.cBuf,0,1),e.rgbaBuf&&this._vaoAttr(P.a_rgba,e.rgbaBuf,0,1,4,!0),e.styleBuf&&this._vaoAttr(P.a_style,e.styleBuf,0,1,4),e.strokeBuf&&this._vaoAttr(P.a_stroke,e.strokeBuf,0,1,4,!0)}),e.cBuf||r.vertexAttrib1f(P.a_cval,0),e.rgbaBuf||r.vertexAttrib4f(P.a_rgba,...e.color),e.styleBuf||r.vertexAttrib4f(P.a_style,1,-1,-1,-1),e.strokeBuf||r.vertexAttrib4f(P.a_stroke,...o),r.drawArraysInstanced(r.TRIANGLES,0,3,e.n)}_lineDash(e){let t=this.gl,n=e=>F(t,this.lineProg,e),r=e.trace.style&&e.trace.style.dash;if(!r||!r.length||!e._dashX)return t.uniform1i(n(`u_dashCount`),0),!1;let i=e.n;(!e._lenArr||e._lenArr.length!==i)&&(e._lenArr=new Float32Array(i));let a=e._lenArr,o=this.dpr,s=this._dataPx(e.xAxis,this._decodeValue(e._dashX,e.xMeta,0)),c=this._dataPx(e.yAxis,this._decodeValue(e._dashY,e.yMeta,0)),l=0;a[0]=0;for(let t=1;t<i;t++){let n=this._dataPx(e.xAxis,this._decodeValue(e._dashX,e.xMeta,t)),r=this._dataPx(e.yAxis,this._decodeValue(e._dashY,e.yMeta,t));Number.isFinite(n)&&Number.isFinite(r)&&Number.isFinite(s)&&Number.isFinite(c)&&(l+=Math.hypot(n-s,r-c)*o),a[t]=l,s=n,c=r}e._lenBuf?(t.bindBuffer(t.ARRAY_BUFFER,e._lenBuf),t.bufferData(t.ARRAY_BUFFER,a,t.DYNAMIC_DRAW)):e._lenBuf=this._upload(a);let u=new Float32Array(8),d=0,f=Math.min(r.length,8);for(let e=0;e<f;e++)u[e]=r[e]*o,d+=u[e];return t.uniform1i(n(`u_dashCount`),f),t.uniform1fv(n(`u_dashArr`),u),t.uniform1f(n(`u_dashPeriod`),Math.max(d,.001)),!0}_drawArea(e,t,n,r){if(e.n<2)return;let i=this.gl,a=this.areaProg;i.useProgram(a);let o=e=>F(i,a,e);i.uniform2f(o(`u_xmap`),t[0],t[1]),i.uniform2f(o(`u_ymap`),n[0],n[1]),i.uniform2f(o(`u_bmap`),r[0],r[1]),this._setAxisUniforms(a,`u_x`,e.xMeta,e.xAxis),this._setAxisUniforms(a,`u_y`,e.yMeta,e.yAxis),this._setAxisUniforms(a,`u_b`,e.baseMeta,e.yAxis);let s=Math.max(0,Math.min(1,e._transitionReveal??1));i.uniform1f(o(`u_revealProgress`),s),i.uniform1f(o(`u_revealSegments`),e.n-1);let[c,l,u,d]=e.color;i.uniform4f(o(`u_color`),c,l,u,d*this._fillOpacity(e.trace.style,.35)*(e._transitionOpacity??1)),i.uniform2f(o(`u_res`),this.canvas.width,this.canvas.height),this._setGradientUniforms(a,e.grad),this._bindVao(e,`area`,[e.xBuf._fcId,e.yBuf._fcId,e.baseBuf._fcId],()=>{this._vaoAttr(P.ax0,e.xBuf,0,1),this._vaoAttr(P.ax1,e.xBuf,4,1),this._vaoAttr(P.ay0,e.yBuf,0,1),this._vaoAttr(P.ay1,e.yBuf,4,1),this._vaoAttr(P.ab0,e.baseBuf,0,1),this._vaoAttr(P.ab1,e.baseBuf,4,1)});let f=Math.max(0,Math.min(e.n-1,Math.ceil((e.n-1)*s)));i.drawArraysInstanced(i.TRIANGLE_STRIP,0,4,f)}_drawRects(e,t,n,r,i,a=[0,0,0,0]){if(!e.n)return;let o=this.gl,s=this.rectProg;o.useProgram(s);let c=e=>F(o,s,e);o.uniform2f(c(`u_x0map`),t[0],t[1]),o.uniform2f(c(`u_x1map`),n[0],n[1]),o.uniform2f(c(`u_y0map`),r[0],r[1]),o.uniform2f(c(`u_y1map`),i[0],i[1]),this._setAxisUniforms(s,`u_x0`,e.x0Meta,e.xAxis),this._setAxisUniforms(s,`u_x1`,e.x1Meta,e.xAxis),this._setAxisUniforms(s,`u_y0`,e.y0Meta,e.yAxis),this._setAxisUniforms(s,`u_y1`,e.y1Meta,e.yAxis),o.uniform1i(c(`u_xmode`),this._axisMode(e.xAxis)),o.uniform1i(c(`u_ymode`),this._axisMode(e.yAxis)),o.uniform4f(c(`u_edgePad`),a[0],a[1],a[2],a[3]);let[l,u,d,f]=e.color;o.uniform4f(c(`u_color`),l,u,d,f),o.uniform1f(c(`u_opacity`),this._fillOpacity(e.trace.style)*(e._transitionOpacity??1)),o.uniform1i(c(`u_colorMode`),e.colorMode||0),this._setRectStyleUniforms(s,e);let p=!!e.cBuf,m=!!e.rgbaBuf,h=!!e.styleBuf,g=!!e.strokeBuf,_=!!e.radiusBuf;p&&(o.activeTexture(o.TEXTURE0),o.bindTexture(o.TEXTURE_2D,e.lut),o.uniform1i(c(`u_lut`),0)),this._bindVao(e,`rects`,[e.x0Buf._fcId,e.x1Buf._fcId,e.y0Buf._fcId,e.y1Buf._fcId,p?e.cBuf._fcId:0,m?e.rgbaBuf._fcId:0,h?e.styleBuf._fcId:0,g?e.strokeBuf._fcId:0,_?e.radiusBuf._fcId:0],()=>{this._vaoAttr(P.ax0,e.x0Buf,0,1),this._vaoAttr(P.ax1,e.x1Buf,0,1),this._vaoAttr(P.ay0,e.y0Buf,0,1),this._vaoAttr(P.ay1,e.y1Buf,0,1),p&&this._vaoAttr(P.a_cval,e.cBuf,0,1),m&&this._vaoAttr(P.a_rgba,e.rgbaBuf,0,1,4,!0),h&&this._vaoAttr(P.a_style,e.styleBuf,0,1,4),g&&this._vaoAttr(P.a_stroke,e.strokeBuf,0,1,4,!0),_&&this._vaoAttr(P.a_radius,e.radiusBuf,0,1,2)}),p||o.vertexAttrib1f(P.a_cval,0),m||o.vertexAttrib4f(P.a_rgba,l,u,d,f),h||o.vertexAttrib4f(P.a_style,1,-1,-1,-1),g||o.vertexAttrib4f(P.a_stroke,...e.strokeColor||e.color),_||o.vertexAttrib2f(P.a_radius,-1,-1),o.drawArraysInstanced(o.TRIANGLE_STRIP,0,4,e.n)}_drawBars(e,t,n,r,i,a=0){if(!e.n)return;let o=this.gl,s=this.barProg;o.useProgram(s);let c=e=>F(o,s,e);o.uniform2f(c(`u_pmap`),t[0],t[1]),o.uniform2f(c(`u_v1map`),n[0],n[1]),o.uniform2f(c(`u_v0map`),r?r[0]:1,r?r[1]:0);let l=e.orientation===1?e.yAxis:e.xAxis,u=e.orientation===1?e.xAxis:e.yAxis;this._setAxisUniforms(s,`u_p`,e.posMeta,l),this._setAxisUniforms(s,`u_v1`,e.value1Meta,u),this._setAxisUniforms(s,`u_v0`,e.value0Meta,u),o.uniform1i(c(`u_pmode`),this._axisMode(l)),o.uniform1i(c(`u_vmode`),this._axisMode(u)),o.uniform1f(c(`u_width`),e.width),o.uniform1i(c(`u_orientation`),e.orientation),o.uniform1i(c(`u_v0Mode`),e.value0Mode),o.uniform1f(c(`u_v0Const`),i??0),o.uniform1f(c(`u_v0EdgePad`),a),o.uniform1f(c(`u_animationProgress`),e._transitionGrow??1);let d=!!(e._transitionPrevPosBuf&&e._transitionPrevValue1Buf&&e._transitionPrevValue0Buf);o.uniform1i(c(`u_transitionActive`),+!!d),o.uniform1f(c(`u_transitionProgress`),e._transitionPositionProgress??1),o.uniform1f(c(`u_prevWidth`),e._transitionPrevWidth??e.width);let[f,p,m,h]=e.color;o.uniform4f(c(`u_color`),f,p,m,h),o.uniform1f(c(`u_opacity`),this._fillOpacity(e.trace.style)*(e._transitionOpacity??1)),o.uniform1i(c(`u_colorMode`),e.colorMode||0),this._setRectStyleUniforms(s,e);let g=e.value0Mode===1&&e.value0Buf,_=!!e.cBuf,v=!!e.rgbaBuf,y=!!e.styleBuf,b=!!e.strokeBuf,x=!!e.radiusBuf;_&&(o.activeTexture(o.TEXTURE0),o.bindTexture(o.TEXTURE_2D,e.lut),o.uniform1i(c(`u_lut`),0)),this._bindVao(e,`bars`,[e.posBuf._fcId,e.value1Buf._fcId,g?e.value0Buf._fcId:0,_?e.cBuf._fcId:0,d?e._transitionPrevPosBuf._fcId:0,d?e._transitionPrevValue1Buf._fcId:0,d?e._transitionPrevValue0Buf._fcId:0,v?e.rgbaBuf._fcId:0,y?e.styleBuf._fcId:0,b?e.strokeBuf._fcId:0,x?e.radiusBuf._fcId:0],()=>{this._vaoAttr(P.a_pos,e.posBuf,0,1),this._vaoAttr(P.a_v1,e.value1Buf,0,1),g&&this._vaoAttr(P.a_v0,e.value0Buf,0,1),_&&this._vaoAttr(P.a_cval,e.cBuf,0,1),d&&(this._vaoAttr(P.a_prevx,e._transitionPrevPosBuf,0,1),this._vaoAttr(P.a_prevy,e._transitionPrevValue1Buf,0,1),this._vaoAttr(P.a_prevx1,e._transitionPrevValue0Buf,0,1)),v&&this._vaoAttr(P.a_rgba,e.rgbaBuf,0,1,4,!0),y&&this._vaoAttr(P.a_style,e.styleBuf,0,1,4),b&&this._vaoAttr(P.a_stroke,e.strokeBuf,0,1,4,!0),x&&this._vaoAttr(P.a_radius,e.radiusBuf,0,1,2)}),g||o.vertexAttrib1f(P.a_v0,0),_||o.vertexAttrib1f(P.a_cval,0),v||o.vertexAttrib4f(P.a_rgba,f,p,m,h),y||o.vertexAttrib4f(P.a_style,1,-1,-1,-1),b||o.vertexAttrib4f(P.a_stroke,...e.strokeColor||e.color),x||o.vertexAttrib2f(P.a_radius,-1,-1),o.drawArraysInstanced(o.TRIANGLE_STRIP,0,4,e.n)}_dataPxX(e){return this._dataPx(`x`,e)}_dataPxY(e){return this._dataPx(`y`,e)}_styleNumber(e,t,n){if(!e||typeof e!=`object`)return n;let r=Number(e[t]);return Number.isFinite(r)?r:n}_axisStyleNumber(e,t,n){return this._styleNumber(e&&e.style,t,n)}_axisStylePaint(e,t,n){let r=e&&typeof e.style==`object`?e.style:null;return w(this.root,r&&r[t],n)}_axisStyleValue(e,t){let n=e&&typeof e.style==`object`?e.style:null;return n&&Object.prototype.hasOwnProperty.call(n,t)?n[t]:void 0}_axisGridDash(e){let t=String(this._axisStyleValue(e,`grid_dash`)||`solid`);return t===`dashed`?[6,4]:t===`dotted`?[1,3]:t===`dashdot`?[6,3,1,3]:[]}_axisTickLabelStrategy(e){let t=String(e&&e.tick_label_strategy||`auto`).replace(/-/g,`_`);return[`auto`,`hide`,`rotate`,`stagger`,`none`,`off`].includes(t)?t:`auto`}_axisTickLabelAnchor(e){let t=e&&e.tick_label_anchor!==void 0?e.tick_label_anchor:this._axisStyleValue(e,`tick_label_anchor`);if(t==null)return null;let n=String(t).toLowerCase();return n===`start`||n===`left`?`start`:n===`end`||n===`right`?`end`:n===`center`||n===`middle`?`center`:null}_axisTickLabelAngle(e){let t=Number(e?e.tick_label_angle:void 0);return Number.isFinite(t)?t:null}_axisTickLabelMinGap(e,t){let n=Number(e?e.tick_label_min_gap:void 0);return Number.isFinite(n)&&n>=0?n:t===`x`?8:4}_estimateTickLabel(e,t){let n=String(e||``);return{w:Math.max(t*.7,n.length*t*.62),h:t*1.2}}_tickLabelExtent(e,t,n){let r=this._estimateTickLabel(e.text,n),i=Math.abs(Number(e.angle||0))*Math.PI/180;return t===`y`?Math.abs(Math.sin(i))*r.w+Math.abs(Math.cos(i))*r.h:Math.abs(Math.cos(i))*r.w+Math.abs(Math.sin(i))*r.h}_tickLabelsCollide(e,t,n,r,i=`center`){let a=new Map;for(let t of e){let e=Number(t.row||0);a.has(e)||a.set(e,[]),a.get(e).push(t)}for(let e of a.values()){if(e.sort((e,t)=>e.pos-t.pos),t===`x`&&i!==`center`){for(let t=1;t<e.length;t++){let a=e[t-1],o=e[t],s=o.pos-a.pos,c=Math.abs(Number(o.angle||0))*Math.PI/180;if(c){if(s*Math.sin(c)<n*1.2+r)return!0}else{let e=i===`end`?o:a;if(s<this._estimateTickLabel(e.text,n).w+r)return!0}}continue}let a=-1/0;for(let i of e){let e=this._tickLabelExtent(i,t,n),o=i.pos-e/2,s=i.pos+e/2;if(o<a+r)return!0;a=s}}return!1}_downsampleTickLabels(e,t,n,r,i=`center`){if(e.length<=1)return e;for(let a=2;a<=e.length;a++){let o=e.filter((e,t)=>t%a===0);if(!this._tickLabelsCollide(o,t,n,r,i))return o}return e.slice(0,1)}_layoutTickLabels(e,t,n){let r=this._axisTickLabelStrategy(e);if(r===`none`||r===`off`)return[];if(n.length<=1){let t=this._axisTickLabelAngle(e);return n.map(e=>({...e,angle:t===null?0:t,row:0}))}let i=Math.max(8,this._axisStyleNumber(e,`tick_label_size`,this._axisStyleNumber(e,`tick_size`,11))),a=this._axisTickLabelMinGap(e,t),o=t===`x`?this._axisTickLabelAnchor(e)??`center`:`center`,s=this._axisTickLabelAngle(e),c=s===null?0:s,l=n.map(e=>({...e,angle:c,row:0})),u=r;if(u===`auto`){if(!this._tickLabelsCollide(l,t,i,a,o))return l;u=t===`x`&&e.kind===`category`&&n.length<=16?`rotate`:t===`x`&&n.length<=24?`stagger`:`hide`}let d=l;if(u===`rotate`&&t===`x`){let t=s===null?e.side===`top`?35:-35:s;d=n.map(e=>({...e,angle:t,row:0}))}else u===`stagger`&&t===`x`&&(d=n.map((e,t)=>({...e,angle:c,row:t%2})));return this._tickLabelsCollide(d,t,i,a,o)&&(d=this._downsampleTickLabels(d,t,i,a,o)),d}_xTickLabelTransform(e,t){let n=Number(t||0),r=e&&e.side===`top`?`top`:`bottom`,i=this._axisTickLabelAnchor(e);if(i){let e=i===`end`?`-100%`:i===`start`?`0%`:`-50%`,t=i===`end`?`right`:i===`start`?`left`:`center`;return{transform:`translateX(${e}) rotate(${n}deg)`,origin:`${t} ${r===`top`?`bottom`:`top`}`}}if(n===0)return{transform:`translateX(-50%)`,origin:r===`top`?`bottom center`:`top center`};let a=r===`bottom`&&n<0||r===`top`&&n>0,o=r===`top`?`bottom`:`top`;return{transform:`${a?`translateX(-100%) `:``}rotate(${n}deg)`,origin:`${o} ${a?`right`:`left`}`}}_axisLabelCss(e,t,n){let r=e&&e.label_position,i=r!=null,a=e&&Number.isFinite(Number(e.label_offset)),o=e&&Number.isFinite(Number(e.label_angle));if(!i&&!a&&!o)return{css:n,style:null};if(r&&typeof r==`object`&&!Array.isArray(r))return{css:`font-weight:500;white-space:nowrap;`,style:r};let s=this.plot,c=String(i?r:`center`).replace(/-/g,`_`),l=c.startsWith(`inside_`),u=l?c.slice(7):c,d=a?Number(e.label_offset):0,f=e&&e.side,p=u===`start`?0:u===`end`?1:.5;if(t===`x`){let t=s.x+s.w*p,n=f===`top`?s.y-34:s.y+s.h+24,r=f===`top`?s.y+12:s.y+s.h-12;return{css:`left:${t}px;top:${(l?r:n)+(f===`top`?l?d:-d:l?-d:d)}px;transform:translateX(${u===`start`?0:u===`end`?-100:-50}%) rotate(${o?Number(e.label_angle):0}deg);transform-origin:center;font-weight:500;white-space:nowrap;`,style:null}}let m=f===`right`?s.x+s.w+40:10,h=f===`right`?s.x+s.w-12:s.x+12;return{css:`left:${(l?h:m)+(f===`right`?l?-d:d:l?d:-d)}px;top:${s.y+s.h*(1-p)}px;transform:translate(-50%,-50%) rotate(${o?Number(e.label_angle):f===`right`?90:-90}deg);transform-origin:center;font-weight:500;white-space:nowrap;`,style:null}}_drawChrome(){let e=this.spec,t=this.dpr,n=this.chrome.getContext(`2d`);n.setTransform(t,0,0,t,0,0),n.clearRect(0,0,this.size.w,this.size.h);let r=this._now(),i=this._viewAnim?80:0,a=i===0||this._lastLabelDraw===null||r-this._lastLabelDraw>=i;a&&(this.labels.textContent=``,this._lastLabelDraw=r);let o=this.plot;this.theme.bg&&(n.fillStyle=x(this.theme.bg),n.fillRect(o.x,o.y,o.w,o.h));let s=this._axis(`x`),c=this._axis(`y`),l=Object.values(this.axes).filter(e=>e&&e.id!==`x`&&String(e.id||``).startsWith(`x`)),u=Object.values(this.axes).filter(e=>e&&e.id!==`y`&&String(e.id||``).startsWith(`y`)),d=this._axisTickLabelStrategy(s)===`none`,f=this._axisTickLabelStrategy(c)===`none`,p=this._axisTicks(`x`,this._axisTickTarget(`x`,Math.max(3,o.w/(s.kind===`time`?90:80)))),m=this._axisTicks(`y`,this._axisTickTarget(`y`,Math.max(3,o.h/45))),h=e=>Math.min(o.x+o.w-.5,Math.max(o.x+.5,Math.round(e)+.5)),g=e=>Math.min(o.y+o.h-.5,Math.max(o.y+.5,Math.round(e)+.5));n.strokeStyle=this._axisStylePaint(s,`grid_color`,this.theme.grid),n.lineWidth=Math.max(.5,this._axisStyleNumber(s,`grid_width`,1)),n.globalAlpha=this._axisStyleNumber(s,`grid_opacity`,1),n.setLineDash(this._axisGridDash(s)),n.beginPath();for(let e of d?[]:p.ticks){let t=this._dataPx(`x`,e);if(!Number.isFinite(t))continue;let r=h(t);n.moveTo(r,o.y),n.lineTo(r,o.y+o.h)}n.stroke(),n.strokeStyle=this._axisStylePaint(c,`grid_color`,this.theme.grid),n.lineWidth=Math.max(.5,this._axisStyleNumber(c,`grid_width`,1)),n.globalAlpha=this._axisStyleNumber(c,`grid_opacity`,1),n.setLineDash(this._axisGridDash(c)),n.beginPath();for(let e of f?[]:m.ticks){let t=this._dataPx(`y`,e);if(!Number.isFinite(t))continue;let r=g(t);n.moveTo(o.x,r),n.lineTo(o.x+o.w,r)}n.stroke(),n.globalAlpha=1,n.setLineDash([]);let _=this.overlay.getContext(`2d`);if(_.setTransform(t,0,0,t,0,0),_.clearRect(0,0,this.size.w,this.size.h),this._drawAnnotationShapes(_),a){let t=(e,t,n,r,i,a=`axis_color`)=>{let o=document.createElement(`div`);o.style.cssText=`position:absolute;left:${t}px;top:${n}px;width:${r}px;height:${i}px;background:${this._axisStylePaint(e,a,this.theme.axis)};pointer-events:none;`,this.labels.appendChild(o)},n=Array.isArray(e.frame_sides)?e.frame_sides:[s.side||`bottom`,c.side||`left`];if(!f){let e=Math.max(1,this._axisStyleNumber(c,`axis_width`,1));n.includes(`left`)&&t(c,o.x,o.y,e,o.h),n.includes(`right`)&&t(c,o.x+o.w-e,o.y,e,o.h)}if(!d){let e=Math.max(1,this._axisStyleNumber(s,`axis_width`,1));n.includes(`top`)&&t(s,o.x,o.y,o.w,e),n.includes(`bottom`)&&t(s,o.x,o.y+o.h-e,o.w,e)}for(let e of l){if(this._axisTickLabelStrategy(e)===`none`)continue;let n=Math.max(1,this._axisStyleNumber(e,`axis_width`,1)),r=e.side===`top`?o.y:o.y+o.h-n;t(e,o.x,r,o.w,n)}for(let e of u){if(this._axisTickLabelStrategy(e)===`none`)continue;let n=Math.max(1,this._axisStyleNumber(e,`axis_width`,1));t(e,e.side===`left`?o.x:o.x+o.w-n,o.y,n,o.h)}let r=e=>{let t=Math.max(0,this._axisStyleNumber(e,`tick_length`,0)),n=Math.max(.5,this._axisStyleNumber(e,`tick_width`,1)),r=String(this._axisStyleValue(e,`tick_direction`)||`out`);return r===`in`?{inward:t,outward:0,width:n}:r===`inout`?{inward:t/2,outward:t/2,width:n}:{inward:0,outward:t,width:n}};if(!d){let e=r(s),n=s.side||`bottom`,i=n===`top`?o.y:o.y+o.h;for(let r of p.ticks){let a=this._dataPx(`x`,r);if(!Number.isFinite(a)||a<o.x-1||a>o.x+o.w+1)continue;let c=n===`top`?i-e.outward:i-e.inward;t(s,a-e.width/2,c,e.width,e.inward+e.outward,`tick_color`)}}if(!f){let e=r(c),n=c.side||`left`,i=n===`right`?o.x+o.w:o.x;for(let r of m.ticks){let a=this._dataPx(`y`,r);!Number.isFinite(a)||a<o.y-1||a>o.y+o.h+1||t(c,n===`right`?i-e.inward:i-e.outward,a-e.width/2,e.inward+e.outward,e.width,`tick_color`)}}for(let e of l){if(this._axisTickLabelStrategy(e)===`none`)continue;let n=this._axisTicks(e.id,this._axisTickTarget(e.id,Math.max(3,o.w/(e.kind===`time`?90:80)))),i=r(e),a=e.side||`bottom`,s=a===`top`?o.y:o.y+o.h;for(let r of n.ticks){let n=this._dataPx(e.id,r);if(!Number.isFinite(n)||n<o.x-1||n>o.x+o.w+1)continue;let c=a===`top`?s-i.outward:s-i.inward;t(e,n-i.width/2,c,i.width,i.inward+i.outward,`tick_color`)}}for(let e of u){if(this._axisTickLabelStrategy(e)===`none`)continue;let n=this._axisTicks(e.id,this._axisTickTarget(e.id,Math.max(3,o.h/45))),i=r(e),a=e.side||`right`,s=a===`right`?o.x+o.w:o.x;for(let r of n.ticks){let n=this._dataPx(e.id,r);!Number.isFinite(n)||n<o.y-1||n>o.y+o.h+1||t(e,a===`right`?s-i.inward:s-i.outward,n-i.width/2,i.inward+i.outward,i.width,`tick_color`)}}}let v=(e,t,n,r=`tick`,i=null)=>{if(!a)return;let o=document.createElement(`div`);o.textContent=e,o.dataset.xyLabelKind=r,o.dataset.xyAxis=n&&n.id!==void 0?String(n.id):``,o.dataset.xyAxisSide=n&&n.side?String(n.side):``;let s=r===`label`?`label_color`:this._axisStyleValue(n,`tick_label_color`)===void 0?`tick_color`:`tick_label_color`,c=r===`label`?`label_size`:this._axisStyleValue(n,`tick_label_size`)===void 0?`tick_size`:`tick_label_size`,l=``;this._axisStyleValue(n,s)!==void 0&&(l=`color:${this._axisStylePaint(n,s,this.theme.label)};`);let u=``;this._axisStyleValue(n,c)!==void 0&&(u=`font-size:${Math.max(8,this._axisStyleNumber(n,c,11))}px;`),o.style.cssText=`position:absolute;line-height:1.2;white-space:nowrap;${l}${u}${t}`,this._applySlot(o,r===`label`?`axis_title`:`tick_label`),this._applyStyle(o,i),this.labels.appendChild(o)},y=[];for(let e of p.labels||p.ticks){let t=this._dataPx(`x`,e);if(t<o.x-1||t>o.x+o.w+1)continue;let n=this._axisTickText(s,e,p.step);y.push({pos:t,text:n})}let b=this._axisStyleNumber(s,`tick_label_size`,this._axisStyleNumber(s,`tick_size`,11));for(let e of this._layoutTickLabels(s,`x`,y)){let t=Number(e.row||0)*(Math.max(8,b)+4),n=s.side===`top`?o.y-18-t:o.y+o.h+6+t,r=this._xTickLabelTransform(s,e.angle);v(e.text,`left:${e.pos}px;top:${n}px;transform:${r.transform};transform-origin:${r.origin};`,s)}for(let e of l){let t=this._axisTicks(e.id,this._axisTickTarget(e.id,Math.max(3,o.w/(e.kind===`time`?90:80)))),n=[];for(let r of t.labels||t.ticks){let i=this._dataPx(e.id,r);i<o.x-1||i>o.x+o.w+1||n.push({pos:i,text:this._axisTickText(e,r,t.step)})}for(let t of this._layoutTickLabels(e,`x`,n)){let n=this._axisStyleNumber(e,`tick_label_size`,this._axisStyleNumber(e,`tick_size`,11)),r=Number(t.row||0)*(Math.max(8,n)+4),i=e.side===`top`?o.y-18-r:o.y+o.h+6+r,a=this._xTickLabelTransform(e,t.angle);v(t.text,`left:${t.pos}px;top:${i}px;transform:${a.transform};transform-origin:${a.origin};`,e)}if(e.label&&this._axisTickLabelStrategy(e)!==`none`){let t=e.side===`top`?o.y-34:o.y+o.h+24,n=`left:${o.x+o.w/2}px;top:${t}px;transform:translateX(-50%);font-weight:500;`,r=this._axisLabelCss(e,`x`,n);v(e.label,r.css,e,`label`,r.style)}}let S=[];for(let e of m.labels||m.ticks){let t=this._dataPx(`y`,e);if(t<o.y-1||t>o.y+o.h+1)continue;let n=this._axisTickText(c,e,m.step);S.push({pos:t,text:n})}let C=(e,t,n)=>{let r=t?o.x+o.w+8:o.x-8,i=this._axisTickLabelAnchor(e)??(t?`start`:`end`),a=i===`end`?`-100%`:i===`start`?`0%`:`-50%`,s=i===`end`?`right`:i===`start`?`left`:`center`;return`left:${r}px;top:${n.pos}px;transform:translate(${a},-50%) rotate(${Number(n.angle||0)}deg);transform-origin:${s} center;`};for(let e of this._layoutTickLabels(c,`y`,S))v(e.text,C(c,c.side===`right`,e),c);for(let e of u){let t=this._axisTicks(e.id,this._axisTickTarget(e.id,Math.max(3,o.h/45))),n=[];for(let r of t.labels||t.ticks){let i=this._dataPx(e.id,r);if(i<o.y-1||i>o.y+o.h+1)continue;let a=this._axisTickText(e,r,t.step);n.push({pos:i,text:a})}for(let t of this._layoutTickLabels(e,`y`,n))v(t.text,C(e,e.side!==`left`,t),e);if(e.label&&this._axisTickLabelStrategy(e)!==`none`){let t=e.side===`left`?`left:10px;top:${o.y+o.h/2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`:`left:${o.x+o.w+40}px;top:${o.y+o.h/2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`,n=this._axisLabelCss(e,`y`,t);v(e.label,n.css,e,`label`,n.style)}}if(e.x_axis.label&&!d){let t=s.side===`top`?o.y-34:o.y+o.h+24,n=`left:${o.x+o.w/2}px;top:${t}px;transform:translateX(-50%);font-weight:500;`,r=this._axisLabelCss(s,`x`,n);v(e.x_axis.label,r.css,s,`label`,r.style)}if(e.y_axis.label&&!f){let t=c.side===`right`?`left:${o.x+o.w+40}px;top:${o.y+o.h/2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`:`left:10px;top:${o.y+o.h/2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`,n=this._axisLabelCss(c,`y`,t);v(e.y_axis.label,n.css,c,`label`,n.style)}this._drawAnnotationLabels(a)}_interactionTransitionActive(){let e=e=>e!=null;return!!this._viewAnim||this.gpuTraces.some(t=>e(t._densityFadeStart)||e(t._densitySwitchFadeStart)||e(t._drillFadeStart)||e(t._drillExitFadeStart)||!!t._densityNormAnim)}_renderPick(){let e=this.gl;(this._pickW!==this.canvas.width||this._pickH!==this.canvas.height)&&this._allocPickTex(),e.bindFramebuffer(e.FRAMEBUFFER,this.pickFbo),e.viewport(0,0,this.canvas.width,this.canvas.height),e.disable(e.BLEND),e.clearColor(0,0,0,0),e.clear(e.COLOR_BUFFER_BIT);let{x0:t,x1:n,y0:r,y1:i}=this.view,a=this.pickProg;e.useProgram(a);let o=t=>F(e,a,t);e.uniform1f(o(`u_dpr`),this.dpr);let s=1;for(let t of this.gpuTraces){let n=t.tier===`density`?t.drill&&!t._drillDying&&this._viewInside(t.drill.win)?t.drill:null:q(t.trace.kind).pointPick?t:null;if(!n||!n.n||s+n.n>2147483647){t.pickBase=-1,t.pickCount=0;continue}let[r,i]=this._axisRange(n.xAxis||t.xAxis),[c,l]=this._axisRange(n.yAxis||t.yAxis),u=this._map(n.xMeta,r,i,n.xAxis||t.xAxis),d=this._map(n.yMeta,c,l,n.yAxis||t.yAxis);e.uniform2f(o(`u_xmap`),u[0],u[1]),e.uniform2f(o(`u_ymap`),d[0],d[1]),this._setAxisUniforms(a,`u_x`,n.xMeta,n.xAxis||t.xAxis),this._setAxisUniforms(a,`u_y`,n.yMeta,n.yAxis||t.yAxis),e.uniform1f(o(`u_size`),n.size),e.uniform1i(o(`u_sizeMode`),n.sizeMode),e.uniform2f(o(`u_sizeRange`),n.sizeRange[0],n.sizeRange[1]);let f=!!(n._transitionPrevXBuf&&n._transitionPrevYBuf);e.uniform1i(o(`u_transitionActive`),+!!f),e.uniform1f(o(`u_transitionProgress`),n._transitionPositionProgress??1),e.uniform1i(o(`u_pick_base`),s),t.pickBase=s,t.pickCount=n.n;let p=n.sizeMode===1&&n.sBuf;this._bindVao(n,`pick`,[n.xBuf._fcId,n.yBuf._fcId,p?n.sBuf._fcId:0,f?n._transitionPrevXBuf._fcId:0,f?n._transitionPrevYBuf._fcId:0],()=>{this._vaoAttr(P.ax,n.xBuf,0,0),this._vaoAttr(P.ay,n.yBuf,0,0),p&&this._vaoAttr(P.a_sval,n.sBuf,0,0),f&&(this._vaoAttr(P.a_prevx,n._transitionPrevXBuf,0,0),this._vaoAttr(P.a_prevy,n._transitionPrevYBuf,0,0))}),p||e.vertexAttrib1f(P.a_sval,.5),e.drawArrays(e.POINTS,0,n.n),s+=n.n}e.enable(e.BLEND),e.bindFramebuffer(e.FRAMEBUFFER,null),this._pickDirty=!1}_pickAt(e,t){if(!this._pickable||this._glLost||!this.gl||this.gl.isContextLost())return null;if(this._pickDirty)try{this._renderPick()}catch(e){if(!this.gl||this.gl.isContextLost())return null;throw e}let n=this.gl,r=Math.round(e*this.dpr),i=Math.round((this.plot.h-t)*this.dpr);if(r<0||i<0||r>=this.canvas.width||i>=this.canvas.height)return null;let a=new Uint8Array(4);n.bindFramebuffer(n.FRAMEBUFFER,this.pickFbo),n.readPixels(r,i,1,1,n.RGBA,n.UNSIGNED_BYTE,a),n.bindFramebuffer(n.FRAMEBUFFER,null);let o=a[0]+a[1]*256+a[2]*65536+a[3]*16777216;if(o===0)return null;let s=this.gpuTraces.find(e=>e.pickBase>0&&o>=e.pickBase&&o<e.pickBase+e.pickCount);return s?{trace:s.trace.id,index:o-s.pickBase,g:s}:null}_decodeValue(e,t,n){return!e||!t||n<0||n>=e.length?NaN:e[n]/(t.scale||1)+t.offset}_dataFromCanvas(e,t,n=`x`,r=`y`){let[i,a]=this._axisRange(n),[o,s]=this._axisRange(r),c=this._axis(n),l=this._axis(r),u=this._axisCoord(c,i),d=this._axisCoord(c,a),f=this._axisCoord(l,o),p=this._axisCoord(l,s);return[u,d,f,p].every(Number.isFinite)?[this._axisValue(c,u+e/this.plot.w*(d-u)),this._axisValue(l,p-t/this.plot.h*(p-f))]:[NaN,NaN]}_nearestCpuIndex(e,t){let n=e&&e._cpu;if(!n||!n.x||!n.x.length)return-1;let r=n.xMeta||e.xMeta,i=this._axis(e.xAxis),a=this._axisCoord(i,t),o=-1,s=1/0,c=Math.min(n.x.length,e.n||n.x.length);for(let t=0;t<c;t++){let c=e._transitionPrevXValues,l=e._transitionPositionProgress,u=(c&&Number.isFinite(l)?c[t]+(n.x[t]-c[t])*l:n.x[t])/(r.scale||1)+r.offset,d=Math.abs(this._axisCoord(i,u)-a);d<s&&(s=d,o=t)}return o}_hoverAt(e,t){let n=null;for(let r of this.gpuTraces){if(r.tier===`density`)continue;let[i,a]=this._dataFromCanvas(e,t,r.xAxis,r.yAxis);if(!Number.isFinite(i)||!Number.isFinite(a))continue;if(r.heatmap&&r._cpuHeatmap){let e=this._heatmapHover(r,i,a);if(e)return e;continue}if(r.trace.bar&&r._cpu){let e=this._barHover(r,i,a);if(e)return e;continue}if(r._cpuRect){let e=this._rectHover(r,i,a);if(e)return e;continue}if(!r._cpu||!r._cpu.x||!r._cpu.y)continue;let o=this._nearestCpuIndex(r,i);if(o<0)continue;let s=r._transitionPositionProgress,c=r._transitionPrevXValues&&Number.isFinite(s)?r._transitionPrevXValues[o]+(r._cpu.x[o]-r._transitionPrevXValues[o])*s:r._cpu.x[o],l=r._transitionPrevYValues&&Number.isFinite(s)?r._transitionPrevYValues[o]+(r._cpu.y[o]-r._transitionPrevYValues[o])*s:r._cpu.y[o],u=c/(r._cpu.xMeta.scale||1)+r._cpu.xMeta.offset,d=l/(r._cpu.yMeta.scale||1)+r._cpu.yMeta.offset,f=this._dataPx(r.xAxis,u)-this.plot.x,p=this._dataPx(r.yAxis,d)-this.plot.y,m=Math.hypot(f-e,p-t);m<=12&&(!n||m<n.dist)&&(n={trace:r.trace.id,index:o,g:r,dist:m,synthetic:!0})}return n}_barHover(e,t,n){let r=e._cpu,i=e.orientation===1,a=Math.min(r.x.length,r.y.length,e.n||r.x.length);for(let o=0;o<a;o++){let a=this._decodeValue(r.x,r.xMeta,o),s=this._decodeValue(r.y,r.yMeta,o),c=e.value0Mode===1&&r.value0?this._decodeValue(r.value0,e.value0Meta,o):e.value0Const,l=Math.min(c??0,i?a:s),u=Math.max(c??0,i?a:s);if(i){if(t>=l&&t<=u&&Math.abs(n-s)<=e.width/2)return{trace:e.trace.id,index:o,g:e,synthetic:!0}}else if(Math.abs(t-a)<=e.width/2&&n>=l&&n<=u)return{trace:e.trace.id,index:o,g:e,synthetic:!0}}return null}_rectHover(e,t,n){let r=e._cpuRect,i=Math.min(r.x0.length,r.x1.length,r.y0.length,r.y1.length,e.n||r.x0.length);for(let a=0;a<i;a++){let i=this._decodeValue(r.x0,r.x0Meta,a),o=this._decodeValue(r.x1,r.x1Meta,a),s=this._decodeValue(r.y0,r.y0Meta,a),c=this._decodeValue(r.y1,r.y1Meta,a);if(t>=Math.min(i,o)&&t<=Math.max(i,o)&&n>=Math.min(s,c)&&n<=Math.max(s,c))return{trace:e.trace.id,index:a,g:e,synthetic:!0}}return null}_heatmapHover(e,t,n){let r=e.heatmap;if(!r||!e._cpuHeatmap)return null;let[i,a]=r.xRange,[o,s]=r.yRange;if(t<i||t>a||n<o||n>s)return null;let[c,l]=this._axisRange(e.xAxis)??[this.view.x0,this.view.x1],[u,d]=this._axisRange(e.yAxis)??[this.view.y0,this.view.y1],f=(c??this.view.x0)>(l??this.view.x1)?a-t:t-i,p=(u??this.view.y0)>(d??this.view.y1)?s-n:n-o,m=Math.min(r.w-1,Math.max(0,Math.floor(f/(a-i)*r.w))),h=Math.min(r.h-1,Math.max(0,Math.floor(p/(s-o)*r.h)));return{trace:e.trace.id,index:h*r.w+m,g:e,heatmap:{row:h,col:m},synthetic:!0}}_drawKeepPick(){this.draw(!0)}_hover(e){if(this._a11yKeyboardReadout=null,this._interactionTransitionActive()){let e=this._hoverId!==-1;this._hoverId=-1,this._hoverTarget=null,this._lastHoverXY=null,this._pickSeq=(this._pickSeq||0)+1,this._hideTooltip(),e&&this.draw();return}let t=this.canvas.getBoundingClientRect(),n=e.clientX-t.left,r=e.clientY-t.top,i=this._pickAt(n,r)||this._hoverAt(n,r);if(!i){let e=this._hoverId!==-1;this._hoverId=-1,this._hoverTarget=null,this._lastHoverXY=null,this._pickSeq=(this._pickSeq||0)+1,this._hideTooltip(),e&&this._drawKeepPick();return}let a=i.trace*1e9+i.index;if(this._lastHoverXY={clientX:e.clientX,clientY:e.clientY},a===this._hoverId){this._tooltipAnchor||this._renderTooltip(this._lastRow,e.clientX,e.clientY);return}this._hoverId=a,this._hoverTarget=i,this._showTooltip(i,e.clientX,e.clientY),this._drawKeepPick()}_asF32(e){return e instanceof ArrayBuffer?new Float32Array(e):e.byteOffset%4==0?new Float32Array(e.buffer,e.byteOffset,Math.floor(e.byteLength/4)):new Float32Array(e.buffer.slice(e.byteOffset,e.byteOffset+e.byteLength))}_asU8(e){return e instanceof ArrayBuffer?new Uint8Array(e):new Uint8Array(e.buffer,e.byteOffset,e.byteLength)}_asU32(e){return e instanceof ArrayBuffer?new Uint32Array(e):e.byteOffset%4==0?new Uint32Array(e.buffer,e.byteOffset,Math.floor(e.byteLength/4)):new Uint32Array(e.buffer.slice(e.byteOffset,e.byteOffset+e.byteLength))}_applyTheme(){this.theme=b(this.root),this._themeStale=!this.root.isConnected;for(let e of this.gpuTraces)q(e.trace.kind).refreshColor?.(this,e)}refreshTheme(){this._destroyed||(this._applyTheme(),this.draw())}_healStaleTheme(){return!this._themeStale||!this.root.isConnected?!1:(this._applyTheme(),!0)}destroy(){if(this._destroyed)return;this._destroyed=!0,this._dataAnim&&this._emitAnimationLifecycle?.(`end`,this._dataAnim.phase,{cancelled:!0}),X.unregister(this),this._ctxIo?.disconnect(),this._ctxIo=null,clearTimeout(this._ctxRecoveryTimer),this._ctxRecoveryTimer=null,clearTimeout(this._rebinTimer),this._rebinWorker&&=(this._rebinWorker.terminate(),this._rebinWorker._fcUrl&&URL.revokeObjectURL(this._rebinWorker._fcUrl),null),this._ro?.disconnect(),this._io?.disconnect(),this._io=null,this._themeWatch?.removeEventListener?.(`change`,this._onScheme),this._themeMutationObserver?.disconnect(),this._themeMutationObserver=null,this._dprMq?.removeEventListener?.(`change`,this._onDprChange),this._dprMq=null,this._unsubscribeComm?.(),this._unsubscribeComm=null;for(let{target:e,type:t,handler:n,options:r}of this._listeners.splice(0))e.removeEventListener(t,n,r);clearTimeout(this._viewTimer),this._viewTimer=null,this._viewEventRaf&&cancelAnimationFrame(this._viewEventRaf),this._viewEventRaf=null,this._wheelZoomRaf&&cancelAnimationFrame(this._wheelZoomRaf),this._wheelZoomRaf=null,this._pendingWheelZoom=null,clearTimeout(this._wheelZoomEndTimer),this._wheelZoomEndTimer=null,this._wheelGesture=null,this._linkChannel?.close?.(),this._linkChannel=null,this._raf&&cancelAnimationFrame(this._raf),this._raf=null,this._resizeRaf&&cancelAnimationFrame(this._resizeRaf),this._resizeRaf=null,this._pendingResize=null,this._resizeNeedsMeasure=!1,this._cancelViewAnimation(),this._dataAnimRaf&&cancelAnimationFrame(this._dataAnimRaf),this._dataAnimRaf=null,this._dataAnim=null,this._destroyTransitionOldTraces?.(),this._destroyGlResources();let e=this.gl&&this.gl.getExtension(`WEBGL_lose_context`);e&&e.loseContext(),this.gl=null,this.root.remove()}_deleteBuffers(e,t){let n=this.gl;if(!n||!e)return;let r=new Set;for(let i of t){let t=e[i];t&&!r.has(t)&&(r.add(t),n.deleteBuffer(t)),e[i]=null}}_destroyTraceResources(e,t){if(!e)return;this._destroyDensitySample(e),this._deleteVaos(e),this._deleteVaos(e.drill),this._deleteBuffers(e,[`xBuf`,`yBuf`,`cBuf`,`sBuf`,`selBuf`,`baseBuf`,`x0Buf`,`x1Buf`,`x2Buf`,`y0Buf`,`y1Buf`,`y2Buf`,`posBuf`,`value1Buf`,`value0Buf`,`_transitionPrevXBuf`,`_transitionPrevYBuf`,`_transitionPrevPosBuf`,`_transitionPrevValue1Buf`,`_transitionPrevValue0Buf`]),this._deleteBuffers(e.drill,[`xBuf`,`yBuf`,`cBuf`,`sBuf`,`selBuf`,`dBuf`]);let n=[];e.heatmap&&n.push(e.heatmap.tex);for(let t of e.densityCache||[])n.push(t&&t.tex);e.density&&n.push(e.density.tex),e._shownDensity&&n.push(e._shownDensity.tex);for(let e of n)e&&!t.has(e)&&(t.add(e),this.gl.deleteTexture(e));e.drill=null,e.density=null,e._shownDensity=null,e.densityCache=[],e.heatmap=null,e._cpu=null}_destroyGlResources(){let e=this.gl;if(!e)return;let t=new Set;for(let e of this.gpuTraces||[])this._destroyTraceResources(e,t);for(let n of this._lutCache.values())n&&!t.has(n)&&(t.add(n),e.deleteTexture(n));this._lutCache.clear(),this.pickFbo&&e.deleteFramebuffer(this.pickFbo),this.pickTex&&!t.has(this.pickTex)&&e.deleteTexture(this.pickTex),this.pickFbo=null,this.pickTex=null,this.quad&&e.deleteBuffer(this.quad),this.quad=null,this.quadVao&&e.deleteVertexArray(this.quadVao),this.quadVao=null;for(let t of this._progCache?this._progCache.values():[])t&&e.deleteProgram(t);this._progCache&&this._progCache.clear(),this._glPrograms=this._progCache,this.gpuTraces=[]}},lt=new Set([`color`,`label_color`,`label_opacity`,`opacity`,`width`,`head_size`,`head_style`,`tail_style`,`shaft_width_start`,`shaft_width_end`,`curve`,`angle_a`,`angle_b`,`gap_start`,`gap_end`,`start_offset`,`label_clear`,`dash`,`span_start`,`span_end`,`size`,`symbol`,`stroke_color`,`stroke_width`,`coordinate_space`]);function ut(e,t){if(typeof e.label_clear!=`string`)return 0;let n=e.label_clear.split(`,`).map(Number);if(n.length!==4||n.some(e=>!Number.isFinite(e)||e<0))return 0;let[r,i,a,o]=n,[s,c]=t,l=s>1e-9?i/s:s<-1e-9?r/-s:1/0,u=c>1e-9?o/c:c<-1e-9?a/-c:1/0,d=Math.min(l,u);return Number.isFinite(d)?d:0}function dt(e,t,n,r,i){let a=e=>Number.isFinite(Number(e))?Number(e):null;if(typeof i.start_offset==`string`){let n=i.start_offset.split(`,`).map(Number);n.length===2&&n.every(Number.isFinite)&&(e+=n[0],t+=n[1])}let o=a(i.angle_a),s=a(i.angle_b),c=a(i.curve),l=null,u=null;if(o!==null&&s!==null){let i=-o*Math.PI/180,a=-s*Math.PI/180,c=Math.cos(i)*Math.sin(a)-Math.sin(i)*Math.cos(a);if(Math.abs(c)>1e-6){let o=((n-e)*Math.sin(a)-(r-t)*Math.cos(a))/c;l=e+o*Math.cos(i),u=t+o*Math.sin(i)}}else if(c){let i=n-e,a=r-t;l=(e+n)/2+c*a,u=(t+r)/2-c*i}let d=(e,t,n,r)=>{let i=Math.hypot(n-e,r-t)||1;return[(n-e)/i,(r-t)/i]},f=l===null?d(e,t,n,r):d(e,t,l,u),p=l===null?d(n,r,e,t):d(n,r,l,u),m=Math.max(0,a(i.gap_start)||0,ut(i,f)),h=Math.max(0,a(i.gap_end)||0),g=Math.hypot(n-e,r-t),_=m+h<g*.9,v=_?[e+m*f[0],t+m*f[1]]:[e,t],y=_?[n+h*p[0],r+h*p[1]]:[n,r],b=l===null?d(v[0],v[1],y[0],y[1]):d(l,u,y[0],y[1]),x=l===null?d(y[0],y[1],v[0],v[1]):d(l,u,v[0],v[1]);return{p0:v,p1:y,control:l===null?null:[l,u],dir0:x,dir1:b}}function ft(e,t=24){let[n,r]=e.p0,[i,a]=e.p1;if(!e.control)return[[n,r],[i,a]];let[o,s]=e.control,c=[];for(let e=0;e<=t;e++){let l=e/t,u=1-l;c.push([u*u*n+2*u*l*o+l*l*i,u*u*r+2*u*l*s+l*l*a])}return c}function pt(e,t){if(!(t>0)||e.length<2)return e;let n=e.slice(),r=t;for(;n.length>=2;){let[e,t]=n[n.length-2],[i,a]=n[n.length-1],o=Math.hypot(i-e,a-t);if(o>r){let s=1-r/o;return n[n.length-1]=[e+s*(i-e),t+s*(a-t)],n}r-=o,n.pop()}return n}function mt(e,t,n){let r=[],i=[],a=e.length;for(let o=0;o<a;o++){let[s,c]=e[o],[l,u]=e[Math.max(0,o-1)],[d,f]=e[Math.min(a-1,o+1)],p=Math.hypot(d-l,f-u)||1,m=-(f-u)/p,h=(d-l)/p,g=(t+(n-t)*(o/Math.max(1,a-1)))/2;r.push([s+g*m,c+g*h]),i.push([s-g*m,c-g*h])}return r.concat(i.reverse())}Object.assign(Z.prototype,{_annotationPaint(e,t){return w(this.root,e&&e.color,t)},_annotationLabelPaint(e,t){return w(this.root,e&&(e.label_color||e.color),t)},_annotationStrokePaint(e,t){return w(this.root,e&&e.stroke_color,t)},_drawAnnotationMarker(e,t,n,r,i){if(!Number.isFinite(t)||!Number.isFinite(n))return;let a=Math.max(1,this._styleNumber(r,`size`,Number(i.size)||8)/2),o=[`circle`,`square`,`diamond`,`cross`].includes(i.symbol)?i.symbol:`circle`;if(e.save(),e.globalAlpha=this._styleNumber(r,`opacity`,1),e.fillStyle=this._annotationPaint(r,[.15,.39,.92,1]),e.strokeStyle=o===`cross`?this._annotationPaint(r,[.15,.39,.92,1]):this._annotationStrokePaint(r,[1,1,1,1]),e.lineWidth=Math.max(0,this._styleNumber(r,`stroke_width`,1.5)),e.beginPath(),o===`square`)e.rect(t-a,n-a,a*2,a*2);else if(o===`diamond`)e.moveTo(t,n-a),e.lineTo(t+a,n),e.lineTo(t,n+a),e.lineTo(t-a,n),e.closePath();else if(o===`cross`){e.moveTo(t-a,n),e.lineTo(t+a,n),e.moveTo(t,n-a),e.lineTo(t,n+a),e.stroke(),e.restore();return}else e.arc(t,n,a,0,Math.PI*2);e.fill(),e.lineWidth>0&&e.stroke(),e.restore()},_drawArrowLine(e,t,n,r,i,a){if(![t,n,r,i].every(Number.isFinite))return;let o=dt(t,n,r,i,a);e.save(),e.globalAlpha=this._styleNumber(a,`opacity`,1),e.strokeStyle=this._annotationPaint(a,[.4,.44,.52,1]),e.fillStyle=e.strokeStyle,e.lineWidth=Math.max(.5,this._styleNumber(a,`width`,1.5)),e.setLineDash(Array.isArray(a.dash)?a.dash:typeof a.dash==`string`?a.dash.split(`,`).map(Number):[]);let s=Number(a.shaft_width_start),c=Number(a.shaft_width_end),l=a.head_style||`triangle`,u=Math.max(4,this._styleNumber(a,`head_size`,8));if(Number.isFinite(s)||Number.isFinite(c)){let t=ft(o);l===`triangle`&&(t=pt(t,u*Math.cos(Math.PI/6)));let n=mt(t,Number.isFinite(s)?s:1,Number.isFinite(c)?c:1);e.beginPath(),e.moveTo(n[0][0],n[0][1]);for(let t=1;t<n.length;t++)e.lineTo(n[t][0],n[t][1]);e.closePath(),e.fill()}else e.beginPath(),e.moveTo(o.p0[0],o.p0[1]),o.control?e.quadraticCurveTo(o.control[0],o.control[1],o.p1[0],o.p1[1]):e.lineTo(o.p1[0],o.p1[1]),e.stroke();this._drawArrowEnd(e,o.p1,o.dir1,l,u),this._drawArrowEnd(e,o.p0,o.dir0,a.tail_style||`none`,u),e.restore()},_drawArrowEnd(e,t,n,r,i){if(r===`none`)return;let[a,o]=t,s=Math.atan2(n[1],n[0]);if(e.beginPath(),r===`bar`){e.moveTo(a-i/2*Math.sin(s),o+i/2*Math.cos(s)),e.lineTo(a+i/2*Math.sin(s),o-i/2*Math.cos(s)),e.stroke();return}let c=e=>[a-i*Math.cos(s-e*Math.PI/6),o-i*Math.sin(s-e*Math.PI/6)],[l,u]=c(1),[d,f]=c(-1);if(r===`v`){e.moveTo(l,u),e.lineTo(a,o),e.lineTo(d,f),e.stroke();return}e.moveTo(a,o),e.lineTo(l,u),e.lineTo(d,f),e.closePath(),e.fill()},_drawAnnotationShapes(e){let t=Array.isArray(this.spec.annotations)?this.spec.annotations:[];if(!t.length)return;let n=this.plot;e.save(),e.beginPath(),e.rect(n.x,n.y,n.w,n.h),e.clip();for(let r of t){let t=r&&typeof r.style==`object`?r.style:{};if(r.kind===`band`){let i=r.axis===`x`,a=i?this._dataPxX(Number(r.start)):this._dataPxY(Number(r.start)),o=i?this._dataPxX(Number(r.end)):this._dataPxY(Number(r.end));if(!Number.isFinite(a)||!Number.isFinite(o))continue;let s=Math.max(i?n.x:n.y,Math.min(a,o)),c=Math.min(i?n.x+n.w:n.y+n.h,Math.max(a,o));if(c<=s)continue;e.save(),e.globalAlpha=this._styleNumber(t,`opacity`,.14),e.fillStyle=this._annotationPaint(t,[.39,.45,.55,1]);let l=Math.max(0,Math.min(1,Number(t.span_start)||0)),u=t.span_end===void 0?1:Number(t.span_end),d=Math.max(l,Math.min(1,Number.isFinite(u)?u:1));i?e.fillRect(s,n.y+(1-d)*n.h,c-s,(d-l)*n.h):e.fillRect(n.x+l*n.w,s,(d-l)*n.w,c-s),e.restore()}else if(r.kind===`rule`){let i=r.axis===`x`,a=i?this._dataPxX(Number(r.value)):this._dataPxY(Number(r.value));if(!Number.isFinite(a)||i&&(a<n.x-1||a>n.x+n.w+1)||!i&&(a<n.y-1||a>n.y+n.h+1))continue;let o=Math.round(a)+.5;e.save(),e.globalAlpha=this._styleNumber(t,`opacity`,1),e.strokeStyle=this._annotationPaint(t,[.4,.44,.52,1]),e.lineWidth=Math.max(.5,this._styleNumber(t,`width`,1.5)),e.setLineDash(Array.isArray(t.dash)?t.dash:typeof t.dash==`string`?t.dash.split(`,`).map(Number):[]),e.beginPath();let s=Math.max(0,Math.min(1,Number(t.span_start)||0)),c=t.span_end===void 0?1:Number(t.span_end),l=Math.max(s,Math.min(1,Number.isFinite(c)?c:1));i?(e.moveTo(o,n.y+(1-l)*n.h),e.lineTo(o,n.y+(1-s)*n.h)):(e.moveTo(n.x+s*n.w,o),e.lineTo(n.x+l*n.w,o)),e.stroke(),e.restore()}else if(r.kind===`arrow`)this._drawArrowLine(e,this._dataPxX(Number(r.x0)),this._dataPxY(Number(r.y0)),this._dataPxX(Number(r.x1)),this._dataPxY(Number(r.y1)),t);else if(r.kind===`callout`){let n=this._dataPxX(Number(r.x)),i=this._dataPxY(Number(r.y)),a=Number.isFinite(Number(r.dx))?Number(r.dx):0,o=Number.isFinite(Number(r.dy))?Number(r.dy):0;this._drawArrowLine(e,n+a,i+o,n,i,t)}else r.kind===`marker`&&this._drawAnnotationMarker(e,this._dataPxX(Number(r.x)),this._dataPxY(Number(r.y)),t,r)}e.restore()},_drawAnnotationLabels(e){if(!e)return;let t=Array.isArray(this.spec.annotations)?this.spec.annotations:[];if(!t.length)return;let n=this.plot;for(let e of t){let t=typeof e.text==`string`?e.text:``;if(!t)continue;let r=e&&typeof e.style==`object`?e.style:{},i=null,a=null,o=null;if(e.kind===`text`)r.coordinate_space===`axes_fraction`?(i=n.x+Number(e.x)*n.w,a=n.y+(1-Number(e.y))*n.h):r.coordinate_space===`figure_fraction`?(i=Number(e.x)*this.size.w,a=(1-Number(e.y))*this.size.h):r.coordinate_space===`yaxis_transform`?(i=n.x+Number(e.x)*n.w,a=this._dataPxY(Number(e.y))):r.coordinate_space===`xaxis_transform`?(i=this._dataPxX(Number(e.x)),a=n.y+(1-Number(e.y))*n.h):(i=this._dataPxX(Number(e.x)),a=this._dataPxY(Number(e.y)));else if(e.kind===`rule`)e.axis===`x`?(i=this._dataPxX(Number(e.value)),a=n.y+6):(i=n.x+n.w-6,a=this._dataPxY(Number(e.value)));else if(e.kind===`band`)e.axis===`x`?(i=(this._dataPxX(Number(e.start))+this._dataPxX(Number(e.end)))/2,a=n.y+6):(i=n.x+n.w-6,a=(this._dataPxY(Number(e.start))+this._dataPxY(Number(e.end)))/2);else if(e.kind===`arrow`){let t=this._dataPxX(Number(e.x0)),n=this._dataPxY(Number(e.y0)),r=this._dataPxX(Number(e.x1)),s=this._dataPxY(Number(e.y1));i=(t+r)/2,a=(n+s)/2;let c=Math.hypot(r-t,s-n);c>1e-6&&(o=[-(s-n)/c,(r-t)/c],o[1]>0&&(o=[-o[0],-o[1]]))}else(e.kind===`callout`||e.kind===`marker`)&&(i=this._dataPxX(Number(e.x)),a=this._dataPxY(Number(e.y)));if(!Number.isFinite(i)||!Number.isFinite(a)||i<n.x-24||i>n.x+n.w+24||a<n.y-24||a>n.y+n.h+24)continue;let s=document.createElement(`div`);s.textContent=t;let c=Number.isFinite(Number(e.dx))?Number(e.dx):0,l=Number.isFinite(Number(e.dy))?Number(e.dy):0,u=e.anchor,d=String(r.vertical_align||``);e.kind===`rule`||e.kind===`band`?e.axis===`x`?(!u&&e.kind===`band`&&(u=`middle`),d||=`top`):(u||=`end`,!d&&e.kind===`band`&&(d=`middle`)):e.kind===`arrow`&&(u||=`middle`,d||=`middle`);let f=u===`middle`?`-50%`:u===`end`?`-100%`:`0px`,p=Number.isFinite(Number(r.rotation))?(Number(r.rotation)%360+360)%360:0,m=d===`center`||d===`middle`?`-50%`:d===`bottom`?`-100%`:d===`top`?`0px`:`calc(-100% + 0.35em)`,h=`translate(${f},${m})`;if(p===90||p===270){let e=p===270;h=`rotate(${e?90:-90}deg) translate(${d===`center`||d===`middle`?`-50%`:d===`top`?e?`0`:`-100%`:d===`bottom`?e?`-100%`:`0`:e?`0`:`-100%`},${u===`middle`?`-50%`:u===`end`?e?`0`:`-100%`:e?`-100%`:`0`})`}else p&&(h=`rotate(${-p}deg) translate(${f},${m})`);s.style.cssText=`position:absolute;left:${i+c}px;top:${a+l}px;transform:${h};transform-origin:0 0;pointer-events:none;white-space:pre-line;text-align:center;width:max-content;`,this._applySlot(s,`annotation_label`),this._applyClass(s,e.class_name);let g=e.kind!==`text`&&e.kind!==`callout`,_={};for(let[t,n]of Object.entries(r)){if(t===`opacity`&&e.kind===`text`){_[t]=n;continue}lt.has(t)||g&&t===`opacity`||(_[t]=n)}if(this._applyStyle(s,_),r&&(r.label_color||r.color)&&(s.style.color=this._annotationLabelPaint(r,this.theme.label)),r&&r.label_opacity!==void 0){let e=Number(r.label_opacity);Number.isFinite(e)&&(s.style.opacity=String(Math.max(0,Math.min(1,e))))}this.labels.appendChild(s);let v=getComputedStyle(s),y=(e,t)=>(parseFloat(e)||0)+(parseFloat(t)||0),b=y(v.paddingLeft,v.borderLeftWidth),x=y(v.paddingRight,v.borderRightWidth),S=y(v.paddingTop,v.borderTopWidth),C=y(v.paddingBottom,v.borderBottomWidth);if((b||x||S||C)&&p!==90&&p!==270){let e=f===`-100%`?x:f===`-50%`?0:-b,t=m===`-50%`?0:m===`0px`?-S:C;s.style.transform=`${p?`rotate(${-p}deg) `:``}translate(calc(${f} + ${e}px), calc(${m} + ${t}px))`}let w=o&&this.labels.getBoundingClientRect();if(o&&w.width>0){let e=w.width/this.size.w,t=s.getBoundingClientRect(),n=t.width/e/2*Math.abs(o[0])+t.height/e/2*Math.abs(o[1])+3;i+=o[0]*n,a+=o[1]*n,s.style.left=`${i+c}px`,s.style.top=`${a+l}px`}let T=this.labels.getBoundingClientRect();if(T.width>0){let e=T.width/this.size.w,t=s.getBoundingClientRect(),n=t.right>T.right?T.right-t.right:t.left<T.left?T.left-t.left:0,r=t.bottom>T.bottom?T.bottom-t.bottom:t.top<T.top?T.top-t.top:0;n&&(s.style.left=`${i+c+n/e}px`),r&&(s.style.top=`${a+l+r/e}px`)}}}}),Object.assign(Z.prototype,{_showTooltip(e,t,n){let r=this._localRow(e);if(this._lastRow=r,this._setTooltipAnchor(e,r,t,n),this._renderTooltip(r,t,n),this._interactionFlag(`hover`)&&this._dispatchChartEvent(`hover`,{row:r,trace:e.trace,index:e.index,view:this._eventView(`hover`),...this._hoverPayload(r,e,t,n)}),this.comm){this._pickSeq=(this._pickSeq||0)+1;let t={type:`pick`,seq:this._pickSeq,trace:e.trace,index:e.index},n=e.g;n&&n.tier===`density`&&n.drill&&n.drill.seq!==void 0&&(t.drill_seq=n.drill.seq),this.comm.send(t)}},_localRow(e){let t=e.g,n=t._cpu,r={trace:t.trace.id,index:e.index};if(e.heatmap&&t.heatmap&&t._cpuHeatmap){let n=t.heatmap,{row:i,col:a}=e.heatmap,o=n.xRange[0]+(a+.5)*((n.xRange[1]-n.xRange[0])/n.w),s=n.yRange[0]+(i+.5)*((n.yRange[1]-n.yRange[0])/n.h),[c,l]=this._sourceDisplayValue(t,`x`,o,`float`),[u,d]=this._sourceDisplayValue(t,`y`,s,`float`);r.x=c,r.y=u,l!==void 0&&(r.x_kind=l),d!==void 0&&(r.y_kind=d);let f=t._cpuHeatmap.grid[e.index];r.color_value=this._denormalizeUnit(f,t.trace.color&&t.trace.color.domain)}else if(t._cpuRect){let n=t._cpuRect,i=this._decodeValue(n.x0,n.x0Meta,e.index),a=this._decodeValue(n.x1,n.x1Meta,e.index);this._decodeValue(n.y0,n.y0Meta,e.index);let o=this._decodeValue(n.y1,n.y1Meta,e.index),[s,c]=this._sourceDisplayValue(t,`x`,i+(a-i)/2,n.x0Meta.kind),[l,u]=this._sourceDisplayValue(t,`y`,o,n.y1Meta.kind);r.x=s,r.y=l,c!==void 0&&(r.x_kind=c),u!==void 0&&(r.y_kind=u)}else if(n){let i=n.xMeta||t.xMeta,a=n.yMeta||t.yMeta,o=this._decodeValue(n.x,i,e.index),s=this._decodeValue(n.y,a,e.index),[c,l]=this._sourceDisplayValue(t,`x`,o,i&&i.kind),[u,d]=this._sourceDisplayValue(t,`y`,s,a&&a.kind);r.x=c,r.y=u,l!==void 0&&(r.x_kind=l),d!==void 0&&(r.y_kind=d);let f=t.trace.color;if(n.color&&f)if(f.mode===`categorical`&&Array.isArray(f.categories)){let t=Math.round(n.color[e.index]);t>=0&&t<f.categories.length&&(r.color_category=String(f.categories[t]))}else f.mode===`continuous`&&(r.color_value=this._denormalizeUnit(n.color[e.index],f.domain));let p=t.trace.size;n.size&&p&&p.mode===`continuous`&&(r.size_value=this._denormalizeUnit(n.size[e.index],p.domain))}return this._applySharedTooltipFields(r),r},_sourceDisplayValue(e,t,n,r){let i=t===`x`?this._axis(e&&e.xAxis):this._axis(e&&e.yAxis);return t===`x`&&i.kind===`category`||t===`y`&&i.kind===`category`?[re(n,i.categories||[]),void 0]:[n,r]},_sourceValue(e,t,n){if(!e||n<0)return[void 0,void 0];let r=t.channel;if(r===`x`||r===`y`){let t=e._cpu;if(!t||!t[r])return[void 0,void 0];let i=r===`x`?t.xMeta||e.xMeta:t.yMeta||e.yMeta,a=this._decodeValue(t[r],i,n);return Number.isFinite(a)?this._sourceDisplayValue(e,r,a,i&&i.kind):[void 0,void 0]}if(r===`color_value`){if(e._cpuHeatmap&&e._cpuHeatmap.grid&&e.trace.color)return[this._denormalizeUnit(e._cpuHeatmap.grid[n],e.trace.color.domain),void 0];if(e._cpu&&e._cpu.color&&e.trace.color)return[this._denormalizeUnit(e._cpu.color[n],e.trace.color.domain),void 0]}if(r===`color_category`&&e._cpu&&e._cpu.color&&e.trace.color){let t=Math.round(e._cpu.color[n]),r=e.trace.color.categories||[];if(t>=0&&t<r.length)return[String(r[t]),void 0]}return r===`size_value`&&e._cpu&&e._cpu.size&&e.trace.size?[this._denormalizeUnit(e._cpu.size[n],e.trace.size.domain),void 0]:[void 0,void 0]},_applySharedTooltipFields(e){let t=this.spec.tooltip&&this.spec.tooltip.sources;if(!(!t||typeof t!=`object`||e.x===void 0))for(let[n,r]of Object.entries(t)){if(!Array.isArray(r)||e[n]!==void 0)continue;let t=r.find(t=>t.trace===e.trace)||r[0];if(!t||!Number.isFinite(Number(t.trace)))continue;let i=this.gpuTraces.find(e=>e.trace.id===t.trace);if(!i)continue;let a=Number.isInteger(e.index)&&t.trace===e.trace?e.index:-1;!i._cpuHeatmap&&(a<0||!i._cpu||!i._cpu.x||a>=i._cpu.x.length)&&(a=this._nearestCpuIndex(i,e.x));let[o,s]=this._sourceValue(i,t,a);o!==void 0&&(e[n]=o,s!==void 0&&(e[`${n}_kind`]=s))}},_denormalizeUnit(e,t){let n=Number(e);if(!Number.isFinite(n)||!Array.isArray(t)||t.length<2)return n;let r=Number(t[0]),i=Number(t[1]);return!Number.isFinite(r)||!Number.isFinite(i)?n:r+n*(i-r)},_defaultTooltipLines(e){let t=[];return e.x!==void 0&&t.push(`x: ${N(e.x,e.x_kind)}`),e.y!==void 0&&t.push(`y: ${N(e.y,e.y_kind)}`),e.color_value!==void 0&&t.push(`color: ${N(e.color_value)}`),e.color_category!==void 0&&t.push(`${e.color_category}`),e.size_value!==void 0&&t.push(`size: ${N(e.size_value)}`),t.length||t.push(`#${e.index}`),t},_tooltipLookup(e,t){let n=this.spec.tooltip&&this.spec.tooltip.aliases||{},r=e[t]===void 0?n[t]:t;return!r||e[r]===void 0?[void 0,void 0]:[e[r],e[`${r}_kind`]]},_formatTooltipValue(e,t,n){let r=ie(e,n);return r===null?N(e,t):r},_tooltipLines(e){let t=this.spec.tooltip||{};if(!t.title&&!Array.isArray(t.fields))return this._defaultTooltipLines(e);let n=t.format||{},r=[];if(typeof t.title==`string`){let i=t.title.replace(/\{([^}]+)\}/g,(t,r)=>{let[i,a]=this._tooltipLookup(e,r);return i===void 0?``:this._formatTooltipValue(i,a,n[r])});i&&r.push(i)}if(Array.isArray(t.fields))for(let i of t.fields){if(typeof i!=`string`)continue;let[t,a]=this._tooltipLookup(e,i);t!==void 0&&r.push(`${i}: ${this._formatTooltipValue(t,a,n[i])}`)}return r.length?r:this._defaultTooltipLines(e)},_setTooltipAnchor(e,t,n,r){let i=e.g;if(!i){this._tooltipAnchor=null;return}let a=i.xAxis||`x`,o=i.yAxis||`y`,s=t.x,c=t.y;if(!Number.isFinite(s)||!Number.isFinite(c)){let e=this.canvas.getBoundingClientRect();[s,c]=this._dataFromCanvas(n-e.left,r-e.top,a,o)}this._tooltipAnchor=Number.isFinite(s)&&Number.isFinite(c)?{xAxis:a,yAxis:o,x:s,y:c}:null,this._tooltipAnchor&&!this._tooltipAnchorPx()&&(this._tooltipAnchor=null)},_tooltipAnchorPx(){let e=this._tooltipAnchor;if(!e)return null;let t=this._dataPx(e.xAxis,e.x),n=this._dataPx(e.yAxis,e.y),r=this.plot;return!Number.isFinite(t)||!Number.isFinite(n)||t<r.x||t>r.x+r.w||n<r.y||n>r.y+r.h?null:{lx:t,ly:n}},_hideTooltip(){this.tooltip.style.display=`none`,this._tooltipAnchor=null},_repositionTooltip(){if(!this._tooltipAnchor)return;let e=this._tooltipAnchorPx();if(!e){this.tooltip.style.display=`none`;return}this.tooltip.style.display=`block`,this._placeTooltip(e.lx,e.ly)},_placeTooltip(e,t){let n=this.tooltip.offsetWidth,r=this.tooltip.offsetHeight,i=Math.max(4,this.size.w-n-4),a=Math.max(4,Math.min(e+12,i)),o=t+12,s=t-r-12,c=o+r<=this.size.h-4?o:Math.max(4,s);this.tooltip.style.left=a+`px`,this.tooltip.style.top=c+`px`},_renderTooltip(e,t,n,r={}){if(!e||this.spec.show_tooltip===!1){this._hideTooltip();return}let i=this._tooltipLines(e);if(this._customTooltip||(this.tooltip.textContent=``,i.forEach((e,t)=>{t&&this.tooltip.appendChild(document.createElement(`br`)),this.tooltip.appendChild(document.createTextNode(e))})),this.a11yLive&&r.announce!==!1){let e=this._a11yKeyboardReadout,t=i.join(`, `),n=e?`Point ${e.flat+1} of ${e.total}. ${t}`:t;this.a11yLive.textContent!==n&&(this.a11yLive.textContent=n)}this.tooltip.style.display=`block`;let a=this._tooltipAnchorPx();if(a)this._placeTooltip(a.lx,a.ly);else if(this._tooltipAnchor)this.tooltip.style.display=`none`;else{let e=this.root.getBoundingClientRect();this._placeTooltip(t-e.left,n-e.top)}}}),Object.assign(Z.prototype,{_initInteraction(){let e=this.canvas,t=null,n=null;this.selRect=document.createElement(`div`),this.selRect.style.cssText=`position:absolute;display:none;pointer-events:none;z-index:4;`,this._applySlot(this.selRect,`selection`),this.root.appendChild(this.selRect),this.selLasso=document.createElementNS(`http://www.w3.org/2000/svg`,`svg`),this.selLasso.style.cssText=`position:absolute;display:none;pointer-events:none;z-index:4;overflow:visible;`,this.selLasso.dataset.xySelectionLassoOverlay=``,this.selLassoPath=document.createElementNS(`http://www.w3.org/2000/svg`,`path`),this.selLassoPath.dataset.xySelectionLasso=``,this.selLasso.appendChild(this.selLassoPath),this.selLassoHandles=document.createElementNS(`http://www.w3.org/2000/svg`,`g`),this.selLassoHandles.dataset.xySelectionLassoHandles=``,this.selLasso.appendChild(this.selLassoHandles),this.root.appendChild(this.selLasso),this._lassoPolygon=null;let r=null,i=t=>{if(!r||t.pointerId!==r.pointerId||!this._lassoPolygon)return;let n=e.getBoundingClientRect(),i=Math.max(0,Math.min(n.width,t.clientX-n.left)),a=Math.max(0,Math.min(n.height,t.clientY-n.top));this._lassoPolygon[r.index]=this._dataFromCanvas(i,a),this._renderLassoSelection(),t.preventDefault(),t.stopPropagation()};this._listen(this.selLasso,`pointerdown`,e=>{let t=e.target.closest?.(`[data-xy-selection-lasso-handle]`);if(!t||!this._lassoPolygon)return;let n=Number(t.dataset.xySelectionLassoHandle);if(!(!Number.isInteger(n)||!this._lassoPolygon[n])){r={index:n,pointerId:e.pointerId,original:[...this._lassoPolygon[n]],handle:t},t.dataset.xyActive=``,this._hideTooltip();try{this.selLasso.setPointerCapture(e.pointerId)}catch{}e.preventDefault(),e.stopPropagation()}}),this._listen(this.selLasso,`pointermove`,i),this._listen(this.selLasso,`pointerup`,e=>{if(!r||e.pointerId!==r.pointerId)return;i(e);let t=r.handle;r=null,delete t.dataset.xyActive,this._lassoPolygon&&this._sendSelectPolygon(this._lassoPolygon)}),this._listen(this.selLasso,`pointercancel`,e=>{!r||e.pointerId!==r.pointerId||(this._lassoPolygon&&(this._lassoPolygon[r.index]=r.original),delete r.handle.dataset.xyActive,r=null,this._lassoPolygon&&this._renderLassoSelection(),e.stopPropagation())}),this._interactionFlag(`crosshair`)&&(this.crosshairX=document.createElement(`div`),this.crosshairX.style.cssText=`position:absolute;display:none;pointer-events:none;z-index:3;width:1px;`,this._applySlot(this.crosshairX,`crosshair_x`),this.root.appendChild(this.crosshairX),this.crosshairY=document.createElement(`div`),this.crosshairY.style.cssText=`position:absolute;display:none;pointer-events:none;z-index:3;height:1px;`,this._applySlot(this.crosshairY,`crosshair_y`),this.root.appendChild(this.crosshairY));let a=(t,n)=>{let r=e.getBoundingClientRect();return this._dataFromCanvas(t-r.left,n-r.top)},o=(t,n)=>{let r=e.getBoundingClientRect(),i=Math.max(0,Math.min(r.width,t-r.left)),a=Math.max(0,Math.min(r.height,n-r.top));return{x:r.left+i,y:r.top+a,data:this._dataFromCanvas(i,a)}};this._listen(e,`pointerdown`,r=>{this._cancelViewAnimation();let i=this._interactionFlag(`pan`,!0),s=this._interactionFlag(`zoom`,!0),c=this._interactionFlag(`navigation`,!0),l=this._interactionFlag(`box_zoom`,!0),u=this._interactionFlag(`brush`,!0)&&this._interactionFlag(`select`,!0),d=this.dragMode.startsWith(`select`)?this.dragMode:null,f=(r.shiftKey||d)&&u&&this._pickable?r.shiftKey?`select`:d:this.dragMode===`zoom`&&c&&s&&l?`zoom`:null;if(f){let t=f.startsWith(`select`)&&this._lassoPolygon?this._lassoPolygon.map(e=>[...e]):null;f.startsWith(`select`)&&this._clearLassoOverlay();let i=f===`select-lasso`?o(r.clientX,r.clientY):null,s=i?i.data:a(r.clientX,r.clientY);n={mode:f,sx:r.clientX,sy:r.clientY,d0:s,points:i?[i]:null,previousLasso:t};try{e.setPointerCapture(r.pointerId)}catch{}this._hideTooltip();return}if(this.dragMode===`pan`&&c&&i){t={px:r.clientX,py:r.clientY,view:this._copyView(this.view),moved:!1,interactionId:++this._interactionSeq,axes:[...new Set([...this._axisPolicy(`pan_axes`),...this._axisIds().filter(e=>this._axisContained(e))])],changedAxes:[]};try{e.setPointerCapture(r.pointerId)}catch{}this._hideTooltip()}}),this._listen(e,`pointermove`,e=>{if(n){this._updateBand(n,e);return}if(t){t.moved=!0;let n=Object.fromEntries(this._axisIds().map(e=>[e,[...this._axisRange(e,t.view)]]));for(let r of t.axes){let i=this._axis(r),[a,o]=this._axisRange(r,t.view),s=this._axisCoord(i,a),c=this._axisCoord(i,o);if(![s,c].every(Number.isFinite)||s===c)continue;let l=this._axisDim(r),u=l===`x`?this.plot.w:this.plot.h,d=(l===`x`?e.clientX-t.px:e.clientY-t.py)/u*(c-s),f=l===`x`?-d:d;n[r]=[this._axisValue(i,s+f),this._axisValue(i,c+f)]}let r=this._setView({ranges:n},{source:`pan_drag`,phase:`update`,interactionId:t.interactionId});t.changedAxes=[...new Set([...t.changedAxes,...r])];return}this._updateCrosshair(e),this._hover(e)}),this._listen(e,`pointerup`,e=>{if(n){n.mode===`select-lasso`&&this._updateBand(n,e),this.selRect.style.display=`none`,this.selLasso.style.display=`none`;let t=a(e.clientX,e.clientY);if(n.mode===`select-lasso`?n.points.length>=3:Math.abs(e.clientX-n.sx)>3||Math.abs(e.clientY-n.sy)>3){if(n.mode===`zoom`&&this._interactionFlag(`zoom`,!0))this._zoomToBox(n.d0,t,!0,{source:`box_zoom`,phase:`end`,interactionId:++this._interactionSeq});else if(n.mode===`select-lasso`)if(n.points.length>=3){let e=this._simplifyLassoPoints(n.points);this._sendSelectPolygon(e.map(e=>e.data))}else n.previousLasso&&(this._lassoPolygon=n.previousLasso,this._renderLassoSelection());else{let e=n.d0;n.mode===`select-x`?(e=[n.d0[0],this.view.y0],t[1]=this.view.y1):n.mode===`select-y`&&(e=[this.view.x0,n.d0[1]],t[0]=this.view.x1),this._sendSelect(e,t)}this._ignoreNextClick=!0}else n.previousLasso&&(this._lassoPolygon=n.previousLasso,this._renderLassoSelection());n=null;return}t&&t.moved&&(this._ignoreNextClick=!0,t.changedAxes.length&&this._emitViewChange(`pan_drag`,{axes:t.changedAxes,phase:`end`,interactionId:t.interactionId})),t&&!t.moved&&this._hideTooltip(),t=null}),this._listen(e,`pointercancel`,()=>{this.selRect.style.display=`none`,this.selLasso.style.display=`none`,n?.previousLasso&&(this._lassoPolygon=n.previousLasso,this._renderLassoSelection()),n=null,t=null}),this._listen(e,`pointerleave`,()=>this._pointerHoverExit()),this._listen(document,`pointerover`,e=>{!this._lastHoverXY||this._a11yKeyboardReadout||this.root.contains(e.target)||this._pointerHoverExit()}),this._listen(e,`click`,e=>this._click(e)),this._listen(e,`wheel`,t=>{if(!this._interactionFlag(`navigation`,!0)||!this._interactionFlag(`zoom`,!0)||!this._interactionFlag(`wheel_zoom`,!0))return;t.preventDefault();let n=1.0015**t.deltaY,r=e.getBoundingClientRect(),i=(t.clientX-r.left)/r.width,a=1-(t.clientY-r.top)/r.height;this._queueWheelZoom(n,i,a)},{passive:!1}),this._listen(e,`dblclick`,()=>{this._interactionFlag(`navigation`,!0)&&this._interactionFlag(`double_click_reset`,!0)&&this._resetView(!0,`reset`)}),this._listen(e,`keydown`,e=>{e.key===`Escape`&&(n||t)&&(this.selRect.style.display=`none`,this.selLasso.style.display=`none`,n=null,t=null,e.preventDefault(),e.stopImmediatePropagation())}),this._listen(e,`keydown`,e=>this._onA11yKey(e))},_pointerHoverExit(){let e=this._hoverId!==-1;this._hoverId=-1,this._hoverTarget=null,this._lastHoverXY=null,this._a11yKeyboardReadout=null,this._pickSeq=(this._pickSeq||0)+1,this._hideTooltip(),this._hideCrosshair(),this._interactionFlag(`hover`)&&this._dispatchChartEvent(`leave`,{view:this._eventView(`leave`),active:!1}),e&&this._drawKeepPick()},_a11yPointGroups(){return(this.gpuTraces||[]).filter(e=>q(e.trace.kind).pointPick&&e.tier!==`density`&&e._cpu&&e._cpu.x&&e._cpu.y&&Math.min(e._cpu.x.length,e._cpu.y.length)>0)},_onA11yKey(e){let t={ArrowRight:1,ArrowDown:1,ArrowLeft:-1,ArrowUp:-1}[e.key],n=e.key===`Enter`||e.key===` `;if(t===void 0&&e.key!==`Home`&&e.key!==`End`&&e.key!==`Escape`&&!n)return;if(n){if(!this._interactionFlag(`click`)||!this._hoverTarget)return;e.preventDefault();let t=this._hoverTarget,n=this.canvas.getBoundingClientRect(),r=this._lastHoverXY?.clientX??n.left,i=this._lastHoverXY?.clientY??n.top,a={x:r-n.left,y:i-n.top},o={shift:e.shiftKey===!0,alt:e.altKey===!0,ctrl:e.ctrlKey===!0,meta:e.metaKey===!0},s={row:this._localRow?this._localRow(t):null,trace:t.trace,index:t.index,screen:a,modifiers:o,view:this._eventView(`click`)};if(this._dispatchChartEvent(`click`,s),this.comm){let e={type:`click`,trace:t.trace,index:t.index,screen:a,modifiers:o},n=t.g;n&&n.tier===`density`&&n.drill&&n.drill.seq!==void 0&&(e.drill_seq=n.drill.seq),this.comm.send(e)}return}if(e.key===`Escape`){e.preventDefault();let t=this._hoverId!==-1;this._hideTooltip(),this._hoverId=-1,this._hoverTarget=null,this._lastHoverXY=null,this._a11yKeyboardReadout=null,this._pickSeq=(this._pickSeq||0)+1,this.a11yLive&&(this.a11yLive.textContent=`Readout closed.`),t&&this._interactionFlag(`hover`)&&this._dispatchChartEvent(`leave`,{view:this._eventView(`leave`),active:!1}),t&&this._drawKeepPick();return}if(e.preventDefault(),this._interactionTransitionActive())return;let r=this._a11yPointGroups(),i=r.reduce((e,t)=>e+Math.min(t._cpu.x.length,t._cpu.y.length),0);if(!i)return;let a=Number.isInteger(this._a11yPointIndex)?this._a11yPointIndex:-1;a=e.key===`Home`?0:e.key===`End`?i-1:a<0?t>0?0:i-1:Math.max(0,Math.min(i-1,a+t)),this._a11yPointIndex=a;let o=a,s=r[0];for(let e of r){let t=Math.min(e._cpu.x.length,e._cpu.y.length);if(o<t){s=e;break}o-=t}let c={trace:s.trace.id,index:o,g:s},l=this._decodeValue(s._cpu.x,s._cpu.xMeta||s.xMeta,o),u=this._decodeValue(s._cpu.y,s._cpu.yMeta||s.yMeta,o),d=this._dataPx(s.xAxis||`x`,l)-this.plot.x,f=this._dataPx(s.yAxis||`y`,u)-this.plot.y,p=this.canvas.getBoundingClientRect(),m=p.left+Math.max(0,Math.min(p.width,d)),h=p.top+Math.max(0,Math.min(p.height,f));this._hoverId=c.trace*1e9+c.index,this._hoverTarget=c,this._lastHoverXY={clientX:m,clientY:h},this._a11yKeyboardReadout={flat:a,total:i},this._showTooltip(c,m,h),this._drawKeepPick()},_updateCrosshair(e){if(!this.crosshairX||!this.crosshairY)return;let t=this.canvas.getBoundingClientRect(),n=this.root.getBoundingClientRect(),r=e.clientX-t.left,i=e.clientY-t.top;if(r<0||r>t.width||i<0||i>t.height){this._hideCrosshair();return}let a=e.clientX-n.left,o=e.clientY-n.top;this.crosshairX.style.display=`block`,this.crosshairX.style.left=a+`px`,this.crosshairX.style.top=this.plot.y+`px`,this.crosshairX.style.height=this.plot.h+`px`,this.crosshairY.style.display=`block`,this.crosshairY.style.left=this.plot.x+`px`,this.crosshairY.style.top=o+`px`,this.crosshairY.style.width=this.plot.w+`px`},_hideCrosshair(){this.crosshairX&&(this.crosshairX.style.display=`none`),this.crosshairY&&(this.crosshairY.style.display=`none`)},_click(e){if(this._ignoreNextClick){this._ignoreNextClick=!1;return}if(!this._interactionFlag(`click`))return;let t=this.canvas.getBoundingClientRect(),n=e.clientX-t.left,r=e.clientY-t.top,[i,a]=this._dataFromCanvas(n,r),o=this._pickAt(n,r)||this._hoverAt(n,r),s={x:i,y:a,view:this._eventView(`click`),row:o&&this._localRow?this._localRow(o):null,trace:o?o.trace:null,index:o?o.index:null};if(this._dispatchChartEvent(`click`,s),o&&this.comm){let t={type:`click`,trace:o.trace,index:o.index,screen:{x:n,y:r},modifiers:{shift:e.shiftKey===!0,alt:e.altKey===!0,ctrl:e.ctrlKey===!0,meta:e.metaKey===!0}},i=o.g;i&&i.tier===`density`&&i.drill&&i.drill.seq!==void 0&&(t.drill_seq=i.drill.seq),this.comm.send(t)}},_updateBand(e,t){let n=this.canvas.getBoundingClientRect(),r=this.root.getBoundingClientRect();if(e.mode===`select-lasso`){let i=e.points[e.points.length-1],a=Math.max(0,Math.min(n.width,t.clientX-n.left)),o=Math.max(0,Math.min(n.height,t.clientY-n.top)),s=n.left+a,c=n.top+o;e.points.length<2048&&Math.hypot(s-i.x,c-i.y)>=3&&e.points.push({x:s,y:c,data:this._dataFromCanvas(a,o)});let l=e.points.map(e=>[Math.max(this.plot.x,Math.min(this.plot.x+this.plot.w,e.x-r.left)),Math.max(this.plot.y,Math.min(this.plot.y+this.plot.h,e.y-r.top))]);this.selLasso.style.display=`block`,this.selLasso.style.inset=`0`,this.selLasso.setAttribute(`width`,String(this.root.clientWidth)),this.selLasso.setAttribute(`height`,String(this.root.clientHeight)),this.selLassoPath.setAttribute(`d`,l.map((e,t)=>`${t?`L`:`M`}${e[0]} ${e[1]}`).join(` `)+` Z`);return}let i=Math.min(e.sx,t.clientX)-r.left,a=Math.min(e.sy,t.clientY)-r.top,o=Math.abs(t.clientX-e.sx),s=Math.abs(t.clientY-e.sy),c=this.plot.x,l=this.plot.y,u=Math.min(i+o,c+this.plot.w),d=Math.min(a+s,l+this.plot.h),f=Math.max(i,c),p=Math.max(a,l),m=u,h=d;e.mode===`select-x`&&(p=l,h=l+this.plot.h),e.mode===`select-y`&&(f=c,m=c+this.plot.w),this.selRect.dataset.xyBand=e.mode===`zoom`?`zoom`:`select`,this.selRect.style.display=`block`,this.selRect.style.left=f+`px`,this.selRect.style.top=p+`px`,this.selRect.style.width=Math.max(0,m-f)+`px`,this.selRect.style.height=Math.max(0,h-p)+`px`},_simplifyLassoPoints(e,t=6,n=16){let r=e.filter(e=>e&&Number.isFinite(e.x)&&Number.isFinite(e.y));if(r.length>3){let e=r[0],n=r[r.length-1];Math.hypot(e.x-n.x,e.y-n.y)<=t&&r.pop()}if(r.length<=3)return r.slice();let i=(e,t,n)=>{let r=n.x-t.x,i=n.y-t.y;if(r===0&&i===0)return(e.x-t.x)**2+(e.y-t.y)**2;let a=Math.max(0,Math.min(1,((e.x-t.x)*r+(e.y-t.y)*i)/(r*r+i*i))),o=t.x+a*r,s=t.y+a*i;return(e.x-o)**2+(e.y-s)**2},a=e=>{let t=new Uint8Array(r.length);t[0]=1,t[r.length-1]=1;let n=[[0,r.length-1]],a=e*e;for(;n.length;){let[e,o]=n.pop(),s=-1,c=a;for(let t=e+1;t<o;t++){let n=i(r[t],r[e],r[o]);n>c&&(s=t,c=n)}s>=0&&(t[s]=1,n.push([e,s],[s,o]))}return r.filter((e,n)=>t[n])},o=a(t);if(o.length<3&&(o=[r[0],r[Math.floor(r.length/2)],r[r.length-1]]),o.length>n){let e=t,i=Math.max(t,1);for(let t=0;t<16&&o.length>n;t++)e=i,i*=2,o=a(i);for(let t=0;t<12;t++){let t=(e+i)/2,r=a(t);r.length>n?e=t:(i=t,o=r)}o.length<3&&(o=[r[0],r[Math.floor(r.length/2)],r[r.length-1]])}return o},_clearLassoOverlay(){this._lassoPolygon=null,this.selLasso&&(this.selLasso.style.display=`none`,this.selLassoPath?.removeAttribute(`d`),this.selLassoHandles?.replaceChildren())},_renderLassoSelection(){let e=this._lassoPolygon;if(!this.selLasso||!this.selLassoPath||!this.selLassoHandles||!Array.isArray(e)||e.length<3)return;let[t,n]=this._axisRange(`x`),[r,i]=this._axisRange(`y`),a=this._axis(`x`),o=this._axis(`y`),s=this._axisCoord(a,t),c=this._axisCoord(a,n),l=this._axisCoord(o,r),u=this._axisCoord(o,i);if(![s,c,l,u].every(Number.isFinite)||s===c||l===u)return;let d=e.map(e=>{let t=this._axisCoord(a,e[0]),n=this._axisCoord(o,e[1]),r=this.plot.x+(t-s)/(c-s)*this.plot.w,i=this.plot.y+(u-n)/(u-l)*this.plot.h;return[Math.max(this.plot.x,Math.min(this.plot.x+this.plot.w,r)),Math.max(this.plot.y,Math.min(this.plot.y+this.plot.h,i))]});if(d.flat().every(Number.isFinite)){for(this.selLasso.style.display=`block`,this.selLasso.style.inset=`0`,this.selLasso.setAttribute(`width`,String(this.root.clientWidth)),this.selLasso.setAttribute(`height`,String(this.root.clientHeight)),this.selLassoPath.setAttribute(`d`,d.map((e,t)=>`${t?`L`:`M`}${e[0]} ${e[1]}`).join(` `)+` Z`);this.selLassoHandles.childElementCount<d.length;){let e=document.createElementNS(`http://www.w3.org/2000/svg`,`circle`);e.dataset.xySelectionLassoHandle=``,e.setAttribute(`r`,`4`),this.selLassoHandles.appendChild(e)}for(;this.selLassoHandles.childElementCount>d.length;)this.selLassoHandles.lastElementChild.remove();[...this.selLassoHandles.children].forEach((e,t)=>{e.dataset.xySelectionLassoHandle=String(t),e.setAttribute(`cx`,String(d[t][0])),e.setAttribute(`cy`,String(d[t][1])),e.setAttribute(`aria-label`,`Lasso point ${t+1}`)})}},_sendSelect(e,t,n={}){this._clearLassoOverlay();let r=Math.min(e[0],t[0]),i=Math.max(e[0],t[0]),a=Math.min(e[1],t[1]),o=Math.max(e[1],t[1]),s={x0:r,x1:i,y0:a,y1:o};this._historyRecord({source:n.source,interactionId:n.interactionId,history:n.history}),this._stateSelection={range:{...s}},this._lastBrush={mode:`box`,x0:r,x1:i,y0:a,y1:o},this._broadcastLinkedSelection({range:s}),this._dispatchChartEvent(`brush`,{range:s,view:this._eventView(`brush`)}),this.comm?this.comm.send({type:`select`,x0:r,x1:i,y0:a,y1:o}):this._selectLocal(r,i,a,o)},_sendSelectPolygon(e,t={}){if(!Array.isArray(e)||e.length<3)return;let n=e.map(e=>[e[0],e[1]]);n.every(e=>e.every(Number.isFinite))&&(this._historyRecord({source:t.source,interactionId:t.interactionId,history:t.history}),this._stateSelection={polygon:n.map(e=>[...e])},this._lassoPolygon=n,this._lastBrush={mode:`poly`,points:n},this._broadcastLinkedSelection({polygon:n}),this._renderLassoSelection(),this._dispatchChartEvent(`brush`,{polygon:n,view:this._eventView(`brush`)}),this.comm?this.comm.send({type:`select_polygon`,points:n}):this._selectLocalPolygon(n))},_selectLocalPolygon(e,t={}){let n=e.map(e=>e[0]),r=e.map(e=>e[1]),i=Math.min(...n),a=Math.max(...n),o=Math.min(...r),s=Math.max(...r),c=(t,n)=>{let r=!1;for(let i=0,a=e.length-1;i<e.length;a=i++){let[o,s]=e[i],[c,l]=e[a];s>n!=l>n&&t<(c-o)*(n-s)/(l-s)+o&&(r=!r)}return r},l=0;for(let e of this.gpuTraces){if(!e._cpu||e.tier===`density`)continue;let t=e._cpu.x,n=e._cpu.y,r=e._cpu.xMeta||e.xMeta,u=e._cpu.yMeta||e.yMeta,d=r.offset,f=r.scale||1,p=u.offset,m=u.scale||1,h=new Float32Array(e.n),g=0;for(let r=0;r<e.n;r++){let e=t[r]/f+d,l=n[r]/m+p;e>=i&&e<=a&&l>=o&&l<=s&&c(e,l)&&(h[r]=1,g++)}this._applySelMask(e,h),l+=g}this._selectionCount=l,this.draw(),t.dispatch!==!1&&this._dispatchChartEvent(`select`,{total:l,polygon:e,view:this._eventView(`select`)})},_selectLocal(e,t,n,r,i={}){let a=0;for(let i of this.gpuTraces){if(!i._cpu||i.tier===`density`)continue;let o=i._cpu.x,s=i._cpu.y,c=i._cpu.xMeta||i.xMeta,l=i._cpu.yMeta||i.yMeta,u=c.offset,d=c.scale||1,f=l.offset,p=l.scale||1,m=new Float32Array(i.n),h=0;for(let a=0;a<i.n;a++){let i=o[a]/d+u,c=s[a]/p+f;i>=e&&i<=t&&c>=n&&c<=r&&(m[a]=1,h++)}this._applySelMask(i,m),a+=h}this._selectionCount=a,this.draw(),i.dispatch!==!1&&this._dispatchChartEvent(`select`,{total:a,range:{x0:e,x1:t,y0:n,y1:r},view:this._eventView(`select`)})},_applySelMask(e,t){let n=this.gl;e.selBuf||=n.createBuffer(),n.bindBuffer(n.ARRAY_BUFFER,e.selBuf),n.bufferData(n.ARRAY_BUFFER,t,n.STATIC_DRAW),e.selActive=!0},_clearSelection(e={}){this._clearLassoOverlay(),e.dispatch!==!1&&this._stateSelection!==null&&this._stateSelection!==void 0&&this._historyRecord({source:e.source,interactionId:e.interactionId,history:e.history}),this._stateSelection=null;for(let e of this.gpuTraces)e.selActive=!1,e.drill&&(e.drill.selActive=!1);this._selectionCount=0,this._lastBrush=null,e.broadcast!==!1&&this._broadcastLinkedSelection({clear:!0}),e.dispatch!==!1&&this._interactionFlag(`select`,!0)&&(this.comm&&this.comm.send({type:`select_clear`}),this._dispatchChartEvent(`select`,{total:0,view:this._eventView(`select_clear`)}))},_clampModebar(e,t){let n=this._modebar;if(!n||!this.root)return;let r=e??(Number.parseFloat(n.style.left)||0),i=t??(Number.parseFloat(n.style.top)||0),a=Math.max(0,this.root.clientWidth-n.offsetWidth),o=Math.max(0,this.root.clientHeight-n.offsetHeight);n.style.left=`${Math.max(0,Math.min(a,r))}px`,n.style.top=`${Math.max(0,Math.min(o,i))}px`},_buildModebar(e){if(this.spec.show_modebar===!1)return;let t=document.createElement(`div`);t.style.cssText=`position:absolute;top:${this.plot.y+4}px;left:${this.plot.x+4}px;z-index:6;display:flex;opacity:0;pointer-events:none;transition:opacity .15s;`,this._applySlot(t,`modebar`),t.setAttribute(`role`,`toolbar`),t.setAttribute(`aria-label`,`Chart controls`),this._modebar=t,this._modeBtns={},this._modebarMoved=!1;let n=()=>{},r=()=>{},i=()=>{},a=e=>{let n=e||this._modebarDragging||t.contains(document.activeElement);t.style.opacity=n?`1`:`0`,t.style.pointerEvents=n?`auto`:`none`};this._listen(e,`pointerenter`,()=>a(!0)),this._listen(e,`pointerleave`,()=>{a(!1),n(!1),r(!1),i(!1)}),this._listen(t,`focusin`,()=>a(!0)),this._listen(t,`focusout`,n=>{!t.contains(n.relatedTarget)&&!e.matches(`:hover`)&&a(!1)});let o=document.createElement(`button`);o.type=`button`,o.title=`Click for toolbar options; drag to move`,o.setAttribute(`aria-label`,`Toolbar options`),o.setAttribute(`aria-haspopup`,`menu`),o.setAttribute(`aria-expanded`,`false`),o.dataset.xyModebarDragHandle=``,o.dataset.xyModebarExport=``,o.dataset.xyModebarExportTrigger=``,o.innerHTML=this._icon(`drag`),o.style.cssText=`display:flex;align-items:center;justify-content:center;pointer-events:auto;touch-action:none;`,this._applySlot(o,`modebar_button`),t.appendChild(o);let s=null,c=0;this._listen(o,`pointerdown`,e=>{if(e.pointerType===`mouse`&&e.button!==0)return;e.stopPropagation();let n=t.getBoundingClientRect();s={pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,dx:e.clientX-n.left,dy:e.clientY-n.top,moved:!1};try{o.setPointerCapture(e.pointerId)}catch{}a(!0)}),this._listen(o,`pointermove`,a=>{if(!s||a.pointerId!==s.pointerId)return;let o=Math.hypot(a.clientX-s.startX,a.clientY-s.startY);if(!s.moved){if(o<6)return;s.moved=!0,this._modebarDragging=!0,this._modebarMoved=!0,t.style.transition=`none`,n(!1),r(!1),i(!1)}let c=e.getBoundingClientRect(),l=a.clientX-c.left-s.dx,u=a.clientY-c.top-s.dy;this._clampModebar(l,u)});let l=n=>{if(!s||n.pointerId!==s.pointerId)return;let r=s.moved,i=n.type===`pointercancel`;s=null,this._modebarDragging=!1,t.style.transition=`opacity .15s`,a(e.matches(`:hover`)),(r||i)&&(c=performance.now()+100)};this._listen(o,`pointerup`,l),this._listen(o,`pointercancel`,l),this._listen(o,`click`,e=>{if(e.stopPropagation(),performance.now()<=c){c=0;return}i(!this._exportMenuOpen)});let u=(e,n,r,i)=>{let a=document.createElement(`button`);return a.type=`button`,a.title=n,a.setAttribute(`aria-label`,n),i&&a.setAttribute(`aria-pressed`,`false`),a.innerHTML=this._icon(e),a.style.cssText=`display:flex;align-items:center;justify-content:center;pointer-events:auto;`,this._applySlot(a,`modebar_button`),this._listen(a,`pointerdown`,e=>e.stopPropagation()),this._listen(a,`click`,e=>{e.stopPropagation(),r()}),t.appendChild(a),i&&(this._modeBtns[i]=a),a},d=this._interactionFlag(`navigation`,!0),f=d&&this._interactionFlag(`pan`,!0),p=d&&this._interactionFlag(`zoom`,!0),m=p&&this._interactionFlag(`zoom_buttons`,!0),h=p&&this._interactionFlag(`box_zoom`,!0),g=d&&this._resetAxisPolicy().length>0,_=m||h||g,v=null,y=null;if(this._zoomMenuButton=null,this._zoomMenuLabel=null,_){v=u(`zoommenu`,`Zoom controls`,()=>{n(!this._zoomMenuOpen)}),this._zoomMenuButton=v,v.dataset.xyModebarMenuTrigger=``,v.replaceChildren();let e=document.createElement(`span`);e.dataset.xyModebarZoomPercent=``,e.textContent=`100%`,v.appendChild(e),y=document.createElement(`span`),y.dataset.xyModebarMenuIndicator=``,y.innerHTML=this._icon(`chevrondown`),v.appendChild(y),this._zoomMenuLabel=e,v.setAttribute(`aria-haspopup`,`menu`),v.setAttribute(`aria-expanded`,`false`)}let b=this._interactionFlag(`brush`,!0)&&this._interactionFlag(`select`,!0),x=null,S=null,C=null;b&&(x=u(`select`,`Selection controls`,()=>{r(!this._selectMenuOpen)}),x.dataset.xyModebarSelect=``,x.dataset.xyModebarSelectTrigger=``,x.setAttribute(`aria-haspopup`,`menu`),x.setAttribute(`aria-expanded`,`false`),x.replaceChildren(),C=document.createElement(`span`),C.dataset.xyModebarSelectIcon=``,C.innerHTML=this._icon(`select`),x.appendChild(C),S=document.createElement(`span`),S.dataset.xyModebarMenuIndicator=``,S.innerHTML=this._icon(`chevrondown`),x.appendChild(S),this._selectMenuButton=x,this._selectMenuIcon=C),f&&u(`pan`,`Pan`,()=>this._setDragMode(`pan`),`pan`),d&&this._historyEnabled()&&(this._historyBackBtn=u(`historyback`,`Back to previous view`,()=>this._historyBack()),this._historyBackBtn.dataset.xyModebarHistory=`back`,this._historyForwardBtn=u(`historyforward`,`Forward to next view`,()=>this._historyForward()),this._historyForwardBtn.dataset.xyModebarHistory=`forward`,this._updateHistoryButtons());let w=null;_&&(w=document.createElement(`div`),w.dataset.xyModebarMenu=``,w.setAttribute(`role`,`menu`),w.setAttribute(`aria-label`,`Zoom controls`),w.style.cssText=`position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;`,t.appendChild(w));let T=[],E=(e,t,r,i,a=!1)=>{let o=document.createElement(`button`);o.type=`button`,o.tabIndex=-1,o.dataset.xyModebarMenuItem=e,a&&(o.dataset.xySeparator=``),o.setAttribute(`role`,`menuitem`),o.style.cssText=`display:flex;align-items:center;pointer-events:auto;`,this._applySlot(o,`modebar_button`);let s=document.createElement(`span`);s.dataset.xyModebarMenuIcon=``,s.innerHTML=this._icon(e),o.appendChild(s);let c=document.createElement(`span`);return c.textContent=t,o.appendChild(c),this._listen(o,`pointerdown`,e=>e.stopPropagation()),this._listen(o,`click`,e=>{e.stopPropagation(),n(!1,!0),r()}),w.appendChild(o),T.push(o),i&&(this._modeBtns[i]=o),o};_&&(m&&(E(`zoomin`,this._actionLabel(`Zoom In`,this._axisPolicy(`zoom_axes`)),()=>this._zoomBy(.5,!0,`zoom_in`)),E(`zoomout`,this._actionLabel(`Zoom Out`,this._axisPolicy(`zoom_axes`)),()=>this._zoomBy(2,!0,`zoom_out`))),h&&E(`zoom`,this._actionLabel(`Box Zoom`,this._axisPolicy(`zoom_axes`)),()=>this._setDragMode(`zoom`),`zoom`),g&&E(`reset`,this._actionLabel(`Reset View`,this._resetAxisPolicy()),()=>this._resetView(!0,`reset`),null,m||h));let D=document.createElement(`div`);D.dataset.xyModebarMenu=``,D.dataset.xyModebarSelectMenu=``,D.setAttribute(`role`,`menu`),D.setAttribute(`aria-label`,`Selection controls`),D.style.cssText=`position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;`,t.appendChild(D);let O=[],k=(e,t,n)=>{let i=document.createElement(`button`);i.type=`button`,i.tabIndex=-1,i.dataset.xyModebarMenuItem=e,i.dataset.xyModebarSelectItem=n,i.setAttribute(`role`,`menuitem`),i.style.cssText=`display:flex;align-items:center;pointer-events:auto;`,this._applySlot(i,`modebar_button`);let a=document.createElement(`span`);a.dataset.xyModebarMenuIcon=``,a.innerHTML=this._icon(e),i.appendChild(a);let o=document.createElement(`span`);o.textContent=t,i.appendChild(o),this._listen(i,`pointerdown`,e=>e.stopPropagation()),this._listen(i,`click`,e=>{e.stopPropagation(),r(!1,!0),this._setDragMode(n)}),D.appendChild(i),O.push(i),this._modeBtns[n]=i};b&&(k(`select`,`Box Select`,`select`),k(`lasso`,`Lasso Select`,`select-lasso`),k(`selectx`,`X Range`,`select-x`),k(`selecty`,`Y Range`,`select-y`));let A=document.createElement(`div`);A.dataset.xyModebarMenu=``,A.dataset.xyModebarExportMenu=``,A.setAttribute(`role`,`menu`),A.setAttribute(`aria-label`,`Toolbar options`),A.style.cssText=`position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;`,t.appendChild(A);let j=[],ee=(e,t,n,r=!1)=>{let a=document.createElement(`button`);a.type=`button`,a.tabIndex=-1,a.dataset.xyModebarMenuItem=e,a.dataset.xyModebarExportItem=e,r&&(a.dataset.xySeparator=``),a.setAttribute(`role`,`menuitem`),a.style.cssText=`display:flex;align-items:center;pointer-events:auto;`,this._applySlot(a,`modebar_button`);let o=document.createElement(`span`);o.dataset.xyModebarMenuIcon=``,o.innerHTML=this._icon(e),a.appendChild(o);let s=document.createElement(`span`);return s.textContent=t,a.appendChild(s),this._listen(a,`pointerdown`,e=>e.stopPropagation()),this._listen(a,`click`,e=>{e.stopPropagation(),i(!1,!0),Promise.resolve(n()).catch(e=>console.error(`xy: ${t} failed`,e))}),A.appendChild(a),j.push(a),a},te={png:[`Export PNG`,()=>this._exportRaster(`png`)],jpeg:[`Export JPEG`,()=>this._exportRaster(`jpeg`)],webp:[`Export WebP`,()=>this._exportRaster(`webp`)],svg:[`Export SVG`,()=>this._exportSvg()],csv:[`Export CSV`,()=>this._exportCsv()]},M=Array.isArray(this._exportConfig().formats)?this._exportConfig().formats:[`png`,`svg`,`csv`];for(let e of M){let t=te[e];t&&ee(e,t[0],t[1])}v&&(n=(n,a=!1)=>{let o=!!n;if(o&&(r(!1),i(!1)),this._zoomMenuOpen=o,v.setAttribute(`aria-expanded`,String(o)),!o){w.style.display=`none`,y.style.transform=`none`,a&&v.focus();return}w.style.display=`flex`,w.style.visibility=`hidden`;let s=e.getBoundingClientRect(),c=t.getBoundingClientRect(),l=c.left-s.left,u=c.top-s.top,d=t.offsetHeight+6,f=-w.offsetHeight-6,p=c.bottom+6+w.offsetHeight<=s.bottom?d:f;y.style.transform=p===f?`rotate(180deg)`:`none`;let m=e.clientWidth-l-w.offsetWidth,h=e.clientHeight-u-w.offsetHeight;w.style.left=`${Math.max(-l,Math.min(m,v.offsetLeft))}px`,w.style.top=`${Math.max(-u,Math.min(h,p))}px`,w.style.visibility=`visible`}),r=(r,a=!1)=>{if(!x)return;let o=!!r;if(o&&(n(!1),i(!1)),this._selectMenuOpen=o,x.setAttribute(`aria-expanded`,String(o)),!o){D.style.display=`none`,S.style.transform=`none`,a&&x.focus();return}D.style.display=`flex`,D.style.visibility=`hidden`;let s=e.getBoundingClientRect(),c=t.getBoundingClientRect(),l=c.left-s.left,u=c.top-s.top,d=t.offsetHeight+6,f=-D.offsetHeight-6,p=c.bottom+6+D.offsetHeight<=s.bottom?d:f;S.style.transform=p===f?`rotate(180deg)`:`none`;let m=e.clientWidth-l-D.offsetWidth,h=e.clientHeight-u-D.offsetHeight;D.style.left=`${Math.max(-l,Math.min(m,x.offsetLeft))}px`,D.style.top=`${Math.max(-u,Math.min(h,p))}px`,D.style.visibility=`visible`},i=(i,a=!1)=>{let s=!!i&&j.length>0;if(s&&(n(!1),r(!1)),this._exportMenuOpen=s,o.setAttribute(`aria-expanded`,String(s)),!s){A.style.display=`none`,a&&o.focus();return}A.style.display=`flex`,A.style.visibility=`hidden`;let c=e.getBoundingClientRect(),l=t.getBoundingClientRect(),u=l.left-c.left,d=l.top-c.top,f=t.offsetHeight+6,p=-A.offsetHeight-6,m=l.bottom+6+A.offsetHeight<=c.bottom?f:p,h=e.clientWidth-u-A.offsetWidth,g=e.clientHeight-d-A.offsetHeight;A.style.left=`${Math.max(-u,Math.min(h,o.offsetLeft))}px`,A.style.top=`${Math.max(-d,Math.min(g,m))}px`,A.style.visibility=`visible`},this._closeModebarMenu=()=>{n(!1),r(!1),i(!1)},this._syncModebarSelect=()=>{if(!x)return;let e=!!this._pickable;e||(r(!1),this.dragMode.startsWith(`select`)&&this._setDragMode(`pan`)),x.style.display=e?`flex`:`none`},this._syncModebarSelect(),this._listen(document,`pointerdown`,e=>{this._zoomMenuOpen&&!t.contains(e.target)&&n(!1),this._selectMenuOpen&&!t.contains(e.target)&&r(!1),this._exportMenuOpen&&!t.contains(e.target)&&i(!1)}),v&&(this._listen(v,`keydown`,e=>{if(e.key!==`ArrowDown`&&e.key!==`ArrowUp`)return;e.preventDefault(),e.stopPropagation(),n(!0);let t=e.key===`ArrowDown`?0:T.length-1;T[t].focus()}),this._listen(w,`keydown`,e=>{if(e.key===`Escape`){e.preventDefault(),e.stopPropagation(),n(!1,!0);return}if(![`ArrowDown`,`ArrowUp`,`Home`,`End`].includes(e.key))return;e.preventDefault();let t=T.indexOf(document.activeElement),r=e.key===`Home`?0:e.key===`End`?T.length-1:t;e.key===`ArrowDown`&&(r=(t+1)%T.length),e.key===`ArrowUp`&&(r=(t-1+T.length)%T.length),T[r].focus()})),x&&(this._listen(x,`keydown`,e=>{if(e.key!==`ArrowDown`&&e.key!==`ArrowUp`)return;e.preventDefault(),e.stopPropagation(),r(!0);let t=e.key===`ArrowDown`?0:O.length-1;O[t].focus()}),this._listen(D,`keydown`,e=>{if(e.key===`Escape`){e.preventDefault(),e.stopPropagation(),r(!1,!0);return}if(![`ArrowDown`,`ArrowUp`,`Home`,`End`].includes(e.key))return;e.preventDefault();let t=O.indexOf(document.activeElement),n=e.key===`Home`?0:e.key===`End`?O.length-1:t;e.key===`ArrowDown`&&(n=(t+1)%O.length),e.key===`ArrowUp`&&(n=(t-1+O.length)%O.length),O[n].focus()})),this._listen(o,`keydown`,e=>{if(e.key!==`ArrowDown`&&e.key!==`ArrowUp`||!j.length)return;e.preventDefault(),e.stopPropagation(),i(!0);let t=e.key===`ArrowDown`?0:j.length-1;j[t].focus()}),this._listen(A,`keydown`,e=>{if(e.key===`Escape`){e.preventDefault(),e.stopPropagation(),i(!1,!0);return}if(![`ArrowDown`,`ArrowUp`,`Home`,`End`].includes(e.key))return;e.preventDefault();let t=j.indexOf(document.activeElement),n=e.key===`Home`?0:e.key===`End`?j.length-1:t;e.key===`ArrowDown`&&(n=(t+1)%j.length),e.key===`ArrowUp`&&(n=(t-1+j.length)%j.length),j[n].focus()}),e.appendChild(t),this._fitModebar(),a(e.matches(`:hover`)),this._setDragMode(this.dragMode)},_fitModebar(){let e=this._modebar;if(e){if(this._closeModebarMenu?.(),this._modebarMoved||(e.style.top=`${this.plot.y+4}px`,e.style.left=`${this.plot.x+4}px`),e.style.display=`flex`,!(e.offsetWidth+8<=this.plot.w&&e.offsetHeight+8<=this.plot.h)){e.style.display=`none`;return}this._clampModebar()}},_setDragMode(e){this.dragMode=e,this.canvas&&(this.canvas.dataset.xyDragmode=e);for(let[t,n]of Object.entries(this._modeBtns||{}))n.classList.toggle(`xy-active`,t===e),n.setAttribute(`aria-pressed`,String(t===e));this._zoomMenuButton?.classList.toggle(`xy-active`,e===`zoom`),this._selectMenuButton?.classList.toggle(`xy-active`,e.startsWith(`select`));let t={select:[`select`,`Box Select`],"select-lasso":[`lasso`,`Lasso Select`],"select-x":[`selectx`,`X Range`],"select-y":[`selecty`,`Y Range`]}[e];if(t&&this._selectMenuButton&&this._selectMenuIcon){let[e,n]=t;this._selectMenuIcon.innerHTML=this._icon(e),this._selectMenuButton.title=`Selection controls: ${n}`,this._selectMenuButton.setAttribute(`aria-label`,`Selection controls: ${n}`)}},_actionLabel(e,t){let n=Array.isArray(t)?t:[...t||[]];return n.length?`${e} on ${n.join(` and `)} ${n.length===1?`axis`:`axes`}`:e},_updateZoomMenuLabel(){if(!this._zoomMenuLabel||!this.view||!this.view0)return;let e=(e,t,n,r,i)=>{let a=this._axis(e),o=Math.abs(this._axisCoord(a,n)-this._axisCoord(a,t)),s=Math.abs(this._axisCoord(a,i)-this._axisCoord(a,r));return Number.isFinite(o)&&o>0&&Number.isFinite(s)&&s>0?s/o*100:null},t=[...this._zoomAxes()].map(t=>{let[n,r]=this._axisRange(t),[i,a]=this._axisRange(t,this.view0);return[t,e(t,n,r,i,a)]}).filter(e=>e[1]!==null),n=t[0]?.[1]??100,r=Math.round(n),i=n<1?`<1%`:`${r}%`,a=r>999?`${String(r).slice(0,3)}…%`:i;if(this._zoomMenuLabel.dataset.xyZoomExact===i&&this._zoomMenuLabel.textContent===a)return;this._zoomMenuLabel.textContent=a,this._zoomMenuLabel.dataset.xyZoomExact=i;let o=t.map(([e,t])=>`${e} ${Math.round(t)}%`).join(`, `);this._zoomMenuButton.title=`Zoom controls (${o||i})`,this._zoomMenuButton.setAttribute(`aria-label`,`Zoom controls, ${o||i}`)},_prefersReducedMotion(){return window.matchMedia?.(`(prefers-reduced-motion: reduce)`)?.matches===!0},_cancelViewAnimation(){this._animRaf&&cancelAnimationFrame(this._animRaf),this._animRaf=null,this._viewAnim=null},_setView(e,t={}){if(this._destroyed)return[];let n=this._clampView(this._viewFrom(e),{anchors:t.anchors}),r=this._axisIds().filter(e=>{let t=this._axisRange(e),r=this._axisRange(e,n);return t[0]!==r[0]||t[1]!==r[1]});if(!r.length)return[];this._viewAnim||this._historyRecord({source:t.source||`programmatic`,interactionId:t.interactionId,history:t.history});let i=t.animate===!0&&!this._prefersReducedMotion(),a=t.duration||180;if(!i||a<=0)return this._cancelViewAnimation(),this.view=n,this.draw(),t.request!==!1&&this._scheduleViewRequest(),this._emitViewChange(t.source||`programmatic`,{axes:r,phase:t.phase||`end`,interactionId:t.interactionId,broadcast:t.broadcast}),r;clearTimeout(this._viewTimer),this.seq+=1;let o=t.request!==!1,s=t.requestDelay??Math.min(55,Math.max(24,a*.35)),c=t.requestMaxWait??130;o&&this._scheduleViewRequest(n,{seq:this.seq,delay:s,maxWait:c});let l=this._now(),u=Math.max(18,a/5);if(this._viewAnim)return Object.assign(this._viewAnim,{target:n,tau:u,changedAxes:[...new Set([...this._viewAnim.changedAxes,...r])],source:t.source||`programmatic`,phase:t.phase||`end`,interactionId:t.interactionId,broadcast:t.broadcast}),r;this._viewAnim={target:n,last:l,tau:u,changedAxes:r,source:t.source||`programmatic`,phase:t.phase||`end`,interactionId:t.interactionId,broadcast:t.broadcast};let d=(e,t,n)=>e+(t-e)*n,f=e=>Math.max(...this._axisIds().map(t=>{let[n,r]=this._axisRange(t,e);return Math.abs(r-n)}),1e-12),p=(e,t)=>{let n=f(t)*1e-4;return Math.max(...this._axisIds().flatMap(n=>{let r=this._axisRange(n,e),i=this._axisRange(n,t);return[Math.abs(r[0]-i[0]),Math.abs(r[1]-i[1])]}))<=n},m=e=>{if(this._destroyed){this._animRaf=null;return}let t=this._viewAnim;if(!t){this._animRaf=null;return}let n=Math.max(0,Math.min(64,e-t.last));t.last=e;let r=1-Math.exp(-n/t.tau),i=p(this.view,t.target)?1:r,a={};for(let e of this._axisIds()){let n=this._axisRange(e),r=this._axisRange(e,t.target);a[e]=[d(n[0],r[0],i),d(n[1],r[1],i)]}this.view=this._copyView({ranges:a}),i<1?(this.draw(),this._animRaf=requestAnimationFrame(m)):(this._animRaf=null,this._viewAnim=null,this.view=t.target,this._lastLabelDraw=null,this.draw(),this._emitViewChange(t.source,{axes:t.changedAxes,phase:t.phase,interactionId:t.interactionId,broadcast:t.broadcast}))};return this._animRaf=requestAnimationFrame(m),r},_zoomLimitForAxis(e){if(!this._axisPolicy(`zoom_axes`).includes(e))return[null,null];let t=this.interaction?.zoom_limits;if(t&&typeof t==`object`&&!Array.isArray(t)){let n=t[e];if(Array.isArray(n)&&n.length===2)return n}return[1,null]},_clampAxisRange(e,t,n,r=.5){let i=this._axis(e),a=this._axisCoord(i,t),o=this._axisCoord(i,n);if(![a,o].every(Number.isFinite)||a===o)return this._axisRange(e,this.view0);let s=this.view0?.ranges?.[e];if(s){let t=this._axisCoord(i,s[0]),n=this._axisCoord(i,s[1]),c=Math.abs(n-t),[l,u]=this._zoomLimitForAxis(e),d=Number(l),f=Number(u),p=Number.isFinite(d)&&d>0?c/d:1/0,m=Number.isFinite(f)&&f>0?c/f:0,h=Math.abs(o-a),g=Math.max(m,Math.min(p,h));if(Number.isFinite(g)&&g>0&&g!==h){let e=o<a?-1:1,t=a+r*(o-a);a=t-r*g*e,o=t+(1-r)*g*e}}let c=-1/0,l=1/0;if(Array.isArray(i.bounds)&&i.bounds.length===2){let e=this._axisCoord(i,i.bounds[0]),r=this._axisCoord(i,i.bounds[1]);if(![a,o,e,r].every(Number.isFinite)||e===r)return[t,n];c=Math.min(e,r),l=Math.max(e,r)}if(s&&this._axisContained(e)){let e=this._axisCoord(i,s[0]),t=this._axisCoord(i,s[1]);[e,t].every(Number.isFinite)&&e!==t&&(c=Math.max(c,Math.min(e,t)),l=Math.min(l,Math.max(e,t)))}if(!Number.isFinite(c)||!Number.isFinite(l)||l<=c)return[this._axisValue(i,a),this._axisValue(i,o)];let u=o<a,d=Math.min(a,o),f=Math.max(a,o);if(f-d>=l-c)d=c,f=l;else{let e=Math.max(c-d,Math.min(l-f,0));d+=e,f+=e}let p=u?f:d,m=u?d:f;return[this._axisValue(i,p),this._axisValue(i,m)]},_clampView(e,t={}){let n=this._viewFrom(e,this.view0),r={};for(let e of this._axisIds()){let[i,a]=this._axisRange(e,n);r[e]=this._clampAxisRange(e,i,a,t.anchors?.[e]??.5)}return this._copyView({ranges:r})},_zoomAxes(){return new Set(this._axisPolicy(`zoom_axes`))},_zoomBy(e,t=!1,n=e<1?`zoom_in`:`zoom_out`){let r=this._viewAnim?this._viewAnim.target:this.view,i=this._zoomAxes(),a=Object.fromEntries(this._axisIds().map(e=>[e,[...this._axisRange(e,r)]]));for(let t of i){let[n,r]=a[t],i=this._zoomAxisRange(t,n,r,e,.5);i&&(a[t]=i)}this._setView({ranges:a},{animate:t,source:n,phase:`end`,interactionId:++this._interactionSeq})},_zoomAxisRange(e,t,n,r,i){let a=this._axis(e),o=this._axisCoord(a,t),s=this._axisCoord(a,n);if(![o,s].every(Number.isFinite)||o===s)return null;let c=o+i*(s-o);if(r<1){let e=Math.max(Math.abs(c),1e-30)*1e-12;if(Math.abs((s-o)*r)<e)return null}let l=c-(c-o)*r,u=c+(s-c)*r;if(r>1&&this.view0){let t=this._axisRange(e,this.view0),n=this._axisCoord(a,t[0]),r=this._axisCoord(a,t[1]),o=Math.abs(r-n);if([n,r].every(Number.isFinite)&&o>0&&Math.abs(u-l)>o){let e=o*Math.sign(u-l);return[this._axisValue(a,c-i*e),this._axisValue(a,c+(1-i)*e)]}}return[this._axisValue(a,l),this._axisValue(a,u)]},_zoomAt(e,t,n,r=!1,i=120,a={}){let o=this._viewAnim?this._viewAnim.target:this.view,s=Array.isArray(a.axes)?new Set(a.axes.filter(e=>this._zoomAxes().has(e))):this._zoomAxes(),c=Object.fromEntries(this._axisIds().map(e=>[e,[...this._axisRange(e,o)]])),l={};for(let r of s){let i=this._axisDim(r)===`x`?t:n,[a,o]=c[r],s=this._zoomAxisRange(r,a,o,e,i);s&&(c[r]=s),l[r]=i}return this._setView({ranges:c},{animate:r,duration:i,anchors:l,source:a.source||`wheel_zoom`,phase:a.phase||`update`,interactionId:a.interactionId})},_queueWheelZoom(e,t,n,r=null){if(!Number.isFinite(e)||e<=0)return;clearTimeout(this._wheelZoomEndTimer),this._wheelZoomEndTimer=null;let i=Array.isArray(r)?r.join(`,`):``;if(this._wheelGesture&&this._wheelGesture.scopeKey!==i){let e=this._wheelGesture;this._wheelGesture=null,e.axes.size&&this._emitViewChange(`wheel_zoom`,{axes:[...e.axes],phase:`end`,interactionId:e.interactionId})}this._wheelGesture||={interactionId:++this._interactionSeq,axes:new Set,scopeKey:i},this._pendingWheelZoom||={factor:1,fx:t,fy:n,interactionId:this._wheelGesture.interactionId,axes:[],axesScope:r},this._pendingWheelZoom.factor*=e,this._pendingWheelZoom.fx=t,this._pendingWheelZoom.fy=n,this._pendingWheelZoom.axesScope=r,!this._wheelZoomRaf&&(this._wheelZoomRaf=requestAnimationFrame(()=>{this._wheelZoomRaf=null;let e=this._pendingWheelZoom;if(this._pendingWheelZoom=null,!(!e||this._destroyed)){e.axes=this._zoomAt(e.factor,e.fx,e.fy,!1,120,{source:`wheel_zoom`,phase:`update`,interactionId:e.interactionId,axes:e.axesScope||void 0})||[];for(let t of e.axes)this._wheelGesture?.axes.add(t);clearTimeout(this._wheelZoomEndTimer),this._wheelZoomEndTimer=setTimeout(()=>{let e=this._wheelGesture;this._wheelGesture=null,!(this._destroyed||!e||!e.axes.size)&&this._emitViewChange(`wheel_zoom`,{axes:[...e.axes],phase:`end`,interactionId:e.interactionId})},90)}}))},_zoomToBox(e,t,n=!1,r={}){let i=this._zoomAxes(),a={};for(let n of[`x`,`y`]){let r=this._axis(n),[i,o]=this._axisRange(n),s=this._axisCoord(r,i),c=this._axisCoord(r,o),l=this._axisCoord(r,e[n===`x`?0:1]),u=this._axisCoord(r,t[n===`x`?0:1]);if(![s,c,l,u].every(Number.isFinite)||s===c)return[];a[n]=[(l-s)/(c-s),(u-s)/(c-s)]}let o=Object.fromEntries(this._axisIds().map(e=>[e,[...this._axisRange(e)]])),s={};for(let e of i){let t=this._axis(e),[n,r]=o[e],i=this._axisCoord(t,n),c=this._axisCoord(t,r),[l,u]=a[this._axisDim(e)],d=i+l*(c-i),f=i+u*(c-i),p=Math.max(Math.abs(d),Math.abs(f),1e-30)*1e-12;if(!Number.isFinite(d)||!Number.isFinite(f)||Math.abs(f-d)<p)continue;let m=c<i,h=Math.min(d,f),g=Math.max(d,f);o[e]=[this._axisValue(t,m?g:h),this._axisValue(t,m?h:g)],s[e]=.5}return this._setView({ranges:o},{animate:n,anchors:s,source:r.source||`box_zoom`,phase:r.phase||`end`,interactionId:r.interactionId})},_resetView(e=!0,t=`reset`,n=null){let r=Object.fromEntries(this._axisIds().map(e=>[e,[...this._axisRange(e)]]));for(let e of n||this._resetAxisPolicy())r[e]=[...this._axisRange(e,this.view0)];return this._setView({ranges:r},{animate:e,source:t,phase:`end`,interactionId:++this._interactionSeq})},_exportConfig(){let e=this.spec&&this.spec.export;return e&&typeof e==`object`?e:{}},_exportFilename(e){let t=this._exportConfig().filename;return typeof t==`string`&&t?`${t}.${e}`:`${String(this.spec.title||`xy-chart`).trim().toLowerCase().replace(/[^a-z0-9]+/g,`-`).replace(/^-+|-+$/g,``)||`xy-chart`}.${e}`},_downloadExport(e,t){let n=URL.createObjectURL(e),r=document.createElement(`a`);r.href=n,r.download=t,r.style.display=`none`,document.body.appendChild(r),r.click(),r.remove(),setTimeout(()=>URL.revokeObjectURL(n),0)},_exportSvgMarkup(){this._drawNow?.(),this.gl?.finish?.();let e=this.size.w,t=this.size.h,n=this.root.cloneNode(!0);n.style.width=`${e}px`,n.style.height=`${t}px`,n.style.margin=`0`,n.setAttribute(`xmlns`,`http://www.w3.org/1999/xhtml`);let r=getComputedStyle(this.root),i=[`color`,`font-family`,`font-size`,`font-style`,`font-weight`,`letter-spacing`,`line-height`],a=[`--chart-bg`,`--chart-text`,`--chart-grid`,`--chart-axis`,`--chart-tooltip-bg`,`--chart-tooltip-text`,`--chart-legend-bg`,`--chart-badge-bg`,`--chart-badge-text`,`--chart-modebar-bg`,`--chart-modebar-active`,`--chart-selection`,`--chart-selection-fill`,`--chart-zoom-selection`,`--chart-zoom-selection-fill`,`--chart-crosshair`,`--chart-annotation-text`,`--chart-cursor`,`--chart-cursor-pan`];for(let e=0;e<r.length;e++){let t=r.item(e);if(!t.startsWith(`--`))continue;let i=r.getPropertyValue(t).trim();i&&n.style.setProperty(t,i)}for(let e of[...i,...a]){let t=r.getPropertyValue(e).trim();t&&n.style.setProperty(e,t)}let o=[...this.root.querySelectorAll(`canvas`)],s=[...n.querySelectorAll(`canvas`)];for(let e=0;e<s.length;e++){let t=o[e],n=s[e];if(!t||!n)continue;let r=document.createElement(`img`);r.setAttribute(`src`,t.toDataURL(`image/png`)),r.setAttribute(`alt`,``),r.setAttribute(`style`,n.getAttribute(`style`)||``),r.setAttribute(`width`,String(t.clientWidth||t.width)),r.setAttribute(`height`,String(t.clientHeight||t.height));for(let e of n.attributes)e.name.startsWith(`data-`)&&r.setAttribute(e.name,e.value);n.replaceWith(r)}n.querySelectorAll(`[data-xy-slot="modebar"],[data-xy-slot="tooltip"],[data-xy-slot="selection"],[data-xy-selection-lasso-overlay],[data-xy-slot="crosshair_x"],[data-xy-slot="crosshair_y"]`).forEach(e=>e.remove());let c=document.createElement(`style`);return c.textContent=S,n.prepend(c),`<svg xmlns="http://www.w3.org/2000/svg" width="${e}" height="${t}" viewBox="0 0 ${e} ${t}"><foreignObject width="100%" height="100%">${new XMLSerializer().serializeToString(n)}</foreignObject></svg>`},_exportSvg(){let e=this._exportSvgMarkup();this._downloadExport(new Blob([e],{type:`image/svg+xml;charset=utf-8`}),this._exportFilename(`svg`))},_exportPng(){return this._exportRaster(`png`)},_exportRaster(e){let t=this._exportSvgMarkup(),n=`data:image/svg+xml;charset=utf-8,${encodeURIComponent(t)}`,r=new Image,i=this._exportConfig(),a={png:`image/png`,jpeg:`image/jpeg`,webp:`image/webp`}[e];return a?new Promise((t,o)=>{r.onload=()=>{let n=Number.isFinite(i.scale)&&i.scale>0?i.scale:Math.max(1,window.devicePixelRatio||1),s=document.createElement(`canvas`);s.width=Math.round(this.size.w*n),s.height=Math.round(this.size.h*n);let c=s.getContext(`2d`),l=typeof i.background==`string`&&i.background!==`auto`?i.background:null,u=l===`transparent`||l===`none`;e===`jpeg`?(c.fillStyle=l&&!u?l:`#ffffff`,c.fillRect(0,0,s.width,s.height)):l&&!u&&(c.fillStyle=l,c.fillRect(0,0,s.width,s.height)),c.scale(n,n),c.drawImage(r,0,0,this.size.w,this.size.h);let d=Number.isFinite(i.quality)?Math.min(1,Math.max(.01,i.quality/100)):.9;s.toBlob(n=>{if(!n){o(Error(`${e.toUpperCase()} encoding returned no data`));return}let r=n.type===`image/jpeg`?`jpg`:n.type===`image/webp`?`webp`:`png`;this._downloadExport(n,this._exportFilename(r)),t()},a,e===`png`?void 0:d)},r.onerror=()=>{o(Error(`chart SVG could not be rasterized`))},r.src=n}):Promise.reject(Error(`unsupported raster export ${e}`))},_exportCsvText(){let e=[[`trace`,`name`,`kind`,`index`,`x`,`y`,`x0`,`x1`,`y0`,`y1`,`value`]],t=e=>Number.isFinite(e)?e:``;for(let n of this.gpuTraces||[]){let r=n.trace||{},i=[r.id??``,r.name??``,r.kind??``];if(n._cpuRect){let r=n._cpuRect,a=Math.min(r.x0.length,r.x1.length,r.y0.length,r.y1.length);for(let n=0;n<a;n++)e.push([...i,n,``,``,t(this._decodeValue(r.x0,r.x0Meta,n)),t(this._decodeValue(r.x1,r.x1Meta,n)),t(this._decodeValue(r.y0,r.y0Meta,n)),t(this._decodeValue(r.y1,r.y1Meta,n)),``]);continue}if(n.heatmap&&n._cpuHeatmap){let a=n.heatmap;for(let o=0;o<n._cpuHeatmap.grid.length;o++){let s=Math.floor(o/a.w),c=o%a.w,l=a.xRange[0]+(c+.5)*((a.xRange[1]-a.xRange[0])/a.w),u=a.yRange[0]+(s+.5)*((a.yRange[1]-a.yRange[0])/a.h),d=this._denormalizeUnit(n._cpuHeatmap.grid[o],r.color?.domain);e.push([...i,o,t(l),t(u),``,``,``,``,t(d)])}continue}let a=n._cpu;if(!a?.x||!a?.y)continue;let o=Math.min(a.x.length,a.y.length,n.n||1/0);for(let r=0;r<o;r++)e.push([...i,r,t(this._decodeValue(a.x,a.xMeta||n.xMeta,r)),t(this._decodeValue(a.y,a.yMeta||n.yMeta,r)),``,``,``,``,``])}let n=e=>{let t=String(e??``),n=t.split(`"`).join(`""`);return t.includes(`,`)||t.includes(`"`)||t.includes(`\r`)||t.includes(`
-`)?`"${n}"`:t};return e.map(e=>e.map(n).join(`,`)).join(`\r
-`)+`\r
-`},_exportCsv(){this._downloadExport(new Blob([this._exportCsvText()],{type:`text/csv;charset=utf-8`}),this._exportFilename(`csv`))},_icon(e){let t=e=>`<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${e}</svg>`;switch(e){case`zoomin`:return t(`<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5 L17 17"/><path d="M8.5 6 V11 M6 8.5 H11"/>`);case`zoomout`:return t(`<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5 L17 17"/><path d="M6 8.5 H11"/>`);case`pan`:return t(`<path d="M10 3 V17 M3 10 H17"/><path d="M10 3 L8 5 M10 3 L12 5"/><path d="M10 17 L8 15 M10 17 L12 15"/><path d="M3 10 L5 8 M3 10 L5 12"/><path d="M17 10 L15 8 M17 10 L15 12"/>`);case`zoom`:return t(`<path d="M7 3.5 H3.5 V7 M13 3.5 H16.5 V7 M3.5 13 V16.5 H7 M16.5 13 V16.5 H13"/>`);case`select`:return t(`<path d="M7 4 H4 V7 M13 4 H16 V7 M4 13 V16 H7 M16 13 V16 H13"/><circle cx="7" cy="8" r="1" fill="currentColor" stroke="none"/><circle cx="12.5" cy="9" r="1" fill="currentColor" stroke="none"/><circle cx="9.5" cy="13" r="1" fill="currentColor" stroke="none"/>`);case`lasso`:return t(`<path d="M5 5.5 C7 3 13.5 3.5 15.5 7 C17 10 14 15.5 9 15.5 C4.5 15.5 2.5 11 4 7.5 Z"/><circle cx="5" cy="5.5" r="1" fill="currentColor" stroke="none"/><circle cx="15.5" cy="7" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="15.5" r="1" fill="currentColor" stroke="none"/>`);case`selectx`:return t(`<path d="M5 4 V16 M15 4 V16 M7 10 H13 M7 10 L9 8 M7 10 L9 12 M13 10 L11 8 M13 10 L11 12"/>`);case`selecty`:return t(`<path d="M4 5 H16 M4 15 H16 M10 7 V13 M10 7 L8 9 M10 7 L12 9 M10 13 L8 11 M10 13 L12 11"/>`);case`chevrondown`:return t(`<path d="M6 8 L10 12 L14 8"/>`);case`collapse`:return t(`<path d="M4 5 H16 M4 15 H16 M7 8 L10 11 L13 8"/>`);case`expand`:return t(`<path d="M4 5 H16 M4 15 H16 M7 12 L10 9 L13 12"/>`);case`png`:return t(`<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/><path d="M7 13 L9 10.5 L11 12 L13.5 9 V15 H7 Z"/>`);case`jpeg`:return t(`<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/><circle cx="8.5" cy="10" r="1.2"/><path d="M7 15 L10 12 L13.5 15 Z"/>`);case`webp`:return t(`<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/><path d="M7 11 C8 10 9 10 10 11 C11 12 12 12 13.5 11"/><path d="M7 14 C8 13 9 13 10 14 C11 15 12 15 13.5 14"/>`);case`svg`:return t(`<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/><path d="M7 13 L9 9 L11 14 L13.5 10"/>`);case`csv`:return t(`<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/><path d="M7 9 H13 M7 12 H13 M7 15 H13 M9 8 V16"/>`);case`reset`:return t(`<path d="M4 10 a6 6 0 1 1 1.8 4.3"/><path d="M4 6 V10 H8"/>`);case`historyback`:return t(`<path d="M13 4 L7 10 L13 16"/>`);case`historyforward`:return t(`<path d="M7 4 L13 10 L7 16"/>`);case`drag`:return t(`<circle cx="7" cy="5" r=".8" fill="currentColor" stroke="none"/><circle cx="13" cy="5" r=".8" fill="currentColor" stroke="none"/><circle cx="7" cy="10" r=".8" fill="currentColor" stroke="none"/><circle cx="13" cy="10" r=".8" fill="currentColor" stroke="none"/><circle cx="7" cy="15" r=".8" fill="currentColor" stroke="none"/><circle cx="13" cy="15" r=".8" fill="currentColor" stroke="none"/>`);default:return t(``)}}});var ht=`
+}`;
+function xyMonotoneTangents(x, y, n) {
+const d = new Float64Array(n - 1);
+const m = new Float64Array(n);
+for (let i = 0; i < n - 1; i++) {
+const dx = x[i + 1] - x[i];
+d[i] = dx > 0 ? (y[i + 1] - y[i]) / dx : 0;
+}
+m[0] = d[0];
+m[n - 1] = d[n - 2];
+for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) * 0.5;
+for (let i = 0; i < n - 1; i++) {
+if (d[i] === 0) { m[i] = 0; m[i + 1] = 0; continue; }
+const a = m[i] / d[i];
+const b = m[i + 1] / d[i];
+const s = a * a + b * b;
+if (s > 9) {
+const t = 3 / Math.sqrt(s);
+m[i] = t * a * d[i];
+m[i + 1] = t * b * d[i];
+}
+}
+return m;
+}
+function xySmoothResample(x, y, extra, n, maxOut) {
+if (n < 3) return null;
+const sub = Math.max(1, Math.min(16, Math.floor(maxOut / n)));
+if (sub <= 1) return null;
+for (let i = 0; i < n; i++) {
+if (!Number.isFinite(x[i]) || !Number.isFinite(y[i])) return null;
+if (i > 0 && x[i] < x[i - 1]) return null;
+if (extra && !Number.isFinite(extra[i])) return null;
+}
+const my = xyMonotoneTangents(x, y, n);
+const me = extra ? xyMonotoneTangents(x, extra, n) : null;
+const outN = (n - 1) * sub + 1;
+const ox = new Float32Array(outN);
+const oy = new Float32Array(outN);
+const oe = extra ? new Float32Array(outN) : null;
+let k = 0;
+for (let i = 0; i < n - 1; i++) {
+const h = x[i + 1] - x[i];
+for (let s = 0; s < sub; s++) {
+const t = s / sub;
+ox[k] = x[i] + h * t;
+if (h > 0) {
+const t2 = t * t;
+const t3 = t2 * t;
+const h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+const h10 = t3 - 2.0 * t2 + t;
+const h01 = -2.0 * t3 + 3.0 * t2;
+const h11 = t3 - t2;
+oy[k] = h00 * y[i] + h10 * h * my[i] + h01 * y[i + 1] + h11 * h * my[i + 1];
+if (oe) oe[k] = h00 * extra[i] + h10 * h * me[i] + h01 * extra[i + 1] + h11 * h * me[i + 1];
+} else {
+oy[k] = y[i];
+if (oe) oe[k] = extra[i];
+}
+k++;
+}
+}
+ox[k] = x[n - 1];
+oy[k] = y[n - 1];
+if (oe) oe[k] = extra[n - 1];
+return { x: ox, y: oy, extra: oe, n: outN };
+}
+const LOD_DIRECT_POINT_BUDGET = 200000;
+const LOD_DRILL_EXIT_FACTOR = 1.15;
+function lodFade(view, start, duration = 140) {
+if (start === undefined || start === null || duration <= 0 || view._prefersReducedMotion()) {
+return 1;
+}
+const t = Math.min(1, Math.max(0, (view._now() - start) / duration));
+return t * t * (3 - 2 * t);
+}
+function lodDecodeLogU8(buf, maxVal) {
+const u8 = buf instanceof ArrayBuffer ? new Uint8Array(buf) : new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+const out = new Float32Array(u8.length);
+const denom = Math.log1p(Math.max(0, maxVal || 0));
+if (denom > 0) {
+for (let i = 0; i < u8.length; i++) {
+if (u8[i] > 0) out[i] = Math.expm1((u8[i] / 255) * denom);
+}
+}
+return out;
+}
+function lodCopyGrid(f32) {
+return f32.slice ? f32.slice() : new Float32Array(f32);
+}
+function lodWriteGridTexture(gl, tex, f32, w, h, maxVal) {
+const data = new Uint8Array(f32.length);
+const denom = Math.log1p(Math.max(0, maxVal || 0));
+if (denom > 0) {
+for (let i = 0; i < f32.length; i++) {
+const c = f32[i];
+if (c > 0 && Number.isFinite(c)) {
+data[i] = Math.max(1, Math.min(255, Math.round(255 * Math.log1p(c) / denom)));
+}
+}
+}
+gl.bindTexture(gl.TEXTURE_2D, tex);
+const align = gl.getParameter(gl.UNPACK_ALIGNMENT);
+gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, data);
+gl.pixelStorei(gl.UNPACK_ALIGNMENT, align);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+}
+function lodNormMax(g, nextMax) {
+if (!Number.isFinite(nextMax) || nextMax <= 0) {
+g.densityNormMax = 0;
+return 0;
+}
+const prev = Number.isFinite(g.densityNormMax) && g.densityNormMax > 0
+? g.densityNormMax
+: nextMax;
+const norm = nextMax > prev
+? prev * 0.3 + nextMax * 0.7
+: Math.max(nextMax, prev * 0.86);
+g.densityNormMax = norm;
+return norm;
+}
+function lodStartNormAnim(view, g, start, target) {
+if (!g.density || !g.density.grid || !Number.isFinite(target) || target <= 0) {
+g._densityNormAnim = null;
+return;
+}
+const ratio = Math.abs(Math.log(Math.max(start, 1e-12) / Math.max(target, 1e-12)));
+if (view._prefersReducedMotion() || ratio < 0.02) {
+g._densityNormAnim = null;
+g.density.normMax = target;
+g.densityNormMax = target;
+lodWriteGridTexture(view.gl, g.density.tex, g.density.grid, g.density.w, g.density.h, target);
+return;
+}
+g._densityNormAnim = {
+start,
+target,
+startedAt: view._now(),
+duration: target < start ? 420 : 260,
+};
+}
+function lodStepNorm(view, g) {
+const anim = g._densityNormAnim;
+const d = g.density;
+if (!anim || !d || !d.grid || !d.tex) return;
+const t = Math.min(1, Math.max(0, (view._now() - anim.startedAt) / anim.duration));
+const k = t * t * (3 - 2 * t);
+const norm = anim.start + (anim.target - anim.start) * k;
+const prev = d.normMax || 0;
+const rel = Math.abs(norm - prev) / Math.max(Math.abs(norm), Math.abs(prev), 1);
+if (rel > 0.004 || t >= 1) {
+d.normMax = norm;
+g.densityNormMax = norm;
+lodWriteGridTexture(view.gl, d.tex, d.grid, d.w, d.h, norm);
+}
+if (t < 1) {
+view.draw();
+return;
+}
+d.normMax = anim.target;
+g.densityNormMax = anim.target;
+g._densityNormAnim = null;
+}
+function lodDensityArea(d) {
+return Math.abs((d.xRange[1] - d.xRange[0]) * (d.yRange[1] - d.yRange[0]));
+}
+function lodWindowArea(win) {
+if (!win) return 0;
+return Math.abs((win.x1 - win.x0) * (win.y1 - win.y0));
+}
+function lodWindowCenterInside(win, view) {
+if (!win || !view) return false;
+const cx = (view.x0 + view.x1) / 2;
+const cy = (view.y0 + view.y1) / 2;
+return (
+cx >= Math.min(win.x0, win.x1) &&
+cx <= Math.max(win.x0, win.x1) &&
+cy >= Math.min(win.y0, win.y1) &&
+cy <= Math.max(win.y0, win.y1)
+);
+}
+function lodDensityForView(view, g) {
+const cache = g.densityCache || (g.density ? [g.density] : []);
+let best = null;
+let broadest = null;
+for (const d of cache) {
+if (!d || !d.tex) continue;
+if (!broadest || lodDensityArea(d) > lodDensityArea(broadest)) broadest = d;
+if (!view._viewInsideRange(d.xRange, d.yRange)) continue;
+if (!best || lodDensityArea(d) < lodDensityArea(best)) best = d;
+}
+return best || broadest || g.density;
+}
+function lodHoldPendingDrill(view, g, d) {
+const pending = g._lodPendingView;
+if (!d || !pending || g._drillDying) return false;
+if (g._lodPendingSeq !== view.seq) return false;
+if (g._lodPendingAt && view._now() - g._lodPendingAt > 1200) return false;
+if (!lodWindowCenterInside(d.win, pending)) return false;
+const drillArea = lodWindowArea(d.win);
+const pendingArea = lodWindowArea(pending);
+if (!Number.isFinite(drillArea) || !Number.isFinite(pendingArea) || drillArea <= 0) return false;
+const baseVisible = Number.isFinite(d.visible) ? d.visible : d.n;
+if (!Number.isFinite(baseVisible) || baseVisible <= 0) return false;
+const estimatedVisible = baseVisible * Math.max(1, pendingArea / drillArea);
+return estimatedVisible <= LOD_DIRECT_POINT_BUDGET * LOD_DRILL_EXIT_FACTOR;
+}
+function lodDensityPinned(g, d) {
+return d === g.density || d === g.prevDensity || d === g._densitySwitchPrev ||
+d === g._shownDensity || d === g._homeDensity;
+}
+function lodRememberDensity(view, g, d) {
+if (!d || !d.tex) return;
+d._stamp = ++view._densityStamp;
+if (!g.densityCache) g.densityCache = [];
+if (!g.densityCache.includes(d)) g.densityCache.push(d);
+const maxCached = 8;
+while (g.densityCache.length > maxCached) {
+let drop = -1;
+for (let i = 0; i < g.densityCache.length; i++) {
+const cand = g.densityCache[i];
+if (lodDensityPinned(g, cand)) continue;
+if (drop < 0) { drop = i; continue; }
+const dropArea = lodDensityArea(g.densityCache[drop]);
+const candArea = lodDensityArea(cand);
+if (candArea < dropArea || (candArea === dropArea && cand._stamp < g.densityCache[drop]._stamp)) {
+drop = i;
+}
+}
+if (drop < 0) break;
+const old = g.densityCache.splice(drop, 1)[0];
+if (!lodDensityPinned(g, old)) view.gl.deleteTexture(old.tex);
+}
+}
+function lodApplyDrill(view, g, upd, buffers) {
+const gl = view.gl;
+const fresh = !g.drill;
+let d = g.drill;
+if (!d) {
+d = g.drill = { trace: g.trace, xBuf: gl.createBuffer(), yBuf: gl.createBuffer() };
+}
+d.trace = { ...g.trace, style: upd.style || g.trace.style || {} };
+d.xAxis = g.xAxis;
+d.yAxis = g.yAxis;
+const xs = view._asF32(buffers[upd.x.buf]);
+const ys = view._asF32(buffers[upd.y.buf]);
+gl.bindBuffer(gl.ARRAY_BUFFER, d.xBuf);
+gl.bufferData(gl.ARRAY_BUFFER, xs, gl.STATIC_DRAW);
+gl.bindBuffer(gl.ARRAY_BUFFER, d.yBuf);
+gl.bufferData(gl.ARRAY_BUFFER, ys, gl.STATIC_DRAW);
+d.xMeta = { offset: upd.x.offset, scale: upd.x.scale };
+d.yMeta = { offset: upd.y.offset, scale: upd.y.scale };
+d.win = { x0: upd.x_range[0], x1: upd.x_range[1], y0: upd.y_range[0], y1: upd.y_range[1] };
+d.n = Math.min(upd.x.len, upd.y.len);
+d.visible = upd.visible ?? d.n;
+d.seq = upd.drill_seq;
+d.selActive = false;
+lodRestoreBrushMask(view, d, xs, ys);
+view._hoverId = -1;
+view._lastRow = null;
+d.colorMode = 0;
+d.color = parseColor(view.root, upd.color && upd.color.color, [0.3, 0.47, 0.66, 1]);
+if (upd.color && upd.color.buf !== undefined) {
+d.colorMode = upd.color.mode === "continuous" ? 1 :
+(upd.color.mode === "categorical" ? 2 : 3);
+const colorValues = upd.color.dtype === "u8"
+? view._asU8(buffers[upd.color.buf])
+: view._asF32(buffers[upd.color.buf]);
+const colorBufferName = d.colorMode === 3 ? "rgbaBuf" : "cBuf";
+if (!d[colorBufferName]) d[colorBufferName] = gl.createBuffer();
+d[colorBufferName]._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
+gl.bindBuffer(gl.ARRAY_BUFFER, d[colorBufferName]);
+gl.bufferData(gl.ARRAY_BUFFER, colorValues, gl.STATIC_DRAW);
+if (d.colorMode !== 3) {
+d.lut = upd.color.mode === "continuous"
+? view._lut(upd.color.colormap)
+: view._paletteLut(upd.color.palette);
+}
+}
+d.sizeMode = 0;
+d.size = (upd.size && upd.size.size) || 4.0;
+d.sizeRange = [2, 18];
+if (upd.size && upd.size.mode === "continuous") {
+d.sizeMode = 1;
+if (!d.sBuf) d.sBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, d.sBuf);
+gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.size.buf]), gl.STATIC_DRAW);
+d.sizeRange = upd.size.range_px;
+}
+const styleChannel = (name) => upd.channels && upd.channels[name];
+const artistScalar = Number(d.trace.style && d.trace.style.artist_alpha);
+if (styleChannel("opacity") || styleChannel("artist_alpha") ||
+styleChannel("stroke_width") || styleChannel("symbol") || Number.isFinite(artistScalar)) {
+const values = new Float32Array(d.n * 4);
+for (let i = 0; i < d.n; i++) {
+values[i * 4] = 1;
+values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
+values[i * 4 + 2] = -1;
+values[i * 4 + 3] = -1;
+}
+const copy = (name, component, scale = 1) => {
+const spec = styleChannel(name);
+if (!spec) return;
+const source = spec.dtype === "u8"
+? view._asU8(buffers[spec.buf])
+: view._asF32(buffers[spec.buf]);
+const components = spec.components || 1;
+for (let i = 0; i < d.n; i++) values[i * 4 + component] = source[i * components] * scale;
+};
+copy("opacity", 0);
+copy("artist_alpha", 1);
+copy("stroke_width", 2, view.dpr);
+copy("symbol", 3);
+if (!d.styleBuf) d.styleBuf = gl.createBuffer();
+d.styleBuf._fcType = gl.FLOAT;
+gl.bindBuffer(gl.ARRAY_BUFFER, d.styleBuf);
+gl.bufferData(gl.ARRAY_BUFFER, values, gl.STATIC_DRAW);
+}
+if (upd.stroke && upd.stroke.mode === "direct_rgba") {
+const values = view._asU8(buffers[upd.stroke.buf]);
+if (!d.strokeBuf) d.strokeBuf = gl.createBuffer();
+d.strokeBuf._fcType = gl.UNSIGNED_BYTE;
+gl.bindBuffer(gl.ARRAY_BUFFER, d.strokeBuf);
+gl.bufferData(gl.ARRAY_BUFFER, values, gl.STATIC_DRAW);
+}
+view._pointMarkStyle(d, d.trace);
+if (upd.density_val && upd.density_val.buf !== undefined) {
+if (!d.dBuf) d.dBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, d.dBuf);
+gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.density_val.buf]), gl.STATIC_DRAW);
+d.dlut = view._lut(upd.density_colormap || "viridis");
+const first = d.lodBlend === undefined;
+d.lodBlend = Math.min(1, upd.lod_blend ?? 0);
+if (first) d.lodBlendShown = d.lodBlend;
+} else {
+d.lodBlend = 0;
+}
+if (fresh) {
+g._drillFadeStart = view._now();
+g._drillWasInside = false;
+g._drillShownAlpha = 0;
+g._drillExitFadeStart = null;
+g._drillDying = false;
+g._drillDiedInsideWin = false;
+return;
+}
+if (g._drillDying || g._drillExitFadeStart != null) {
+lodEnterDrillContinuous(view, g);
+}
+g._drillDying = false;
+g._drillDiedInsideWin = false;
+}
+function lodRestoreBrushMask(view, d, xs, ys) {
+const b = view._lastBrush;
+if (!b || !d.n) return;
+const ox = d.xMeta.offset, sx = d.xMeta.scale || 1;
+const oy = d.yMeta.offset, sy = d.yMeta.scale || 1;
+const mask = new Float32Array(d.n);
+if (b.mode === "box") {
+for (let i = 0; i < d.n; i++) {
+const x = xs[i] / sx + ox, y = ys[i] / sy + oy;
+if (x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) mask[i] = 1;
+}
+} else if (b.mode === "poly" && Array.isArray(b.points) && b.points.length >= 3) {
+const pts = b.points;
+for (let i = 0; i < d.n; i++) {
+const x = xs[i] / sx + ox, y = ys[i] / sy + oy;
+let hit = false;
+for (let a = 0, z = pts.length - 1; a < pts.length; z = a++) {
+const [xa, ya] = pts[a], [xz, yz] = pts[z];
+if ((ya > y) !== (yz > y) && x < ((xz - xa) * (y - ya)) / (yz - ya) + xa) hit = !hit;
+}
+if (hit) mask[i] = 1;
+}
+} else {
+return;
+}
+view._applySelMask(d, mask);
+}
+function lodDropDrill(view, g) {
+const d = g.drill;
+if (!d) return;
+const gl = view.gl;
+view._deleteVaos(d);
+for (const b of [d.xBuf, d.yBuf, d.cBuf, d.rgbaBuf, d.sBuf, d.styleBuf,
+d.strokeBuf, d.selBuf, d.dBuf]) if (b) gl.deleteBuffer(b);
+g.drill = null;
+g._drillFadeStart = null;
+g._drillExitFadeStart = null;
+g._drillWasInside = false;
+g._drillShownAlpha = null;
+g._drillDying = false;
+g._drillDiedInsideWin = false;
+view._hoverId = -1;
+view._lastRow = null;
+view._updatePickable();
+}
+function lodMarkDrillDying(view, g) {
+if (!g.drill) return;
+g._drillDying = true;
+g._drillDiedInsideWin = view._viewInside(g.drill.win);
+lodBeginDrillExitContinuous(view, g);
+}
+function lodDrillExitFade(view, g) {
+if (g._drillExitFadeStart === undefined || g._drillExitFadeStart === null) {
+g._drillExitFadeStart = view._now();
+}
+const fade = lodFade(view, g._drillExitFadeStart, LOD_EXIT_FADE_MS);
+if (fade >= 1) g._drillExitFadeStart = null;
+return fade;
+}
+const LOD_ENTRY_FADE_MS = 140;
+const LOD_EXIT_FADE_MS = 120;
+function lodFadeInvert(alpha) {
+const a = Math.min(1, Math.max(0, alpha));
+return 0.5 - Math.sin(Math.asin(1 - 2 * a) / 3);
+}
+function lodDrillShownAlpha(view, g) {
+if (g._drillExitFadeStart != null) {
+return 1 - lodFade(view, g._drillExitFadeStart, LOD_EXIT_FADE_MS);
+}
+if (g._drillFadeStart != null) {
+return lodFade(view, g._drillFadeStart, LOD_ENTRY_FADE_MS);
+}
+if (g._drillShownAlpha != null) return g._drillShownAlpha;
+return g._drillWasInside ? 1 : 0;
+}
+function lodEnterDrillContinuous(view, g) {
+const alpha = lodDrillShownAlpha(view, g);
+g._drillShownAlpha = alpha;
+g._drillExitFadeStart = null;
+g._drillFadeStart =
+alpha >= 1 ? null : view._now() - LOD_ENTRY_FADE_MS * lodFadeInvert(alpha);
+}
+function lodBeginDrillExitContinuous(view, g) {
+if (g._drillExitFadeStart != null) return;
+const alpha = lodDrillShownAlpha(view, g);
+g._drillShownAlpha = alpha;
+g._drillFadeStart = null;
+g._drillExitFadeStart = view._now() - LOD_EXIT_FADE_MS * lodFadeInvert(1 - alpha);
+}
+function lodApplyDensityUpdate(view, g, upd, buffers) {
+lodMarkDrillDying(view, g);
+const d = upd.density;
+const grid = d.enc === "log-u8"
+? lodDecodeLogU8(buffers[d.buf], d.max)
+: lodCopyGrid(view._asF32(buffers[d.buf]));
+const normStart = lodNormMax(g, d.max);
+const normMax = view._prefersReducedMotion() ? d.max : normStart;
+g.densityNormMax = normMax;
+g.prevDensity = g.density;
+g._densityFadeStart = view._now();
+g.density = {
+w: d.w, h: d.h, max: d.max, normMax, colormap: d.colormap || g.density.colormap,
+color: d.color ? parseColor(view.root, d.color, [0.3, 0.47, 0.66, 1]) : g.density.color,
+xRange: d.x_range, yRange: d.y_range,
+grid,
+tex: view._uploadGrid(grid, d.w, d.h, normMax),
+lut: g.density.lut,
+};
+if (Object.prototype.hasOwnProperty.call(d, "sample")) {
+view._applyDensitySample(g, d.sample, buffers);
+}
+lodStartNormAnim(view, g, normMax, d.max);
+lodRememberDensity(view, g, g.density);
+}
+function lodDrawDensityWithFade(view, g, density, opacityScale = 1) {
+if (density !== g._shownDensity) {
+if (density === g._densitySwitchPrev && g._densitySwitchFadeStart != null) {
+const f = lodFade(view, g._densitySwitchFadeStart, 140);
+g._densitySwitchFadeStart = view._now() - 140 * lodFadeInvert(1 - f);
+} else {
+g._densitySwitchFadeStart = view._now();
+}
+g._densitySwitchPrev = g._shownDensity;
+g._shownDensity = density;
+}
+const prev = g._densitySwitchPrev;
+const fade = prev && prev.tex ? lodFade(view, g._densitySwitchFadeStart, 140) : 1;
+if (fade < 1) {
+view._drawDensity(g, prev, (1 - fade) * opacityScale);
+view._drawDensity(g, density, fade * opacityScale);
+view.draw();
+return;
+}
+if (fade >= 1) {
+if (g.prevDensity === g._densitySwitchPrev) g.prevDensity = null;
+g._densitySwitchPrev = null;
+g._densitySwitchFadeStart = null;
+if (density === g.density) g._densityFadeStart = null;
+}
+view._drawDensity(g, density, opacityScale);
+}
+function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
+lodStepNorm(view, g);
+const d = g.drill;
+if (d && g._drillDying && !g._drillDiedInsideWin && view._viewInside(d.win)) {
+g._drillDying = false;
+lodEnterDrillContinuous(view, g);
+g._drillWasInside = true;
+}
+const inside = d && !g._drillDying && view._viewInside(d.win);
+const density = lodDensityForView(view, g);
+if (inside) {
+if (!g._drillWasInside || g._drillExitFadeStart != null) lodEnterDrillContinuous(view, g);
+g._drillWasInside = true;
+g._drillExitFadeStart = null;
+const fade = lodFade(view, g._drillFadeStart);
+g._drillShownAlpha = fade;
+g._shownDensity = fade < 1 ? density : null;
+g._densitySwitchPrev = null;
+g._densitySwitchFadeStart = null;
+if (fade < 1 && density && density.tex) {
+view._drawDensity(g, density, 1 - fade);
+view._drawPoints(
+d,
+view._map(d.xMeta, x0, x1, d.xAxis),
+view._map(d.yMeta, y0, y1, d.yAxis),
+fade
+);
+view.draw();
+} else {
+g._drillFadeStart = null;
+view._drawPoints(
+d,
+view._map(d.xMeta, x0, x1, d.xAxis),
+view._map(d.yMeta, y0, y1, d.yAxis)
+);
+}
+} else if (density && density.tex) {
+if (lodHoldPendingDrill(view, g, d)) {
+lodEnterDrillContinuous(view, g);
+const fade = lodFade(view, g._drillFadeStart);
+g._drillShownAlpha = fade;
+if (fade < 1) {
+view._drawDensity(g, density, 1 - fade);
+view._drawPoints(
+d,
+view._map(d.xMeta, x0, x1, d.xAxis),
+view._map(d.yMeta, y0, y1, d.yAxis),
+fade
+);
+view.draw();
+} else {
+g._drillFadeStart = null;
+view._drawPoints(
+d,
+view._map(d.xMeta, x0, x1, d.xAxis),
+view._map(d.yMeta, y0, y1, d.yAxis)
+);
+}
+if (view._viewAnim) view.draw();
+return;
+}
+const exitingDrill = d && g._drillWasInside;
+if (exitingDrill) lodBeginDrillExitContinuous(view, g);
+const exitFade = exitingDrill ? lodDrillExitFade(view, g) : 1;
+if (d) g._drillShownAlpha = exitingDrill && exitFade < 1 ? 1 - exitFade : 0;
+if (exitingDrill && exitFade < 1) {
+lodDrawDensityWithFade(view, g, density, exitFade);
+view._drawPoints(
+d,
+view._map(d.xMeta, x0, x1, d.xAxis),
+view._map(d.yMeta, y0, y1, d.yAxis),
+1 - exitFade
+);
+view.draw();
+} else {
+if (g._drillDying) lodDropDrill(view, g);
+else if (exitingDrill) g._drillWasInside = false;
+lodDrawDensityWithFade(view, g, density);
+view._drawDensitySample(g, x0, x1, y0, y1);
+}
+} else if (d) {
+view._drawPoints(
+d,
+view._map(d.xMeta, x0, x1, d.xAxis),
+view._map(d.yMeta, y0, y1, d.yAxis)
+);
+}
+}
+const XY_REBIN_WORKER_SRC = `
 const DATA = new Map();
 self.onmessage = (e) => {
   const m = e.data;
@@ -767,4 +1874,7868 @@ self.onmessage = (e) => {
     [grid.buffer]
   );
 };
-`;function gt(){try{let e=URL.createObjectURL(new Blob([ht],{type:`application/javascript`})),t=new Worker(e);return t._fcUrl=e,t}catch{return null}}Object.assign(Z.prototype,{_scheduleViewRequest(e=this.view,t={}){if(this._destroyed||this._glLost)return;if(!this.comm){this._scheduleSampleRebin(e,t);return}let n=this.spec.traces.some(e=>e.tier===`decimated`),r=this.gpuTraces.some(e=>e.tier===`density`);if(!n&&!r)return;let i=t.seq??++this.seq,a=this._copyView(e),o=Math.round(this.plot.w),s=Math.round(this.plot.h);if(r){let e=this._now();for(let t of this.gpuTraces)t.tier===`density`&&(t._lodPendingView=a,t._lodPendingSeq=i,t._lodPendingAt=e)}let c=t.delay??120;if(t.maxWait!==void 0&&t.maxWait!==null){let e=this._now();(this._viewRequestBurstStart===void 0||this._viewRequestBurstStart===null)&&(this._viewRequestBurstStart=e);let n=t.maxWait-(e-this._viewRequestBurstStart);c=n<=0?0:Math.min(c,n)}else this._viewRequestBurstStart=null;clearTimeout(this._viewTimer);let l=()=>{if(!this._destroyed&&(this._viewRequestBurstStart=null,i===this.seq&&(n&&this.comm.send({type:`view`,seq:i,x0:Math.min(a.x0,a.x1),x1:Math.max(a.x0,a.x1),px:o}),r)))for(let e of this.gpuTraces){if(e.tier!==`density`)continue;let[t,n]=this._axisRange(e.xAxis,a),[r,c]=this._axisRange(e.yAxis,a);this.comm.send({type:`density_view`,seq:i,trace:e.trace.id,x0:Math.min(t,n),x1:Math.max(t,n),y0:Math.min(r,c),y1:Math.max(r,c),w:o,h:s})}};return c<=0?l():this._viewTimer=setTimeout(l,c),i},_scheduleSampleRebin(e=this.view,t={}){if(this._destroyed||this._glLost||this._sampleRebinDisabled)return;let n=(this.gpuTraces||[]).filter(e=>e.tier===`density`&&e.sampleOverlay&&e.sampleOverlay._cpu);if(!n.length)return;let r=t.seq??++this.seq,i=this._copyView(e);clearTimeout(this._rebinTimer),this._rebinTimer=setTimeout(()=>{if(!(this._destroyed||r!==this.seq))for(let e of n)this._requestSampleRebin(e,i,r)},t.delay??120)},_requestSampleRebin(e,t,n){e._homeDensity||=e.density;let[r,i]=this._axisRange(e.xAxis,t),[a,o]=this._axisRange(e.yAxis,t),[s,c]=this._axisRange(e.xAxis,this.view0),[l,u]=this._axisRange(e.yAxis,this.view0),d=Math.max(Math.abs(c-s),1e-300),f=Math.max(Math.abs(u-l),1e-300),p=Math.abs(i-r),m=Math.abs(o-a);if(p>=d*.999999&&m>=f*.999999){if(e.density!==e._homeDensity){let t=e._homeDensity;this._applySampleRebinGrid(e,{...t,tex:this._uploadGrid(t.grid,t.w,t.h,t.normMax||t.max||1)},!1)}return}if(!this._sampleRebinDisabled){if(!this._rebinWorker){if(this._rebinWorker=gt(),!this._rebinWorker){this._sampleRebinDisabled=!0;return}this._rebinWorker.onmessage=e=>this._onRebinResult(e.data),this._rebinInit=new Set}if(!this._rebinInit.has(e.trace.id)){let t=e.sampleOverlay._cpu,n=Math.min(t.x.length,t.y.length),r=new Float64Array(n),i=new Float64Array(n);for(let e=0;e<n;e++)r[e]=this._decodeValue(t.x,t.xMeta,e),i[e]=this._decodeValue(t.y,t.yMeta,e);this._rebinWorker.postMessage({type:`init`,trace:e.trace.id,x:r.buffer,y:i.buffer},[r.buffer,i.buffer]),this._rebinInit.add(e.trace.id)}this._rebinWorker.postMessage({type:`rebin`,trace:e.trace.id,seq:n,x0:Math.min(r,i),x1:Math.max(r,i),y0:Math.min(a,o),y1:Math.max(a,o),w:Math.max(16,Math.min(2048,Math.round(this.plot.w))),h:Math.max(16,Math.min(2048,Math.round(this.plot.h)))})}},_onRebinResult(e){if(this._destroyed||this._glLost||!e||e.type!==`grid`||e.seq!==this.seq)return;let t=this.gpuTraces.find(t=>t.trace.id===e.trace&&t.tier===`density`);if(!t)return;let n=new Float32Array(e.grid);this._applySampleRebinGrid(t,{w:e.w,h:e.h,max:e.max,normMax:e.max,colormap:t.density.colormap,xRange:[e.x0,e.x1],yRange:[e.y0,e.y1],grid:n,tex:this._uploadGrid(n,e.w,e.h,e.max||1),lut:t.density.lut},!0)},_applySampleRebinGrid(e,t,n){e.prevDensity=e.density,e._densityFadeStart=this._now(),e.densityNormMax=t.normMax||t.max,e.density=t,e._sampleRebinned=!!n,B(this,e,e.density),this._refreshReductionBadges(),this.draw()},_applyAppend(e,t){let n=e.spec,r=t&&t[0];if(!n||!r||!n.traces)return;let i=s(r),a=(e,t)=>Math.max(Math.abs(t-e),1e-300)*1e-9,o=a(this.view0.x0,this.view0.x1),c=a(this.view0.y0,this.view0.y1),l=Math.abs(this.view.x0-this.view0.x0)<=o&&Math.abs(this.view.x1-this.view0.x1)<=o&&Math.abs(this.view.y0-this.view0.y0)<=c&&Math.abs(this.view.y1-this.view0.y1)<=c,u=!l&&Math.abs(this.view.x1-this.view0.x1)<=o,d={x0:n.x_axis.range[0],x1:n.x_axis.range[1],y0:n.y_axis.range[0],y1:n.y_axis.range[1]},f={...this.view};if(l)f={...d};else if(u){let e=this.view.x1-this.view.x0;f={...this.view,x1:d.x1,x0:d.x1-e}}if((n.animation||n.traces.some(e=>!!e.animation))&&!this._glLost&&this.gl&&this.updatePayload(n,i)){this._transitionView?this._transitionView.to={...f}:this.view={...f},this._scheduleViewRequest(f,{delay:0});return}if(this.spec=n,this.axes=this._normalizeAxes(n),this._payload=i,this.view0=this._copyView({ranges:Object.fromEntries(Object.entries(this.axes).map(([e,t])=>[e,[...t.range]]))}),l)this.view=this._copyView(this.view0);else if(u){let e=this.view.x1-this.view.x0;this.view=this._viewFrom({x1:this.view0.x1,x0:this.view0.x1-e})}if(this._glLost||!this.gl)return;let p=new Set;for(let t of e.affected||[]){let e=this.gpuTraces.findIndex(e=>e.trace.id===t),r=n.traces.find(e=>e.id===t);e<0||!r||(this._destroyTraceResources(this.gpuTraces[e],p),this.gpuTraces[e]=this._buildTrace(i,r))}this._updatePickable(),this._scheduleViewRequest(this.view,{delay:0}),this.draw()},_onKernelMsg(e,t){if(!this._destroyed&&e&&!(this._glLost&&e.type!==`append`&&e.type!==`pick_result`))if(e.type===`tier_update`){if(e.seq!==this.seq)return;for(let n of e.traces){let e=this.gpuTraces.find(e=>e.trace.id===n.id);if(!e)continue;let r=this.gl,i=this._asF32(t[n.x.buf]),a=this._asF32(t[n.y.buf]),o=n.base&&e.baseBuf?this._asF32(t[n.base.buf]):null,s=Math.min(n.x.len,n.y.len);o&&(s=Math.min(s,n.base.len));let c=this._smoothArrays(e.trace,i,a,o,s),l=c||{x:i,y:a,n:s},u=this._stepArrays(e.trace,l.x,l.y,l.n);r.bindBuffer(r.ARRAY_BUFFER,e.xBuf),r.bufferData(r.ARRAY_BUFFER,u?u.x:l.x,r.STATIC_DRAW),r.bindBuffer(r.ARRAY_BUFFER,e.yBuf),r.bufferData(r.ARRAY_BUFFER,u?u.y:l.y,r.STATIC_DRAW),e.xMeta={...e.xMeta,offset:n.x.offset,scale:n.x.scale},e.yMeta={...e.yMeta,offset:n.y.offset,scale:n.y.scale},e._dashX=u?u.x:l.x,e._dashY=u?u.y:l.y,o&&(r.bindBuffer(r.ARRAY_BUFFER,e.baseBuf),r.bufferData(r.ARRAY_BUFFER,c?c.extra:o,r.STATIC_DRAW),e.baseMeta={...e.baseMeta,offset:n.base.offset,scale:n.base.scale}),e.n=u?u.n:l.n}this.draw()}else if(e.type===`density_update`){if(e.seq!==void 0&&e.seq!==this.seq)return;let n=e.traces||[],r=new Set(n.map(e=>Number(e.id)));r.size===0&&e.trace!==void 0&&r.add(Number(e.trace));let i=r.size===0&&e.stale,a=t=>{e.seq!==void 0&&t._lodPendingSeq!==e.seq||(t._lodPendingView=null,t._lodPendingSeq=null,t._lodPendingAt=null)};if(r.size||i)for(let e of this.gpuTraces)e.tier===`density`&&(!i&&!r.has(e.trace.id)||a(e));for(let e of n){let n=this.gpuTraces.find(t=>t.trace.id===e.id&&t.tier===`density`);if(n){if(a(n),e.mode===`points`){this._applyDrill(n,e,t);continue}Qe(this,n,e,t)}}this._updatePickable(),this.draw()}else if(e.type===`append`)this._applyAppend(e,t);else if(e.type===`pick_result`){if(e.seq!==void 0&&e.seq!==this._pickSeq)return;if(!e.row){this._hideTooltip();return}let t=this._lastRow;if(t&&t.trace===e.row.trace&&t.index===e.row.index)for(let[n,r]of Object.entries(t))e.row[n]===void 0&&(e.row[n]=r);this._applySharedTooltipFields(e.row),this._lastRow=e.row,this._tooltipAnchor&&Number.isFinite(e.row.x)&&Number.isFinite(e.row.y)&&(this._tooltipAnchor.x=e.row.x,this._tooltipAnchor.y=e.row.y);let n=this._lastHoverXY;if(n&&this._renderTooltip(e.row,n.clientX,n.clientY,{announce:!this._a11yKeyboardReadout}),this._interactionFlag(`hover`)){let t={row:e.row,trace:e.row.trace,index:e.row.index,exact:!0,view:this._eventView(`hover`)};n&&Object.assign(t,this._hoverPayload(e.row,this._hoverTarget,n.clientX,n.clientY,!0)),this._dispatchChartEvent(`hover`,t)}}else e.type===`selection`?(e.bounds?this._lastBrush={mode:`box`,...e.bounds}:e.polygon&&(this._lastBrush={mode:`poly`,points:e.polygon}),(!e.traces||!e.traces.length)&&(this._lastBrush=null),this._applySelectionBuffers(e,t),this._selectionCount=e.total||0,this.draw(),this._interactionFlag(`select`,!0)&&this._dispatchChartEvent(`select`,{total:this._selectionCount,view:this._eventView(`select`)})):e.type===`state_patch`?this._applyStatePatch(e.state,{source:`api`,animate:e.animate===!0,history:e.history!==!1}):e.type===`view_nav`?e.op===`reset`&&this._navReset(e.axes):e.type===`selection_rows`&&this._applyRowsSelection(e,t)},_applySelectionBuffers(e,t){if(!e.traces||!e.traces.length){for(let e of this.gpuTraces)e.selActive=!1,e.drill&&(e.drill.selActive=!1);return}for(let n of e.traces){let e=this.gpuTraces.find(e=>e.trace.id===n.id);if(!e)continue;let r=e.tier===`density`?e.drill:e;if(!r||!r.n||e.tier===`density`&&n.drill_seq!==void 0&&r.seq!==void 0&&n.drill_seq!==r.seq)continue;let i=this._asU32(t[n.buf]),a=new Float32Array(r.n);for(let e=0;e<i.length;e++)i[e]<r.n&&(a[i[e]]=1);this._applySelMask(r,a)}},_applyDrill(e,t,n){We(this,e,t,n)},_dropDrill(e){Ke(this,e)},_viewInside(e){if(!e)return!1;let{x0:t,x1:n,y0:r,y1:i}=this.view,a=Math.abs(n-t)*1e-4,o=Math.abs(i-r)*1e-4,s=Math.min(t,n),c=Math.max(t,n),l=Math.min(r,i),u=Math.max(r,i),d=Math.min(e.x0,e.x1),f=Math.max(e.x0,e.x1),p=Math.min(e.y0,e.y1),m=Math.max(e.y0,e.y1);return s>=d-a&&c<=f+a&&l>=p-o&&u<=m+o},_viewOverlaps(e){if(!e)return!1;let{x0:t,x1:n,y0:r,y1:i}=this.view,a=Math.min(t,n),o=Math.max(t,n),s=Math.min(r,i),c=Math.max(r,i),l=Math.min(e.x0,e.x1),u=Math.max(e.x0,e.x1),d=Math.min(e.y0,e.y1),f=Math.max(e.y0,e.y1);return a<=u&&o>=l&&s<=f&&c>=d},_viewInsideRange(e,t){return!e||!t?!1:this._viewInside({x0:e[0],x1:e[1],y0:t[0],y1:t[1]})}});var _t={linear:[0,0,1,1],ease:[.25,.1,.25,1],"ease-in":[.42,0,1,1],"ease-out":[0,0,.58,1],"ease-in-out":[.42,0,.58,1]};function vt(e,t){let n=Number(t[0]),r=Number(t[1]),i=Number(t[2]),a=Number(t[3]),o=(e,t,n)=>{let r=1-e;return 3*r*r*e*t+3*r*e*e*n+e*e*e},s=(e,t,n)=>{let r=1-e;return 3*r*r*t+6*r*e*(n-t)+3*e*e*(1-n)},c=e;for(let t=0;t<5;t++){let t=s(c,n,i);if(Math.abs(t)<1e-6)break;c=Math.max(0,Math.min(1,c-(o(c,n,i)-e)/t))}let l=0,u=1;for(let t=0;t<8;t++)o(c,n,i)<e?l=c:u=c,c=(l+u)*.5;return o(c,r,a)}function yt(e,t){let n=Math.max(1e-6,Number(t.stiffness)||170),r=Math.max(1e-6,Number(t.damping)||26),i=Math.max(1e-6,Number(t.mass)||1),a=Math.sqrt(n/i),o=r/(2*Math.sqrt(n*i)),s=e=>{let t=e*6/a;if(o<1){let e=a*Math.sqrt(1-o*o);return 1-Math.exp(-o*a*t)*(Math.cos(e*t)+o*a/e*Math.sin(e*t))}return 1-Math.exp(-a*t)*(1+a*t)},c=s(1),l=Math.abs(c)>1e-9?s(e)/c:e;return Math.max(0,Math.min(1.15,l))}function Q(e,t){return t&&typeof t==`object`&&!Array.isArray(t)&&t.type===`spring`?yt(e,t):vt(e,Array.isArray(t)?t:_t[t]||_t[`ease-out`])}Object.assign(Z.prototype,{_resolvedAnimation(e){return{...this.spec.animation||{},...e&&e.animation||{},_present:!!this.spec.animation||!!(e&&e.animation)}},_animationEnabled(e){return!e._present||e.enabled===!1?!1:e.enabled===!0||!this._prefersReducedMotion()},_defaultEntrance(e){return e===`line`||e===`area`||e===`error_band`?`reveal`:e===`bar`||e===`column`?`grow`:e===`scatter`||e===`errorbar`?`scale`:`none`},_setTransitionVisual(e,t,n,r){let i=Math.max(0,Math.min(1,n));if(e._transitionOpacity=1,e._transitionScale=1,e._transitionReveal=1,e._transitionGrow=1,t===`exit`){e._transitionOpacity=0;return}if(t===`update`){e._transitionPositionProgress=i;return}let a=r.enter||`auto`;a===`auto`&&(a=this._defaultEntrance(e.trace.kind)),a!==`none`&&(a===`scale`&&(e.trace.kind===`scatter`||e.trace.kind===`errorbar`?e._transitionScale=i:e.trace.kind===`bar`||e.trace.kind===`column`?e._transitionGrow=i:(e.trace.kind===`line`||e.trace.kind===`area`||e.trace.kind===`error_band`)&&(e._transitionReveal=i)),a===`reveal`&&(e._transitionReveal=i),a===`grow`&&(e._transitionGrow=i))},_clearTransitionVisual(e){delete e._transitionOpacity,delete e._transitionScale,delete e._transitionReveal,delete e._transitionGrow,delete e._transitionPositionProgress,delete e._transitionPhase,delete e._transitionPrevXValues,delete e._transitionPrevYValues,delete e._transitionPrevPosValues,delete e._transitionPrevValue1Values,delete e._transitionPrevValue0Values,delete e._transitionPrevWidth,delete e._transitionPositionInterpolated,this._deleteBuffers(e,[`_transitionPrevXBuf`,`_transitionPrevYBuf`,`_transitionPrevPosBuf`,`_transitionPrevValue1Buf`,`_transitionPrevValue0Buf`])},_emitAnimationLifecycle(e,t,n={}){let r={stage:e,phase:t,...n,view:this._eventView(`animation_${e}`)};this._dispatchChartEvent(`animation_${e}`,r),this.comm?.send?.({type:`animation_${e}`,phase:t,...n})},_runDataAnimation(e,t,n=[]){this._dataAnimRaf&&cancelAnimationFrame(this._dataAnimRaf);let r=(this._dataAnimEpoch||0)+1;this._dataAnimEpoch=r;let i=[];for(let n of t){let t=this._resolvedAnimation(n.trace),r=n._transitionPhase||e;if(!this._animationEnabled(t)||r===`enter`&&t.enter===`none`||r===`update`&&t.update===`none`){this._clearTransitionVisual(n);continue}i.push({g:n,config:t,phase:r,delay:Number(t.delay)||0,duration:Math.max(0,Number(t.duration)||0)})}for(let e of n)e._transitionOpacity=0;if(!i.length){for(let e of t)this._clearTransitionVisual(e);return this._transitionView&&=(this.view={...this._transitionView.to},null),this._destroyTransitionOldTraces(),this.draw(),!1}let a=this._now();this._dataAnim={epoch:r,phase:e,start:a},this._emitAnimationLifecycle(`start`,e);let o=()=>{if(this._destroyed||!this._dataAnim||this._dataAnim.epoch!==r)return;let t=this._now(),n=!1,s=0;for(let e of i){let r=e.duration<=0?+(t>=a+e.delay):Math.max(0,Math.min(1,(t-a-e.delay)/e.duration));this._transitionView&&(s=Math.max(s,r));let i=Q(r,e.config.easing);this._setTransitionVisual(e.g,e.phase,i,e.config),r<1&&(n=!0)}if(this._transitionView){let e=Q(s,(this.spec.animation||{}).easing),t=this._transitionView.from,n=this._transitionView.to;this.view={x0:t.x0+(n.x0-t.x0)*e,x1:t.x1+(n.x1-t.x1)*e,y0:t.y0+(n.y0-t.y0)*e,y1:t.y1+(n.y1-t.y1)*e}}if(this.draw(),n)this._dataAnimRaf=requestAnimationFrame(o);else{this._dataAnimRaf=null;for(let e of i)this._clearTransitionVisual(e.g);this._finishDataAnimation(e)}};return this._dataAnimRaf=requestAnimationFrame(o),!0},_finishDataAnimation(e){this._dataAnim=null,this._transitionView&&=(this.view={...this._transitionView.to},null),this._destroyTransitionOldTraces(),this._emitAnimationLifecycle(`end`,e)},_startEntranceAnimation(){let e=Number(this.spec.animation_capture_progress);if(Number.isFinite(e)&&e>=0&&e<=1){for(let t of this.gpuTraces||[]){let n=this._resolvedAnimation(t.trace);n._present&&n.enabled!==!1&&n.enter!==`none`?this._setTransitionVisual(t,`enter`,Q(e,n.easing),n):this._clearTransitionVisual(t)}this.draw();return}this._runDataAnimation(`enter`,this.gpuTraces||[])},_destroyTransitionOldTraces(){if(!this._transitionOldTraces||!this.gl){this._transitionOldTraces=null;return}let e=new Set;for(let t of this._transitionOldTraces)this._destroyTraceResources(t,e);this._transitionOldTraces=null},_transitionMatches(e,t,n){let r=n.match||`index`,i=[],a=t.trace.animation_fallback||null;if((e.n||0)>2e5||(t.n||0)>2e5)return{strategy:`snap`,pairs:i,fallback:a||`snap:${r}-match-limit`};if(r===`key`)if(e._transitionKeyIndex&&t._transitionKeys)for(let n=0;n<t._transitionKeys.length;n++){let r=e._transitionKeyIndex.get(t._transitionKeys[n]);r!==void 0&&i.push([r,n])}else a||=`index:missing-keys`,r=`index`;if(r===`append`){let n=e._cpu&&e._cpu.x,o=t._cpu&&t._cpu.x;if(n&&o&&n.length<=2e5&&o.length<=2e5){let r=new Map;for(let t=0;t<n.length;t++){let i=this._decodeValue(n,e.xMeta,t);Number.isFinite(i)&&r.set(i.toPrecision(12),t)}for(let e=0;e<o.length;e++){let n=this._decodeValue(o,t.xMeta,e),a=Number.isFinite(n)?r.get(n.toPrecision(12)):void 0;a!==void 0&&i.push([a,e])}}else a||=`index:append-limit`,r=`index`}if(r===`index`){let n=Math.min(e.n||0,t.n||0);for(let e=0;e<n;e++)i.push([e,e])}return{strategy:r,pairs:i,fallback:a}},_recordAnimationFallback(e,t){!e||!t||(e.animation_fallback=t,this.root&&this.root.dataset&&(this.root.dataset.xyAnimationFallback=t))},_preparePositionInterpolation(e,t,n){let r=t._transitionMatch,i=n.interpolate||[];if(n.update!==`interpolate`||!i.includes(`position`)||!r)return!1;if([`bar`,`column`].includes(t.trace.kind))return this._prepareBarPositionInterpolation(e,t,r);if(![`scatter`,`line`].includes(t.trace.kind))return!1;if(!e._cpu||!t._cpu||t.n!==t._cpu.x.length||e.n!==e._cpu.x.length)return r.fallback||=`snap:layout-mismatch`,!1;let a=new Float32Array(t._cpu.x),o=new Float32Array(t._cpu.y),s=(e,t)=>(e-(Number(t.offset)||0))*(Number(t.scale)||1),c=(t,n)=>{let r=e._cpu[t],i=e[t===`x`?`_transitionPrevXValues`:`_transitionPrevYValues`],a=e._transitionPositionProgress;if(!i||!Number.isFinite(a))return this._decodeValue(r,e[`${t}Meta`],n);let o=i[n]+(r[n]-i[n])*a,s=e[`${t}Meta`];return o/(s.scale||1)+s.offset};for(let[e,n]of r.pairs){let r=c(`x`,e),i=c(`y`,e);Number.isFinite(r)&&Number.isFinite(i)&&(a[n]=s(r,t.xMeta),o[n]=s(i,t.yMeta))}return t._transitionPrevXBuf=this._upload(a),t._transitionPrevYBuf=this._upload(o),t._transitionPrevXValues=a,t._transitionPrevYValues=o,t._transitionPositionProgress=0,t._transitionPositionInterpolated=!0,e._transitionSkipExit=!0,!0},_prepareBarPositionInterpolation(e,t,n){let r=e._cpuBar,i=t._cpuBar;if(!r||!i||e.orientation!==t.orientation||t.n!==i.pos.length||e.n!==r.pos.length)return n.fallback||=`snap:layout-mismatch`,!1;let a=new Float32Array(i.pos),o=new Float32Array(i.value1),s=new Float32Array(t.n),c=(e,t)=>(e-(Number(t.offset)||0))*(Number(t.scale)||1),l=(e,t)=>e/(Number(t.scale)||1)+(Number(t.offset)||0),u=(e,t)=>e.value0?l(e.value0[t],e.value0Meta):Number(e.value0Const)||0,d=(t,n,r,i)=>{let a=e._transitionPositionProgress;return l(!t||!Number.isFinite(a)?n[i]:t[i]+(n[i]-t[i])*a,r)},f=t=>{let n=e._transitionPrevValue0Values,i=e._transitionPositionProgress,a=u(r,t);if(!n||!Number.isFinite(i))return a;let o=l(n[t],r.value1Meta);return o+(a-o)*i};for(let e=0;e<t.n;e++)s[e]=c(u(i,e),i.value1Meta);for(let[t,l]of n.pairs){let n=d(e._transitionPrevPosValues,r.pos,r.posMeta,t),u=d(e._transitionPrevValue1Values,r.value1,r.value1Meta,t),p=f(t);Number.isFinite(n)&&Number.isFinite(p)&&Number.isFinite(u)&&(a[l]=c(n,i.posMeta),o[l]=c(u,i.value1Meta),s[l]=c(p,i.value1Meta))}let p=e._transitionPositionProgress,m=Number.isFinite(e._transitionPrevWidth)&&Number.isFinite(p)?e._transitionPrevWidth+(r.width-e._transitionPrevWidth)*p:r.width;return t._transitionPrevPosBuf=this._upload(a),t._transitionPrevValue1Buf=this._upload(o),t._transitionPrevValue0Buf=this._upload(s),t._transitionPrevPosValues=a,t._transitionPrevValue1Values=o,t._transitionPrevValue0Values=s,t._transitionPrevWidth=m,t._transitionPositionProgress=0,t._transitionPositionInterpolated=!0,e._transitionSkipExit=!0,!0},updatePayload(e,t){if(this._destroyed||!e||e.protocol!==4)return!1;this._dataAnimRaf&&cancelAnimationFrame(this._dataAnimRaf),this._dataAnimRaf=null,this._dataAnim&&this._emitAnimationLifecycle(`end`,this._dataAnim.phase,{cancelled:!0}),this._dataAnim=null,this._destroyTransitionOldTraces();let n=this.gpuTraces||[],r={...this.view};this.spec=e,this.interaction=e.interaction||{},this.markStyle=e.mark_style||{},this.axes=this._normalizeAxes(e),this._payload=t,this.view0=void 0,this.view0=this._clampView({ranges:Object.fromEntries(Object.entries(this.axes).map(([e,t])=>[e,[...t.range]]))});let i={...this.view0};if(this._glLost||!this.gl)return this.view={...i},!0;this.gpuTraces=e.traces.map(e=>this._buildTrace(t,e));for(let e of this.gpuTraces){let t=n.find(t=>t.trace.id===e.trace.id&&t.trace.kind===e.trace.kind);if(t){let n=this._resolvedAnimation(e.trace);t._transitionExitTrace=e.trace,this._animationEnabled(n)&&n.update!==`none`&&(e._transitionMatch=this._transitionMatches(t,e,n),this._preparePositionInterpolation(t,e,n),t._transitionSkipExit=!0,this._recordAnimationFallback(e.trace,e._transitionMatch.fallback))}else e._transitionPhase=`enter`}this._transitionOldTraces=n;let a=this.gpuTraces.some(e=>{let t=this._resolvedAnimation(e.trace);return this._animationEnabled(t)&&t.update===`interpolate`&&(t.interpolate||[]).includes(`domain`)});return this._transitionView=a?{from:r,to:i}:null,a||(this.view={...i}),this._updatePickable(),this._runDataAnimation(`update`,this.gpuTraces,n)||(this.view={...i},this._transitionView=null),!0}});var bt=64;Object.assign(Z.prototype,{_initViewState(){this._historyPast=[],this._historyFuture=[],this._historyLastInteractionId=null,this._stateSelection=null,this._customTooltip=null,this.root.xy={applyState:(e,t={})=>this._applyStatePatch(e,{source:`api`,animate:t.animate===!0,history:t.history!==!1}),state:()=>this._durableState(),back:()=>this._historyBack(),forward:()=>this._historyForward()}},_durableState(){let e=Object.fromEntries(this._axisIds().map(e=>[e,[...this._axisRange(e)]])),t=this._stateSelection;return{v:1,ranges:e,selection:t==null?null:t.rows?{rows:!0}:t.range?{range:{...t.range}}:{polygon:t.polygon.map(e=>[...e])}}},_validateStatePatch(e){if(!e||typeof e!=`object`||Array.isArray(e))return`state patch must be an object`;if(e.v!==void 0&&e.v!==1)return`unsupported state version ${e.v}`;for(let t of Object.keys(e))if(![`v`,`ranges`,`selection`].includes(t))return`unknown key ${t}`;if(e.ranges!==void 0){if(!e.ranges||typeof e.ranges!=`object`||Array.isArray(e.ranges))return`ranges must be an object`;let t=new Set(this._axisIds());for(let[n,r]of Object.entries(e.ranges)){if(!t.has(n))return`unknown axis ${n}`;if(!Array.isArray(r)||r.length!==2||!r.every(e=>Number.isFinite(e))||r[0]===r[1])return`invalid range for axis ${n}`}}if(e.selection!==void 0&&e.selection!==null){let t=e.selection;if(typeof t!=`object`||Array.isArray(t))return`invalid selection`;let n=Object.keys(t);if(n.length!==1)return`invalid selection`;if(n[0]===`range`){let e=t.range;if(!e||typeof e!=`object`||![`x0`,`x1`,`y0`,`y1`].every(t=>Number.isFinite(e[t])))return`invalid selection range`}else if(n[0]===`polygon`){let e=t.polygon;if(!Array.isArray(e)||e.length<3||!e.every(e=>Array.isArray(e)&&e.length===2&&e.every(Number.isFinite)))return`invalid selection polygon`}else if(n[0]===`rows`)return`rows selections are not applicable state`;else return`invalid selection`}return null},_applyStatePatch(e,t={}){if(this._destroyed)return!1;let n=this._validateStatePatch(e);if(n)return typeof console<`u`&&console.warn&&console.warn(`xy: state patch rejected: ${n}`),!1;let r=t.source||`api`,i=++this._interactionSeq;if(e.ranges!==void 0){let n=Object.fromEntries(this._axisIds().map(e=>[e,[...this._axisRange(e)]]));for(let[t,r]of Object.entries(e.ranges))n[t]=[Number(r[0]),Number(r[1])];this._setView({ranges:n},{animate:t.animate===!0,source:r,phase:`end`,interactionId:i,history:t.history})}if(e.selection!==void 0){let n=e.selection,a={history:t.history,interactionId:i,source:r};if(n===null)this._clearSelection(a);else if(n.range){let{x0:e,x1:t,y0:r,y1:i}=n.range;this._sendSelect([e,r],[t,i],a)}else n.polygon&&this._sendSelectPolygon(n.polygon.map(e=>[...e]),a)}return!0},_historyEnabled(){return this._interactionFlag(`history`,!0)},_historyRecord(e={}){if(!this._historyPast||!this._historyEnabled()||this._destroyed||e.history===!1||e.source===`linked`||e.source===`history`)return;let t=e.interactionId;t!=null&&t===this._historyLastInteractionId||(this._historyLastInteractionId=t===void 0?null:t,this._historyPast.push(this._durableState()),this._historyPast.length>bt&&this._historyPast.shift(),this._historyFuture.length=0,this._updateHistoryButtons())},_historyBack(){if(!this._historyEnabled()||!this._historyPast.length)return!1;let e=this._historyPast.pop();return this._historyFuture.push(this._durableState()),this._historyApply(e),!0},_historyForward(){if(!this._historyEnabled()||!this._historyFuture.length)return!1;let e=this._historyFuture.pop();return this._historyPast.push(this._durableState()),this._historyApply(e),!0},_historyApply(e){let t={v:1,ranges:e.ranges};(!e.selection||!e.selection.rows)&&(t.selection=e.selection??null),this._applyStatePatch(t,{source:`history`,animate:!0,history:!1}),this._historyLastInteractionId=null,this._updateHistoryButtons()},_updateHistoryButtons(){let e=(e,t)=>{e&&(e.disabled=!t,e.setAttribute(`aria-disabled`,String(!t)),e.style.opacity=t?``:`0.4`)};e(this._historyBackBtn,this._historyPast.length>0),e(this._historyForwardBtn,this._historyFuture.length>0)},_navReset(e){let t=Array.isArray(e)?e.filter(e=>this._axisIds().includes(e)):null;this._resetView(!0,`reset`,t)},_applyRowsSelection(e,t){this._clearLassoOverlay();for(let e of this.gpuTraces)e.selActive=!1,e.drill&&(e.drill.selActive=!1);this._lastBrush=null,this._applySelectionBuffers(e,t),this._stateSelection={rows:!0},this._selectionCount=e.total||0,this.draw(),this._interactionFlag(`select`,!0)&&this._dispatchChartEvent(`select`,{total:this._selectionCount,view:this._eventView(`select`)})},_axisBandNavigable(e){if(!this._interactionFlag(`navigation`,!0))return!1;let t=this._interactionFlag(`pan`,!0)&&this._axisPolicy(`pan_axes`).includes(e),n=this._interactionFlag(`zoom`,!0)&&this._axisPolicy(`zoom_axes`).includes(e);return t||n},_axisBandCursor(e,t){return this._interactionFlag(`zoom`,!0)&&this._axisPolicy(`zoom_axes`).includes(e)?t===`x`?`ew-resize`:`ns-resize`:`grab`},_initAxisBands(){if(this.root){this._axisBands={};for(let e of this._axisIds()){if(!this._axisBandNavigable(e))continue;let t=this._axisDim(e),n=document.createElement(`div`);n.dataset.xyAxisBand=e,n.style.cssText=`position:absolute;z-index:2;touch-action:none;cursor:${this._axisBandCursor(e,t)};`,this.root.appendChild(n),this._axisBands[e]=n,this._bindAxisBand(n,e,t)}this._layoutAxisBands()}},_layoutAxisBands(){if(this._axisBands)for(let[e,t]of Object.entries(this._axisBands)){let n=this._axisDim(e),r=this._axis(e).side;n===`x`?(t.style.left=`${this.plot.x}px`,t.style.width=`${this.plot.w}px`,r===`top`?(t.style.top=`${Math.max(0,this.plot.y-24)}px`,t.style.height=`30px`):(t.style.top=`${this.plot.y+this.plot.h-6}px`,t.style.height=`30px`)):(t.style.top=`${this.plot.y}px`,t.style.height=`${this.plot.h}px`,r===`right`?(t.style.left=`${this.plot.x+this.plot.w-6}px`,t.style.width=`30px`):(t.style.left=`${Math.max(0,this.plot.x-24)}px`,t.style.width=`30px`))}},_axisBandValue(e,t,n){let r=this.canvas.getBoundingClientRect();if(this._axisDim(e)===`x`){let n=Math.max(0,Math.min(r.width,t-r.left));return this._dataFromCanvas(n,0,e,`y`)[0]}let i=Math.max(0,Math.min(r.height,n-r.top));return this._dataFromCanvas(0,i,`x`,e)[1]},_bindAxisBand(e,t,n){let r=null;this._listen(e,`wheel`,e=>{if(!this._interactionFlag(`navigation`,!0)||!this._interactionFlag(`zoom`,!0)||!this._interactionFlag(`wheel_zoom`,!0)||!this._axisPolicy(`zoom_axes`).includes(t))return;e.preventDefault();let n=1.0015**e.deltaY,r=this.canvas.getBoundingClientRect(),i=(e.clientX-r.left)/r.width,a=1-(e.clientY-r.top)/r.height;this._queueWheelZoom(n,i,a,[t])},{passive:!1}),this._listen(e,`pointerdown`,n=>{if(!(n.pointerType===`mouse`&&n.button!==0)&&this._interactionFlag(`navigation`,!0)){this._cancelViewAnimation(),r={pointerId:n.pointerId,sx:n.clientX,sy:n.clientY,view:this._copyView(this.view),d0:this._axisBandValue(t,n.clientX,n.clientY),mode:null,interactionId:++this._interactionSeq,changedAxes:[]};try{e.setPointerCapture(n.pointerId)}catch{}this.tooltip.style.display=`none`,n.preventDefault()}});let i=()=>this._interactionFlag(`pan`,!0)&&this._axisPolicy(`pan_axes`).includes(t)?!0:this._axisContained(t),a=()=>this._interactionFlag(`zoom`,!0)&&this._interactionFlag(`box_zoom`,!0)&&this._axisPolicy(`zoom_axes`).includes(t);this._listen(e,`pointermove`,o=>{if(!r||o.pointerId!==r.pointerId)return;let s=o.clientX-r.sx,c=o.clientY-r.sy;if(!r.mode){if(Math.hypot(s,c)<=3)return;r.mode=Math.abs(n===`x`?s:c)>=Math.abs(n===`x`?c:s)?i()?`pan`:a()?`span`:`none`:a()?`span`:i()?`pan`:`none`,r.mode===`pan`&&(e.style.cursor=`grabbing`)}if(r.mode===`pan`){let e=Object.fromEntries(this._axisIds().map(e=>[e,[...this._axisRange(e,r.view)]])),i=this._axis(t),[a,o]=this._axisRange(t,r.view),l=this._axisCoord(i,a),u=this._axisCoord(i,o);if(![l,u].every(Number.isFinite)||l===u)return;let d=n===`x`?this.plot.w:this.plot.h,f=(n===`x`?s:c)/d*(u-l),p=n===`x`?-f:f;e[t]=[this._axisValue(i,l+p),this._axisValue(i,u+p)];let m=this._setView({ranges:e},{source:`pan_drag`,phase:`update`,interactionId:r.interactionId});r.changedAxes=[...new Set([...r.changedAxes,...m])]}else if(r.mode===`span`){let e=this.root.getBoundingClientRect();if(this.selRect.dataset.xyBand=`zoom`,this.selRect.style.display=`block`,n===`x`){let t=Math.max(this.plot.x,Math.min(this.plot.x+this.plot.w,Math.min(r.sx,o.clientX)-e.left)),n=Math.max(this.plot.x,Math.min(this.plot.x+this.plot.w,Math.max(r.sx,o.clientX)-e.left));this.selRect.style.left=`${t}px`,this.selRect.style.width=`${Math.max(0,n-t)}px`,this.selRect.style.top=`${this.plot.y}px`,this.selRect.style.height=`${this.plot.h}px`}else{let t=Math.max(this.plot.y,Math.min(this.plot.y+this.plot.h,Math.min(r.sy,o.clientY)-e.top)),n=Math.max(this.plot.y,Math.min(this.plot.y+this.plot.h,Math.max(r.sy,o.clientY)-e.top));this.selRect.style.top=`${t}px`,this.selRect.style.height=`${Math.max(0,n-t)}px`,this.selRect.style.left=`${this.plot.x}px`,this.selRect.style.width=`${this.plot.w}px`}}o.preventDefault()});let o=i=>{if(!r||i.pointerId!==r.pointerId)return;let a=r;if(r=null,e.style.cursor=this._axisBandCursor(t,n),a.mode===`span`&&(this.selRect.style.display=`none`),i.type!==`pointercancel`){if(a.mode===`pan`&&a.changedAxes.length)this._emitViewChange(`pan_drag`,{axes:a.changedAxes,phase:`end`,interactionId:a.interactionId});else if(a.mode===`span`){let e=this._axisBandValue(t,i.clientX,i.clientY),n=this._axis(t),r=this._axisCoord(n,a.d0),o=this._axisCoord(n,e),s=Math.max(Math.abs(r),Math.abs(o),1e-30)*1e-12;if(![r,o].every(Number.isFinite)||Math.abs(o-r)<s)return;let[c,l]=this._axisRange(t),u=this._axisCoord(n,l)<this._axisCoord(n,c),d=Math.min(r,o),f=Math.max(r,o),p=Object.fromEntries(this._axisIds().map(e=>[e,[...this._axisRange(e)]]));p[t]=[this._axisValue(n,u?f:d),this._axisValue(n,u?d:f)],this._setView({ranges:p},{animate:!0,anchors:{[t]:.5},source:`box_zoom`,phase:`end`,interactionId:a.interactionId})}}};this._listen(e,`pointerup`,o),this._listen(e,`pointercancel`,o)},_seriesColorCss(e){let t=e&&e.color;if(!Array.isArray(t)||t.length<3)return null;let n=e=>Math.max(0,Math.min(255,Math.round(Number(e)*255)));return`rgb(${n(t[0])}, ${n(t[1])}, ${n(t[2])})`},_hoverPayload(e,t,n,r,i=!1){let a=this.root.getBoundingClientRect(),o=this.canvas.getBoundingClientRect(),s=Math.max(0,Math.min(o.width,n-o.left)),c=Math.max(0,Math.min(o.height,r-o.top)),l={};for(let e of this._axisIds()){let t=this._axisDim(e),[n,r]=this._dataFromCanvas(s,c,t===`x`?e:`x`,t===`y`?e:`y`);l[e]=t===`x`?n:r}let u=t&&t.g,d=e?[{trace:u&&u.trace&&u.trace.name||e.trace,index:e.index,row:e,x_axis:u&&u.xAxis||`x`,y_axis:u&&u.yAxis||`y`,color:this._seriesColorCss(u)}]:[],f={active:!0,cursor:{px:[n-a.left,r-a.top],data:l},points:d};return i&&(f.exact=!0),f},setCustomTooltip(e){if(this.tooltip){if(!e){this._customTooltip=null,delete this.tooltip.dataset.xyCustomTooltip,this.tooltip.style.background=``,this.tooltip.style.border=``,this.tooltip.style.padding=``,this.tooltip.replaceChildren(),this.tooltip.style.display=`none`;return}this._customTooltip=e,this.tooltip.dataset.xyCustomTooltip=``,this.tooltip.style.background=`transparent`,this.tooltip.style.border=`none`,this.tooltip.style.padding=`0`,e.style.display=``,this.tooltip.replaceChildren(e)}}});function xt(e,t){if(e.buffer_layout===`split`){if(!Array.isArray(t))throw Error(`xy: spec says buffer_layout=split but the transport delivered one buffer`);return t.map(s)}if(Array.isArray(t))throw Error(`xy: transport delivered a buffer list but the spec is not split-layout`);return s(t)}function $({model:e,el:t}){let n=e.get(`spec`),r=new Z(t,n,xt(n,e.get(`buffers`)),{send:t=>e.send(t),wantsViewChange:()=>n.interaction?._transport_view_change===!0,onMessage:t=>{let n=(e,n)=>t(e,n);return e.on(`msg:custom`,n),()=>e.off?.(`msg:custom`,n)}});return()=>r.destroy()}function St(e,t,n){let r=s(n),i=new Z(e,t,r,null),a=e=>i._columnView(r,t.columns[e]);for(let e of i.gpuTraces)q(e.trace.kind).retainCpu&&e.tier!==`density`&&(e._cpu={x:a(e.trace.x),y:a(e.trace.y),xMeta:e.xMeta,yMeta:e.yMeta},e.trace.color&&Number.isInteger(e.trace.color.buf)&&(e._cpu.color=a(e.trace.color.buf)),e.trace.size&&Number.isInteger(e.trace.size.buf)&&(e._cpu.size=a(e.trace.size.buf)));return i}var Ct={render:$,decodeFrame:f};return e.ChartView=Z,e.MARK_KINDS=K,e.decodeFrame=f,e.default=Ct,e.markOf=q,e.render=$,e.renderStandalone=St,e})({});
+`;
+function xyCreateRebinWorker() {
+try {
+const url = URL.createObjectURL(
+new Blob([XY_REBIN_WORKER_SRC], { type: "application/javascript" })
+);
+const worker = new Worker(url);
+worker._fcUrl = url;
+return worker;
+} catch (e) {
+return null;
+}
+}
+const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
+const COLORBAR_THICKNESS = 18;
+const COLORBAR_GAP = 24;
+const COMPACT_COLORBAR_GAP = 8;
+let XY_A11Y_ID = 0;
+const XY_SR_ONLY_STYLE =
+"position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;" +
+"clip:rect(0,0,0,0);white-space:nowrap;border:0;";
+const UNITLESS_STYLE_PROPS = new Set([
+"animation-iteration-count",
+"aspect-ratio",
+"border-image-outset",
+"border-image-slice",
+"border-image-width",
+"column-count",
+"flex",
+"flex-grow",
+"flex-shrink",
+"font-weight",
+"line-height",
+"opacity",
+"order",
+"orphans",
+"tab-size",
+"widows",
+"z-index",
+"zoom",
+"fill-opacity",
+"flood-opacity",
+"stop-opacity",
+"stroke-miterlimit",
+"stroke-opacity",
+]);
+const XY_CONTEXT_GOVERNOR = {
+views: new Set(),
+seq: 1,
+maxPendingRestores: 1,
+hiddenReleaseChannel: null,
+hiddenReleaseQueue: [],
+budget() {
+const v = typeof window !== "undefined" ? window.XY_CONTEXT_BUDGET : null;
+return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 10;
+},
+register(view) {
+this.views.add(view);
+},
+unregister(view) {
+view._ctxPendingReservation = false;
+this.views.delete(view);
+},
+reserve(requester, { deferred = false } = {}) {
+const live = [];
+let pending = 0;
+for (const view of this.views) {
+if (view !== requester && view.gl && !view._glLost && !view._destroyed) live.push(view);
+if (view !== requester && view._ctxPendingReservation && !view._destroyed) pending += 1;
+}
+const continuingDeferred = requester._ctxPendingReservation;
+if (deferred && !continuingDeferred && pending >= this.maxPendingRestores) {
+return false;
+}
+requester._ctxPendingReservation = true;
+const activeBudget = Math.max(1, this.budget() - (deferred || continuingDeferred ? 1 : 0));
+let over = live.length + pending + 1 - activeBudget;
+if (over <= 0) return true;
+const candidates = live
+.filter((view) => !view._ctxVisible)
+.sort((a, b) => (a._ctxSeenSeq || 0) - (b._ctxSeenSeq || 0));
+for (const view of candidates) {
+if (over <= 0) break;
+if (view._releaseContext()) over -= 1;
+}
+if (over <= 0) return true;
+const visible = live
+.filter((view) => view._ctxVisible)
+.sort((a, b) => (a._ctxSeenSeq || 0) - (b._ctxSeenSeq || 0));
+for (const view of visible) {
+if (over <= 0) break;
+if (view._releaseContext()) over -= 1;
+}
+if (over <= 0) return true;
+requester._ctxPendingReservation = false;
+return false;
+},
+acquired(requester) {
+requester._ctxPendingReservation = false;
+},
+cancel(requester) {
+requester._ctxPendingReservation = false;
+},
+scheduleHiddenReleases() {
+if (this.hiddenReleaseChannel !== null) return;
+this.hiddenReleaseQueue = Array.from(this.views);
+const channel = new MessageChannel();
+this.hiddenReleaseChannel = channel;
+channel.port1.onmessage = () => {
+if (
+typeof document === "undefined" ||
+document.visibilityState !== "hidden"
+) {
+this.cancelHiddenReleases();
+return;
+}
+let view = null;
+while (this.hiddenReleaseQueue.length && !view) {
+const candidate = this.hiddenReleaseQueue.shift();
+if (
+!candidate._destroyed &&
+candidate.gl &&
+!candidate._glLost &&
+!candidate.gl.isContextLost()
+) view = candidate;
+}
+if (!view) {
+this.cancelHiddenReleases();
+return;
+}
+view._releaseContext();
+channel.port2.postMessage(null);
+};
+channel.port2.postMessage(null);
+},
+cancelHiddenReleases() {
+this.hiddenReleaseChannel?.port1.close();
+this.hiddenReleaseChannel?.port2.close();
+this.hiddenReleaseChannel = null;
+this.hiddenReleaseQueue = [];
+},
+};
+function xyInitiallyVisible(el) {
+if (typeof window === "undefined" || !el.getBoundingClientRect) return true;
+const rect = el.getBoundingClientRect();
+if (!rect.width && !rect.height) return false;
+const vh = window.innerHeight || 0;
+const vw = window.innerWidth || 0;
+return (
+rect.bottom > -0.25 * vh && rect.top < 1.25 * vh && rect.right > -0.25 * vw && rect.left < 1.25 * vw
+);
+}
+class ChartView {
+constructor(el, spec, buffer, comm) {
+if (spec.protocol !== PROTOCOL) {
+el.textContent =
+`xy: protocol mismatch (client speaks ${PROTOCOL}, kernel sent ${spec.protocol}). ` +
+"Update the xy package and restart the kernel.";
+throw new Error("protocol mismatch");
+}
+this.spec = spec;
+this.interaction = spec.interaction || {};
+this.markStyle = spec.mark_style || {};
+this.axes = this._normalizeAxes(spec);
+this.comm = comm;
+this.seq = 0;
+this._densityStamp = 0;
+this._viewRequestBurstStart = null;
+this._viewAnim = null;
+this._animRaf = null;
+this._dataAnim = null;
+this._dataAnimRaf = null;
+this._transitionOldTraces = null;
+this._transitionView = null;
+this._wheelZoomRaf = null;
+this._pendingWheelZoom = null;
+this._lastLabelDraw = null;
+this._lutCache = new Map();
+this._listeners = [];
+this._glPrograms = [];
+this._progCache = new Map();
+this._bufSeq = 0;
+this._destroyed = false;
+this._resizeRaf = null;
+this._pendingResize = null;
+this._resizeNeedsMeasure = false;
+this._hoverId = -1;
+this._hoverTarget = null;
+this._viewEventRaf = null;
+this._linkedSource = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+this.dragMode = "none";
+this._interactionSeq = 0;
+this.fluid = spec.width === "100%";
+this.fluidH = spec.height === "100%";
+const rect = this.fluid || this.fluidH ? el.getBoundingClientRect() : null;
+const cw = this.fluid ? Math.round(rect.width) || 640 : spec.width;
+const ch = this.fluidH ? Math.round(rect.height) || 420 : spec.height;
+this.size = {
+w: Math.max(this.fluid ? 120 : 48, cw),
+h: Math.max(this.fluidH ? 120 : 48, ch),
+};
+this._layout();
+this._buildDom(el);
+this.theme = readTheme(this.root);
+this._themeStale = !this.root.isConnected;
+this._payload = buffer;
+this._glLost = false;
+this._ctxReleasedExt = null;
+this._ctxReleaseEventPending = false;
+this._ctxReleases = 0;
+this._ctxRecoveries = 0;
+this._ctxVisible = xyInitiallyVisible(el);
+XY_CONTEXT_GOVERNOR.register(this);
+if (this._ctxVisible) this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
+this._contextLossCount = 0;
+this._contextRestoreCount = 0;
+this._contextRecoveryError = null;
+try {
+this._initGl(buffer);
+} catch (err) {
+XY_CONTEXT_GOVERNOR.unregister(this);
+if (String(err && err.message || err) === "webgl2 unavailable") {
+this.root.textContent = "xy: WebGL2 unavailable in this browser.";
+}
+throw err;
+}
+this.canvas.dataset.xyCtx = "live";
+this.view0 = this._clampView({
+ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]) => [id, [...axis.range]])),
+});
+this.view = this._copyView(this.view0);
+this.dragMode = this._resolveDefaultDragAction();
+this._initA11y();
+this.root.dataset.xyContextState = "ready";
+this._initContextLossRecovery();
+this._armContextVisibilityWatch();
+this._initInteraction();
+this._buildModebar(this.root);
+if ((this.fluid || this.fluidH) && typeof ResizeObserver !== "undefined") {
+this._ro = new ResizeObserver((entries) => {
+const r = entries[entries.length - 1].contentRect;
+if (r.width || r.height) this._queueResize(r.width, r.height);
+});
+this._ro.observe(this.root);
+}
+this._armVisibilityResizeWatch();
+this._armDprWatch();
+this._initLinkedCharts();
+this._themeWatch = window.matchMedia("(prefers-color-scheme: dark)");
+this._onScheme = () => this.refreshTheme();
+this._themeWatch.addEventListener?.("change", this._onScheme);
+if (typeof MutationObserver !== "undefined") {
+this._themeMutationObserver = new MutationObserver(() => this.refreshTheme());
+for (let node = this.root; node; node = node.parentElement) {
+this._themeMutationObserver.observe(node, {
+attributes: true,
+attributeFilter: ["class", "style"],
+});
+}
+}
+this._unsubscribeComm = comm ? comm.onMessage((msg, buffers) => this._onKernelMsg(msg, buffers)) : null;
+if (this._startEntranceAnimation) this._startEntranceAnimation();
+else this.draw();
+}
+_layout() {
+const compact = this.size.w < 520;
+const pad = Array.isArray(this.spec.padding) ? this.spec.padding : null;
+const colorbar = this.spec.colorbar;
+const verticalColorbar = colorbar && colorbar.orientation !== "horizontal";
+const horizontalColorbar = colorbar && colorbar.orientation === "horizontal";
+const responsivePad = this.fluid && compact && pad;
+const marginLeft = pad ? (responsivePad ? Math.min(pad[3], 46) : pad[3]) : compact ? 46 : MARGIN.l;
+this._compactVerticalColorbar = Boolean(this.fluid && compact && verticalColorbar);
+const colorbarRightRoom = verticalColorbar
+? (this._compactVerticalColorbar
+? COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + 8
+: 86 + (colorbar.label ? 18 : 0))
+: 0;
+const colorbarBottomRoom = horizontalColorbar ? 38 + (colorbar.label ? 16 : 0) : 0;
+const baseRight = pad ? (responsivePad ? Math.min(pad[1], 8) : pad[1]) : compact ? 8 : MARGIN.r;
+const marginRight = baseRight + colorbarRightRoom;
+const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
+const marginBottom = (pad ? pad[2] : compact ? 36 : MARGIN.b) + colorbarBottomRoom;
+const hasBottomAxis = Object.values(this.axes || {}).some((axis) =>
+axis && String(axis.id || "").startsWith("x") && axis.side !== "top" &&
+this._axisTickLabelStrategy(axis) !== "none");
+this._bottomAxisRoom = hasBottomAxis ? (compact ? 36 : MARGIN.b) : 0;
+const topAxisRoom = Object.values(this.axes || {}).some((axis) =>
+axis && String(axis.id || "").startsWith("x") && axis.side === "top" &&
+this._axisTickLabelStrategy(axis) !== "none")
+? (compact ? 26 : 32)
+: 0;
+const top = marginTop + (this.spec.title ? (compact ? 26 : 30) : 0) + topAxisRoom;
+const rightAxes = Object.values(this.axes || {}).filter((axis) =>
+axis && String(axis.id || "").startsWith("y") &&
+axis.side === "right" && this._axisTickLabelStrategy(axis) !== "none");
+this._rightAxisRoom = rightAxes.length ? (compact ? 42 : 54) : 0;
+const right = marginRight + this._rightAxisRoom;
+this.plot = {
+x: marginLeft,
+y: top,
+w: Math.max(40, this.size.w - marginLeft - right),
+h: Math.max(40, this.size.h - top - marginBottom),
+};
+}
+_normalizeAxes(spec) {
+const axes = { ...(spec.axes || {}) };
+if (spec.x_axis) axes.x = spec.x_axis;
+if (spec.y_axis) axes.y = spec.y_axis;
+for (const [id, axis] of Object.entries(axes)) {
+if (axis && typeof axis === "object" && !axis.id) axis.id = id;
+}
+return axes;
+}
+_axis(axisId) {
+const id = axisId || "x";
+return this.axes[id] || (String(id).startsWith("y") ? this.axes.y : this.axes.x) || {};
+}
+_axisDim(axisId) {
+return String(axisId || "x").startsWith("y") ? "y" : "x";
+}
+_axisMode(axisId) {
+return this._axis(axisId).scale === "log" ? 1 : 0;
+}
+_axisIds() {
+return Object.keys(this.axes || {});
+}
+_copyView(view) {
+const ranges = {};
+for (const axisId of this._axisIds()) {
+const range = view?.ranges?.[axisId] || this._axis(axisId).range || [0, 1];
+ranges[axisId] = [Number(range[0]), Number(range[1])];
+}
+const x = ranges.x || [0, 1];
+const y = ranges.y || [0, 1];
+return { ranges, x0: x[0], x1: x[1], y0: y[0], y1: y[1] };
+}
+_viewFrom(next, base = this.view) {
+const ranges = {};
+for (const axisId of this._axisIds()) {
+const source = next?.ranges?.[axisId]
+|| (axisId === "x" && next?.x0 !== undefined ? [next.x0, next.x1] : null)
+|| (axisId === "y" && next?.y0 !== undefined ? [next.y0, next.y1] : null)
+|| base?.ranges?.[axisId]
+|| this._axis(axisId).range
+|| [0, 1];
+ranges[axisId] = [Number(source[0]), Number(source[1])];
+}
+return this._copyView({ ranges });
+}
+_axisPolicy(name) {
+const configured = this.interaction?.[name];
+if (!Array.isArray(configured) || !configured.length) return this._axisIds();
+const declared = new Set(this._axisIds());
+return [...new Set(configured.filter((axisId) => declared.has(axisId)))];
+}
+_resetAxisPolicy() {
+if (Array.isArray(this.interaction?.reset_axes)) return this._axisPolicy("reset_axes");
+const axes = [];
+if (this._interactionFlag("pan", true)) axes.push(...this._axisPolicy("pan_axes"));
+if (this._interactionFlag("zoom", true)) axes.push(...this._axisPolicy("zoom_axes"));
+return [...new Set(axes)];
+}
+_axisContained(axisId) {
+if (!this._interactionFlag("navigation", true)) return false;
+if (!this._interactionFlag("zoom", true)) return false;
+if (!this._axisPolicy("zoom_axes").includes(axisId)) return false;
+if (!this._interactionFlag("pan", true)) return true;
+return !this._axisPolicy("pan_axes").includes(axisId);
+}
+_resolveDefaultDragAction() {
+const requested = typeof this.interaction?.default_drag_action === "string"
+? this.interaction.default_drag_action : "auto";
+const canNavigate = this._interactionFlag("navigation", true);
+const canPan = canNavigate && this._interactionFlag("pan", true);
+const canZoom = canNavigate && this._interactionFlag("zoom", true)
+&& this._interactionFlag("box_zoom", true);
+const canSelect = this._pickable && this._interactionFlag("select", true)
+&& this._interactionFlag("brush", true);
+if (requested === "auto") {
+if (canPan) return "pan";
+if (canZoom) return "zoom";
+if (canSelect) return "select";
+return "none";
+}
+if (requested === "pan") return canPan ? "pan" : this._resolveDefaultDragActionFallback();
+if (requested === "zoom") return canZoom ? "zoom" : this._resolveDefaultDragActionFallback();
+if (requested.startsWith("select")) {
+return canSelect ? requested : this._resolveDefaultDragActionFallback();
+}
+return requested === "none" ? "none" : this._resolveDefaultDragActionFallback();
+}
+_resolveDefaultDragActionFallback() {
+const saved = this.interaction.default_drag_action;
+this.interaction.default_drag_action = "auto";
+const resolved = this._resolveDefaultDragAction();
+this.interaction.default_drag_action = saved;
+return resolved;
+}
+_axisCoord(axis, value) {
+const v = Number(value);
+if (!Number.isFinite(v)) return NaN;
+if (axis && axis.scale === "log") return v > 0 ? Math.log10(v) : NaN;
+return v;
+}
+_axisValue(axis, coord) {
+if (axis && axis.scale === "log") return Math.pow(10, coord);
+return coord;
+}
+_axisRange(axisId, view = this.view) {
+const mapped = view?.ranges?.[axisId];
+if (Array.isArray(mapped)) return [mapped[0], mapped[1]];
+if (axisId === "x" && view) return [view.x0, view.x1];
+if (axisId === "y" && view) return [view.y0, view.y1];
+const axis = this._axis(axisId);
+const r = axis.range || [0, 1];
+return [Number(r[0]), Number(r[1])];
+}
+_axisTicks(axisId, target) {
+const axis = this._axis(axisId);
+const [lo, hi] = this._axisRange(axisId);
+if (Array.isArray(axis.tick_values)) {
+const a = Math.min(lo, hi), b = Math.max(lo, hi);
+const ticks = axis.tick_values.map(Number).filter((v) => Number.isFinite(v) && v >= a && v <= b);
+return { ticks, labels: ticks, step: ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : 1 };
+}
+if (axis.kind === "time") return timeTicks(lo, hi, target);
+if (axis.kind === "category") return categoryTicks(lo, hi, axis.categories || [], target);
+if (axis.scale === "log") return logTicks(lo, hi, target);
+return linearTicks(lo, hi, target);
+}
+_axisTickText(axis, value, step) {
+if (Array.isArray(axis.tick_values) && Array.isArray(axis.tick_labels)) {
+const index = axis.tick_values.findIndex((candidate) => Number(candidate) === Number(value));
+if (index >= 0 && index < axis.tick_labels.length) return String(axis.tick_labels[index]);
+}
+return fmtAxis(axis, value, step);
+}
+_axisTickTarget(axisId, fallback) {
+const axis = this._axis(axisId);
+const requested = Number(axis && axis.tick_count);
+if (Number.isFinite(requested) && requested > 0) {
+return Math.max(1, Math.min(200, requested));
+}
+return fallback;
+}
+_dataPx(axisId, value) {
+const dim = this._axisDim(axisId);
+const axis = this._axis(axisId);
+const [lo, hi] = this._axisRange(axisId);
+const c0 = this._axisCoord(axis, lo);
+const c1 = this._axisCoord(axis, hi);
+const c = this._axisCoord(axis, value);
+if (![c0, c1, c].every(Number.isFinite) || c1 === c0) return NaN;
+if (dim === "x") return this.plot.x + ((c - c0) / (c1 - c0)) * this.plot.w;
+return this.plot.y + (1 - (c - c0) / (c1 - c0)) * this.plot.h;
+}
+_listen(target, type, handler, options) {
+target.addEventListener(type, handler, options);
+this._listeners.push({ target, type, handler, options });
+return handler;
+}
+_interactionFlag(name, fallback = false) {
+const value = this.interaction && this.interaction[name];
+return value === undefined ? fallback : value === true;
+}
+_eventView(source = "view") {
+return {
+ranges: Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+),
+x0: this.view.x0,
+x1: this.view.x1,
+y0: this.view.y0,
+y1: this.view.y1,
+source,
+};
+}
+_dispatchChartEvent(name, detail) {
+if (!this.root || typeof CustomEvent !== "function") return;
+this.root.dispatchEvent(new CustomEvent(`xy:${name}`, {
+detail,
+bubbles: true,
+composed: true,
+}));
+}
+_emitViewChange(source = "view", opts = {}) {
+if (this._destroyed) return;
+const broadcast = opts.broadcast !== false;
+this._pendingViewEvent = {
+source,
+broadcast,
+axes: Array.isArray(opts.axes) ? [...opts.axes] : [],
+phase: opts.phase || "end",
+interaction_id: opts.interactionId ?? ++this._interactionSeq,
+};
+if (this._viewEventRaf) return;
+this._viewEventRaf = requestAnimationFrame(() => {
+this._viewEventRaf = null;
+const pending = this._pendingViewEvent || { source, broadcast };
+this._pendingViewEvent = null;
+const detail = {
+...this._eventView(pending.source),
+axes: pending.axes,
+phase: pending.phase,
+interaction_id: pending.interaction_id,
+};
+this._dispatchChartEvent("view_change", detail);
+if (this.comm && (!this.comm.wantsViewChange || this.comm.wantsViewChange())) {
+this.comm.send({ type: "view_change", ...detail });
+}
+if (pending.broadcast) this._broadcastLinkedView(detail);
+});
+}
+_initLinkedCharts() {
+const group = this.interaction && this.interaction.link_group;
+if (!group || typeof BroadcastChannel !== "function") return;
+this._linkAxes = this._axisPolicy("link_axes");
+this._linkChannel = new BroadcastChannel(`xy:${group}`);
+this._linkChannel.onmessage = (event) => {
+const msg = event.data || {};
+if (msg.source === this._linkedSource) return;
+if (this._interactionFlag("link_select") && msg.selection) {
+const selection = msg.selection;
+if (selection.clear) this._clearSelection({ broadcast: false, dispatch: false });
+else if (selection.polygon) this._selectLocalPolygon(selection.polygon, { dispatch: false });
+else if (selection.range) {
+const { x0, x1, y0, y1 } = selection.range;
+if ([x0, x1, y0, y1].every(Number.isFinite)) {
+this._selectLocal(x0, x1, y0, y1, { dispatch: false });
+}
+}
+return;
+}
+if (!msg.view || msg.source === this._linkedSource) return;
+const incoming = msg.view.ranges || {};
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+);
+for (const axisId of this._linkAxes) {
+const range = incoming[axisId]
+|| (axisId === "x" ? [msg.view.x0, msg.view.x1] : null)
+|| (axisId === "y" ? [msg.view.y0, msg.view.y1] : null);
+if (Array.isArray(range) && range.length === 2 && range.every(Number.isFinite)) {
+ranges[axisId] = [Number(range[0]), Number(range[1])];
+}
+}
+this._setView({ ranges }, {
+animate: false,
+source: "linked",
+phase: "end",
+broadcast: false,
+});
+};
+}
+_broadcastLinkedView(detail) {
+if (!this._linkChannel) return;
+const axes = (detail.axes || []).filter((axisId) => this._linkAxes.includes(axisId));
+if (!axes.length) return;
+const ranges = Object.fromEntries(axes.map((axisId) => [axisId, detail.ranges[axisId]]));
+this._linkChannel.postMessage({
+source: this._linkedSource,
+view: { ...detail, axes, ranges },
+});
+}
+_broadcastLinkedSelection(selection) {
+if (!this._linkChannel || !this._interactionFlag("link_select")) return;
+this._linkChannel.postMessage({ source: this._linkedSource, selection });
+}
+setView(ranges, opts = {}) {
+return this._setView({ ranges }, {
+animate: opts.animate === true,
+source: "programmatic",
+phase: "end",
+interactionId: ++this._interactionSeq,
+broadcast: opts.broadcast === true,
+});
+}
+resetView(opts = {}) {
+return this._resetView(opts.animate !== false, "reset");
+}
+_applyClass(el, className) {
+if (typeof className !== "string") return;
+for (const token of className.split(/\s+/).filter(Boolean)) {
+try { el.classList.add(token); } catch (_) {   }
+}
+}
+_stylePropertyName(key) {
+if (key.startsWith("--")) return key;
+return key.replace(/_/g, "-").replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`);
+}
+_stylePropertyValue(property, value) {
+if (typeof value !== "number") return String(value);
+if (!Number.isFinite(value)) return null;
+if (property.startsWith("--") || UNITLESS_STYLE_PROPS.has(property)) return String(value);
+return `${value}px`;
+}
+_applyStyle(el, style) {
+if (!style || typeof style !== "object" || Array.isArray(style)) return;
+for (const [key, value] of Object.entries(style)) {
+if (typeof key !== "string") continue;
+if (typeof value !== "string" && typeof value !== "number") continue;
+const property = this._stylePropertyName(key);
+const cssValue = this._stylePropertyValue(property, value);
+if (cssValue != null) el.style.setProperty(property, cssValue);
+}
+}
+_applySlot(el, slot) {
+if (el && el.dataset) el.dataset.xySlot = slot;
+const dom = this.spec.dom;
+if (!dom || typeof dom !== "object") return;
+if (slot === "root") this._applyClass(el, dom.class_name);
+if (dom.class_names && typeof dom.class_names === "object") {
+this._applyClass(el, dom.class_names[slot]);
+}
+if (slot === "root") this._applyStyle(el, dom.style);
+if (dom.styles && typeof dom.styles === "object") {
+this._applyStyle(el, dom.styles[slot]);
+}
+}
+_slotStyleValue(slot, property) {
+const styles = this.spec.dom?.styles;
+const style = styles && typeof styles === "object" ? styles[slot] : null;
+if (!style || typeof style !== "object" || Array.isArray(style)) return null;
+const want = this._stylePropertyName(property);
+for (const key of Object.keys(style)) {
+if (this._stylePropertyName(key) === want) return style[key];
+}
+return null;
+}
+_syncContainerSize() {
+if (this._destroyed || !(this.fluid || this.fluidH) || !this.root) return;
+this._queueResize(null, null, true);
+}
+_queueResize(cssW = null, cssH = null, measure = false) {
+if (this._destroyed) return;
+if (cssW || cssH) this._pendingResize = { cssW, cssH };
+if (measure) this._resizeNeedsMeasure = true;
+if (this._resizeRaf) return;
+this._resizeRaf = requestAnimationFrame(() => {
+this._resizeRaf = null;
+let pending = this._pendingResize;
+this._pendingResize = null;
+if (this._resizeNeedsMeasure && this.root) {
+const rect = this.root.getBoundingClientRect();
+if (rect.width || rect.height) pending = { cssW: rect.width, cssH: rect.height };
+}
+this._resizeNeedsMeasure = false;
+if (pending && (pending.cssW || pending.cssH)) {
+this._resize(pending.cssW, pending.cssH);
+}
+});
+}
+_armVisibilityResizeWatch() {
+if (!(this.fluid || this.fluidH)) return;
+const syncSoon = () => {
+if (this._destroyed) return;
+this._syncContainerSize();
+};
+this._listen(window, "resize", syncSoon);
+this._listen(window, "pageshow", syncSoon);
+this._listen(document, "visibilitychange", syncSoon);
+if (typeof IntersectionObserver !== "undefined") {
+this._io = new IntersectionObserver((entries) => {
+if (entries.some((entry) => entry.isIntersecting || entry.intersectionRatio > 0)) {
+syncSoon();
+}
+});
+this._io.observe(this.root);
+}
+}
+_markStateValue(state, property, fallback = null) {
+const styles = this.markStyle && typeof this.markStyle === "object" ? this.markStyle[state] : null;
+if (!styles || typeof styles !== "object" || Array.isArray(styles)) return fallback;
+if (Object.prototype.hasOwnProperty.call(styles, property)) return styles[property];
+return fallback;
+}
+_markStateNumber(state, property, fallback) {
+const value = this._markStateValue(state, property, fallback);
+if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+return value;
+}
+_markStatePaint(state, property, fallback) {
+const value = this._markStateValue(state, property, fallback);
+return typeof value === "string" ? value : fallback;
+}
+_armDprWatch() {
+if (typeof window.matchMedia !== "function") return;
+this._dprMq?.removeEventListener?.("change", this._onDprChange);
+const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+this._onDprChange = () => {
+if (this._destroyed) return;
+this._resize(this.size.w, this.size.h);
+this._armDprWatch();
+};
+mq.addEventListener?.("change", this._onDprChange, { once: true });
+this._dprMq = mq;
+}
+_initContextLossRecovery() {
+this._listen(this.canvas, "webglcontextlost", (e) => {
+e.preventDefault();
+if (this._destroyed) return;
+const eventCanvas = e.currentTarget;
+const governedRelease =
+eventCanvas?._xyGovernedReleasePending === true ||
+eventCanvas?.dataset?.xyCtx === "released";
+e.xyGovernedRelease = governedRelease;
+if (eventCanvas) eventCanvas._xyGovernedReleasePending = false;
+this._ctxReleaseEventPending = false;
+if (this._glLost && !governedRelease) return;
+this._glLost = true;
+if (!governedRelease) this.canvas.dataset.xyCtx = "lost";
+this._contextLossCount += 1;
+this._contextRecoveryError = null;
+this.root.dataset.xyContextState = "lost";
+this.seq += 1;
+if (this._raf) cancelAnimationFrame(this._raf);
+this._raf = null;
+if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
+this._wheelZoomRaf = null;
+this._pendingWheelZoom = null;
+clearTimeout(this._wheelZoomEndTimer);
+this._wheelZoomEndTimer = null;
+this._wheelGesture = null;
+if (this._dataAnimRaf) cancelAnimationFrame(this._dataAnimRaf);
+this._dataAnimRaf = null;
+if (this._dataAnim) {
+this._emitAnimationLifecycle?.("end", this._dataAnim.phase, { cancelled: true });
+}
+this._dataAnim = null;
+this._transitionOldTraces = null;
+this._transitionView = null;
+if (this.view0) this.view = { ...this.view0 };
+this._cancelViewAnimation();
+clearTimeout(this._viewTimer);
+this._viewTimer = null;
+clearTimeout(this._rebinTimer);
+this._rebinTimer = null;
+this._viewRequestBurstStart = null;
+this._dispatchChartEvent("context_lost", {
+loss_count: this._contextLossCount,
+governed: governedRelease,
+});
+const documentVisible =
+typeof document === "undefined" ||
+!document.visibilityState ||
+document.visibilityState === "visible";
+if (!governedRelease && this._ctxVisible && documentVisible) {
+setTimeout(() => {
+if (
+!this._destroyed &&
+this._glLost &&
+this.canvas.dataset.xyCtx === "lost" &&
+this._ctxVisible
+) {
+this._recoverContext();
+}
+}, 0);
+}
+});
+this._listen(this.canvas, "webglcontextrestored", () => {
+if (this._destroyed || this._contextRecoveryError) return;
+this._lutCache.clear();
+this.pickFbo = null;
+this.pickTex = null;
+try {
+this._initGl(this._payload);
+this._glLost = false;
+this._drawNow();
+this._assertContextFrameReady("restore");
+} catch (err) {
+this._glLost = true;
+this.canvas.dataset.xyCtx = "lost";
+this.root.dataset.xyContextState = "lost";
+const transient =
+!this.gl ||
+this.gl.isContextLost() ||
+String(err && err.message || err).includes("shader compile: null") ||
+String(err && err.message || err).startsWith("WebGL error ");
+if (transient) {
+this._contextRecoveryError = null;
+this._scheduleContextRecovery();
+return;
+}
+this._contextRecoveryError = err;
+this.root.dataset.xyContextState = "failed";
+try { this._destroyGlResources(); } catch (_cleanupErr) {}
+this.gl = null;
+this._dispatchChartEvent("context_restore_failed", {
+loss_count: this._contextLossCount,
+message: err instanceof Error ? err.message : String(err),
+});
+this.root.textContent = "xy: WebGL2 context could not be restored.";
+return;
+}
+this._contextRestoreCount += 1;
+this._contextRecoveryError = null;
+this._ctxRecoveryDelay = 0;
+this.canvas.dataset.xyCtx = "live";
+this.root.dataset.xyContextState = "ready";
+this._scheduleViewRequest(this.view, { delay: 0 });
+this._dropContextSnapshot();
+this._dispatchChartEvent("context_restored", {
+loss_count: this._contextLossCount,
+restore_count: this._contextRestoreCount,
+});
+});
+}
+_releaseContext() {
+if (this._destroyed || !this.gl || this._glLost || this.gl.isContextLost()) return false;
+const ext = this.gl.getExtension("WEBGL_lose_context");
+if (!ext) return false;
+this._snapshotBeforeRelease();
+this._ctxReleasedExt = ext;
+this._ctxReleaseEventPending = true;
+this.canvas._xyGovernedReleasePending = true;
+this._ctxReleases += 1;
+this._glLost = true;
+this.canvas.dataset.xyCtx = "released";
+if (this._raf) cancelAnimationFrame(this._raf);
+this._raf = null;
+ext.loseContext();
+return true;
+}
+_snapshotBeforeRelease() {
+try {
+if (this._raf) cancelAnimationFrame(this._raf);
+this._raf = null;
+this._rafKeepPick = true;
+this._drawNow();
+let snap = this._ctxSnapshot;
+if (!snap) {
+snap = this._ctxSnapshot = document.createElement("canvas");
+snap.dataset.xyCtxSnapshot = "";
+}
+snap.width = this.canvas.width;
+snap.height = this.canvas.height;
+snap.style.cssText = this.canvas.style.cssText;
+snap.style.pointerEvents = "none";
+const gl = this.gl;
+const w = this.canvas.width;
+const h = this.canvas.height;
+gl.finish();
+const pixels = new Uint8Array(w * h * 4);
+gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+const ctx = snap.getContext("2d");
+const image = ctx.createImageData(w, h);
+const data = image.data;
+for (let srcY = 0; srcY < h; srcY++) {
+let src = srcY * w * 4;
+const srcEnd = src + w * 4;
+let dst = (h - 1 - srcY) * w * 4;
+for (; src < srcEnd; src += 4, dst += 4) {
+const alpha = pixels[src + 3];
+let red = pixels[src];
+let green = pixels[src + 1];
+let blue = pixels[src + 2];
+if (alpha > 0 && alpha < 255) {
+const scale = 255 / alpha;
+red = Math.min(255, Math.round(red * scale));
+green = Math.min(255, Math.round(green * scale));
+blue = Math.min(255, Math.round(blue * scale));
+}
+data[dst] = red;
+data[dst + 1] = green;
+data[dst + 2] = blue;
+data[dst + 3] = alpha;
+}
+}
+ctx.putImageData(image, 0, 0);
+this.canvas.before(snap);
+this.canvas.style.visibility = "hidden";
+} catch (_err) {
+this._dropContextSnapshot();
+}
+}
+_dropContextSnapshot() {
+this.canvas.style.visibility = "";
+if (this._ctxSnapshot) this._ctxSnapshot.remove();
+this._ctxSnapshot = null;
+}
+_recoverContext() {
+if (this._destroyed || !this._glLost) return;
+if (this._ctxReleaseEventPending) {
+this._scheduleContextRecovery();
+return;
+}
+this._ctxRecoveries += 1;
+if (this._ctxReleasedExt) {
+const ext = this._ctxReleasedExt;
+if (!XY_CONTEXT_GOVERNOR.reserve(this, { deferred: true })) {
+this._scheduleContextRecovery();
+return;
+}
+this._ctxReleasedExt = null;
+try {
+ext.restoreContext();
+return;
+} catch (_err) {
+XY_CONTEXT_GOVERNOR.cancel(this);
+}
+}
+this._rebuildEvictedContext();
+}
+_assertContextFrameReady(stage) {
+if (!this.gl) {
+throw new Error(`context lost during ${stage} draw`);
+}
+this.gl.finish();
+if (this.gl.isContextLost()) throw new Error(`context lost during ${stage} draw`);
+const error = this.gl.getError();
+if (error !== this.gl.NO_ERROR) {
+throw new Error(`WebGL error ${error} during ${stage} draw`);
+}
+}
+_scheduleContextRecovery() {
+if (this._ctxRecoveryTimer || this._destroyed || !this._ctxVisible) return;
+if (
+typeof document !== "undefined" &&
+document.visibilityState &&
+document.visibilityState !== "visible"
+) return;
+const delay = this._ctxRecoveryDelay || 50;
+this._ctxRecoveryDelay = Math.min(1000, delay * 2);
+this._ctxRecoveryTimer = setTimeout(() => {
+this._ctxRecoveryTimer = null;
+if (this._glLost && !this._destroyed && this._ctxVisible) this._recoverContext();
+}, delay);
+}
+_rebuildEvictedContext() {
+if (this.gl && !this.gl.isContextLost()) {
+try { this.gl.getExtension("WEBGL_lose_context")?.loseContext(); } catch (_err) {}
+}
+const fresh = this.canvas.cloneNode(false);
+for (const record of this._listeners) {
+if (record.target === this.canvas) {
+this.canvas.removeEventListener(record.type, record.handler, record.options);
+fresh.addEventListener(record.type, record.handler, record.options);
+record.target = fresh;
+}
+}
+this.canvas.replaceWith(fresh);
+this.canvas = fresh;
+this._glLost = false;
+this._lutCache.clear();
+this.pickFbo = null;
+this.pickTex = null;
+try {
+this._initGl(this._payload);
+this._glLost = false;
+this._drawNow();
+this._assertContextFrameReady("rebuild");
+} catch (_err) {
+this._glLost = true;
+this.canvas.dataset.xyCtx = "lost";
+this._scheduleContextRecovery();
+return;
+}
+this._ctxRecoveryDelay = 0;
+this.canvas.dataset.xyCtx = "live";
+this._scheduleViewRequest(this.view, { delay: 0 });
+this._dropContextSnapshot();
+}
+_armContextVisibilityWatch() {
+this._listen(this.root, "pointerenter", () => {
+if (this._destroyed) return;
+this._ctxVisible = true;
+this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
+if (this._glLost) this._recoverContext();
+});
+if (typeof document !== "undefined") {
+this._listen(document, "visibilitychange", () => {
+if (document.visibilityState === "hidden") {
+XY_CONTEXT_GOVERNOR.scheduleHiddenReleases();
+return;
+}
+XY_CONTEXT_GOVERNOR.cancelHiddenReleases();
+if (
+document.visibilityState === "visible" &&
+this._ctxVisible &&
+this._glLost &&
+!this._destroyed
+) {
+this._recoverContext();
+}
+});
+}
+if (typeof IntersectionObserver === "undefined") {
+this._ctxVisible = true;
+return;
+}
+this._ctxIo = new IntersectionObserver(
+(entries) => {
+const entry = entries[entries.length - 1];
+this._ctxVisible = entry.isIntersecting || entry.intersectionRatio > 0;
+if (this._ctxVisible) {
+this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
+if (this._glLost && !this._destroyed) this._recoverContext();
+if (this._healStaleTheme()) this.draw();
+}
+},
+{ rootMargin: "25% 0px 25% 0px" },
+);
+this._ctxIo.observe(this.root);
+}
+_resize(cssW, cssH) {
+const w = this.fluid && cssW ? Math.max(120, Math.round(cssW)) : this.size.w;
+const h = this.fluidH && cssH ? Math.max(120, Math.round(cssH)) : this.size.h;
+const dpr = window.devicePixelRatio || 1;
+if (w === this.size.w && h === this.size.h && dpr === this.dpr) return;
+this.dpr = dpr;
+this.size.w = w;
+this.size.h = h;
+this._layout();
+const p = this.plot;
+this.root.style.setProperty("--xy-legend-max-width", Math.max(40, p.w - 12) + "px");
+this.root.style.setProperty("--xy-legend-max-height", Math.max(40, p.h - 12) + "px");
+this.canvas.style.left = p.x + "px";
+this.canvas.style.top = p.y + "px";
+this.canvas.style.width = p.w + "px";
+this.canvas.style.height = p.h + "px";
+this.canvas.width = p.w * this.dpr;
+this.canvas.height = p.h * this.dpr;
+this.chrome.style.width = this.size.w + "px";
+this.chrome.style.height = this.size.h + "px";
+this.chrome.width = this.size.w * this.dpr;
+this.chrome.height = this.size.h * this.dpr;
+this.overlay.style.width = this.size.w + "px";
+this.overlay.style.height = this.size.h + "px";
+this.overlay.width = this.size.w * this.dpr;
+this.overlay.height = this.size.h * this.dpr;
+for (const lg of this._legends || []) {
+this._positionLegend(lg, lg.dataset.xyLegendLoc || "upper right");
+}
+this._positionReductionBadges();
+this._positionColorbar();
+this._fitModebar();
+this._pickDirty = true;
+if (this._raf) cancelAnimationFrame(this._raf);
+this._raf = null;
+this._drawNow();
+this._scheduleViewRequest();
+}
+_buildDom(el) {
+const s = this.spec;
+const root = document.createElement("div");
+root.className = "xy";
+root.style.cssText =
+`position:relative;width:${this.fluid ? "100%" : this.size.w + "px"};` +
+`height:${this.fluidH ? "100%" : this.size.h + "px"};` +
+`--xy-legend-max-width:${Math.max(40, this.plot.w - 12)}px;` +
+`--xy-legend-max-height:${Math.max(40, this.plot.h - 12)}px;` +
+(this.fluidH ? "min-height:120px;" : "") +
+"font:12px system-ui,sans-serif;user-select:none;";
+this._applySlot(root, "root");
+if (root.style.background || root.style.backgroundColor) root.dataset.xyOwnBg = "";
+el.appendChild(root);
+this.root = root;
+ensureChromeStylesheet(root);
+let a11yId;
+do {
+a11yId = `xy-a11y-${++XY_A11Y_ID}`;
+} while (
+document.getElementById(`${a11yId}-summary`) || document.getElementById(`${a11yId}-live`)
+);
+root.setAttribute("role", "region");
+root.setAttribute("aria-label", s.title ? `Chart: ${s.title}` : "Interactive chart");
+this.a11ySummary = document.createElement("div");
+this.a11ySummary.id = `${a11yId}-summary`;
+this.a11ySummary.style.cssText = XY_SR_ONLY_STYLE;
+root.setAttribute("aria-describedby", this.a11ySummary.id);
+root.appendChild(this.a11ySummary);
+this.a11yLive = document.createElement("div");
+this.a11yLive.id = `${a11yId}-live`;
+this.a11yLive.setAttribute("role", "status");
+this.a11yLive.setAttribute("aria-live", "polite");
+this.a11yLive.setAttribute("aria-atomic", "true");
+this.a11yLive.style.cssText = XY_SR_ONLY_STYLE;
+root.appendChild(this.a11yLive);
+if (s.title) {
+const t = document.createElement("div");
+t.textContent = s.title;
+t.style.cssText = "position:absolute;top:6px;left:0;right:0;";
+this._applySlot(t, "title");
+root.appendChild(t);
+}
+this.chrome = document.createElement("canvas");
+this.chrome.style.cssText = "position:absolute;inset:0;pointer-events:none;";
+this._applySlot(this.chrome, "chrome");
+root.appendChild(this.chrome);
+this.canvas = document.createElement("canvas");
+this.canvas.style.cssText =
+`position:absolute;left:${this.plot.x}px;top:${this.plot.y}px;` +
+`width:${this.plot.w}px;height:${this.plot.h}px;touch-action:none;`;
+this._applySlot(this.canvas, "canvas");
+this.canvas.tabIndex = 0;
+this.canvas.setAttribute("role", "img");
+this.canvas.setAttribute("aria-describedby", this.a11ySummary.id);
+root.appendChild(this.canvas);
+this.overlay = document.createElement("canvas");
+this.overlay.style.cssText = "position:absolute;inset:0;pointer-events:none;";
+root.appendChild(this.overlay);
+this.labels = document.createElement("div");
+this.labels.style.cssText = "position:absolute;inset:0;pointer-events:none;";
+this._applySlot(this.labels, "labels");
+root.appendChild(this.labels);
+this.tooltip = document.createElement("div");
+this.tooltip.style.cssText =
+"position:absolute;display:none;pointer-events:none;z-index:5;";
+this._applySlot(this.tooltip, "tooltip");
+this.tooltip.setAttribute("aria-hidden", "true");
+root.appendChild(this.tooltip);
+this._buildLegend(root);
+this._buildColorbar(root);
+this._buildReductionBadges(root);
+}
+_a11yAxisSummary(axisId, name) {
+const axis = this._axis(axisId);
+const label = axis.label ? `${name} axis (${axis.label})` : `${name} axis`;
+if (axis.kind === "category") {
+const categories = Array.isArray(axis.categories) ? axis.categories : [];
+if (!categories.length) return `${label} uses categories.`;
+const shown = categories.slice(0, 6).map((value) => String(value));
+const remaining = categories.length - shown.length;
+const suffix = remaining > 0 ? `, and ${remaining} more` : "";
+return `${label} has ${categories.length} categories: ${shown.join(", ")}${suffix}.`;
+}
+const range = axis.range || [];
+if (range.length < 2) return null;
+return `${label} ranges from ${fmtValue(range[0], axis.kind)} to ${fmtValue(range[1], axis.kind)}.`;
+}
+_a11ySummaryText() {
+const traces = Array.isArray(this.spec.traces) ? this.spec.traces : [];
+const parts = [this.spec.title ? `${this.spec.title}.` : "Interactive chart."];
+parts.push(`${traces.length} data series.`);
+const names = traces.map((trace) => trace && trace.name).filter(Boolean).slice(0, 6);
+if (names.length) parts.push(`Series: ${names.join(", ")}.`);
+const x = this._a11yAxisSummary("x", "X");
+const y = this._a11yAxisSummary("y", "Y");
+if (x) parts.push(x);
+if (y) parts.push(y);
+return parts.join(" ");
+}
+_initA11y() {
+if (!this.a11ySummary || !this.canvas) return;
+this.a11ySummary.textContent = this._a11ySummaryText();
+const instruction = this._pickable
+? " Use Arrow keys to explore data points in series data order; Home and End jump to the first and last point; Escape closes the readout."
+: "";
+this.canvas.setAttribute("aria-label", `Plot area.${instruction}`);
+}
+_compactInt(value) {
+const n = Number(value);
+if (!Number.isFinite(n)) return "0";
+return Math.round(n).toLocaleString();
+}
+_positionReductionBadges() {
+if (!this._badges) return;
+const rightInset = this.size.w - (this.plot.x + this.plot.w);
+const bottomInset = this.size.h - (this.plot.y + this.plot.h);
+this._badges.style.right = `${rightInset + 6}px`;
+this._badges.style.bottom = `${bottomInset + 6}px`;
+}
+_reductionBadgeItems() {
+const items = [];
+const traces = this.gpuTraces && this.gpuTraces.length
+? this.gpuTraces
+: (this.spec.traces || []);
+for (const entry of traces) {
+const t = entry.trace || entry;
+if (t.tier !== "density" || !t.density) continue;
+const sample = entry.sampleOverlay && entry.sampleOverlay.sample
+? entry.sampleOverlay.sample
+: t.density.sample;
+if (sample && Number(sample.n) > 0) {
+items.push(`sampled ${this._compactInt(sample.n)} of ${this._compactInt(sample.visible)}`);
+}
+if (entry._sampleRebinned) items.push("zoom re-binned from sample");
+if (t.density.channels_dropped) items.push("aggregated channels");
+}
+return items;
+}
+_refreshReductionBadges() {
+if (!this._badges) return;
+const items = this._reductionBadgeItems();
+this._badges.textContent = "";
+this._badges.hidden = items.length === 0;
+for (const item of items) {
+const badge = document.createElement("div");
+badge.textContent = item;
+this._applySlot(badge, "badge_item");
+this._badges.appendChild(badge);
+}
+this._positionReductionBadges();
+}
+_buildReductionBadges(root) {
+const items = this._reductionBadgeItems();
+const hasDensityTrace = (this.spec.traces || []).some((t) => t.tier === "density");
+if (!items.length && !hasDensityTrace) return;
+const box = document.createElement("div");
+box.style.cssText =
+"position:absolute;display:flex;flex-direction:column;align-items:flex-end;" +
+"pointer-events:none;z-index:4;";
+this._applySlot(box, "badge");
+root.appendChild(box);
+this._badges = box;
+this._refreshReductionBadges();
+}
+_buildLegend(root) {
+const s = this.spec;
+this._legends = [];
+const items = [];
+if (s.show_legend !== false) {
+for (const t of s.traces) {
+if (t.tier === "density") {
+items.push({ swatch: "gradient", cmap: t.density.colormap, name: t.name || "density" });
+} else if (t.color && t.color.mode === "categorical") {
+t.color.categories.forEach((cat, i) =>
+items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} }));
+} else if (t.color && t.color.mode === "continuous") {
+items.push({ swatch: "gradient", cmap: t.color.colormap, name: t.name || "value" });
+} else if (t.name) {
+const c = (t.color && t.color.color) || (t.style && t.style.color);
+const line = ["line", "segments", "step", "stairs", "errorbar"].includes(t.kind);
+items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {} });
+}
+}
+if (items.length) this._legendBox(root, items, s.legend || {});
+}
+for (const extra of s.extra_legends || []) {
+const mapped = (extra.items || []).map((it) => ({
+swatch: it.style && it.style.color,
+name: it.name,
+symbol: it.kind === "scatter" ? (it.style?.symbol || "circle") : null,
+line: ["line", "segments", "step", "stairs", "errorbar"].includes(it.kind),
+style: it.style || {},
+}));
+if (mapped.length) this._legendBox(root, mapped, extra);
+}
+}
+_legendBox(root, items, options) {
+const lg = document.createElement("div");
+const loc = options.loc || "upper right";
+const ncols = Math.max(1, Number(options.ncols) || 1);
+const horizontal = ncols > 1;
+lg.style.cssText = "position:absolute;" +
+`display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
+"overflow:auto;";
+lg.dataset.xyLegendLoc = loc;
+this._positionLegend(lg, loc);
+this._applySlot(lg, "legend");
+if (options.title) {
+const title = document.createElement("div");
+title.textContent = String(options.title);
+title.style.fontWeight = "600";
+title.style.gridColumn = `1 / span ${horizontal ? ncols : 1}`;
+lg.appendChild(title);
+}
+for (const it of items) {
+const row = document.createElement("div");
+this._applySlot(row, "legend_item");
+const sw = document.createElement("span");
+sw.style.display = "inline-block";
+sw.style.verticalAlign = "-1px";
+let bg = it.swatch;
+if (it.swatch === "gradient") {
+const stops = colormapStops(it.cmap);
+bg = `linear-gradient(90deg,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
+sw.style.background = bg;
+} else if (it.symbol) {
+const ns = "http://www.w3.org/2000/svg";
+const svg = document.createElementNS(ns, "svg");
+svg.setAttribute("viewBox", "0 0 18 14");
+svg.setAttribute("width", "18");
+svg.setAttribute("height", "14");
+const path = document.createElementNS(ns, "path");
+const paths = {
+square: "M4.5 2.5h9v9h-9z", diamond: "M9 2l5 5-5 5-5-5z",
+thin_diamond: "M9 2l3 5-3 5-3-5z",
+triangle: "M9 2l-5 10h10z", triangle_down: "M9 12L4 2h10z",
+triangle_left: "M4 7L14 2v10z", triangle_right: "M14 7L4 2v10z",
+plus_line: "M9 2v10M4 7h10", x_line: "M5 3l8 8M13 3l-8 8",
+cross: "M7.5 2h3v3.5H14v3h-3.5V12h-3V8.5H4v-3h3.5z",
+x: "M5.5 2L9 5.5 12.5 2 14 3.5 10.5 7 14 10.5 12.5 12 9 8.5 5.5 12 4 10.5 7.5 7 4 3.5z",
+pentagon: "M9 2.5L13.28 5.61 11.65 10.64H6.35L4.72 5.61z",
+hexagon: "M9 2L13.3 4.5v5L9 12l-4.3-2.5v-5z",
+star: "M9 2l1.5 3.1 3.5.5-2.5 2.5.6 3.5L9 10l-3.1 1.6.6-3.5L4 5.6l3.5-.5z"
+};
+const color = safeCssPaint(this.root, bg);
+if (it.symbol === "circle" || it.symbol === "point" || it.symbol === "pixel") {
+if (it.symbol === "pixel") path.setAttribute("d", "M8.5 6.5h1v1h-1z");
+else path.setAttribute("d", `M9 ${it.symbol === "point" ? 4.75 : 2.5}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 ${it.symbol === "point" ? 4.5 : 9}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 -${it.symbol === "point" ? 4.5 : 9}`);
+} else path.setAttribute("d", paths[it.symbol] || paths.square);
+path.setAttribute("fill", it.symbol.endsWith("_line") ? "none" : color);
+path.setAttribute("stroke", color);
+path.setAttribute("stroke-width", String(it.style?.stroke_width || 1));
+svg.appendChild(path);
+sw.appendChild(svg);
+sw.style.width = "18px";
+sw.style.height = "14px";
+} else if (it.line) {
+const ns = "http://www.w3.org/2000/svg";
+const svg = document.createElementNS(ns, "svg");
+svg.setAttribute("viewBox", "0 0 22 12");
+svg.setAttribute("width", "22");
+svg.setAttribute("height", "12");
+const ln = document.createElementNS(ns, "line");
+ln.setAttribute("x1", "1");
+ln.setAttribute("y1", "6");
+ln.setAttribute("x2", "21");
+ln.setAttribute("y2", "6");
+ln.setAttribute("stroke", safeCssPaint(this.root, bg));
+ln.setAttribute("stroke-width", String(it.style?.width ?? 1.5));
+if (it.style?.dash && it.style.dash.length) ln.setAttribute("stroke-dasharray", it.style.dash.join(" "));
+svg.appendChild(ln);
+sw.appendChild(svg);
+sw.style.width = "22px";
+sw.style.height = "12px";
+} else {
+sw.style.background = safeCssPaint(this.root, bg);
+}
+this._applySlot(sw, "legend_swatch");
+row.appendChild(sw);
+row.appendChild(document.createTextNode(it.name));
+lg.appendChild(row);
+}
+root.appendChild(lg);
+this._legends.push(lg);
+return lg;
+}
+_positionLegend(lg, loc) {
+if (!lg) return;
+const rightInset = this.size.w - (this.plot.x + this.plot.w);
+const h = loc.includes("left") ? "left" : loc.includes("right") ? "right" : "center";
+const v = loc.includes("upper") ? "upper" : loc.includes("lower") ? "lower" : "center";
+const left = h === "left" ? this.plot.x + 6 : h === "center" ? this.plot.x + this.plot.w / 2 : null;
+const right = h === "right" ? rightInset + 6 : null;
+const top = v === "upper" ? this.plot.y + 6 : v === "center" ? this.plot.y + this.plot.h / 2 : null;
+const bottom = v === "lower" ? this.size.h - (this.plot.y + this.plot.h) + 6 : null;
+lg.style.setProperty("--xy-legend-left", left == null ? "auto" : left + "px");
+lg.style.setProperty("--xy-legend-right", right == null ? "auto" : right + "px");
+lg.style.setProperty("--xy-legend-top", top == null ? "auto" : top + "px");
+lg.style.setProperty("--xy-legend-bottom", bottom == null ? "auto" : bottom + "px");
+const tx = h === "center" ? "-50%" : "0";
+const ty = v === "center" ? "-50%" : "0";
+lg.style.setProperty("--xy-legend-transform", `translate(${tx},${ty})`);
+}
+_buildColorbar(root) {
+const cb = this.spec.colorbar;
+if (!cb) return;
+const box = document.createElement("div");
+const horizontal = cb.orientation === "horizontal";
+box.style.cssText = "position:absolute;pointer-events:none;z-index:4;";
+this._applySlot(box, "colorbar");
+const bar = document.createElement("div");
+const levels = Math.max(0, Number(cb.levels) || 0);
+let gradient;
+if (levels > 0) {
+const lut = buildLutData(cb.colormap || "viridis");
+const bands = [];
+for (let index = 0; index < levels; index++) {
+const sample = Math.min(255, Math.round(255 * (index + 0.5) / levels));
+const color = `rgb(${lut[sample * 4]},${lut[sample * 4 + 1]},${lut[sample * 4 + 2]})`;
+bands.push(`${color} ${100 * index / levels}% ${100 * (index + 1) / levels}%`);
+}
+gradient = `linear-gradient(to ${horizontal ? "right" : "top"},${bands.join(",")})`;
+} else {
+const stops = colormapStops(cb.colormap || "viridis");
+gradient = `linear-gradient(to ${horizontal ? "right" : "top"},${stops.map((c) =>
+`rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
+}
+bar.style.cssText = horizontal
+? `position:absolute;inset:0 0 auto 0;height:${COLORBAR_THICKNESS}px;`
+: `position:absolute;inset:0 auto 0 0;width:${COLORBAR_THICKNESS}px;`;
+bar.style.setProperty("--xy-colorbar-gradient", gradient);
+this._applySlot(bar, "colorbar_bar");
+box.appendChild(bar);
+const domain = cb.domain || [0, 1];
+const lo = Number(domain[0]), hi = Number(domain[1]);
+const span = hi - lo || 1;
+const tickResult = linearTicks(lo, hi, 8);
+const hasExplicitTicks = Array.isArray(cb.ticks);
+const tickValues = hasExplicitTicks ? cb.ticks : tickResult.ticks;
+const tickStep = tickResult.step;
+for (const raw of tickValues) {
+const value = Number(raw);
+if (!Number.isFinite(value) || value < Math.min(lo, hi) || value > Math.max(lo, hi)) continue;
+const tick = document.createElement("span");
+tick.textContent = hasExplicitTicks ? fmtGeneral(value) : fmtLinear(value, tickStep);
+const fraction = (value - lo) / span;
+tick.style.cssText = horizontal
+? `position:absolute;left:${100 * fraction}%;top:${COLORBAR_THICKNESS + 2}px;transform:translateX(-50%);white-space:nowrap;`
+: `position:absolute;left:${COLORBAR_THICKNESS + 5}px;top:${100 * (1 - fraction)}%;transform:translateY(-50%);white-space:nowrap;`;
+this._applySlot(tick, "colorbar_tick");
+box.appendChild(tick);
+}
+if (cb.label) {
+const label = document.createElement("span");
+label.textContent = String(cb.label);
+label.style.cssText = horizontal
+? `position:absolute;left:50%;top:${COLORBAR_THICKNESS + 18}px;transform:translateX(-50%);white-space:nowrap;`
+: `position:absolute;left:${COLORBAR_THICKNESS + 40}px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`;
+this._applySlot(label, "colorbar_title");
+box.appendChild(label);
+}
+box.title = `${cb.label ? cb.label + ": " : ""}${domain[0]} – ${domain[1]}`;
+root.appendChild(box);
+this._colorbar = box;
+this._colorbarHorizontal = horizontal;
+this._positionColorbar();
+}
+_positionColorbar() {
+if (!this._colorbar) return;
+const horizontal = this._colorbarHorizontal;
+const compactVertical = !horizontal && this._compactVerticalColorbar;
+const gap = compactVertical ? COMPACT_COLORBAR_GAP : COLORBAR_GAP;
+this._colorbar.style.left = (horizontal
+? this.plot.x
+: this.plot.x + this.plot.w + this._rightAxisRoom + gap) + "px";
+this._colorbar.style.top = (horizontal
+? this.plot.y + this.plot.h + (this._bottomAxisRoom || 8)
+: this.plot.y) + "px";
+this._colorbar.style.width = (horizontal
+? this.plot.w
+: compactVertical ? COLORBAR_THICKNESS : 66) + "px";
+this._colorbar.style.height = (horizontal ? 50 : Math.max(24, this.plot.h)) + "px";
+this._colorbar.dataset.xyCompact = compactVertical ? "true" : "false";
+for (const node of this._colorbar.querySelectorAll(
+'[data-xy-slot="colorbar_tick"], [data-xy-slot="colorbar_title"]'
+)) {
+node.hidden = compactVertical;
+}
+}
+_initGl(buffer) {
+const dpr = window.devicePixelRatio || 1;
+this.dpr = dpr;
+this.canvas.width = this.plot.w * dpr;
+this.canvas.height = this.plot.h * dpr;
+this.chrome.width = this.size.w * dpr;
+this.chrome.height = this.size.h * dpr;
+this.chrome.style.width = this.size.w + "px";
+this.chrome.style.height = this.size.h + "px";
+this.overlay.width = this.size.w * dpr;
+this.overlay.height = this.size.h * dpr;
+this.overlay.style.width = this.size.w + "px";
+this.overlay.style.height = this.size.h + "px";
+XY_CONTEXT_GOVERNOR.reserve(this);
+const gl = this.canvas.getContext("webgl2", {
+antialias: false, premultipliedAlpha: true, alpha: true,
+});
+if (!gl) {
+XY_CONTEXT_GOVERNOR.cancel(this);
+throw new Error("webgl2 unavailable");
+}
+this.gl = gl;
+XY_CONTEXT_GOVERNOR.acquired(this);
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+this._progCache = new Map();
+this._glPrograms = this._progCache;
+this.quad = gl.createBuffer();
+this.quad._fcId = ++this._bufSeq;
+gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
+this.quadVao = gl.createVertexArray();
+gl.bindVertexArray(this.quadVao);
+gl.enableVertexAttribArray(ATTR_SLOTS.a_corner);
+gl.vertexAttribPointer(ATTR_SLOTS.a_corner, 2, gl.FLOAT, false, 0, 0);
+gl.vertexAttribDivisor(ATTR_SLOTS.a_corner, 0);
+gl.bindVertexArray(null);
+this.gpuTraces = this.spec.traces.map((t) => this._buildTrace(buffer, t));
+this._updatePickable();
+}
+_updatePickable() {
+this._pickable = this.gpuTraces.some(
+(t) => markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill));
+if (this._pickable && !this.pickFbo) this._initPickTarget();
+this._syncModebarSelect?.();
+}
+_prog(key, vs, fs) {
+let p = this._progCache.get(key);
+if (!p) {
+p = makeProgram(this.gl, vs, fs);
+this._progCache.set(key, p);
+}
+return p;
+}
+get pointProg() { return this._prog("point", POINT_VS, POINT_FS); }
+get pointSimpleProg() { return this._prog("point-simple", POINT_SIMPLE_VS, POINT_SIMPLE_FS); }
+get lineProg() { return this._prog("line", LINE_VS, LINE_FS); }
+get segmentProg() { return this._prog("segment", SEGMENT_VS, SEGMENT_FS); }
+get meshProg() { return this._prog("mesh", MESH_VS, MESH_FS); }
+get areaProg() { return this._prog("area", AREA_VS, AREA_FS); }
+get rectProg() { return this._prog("rect", RECT_VS, RECT_FS); }
+get barProg() { return this._prog("bar", BAR_VS, RECT_FS); }
+get pickProg() { return this._prog("pick", PICK_VS, PICK_FS); }
+get densityProg() { return this._prog("density", GRID_VS, DENSITY_FS); }
+get heatmapProg() { return this._prog("heatmap", GRID_VS, HEATMAP_FS); }
+_lut(name) {
+if (this._lutCache.has(name)) return this._lutCache.get(name);
+const gl = this.gl;
+const tex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, tex);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, buildLutData(name));
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+this._lutCache.set(name, tex);
+return tex;
+}
+_paletteLut(palette) {
+const key = "pal:" + palette.join(",");
+if (this._lutCache.has(key)) return this._lutCache.get(key);
+const gl = this.gl;
+const data = new Uint8Array(256 * 4);
+for (let i = 0; i < 256; i++) {
+const c = hexColor(palette[i % palette.length]);
+data[i * 4] = c[0] * 255;
+data[i * 4 + 1] = c[1] * 255;
+data[i * 4 + 2] = c[2] * 255;
+data[i * 4 + 3] = 255;
+}
+const tex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, tex);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+this._lutCache.set(key, tex);
+return tex;
+}
+_buildTrace(buffer, t) {
+const gl = this.gl;
+const g = {
+trace: t,
+tier: t.tier,
+color: [0.3, 0.47, 0.66, 1],
+xAxis: typeof t.x_axis === "string" ? t.x_axis : "x",
+yAxis: typeof t.y_axis === "string" ? t.y_axis : "y",
+};
+if (t.tier === "density") {
+const d = t.density;
+const meta = this.spec.columns[d.buf];
+const raw = this._columnView(buffer, meta);
+const grid = d.enc === "log-u8" ? lodDecodeLogU8(raw, d.max) : raw;
+g.densityNormMax = d.max;
+g.density = {
+w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
+color: d.color ? parseColor(this.root, d.color, [0.3, 0.47, 0.66, 1]) : null,
+xRange: d.x_range, yRange: d.y_range,
+grid: lodCopyGrid(grid),
+tex: this._uploadGrid(grid, d.w, d.h, d.max),
+lut: this._lut(d.colormap),
+};
+g.sampleOverlay = this._buildDensitySample(t, d.sample, buffer);
+g._shownDensity = g.density;
+lodRememberDensity(this, g, g.density);
+return g;
+}
+markOf(t.kind).build(this, g, t, buffer);
+if (t.keys && Number.isInteger(t.keys.lo) && Number.isInteger(t.keys.hi)) {
+const lo = this._columnView(buffer, this.spec.columns[t.keys.lo]);
+const hi = this._columnView(buffer, this.spec.columns[t.keys.hi]);
+const count = Math.min(g.n || 0, lo.length, hi.length);
+g._transitionKeys = new Array(count);
+g._transitionKeyIndex = new Map();
+for (let i = 0; i < count; i++) {
+const key = `${hi[i]}:${lo[i]}`;
+if (g._transitionKeyIndex.has(key)) throw new Error("xy: duplicate binary animation key");
+g._transitionKeys[i] = key;
+g._transitionKeyIndex.set(key, i);
+}
+}
+return g;
+}
+_buildXY(g, t, buffer) {
+const x = this._columnView(buffer, this.spec.columns[t.x]);
+const y = this._columnView(buffer, this.spec.columns[t.y]);
+g.xMeta = { ...this.spec.columns[t.x] };
+g.yMeta = { ...this.spec.columns[t.y] };
+g.n = Math.min(x.length, y.length);
+g._cpu = { x, y, xMeta: g.xMeta, yMeta: g.yMeta };
+g.xBuf = this._upload(x);
+g.yBuf = this._upload(y);
+}
+_buildInstanceStyleChannels(g, t, buffer, widthName) {
+const channel = (name) => t.channels && t.channels[name];
+const artistScalar = Number(t.style && t.style.artist_alpha);
+const hasStyle = channel("opacity") || channel("artist_alpha") ||
+channel(widthName) || channel("symbol") || Number.isFinite(artistScalar);
+if (hasStyle) {
+const values = new Float32Array(g.n * 4);
+for (let i = 0; i < g.n; i++) {
+values[i * 4] = 1;
+values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
+values[i * 4 + 2] = -1;
+values[i * 4 + 3] = -1;
+}
+const copy = (name, component, scale = 1) => {
+const spec = channel(name);
+if (!spec) return;
+const source = this._columnView(buffer, this.spec.columns[spec.buf]);
+for (let i = 0; i < g.n; i++) values[i * 4 + component] = source[i * (spec.components || 1)] * scale;
+};
+copy("opacity", 0);
+copy("artist_alpha", 1);
+copy(widthName, 2, this.dpr);
+copy("symbol", 3);
+g.styleBuf = this._upload(values);
+}
+const radius = channel("corner_radius");
+if (radius) {
+const source = this._columnView(buffer, this.spec.columns[radius.buf]);
+const components = radius.components || 1;
+const values = new Float32Array(g.n * 2);
+for (let i = 0; i < g.n; i++) {
+values[i * 2] = source[i * components] * this.dpr;
+values[i * 2 + 1] = (components > 1 ? source[i * components + 1] : source[i * components]) * this.dpr;
+}
+g.radiusBuf = this._upload(values);
+}
+if (t.stroke && t.stroke.mode === "direct_rgba") {
+g.strokeBuf = this._upload(this._columnView(buffer, this.spec.columns[t.stroke.buf]));
+}
+}
+_buildScatterMark(g, t, buffer) {
+this._buildXY(g, t, buffer);
+g.colorMode = 0;
+g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
+if (t.color && t.color.mode === "continuous") {
+g.colorMode = 1;
+g._cpu.color = this._columnView(buffer, this.spec.columns[t.color.buf]);
+g.cBuf = this._upload(g._cpu.color);
+g.lut = this._lut(t.color.colormap);
+} else if (t.color && t.color.mode === "categorical") {
+g.colorMode = 2;
+g._cpu.color = this._columnView(buffer, this.spec.columns[t.color.buf]);
+g.cBuf = this._upload(g._cpu.color);
+g.lut = this._paletteLut(t.color.palette);
+} else if (t.color && t.color.mode === "direct_rgba") {
+g.colorMode = 3;
+g._cpu.rgba = this._columnView(buffer, this.spec.columns[t.color.buf]);
+g.rgbaBuf = this._upload(g._cpu.rgba);
+}
+g.sizeMode = 0;
+g.size = (t.size && t.size.size) || 4.0;
+g.sizeRange = [2, 18];
+if (t.size && t.size.mode === "continuous") {
+g.sizeMode = 1;
+g._cpu.size = this._columnView(buffer, this.spec.columns[t.size.buf]);
+g.sBuf = this._upload(g._cpu.size);
+g.sizeRange = t.size.range_px;
+}
+this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
+this._pointMarkStyle(g, t);
+}
+_pointMarkStyle(g, t) {
+const s = t.style || {};
+g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 }[s.symbol] || 0;
+g.pointStrokeWidth = Number(s.stroke_width) || 0;
+g.pointStrokeFace = !s.stroke && (!t.stroke || t.stroke.mode === "match_fill");
+g.pointStroke = s.stroke
+? parseColor(this.root, s.stroke, [g.color[0], g.color[1], g.color[2], 1])
+: null;
+}
+_sampleTraceSpec(parentTrace, sample) {
+return {
+id: parentTrace.id,
+kind: "scatter",
+name: parentTrace.name,
+style: sample.style || parentTrace.style || {},
+tier: "sampled",
+x: sample.x && sample.x.col,
+y: sample.y && sample.y.col,
+x_axis: parentTrace.x_axis,
+y_axis: parentTrace.y_axis,
+color: sample.color,
+size: sample.size,
+stroke: sample.stroke,
+channels: sample.channels,
+};
+}
+_buildDensitySample(parentTrace, sample, buffer) {
+if (!sample || !sample.x || !sample.y || sample.x.col === undefined || sample.y.col === undefined) {
+return null;
+}
+const trace = this._sampleTraceSpec(parentTrace, sample);
+const g = {
+trace,
+tier: "sampled",
+xAxis: typeof parentTrace.x_axis === "string" ? parentTrace.x_axis : "x",
+yAxis: typeof parentTrace.y_axis === "string" ? parentTrace.y_axis : "y",
+};
+this._buildScatterMark(g, trace, buffer);
+g.win = {
+x0: sample.x_range[0], x1: sample.x_range[1],
+y0: sample.y_range[0], y1: sample.y_range[1],
+};
+g.sample = { n: sample.n, visible: sample.visible };
+return g;
+}
+_destroyDensitySample(g) {
+const s = g && g.sampleOverlay;
+if (!s || !this.gl) return;
+for (const b of [s.xBuf, s.yBuf, s.cBuf, s.rgbaBuf, s.sBuf, s.styleBuf,
+s.strokeBuf, s.selBuf, s.dBuf]) {
+if (b) this.gl.deleteBuffer(b);
+}
+g.sampleOverlay = null;
+}
+_applyDensitySample(g, sample, buffers) {
+this._destroyDensitySample(g);
+if (!sample || !sample.x || !sample.y || sample.x.buf === undefined || sample.y.buf === undefined) {
+this._refreshReductionBadges();
+return;
+}
+const gl = this.gl;
+const trace = {
+id: g.trace.id,
+kind: "scatter",
+name: g.trace.name,
+style: sample.style || g.trace.style || {},
+tier: "sampled",
+x_axis: g.trace.x_axis,
+y_axis: g.trace.y_axis,
+color: sample.color,
+size: sample.size,
+stroke: sample.stroke,
+channels: sample.channels,
+};
+const s = {
+trace,
+tier: "sampled",
+xAxis: g.xAxis,
+yAxis: g.yAxis,
+xBuf: gl.createBuffer(),
+yBuf: gl.createBuffer(),
+xMeta: { offset: sample.x.offset, scale: sample.x.scale },
+yMeta: { offset: sample.y.offset, scale: sample.y.scale },
+n: Math.min(sample.x.len, sample.y.len),
+win: {
+x0: sample.x_range[0], x1: sample.x_range[1],
+y0: sample.y_range[0], y1: sample.y_range[1],
+},
+sample: { n: sample.n, visible: sample.visible },
+selActive: false,
+colorMode: 0,
+color: parseColor(this.root, sample.color && sample.color.color, [0.3, 0.47, 0.66, 1]),
+sizeMode: 0,
+size: (sample.size && sample.size.size) || 4.0,
+sizeRange: [2, 18],
+};
+gl.bindBuffer(gl.ARRAY_BUFFER, s.xBuf);
+gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.x.buf]), gl.STATIC_DRAW);
+gl.bindBuffer(gl.ARRAY_BUFFER, s.yBuf);
+gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.y.buf]), gl.STATIC_DRAW);
+if (sample.color && sample.color.buf !== undefined) {
+s.colorMode = sample.color.mode === "continuous" ? 1 :
+(sample.color.mode === "categorical" ? 2 : 3);
+const colorValues = sample.color.dtype === "u8"
+? this._asU8(buffers[sample.color.buf])
+: this._asF32(buffers[sample.color.buf]);
+const colorBufferName = s.colorMode === 3 ? "rgbaBuf" : "cBuf";
+s[colorBufferName] = gl.createBuffer();
+s[colorBufferName]._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
+gl.bindBuffer(gl.ARRAY_BUFFER, s[colorBufferName]);
+gl.bufferData(gl.ARRAY_BUFFER, colorValues, gl.STATIC_DRAW);
+if (s.colorMode !== 3) {
+s.lut = sample.color.mode === "continuous"
+? this._lut(sample.color.colormap)
+: this._paletteLut(sample.color.palette);
+}
+}
+if (sample.size && sample.size.mode === "continuous") {
+s.sizeMode = 1;
+s.sBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, s.sBuf);
+gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.size.buf]), gl.STATIC_DRAW);
+s.sizeRange = sample.size.range_px;
+}
+const channel = (name) => sample.channels && sample.channels[name];
+const artistScalar = Number(trace.style && trace.style.artist_alpha);
+if (channel("opacity") || channel("artist_alpha") || channel("stroke_width") ||
+channel("symbol") || Number.isFinite(artistScalar)) {
+const values = new Float32Array(s.n * 4);
+for (let i = 0; i < s.n; i++) {
+values[i * 4] = 1;
+values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
+values[i * 4 + 2] = -1;
+values[i * 4 + 3] = -1;
+}
+const copy = (name, component, scale = 1) => {
+const spec = channel(name);
+if (!spec) return;
+const source = spec.dtype === "u8"
+? this._asU8(buffers[spec.buf])
+: this._asF32(buffers[spec.buf]);
+const components = spec.components || 1;
+for (let i = 0; i < s.n; i++) values[i * 4 + component] = source[i * components] * scale;
+};
+copy("opacity", 0);
+copy("artist_alpha", 1);
+copy("stroke_width", 2, this.dpr);
+copy("symbol", 3);
+s.styleBuf = this._upload(values);
+}
+if (sample.stroke && sample.stroke.mode === "direct_rgba") {
+s.strokeBuf = this._upload(this._asU8(buffers[sample.stroke.buf]));
+}
+this._pointMarkStyle(s, trace);
+g.sampleOverlay = s;
+this._refreshReductionBadges();
+}
+_drawDensitySample(g, x0, x1, y0, y1, opacityScale = 1) {
+const s = g && g.sampleOverlay;
+if (!s || !s.n || !this._viewOverlaps(s.win)) return;
+this._drawPoints(
+s,
+this._map(s.xMeta, x0, x1, s.xAxis),
+this._map(s.yMeta, y0, y1, s.yAxis),
+opacityScale
+);
+}
+_resolveMarkFill(style, markColor) {
+const fill = style && style.fill;
+if (!fill || !Array.isArray(fill.stops) || fill.stops.length < 2) return null;
+const mode = fill.space === "plot" ? 2 : 1;
+const dir = { down: 0, up: 1, left: 2, right: 3 }[fill.dir] ?? 0;
+const count = Math.min(fill.stops.length, 8);
+const pos = new Float32Array(8);
+const colors = new Float32Array(32);
+for (let i = 0; i < count; i++) {
+const stop = fill.stops[i] || [];
+pos[i] = Math.min(Math.max(Number(stop[0]) || 0, 0), 1);
+const expr = String(stop[1] || "").trim();
+const c = expr.toLowerCase() === "currentcolor"
+? markColor
+: parseColor(this.root, expr, markColor);
+colors[i * 4] = c[0] * c[3];
+colors[i * 4 + 1] = c[1] * c[3];
+colors[i * 4 + 2] = c[2] * c[3];
+colors[i * 4 + 3] = c[3];
+}
+return { mode, dir, count, pos, colors };
+}
+_setGradientUniforms(prog, grad) {
+const gl = this.gl;
+const u = (n) => uniformOf(gl, prog, n);
+if (!grad) {
+gl.uniform1i(u("u_gradMode"), 0);
+return;
+}
+gl.uniform1i(u("u_gradMode"), grad.mode);
+gl.uniform1i(u("u_gradDir"), grad.dir);
+gl.uniform1i(u("u_gradCount"), grad.count);
+gl.uniform1fv(u("u_gradPos"), grad.pos);
+gl.uniform4fv(u("u_gradColor"), grad.colors);
+}
+_fillOpacity(style, fallback = 1) {
+return Number(style.opacity ?? fallback) * Number(style.fill_opacity ?? 1);
+}
+_strokeOpacity(style, fallback = 1) {
+return Number(style.opacity ?? fallback) * Number(style.stroke_opacity ?? 1);
+}
+_setRectStyleUniforms(prog, g) {
+const gl = this.gl;
+const u = (n) => uniformOf(gl, prog, n);
+gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
+const cr = g.cornerRadius || [0, 0];
+gl.uniform2f(u("u_radius"), cr[0] * this.dpr, cr[1] * this.dpr);
+gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
+const sc = g.strokeColor || [0, 0, 0, 0];
+gl.uniform4f(u("u_stroke"), sc[0], sc[1], sc[2], sc[3]);
+gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}));
+this._setGradientUniforms(prog, g.grad);
+}
+_rectMarkStyleGpu(g, t) {
+const s = t.style || {};
+const cr = s.corner_radius;
+g.cornerRadius = Array.isArray(cr)
+? [Number(cr[0]) || 0, Number(cr[1]) || 0]
+: [Number(cr) || 0, Number(cr) || 0];
+g.strokeWidth = Number(s.stroke_width) || 0;
+const opaque = [g.color[0], g.color[1], g.color[2], 1];
+g.strokeColor = s.stroke ? parseColor(this.root, s.stroke, opaque) : opaque;
+g.grad = this._resolveMarkFill(s, g.color);
+}
+_smoothArrays(t, x, y, base, n) {
+if (!t.style || t.style.curve !== "smooth") return null;
+return xySmoothResample(x, y, base || null, n, 32768);
+}
+_stepArrays(t, x, y, n) {
+const where = t.style && t.style.step;
+if (!where || n < 2) return null;
+const perGap = where === "mid" ? 3 : 2;
+const m = 1 + (n - 1) * perGap;
+const sx = new Float32Array(m);
+const sy = new Float32Array(m);
+sx[0] = x[0];
+sy[0] = y[0];
+let j = 1;
+for (let i = 1; i < n; i++) {
+if (where === "pre") {
+sx[j] = x[i - 1]; sy[j] = y[i]; j++;
+sx[j] = x[i]; sy[j] = y[i]; j++;
+} else if (where === "mid") {
+const mid = (x[i - 1] + x[i]) * 0.5;
+sx[j] = mid; sy[j] = y[i - 1]; j++;
+sx[j] = mid; sy[j] = y[i]; j++;
+sx[j] = x[i]; sy[j] = y[i]; j++;
+} else {
+sx[j] = x[i]; sy[j] = y[i - 1]; j++;
+sx[j] = x[i]; sy[j] = y[i]; j++;
+}
+}
+return { x: sx, y: sy, n: m };
+}
+_buildLineMark(g, t, buffer) {
+const x = this._columnView(buffer, this.spec.columns[t.x]);
+const y = this._columnView(buffer, this.spec.columns[t.y]);
+g.xMeta = { ...this.spec.columns[t.x] };
+g.yMeta = { ...this.spec.columns[t.y] };
+g.n = Math.min(x.length, y.length);
+g._cpu = { x, y, xMeta: g.xMeta, yMeta: g.yMeta };
+const sm = this._smoothArrays(t, x, y, null, g.n);
+const src = sm || { x, y, n: g.n };
+const st = this._stepArrays(t, src.x, src.y, src.n);
+const drawX = st ? st.x : src.x;
+const drawY = st ? st.y : src.y;
+g.xBuf = this._upload(drawX);
+g.yBuf = this._upload(drawY);
+g.n = st ? st.n : src.n;
+g._dashX = drawX;
+g._dashY = drawY;
+g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+}
+_buildSegmentMark(g, t, buffer) {
+const x0 = this._columnView(buffer, this.spec.columns[t.x0]);
+const x1 = this._columnView(buffer, this.spec.columns[t.x1]);
+const y0 = this._columnView(buffer, this.spec.columns[t.y0]);
+const y1 = this._columnView(buffer, this.spec.columns[t.y1]);
+g.x0Meta = { ...this.spec.columns[t.x0] };
+g.x1Meta = { ...this.spec.columns[t.x1] };
+g.y0Meta = { ...this.spec.columns[t.y0] };
+g.y1Meta = { ...this.spec.columns[t.y1] };
+g.n = Math.min(x0.length, x1.length, y0.length, y1.length);
+g.x0Buf = this._upload(x0);
+g.x1Buf = this._upload(x1);
+g.y0Buf = this._upload(y0);
+g.y1Buf = this._upload(y1);
+g._segmentCpu = { x0, x1, y0, y1 };
+g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+g.colorMode = 0;
+if (t.color && t.color.mode === "continuous") {
+g.colorMode = 1;
+g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+g.lut = this._lut(t.color.colormap);
+} else if (t.color && t.color.mode === "categorical") {
+g.colorMode = 2;
+g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+g.lut = this._paletteLut(t.color.palette);
+} else if (t.color && t.color.mode === "direct_rgba") {
+g.colorMode = 3;
+g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+}
+this._buildInstanceStyleChannels(g, t, buffer, "width");
+g._cpu = { x: x0, y: y1, xMeta: g.x0Meta, yMeta: g.y1Meta };
+}
+_buildMeshMark(g, t, buffer) {
+for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) {
+const values = this._columnView(buffer, this.spec.columns[t[name]]);
+g[name + "Meta"] = { ...this.spec.columns[t[name]] };
+g[name + "Buf"] = this._upload(values);
+g.n = g.n === undefined ? values.length : Math.min(g.n, values.length);
+}
+g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
+g.colorMode = 0;
+if (t.color && t.color.mode === "continuous") {
+g.colorMode = 1;
+g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+g.lut = this._lut(t.color.colormap);
+} else if (t.color && t.color.mode === "categorical") {
+g.colorMode = 2;
+g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+g.lut = this._paletteLut(t.color.palette);
+} else if (t.color && t.color.mode === "direct_rgba") {
+g.colorMode = 3;
+g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+}
+this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
+const style = t.style || {};
+g.meshStrokeWidth = Number(style.stroke_width) || 0;
+g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
+}
+_buildHexbinMark(g, t, buffer) {
+const cx = this._columnView(buffer, this.spec.columns[t.x]);
+const cy = this._columnView(buffer, this.spec.columns[t.y]);
+const xMeta = { ...this.spec.columns[t.x] };
+const yMeta = { ...this.spec.columns[t.y] };
+const n = Math.min(cx.length, cy.length);
+const style = t.style || {};
+const dx = (Number(style.hex_dx) || 0) * (xMeta.scale || 1);
+const dy = (Number(style.hex_dy) || 0) * (yMeta.scale || 1);
+const ringX = [0, dx / 2, dx / 2, 0, -dx / 2, -dx / 2, 0];
+const ringY = [-dy / 3, -dy / 6, dy / 6, dy / 3, dy / 6, -dy / 6, -dy / 3];
+const parts = {};
+for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) parts[name] = new Float32Array(n * 6);
+for (let i = 0; i < n; i++) {
+const px = cx[i], py = cy[i];
+for (let k = 0; k < 6; k++) {
+const j = i * 6 + k;
+parts.x0[j] = px;
+parts.y0[j] = py;
+parts.x1[j] = px + ringX[k];
+parts.y1[j] = py + ringY[k];
+parts.x2[j] = px + ringX[k + 1];
+parts.y2[j] = py + ringY[k + 1];
+}
+}
+for (const name of ["x0", "x1", "x2"]) {
+g[name + "Meta"] = { ...xMeta };
+g[name + "Buf"] = this._upload(parts[name]);
+}
+for (const name of ["y0", "y1", "y2"]) {
+g[name + "Meta"] = { ...yMeta };
+g[name + "Buf"] = this._upload(parts[name]);
+}
+g.n = n * 6;
+g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
+g.colorMode = 0;
+if (t.color && (t.color.mode === "continuous" || t.color.mode === "categorical")) {
+g.colorMode = t.color.mode === "continuous" ? 1 : 2;
+const cval = this._columnView(buffer, this.spec.columns[t.color.buf]);
+const expanded = new Float32Array(n * 6);
+for (let i = 0; i < n; i++) expanded.fill(cval[i], i * 6, i * 6 + 6);
+g.cBuf = this._upload(expanded);
+g.lut = t.color.mode === "continuous" ? this._lut(t.color.colormap) : this._paletteLut(t.color.palette);
+}
+g.meshStrokeWidth = Number(style.stroke_width) || 0;
+g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
+}
+_buildAreaMark(g, t, buffer) {
+const x = this._columnView(buffer, this.spec.columns[t.x]);
+const y = this._columnView(buffer, this.spec.columns[t.y]);
+const base = this._columnView(buffer, this.spec.columns[t.base]);
+g.xMeta = { ...this.spec.columns[t.x] };
+g.yMeta = { ...this.spec.columns[t.y] };
+g.baseMeta = { ...this.spec.columns[t.base] };
+g.n = Math.min(x.length, y.length, base.length);
+g._cpu = { x, y, base, xMeta: g.xMeta, yMeta: g.yMeta };
+const sm = this._smoothArrays(t, x, y, base, g.n);
+g.xBuf = this._upload(sm ? sm.x : x);
+g.yBuf = this._upload(sm ? sm.y : y);
+g.baseBuf = this._upload(sm ? sm.extra : base);
+if (sm) g.n = sm.n;
+g._dashX = sm ? sm.x : x;
+g._dashY = sm ? sm.y : y;
+g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+g.lineColor = parseColor(this.root, t.style && (t.style.line_color || t.style.color), g.color);
+g.grad = this._resolveMarkFill(t.style, g.color);
+}
+_buildRectMark(g, t, buffer) {
+const x0 = this._columnView(buffer, this.spec.columns[t.x0]);
+const x1 = this._columnView(buffer, this.spec.columns[t.x1]);
+const y0 = this._columnView(buffer, this.spec.columns[t.y0]);
+const y1 = this._columnView(buffer, this.spec.columns[t.y1]);
+g.x0Meta = { ...this.spec.columns[t.x0] };
+g.x1Meta = { ...this.spec.columns[t.x1] };
+g.y0Meta = { ...this.spec.columns[t.y0] };
+g.y1Meta = { ...this.spec.columns[t.y1] };
+g.n = Math.min(x0.length, x1.length, y0.length, y1.length);
+g._cpuRect = {
+x0, x1, y0, y1,
+x0Meta: g.x0Meta, x1Meta: g.x1Meta, y0Meta: g.y0Meta, y1Meta: g.y1Meta,
+};
+g.x0Buf = this._upload(x0);
+g.x1Buf = this._upload(x1);
+g.y0Buf = this._upload(y0);
+g.y1Buf = this._upload(y1);
+g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+g.colorMode = 0;
+if (t.color && t.color.mode === "continuous") {
+g.colorMode = 1;
+g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+g.lut = this._lut(t.color.colormap);
+} else if (t.color && t.color.mode === "categorical") {
+g.colorMode = 2;
+g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+g.lut = this._paletteLut(t.color.palette);
+} else if (t.color && t.color.mode === "direct_rgba") {
+g.colorMode = 3;
+g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+}
+this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
+this._rectMarkStyleGpu(g, t);
+}
+_buildBarMark(g, t, buffer) {
+const b = t.bar;
+if (!b) return this._buildRectMark(g, t, buffer);
+const pos = this._columnView(buffer, this.spec.columns[b.pos]);
+const v1 = this._columnView(buffer, this.spec.columns[b.value1]);
+g.posMeta = { ...this.spec.columns[b.pos] };
+g.value1Meta = { ...this.spec.columns[b.value1] };
+g.n = Math.min(pos.length, v1.length);
+g.posBuf = this._upload(pos);
+g.value1Buf = this._upload(v1);
+g.orientation = b.orientation === "horizontal" ? 1 : 0;
+g.value0Const = b.value0_const ?? 0;
+g.value0Mode = b.value0 === undefined ? 0 : 1;
+g.width = b.width;
+if (g.value0Mode === 1) {
+const v0 = this._columnView(buffer, this.spec.columns[b.value0]);
+g.value0Meta = { ...this.spec.columns[b.value0] };
+g.n = Math.min(g.n, v0.length);
+g._cpuValue0 = v0;
+g.value0Buf = this._upload(v0);
+}
+g._cpuBar = {
+pos,
+value1: v1,
+value0: g._cpuValue0 || null,
+posMeta: g.posMeta,
+value1Meta: g.value1Meta,
+value0Meta: g.value0Meta || null,
+value0Const: g.value0Const,
+width: g.width,
+};
+g._cpu = g.orientation === 1
+? { x: v1, y: pos, xMeta: g.value1Meta, yMeta: g.posMeta, value0: g._cpuValue0 }
+: { x: pos, y: v1, xMeta: g.posMeta, yMeta: g.value1Meta, value0: g._cpuValue0 };
+g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+g.colorMode = 0;
+if (t.color && t.color.mode === "continuous") {
+g.colorMode = 1;
+g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+g.lut = this._lut(t.color.colormap);
+} else if (t.color && t.color.mode === "categorical") {
+g.colorMode = 2;
+g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+g.lut = this._paletteLut(t.color.palette);
+} else if (t.color && t.color.mode === "direct_rgba") {
+g.colorMode = 3;
+g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+}
+this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
+this._rectMarkStyleGpu(g, t);
+}
+_buildHeatmapMark(g, t, buffer) {
+const h = t.heatmap;
+const truecolor = Array.isArray(h.rgba_bufs);
+const grid = truecolor
+? h.rgba_bufs.map((index) => this._columnView(buffer, this.spec.columns[index]))
+: this._columnView(buffer, this.spec.columns[h.buf]);
+g.heatmap = {
+w: h.w,
+h: h.h,
+xRange: h.x_range,
+yRange: h.y_range,
+colormap: h.colormap,
+truecolor,
+tex: truecolor ? this._uploadRgbaGrid(grid, h.w, h.h) : this._uploadHeatmapGrid(grid, h.w, h.h),
+lut: truecolor ? null : this._lut(h.colormap),
+};
+if (!truecolor) g._cpuHeatmap = { grid };
+}
+_uploadRgbaGrid(channels, w, h) {
+const gl = this.gl;
+const tex = gl.createTexture();
+const data = new Uint8Array(w * h * 4);
+for (let index = 0; index < w * h; index++) {
+for (let channel = 0; channel < 4; channel++) {
+data[index * 4 + channel] = Math.round(255 * Math.max(0, Math.min(1, channels[channel][index])));
+}
+}
+gl.bindTexture(gl.TEXTURE_2D, tex);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+return tex;
+}
+_uploadGrid(f32, w, h, maxVal) {
+const gl = this.gl;
+const tex = gl.createTexture();
+lodWriteGridTexture(gl, tex, f32, w, h, maxVal);
+return tex;
+}
+_uploadHeatmapGrid(f32, w, h) {
+const gl = this.gl;
+const tex = gl.createTexture();
+const data = new Uint8Array(f32.length);
+for (let i = 0; i < f32.length; i++) {
+const v = f32[i];
+if (Number.isFinite(v)) {
+data[i] = Math.max(1, Math.min(255, Math.round(1 + 254 * Math.max(0, Math.min(1, v)))));
+}
+}
+gl.bindTexture(gl.TEXTURE_2D, tex);
+const align = gl.getParameter(gl.UNPACK_ALIGNMENT);
+gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, data);
+gl.pixelStorei(gl.UNPACK_ALIGNMENT, align);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+return tex;
+}
+_columnView(buffer, meta) {
+const split = Array.isArray(buffer);
+if (split !== Number.isInteger(meta.buf)) {
+throw new Error(
+split
+? "xy: transport delivered a buffer list but the spec column has no wire-buffer index"
+: "xy: spec column carries a wire-buffer index but the transport delivered one blob",
+);
+}
+const span = xyByteSpan(split ? buffer[meta.buf] : buffer, "chart payload");
+const relativeOffset = Number(meta.byte_offset);
+const length = Number(meta.len);
+if (!Number.isSafeInteger(relativeOffset) || relativeOffset < 0 ||
+!Number.isSafeInteger(length) || length < 0) {
+throw new RangeError("column offset/length must be non-negative safe integers");
+}
+const bytesPerElement = meta.dtype === "u8" ? 1 : 4;
+const absoluteOffset = span.byteOffset + relativeOffset;
+const end = relativeOffset + length * bytesPerElement;
+if (end > span.byteLength) throw new RangeError("column extends past chart payload");
+if (absoluteOffset % bytesPerElement !== 0) throw new RangeError("column is misaligned");
+if (meta.dtype === "u8") return new Uint8Array(span.buffer, absoluteOffset, length);
+if (meta.dtype === "u32") return new Uint32Array(span.buffer, absoluteOffset, length);
+return new Float32Array(span.buffer, absoluteOffset, length);
+}
+_upload(view) {
+const gl = this.gl;
+const buf = gl.createBuffer();
+buf._fcId = ++this._bufSeq;
+buf._fcType = view instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, view, gl.STATIC_DRAW);
+return buf;
+}
+_bindVao(g, key, parts, setup) {
+const gl = this.gl;
+if (!g._vaos) g._vaos = new Map();
+const sig = parts.join("|");
+let entry = g._vaos.get(key);
+if (!entry || entry.sig !== sig) {
+if (entry) gl.deleteVertexArray(entry.vao);
+const vao = gl.createVertexArray();
+gl.bindVertexArray(vao);
+setup();
+entry = { vao, sig };
+g._vaos.set(key, entry);
+} else {
+gl.bindVertexArray(entry.vao);
+}
+}
+_deleteVaos(g) {
+if (!g || !g._vaos) return;
+const gl = this.gl;
+if (gl) for (const { vao } of g._vaos.values()) gl.deleteVertexArray(vao);
+g._vaos = null;
+}
+_vaoAttr(slot, buf, byteOffset, divisor, size = 1, normalized = false) {
+const gl = this.gl;
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.enableVertexAttribArray(slot);
+gl.vertexAttribPointer(slot, size, buf._fcType || gl.FLOAT, normalized, 0, byteOffset);
+gl.vertexAttribDivisor(slot, divisor);
+}
+_initPickTarget() {
+const gl = this.gl;
+this.pickTex = gl.createTexture();
+this._allocPickTex();
+this.pickFbo = gl.createFramebuffer();
+gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
+gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.pickTex, 0);
+gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+this._pickDirty = true;
+}
+_allocPickTex() {
+const gl = this.gl;
+gl.bindTexture(gl.TEXTURE_2D, this.pickTex);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, this.canvas.width, this.canvas.height, 0,
+gl.RGBA, gl.UNSIGNED_BYTE, null);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+this._pickW = this.canvas.width;
+this._pickH = this.canvas.height;
+}
+_map(meta, lo, hi, axisId = null) {
+if (!axisId) {
+const mul = 2 / ((hi - lo) * meta.scale);
+const add = ((meta.offset - lo) / (hi - lo)) * 2 - 1;
+return [mul, add];
+}
+const axis = this._axis(axisId);
+const c0 = this._axisCoord(axis, lo);
+const c1 = this._axisCoord(axis, hi);
+if (![c0, c1].every(Number.isFinite) || c1 === c0) return [0, -2];
+const mul = 2 / (c1 - c0);
+const add = -1 - c0 * mul;
+return [mul, add];
+}
+_mapConst(value, lo, hi, axisId = null) {
+if (!axisId) return ((value - lo) / (hi - lo)) * 2 - 1;
+const axis = this._axis(axisId);
+const c = this._axisCoord(axis, value);
+const c0 = this._axisCoord(axis, lo);
+const c1 = this._axisCoord(axis, hi);
+if (![c, c0, c1].every(Number.isFinite) || c1 === c0) return -2;
+return ((c - c0) / (c1 - c0)) * 2 - 1;
+}
+_edgePadForValue(value, lo, hi, pixels) {
+if (!Number.isFinite(value) || !Number.isFinite(lo) || !Number.isFinite(hi) || hi === lo) return 0;
+const span = Math.abs(hi - lo);
+const eps = span * 1e-10 + 1e-12;
+const px = Math.max(1, pixels || 1);
+const padPx = Math.max(2, Math.ceil(this.dpr || 1));
+if (Math.abs(value - lo) <= eps) return -(2 * padPx) / px;
+if (Math.abs(value - hi) <= eps) return (2 * padPx) / px;
+return 0;
+}
+_setAxisUniforms(prog, prefix, meta, axisId) {
+const gl = this.gl;
+const u = (n) => uniformOf(gl, prog, n);
+gl.uniform2f(u(`${prefix}meta`), meta && Number.isFinite(meta.offset) ? meta.offset : 0, meta && meta.scale ? meta.scale : 1);
+gl.uniform1i(u(`${prefix}mode`), this._axisMode(axisId));
+}
+draw(keepPick = false) {
+if (this._destroyed || this._glLost || !this.gl) return;
+this._updateZoomMenuLabel?.();
+if (this._raf) {
+this._rafKeepPick = this._rafKeepPick && keepPick;
+return;
+}
+this._rafKeepPick = keepPick;
+this._raf = requestAnimationFrame(() => {
+this._raf = null;
+if (this._destroyed) return;
+this._drawNow();
+});
+}
+_drawNow() {
+if (this._destroyed || !this.gl || this._glLost) return;
+this._healStaleTheme();
+const gl = this.gl;
+const { x0, x1, y0, y1 } = this.view;
+gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+gl.clearColor(0, 0, 0, 0);
+gl.clear(gl.COLOR_BUFFER_BIT);
+const drawTrace = (g) => {
+if (g.tier === "density") {
+const [gx0, gx1] = this._axisRange(g.xAxis);
+const [gy0, gy1] = this._axisRange(g.yAxis);
+lodDrawDensityTier(this, g, gx0, gx1, gy0, gy1);
+return;
+}
+markOf(g.trace.kind).draw(this, g, x0, x1, y0, y1);
+};
+for (const g of this._transitionOldTraces || []) drawTrace(g);
+for (const g of this.gpuTraces) {
+drawTrace(g);
+}
+this._drawHoverState();
+this._repositionTooltip();
+if (!this._rafKeepPick) this._pickDirty = true;
+this._rafKeepPick = false;
+this._drawChrome();
+this._renderLassoSelection?.();
+}
+_now() {
+return performance.now();
+}
+_canDrawSimplePoints(g) {
+return g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
+!g.rgbaBuf && !g.styleBuf && !g.strokeBuf &&
+(g.symbol || 0) === 0 && (g.pointStrokeWidth || 0) <= 0 &&
+Math.max(g.lodBlendShown ?? 0, g.lodBlend ?? 0) <= 0.001;
+}
+_drawPoints(g, xm, ym, opacityScale = 1) {
+opacityScale *= g._transitionOpacity ?? 1;
+const animationScale = g._transitionScale ?? 1;
+if (this._canDrawSimplePoints(g)) {
+this._drawSimplePoints(g, xm, ym, opacityScale);
+return;
+}
+const gl = this.gl;
+const prog = this.pointProg;
+gl.useProgram(prog);
+const u = (n) => uniformOf(gl, prog, n);
+gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
+this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+gl.uniform1f(u("u_dpr"), this.dpr);
+const transitionOn = !!(g._transitionPrevXBuf && g._transitionPrevYBuf);
+gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
+gl.uniform1f(u("u_transitionProgress"), g._transitionPositionProgress ?? 1);
+gl.uniform1f(u("u_size"), g.size * animationScale);
+gl.uniform1i(u("u_sizeMode"), g.sizeMode);
+gl.uniform2f(u("u_sizeRange"), g.sizeRange[0] * animationScale, g.sizeRange[1] * animationScale);
+gl.uniform1i(u("u_colorMode"), g.colorMode);
+const markOpacity = this._fillOpacity(g.trace.style, 0.8) * opacityScale;
+gl.uniform1f(u("u_opacity"), markOpacity);
+gl.uniform1f(u("u_selectedOpacity"), this._markStateNumber("selected", "opacity", 1));
+gl.uniform1f(u("u_unselectedOpacity"), this._markStateNumber("unselected", "opacity", 0.12));
+const stateColor = (loc, expr) => {
+const c = expr ? parseColor(this.root, expr, [0, 0, 0, 1]) : null;
+gl.uniform4f(loc, c ? c[0] : 0, c ? c[1] : 0, c ? c[2] : 0, c ? 1 : 0);
+};
+stateColor(u("u_selColor"), this._markStateValue("selected", "color"));
+stateColor(u("u_unselColor"), this._markStateValue("unselected", "color"));
+const [r, gg, b, a] = g.color;
+gl.uniform4f(u("u_color"), r, gg, b, a);
+gl.uniform1i(u("u_symbol"), g.symbol || 0);
+const sc = g.pointStroke;
+gl.uniform1f(u("u_ptStrokeWidth"), (g.pointStrokeWidth || 0) * this.dpr);
+gl.uniform1i(u("u_ptStrokeFace"), g.pointStrokeFace ? 1 : 0);
+gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style, 0.8) * opacityScale);
+gl.uniform4f(u("u_ptStroke"), sc ? sc[0] : 0, sc ? sc[1] : 0,
+sc ? sc[2] : 0, sc ? sc[3] : 0);
+gl.uniform1i(u("u_selActive"), g.selActive ? 1 : 0);
+const colorOn = g.colorMode !== 0 && g.cBuf;
+const sizeOn = g.sizeMode === 1 && g.sBuf;
+const selOn = g.selActive && g.selBuf;
+const rgbaOn = g.colorMode === 3 && g.rgbaBuf;
+const styleOn = !!g.styleBuf;
+const strokeOn = !!g.strokeBuf;
+if (g.lut) {
+gl.activeTexture(gl.TEXTURE0);
+gl.bindTexture(gl.TEXTURE_2D, g.lut);
+gl.uniform1i(u("u_lut"), 0);
+}
+const blendTarget = g.lodBlend ?? 0;
+let blend = g.lodBlendShown ?? blendTarget;
+if (Math.abs(blend - blendTarget) > 0.005 && !this._prefersReducedMotion()) {
+const now = this._now();
+const dt = g._blendTick ? Math.min(100, now - g._blendTick) : 16;
+g._blendTick = now;
+blend += (blendTarget - blend) * (1 - Math.exp(-dt / 90));
+g.lodBlendShown = blend;
+this.draw();
+} else {
+g.lodBlendShown = blend = blendTarget;
+g._blendTick = 0;
+}
+gl.uniform1f(u("u_dblend"), blend);
+const blendOn = blend > 0.001 && g.dBuf && g.dlut;
+if (blendOn) {
+gl.activeTexture(gl.TEXTURE1);
+gl.bindTexture(gl.TEXTURE_2D, g.dlut);
+}
+gl.uniform1i(u("u_dlut"), 1);
+this._bindVao(
+g,
+"points",
+[
+g.xBuf._fcId, g.yBuf._fcId,
+colorOn ? g.cBuf._fcId : 0,
+sizeOn ? g.sBuf._fcId : 0,
+selOn ? g.selBuf._fcId : 0,
+blendOn ? g.dBuf._fcId : 0,
+transitionOn ? g._transitionPrevXBuf._fcId : 0,
+transitionOn ? g._transitionPrevYBuf._fcId : 0,
+rgbaOn ? g.rgbaBuf._fcId : 0,
+styleOn ? g.styleBuf._fcId : 0,
+strokeOn ? g.strokeBuf._fcId : 0,
+],
+() => {
+this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 0);
+this._vaoAttr(ATTR_SLOTS.ay, g.yBuf, 0, 0);
+if (colorOn) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 0);
+if (sizeOn) this._vaoAttr(ATTR_SLOTS.a_sval, g.sBuf, 0, 0);
+if (selOn) this._vaoAttr(ATTR_SLOTS.a_sel, g.selBuf, 0, 0);
+if (blendOn) this._vaoAttr(ATTR_SLOTS.a_dval, g.dBuf, 0, 0);
+if (transitionOn) {
+this._vaoAttr(ATTR_SLOTS.a_prevx, g._transitionPrevXBuf, 0, 0);
+this._vaoAttr(ATTR_SLOTS.a_prevy, g._transitionPrevYBuf, 0, 0);
+}
+if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 0, 4, true);
+if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 0, 4);
+if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 0, 4, true);
+}
+);
+if (!colorOn) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+if (!sizeOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
+if (!selOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sel, 1.0);
+if (!blendOn) gl.vertexAttrib1f(ATTR_SLOTS.a_dval, 0);
+if (!rgbaOn) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, r, gg, b, a);
+gl.drawArrays(gl.POINTS, 0, g.n);
+}
+_drawSimplePoints(g, xm, ym, opacityScale = 1) {
+const gl = this.gl;
+const prog = this.pointSimpleProg;
+gl.useProgram(prog);
+const u = (n) => uniformOf(gl, prog, n);
+gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
+this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+gl.uniform1f(u("u_dpr"), this.dpr);
+const transitionOn = !!(g._transitionPrevXBuf && g._transitionPrevYBuf);
+gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
+gl.uniform1f(u("u_transitionProgress"), g._transitionPositionProgress ?? 1);
+gl.uniform1f(u("u_size"), g.size * (g._transitionScale ?? 1));
+const [r, gg, b, a] = g.color;
+gl.uniform4f(
+u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.8) * opacityScale
+);
+this._bindVao(
+g,
+"points-simple",
+[g.xBuf._fcId, g.yBuf._fcId,
+transitionOn ? g._transitionPrevXBuf._fcId : 0,
+transitionOn ? g._transitionPrevYBuf._fcId : 0],
+() => {
+this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 0);
+this._vaoAttr(ATTR_SLOTS.ay, g.yBuf, 0, 0);
+if (transitionOn) {
+this._vaoAttr(ATTR_SLOTS.a_prevx, g._transitionPrevXBuf, 0, 0);
+this._vaoAttr(ATTR_SLOTS.a_prevy, g._transitionPrevYBuf, 0, 0);
+}
+}
+);
+gl.drawArrays(gl.POINTS, 0, g.n);
+}
+_drawHoverState() {
+const hit = this._hoverTarget;
+if (!hit || !hit.g) return;
+const g = hit.g;
+if (g.trace.kind !== "scatter" || g.tier === "density") return;
+if (!Number.isInteger(hit.index) || hit.index < 0 || hit.index >= g.n) return;
+const [x0, x1] = this._axisRange(g.xAxis);
+const [y0, y1] = this._axisRange(g.yAxis);
+this._drawHoverPoint(
+g,
+hit.index,
+this._map(g.xMeta, x0, x1, g.xAxis),
+this._map(g.yMeta, y0, y1, g.yAxis)
+);
+}
+_drawHoverPoint(g, index, xm, ym) {
+const gl = this.gl;
+const prog = this.pointProg;
+gl.useProgram(prog);
+const u = (n) => uniformOf(gl, prog, n);
+gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
+this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+const defaultSize = Math.max((g.size || 4) * 1.75, (g.size || 4) + 5);
+const size = Math.max(0, this._markStateNumber("hover", "size", defaultSize));
+const opacity = Math.max(0, Math.min(1, this._markStateNumber("hover", "opacity", 0.95)));
+const color = parseColor(
+this.root,
+this._markStatePaint("hover", "color", "rgba(15,23,42,.92)"),
+[0.06, 0.09, 0.16, 0.92]
+);
+gl.uniform1f(u("u_dpr"), this.dpr);
+gl.uniform1f(u("u_size"), size);
+gl.uniform1i(u("u_sizeMode"), 0);
+gl.uniform2f(u("u_sizeRange"), size, size);
+gl.uniform1i(u("u_colorMode"), 0);
+gl.uniform1f(u("u_opacity"), opacity);
+gl.uniform1f(u("u_selectedOpacity"), 1);
+gl.uniform1f(u("u_unselectedOpacity"), 1);
+gl.uniform4f(u("u_color"), color[0], color[1], color[2], 1);
+gl.uniform1i(u("u_selActive"), 0);
+gl.uniform1f(u("u_dblend"), 0);
+this._bindVao(g, "hover", [g.xBuf._fcId, g.yBuf._fcId], () => {
+this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 0);
+this._vaoAttr(ATTR_SLOTS.ay, g.yBuf, 0, 0);
+});
+gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
+gl.vertexAttrib1f(ATTR_SLOTS.a_sel, 1);
+gl.vertexAttrib1f(ATTR_SLOTS.a_dval, 0);
+gl.drawArrays(gl.POINTS, index, 1);
+}
+_drawDensity(g, density, opacityScale = 1) {
+const gl = this.gl;
+const d = density || g.density;
+if (!d || !d.tex || !gl.isTexture(d.tex)) return;
+opacityScale *= g._transitionOpacity ?? 1;
+const prog = this.densityProg;
+gl.useProgram(prog);
+const u = (n) => uniformOf(gl, prog, n);
+const { x0, x1, y0, y1 } = this.view;
+const [vx0, vx1] = this._axisRange(g.xAxis);
+const [vy0, vy1] = this._axisRange(g.yAxis);
+gl.uniform4f(u("u_view"), vx0 ?? x0, vx1 ?? x1, vy0 ?? y0, vy1 ?? y1);
+gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
+gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
+gl.uniform4f(u("u_gridRange"), d.xRange[0], d.xRange[1], d.yRange[0], d.yRange[1]);
+gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * opacityScale);
+const constant = d.color;
+gl.uniform1i(u("u_constantColor"), constant ? 1 : 0);
+gl.uniform4f(u("u_color"), ...(constant || [1, 1, 1, 1]));
+gl.activeTexture(gl.TEXTURE0);
+gl.bindTexture(gl.TEXTURE_2D, d.tex);
+gl.uniform1i(u("u_grid"), 0);
+gl.activeTexture(gl.TEXTURE1);
+gl.bindTexture(gl.TEXTURE_2D, d.lut);
+gl.uniform1i(u("u_lut"), 1);
+gl.bindVertexArray(this.quadVao);
+gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+_drawHeatmap(g) {
+const h = g.heatmap;
+if (!h) return;
+const gl = this.gl;
+const prog = this.heatmapProg;
+gl.useProgram(prog);
+const u = (n) => uniformOf(gl, prog, n);
+const { x0, x1, y0, y1 } = this.view;
+const [vx0, vx1] = this._axisRange(g.xAxis);
+const [vy0, vy1] = this._axisRange(g.yAxis);
+gl.uniform4f(u("u_view"), vx0 ?? x0, vx1 ?? x1, vy0 ?? y0, vy1 ?? y1);
+gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
+gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
+const xrev = (vx0 ?? x0) > (vx1 ?? x1);
+const yrev = (vy0 ?? y0) > (vy1 ?? y1);
+gl.uniform4f(
+u("u_gridRange"),
+h.xRange[xrev ? 1 : 0], h.xRange[xrev ? 0 : 1],
+h.yRange[yrev ? 1 : 0], h.yRange[yrev ? 0 : 1],
+);
+gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
+gl.uniform1i(u("u_truecolor"), h.truecolor ? 1 : 0);
+gl.activeTexture(gl.TEXTURE0);
+gl.bindTexture(gl.TEXTURE_2D, h.tex);
+gl.uniform1i(u("u_grid"), 0);
+if (!h.truecolor) {
+gl.activeTexture(gl.TEXTURE1);
+gl.bindTexture(gl.TEXTURE_2D, h.lut);
+gl.uniform1i(u("u_lut"), 1);
+}
+gl.bindVertexArray(this.quadVao);
+gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+_drawLine(g, xm, ym, color = null, width = null, opacity = null) {
+if (g.n < 2) return;
+const gl = this.gl;
+gl.useProgram(this.lineProg);
+const u = (n) => uniformOf(gl, this.lineProg, n);
+gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+this._setAxisUniforms(this.lineProg, "u_x", g.xMeta, g.xAxis);
+this._setAxisUniforms(this.lineProg, "u_y", g.yMeta, g.yAxis);
+gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
+const transitionOn = !!(g._transitionPrevXBuf && g._transitionPrevYBuf);
+gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
+gl.uniform1f(u("u_transitionProgress"), g._transitionPositionProgress ?? 1);
+const reveal = Math.max(0, Math.min(1, g._transitionReveal ?? 1));
+gl.uniform1f(u("u_revealProgress"), reveal);
+gl.uniform1f(u("u_revealSegments"), g.n - 1);
+gl.uniform1f(u("u_width"), (width ?? g.trace.style.width ?? 1.5) * this.dpr);
+const [r, gg, b, a] = color || g.color;
+const strokeOpacity = this._strokeOpacity(g.trace.style) * (opacity ?? 1) * (g._transitionOpacity ?? 1);
+gl.uniform4f(u("u_color"), r, gg, b, a * strokeOpacity);
+const dashed = this._lineDash(g);
+this._bindVao(
+g,
+"line",
+[g.xBuf._fcId, g.yBuf._fcId, dashed ? g._lenBuf._fcId : 0,
+transitionOn ? g._transitionPrevXBuf._fcId : 0,
+transitionOn ? g._transitionPrevYBuf._fcId : 0],
+() => {
+this._vaoAttr(ATTR_SLOTS.ax0, g.xBuf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.ax1, g.xBuf, 4, 1);
+this._vaoAttr(ATTR_SLOTS.ay0, g.yBuf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.ay1, g.yBuf, 4, 1);
+if (dashed) {
+this._vaoAttr(ATTR_SLOTS.a_len0, g._lenBuf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.a_len1, g._lenBuf, 4, 1);
+}
+if (transitionOn) {
+this._vaoAttr(ATTR_SLOTS.a_prevx, g._transitionPrevXBuf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.a_prevy, g._transitionPrevYBuf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.a_prevx1, g._transitionPrevXBuf, 4, 1);
+this._vaoAttr(ATTR_SLOTS.a_prevy1, g._transitionPrevYBuf, 4, 1);
+}
+}
+);
+const segments = Math.max(0, Math.min(g.n - 1, Math.ceil((g.n - 1) * reveal)));
+gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, segments);
+}
+_drawSegments(g, xm, ym) {
+if (g.n < 1) return;
+const gl = this.gl;
+const prog = this.segmentProg;
+gl.useProgram(prog);
+const u = (n) => uniformOf(gl, prog, n);
+gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+this._setAxisUniforms(prog, "u_x0", g.x0Meta, g.xAxis);
+this._setAxisUniforms(prog, "u_x1", g.x1Meta, g.xAxis);
+this._setAxisUniforms(prog, "u_y0", g.y0Meta, g.yAxis);
+this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis);
+gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
+gl.uniform1f(u("u_width"), (g.trace.style.width ?? 1.5) * this.dpr);
+gl.uniform1f(u("u_animationProgress"), g._transitionScale ?? 1);
+const [r, gg, b, a] = g.color;
+gl.uniform4f(u("u_color"), r, gg, b, a);
+gl.uniform1f(u("u_opacity"), this._strokeOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
+gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+const dashed = this._segmentDash(g, prog);
+if (g.colorMode && g.lut) {
+gl.activeTexture(gl.TEXTURE0);
+gl.bindTexture(gl.TEXTURE_2D, g.lut);
+gl.uniform1i(u("u_lut"), 0);
+}
+this._bindVao(
+g,
+"segment",
+[g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId,
+g.colorMode && g.cBuf ? g.cBuf._fcId : 0,
+g.rgbaBuf ? g.rgbaBuf._fcId : 0,
+g.styleBuf ? g.styleBuf._fcId : 0,
+dashed ? g._segmentDashOffsetBuf._fcId : 0,
+dashed ? g._segmentDashDirBuf._fcId : 0],
+() => {
+this._vaoAttr(ATTR_SLOTS.ax0, g.x0Buf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
+if (g.colorMode && g.cBuf) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+if (g.styleBuf) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+if (dashed) {
+this._vaoAttr(ATTR_SLOTS.a_dash0, g._segmentDashOffsetBuf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.a_dashDir, g._segmentDashDirBuf, 0, 1);
+}
+}
+);
+if (!g.cBuf) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+if (!g.rgbaBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+if (!g.styleBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+const count = Math.max(0, Math.min(g.n, Math.ceil(g.n * (g._transitionReveal ?? 1))));
+gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
+}
+_segmentDash(g, prog) {
+const gl = this.gl;
+const u = (n) => uniformOf(gl, prog, n);
+const dash = g.trace.style && g.trace.style.dash;
+const cpu = g._segmentCpu;
+if (!dash || !dash.length || !cpu) {
+gl.uniform1i(u("u_dashCount"), 0);
+return false;
+}
+const n = g.n;
+const offsets = g._segmentDashOffsets?.length === n
+? g._segmentDashOffsets : (g._segmentDashOffsets = new Float32Array(n));
+const directions = g._segmentDashDirections?.length === n
+? g._segmentDashDirections : (g._segmentDashDirections = new Float32Array(n));
+const k0 = new Array(n), k1 = new Array(n), lengths = new Float32Array(n);
+const adjacency = new Map();
+const add = (key, index) => {
+const edges = adjacency.get(key);
+if (edges) edges.push(index); else adjacency.set(key, [index]);
+};
+const key = (x, y) => `${Math.round(x * 1000)},${Math.round(y * 1000)}`;
+const dpr = this.dpr;
+for (let i = 0; i < n; i++) {
+const x0 = this._dataPx(g.xAxis, this._decodeValue(cpu.x0, g.x0Meta, i));
+const x1 = this._dataPx(g.xAxis, this._decodeValue(cpu.x1, g.x1Meta, i));
+const y0 = this._dataPx(g.yAxis, this._decodeValue(cpu.y0, g.y0Meta, i));
+const y1 = this._dataPx(g.yAxis, this._decodeValue(cpu.y1, g.y1Meta, i));
+k0[i] = key(x0, y0); k1[i] = key(x1, y1);
+lengths[i] = Math.hypot(x1 - x0, y1 - y0) * dpr;
+add(k0[i], i); add(k1[i], i);
+}
+const visited = new Uint8Array(n);
+const walk = (start) => {
+let current = start, accumulated = 0;
+while (true) {
+const edge = (adjacency.get(current) || []).find((index) => !visited[index]);
+if (edge === undefined) break;
+visited[edge] = 1;
+if (k0[edge] === current) {
+offsets[edge] = accumulated;
+directions[edge] = 1;
+current = k1[edge];
+} else {
+offsets[edge] = accumulated + lengths[edge];
+directions[edge] = -1;
+current = k0[edge];
+}
+accumulated += lengths[edge];
+}
+};
+for (const [node, edges] of adjacency) if (edges.length === 1) walk(node);
+for (let i = 0; i < n; i++) if (!visited[i]) walk(k0[i]);
+const upload = (buffer, values) => {
+if (!buffer) return this._upload(values);
+gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+gl.bufferData(gl.ARRAY_BUFFER, values, gl.DYNAMIC_DRAW);
+return buffer;
+};
+g._segmentDashOffsetBuf = upload(g._segmentDashOffsetBuf, offsets);
+g._segmentDashDirBuf = upload(g._segmentDashDirBuf, directions);
+const pattern = new Float32Array(8);
+const count = Math.min(dash.length, 8);
+let period = 0;
+for (let i = 0; i < count; i++) {
+pattern[i] = Number(dash[i]) * dpr;
+period += pattern[i];
+}
+gl.uniform1i(u("u_dashCount"), count);
+gl.uniform1fv(u("u_dashArr"), pattern);
+gl.uniform1f(u("u_dashPeriod"), Math.max(period, 1e-3));
+return true;
+}
+_drawMesh(g, xm, ym) {
+if (g.n < 1) return;
+const gl = this.gl;
+const prog = this.meshProg;
+gl.useProgram(prog);
+const u = (n) => uniformOf(gl, prog, n);
+gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+for (const name of ["x0", "x1", "x2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.xAxis);
+for (const name of ["y0", "y1", "y2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.yAxis);
+gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
+gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], g.color[3]);
+const stroke = g.meshStroke || [0, 0, 0, 0];
+gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
+gl.uniform1f(u("u_strokeWidth"), g.meshStrokeWidth || 0);
+gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style));
+if (g.colorMode && g.lut) {
+gl.activeTexture(gl.TEXTURE0);
+gl.bindTexture(gl.TEXTURE_2D, g.lut);
+gl.uniform1i(u("u_lut"), 0);
+}
+const parts = ["x0", "x1", "x2", "y0", "y1", "y2"].map((name) => g[name + "Buf"]._fcId);
+parts.push(g.cBuf ? g.cBuf._fcId : 0, g.rgbaBuf ? g.rgbaBuf._fcId : 0,
+g.styleBuf ? g.styleBuf._fcId : 0, g.strokeBuf ? g.strokeBuf._fcId : 0);
+this._bindVao(g, "mesh", parts, () => {
+for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) {
+this._vaoAttr(ATTR_SLOTS["a" + name], g[name + "Buf"], 0, 1);
+}
+if (g.cBuf) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+if (g.styleBuf) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+if (g.strokeBuf) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
+});
+if (!g.cBuf) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+if (!g.rgbaBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, ...g.color);
+if (!g.styleBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+if (!g.strokeBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...stroke);
+gl.drawArraysInstanced(gl.TRIANGLES, 0, 3, g.n);
+}
+_lineDash(g) {
+const gl = this.gl;
+const u = (n) => uniformOf(gl, this.lineProg, n);
+const dash = g.trace.style && g.trace.style.dash;
+if (!dash || !dash.length || !g._dashX) {
+gl.uniform1i(u("u_dashCount"), 0);
+return false;
+}
+const n = g.n;
+if (!g._lenArr || g._lenArr.length !== n) g._lenArr = new Float32Array(n);
+const lens = g._lenArr;
+const dpr = this.dpr;
+let px = this._dataPx(g.xAxis, this._decodeValue(g._dashX, g.xMeta, 0));
+let py = this._dataPx(g.yAxis, this._decodeValue(g._dashY, g.yMeta, 0));
+let acc = 0;
+lens[0] = 0;
+for (let i = 1; i < n; i++) {
+const nx = this._dataPx(g.xAxis, this._decodeValue(g._dashX, g.xMeta, i));
+const ny = this._dataPx(g.yAxis, this._decodeValue(g._dashY, g.yMeta, i));
+if (Number.isFinite(nx) && Number.isFinite(ny) && Number.isFinite(px) && Number.isFinite(py)) {
+acc += Math.hypot(nx - px, ny - py) * dpr;
+}
+lens[i] = acc;
+px = nx;
+py = ny;
+}
+if (!g._lenBuf) g._lenBuf = this._upload(lens);
+else {
+gl.bindBuffer(gl.ARRAY_BUFFER, g._lenBuf);
+gl.bufferData(gl.ARRAY_BUFFER, lens, gl.DYNAMIC_DRAW);
+}
+const arr = new Float32Array(8);
+let period = 0;
+const count = Math.min(dash.length, 8);
+for (let i = 0; i < count; i++) {
+arr[i] = dash[i] * dpr;
+period += arr[i];
+}
+gl.uniform1i(u("u_dashCount"), count);
+gl.uniform1fv(u("u_dashArr"), arr);
+gl.uniform1f(u("u_dashPeriod"), Math.max(period, 1e-3));
+return true;
+}
+_drawArea(g, xm, ym, bm) {
+if (g.n < 2) return;
+const gl = this.gl;
+const prog = this.areaProg;
+gl.useProgram(prog);
+const u = (n) => uniformOf(gl, prog, n);
+gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+gl.uniform2f(u("u_bmap"), bm[0], bm[1]);
+this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
+this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+this._setAxisUniforms(prog, "u_b", g.baseMeta, g.yAxis);
+const reveal = Math.max(0, Math.min(1, g._transitionReveal ?? 1));
+gl.uniform1f(u("u_revealProgress"), reveal);
+gl.uniform1f(u("u_revealSegments"), g.n - 1);
+const [r, gg, b, a] = g.color;
+gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.35) * (g._transitionOpacity ?? 1));
+gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
+this._setGradientUniforms(prog, g.grad);
+this._bindVao(g, "area", [g.xBuf._fcId, g.yBuf._fcId, g.baseBuf._fcId], () => {
+this._vaoAttr(ATTR_SLOTS.ax0, g.xBuf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.ax1, g.xBuf, 4, 1);
+this._vaoAttr(ATTR_SLOTS.ay0, g.yBuf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.ay1, g.yBuf, 4, 1);
+this._vaoAttr(ATTR_SLOTS.ab0, g.baseBuf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.ab1, g.baseBuf, 4, 1);
+});
+const count = Math.max(0, Math.min(g.n - 1, Math.ceil((g.n - 1) * reveal)));
+gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
+}
+_drawRects(g, x0, x1, y0, y1, edgePad = [0, 0, 0, 0]) {
+if (!g.n) return;
+const gl = this.gl;
+const prog = this.rectProg;
+gl.useProgram(prog);
+const u = (n) => uniformOf(gl, prog, n);
+gl.uniform2f(u("u_x0map"), x0[0], x0[1]);
+gl.uniform2f(u("u_x1map"), x1[0], x1[1]);
+gl.uniform2f(u("u_y0map"), y0[0], y0[1]);
+gl.uniform2f(u("u_y1map"), y1[0], y1[1]);
+this._setAxisUniforms(prog, "u_x0", g.x0Meta, g.xAxis);
+this._setAxisUniforms(prog, "u_x1", g.x1Meta, g.xAxis);
+this._setAxisUniforms(prog, "u_y0", g.y0Meta, g.yAxis);
+this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis);
+gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
+gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
+gl.uniform4f(u("u_edgePad"), edgePad[0], edgePad[1], edgePad[2], edgePad[3]);
+const [r, gg, b, a] = g.color;
+gl.uniform4f(u("u_color"), r, gg, b, a);
+gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
+gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+this._setRectStyleUniforms(prog, g);
+const colorOn = !!g.cBuf;
+const rgbaOn = !!g.rgbaBuf;
+const styleOn = !!g.styleBuf;
+const strokeOn = !!g.strokeBuf;
+const radiusOn = !!g.radiusBuf;
+if (colorOn) {
+gl.activeTexture(gl.TEXTURE0);
+gl.bindTexture(gl.TEXTURE_2D, g.lut);
+gl.uniform1i(u("u_lut"), 0);
+}
+this._bindVao(
+g,
+"rects",
+[g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId,
+colorOn ? g.cBuf._fcId : 0, rgbaOn ? g.rgbaBuf._fcId : 0,
+styleOn ? g.styleBuf._fcId : 0, strokeOn ? g.strokeBuf._fcId : 0,
+radiusOn ? g.radiusBuf._fcId : 0],
+() => {
+this._vaoAttr(ATTR_SLOTS.ax0, g.x0Buf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
+if (colorOn) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
+if (radiusOn) this._vaoAttr(ATTR_SLOTS.a_radius, g.radiusBuf, 0, 1, 2);
+}
+);
+if (!colorOn) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+if (!rgbaOn) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...(g.strokeColor || g.color));
+if (!radiusOn) gl.vertexAttrib2f(ATTR_SLOTS.a_radius, -1, -1);
+gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+}
+_drawBars(g, pmap, v1map, v0map, v0Const, v0EdgePad = 0) {
+if (!g.n) return;
+const gl = this.gl;
+const prog = this.barProg;
+gl.useProgram(prog);
+const u = (n) => uniformOf(gl, prog, n);
+gl.uniform2f(u("u_pmap"), pmap[0], pmap[1]);
+gl.uniform2f(u("u_v1map"), v1map[0], v1map[1]);
+gl.uniform2f(u("u_v0map"), v0map ? v0map[0] : 1, v0map ? v0map[1] : 0);
+const pAxis = g.orientation === 1 ? g.yAxis : g.xAxis;
+const vAxis = g.orientation === 1 ? g.xAxis : g.yAxis;
+this._setAxisUniforms(prog, "u_p", g.posMeta, pAxis);
+this._setAxisUniforms(prog, "u_v1", g.value1Meta, vAxis);
+this._setAxisUniforms(prog, "u_v0", g.value0Meta, vAxis);
+gl.uniform1i(u("u_pmode"), this._axisMode(pAxis));
+gl.uniform1i(u("u_vmode"), this._axisMode(vAxis));
+gl.uniform1f(u("u_width"), g.width);
+gl.uniform1i(u("u_orientation"), g.orientation);
+gl.uniform1i(u("u_v0Mode"), g.value0Mode);
+gl.uniform1f(u("u_v0Const"), v0Const ?? 0);
+gl.uniform1f(u("u_v0EdgePad"), v0EdgePad);
+gl.uniform1f(u("u_animationProgress"), g._transitionGrow ?? 1);
+const transitionOn = !!(
+g._transitionPrevPosBuf &&
+g._transitionPrevValue1Buf &&
+g._transitionPrevValue0Buf
+);
+gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
+gl.uniform1f(u("u_transitionProgress"), g._transitionPositionProgress ?? 1);
+gl.uniform1f(u("u_prevWidth"), g._transitionPrevWidth ?? g.width);
+const [r, gg, b, a] = g.color;
+gl.uniform4f(u("u_color"), r, gg, b, a);
+gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
+gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+this._setRectStyleUniforms(prog, g);
+const v0On = g.value0Mode === 1 && g.value0Buf;
+const colorOn = !!g.cBuf;
+const rgbaOn = !!g.rgbaBuf;
+const styleOn = !!g.styleBuf;
+const strokeOn = !!g.strokeBuf;
+const radiusOn = !!g.radiusBuf;
+if (colorOn) {
+gl.activeTexture(gl.TEXTURE0);
+gl.bindTexture(gl.TEXTURE_2D, g.lut);
+gl.uniform1i(u("u_lut"), 0);
+}
+this._bindVao(
+g,
+"bars",
+[
+g.posBuf._fcId, g.value1Buf._fcId,
+v0On ? g.value0Buf._fcId : 0,
+colorOn ? g.cBuf._fcId : 0,
+transitionOn ? g._transitionPrevPosBuf._fcId : 0,
+transitionOn ? g._transitionPrevValue1Buf._fcId : 0,
+transitionOn ? g._transitionPrevValue0Buf._fcId : 0,
+rgbaOn ? g.rgbaBuf._fcId : 0,
+styleOn ? g.styleBuf._fcId : 0,
+strokeOn ? g.strokeBuf._fcId : 0,
+radiusOn ? g.radiusBuf._fcId : 0,
+],
+() => {
+this._vaoAttr(ATTR_SLOTS.a_pos, g.posBuf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.a_v1, g.value1Buf, 0, 1);
+if (v0On) this._vaoAttr(ATTR_SLOTS.a_v0, g.value0Buf, 0, 1);
+if (colorOn) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+if (transitionOn) {
+this._vaoAttr(ATTR_SLOTS.a_prevx, g._transitionPrevPosBuf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.a_prevy, g._transitionPrevValue1Buf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.a_prevx1, g._transitionPrevValue0Buf, 0, 1);
+}
+if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
+if (radiusOn) this._vaoAttr(ATTR_SLOTS.a_radius, g.radiusBuf, 0, 1, 2);
+}
+);
+if (!v0On) gl.vertexAttrib1f(ATTR_SLOTS.a_v0, 0);
+if (!colorOn) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+if (!rgbaOn) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...(g.strokeColor || g.color));
+if (!radiusOn) gl.vertexAttrib2f(ATTR_SLOTS.a_radius, -1, -1);
+gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+}
+_dataPxX(value) {
+return this._dataPx("x", value);
+}
+_dataPxY(value) {
+return this._dataPx("y", value);
+}
+_styleNumber(style, key, fallback) {
+if (!style || typeof style !== "object") return fallback;
+const value = Number(style[key]);
+return Number.isFinite(value) ? value : fallback;
+}
+_axisStyleNumber(axis, key, fallback) {
+return this._styleNumber(axis && axis.style, key, fallback);
+}
+_axisStylePaint(axis, key, fallback) {
+const style = axis && typeof axis.style === "object" ? axis.style : null;
+return safeCssPaint(this.root, style && style[key], fallback);
+}
+_axisStyleValue(axis, key) {
+const style = axis && typeof axis.style === "object" ? axis.style : null;
+return style && Object.prototype.hasOwnProperty.call(style, key) ? style[key] : undefined;
+}
+_axisGridDash(axis) {
+const value = String(this._axisStyleValue(axis, "grid_dash") || "solid");
+if (value === "dashed") return [6, 4];
+if (value === "dotted") return [1, 3];
+if (value === "dashdot") return [6, 3, 1, 3];
+return [];
+}
+_axisTickLabelStrategy(axis) {
+const value = String((axis && axis.tick_label_strategy) || "auto").replace(/-/g, "_");
+return ["auto", "hide", "rotate", "stagger", "none", "off"].includes(value) ? value : "auto";
+}
+_axisTickLabelAnchor(axis) {
+const raw = axis && axis.tick_label_anchor !== undefined
+? axis.tick_label_anchor
+: this._axisStyleValue(axis, "tick_label_anchor");
+if (raw == null) return null;
+const value = String(raw).toLowerCase();
+if (value === "start" || value === "left") return "start";
+if (value === "end" || value === "right") return "end";
+if (value === "center" || value === "middle") return "center";
+return null;
+}
+_axisTickLabelAngle(axis) {
+const angle = Number(axis ? axis.tick_label_angle : undefined);
+return Number.isFinite(angle) ? angle : null;
+}
+_axisTickLabelMinGap(axis, dim) {
+const gap = Number(axis ? axis.tick_label_min_gap : undefined);
+return Number.isFinite(gap) && gap >= 0 ? gap : (dim === "x" ? 8 : 4);
+}
+_estimateTickLabel(text, fontSize) {
+const s = String(text || "");
+return { w: Math.max(fontSize * 0.7, s.length * fontSize * 0.62), h: fontSize * 1.2 };
+}
+_tickLabelExtent(label, dim, fontSize) {
+const size = this._estimateTickLabel(label.text, fontSize);
+const angle = Math.abs(Number(label.angle || 0)) * Math.PI / 180;
+return dim === "y"
+? Math.abs(Math.sin(angle)) * size.w + Math.abs(Math.cos(angle)) * size.h
+: Math.abs(Math.cos(angle)) * size.w + Math.abs(Math.sin(angle)) * size.h;
+}
+_tickLabelsCollide(labels, dim, fontSize, minGap, anchor = "center") {
+const rows = new Map();
+for (const label of labels) {
+const row = Number(label.row || 0);
+if (!rows.has(row)) rows.set(row, []);
+rows.get(row).push(label);
+}
+for (const rowLabels of rows.values()) {
+rowLabels.sort((a, b) => a.pos - b.pos);
+if (dim === "x" && anchor !== "center") {
+for (let i = 1; i < rowLabels.length; i++) {
+const prev = rowLabels[i - 1];
+const label = rowLabels[i];
+const spacing = label.pos - prev.pos;
+const angle = Math.abs(Number(label.angle || 0)) * Math.PI / 180;
+if (angle) {
+if (spacing * Math.sin(angle) < fontSize * 1.2 + minGap) return true;
+} else {
+const lead = anchor === "end" ? label : prev;
+if (spacing < this._estimateTickLabel(lead.text, fontSize).w + minGap) return true;
+}
+}
+continue;
+}
+let lastEnd = -Infinity;
+for (const label of rowLabels) {
+const extent = this._tickLabelExtent(label, dim, fontSize);
+const start = label.pos - extent / 2;
+const end = label.pos + extent / 2;
+if (start < lastEnd + minGap) return true;
+lastEnd = end;
+}
+}
+return false;
+}
+_downsampleTickLabels(labels, dim, fontSize, minGap, anchor = "center") {
+if (labels.length <= 1) return labels;
+for (let stride = 2; stride <= labels.length; stride++) {
+const out = labels.filter((_, i) => i % stride === 0);
+if (!this._tickLabelsCollide(out, dim, fontSize, minGap, anchor)) return out;
+}
+return labels.slice(0, 1);
+}
+_layoutTickLabels(axis, dim, labels) {
+const strategyValue = this._axisTickLabelStrategy(axis);
+if (strategyValue === "none" || strategyValue === "off") return [];
+if (labels.length <= 1) {
+const angle = this._axisTickLabelAngle(axis);
+return labels.map((label) => ({ ...label, angle: angle === null ? 0 : angle, row: 0 }));
+}
+const fontSize = Math.max(
+8,
+this._axisStyleNumber(axis, "tick_label_size", this._axisStyleNumber(axis, "tick_size", 11)),
+);
+const minGap = this._axisTickLabelMinGap(axis, dim);
+const anchor = dim === "x" ? (this._axisTickLabelAnchor(axis) ?? "center") : "center";
+const explicitAngle = this._axisTickLabelAngle(axis);
+const baseAngle = explicitAngle === null ? 0 : explicitAngle;
+const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
+let strategy = strategyValue;
+if (strategy === "auto") {
+if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap, anchor)) return withBase;
+if (dim === "x" && axis.kind === "category" && labels.length <= 16) strategy = "rotate";
+else if (dim === "x" && labels.length <= 24) strategy = "stagger";
+else strategy = "hide";
+}
+let out = withBase;
+if (strategy === "rotate" && dim === "x") {
+const angle = explicitAngle === null ? (axis.side === "top" ? 35 : -35) : explicitAngle;
+out = labels.map((label) => ({ ...label, angle, row: 0 }));
+} else if (strategy === "stagger" && dim === "x") {
+out = labels.map((label, i) => ({ ...label, angle: baseAngle, row: i % 2 }));
+}
+if (this._tickLabelsCollide(out, dim, fontSize, minGap, anchor)) {
+out = this._downsampleTickLabels(out, dim, fontSize, minGap, anchor);
+}
+return out;
+}
+_xTickLabelTransform(axis, angle) {
+const value = Number(angle || 0);
+const side = axis && axis.side === "top" ? "top" : "bottom";
+const anchor = this._axisTickLabelAnchor(axis);
+if (anchor) {
+const shift = anchor === "end" ? "-100%" : anchor === "start" ? "0%" : "-50%";
+const originX = anchor === "end" ? "right" : anchor === "start" ? "left" : "center";
+return {
+transform: `translateX(${shift}) rotate(${value}deg)`,
+origin: `${originX} ${side === "top" ? "bottom" : "top"}`,
+};
+}
+if (value === 0) {
+return {
+transform: "translateX(-50%)",
+origin: side === "top" ? "bottom center" : "top center",
+};
+}
+const anchorAtEnd = (side === "bottom" && value < 0) || (side === "top" && value > 0);
+const verticalOrigin = side === "top" ? "bottom" : "top";
+return {
+transform: `${anchorAtEnd ? "translateX(-100%) " : ""}rotate(${value}deg)`,
+origin: `${verticalOrigin} ${anchorAtEnd ? "right" : "left"}`,
+};
+}
+_axisLabelCss(axis, dim, fallbackCss) {
+const rawPosition = axis && axis.label_position;
+const hasPosition = rawPosition !== undefined && rawPosition !== null;
+const hasOffset = axis && Number.isFinite(Number(axis.label_offset));
+const hasAngle = axis && Number.isFinite(Number(axis.label_angle));
+if (!hasPosition && !hasOffset && !hasAngle) return { css: fallbackCss, style: null };
+if (rawPosition && typeof rawPosition === "object" && !Array.isArray(rawPosition)) {
+return { css: "font-weight:500;white-space:nowrap;", style: rawPosition };
+}
+const p = this.plot;
+const position = String(hasPosition ? rawPosition : "center").replace(/-/g, "_");
+const inside = position.startsWith("inside_");
+const anchor = inside ? position.slice("inside_".length) : position;
+const offset = hasOffset ? Number(axis.label_offset) : 0;
+const side = axis && axis.side;
+const anchorFrac = anchor === "start" ? 0 : (anchor === "end" ? 1 : 0.5);
+if (dim === "x") {
+const x = p.x + p.w * anchorFrac;
+const outsideY = side === "top" ? p.y - 34 : p.y + p.h + 24;
+const insideY = side === "top" ? p.y + 12 : p.y + p.h - 12;
+const y = (inside ? insideY : outsideY) +
+(side === "top" ? (inside ? offset : -offset) : (inside ? -offset : offset));
+const translateX = anchor === "start" ? 0 : (anchor === "end" ? -100 : -50);
+const angle = hasAngle ? Number(axis.label_angle) : 0;
+return {
+css:
+`left:${x}px;top:${y}px;` +
+`transform:translateX(${translateX}%) rotate(${angle}deg);` +
+"transform-origin:center;font-weight:500;white-space:nowrap;",
+style: null,
+};
+}
+const xOutside = side === "right" ? p.x + p.w + 40 : 10;
+const xInside = side === "right" ? p.x + p.w - 12 : p.x + 12;
+const x = (inside ? xInside : xOutside) +
+(side === "right" ? (inside ? -offset : offset) : (inside ? offset : -offset));
+const y = p.y + p.h * (1 - anchorFrac);
+const angle = hasAngle ? Number(axis.label_angle) : (side === "right" ? 90 : -90);
+return {
+css:
+`left:${x}px;top:${y}px;` +
+`transform:translate(-50%,-50%) rotate(${angle}deg);` +
+"transform-origin:center;font-weight:500;white-space:nowrap;",
+style: null,
+};
+}
+_drawChrome() {
+const s = this.spec;
+const dpr = this.dpr;
+const ctx = this.chrome.getContext("2d");
+ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+ctx.clearRect(0, 0, this.size.w, this.size.h);
+const now = this._now();
+const labelCadenceMs = this._viewAnim ? 80 : 0;
+const updateLabels = labelCadenceMs === 0
+|| this._lastLabelDraw === null
+|| now - this._lastLabelDraw >= labelCadenceMs;
+if (updateLabels) {
+this.labels.textContent = "";
+this._lastLabelDraw = now;
+}
+const p = this.plot;
+if (this.theme.bg) {
+ctx.fillStyle = cssColor(this.theme.bg);
+ctx.fillRect(p.x, p.y, p.w, p.h);
+}
+const xAxis = this._axis("x");
+const yAxis = this._axis("y");
+const extraXAxes = Object.values(this.axes).filter((axis) =>
+axis && axis.id !== "x" && String(axis.id || "").startsWith("x"));
+const extraYAxes = Object.values(this.axes).filter((axis) =>
+axis && axis.id !== "y" && String(axis.id || "").startsWith("y"));
+const hideX = this._axisTickLabelStrategy(xAxis) === "none";
+const hideY = this._axisTickLabelStrategy(yAxis) === "none";
+const xt = this._axisTicks(
+"x",
+this._axisTickTarget("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80))),
+);
+const yt = this._axisTicks("y", this._axisTickTarget("y", Math.max(3, p.h / 45)));
+const xEdge = (px) => Math.min(p.x + p.w - 0.5, Math.max(p.x + 0.5, Math.round(px) + 0.5));
+const yEdge = (py) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(py) + 0.5));
+ctx.strokeStyle = this._axisStylePaint(xAxis, "grid_color", this.theme.grid);
+ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xAxis, "grid_width", 1));
+ctx.globalAlpha = this._axisStyleNumber(xAxis, "grid_opacity", 1);
+ctx.setLineDash(this._axisGridDash(xAxis));
+ctx.beginPath();
+for (const v of (hideX ? [] : xt.ticks)) {
+const px = this._dataPx("x", v);
+if (!Number.isFinite(px)) continue;
+const x = xEdge(px);
+ctx.moveTo(x, p.y);
+ctx.lineTo(x, p.y + p.h);
+}
+ctx.stroke();
+ctx.strokeStyle = this._axisStylePaint(yAxis, "grid_color", this.theme.grid);
+ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(yAxis, "grid_width", 1));
+ctx.globalAlpha = this._axisStyleNumber(yAxis, "grid_opacity", 1);
+ctx.setLineDash(this._axisGridDash(yAxis));
+ctx.beginPath();
+for (const v of (hideY ? [] : yt.ticks)) {
+const py = this._dataPx("y", v);
+if (!Number.isFinite(py)) continue;
+const y = yEdge(py);
+ctx.moveTo(p.x, y);
+ctx.lineTo(p.x + p.w, y);
+}
+ctx.stroke();
+ctx.globalAlpha = 1;
+ctx.setLineDash([]);
+const octx = this.overlay.getContext("2d");
+octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+octx.clearRect(0, 0, this.size.w, this.size.h);
+this._drawAnnotationShapes(octx);
+if (updateLabels) {
+const rule = (styleAxis, left, top, w, h, colorKey = "axis_color") => {
+const d = document.createElement("div");
+d.style.cssText =
+`position:absolute;left:${left}px;top:${top}px;width:${w}px;height:${h}px;` +
+`background:${this._axisStylePaint(styleAxis, colorKey, this.theme.axis)};` +
+"pointer-events:none;";
+this.labels.appendChild(d);
+};
+const frameSides = Array.isArray(s.frame_sides)
+? s.frame_sides
+: [xAxis.side || "bottom", yAxis.side || "left"];
+if (!hideY) {
+const yWidth = Math.max(1, this._axisStyleNumber(yAxis, "axis_width", 1));
+if (frameSides.includes("left")) rule(yAxis, p.x, p.y, yWidth, p.h);
+if (frameSides.includes("right")) rule(yAxis, p.x + p.w - yWidth, p.y, yWidth, p.h);
+}
+if (!hideX) {
+const xHeight = Math.max(1, this._axisStyleNumber(xAxis, "axis_width", 1));
+if (frameSides.includes("top")) rule(xAxis, p.x, p.y, p.w, xHeight);
+if (frameSides.includes("bottom")) rule(xAxis, p.x, p.y + p.h - xHeight, p.w, xHeight);
+}
+for (const axis of extraXAxes) {
+if (this._axisTickLabelStrategy(axis) === "none") continue;
+const h = Math.max(1, this._axisStyleNumber(axis, "axis_width", 1));
+const y = axis.side === "top" ? p.y : p.y + p.h - h;
+rule(axis, p.x, y, p.w, h);
+}
+for (const axis of extraYAxes) {
+if (this._axisTickLabelStrategy(axis) === "none") continue;
+const w = Math.max(1, this._axisStyleNumber(axis, "axis_width", 1));
+const x = axis.side === "left" ? p.x : p.x + p.w - w;
+rule(axis, x, p.y, w, p.h);
+}
+const tickParts = (axis) => {
+const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
+const width = Math.max(0.5, this._axisStyleNumber(axis, "tick_width", 1));
+const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+if (direction === "in") return { inward: length, outward: 0, width };
+if (direction === "inout") return { inward: length / 2, outward: length / 2, width };
+return { inward: 0, outward: length, width };
+};
+if (!hideX) {
+const tick = tickParts(xAxis);
+const side = xAxis.side || "bottom";
+const edge = side === "top" ? p.y : p.y + p.h;
+for (const value of xt.ticks) {
+const x = this._dataPx("x", value);
+if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
+const top = side === "top" ? edge - tick.outward : edge - tick.inward;
+rule(xAxis, x - tick.width / 2, top, tick.width, tick.inward + tick.outward, "tick_color");
+}
+}
+if (!hideY) {
+const tick = tickParts(yAxis);
+const side = yAxis.side || "left";
+const edge = side === "right" ? p.x + p.w : p.x;
+for (const value of yt.ticks) {
+const y = this._dataPx("y", value);
+if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
+const left = side === "right" ? edge - tick.inward : edge - tick.outward;
+rule(yAxis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width, "tick_color");
+}
+}
+for (const axis of extraXAxes) {
+if (this._axisTickLabelStrategy(axis) === "none") continue;
+const ticks = this._axisTicks(
+axis.id,
+this._axisTickTarget(axis.id, Math.max(3, p.w / (axis.kind === "time" ? 90 : 80))),
+);
+const tick = tickParts(axis);
+const side = axis.side || "bottom";
+const edge = side === "top" ? p.y : p.y + p.h;
+for (const value of ticks.ticks) {
+const x = this._dataPx(axis.id, value);
+if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
+const top = side === "top" ? edge - tick.outward : edge - tick.inward;
+rule(axis, x - tick.width / 2, top, tick.width, tick.inward + tick.outward, "tick_color");
+}
+}
+for (const axis of extraYAxes) {
+if (this._axisTickLabelStrategy(axis) === "none") continue;
+const ticks = this._axisTicks(
+axis.id,
+this._axisTickTarget(axis.id, Math.max(3, p.h / 45)),
+);
+const tick = tickParts(axis);
+const side = axis.side || "right";
+const edge = side === "right" ? p.x + p.w : p.x;
+for (const value of ticks.ticks) {
+const y = this._dataPx(axis.id, value);
+if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
+const left = side === "right" ? edge - tick.inward : edge - tick.outward;
+rule(axis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width, "tick_color");
+}
+}
+}
+const label = (text, css, axis, kind = "tick", extraStyle = null) => {
+if (!updateLabels) return;
+const d = document.createElement("div");
+d.textContent = text;
+d.dataset.xyLabelKind = kind;
+d.dataset.xyAxis = axis && axis.id !== undefined ? String(axis.id) : "";
+d.dataset.xyAxisSide = axis && axis.side ? String(axis.side) : "";
+const colorKey = kind === "label"
+? "label_color"
+: (this._axisStyleValue(axis, "tick_label_color") !== undefined
+? "tick_label_color" : "tick_color");
+const sizeKey = kind === "label"
+? "label_size"
+: (this._axisStyleValue(axis, "tick_label_size") !== undefined
+? "tick_label_size" : "tick_size");
+let color = "";
+if (this._axisStyleValue(axis, colorKey) !== undefined) {
+color = `color:${this._axisStylePaint(axis, colorKey, this.theme.label)};`;
+}
+let size = "";
+if (this._axisStyleValue(axis, sizeKey) !== undefined) {
+size = `font-size:${Math.max(8, this._axisStyleNumber(axis, sizeKey, 11))}px;`;
+}
+d.style.cssText = `position:absolute;line-height:1.2;white-space:nowrap;${color}${size}${css}`;
+this._applySlot(d, kind === "label" ? "axis_title" : "tick_label");
+this._applyStyle(d, extraStyle);
+this.labels.appendChild(d);
+};
+const xLabelCandidates = [];
+for (const v of (xt.labels || xt.ticks)) {
+const px = this._dataPx("x", v);
+if (px < p.x - 1 || px > p.x + p.w + 1) continue;
+const text = this._axisTickText(xAxis, v, xt.step);
+xLabelCandidates.push({ pos: px, text });
+}
+const tickLabelSize = this._axisStyleNumber(
+xAxis,
+"tick_label_size",
+this._axisStyleNumber(xAxis, "tick_size", 11),
+);
+for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
+const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
+const top = xAxis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
+const placement = this._xTickLabelTransform(xAxis, item.angle);
+label(
+item.text,
+`left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
+`transform-origin:${placement.origin};`,
+xAxis,
+);
+}
+for (const axis of extraXAxes) {
+const ticks = this._axisTicks(
+axis.id,
+this._axisTickTarget(axis.id, Math.max(3, p.w / (axis.kind === "time" ? 90 : 80))),
+);
+const labelCandidates = [];
+for (const value of (ticks.labels || ticks.ticks)) {
+const px = this._dataPx(axis.id, value);
+if (px < p.x - 1 || px > p.x + p.w + 1) continue;
+labelCandidates.push({ pos: px, text: this._axisTickText(axis, value, ticks.step) });
+}
+for (const item of this._layoutTickLabels(axis, "x", labelCandidates)) {
+const tickLabelSize = this._axisStyleNumber(
+axis,
+"tick_label_size",
+this._axisStyleNumber(axis, "tick_size", 11),
+);
+const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
+const top = axis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
+const placement = this._xTickLabelTransform(axis, item.angle);
+label(
+item.text,
+`left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
+`transform-origin:${placement.origin};`,
+axis,
+);
+}
+if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
+const top = axis.side === "top" ? p.y - 34 : p.y + p.h + 24;
+const fallbackCss =
+`left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`;
+const placement = this._axisLabelCss(axis, "x", fallbackCss);
+label(axis.label, placement.css, axis, "label", placement.style);
+}
+}
+const yLabelCandidates = [];
+for (const v of (yt.labels || yt.ticks)) {
+const py = this._dataPx("y", v);
+if (py < p.y - 1 || py > p.y + p.h + 1) continue;
+const text = this._axisTickText(yAxis, v, yt.step);
+yLabelCandidates.push({ pos: py, text });
+}
+const yLabelCss = (axis, onRight, item) => {
+const pin = onRight ? p.x + p.w + 8 : p.x - 8;
+const anchor = this._axisTickLabelAnchor(axis) ?? (onRight ? "start" : "end");
+const shift = anchor === "end" ? "-100%" : anchor === "start" ? "0%" : "-50%";
+const originX = anchor === "end" ? "right" : anchor === "start" ? "left" : "center";
+return `left:${pin}px;top:${item.pos}px;` +
+`transform:translate(${shift},-50%) rotate(${Number(item.angle || 0)}deg);` +
+`transform-origin:${originX} center;`;
+};
+for (const item of this._layoutTickLabels(yAxis, "y", yLabelCandidates)) {
+label(item.text, yLabelCss(yAxis, yAxis.side === "right", item), yAxis);
+}
+for (const axis of extraYAxes) {
+const ticks = this._axisTicks(axis.id, this._axisTickTarget(axis.id, Math.max(3, p.h / 45)));
+const labelCandidates = [];
+for (const v of (ticks.labels || ticks.ticks)) {
+const py = this._dataPx(axis.id, v);
+if (py < p.y - 1 || py > p.y + p.h + 1) continue;
+const text = this._axisTickText(axis, v, ticks.step);
+labelCandidates.push({ pos: py, text });
+}
+for (const item of this._layoutTickLabels(axis, "y", labelCandidates)) {
+label(item.text, yLabelCss(axis, axis.side !== "left", item), axis);
+}
+if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
+const fallbackCss = axis.side === "left"
+? `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`
+: `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`;
+const placement = this._axisLabelCss(axis, "y", fallbackCss);
+label(axis.label, placement.css, axis, "label", placement.style);
+}
+}
+if (s.x_axis.label && !hideX) {
+const top = xAxis.side === "top" ? p.y - 34 : p.y + p.h + 24;
+const fallbackCss = `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`;
+const placement = this._axisLabelCss(xAxis, "x", fallbackCss);
+label(s.x_axis.label, placement.css, xAxis, "label", placement.style);
+}
+if (s.y_axis.label && !hideY) {
+const fallbackCss = yAxis.side === "right"
+? `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`
+: `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`;
+const placement = this._axisLabelCss(yAxis, "y", fallbackCss);
+label(s.y_axis.label, placement.css, yAxis, "label", placement.style);
+}
+this._drawAnnotationLabels(updateLabels);
+}
+_interactionTransitionActive() {
+const activeStart = (v) => v !== undefined && v !== null;
+return !!this._viewAnim || this.gpuTraces.some((g) =>
+activeStart(g._densityFadeStart) ||
+activeStart(g._densitySwitchFadeStart) ||
+activeStart(g._drillFadeStart) ||
+activeStart(g._drillExitFadeStart) ||
+!!g._densityNormAnim);
+}
+_renderPick() {
+const gl = this.gl;
+if (this._pickW !== this.canvas.width || this._pickH !== this.canvas.height) {
+this._allocPickTex();
+}
+gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
+gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+gl.disable(gl.BLEND);
+gl.clearColor(0, 0, 0, 0);
+gl.clear(gl.COLOR_BUFFER_BIT);
+const { x0, x1, y0, y1 } = this.view;
+const prog = this.pickProg;
+gl.useProgram(prog);
+const u = (n) => uniformOf(gl, prog, n);
+gl.uniform1f(u("u_dpr"), this.dpr);
+let base = 1;
+for (const g of this.gpuTraces) {
+const pg = g.tier === "density"
+? (g.drill && !g._drillDying && this._viewInside(g.drill.win) ? g.drill : null)
+: (markOf(g.trace.kind).pointPick ? g : null);
+if (!pg || !pg.n || base + pg.n > 0x7fffffff) {
+g.pickBase = -1;
+g.pickCount = 0;
+continue;
+}
+const [px0, px1] = this._axisRange(pg.xAxis || g.xAxis);
+const [py0, py1] = this._axisRange(pg.yAxis || g.yAxis);
+const xm = this._map(pg.xMeta, px0, px1, pg.xAxis || g.xAxis);
+const ym = this._map(pg.yMeta, py0, py1, pg.yAxis || g.yAxis);
+gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+this._setAxisUniforms(prog, "u_x", pg.xMeta, pg.xAxis || g.xAxis);
+this._setAxisUniforms(prog, "u_y", pg.yMeta, pg.yAxis || g.yAxis);
+gl.uniform1f(u("u_size"), pg.size);
+gl.uniform1i(u("u_sizeMode"), pg.sizeMode);
+gl.uniform2f(u("u_sizeRange"), pg.sizeRange[0], pg.sizeRange[1]);
+const transitionOn = !!(pg._transitionPrevXBuf && pg._transitionPrevYBuf);
+gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
+gl.uniform1f(u("u_transitionProgress"), pg._transitionPositionProgress ?? 1);
+gl.uniform1i(u("u_pick_base"), base);
+g.pickBase = base;
+g.pickCount = pg.n;
+const sizeOn = pg.sizeMode === 1 && pg.sBuf;
+this._bindVao(
+pg,
+"pick",
+[pg.xBuf._fcId, pg.yBuf._fcId, sizeOn ? pg.sBuf._fcId : 0,
+transitionOn ? pg._transitionPrevXBuf._fcId : 0,
+transitionOn ? pg._transitionPrevYBuf._fcId : 0],
+() => {
+this._vaoAttr(ATTR_SLOTS.ax, pg.xBuf, 0, 0);
+this._vaoAttr(ATTR_SLOTS.ay, pg.yBuf, 0, 0);
+if (sizeOn) this._vaoAttr(ATTR_SLOTS.a_sval, pg.sBuf, 0, 0);
+if (transitionOn) {
+this._vaoAttr(ATTR_SLOTS.a_prevx, pg._transitionPrevXBuf, 0, 0);
+this._vaoAttr(ATTR_SLOTS.a_prevy, pg._transitionPrevYBuf, 0, 0);
+}
+}
+);
+if (!sizeOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
+gl.drawArrays(gl.POINTS, 0, pg.n);
+base += pg.n;
+}
+gl.enable(gl.BLEND);
+gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+this._pickDirty = false;
+}
+_pickAt(cssX, cssY) {
+if (
+!this._pickable ||
+this._glLost ||
+!this.gl ||
+this.gl.isContextLost()
+) return null;
+if (this._pickDirty) {
+try {
+this._renderPick();
+} catch (err) {
+if (!this.gl || this.gl.isContextLost()) return null;
+throw err;
+}
+}
+const gl = this.gl;
+const px = Math.round(cssX * this.dpr);
+const py = Math.round((this.plot.h - cssY) * this.dpr);
+if (px < 0 || py < 0 || px >= this.canvas.width || py >= this.canvas.height) return null;
+const buf = new Uint8Array(4);
+gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
+gl.readPixels(px, py, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+const id = buf[0] + buf[1] * 0x100 + buf[2] * 0x10000 + buf[3] * 0x1000000;
+if (id === 0) return null;
+const g = this.gpuTraces.find(
+(t) => t.pickBase > 0 && id >= t.pickBase && id < t.pickBase + t.pickCount
+);
+if (!g) return null;
+return { trace: g.trace.id, index: id - g.pickBase, g };
+}
+_decodeValue(values, meta, index) {
+if (!values || !meta || index < 0 || index >= values.length) return NaN;
+return values[index] / (meta.scale || 1) + meta.offset;
+}
+_dataFromCanvas(cssX, cssY, xAxisId = "x", yAxisId = "y") {
+const [x0, x1] = this._axisRange(xAxisId);
+const [y0, y1] = this._axisRange(yAxisId);
+const xAxis = this._axis(xAxisId);
+const yAxis = this._axis(yAxisId);
+const cx0 = this._axisCoord(xAxis, x0);
+const cx1 = this._axisCoord(xAxis, x1);
+const cy0 = this._axisCoord(yAxis, y0);
+const cy1 = this._axisCoord(yAxis, y1);
+if (![cx0, cx1, cy0, cy1].every(Number.isFinite)) return [NaN, NaN];
+return [
+this._axisValue(xAxis, cx0 + (cssX / this.plot.w) * (cx1 - cx0)),
+this._axisValue(yAxis, cy1 - (cssY / this.plot.h) * (cy1 - cy0)),
+];
+}
+_nearestCpuIndex(g, dataX) {
+const cpu = g && g._cpu;
+if (!cpu || !cpu.x || !cpu.x.length) return -1;
+const xMeta = cpu.xMeta || g.xMeta;
+const axis = this._axis(g.xAxis);
+const target = this._axisCoord(axis, dataX);
+let best = -1;
+let bestDist = Infinity;
+const limit = Math.min(cpu.x.length, g.n || cpu.x.length);
+for (let i = 0; i < limit; i++) {
+const starts = g._transitionPrevXValues;
+const progress = g._transitionPositionProgress;
+const xEncoded = starts && Number.isFinite(progress)
+? starts[i] + (cpu.x[i] - starts[i]) * progress
+: cpu.x[i];
+const x = xEncoded / (xMeta.scale || 1) + xMeta.offset;
+const d = Math.abs(this._axisCoord(axis, x) - target);
+if (d < bestDist) {
+bestDist = d;
+best = i;
+}
+}
+return best;
+}
+_hoverAt(cssX, cssY) {
+const maxPx = 12;
+let best = null;
+for (const g of this.gpuTraces) {
+if (g.tier === "density") continue;
+const [dataX, dataY] = this._dataFromCanvas(cssX, cssY, g.xAxis, g.yAxis);
+if (!Number.isFinite(dataX) || !Number.isFinite(dataY)) continue;
+if (g.heatmap && g._cpuHeatmap) {
+const hit = this._heatmapHover(g, dataX, dataY);
+if (hit) return hit;
+continue;
+}
+if (g.trace.bar && g._cpu) {
+const hit = this._barHover(g, dataX, dataY);
+if (hit) return hit;
+continue;
+}
+if (g._cpuRect) {
+const hit = this._rectHover(g, dataX, dataY);
+if (hit) return hit;
+continue;
+}
+if (!g._cpu || !g._cpu.x || !g._cpu.y) continue;
+const idx = this._nearestCpuIndex(g, dataX);
+if (idx < 0) continue;
+const progress = g._transitionPositionProgress;
+const xEncoded = g._transitionPrevXValues && Number.isFinite(progress)
+? g._transitionPrevXValues[idx] + (g._cpu.x[idx] - g._transitionPrevXValues[idx]) * progress
+: g._cpu.x[idx];
+const yEncoded = g._transitionPrevYValues && Number.isFinite(progress)
+? g._transitionPrevYValues[idx] + (g._cpu.y[idx] - g._transitionPrevYValues[idx]) * progress
+: g._cpu.y[idx];
+const x = xEncoded / (g._cpu.xMeta.scale || 1) + g._cpu.xMeta.offset;
+const y = yEncoded / (g._cpu.yMeta.scale || 1) + g._cpu.yMeta.offset;
+const px = this._dataPx(g.xAxis, x) - this.plot.x;
+const py = this._dataPx(g.yAxis, y) - this.plot.y;
+const dist = Math.hypot(px - cssX, py - cssY);
+if (dist <= maxPx && (!best || dist < best.dist)) {
+best = { trace: g.trace.id, index: idx, g, dist, synthetic: true };
+}
+}
+return best;
+}
+_barHover(g, dataX, dataY) {
+const cpu = g._cpu;
+const horizontal = g.orientation === 1;
+const limit = Math.min(cpu.x.length, cpu.y.length, g.n || cpu.x.length);
+for (let i = 0; i < limit; i++) {
+const x = this._decodeValue(cpu.x, cpu.xMeta, i);
+const y = this._decodeValue(cpu.y, cpu.yMeta, i);
+const value0 = g.value0Mode === 1 && cpu.value0
+? this._decodeValue(cpu.value0, horizontal ? g.value0Meta : g.value0Meta, i)
+: g.value0Const;
+const lo = Math.min(value0 ?? 0, horizontal ? x : y);
+const hi = Math.max(value0 ?? 0, horizontal ? x : y);
+if (horizontal) {
+if (dataX >= lo && dataX <= hi && Math.abs(dataY - y) <= g.width / 2) {
+return { trace: g.trace.id, index: i, g, synthetic: true };
+}
+} else if (Math.abs(dataX - x) <= g.width / 2 && dataY >= lo && dataY <= hi) {
+return { trace: g.trace.id, index: i, g, synthetic: true };
+}
+}
+return null;
+}
+_rectHover(g, dataX, dataY) {
+const r = g._cpuRect;
+const limit = Math.min(r.x0.length, r.x1.length, r.y0.length, r.y1.length, g.n || r.x0.length);
+for (let i = 0; i < limit; i++) {
+const x0 = this._decodeValue(r.x0, r.x0Meta, i);
+const x1 = this._decodeValue(r.x1, r.x1Meta, i);
+const y0 = this._decodeValue(r.y0, r.y0Meta, i);
+const y1 = this._decodeValue(r.y1, r.y1Meta, i);
+if (
+dataX >= Math.min(x0, x1) && dataX <= Math.max(x0, x1) &&
+dataY >= Math.min(y0, y1) && dataY <= Math.max(y0, y1)
+) {
+return { trace: g.trace.id, index: i, g, synthetic: true };
+}
+}
+return null;
+}
+_heatmapHover(g, dataX, dataY) {
+const h = g.heatmap;
+if (!h || !g._cpuHeatmap) return null;
+const [x0, x1] = h.xRange;
+const [y0, y1] = h.yRange;
+if (dataX < x0 || dataX > x1 || dataY < y0 || dataY > y1) return null;
+const [ax0, ax1] = this._axisRange(g.xAxis) ?? [this.view.x0, this.view.x1];
+const [ay0, ay1] = this._axisRange(g.yAxis) ?? [this.view.y0, this.view.y1];
+const fx = ((ax0 ?? this.view.x0) > (ax1 ?? this.view.x1)) ? (x1 - dataX) : (dataX - x0);
+const fy = ((ay0 ?? this.view.y0) > (ay1 ?? this.view.y1)) ? (y1 - dataY) : (dataY - y0);
+const col = Math.min(h.w - 1, Math.max(0, Math.floor((fx / (x1 - x0)) * h.w)));
+const row = Math.min(h.h - 1, Math.max(0, Math.floor((fy / (y1 - y0)) * h.h)));
+return { trace: g.trace.id, index: row * h.w + col, g, heatmap: { row, col }, synthetic: true };
+}
+_drawKeepPick() {
+this.draw(true);
+}
+_hover(e) {
+this._a11yKeyboardReadout = null;
+if (this._interactionTransitionActive()) {
+const hadHover = this._hoverId !== -1;
+this._hoverId = -1;
+this._hoverTarget = null;
+this._lastHoverXY = null;
+this._pickSeq = (this._pickSeq || 0) + 1;
+this._hideTooltip();
+if (hadHover) this.draw();
+return;
+}
+const rect = this.canvas.getBoundingClientRect();
+const cssX = e.clientX - rect.left;
+const cssY = e.clientY - rect.top;
+const hit = this._pickAt(cssX, cssY) || this._hoverAt(cssX, cssY);
+if (!hit) {
+const hadHover = this._hoverId !== -1;
+this._hoverId = -1;
+this._hoverTarget = null;
+this._lastHoverXY = null;
+this._pickSeq = (this._pickSeq || 0) + 1;
+this._hideTooltip();
+if (hadHover) this._drawKeepPick();
+return;
+}
+const id = hit.trace * 1e9 + hit.index;
+this._lastHoverXY = { clientX: e.clientX, clientY: e.clientY };
+if (id === this._hoverId) {
+if (!this._tooltipAnchor) this._renderTooltip(this._lastRow, e.clientX, e.clientY);
+return;
+}
+this._hoverId = id;
+this._hoverTarget = hit;
+this._showTooltip(hit, e.clientX, e.clientY);
+this._drawKeepPick();
+}
+_asF32(b) {
+if (b instanceof ArrayBuffer) return new Float32Array(b);
+if (b.byteOffset % 4 === 0) {
+return new Float32Array(b.buffer, b.byteOffset, Math.floor(b.byteLength / 4));
+}
+return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+}
+_asU8(b) {
+if (b instanceof ArrayBuffer) return new Uint8Array(b);
+return new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+}
+_asU32(b) {
+if (b instanceof ArrayBuffer) return new Uint32Array(b);
+if (b.byteOffset % 4 === 0) {
+return new Uint32Array(b.buffer, b.byteOffset, Math.floor(b.byteLength / 4));
+}
+return new Uint32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+}
+_applyTheme() {
+this.theme = readTheme(this.root);
+this._themeStale = !this.root.isConnected;
+for (const g of this.gpuTraces) {
+markOf(g.trace.kind).refreshColor?.(this, g);
+}
+}
+refreshTheme() {
+if (this._destroyed) return;
+this._applyTheme();
+this.draw();
+}
+_healStaleTheme() {
+if (!this._themeStale || !this.root.isConnected) return false;
+this._applyTheme();
+return true;
+}
+destroy() {
+if (this._destroyed) return;
+this._destroyed = true;
+if (this._dataAnim) {
+this._emitAnimationLifecycle?.("end", this._dataAnim.phase, { cancelled: true });
+}
+XY_CONTEXT_GOVERNOR.unregister(this);
+this._ctxIo?.disconnect();
+this._ctxIo = null;
+clearTimeout(this._ctxRecoveryTimer);
+this._ctxRecoveryTimer = null;
+clearTimeout(this._rebinTimer);
+if (this._rebinWorker) {
+this._rebinWorker.terminate();
+if (this._rebinWorker._fcUrl) URL.revokeObjectURL(this._rebinWorker._fcUrl);
+this._rebinWorker = null;
+}
+this._ro?.disconnect();
+this._io?.disconnect();
+this._io = null;
+this._themeWatch?.removeEventListener?.("change", this._onScheme);
+this._themeMutationObserver?.disconnect();
+this._themeMutationObserver = null;
+this._dprMq?.removeEventListener?.("change", this._onDprChange);
+this._dprMq = null;
+this._unsubscribeComm?.();
+this._unsubscribeComm = null;
+for (const { target, type, handler, options } of this._listeners.splice(0)) {
+target.removeEventListener(type, handler, options);
+}
+clearTimeout(this._viewTimer);
+this._viewTimer = null;
+if (this._viewEventRaf) cancelAnimationFrame(this._viewEventRaf);
+this._viewEventRaf = null;
+if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
+this._wheelZoomRaf = null;
+this._pendingWheelZoom = null;
+clearTimeout(this._wheelZoomEndTimer);
+this._wheelZoomEndTimer = null;
+this._wheelGesture = null;
+this._linkChannel?.close?.();
+this._linkChannel = null;
+if (this._raf) cancelAnimationFrame(this._raf);
+this._raf = null;
+if (this._resizeRaf) cancelAnimationFrame(this._resizeRaf);
+this._resizeRaf = null;
+this._pendingResize = null;
+this._resizeNeedsMeasure = false;
+this._cancelViewAnimation();
+if (this._dataAnimRaf) cancelAnimationFrame(this._dataAnimRaf);
+this._dataAnimRaf = null;
+this._dataAnim = null;
+this._destroyTransitionOldTraces?.();
+this._destroyGlResources();
+const loseExt = this.gl && this.gl.getExtension("WEBGL_lose_context");
+if (loseExt) loseExt.loseContext();
+this.gl = null;
+this.root.remove();
+}
+_deleteBuffers(obj, names) {
+const gl = this.gl;
+if (!gl || !obj) return;
+const seen = new Set();
+for (const name of names) {
+const buf = obj[name];
+if (buf && !seen.has(buf)) {
+seen.add(buf);
+gl.deleteBuffer(buf);
+}
+obj[name] = null;
+}
+}
+_destroyTraceResources(g, texSeen) {
+if (!g) return;
+this._destroyDensitySample(g);
+this._deleteVaos(g);
+this._deleteVaos(g.drill);
+this._deleteBuffers(g, [
+"xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "baseBuf",
+"x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf",
+"posBuf", "value1Buf", "value0Buf",
+"_transitionPrevXBuf", "_transitionPrevYBuf",
+"_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",
+]);
+this._deleteBuffers(g.drill, ["xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "dBuf"]);
+const textures = [];
+if (g.heatmap) textures.push(g.heatmap.tex);
+for (const d of g.densityCache || []) textures.push(d && d.tex);
+if (g.density) textures.push(g.density.tex);
+if (g._shownDensity) textures.push(g._shownDensity.tex);
+for (const tex of textures) {
+if (tex && !texSeen.has(tex)) {
+texSeen.add(tex);
+this.gl.deleteTexture(tex);
+}
+}
+g.drill = null;
+g.density = null;
+g._shownDensity = null;
+g.densityCache = [];
+g.heatmap = null;
+g._cpu = null;
+}
+_destroyGlResources() {
+const gl = this.gl;
+if (!gl) return;
+const texSeen = new Set();
+for (const g of this.gpuTraces || []) this._destroyTraceResources(g, texSeen);
+for (const tex of this._lutCache.values()) {
+if (tex && !texSeen.has(tex)) {
+texSeen.add(tex);
+gl.deleteTexture(tex);
+}
+}
+this._lutCache.clear();
+if (this.pickFbo) gl.deleteFramebuffer(this.pickFbo);
+if (this.pickTex && !texSeen.has(this.pickTex)) gl.deleteTexture(this.pickTex);
+this.pickFbo = null;
+this.pickTex = null;
+if (this.quad) gl.deleteBuffer(this.quad);
+this.quad = null;
+if (this.quadVao) gl.deleteVertexArray(this.quadVao);
+this.quadVao = null;
+for (const p of this._progCache ? this._progCache.values() : []) {
+if (p) gl.deleteProgram(p);
+}
+if (this._progCache) this._progCache.clear();
+this._glPrograms = this._progCache;
+this.gpuTraces = [];
+}
+}
+const XY_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
+"color",
+"label_color",
+"label_opacity",
+"opacity",
+"width",
+"head_size",
+"head_style",
+"tail_style",
+"shaft_width_start",
+"shaft_width_end",
+"curve",
+"angle_a",
+"angle_b",
+"gap_start",
+"gap_end",
+"start_offset",
+"label_clear",
+"dash",
+"span_start",
+"span_end",
+"size",
+"symbol",
+"stroke_color",
+"stroke_width",
+"coordinate_space",
+]);
+function xyLabelClearExit(style, tangent) {
+if (typeof style.label_clear !== "string") return 0;
+const parts = style.label_clear.split(",").map(Number);
+if (parts.length !== 4 || parts.some((p) => !Number.isFinite(p) || p < 0)) return 0;
+const [left, right, up, down] = parts;
+const [tx, ty] = tangent;
+const exitX = tx > 1e-9 ? right / tx : tx < -1e-9 ? left / -tx : Infinity;
+const exitY = ty > 1e-9 ? down / ty : ty < -1e-9 ? up / -ty : Infinity;
+const exit = Math.min(exitX, exitY);
+return Number.isFinite(exit) ? exit : 0;
+}
+function xyArrowGeometry(x0, y0, x1, y1, style) {
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+if (typeof style.start_offset === "string") {
+const offset = style.start_offset.split(",").map(Number);
+if (offset.length === 2 && offset.every(Number.isFinite)) {
+x0 += offset[0];
+y0 += offset[1];
+}
+}
+const angleA = num(style.angle_a);
+const angleB = num(style.angle_b);
+const curve = num(style.curve);
+let cx = null;
+let cy = null;
+if (angleA !== null && angleB !== null) {
+const a = (-angleA * Math.PI) / 180;
+const b = (-angleB * Math.PI) / 180;
+const denom = Math.cos(a) * Math.sin(b) - Math.sin(a) * Math.cos(b);
+if (Math.abs(denom) > 1e-6) {
+const t = ((x1 - x0) * Math.sin(b) - (y1 - y0) * Math.cos(b)) / denom;
+cx = x0 + t * Math.cos(a);
+cy = y0 + t * Math.sin(a);
+}
+} else if (curve) {
+const dx = x1 - x0;
+const dy = y1 - y0;
+cx = (x0 + x1) / 2 + curve * dy;
+cy = (y0 + y1) / 2 - curve * dx;
+}
+const toward = (px, py, qx, qy) => {
+const d = Math.hypot(qx - px, qy - py) || 1;
+return [(qx - px) / d, (qy - py) / d];
+};
+const t0 = cx === null ? toward(x0, y0, x1, y1) : toward(x0, y0, cx, cy);
+const t1 = cx === null ? toward(x1, y1, x0, y0) : toward(x1, y1, cx, cy);
+const gapStart = Math.max(0, num(style.gap_start) || 0, xyLabelClearExit(style, t0));
+const gapEnd = Math.max(0, num(style.gap_end) || 0);
+const span = Math.hypot(x1 - x0, y1 - y0);
+const trim = gapStart + gapEnd < span * 0.9;
+const p0 = trim ? [x0 + gapStart * t0[0], y0 + gapStart * t0[1]] : [x0, y0];
+const p1 = trim ? [x1 + gapEnd * t1[0], y1 + gapEnd * t1[1]] : [x1, y1];
+const dir1 = cx === null ? toward(p0[0], p0[1], p1[0], p1[1]) : toward(cx, cy, p1[0], p1[1]);
+const dir0 = cx === null ? toward(p1[0], p1[1], p0[0], p0[1]) : toward(cx, cy, p0[0], p0[1]);
+return { p0, p1, control: cx === null ? null : [cx, cy], dir0, dir1 };
+}
+function xyArrowShaftPoints(geom, samples = 24) {
+const [x0, y0] = geom.p0;
+const [x1, y1] = geom.p1;
+if (!geom.control) return [[x0, y0], [x1, y1]];
+const [cx, cy] = geom.control;
+const points = [];
+for (let i = 0; i <= samples; i++) {
+const t = i / samples;
+const u = 1 - t;
+points.push([u * u * x0 + 2 * u * t * cx + t * t * x1, u * u * y0 + 2 * u * t * cy + t * t * y1]);
+}
+return points;
+}
+function xyTrimPolylineEnd(points, trim) {
+if (!(trim > 0) || points.length < 2) return points;
+const out = points.slice();
+let remaining = trim;
+while (out.length >= 2) {
+const [ax, ay] = out[out.length - 2];
+const [bx, by] = out[out.length - 1];
+const seg = Math.hypot(bx - ax, by - ay);
+if (seg > remaining) {
+const t = 1 - remaining / seg;
+out[out.length - 1] = [ax + t * (bx - ax), ay + t * (by - ay)];
+return out;
+}
+remaining -= seg;
+out.pop();
+}
+return out;
+}
+function xyTaperPolygon(points, w0, w1) {
+const left = [];
+const right = [];
+const count = points.length;
+for (let i = 0; i < count; i++) {
+const [px, py] = points[i];
+const [ax, ay] = points[Math.max(0, i - 1)];
+const [bx, by] = points[Math.min(count - 1, i + 1)];
+const d = Math.hypot(bx - ax, by - ay) || 1;
+const nx = -(by - ay) / d;
+const ny = (bx - ax) / d;
+const half = (w0 + (w1 - w0) * (i / Math.max(1, count - 1))) / 2;
+left.push([px + half * nx, py + half * ny]);
+right.push([px - half * nx, py - half * ny]);
+}
+return left.concat(right.reverse());
+}
+Object.assign(ChartView.prototype, {
+_annotationPaint(style, fallback) {
+return safeCssPaint(this.root, style && style.color, fallback);
+},
+_annotationLabelPaint(style, fallback) {
+return safeCssPaint(this.root, style && (style.label_color || style.color), fallback);
+},
+_annotationStrokePaint(style, fallback) {
+return safeCssPaint(this.root, style && style.stroke_color, fallback);
+},
+_drawAnnotationMarker(ctx, x, y, style, ann) {
+if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+const r = Math.max(1, this._styleNumber(style, "size", Number(ann.size) || 8) / 2);
+const symbol = ["circle", "square", "diamond", "cross"].includes(ann.symbol) ? ann.symbol : "circle";
+ctx.save();
+ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
+ctx.fillStyle = this._annotationPaint(style, [0.15, 0.39, 0.92, 1]);
+ctx.strokeStyle = symbol === "cross"
+? this._annotationPaint(style, [0.15, 0.39, 0.92, 1])
+: this._annotationStrokePaint(style, [1, 1, 1, 1]);
+ctx.lineWidth = Math.max(0, this._styleNumber(style, "stroke_width", 1.5));
+ctx.beginPath();
+if (symbol === "square") {
+ctx.rect(x - r, y - r, r * 2, r * 2);
+} else if (symbol === "diamond") {
+ctx.moveTo(x, y - r);
+ctx.lineTo(x + r, y);
+ctx.lineTo(x, y + r);
+ctx.lineTo(x - r, y);
+ctx.closePath();
+} else if (symbol === "cross") {
+ctx.moveTo(x - r, y);
+ctx.lineTo(x + r, y);
+ctx.moveTo(x, y - r);
+ctx.lineTo(x, y + r);
+ctx.stroke();
+ctx.restore();
+return;
+} else {
+ctx.arc(x, y, r, 0, Math.PI * 2);
+}
+ctx.fill();
+if (ctx.lineWidth > 0) ctx.stroke();
+ctx.restore();
+},
+_drawArrowLine(ctx, x0, y0, x1, y1, style) {
+if (![x0, y0, x1, y1].every(Number.isFinite)) return;
+const geom = xyArrowGeometry(x0, y0, x1, y1, style);
+ctx.save();
+ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
+ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
+ctx.fillStyle = ctx.strokeStyle;
+ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
+ctx.setLineDash(Array.isArray(style.dash) ? style.dash :
+(typeof style.dash === "string" ? style.dash.split(",").map(Number) : []));
+const w0 = Number(style.shaft_width_start);
+const w1 = Number(style.shaft_width_end);
+const headStyle = style.head_style || "triangle";
+const head = Math.max(4, this._styleNumber(style, "head_size", 8));
+if (Number.isFinite(w0) || Number.isFinite(w1)) {
+let points = xyArrowShaftPoints(geom);
+if (headStyle === "triangle") {
+points = xyTrimPolylineEnd(points, head * Math.cos(Math.PI / 6));
+}
+const polygon = xyTaperPolygon(
+points,
+Number.isFinite(w0) ? w0 : 1,
+Number.isFinite(w1) ? w1 : 1
+);
+ctx.beginPath();
+ctx.moveTo(polygon[0][0], polygon[0][1]);
+for (let i = 1; i < polygon.length; i++) ctx.lineTo(polygon[i][0], polygon[i][1]);
+ctx.closePath();
+ctx.fill();
+} else {
+ctx.beginPath();
+ctx.moveTo(geom.p0[0], geom.p0[1]);
+if (geom.control) ctx.quadraticCurveTo(geom.control[0], geom.control[1], geom.p1[0], geom.p1[1]);
+else ctx.lineTo(geom.p1[0], geom.p1[1]);
+ctx.stroke();
+}
+this._drawArrowEnd(ctx, geom.p1, geom.dir1, headStyle, head);
+this._drawArrowEnd(ctx, geom.p0, geom.dir0, style.tail_style || "none", head);
+ctx.restore();
+},
+_drawArrowEnd(ctx, point, dir, endStyle, head) {
+if (endStyle === "none") return;
+const [px, py] = point;
+const angle = Math.atan2(dir[1], dir[0]);
+ctx.beginPath();
+if (endStyle === "bar") {
+ctx.moveTo(px - (head / 2) * Math.sin(angle), py + (head / 2) * Math.cos(angle));
+ctx.lineTo(px + (head / 2) * Math.sin(angle), py - (head / 2) * Math.cos(angle));
+ctx.stroke();
+return;
+}
+const wing = (side) => [
+px - head * Math.cos(angle - side * Math.PI / 6),
+py - head * Math.sin(angle - side * Math.PI / 6),
+];
+const [ax, ay] = wing(1);
+const [bx, by] = wing(-1);
+if (endStyle === "v") {
+ctx.moveTo(ax, ay);
+ctx.lineTo(px, py);
+ctx.lineTo(bx, by);
+ctx.stroke();
+return;
+}
+ctx.moveTo(px, py);
+ctx.lineTo(ax, ay);
+ctx.lineTo(bx, by);
+ctx.closePath();
+ctx.fill();
+},
+_drawAnnotationShapes(ctx) {
+const annotations = Array.isArray(this.spec.annotations) ? this.spec.annotations : [];
+if (!annotations.length) return;
+const p = this.plot;
+ctx.save();
+ctx.beginPath();
+ctx.rect(p.x, p.y, p.w, p.h);
+ctx.clip();
+for (const ann of annotations) {
+const style = ann && typeof ann.style === "object" ? ann.style : {};
+if (ann.kind === "band") {
+const vertical = ann.axis === "x";
+const a = vertical ? this._dataPxX(Number(ann.start)) : this._dataPxY(Number(ann.start));
+const b = vertical ? this._dataPxX(Number(ann.end)) : this._dataPxY(Number(ann.end));
+if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+const lo = Math.max(vertical ? p.x : p.y, Math.min(a, b));
+const hi = Math.min(vertical ? p.x + p.w : p.y + p.h, Math.max(a, b));
+if (hi <= lo) continue;
+ctx.save();
+ctx.globalAlpha = this._styleNumber(style, "opacity", 0.14);
+ctx.fillStyle = this._annotationPaint(style, [0.39, 0.45, 0.55, 1]);
+const start = Math.max(0, Math.min(1, Number(style.span_start) || 0));
+const rawEnd = style.span_end === undefined ? 1 : Number(style.span_end);
+const end = Math.max(start, Math.min(1, Number.isFinite(rawEnd) ? rawEnd : 1));
+if (vertical) ctx.fillRect(lo, p.y + (1 - end) * p.h, hi - lo, (end - start) * p.h);
+else ctx.fillRect(p.x + start * p.w, lo, (end - start) * p.w, hi - lo);
+ctx.restore();
+} else if (ann.kind === "rule") {
+const vertical = ann.axis === "x";
+const pos = vertical ? this._dataPxX(Number(ann.value)) : this._dataPxY(Number(ann.value));
+if (!Number.isFinite(pos)) continue;
+if (vertical && (pos < p.x - 1 || pos > p.x + p.w + 1)) continue;
+if (!vertical && (pos < p.y - 1 || pos > p.y + p.h + 1)) continue;
+const crisp = Math.round(pos) + 0.5;
+ctx.save();
+ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
+ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
+ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
+ctx.setLineDash(Array.isArray(style.dash) ? style.dash :
+(typeof style.dash === "string" ? style.dash.split(",").map(Number) : []));
+ctx.beginPath();
+const start = Math.max(0, Math.min(1, Number(style.span_start) || 0));
+const rawEnd = style.span_end === undefined ? 1 : Number(style.span_end);
+const end = Math.max(start, Math.min(1, Number.isFinite(rawEnd) ? rawEnd : 1));
+if (vertical) {
+ctx.moveTo(crisp, p.y + (1 - end) * p.h);
+ctx.lineTo(crisp, p.y + (1 - start) * p.h);
+} else {
+ctx.moveTo(p.x + start * p.w, crisp);
+ctx.lineTo(p.x + end * p.w, crisp);
+}
+ctx.stroke();
+ctx.restore();
+} else if (ann.kind === "arrow") {
+this._drawArrowLine(
+ctx,
+this._dataPxX(Number(ann.x0)),
+this._dataPxY(Number(ann.y0)),
+this._dataPxX(Number(ann.x1)),
+this._dataPxY(Number(ann.y1)),
+style
+);
+} else if (ann.kind === "callout") {
+const px = this._dataPxX(Number(ann.x));
+const py = this._dataPxY(Number(ann.y));
+const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
+const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
+this._drawArrowLine(ctx, px + dx, py + dy, px, py, style);
+} else if (ann.kind === "marker") {
+this._drawAnnotationMarker(
+ctx,
+this._dataPxX(Number(ann.x)),
+this._dataPxY(Number(ann.y)),
+style,
+ann
+);
+}
+}
+ctx.restore();
+},
+_drawAnnotationLabels(updateLabels) {
+if (!updateLabels) return;
+const annotations = Array.isArray(this.spec.annotations) ? this.spec.annotations : [];
+if (!annotations.length) return;
+const p = this.plot;
+for (const ann of annotations) {
+const text = typeof ann.text === "string" ? ann.text : "";
+if (!text) continue;
+const style = ann && typeof ann.style === "object" ? ann.style : {};
+let px = null;
+let py = null;
+let lift = null;
+if (ann.kind === "text") {
+if (style.coordinate_space === "axes_fraction") {
+px = p.x + Number(ann.x) * p.w;
+py = p.y + (1 - Number(ann.y)) * p.h;
+} else if (style.coordinate_space === "figure_fraction") {
+px = Number(ann.x) * this.size.w;
+py = (1 - Number(ann.y)) * this.size.h;
+} else if (style.coordinate_space === "yaxis_transform") {
+px = p.x + Number(ann.x) * p.w;
+py = this._dataPxY(Number(ann.y));
+} else if (style.coordinate_space === "xaxis_transform") {
+px = this._dataPxX(Number(ann.x));
+py = p.y + (1 - Number(ann.y)) * p.h;
+} else {
+px = this._dataPxX(Number(ann.x));
+py = this._dataPxY(Number(ann.y));
+}
+} else if (ann.kind === "rule") {
+if (ann.axis === "x") {
+px = this._dataPxX(Number(ann.value));
+py = p.y + 6;
+} else {
+px = p.x + p.w - 6;
+py = this._dataPxY(Number(ann.value));
+}
+} else if (ann.kind === "band") {
+if (ann.axis === "x") {
+px = (this._dataPxX(Number(ann.start)) + this._dataPxX(Number(ann.end))) / 2;
+py = p.y + 6;
+} else {
+px = p.x + p.w - 6;
+py = (this._dataPxY(Number(ann.start)) + this._dataPxY(Number(ann.end))) / 2;
+}
+} else if (ann.kind === "arrow") {
+const ax0 = this._dataPxX(Number(ann.x0));
+const ay0 = this._dataPxY(Number(ann.y0));
+const ax1 = this._dataPxX(Number(ann.x1));
+const ay1 = this._dataPxY(Number(ann.y1));
+px = (ax0 + ax1) / 2;
+py = (ay0 + ay1) / 2;
+const len = Math.hypot(ax1 - ax0, ay1 - ay0);
+if (len > 1e-6) {
+lift = [-(ay1 - ay0) / len, (ax1 - ax0) / len];
+if (lift[1] > 0) lift = [-lift[0], -lift[1]];
+}
+} else if (ann.kind === "callout") {
+px = this._dataPxX(Number(ann.x));
+py = this._dataPxY(Number(ann.y));
+} else if (ann.kind === "marker") {
+px = this._dataPxX(Number(ann.x));
+py = this._dataPxY(Number(ann.y));
+}
+if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+if (px < p.x - 24 || px > p.x + p.w + 24 || py < p.y - 24 || py > p.y + p.h + 24) {
+continue;
+}
+const d = document.createElement("div");
+d.textContent = text;
+const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
+const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
+let anchorName = ann.anchor;
+let va = String(style.vertical_align || "");
+if (ann.kind === "rule" || ann.kind === "band") {
+if (ann.axis === "x") {
+if (!anchorName && ann.kind === "band") anchorName = "middle";
+if (!va) va = "top";
+} else {
+if (!anchorName) anchorName = "end";
+if (!va && ann.kind === "band") va = "middle";
+}
+} else if (ann.kind === "arrow") {
+if (!anchorName) anchorName = "middle";
+if (!va) va = "middle";
+}
+const anchor = anchorName === "middle" ? "-50%" : anchorName === "end" ? "-100%" : "0px";
+const rot = Number.isFinite(Number(style.rotation))
+? ((Number(style.rotation) % 360) + 360) % 360
+: 0;
+const vAnchor =
+va === "center" || va === "middle" ? "-50%"
+: va === "bottom" ? "-100%"
+: va === "top" ? "0px"
+: "calc(-100% + 0.35em)";
+let transform = `translate(${anchor},${vAnchor})`;
+if (rot === 90 || rot === 270) {
+const cw = rot === 270;
+const along =
+va === "center" || va === "middle" ? "-50%"
+: va === "top" ? (cw ? "0" : "-100%")
+: va === "bottom" ? (cw ? "-100%" : "0")
+: cw ? "0" : "-100%";
+const cross =
+anchorName === "middle" ? "-50%" : anchorName === "end" ? (cw ? "0" : "-100%") : cw ? "-100%" : "0";
+transform = `rotate(${cw ? 90 : -90}deg) translate(${along},${cross})`;
+} else if (rot) {
+transform = `rotate(${-rot}deg) translate(${anchor},${vAnchor})`;
+}
+d.style.cssText =
+`position:absolute;left:${px + dx}px;top:${py + dy}px;` +
+`transform:${transform};transform-origin:0 0;pointer-events:none;` +
+`white-space:pre-line;text-align:center;width:max-content;`;
+this._applySlot(d, "annotation_label");
+this._applyClass(d, ann.class_name);
+const opacityIsShape = ann.kind !== "text" && ann.kind !== "callout";
+const labelStyle = {};
+for (const [key, value] of Object.entries(style)) {
+if (key === "opacity" && ann.kind === "text") {
+labelStyle[key] = value;
+continue;
+}
+if (XY_ANNOTATION_SHAPE_STYLE_KEYS.has(key)) continue;
+if (opacityIsShape && key === "opacity") continue;
+labelStyle[key] = value;
+}
+this._applyStyle(d, labelStyle);
+if (style && (style.label_color || style.color)) {
+d.style.color = this._annotationLabelPaint(style, this.theme.label);
+}
+if (style && style.label_opacity !== undefined) {
+const labelOpacity = Number(style.label_opacity);
+if (Number.isFinite(labelOpacity)) {
+d.style.opacity = String(Math.max(0, Math.min(1, labelOpacity)));
+}
+}
+this.labels.appendChild(d);
+const cs = getComputedStyle(d);
+const edge = (pad, border) => (parseFloat(pad) || 0) + (parseFloat(border) || 0);
+const padL = edge(cs.paddingLeft, cs.borderLeftWidth);
+const padR = edge(cs.paddingRight, cs.borderRightWidth);
+const padT = edge(cs.paddingTop, cs.borderTopWidth);
+const padB = edge(cs.paddingBottom, cs.borderBottomWidth);
+if ((padL || padR || padT || padB) && rot !== 90 && rot !== 270) {
+const hShift = anchor === "-100%" ? padR : anchor === "-50%" ? 0 : -padL;
+const vShift =
+vAnchor === "-50%" ? 0 : vAnchor === "0px" ? -padT : padB;
+d.style.transform =
+`${rot ? `rotate(${-rot}deg) ` : ""}` +
+`translate(calc(${anchor} + ${hShift}px), calc(${vAnchor} + ${vShift}px))`;
+}
+const liftBounds = lift && this.labels.getBoundingClientRect();
+if (lift && liftBounds.width > 0) {
+const liftScale = liftBounds.width / this.size.w;
+const r = d.getBoundingClientRect();
+const clear =
+(r.width / liftScale / 2) * Math.abs(lift[0]) +
+(r.height / liftScale / 2) * Math.abs(lift[1]) + 3;
+px += lift[0] * clear;
+py += lift[1] * clear;
+d.style.left = `${px + dx}px`;
+d.style.top = `${py + dy}px`;
+}
+const bounds = this.labels.getBoundingClientRect();
+if (bounds.width > 0) {
+const scale = bounds.width / this.size.w;
+const r = d.getBoundingClientRect();
+const pullX =
+r.right > bounds.right ? bounds.right - r.right
+: r.left < bounds.left ? bounds.left - r.left : 0;
+const pullY =
+r.bottom > bounds.bottom ? bounds.bottom - r.bottom
+: r.top < bounds.top ? bounds.top - r.top : 0;
+if (pullX) d.style.left = `${px + dx + pullX / scale}px`;
+if (pullY) d.style.top = `${py + dy + pullY / scale}px`;
+}
+}
+},
+});
+Object.assign(ChartView.prototype, {
+_showTooltip(hit, clientX, clientY) {
+const row = this._localRow(hit);
+this._lastRow = row;
+this._setTooltipAnchor(hit, row, clientX, clientY);
+this._renderTooltip(row, clientX, clientY);
+if (this._interactionFlag("hover")) {
+this._dispatchChartEvent("hover", {
+row,
+trace: hit.trace,
+index: hit.index,
+view: this._eventView("hover"),
+});
+}
+if (this.comm) {
+this._pickSeq = (this._pickSeq || 0) + 1;
+const req = { type: "pick", seq: this._pickSeq, trace: hit.trace, index: hit.index };
+const hg = hit.g;
+if (hg && hg.tier === "density" && hg.drill && hg.drill.seq !== undefined) {
+req.drill_seq = hg.drill.seq;
+}
+this.comm.send(req);
+}
+},
+_localRow(hit) {
+const g = hit.g;
+const cpu = g._cpu;
+const row = { trace: g.trace.id, index: hit.index };
+if (hit.heatmap && g.heatmap && g._cpuHeatmap) {
+const h = g.heatmap;
+const { row: heatRow, col } = hit.heatmap;
+const rawX = h.xRange[0] + (col + 0.5) * ((h.xRange[1] - h.xRange[0]) / h.w);
+const rawY = h.yRange[0] + (heatRow + 0.5) * ((h.yRange[1] - h.yRange[0]) / h.h);
+const [x, xKind] = this._sourceDisplayValue(g, "x", rawX, "float");
+const [y, yKind] = this._sourceDisplayValue(g, "y", rawY, "float");
+row.x = x;
+row.y = y;
+if (xKind !== undefined) row.x_kind = xKind;
+if (yKind !== undefined) row.y_kind = yKind;
+const norm = g._cpuHeatmap.grid[hit.index];
+row.color_value = this._denormalizeUnit(norm, g.trace.color && g.trace.color.domain);
+} else if (g._cpuRect) {
+const r = g._cpuRect;
+const x0 = this._decodeValue(r.x0, r.x0Meta, hit.index);
+const x1 = this._decodeValue(r.x1, r.x1Meta, hit.index);
+const y0 = this._decodeValue(r.y0, r.y0Meta, hit.index);
+const y1 = this._decodeValue(r.y1, r.y1Meta, hit.index);
+const [x, xKind] = this._sourceDisplayValue(
+g, "x", x0 + (x1 - x0) / 2, r.x0Meta.kind,
+);
+const [y, yKind] = this._sourceDisplayValue(g, "y", y1, r.y1Meta.kind);
+row.x = x;
+row.y = y;
+if (xKind !== undefined) row.x_kind = xKind;
+if (yKind !== undefined) row.y_kind = yKind;
+} else if (cpu) {
+const xMeta = cpu.xMeta || g.xMeta;
+const yMeta = cpu.yMeta || g.yMeta;
+const rawX = this._decodeValue(cpu.x, xMeta, hit.index);
+const rawY = this._decodeValue(cpu.y, yMeta, hit.index);
+const [x, xKind] = this._sourceDisplayValue(g, "x", rawX, xMeta && xMeta.kind);
+const [y, yKind] = this._sourceDisplayValue(g, "y", rawY, yMeta && yMeta.kind);
+row.x = x;
+row.y = y;
+if (xKind !== undefined) row.x_kind = xKind;
+if (yKind !== undefined) row.y_kind = yKind;
+const color = g.trace.color;
+if (cpu.color && color) {
+if (color.mode === "categorical" && Array.isArray(color.categories)) {
+const code = Math.round(cpu.color[hit.index]);
+if (code >= 0 && code < color.categories.length) {
+row.color_category = String(color.categories[code]);
+}
+} else if (color.mode === "continuous") {
+row.color_value = this._denormalizeUnit(cpu.color[hit.index], color.domain);
+}
+}
+const size = g.trace.size;
+if (cpu.size && size && size.mode === "continuous") {
+row.size_value = this._denormalizeUnit(cpu.size[hit.index], size.domain);
+}
+}
+this._applySharedTooltipFields(row);
+return row;
+},
+_sourceDisplayValue(g, channel, value, kind) {
+const axis = channel === "x" ? this._axis(g && g.xAxis) : this._axis(g && g.yAxis);
+if (channel === "x" && axis.kind === "category") {
+return [fmtCategory(value, axis.categories || []), undefined];
+}
+if (channel === "y" && axis.kind === "category") {
+return [fmtCategory(value, axis.categories || []), undefined];
+}
+return [value, kind];
+},
+_sourceValue(g, source, index) {
+if (!g || index < 0) return [undefined, undefined];
+const channel = source.channel;
+if (channel === "x" || channel === "y") {
+const cpu = g._cpu;
+if (!cpu || !cpu[channel]) return [undefined, undefined];
+const meta = channel === "x" ? (cpu.xMeta || g.xMeta) : (cpu.yMeta || g.yMeta);
+const value = this._decodeValue(cpu[channel], meta, index);
+if (!Number.isFinite(value)) return [undefined, undefined];
+return this._sourceDisplayValue(g, channel, value, meta && meta.kind);
+}
+if (channel === "color_value") {
+if (g._cpuHeatmap && g._cpuHeatmap.grid && g.trace.color) {
+return [this._denormalizeUnit(g._cpuHeatmap.grid[index], g.trace.color.domain), undefined];
+}
+if (g._cpu && g._cpu.color && g.trace.color) {
+return [this._denormalizeUnit(g._cpu.color[index], g.trace.color.domain), undefined];
+}
+}
+if (channel === "color_category" && g._cpu && g._cpu.color && g.trace.color) {
+const code = Math.round(g._cpu.color[index]);
+const categories = g.trace.color.categories || [];
+if (code >= 0 && code < categories.length) return [String(categories[code]), undefined];
+}
+if (channel === "size_value" && g._cpu && g._cpu.size && g.trace.size) {
+return [this._denormalizeUnit(g._cpu.size[index], g.trace.size.domain), undefined];
+}
+return [undefined, undefined];
+},
+_applySharedTooltipFields(row) {
+const sources = this.spec.tooltip && this.spec.tooltip.sources;
+if (!sources || typeof sources !== "object" || row.x === undefined) return;
+for (const [field, entries] of Object.entries(sources)) {
+if (!Array.isArray(entries) || row[field] !== undefined) continue;
+const source = entries.find((entry) => entry.trace === row.trace) || entries[0];
+if (!source || !Number.isFinite(Number(source.trace))) continue;
+const g = this.gpuTraces.find((trace) => trace.trace.id === source.trace);
+if (!g) continue;
+let idx = Number.isInteger(row.index) && source.trace === row.trace ? row.index : -1;
+if (
+!g._cpuHeatmap &&
+(idx < 0 || !g._cpu || !g._cpu.x || idx >= g._cpu.x.length)
+) {
+idx = this._nearestCpuIndex(g, row.x);
+}
+const [value, kind] = this._sourceValue(g, source, idx);
+if (value === undefined) continue;
+row[field] = value;
+if (kind !== undefined) row[`${field}_kind`] = kind;
+}
+},
+_denormalizeUnit(value, domain) {
+const v = Number(value);
+if (!Number.isFinite(v)) return v;
+if (!Array.isArray(domain) || domain.length < 2) return v;
+const lo = Number(domain[0]);
+const hi = Number(domain[1]);
+if (!Number.isFinite(lo) || !Number.isFinite(hi)) return v;
+return lo + v * (hi - lo);
+},
+_defaultTooltipLines(row) {
+const lines = [];
+if (row.x !== undefined) lines.push(`x: ${fmtValue(row.x, row.x_kind)}`);
+if (row.y !== undefined) lines.push(`y: ${fmtValue(row.y, row.y_kind)}`);
+if (row.color_value !== undefined) lines.push(`color: ${fmtValue(row.color_value)}`);
+if (row.color_category !== undefined) lines.push(`${row.color_category}`);
+if (row.size_value !== undefined) lines.push(`size: ${fmtValue(row.size_value)}`);
+if (!lines.length) lines.push(`#${row.index}`);
+return lines;
+},
+_tooltipLookup(row, field) {
+const aliases = (this.spec.tooltip && this.spec.tooltip.aliases) || {};
+const key = row[field] !== undefined ? field : aliases[field];
+if (!key || row[key] === undefined) return [undefined, undefined];
+return [row[key], row[`${key}_kind`]];
+},
+_formatTooltipValue(value, kind, format) {
+const formatted = fmtNumberSpec(value, format);
+if (formatted !== null) return formatted;
+return fmtValue(value, kind);
+},
+_tooltipLines(row) {
+const tooltip = this.spec.tooltip || {};
+if (!tooltip.title && !Array.isArray(tooltip.fields)) return this._defaultTooltipLines(row);
+const formats = tooltip.format || {};
+const lines = [];
+if (typeof tooltip.title === "string") {
+const title = tooltip.title.replace(/\{([^}]+)\}/g, (_, field) => {
+const [value, kind] = this._tooltipLookup(row, field);
+return value === undefined ? "" : this._formatTooltipValue(value, kind, formats[field]);
+});
+if (title) lines.push(title);
+}
+if (Array.isArray(tooltip.fields)) {
+for (const field of tooltip.fields) {
+if (typeof field !== "string") continue;
+const [value, kind] = this._tooltipLookup(row, field);
+if (value === undefined) continue;
+lines.push(`${field}: ${this._formatTooltipValue(value, kind, formats[field])}`);
+}
+}
+return lines.length ? lines : this._defaultTooltipLines(row);
+},
+_setTooltipAnchor(hit, row, clientX, clientY) {
+const g = hit.g;
+if (!g) { this._tooltipAnchor = null; return; }
+const xAxis = g.xAxis || "x";
+const yAxis = g.yAxis || "y";
+let x = row.x;
+let y = row.y;
+if (!Number.isFinite(x) || !Number.isFinite(y)) {
+const rect = this.canvas.getBoundingClientRect();
+[x, y] = this._dataFromCanvas(clientX - rect.left, clientY - rect.top, xAxis, yAxis);
+}
+this._tooltipAnchor = Number.isFinite(x) && Number.isFinite(y)
+? { xAxis, yAxis, x, y }
+: null;
+if (this._tooltipAnchor && !this._tooltipAnchorPx()) this._tooltipAnchor = null;
+},
+_tooltipAnchorPx() {
+const a = this._tooltipAnchor;
+if (!a) return null;
+const lx = this._dataPx(a.xAxis, a.x);
+const ly = this._dataPx(a.yAxis, a.y);
+const p = this.plot;
+if (!Number.isFinite(lx) || !Number.isFinite(ly)
+|| lx < p.x || lx > p.x + p.w || ly < p.y || ly > p.y + p.h) {
+return null;
+}
+return { lx, ly };
+},
+_hideTooltip() {
+this.tooltip.style.display = "none";
+this._tooltipAnchor = null;
+},
+_repositionTooltip() {
+if (!this._tooltipAnchor) return;
+const pos = this._tooltipAnchorPx();
+if (!pos) {
+this.tooltip.style.display = "none";
+return;
+}
+this.tooltip.style.display = "block";
+this._placeTooltip(pos.lx, pos.ly);
+},
+_placeTooltip(lx, ly) {
+const tw = this.tooltip.offsetWidth;
+const th = this.tooltip.offsetHeight;
+const edge = 4;
+const gap = 12;
+const maxLeft = Math.max(edge, this.size.w - tw - edge);
+const left = Math.max(edge, Math.min(lx + gap, maxLeft));
+const below = ly + gap;
+const above = ly - th - gap;
+const top = below + th <= this.size.h - edge ? below : Math.max(edge, above);
+this.tooltip.style.left = left + "px";
+this.tooltip.style.top = top + "px";
+},
+_renderTooltip(row, clientX, clientY, options = {}) {
+if (!row || this.spec.show_tooltip === false) {
+this._hideTooltip();
+return;
+}
+const lines = this._tooltipLines(row);
+this.tooltip.textContent = "";
+lines.forEach((ln, i) => {
+if (i) this.tooltip.appendChild(document.createElement("br"));
+this.tooltip.appendChild(document.createTextNode(ln));
+});
+if (this.a11yLive && options.announce !== false) {
+const prefix = this._a11yKeyboardReadout;
+const detail = lines.join(", ");
+const announcement = prefix
+? `Point ${prefix.flat + 1} of ${prefix.total}. ${detail}`
+: detail;
+if (this.a11yLive.textContent !== announcement) this.a11yLive.textContent = announcement;
+}
+this.tooltip.style.display = "block";
+const pos = this._tooltipAnchorPx();
+if (pos) {
+this._placeTooltip(pos.lx, pos.ly);
+} else if (this._tooltipAnchor) {
+this.tooltip.style.display = "none";
+} else {
+const rect = this.root.getBoundingClientRect();
+this._placeTooltip(clientX - rect.left, clientY - rect.top);
+}
+},
+});
+Object.assign(ChartView.prototype, {
+_initInteraction() {
+const c = this.canvas;
+let drag = null;
+let band = null;
+this.selRect = document.createElement("div");
+this.selRect.style.cssText = "position:absolute;display:none;pointer-events:none;z-index:4;";
+this._applySlot(this.selRect, "selection");
+this.root.appendChild(this.selRect);
+this.selLasso = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+this.selLasso.style.cssText =
+"position:absolute;display:none;pointer-events:none;z-index:4;overflow:visible;";
+this.selLasso.dataset.xySelectionLassoOverlay = "";
+this.selLassoPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+this.selLassoPath.dataset.xySelectionLasso = "";
+this.selLasso.appendChild(this.selLassoPath);
+this.selLassoHandles = document.createElementNS("http://www.w3.org/2000/svg", "g");
+this.selLassoHandles.dataset.xySelectionLassoHandles = "";
+this.selLasso.appendChild(this.selLassoHandles);
+this.root.appendChild(this.selLasso);
+this._lassoPolygon = null;
+let lassoHandleDrag = null;
+const moveLassoHandle = (e) => {
+if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId
+|| !this._lassoPolygon) return;
+const rect = c.getBoundingClientRect();
+const cssX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+const cssY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+this._lassoPolygon[lassoHandleDrag.index] = this._dataFromCanvas(cssX, cssY);
+this._renderLassoSelection();
+e.preventDefault();
+e.stopPropagation();
+};
+this._listen(this.selLasso, "pointerdown", (e) => {
+const handle = e.target.closest?.("[data-xy-selection-lasso-handle]");
+if (!handle || !this._lassoPolygon) return;
+const index = Number(handle.dataset.xySelectionLassoHandle);
+if (!Number.isInteger(index) || !this._lassoPolygon[index]) return;
+lassoHandleDrag = {
+index,
+pointerId: e.pointerId,
+original: [...this._lassoPolygon[index]],
+handle,
+};
+handle.dataset.xyActive = "";
+this._hideTooltip();
+try { this.selLasso.setPointerCapture(e.pointerId); } catch (_err) {   }
+e.preventDefault();
+e.stopPropagation();
+});
+this._listen(this.selLasso, "pointermove", moveLassoHandle);
+this._listen(this.selLasso, "pointerup", (e) => {
+if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
+moveLassoHandle(e);
+const handle = lassoHandleDrag.handle;
+lassoHandleDrag = null;
+delete handle.dataset.xyActive;
+if (this._lassoPolygon) this._sendSelectPolygon(this._lassoPolygon);
+});
+this._listen(this.selLasso, "pointercancel", (e) => {
+if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
+if (this._lassoPolygon) {
+this._lassoPolygon[lassoHandleDrag.index] = lassoHandleDrag.original;
+}
+delete lassoHandleDrag.handle.dataset.xyActive;
+lassoHandleDrag = null;
+if (this._lassoPolygon) this._renderLassoSelection();
+e.stopPropagation();
+});
+if (this._interactionFlag("crosshair")) {
+this.crosshairX = document.createElement("div");
+this.crosshairX.style.cssText =
+"position:absolute;display:none;pointer-events:none;z-index:3;width:1px;";
+this._applySlot(this.crosshairX, "crosshair_x");
+this.root.appendChild(this.crosshairX);
+this.crosshairY = document.createElement("div");
+this.crosshairY.style.cssText =
+"position:absolute;display:none;pointer-events:none;z-index:3;height:1px;";
+this._applySlot(this.crosshairY, "crosshair_y");
+this.root.appendChild(this.crosshairY);
+}
+const dataAt = (clientX, clientY) => {
+const r = c.getBoundingClientRect();
+return this._dataFromCanvas(clientX - r.left, clientY - r.top);
+};
+const lassoPointAt = (clientX, clientY) => {
+const r = c.getBoundingClientRect();
+const cssX = Math.max(0, Math.min(r.width, clientX - r.left));
+const cssY = Math.max(0, Math.min(r.height, clientY - r.top));
+return {
+x: r.left + cssX,
+y: r.top + cssY,
+data: this._dataFromCanvas(cssX, cssY),
+};
+};
+this._listen(c, "pointerdown", (e) => {
+this._cancelViewAnimation();
+const canPan = this._interactionFlag("pan", true);
+const canZoom = this._interactionFlag("zoom", true);
+const canNavigate = this._interactionFlag("navigation", true);
+const canBoxZoom = this._interactionFlag("box_zoom", true);
+const canBrush = this._interactionFlag("brush", true) && this._interactionFlag("select", true);
+const selectMode = this.dragMode.startsWith("select") ? this.dragMode : null;
+const mode = (e.shiftKey || selectMode) && canBrush && this._pickable
+? (e.shiftKey ? "select" : selectMode)
+: this.dragMode === "zoom" && canNavigate && canZoom && canBoxZoom ? "zoom" : null;
+if (mode) {
+const previousLasso = mode.startsWith("select") && this._lassoPolygon
+? this._lassoPolygon.map((point) => [...point])
+: null;
+if (mode.startsWith("select")) this._clearLassoOverlay();
+const firstLassoPoint = mode === "select-lasso" ? lassoPointAt(e.clientX, e.clientY) : null;
+const d0 = firstLassoPoint ? firstLassoPoint.data : dataAt(e.clientX, e.clientY);
+band = {
+mode, sx: e.clientX, sy: e.clientY, d0,
+points: firstLassoPoint ? [firstLassoPoint] : null,
+previousLasso,
+};
+try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
+this._hideTooltip();
+return;
+}
+if (this.dragMode === "pan" && canNavigate && canPan) {
+drag = {
+px: e.clientX,
+py: e.clientY,
+view: this._copyView(this.view),
+moved: false,
+interactionId: ++this._interactionSeq,
+axes: [...new Set([
+...this._axisPolicy("pan_axes"),
+...this._axisIds().filter((axisId) => this._axisContained(axisId)),
+])],
+changedAxes: [],
+};
+try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
+this._hideTooltip();
+}
+});
+this._listen(c, "pointermove", (e) => {
+if (band) { this._updateBand(band, e); return; }
+if (drag) {
+drag.moved = true;
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId, drag.view)]])
+);
+for (const axisId of drag.axes) {
+const axis = this._axis(axisId);
+const [lo, hi] = this._axisRange(axisId, drag.view);
+const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+if (![c0, c1].every(Number.isFinite) || c0 === c1) continue;
+const dim = this._axisDim(axisId);
+const pixels = dim === "x" ? this.plot.w : this.plot.h;
+const deltaPx = dim === "x" ? e.clientX - drag.px : e.clientY - drag.py;
+const delta = (deltaPx / pixels) * (c1 - c0);
+const signed = dim === "x" ? -delta : delta;
+ranges[axisId] = [
+this._axisValue(axis, c0 + signed),
+this._axisValue(axis, c1 + signed),
+];
+}
+const changedAxes = this._setView({ ranges }, {
+source: "pan_drag",
+phase: "update",
+interactionId: drag.interactionId,
+});
+drag.changedAxes = [...new Set([...drag.changedAxes, ...changedAxes])];
+return;
+}
+this._updateCrosshair(e);
+this._hover(e);
+});
+const end = (e) => {
+if (band) {
+if (band.mode === "select-lasso") this._updateBand(band, e);
+this.selRect.style.display = "none";
+this.selLasso.style.display = "none";
+const d1 = dataAt(e.clientX, e.clientY);
+const moved = band.mode === "select-lasso"
+? band.points.length >= 3
+: Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
+if (moved) {
+if (band.mode === "zoom" && this._interactionFlag("zoom", true)) {
+this._zoomToBox(band.d0, d1, true, {
+source: "box_zoom",
+phase: "end",
+interactionId: ++this._interactionSeq,
+});
+} else if (band.mode === "select-lasso") {
+if (band.points.length >= 3) {
+const editable = this._simplifyLassoPoints(band.points);
+this._sendSelectPolygon(editable.map((point) => point.data));
+} else if (band.previousLasso) {
+this._lassoPolygon = band.previousLasso;
+this._renderLassoSelection();
+}
+} else {
+let d0 = band.d0;
+if (band.mode === "select-x") {
+d0 = [band.d0[0], this.view.y0];
+d1[1] = this.view.y1;
+} else if (band.mode === "select-y") {
+d0 = [this.view.x0, band.d0[1]];
+d1[0] = this.view.x1;
+}
+this._sendSelect(d0, d1);
+}
+this._ignoreNextClick = true;
+} else if (band.previousLasso) {
+this._lassoPolygon = band.previousLasso;
+this._renderLassoSelection();
+}
+band = null;
+return;
+}
+if (drag && drag.moved) {
+this._ignoreNextClick = true;
+if (drag.changedAxes.length) this._emitViewChange("pan_drag", {
+axes: drag.changedAxes,
+phase: "end",
+interactionId: drag.interactionId,
+});
+}
+if (drag && !drag.moved) this._hideTooltip();
+drag = null;
+};
+this._listen(c, "pointerup", end);
+this._listen(c, "pointercancel", () => {
+this.selRect.style.display = "none";
+this.selLasso.style.display = "none";
+if (band?.previousLasso) {
+this._lassoPolygon = band.previousLasso;
+this._renderLassoSelection();
+}
+band = null;
+drag = null;
+});
+this._listen(c, "pointerleave", () => {
+const hadHover = this._hoverId !== -1;
+this._hoverId = -1;
+this._hoverTarget = null;
+this._lastHoverXY = null;
+this._a11yKeyboardReadout = null;
+this._pickSeq = (this._pickSeq || 0) + 1;
+this._hideTooltip();
+this._hideCrosshair();
+if (this._interactionFlag("hover")) {
+this._dispatchChartEvent("leave", { view: this._eventView("leave") });
+}
+if (hadHover) this._drawKeepPick();
+});
+this._listen(c, "click", (e) => this._click(e));
+this._listen(c, "wheel", (e) => {
+if (!this._interactionFlag("navigation", true)) return;
+if (!this._interactionFlag("zoom", true)) return;
+if (!this._interactionFlag("wheel_zoom", true)) return;
+e.preventDefault();
+const f = Math.pow(1.0015, e.deltaY);
+const r = c.getBoundingClientRect();
+const fx = (e.clientX - r.left) / r.width;
+const fy = 1 - (e.clientY - r.top) / r.height;
+this._queueWheelZoom(f, fx, fy);
+}, { passive: false });
+this._listen(c, "dblclick", () => {
+if (!this._interactionFlag("navigation", true)) return;
+if (!this._interactionFlag("double_click_reset", true)) return;
+this._resetView(true, "reset");
+});
+this._listen(c, "keydown", (e) => {
+if (e.key === "Escape" && (band || drag)) {
+this.selRect.style.display = "none";
+this.selLasso.style.display = "none";
+band = null;
+drag = null;
+e.preventDefault();
+e.stopImmediatePropagation();
+}
+});
+this._listen(c, "keydown", (e) => this._onA11yKey(e));
+},
+_a11yPointGroups() {
+return (this.gpuTraces || []).filter((g) =>
+markOf(g.trace.kind).pointPick && g.tier !== "density" && g._cpu &&
+g._cpu.x && g._cpu.y && Math.min(g._cpu.x.length, g._cpu.y.length) > 0);
+},
+_onA11yKey(e) {
+const direction = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+const activate = e.key === "Enter" || e.key === " ";
+if (direction === undefined && e.key !== "Home" && e.key !== "End" && e.key !== "Escape"
+&& !activate) {
+return;
+}
+if (activate) {
+if (!this._interactionFlag("click") || !this._hoverTarget) return;
+e.preventDefault();
+const hit = this._hoverTarget;
+const rect = this.canvas.getBoundingClientRect();
+const clientX = this._lastHoverXY?.clientX ?? rect.left;
+const clientY = this._lastHoverXY?.clientY ?? rect.top;
+const screen = { x: clientX - rect.left, y: clientY - rect.top };
+const modifiers = {
+shift: e.shiftKey === true,
+alt: e.altKey === true,
+ctrl: e.ctrlKey === true,
+meta: e.metaKey === true,
+};
+const detail = {
+row: this._localRow ? this._localRow(hit) : null,
+trace: hit.trace,
+index: hit.index,
+screen,
+modifiers,
+view: this._eventView("click"),
+};
+this._dispatchChartEvent("click", detail);
+if (this.comm) {
+const msg = { type: "click", trace: hit.trace, index: hit.index, screen, modifiers };
+const g = hit.g;
+if (g && g.tier === "density" && g.drill && g.drill.seq !== undefined) {
+msg.drill_seq = g.drill.seq;
+}
+this.comm.send(msg);
+}
+return;
+}
+if (e.key === "Escape") {
+e.preventDefault();
+const hadHover = this._hoverId !== -1;
+this._hideTooltip();
+this._hoverId = -1;
+this._hoverTarget = null;
+this._lastHoverXY = null;
+this._a11yKeyboardReadout = null;
+this._pickSeq = (this._pickSeq || 0) + 1;
+if (this.a11yLive) this.a11yLive.textContent = "Readout closed.";
+if (hadHover && this._interactionFlag("hover")) {
+this._dispatchChartEvent("leave", { view: this._eventView("leave") });
+}
+if (hadHover) this._drawKeepPick();
+return;
+}
+e.preventDefault();
+if (this._interactionTransitionActive()) return;
+const groups = this._a11yPointGroups();
+const total = groups.reduce((sum, g) => sum + Math.min(g._cpu.x.length, g._cpu.y.length), 0);
+if (!total) return;
+let flat = Number.isInteger(this._a11yPointIndex) ? this._a11yPointIndex : -1;
+if (e.key === "Home") flat = 0;
+else if (e.key === "End") flat = total - 1;
+else if (flat < 0) flat = direction > 0 ? 0 : total - 1;
+else flat = Math.max(0, Math.min(total - 1, flat + direction));
+this._a11yPointIndex = flat;
+let offset = flat;
+let g = groups[0];
+for (const candidate of groups) {
+const n = Math.min(candidate._cpu.x.length, candidate._cpu.y.length);
+if (offset < n) { g = candidate; break; }
+offset -= n;
+}
+const hit = { trace: g.trace.id, index: offset, g };
+const xValue = this._decodeValue(g._cpu.x, g._cpu.xMeta || g.xMeta, offset);
+const yValue = this._decodeValue(g._cpu.y, g._cpu.yMeta || g.yMeta, offset);
+const x = this._dataPx(g.xAxis || "x", xValue) - this.plot.x;
+const y = this._dataPx(g.yAxis || "y", yValue) - this.plot.y;
+const rect = this.canvas.getBoundingClientRect();
+const clientX = rect.left + Math.max(0, Math.min(rect.width, x));
+const clientY = rect.top + Math.max(0, Math.min(rect.height, y));
+this._hoverId = hit.trace * 1e9 + hit.index;
+this._hoverTarget = hit;
+this._lastHoverXY = { clientX, clientY };
+this._a11yKeyboardReadout = { flat, total };
+this._showTooltip(hit, clientX, clientY);
+this._drawKeepPick();
+},
+_updateCrosshair(e) {
+if (!this.crosshairX || !this.crosshairY) return;
+const rect = this.canvas.getBoundingClientRect();
+const rootRect = this.root.getBoundingClientRect();
+const x = e.clientX - rect.left;
+const y = e.clientY - rect.top;
+if (x < 0 || x > rect.width || y < 0 || y > rect.height) {
+this._hideCrosshair();
+return;
+}
+const left = e.clientX - rootRect.left;
+const top = e.clientY - rootRect.top;
+this.crosshairX.style.display = "block";
+this.crosshairX.style.left = left + "px";
+this.crosshairX.style.top = this.plot.y + "px";
+this.crosshairX.style.height = this.plot.h + "px";
+this.crosshairY.style.display = "block";
+this.crosshairY.style.left = this.plot.x + "px";
+this.crosshairY.style.top = top + "px";
+this.crosshairY.style.width = this.plot.w + "px";
+},
+_hideCrosshair() {
+if (this.crosshairX) this.crosshairX.style.display = "none";
+if (this.crosshairY) this.crosshairY.style.display = "none";
+},
+_click(e) {
+if (this._ignoreNextClick) {
+this._ignoreNextClick = false;
+return;
+}
+if (!this._interactionFlag("click")) return;
+const rect = this.canvas.getBoundingClientRect();
+const cssX = e.clientX - rect.left;
+const cssY = e.clientY - rect.top;
+const [x, y] = this._dataFromCanvas(cssX, cssY);
+const hit = this._pickAt(cssX, cssY) || this._hoverAt(cssX, cssY);
+const detail = {
+x,
+y,
+view: this._eventView("click"),
+row: hit && this._localRow ? this._localRow(hit) : null,
+trace: hit ? hit.trace : null,
+index: hit ? hit.index : null,
+};
+this._dispatchChartEvent("click", detail);
+if (hit && this.comm) {
+const msg = {
+type: "click",
+trace: hit.trace,
+index: hit.index,
+screen: { x: cssX, y: cssY },
+modifiers: {
+shift: e.shiftKey === true,
+alt: e.altKey === true,
+ctrl: e.ctrlKey === true,
+meta: e.metaKey === true,
+},
+};
+const g = hit.g;
+if (g && g.tier === "density" && g.drill && g.drill.seq !== undefined) {
+msg.drill_seq = g.drill.seq;
+}
+this.comm.send(msg);
+}
+},
+_updateBand(band, e) {
+const rect = this.canvas.getBoundingClientRect();
+const rootRect = this.root.getBoundingClientRect();
+if (band.mode === "select-lasso") {
+const previous = band.points[band.points.length - 1];
+const cssX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+const cssY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+const clientX = rect.left + cssX;
+const clientY = rect.top + cssY;
+if (band.points.length < 2048
+&& Math.hypot(clientX - previous.x, clientY - previous.y) >= 3) {
+band.points.push({ x: clientX, y: clientY, data: this._dataFromCanvas(cssX, cssY) });
+}
+const points = band.points.map((point) => [
+Math.max(this.plot.x, Math.min(this.plot.x + this.plot.w, point.x - rootRect.left)),
+Math.max(this.plot.y, Math.min(this.plot.y + this.plot.h, point.y - rootRect.top)),
+]);
+this.selLasso.style.display = "block";
+this.selLasso.style.inset = "0";
+this.selLasso.setAttribute("width", String(this.root.clientWidth));
+this.selLasso.setAttribute("height", String(this.root.clientHeight));
+this.selLassoPath.setAttribute(
+"d", points.map((point, i) => `${i ? "L" : "M"}${point[0]} ${point[1]}`).join(" ") + " Z"
+);
+return;
+}
+const x = Math.min(band.sx, e.clientX) - rootRect.left;
+const y = Math.min(band.sy, e.clientY) - rootRect.top;
+const w = Math.abs(e.clientX - band.sx);
+const h = Math.abs(e.clientY - band.sy);
+const px = this.plot.x, py = this.plot.y;
+const x2 = Math.min(x + w, px + this.plot.w), y2 = Math.min(y + h, py + this.plot.h);
+let cx = Math.max(x, px), cy = Math.max(y, py);
+let bx2 = x2, by2 = y2;
+if (band.mode === "select-x") { cy = py; by2 = py + this.plot.h; }
+if (band.mode === "select-y") { cx = px; bx2 = px + this.plot.w; }
+this.selRect.dataset.xyBand = band.mode === "zoom" ? "zoom" : "select";
+this.selRect.style.display = "block";
+this.selRect.style.left = cx + "px";
+this.selRect.style.top = cy + "px";
+this.selRect.style.width = Math.max(0, bx2 - cx) + "px";
+this.selRect.style.height = Math.max(0, by2 - cy) + "px";
+void rect;
+},
+_simplifyLassoPoints(points, tolerance = 6, maxPoints = 16) {
+const source = points.filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y));
+if (source.length > 3) {
+const first = source[0], last = source[source.length - 1];
+if (Math.hypot(first.x - last.x, first.y - last.y) <= tolerance) source.pop();
+}
+if (source.length <= 3) return source.slice();
+const distanceToSegmentSq = (point, start, end) => {
+const dx = end.x - start.x, dy = end.y - start.y;
+if (dx === 0 && dy === 0) {
+return (point.x - start.x) ** 2 + (point.y - start.y) ** 2;
+}
+const t = Math.max(0, Math.min(1,
+((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy)
+));
+const x = start.x + t * dx, y = start.y + t * dy;
+return (point.x - x) ** 2 + (point.y - y) ** 2;
+};
+const simplifyAt = (currentTolerance) => {
+const keep = new Uint8Array(source.length);
+keep[0] = 1;
+keep[source.length - 1] = 1;
+const stack = [[0, source.length - 1]];
+const toleranceSq = currentTolerance * currentTolerance;
+while (stack.length) {
+const [start, end] = stack.pop();
+let furthest = -1, furthestDistance = toleranceSq;
+for (let i = start + 1; i < end; i++) {
+const distance = distanceToSegmentSq(source[i], source[start], source[end]);
+if (distance > furthestDistance) {
+furthest = i;
+furthestDistance = distance;
+}
+}
+if (furthest >= 0) {
+keep[furthest] = 1;
+stack.push([start, furthest], [furthest, end]);
+}
+}
+return source.filter((_point, index) => keep[index]);
+};
+let simplified = simplifyAt(tolerance);
+if (simplified.length < 3) {
+simplified = [source[0], source[Math.floor(source.length / 2)], source[source.length - 1]];
+}
+if (simplified.length > maxPoints) {
+let low = tolerance;
+let high = Math.max(tolerance, 1);
+for (let i = 0; i < 16 && simplified.length > maxPoints; i++) {
+low = high;
+high *= 2;
+simplified = simplifyAt(high);
+}
+for (let i = 0; i < 12; i++) {
+const middle = (low + high) / 2;
+const candidate = simplifyAt(middle);
+if (candidate.length > maxPoints) low = middle;
+else {
+high = middle;
+simplified = candidate;
+}
+}
+if (simplified.length < 3) {
+simplified = [source[0], source[Math.floor(source.length / 2)], source[source.length - 1]];
+}
+}
+return simplified;
+},
+_clearLassoOverlay() {
+this._lassoPolygon = null;
+if (!this.selLasso) return;
+this.selLasso.style.display = "none";
+this.selLassoPath?.removeAttribute("d");
+this.selLassoHandles?.replaceChildren();
+},
+_renderLassoSelection() {
+const polygon = this._lassoPolygon;
+if (!this.selLasso || !this.selLassoPath || !this.selLassoHandles
+|| !Array.isArray(polygon) || polygon.length < 3) return;
+const [x0, x1] = this._axisRange("x");
+const [y0, y1] = this._axisRange("y");
+const xAxis = this._axis("x"), yAxis = this._axis("y");
+const cx0 = this._axisCoord(xAxis, x0), cx1 = this._axisCoord(xAxis, x1);
+const cy0 = this._axisCoord(yAxis, y0), cy1 = this._axisCoord(yAxis, y1);
+if (![cx0, cx1, cy0, cy1].every(Number.isFinite) || cx0 === cx1 || cy0 === cy1) return;
+const points = polygon.map((point) => {
+const cx = this._axisCoord(xAxis, point[0]);
+const cy = this._axisCoord(yAxis, point[1]);
+const x = this.plot.x + ((cx - cx0) / (cx1 - cx0)) * this.plot.w;
+const y = this.plot.y + ((cy1 - cy) / (cy1 - cy0)) * this.plot.h;
+return [
+Math.max(this.plot.x, Math.min(this.plot.x + this.plot.w, x)),
+Math.max(this.plot.y, Math.min(this.plot.y + this.plot.h, y)),
+];
+});
+if (!points.flat().every(Number.isFinite)) return;
+this.selLasso.style.display = "block";
+this.selLasso.style.inset = "0";
+this.selLasso.setAttribute("width", String(this.root.clientWidth));
+this.selLasso.setAttribute("height", String(this.root.clientHeight));
+this.selLassoPath.setAttribute(
+"d", points.map((point, index) => `${index ? "L" : "M"}${point[0]} ${point[1]}`).join(" ") + " Z"
+);
+while (this.selLassoHandles.childElementCount < points.length) {
+const handle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+handle.dataset.xySelectionLassoHandle = "";
+handle.setAttribute("r", "4");
+this.selLassoHandles.appendChild(handle);
+}
+while (this.selLassoHandles.childElementCount > points.length) {
+this.selLassoHandles.lastElementChild.remove();
+}
+[...this.selLassoHandles.children].forEach((handle, index) => {
+handle.dataset.xySelectionLassoHandle = String(index);
+handle.setAttribute("cx", String(points[index][0]));
+handle.setAttribute("cy", String(points[index][1]));
+handle.setAttribute("aria-label", `Lasso point ${index + 1}`);
+});
+},
+_sendSelect(d0, d1) {
+this._clearLassoOverlay();
+const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
+const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
+const range = { x0, x1, y0, y1 };
+this._lastBrush = { mode: "box", x0, x1, y0, y1 };
+this._broadcastLinkedSelection({ range });
+this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
+if (this.comm) {
+this.comm.send({ type: "select", x0, x1, y0, y1 });
+} else {
+this._selectLocal(x0, x1, y0, y1);
+}
+},
+_sendSelectPolygon(points) {
+if (!Array.isArray(points) || points.length < 3) return;
+const polygon = points.map((point) => [point[0], point[1]]);
+if (!polygon.every((point) => point.every(Number.isFinite))) return;
+this._lassoPolygon = polygon;
+this._lastBrush = { mode: "poly", points: polygon };
+this._broadcastLinkedSelection({ polygon });
+this._renderLassoSelection();
+this._dispatchChartEvent("brush", {
+polygon,
+view: this._eventView("brush"),
+});
+if (this.comm) {
+this.comm.send({ type: "select_polygon", points: polygon });
+} else {
+this._selectLocalPolygon(polygon);
+}
+},
+_selectLocalPolygon(points, opts = {}) {
+const xs = points.map((point) => point[0]);
+const ys = points.map((point) => point[1]);
+const minX = Math.min(...xs), maxX = Math.max(...xs);
+const minY = Math.min(...ys), maxY = Math.max(...ys);
+const inside = (x, y) => {
+let hit = false;
+for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+const [xi, yi] = points[i], [xj, yj] = points[j];
+if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+}
+return hit;
+};
+let total = 0;
+for (const g of this.gpuTraces) {
+if (!g._cpu || g.tier === "density") continue;
+const cx = g._cpu.x, cy = g._cpu.y;
+const xMeta = g._cpu.xMeta || g.xMeta;
+const yMeta = g._cpu.yMeta || g.yMeta;
+const ox = xMeta.offset, sx = xMeta.scale || 1;
+const oy = yMeta.offset, sy = yMeta.scale || 1;
+const mask = new Float32Array(g.n);
+let count = 0;
+for (let i = 0; i < g.n; i++) {
+const x = cx[i] / sx + ox;
+const y = cy[i] / sy + oy;
+if (x >= minX && x <= maxX && y >= minY && y <= maxY && inside(x, y)) {
+mask[i] = 1;
+count++;
+}
+}
+this._applySelMask(g, mask);
+total += count;
+}
+this._selectionCount = total;
+this.draw();
+if (opts.dispatch !== false) {
+this._dispatchChartEvent("select", {
+total,
+polygon: points,
+view: this._eventView("select"),
+});
+}
+},
+_selectLocal(x0, x1, y0, y1, opts = {}) {
+let total = 0;
+for (const g of this.gpuTraces) {
+if (!g._cpu || g.tier === "density") continue;
+const cx = g._cpu.x, cy = g._cpu.y;
+const xMeta = g._cpu.xMeta || g.xMeta;
+const yMeta = g._cpu.yMeta || g.yMeta;
+const ox = xMeta.offset, sx = xMeta.scale || 1;
+const oy = yMeta.offset, sy = yMeta.scale || 1;
+const mask = new Float32Array(g.n);
+let cnt = 0;
+for (let i = 0; i < g.n; i++) {
+const dx = cx[i] / sx + ox, dy = cy[i] / sy + oy;
+if (dx >= x0 && dx <= x1 && dy >= y0 && dy <= y1) { mask[i] = 1; cnt++; }
+}
+this._applySelMask(g, mask);
+total += cnt;
+}
+this._selectionCount = total;
+this.draw();
+if (opts.dispatch !== false) {
+this._dispatchChartEvent("select", {
+total,
+range: { x0, x1, y0, y1 },
+view: this._eventView("select"),
+});
+}
+},
+_applySelMask(g, maskF32) {
+const gl = this.gl;
+if (!g.selBuf) g.selBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, g.selBuf);
+gl.bufferData(gl.ARRAY_BUFFER, maskF32, gl.STATIC_DRAW);
+g.selActive = true;
+},
+_clearSelection(opts = {}) {
+this._clearLassoOverlay();
+for (const g of this.gpuTraces) {
+g.selActive = false;
+if (g.drill) g.drill.selActive = false;
+}
+this._selectionCount = 0;
+this._lastBrush = null;
+if (opts.broadcast !== false) this._broadcastLinkedSelection({ clear: true });
+if (opts.dispatch !== false) {
+if (this._interactionFlag("select", true)) {
+if (this.comm) this.comm.send({ type: "select_clear" });
+this._dispatchChartEvent("select", { total: 0, view: this._eventView("select_clear") });
+}
+}
+},
+_clampModebar(left, top) {
+const bar = this._modebar;
+if (!bar || !this.root) return;
+const currentLeft = left ?? (Number.parseFloat(bar.style.left) || 0);
+const currentTop = top ?? (Number.parseFloat(bar.style.top) || 0);
+const maxLeft = Math.max(0, this.root.clientWidth - bar.offsetWidth);
+const maxTop = Math.max(0, this.root.clientHeight - bar.offsetHeight);
+bar.style.left = `${Math.max(0, Math.min(maxLeft, currentLeft))}px`;
+bar.style.top = `${Math.max(0, Math.min(maxTop, currentTop))}px`;
+},
+_buildModebar(root) {
+if (this.spec.show_modebar === false) return;
+const bar = document.createElement("div");
+bar.style.cssText =
+`position:absolute;top:${this.plot.y + 4}px;left:${this.plot.x + 4}px;z-index:6;` +
+"display:flex;opacity:0;pointer-events:none;transition:opacity .15s;";
+this._applySlot(bar, "modebar");
+bar.setAttribute("role", "toolbar");
+bar.setAttribute("aria-label", "Chart controls");
+this._modebar = bar;
+this._modeBtns = {};
+this._modebarMoved = false;
+let setZoomMenuOpen = () => {};
+let setSelectMenuOpen = () => {};
+let setExportMenuOpen = () => {};
+const setVisible = (visible) => {
+const show = visible || this._modebarDragging || bar.contains(document.activeElement);
+bar.style.opacity = show ? "1" : "0";
+bar.style.pointerEvents = show ? "auto" : "none";
+};
+this._listen(root, "pointerenter", () => setVisible(true));
+this._listen(root, "pointerleave", () => {
+setVisible(false);
+setZoomMenuOpen(false);
+setSelectMenuOpen(false);
+setExportMenuOpen(false);
+});
+this._listen(bar, "focusin", () => setVisible(true));
+this._listen(bar, "focusout", (e) => {
+if (!bar.contains(e.relatedTarget) && !root.matches(":hover")) setVisible(false);
+});
+const grip = document.createElement("button");
+grip.type = "button";
+grip.title = "Click for toolbar options; drag to move";
+grip.setAttribute("aria-label", "Toolbar options");
+grip.setAttribute("aria-haspopup", "menu");
+grip.setAttribute("aria-expanded", "false");
+grip.dataset.xyModebarDragHandle = "";
+grip.dataset.xyModebarExport = "";
+grip.dataset.xyModebarExportTrigger = "";
+grip.innerHTML = this._icon("drag");
+grip.style.cssText =
+"display:flex;align-items:center;justify-content:center;pointer-events:auto;touch-action:none;";
+this._applySlot(grip, "modebar_button");
+bar.appendChild(grip);
+const DRAG_THRESHOLD_PX = 6;
+let modebarDrag = null;
+let suppressGripClickUntil = 0;
+this._listen(grip, "pointerdown", (e) => {
+if (e.pointerType === "mouse" && e.button !== 0) return;
+e.stopPropagation();
+const barRect = bar.getBoundingClientRect();
+modebarDrag = {
+pointerId: e.pointerId,
+startX: e.clientX,
+startY: e.clientY,
+dx: e.clientX - barRect.left,
+dy: e.clientY - barRect.top,
+moved: false,
+};
+try { grip.setPointerCapture(e.pointerId); } catch (_err) {   }
+setVisible(true);
+});
+this._listen(grip, "pointermove", (e) => {
+if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
+const distance = Math.hypot(e.clientX - modebarDrag.startX, e.clientY - modebarDrag.startY);
+if (!modebarDrag.moved) {
+if (distance < DRAG_THRESHOLD_PX) return;
+modebarDrag.moved = true;
+this._modebarDragging = true;
+this._modebarMoved = true;
+bar.style.transition = "none";
+setZoomMenuOpen(false);
+setSelectMenuOpen(false);
+setExportMenuOpen(false);
+}
+const rootRect = root.getBoundingClientRect();
+const left = e.clientX - rootRect.left - modebarDrag.dx;
+const top = e.clientY - rootRect.top - modebarDrag.dy;
+this._clampModebar(left, top);
+});
+const endModebarDrag = (e) => {
+if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
+const moved = modebarDrag.moved;
+const cancelled = e.type === "pointercancel";
+modebarDrag = null;
+this._modebarDragging = false;
+bar.style.transition = "opacity .15s";
+setVisible(root.matches(":hover"));
+if (moved || cancelled) {
+suppressGripClickUntil = performance.now() + 100;
+}
+};
+this._listen(grip, "pointerup", endModebarDrag);
+this._listen(grip, "pointercancel", endModebarDrag);
+this._listen(grip, "click", (e) => {
+e.stopPropagation();
+if (performance.now() <= suppressGripClickUntil) {
+suppressGripClickUntil = 0;
+return;
+}
+setExportMenuOpen(!this._exportMenuOpen);
+});
+const mk = (name, title, onClick, toggles) => {
+const b = document.createElement("button");
+b.type = "button";
+b.title = title;
+b.setAttribute("aria-label", title);
+if (toggles) b.setAttribute("aria-pressed", "false");
+b.innerHTML = this._icon(name);
+b.style.cssText =
+"display:flex;align-items:center;justify-content:center;pointer-events:auto;";
+this._applySlot(b, "modebar_button");
+this._listen(b, "pointerdown", (e) => e.stopPropagation());
+this._listen(b, "click", (e) => { e.stopPropagation(); onClick(); });
+bar.appendChild(b);
+if (toggles) this._modeBtns[toggles] = b;
+return b;
+};
+const canNavigate = this._interactionFlag("navigation", true);
+const canPan = canNavigate && this._interactionFlag("pan", true);
+const canZoom = canNavigate && this._interactionFlag("zoom", true);
+const canZoomButtons = canZoom && this._interactionFlag("zoom_buttons", true);
+const canBoxZoom = canZoom && this._interactionFlag("box_zoom", true);
+const canReset = canNavigate && this._resetAxisPolicy().length > 0;
+const hasZoomMenu = canZoomButtons || canBoxZoom || canReset;
+let zoomTrigger = null;
+let zoomIndicator = null;
+this._zoomMenuButton = null;
+this._zoomMenuLabel = null;
+if (hasZoomMenu) {
+zoomTrigger = mk("zoommenu", "Zoom controls", () => {
+setZoomMenuOpen(!this._zoomMenuOpen);
+});
+this._zoomMenuButton = zoomTrigger;
+zoomTrigger.dataset.xyModebarMenuTrigger = "";
+zoomTrigger.replaceChildren();
+const zoomPercent = document.createElement("span");
+zoomPercent.dataset.xyModebarZoomPercent = "";
+zoomPercent.textContent = "100%";
+zoomTrigger.appendChild(zoomPercent);
+zoomIndicator = document.createElement("span");
+zoomIndicator.dataset.xyModebarMenuIndicator = "";
+zoomIndicator.innerHTML = this._icon("chevrondown");
+zoomTrigger.appendChild(zoomIndicator);
+this._zoomMenuLabel = zoomPercent;
+zoomTrigger.setAttribute("aria-haspopup", "menu");
+zoomTrigger.setAttribute("aria-expanded", "false");
+}
+const canSelect = this._interactionFlag("brush", true)
+&& this._interactionFlag("select", true);
+let selectTrigger = null;
+let selectIndicator = null;
+let selectModeIcon = null;
+if (canSelect) {
+selectTrigger = mk("select", "Selection controls", () => {
+setSelectMenuOpen(!this._selectMenuOpen);
+});
+selectTrigger.dataset.xyModebarSelect = "";
+selectTrigger.dataset.xyModebarSelectTrigger = "";
+selectTrigger.setAttribute("aria-haspopup", "menu");
+selectTrigger.setAttribute("aria-expanded", "false");
+selectTrigger.replaceChildren();
+selectModeIcon = document.createElement("span");
+selectModeIcon.dataset.xyModebarSelectIcon = "";
+selectModeIcon.innerHTML = this._icon("select");
+selectTrigger.appendChild(selectModeIcon);
+selectIndicator = document.createElement("span");
+selectIndicator.dataset.xyModebarMenuIndicator = "";
+selectIndicator.innerHTML = this._icon("chevrondown");
+selectTrigger.appendChild(selectIndicator);
+this._selectMenuButton = selectTrigger;
+this._selectMenuIcon = selectModeIcon;
+}
+if (canPan) mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
+let zoomMenu = null;
+if (hasZoomMenu) {
+zoomMenu = document.createElement("div");
+zoomMenu.dataset.xyModebarMenu = "";
+zoomMenu.setAttribute("role", "menu");
+zoomMenu.setAttribute("aria-label", "Zoom controls");
+zoomMenu.style.cssText =
+"position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
+bar.appendChild(zoomMenu);
+}
+const zoomMenuItems = [];
+const mkZoomItem = (name, label, onClick, toggles, separator = false) => {
+const button = document.createElement("button");
+button.type = "button";
+button.tabIndex = -1;
+button.dataset.xyModebarMenuItem = name;
+if (separator) button.dataset.xySeparator = "";
+button.setAttribute("role", "menuitem");
+button.style.cssText =
+"display:flex;align-items:center;pointer-events:auto;";
+this._applySlot(button, "modebar_button");
+const icon = document.createElement("span");
+icon.dataset.xyModebarMenuIcon = "";
+icon.innerHTML = this._icon(name);
+button.appendChild(icon);
+const text = document.createElement("span");
+text.textContent = label;
+button.appendChild(text);
+this._listen(button, "pointerdown", (e) => e.stopPropagation());
+this._listen(button, "click", (e) => {
+e.stopPropagation();
+setZoomMenuOpen(false, true);
+onClick();
+});
+zoomMenu.appendChild(button);
+zoomMenuItems.push(button);
+if (toggles) this._modeBtns[toggles] = button;
+return button;
+};
+if (hasZoomMenu) {
+if (canZoomButtons) {
+mkZoomItem("zoomin", this._actionLabel("Zoom In", this._axisPolicy("zoom_axes")),
+() => this._zoomBy(0.5, true, "zoom_in"));
+mkZoomItem("zoomout", this._actionLabel("Zoom Out", this._axisPolicy("zoom_axes")),
+() => this._zoomBy(2, true, "zoom_out"));
+}
+if (canBoxZoom) {
+mkZoomItem("zoom", this._actionLabel("Box Zoom", this._axisPolicy("zoom_axes")),
+() => this._setDragMode("zoom"), "zoom");
+}
+if (canReset) {
+mkZoomItem("reset", this._actionLabel("Reset View", this._resetAxisPolicy()),
+() => this._resetView(true, "reset"), null, canZoomButtons || canBoxZoom);
+}
+}
+const selectMenu = document.createElement("div");
+selectMenu.dataset.xyModebarMenu = "";
+selectMenu.dataset.xyModebarSelectMenu = "";
+selectMenu.setAttribute("role", "menu");
+selectMenu.setAttribute("aria-label", "Selection controls");
+selectMenu.style.cssText =
+"position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
+bar.appendChild(selectMenu);
+const selectMenuItems = [];
+const mkSelectItem = (name, label, mode) => {
+const button = document.createElement("button");
+button.type = "button";
+button.tabIndex = -1;
+button.dataset.xyModebarMenuItem = name;
+button.dataset.xyModebarSelectItem = mode;
+button.setAttribute("role", "menuitem");
+button.style.cssText = "display:flex;align-items:center;pointer-events:auto;";
+this._applySlot(button, "modebar_button");
+const icon = document.createElement("span");
+icon.dataset.xyModebarMenuIcon = "";
+icon.innerHTML = this._icon(name);
+button.appendChild(icon);
+const text = document.createElement("span");
+text.textContent = label;
+button.appendChild(text);
+this._listen(button, "pointerdown", (e) => e.stopPropagation());
+this._listen(button, "click", (e) => {
+e.stopPropagation();
+setSelectMenuOpen(false, true);
+this._setDragMode(mode);
+});
+selectMenu.appendChild(button);
+selectMenuItems.push(button);
+this._modeBtns[mode] = button;
+};
+if (canSelect) {
+mkSelectItem("select", "Box Select", "select");
+mkSelectItem("lasso", "Lasso Select", "select-lasso");
+mkSelectItem("selectx", "X Range", "select-x");
+mkSelectItem("selecty", "Y Range", "select-y");
+}
+const exportMenu = document.createElement("div");
+exportMenu.dataset.xyModebarMenu = "";
+exportMenu.dataset.xyModebarExportMenu = "";
+exportMenu.setAttribute("role", "menu");
+exportMenu.setAttribute("aria-label", "Toolbar options");
+exportMenu.style.cssText =
+"position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
+bar.appendChild(exportMenu);
+const exportMenuItems = [];
+const mkExportItem = (name, label, onClick, separator = false) => {
+const button = document.createElement("button");
+button.type = "button";
+button.tabIndex = -1;
+button.dataset.xyModebarMenuItem = name;
+button.dataset.xyModebarExportItem = name;
+if (separator) button.dataset.xySeparator = "";
+button.setAttribute("role", "menuitem");
+button.style.cssText = "display:flex;align-items:center;pointer-events:auto;";
+this._applySlot(button, "modebar_button");
+const icon = document.createElement("span");
+icon.dataset.xyModebarMenuIcon = "";
+icon.innerHTML = this._icon(name);
+button.appendChild(icon);
+const text = document.createElement("span");
+text.textContent = label;
+button.appendChild(text);
+this._listen(button, "pointerdown", (e) => e.stopPropagation());
+this._listen(button, "click", (e) => {
+e.stopPropagation();
+setExportMenuOpen(false, true);
+Promise.resolve(onClick()).catch((error) => console.error(`xy: ${label} failed`, error));
+});
+exportMenu.appendChild(button);
+exportMenuItems.push(button);
+return button;
+};
+const EXPORT_ITEMS = {
+png: ["Export PNG", () => this._exportRaster("png")],
+jpeg: ["Export JPEG", () => this._exportRaster("jpeg")],
+webp: ["Export WebP", () => this._exportRaster("webp")],
+svg: ["Export SVG", () => this._exportSvg()],
+csv: ["Export CSV", () => this._exportCsv()],
+};
+const configuredFormats = Array.isArray(this._exportConfig().formats)
+? this._exportConfig().formats
+: ["png", "svg", "csv"];
+for (const name of configuredFormats) {
+const item = EXPORT_ITEMS[name];
+if (item) mkExportItem(name, item[0], item[1]);
+}
+if (zoomTrigger) {
+setZoomMenuOpen = (open, restoreFocus = false) => {
+const show = Boolean(open);
+if (show) {
+setSelectMenuOpen(false);
+setExportMenuOpen(false);
+}
+this._zoomMenuOpen = show;
+zoomTrigger.setAttribute("aria-expanded", String(show));
+if (!show) {
+zoomMenu.style.display = "none";
+zoomIndicator.style.transform = "none";
+if (restoreFocus) zoomTrigger.focus();
+return;
+}
+zoomMenu.style.display = "flex";
+zoomMenu.style.visibility = "hidden";
+const rootRect = root.getBoundingClientRect();
+const barRect = bar.getBoundingClientRect();
+const rootLeft = barRect.left - rootRect.left;
+const rootTop = barRect.top - rootRect.top;
+const below = bar.offsetHeight + 6;
+const above = -zoomMenu.offsetHeight - 6;
+const preferredTop = barRect.bottom + 6 + zoomMenu.offsetHeight <= rootRect.bottom
+? below
+: above;
+zoomIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
+const maxLeft = root.clientWidth - rootLeft - zoomMenu.offsetWidth;
+const maxTop = root.clientHeight - rootTop - zoomMenu.offsetHeight;
+zoomMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, zoomTrigger.offsetLeft))}px`;
+zoomMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
+zoomMenu.style.visibility = "visible";
+};
+}
+setSelectMenuOpen = (open, restoreFocus = false) => {
+if (!selectTrigger) return;
+const show = Boolean(open);
+if (show) {
+setZoomMenuOpen(false);
+setExportMenuOpen(false);
+}
+this._selectMenuOpen = show;
+selectTrigger.setAttribute("aria-expanded", String(show));
+if (!show) {
+selectMenu.style.display = "none";
+selectIndicator.style.transform = "none";
+if (restoreFocus) selectTrigger.focus();
+return;
+}
+selectMenu.style.display = "flex";
+selectMenu.style.visibility = "hidden";
+const rootRect = root.getBoundingClientRect();
+const barRect = bar.getBoundingClientRect();
+const rootLeft = barRect.left - rootRect.left;
+const rootTop = barRect.top - rootRect.top;
+const below = bar.offsetHeight + 6;
+const above = -selectMenu.offsetHeight - 6;
+const preferredTop = barRect.bottom + 6 + selectMenu.offsetHeight <= rootRect.bottom
+? below
+: above;
+selectIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
+const maxLeft = root.clientWidth - rootLeft - selectMenu.offsetWidth;
+const maxTop = root.clientHeight - rootTop - selectMenu.offsetHeight;
+selectMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, selectTrigger.offsetLeft))}px`;
+selectMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
+selectMenu.style.visibility = "visible";
+};
+setExportMenuOpen = (open, restoreFocus = false) => {
+const show = Boolean(open) && exportMenuItems.length > 0;
+if (show) {
+setZoomMenuOpen(false);
+setSelectMenuOpen(false);
+}
+this._exportMenuOpen = show;
+grip.setAttribute("aria-expanded", String(show));
+if (!show) {
+exportMenu.style.display = "none";
+if (restoreFocus) grip.focus();
+return;
+}
+exportMenu.style.display = "flex";
+exportMenu.style.visibility = "hidden";
+const rootRect = root.getBoundingClientRect();
+const barRect = bar.getBoundingClientRect();
+const rootLeft = barRect.left - rootRect.left;
+const rootTop = barRect.top - rootRect.top;
+const below = bar.offsetHeight + 6;
+const above = -exportMenu.offsetHeight - 6;
+const preferredTop = barRect.bottom + 6 + exportMenu.offsetHeight <= rootRect.bottom
+? below
+: above;
+const maxLeft = root.clientWidth - rootLeft - exportMenu.offsetWidth;
+const maxTop = root.clientHeight - rootTop - exportMenu.offsetHeight;
+exportMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, grip.offsetLeft))}px`;
+exportMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
+exportMenu.style.visibility = "visible";
+};
+this._closeModebarMenu = () => {
+setZoomMenuOpen(false);
+setSelectMenuOpen(false);
+setExportMenuOpen(false);
+};
+this._syncModebarSelect = () => {
+if (!selectTrigger) return;
+const on = Boolean(this._pickable);
+if (!on) {
+setSelectMenuOpen(false);
+if (this.dragMode.startsWith("select")) this._setDragMode("pan");
+}
+selectTrigger.style.display = on ? "flex" : "none";
+};
+this._syncModebarSelect();
+this._listen(document, "pointerdown", (e) => {
+if (this._zoomMenuOpen && !bar.contains(e.target)) setZoomMenuOpen(false);
+if (this._selectMenuOpen && !bar.contains(e.target)) setSelectMenuOpen(false);
+if (this._exportMenuOpen && !bar.contains(e.target)) setExportMenuOpen(false);
+});
+if (zoomTrigger) {
+this._listen(zoomTrigger, "keydown", (e) => {
+if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+e.preventDefault();
+e.stopPropagation();
+setZoomMenuOpen(true);
+const index = e.key === "ArrowDown" ? 0 : zoomMenuItems.length - 1;
+zoomMenuItems[index].focus();
+});
+this._listen(zoomMenu, "keydown", (e) => {
+if (e.key === "Escape") {
+e.preventDefault();
+e.stopPropagation();
+setZoomMenuOpen(false, true);
+return;
+}
+if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+e.preventDefault();
+const current = zoomMenuItems.indexOf(document.activeElement);
+let next = e.key === "Home" ? 0 : e.key === "End" ? zoomMenuItems.length - 1 : current;
+if (e.key === "ArrowDown") next = (current + 1) % zoomMenuItems.length;
+if (e.key === "ArrowUp") next = (current - 1 + zoomMenuItems.length) % zoomMenuItems.length;
+zoomMenuItems[next].focus();
+});
+}
+if (selectTrigger) {
+this._listen(selectTrigger, "keydown", (e) => {
+if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+e.preventDefault();
+e.stopPropagation();
+setSelectMenuOpen(true);
+const index = e.key === "ArrowDown" ? 0 : selectMenuItems.length - 1;
+selectMenuItems[index].focus();
+});
+this._listen(selectMenu, "keydown", (e) => {
+if (e.key === "Escape") {
+e.preventDefault();
+e.stopPropagation();
+setSelectMenuOpen(false, true);
+return;
+}
+if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+e.preventDefault();
+const current = selectMenuItems.indexOf(document.activeElement);
+let next = e.key === "Home" ? 0 : e.key === "End" ? selectMenuItems.length - 1 : current;
+if (e.key === "ArrowDown") next = (current + 1) % selectMenuItems.length;
+if (e.key === "ArrowUp") {
+next = (current - 1 + selectMenuItems.length) % selectMenuItems.length;
+}
+selectMenuItems[next].focus();
+});
+}
+this._listen(grip, "keydown", (e) => {
+if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+if (!exportMenuItems.length) return;
+e.preventDefault();
+e.stopPropagation();
+setExportMenuOpen(true);
+const index = e.key === "ArrowDown" ? 0 : exportMenuItems.length - 1;
+exportMenuItems[index].focus();
+});
+this._listen(exportMenu, "keydown", (e) => {
+if (e.key === "Escape") {
+e.preventDefault();
+e.stopPropagation();
+setExportMenuOpen(false, true);
+return;
+}
+if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+e.preventDefault();
+const current = exportMenuItems.indexOf(document.activeElement);
+let next = e.key === "Home" ? 0 : e.key === "End" ? exportMenuItems.length - 1 : current;
+if (e.key === "ArrowDown") next = (current + 1) % exportMenuItems.length;
+if (e.key === "ArrowUp") {
+next = (current - 1 + exportMenuItems.length) % exportMenuItems.length;
+}
+exportMenuItems[next].focus();
+});
+root.appendChild(bar);
+this._fitModebar();
+setVisible(root.matches(":hover"));
+this._setDragMode(this.dragMode);
+},
+_fitModebar() {
+const bar = this._modebar;
+if (!bar) return;
+this._closeModebarMenu?.();
+if (!this._modebarMoved) {
+bar.style.top = `${this.plot.y + 4}px`;
+bar.style.left = `${this.plot.x + 4}px`;
+}
+bar.style.display = "flex";
+const fits =
+bar.offsetWidth + 8 <= this.plot.w && bar.offsetHeight + 8 <= this.plot.h;
+if (!fits) {
+bar.style.display = "none";
+return;
+}
+this._clampModebar();
+},
+_setDragMode(mode) {
+this.dragMode = mode;
+if (this.canvas) this.canvas.dataset.xyDragmode = mode;
+for (const [name, btn] of Object.entries(this._modeBtns || {})) {
+btn.classList.toggle("xy-active", name === mode);
+btn.setAttribute("aria-pressed", String(name === mode));
+}
+this._zoomMenuButton?.classList.toggle("xy-active", mode === "zoom");
+this._selectMenuButton?.classList.toggle("xy-active", mode.startsWith("select"));
+const selectionMode = {
+select: ["select", "Box Select"],
+"select-lasso": ["lasso", "Lasso Select"],
+"select-x": ["selectx", "X Range"],
+"select-y": ["selecty", "Y Range"],
+}[mode];
+if (selectionMode && this._selectMenuButton && this._selectMenuIcon) {
+const [iconName, label] = selectionMode;
+this._selectMenuIcon.innerHTML = this._icon(iconName);
+this._selectMenuButton.title = `Selection controls: ${label}`;
+this._selectMenuButton.setAttribute("aria-label", `Selection controls: ${label}`);
+}
+},
+_actionLabel(action, axes) {
+const ids = Array.isArray(axes) ? axes : [...axes || []];
+if (!ids.length) return action;
+return `${action} on ${ids.join(" and ")} ${ids.length === 1 ? "axis" : "axes"}`;
+},
+_updateZoomMenuLabel() {
+if (!this._zoomMenuLabel || !this.view || !this.view0) return;
+const axisPercent = (axisId, lo, hi, homeLo, homeHi) => {
+const axis = this._axis(axisId);
+const span = Math.abs(this._axisCoord(axis, hi) - this._axisCoord(axis, lo));
+const homeSpan = Math.abs(
+this._axisCoord(axis, homeHi) - this._axisCoord(axis, homeLo)
+);
+return Number.isFinite(span) && span > 0 && Number.isFinite(homeSpan) && homeSpan > 0
+? (homeSpan / span) * 100
+: null;
+};
+const zoomAxes = [...this._zoomAxes()];
+const percentages = zoomAxes.map((axisId) => {
+const [lo, hi] = this._axisRange(axisId);
+const [homeLo, homeHi] = this._axisRange(axisId, this.view0);
+return [axisId, axisPercent(axisId, lo, hi, homeLo, homeHi)];
+}).filter((entry) => entry[1] !== null);
+const percent = percentages[0]?.[1] ?? 100;
+const rounded = Math.round(percent);
+const exactText = percent < 1 ? "<1%" : `${rounded}%`;
+const displayText = rounded > 999 ? `${String(rounded).slice(0, 3)}…%` : exactText;
+if (this._zoomMenuLabel.dataset.xyZoomExact === exactText
+&& this._zoomMenuLabel.textContent === displayText) return;
+this._zoomMenuLabel.textContent = displayText;
+this._zoomMenuLabel.dataset.xyZoomExact = exactText;
+const details = percentages.map(([axisId, value]) => `${axisId} ${Math.round(value)}%`).join(", ");
+this._zoomMenuButton.title = `Zoom controls (${details || exactText})`;
+this._zoomMenuButton.setAttribute("aria-label", `Zoom controls, ${details || exactText}`);
+},
+_prefersReducedMotion() {
+return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+},
+_cancelViewAnimation() {
+if (this._animRaf) cancelAnimationFrame(this._animRaf);
+this._animRaf = null;
+this._viewAnim = null;
+},
+_setView(next, opts = {}) {
+if (this._destroyed) return [];
+const target = this._clampView(this._viewFrom(next), { anchors: opts.anchors });
+const changedAxes = this._axisIds().filter((axisId) => {
+const before = this._axisRange(axisId);
+const after = this._axisRange(axisId, target);
+return before[0] !== after[0] || before[1] !== after[1];
+});
+if (!changedAxes.length) return [];
+const animate = opts.animate === true && !this._prefersReducedMotion();
+const duration = opts.duration || 180;
+if (!animate || duration <= 0) {
+this._cancelViewAnimation();
+this.view = target;
+this.draw();
+if (opts.request !== false) this._scheduleViewRequest();
+this._emitViewChange(opts.source || "programmatic", {
+axes: changedAxes,
+phase: opts.phase || "end",
+interactionId: opts.interactionId,
+broadcast: opts.broadcast,
+});
+return changedAxes;
+}
+clearTimeout(this._viewTimer);
+this.seq += 1;
+const request = opts.request !== false;
+const requestDelay = opts.requestDelay ?? Math.min(55, Math.max(24, duration * 0.35));
+const requestMaxWait = opts.requestMaxWait ?? 130;
+if (request) {
+this._scheduleViewRequest(target, { seq: this.seq, delay: requestDelay, maxWait: requestMaxWait });
+}
+const now = this._now();
+const tau = Math.max(18, duration / 5);
+if (this._viewAnim) {
+this._viewAnim.target = target;
+this._viewAnim.tau = tau;
+this._viewAnim.changedAxes = [...new Set([...this._viewAnim.changedAxes, ...changedAxes])];
+return changedAxes;
+}
+this._viewAnim = {
+target,
+last: now,
+tau,
+changedAxes,
+};
+const lerp = (a, b, t) => a + (b - a) * t;
+const span = (v) => Math.max(
+...this._axisIds().map((axisId) => {
+const [lo, hi] = this._axisRange(axisId, v);
+return Math.abs(hi - lo);
+}),
+1e-12,
+);
+const closeEnough = (a, b) => {
+const tol = span(b) * 1e-4;
+return Math.max(...this._axisIds().flatMap((axisId) => {
+const ar = this._axisRange(axisId, a), br = this._axisRange(axisId, b);
+return [Math.abs(ar[0] - br[0]), Math.abs(ar[1] - br[1])];
+})) <= tol;
+};
+const step = (nowFrame) => {
+if (this._destroyed) { this._animRaf = null; return; }
+const anim = this._viewAnim;
+if (!anim) { this._animRaf = null; return; }
+const dt = Math.max(0, Math.min(64, nowFrame - anim.last));
+anim.last = nowFrame;
+const k = 1 - Math.exp(-dt / anim.tau);
+const t = closeEnough(this.view, anim.target) ? 1 : k;
+const ranges = {};
+for (const axisId of this._axisIds()) {
+const current = this._axisRange(axisId), targetRange = this._axisRange(axisId, anim.target);
+ranges[axisId] = [
+lerp(current[0], targetRange[0], t),
+lerp(current[1], targetRange[1], t),
+];
+}
+this.view = this._copyView({ ranges });
+if (t < 1) {
+this.draw();
+this._animRaf = requestAnimationFrame(step);
+} else {
+this._animRaf = null;
+this._viewAnim = null;
+this.view = anim.target;
+this._lastLabelDraw = null;
+this.draw();
+this._emitViewChange(opts.source || "programmatic", {
+axes: anim.changedAxes,
+phase: opts.phase || "end",
+interactionId: opts.interactionId,
+broadcast: opts.broadcast,
+});
+}
+};
+this._animRaf = requestAnimationFrame(step);
+return changedAxes;
+},
+_zoomLimitForAxis(axisId) {
+if (!this._axisPolicy("zoom_axes").includes(axisId)) return [null, null];
+const configured = this.interaction?.zoom_limits;
+if (configured && typeof configured === "object" && !Array.isArray(configured)) {
+const pair = configured[axisId];
+if (Array.isArray(pair) && pair.length === 2) return pair;
+}
+return [1, null];
+},
+_clampAxisRange(axisId, lo, hi, anchorFrac = 0.5) {
+const axis = this._axis(axisId);
+let c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+if (![c0, c1].every(Number.isFinite) || c0 === c1) return this._axisRange(axisId, this.view0);
+const home = this.view0?.ranges?.[axisId];
+if (home) {
+const h0 = this._axisCoord(axis, home[0]), h1 = this._axisCoord(axis, home[1]);
+const homeSpan = Math.abs(h1 - h0);
+const [minMagRaw, maxMagRaw] = this._zoomLimitForAxis(axisId);
+const minMag = Number(minMagRaw), maxMag = Number(maxMagRaw);
+const maxSpan = Number.isFinite(minMag) && minMag > 0 ? homeSpan / minMag : Infinity;
+const minSpan = Number.isFinite(maxMag) && maxMag > 0 ? homeSpan / maxMag : 0;
+const requestedSpan = Math.abs(c1 - c0);
+const limitedSpan = Math.max(minSpan, Math.min(maxSpan, requestedSpan));
+if (Number.isFinite(limitedSpan) && limitedSpan > 0 && limitedSpan !== requestedSpan) {
+const direction = c1 < c0 ? -1 : 1;
+const anchor = c0 + anchorFrac * (c1 - c0);
+c0 = anchor - anchorFrac * limitedSpan * direction;
+c1 = anchor + (1 - anchorFrac) * limitedSpan * direction;
+}
+}
+let boundLo = -Infinity, boundHi = Infinity;
+if (Array.isArray(axis.bounds) && axis.bounds.length === 2) {
+const b0 = this._axisCoord(axis, axis.bounds[0]);
+const b1 = this._axisCoord(axis, axis.bounds[1]);
+if (![c0, c1, b0, b1].every(Number.isFinite) || b0 === b1) return [lo, hi];
+boundLo = Math.min(b0, b1);
+boundHi = Math.max(b0, b1);
+}
+if (home && this._axisContained(axisId)) {
+const h0 = this._axisCoord(axis, home[0]);
+const h1 = this._axisCoord(axis, home[1]);
+if ([h0, h1].every(Number.isFinite) && h0 !== h1) {
+boundLo = Math.max(boundLo, Math.min(h0, h1));
+boundHi = Math.min(boundHi, Math.max(h0, h1));
+}
+}
+if (!Number.isFinite(boundLo) || !Number.isFinite(boundHi) || boundHi <= boundLo) {
+return [this._axisValue(axis, c0), this._axisValue(axis, c1)];
+}
+const reverse = c1 < c0;
+let outLo = Math.min(c0, c1), outHi = Math.max(c0, c1);
+if (outHi - outLo >= boundHi - boundLo) {
+outLo = boundLo;
+outHi = boundHi;
+} else {
+const shift = Math.max(boundLo - outLo, Math.min(boundHi - outHi, 0));
+outLo += shift;
+outHi += shift;
+}
+const first = reverse ? outHi : outLo;
+const second = reverse ? outLo : outHi;
+return [this._axisValue(axis, first), this._axisValue(axis, second)];
+},
+_clampView(view, opts = {}) {
+const candidate = this._viewFrom(view, this.view0);
+const ranges = {};
+for (const axisId of this._axisIds()) {
+const [lo, hi] = this._axisRange(axisId, candidate);
+ranges[axisId] = this._clampAxisRange(axisId, lo, hi, opts.anchors?.[axisId] ?? 0.5);
+}
+return this._copyView({ ranges });
+},
+_zoomAxes() {
+return new Set(this._axisPolicy("zoom_axes"));
+},
+_zoomBy(f, animate = false, source = f < 1 ? "zoom_in" : "zoom_out") {
+const base = this._viewAnim ? this._viewAnim.target : this.view;
+const axes = this._zoomAxes();
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId, base)]])
+);
+for (const axisId of axes) {
+const [lo, hi] = ranges[axisId];
+const range = this._zoomAxisRange(axisId, lo, hi, f, 0.5);
+if (range) ranges[axisId] = range;
+}
+this._setView({ ranges }, {
+animate,
+source,
+phase: "end",
+interactionId: ++this._interactionSeq,
+});
+},
+_zoomAxisRange(axisId, lo, hi, f, anchorFrac) {
+const axis = this._axis(axisId);
+const c0 = this._axisCoord(axis, lo);
+const c1 = this._axisCoord(axis, hi);
+if (![c0, c1].every(Number.isFinite) || c0 === c1) return null;
+const ca = c0 + anchorFrac * (c1 - c0);
+if (f < 1) {
+const minSpan = Math.max(Math.abs(ca), 1e-30) * 1e-12;
+if (Math.abs((c1 - c0) * f) < minSpan) return null;
+}
+const next0 = ca - (ca - c0) * f;
+const next1 = ca + (c1 - ca) * f;
+if (f > 1 && this.view0) {
+const home = this._axisRange(axisId, this.view0);
+const home0 = this._axisCoord(axis, home[0]);
+const home1 = this._axisCoord(axis, home[1]);
+const homeSpan = Math.abs(home1 - home0);
+if ([home0, home1].every(Number.isFinite)
+&& homeSpan > 0
+&& Math.abs(next1 - next0) > homeSpan) {
+const signedHome = homeSpan * Math.sign(next1 - next0);
+return [
+this._axisValue(axis, ca - anchorFrac * signedHome),
+this._axisValue(axis, ca + (1 - anchorFrac) * signedHome),
+];
+}
+}
+return [
+this._axisValue(axis, next0),
+this._axisValue(axis, next1),
+];
+},
+_zoomAt(f, fx, fy, animate = false, duration = 120, opts = {}) {
+const base = this._viewAnim ? this._viewAnim.target : this.view;
+const axes = this._zoomAxes();
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId, base)]])
+);
+const anchors = {};
+for (const axisId of axes) {
+const anchor = this._axisDim(axisId) === "x" ? fx : fy;
+const [lo, hi] = ranges[axisId];
+const range = this._zoomAxisRange(axisId, lo, hi, f, anchor);
+if (range) ranges[axisId] = range;
+anchors[axisId] = anchor;
+}
+return this._setView({ ranges }, {
+animate,
+duration,
+anchors,
+source: opts.source || "wheel_zoom",
+phase: opts.phase || "update",
+interactionId: opts.interactionId,
+});
+},
+_queueWheelZoom(factor, fx, fy) {
+if (!Number.isFinite(factor) || factor <= 0) return;
+clearTimeout(this._wheelZoomEndTimer);
+this._wheelZoomEndTimer = null;
+if (!this._wheelGesture) {
+this._wheelGesture = { interactionId: ++this._interactionSeq, axes: new Set() };
+}
+if (!this._pendingWheelZoom) {
+this._pendingWheelZoom = {
+factor: 1,
+fx,
+fy,
+interactionId: this._wheelGesture.interactionId,
+axes: [],
+};
+}
+this._pendingWheelZoom.factor *= factor;
+this._pendingWheelZoom.fx = fx;
+this._pendingWheelZoom.fy = fy;
+if (this._wheelZoomRaf) return;
+this._wheelZoomRaf = requestAnimationFrame(() => {
+this._wheelZoomRaf = null;
+const pending = this._pendingWheelZoom;
+this._pendingWheelZoom = null;
+if (!pending || this._destroyed) return;
+pending.axes = this._zoomAt(pending.factor, pending.fx, pending.fy, false, 120, {
+source: "wheel_zoom",
+phase: "update",
+interactionId: pending.interactionId,
+}) || [];
+for (const axisId of pending.axes) this._wheelGesture?.axes.add(axisId);
+clearTimeout(this._wheelZoomEndTimer);
+this._wheelZoomEndTimer = setTimeout(() => {
+const gesture = this._wheelGesture;
+this._wheelGesture = null;
+if (this._destroyed || !gesture || !gesture.axes.size) return;
+this._emitViewChange("wheel_zoom", {
+axes: [...gesture.axes],
+phase: "end",
+interactionId: gesture.interactionId,
+});
+}, 90);
+});
+},
+_zoomToBox(d0, d1, animate = false, opts = {}) {
+const axes = this._zoomAxes();
+const fractions = {};
+for (const dim of ["x", "y"]) {
+const primary = this._axis(dim);
+const [lo, hi] = this._axisRange(dim);
+const c0 = this._axisCoord(primary, lo), c1 = this._axisCoord(primary, hi);
+const first = this._axisCoord(primary, d0[dim === "x" ? 0 : 1]);
+const second = this._axisCoord(primary, d1[dim === "x" ? 0 : 1]);
+if (![c0, c1, first, second].every(Number.isFinite) || c0 === c1) return [];
+fractions[dim] = [(first - c0) / (c1 - c0), (second - c0) / (c1 - c0)];
+}
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+);
+const anchors = {};
+for (const axisId of axes) {
+const axis = this._axis(axisId);
+const [lo, hi] = ranges[axisId];
+const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+const [f0, f1] = fractions[this._axisDim(axisId)];
+const a = c0 + f0 * (c1 - c0), b = c0 + f1 * (c1 - c0);
+const minSpan = Math.max(Math.abs(a), Math.abs(b), 1e-30) * 1e-12;
+if (!Number.isFinite(a) || !Number.isFinite(b) || Math.abs(b - a) < minSpan) continue;
+const reverse = c1 < c0;
+const low = Math.min(a, b), high = Math.max(a, b);
+ranges[axisId] = [
+this._axisValue(axis, reverse ? high : low),
+this._axisValue(axis, reverse ? low : high),
+];
+anchors[axisId] = 0.5;
+}
+return this._setView({ ranges }, {
+animate,
+anchors,
+source: opts.source || "box_zoom",
+phase: opts.phase || "end",
+interactionId: opts.interactionId,
+});
+},
+_resetView(animate = true, source = "reset") {
+const ranges = Object.fromEntries(
+this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
+);
+for (const axisId of this._resetAxisPolicy()) {
+ranges[axisId] = [...this._axisRange(axisId, this.view0)];
+}
+return this._setView({ ranges }, {
+animate,
+source,
+phase: "end",
+interactionId: ++this._interactionSeq,
+});
+},
+_exportConfig() {
+const config = this.spec && this.spec.export;
+return config && typeof config === "object" ? config : {};
+},
+_exportFilename(extension) {
+const configured = this._exportConfig().filename;
+if (typeof configured === "string" && configured) return `${configured}.${extension}`;
+const title = String(this.spec.title || "xy-chart")
+.trim()
+.toLowerCase()
+.replace(/[^a-z0-9]+/g, "-")
+.replace(/^-+|-+$/g, "") || "xy-chart";
+return `${title}.${extension}`;
+},
+_downloadExport(blob, filename) {
+const url = URL.createObjectURL(blob);
+const link = document.createElement("a");
+link.href = url;
+link.download = filename;
+link.style.display = "none";
+document.body.appendChild(link);
+link.click();
+link.remove();
+setTimeout(() => URL.revokeObjectURL(url), 0);
+},
+_exportSvgMarkup() {
+this._drawNow?.();
+this.gl?.finish?.();
+const width = this.size.w;
+const height = this.size.h;
+const clone = this.root.cloneNode(true);
+clone.style.width = `${width}px`;
+clone.style.height = `${height}px`;
+clone.style.margin = "0";
+clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+const computed = getComputedStyle(this.root);
+const inheritedProperties = [
+"color", "font-family", "font-size", "font-style", "font-weight",
+"letter-spacing", "line-height",
+];
+const chartTokens = [
+"--chart-bg", "--chart-text", "--chart-grid", "--chart-axis",
+"--chart-tooltip-bg", "--chart-tooltip-text", "--chart-legend-bg",
+"--chart-badge-bg", "--chart-badge-text", "--chart-modebar-bg",
+"--chart-modebar-active", "--chart-selection", "--chart-selection-fill",
+"--chart-zoom-selection", "--chart-zoom-selection-fill", "--chart-crosshair",
+"--chart-annotation-text", "--chart-cursor", "--chart-cursor-pan",
+];
+for (let i = 0; i < computed.length; i++) {
+const property = computed.item(i);
+if (!property.startsWith("--")) continue;
+const value = computed.getPropertyValue(property).trim();
+if (value) clone.style.setProperty(property, value);
+}
+for (const property of [...inheritedProperties, ...chartTokens]) {
+const value = computed.getPropertyValue(property).trim();
+if (value) clone.style.setProperty(property, value);
+}
+const sourceCanvases = [...this.root.querySelectorAll("canvas")];
+const clonedCanvases = [...clone.querySelectorAll("canvas")];
+for (let i = 0; i < clonedCanvases.length; i++) {
+const source = sourceCanvases[i];
+const target = clonedCanvases[i];
+if (!source || !target) continue;
+const image = document.createElement("img");
+image.setAttribute("src", source.toDataURL("image/png"));
+image.setAttribute("alt", "");
+image.setAttribute("style", target.getAttribute("style") || "");
+image.setAttribute("width", String(source.clientWidth || source.width));
+image.setAttribute("height", String(source.clientHeight || source.height));
+for (const attr of target.attributes) {
+if (attr.name.startsWith("data-")) image.setAttribute(attr.name, attr.value);
+}
+target.replaceWith(image);
+}
+clone.querySelectorAll(
+'[data-xy-slot="modebar"],[data-xy-slot="tooltip"],' +
+'[data-xy-slot="selection"],[data-xy-selection-lasso-overlay],' +
+'[data-xy-slot="crosshair_x"],[data-xy-slot="crosshair_y"]'
+).forEach((node) => node.remove());
+const stylesheet = document.createElement("style");
+stylesheet.textContent = XY_CHROME_CSS;
+clone.prepend(stylesheet);
+const content = new XMLSerializer().serializeToString(clone);
+return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" ` +
+`viewBox="0 0 ${width} ${height}"><foreignObject width="100%" height="100%">` +
+`${content}</foreignObject></svg>`;
+},
+_exportSvg() {
+const svg = this._exportSvgMarkup();
+this._downloadExport(
+new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
+this._exportFilename("svg")
+);
+},
+_exportPng() {
+return this._exportRaster("png");
+},
+_exportRaster(format) {
+const svg = this._exportSvgMarkup();
+const sourceUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+const image = new Image();
+const config = this._exportConfig();
+const mime = { png: "image/png", jpeg: "image/jpeg", webp: "image/webp" }[format];
+if (!mime) return Promise.reject(new Error(`unsupported raster export ${format}`));
+return new Promise((resolve, reject) => {
+image.onload = () => {
+const scale = Number.isFinite(config.scale) && config.scale > 0
+? config.scale
+: Math.max(1, window.devicePixelRatio || 1);
+const canvas = document.createElement("canvas");
+canvas.width = Math.round(this.size.w * scale);
+canvas.height = Math.round(this.size.h * scale);
+const ctx = canvas.getContext("2d");
+const configured = typeof config.background === "string" &&
+config.background !== "auto" ? config.background : null;
+const transparent = configured === "transparent" || configured === "none";
+if (format === "jpeg") {
+ctx.fillStyle = configured && !transparent ? configured : "#ffffff";
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+} else if (configured && !transparent) {
+ctx.fillStyle = configured;
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+ctx.scale(scale, scale);
+ctx.drawImage(image, 0, 0, this.size.w, this.size.h);
+const quality = Number.isFinite(config.quality)
+? Math.min(1, Math.max(0.01, config.quality / 100))
+: 0.9;
+canvas.toBlob((blob) => {
+if (!blob) {
+reject(new Error(`${format.toUpperCase()} encoding returned no data`));
+return;
+}
+const actual = blob.type === "image/jpeg" ? "jpg"
+: blob.type === "image/webp" ? "webp"
+: "png";
+this._downloadExport(blob, this._exportFilename(actual));
+resolve();
+}, mime, format === "png" ? undefined : quality);
+};
+image.onerror = () => {
+reject(new Error("chart SVG could not be rasterized"));
+};
+image.src = sourceUrl;
+});
+},
+_exportCsvText() {
+const columns = ["trace", "name", "kind", "index", "x", "y", "x0", "x1", "y0", "y1", "value"];
+const rows = [columns];
+const clean = (value) => Number.isFinite(value) ? value : "";
+for (const g of this.gpuTraces || []) {
+const trace = g.trace || {};
+const prefix = [trace.id ?? "", trace.name ?? "", trace.kind ?? ""];
+if (g._cpuRect) {
+const r = g._cpuRect;
+const n = Math.min(r.x0.length, r.x1.length, r.y0.length, r.y1.length);
+for (let i = 0; i < n; i++) {
+rows.push([...prefix, i, "", "",
+clean(this._decodeValue(r.x0, r.x0Meta, i)),
+clean(this._decodeValue(r.x1, r.x1Meta, i)),
+clean(this._decodeValue(r.y0, r.y0Meta, i)),
+clean(this._decodeValue(r.y1, r.y1Meta, i)), ""]);
+}
+continue;
+}
+if (g.heatmap && g._cpuHeatmap) {
+const h = g.heatmap;
+for (let i = 0; i < g._cpuHeatmap.grid.length; i++) {
+const row = Math.floor(i / h.w);
+const col = i % h.w;
+const x = h.xRange[0] + (col + 0.5) * ((h.xRange[1] - h.xRange[0]) / h.w);
+const y = h.yRange[0] + (row + 0.5) * ((h.yRange[1] - h.yRange[0]) / h.h);
+const value = this._denormalizeUnit(g._cpuHeatmap.grid[i], trace.color?.domain);
+rows.push([...prefix, i, clean(x), clean(y), "", "", "", "", clean(value)]);
+}
+continue;
+}
+const cpu = g._cpu;
+if (!cpu?.x || !cpu?.y) continue;
+const n = Math.min(cpu.x.length, cpu.y.length, g.n || Infinity);
+for (let i = 0; i < n; i++) {
+rows.push([...prefix, i,
+clean(this._decodeValue(cpu.x, cpu.xMeta || g.xMeta, i)),
+clean(this._decodeValue(cpu.y, cpu.yMeta || g.yMeta, i)),
+"", "", "", "", ""]);
+}
+}
+const quote = (value) => {
+const text = String(value ?? "");
+const escaped = text.split('"').join('""');
+return text.includes(",") || text.includes('"') || text.includes("\r") || text.includes("\n")
+? `"${escaped}"`
+: text;
+};
+return rows.map((row) => row.map(quote).join(",")).join("\r\n") + "\r\n";
+},
+_exportCsv() {
+this._downloadExport(
+new Blob([this._exportCsvText()], { type: "text/csv;charset=utf-8" }),
+this._exportFilename("csv")
+);
+},
+_icon(name) {
+const svg = (body) =>
+`<svg width="15" height="15" viewBox="0 0 20 20" fill="none" ` +
+`stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ` +
+`stroke-linejoin="round">${body}</svg>`;
+switch (name) {
+case "zoomin":
+return svg('<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5 L17 17"/>' +
+'<path d="M8.5 6 V11 M6 8.5 H11"/>');
+case "zoomout":
+return svg('<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5 L17 17"/>' +
+'<path d="M6 8.5 H11"/>');
+case "pan":
+return svg('<path d="M10 3 V17 M3 10 H17"/><path d="M10 3 L8 5 M10 3 L12 5"/>' +
+'<path d="M10 17 L8 15 M10 17 L12 15"/><path d="M3 10 L5 8 M3 10 L5 12"/>' +
+'<path d="M17 10 L15 8 M17 10 L15 12"/>');
+case "zoom":
+return svg('<path d="M7 3.5 H3.5 V7 M13 3.5 H16.5 V7 ' +
+'M3.5 13 V16.5 H7 M16.5 13 V16.5 H13"/>');
+case "select":
+return svg('<path d="M7 4 H4 V7 M13 4 H16 V7 M4 13 V16 H7 ' +
+'M16 13 V16 H13"/><circle cx="7" cy="8" r="1" fill="currentColor" ' +
+'stroke="none"/><circle cx="12.5" cy="9" r="1" fill="currentColor" stroke="none"/>' +
+'<circle cx="9.5" cy="13" r="1" fill="currentColor" stroke="none"/>');
+case "lasso":
+return svg('<path d="M5 5.5 C7 3 13.5 3.5 15.5 7 C17 10 14 15.5 9 15.5 ' +
+'C4.5 15.5 2.5 11 4 7.5 Z"/><circle cx="5" cy="5.5" r="1" ' +
+'fill="currentColor" stroke="none"/><circle cx="15.5" cy="7" r="1" ' +
+'fill="currentColor" stroke="none"/><circle cx="9" cy="15.5" r="1" ' +
+'fill="currentColor" stroke="none"/>');
+case "selectx":
+return svg('<path d="M5 4 V16 M15 4 V16 M7 10 H13 ' +
+'M7 10 L9 8 M7 10 L9 12 M13 10 L11 8 M13 10 L11 12"/>');
+case "selecty":
+return svg('<path d="M4 5 H16 M4 15 H16 M10 7 V13 ' +
+'M10 7 L8 9 M10 7 L12 9 M10 13 L8 11 M10 13 L12 11"/>');
+case "chevrondown":
+return svg('<path d="M6 8 L10 12 L14 8"/>');
+case "collapse":
+return svg('<path d="M4 5 H16 M4 15 H16 M7 8 L10 11 L13 8"/>');
+case "expand":
+return svg('<path d="M4 5 H16 M4 15 H16 M7 12 L10 9 L13 12"/>');
+case "png":
+return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+'<path d="M7 13 L9 10.5 L11 12 L13.5 9 V15 H7 Z"/>');
+case "jpeg":
+return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+'<circle cx="8.5" cy="10" r="1.2"/><path d="M7 15 L10 12 L13.5 15 Z"/>');
+case "webp":
+return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+'<path d="M7 11 C8 10 9 10 10 11 C11 12 12 12 13.5 11"/>' +
+'<path d="M7 14 C8 13 9 13 10 14 C11 15 12 15 13.5 14"/>');
+case "svg":
+return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+'<path d="M7 13 L9 9 L11 14 L13.5 10"/>');
+case "csv":
+return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+'<path d="M7 9 H13 M7 12 H13 M7 15 H13 M9 8 V16"/>');
+case "reset":
+return svg('<path d="M4 10 a6 6 0 1 1 1.8 4.3"/><path d="M4 6 V10 H8"/>');
+case "drag":
+return svg('<circle cx="7" cy="5" r=".8" fill="currentColor" stroke="none"/>' +
+'<circle cx="13" cy="5" r=".8" fill="currentColor" stroke="none"/>' +
+'<circle cx="7" cy="10" r=".8" fill="currentColor" stroke="none"/>' +
+'<circle cx="13" cy="10" r=".8" fill="currentColor" stroke="none"/>' +
+'<circle cx="7" cy="15" r=".8" fill="currentColor" stroke="none"/>' +
+'<circle cx="13" cy="15" r=".8" fill="currentColor" stroke="none"/>');
+default:
+return svg("");
+}
+},
+});
+Object.assign(ChartView.prototype, {
+_scheduleViewRequest(viewOverride = this.view, opts = {}) {
+if (this._destroyed || this._glLost) return;
+if (!this.comm) {
+this._scheduleSampleRebin(viewOverride, opts);
+return;
+}
+const needsDecimated = this.spec.traces.some((t) => t.tier === "decimated");
+const needsDensity = this.gpuTraces.some((g) => g.tier === "density");
+if (!needsDecimated && !needsDensity) return;
+const seq = opts.seq ?? ++this.seq;
+const view = this._copyView(viewOverride);
+const plotW = Math.round(this.plot.w);
+const plotH = Math.round(this.plot.h);
+if (needsDensity) {
+const now = this._now();
+for (const g of this.gpuTraces) {
+if (g.tier !== "density") continue;
+g._lodPendingView = view;
+g._lodPendingSeq = seq;
+g._lodPendingAt = now;
+}
+}
+let delay = opts.delay ?? 120;
+if (opts.maxWait !== undefined && opts.maxWait !== null) {
+const now = this._now();
+if (this._viewRequestBurstStart === undefined || this._viewRequestBurstStart === null) {
+this._viewRequestBurstStart = now;
+}
+const remaining = opts.maxWait - (now - this._viewRequestBurstStart);
+delay = remaining <= 0 ? 0 : Math.min(delay, remaining);
+} else {
+this._viewRequestBurstStart = null;
+}
+clearTimeout(this._viewTimer);
+const send = () => {
+if (this._destroyed) return;
+this._viewRequestBurstStart = null;
+if (seq !== this.seq) return;
+if (needsDecimated) {
+this.comm.send({
+type: "view", seq,
+x0: Math.min(view.x0, view.x1), x1: Math.max(view.x0, view.x1), px: plotW,
+});
+}
+if (needsDensity) {
+for (const g of this.gpuTraces) {
+if (g.tier !== "density") continue;
+const [x0, x1] = this._axisRange(g.xAxis, view);
+const [y0, y1] = this._axisRange(g.yAxis, view);
+this.comm.send({
+type: "density_view", seq, trace: g.trace.id,
+x0: Math.min(x0, x1), x1: Math.max(x0, x1),
+y0: Math.min(y0, y1), y1: Math.max(y0, y1),
+w: plotW, h: plotH,
+});
+}
+}
+};
+if (delay <= 0) {
+send();
+} else {
+this._viewTimer = setTimeout(send, delay);
+}
+return seq;
+},
+_scheduleSampleRebin(viewOverride = this.view, opts = {}) {
+if (this._destroyed || this._glLost || this._sampleRebinDisabled) return;
+const targets = (this.gpuTraces || []).filter(
+(g) => g.tier === "density" && g.sampleOverlay && g.sampleOverlay._cpu
+);
+if (!targets.length) return;
+const seq = opts.seq ?? ++this.seq;
+const view = this._copyView(viewOverride);
+clearTimeout(this._rebinTimer);
+this._rebinTimer = setTimeout(() => {
+if (this._destroyed || seq !== this.seq) return;
+for (const g of targets) this._requestSampleRebin(g, view, seq);
+}, opts.delay ?? 120);
+},
+_requestSampleRebin(g, view, seq) {
+if (!g._homeDensity) g._homeDensity = g.density;
+const [vx0, vx1] = this._axisRange(g.xAxis, view);
+const [vy0, vy1] = this._axisRange(g.yAxis, view);
+const [hx0, hx1] = this._axisRange(g.xAxis, this.view0);
+const [hy0, hy1] = this._axisRange(g.yAxis, this.view0);
+const homeSpanX = Math.max(Math.abs(hx1 - hx0), 1e-300);
+const homeSpanY = Math.max(Math.abs(hy1 - hy0), 1e-300);
+const viewSpanX = Math.abs(vx1 - vx0);
+const viewSpanY = Math.abs(vy1 - vy0);
+const notZoomedIn =
+viewSpanX >= homeSpanX * (1 - 1e-6) && viewSpanY >= homeSpanY * (1 - 1e-6);
+if (notZoomedIn) {
+if (g.density !== g._homeDensity) {
+const hd = g._homeDensity;
+this._applySampleRebinGrid(g, {
+...hd,
+tex: this._uploadGrid(hd.grid, hd.w, hd.h, hd.normMax || hd.max || 1),
+}, false);
+}
+return;
+}
+if (this._sampleRebinDisabled) return;
+if (!this._rebinWorker) {
+this._rebinWorker = xyCreateRebinWorker();
+if (!this._rebinWorker) {
+this._sampleRebinDisabled = true;
+return;
+}
+this._rebinWorker.onmessage = (e) => this._onRebinResult(e.data);
+this._rebinInit = new Set();
+}
+if (!this._rebinInit.has(g.trace.id)) {
+const cpu = g.sampleOverlay._cpu;
+const n = Math.min(cpu.x.length, cpu.y.length);
+const xs = new Float64Array(n);
+const ys = new Float64Array(n);
+for (let i = 0; i < n; i++) {
+xs[i] = this._decodeValue(cpu.x, cpu.xMeta, i);
+ys[i] = this._decodeValue(cpu.y, cpu.yMeta, i);
+}
+this._rebinWorker.postMessage(
+{ type: "init", trace: g.trace.id, x: xs.buffer, y: ys.buffer },
+[xs.buffer, ys.buffer]
+);
+this._rebinInit.add(g.trace.id);
+}
+this._rebinWorker.postMessage({
+type: "rebin", trace: g.trace.id, seq,
+x0: Math.min(vx0, vx1), x1: Math.max(vx0, vx1),
+y0: Math.min(vy0, vy1), y1: Math.max(vy0, vy1),
+w: Math.max(16, Math.min(2048, Math.round(this.plot.w))),
+h: Math.max(16, Math.min(2048, Math.round(this.plot.h))),
+});
+},
+_onRebinResult(msg) {
+if (this._destroyed || this._glLost || !msg || msg.type !== "grid" || msg.seq !== this.seq) return;
+const g = this.gpuTraces.find((t) => t.trace.id === msg.trace && t.tier === "density");
+if (!g) return;
+const grid = new Float32Array(msg.grid);
+this._applySampleRebinGrid(g, {
+w: msg.w, h: msg.h, max: msg.max, normMax: msg.max,
+colormap: g.density.colormap,
+xRange: [msg.x0, msg.x1], yRange: [msg.y0, msg.y1],
+grid,
+tex: this._uploadGrid(grid, msg.w, msg.h, msg.max || 1),
+lut: g.density.lut,
+}, true);
+},
+_applySampleRebinGrid(g, density, rebinned) {
+g.prevDensity = g.density;
+g._densityFadeStart = this._now();
+g.densityNormMax = density.normMax || density.max;
+g.density = density;
+g._sampleRebinned = !!rebinned;
+lodRememberDensity(this, g, g.density);
+this._refreshReductionBadges();
+this.draw();
+},
+_applyAppend(msg, buffers) {
+const spec = msg.spec;
+const blobRaw = buffers && buffers[0];
+if (!spec || !blobRaw || !spec.traces) return;
+const blob = bytesToSpan(blobRaw);
+const spanEps = (lo, hi) => Math.max(Math.abs(hi - lo), 1e-300) * 1e-9;
+const ex = spanEps(this.view0.x0, this.view0.x1);
+const ey = spanEps(this.view0.y0, this.view0.y1);
+const atHome =
+Math.abs(this.view.x0 - this.view0.x0) <= ex && Math.abs(this.view.x1 - this.view0.x1) <= ex &&
+Math.abs(this.view.y0 - this.view0.y0) <= ey && Math.abs(this.view.y1 - this.view0.y1) <= ey;
+const pinnedRight = !atHome && Math.abs(this.view.x1 - this.view0.x1) <= ex;
+const nextHome = {
+x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
+y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
+};
+let nextView = { ...this.view };
+if (atHome) {
+nextView = { ...nextHome };
+} else if (pinnedRight) {
+const w = this.view.x1 - this.view.x0;
+nextView = { ...this.view, x1: nextHome.x1, x0: nextHome.x1 - w };
+}
+const animated = !!spec.animation || spec.traces.some((trace) => !!trace.animation);
+if (animated && !this._glLost && this.gl && this.updatePayload(spec, blob)) {
+if (this._transitionView) this._transitionView.to = { ...nextView };
+else this.view = { ...nextView };
+this._scheduleViewRequest(nextView, { delay: 0 });
+return;
+}
+this.spec = spec;
+this.axes = this._normalizeAxes(spec);
+this._payload = blob;
+this.view0 = this._copyView({
+ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]) => [id, [...axis.range]])),
+});
+if (atHome) {
+this.view = this._copyView(this.view0);
+} else if (pinnedRight) {
+const w = this.view.x1 - this.view.x0;
+this.view = this._viewFrom({ x1: this.view0.x1, x0: this.view0.x1 - w });
+}
+if (this._glLost || !this.gl) return;
+const texSeen = new Set();
+for (const id of msg.affected || []) {
+const i = this.gpuTraces.findIndex((g) => g.trace.id === id);
+const ts = spec.traces.find((t) => t.id === id);
+if (i < 0 || !ts) continue;
+this._destroyTraceResources(this.gpuTraces[i], texSeen);
+this.gpuTraces[i] = this._buildTrace(blob, ts);
+}
+this._updatePickable();
+this._scheduleViewRequest(this.view, { delay: 0 });
+this.draw();
+},
+_onKernelMsg(msg, buffers) {
+if (this._destroyed) return;
+if (!msg) return;
+if (this._glLost && msg.type !== "append" && msg.type !== "pick_result") return;
+if (msg.type === "tier_update") {
+if (msg.seq !== this.seq) return;
+for (const upd of msg.traces) {
+const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
+if (!g) continue;
+const gl = this.gl;
+const xArr = this._asF32(buffers[upd.x.buf]);
+const yArr = this._asF32(buffers[upd.y.buf]);
+const bArr = upd.base && g.baseBuf ? this._asF32(buffers[upd.base.buf]) : null;
+let n = Math.min(upd.x.len, upd.y.len);
+if (bArr) n = Math.min(n, upd.base.len);
+const sm = this._smoothArrays(g.trace, xArr, yArr, bArr, n);
+const src = sm || { x: xArr, y: yArr, n };
+const st = this._stepArrays(g.trace, src.x, src.y, src.n);
+gl.bindBuffer(gl.ARRAY_BUFFER, g.xBuf);
+gl.bufferData(gl.ARRAY_BUFFER, st ? st.x : src.x, gl.STATIC_DRAW);
+gl.bindBuffer(gl.ARRAY_BUFFER, g.yBuf);
+gl.bufferData(gl.ARRAY_BUFFER, st ? st.y : src.y, gl.STATIC_DRAW);
+g.xMeta = { ...g.xMeta, offset: upd.x.offset, scale: upd.x.scale };
+g.yMeta = { ...g.yMeta, offset: upd.y.offset, scale: upd.y.scale };
+g._dashX = st ? st.x : src.x;
+g._dashY = st ? st.y : src.y;
+if (bArr) {
+gl.bindBuffer(gl.ARRAY_BUFFER, g.baseBuf);
+gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.extra : bArr, gl.STATIC_DRAW);
+g.baseMeta = { ...g.baseMeta, offset: upd.base.offset, scale: upd.base.scale };
+}
+g.n = st ? st.n : src.n;
+}
+this.draw();
+} else if (msg.type === "density_update") {
+if (msg.seq !== undefined && msg.seq !== this.seq) return;
+const densityTraces = msg.traces || [];
+const pendingTraceIds = new Set(densityTraces.map((upd) => Number(upd.id)));
+if (pendingTraceIds.size === 0 && msg.trace !== undefined) {
+pendingTraceIds.add(Number(msg.trace));
+}
+const clearAllPending = pendingTraceIds.size === 0 && msg.stale;
+const clearPending = (g) => {
+if (msg.seq !== undefined && g._lodPendingSeq !== msg.seq) return;
+g._lodPendingView = null;
+g._lodPendingSeq = null;
+g._lodPendingAt = null;
+};
+if (pendingTraceIds.size || clearAllPending) {
+for (const g of this.gpuTraces) {
+if (g.tier !== "density") continue;
+if (!clearAllPending && !pendingTraceIds.has(g.trace.id)) continue;
+clearPending(g);
+}
+}
+for (const upd of densityTraces) {
+const g = this.gpuTraces.find((t) => t.trace.id === upd.id && t.tier === "density");
+if (!g) continue;
+clearPending(g);
+if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
+lodApplyDensityUpdate(this, g, upd, buffers);
+}
+this._updatePickable();
+this.draw();
+} else if (msg.type === "append") {
+this._applyAppend(msg, buffers);
+} else if (msg.type === "pick_result") {
+if (msg.seq !== undefined && msg.seq !== this._pickSeq) return;
+if (!msg.row) { this._hideTooltip(); return; }
+const local = this._lastRow;
+if (local && local.trace === msg.row.trace && local.index === msg.row.index) {
+for (const [key, value] of Object.entries(local)) {
+if (msg.row[key] === undefined) msg.row[key] = value;
+}
+}
+this._applySharedTooltipFields(msg.row);
+this._lastRow = msg.row;
+if (this._tooltipAnchor
+&& Number.isFinite(msg.row.x) && Number.isFinite(msg.row.y)) {
+this._tooltipAnchor.x = msg.row.x;
+this._tooltipAnchor.y = msg.row.y;
+}
+const xy = this._lastHoverXY;
+if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY, {
+announce: !this._a11yKeyboardReadout,
+});
+if (this._interactionFlag("hover")) {
+this._dispatchChartEvent("hover", {
+row: msg.row,
+trace: msg.row.trace,
+index: msg.row.index,
+exact: true,
+view: this._eventView("hover"),
+});
+}
+} else if (msg.type === "selection") {
+if (msg.bounds) this._lastBrush = { mode: "box", ...msg.bounds };
+else if (msg.polygon) this._lastBrush = { mode: "poly", points: msg.polygon };
+if (!msg.traces || !msg.traces.length) {
+this._lastBrush = null;
+for (const g of this.gpuTraces) {
+g.selActive = false;
+if (g.drill) g.drill.selActive = false;
+}
+} else {
+for (const upd of msg.traces) {
+const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
+if (!g) continue;
+const pg = g.tier === "density" ? g.drill : g;
+if (!pg || !pg.n) continue;
+if (
+g.tier === "density" && upd.drill_seq !== undefined &&
+pg.seq !== undefined && upd.drill_seq !== pg.seq
+) continue;
+const idx = this._asU32(buffers[upd.buf]);
+const mask = new Float32Array(pg.n);
+for (let i = 0; i < idx.length; i++) if (idx[i] < pg.n) mask[idx[i]] = 1;
+this._applySelMask(pg, mask);
+}
+}
+this._selectionCount = msg.total || 0;
+this.draw();
+if (this._interactionFlag("select", true)) {
+this._dispatchChartEvent("select", {
+total: this._selectionCount,
+view: this._eventView("select"),
+});
+}
+}
+},
+_applyDrill(g, upd, buffers) {
+lodApplyDrill(this, g, upd, buffers);
+},
+_dropDrill(g) {
+lodDropDrill(this, g);
+},
+_viewInside(win) {
+if (!win) return false;
+const { x0, x1, y0, y1 } = this.view;
+const ex = Math.abs(x1 - x0) * 1e-4, ey = Math.abs(y1 - y0) * 1e-4;
+const vx0 = Math.min(x0, x1), vx1 = Math.max(x0, x1);
+const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
+const wx0 = Math.min(win.x0, win.x1), wx1 = Math.max(win.x0, win.x1);
+const wy0 = Math.min(win.y0, win.y1), wy1 = Math.max(win.y0, win.y1);
+return vx0 >= wx0 - ex && vx1 <= wx1 + ex && vy0 >= wy0 - ey && vy1 <= wy1 + ey;
+},
+_viewOverlaps(win) {
+if (!win) return false;
+const { x0, x1, y0, y1 } = this.view;
+const vx0 = Math.min(x0, x1), vx1 = Math.max(x0, x1);
+const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
+const wx0 = Math.min(win.x0, win.x1), wx1 = Math.max(win.x0, win.x1);
+const wy0 = Math.min(win.y0, win.y1), wy1 = Math.max(win.y0, win.y1);
+return vx0 <= wx1 && vx1 >= wx0 && vy0 <= wy1 && vy1 >= wy0;
+},
+_viewInsideRange(xRange, yRange) {
+if (!xRange || !yRange) return false;
+return this._viewInside({ x0: xRange[0], x1: xRange[1], y0: yRange[0], y1: yRange[1] });
+},
+});
+const RECT_MARK = {
+build: (view, g, t, buffer) => view._buildRectMark(g, t, buffer),
+draw: (view, g) => {
+const [x0, x1] = view._axisRange(g.xAxis);
+const [y0, y1] = view._axisRange(g.yAxis);
+const edgePad = g.trace.kind === "histogram"
+? [0, 0, view._edgePadForValue(0, y0, y1, view.canvas.height), 0]
+: [0, 0, 0, 0];
+view._drawRects(
+g,
+view._map(g.x0Meta, x0, x1, g.xAxis),
+view._map(g.x1Meta, x0, x1, g.xAxis),
+view._map(g.y0Meta, y0, y1, g.yAxis),
+view._map(g.y1Meta, y0, y1, g.yAxis),
+edgePad
+);
+},
+refreshColor: (view, g) => {
+if (!g.colorMode) g.color = parseColor(view.root, g.trace.style.color, g.color);
+view._rectMarkStyleGpu(g, g.trace);
+},
+};
+const BAR_MARK = {
+build: (view, g, t, buffer) => view._buildBarMark(g, t, buffer),
+draw: (view, g) => {
+if (!g.trace.bar) {
+RECT_MARK.draw(view, g);
+return;
+}
+const horizontal = g.orientation === 1;
+const pAxis = horizontal ? g.yAxis : g.xAxis;
+const vAxis = horizontal ? g.xAxis : g.yAxis;
+const [p0, p1] = view._axisRange(pAxis);
+const [v0, v1] = view._axisRange(vAxis);
+const pmap = view._map(g.posMeta, p0, p1, pAxis);
+const v1map = view._map(g.value1Meta, v0, v1, vAxis);
+const v0map = g.value0Mode === 1
+? view._map(g.value0Meta, v0, v1, vAxis)
+: null;
+const v0Const = g.value0Mode === 0
+? view._mapConst(g.value0Const, v0, v1, vAxis)
+: null;
+const v0EdgePad = g.value0Mode === 0
+? view._edgePadForValue(
+g.value0Const,
+v0,
+v1,
+horizontal ? view.canvas.width : view.canvas.height
+)
+: 0;
+view._drawBars(g, pmap, v1map, v0map, v0Const, v0EdgePad);
+},
+refreshColor: (view, g) => {
+if (!g.colorMode) g.color = parseColor(view.root, g.trace.style.color, g.color);
+view._rectMarkStyleGpu(g, g.trace);
+},
+};
+const SEGMENT_MARK = {
+build: (view, g, t, buffer) => view._buildSegmentMark(g, t, buffer),
+draw: (view, g) => {
+const [x0, x1] = view._axisRange(g.xAxis);
+const [y0, y1] = view._axisRange(g.yAxis);
+view._drawSegments(
+g,
+view._map(g.x0Meta, x0, x1, g.xAxis),
+view._map(g.y0Meta, y0, y1, g.yAxis),
+);
+},
+refreshColor: (view, g) => {
+if (!g.colorMode) g.color = parseColor(view.root, g.trace.style.color, g.color);
+},
+};
+const AREA_MARK = {
+build: (view, g, t, buffer) => view._buildAreaMark(g, t, buffer),
+draw: (view, g) => {
+const [x0, x1] = view._axisRange(g.xAxis);
+const [y0, y1] = view._axisRange(g.yAxis);
+const xm = view._map(g.xMeta, x0, x1, g.xAxis);
+const ym = view._map(g.yMeta, y0, y1, g.yAxis);
+view._drawArea(g, xm, ym, view._map(g.baseMeta, y0, y1, g.yAxis));
+if ((g.trace.style.line_width ?? 0) > 0) {
+view._drawLine(g, xm, ym, g.lineColor, g.trace.style.line_width, g.trace.style.line_opacity ?? 1);
+if (g.trace.style.stroke_perimeter) {
+const yBuf = g.yBuf, yMeta = g.yMeta, dashY = g._dashY;
+g.yBuf = g.baseBuf;
+g.yMeta = g.baseMeta;
+g._dashY = g._cpu.base;
+view._drawLine(g, xm, ym, g.lineColor, g.trace.style.line_width, g.trace.style.line_opacity ?? 1);
+g.yBuf = yBuf;
+g.yMeta = yMeta;
+g._dashY = dashY;
+}
+}
+},
+refreshColor: (view, g) => {
+g.color = parseColor(view.root, g.trace.style.color, g.color);
+g.lineColor = parseColor(view.root, g.trace.style.line_color || g.trace.style.color, g.lineColor || g.color);
+g.grad = view._resolveMarkFill(g.trace.style, g.color);
+},
+};
+const MESH_MARK = {
+build: (view, g, t, buffer) => view._buildMeshMark(g, t, buffer),
+draw: (view, g) => {
+const [x0, x1] = view._axisRange(g.xAxis);
+const [y0, y1] = view._axisRange(g.yAxis);
+view._drawMesh(g, view._map(g.x0Meta, x0, x1, g.xAxis), view._map(g.y0Meta, y0, y1, g.yAxis));
+},
+refreshColor: (view, g) => {
+if (g.colorMode === 0 && g.trace.color) g.color = parseColor(view.root, g.trace.color.color, g.color);
+const style = g.trace.style || {};
+g.meshStroke = parseColor(view.root, style.stroke || "transparent", [0, 0, 0, 0]);
+},
+};
+const MARK_KINDS = {
+histogram: RECT_MARK,
+box: RECT_MARK,
+violin: RECT_MARK,
+errorbar: SEGMENT_MARK,
+stem: SEGMENT_MARK,
+box_whisker: SEGMENT_MARK,
+box_median: SEGMENT_MARK,
+contour: SEGMENT_MARK,
+segments: SEGMENT_MARK,
+triangle_mesh: MESH_MARK,
+error_band: AREA_MARK,
+hexbin: {
+build: (view, g, t, buffer) => view._buildHexbinMark(g, t, buffer),
+draw: (view, g) => {
+const [x0, x1] = view._axisRange(g.xAxis);
+const [y0, y1] = view._axisRange(g.yAxis);
+view._drawMesh(g, view._map(g.x0Meta, x0, x1, g.xAxis), view._map(g.y0Meta, y0, y1, g.yAxis));
+},
+refreshColor: (view, g) => {
+if (g.colorMode === 0 && g.trace.color) g.color = parseColor(view.root, g.trace.color.color, g.color);
+const style = g.trace.style || {};
+g.meshStroke = parseColor(view.root, style.stroke || "transparent", [0, 0, 0, 0]);
+},
+},
+bar: BAR_MARK,
+column: BAR_MARK,
+heatmap: {
+build: (view, g, t, buffer) => view._buildHeatmapMark(g, t, buffer),
+draw: (view, g) => view._drawHeatmap(g),
+},
+scatter: {
+build: (view, g, t, buffer) => view._buildScatterMark(g, t, buffer),
+draw: (view, g) => {
+const [x0, x1] = view._axisRange(g.xAxis);
+const [y0, y1] = view._axisRange(g.yAxis);
+view._drawPoints(g, view._map(g.xMeta, x0, x1, g.xAxis), view._map(g.yMeta, y0, y1, g.yAxis));
+},
+pointPick: true,
+retainCpu: true,
+refreshColor: (view, g) => {
+if (g.colorMode === 0 && g.trace.color) {
+g.color = parseColor(view.root, g.trace.color.color, g.color);
+}
+view._pointMarkStyle(g, g.trace);
+},
+},
+line: {
+build: (view, g, t, buffer) => view._buildLineMark(g, t, buffer),
+draw: (view, g) => {
+const [x0, x1] = view._axisRange(g.xAxis);
+const [y0, y1] = view._axisRange(g.yAxis);
+view._drawLine(g, view._map(g.xMeta, x0, x1, g.xAxis), view._map(g.yMeta, y0, y1, g.yAxis));
+},
+refreshColor: (view, g) => {
+g.color = parseColor(view.root, g.trace.style.color, g.color);
+},
+},
+area: AREA_MARK,
+};
+function markOf(kind) {
+return MARK_KINDS[kind] || MARK_KINDS.scatter;
+}
+const XY_EASINGS = {
+linear: [0, 0, 1, 1],
+ease: [0.25, 0.1, 0.25, 1],
+"ease-in": [0.42, 0, 1, 1],
+"ease-out": [0, 0, 0.58, 1],
+"ease-in-out": [0.42, 0, 0.58, 1],
+};
+function xyCubicBezierProgress(value, points) {
+const x1 = Number(points[0]), y1 = Number(points[1]);
+const x2 = Number(points[2]), y2 = Number(points[3]);
+const sample = (t, a, b) => {
+const u = 1 - t;
+return 3 * u * u * t * a + 3 * u * t * t * b + t * t * t;
+};
+const slope = (t, a, b) => {
+const u = 1 - t;
+return 3 * u * u * a + 6 * u * t * (b - a) + 3 * t * t * (1 - b);
+};
+let t = value;
+for (let i = 0; i < 5; i++) {
+const d = slope(t, x1, x2);
+if (Math.abs(d) < 1e-6) break;
+t = Math.max(0, Math.min(1, t - (sample(t, x1, x2) - value) / d));
+}
+let lo = 0, hi = 1;
+for (let i = 0; i < 8; i++) {
+if (sample(t, x1, x2) < value) lo = t; else hi = t;
+t = (lo + hi) * 0.5;
+}
+return sample(t, y1, y2);
+}
+function xySpringProgress(value, policy) {
+const stiffness = Math.max(1e-6, Number(policy.stiffness) || 170);
+const damping = Math.max(1e-6, Number(policy.damping) || 26);
+const mass = Math.max(1e-6, Number(policy.mass) || 1);
+const w0 = Math.sqrt(stiffness / mass);
+const zeta = damping / (2 * Math.sqrt(stiffness * mass));
+const response = (progress) => {
+const time = progress * 6 / w0;
+if (zeta < 1) {
+const wd = w0 * Math.sqrt(1 - zeta * zeta);
+return 1 - Math.exp(-zeta * w0 * time) *
+(Math.cos(wd * time) + (zeta * w0 / wd) * Math.sin(wd * time));
+}
+return 1 - Math.exp(-w0 * time) * (1 + w0 * time);
+};
+const endpoint = response(1);
+const result = Math.abs(endpoint) > 1e-9 ? response(value) / endpoint : value;
+return Math.max(0, Math.min(1.15, result));
+}
+function xyAnimationEase(value, easing) {
+if (easing && typeof easing === "object" && !Array.isArray(easing) && easing.type === "spring") {
+return xySpringProgress(value, easing);
+}
+const points = Array.isArray(easing) ? easing : XY_EASINGS[easing] || XY_EASINGS["ease-out"];
+return xyCubicBezierProgress(value, points);
+}
+Object.assign(ChartView.prototype, {
+_resolvedAnimation(trace) {
+return {
+...(this.spec.animation || {}),
+...((trace && trace.animation) || {}),
+_present: !!this.spec.animation || !!(trace && trace.animation),
+};
+},
+_animationEnabled(config) {
+if (!config._present) return false;
+if (config.enabled === false) return false;
+if (config.enabled === true) return true;
+return !this._prefersReducedMotion();
+},
+_defaultEntrance(kind) {
+if (kind === "line" || kind === "area" || kind === "error_band") return "reveal";
+if (kind === "bar" || kind === "column") return "grow";
+if (kind === "scatter" || kind === "errorbar") return "scale";
+return "none";
+},
+_setTransitionVisual(g, phase, progress, config) {
+const p = Math.max(0, Math.min(1, progress));
+g._transitionOpacity = 1;
+g._transitionScale = 1;
+g._transitionReveal = 1;
+g._transitionGrow = 1;
+if (phase === "exit") {
+g._transitionOpacity = 0;
+return;
+}
+if (phase === "update") {
+g._transitionPositionProgress = p;
+return;
+}
+let enter = config.enter || "auto";
+if (enter === "auto") enter = this._defaultEntrance(g.trace.kind);
+if (enter === "none") return;
+if (enter === "scale") {
+if (g.trace.kind === "scatter") g._transitionScale = p;
+else if (g.trace.kind === "errorbar") g._transitionScale = p;
+else if (g.trace.kind === "bar" || g.trace.kind === "column") g._transitionGrow = p;
+else if (g.trace.kind === "line" || g.trace.kind === "area" ||
+g.trace.kind === "error_band") g._transitionReveal = p;
+}
+if (enter === "reveal") g._transitionReveal = p;
+if (enter === "grow") g._transitionGrow = p;
+},
+_clearTransitionVisual(g) {
+delete g._transitionOpacity;
+delete g._transitionScale;
+delete g._transitionReveal;
+delete g._transitionGrow;
+delete g._transitionPositionProgress;
+delete g._transitionPhase;
+delete g._transitionPrevXValues;
+delete g._transitionPrevYValues;
+delete g._transitionPrevPosValues;
+delete g._transitionPrevValue1Values;
+delete g._transitionPrevValue0Values;
+delete g._transitionPrevWidth;
+delete g._transitionPositionInterpolated;
+this._deleteBuffers(g, [
+"_transitionPrevXBuf", "_transitionPrevYBuf",
+"_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",
+]);
+},
+_emitAnimationLifecycle(stage, phase, extra = {}) {
+const detail = { stage, phase, ...extra, view: this._eventView(`animation_${stage}`) };
+this._dispatchChartEvent(`animation_${stage}`, detail);
+this.comm?.send?.({ type: `animation_${stage}`, phase, ...extra });
+},
+_runDataAnimation(phase, current, exiting = []) {
+if (this._dataAnimRaf) cancelAnimationFrame(this._dataAnimRaf);
+const epoch = (this._dataAnimEpoch || 0) + 1;
+this._dataAnimEpoch = epoch;
+const records = [];
+for (const g of current) {
+const config = this._resolvedAnimation(g.trace);
+const recordPhase = g._transitionPhase || phase;
+if (!this._animationEnabled(config) ||
+(recordPhase === "enter" && config.enter === "none") ||
+(recordPhase === "update" && config.update === "none")) {
+this._clearTransitionVisual(g);
+continue;
+}
+records.push({ g, config, phase: recordPhase, delay: Number(config.delay) || 0, duration: Math.max(0, Number(config.duration) || 0) });
+}
+for (const g of exiting) {
+g._transitionOpacity = 0;
+}
+if (!records.length) {
+for (const g of current) this._clearTransitionVisual(g);
+if (this._transitionView) {
+this.view = { ...this._transitionView.to };
+this._transitionView = null;
+}
+this._destroyTransitionOldTraces();
+this.draw();
+return false;
+}
+const start = this._now();
+this._dataAnim = { epoch, phase, start };
+this._emitAnimationLifecycle("start", phase);
+const tick = () => {
+if (this._destroyed || !this._dataAnim || this._dataAnim.epoch !== epoch) return;
+const now = this._now();
+let active = false;
+let maxRaw = 0;
+for (const record of records) {
+const raw = record.duration <= 0
+? (now >= start + record.delay ? 1 : 0)
+: Math.max(0, Math.min(1, (now - start - record.delay) / record.duration));
+if (this._transitionView) maxRaw = Math.max(maxRaw, raw);
+const eased = xyAnimationEase(raw, record.config.easing);
+this._setTransitionVisual(record.g, record.phase, eased, record.config);
+if (raw < 1) active = true;
+}
+if (this._transitionView) {
+const p = xyAnimationEase(maxRaw, (this.spec.animation || {}).easing);
+const from = this._transitionView.from, to = this._transitionView.to;
+this.view = {
+x0: from.x0 + (to.x0 - from.x0) * p,
+x1: from.x1 + (to.x1 - from.x1) * p,
+y0: from.y0 + (to.y0 - from.y0) * p,
+y1: from.y1 + (to.y1 - from.y1) * p,
+};
+}
+this.draw();
+if (active) {
+this._dataAnimRaf = requestAnimationFrame(tick);
+} else {
+this._dataAnimRaf = null;
+for (const record of records) this._clearTransitionVisual(record.g);
+this._finishDataAnimation(phase);
+}
+};
+this._dataAnimRaf = requestAnimationFrame(tick);
+return true;
+},
+_finishDataAnimation(phase) {
+this._dataAnim = null;
+if (this._transitionView) {
+this.view = { ...this._transitionView.to };
+this._transitionView = null;
+}
+this._destroyTransitionOldTraces();
+this._emitAnimationLifecycle("end", phase);
+},
+_startEntranceAnimation() {
+const capture = Number(this.spec.animation_capture_progress);
+if (Number.isFinite(capture) && capture >= 0 && capture <= 1) {
+for (const g of this.gpuTraces || []) {
+const config = this._resolvedAnimation(g.trace);
+if (config._present && config.enabled !== false && config.enter !== "none") {
+this._setTransitionVisual(g, "enter", xyAnimationEase(capture, config.easing), config);
+} else {
+this._clearTransitionVisual(g);
+}
+}
+this.draw();
+return;
+}
+this._runDataAnimation("enter", this.gpuTraces || []);
+},
+_destroyTransitionOldTraces() {
+if (!this._transitionOldTraces || !this.gl) {
+this._transitionOldTraces = null;
+return;
+}
+const seen = new Set();
+for (const g of this._transitionOldTraces) this._destroyTraceResources(g, seen);
+this._transitionOldTraces = null;
+},
+_transitionMatches(previous, next, config) {
+let strategy = config.match || "index";
+const pairs = [];
+let fallback = next.trace.animation_fallback || null;
+if ((previous.n || 0) > 200000 || (next.n || 0) > 200000) {
+return {
+strategy: "snap",
+pairs,
+fallback: fallback || `snap:${strategy}-match-limit`,
+};
+}
+if (strategy === "key") {
+if (previous._transitionKeyIndex && next._transitionKeys) {
+for (let ni = 0; ni < next._transitionKeys.length; ni++) {
+const oi = previous._transitionKeyIndex.get(next._transitionKeys[ni]);
+if (oi !== undefined) pairs.push([oi, ni]);
+}
+} else {
+fallback ||= "index:missing-keys";
+strategy = "index";
+}
+}
+if (strategy === "append") {
+const oldX = previous._cpu && previous._cpu.x;
+const newX = next._cpu && next._cpu.x;
+if (oldX && newX && oldX.length <= 200000 && newX.length <= 200000) {
+const index = new Map();
+for (let i = 0; i < oldX.length; i++) {
+const value = this._decodeValue(oldX, previous.xMeta, i);
+if (Number.isFinite(value)) index.set(value.toPrecision(12), i);
+}
+for (let i = 0; i < newX.length; i++) {
+const value = this._decodeValue(newX, next.xMeta, i);
+const oi = Number.isFinite(value) ? index.get(value.toPrecision(12)) : undefined;
+if (oi !== undefined) pairs.push([oi, i]);
+}
+} else {
+fallback ||= "index:append-limit";
+strategy = "index";
+}
+}
+if (strategy === "index") {
+const count = Math.min(previous.n || 0, next.n || 0);
+for (let i = 0; i < count; i++) pairs.push([i, i]);
+}
+return {
+strategy,
+pairs,
+fallback,
+};
+},
+_recordAnimationFallback(trace, fallback) {
+if (!trace || !fallback) return;
+trace.animation_fallback = fallback;
+if (this.root && this.root.dataset) {
+this.root.dataset.xyAnimationFallback = fallback;
+}
+},
+_preparePositionInterpolation(previous, next, config) {
+const match = next._transitionMatch;
+const policies = config.interpolate || [];
+if (config.update !== "interpolate" || !policies.includes("position") || !match) return false;
+if (["bar", "column"].includes(next.trace.kind)) {
+return this._prepareBarPositionInterpolation(previous, next, match);
+}
+if (!["scatter", "line"].includes(next.trace.kind)) return false;
+if (!previous._cpu || !next._cpu || next.n !== next._cpu.x.length ||
+previous.n !== previous._cpu.x.length) {
+match.fallback ||= "snap:layout-mismatch";
+return false;
+}
+const startX = new Float32Array(next._cpu.x);
+const startY = new Float32Array(next._cpu.y);
+const encode = (value, meta) => (value - (Number(meta.offset) || 0)) * (Number(meta.scale) || 1);
+const displayedValue = (axis, index) => {
+const cpu = previous._cpu[axis];
+const starts = previous[axis === "x" ? "_transitionPrevXValues" : "_transitionPrevYValues"];
+const progress = previous._transitionPositionProgress;
+if (!starts || !Number.isFinite(progress)) {
+return this._decodeValue(cpu, previous[`${axis}Meta`], index);
+}
+const encoded = starts[index] + (cpu[index] - starts[index]) * progress;
+const meta = previous[`${axis}Meta`];
+return encoded / (meta.scale || 1) + meta.offset;
+};
+for (const [oldIndex, newIndex] of match.pairs) {
+const x = displayedValue("x", oldIndex);
+const y = displayedValue("y", oldIndex);
+if (Number.isFinite(x) && Number.isFinite(y)) {
+startX[newIndex] = encode(x, next.xMeta);
+startY[newIndex] = encode(y, next.yMeta);
+}
+}
+next._transitionPrevXBuf = this._upload(startX);
+next._transitionPrevYBuf = this._upload(startY);
+next._transitionPrevXValues = startX;
+next._transitionPrevYValues = startY;
+next._transitionPositionProgress = 0;
+next._transitionPositionInterpolated = true;
+previous._transitionSkipExit = true;
+return true;
+},
+_prepareBarPositionInterpolation(previous, next, match) {
+const oldBar = previous._cpuBar;
+const newBar = next._cpuBar;
+if (!oldBar || !newBar || previous.orientation !== next.orientation ||
+next.n !== newBar.pos.length || previous.n !== oldBar.pos.length) {
+match.fallback ||= "snap:layout-mismatch";
+return false;
+}
+const startPos = new Float32Array(newBar.pos);
+const startValue1 = new Float32Array(newBar.value1);
+const startValue0 = new Float32Array(next.n);
+const encode = (value, meta) => (value - (Number(meta.offset) || 0)) * (Number(meta.scale) || 1);
+const decode = (value, meta) => value / (Number(meta.scale) || 1) + (Number(meta.offset) || 0);
+const value0At = (bar, index) => bar.value0
+? decode(bar.value0[index], bar.value0Meta)
+: Number(bar.value0Const) || 0;
+const displayed = (values, current, meta, index) => {
+const progress = previous._transitionPositionProgress;
+if (!values || !Number.isFinite(progress)) return decode(current[index], meta);
+return decode(values[index] + (current[index] - values[index]) * progress, meta);
+};
+const displayedValue0 = (index) => {
+const starts = previous._transitionPrevValue0Values;
+const progress = previous._transitionPositionProgress;
+const current = value0At(oldBar, index);
+if (!starts || !Number.isFinite(progress)) return current;
+const start = decode(starts[index], oldBar.value1Meta);
+return start + (current - start) * progress;
+};
+for (let i = 0; i < next.n; i++) {
+startValue0[i] = encode(value0At(newBar, i), newBar.value1Meta);
+}
+for (const [oldIndex, newIndex] of match.pairs) {
+const pos = displayed(
+previous._transitionPrevPosValues,
+oldBar.pos,
+oldBar.posMeta,
+oldIndex
+);
+const value1 = displayed(
+previous._transitionPrevValue1Values,
+oldBar.value1,
+oldBar.value1Meta,
+oldIndex
+);
+const value0 = displayedValue0(oldIndex);
+if (Number.isFinite(pos) && Number.isFinite(value0) && Number.isFinite(value1)) {
+startPos[newIndex] = encode(pos, newBar.posMeta);
+startValue1[newIndex] = encode(value1, newBar.value1Meta);
+startValue0[newIndex] = encode(value0, newBar.value1Meta);
+}
+}
+const progress = previous._transitionPositionProgress;
+const previousWidth = Number.isFinite(previous._transitionPrevWidth) && Number.isFinite(progress)
+? previous._transitionPrevWidth + (oldBar.width - previous._transitionPrevWidth) * progress
+: oldBar.width;
+next._transitionPrevPosBuf = this._upload(startPos);
+next._transitionPrevValue1Buf = this._upload(startValue1);
+next._transitionPrevValue0Buf = this._upload(startValue0);
+next._transitionPrevPosValues = startPos;
+next._transitionPrevValue1Values = startValue1;
+next._transitionPrevValue0Values = startValue0;
+next._transitionPrevWidth = previousWidth;
+next._transitionPositionProgress = 0;
+next._transitionPositionInterpolated = true;
+previous._transitionSkipExit = true;
+return true;
+},
+updatePayload(spec, buffer) {
+if (this._destroyed || !spec || spec.protocol !== PROTOCOL) return false;
+if (this._dataAnimRaf) cancelAnimationFrame(this._dataAnimRaf);
+this._dataAnimRaf = null;
+if (this._dataAnim) {
+this._emitAnimationLifecycle("end", this._dataAnim.phase, { cancelled: true });
+}
+this._dataAnim = null;
+this._destroyTransitionOldTraces();
+const previous = this.gpuTraces || [];
+const fromView = { ...this.view };
+this.spec = spec;
+this.interaction = spec.interaction || {};
+this.markStyle = spec.mark_style || {};
+this.axes = this._normalizeAxes(spec);
+this._payload = buffer;
+this.view0 = undefined;
+this.view0 = this._clampView({
+ranges: Object.fromEntries(
+Object.entries(this.axes).map(([id, axis]) => [id, [...axis.range]]),
+),
+});
+const target = { ...this.view0 };
+if (this._glLost || !this.gl) {
+this.view = { ...target };
+return true;
+}
+this.gpuTraces = spec.traces.map((trace) => this._buildTrace(buffer, trace));
+for (const next of this.gpuTraces) {
+const old = previous.find((candidate) => candidate.trace.id === next.trace.id && candidate.trace.kind === next.trace.kind);
+if (old) {
+const config = this._resolvedAnimation(next.trace);
+old._transitionExitTrace = next.trace;
+if (this._animationEnabled(config) && config.update !== "none") {
+next._transitionMatch = this._transitionMatches(old, next, config);
+this._preparePositionInterpolation(old, next, config);
+old._transitionSkipExit = true;
+this._recordAnimationFallback(next.trace, next._transitionMatch.fallback);
+}
+} else {
+next._transitionPhase = "enter";
+}
+}
+this._transitionOldTraces = previous;
+const animateDomain = this.gpuTraces.some((g) => {
+const config = this._resolvedAnimation(g.trace);
+return this._animationEnabled(config) && config.update === "interpolate" &&
+(config.interpolate || []).includes("domain");
+});
+this._transitionView = animateDomain ? { from: fromView, to: target } : null;
+if (!animateDomain) this.view = { ...target };
+this._updatePickable();
+if (!this._runDataAnimation("update", this.gpuTraces, previous)) {
+this.view = { ...target };
+this._transitionView = null;
+}
+return true;
+},
+});
+function bytesToSpan(b) {
+const span = xyByteSpan(b, "chart payload");
+return span.byteOffset % 4 === 0 ? span : new Uint8Array(span);
+}
+
+function payloadBuffers(spec, raw) {
+if (spec.buffer_layout === "split") {
+if (!Array.isArray(raw)) {
+throw new Error("xy: spec says buffer_layout=split but the transport delivered one buffer");
+}
+return raw.map(bytesToSpan);
+}
+if (Array.isArray(raw)) {
+throw new Error("xy: transport delivered a buffer list but the spec is not split-layout");
+}
+return bytesToSpan(raw);
+}
+function render({ model, el }) {
+const spec = model.get("spec");
+const buffer = payloadBuffers(spec, model.get("buffers"));
+const comm = {
+send: (msg) => model.send(msg),
+wantsViewChange: () => spec.interaction?._transport_view_change === true,
+onMessage: (cb) => {
+const handler = (content, buffers) => cb(content, buffers);
+model.on("msg:custom", handler);
+return () => model.off?.("msg:custom", handler);
+},
+};
+const view = new ChartView(el, spec, buffer, comm);
+return () => view.destroy();
+}
+
+function renderStandalone(el, spec, arrayBuffer) {
+const buffer = bytesToSpan(arrayBuffer);
+const view = new ChartView(el, spec, buffer, null);
+const column = (idx) => view._columnView(buffer, spec.columns[idx]);
+for (const g of view.gpuTraces) {
+if (markOf(g.trace.kind).retainCpu && g.tier !== "density") {
+g._cpu = {
+x: column(g.trace.x),
+y: column(g.trace.y),
+xMeta: g.xMeta,
+yMeta: g.yMeta,
+};
+if (g.trace.color && Number.isInteger(g.trace.color.buf)) {
+g._cpu.color = column(g.trace.color.buf);
+}
+if (g.trace.size && Number.isInteger(g.trace.size.buf)) {
+g._cpu.size = column(g.trace.size.buf);
+}
+}
+}
+return view;
+}
+
+window.xy = { render, renderStandalone, decodeFrame, ChartView, MARK_KINDS, markOf };
+})();

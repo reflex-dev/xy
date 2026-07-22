@@ -198,7 +198,15 @@ jobs:
           .venv/bin/python benchmarks/bench_dashboard.py \
             --chart-counts 10,20,50 --chromium "$CHROME" --json dashboard-smoke.json
           .venv/bin/python scripts/verify_benchmark_report.py \
-            dashboard-smoke.json --kind dashboard-browser
+            dashboard-smoke.json --kind dashboard-browser --profile strict
+
+      - name: Upload dashboard health evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dashboard-health-evidence
+          if-no-files-found: error
+          path: dashboard-smoke.json
 
       - name: Benchmark smoke (1e5/1e6 — §12 harness runs every phase)
         run: .venv/bin/python scripts/bench.py --sizes 1e5,1e6

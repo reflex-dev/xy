@@ -193,9 +193,11 @@ def test_dashboard_benchmark_reports_eviction_and_scroll_telemetry() -> None:
     bench = (ROOT / "benchmarks" / "bench_dashboard.py").read_text(encoding="utf-8")
 
     for marker in (
-        'addEventListener("webglcontextlost"',
-        'addEventListener("webglcontextrestored"',
+        'addEventListener("xy:context_lost"',
+        "event.detail?.governed === true",
+        'addEventListener("xy:context_restored"',
         "scrollIntoView",
+        'dispatchEvent(new PointerEvent("pointerenter"))',
         "context_lost_chart_ids",
         "context_restored_chart_ids",
         "initial_nonblank_chart_ids",
@@ -213,12 +215,44 @@ def test_dashboard_benchmark_reports_eviction_and_scroll_telemetry() -> None:
     # webglcontextlost dispatches as a task, so the probe must yield before
     # leaving the "create" phase or creation-loop evictions get mislabeled
     # with whatever phase is current when the queued events finally fire.
-    creation_loop = bench.index('addEventListener("webglcontextlost"')
+    creation_loop = bench.index('addEventListener("xy:context_lost"')
     first_yield = bench.index(
         "await new Promise((resolve) => setTimeout(resolve, 0));", creation_loop
     )
     phase_initial = bench.index('phase = "initial";', creation_loop)
     assert first_yield < phase_initial
+
+
+def test_dashboard_probe_budget_scales_with_requested_chart_count(monkeypatch) -> None:
+    from benchmarks import bench_dashboard
+
+    class DummyFigure:
+        def build_payload(self):
+            return {}, b""
+
+    captured: dict[str, int] = {}
+
+    def fake_probe(html, *, marker, chromium, virtual_time_ms, timeout_s):
+        del html, marker, chromium
+        captured["virtual_time_ms"] = virtual_time_ms
+        captured["timeout_s"] = timeout_s
+        return {"status": "failed(test sentinel)"}
+
+    monkeypatch.setattr(
+        bench_dashboard, "_dashboard_figures", lambda count: [DummyFigure() for _ in range(count)]
+    )
+    monkeypatch.setattr(bench_dashboard, "page_for_charts", lambda *args, **kwargs: "<html></html>")
+    monkeypatch.setattr(bench_dashboard, "run_json_probe", fake_probe)
+    monkeypatch.setattr(bench_dashboard, "collect_environment_metadata", lambda **kwargs: {})
+
+    bench_dashboard.run(chart_counts=[50], chromium="/test/chromium")
+
+    assert captured["virtual_time_ms"] == (
+        bench_dashboard.DASHBOARD_BASE_VIRTUAL_TIME_MS
+        + 50 * bench_dashboard.DASHBOARD_SETTLE_VIRTUAL_TIME_MS_PER_CHART
+    )
+    assert captured["virtual_time_ms"] > 50 * 400
+    assert captured["timeout_s"] == bench_dashboard.DASHBOARD_PROBE_TIMEOUT_S
 
 
 def test_context_governor_reserves_pending_restores() -> None:
@@ -227,14 +261,25 @@ def test_context_governor_reserves_pending_restores() -> None:
     client = (ROOT / "js" / "src" / "50_chartview.ts").read_text(encoding="utf-8")
 
     assert "view._ctxPendingReservation" in client
+    assert "maxPendingRestores: 1" in client
+    assert "this._ctxReleaseEventPending = true" in client
+    assert "const activeBudget = Math.max(1, this.budget()" in client
     constructor = client[client.index("  constructor(") : client.index("  _listen(")]
     assert 'this.root.textContent = "xy: WebGL2 unavailable in this browser.";' in constructor
     init_gl = client[client.index("  _initGl(buffer) {") : client.index("  _buildTrace(")]
     assert "WebGL2 unavailable in this browser" not in init_gl
     recover = client.index("  _recoverContext() {")
-    reserve = client.index("XY_CONTEXT_GOVERNOR.reserve(this);", recover)
+    deferred_reserve = client.index(
+        "XY_CONTEXT_GOVERNOR.reserve(this, { deferred: true })", recover
+    )
+    release_event_wait = client.index("if (this._ctxReleaseEventPending)", recover)
     restore = client.index("ext.restoreContext();", recover)
-    assert reserve < restore
+    assert release_event_wait < deferred_reserve < restore
+
+    pointer = client[client.index('this._listen(this.root, "pointerenter"') :]
+    promote = pointer.index("this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;")
+    recover_pointer = pointer.index("this._recoverContext();")
+    assert promote < recover_pointer
 
     snapshot = client[client.index("_snapshotBeforeRelease()") : recover]
     draw = snapshot.index("this._drawNow();")

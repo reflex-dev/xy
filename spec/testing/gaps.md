@@ -33,10 +33,11 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-002 — Strict dashboard 10/20/50 health gate
 
-- Status: `NOT IMPLEMENTED`
+- Status: `IMPLEMENTED`
 - Owner: unassigned — file a tracking issue before implementation starts
-- Current gap: the audited 50-chart row failed while the verifier and workflow
-  stayed green.
+- Evidence: `benchmarks/bench_dashboard.py`, `scripts/verify_benchmark_report.py`, `tests/test_verify_benchmark_report.py`, and the hard-CI `test` job's `dashboard-health-evidence` artifact.
+- Current gap: closed; hard CI selects the strict profile, and the context
+  governor now completes the 10/20/50 visit matrix without unexplained loss.
 - Implemented when: a strict profile requires one healthy row for every requested
   count; governed charts must all be created and nonblank when visited; missing,
   failed, partial, or unexplained-loss rows exit nonzero; mutation tests prove

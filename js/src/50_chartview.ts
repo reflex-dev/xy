@@ -1,22 +1,6 @@
-import { PROTOCOL, xyByteSpan } from "./00_header";
-import { buildLutData, colormapStops } from "./10_colormaps";
-import { cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
-import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
-import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
-import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodRememberDensity, lodWriteGridTexture } from "./45_lod";
-import { markOf } from "./55_marks";
-
 // ---------------------------------------------------------------------------
 // ChartView
 // ---------------------------------------------------------------------------
-
-// ChartView gains methods via prototype augmentation (51–57) and creates
-// instance fields ad hoc throughout its lifecycle; the merged index signature
-// keeps that dynamic surface type-legal until the class is annotated
-// field-by-field.
-export interface ChartView {
-  [key: string]: any;
-}
 
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 const COLORBAR_THICKNESS = 18;
@@ -63,64 +47,54 @@ const UNITLESS_STYLE_PROPS = new Set([
 // view ever releases, so pages with few charts behave exactly as before.
 // Every decision is observable (§28): `data-xy-ctx` on the canvas reads
 // "live" | "released" | "lost", and views count releases/recoveries.
-//
-// The browser cap is *process-wide* — shared across every same-origin iframe —
-// but the machinery above is per-document, so it sees only its own charts. A
-// page that puts each chart in its own iframe (docs sites, SaaS dashboards,
-// the FastAPI gallery example) would therefore blow the cap: no per-document
-// governor ever releases (each frame is under budget on its own), the browser
-// LRU-evicts live charts, and the evicted charts fight to recover and re-evict
-// — a scroll-driven "Too many active WebGL contexts" storm. The governor
-// closes that gap by sharing one budget across same-origin frames over a
-// BroadcastChannel (§18): each frame announces its live-context count, and any
-// frame over the shared budget sheds its own *off-screen* views (never a
-// visible one — a neighbor loading must not blank a chart the user is looking
-// at). Cross-origin frames cannot share a channel and fall back to the
-// per-document behavior. Over-counting a crashed frame that never said goodbye
-// is safe: it only lowers the effective budget, releasing a few extra
-// off-screen contexts that revive on demand — it never evicts or blanks.
 const XY_CONTEXT_GOVERNOR = {
   views: new Set(),
   seq: 1,
+  // Chrome commonly permits ~16 live contexts. The logical budget of 10
+  // leaves headroom for asynchronous restore hand-offs. Serialize those
+  // hand-offs: some drivers continue counting a released context until its
+  // loss task drains, so even a small burst can still cross the process cap.
+  maxPendingRestores: 1,
   hiddenReleaseChannel: null,
   hiddenReleaseQueue: [],
-  // Cross-frame coordination (initialized lazily on first register()).
-  frameId: null,
-  channel: null,
-  foreign: null, // Map<frameId, liveCount> reported by other same-origin frames
-  _announcedLive: -1,
-  _crossFrameReady: false,
-  _rebalanceScheduled: false,
   budget() {
-    const v = typeof window !== "undefined" ? (window as any).XY_CONTEXT_BUDGET : null;
-    // 12 leaves headroom under Chrome's ~16 so host-page GL (maps, editors)
+    const v = typeof window !== "undefined" ? window.XY_CONTEXT_BUDGET : null;
+    // 10 leaves headroom under Chrome's ~16 so host-page GL (maps, editors)
     // does not push chart contexts into browser-side eviction.
-    return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 12;
+    return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 10;
   },
   register(view) {
-    this._initCrossFrame();
     this.views.add(view);
   },
   unregister(view) {
     view._ctxPendingReservation = false;
     this.views.delete(view);
-    this._announceLive();
   },
   // Called before a view acquires (or re-acquires) a GL context. Releases
   // least-recently-visible off-screen views until the requester fits the
-  // budget. If every live view is visible, overflow is allowed — the browser
-  // may LRU-evict, and eviction recovery rebuilds on re-entry.
-  reserve(requester) {
+  // budget. If every live view is visible, snapshot and release the LRU
+  // visible view rather than allowing the browser to evict unpredictably.
+  reserve(requester, { deferred = false } = {}) {
     const live = [];
     let pending = 0;
     for (const view of this.views) {
       if (view !== requester && view.gl && !view._glLost && !view._destroyed) live.push(view);
       if (view !== requester && view._ctxPendingReservation && !view._destroyed) pending += 1;
     }
-    const needsReservation = !requester._ctxPendingReservation;
+    const continuingDeferred = requester._ctxPendingReservation;
+    if (deferred && !continuingDeferred && pending >= this.maxPendingRestores) {
+      return false;
+    }
     requester._ctxPendingReservation = true;
-    let over = live.length + pending + (needsReservation ? 1 : 0) - this.budget();
-    if (over <= 0) return;
+    // `pending` excludes requester, so its reservation always contributes one
+    // whether this is the first reserve call or _initGl confirming a prior
+    // deferred reservation in the restore event.
+    // During restore hand-offs keep one additional slot free. The released
+    // handle may remain counted by the driver until its queued task drains,
+    // even though the governor has already marked it lost.
+    const activeBudget = Math.max(1, this.budget() - (deferred || continuingDeferred ? 1 : 0));
+    let over = live.length + pending + 1 - activeBudget;
+    if (over <= 0) return true;
     const candidates = live
       .filter((view) => !view._ctxVisible)
       .sort((a, b) => (a._ctxSeenSeq || 0) - (b._ctxSeenSeq || 0));
@@ -128,7 +102,7 @@ const XY_CONTEXT_GOVERNOR = {
       if (over <= 0) break;
       if (view._releaseContext()) over -= 1;
     }
-    if (over <= 0) return;
+    if (over <= 0) return true;
     // Every remaining live view is on screen (a dense subplot grid). Release
     // least-recently-visible ones anyway: the snapshot stand-in keeps them
     // looking rendered, and pointer entry revives them. Letting the browser
@@ -141,132 +115,15 @@ const XY_CONTEXT_GOVERNOR = {
       if (over <= 0) break;
       if (view._releaseContext()) over -= 1;
     }
+    if (over <= 0) return true;
+    requester._ctxPendingReservation = false;
+    return false;
   },
   acquired(requester) {
     requester._ctxPendingReservation = false;
-    // A context just came live. Shed our own off-screen views if that pushed
-    // the shared budget over, then tell peer frames the new count so theirs
-    // can shed too (the newly visible chart stays; off-screen ones give way).
-    this._rebalance();
-    this._announceLive();
   },
   cancel(requester) {
     requester._ctxPendingReservation = false;
-  },
-  // --- Cross-frame budget sharing over BroadcastChannel (§18) ---------------
-  // Same-origin frames share one WebGL-context budget so a per-chart-iframe
-  // page cannot collectively exceed the browser's process-wide cap. Guarded
-  // and lazy: a lone top-level page opens a channel but never hears a peer, so
-  // foreignLive() stays 0 and every path below is a no-op — identical to the
-  // per-document behavior. Cross-origin frames get their own opaque channel
-  // scope (or none) and likewise fall back.
-  _initCrossFrame() {
-    if (this._crossFrameReady) return;
-    this._crossFrameReady = true;
-    this.foreign = new Map();
-    if (typeof BroadcastChannel === "undefined") return;
-    try {
-      this.frameId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-      this.channel = new BroadcastChannel("xy-webgl-context-governor");
-      this.channel.onmessage = (event) => this._onForeignMessage(event.data);
-      // Announce arrival so already-open frames re-advertise their counts, and
-      // drop our contribution from theirs when we go away.
-      this._post({ t: "hello", id: this.frameId });
-      if (typeof window !== "undefined" && window.addEventListener) {
-        // `pagehide` fires on real unload AND when the document is frozen into
-        // the back/forward cache; either way peers should stop counting us (a
-        // frozen frame can't respond to shed requests). `pageshow` with
-        // persisted=true is a bfcache restore: re-announce so peers add us back
-        // — without it a restored frame stays absent from the shared budget and
-        // the page can silently exceed the browser cap.
-        window.addEventListener("pagehide", () => this._post({ t: "bye", id: this.frameId }));
-        window.addEventListener("pageshow", (event) => {
-          if (!event || !event.persisted) return;
-          // Peers may have come and gone while we were frozen, and a departed
-          // peer sent its `bye` to a channel we could not hear. Drop the stale
-          // map and rebuild it from live peers' replies to our `hello` rather
-          // than counting contexts that no longer exist.
-          this.foreign.clear();
-          this._announcedLive = -1; // force the announcement below to re-send
-          this._post({ t: "hello", id: this.frameId }); // relearn peers' counts
-          this._announceLive(true); // and re-advertise ours
-        });
-      }
-    } catch (_err) {
-      this.channel = null; // sandboxed context: stay per-document
-    }
-  },
-  _post(msg) {
-    try {
-      if (this.channel) this.channel.postMessage(msg);
-    } catch (_err) {
-      /* channel closed mid-teardown */
-    }
-  },
-  _onForeignMessage(msg) {
-    if (!msg || !this.foreign || msg.id === this.frameId) return;
-    if (msg.t === "live") {
-      this.foreign.set(msg.id, msg.n | 0);
-      this._rebalance();
-    } else if (msg.t === "hello") {
-      // A frame joined: re-advertise so it learns our current count.
-      this._announceLive(true);
-    } else if (msg.t === "bye") {
-      this.foreign.delete(msg.id);
-    }
-  },
-  localLive() {
-    let n = 0;
-    for (const view of this.views) {
-      if (view.gl && !view._glLost && !view._destroyed) n += 1;
-    }
-    return n;
-  },
-  foreignLive() {
-    let n = 0;
-    if (this.foreign) for (const count of this.foreign.values()) n += count;
-    return n;
-  },
-  // Broadcast this frame's live-context count when it changes (deduped so a
-  // burst of releases collapses to one message). `force` re-sends the current
-  // count in reply to a peer's hello even when it is unchanged.
-  _announceLive(force = false) {
-    if (!this.channel) return;
-    const n = this.localLive();
-    if (!force && n === this._announcedLive) return;
-    this._announcedLive = n;
-    this._post({ t: "live", id: this.frameId, n });
-  },
-  // Shared budget crossed (a peer announced, we acquired, or one of our charts
-  // scrolled off): release the single least-recently-visible *off-screen* view.
-  // Visible views are never released here — the shared cap can only be honored
-  // by dropping off-screen contexts, and blanking a chart the user is looking
-  // at because a sibling frame loaded is worse than the documented
-  // >budget-simultaneously-visible limit.
-  //
-  // One release per call, not the whole computed excess: several frames all see
-  // the same over-budget snapshot at once, and if each dropped the full deficit
-  // they would collectively over-release (N frames each shedding K → N×K gone).
-  // Shedding one and re-arming on a task lets every frame's release announce and
-  // be observed before the next round, so the page converges on the budget
-  // instead of overshooting it. Re-arming (rather than stopping) also means a
-  // frame that must shed several never under-releases when peers are quiet.
-  _rebalance() {
-    if (this.localLive() + this.foreignLive() - this.budget() <= 0) return;
-    let target = null;
-    for (const view of this.views) {
-      if (view.gl && !view._glLost && !view._destroyed && !view._ctxVisible) {
-        if (!target || (view._ctxSeenSeq || 0) < (target._ctxSeenSeq || 0)) target = view;
-      }
-    }
-    if (!target || !target._releaseContext()) return;
-    if (this.localLive() + this.foreignLive() - this.budget() > 0 && !this._rebalanceScheduled) {
-      this._rebalanceScheduled = true;
-      setTimeout(() => {
-        this._rebalanceScheduled = false;
-        this._rebalance();
-      }, 0);
-    }
   },
   // Releasing a context takes a synchronous framebuffer readback. Queue one
   // chart per task when a document is hidden so visibilitychange itself stays
@@ -326,7 +183,7 @@ function xyInitiallyVisible(el) {
   );
 }
 
-export class ChartView {
+class ChartView {
   constructor(el, spec, buffer, comm) {
     if (spec.protocol !== PROTOCOL) {
       el.textContent =
@@ -401,13 +258,9 @@ export class ChartView {
     this._payload = buffer;
     this._glLost = false;
     this._ctxReleasedExt = null;
+    this._ctxReleaseEventPending = false;
     this._ctxReleases = 0;
     this._ctxRecoveries = 0;
-    // A governed release's webglcontextlost event is dispatched a task later;
-    // restoreContext() called before it lands is silently dropped by Chromium,
-    // so recovery that races ahead is deferred until the loss handler fires.
-    this._ctxLostPending = false;
-    this._ctxRecoverRequested = false;
     this._ctxVisible = xyInitiallyVisible(el);
     XY_CONTEXT_GOVERNOR.register(this);
     if (this._ctxVisible) this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
@@ -429,7 +282,7 @@ export class ChartView {
     }
     this.canvas.dataset.xyCtx = "live";
     this.view0 = this._clampView({
-      ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]: any) => [id, [...axis.range]])),
+      ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]) => [id, [...axis.range]])),
     });
     this.view = this._copyView(this.view0);
     this.dragMode = this._resolveDefaultDragAction();
@@ -437,10 +290,8 @@ export class ChartView {
     this.root.dataset.xyContextState = "ready";
     this._initContextLossRecovery();
     this._armContextVisibilityWatch();
-    this._initViewState(); // durable-state controller + history before gestures
     this._initInteraction();
     this._buildModebar(this.root); // after theme (icon color) + canvas (cursor)
-    this._initAxisBands(); // after modebar so bands sit under its z-order
 
     if ((this.fluid || this.fluidH) && typeof ResizeObserver !== "undefined") {
       this._ro = new ResizeObserver((entries) => {
@@ -502,7 +353,7 @@ export class ChartView {
     const marginRight = baseRight + colorbarRightRoom;
     const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
     const marginBottom = (pad ? pad[2] : compact ? 36 : MARGIN.b) + colorbarBottomRoom;
-    const hasBottomAxis = Object.values<any>(this.axes || {}).some((axis: any) =>
+    const hasBottomAxis = Object.values(this.axes || {}).some((axis) =>
       axis && String(axis.id || "").startsWith("x") && axis.side !== "top" &&
       this._axisTickLabelStrategy(axis) !== "none");
     this._bottomAxisRoom = hasBottomAxis ? (compact ? 36 : MARGIN.b) : 0;
@@ -510,13 +361,13 @@ export class ChartView {
     // on the bottom. Reserve one shared gutter for every top-side x axis;
     // multiple axes on the same side intentionally overlay until axis offsets
     // become part of the public API (the same rule used by secondary y axes).
-    const topAxisRoom = Object.values<any>(this.axes || {}).some((axis: any) =>
+    const topAxisRoom = Object.values(this.axes || {}).some((axis) =>
       axis && String(axis.id || "").startsWith("x") && axis.side === "top" &&
       this._axisTickLabelStrategy(axis) !== "none")
       ? (compact ? 26 : 32)
       : 0;
     const top = marginTop + (this.spec.title ? (compact ? 26 : 30) : 0) + topAxisRoom;
-    const rightAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
+    const rightAxes = Object.values(this.axes || {}).filter((axis) =>
       axis && String(axis.id || "").startsWith("y") &&
       axis.side === "right" && this._axisTickLabelStrategy(axis) !== "none");
     // The vertical colorbar shifts right by this room (see _positionColorbar);
@@ -535,7 +386,7 @@ export class ChartView {
     const axes = { ...(spec.axes || {}) };
     if (spec.x_axis) axes.x = spec.x_axis;
     if (spec.y_axis) axes.y = spec.y_axis;
-    for (const [id, axis] of Object.entries<any>(axes)) {
+    for (const [id, axis] of Object.entries(axes)) {
       if (axis && typeof axis === "object" && !axis.id) axis.id = id;
     }
     return axes;
@@ -559,7 +410,7 @@ export class ChartView {
   }
 
   _copyView(view) {
-    const ranges: any = {};
+    const ranges = {};
     for (const axisId of this._axisIds()) {
       const range = view?.ranges?.[axisId] || this._axis(axisId).range || [0, 1];
       ranges[axisId] = [Number(range[0]), Number(range[1])];
@@ -663,7 +514,7 @@ export class ChartView {
     return [Number(r[0]), Number(r[1])];
   }
 
-  _axisTicks(axisId, target): any {
+  _axisTicks(axisId, target) {
     const axis = this._axis(axisId);
     const [lo, hi] = this._axisRange(axisId);
     if (Array.isArray(axis.tick_values)) {
@@ -706,7 +557,7 @@ export class ChartView {
     return this.plot.y + (1 - (c - c0) / (c1 - c0)) * this.plot.h;
   }
 
-  _listen(target, type, handler, options?: any) {
+  _listen(target, type, handler, options) {
     target.addEventListener(type, handler, options);
     this._listeners.push({ target, type, handler, options });
     return handler;
@@ -739,7 +590,7 @@ export class ChartView {
     }));
   }
 
-  _emitViewChange(source = "view", opts: any = {}) {
+  _emitViewChange(source = "view", opts = {}) {
     if (this._destroyed) return;
     const broadcast = opts.broadcast !== false;
     this._pendingViewEvent = {
@@ -761,11 +612,7 @@ export class ChartView {
         interaction_id: pending.interaction_id,
       };
       this._dispatchChartEvent("view_change", detail);
-      // End-phase events always ship: they feed the kernel's view_state()
-      // cache (view-state.md §5.1) at one message per gesture. Update-phase
-      // streams stay gated on listener presence.
-      if (this.comm && (pending.phase === "end"
-          || !this.comm.wantsViewChange || this.comm.wantsViewChange())) {
+      if (this.comm && (!this.comm.wantsViewChange || this.comm.wantsViewChange())) {
         this.comm.send({ type: "view_change", ...detail });
       }
       if (pending.broadcast) this._broadcastLinkedView(detail);
@@ -782,17 +629,11 @@ export class ChartView {
       if (msg.source === this._linkedSource) return;
       if (this._interactionFlag("link_select") && msg.selection) {
         const selection = msg.selection;
-        // Linked applies update the durable-state mirror but never push
-        // history (view-state.md §4) — dispatch: false already skips it.
-        if (selection.clear) {
-          this._clearSelection({ broadcast: false, dispatch: false });
-        } else if (selection.polygon) {
-          this._stateSelection = { polygon: selection.polygon.map((point) => [...point]) };
-          this._selectLocalPolygon(selection.polygon, { dispatch: false });
-        } else if (selection.range) {
+        if (selection.clear) this._clearSelection({ broadcast: false, dispatch: false });
+        else if (selection.polygon) this._selectLocalPolygon(selection.polygon, { dispatch: false });
+        else if (selection.range) {
           const { x0, x1, y0, y1 } = selection.range;
           if ([x0, x1, y0, y1].every(Number.isFinite)) {
-            this._stateSelection = { range: { x0, x1, y0, y1 } };
             this._selectLocal(x0, x1, y0, y1, { dispatch: false });
           }
         }
@@ -836,7 +677,7 @@ export class ChartView {
     this._linkChannel.postMessage({ source: this._linkedSource, selection });
   }
 
-  setView(ranges, opts: any = {}) {
+  setView(ranges, opts = {}) {
     return this._setView({ ranges }, {
       animate: opts.animate === true,
       source: "programmatic",
@@ -846,7 +687,7 @@ export class ChartView {
     });
   }
 
-  resetView(opts: any = {}) {
+  resetView(opts = {}) {
     return this._resetView(opts.animate !== false, "reset");
   }
 
@@ -1006,20 +847,23 @@ export class ChartView {
     this._listen(this.canvas, "webglcontextlost", (e) => {
       e.preventDefault();
       if (this._destroyed) return;
-      const governedRelease = this.canvas.dataset.xyCtx === "released";
+      const eventCanvas = e.currentTarget;
+      const governedRelease =
+        eventCanvas?._xyGovernedReleasePending === true ||
+        eventCanvas?.dataset?.xyCtx === "released";
+      // Preserve the cause on the event for benchmark/host listeners that run
+      // after this handler; the live canvas state may change during recovery.
+      e.xyGovernedRelease = governedRelease;
+      if (eventCanvas) eventCanvas._xyGovernedReleasePending = false;
+      this._ctxReleaseEventPending = false;
       // _releaseContext marks the view lost synchronously before the browser
       // dispatches this event. Still run the full quiesce/telemetry path for
       // that first governed event; only ignore duplicate ungoverned losses.
       if (this._glLost && !governedRelease) return;
       this._glLost = true;
-      this._ctxLostPending = false; // the loss event has now dispatched
       // Governed releases already stamped "released"; anything else is a
       // browser-side eviction/driver reset (§28: the difference stays legible).
       if (!governedRelease) this.canvas.dataset.xyCtx = "lost";
-      // Either way a live context just went away; let peer frames know the
-      // shared budget has room (a governed release already announced; this is
-      // deduped, and it is what tells peers about a browser-side eviction).
-      XY_CONTEXT_GOVERNOR._announceLive();
       this._contextLossCount += 1;
       this._contextRecoveryError = null;
       this.root.dataset.xyContextState = "lost";
@@ -1052,6 +896,7 @@ export class ChartView {
       this._viewRequestBurstStart = null;
       this._dispatchChartEvent("context_lost", {
         loss_count: this._contextLossCount,
+        governed: governedRelease,
       });
       // A governed release keeps a snapshot and deliberately waits until the
       // chart is requested again. A browser-side eviction is different: the
@@ -1075,17 +920,6 @@ export class ChartView {
           ) {
             this._recoverContext();
           }
-        }, 0);
-      }
-      // A governed release whose re-acquire raced ahead of this event deferred
-      // its restoreContext() (see _recoverContext). Schedule the retry on the
-      // next task rather than calling it here: restoreContext() invoked
-      // synchronously inside the webglcontextlost dispatch is also ignored by
-      // Chromium — it must run after the loss event fully unwinds.
-      if (governedRelease && this._ctxRecoverRequested && !this._destroyed && this._ctxVisible) {
-        this._ctxRecoverRequested = false;
-        setTimeout(() => {
-          if (!this._destroyed && this._glLost && this._ctxVisible) this._recoverContext();
         }, 0);
       }
     });
@@ -1141,7 +975,6 @@ export class ChartView {
       this._ctxRecoveryDelay = 0;
       this.canvas.dataset.xyCtx = "live";
       this.root.dataset.xyContextState = "ready";
-      XY_CONTEXT_GOVERNOR._announceLive(); // context recovered; peers rebalance
       this._scheduleViewRequest(this.view, { delay: 0 });
       this._dropContextSnapshot(); // live frame is back; retire the stand-in
       this._dispatchChartEvent("context_restored", {
@@ -1162,14 +995,14 @@ export class ChartView {
     if (!ext) return false;
     this._snapshotBeforeRelease();
     this._ctxReleasedExt = ext;
+    this._ctxReleaseEventPending = true;
+    this.canvas._xyGovernedReleasePending = true;
     this._ctxReleases += 1;
     this._glLost = true; // synchronous: the lost *event* arrives as a task
-    this._ctxLostPending = true; // ...and restoreContext() must wait for it
     this.canvas.dataset.xyCtx = "released";
     if (this._raf) cancelAnimationFrame(this._raf);
     this._raf = null;
     ext.loseContext();
-    XY_CONTEXT_GOVERNOR._announceLive(); // one fewer live context on this frame
     return true;
   }
 
@@ -1257,24 +1090,25 @@ export class ChartView {
   // fresh one and rebuilt from the retained spec + payload.
   _recoverContext() {
     if (this._destroyed || !this._glLost) return;
-    // Governed release, but its webglcontextlost event has not dispatched yet
-    // (scrolled back into view in the same task it was released). Chromium
-    // drops a restoreContext() issued before the loss event, stranding the
-    // context lost forever — so defer; the loss handler re-invokes us once the
-    // event lands (and restoreContext is then honored).
-    if (this._ctxReleasedExt && this._ctxLostPending) {
-      this._ctxRecoverRequested = true;
+    // WEBGL_lose_context dispatches its loss event asynchronously. Restoring
+    // before that task lands can produce a restored-then-lost inversion and
+    // make a controlled release look like a fresh browser eviction.
+    if (this._ctxReleaseEventPending) {
+      this._scheduleContextRecovery();
       return;
     }
     this._ctxRecoveries += 1;
     if (this._ctxReleasedExt) {
       const ext = this._ctxReleasedExt;
+      if (!XY_CONTEXT_GOVERNOR.reserve(this, { deferred: true })) {
+        this._scheduleContextRecovery();
+        return;
+      }
       this._ctxReleasedExt = null;
       try {
         // Reserve before asking the browser to restore. The restored event is
         // asynchronous, so the pending reservation must count against later
         // recoveries in the same IntersectionObserver delivery.
-        XY_CONTEXT_GOVERNOR.reserve(this);
         ext.restoreContext(); // restored event -> full rebuild
         return;
       } catch (_err) {
@@ -1357,7 +1191,6 @@ export class ChartView {
     }
     this._ctxRecoveryDelay = 0;
     this.canvas.dataset.xyCtx = "live";
-    XY_CONTEXT_GOVERNOR._announceLive(); // rebuilt on a fresh canvas; peers rebalance
     this._scheduleViewRequest(this.view, { delay: 0 });
     this._dropContextSnapshot();
   }
@@ -1371,7 +1204,14 @@ export class ChartView {
     // entry — visibility alone can't distinguish it from its neighbors, and
     // touching a chart is the interaction signal that it needs to be live.
     this._listen(this.root, "pointerenter", () => {
-      if (this._glLost && !this._destroyed) this._recoverContext();
+      if (this._destroyed) return;
+      // Pointer entry is a stronger recency signal than an old intersection
+      // callback. Promote the requested chart before reserving a context so a
+      // burst of neighboring restores cannot immediately choose it as the LRU
+      // victim and leave the chart under the pointer blank.
+      this._ctxVisible = true;
+      this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
+      if (this._glLost) this._recoverContext();
     });
     // A background tab can lose contexts without changing any element's
     // intersection state. When the tab becomes active again, eagerly recover
@@ -1409,11 +1249,6 @@ export class ChartView {
           this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
           if (this._glLost && !this._destroyed) this._recoverContext();
           if (this._healStaleTheme()) this.draw();
-        } else if (!this._destroyed) {
-          // Now off-screen and releasable: if a sibling frame has pushed the
-          // shared budget over, give this context back rather than waiting for
-          // the browser to evict some other frame's visible chart.
-          XY_CONTEXT_GOVERNOR._rebalance();
         }
       },
       { rootMargin: "25% 0px 25% 0px" },
@@ -1460,7 +1295,6 @@ export class ChartView {
     this._positionReductionBadges();
     this._positionColorbar();
     this._fitModebar();
-    this._layoutAxisBands();
     this._pickDirty = true;
     // Changing a canvas backing-store dimension clears it immediately. Resize
     // work is already coalesced into one animation frame, so paint in that same
@@ -2038,7 +1872,7 @@ export class ChartView {
 
   _buildTrace(buffer, t) {
     const gl = this.gl;
-    const g: any = {
+    const g = {
       trace: t,
       tier: t.tier,
       color: [0.3, 0.47, 0.66, 1],
@@ -2207,7 +2041,7 @@ export class ChartView {
       return null;
     }
     const trace = this._sampleTraceSpec(parentTrace, sample);
-    const g: any = {
+    const g = {
       trace,
       tier: "sampled",
       xAxis: typeof parentTrace.x_axis === "string" ? parentTrace.x_axis : "x",
@@ -2252,7 +2086,7 @@ export class ChartView {
       stroke: sample.stroke,
       channels: sample.channels,
     };
-    const s: any = {
+    const s = {
       trace,
       tier: "sampled",
       xAxis: g.xAxis,
@@ -2575,7 +2409,7 @@ export class ChartView {
     const dy = (Number(style.hex_dy) || 0) * (yMeta.scale || 1);
     const ringX = [0, dx / 2, dx / 2, 0, -dx / 2, -dx / 2, 0];
     const ringY = [-dy / 3, -dy / 6, dy / 6, dy / 3, dy / 6, -dy / 6, -dy / 3];
-    const parts: any = {};
+    const parts = {};
     for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) parts[name] = new Float32Array(n * 6);
     for (let i = 0; i < n; i++) {
       const px = cx[i], py = cy[i];
@@ -4042,9 +3876,9 @@ export class ChartView {
     }
     const xAxis = this._axis("x");
     const yAxis = this._axis("y");
-    const extraXAxes = Object.values<any>(this.axes).filter((axis: any) =>
+    const extraXAxes = Object.values(this.axes).filter((axis) =>
       axis && axis.id !== "x" && String(axis.id || "").startsWith("x"));
-    const extraYAxes = Object.values<any>(this.axes).filter((axis: any) =>
+    const extraYAxes = Object.values(this.axes).filter((axis) =>
       axis && axis.id !== "y" && String(axis.id || "").startsWith("y"));
     const hideX = this._axisTickLabelStrategy(xAxis) === "none";
     const hideY = this._axisTickLabelStrategy(yAxis) === "none";
