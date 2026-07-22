@@ -1,4 +1,4 @@
-import { bytesToSpan, decodeFrame } from "./00_header";
+import { bytesToSpan, decodeFrame, payloadBuffers } from "./00_header";
 import { ChartView } from "./50_chartview";
 import { MARK_KINDS, markOf } from "./55_marks";
 // Prototype-augmentation modules: imported for their side effect of attaching
@@ -15,29 +15,14 @@ import "./57_viewstate";
 // Entry points
 // ---------------------------------------------------------------------------
 
-/** First-paint buffers in the shape the spec declares (§29): packed is one
- * blob; split is one span per column. Aligned views stay zero-copy; only a
- * legacy unaligned view pays a narrow view-sized copy. A spec/transport
- * disagreement is a bug, never a fallback. */
-function payloadBuffers(spec, raw) {
-  if (spec.buffer_layout === "split") {
-    if (!Array.isArray(raw)) {
-      throw new Error("xy: spec says buffer_layout=split but the transport delivered one buffer");
-    }
-    return raw.map(bytesToSpan);
-  }
-  if (Array.isArray(raw)) {
-    throw new Error("xy: transport delivered a buffer list but the spec is not split-layout");
-  }
-  return bytesToSpan(raw);
-}
-
 export function render({ model, el }) {
   const spec = model.get("spec");
   const buffer = payloadBuffers(spec, model.get("buffers"));
   const comm = {
     send: (msg) => model.send(msg),
-    wantsViewChange: () => spec.interaction?._transport_view_change === true,
+    // Read the live spec: appends re-sync it, and the transport flag must
+    // survive them (it is re-applied kernel-side on every append).
+    wantsViewChange: () => model.get("spec")?.interaction?._transport_view_change === true,
     onMessage: (cb) => {
       const handler = (content, buffers) => cb(content, buffers);
       model.on("msg:custom", handler);
@@ -45,7 +30,26 @@ export function render({ model, el }) {
     },
   };
   const view = new ChartView(el, spec, buffer, comm);
-  return () => view.destroy();
+  // Streaming append rides the spec+buffers trait update itself (§29): one
+  // comm message per tick that doubles as notebook-reopen state. A fresh
+  // render above already painted the streamed state, so only a *subsequent*
+  // advance of `spec.append.seq` applies as an incremental append.
+  let appendSeq = spec.append?.seq ?? null;
+  const onSpecChange = () => {
+    const nextSpec = model.get("spec");
+    const tag = nextSpec?.append;
+    if (!tag || tag.seq === appendSeq) return;
+    appendSeq = tag.seq;
+    view._applyAppend(
+      { type: "append", affected: tag.affected, spec: nextSpec },
+      model.get("buffers"),
+    );
+  };
+  model.on("change:spec", onSpecChange);
+  return () => {
+    model.off?.("change:spec", onSpecChange);
+    view.destroy();
+  };
 }
 
 /** Standalone (static HTML export — no kernel). Retains typed CPU views of

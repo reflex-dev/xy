@@ -20,7 +20,7 @@
  * title, axis tick labels, legend, tooltip (§7).
  */
 
-export const PROTOCOL = 4;
+export const PROTOCOL = 5;
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
 // python/xy/_framing.py). The chart spec's PROTOCOL
@@ -51,6 +51,24 @@ export function bytesToSpan(b) {
   // the normal aligned path zero-copy; preserve compatibility with one narrow
   // view-sized copy only when f32 columns could not be constructed in place.
   return span.byteOffset % 4 === 0 ? span : new Uint8Array(span);
+}
+
+/** Wire buffers in the shape the spec declares (§29): packed is one blob;
+ * split is one span per column. Aligned views stay zero-copy; only a
+ * legacy unaligned view pays a narrow view-sized copy. A spec/transport
+ * disagreement is a bug, never a fallback. Used at first paint and by the
+ * streaming-append apply path (both ride the same layouts). */
+export function payloadBuffers(spec, raw) {
+  if (spec.buffer_layout === "split") {
+    if (!Array.isArray(raw)) {
+      throw new Error("xy: spec says buffer_layout=split but the transport delivered one buffer");
+    }
+    return raw.map(bytesToSpan);
+  }
+  if (Array.isArray(raw)) {
+    throw new Error("xy: transport delivered a buffer list but the spec is not split-layout");
+  }
+  return bytesToSpan(raw);
 }
 
 function xyFrameLimit(limits, name) {
