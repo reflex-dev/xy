@@ -5926,6 +5926,7 @@ mod fuzz {
     }
 
     #[test]
+    #[cfg(any(not(target_family = "wasm"), target_feature = "atomics"))]
     fn fuzz_parallel_matches_serial() {
         // The public fns only fan out past PAR_THRESHOLD, so drive the impl
         // directly: hostile data must produce bitwise-identical results for
