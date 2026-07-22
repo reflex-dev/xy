@@ -51,6 +51,19 @@ def test_widget_append_resyncs_packed_reopen_state():
     assert len(sent) == 1
 
 
+def test_view_change_transport_is_callback_gated_and_survives_append():
+    fig = Figure().scatter(np.arange(10.0), np.arange(10.0))
+    quiet, _ = _capturing_widget(fig)
+    assert "_transport_view_change" not in quiet.spec.get("interaction", {})
+
+    widget, sent = _capturing_widget(fig, on_view_change=lambda _view: None)
+    assert widget.spec["interaction"]["_transport_view_change"] is True
+
+    widget.append(fig.traces[0].id, [10.0], [10.0])
+    assert widget.spec["interaction"]["_transport_view_change"] is True
+    assert sent[0][0]["spec"]["interaction"]["_transport_view_change"] is True
+
+
 def test_widget_drops_malformed_view_messages():
     n = DECIMATION_THRESHOLD + 1
     fig = Figure().line(np.arange(n, dtype=np.float64), np.arange(n, dtype=np.float64))

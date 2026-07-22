@@ -39,8 +39,13 @@ Internal architecture: how the engine is built and why.
 
 - [`chart-grammar.md`](design/chart-grammar.md) — the declarative composition
   model (`Chart` + `Mark` + `Axis` + `Legend`), fixed before the catalog grows.
+- [`animation.md`](design/animation.md) — declarative entrance/update/exit
+  motion, stable identity, interruption, reduced motion, and export determinism.
 - [`lod-architecture.md`](design/lod-architecture.md) — the Tier 0/1/2/3
   LOD/drilldown design that keeps large data truthful and interactive.
+- [`pan-and-zoom-configuration.md`](design/pan-and-zoom-configuration.md) — the
+  flat per-axis viewport-navigation contract: capability/action/axis/source
+  switches, `zoom_limits`, reset, and the semantic `ranges` view events.
 - [`reflex-integration.md`](design/reflex-integration.md) — the `reflex-xy`
   adapter design: figures as first-class Reflex components over a second
   socket.io namespace.
@@ -50,6 +55,9 @@ Internal architecture: how the engine is built and why.
   shipped WebGL2 render path plus the architecture it converges to.
 - [`rust-engine.md`](design/rust-engine.md) — what lives in Rust vs Python and
   how the C-ABI/FFI seam evolves without rewrites.
+- [`view-state.md`](design/view-state.md) — the unified view-state layer:
+  one serializable state object behind history, programmatic zoom/pan/select,
+  axis-scoped gestures, and framework-owned tooltips.
 - [`wire-protocol.md`](design/wire-protocol.md) — the client↔Python message
   catalog, first-paint buffer layouts, and the version handshake.
 

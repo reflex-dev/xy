@@ -39,13 +39,17 @@ example, `plot_background` writes `--chart-bg`, while `grid_color` writes
 `--chart-grid`.
 
 ~~~python demo exec toggle preview-code id=theme-chrome-area-demo
+months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
+revenue = [32, 45, 41, 58, 63, 74]
+
+# --- chart ---
 import reflex_xy
 import xy
 
 chart = xy.area_chart(
     xy.area(
-        ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
-        [32, 45, 41, 58, 63, 74],
+        months,
+        revenue,
         name="Revenue",
         color="#f43f5e",
         fill="linear-gradient(#f43f5e4d 5%, #f43f5e00 95%)",
@@ -136,9 +140,6 @@ Explicit numeric offsets and narrow columns leave a visible gap inside every
 group.
 
 ~~~python demo exec toggle preview-code id=semantic-palette-columns-demo
-import reflex_xy
-import xy
-
 months = ["Jan", "Feb", "Mar", "Apr"]
 category_centers = list(range(len(months)))
 series = [
@@ -146,6 +147,11 @@ series = [
     ("Secondary", [28, 34, 39, 47], "var(--series-secondary)", 0.0),
     ("Accent", [16, 21, 25, 31], "var(--series-accent)", 0.24),
 ]
+
+# --- chart ---
+import reflex_xy
+import xy
+
 columns = [
     xy.column(
         [center + offset for center in category_centers],
@@ -366,13 +372,17 @@ does not depend on a network font; replace that stack with the family your host
 loads.
 
 ~~~python demo exec toggle preview-code id=custom-font-columns-demo
+quarters = ["Q1", "Q2", "Q3", "Q4", "Q5"]
+revenue = [3, 6, 4, 8, 7]
+
+# --- chart ---
 import reflex_xy
 import xy
 
 font_chart = xy.column_chart(
     xy.column(
-        ["Q1", "Q2", "Q3", "Q4", "Q5"],
-        [3, 6, 4, 8, 7],
+        quarters,
+        revenue,
         name="Revenue",
         color="#8e51ff",
         width=0.56,

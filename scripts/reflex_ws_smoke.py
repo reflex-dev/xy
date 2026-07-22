@@ -1,8 +1,8 @@
 """End-to-end probe for the Reflex integration (reflex-integration.md §1/§2).
 
-Drives headless Chromium at a *running* reflex-xy demo app (see
-python/reflex-xy/examples/demo_app: `reflex run`) and asserts the load-bearing
-claims of the design:
+Drives headless Chromium at a *running* reflex-xy showcase app (see
+examples/reflex: `reflex run`) and asserts the load-bearing claims of the
+design:
 
 1. ONE physical websocket to the backend carries both the app plane and the
    chart data plane (socket.io namespace multiplexing) — counted via CDP.
@@ -241,11 +241,11 @@ def main() -> None:
     with ChromiumSession(chromium, gl="software", sandbox=False) as session:
         probe = Probe(session, args.frontend)
 
-        # 1) all four charts mount live views (three socket-fed, one static)
+        # 1) every chart mounts a view (six live figure vars + one static Chart)
         probe.wait_for(
-            "window.__xy_views && window.__xy_views.size >= 4",
+            "window.__xy_views && window.__xy_views.size >= 6",
             timeout_s=120.0,
-            label="4 mounted chart views",
+            label="mounted chart views",
         )
         print("mounted views:", probe.eval("Array.from(window.__xy_views.keys()).sort()"))
 
@@ -256,12 +256,12 @@ def main() -> None:
         if len(ws) != 1:
             failures.append(f"expected exactly 1 backend websocket (shared transport), got {ws}")
 
-        # 2b) the direct-Chart mount is truly static: it never subscribed —
-        #     exactly one sub per live chart, none mentioning the inline one
+        # 2b) the direct-Chart mount is truly static: it never subscribes. The
+        #     six live sources (five figure vars + one inline() token) each sub.
         subs = probe.sent_ws_frames('"sub"')
         print(f"sub frames sent: {len(subs)}")
-        if len(subs) != 3:
-            failures.append(f"expected 3 sub frames (live charts only), got {len(subs)}")
+        if len(subs) < 6:
+            failures.append(f"expected >= 6 sub frames (live sources), got {len(subs)}")
 
         # 3) pixels: every chart paints ink inside its rect (full-page shot,
         #    rects in page coordinates so below-the-fold charts count too)

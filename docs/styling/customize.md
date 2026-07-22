@@ -27,14 +27,15 @@ clearer. Unsupported properties raise while the chart is built instead of
 silently disappearing in one renderer.
 
 ~~~python demo exec toggle preview-code id=customize-mark-paint-demo
+x = [0, 1, 2, 3, 4, 5]
+y = [22, 31, 29, 44, 51, 63]
+
+# --- chart ---
 import reflex_xy
 import xy
 
 
 def customize_mark_paint_preview():
-    x = [0, 1, 2, 3, 4, 5]
-    y = [22, 31, 29, 44, 51, 63]
-
     chart = xy.area_chart(
         xy.area(
             x,
@@ -111,16 +112,19 @@ the remaining zero-width and transparent properties remove the baseline and
 ticks without removing the horizontal grid.
 
 ~~~python demo exec toggle preview-code id=customize-horizontal-grid-demo
+months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul"]
+revenue = [38, 46, 43, 57, 54, 65, 72]
+
+# --- chart ---
 import reflex_xy
 import xy
 
 
 def customize_horizontal_grid_preview():
-    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul"]
     chart = xy.area_chart(
         xy.area(
             months,
-            [38, 46, 43, 57, 54, 65, 72],
+            revenue,
             name="Revenue",
             color="#00b8db",
             fill="linear-gradient(#00b8db4d 5%, #00b8db00 95%)",
@@ -178,6 +182,10 @@ This column chart keeps a deliberate bottom axis. The baseline uses
 visually quiet while still drawing horizontal guides.
 
 ~~~python demo exec toggle preview-code id=customize-axis-details-demo
+months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
+orders = [32, 47, 41, 58, 54, 68]
+
+# --- chart ---
 import reflex_xy
 import xy
 
@@ -185,8 +193,8 @@ import xy
 def customize_axis_details_preview():
     chart = xy.column_chart(
         xy.column(
-            ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
-            [32, 47, 41, 58, 54, 68],
+            months,
+            orders,
             name="Orders",
             color="#00bc7d",
             corner_radius=(5, 0),
@@ -241,16 +249,20 @@ treatment used by the product-ready examples, shown here with two vivid series
 and a compact stroke-shaped legend.
 
 ~~~python demo exec toggle preview-code id=customize-clean-dashboard-axis-demo
+months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"]
+direct = [34, 41, 39, 52, 48, 59, 56, 69]
+partner = [22, 28, 34, 31, 39, 44, 53, 61]
+
+# --- chart ---
 import reflex_xy
 import xy
 
 
 def customize_clean_dashboard_axis_preview():
-    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"]
     chart = xy.area_chart(
         xy.area(
             months,
-            [34, 41, 39, 52, 48, 59, 56, 69],
+            direct,
             name="Direct",
             color="#8e51ff",
             fill="linear-gradient(#8e51ff4d 5%, #8e51ff00 95%)",
@@ -260,7 +272,7 @@ def customize_clean_dashboard_axis_preview():
         ),
         xy.area(
             months,
-            [22, 28, 34, 31, 39, 44, 53, 61],
+            partner,
             name="Partner",
             color="#2b7fff",
             fill="linear-gradient(#2b7fff4d 5%, #2b7fff00 95%)",
@@ -326,6 +338,13 @@ scale, then style its container, gradient, ticks, and title through the
 `colorbar`, `colorbar_bar`, `colorbar_tick`, and `colorbar_title` slots.
 
 ~~~python demo exec toggle preview-code id=customize-colorbar-demo
+conversion = [
+    [0.12, 0.35, 0.62, 0.46],
+    [0.28, 0.71, 0.94, 0.68],
+    [0.18, 0.54, 0.82, 0.57],
+]
+
+# --- chart ---
 import reflex_xy
 import xy
 
@@ -333,11 +352,7 @@ import xy
 def customize_colorbar_preview():
     chart = xy.heatmap_chart(
         xy.heatmap(
-            [
-                [0.12, 0.35, 0.62, 0.46],
-                [0.28, 0.71, 0.94, 0.68],
-                [0.18, 0.54, 0.82, 0.57],
-            ],
+            conversion,
             name="Conversion rate",
             colormap="purples",
             domain=(0, 1),
@@ -399,16 +414,20 @@ work through `class_name` / `class_names` when the host enables Reflex's
 `TailwindV4Plugin`.
 
 ~~~python demo exec toggle preview-code id=customize-legend-demo
+periods = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"]
+desktop = [31, 38, 35, 46, 43, 54, 51, 62]
+mobile = [22, 27, 32, 29, 38, 42, 49, 57]
+
+# --- chart ---
 import reflex_xy
 import xy
 
 
 def customize_legend_preview():
-    periods = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"]
     chart = xy.area_chart(
         xy.area(
             periods,
-            [31, 38, 35, 46, 43, 54, 51, 62],
+            desktop,
             name="Desktop",
             color="#8e51ff",
             fill="linear-gradient(#8e51ff4d 5%, #8e51ff00 95%)",
@@ -418,7 +437,7 @@ def customize_legend_preview():
         ),
         xy.area(
             periods,
-            [22, 27, 32, 29, 38, 42, 49, 57],
+            mobile,
             name="Mobile",
             color="#2b7fff",
             fill="linear-gradient(#2b7fff4d 5%, #2b7fff00 95%)",
@@ -492,15 +511,17 @@ data columns for readable titles and formats, then style the built-in tooltip
 directly or through the chart's `tooltip` slot.
 
 ~~~python demo exec toggle preview-code id=customize-tooltip-demo
+data = {
+    "period": ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
+    "revenue": [32_000, 45_000, 41_000, 58_000, 63_000, 74_000],
+}
+
+# --- chart ---
 import reflex_xy
 import xy
 
 
 def customize_tooltip_preview():
-    data = {
-        "period": ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
-        "revenue": [32_000, 45_000, 41_000, 58_000, 63_000, 74_000],
-    }
     chart = xy.area_chart(
         xy.area(
             x="period",
@@ -576,6 +597,10 @@ Use geometry props such as `color`, `width`, and `opacity`, then use the
 annotation's `style` or the chart's `annotation_label` slot for its label.
 
 ~~~python demo exec toggle preview-code id=customize-annotations-demo
+x = [0, 1, 2, 3, 4, 5]
+y = [3, 5, 4, 7, 6, 9]
+
+# --- chart ---
 import reflex_xy
 import xy
 
@@ -583,8 +608,8 @@ import xy
 def customize_annotations_preview():
     chart = xy.area_chart(
         xy.area(
-            [0, 1, 2, 3, 4, 5],
-            [3, 5, 4, 7, 6, 9],
+            x,
+            y,
             color="#2b7fff",
             fill="linear-gradient(#2b7fff4d 5%, #2b7fff00 95%)",
             opacity=1,
@@ -679,6 +704,10 @@ the `crosshair_x`, `crosshair_y`, `selection`, `modebar`, and `modebar_button`
 slots.
 
 ~~~python demo exec toggle preview-code id=customize-interaction-demo
+x = [0, 1, 2, 3, 4, 5, 6, 7]
+y = [2, 5, 3, 7, 6, 9, 8, 11]
+
+# --- chart ---
 import reflex_xy
 import xy
 
@@ -686,8 +715,8 @@ import xy
 def customize_interaction_preview():
     chart = xy.scatter_chart(
         xy.scatter(
-            [0, 1, 2, 3, 4, 5, 6, 7],
-            [2, 5, 3, 7, 6, 9, 8, 11],
+            x,
+            y,
             size=10,
             style={
                 "fill": "#fe9a00",

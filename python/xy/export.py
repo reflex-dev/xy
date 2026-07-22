@@ -267,6 +267,7 @@ def to_html(
     path: Optional[str | PathLike[str]] = None,
     *,
     custom_css: Optional[str] = None,
+    animation_progress: Optional[float] = None,
 ) -> str:
     """Render `fig` to a standalone interactive HTML string (optionally saved).
 
@@ -278,6 +279,11 @@ def to_html(
     utility classes referenced by `class_names` (e.g. Tailwind) resolve in the
     standalone export; it must not contain a `</style>` breakout sequence."""
     spec, blob = fig.build_payload()
+    if animation_progress is not None:
+        progress = float(animation_progress)
+        if not math.isfinite(progress) or not 0.0 <= progress <= 1.0:
+            raise ValueError("animation progress must be between 0 and 1")
+        spec["animation_capture_progress"] = progress
     if len(blob) > EMBED_WARN_BYTES:
         import warnings
 
@@ -724,7 +730,7 @@ def to_png(
 
         data = _raster.to_png(fig, None, width=w, height=h, scale=scale, fast=not optimize)
     else:
-        doc = to_html(fig, custom_css=custom_css)
+        doc = to_html(fig, custom_css=custom_css, animation_progress=1.0)
         data = html_to_png(
             doc,
             w,
@@ -908,7 +914,7 @@ def _browser_html(fig: "Figure", custom_css: Optional[str], background: Optional
     """Standalone document for browser capture, with the export background
     override injected as page CSS (validated by `_validated_background`)."""
     css = _background_css(background) + (custom_css or "")
-    return to_html(fig, custom_css=css or None)
+    return to_html(fig, custom_css=css or None, animation_progress=1.0)
 
 
 def _browser_session(*, gl: str, sandbox: bool) -> "Any":

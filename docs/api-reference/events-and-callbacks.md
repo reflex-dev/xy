@@ -17,7 +17,7 @@ self-contained file has no Python process to call.
 | `on_click` | Exact canonical row dictionary for the clicked point |
 | `on_brush` | Selection geometry: normalized `x0`/`x1`/`y0`/`y1` or a `polygon` |
 | `on_select` | A `Selection` with canonical row indices grouped by trace |
-| `on_view_change` | Normalized `x0`, `x1`, `y0`, `y1`, and `source` |
+| `on_view_change` | Per-axis `ranges` map, `source`, changed `axes`, `phase`, `interaction_id` (with `x0`/`x1`/`y0`/`y1` aliases) |
 
 Supplying a callback enables its corresponding browser interaction. Callback
 payload details are still experimental during the alpha series.
@@ -63,7 +63,7 @@ The client dispatches bubbling custom events from the chart root:
 | `xy:hover` | Resident or exact `row`, `trace`, `index`, viewport, and optional `exact` flag |
 | `xy:click` | Data-space `x`/`y`, optional row hit, trace/index, and viewport |
 | `xy:select` | Selected `total`, viewport, and range or polygon when resolved locally |
-| `xy:view_change` | `x0`, `x1`, `y0`, `y1`, and interaction `source` |
+| `xy:view_change` | Per-axis `ranges`, `source`, changed `axes`, `phase`, `interaction_id` (with `x0`/`x1`/`y0`/`y1` aliases) |
 
 A live hover can emit an immediate resident readout followed by an exact update.
 Consumers that only need the canonical Python row should use `on_hover`.

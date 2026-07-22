@@ -27,6 +27,7 @@ DEFAULT_PATHS = (
     Path("benchmarks"),
     Path("tests"),
     Path("examples/reflex"),
+    Path("examples/fastapi"),
     Path("hatch_build.py"),
 )
 

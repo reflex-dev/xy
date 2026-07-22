@@ -233,6 +233,14 @@ def test_public_markdown_routes_match_the_docs_navigation() -> None:
     assert DOCS_NAVIGATION[-1] == "/overview/benchmarks/"
     assert "/overview/gallery/" in DOCS_NAVIGATION
     assert "/charts/" not in DOCS_NAVIGATION
+    core_concept_leaves = next(
+        leaves for title, _route, _icon, leaves in DOCS_SECTIONS if title == "Core Concepts"
+    )
+    assert ("Animations", "/core-concepts/animations/") not in core_concept_leaves
+    styling_leaves = next(
+        leaves for title, _route, _icon, leaves in DOCS_SECTIONS if title == "Styling"
+    )
+    assert ("Animations", "/styling/animations/") in styling_leaves
     assert (
         max(len(tuple(part for part in route.split("/") if part)) for route in section_routes) <= 2
     )
@@ -387,11 +395,15 @@ def test_chart_examples_are_wide_copyable_demos_without_a_toc() -> None:
 
     rendered_page = str(render_xy_markdown_page(page))
     demo_count = len(demos)
+    # Demos that split their hardcoded data into a Data tab (the `# --- chart ---`
+    # divider) render a third trigger/panel; the rest stay Preview/Code.
+    data_demos = sum("# --- chart ---" in block.content for block in demos)
     assert rendered_page.count("XYChart") == demo_count + 6
     assert rendered_page.count('value:"preview"') == demo_count * 2
     assert rendered_page.count('value:"code"') == demo_count * 2
-    assert rendered_page.count("xy-example-tab cursor-pointer") == demo_count * 2
-    assert rendered_page.count("xy-example-tab-list inline-flex") == demo_count
+    assert rendered_page.count('value:"data"') == data_demos * 2
+    assert rendered_page.count("xy-example-tab cursor-pointer") == demo_count * 2 + data_demos
+    assert rendered_page.count("xy-example-tab-list relative") == demo_count
     assert "xy-chart-examples" in rendered_page
     assert "max-width: 88rem" in rendered_page
     assert "div:has(#toc-navigation)" in rendered_page
@@ -401,6 +413,32 @@ def test_chart_examples_are_wide_copyable_demos_without_a_toc() -> None:
     assert "var(--chart-" not in page.content
     assert "currentColor" not in page.content
     assert '"transparent"' not in page.content
+
+
+def test_animation_replay_demos_reuse_example_chrome_and_controls() -> None:
+    """Keep animation demos visually aligned with the polished examples."""
+    page = next(page for page in discover_docs(DOCS_CONFIG) if page.route == "/styling/animations/")
+    content = page.content
+
+    assert content.count("ui.button(") == 8
+    assert content.count('ui.icon("PlayIcon"') == 5
+    assert content.count('variant="outline"') == 8
+    assert content.count("flex w-full justify-end px-4 pt-4 sm:px-5 sm:pt-5") == 3
+    assert "rx.button(" not in content
+    assert 'aria_label="Play mark override animation"' in content
+    assert 'aria_label="Play lifecycle animation"' in content
+    assert "2 exits · 2 enters · 3 retained" in content
+    assert '"sales": [54, 16, 46, 22, 60]' in content
+    assert "random.uniform(-0.75, 0.75)" in content
+    assert "StreamingAnimationDemo.append_points(1)" in content
+    assert "StreamingAnimationDemo.append_points(5)" in content
+    assert "StreamingAnimationDemo.append_points(12)" in content
+    assert "linear-gradient(#8e51ff4d 5%, #8e51ff00 95%)" in content
+    assert '"axis_color": "#00000000"' in content
+
+    rendered = str(render_xy_markdown_page(page))
+    assert rendered.count("border border-secondary-a4 bg-secondary-1") >= 8
+    assert rendered.count("Play animation") >= 5
 
 
 def test_palette_playground_drives_a_reactive_chart_grid() -> None:

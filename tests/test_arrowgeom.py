@@ -1,5 +1,5 @@
 """Arrow-path geometry: the label_clear start clearance (mirrored in
-js/src/51_annotations.js — keep behaviors in sync)."""
+js/src/51_annotations.ts — keep behaviors in sync)."""
 
 from __future__ import annotations
 

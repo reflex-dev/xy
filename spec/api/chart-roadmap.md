@@ -254,7 +254,7 @@ logic is chart-agnostic and factored out on both sides of the wire —
 `python/xy/lod.py` (visible-window mask, hysteresis drill decision,
 drilled-subset bookkeeping incl. `drill_seq`, §16 window-centered encoding,
 screen-derived grid shape, per-point local log-density, wire-buffer packing)
-and `js/src/45_lod.js` (drill lifecycle with entry/exit fades and the dying
+and `js/src/45_lod.ts` (drill lifecycle with entry/exit fades and the dying
 state, density-source cache, texture crossfades, eased exposure
 normalization). `interaction.density_view` and ChartView are thin scatter
 wiring over these; a heatmap or histogram tier should reuse them with a

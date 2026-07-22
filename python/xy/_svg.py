@@ -7,7 +7,7 @@ grid, so a 100M-point figure exports as a few-hundred-KB, resolution-
 independent SVG in milliseconds — no browser, no extra dependencies.
 
 Layout, tick math, colormaps, and mark styling mirror the JS client
-(`30_ticks.js`, `10_colormaps.js`, `50_chartview.js`); tests assert the
+(`30_ticks.ts`, `10_colormaps.ts`, `50_chartview.ts`); tests assert the
 ported tables stay in sync with the JS parts. Known static-export
 approximations, documented in spec/api/styling.md: area mark-space gradients use
 the area's bounding box (SVG has no per-column gradient); complete chart color
@@ -28,7 +28,7 @@ from xml.sax.saxutils import escape
 
 import numpy as np
 
-from . import _native, _png
+from . import _native, _paint, _png
 from ._arrowgeom import arrow_shapes as _arrow_shapes
 from .config import DEFAULT_PALETTE
 
@@ -43,7 +43,7 @@ def _stroke_opacity(style: dict[str, Any], default: float = 1.0) -> float:
     return float(style.get("opacity", default)) * float(style.get("stroke_opacity", 1.0))
 
 
-# Mirrors js/src/10_colormaps.js COLORMAP_STOPS (§36) — test-guarded.
+# Mirrors js/src/10_colormaps.ts COLORMAP_STOPS (§36) — test-guarded.
 COLORMAP_STOPS: dict[str, list[tuple[int, int, int]]] = {
     "binary": [(255, 255, 255), (0, 0, 0)],
     "gray": [
@@ -311,7 +311,7 @@ _AXIS_GRID_DASHES = {
 
 
 # ---------------------------------------------------------------------------
-# Tick math — ports of 30_ticks.js (f64 throughout, §16)
+# Tick math — ports of 30_ticks.ts (f64 throughout, §16)
 # ---------------------------------------------------------------------------
 
 
@@ -1996,27 +1996,28 @@ def _segment_marks(
     x1 = _column(blob, cols[t["x1"]])
     y0 = _column(blob, cols[t["y0"]])
     y1 = _column(blob, cols[t["y1"]])
-    width = float(style.get("width", 1.2))
-    op = _stroke_opacity(style)
-    channel = t.get("color") or {}
-    if channel.get("mode") == "continuous":
-        rgb = _lut(channel.get("colormap", "viridis"), _column(blob, cols[channel["buf"]]))
-        colors = [f"rgb({r},{g},{b})" for r, g, b in rgb]
-    elif channel.get("mode") == "categorical":
-        codes = _column(blob, cols[channel["buf"]]).astype(int)
-        palette = channel.get("palette") or DEFAULT_PALETTE
-        colors = [palette[code % len(palette)] for code in codes]
-    else:
-        colors = [color] * len(x0)
-    suffix = (
-        f'stroke-width="{_num(width)}" fill="none" stroke-linecap="round"'
-        + (f' stroke-opacity="{_num(op)}"' if op < 1 else "")
-        + _dash_attr(style)
-    )
+    n = len(x0)
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    intrinsic = _trace_paint_rgba(t, "color", n, color, read)
+    colors = _paint.effective_rgba(intrinsic, t, read, component="stroke", default_opacity=1.0)
+    widths = _paint.style_values(t, "width", n, read, float(style.get("width", 1.2)))
+    paint = t.get("color") or {}
+    plain_css = _css(paint.get("color"), color)
+    # Only an opaque constant color may pass through verbatim: a translucent
+    # CSS constant already contributes its alpha to stroke-opacity through
+    # effective_rgba, so repeating it inside stroke= would apply it twice.
+    constant_paint = paint.get("mode") in {None, "constant"} and _paint_rgba8(plain_css)[3] == 255
+    css_paint = escape(plain_css)
     return "".join(
         f'<line x1="{_num(float(sx(x0[i])))}" y1="{_num(float(sy(y0[i])))}" '
         f'x2="{_num(float(sx(x1[i])))}" y2="{_num(float(sy(y1[i])))}" '
-        f'stroke="{escape(colors[i])}" {suffix}/>'
+        f'stroke="{css_paint if constant_paint else f"rgb({round(colors[i, 0] * 255)},{round(colors[i, 1] * 255)},{round(colors[i, 2] * 255)})"}" '
+        f'stroke-opacity="{_num(float(colors[i, 3]))}" '
+        f'stroke-width="{_num(float(widths[i]))}" fill="none" stroke-linecap="round"'
+        f"{_dash_attr(style)}/>"
         for i in range(len(x0))
     )
 
@@ -2029,18 +2030,30 @@ def _scatter_marks(
     px, py = sx(xv), sy(yv)
     n = len(xv)
 
-    color_ch = t.get("color") or {}
-    mode = color_ch.get("mode")
-    if mode == "continuous":
-        vals = _column(blob, cols[color_ch["buf"]])
-        rgb = _lut(color_ch.get("colormap", "viridis"), vals)
-        fills = [f"rgb({r},{g},{b})" for r, g, b in rgb]
-    elif mode == "categorical":
-        codes = _column(blob, cols[color_ch["buf"]]).astype(int)
-        pal = color_ch.get("palette") or DEFAULT_PALETTE
-        fills = [pal[c % len(pal)] for c in codes]
-    else:
-        fills = [_css(color_ch.get("color"), fallback)] * n
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    face_intrinsic = _trace_paint_rgba(t, "color", n, fallback, read)
+    scalar_artist = style.get("artist_alpha")
+    grouped_alpha = scalar_artist is not None and not (t.get("channels") or {}).get("artist_alpha")
+    effective_trace = t
+    if grouped_alpha:
+        face_intrinsic[:, 3] = 1.0
+        effective_trace = dict(t)
+        effective_style = dict(style)
+        effective_style.pop("artist_alpha", None)
+        effective_style["opacity"] = 1.0
+        effective_style["fill_opacity"] = 1.0
+        effective_style["stroke_opacity"] = 1.0
+        effective_trace["style"] = effective_style
+    face_rgba = _paint.effective_rgba(
+        face_intrinsic, effective_trace, read, component="fill", default_opacity=0.8
+    )
+    face_channel = t.get("color") or {}
+    face_css = _css(face_channel.get("color"), fallback)
+    face_css_constant = (
+        face_channel.get("mode") in {None, "constant"} and _paint_rgba8(face_css)[3] == 255
+    )
 
     size_ch = t.get("size") or {}
     if size_ch.get("mode") == "continuous":
@@ -2050,31 +2063,69 @@ def _scatter_marks(
     else:
         radii = np.full(n, float(size_ch.get("size", 4.0)) / 2)
 
-    fill_op = _fill_opacity(style, 0.8)
-    stroke_op = _stroke_opacity(style, 0.8)
-    stroke_w = float(style.get("stroke_width", 0.0))
-    line_symbol = style.get("symbol") in {"plus_line", "x_line"}
-    if line_symbol and stroke_w <= 0:
-        stroke_w = 1.0
-    explicit_stroke = style.get("stroke")
-    stroke = _css(explicit_stroke, fallback) if explicit_stroke is not None else None
-    symbol = style.get("symbol", "circle")
-    builder = _SYMBOL_BUILDERS.get(symbol)
-
-    # Collection alpha applies to faces and edges.  A missing explicit stroke
-    # means edgecolors="face", so resolve the edge separately for every mark.
-    attrs = ""
-    if fill_op < 1:
-        attrs += f' fill-opacity="{_num(fill_op)}"'
-    if stroke_op < 1:
-        attrs += f' stroke-opacity="{_num(stroke_op)}"'
-    out = [f"<g{attrs}>"]
+    stroke_widths = _paint.style_values(t, "stroke_width", n, read, 0.0)
+    symbols = _symbol_names(t, n, read, str(style.get("symbol", "circle")))
+    if (t.get("stroke") or {}).get("mode") == "match_fill":
+        stroke_source = face_intrinsic.copy()
+        stroke_css = face_css
+        stroke_css_constant = face_css_constant
+    elif t.get("stroke") is not None:
+        stroke_source = _trace_paint_rgba(t, "stroke", n, fallback, read)
+        stroke_css = _css((t.get("stroke") or {}).get("color"), style.get("stroke") or face_css)
+        stroke_css_constant = (t.get("stroke") or {}).get("mode") in {
+            None,
+            "constant",
+        } and _paint_rgba8(stroke_css)[3] == 255
+    elif style.get("stroke") is not None:
+        stroke_css = _css(style.get("stroke"), face_css)
+        stroke_source = np.tile(
+            np.asarray(_paint_rgba8(stroke_css), dtype=np.float64) / 255.0, (n, 1)
+        )
+        stroke_css_constant = _paint_rgba8(stroke_css)[3] == 255
+    else:
+        stroke_source = face_intrinsic.copy()
+        stroke_css = face_css
+        stroke_css_constant = face_css_constant
+    stroke_rgba = _paint.effective_rgba(
+        stroke_source, effective_trace, read, component="stroke", default_opacity=0.8
+    )
+    if grouped_alpha:
+        fill_group = float(scalar_artist) * _fill_opacity(style, 1.0)
+        stroke_group = float(scalar_artist) * _stroke_opacity(style, 1.0)
+        out = [f'<g fill-opacity="{_num(fill_group)}" stroke-opacity="{_num(stroke_group)}">']
+    else:
+        out = ["<g>"]
     for i in range(n):
-        fill_attr = f' fill="{escape(fills[i])}"'
-        point_stroke = stroke or (fills[i] if stroke_w or line_symbol else None)
+        fill = face_rgba[i]
+        fill_value = (
+            escape(face_css)
+            if face_css_constant
+            else f"rgb({round(fill[0] * 255)},{round(fill[1] * 255)},{round(fill[2] * 255)})"
+        )
+        fill_attr = f' fill="{fill_value}"' + (
+            f' fill-opacity="{_num(float(fill[3]))}"' if float(fill[3]) < 1.0 else ""
+        )
+        symbol = symbols[i]
+        builder = _SYMBOL_BUILDERS.get(symbol)
+        line_symbol = symbol in {"plus_line", "x_line"}
+        stroke_w = float(stroke_widths[i])
+        if line_symbol and stroke_w <= 0:
+            stroke_w = 1.0
+        stroke_color = stroke_rgba[i]
+        stroke_value = (
+            escape(stroke_css)
+            if stroke_css_constant
+            else f"rgb({round(stroke_color[0] * 255)},{round(stroke_color[1] * 255)},{round(stroke_color[2] * 255)})"
+        )
         stroke_attr = (
-            f' stroke="{escape(point_stroke)}" stroke-width="{_num(stroke_w)}"'
-            if point_stroke
+            f' stroke="{stroke_value}"'
+            + (
+                f' stroke-opacity="{_num(float(stroke_color[3]))}"'
+                if float(stroke_color[3]) < 1.0
+                else ""
+            )
+            + f' stroke-width="{_num(stroke_w)}"'
+            if stroke_w > 0 or line_symbol
             else ""
         )
         # `size` includes the edge; SVG strokes are centered on the path.
@@ -2092,9 +2143,71 @@ def _scatter_marks(
     return "".join(out)
 
 
+_SYMBOL_NAMES = (
+    "circle",
+    "square",
+    "diamond",
+    "triangle",
+    "cross",
+    "hexagon",
+    "pentagon",
+    "star",
+    "triangle_down",
+    "triangle_left",
+    "triangle_right",
+    "x",
+    "point",
+    "pixel",
+    "thin_diamond",
+    "plus_line",
+    "x_line",
+)
+
+
+def _symbol_names(
+    trace: dict[str, Any], n: int, read: _paint.ColumnReader, fallback: str
+) -> list[str]:
+    channel = (trace.get("channels") or {}).get("symbol")
+    if channel is None:
+        return [fallback] * n
+    codes = np.asarray(read(int(channel["buf"])), dtype=np.uint8)[:n]
+    return [
+        _SYMBOL_NAMES[int(code)] if int(code) < len(_SYMBOL_NAMES) else fallback for code in codes
+    ]
+
+
+def _trace_paint_rgba(
+    trace: dict[str, Any],
+    key: str,
+    n: int,
+    fallback: str,
+    read: _paint.ColumnReader,
+) -> np.ndarray:
+    """Resolve one payload paint channel to intrinsic float RGBA."""
+    channel = trace.get(key) or {}
+    direct = _paint.direct_rgba(channel, n, read)
+    if direct is not None:
+        return direct
+    rgba = np.empty((n, 4), dtype=np.float64)
+    rgba[:, 3] = 1.0
+    mode = channel.get("mode")
+    if mode == "continuous":
+        rgba[:, :3] = _lut(channel.get("colormap", "viridis"), read(channel["buf"])[:n]) / 255.0
+    elif mode == "categorical":
+        codes = np.asarray(read(channel["buf"]), dtype=np.int64)[:n]
+        palette = channel.get("palette") or DEFAULT_PALETTE
+        table = np.asarray([_paint_rgba8(value) for value in palette], dtype=np.float64) / 255.0
+        rgba[:] = table[codes % len(table)]
+    else:
+        rgba[:] = (
+            np.asarray(_paint_rgba8(_css(channel.get("color"), fallback)), dtype=np.float64) / 255.0
+        )
+    return rgba
+
+
 # The hexagon ring around a hexbin cell center, as fractions of the cell
 # pitch (style hex_dx/hex_dy). Shared by the SVG and raster exporters; the JS
-# client mirrors it in _buildHexbinMark (js/src/50_chartview.js) — keep them
+# client mirrors it in _buildHexbinMark (js/src/50_chartview.ts) — keep them
 # in sync.
 HEX_RING = (
     (0.0, -1.0 / 3.0),
@@ -2157,27 +2270,45 @@ def _triangle_mesh_marks(
 ) -> str:
     vertices = [_column(blob, cols[t[name]]) for name in ("x0", "y0", "x1", "y1", "x2", "y2")]
     n = min(len(values) for values in vertices)
-    fills = _mesh_fills(t, blob, cols, n, fallback)
 
-    fill_op = _fill_opacity(style)
-    stroke_op = _stroke_opacity(style)
-    stroke_width = float(style.get("stroke_width", 0.0))
-    stroke = _css(style.get("stroke"), fallback) if stroke_width else None
-    group_attr = f' fill-opacity="{_num(fill_op)}"' if fill_op < 1 else ""
-    stroke_attr = (
-        f' stroke="{escape(stroke)}" stroke-width="{_num(stroke_width)}"'
-        + (f' stroke-opacity="{_num(stroke_op)}"' if stroke_op < 1 else "")
-        if stroke is not None
-        else ""
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    face = _trace_paint_rgba(t, "color", n, fallback, read)
+    fills = _paint.effective_rgba(face, t, read, component="fill", default_opacity=1.0)
+    if t.get("stroke") is not None:
+        stroke_face = _trace_paint_rgba(t, "stroke", n, fallback, read)
+    elif style.get("stroke") is not None:
+        stroke_face = np.tile(
+            np.asarray(_paint_rgba8(_css(style.get("stroke"), fallback)), dtype=np.float64) / 255.0,
+            (n, 1),
+        )
+    else:
+        stroke_face = face
+    strokes = _paint.effective_rgba(stroke_face, t, read, component="stroke", default_opacity=1.0)
+    stroke_widths = _paint.style_values(
+        t, "stroke_width", n, read, float(style.get("stroke_width", 0.0))
     )
     x0, y0, x1, y1, x2, y2 = vertices
-    out = [f"<g{group_attr}>"]
+    out = ["<g>"]
     for i in range(n):
         points = " ".join(
             f"{_num(float(sx(x)))},{_num(float(sy(y)))}"
             for x, y in ((x0[i], y0[i]), (x1[i], y1[i]), (x2[i], y2[i]))
         )
-        out.append(f'<polygon points="{points}" fill="{escape(fills[i])}"{stroke_attr}/>')
+        fill = fills[i]
+        attrs = (
+            f' fill="rgb({round(fill[0] * 255)},{round(fill[1] * 255)},'
+            f'{round(fill[2] * 255)})" fill-opacity="{_num(float(fill[3]))}"'
+        )
+        if stroke_widths[i] > 0:
+            stroke = strokes[i]
+            attrs += (
+                f' stroke="rgb({round(stroke[0] * 255)},{round(stroke[1] * 255)},'
+                f'{round(stroke[2] * 255)})" stroke-opacity="{_num(float(stroke[3]))}" '
+                f'stroke-width="{_num(float(stroke_widths[i]))}"'
+            )
+        out.append(f'<polygon points="{points}"{attrs}/>')
     out.append("</g>")
     return "".join(out)
 
@@ -2204,6 +2335,60 @@ def _corner_radii(style: dict) -> tuple[float, float]:
     return float(cr or 0), float(cr or 0)
 
 
+def _rect_svg_styles(
+    trace: dict[str, Any],
+    n: int,
+    fallback: str,
+    read: _paint.ColumnReader,
+    style: dict[str, Any],
+    svg: _Svg,
+    plot: dict[str, Any],
+) -> tuple[list[str], list[str], np.ndarray]:
+    """Resolve per-rectangle SVG fill/stroke attributes and radii."""
+    radius_channel = _paint.style_matrix(trace, "corner_radius", n, read)
+    if radius_channel is None:
+        tip, base = _corner_radii(style)
+        radii = np.tile(np.asarray([[tip, base]], dtype=np.float64), (n, 1))
+    elif radius_channel.shape[1] == 1:
+        radii = np.repeat(radius_channel, 2, axis=1)
+    else:
+        radii = radius_channel
+    if isinstance(style.get("fill"), dict):
+        fill, extra = _bar_fill(style, fallback, svg, plot)
+        return [fill] * n, [extra] * n, radii
+
+    face = _trace_paint_rgba(trace, "color", n, fallback, read)
+    fills_rgba = _paint.effective_rgba(face, trace, read, component="fill", default_opacity=0.85)
+    if trace.get("stroke") is not None:
+        stroke_face = _trace_paint_rgba(trace, "stroke", n, fallback, read)
+    elif style.get("stroke") is not None:
+        stroke_face = np.tile(
+            np.asarray(_paint_rgba8(_css(style.get("stroke"), fallback)), dtype=np.float64) / 255.0,
+            (n, 1),
+        )
+    else:
+        stroke_face = face
+    strokes = _paint.effective_rgba(
+        stroke_face, trace, read, component="stroke", default_opacity=0.85
+    )
+    widths = _paint.style_values(
+        trace, "stroke_width", n, read, float(style.get("stroke_width", 0.0))
+    )
+    fills: list[str] = []
+    extras: list[str] = []
+    for fill, stroke, width in zip(fills_rgba, strokes, widths, strict=True):
+        fills.append(f"rgb({round(fill[0] * 255)},{round(fill[1] * 255)},{round(fill[2] * 255)})")
+        extra = f' fill-opacity="{_num(float(fill[3]))}"'
+        if width > 0:
+            extra += (
+                f' stroke="rgb({round(stroke[0] * 255)},{round(stroke[1] * 255)},'
+                f'{round(stroke[2] * 255)})" stroke-opacity="{_num(float(stroke[3]))}" '
+                f'stroke-width="{_num(float(width))}"'
+            )
+        extras.append(extra)
+    return fills, extras, radii
+
+
 def _bar_marks(
     t: dict,
     blob: bytes,
@@ -2225,8 +2410,11 @@ def _bar_marks(
     )
     horizontal = b.get("orientation") == "horizontal"
     half = float(b["width"]) / 2
-    r_tip, r_base = _corner_radii(style)
-    fill, extra = _bar_fill(style, color, svg, plot)
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    fills, extras, radii = _rect_svg_styles(t, len(pos), color, read, style, svg, plot)
     out = []
     for i in range(len(pos)):
         if horizontal:
@@ -2237,14 +2425,15 @@ def _bar_marks(
             y0, y1 = float(sy(max(v0[i], v1[i]))), float(sy(min(v0[i], v1[i])))
         w, h = abs(x1 - x0), abs(y1 - y0)
         x, y = min(x0, x1), min(y0, y1)
+        r_tip, r_base = radii[i]
         if r_tip or r_base:
             tip_top = not horizontal and v1[i] >= v0[i]
             d = _rounded_rect_path(x, y, w, h, r_tip, r_base, tip_top or horizontal)
-            out.append(f'<path d="{d}" fill="{fill}"{extra}/>')
+            out.append(f'<path d="{d}" fill="{fills[i]}"{extras[i]}/>')
         else:
             out.append(
                 f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(w)}" height="{_num(h)}" '
-                f'fill="{fill}"{extra}/>'
+                f'fill="{fills[i]}"{extras[i]}/>'
             )
     return "".join(out)
 
@@ -2264,21 +2453,25 @@ def _rect_marks(
     x1v = _column(blob, cols[t["x1"]])
     y0v = _column(blob, cols[t["y0"]])
     y1v = _column(blob, cols[t["y1"]])
-    r_tip, r_base = _corner_radii(style)
-    fill, extra = _bar_fill(style, color, svg, plot)
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    fills, extras, radii = _rect_svg_styles(t, len(x0v), color, read, style, svg, plot)
     out = []
     for i in range(len(x0v)):
         xa_, xb = float(sx(x0v[i])), float(sx(x1v[i]))
         ya_, yb = float(sy(y0v[i])), float(sy(y1v[i]))
         x, y = min(xa_, xb), min(ya_, yb)
         w, h = abs(xb - xa_), abs(yb - ya_)
+        r_tip, r_base = radii[i]
         if r_tip or r_base:
             d = _rounded_rect_path(x, y, w, h, r_tip, r_base, y1v[i] >= y0v[i])
-            out.append(f'<path d="{d}" fill="{fill}"{extra}/>')
+            out.append(f'<path d="{d}" fill="{fills[i]}"{extras[i]}/>')
         else:
             out.append(
                 f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(w)}" height="{_num(h)}" '
-                f'fill="{fill}"{extra}/>'
+                f'fill="{fills[i]}"{extras[i]}/>'
             )
     return "".join(out)
 
