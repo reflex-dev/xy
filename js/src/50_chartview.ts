@@ -2099,31 +2099,65 @@ export class ChartView {
     g.yBuf = this._upload(y);
   }
 
+  // Pack only the dynamic style components. The shaders reconstruct the
+  // semantic [opacity, artist_alpha, width, symbol] vec4 from these slots and
+  // styleBase. This makes the common one-channel case 4 B/item instead of
+  // 16 B/item and keeps scalar artist alpha entirely in a uniform.
+  _packInstanceStyleChannels(g, n, channel, artistScalar, sourceOf, widthName) {
+    const base = [1, Number.isFinite(artistScalar) ? artistScalar : -1, -1, -1];
+    const definitions = [
+      { name: "opacity", component: 0, scale: 1 },
+      { name: "artist_alpha", component: 1, scale: 1 },
+      { name: widthName, component: 2, scale: this.dpr },
+      { name: "symbol", component: 3, scale: 1 },
+    ];
+    const active = definitions
+      .map(({ name, component, scale }) => ({ spec: channel(name), component, scale }))
+      .filter(({ spec }) => !!spec);
+    const slots = [-1, -1, -1, -1];
+    for (let packed = 0; packed < active.length; packed++) {
+      slots[active[packed].component] = packed;
+    }
+    g.styleBase = base;
+    g.styleSlots = slots;
+    const previousSize = g.styleSize || 0;
+    g.styleSize = active.length;
+    if (!active.length) {
+      if (g.styleBuf) {
+        this._deleteVaos(g);
+        this.gl.deleteBuffer(g.styleBuf);
+        g.styleBuf = null;
+      }
+      return;
+    }
+    const values = new Float32Array(n * active.length);
+    for (let packed = 0; packed < active.length; packed++) {
+      const { spec, scale } = active[packed];
+      const source = sourceOf(spec);
+      const components = spec.components || 1;
+      for (let i = 0; i < n; i++) {
+        values[i * active.length + packed] = source[i * components] * scale;
+      }
+    }
+    if (g.styleBuf) {
+      if (previousSize !== active.length) this._deleteVaos(g);
+      this._uploadTierBuffer(g.styleBuf, values);
+    } else {
+      g.styleBuf = this._upload(values);
+    }
+  }
+
   _buildInstanceStyleChannels(g, t, buffer, widthName) {
     const channel = (name) => t.channels && t.channels[name];
     const artistScalar = Number(t.style && t.style.artist_alpha);
-    const hasStyle = channel("opacity") || channel("artist_alpha") ||
-      channel(widthName) || channel("symbol") || Number.isFinite(artistScalar);
-    if (hasStyle) {
-      const values = new Float32Array(g.n * 4);
-      for (let i = 0; i < g.n; i++) {
-        values[i * 4] = 1;
-        values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
-        values[i * 4 + 2] = -1;
-        values[i * 4 + 3] = -1;
-      }
-      const copy = (name, component, scale = 1) => {
-        const spec = channel(name);
-        if (!spec) return;
-        const source = this._columnView(buffer, this.spec.columns[spec.buf]);
-        for (let i = 0; i < g.n; i++) values[i * 4 + component] = source[i * (spec.components || 1)] * scale;
-      };
-      copy("opacity", 0);
-      copy("artist_alpha", 1);
-      copy(widthName, 2, this.dpr);
-      copy("symbol", 3);
-      g.styleBuf = this._upload(values);
-    }
+    this._packInstanceStyleChannels(
+      g,
+      g.n,
+      channel,
+      artistScalar,
+      (spec) => this._columnView(buffer, this.spec.columns[spec.buf]),
+      widthName,
+    );
     const radius = channel("corner_radius");
     if (radius) {
       const source = this._columnView(buffer, this.spec.columns[radius.buf]);
@@ -2304,30 +2338,16 @@ export class ChartView {
     }
     const channel = (name) => sample.channels && sample.channels[name];
     const artistScalar = Number(trace.style && trace.style.artist_alpha);
-    if (channel("opacity") || channel("artist_alpha") || channel("stroke_width") ||
-        channel("symbol") || Number.isFinite(artistScalar)) {
-      const values = new Float32Array(s.n * 4);
-      for (let i = 0; i < s.n; i++) {
-        values[i * 4] = 1;
-        values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
-        values[i * 4 + 2] = -1;
-        values[i * 4 + 3] = -1;
-      }
-      const copy = (name, component, scale = 1) => {
-        const spec = channel(name);
-        if (!spec) return;
-        const source = spec.dtype === "u8"
-          ? this._asU8(buffers[spec.buf])
-          : this._asF32(buffers[spec.buf]);
-        const components = spec.components || 1;
-        for (let i = 0; i < s.n; i++) values[i * 4 + component] = source[i * components] * scale;
-      };
-      copy("opacity", 0);
-      copy("artist_alpha", 1);
-      copy("stroke_width", 2, this.dpr);
-      copy("symbol", 3);
-      s.styleBuf = this._upload(values);
-    }
+    this._packInstanceStyleChannels(
+      s,
+      s.n,
+      channel,
+      artistScalar,
+      (spec) => spec.dtype === "u8"
+        ? this._asU8(buffers[spec.buf])
+        : this._asF32(buffers[spec.buf]),
+      "stroke_width",
+    );
     if (sample.stroke && sample.stroke.mode === "direct_rgba") {
       s.strokeBuf = this._upload(this._asU8(buffers[sample.stroke.buf]));
     }
@@ -2967,11 +2987,20 @@ export class ChartView {
     gl.uniform1i(u(`${prefix}mode`), this._axisMode(axisId));
   }
 
-  // `keepPick` marks a frame whose ONLY trigger is hover-highlight state: the
-  // highlight lives in the color pass, so the pick framebuffer's geometry/view
-  // snapshot stays valid and the frame must not invalidate it. Coalescing is
-  // conservative: if any caller of a pending frame needs invalidation, the
-  // frame invalidates (§17 — steady hover must not re-render N-point picks).
+  _setInstanceStyleUniforms(prog, g) {
+    const gl = this.gl;
+    const base = g.styleBase || [1, -1, -1, -1];
+    const slots = g.styleSlots || [-1, -1, -1, -1];
+    gl.uniform4f(uniformOf(gl, prog, "u_styleBase"), base[0], base[1], base[2], base[3]);
+    gl.uniform4i(uniformOf(gl, prog, "u_styleSlots"), slots[0], slots[1], slots[2], slots[3]);
+  }
+
+  // `keepPick` marks a color-only frame with no geometry or view change. The
+  // hover highlight and native-color density blend live in the color pass, so
+  // the pick framebuffer's geometry/view snapshot stays valid and the frame
+  // must not invalidate it. Coalescing is conservative: if any caller of a
+  // pending frame needs invalidation, the frame invalidates (§17 — steady hover
+  // must not re-render N-point picks).
   draw(keepPick = false) {
     if (this._destroyed || this._glLost || !this.gl) return;
     this._updateZoomMenuLabel?.();
@@ -2990,6 +3019,12 @@ export class ChartView {
 
   _drawNow() {
     if (this._destroyed || !this.gl || this._glLost) return;
+    // Consume this frame's coalesced invalidation policy before drawing. A
+    // color-only animation may schedule its *next* keep-pick frame from inside
+    // _drawPoints; that next-frame flag must not retroactively make the current
+    // (possibly geometry-changing) frame preserve a stale pick snapshot.
+    const keepPick = this._rafKeepPick === true;
+    this._rafKeepPick = false;
     this._healStaleTheme();
     const gl = this.gl;
     const { x0, x1, y0, y1 } = this.view;
@@ -3021,8 +3056,7 @@ export class ChartView {
     this._repositionTooltip();
     // Hover-only frames leave the pick snapshot valid (see draw()); direct
     // _drawNow() callers never set the flag, so they invalidate as before.
-    if (!this._rafKeepPick) this._pickDirty = true;
-    this._rafKeepPick = false;
+    if (!keepPick) this._pickDirty = true;
     this._drawChrome();
     this._renderLassoSelection?.();
   }
@@ -3037,8 +3071,10 @@ export class ChartView {
 
 
   _canDrawSimplePoints(g) {
+    const style = g.styleBase || [1, -1, -1, -1];
     return g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
       !g.rgbaBuf && !g.styleBuf && !g.strokeBuf &&
+      style[0] === 1 && style[1] === -1 && style[2] === -1 && style[3] === -1 &&
       (g.symbol || 0) === 0 && (g.pointStrokeWidth || 0) <= 0 &&
       Math.max(g.lodBlendShown ?? 0, g.lodBlend ?? 0) <= 0.001;
   }
@@ -3054,6 +3090,7 @@ export class ChartView {
     const prog = this.pointProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
+    this._setInstanceStyleUniforms(prog, g);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
@@ -3114,7 +3151,10 @@ export class ChartView {
       g._blendTick = now;
       blend += (blendTarget - blend) * (1 - Math.exp(-dt / 90));
       g.lodBlendShown = blend;
-      this.draw();
+      // This tween changes only fragment color. Preserve the existing pick
+      // geometry so pointer movement during the blend cannot trigger an O(N)
+      // pick redraw on every frame.
+      this.draw(true);
     } else {
       g.lodBlendShown = blend = blendTarget;
       g._blendTick = 0;
@@ -3154,7 +3194,7 @@ export class ChartView {
           this._vaoAttr(ATTR_SLOTS.a_prevy, g._transitionPrevYBuf, 0, 0);
         }
         if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 0, 4, true);
-        if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 0, 4);
+        if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 0, g.styleSize || 4);
         if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 0, 4, true);
       }
     );
@@ -3390,6 +3430,7 @@ export class ChartView {
     const prog = this.segmentProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
+    this._setInstanceStyleUniforms(prog, g);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     this._setAxisUniforms(prog, "u_x0", g.x0Meta, g.xAxis);
@@ -3425,7 +3466,7 @@ export class ChartView {
         this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
         if (g.colorMode && g.cBuf) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
         if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
-        if (g.styleBuf) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+        if (g.styleBuf) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, g.styleSize || 4);
         if (dashed) {
           this._vaoAttr(ATTR_SLOTS.a_dash0, g._segmentDashOffsetBuf, 0, 1);
           this._vaoAttr(ATTR_SLOTS.a_dashDir, g._segmentDashDirBuf, 0, 1);
@@ -3518,6 +3559,7 @@ export class ChartView {
     const prog = this.meshProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
+    this._setInstanceStyleUniforms(prog, g);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     for (const name of ["x0", "x1", "x2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.xAxis);
@@ -3546,7 +3588,7 @@ export class ChartView {
       }
       if (g.cBuf) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
       if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
-      if (g.styleBuf) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+      if (g.styleBuf) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, g.styleSize || 4);
       if (g.strokeBuf) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
     });
     if (!g.cBuf) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
@@ -3641,6 +3683,7 @@ export class ChartView {
     const prog = this.rectProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
+    this._setInstanceStyleUniforms(prog, g);
     gl.uniform2f(u("u_x0map"), x0[0], x0[1]);
     gl.uniform2f(u("u_x1map"), x1[0], x1[1]);
     gl.uniform2f(u("u_y0map"), y0[0], y0[1]);
@@ -3681,7 +3724,7 @@ export class ChartView {
         this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
         if (colorOn) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
         if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
-        if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+        if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, g.styleSize || 4);
         if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
         if (radiusOn) this._vaoAttr(ATTR_SLOTS.a_radius, g.radiusBuf, 0, 1, 2);
       }
@@ -3700,6 +3743,7 @@ export class ChartView {
     const prog = this.barProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
+    this._setInstanceStyleUniforms(prog, g);
     gl.uniform2f(u("u_pmap"), pmap[0], pmap[1]);
     gl.uniform2f(u("u_v1map"), v1map[0], v1map[1]);
     gl.uniform2f(u("u_v0map"), v0map ? v0map[0] : 1, v0map ? v0map[1] : 0);
@@ -3766,7 +3810,7 @@ export class ChartView {
           this._vaoAttr(ATTR_SLOTS.a_prevx1, g._transitionPrevValue0Buf, 0, 1);
         }
         if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
-        if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+        if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, g.styleSize || 4);
         if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
         if (radiusOn) this._vaoAttr(ATTR_SLOTS.a_radius, g.radiusBuf, 0, 1, 2);
       }
@@ -4475,7 +4519,9 @@ export class ChartView {
     const px = Math.round(cssX * this.dpr);
     const py = Math.round((this.plot.h - cssY) * this.dpr); // GL origin bottom-left
     if (px < 0 || py < 0 || px >= this.canvas.width || py >= this.canvas.height) return null;
-    const buf = new Uint8Array(4);
+    // A single chart cannot issue overlapping synchronous reads on the main
+    // thread; reuse this tiny result buffer instead of allocating per move.
+    const buf = this._pickPixel || (this._pickPixel = new Uint8Array(4));
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
     gl.readPixels(px, py, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);

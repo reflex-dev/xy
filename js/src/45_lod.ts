@@ -288,33 +288,16 @@ export function lodApplyDrill(view, g, upd, buffers) {
   }
   const styleChannel = (name) => upd.channels && upd.channels[name];
   const artistScalar = Number(d.trace.style && d.trace.style.artist_alpha);
-  if (styleChannel("opacity") || styleChannel("artist_alpha") ||
-      styleChannel("stroke_width") || styleChannel("symbol") || Number.isFinite(artistScalar)) {
-    const values = new Float32Array(d.n * 4);
-    for (let i = 0; i < d.n; i++) {
-      values[i * 4] = 1;
-      values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
-      values[i * 4 + 2] = -1;
-      values[i * 4 + 3] = -1;
-    }
-    const copy = (name, component, scale = 1) => {
-      const spec = styleChannel(name);
-      if (!spec) return;
-      const source = spec.dtype === "u8"
-        ? view._asU8(buffers[spec.buf])
-        : view._asF32(buffers[spec.buf]);
-      const components = spec.components || 1;
-      for (let i = 0; i < d.n; i++) values[i * 4 + component] = source[i * components] * scale;
-    };
-    copy("opacity", 0);
-    copy("artist_alpha", 1);
-    copy("stroke_width", 2, view.dpr);
-    copy("symbol", 3);
-    if (!d.styleBuf) d.styleBuf = gl.createBuffer();
-    d.styleBuf._fcType = gl.FLOAT;
-    gl.bindBuffer(gl.ARRAY_BUFFER, d.styleBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, values, gl.STATIC_DRAW);
-  }
+  view._packInstanceStyleChannels(
+    d,
+    d.n,
+    styleChannel,
+    artistScalar,
+    (spec) => spec.dtype === "u8"
+      ? view._asU8(buffers[spec.buf])
+      : view._asF32(buffers[spec.buf]),
+    "stroke_width",
+  );
   if (upd.stroke && upd.stroke.mode === "direct_rgba") {
     const values = view._asU8(buffers[upd.stroke.buf]);
     if (!d.strokeBuf) d.strokeBuf = gl.createBuffer();

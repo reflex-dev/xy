@@ -340,7 +340,11 @@ in the README).
   bounded scratch; stacked bars reuse shared category geometry; static Reflex
   assets hash/write XYBF frame parts incrementally through unique atomic temps;
   and equal-sized line/area tier refinements update existing GPU storage with
-  `bufferSubData` while size changes retain the safe `bufferData` path.
+  `bufferSubData` while size changes retain the safe `bufferData` path. Client
+  instance styles now upload only their dynamic components (4 B/item for one
+  channel instead of a padded 16 B/item; scalar artist alpha stays uniform),
+  and native-color density blends preserve their unchanged pick snapshot while
+  retaining invalidation for the geometry-changing frame that starts them.
 - **Rendering hardening:** context loss now quiesces draw/animation/re-bin work,
   invalidates pre-loss replies, retains streamed canonical payloads, reports
   recovery state, and rebuilds without throwing an unhandled event error. The

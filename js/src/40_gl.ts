@@ -99,6 +99,32 @@ float xyViewValue(float coord, int mode) {
 }
 `;
 
+// Per-instance style channels are packed densely on the CPU. Most traces have
+// only one dynamic channel (opacity, artist alpha, width, or symbol), so
+// uploading the legacy padded vec4 wasted 12 bytes per item. u_styleSlots maps
+// the semantic xyzw components to the packed attribute; u_styleBase supplies
+// constants and the defaults for absent channels. Keeping the reconstruction
+// in one shader snippet gives every instanced mark exactly the same semantics.
+const STYLE_CHANNEL_GLSL = `
+uniform vec4 u_styleBase;
+uniform ivec4 u_styleSlots;
+float xyStyleValue(vec4 packed, int slot, float fallback) {
+  if (slot == 0) return packed.x;
+  if (slot == 1) return packed.y;
+  if (slot == 2) return packed.z;
+  if (slot == 3) return packed.w;
+  return fallback;
+}
+vec4 xyStyle(vec4 packed) {
+  return vec4(
+    xyStyleValue(packed, u_styleSlots.x, u_styleBase.x),
+    xyStyleValue(packed, u_styleSlots.y, u_styleBase.y),
+    xyStyleValue(packed, u_styleSlots.z, u_styleBase.z),
+    xyStyleValue(packed, u_styleSlots.w, u_styleBase.w)
+  );
+}
+`;
+
 export const POINT_VS = `#version 300 es
 in float ax; in float ay; in float a_prevx; in float a_prevy;
 in float a_cval; in float a_sval; in float a_sel; in float a_dval;
@@ -112,6 +138,7 @@ uniform float u_transitionProgress; uniform int u_transitionActive;
 out float v_lutCoord; out float v_dim; out float v_dval; out float v_ptSize; out float v_sel;
 out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke;
 ${AXIS_GLSL}
+${STYLE_CHANNEL_GLSL}
 void main() {
   float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
   float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
@@ -121,7 +148,7 @@ void main() {
   v_ptSize = sz * u_dpr;
   v_sel = a_sel;
   v_rgba = a_rgba;
-  v_style = a_style;
+  v_style = xyStyle(a_style);
   v_stroke = a_stroke;
   // continuous: coord = value in [0,1]; categorical: center of texel a_cval.
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
@@ -517,6 +544,7 @@ uniform int u_x0mode; uniform int u_x1mode; uniform int u_y0mode; uniform int u_
 out float v_off; out float v_cval; out float v_dash; out vec4 v_rgba; out vec4 v_style;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
+${STYLE_CHANNEL_GLSL}
 void main() {
   vec2 p0 = vec2(xyMap(ax0, u_xmap, u_x0meta, u_x0mode), xyMap(ay0, u_ymap, u_y0meta, u_y0mode));
   vec2 p1 = vec2(xyMap(ax1, u_xmap, u_x1meta, u_x1mode), xyMap(ay1, u_ymap, u_y1meta, u_y1mode));
@@ -530,14 +558,15 @@ void main() {
   dir /= len;
   vec2 n = vec2(-dir.y, dir.x);
   vec2 c = corners[gl_VertexID];
-  float itemWidth = a_style.z >= 0.0 ? a_style.z : u_width;
+  vec4 itemStyle = xyStyle(a_style);
+  float itemWidth = itemStyle.z >= 0.0 ? itemStyle.z : u_width;
   float half_w = itemWidth * 0.5 + 0.5;
   vec2 pos = mix(pix0, pix1, c.x) + dir * (c.x * 2.0 - 1.0) * 0.5 + n * c.y * half_w;
   gl_Position = vec4(pos / u_res * 2.0 - 1.0, 0.0, 1.0);
   v_off = c.y * half_w;
   v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   v_dash = a_dash0 + c.x * len * a_dashDir;
-  v_rgba = a_rgba; v_style = a_style;
+  v_rgba = a_rgba; v_style = itemStyle;
 }`;
 
 export const SEGMENT_FS = `#version 300 es
@@ -582,6 +611,7 @@ uniform int u_y0mode; uniform int u_y1mode; uniform int u_y2mode;
 uniform int u_colorMode;
 out float v_cval; out vec3 v_bary; out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke;
 ${AXIS_GLSL}
+${STYLE_CHANNEL_GLSL}
 void main() {
   int vertex = gl_VertexID % 3;
   float x = vertex == 0 ? ax0 : (vertex == 1 ? ax1 : ax2);
@@ -593,7 +623,7 @@ void main() {
   gl_Position = vec4(xyMap(x, u_xmap, xm, xmode), xyMap(y, u_ymap, ym, ymode), 0.0, 1.0);
   v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   v_bary = vertex == 0 ? vec3(1.,0.,0.) : (vertex == 1 ? vec3(0.,1.,0.) : vec3(0.,0.,1.));
-  v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke;
+  v_rgba = a_rgba; v_style = xyStyle(a_style); v_stroke = a_stroke;
 }`;
 
 export const MESH_FS = `#version 300 es
@@ -726,6 +756,7 @@ out vec2 v_local; out vec2 v_half; out float v_t;
 out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke; out vec2 v_radius;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
+${STYLE_CHANNEL_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
   float x0 = xyMap(ax0, u_x0map, u_x0meta, u_xmode) + u_edgePad.x;
@@ -740,7 +771,7 @@ void main() {
   v_half = abs(pB - pA) * 0.5;
   v_local = mix(pA, pB, c) - (pA + pB) * 0.5;
   v_t = c.y;
-  v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke; v_radius = a_radius;
+  v_rgba = a_rgba; v_style = xyStyle(a_style); v_stroke = a_stroke; v_radius = a_radius;
   gl_Position = vec4(mix(x0, x1, c.x), mix(y0, y1, c.y), 0.0, 1.0);
 }`;
 
@@ -766,6 +797,7 @@ out vec2 v_local; out vec2 v_half; out float v_t;
 out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke; out vec2 v_radius;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
+${STYLE_CHANNEL_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
   float nextP = xyMap(a_pos, u_pmap, u_pmeta, u_pmode);
@@ -803,7 +835,7 @@ void main() {
   vec2 pB = (clipB * 0.5 + 0.5) * u_res;
   v_half = abs(pB - pA) * 0.5;
   v_local = vec2(mix(pA.x, pB.x, c.x), mix(pA.y, pB.y, c.y)) - (pA + pB) * 0.5;
-  v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke; v_radius = a_radius;
+  v_rgba = a_rgba; v_style = xyStyle(a_style); v_stroke = a_stroke; v_radius = a_radius;
 }`;
 
 // Shared by the rect and compact-bar programs: flat fill or LUT color, then an
