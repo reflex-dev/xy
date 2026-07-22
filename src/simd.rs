@@ -45,13 +45,20 @@ const BLOCK: usize = 1024;
 const SKIP: u32 = u32::MAX;
 
 #[cfg(target_arch = "x86_64")]
+pub(crate) fn avx2_available() -> bool {
+    std::arch::is_x86_feature_detected!("avx2")
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+pub(crate) fn avx2_available() -> bool {
+    false
+}
+
+#[cfg(target_arch = "x86_64")]
 pub(crate) fn use_avx2() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| {
-        std::env::var_os("XY_SIMD").is_none_or(|v| v != "0")
-            && std::arch::is_x86_feature_detected!("avx2")
-    })
+    *ON.get_or_init(|| std::env::var_os("XY_SIMD").is_none_or(|v| v != "0") && avx2_available())
 }
 
 #[cfg(not(target_arch = "x86_64"))]

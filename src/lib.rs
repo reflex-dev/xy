@@ -80,12 +80,37 @@ unsafe fn borrowed_byte_spans<'a>(
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 37;
+pub const ABI_VERSION: u32 = 38;
+pub const NATIVE_CAP_SCALAR: u32 = 1 << 0;
+pub const NATIVE_CAP_AVX2_AVAILABLE: u32 = 1 << 1;
+pub const NATIVE_CAP_AVX2_SELECTED: u32 = 1 << 2;
+pub const NATIVE_CAP_AARCH64: u32 = 1 << 3;
 const FACTORIZE_CAPACITY_EXCEEDED: usize = usize::MAX - 1;
 
 #[no_mangle]
 pub extern "C" fn xy_abi_version() -> u32 {
     ABI_VERSION
+}
+
+/// Report native dispatch capabilities for executable architecture evidence.
+/// Scalar kernels are always available. AVX2 availability describes the host
+/// CPU, while AVX2 selection also reflects the `XY_SIMD=0` kill switch.
+/// AArch64 reports its mandatory baseline SIMD separately because those scalar
+/// Rust loops are autovectorized to NEON rather than runtime-dispatched.
+#[no_mangle]
+pub extern "C" fn xy_runtime_capabilities() -> u32 {
+    let mut capabilities = NATIVE_CAP_SCALAR;
+    if simd::avx2_available() {
+        capabilities |= NATIVE_CAP_AVX2_AVAILABLE;
+    }
+    if simd::use_avx2() {
+        capabilities |= NATIVE_CAP_AVX2_SELECTED;
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        capabilities |= NATIVE_CAP_AARCH64;
+    }
+    capabilities
 }
 
 /// Serialize parallel f64 screen coordinates into SVG polyline path data.
@@ -2838,6 +2863,19 @@ pub unsafe extern "C" fn xy_pyramid_free(handle: u64) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_capability_bits_are_coherent() {
+        let capabilities = xy_runtime_capabilities();
+        assert_ne!(capabilities & NATIVE_CAP_SCALAR, 0);
+        if capabilities & NATIVE_CAP_AVX2_SELECTED != 0 {
+            assert_ne!(capabilities & NATIVE_CAP_AVX2_AVAILABLE, 0);
+        }
+        #[cfg(target_arch = "aarch64")]
+        assert_ne!(capabilities & NATIVE_CAP_AARCH64, 0);
+        #[cfg(not(target_arch = "aarch64"))]
+        assert_eq!(capabilities & NATIVE_CAP_AARCH64, 0);
+    }
 
     #[test]
     fn ffi_guard_maps_panic_to_sentinel() {

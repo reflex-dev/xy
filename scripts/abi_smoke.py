@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ctypes
 import math
+import platform
 import sys
 from array import array
 from pathlib import Path
@@ -73,6 +74,8 @@ def load() -> ctypes.CDLL:
 
     lib.xy_abi_version.restype = ctypes.c_uint32
     lib.xy_abi_version.argtypes = []
+    lib.xy_runtime_capabilities.restype = ctypes.c_uint32
+    lib.xy_runtime_capabilities.argtypes = []
     lib.xy_factorize_fixed.restype = ctypes.c_size_t
     lib.xy_factorize_fixed.argtypes = [U8P, ctypes.c_size_t, ctypes.c_size_t, U32P, U32P]
     lib.xy_factorize_fixed_u8.restype = ctypes.c_size_t
@@ -393,6 +396,17 @@ def main() -> None:
         checks += 1
 
     ok(lib.xy_abi_version() == ABI_VERSION, "abi version")
+    capabilities = lib.xy_runtime_capabilities()
+    ok(capabilities & 0b0001, "scalar capability reported")
+    ok(
+        not capabilities & 0b0100 or capabilities & 0b0010,
+        "selected AVX2 implies available AVX2",
+    )
+    machine = platform.machine().lower()
+    if machine in {"arm64", "aarch64"}:
+        ok(capabilities & 0b1000, "aarch64 baseline capability reported")
+    else:
+        ok(not capabilities & 0b1000, "aarch64 capability absent off aarch64")
     ok(ctypes.sizeof(CZoneMap) == 64, "ZoneMap repr(C) size")
 
     ok(

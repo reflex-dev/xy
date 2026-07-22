@@ -21,6 +21,7 @@ HARD_JOBS = (
     "browser_conformance",
     "install_without_rust",
     "matplotlib_reference",
+    "native_parity",
     "python_floor",
     "reflex_adapter",
     "rust_release",

@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
-ABI_VERSION = 37
+ABI_VERSION = 38
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -79,6 +79,9 @@ def _load() -> ctypes.CDLL:
             f"{ABI_VERSION}, library reports {got}. Reinstall xy so the "
             "wheel and package versions match."
         )
+
+    lib.xy_runtime_capabilities.restype = ctypes.c_uint32
+    lib.xy_runtime_capabilities.argtypes = []
 
     lib.xy_factorize_fixed.restype = ctypes.c_size_t
     lib.xy_factorize_fixed.argtypes = [

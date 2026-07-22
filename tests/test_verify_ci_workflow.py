@@ -143,6 +143,51 @@ def test_ci_workflow_rejects_release_rust_job_outside_required_aggregate(
     assert any("required_ci needs" in error and "rust_release" in error for error in errors)
 
 
+def test_ci_workflow_rejects_incomplete_native_parity_matrix(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "          - os: macos-14\n            arch: aarch64\n            default: aarch64\n",
+            "",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("native_parity matrix" in error for error in errors)
+
+
+def test_ci_workflow_rejects_native_parity_outside_required_aggregate(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace("      - native_parity\n", "", 1), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("required_ci needs" in error and "native_parity" in error for error in errors)
+
+
+def test_ci_workflow_requires_failure_retained_native_parity_report(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Retain native parity report\n        if: always()\n",
+            "      - name: Retain native parity report\n",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("native_parity" in error and "if: always()" in error for error in errors)
+
+
 def test_ci_workflow_rejects_conditioned_release_test_inventory(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
@@ -1000,6 +1045,49 @@ def test_release_workflow_rejects_nonblocking_native_wheel_matrix(tmp_path: Path
     errors = verify_ci_workflow.validate_release_workflow(path)
 
     assert any("wheels job must block publishing" in error for error in errors)
+
+
+def test_release_workflow_rejects_missing_native_artifact_runtime_probe(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            "            python scripts/native_parity.py \\\n",
+            "            python missing.py \\\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "Run musllinux wheel parity in musl 1.2" in error and "native_parity.py" in error
+        for error in errors
+    )
+
+
+def test_release_workflow_requires_failure_retained_native_runtime_report(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            "        if: always() && (matrix.runtime == 'manylinux' || "
+            "matrix.runtime == 'musllinux')\n",
+            "        if: matrix.runtime == 'manylinux' || matrix.runtime == 'musllinux'\n",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "Retain native artifact runtime report" in error and "always()" in error for error in errors
+    )
 
 
 def test_release_workflow_rejects_unpinned_pyodide_runtime_contract(

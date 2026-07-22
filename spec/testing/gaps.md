@@ -275,9 +275,14 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-023 — SIMD and native artifact runtime parity
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: AVX2 can be absent without explicit capability evidence and many
-  ARM/Windows/macOS/cross-built artifacts receive import or structural smoke only.
+- Status: `IMPLEMENTED`
+- Owner: unassigned — file a tracking issue before implementation starts
+- Evidence: `src/lib.rs::xy_runtime_capabilities`, the stdlib-only
+  `scripts/native_parity.py` oracle, the hard `native_parity` matrix in
+  `ci.yml` with retained `native-parity-*` reports, and the pinned manylinux
+  2.17/musllinux 1.2 runtime steps and artifacts in `release.yml`.
+- Current gap: closed for the focused native contract. The wider public Python
+  behavior matrix remains tracked by TST-NI-049.
 - Implemented when: scalar/AVX2/aarch64 capability is reported and exercised;
   focused kernel/FFI/raster parity runs on native Linux x64/ARM64, Windows x64,
   and macOS ARM64; and selected manylinux/musllinux release artifacts run under

@@ -28,6 +28,7 @@ REQUIRED_CI_JOBS = {
     "browser_conformance",
     "reflex_adapter",
     "matplotlib_reference",
+    "native_parity",
     "test",
     "python_floor",
     "rust_release",
@@ -769,6 +770,41 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     _require_job_contains(
         errors,
         jobs,
+        "native_parity",
+        "CI",
+        "hard native architecture matrix and retained common parity probe",
+        "timeout-minutes: 15",
+        "fail-fast: false",
+        "ubuntu-latest",
+        "ubuntu-24.04-arm",
+        "windows-latest",
+        "macos-14",
+        "cargo build --locked --release",
+        "scripts/native_parity.py",
+        "--expect-arch ${{ matrix.arch }}",
+        "--expect-default ${{ matrix.default }}",
+        "if: always()",
+        "actions/upload-artifact@",
+        "name: native-parity-${{ matrix.os }}",
+        "if-no-files-found: error",
+    )
+    native_parity = jobs.get("native_parity", "")
+    expected_native_matrix = [
+        {"os": "ubuntu-latest", "arch": "x86_64", "default": "avx2"},
+        {"os": "ubuntu-24.04-arm", "arch": "aarch64", "default": "aarch64"},
+        {"os": "windows-latest", "arch": "x86_64", "default": "avx2"},
+        {"os": "macos-14", "arch": "aarch64", "default": "aarch64"},
+    ]
+    if _matrix_include_entries(native_parity) != expected_native_matrix:
+        errors.append(
+            "CI native_parity matrix must exactly cover native Linux x64/ARM64, "
+            "Windows x64, and macOS ARM64 with explicit dispatch expectations"
+        )
+    if "continue-on-error:" in native_parity:
+        errors.append("CI native_parity must be a hard gate without continue-on-error")
+    _require_job_contains(
+        errors,
+        jobs,
         "sdist",
         "CI",
         "source artifact verification",
@@ -803,6 +839,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "browser_conformance",
         "install_without_rust",
         "matplotlib_reference",
+        "native_parity",
         "python_floor",
         "reflex_adapter",
         "rust_release",
@@ -955,6 +992,38 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
             "release wheels job must block publishing when any native wheel build or "
             "verification fails"
         )
+    _require_step_contains(
+        errors,
+        wheels_job,
+        "Run manylinux wheel parity in glibc 2.17",
+        "pinned manylinux runtime and common artifact parity probe",
+        "if: matrix.runtime == 'manylinux'",
+        "manylinux2014_x86_64@sha256:",
+        "scripts/native_parity.py",
+        "--wheel",
+        "--expect-default avx2",
+    )
+    _require_step_contains(
+        errors,
+        wheels_job,
+        "Run musllinux wheel parity in musl 1.2",
+        "pinned musllinux runtime and common artifact parity probe",
+        "if: matrix.runtime == 'musllinux'",
+        "python:3.13-alpine3.22@sha256:",
+        "scripts/native_parity.py",
+        "--wheel",
+        "--expect-default avx2",
+    )
+    _require_step_contains(
+        errors,
+        wheels_job,
+        "Retain native artifact runtime report",
+        "manylinux/musllinux runtime evidence retention",
+        "always() && (matrix.runtime == 'manylinux' || matrix.runtime == 'musllinux')",
+        "actions/upload-artifact@",
+        "if-no-files-found: error",
+        "native-parity-${{ matrix.plat }}.json",
+    )
     _require_job_contains(
         errors,
         jobs,

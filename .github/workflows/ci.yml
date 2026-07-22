@@ -39,6 +39,48 @@ jobs:
           if-no-files-found: error
           path: release-tests.txt
 
+  native_parity:
+    name: Native parity (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+            default: avx2
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+            default: aarch64
+          - os: windows-latest
+            arch: x86_64
+            default: avx2
+          - os: macos-14
+            arch: aarch64
+            default: aarch64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Build locked native core
+        run: cargo build --locked --release
+      - name: Run common kernel, FFI, and raster parity probe
+        run: >-
+          python scripts/native_parity.py
+          --expect-arch ${{ matrix.arch }}
+          --expect-default ${{ matrix.default }}
+          --report native-parity-${{ matrix.os }}.json
+      - name: Retain native parity report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-parity-${{ matrix.os }}
+          if-no-files-found: error
+          path: native-parity-${{ matrix.os }}.json
+
   matplotlib_reference:
     name: Matplotlib 3.11 reference compatibility
     runs-on: ubuntu-latest
@@ -884,6 +926,7 @@ jobs:
       - browser_conformance
       - install_without_rust
       - matplotlib_reference
+      - native_parity
       - python_floor
       - reflex_adapter
       - rust_release

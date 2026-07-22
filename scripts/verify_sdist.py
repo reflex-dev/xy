@@ -113,6 +113,7 @@ REQUIRED_FILES = {
     "scripts/bench_dashboard.py",
     "scripts/bench_interaction.py",
     "scripts/bench_pyplot_vs_matplotlib.py",
+    "scripts/native_parity.py",
     "scripts/verify_ci_workflow.py",
     "scripts/verify_benchmark_report.py",
     "scripts/verify_local.py",
