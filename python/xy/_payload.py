@@ -20,6 +20,7 @@ from .config import (
     DENSITY_SAMPLE_SEED,
     DENSITY_SAMPLE_TARGET,
     PROTOCOL_VERSION,
+    default_palette_color,
 )
 
 if TYPE_CHECKING:
@@ -335,7 +336,7 @@ class PayloadMixin(_Host):
         was given — the one place this rule lives (was copy-pasted per kind)."""
         style = dict(t.style)
         if style.get("color") is None:
-            style["color"] = DEFAULT_PALETTE[t.id % len(DEFAULT_PALETTE)]
+            style["color"] = default_palette_color(t.id)
         return style
 
     @staticmethod

@@ -7,6 +7,8 @@ recorded in the shipped spec, never silent (§28).
 
 from __future__ import annotations
 
+import warnings
+
 # Wire protocol version: the client refuses a mismatched spec loudly (§33).
 PROTOCOL_VERSION = 3
 
@@ -77,6 +79,27 @@ DEFAULT_PALETTE = [
     "#9085e9",  # violet
     "#e66767",  # red
 ]
+
+_PALETTE_WRAP_MESSAGE = (
+    f"more than {len(DEFAULT_PALETTE)} series use default colors; the default "
+    f"palette repeats every {len(DEFAULT_PALETTE)} (series 9 wears series 1's "
+    "color). Pass explicit color= per series, or group series, to keep "
+    "identities distinct."
+)
+
+
+def default_palette_color(index: int, *, stacklevel: int = 3) -> str:
+    """Default color for the `index`-th series (0-based): the palette, cycled.
+
+    The palette is deliberately eight slots — the adjacency order above is the
+    CVD-safety mechanism, so it cannot grow a ninth hue without re-clearing the
+    validator — which means assignment wraps modulo eight. The wrap is allowed
+    but never silent (§28): the first wrapped assignment warns.
+    """
+    if index >= len(DEFAULT_PALETTE):
+        warnings.warn(_PALETTE_WRAP_MESSAGE, RuntimeWarning, stacklevel=stacklevel)
+    return DEFAULT_PALETTE[index % len(DEFAULT_PALETTE)]
+
 
 # Tile pyramid (§5 Tier 3): built lazily per density trace at/above this size;
 # base level is PYRAMID_BASE_DIM² u32 counts (~4·dim² bytes + 1/3 overhead).

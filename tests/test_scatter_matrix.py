@@ -104,12 +104,16 @@ def test_continuous_int_and_float_color():
 
 
 def test_categorical_many_categories_cycle_palette():
-    # More categories than the base palette (10) → palette entries cycle, no crash.
+    # More categories than the eight-slot default palette → palette entries
+    # cycle, no crash — and the wrap is never silent (§28).
     cats = np.array([f"c{i}" for i in range(25)] * 2)
-    fig = Figure().scatter(np.arange(50.0), np.arange(50.0), color=cats)
+    with pytest.warns(RuntimeWarning, match="colors repeat"):
+        fig = Figure().scatter(np.arange(50.0), np.arange(50.0), color=cats)
     spec, _ = _payload(fig)
     assert len(spec["traces"][0]["color"]["categories"]) == 25
     assert len(spec["traces"][0]["color"]["palette"]) == 25
+    palette = spec["traces"][0]["color"]["palette"]
+    assert palette[8] == palette[0]  # documented cycle, not a distinct 9th hue
 
 
 def test_categorical_single_category():
@@ -329,6 +333,20 @@ def test_multi_scatter_distinct_default_colors():
     c0 = spec["traces"][0]["color"]["color"]
     c1 = spec["traces"][1]["color"]["color"]
     assert c0 != c1  # palette cycles per trace
+
+
+def test_default_colors_wrap_past_palette_warns():
+    # The default palette is eight slots; the ninth default-colored trace wraps
+    # to slot one, and the wrap warns instead of silently aliasing series (§28).
+    fig = Figure()
+    for i in range(8):
+        fig.scatter(np.arange(3.0), np.arange(3.0) + i)
+    with pytest.warns(RuntimeWarning, match="repeats every"):
+        fig.scatter(np.arange(3.0), np.arange(3.0) + 8)
+    spec, _ = _payload(fig)
+    colors = [t["color"]["color"] for t in spec["traces"]]
+    assert len(set(colors[:8])) == 8  # first eight stay distinct
+    assert colors[8] == colors[0]  # ninth wraps, but loudly
 
 
 def test_scatter_and_line_mixed():
