@@ -20,7 +20,11 @@ import numpy as np
 from . import _validate, channels, columns, kernels, styles
 from ._trace import Trace
 from ._typing import ArrayLike, Scalar
-from .config import DEFAULT_PALETTE, DIRECT_SOFT_CEILING, MAX_CONTOUR_WORK
+from .config import (
+    DEFAULT_PALETTE,
+    DIRECT_SOFT_CEILING,
+    MAX_CONTOUR_WORK,
+)
 
 if TYPE_CHECKING:
     from ._figure import Figure
