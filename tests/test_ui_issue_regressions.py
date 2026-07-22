@@ -125,20 +125,43 @@ def test_narrow_annotation_labels_stay_inside_and_do_not_collide(tmp_path: Path)
         const rect = label.getBoundingClientRect();
         return [rect.left, rect.top];
       });
-    const callout = labels.find((label) => label.textContent === "Primary endpoint");
+    const callout = [...view.root.querySelectorAll('[data-xy-slot="annotation_label"]')]
+      .find((label) => label.textContent === "Primary endpoint");
     const calloutSpec = view.spec.annotations.findIndex((ann) => ann.kind === "callout");
-    const resolved = view._resolvedAnnotationOffsets.get(calloutSpec);
+    const resolved = view._resolvedAnnotationAnchors.get(calloutSpec);
     const calloutLeft = parseFloat(callout.style.left);
     const calloutTop = parseFloat(callout.style.top);
-    const calloutAnn = view.spec.annotations[calloutSpec];
-    const anchorX = view._dataPxX(Number(calloutAnn.x));
-    const anchorY = view._dataPxY(Number(calloutAnn.y));
+
+    // Advance a view-animation frame inside the 80 ms DOM-label throttle
+    // window. The visible label stays at its previous absolute position, so
+    // the canvas pointer must begin at that same cached anchor rather than at
+    // the new data position plus a stale relative offset.
+    const realDataPxX = view._dataPxX.bind(view);
+    const realDataPxY = view._dataPxY.bind(view);
+    const realDrawArrowLine = view._drawArrowLine.bind(view);
+    let animatedPointer = null;
+    view._dataPxX = (value) => realDataPxX(value) + 14;
+    view._dataPxY = (value) => realDataPxY(value) - 9;
+    view._drawArrowLine = (_ctx, x0, y0, x1, y1) => {
+      animatedPointer = { x0, y0, x1, y1 };
+    };
+    view._viewAnim = {};
+    view._lastLabelDraw = view._now();
+    view._drawChrome();
+    view._dataPxX = realDataPxX;
+    view._dataPxY = realDataPxY;
+    view._drawArrowLine = realDrawArrowLine;
+    view._viewAnim = null;
     document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
       labels: rects.map((rect) => rect.text), inside, overlaps,
       stable: JSON.stringify(firstPositions) === JSON.stringify(secondPositions),
       pointerAttached:
-        Math.abs(anchorX + resolved.dx - calloutLeft) < 0.01 &&
-        Math.abs(anchorY + resolved.dy - calloutTop) < 0.01,
+        Math.abs(resolved.x - calloutLeft) < 0.01 &&
+        Math.abs(resolved.y - calloutTop) < 0.01,
+      animatedPointerAttached:
+        animatedPointer !== null &&
+        Math.abs(animatedPointer.x0 - calloutLeft) < 0.01 &&
+        Math.abs(animatedPointer.y0 - calloutTop) < 0.01,
       annotationLayoutReads,
     }));
 """
@@ -151,6 +174,7 @@ def test_narrow_annotation_labels_stay_inside_and_do_not_collide(tmp_path: Path)
     assert result["overlaps"] == [], result
     assert result["stable"] is True, result
     assert result["pointerAttached"] is True, result
+    assert result["animatedPointerAttached"] is True, result
     assert result["annotationLayoutReads"] <= len(result["labels"]) * 2, result
 
 

@@ -353,10 +353,15 @@ Object.assign(ChartView.prototype, {
       } else if (ann.kind === "callout") {
         const px = this._dataPxX(Number(ann.x));
         const py = this._dataPxY(Number(ann.y));
-        const resolved = this._resolvedAnnotationOffsets?.get(annotationIndex);
-        const dx = resolved?.dx ?? (Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0);
-        const dy = resolved?.dy ?? (Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0);
-        this._drawArrowLine(ctx, px + dx, py + dy, px, py, style);
+        const resolved = this._resolvedAnnotationAnchors?.get(annotationIndex);
+        const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
+        const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
+        // DOM label layout is throttled during view animations. Keep the
+        // pointer attached to the label that is actually visible rather than
+        // applying its previous relative offset to the current data position.
+        const labelX = resolved?.x ?? px + dx;
+        const labelY = resolved?.y ?? py + dy;
+        this._drawArrowLine(ctx, labelX, labelY, px, py, style);
       } else if (ann.kind === "marker") {
         this._drawAnnotationMarker(
           ctx,
@@ -376,7 +381,7 @@ Object.assign(ChartView.prototype, {
     if (!annotations.length) return;
     const p = this.plot;
     const laidOut = [];
-    this._resolvedAnnotationOffsets = new Map();
+    this._resolvedAnnotationAnchors = new Map();
     for (const [annotationIndex, ann] of annotations.entries()) {
       const text = typeof ann.text === "string" ? ann.text : "";
       if (!text) continue;
@@ -651,15 +656,18 @@ Object.assign(ChartView.prototype, {
       }
     }
 
-    // The pointer begins at the callout's final text anchor. Edge clamping can
-    // change that anchor, so cache the resolved offset for the canvas pass.
+    // The pointer begins at the callout's final text anchor. Cache its absolute
+    // position so animation frames that throttle DOM layout keep pointing at
+    // the label that remains visible, even while its data coordinate moves.
     for (const item of laidOut) {
       if (item.ann.kind !== "callout") continue;
       const left = parseFloat(item.d.style.left);
       const top = parseFloat(item.d.style.top);
-      this._resolvedAnnotationOffsets.set(item.annotationIndex, {
-        dx: (Number.isFinite(left) ? left : item.px) - item.px,
-        dy: (Number.isFinite(top) ? top : item.py) - item.py,
+      const dx = Number.isFinite(Number(item.ann.dx)) ? Number(item.ann.dx) : 0;
+      const dy = Number.isFinite(Number(item.ann.dy)) ? Number(item.ann.dy) : 0;
+      this._resolvedAnnotationAnchors.set(item.annotationIndex, {
+        x: Number.isFinite(left) ? left : item.px + dx,
+        y: Number.isFinite(top) ? top : item.py + dy,
       });
     }
   },
