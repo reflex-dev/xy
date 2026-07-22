@@ -70,6 +70,10 @@ _DEFAULTS: dict[str, Any] = {
     "legend.frameon": True,
     "text.usetex": False,
     "image.cmap": "viridis",
+    # Matplotlib's "antialiased" default resolves to nearest-neighbor when a
+    # small image is enlarged by more than 3x; pre-rendering has no final plot
+    # size yet, so nearest is the faithful and compact default here.
+    "image.interpolation": "nearest",
     "image.origin": "upper",
     "axes.prop_cycle": _PropCycle(),
 }

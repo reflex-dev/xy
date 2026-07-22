@@ -1538,7 +1538,9 @@ def _emit_triangle_mesh(
 
     x0, y0, x1, y1, x2, y2 = vertices
     widths = _paint.style_values(t, "stroke_width", n, read, float(style.get("stroke_width", 0.0)))
-    if t.get("stroke") is not None:
+    if (t.get("stroke") or {}).get("mode") == "match_fill":
+        stroke_intrinsic = _trace_paint_rgba(t, "color", n, color, read)
+    elif t.get("stroke") is not None:
         stroke_intrinsic = _trace_paint_rgba(t, "stroke", n, color, read)
     elif style.get("stroke") is not None:
         stroke_intrinsic = np.tile(
@@ -1554,6 +1556,14 @@ def _emit_triangle_mesh(
     projected = (sx(x0[:n]), sy(y0[:n]), sx(x1[:n]), sy(y1[:n]), sx(x2[:n]), sy(y2[:n]))
     if n == 0:
         return
+    if style.get("joined_fill") and np.all(fills == fills[0]) and np.all(widths == 0.0):
+        boundary = _paint.triangle_mesh_boundary(x0, y0, x1, y1, x2, y2)
+        if boundary is not None:
+            cmd.fill(
+                list(zip(sx(boundary[:, 0]), sy(boundary[:, 1]), strict=True)),
+                tuple(int(value) for value in fills[0]),
+            )
+            return
     if np.all(widths == widths[0]) and np.all(strokes == strokes[0]):
         cmd.triangles(
             *projected,
@@ -1649,7 +1659,9 @@ def _rect_style_arrays(
         * 255.0
     ).astype(np.uint8)
     style = trace.get("style") or {}
-    if trace.get("stroke") is not None:
+    if (trace.get("stroke") or {}).get("mode") == "match_fill":
+        stroke_face = face
+    elif trace.get("stroke") is not None:
         stroke_face = _trace_paint_rgba(trace, "stroke", n, fallback, read)
     elif style.get("stroke") is not None:
         stroke_face = np.tile(

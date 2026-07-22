@@ -612,7 +612,7 @@ void main() {
     float coverage = smoothstep(0.0, max(fwidth(edge) * strokeWidth, 1e-5), edge);
     // Both stroke sources ship straight alpha; the per-item alpha stack
     // applies to scalar strokes as well (parity with static exporters).
-    vec4 strokeSrc = u_strokeMode == 1 ? v_stroke : u_stroke;
+    vec4 strokeSrc = u_strokeMode == 1 ? v_stroke : (u_strokeMode == 2 ? paint : u_stroke);
     float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : strokeSrc.a) * v_style.x * u_strokeOpacity;
     vec4 stroke = vec4(strokeSrc.rgb * strokeAlpha, strokeAlpha);
     outColor = mix(stroke, fill, coverage);
@@ -849,7 +849,7 @@ void main() {
     if (strokeWidth > 0.0) {
       // Both stroke sources ship straight alpha; the per-item alpha stack
       // applies to scalar strokes as well (parity with static exporters).
-      vec4 strokeSrc = u_strokeMode == 1 ? v_stroke : u_stroke;
+      vec4 strokeSrc = u_strokeMode == 1 ? v_stroke : (u_strokeMode == 2 ? paint : u_stroke);
       float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : strokeSrc.a) * v_style.x * u_strokeOpacity;
       vec4 stroke = vec4(strokeSrc.rgb * strokeAlpha, strokeAlpha);
       float inner = 1.0 - smoothstep(-aa, aa, d + strokeWidth);
