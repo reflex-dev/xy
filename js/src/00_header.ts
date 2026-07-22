@@ -20,9 +20,9 @@
  * title, axis tick labels, legend, tooltip (§7).
  */
 
-// v5: symlog axis scale (`scale: "symlog"` + `constant`) and scale-coordinate
-// density grids — a v4 client would render both silently wrong.
-export const PROTOCOL = 5;
+// v6: symlog axis scale (`scale: "symlog"` + `constant`) and scale-coordinate
+// density grids — a v5 client would render both silently wrong.
+export const PROTOCOL = 6;
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
 // python/xy/_framing.py). The chart spec's PROTOCOL
@@ -53,6 +53,47 @@ export function bytesToSpan(b) {
   // the normal aligned path zero-copy; preserve compatibility with one narrow
   // view-sized copy only when f32 columns could not be constructed in place.
   return span.byteOffset % 4 === 0 ? span : new Uint8Array(span);
+}
+
+/** True when every column in the spec fits inside the supplied buffers.
+ * Trait-transported appends can observe a torn update on hosts that set
+ * spec and buffers non-atomically (one change event fires between the two
+ * writes); a torn pair must be deferred to the other change event, not
+ * applied and not treated as fatal. Message- and first-paint transports
+ * deliver the pair together, so for them a mismatch stays a loud
+ * `payloadBuffers`/`_columnView` error, never this soft check. */
+export function payloadCoherent(spec, raw) {
+  const cols = spec?.columns;
+  if (!Array.isArray(cols)) return false;
+  const size = (c) => (c.dtype === "u8" ? 1 : 4);
+  if (spec.buffer_layout === "split") {
+    if (!Array.isArray(raw)) return false;
+    return cols.every((c) => {
+      if (!Number.isInteger(c.buf)) return true; // raster-only borrowed span
+      const b = raw[c.buf];
+      return !!b && c.len * size(c) <= b.byteLength;
+    });
+  }
+  if (Array.isArray(raw) || !raw) return false;
+  return cols.every((c) => c.byte_offset + c.len * size(c) <= raw.byteLength);
+}
+
+/** Wire buffers in the shape the spec declares (§29): packed is one blob;
+ * split is one span per column. Aligned views stay zero-copy; only a
+ * legacy unaligned view pays a narrow view-sized copy. A spec/transport
+ * disagreement is a bug, never a fallback. Used at first paint and by the
+ * streaming-append apply path (both ride the same layouts). */
+export function payloadBuffers(spec, raw) {
+  if (spec.buffer_layout === "split") {
+    if (!Array.isArray(raw)) {
+      throw new Error("xy: spec says buffer_layout=split but the transport delivered one buffer");
+    }
+    return raw.map(bytesToSpan);
+  }
+  if (Array.isArray(raw)) {
+    throw new Error("xy: transport delivered a buffer list but the spec is not split-layout");
+  }
+  return bytesToSpan(raw);
 }
 
 function xyFrameLimit(limits, name) {

@@ -2088,14 +2088,13 @@ pub unsafe extern "C" fn xy_bin_2d_sample_range(
         grid.fill(0.0);
         return 0;
     }
+    let out_rows = if capacity == 0 {
+        &mut [][..]
+    } else {
+        std::slice::from_raw_parts_mut(out, capacity)
+    };
     ffi_guard(usize::MAX, || {
-        let selected =
-            kernels::bin_2d_sample_range(x, y, x0, x1, y0, y1, w, h, seed, threshold, grid);
-        let written = selected.len();
-        if written > 0 && written <= capacity {
-            std::ptr::copy_nonoverlapping(selected.as_ptr(), out, written);
-        }
-        written
+        kernels::bin_2d_sample_range(x, y, x0, x1, y0, y1, w, h, seed, threshold, grid, out_rows)
     })
 }
 
@@ -2378,13 +2377,13 @@ pub unsafe extern "C" fn xy_sample_range_indices(
     if size > u32::MAX as usize || (capacity > 0 && out.is_null()) {
         return usize::MAX;
     }
+    let output = if capacity == 0 {
+        &mut [][..]
+    } else {
+        std::slice::from_raw_parts_mut(out, capacity)
+    };
     ffi_guard(usize::MAX, || {
-        let selected = kernels::sample_range_indices(size, seed, threshold);
-        if !selected.is_empty() && selected.len() <= capacity {
-            let output = std::slice::from_raw_parts_mut(out, capacity);
-            output[..selected.len()].copy_from_slice(&selected);
-        }
-        selected.len()
+        kernels::sample_range_indices_into(size, seed, threshold, output)
     })
 }
 

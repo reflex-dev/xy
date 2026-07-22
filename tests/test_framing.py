@@ -294,10 +294,14 @@ def test_javascript_rejects_malformed_and_unaligned_frames() -> None:
 
 def test_widget_entry_no_longer_slices_binary_views() -> None:
     source = (ROOT / "js" / "src" / "60_entries.ts").read_text(encoding="utf-8")
+    # payloadBuffers lives in the shared header now (the append apply path in
+    # 54_kernel.ts uses it too); the entry consumes it for first paint.
+    header = (ROOT / "js" / "src" / "00_header.ts").read_text(encoding="utf-8")
     built = CLIENT.read_text(encoding="utf-8")
     assert 'payloadBuffers(spec, model.get("buffers"))' in source
-    assert "raw.map(bytesToSpan)" in source
-    assert ".buffer.slice(b.byteOffset" not in source
+    assert "raw.map(bytesToSpan)" in header
+    for text in (source, header):
+        assert ".buffer.slice(b.byteOffset" not in text
     # The built bundle is minified; the decodeFrame export alias is the marker
     # that survives identifier renaming.
     assert "as decodeFrame" in built

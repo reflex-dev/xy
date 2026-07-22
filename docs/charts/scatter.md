@@ -1,6 +1,8 @@
 ---
 title: Scatter Charts
 description: Render and explore large point collections.
+components:
+  - xy.scatter_chart
 ---
 
 # Scatter Charts

@@ -1,6 +1,10 @@
 ---
 title: Specialized Charts
 description: Draw stems, independent segments, and triangle meshes.
+components:
+  - xy.stem_chart
+  - xy.segments_chart
+  - xy.triangle_mesh_chart
 ---
 
 # Specialized Charts

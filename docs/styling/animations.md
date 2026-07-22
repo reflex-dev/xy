@@ -1,6 +1,9 @@
 ---
 title: Animations and Data Transitions
 description: Animate entrances, keyed replacements, reorders, exits, and streaming appends with reduced-motion and deterministic-export control.
+components:
+  - xy.animation
+  - xy.spring
 ---
 
 # Animations and Data Transitions

@@ -11,6 +11,7 @@ from reflex_base.config import get_config
 from reflex_base.plugins import Plugin
 from reflex_site_shared.docs import DocsPage, DocsSiteConfig, discover_docs
 
+from xy_docs.api_reference import append_component_api_markdown
 from xy_docs.constants import LLMS_FULL_TXT_PATH, LLMS_TXT_PATH, PUBLIC_DOCS_URL
 
 
@@ -38,6 +39,25 @@ def _page_body(content: str) -> str:
     if first_line.startswith("# "):
         return rest.lstrip("\n") if separator else ""
     return content
+
+
+def page_markdown_with_api_reference(
+    page: DocsPage,
+    *,
+    include_frontmatter: bool = False,
+) -> str:
+    """Return authored Markdown plus its generated component API section.
+
+    Args:
+        page: Discovered documentation page.
+        include_frontmatter: Read the original source, including YAML metadata,
+            instead of using the parsed page body.
+
+    Returns:
+        Agent-readable Markdown matching the rendered page's API content.
+    """
+    content = page.source_path.read_text(encoding="utf-8") if include_frontmatter else page.content
+    return append_component_api_markdown(content, page.metadata)
 
 
 def build_llms_txt(config: DocsSiteConfig) -> str:
@@ -85,7 +105,7 @@ def build_llms_full_txt(config: DocsSiteConfig) -> str:
                 "",
                 f"Source: {_page_markdown_url(page)}",
                 "",
-                _page_body(page.content),
+                _page_body(page_markdown_with_api_reference(page)),
                 "",
             )
         )
@@ -114,4 +134,5 @@ __all__ = [
     "build_llms_full_txt",
     "build_llms_txt",
     "markdown_asset_path",
+    "page_markdown_with_api_reference",
 ]

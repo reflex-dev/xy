@@ -157,6 +157,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # `view_state()` never round-trips. Reads are eventually consistent.
         self._view_state_ranges: Optional[dict[str, list[float]]] = None
         self._view_state_selection: Optional[dict[str, Any]] = None
+        # Monotonic streaming-append counter; rides the spec as
+        # `append.seq` so trait-transported hosts can detect the refresh
+        # (wire-protocol §4).
+        self._append_seq = 0
 
     # -- axis config --------------------------------------------------------
 

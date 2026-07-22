@@ -1023,7 +1023,47 @@ pub fn histogram2d_into(
     if out.len() != nx.saturating_mul(ny) {
         return false;
     }
-    out.fill(0.0);
+    if let Some(values) = weights {
+        // Weighted accumulation stays serial: f64 addition is order-dependent,
+        // so a per-thread merge would make the sums vary with core count
+        // (§21 determinism).
+        out.fill(0.0);
+        for index in 0..x.len() {
+            let Some(x_bin) = histogram_edge_bin(x[index], x_edges) else {
+                continue;
+            };
+            let Some(y_bin) = histogram_edge_bin(y[index], y_edges) else {
+                continue;
+            };
+            let weight = values[index];
+            if weight.is_finite() {
+                out[x_bin * ny + y_bin] += weight;
+            }
+        }
+    } else {
+        // Unit weights are integer counts: per-worker u64 grids with an
+        // integer-sum merge are bit-identical to the serial pass for any
+        // thread count. Same grid-aware fan-out cap as `bin_2d`.
+        histogram2d_count(
+            x,
+            y,
+            x_edges,
+            y_edges,
+            bin_2d_threads(x.len(), nx * ny),
+            out,
+        );
+    }
+    true
+}
+
+fn histogram2d_count_scan(
+    x: &[f64],
+    y: &[f64],
+    x_edges: &[f64],
+    y_edges: &[f64],
+    bins: &mut [u64],
+) {
+    let ny = y_edges.len() - 1;
     for index in 0..x.len() {
         let Some(x_bin) = histogram_edge_bin(x[index], x_edges) else {
             continue;
@@ -1031,12 +1071,49 @@ pub fn histogram2d_into(
         let Some(y_bin) = histogram_edge_bin(y[index], y_edges) else {
             continue;
         };
-        let weight = weights.map_or(1.0, |values| values[index]);
-        if weight.is_finite() {
-            out[x_bin * ny + y_bin] += weight;
-        }
+        bins[x_bin * ny + y_bin] += 1;
     }
-    true
+}
+
+fn histogram2d_count(
+    x: &[f64],
+    y: &[f64],
+    x_edges: &[f64],
+    y_edges: &[f64],
+    threads: usize,
+    out: &mut [f64],
+) {
+    let n = x.len();
+    if threads <= 1 || n < threads {
+        let mut bins = vec![0u64; out.len()];
+        histogram2d_count_scan(x, y, x_edges, y_edges, &mut bins);
+        for (cell, count) in out.iter_mut().zip(bins) {
+            *cell = count as f64;
+        }
+        return;
+    }
+    let chunk = n.div_ceil(threads);
+    let parts: Vec<Vec<u64>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = x
+            .chunks(chunk)
+            .zip(y.chunks(chunk))
+            .map(|(xs, ys)| {
+                let n_bins = out.len();
+                scope.spawn(move || {
+                    let mut bins = vec![0u64; n_bins];
+                    histogram2d_count_scan(xs, ys, x_edges, y_edges, &mut bins);
+                    bins
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("histogram2d worker panicked"))
+            .collect()
+    });
+    for (index, cell) in out.iter_mut().enumerate() {
+        *cell = parts.iter().map(|bins| bins[index]).sum::<u64>() as f64;
+    }
 }
 
 /// Expand a rectilinear or curvilinear quadrilateral grid into independent
@@ -3283,13 +3360,45 @@ fn bin_2d_indices_impl(
     write
 }
 
+/// Copy ascending per-worker row selections straight into `out` at their
+/// prefix offsets. Returns the total selection length; rows are written only
+/// when the total fits `out`, matching the two-phase capacity protocol of the
+/// sampling ABI. Writing chunk-by-chunk replaces the previous
+/// concatenate-then-copy shape, which allocated and copied a second
+/// selection-sized buffer per call (§27: staging never grows with data).
+fn write_selected_chunks(chunks: &[Vec<u32>], out: &mut [u32]) -> usize {
+    let total: usize = chunks.iter().map(Vec::len).sum();
+    if total == 0 || total > out.len() {
+        return total;
+    }
+    if total >= PAR_THRESHOLD {
+        // Destinations are disjoint, so the copies fan out safely.
+        std::thread::scope(|scope| {
+            let mut rest = &mut out[..total];
+            for chunk in chunks {
+                let (dst, tail) = std::mem::take(&mut rest).split_at_mut(chunk.len());
+                rest = tail;
+                scope.spawn(move || dst.copy_from_slice(chunk));
+            }
+        });
+    } else {
+        let mut cursor = 0usize;
+        for chunk in chunks {
+            out[cursor..cursor + chunk.len()].copy_from_slice(chunk);
+            cursor += chunk.len();
+        }
+    }
+    total
+}
+
 /// Full-domain density first paint: build the grid and deterministically
 /// sample implicit row ids in one traversal. Unlike [`bin_2d_indices`], the
 /// sampled rows do not depend on the viewport predicate: callers use this
 /// only after proving every source row is visible. The two results are
-/// therefore exactly [`bin_2d`] and [`sample_range_indices`] for the same
-/// arguments, while interleaving the independent grid and SplitMix work lets
-/// the CPU overlap their latency.
+/// therefore exactly [`bin_2d`] and [`sample_range_indices_into`] for the
+/// same arguments, while interleaving the independent grid and SplitMix work
+/// lets the CPU overlap their latency. Returns the exact selection length;
+/// rows are written only when they fit `out_rows`.
 #[allow(clippy::too_many_arguments)]
 pub fn bin_2d_sample_range(
     x: &[f64],
@@ -3303,13 +3412,16 @@ pub fn bin_2d_sample_range(
     seed: u64,
     threshold: u64,
     out: &mut [f32],
-) -> Vec<u32> {
+    out_rows: &mut [u32],
+) -> usize {
     assert_eq!(x.len(), y.len());
     assert!(x.len() <= u32::MAX as usize);
     assert_eq!(out.len(), w * h);
     assert!(w > 0 && h > 0 && x1_gt_x0(x0, x1) && x1_gt_x0(y0, y1));
     let threads = bin_2d_threads(x.len(), w * h);
-    bin_2d_sample_range_impl(x, y, x0, x1, y0, y1, w, h, seed, threshold, threads, out)
+    let chunks =
+        bin_2d_sample_range_impl(x, y, x0, x1, y0, y1, w, h, seed, threshold, threads, out);
+    write_selected_chunks(&chunks, out_rows)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3361,7 +3473,7 @@ fn bin_2d_sample_range_impl(
     threshold: u64,
     threads: usize,
     out: &mut [f32],
-) -> Vec<u32> {
+) -> Vec<Vec<u32>> {
     let n = x.len();
     if threads <= 1 || n < threads {
         let mut grid = vec![0u32; w * h];
@@ -3370,7 +3482,7 @@ fn bin_2d_sample_range_impl(
         for (o, c) in out.iter_mut().zip(grid) {
             *o = c as f32;
         }
-        return selected;
+        return vec![selected];
     }
 
     let chunk = n.div_ceil(threads);
@@ -3413,12 +3525,7 @@ fn bin_2d_sample_range_impl(
         }
     });
 
-    let selected_len = parts.iter().map(|(_, rows)| rows.len()).sum();
-    let mut selected = Vec::with_capacity(selected_len);
-    for (_, rows) in parts {
-        selected.extend(rows);
-    }
-    selected
+    parts.into_iter().map(|(_, rows)| rows).collect()
 }
 
 const SPLITMIX_INCREMENT: u64 = 0x9E37_79B9_7F4A_7C15;
@@ -3461,19 +3568,27 @@ pub fn sample_mask<T: Copy + Sync + Into<u64>>(
 }
 
 /// Deterministically sample implicit row ids `0..size` without materializing
-/// the input ids or a byte mask.  The returned indices are ascending and are
+/// the input ids or a byte mask.  The selected indices are ascending and are
 /// bit-identical to filtering `arange(size)` with [`sample_mask`].
 ///
 /// This is the common full-domain density-overlay path.  Its live memory is
 /// proportional to the selected rows rather than the source row count.
-pub fn sample_range_indices(size: usize, seed: u64, threshold: u64) -> Vec<u32> {
+/// Returns the exact selection length; rows are written straight from the
+/// per-worker selections only when they fit `out` — no concatenated
+/// intermediate copy.
+pub fn sample_range_indices_into(size: usize, seed: u64, threshold: u64, out: &mut [u32]) -> usize {
+    let chunks = sample_range_chunks(size, seed, threshold);
+    write_selected_chunks(&chunks, out)
+}
+
+fn sample_range_chunks(size: usize, seed: u64, threshold: u64) -> Vec<Vec<u32>> {
     assert!(size <= u32::MAX as usize);
     if size == 0 {
         return Vec::new();
     }
     let threads = par_threads(size).min(size);
     let per = size.div_ceil(threads);
-    let chunks: Vec<Vec<u32>> = std::thread::scope(|s| {
+    std::thread::scope(|s| {
         let handles: Vec<_> = (0..threads)
             .filter_map(|thread| {
                 let start = thread * per;
@@ -3496,13 +3611,13 @@ pub fn sample_range_indices(size: usize, seed: u64, threshold: u64) -> Vec<u32> 
             .into_iter()
             .map(|handle| handle.join().expect("sample-range worker panicked"))
             .collect()
-    });
-    let total = chunks.iter().map(Vec::len).sum();
-    let mut selected = Vec::with_capacity(total);
-    for chunk in chunks {
-        selected.extend(chunk);
-    }
-    selected
+    })
+}
+
+/// Test-only convenience: the selection as one owned Vec.
+#[cfg(test)]
+pub fn sample_range_indices(size: usize, seed: u64, threshold: u64) -> Vec<u32> {
+    sample_range_chunks(size, seed, threshold).concat()
 }
 
 /// Category-stratified sampling for implicit row ids `0..groups.len()`.
@@ -4492,8 +4607,48 @@ pub fn min_max(data: &[f64]) -> Option<(f64, f64)> {
 /// (IEEE comparisons with NaN are false). This is exactly NumPy's
 /// `all(diff(x) >= 0)` — the line/area sorted-ingest predicate (§28) — but
 /// single-pass, allocation-free, and early-exit on the first violation.
+/// Large inputs fan out over overlapping segments (the pair AND is
+/// order-independent); a shared flag propagates the early exit.
 pub fn is_sorted_f64(data: &[f64]) -> bool {
-    data.windows(2).all(|pair| pair[1] >= pair[0])
+    is_sorted_f64_impl(data, par_threads(data.len()))
+}
+
+fn is_sorted_f64_impl(data: &[f64], threads: usize) -> bool {
+    let n = data.len();
+    if threads <= 1 || n < threads * 2 {
+        return data.windows(2).all(|pair| pair[1] >= pair[0]);
+    }
+    let violated = std::sync::atomic::AtomicBool::new(false);
+    let per = n.div_ceil(threads);
+    std::thread::scope(|scope| {
+        let violated = &violated;
+        for thread in 0..threads {
+            // Segments overlap by one element so every boundary pair is
+            // checked by exactly one worker.
+            let start = thread * per;
+            let stop = (start + per + 1).min(n);
+            if start + 1 >= stop {
+                continue;
+            }
+            let seg = &data[start..stop];
+            scope.spawn(move || {
+                let last = seg.len() - 1;
+                let mut lo = 0usize;
+                while lo < last {
+                    if violated.load(std::sync::atomic::Ordering::Relaxed) {
+                        return;
+                    }
+                    let hi = (lo + (1 << 15)).min(last);
+                    if !seg[lo..=hi].windows(2).all(|pair| pair[1] >= pair[0]) {
+                        violated.store(true, std::sync::atomic::Ordering::Relaxed);
+                        return;
+                    }
+                    lo = hi;
+                }
+            });
+        }
+    });
+    !violated.into_inner()
 }
 
 /// Dispatches to the AVX2 clone when available (simd.rs).
@@ -5111,11 +5266,22 @@ mod tests {
 
         for threads in [1, 4] {
             let mut grid = vec![0.0f32; w * h];
-            let sample = bin_2d_sample_range_impl(
+            let chunks = bin_2d_sample_range_impl(
                 &x, &y, x0, x1, y0, y1, w, h, seed, threshold, threads, &mut grid,
             );
             assert_eq!(grid, grid_ref, "grid threads={threads}");
-            assert_eq!(sample, sample_ref, "sample threads={threads}");
+            assert_eq!(chunks.concat(), sample_ref, "sample threads={threads}");
+            let mut written = vec![0u32; sample_ref.len()];
+            assert_eq!(
+                write_selected_chunks(&chunks, &mut written),
+                sample_ref.len()
+            );
+            assert_eq!(written, sample_ref, "direct write threads={threads}");
+            assert_eq!(
+                write_selected_chunks(&chunks, &mut written[..sample_ref.len() - 1]),
+                sample_ref.len(),
+                "undersized capacity still reports the exact length"
+            );
         }
     }
 

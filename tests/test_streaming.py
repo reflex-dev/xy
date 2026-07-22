@@ -95,7 +95,14 @@ def _msg(fig, tid, x, y, **kw):
     msg, buffers = fig.append(tid, x, y, **kw)
     assert msg["type"] == "append"
     assert msg["affected"] == [tid]
-    assert isinstance(buffers[0], bytes)
+    # Split layout, like first paint: borrowed per-column views, no join copy.
+    assert msg["spec"]["buffer_layout"] == "split"
+    assert len(buffers) == len(msg["spec"]["columns"])
+    assert all(isinstance(b, memoryview) for b in buffers)
+    # The spec names the append so trait-transported hosts can apply it.
+    tag = msg["spec"]["append"]
+    assert tag["affected"] == [tid]
+    assert isinstance(tag["seq"], int) and tag["seq"] >= 1
     return msg, buffers
 
 

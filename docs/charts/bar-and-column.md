@@ -1,6 +1,9 @@
 ---
 title: Bar and Column Charts
 description: Compare categories with grouped, stacked, normalized, and horizontal bars.
+components:
+  - xy.bar_chart
+  - xy.column_chart
 ---
 
 # Bar and Column Charts

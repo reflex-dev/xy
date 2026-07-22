@@ -2837,8 +2837,8 @@ class Chart(Component):
         children: tuple[Component, ...],
         *,
         title: Optional[str] = None,
-        width: "int | str" = 900,  # pixels, or "100%" to fill the parent
-        height: "int | str" = 420,  # pixels, or "100%" (parent needs a height)
+        width: int | str = 900,  # pixels, or "100%" to fill the parent
+        height: int | str = 420,  # pixels, or "100%" (parent needs a height)
         padding: Union[
             float, Sequence[float], None
         ] = None,  # plot margins; 0 = edge-to-edge sparkline
@@ -2872,6 +2872,46 @@ class Chart(Component):
         link_group: Optional[str] = None,
         link_axes: Optional[tuple[str, ...]] = None,
     ) -> None:
+        """Initialize a chart composition.
+
+        Args:
+            kind: Internal factory kind used to identify the chart family.
+            children: Marks, axes, annotations, and chart chrome.
+            title: Title shown above the plot.
+            width: Chart width in pixels or a CSS size such as ``"100%"``.
+            height: Chart height in pixels or a CSS size such as ``"100%"``.
+            padding: Plot margins, as one value or a sequence of side values.
+                Use zero for an edge-to-edge sparkline.
+            data: Chart-level data used by marks that omit their own ``data``.
+            class_name: CSS class applied to the chart container.
+            class_names: CSS classes keyed by stable chart DOM slot.
+            style: Inline style overrides for the chart container.
+            styles: Inline style mappings keyed by stable chart DOM slot.
+            on_hover: Callback receiving hover event payloads.
+            on_click: Callback receiving picked-mark click payloads.
+            on_brush: Callback receiving brush event payloads.
+            on_select: Callback receiving data-space selections.
+            on_view_change: Callback receiving viewport change payloads.
+            hover: Whether pointer movement emits hover events.
+            click: Whether picked marks emit click events.
+            select: Whether shift-drag box selection is enabled.
+            brush: Whether brush selection is enabled.
+            crosshair: Whether plot-aligned hover guides are shown.
+            navigation: Whether browser pan and zoom navigation is enabled.
+            pan: Whether plain-drag panning is enabled.
+            pan_axes: Declared axis IDs translated by pan gestures.
+            zoom: Whether viewport zoom is enabled.
+            default_drag_action: Initial action performed by a plain plot drag.
+            zoom_axes: Declared axis IDs changed by zoom gestures and controls.
+            zoom_limits: Minimum and maximum magnification globally or by axis.
+            wheel_zoom: Whether wheel and trackpad zoom is available.
+            box_zoom: Whether box zoom is available as a drag action.
+            zoom_buttons: Whether modebar Zoom In/Out commands are available.
+            double_click_reset: Whether double-click restores ``reset_axes``.
+            reset_axes: Declared axis IDs restored by reset.
+            link_group: Identifier used to synchronize charts in the browser.
+            link_axes: Axes synchronized within the link group.
+        """
         self.kind = kind
         self.children = children
         self.title = title

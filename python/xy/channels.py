@@ -18,7 +18,7 @@ from typing import Any, Optional
 import numpy as np
 import numpy.typing as npt
 
-from . import _validate, kernels
+from . import _validate, config, kernels
 
 _finite_scalar = _validate.finite_scalar
 
@@ -442,6 +442,21 @@ def resolve_color(
                 f"categorical color has {len(cats)} categories; only the first "
                 f"{MAX_CATEGORIES} get distinct palette slots (the rest collide). "
                 "Consider grouping rare categories or a continuous encoding.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+        elif len(cats) > len(config.DEFAULT_PALETTE):
+            import warnings
+
+            # The default palette is deliberately eight slots (its adjacency
+            # order is the CVD-safety gate; see config.DEFAULT_PALETTE), so
+            # category colors repeat modulo eight. Allowed, never silent (§28).
+            warnings.warn(
+                f"categorical color has {len(cats)} categories but the default "
+                f"palette has {len(config.DEFAULT_PALETTE)} colors; colors repeat "
+                f"every {len(config.DEFAULT_PALETTE)} categories (category 9 "
+                "wears category 1's color). Consider grouping rare categories "
+                "or a continuous encoding.",
                 RuntimeWarning,
                 stacklevel=3,
             )

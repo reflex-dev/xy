@@ -7,11 +7,13 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from reflex.constants import Dirs
 from reflex_base.config import get_config
 from reflex_site_shared.docs import DocsSiteConfig, discover_docs
 from reflex_site_shared.plugins import DocsMarkdownPlugin
 
 from xy_docs.config import DOCS_CONFIG, DOCS_REDIRECTS
+from xy_docs.plugins import markdown_asset_path, page_markdown_with_api_reference
 
 _CONFIG_PREFIX = "export default "
 _CONFIG_PATH = "react-router.config.js"
@@ -77,6 +79,28 @@ def _with_all_docs_prerendered(
 
 class XyDocsMarkdownPlugin(DocsMarkdownPlugin):
     """Publish Markdown without replacing the routes prerendered beside it."""
+
+    def get_static_assets(self, **context: Any) -> tuple[tuple[Path, str], ...]:
+        """Publish source Markdown with the same generated API as the HTML page."""
+        del context
+        root = Path(Dirs.PUBLIC)
+        if frontend_path := get_config().frontend_path:
+            root /= frontend_path.lstrip("/")
+
+        assets: list[tuple[Path, str]] = []
+        for page in discover_docs(self.docs):
+            content = page_markdown_with_api_reference(
+                page,
+                include_frontmatter=True,
+            )
+            route = page.route.strip("/")
+            assets.extend(
+                (
+                    (root / markdown_asset_path(page), content),
+                    (root / route / ".md", content),
+                )
+            )
+        return tuple(assets)
 
     def pre_compile(self, **context: Any) -> None:
         """Register the generated-config rewrite for production compilation."""

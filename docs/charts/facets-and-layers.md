@@ -1,6 +1,9 @@
 ---
 title: Facets and Layers
 description: Build small multiples and combine different marks in one chart.
+components:
+  - xy.chart
+  - xy.facet_chart
 ---
 
 # Facets and Layers

@@ -713,16 +713,20 @@ def append_data(
     alpha: Any = None,
     stroke_width: Any = None,
     symbol: Any = None,
-) -> tuple[dict[str, Any], list[bytes]]:
+) -> tuple[dict[str, Any], list[memoryview]]:
     """Streaming append (Phase-0): extend a trace's canonical
     columns in place and return the client refresh message.
 
     The wire never ships deltas because it never needs to: every tier's payload
     is screen-bounded by construction (design dossier §29 — direct ≤ budget,
     M4 ≤ 4·px, density = grid), so re-emitting the affected trace costs
-    O(pixels), not O(N). The message carries a complete fresh payload; the
-    client rebuilds only the traces named in `affected` and re-requests its
-    current view through the normal stale-while-revalidate path.
+    O(pixels), not O(N). The message carries a complete fresh payload in the
+    split layout (per-column borrowed views, no join copy); the client rebuilds
+    only the traces named in `affected` and re-requests its current view
+    through the normal stale-while-revalidate path. The spec carries
+    `append: {seq, affected}` so a host whose transport is the payload itself
+    (the widget's spec+buffers trait update) can detect and apply the refresh
+    without a separate message envelope.
 
     Phase-0 contract (violations raise before anything mutates):
     - scatter and line traces only;
@@ -901,5 +905,13 @@ def append_data(
         t._pyr_handle = None
     lod.exit_drill(t)
 
-    spec, blob = fig.build_payload()
-    return {"type": "append", "affected": [t.id], "spec": spec}, [blob]
+    # Split layout, same as first paint (§29): per-column borrowed views, no
+    # join copy. The spec itself names the append — `append.seq` is the apply
+    # signal for the widget host, where the refresh rides the spec+buffers
+    # trait update as one comm message that doubles as notebook-reopen state.
+    # The socket.io host wraps the same spec in an `append` message push.
+    fig._append_seq += 1
+    seq = fig._append_seq
+    spec, buffers = fig.build_payload_split()
+    spec["append"] = {"seq": seq, "affected": [t.id]}
+    return {"type": "append", "affected": [t.id], "spec": spec}, buffers
