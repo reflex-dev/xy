@@ -121,4 +121,4 @@ repository root.
 For Markdown-only changes, run the docs tests and Ruff. For changes to routing,
 components, plugins, shared packages, or live previews, also start the
 production app and run every validator documented in `README.md`. Run the
-adapter tests under `tests/reflex_adapter/` when changing `reflex_xy` behavior.
+adapter tests under `python/reflex-xy/tests/` when changing `reflex_xy` behavior.

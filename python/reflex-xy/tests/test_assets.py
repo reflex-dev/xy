@@ -1,4 +1,4 @@
-"""Shipped frontend assets: client sourced from the xy install + wrapper contract."""
+"""Shipped reflex-xy assets: installed client source and wrapper contract."""
 
 from __future__ import annotations
 
@@ -122,3 +122,15 @@ def test_wrapper_mirrors_reflex_connection_options():
         "reconnection: false",
     ):
         assert needle in jsx, f"wrapper lost reflex connection option: {needle}"
+
+
+def test_wrapper_follows_reflex_host_transport_lifecycle():
+    """The xy namespace must not keep the shared physical socket alive after
+    Reflex tears down its app namespace, and bfcache restores must reconnect."""
+    jsx = (ADAPTER_ASSETS / "XYChart.jsx").read_text(encoding="utf-8")
+
+    assert 'addEventListener?.("pagehide"' in jsx
+    assert "sharedSocket?.disconnect()" in jsx
+    assert 'addEventListener?.("pageshow"' in jsx
+    assert "event.persisted" in jsx
+    assert "sharedSocket.connect()" in jsx

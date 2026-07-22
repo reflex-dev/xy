@@ -22,6 +22,7 @@ HARD_JOBS = (
     "install_without_rust",
     "matplotlib_reference",
     "python_floor",
+    "reflex_adapter",
     "sdist",
     "test",
     "wheels",

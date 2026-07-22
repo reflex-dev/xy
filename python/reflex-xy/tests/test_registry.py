@@ -1,3 +1,5 @@
+"""reflex-xy registry ownership, publication, and lifecycle tests."""
+
 from __future__ import annotations
 
 import asyncio

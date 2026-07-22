@@ -26,6 +26,7 @@ DEFAULT_HELM_DOCS_WORKFLOW = ROOT / ".github" / "workflows" / "_helm-docs-pr.yml
 DEFAULT_WORKFLOW = DEFAULT_CI_WORKFLOW
 REQUIRED_CI_JOBS = {
     "browser_conformance",
+    "reflex_adapter",
     "matplotlib_reference",
     "test",
     "python_floor",
@@ -420,6 +421,60 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "if-no-files-found: error",
         "dashboard-smoke.json",
     )
+    reflex_adapter = jobs.get("reflex_adapter", "")
+    # This lane is intentionally hard.  Check the forbidden form explicitly
+    # rather than relying on absence of a positive token.
+    if "continue-on-error:" in reflex_adapter:
+        errors.append("CI reflex_adapter job must be a hard gate without continue-on-error")
+    if '-e ".[dev]"' in reflex_adapter:
+        errors.append(
+            "CI reflex_adapter job must provision tests from python/reflex-xy[dev], "
+            "not the root xy dev extra"
+        )
+    _require_job_contains(
+        errors,
+        jobs,
+        "reflex_adapter",
+        "CI",
+        "Reflex host matrix, zero-skip suite, compile, and real browser E2E",
+        "reflex==0.9.6",
+        "reflex>=0.9.6",
+        'XY_REQUIRE_CARGO: "1"',
+        "uv pip install -p .venv/bin/python -e .",
+        "python/reflex-xy[dev]",
+        "from importlib.metadata import version",
+        "version('reflex')",
+        "scripts/run_pytest_no_skips.py -q python/reflex-xy/tests",
+        "reflex compile --dry",
+        "reflex run --env prod --single-port",
+        "scripts/reflex_ws_smoke.py",
+        "--screenshot reflex-e2e.png",
+        "npx playwright install --with-deps chromium",
+        "Upload Reflex E2E evidence",
+        "reflex-e2e-${{ matrix.name }}",
+        "examples/reflex/reflex-e2e.log",
+        "examples/reflex/reflex-e2e.png",
+    )
+    _require_step_contains(
+        errors,
+        reflex_adapter,
+        "Run real Reflex browser E2E",
+        "browser evidence capture",
+        "scripts/reflex_ws_smoke.py",
+        "--screenshot reflex-e2e.png",
+    )
+    _require_step_contains(
+        errors,
+        reflex_adapter,
+        "Upload Reflex E2E evidence",
+        "failure-safe browser evidence upload",
+        "if: always()",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        "reflex-e2e-${{ matrix.name }}",
+        "if-no-files-found: warn",
+        "examples/reflex/reflex-e2e.log",
+        "examples/reflex/reflex-e2e.png",
+    )
     _require_job_contains(
         errors,
         jobs,
@@ -689,6 +744,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "install_without_rust",
         "matplotlib_reference",
         "python_floor",
+        "reflex_adapter",
         "sdist",
         "test",
         "wheels",

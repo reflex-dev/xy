@@ -58,12 +58,15 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-004 — Required Reflex adapter and browser E2E lane
 
-- Status: `NOT IMPLEMENTED`
+- Status: `IMPLEMENTED`
 - Owner: unassigned — file a tracking issue before implementation starts
-- Current gap: root CI does not install `reflex` or `reflex_xy`, so one collection
-  skip hides the adapter suite; the real `reflex_ws_smoke.py` is unwired.
+- Evidence: `python/reflex-xy/tests/`, `scripts/run_pytest_no_skips.py`,
+  `scripts/reflex_ws_smoke.py`, and the required `reflex_adapter` CI job's
+  floor/latest `reflex-e2e-*` artifacts.
+- Current gap: closed; package-owned dependencies fail collection when missing,
+  and the real production example is a zero-skip required browser lane.
 - Implemented when: a dedicated job installs root XY and
-  `python/reflex-xy[dev]`, allows zero dependency skips, runs all adapter cases,
+  `python/reflex-xy[dev]`, requires zero dependency skips, runs all adapter cases,
   compiles/starts the real example, and proves socket, binary paint, drill,
   state, streaming, and teardown behavior at the supported Reflex floor/latest.
 

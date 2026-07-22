@@ -70,13 +70,26 @@ def test_ci_workflow_rejects_required_aggregate_missing_hard_job(tmp_path: Path)
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
     path.write_text(
-        workflow.replace("      - python_floor\n      - sdist\n", "      - python_floor\n"),
+        workflow.replace("      - reflex_adapter\n      - sdist\n", "      - reflex_adapter\n"),
         encoding="utf-8",
     )
 
     errors = verify_ci_workflow.validate_ci_workflow(path)
 
     assert any("required_ci needs" in error and "sdist" in error for error in errors)
+
+
+def test_ci_workflow_rejects_reflex_lane_outside_required_aggregate(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("      - reflex_adapter\n", "", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("required_ci needs" in error and "reflex_adapter" in error for error in errors)
 
 
 def test_ci_workflow_rejects_invalid_embedded_python_indentation(tmp_path: Path) -> None:
@@ -613,6 +626,104 @@ def test_ci_workflow_rejects_missing_cross_browser_conformance(tmp_path: Path) -
     errors = verify_ci_workflow.validate_ci_workflow(path)
 
     assert any("browser_conformance" in error and "conformance gate" in error for error in errors)
+
+
+def test_ci_workflow_rejects_missing_reflex_adapter_browser_gate(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            "          ../../.venv/bin/python ../../scripts/reflex_ws_smoke.py \\\n"
+            '            --frontend http://localhost:3100 --chromium "$CHROME" \\\n'
+            "            --screenshot reflex-e2e.png\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("reflex_adapter" in error and "reflex_ws_smoke.py" in error for error in errors)
+
+
+def test_ci_workflow_rejects_reflex_adapter_without_screenshot_evidence(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(" \\\n            --screenshot reflex-e2e.png\n", "\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("browser evidence capture" in error and "--screenshot" in error for error in errors)
+
+
+def test_ci_workflow_rejects_reflex_evidence_upload_that_skips_failures(
+    tmp_path: Path,
+) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    marker = "      - name: Upload Reflex E2E evidence\n        if: always()\n"
+    path.write_text(
+        text.replace(marker, "      - name: Upload Reflex E2E evidence\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "failure-safe browser evidence upload" in error and "if: always()" in error
+        for error in errors
+    )
+
+
+def test_ci_workflow_rejects_soft_reflex_adapter_gate(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            "  reflex_adapter:\n    name:",
+            "  reflex_adapter:\n    continue-on-error: true\n    name:",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("reflex_adapter job must be a hard gate" in error for error in errors)
+
+
+def test_ci_workflow_rejects_root_owned_reflex_test_dependencies(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            "          uv pip install -p .venv/bin/python -e .\n",
+            '          uv pip install -p .venv/bin/python -e ".[dev]"\n',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "python/reflex-xy[dev]" in error and "root xy dev extra" in error for error in errors
+    )
+
+
+def test_ci_workflow_rejects_adapter_tests_outside_package_boundary(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace("-q python/reflex-xy/tests\n", "-q tests/reflex_adapter\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("reflex_adapter" in error and "python/reflex-xy/tests" in error for error in errors)
 
 
 def test_ci_workflow_rejects_missing_playwright_browser_cache(tmp_path: Path) -> None:

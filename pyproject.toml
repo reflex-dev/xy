@@ -109,9 +109,6 @@ exclude = [
     "/node_modules/**",
     "/target/**",
     "/dist/**",
-    # Adapter tests ship with the reflex-xy package's repo checkout, not
-    # with the xy sdist (whose package they can't exercise anyway).
-    "/tests/reflex_adapter/**",
     # Belt and braces for the include narrowing above: hatchling auto-admits
     # readme-named files, which would smuggle adapter docs back in.
     "/python/reflex-xy/**",
@@ -167,7 +164,7 @@ exclude = ["examples/pdsh/*.ipynb"]
 # their page prose and chrome.
 "examples/reflex/**" = ["RUF012", "RUF001"]
 "examples/fastapi/**" = ["RUF001"]
-"tests/reflex_adapter/*.py" = ["RUF012"]
+"python/reflex-xy/tests/*.py" = ["RUF012"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["xy"]

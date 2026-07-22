@@ -126,9 +126,7 @@ def test_component_creation_does_not_touch_repo_root():
 
 
 def test_semantic_event_wrapper_contracts_are_present():
-    source = (
-        pathlib.Path(__file__).parents[2] / "python/reflex-xy/reflex_xy/assets/XYChart.jsx"
-    ).read_text()
+    source = (pathlib.Path(__file__).parents[1] / "reflex_xy/assets/XYChart.jsx").read_text()
     assert 'm.type === "select_polygon"' in source
     assert 'lastSelect?.type === "select_polygon" ? lastSelect.points : null' in source
     assert "interaction.click = true" in source

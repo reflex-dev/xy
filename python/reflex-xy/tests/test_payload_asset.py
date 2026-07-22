@@ -1,4 +1,4 @@
-"""The static payload tier: Chart -> asset file -> src prop, and inline()."""
+"""The adapter's static tier: Chart -> asset file -> src prop, and inline()."""
 
 from __future__ import annotations
 

@@ -56,6 +56,16 @@ let sharedSocket = null;
 // room membership is per-connection, not per-mount).
 const subCounts = new Map();
 
+// Reflex tears down its `/_event` namespace on pagehide.  The xy namespace
+// shares that manager, so it must leave too; otherwise its active namespace
+// keeps the one physical Engine.IO websocket alive after host teardown.
+// A bfcache restore keeps this module instance, so reactivate the namespace
+// when pageshow reports that the document was preserved.
+globalThis.addEventListener?.("pagehide", () => sharedSocket?.disconnect());
+globalThis.addEventListener?.("pageshow", (event) => {
+  if (event.persisted && sharedSocket && !sharedSocket.connected) sharedSocket.connect();
+});
+
 function xySocket() {
   if (sharedSocket) return sharedSocket;
   const endpoint = getBackendURL(env.EVENT);

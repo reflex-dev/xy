@@ -1,4 +1,4 @@
-"""End-to-end data plane over a real websocket.
+"""End-to-end reflex-xy data plane over a real websocket.
 
 Boots the same server stack a Reflex backend uses — python-socketio
 AsyncServer (with reflex's JSON config) + engine.io ASGI app mounted at

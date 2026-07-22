@@ -239,6 +239,92 @@ jobs:
       - name: Benchmark smoke (1e5/1e6 — §12 harness runs every phase)
         run: .venv/bin/python scripts/bench.py --sizes 1e5,1e6
 
+  reflex_adapter:
+    name: Reflex adapter E2E (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: floor
+            reflex: reflex==0.9.6
+          - name: latest
+            reflex: reflex>=0.9.6
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Build native core and client
+        run: |
+          cargo build --release
+          node js/build.mjs --check
+      - name: Install xy, Reflex adapter, and selected Reflex version
+        env:
+          XY_REQUIRE_CARGO: "1"
+        run: |
+          uv venv .venv
+          uv pip install -p .venv/bin/python -e .
+          uv pip install -p .venv/bin/python -e "python/reflex-xy[dev]" "${{ matrix.reflex }}"
+      - name: Verify selected host versions
+        run: |
+          .venv/bin/python -c "from importlib.metadata import version; print('reflex', version('reflex'))"
+          .venv/bin/python -c "import reflex_xy, xy; assert reflex_xy and xy"
+      - name: Run adapter suite with zero skips
+        run: .venv/bin/python scripts/run_pytest_no_skips.py -q python/reflex-xy/tests
+      - name: Compile real Reflex example
+        working-directory: examples/reflex
+        run: ../../.venv/bin/reflex compile --dry
+      - name: Install Chromium (Playwright)
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run real Reflex browser E2E
+        shell: bash
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          cd examples/reflex
+          ../../.venv/bin/reflex run --env prod --single-port --frontend-port 3100 \
+            > reflex-e2e.log 2>&1 &
+          server_pid=$!
+          cleanup() {
+            kill -INT "$server_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          ready=0
+          for _attempt in $(seq 1 120); do
+            if curl --fail --silent http://localhost:3100/ >/dev/null; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$ready" != "1" ]]; then
+            cat reflex-e2e.log
+            exit 1
+          fi
+          ../../.venv/bin/python ../../scripts/reflex_ws_smoke.py \
+            --frontend http://localhost:3100 --chromium "$CHROME" \
+            --screenshot reflex-e2e.png
+      - name: Upload Reflex E2E evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: reflex-e2e-${{ matrix.name }}
+          if-no-files-found: warn
+          path: |
+            examples/reflex/reflex-e2e.log
+            examples/reflex/reflex-e2e.png
+
   browser_conformance:
     name: Accessibility + cross-browser conformance
     runs-on: ubuntu-latest
@@ -767,6 +853,7 @@ jobs:
       - install_without_rust
       - matplotlib_reference
       - python_floor
+      - reflex_adapter
       - sdist
       - test
       - wheels

@@ -1,7 +1,7 @@
 # Reflex integration — design
 
 Status: **prototype landed** (`python/reflex-xy`, tests under
-`tests/reflex_adapter/`). This document is the authoritative design; the
+`python/reflex-xy/tests/`). This document is the authoritative design; the
 prototype implements it end to end over Reflex 0.9.6. The deliverable is an
 external adapter package (`reflex-xy`) that makes a xy figure a
 first-class Reflex component with the same performance contract as the
@@ -69,7 +69,7 @@ from `xy.channel`) for HTTP/export hosts; the namespace does not use it.
 - **Version coupling.** The wrapper mirrors Reflex's socket options
   (`transports`, ws subprotocol, `?token=` query) so the manager cache
   merges the connections. Those names are pinned by
-  `tests/reflex_adapter/test_assets.py` — a Reflex upgrade that renames
+  `python/reflex-xy/tests/test_assets.py` — a Reflex upgrade that renames
   them fails loudly in CI, not silently in prod.
 - **One engine.io connection per tab** stays the invariant. If a chart page
   somehow loads without state enabled there is no socket at all — but
@@ -550,7 +550,7 @@ examples/reflex/  (repo root) reflex-xy showcase: figure-var drilldown with
                              fixed-data tiers (direct Chart + inline() token)
 examples/fastapi/ (repo root) the same charts + a live 100M drilldown served
                              from a plain FastAPI app (no committed HTML)
-tests/reflex_adapter/        69 tests: token/registry/var/bridge/payload-asset
+python/reflex-xy/tests/      token/registry/var/bridge/payload-asset
                              units, component compile, and a real-websocket
                              integration suite (uvicorn + socketio client)
                              covering payload/pick/select/affinity/rebuild/

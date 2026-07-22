@@ -29,7 +29,7 @@ index. Missing additions are tracked by ID in [`gaps.md`](gaps.md).
 
 | Surface | Current executable evidence | Enforcement | Status | Current boundary / gap |
 |---|---|---|---|---|
-| Core Python behavior | Repository-wide `pytest -q`, recursively including root tests, `tests/pyplot/`, and `tests/reflex_adapter/` | Hard main and Python 3.11 jobs | `PARTIALLY IMPLEMENTED` | Broad native-backed coverage exists, but optional dependency and adapter tests can skip without a per-job allowlist. See TST-NI-031 and TST-NI-036. |
+| Core Python behavior | Repository-wide `pytest -q`, recursively including root tests and `tests/pyplot/`; adapter tests are package-owned below | Hard main and Python 3.11 jobs | `PARTIALLY IMPLEMENTED` | Broad native-backed coverage exists, but optional root dependencies can still skip without a per-job allowlist. See TST-NI-031 and TST-NI-036. |
 | Figure grammar and builder parity | `tests/test_figure.py`; `tests/test_components.py`; `tests/test_api_parity.py`; plot-family tests | Hard root suite | `IMPLEMENTED` | Public composition methods, appliers, signatures, defaults, and representative payloads are exercised. The stronger all-builder property/rollback claim is partial below. |
 | Validation and transactional rollback | `tests/test_components.py`; `tests/test_figure.py`; focused error/LOD/cache tests; `make check-errors` | Hard root suite | `PARTIALLY IMPLEMENTED` | Targeted rollback exists, but no injected late-failure matrix covers all 20 public builders on seeded state. See TST-NI-006. |
 | Property-based figure tests | `tests/test_property_figure.py`; `tests/test_framing_property.py` | Hard when Hypothesis is installed | `PARTIALLY IMPLEMENTED` | Figure strategies cover six core builders, and the framing property is valid-input focused. See TST-NI-006 and TST-NI-028. |
@@ -79,7 +79,7 @@ index. Missing additions are tracked by ID in [`gaps.md`](gaps.md).
 | Dashboard context governance | `benchmarks/bench_dashboard.py` at 10/20/50 plus strict outcome validation and mutation negatives in `tests/test_verify_benchmark_report.py` | Hard CI selects `--profile strict` and retains `dashboard-health-evidence`; timing reports remain advisory | `IMPLEMENTED` | Every requested row must be complete or governed, create and visit-paint every chart, and contain no unexplained context loss. See TST-NI-002. |
 | Accessibility | Source contracts plus the focused three-engine semantic fixture | Mixed hard evidence | `PARTIALLY IMPLEMENTED` | Roles and selected keyboard/live behavior have evidence, but there is no normative rendered matrix for direct/aggregate charts, focus, forced colors, or a table alternative. See TST-NI-017 and TST-NI-039. |
 | Anywidget/Jupyter | Python widget and transport tests | Hard root suite | `PARTIALLY IMPLEMENTED` | No supported notebook frontend mounts the shipped widget and drives bidirectional behavior. See TST-NI-018 and TST-NI-019. |
-| Reflex adapter | `tests/reflex_adapter/`; `scripts/reflex_ws_smoke.py` | Not provisioned or run by CI | `PARTIALLY IMPLEMENTED` | Valuable adapter/socket tests exist when dependencies are installed, but one import skip hides the suite and the real browser smoke is unwired. The required adapter lane is `NOT IMPLEMENTED`; see TST-NI-004. |
+| Reflex adapter | `python/reflex-xy/tests/`; `scripts/reflex_ws_smoke.py` | Hard dedicated Reflex floor/latest job with zero skips and retained logs/screenshots | `IMPLEMENTED` | Package-owned dependencies make missing test requirements fail collection; the production example proves one shared socket, binary paint, drill/hover state, streaming, renderer teardown, and host transport close. This supplies TST-NI-004; the broader cross-host matrix remains TST-NI-019. |
 | FastAPI and host versions | Example tests and the gallery browser app | Mixed | `PARTIALLY IMPLEMENTED` | Supported host floors/latest versions are not exercised as a declared matrix. See TST-NI-019. |
 
 ## Matplotlib compatibility and documentation application
@@ -180,9 +180,9 @@ automation, not whether the helper is valuable.
 
 | Suite or helper | Scope | Wiring / status |
 |---|---|---|
-| Repository `pytest -q` | Root tests plus recursively collected pyplot and Reflex-adapter suites | Hard main/Python-floor jobs; `PARTIALLY IMPLEMENTED` because optional dependencies can skip |
+| Repository `pytest -q` | Root tests plus recursively collected pyplot tests | Hard main/Python-floor jobs; `PARTIALLY IMPLEMENTED` because optional dependencies can skip |
 | `tests/pyplot/` | Matplotlib API/state/artist/options/corpus/reference behavior | Root collection plus dedicated hard Matplotlib reference job; `IMPLEMENTED` for its documented scope |
-| `tests/reflex_adapter/` | Adapter assets, components, vars, socket plane, state bridge, and tokens | Dormant in CI because dependencies are absent; target lane `NOT IMPLEMENTED` |
+| `python/reflex-xy/tests/` | Adapter assets, components, vars, socket plane, state bridge, and tokens | Package-owned dev environment plus zero-skip Reflex floor/latest job; `IMPLEMENTED` |
 | `docs/app/tests` | Documentation application unit/route/content behavior | Docs quality job; `IMPLEMENTED` |
 | `benchmarks/test_codspeed_*.py` | Kernel, transport, pyplot, and Python animation microbenchmarks | Advisory CodSpeed job; `IMPLEMENTED` |
 | Rust tests in `src/` | Native kernels, encoding, raster, tiles, SIMD, and module invariants | Debug hard CI; release gate `NOT IMPLEMENTED` |
@@ -197,7 +197,7 @@ automation, not whether the helper is valuable.
 | `scripts/browser_conformance.mjs` | Focused semantic/accessibility/layout/raster comparison | Hard Chromium/Firefox/WebKit CI |
 | `scripts/pick_boundary_smoke.py` | Large trace/index picking limits | Hard Chromium CI/browser lane with retained JSON evidence; `IMPLEMENTED` |
 | `scripts/animation_smoke.py` | Real-browser animation lifecycle/pixels/allocation | Hard Chromium CI/browser lane with retained JSON evidence; `IMPLEMENTED` |
-| `scripts/reflex_ws_smoke.py` | Real Reflex websocket/browser path | Exists locally and is unwired; required gate `NOT IMPLEMENTED` |
+| `scripts/reflex_ws_smoke.py` | Real Reflex websocket/browser path: shared socket, binary paint, drill/pick state, streaming, renderer teardown, and transport close | Hard dedicated Reflex floor/latest CI with retained log/screenshot evidence; `IMPLEMENTED` for TST-NI-004 |
 | `scripts/pyodide_load_smoke.py` | Built WASM wheel runtime load | Release-only exact-artifact evidence |
 | `scripts/verify_released_docs_quickstart.py` | Public quickstarts against the published wheel | Docs released-quickstart job |
 | `scripts/check_release_version.py` and its tests | Tag, project version, and changelog coherence | Reused by exact-SHA release qualification for tag and manual real publication |
@@ -213,7 +213,7 @@ automation, not whether the helper is valuable.
 
 | Workflow | Current jobs | Testing role |
 |---|---|---|
-| `ci.yml` | `matplotlib_reference`, `test`, `browser_conformance`, `python_floor`, `benchmark_vs`, `benchmark_methodology`, `benchmark`, `sdist`, `wheels`, `install_without_rust`, `required_ci` | Main hard and advisory code/package evidence; stable hard aggregate runs on every pull-request path |
+| `ci.yml` | `matplotlib_reference`, `test`, `reflex_adapter`, `browser_conformance`, `python_floor`, `benchmark_vs`, `benchmark_methodology`, `benchmark`, `sdist`, `wheels`, `install_without_rust`, `required_ci` | Main hard and advisory code/package evidence; stable hard aggregate runs on every pull-request path |
 | `codspeed.yml` | `benchmarks` | Advisory microbenchmark evidence |
 | `docs.yml` | `released-quickstart`, `quality`, `production` | Published-wheel quickstart, docs tests/lint, and production-route matrix |
 | `benchmark-refresh.yml` | `cross-library` | Manual scatter and core-2D refresh evidence |

@@ -1,4 +1,4 @@
-"""The @reflex_xy.figure computed var: registration, stability, rebuild."""
+"""The adapter's @reflex_xy.figure var: registration, stability, rebuild."""
 
 from __future__ import annotations
 
@@ -9,10 +9,9 @@ import pytest
 import reflex as rx
 import reflex_xy
 from reflex_xy.tokens import builder_of, parse_token
+from reflex_xy_test_helpers import make_router_data
 
 import xy
-
-from .conftest import make_router_data
 
 
 class VarDemo(rx.State):

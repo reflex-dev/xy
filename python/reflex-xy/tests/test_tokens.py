@@ -1,3 +1,5 @@
+"""State-token grammar and property tests for reflex-xy."""
+
 from __future__ import annotations
 
 import pytest

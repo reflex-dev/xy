@@ -139,10 +139,13 @@ class Probe:
     def __init__(self, session: ChromiumSession, url: str) -> None:
         self.s = session
         target = session._call("Target.createTarget", {"url": "about:blank"})
+        self.target_id = target["targetId"]
+        session._call("Target.activateTarget", {"targetId": target["targetId"]})
         attached = session._call(
             "Target.attachToTarget", {"targetId": target["targetId"], "flatten": True}
         )
         self.sid = attached["sessionId"]
+        self._call("Page.bringToFront")
         self._call("Network.enable")
         self._call("Page.enable")
         self._call("Runtime.enable")
@@ -197,6 +200,25 @@ class Probe:
                         out.append(data)
         return out
 
+    def binary_ws_frames(self) -> int:
+        """Count received websocket binary frames (socket.io attachments)."""
+        self.eval("1")
+        return sum(
+            1
+            for (sid, method), events in self.s._events.items()
+            if sid == self.sid and method == "Network.webSocketFrameReceived"
+            for event in events
+            if event.get("response", {}).get("opcode") == 2
+        )
+
+    def closed_websockets(self) -> int:
+        self.eval("1")
+        return sum(
+            len(events)
+            for (sid, method), events in self.s._events.items()
+            if sid == self.sid and method == "Network.webSocketClosed"
+        )
+
     def screenshot(self) -> bytes:
         shot = self._call(
             "Page.captureScreenshot",
@@ -224,6 +246,39 @@ class Probe:
         self._call(
             "Input.dispatchMouseEvent",
             {"type": kind, "x": x, "y": y, **extra},
+        )
+
+    def first_pick_target(self, view_id: str) -> dict | None:
+        """Return a client-coordinate pixel occupied in the GPU pick buffer."""
+        key = json.dumps(view_id)
+        return self.eval(
+            "(() => {"
+            f" const v = window.__xy_views.get({key});"
+            " const gl = v && v.gl;"
+            " if (!v || !gl || !v.pickFbo) return null;"
+            " if (v._pickDirty) v._renderPick();"
+            " const w = v.canvas.width, h = v.canvas.height;"
+            " const pixels = new Uint8Array(w * h * 4);"
+            " gl.bindFramebuffer(gl.FRAMEBUFFER, v.pickFbo);"
+            " gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);"
+            " gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
+            " let p = -1;"
+            " for (let i = 0; i < pixels.length; i += 4) {"
+            "   if (pixels[i] || pixels[i + 1] || pixels[i + 2] || pixels[i + 3]) {"
+            "     p = i / 4; break;"
+            "   }"
+            " }"
+            " if (p < 0) return null;"
+            " const px = p % w, py = Math.floor(p / w);"
+            " const r = v.canvas.getBoundingClientRect();"
+            " const dpr = v.dpr || window.devicePixelRatio || 1;"
+            " const cssX = (px + 0.5) / dpr;"
+            " const cssY = (h - py - 0.5) / dpr;"
+            " const hit = v._pickAt(cssX, cssY);"
+            " if (!hit) return null;"
+            " return {x: r.left + cssX, y: r.top + cssY, trace: hit.trace,"
+            "   index: hit.index};"
+            " })()"
         )
 
 
@@ -256,6 +311,11 @@ def main() -> None:
         if len(ws) != 1:
             failures.append(f"expected exactly 1 backend websocket (shared transport), got {ws}")
 
+        binary_frames = probe.binary_ws_frames()
+        print(f"binary websocket frames received: {binary_frames}")
+        if binary_frames == 0:
+            failures.append("no binary socket.io attachments reached the browser")
+
         # 2b) the direct-Chart mount is truly static: it never subscribes. The
         #     six live sources (five figure vars + one inline() token) each sub.
         subs = probe.sent_ws_frames('"sub"')
@@ -267,6 +327,9 @@ def main() -> None:
         #    rects in page coordinates so below-the-fold charts count too)
         time.sleep(1.0)
         png = probe.screenshot()
+        if args.screenshot:
+            Path(args.screenshot).write_bytes(png)
+            print(f"saved initial evidence to {args.screenshot}")
         checks = (("cloud", 0.02), ("hist", 0.02), ("live", 0.005), ("inline", 0.005))
         for chart_id, min_ink in checks:
             frac = ink_fraction(png, probe.rect(chart_id, page_coords=True), 1.0)
@@ -275,12 +338,37 @@ def main() -> None:
                 failures.append(f"{chart_id} looks blank ({frac:.2%} < {min_ink:.0%})")
 
         # 4) deep zoom drills density -> exact points (§16 over the socket) …
-        rect = probe.rect("cloud")
-        cx, cy = rect["x"] + rect["w"] * 0.55, rect["y"] + rect["h"] * 0.5
+        # The chart is taller than Chromium's default headless viewport.  Put
+        # its interaction surface on-screen before dispatching trusted CDP
+        # wheel/pointer input; off-viewport coordinates are silently ignored.
+        probe.scroll_to("cloud")
+        target = probe.eval(
+            "(() => { const v = window.__xy_views.get('cloud');"
+            " const r = v.canvas.getBoundingClientRect();"
+            " const x = r.left + r.width * 0.55, y = r.top + r.height * 0.5;"
+            " const hit = document.elementFromPoint(x, y);"
+            " return {x, y, rect: {x: r.x, y: r.y, w: r.width, h: r.height},"
+            " viewport: {w: innerWidth, h: innerHeight},"
+            " hit: hit && hit.tagName, hitsCanvas: hit === v.canvas}; })()"
+        )
+        print(f"cloud input target: {target}")
+        if not target["hitsCanvas"]:
+            raise SystemExit(
+                "cloud interaction precondition failed: CDP coordinates do not hit "
+                f"the chart canvas (rect={target['rect']}, viewport={target['viewport']}, "
+                f"target={target['hit']!r})"
+            )
+        cx, cy = target["x"], target["y"]
         probe.mouse("mouseMoved", cx, cy)
         for _ in range(16):
             probe.mouse("mouseWheel", cx, cy, deltaX=0, deltaY=-240)
             time.sleep(0.15)
+        zoom_state = probe.eval(
+            "(() => { const v = window.__xy_views.get('cloud');"
+            " const g = v.gpuTraces[0]; return {view: v.view, seq: v.seq,"
+            " tier: g.tier, drill: !!g.drill}; })()"
+        )
+        print(f"deep-zoom state: {zoom_state}")
         probe.wait_for(
             "(() => { const g = window.__xy_views.get('cloud').gpuTraces[0];"
             " return !!(g && (g.drill || g.tier !== 'density')); })()",
@@ -291,10 +379,25 @@ def main() -> None:
 
         # … and hovering a drilled point closes the semantic event loop:
         # GPU pick -> socket pick round-trip -> reflex event -> state delta.
-        for dx in range(-40, 200, 8):
-            probe.mouse("mouseMoved", cx + dx / 4, cy + dx / 16)
-            time.sleep(0.12)
         try:
+            probe.wait_for(
+                "(() => { const v = window.__xy_views.get('cloud');"
+                " if (!v || !v.gpuTraces[0].drill) return false;"
+                " if (v._pickDirty) v._renderPick();"
+                " const gl = v.gl, w = v.canvas.width, h = v.canvas.height;"
+                " const pixels = new Uint8Array(w * h * 4);"
+                " gl.bindFramebuffer(gl.FRAMEBUFFER, v.pickFbo);"
+                " gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);"
+                " gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
+                " return pixels.some((value) => value !== 0); })()",
+                timeout_s=15.0,
+                label="a drilled point in the GPU pick buffer",
+            )
+            point = probe.first_pick_target("cloud")
+            if point is None:
+                raise SystemExit("GPU pick buffer was nonempty but yielded no pickable point")
+            print(f"hovering drilled GPU point: {point}")
+            probe.mouse("mouseMoved", point["x"], point["y"])
             found_row = probe.wait_for(
                 "(document.body.innerText.match(/x=-?[0-9.]+/) || [null])[0]",
                 timeout_s=15.0,
@@ -327,6 +430,50 @@ def main() -> None:
         if args.screenshot:
             Path(args.screenshot).write_bytes(probe.screenshot())
             print(f"saved {args.screenshot}")
+
+        # 6) renderer teardown releases every resource it owns.  The React
+        # wrapper's effect cleanup calls the same idempotent destroy method;
+        # direct invocation keeps the assertions observable before host
+        # teardown destroys the page execution context.
+        teardown = probe.eval(
+            "(() => { const views = Array.from(window.__xy_views?.values?.() || []);"
+            " for (const view of views) view.destroy();"
+            " return views.map((view) => ({"
+            "   destroyed: view._destroyed === true, listeners: view._listeners.length,"
+            "   worker: view._rebinWorker == null, gl: view.gl === null,"
+            "   comm: view._unsubscribeComm === null, connected: view.root.isConnected"
+            " })); })()"
+        )
+        print(f"destroyed views: {len(teardown)}")
+        if len(teardown) < 6 or any(
+            not item["destroyed"]
+            or item["listeners"] != 0
+            or not item["worker"]
+            or not item["gl"]
+            or not item["comm"]
+            or item["connected"]
+            for item in teardown
+        ):
+            failures.append(f"renderer teardown leaked resources: {teardown}")
+
+        # Reflex installs pagehide/beforeunload as its host-transport teardown
+        # path.  Exercise that lifecycle while the CDP target remains alive so
+        # Network.webSocketClosed is observable (closing the target first drops
+        # its final target-scoped Network events).
+        probe.eval(
+            "window.dispatchEvent(new PageTransitionEvent('pagehide', {persisted: false})); true"
+        )
+        deadline = time.monotonic() + 15.0
+        closed = 0
+        while time.monotonic() < deadline:
+            closed = probe.closed_websockets()
+            if closed >= 1:
+                break
+            time.sleep(0.1)
+        print(f"closed backend websockets: {closed}")
+        if closed < 1:
+            failures.append("backend websocket remained open after page teardown")
+        session._call("Target.closeTarget", {"targetId": probe.target_id})
 
     if failures:
         print("\nFAILURES:")

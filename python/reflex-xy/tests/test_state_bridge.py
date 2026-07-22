@@ -1,4 +1,4 @@
-"""Rebuild-from-state: the multi-worker / reconnect recovery path."""
+"""Adapter rebuild-from-state: the multi-worker / reconnect recovery path."""
 
 from __future__ import annotations
 

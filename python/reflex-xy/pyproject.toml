@@ -19,10 +19,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# tests/reflex_adapter drives the data plane over a real websocket:
-# uvicorn serves the socket app, aiohttp backs socketio.AsyncClient.
+# The package-owned test suite drives the data plane over a real websocket:
+# uvicorn serves the socket app, aiohttp backs socketio.AsyncClient. Keep all
+# collection/runtime requirements here so missing dependencies fail instead
+# of silently skipping adapter coverage.
 dev = [
     "aiohttp>=3.9",
+    "hypothesis>=6",
+    "pytest>=8",
     "uvicorn>=0.23",
 ]
 
@@ -35,3 +39,11 @@ packages = ["reflex_xy"]
 # client is NOT packaged — it links out of the installed xy wheel at
 # app compile time (see reflex_xy/assets/__init__.py), so it can never
 # drift from the kernel that produces its payloads.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.uv.sources]
+# Package-local test commands must exercise this checkout's xy, not a released
+# wheel that happens to satisfy the adapter's runtime dependency.
+xy = { path = "../..", editable = true }

@@ -1,4 +1,4 @@
-"""Server-side completion of bounded Reflex selection events."""
+"""Adapter-side completion of bounded Reflex selection events."""
 
 from __future__ import annotations
 

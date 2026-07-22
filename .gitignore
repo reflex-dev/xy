@@ -8,3 +8,5 @@ __pycache__/
 .ruff_cache/
 node_modules/
 *.egg-info/
+examples/reflex/reflex-e2e.log
+examples/reflex/reflex-e2e.png

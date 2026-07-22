@@ -1,4 +1,4 @@
-"""Async figure builders: @reflex_xy.figure on `async def`, mirroring
+"""Async adapter builders: @reflex_xy.figure on `async def`, mirroring
 reflex's ComputedVar/AsyncComputedVar split."""
 
 from __future__ import annotations
@@ -15,10 +15,9 @@ from reflex_base.vars.base import AsyncComputedVar
 from reflex_xy.state_bridge import make_rebuild_hook
 from reflex_xy.tokens import build_state_token
 from reflex_xy.vars import AsyncFigureVar, FigureVar
+from reflex_xy_test_helpers import make_router_data
 
 import xy
-
-from .conftest import make_router_data
 
 BUILDER_CALLS = {"count": 0}
 
