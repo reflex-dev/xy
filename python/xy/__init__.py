@@ -29,6 +29,7 @@ __version__ = "0.0.1"
 
 _EXPORTS = {
     "Annotation": ".components",
+    "Animation": ".components",
     "Axis": ".components",
     "CHART_DOM_SLOTS": ".dom",
     "Chart": ".components",
@@ -44,6 +45,7 @@ _EXPORTS = {
     "Mark": ".components",
     "Modebar": ".components",
     "Selection": "._figure",
+    "Spring": ".components",
     "Theme": ".components",
     "ThemeColorScheme": ".components",
     "ThemeContrast": ".components",
@@ -52,6 +54,7 @@ _EXPORTS = {
     "Tooltip": ".components",
     "ZoneMaps": ".columns",
     "area": ".components",
+    "animation": ".components",
     "area_chart": ".components",
     "arrow": ".components",
     "bar": ".components",
@@ -98,6 +101,7 @@ _EXPORTS = {
     "stairs_chart": ".components",
     "stem": ".components",
     "stem_chart": ".components",
+    "spring": ".components",
     "threshold": ".components",
     "threshold_zone": ".components",
     "triangle_mesh": ".components",
@@ -119,6 +123,7 @@ _EXPORTS = {
 
 __all__ = [
     "CHART_DOM_SLOTS",
+    "Animation",
     "Annotation",
     "Axis",
     "Chart",
@@ -134,6 +139,7 @@ __all__ = [
     "Mark",
     "Modebar",
     "Selection",
+    "Spring",
     "Theme",
     "ThemeColorScheme",
     "ThemeContrast",
@@ -142,6 +148,7 @@ __all__ = [
     "Tooltip",
     "ZoneMaps",
     "__version__",
+    "animation",
     "area",
     "area_chart",
     "arrow",
@@ -183,6 +190,7 @@ __all__ = [
     "scatter_chart",
     "segments",
     "segments_chart",
+    "spring",
     "stairs",
     "stairs_chart",
     "stem",

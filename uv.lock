@@ -7,6 +7,19 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "anyio"
+version = "4.14.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "idna" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/61/cc/a381afa6efea9f496eff839d4a6a1aed3bfafc7b3ab4b0d1b243a12573dd/anyio-4.14.2.tar.gz", hash = "sha256:cfa139f3ed1a23ee8f88a145ddb5ac7605b8bbfd8592baacd7ce3d8bb4313c7f", size = 260176, upload-time = "2026-07-12T20:29:07.082Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/da/35/f2287558c17e29fafc8ef3daf819bb9834061cfa43bff8014f7df7f63bdc/anyio-4.14.2-py3-none-any.whl", hash = "sha256:9f505dda5ac9f0c8309b5e8bd445a8c2bf7246f3ce950121e45ea15bc41d1494", size = 125813, upload-time = "2026-07-12T20:29:05.763Z" },
+]
+
+[[package]]
 name = "anywidget"
 version = "0.11.0"
 source = { registry = "https://pypi.org/simple" }
@@ -122,6 +135,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/44/ec/c8c19542f6389580e6281f87802849754b8910d29e0a7e36e32ac4e18811/hypothesis-6.156.4-pp311-pypy311_pp73-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e7338ee15ee84ef994ae3d1a2e71d25c82713bf5ec27f55442755ae15e38369b", size = 1071376, upload-time = "2026-07-08T21:54:54.003Z" },
     { url = "https://files.pythonhosted.org/packages/b5/10/57cc273baf0cfe722eaa903c72db7ca45e7df4cc0780f80cb5dfe50edbbf/hypothesis-6.156.4-pp311-pypy311_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:539be6819696560c23ff6c0d0af4e7c1ea4936123f4433b511977a79adc371d5", size = 1121429, upload-time = "2026-07-08T21:55:17.323Z" },
     { url = "https://files.pythonhosted.org/packages/68/cf/4b31c31716980972f7b5dfd75fe11021e9b8b6dd09664cc5a82c8c03c2bc/hypothesis-6.156.4-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:b1717bc41d1a0683470f950c565ade33a52c28f600b1aa824d74f651a36e2c7b", size = 640761, upload-time = "2026-07-08T21:54:37.716Z" },
+]
+
+[[package]]
+name = "idna"
+version = "3.18"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/cd/63/9496c57188a2ee585e0f1db071d75089a11e98aa86eb99d9d7618fc1edce/idna-3.18.tar.gz", hash = "sha256:ffb385a7e039654cef1ab9ef32c6fafe283c0c0467bba1d9029738ce4a14a848", size = 196711, upload-time = "2026-06-02T14:34:07.794Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1e/5e/d4e9f1a599fb8e573b7b87160658329fbf28d19eac2718f51fc3def3aa5a/idna-3.18-py3-none-any.whl", hash = "sha256:7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2", size = 65455, upload-time = "2026-06-02T14:34:06.319Z" },
 ]
 
 [[package]]
@@ -778,6 +800,19 @@ wheels = [
 ]
 
 [[package]]
+name = "starlette"
+version = "1.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/eb/e3/7c1dc7381d9f8ab7d854328ebfa884e62cb3f3d8549ddfd37c7814f42afa/starlette-1.3.1.tar.gz", hash = "sha256:05d0213193f2fbaae60e2ecb593b4add4262ad4e46536b54abe36f11a71724e0", size = 2703240, upload-time = "2026-06-12T09:23:11.602Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/bb/2799cc2ede3ed41131f8975621e7213dfc7ef4acbbaadfa440f32500c370/starlette-1.3.1-py3-none-any.whl", hash = "sha256:c7372aae11c3c3f26a42df7bd626cec2f47d03483d261d369516a615a53714c6", size = 73632, upload-time = "2026-06-12T09:23:10.017Z" },
+]
+
+[[package]]
 name = "traitlets"
 version = "5.15.1"
 source = { registry = "https://pypi.org/simple" }
@@ -861,6 +896,7 @@ dev = [
     { name = "pyarrow" },
     { name = "pytest" },
     { name = "ruff" },
+    { name = "starlette" },
     { name = "ty" },
 ]
 
@@ -875,6 +911,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pytest-codspeed", marker = "extra == 'codspeed'", specifier = ">=5,<6" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.8" },
+    { name = "starlette", marker = "extra == 'dev'", specifier = ">=0.36" },
     { name = "ty", marker = "extra == 'dev'" },
 ]
 provides-extras = ["dev", "bench", "codspeed"]

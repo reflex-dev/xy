@@ -44,6 +44,7 @@ DOCS_SECTIONS = (
             ("Overview", "/styling/"),
             ("Examples", "/styling/examples/"),
             ("Customize Each Part", "/styling/customize/"),
+            ("Animations", "/styling/animations/"),
             ("Themes and Export", "/styling/themes-and-tokens/"),
             ("Theme Presets", "/styling/theme-presets/"),
             ("Advanced Styling Gallery", "/styling/gallery/"),
@@ -152,6 +153,7 @@ DOCS_SECTIONS = (
 
 DOCS_REDIRECTS = {
     "/charts/annotations/": "/components/annotations/",
+    "/core-concepts/animations/": "/styling/animations/",
     "/styling/playground/": "/styling/examples/#palette-playground",
     "/styling/recipes/": "/styling/examples/#responsive-combo-chart",
     "/styling/chrome-slots/": "/styling/customize/#legend",

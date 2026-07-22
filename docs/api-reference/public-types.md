@@ -22,6 +22,8 @@ construct lowercase factory results and only name these types in annotations.
 | `Modebar` | Toolbar visibility and DOM styling |
 | `Theme` | Validated chart theme tokens |
 | `Interaction` | Browser interaction and linked-viewport configuration |
+| `Animation` | Browser entrance/update policy and lifecycle callbacks |
+| `Spring` | Serializable spring easing policy used by `animation()` |
 | `Chart` | Public composed chart with display, export, and readout methods |
 | `FacetChart` | Public small-multiple wrapper |
 

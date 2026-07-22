@@ -10,11 +10,14 @@ auto-level count / dashed-negative / filled-band conventions.
 from __future__ import annotations
 
 import io
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 import xy.pyplot as plt
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(autouse=True)
@@ -110,7 +113,10 @@ def test_default_colorbar_ticks_are_dense_for_small_decimal_domains():
     plt.colorbar(image)
     svg = _svg()
     assert all(f">{value:.2f}<" in svg for value in (0.02, 0.04, 0.06, 0.08, 0.12, 0.14))
-    assert "linearTicks(lo, hi, 8)" in plt.gcf()._repr_html_()
+    # The client-side colorbar mirrors the 8-tick target; the embedded bundle
+    # is minified, so assert against the client source instead of the HTML.
+    client = ROOT / "js" / "src" / "50_chartview.ts"
+    assert "linearTicks(lo, hi, 8)" in client.read_text(encoding="utf-8")
 
 
 def test_explicit_colorbar_ticks_still_honored():

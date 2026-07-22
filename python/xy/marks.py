@@ -20,10 +20,200 @@ import numpy as np
 from . import _validate, channels, columns, kernels, styles
 from ._trace import Trace
 from ._typing import ArrayLike, Scalar
-from .config import DIRECT_SOFT_CEILING, MAX_CONTOUR_WORK
+from .config import DEFAULT_PALETTE, DIRECT_SOFT_CEILING, MAX_CONTOUR_WORK
 
 if TYPE_CHECKING:
     from ._figure import Figure
+
+
+_SYMBOL_CODES = {
+    name: index
+    for index, name in enumerate(
+        (
+            "circle",
+            "square",
+            "diamond",
+            "triangle",
+            "cross",
+            "hexagon",
+            "pentagon",
+            "star",
+            "triangle_down",
+            "triangle_left",
+            "triangle_right",
+            "x",
+            "point",
+            "pixel",
+            "thin_diamond",
+            "plus_line",
+            "x_line",
+        )
+    )
+}
+
+
+def _direct_style(
+    value: Any,
+    n: int,
+    label: str,
+    style_channels: dict[str, channels.StyleChannel],
+    key: str,
+    *,
+    default: float,
+    minimum: Optional[float] = None,
+    maximum: Optional[float] = None,
+) -> float:
+    constant, channel = channels.resolve_style_channel(
+        value, n, label, minimum=minimum, maximum=maximum
+    )
+    if channel is not None:
+        style_channels[key] = channel
+        # Opacity channels multiply the scalar renderer uniform; keep that
+        # uniform neutral so the vector is applied exactly once. Width-like
+        # channels select over their scalar fallback instead.
+        return 1.0 if key == "opacity" else default
+    return default if constant is None else float(constant)
+
+
+def _direct_symbols(value: Any, n: int, style_channels: dict[str, channels.StyleChannel]) -> str:
+    if isinstance(value, str):
+        return _validate.point_symbol(value, "scatter symbol")
+    arr = np.asarray(value, dtype=object)
+    if arr.shape != (n,):
+        raise ValueError(f"scatter symbol array must have shape {(n,)}, got {arr.shape}")
+    codes = np.empty(n, dtype=np.uint8)
+    for index, raw in enumerate(arr):
+        symbol = _validate.point_symbol(raw, f"scatter symbol[{index}]")
+        codes[index] = _SYMBOL_CODES[symbol]
+    style_channels["symbol"] = channels.StyleChannel(codes, dtype="u8")
+    return "circle"
+
+
+def _stroke_channel(
+    value: Any, n: int, label: str
+) -> tuple[Optional[str], Optional[channels.ColorChannel]]:
+    if value is None:
+        return None, None
+    if isinstance(value, str):
+        return _validate.css_color(value, label), None
+    resolved = channels.resolve_color(value, n, default_constant="transparent")
+    if resolved.mode != "direct_rgba":
+        raise ValueError(f"{label} arrays must be numeric RGB/RGBA with shape ({n}, 3|4)")
+    return None, resolved
+
+
+def _series_direct_paints(
+    value: Any,
+    n_series: int,
+    n_items: int,
+    label: str,
+) -> Optional[list[channels.ColorChannel]]:
+    """Resolve numeric bar paint arrays without confusing CSS sequences.
+
+    A one-series bar accepts ``(N, 3|4)`` and a multi-series bar accepts
+    ``(S, N, 3|4)``.  Returning ``None`` leaves scalar/per-series CSS color
+    handling to the existing palette resolver.
+    """
+    if value is None or isinstance(value, str):
+        return None
+    arr = np.asarray(value)
+    if not np.issubdtype(arr.dtype, np.number):
+        return None
+    if n_series == 1 and arr.shape in {(n_items, 3), (n_items, 4)}:
+        return [channels.resolve_color(arr, n_items, default_constant=DEFAULT_PALETTE[0])]
+    if arr.ndim == 3 and arr.shape[:2] == (n_series, n_items) and arr.shape[2] in (3, 4):
+        return [
+            channels.resolve_color(
+                arr[index], n_items, default_constant=DEFAULT_PALETTE[index % len(DEFAULT_PALETTE)]
+            )
+            for index in range(n_series)
+        ]
+    raise ValueError(
+        f"{label} numeric paint must have shape ({n_items}, 3|4) for one series "
+        f"or ({n_series}, {n_items}, 3|4), got {arr.shape}"
+    )
+
+
+def _series_style_values(
+    value: Any,
+    n_series: int,
+    n_items: int,
+    label: str,
+    key: str,
+    *,
+    default: float,
+    minimum: Optional[float] = None,
+    maximum: Optional[float] = None,
+) -> tuple[list[float], list[dict[str, channels.StyleChannel]]]:
+    """Resolve scalar, ``(N,)``, or ``(S,N)`` bar style values."""
+    if value is None or np.isscalar(value):
+        constant, _ = channels.resolve_style_channel(
+            value, n_items, label, minimum=minimum, maximum=maximum
+        )
+        resolved = default if constant is None else float(constant)
+        return [resolved] * n_series, [{} for _ in range(n_series)]
+    arr = np.asarray(value)
+    if n_series == 1 and arr.shape == (n_items,):
+        rows = [arr]
+    elif arr.shape == (n_series, n_items):
+        rows = [arr[index] for index in range(n_series)]
+    else:
+        raise ValueError(
+            f"{label} array must have shape ({n_items},) for one series or "
+            f"({n_series}, {n_items}), got {arr.shape}"
+        )
+    out: list[dict[str, channels.StyleChannel]] = []
+    for row in rows:
+        _, channel = channels.resolve_style_channel(
+            row, n_items, label, minimum=minimum, maximum=maximum
+        )
+        assert channel is not None
+        out.append({key: channel})
+    constant = 1.0 if key == "opacity" else default
+    return [constant] * n_series, out
+
+
+def _series_corner_radius(
+    value: Any,
+    n_series: int,
+    n_items: int,
+    label: str,
+) -> tuple[Any, list[dict[str, channels.StyleChannel]]]:
+    """Resolve constant radius/pair or direct per-bar radii."""
+    arr = np.asarray(value)
+    # A plain two-scalar tuple/list remains the existing constant (tip, base)
+    # form.  Numeric ndarrays are direct channels, including shape (N, 2).
+    if (
+        np.isscalar(value)
+        or isinstance(value, tuple)
+        or (
+            isinstance(value, (tuple, list))
+            and len(value) == 2
+            and all(np.isscalar(item) for item in value)
+        )
+    ):
+        return value, [{} for _ in range(n_series)]
+    if n_series == 1 and arr.shape == (n_items,):
+        rows, components = [arr], 1
+    elif n_series == 1 and arr.shape == (n_items, 2):
+        rows, components = [arr], 2
+    elif arr.shape == (n_series, n_items):
+        rows, components = [arr[index] for index in range(n_series)], 1
+    elif arr.shape == (n_series, n_items, 2):
+        rows, components = [arr[index] for index in range(n_series)], 2
+    else:
+        raise ValueError(
+            f"{label} array must have shape ({n_items},), ({n_items}, 2), "
+            f"({n_series}, {n_items}), or ({n_series}, {n_items}, 2); got {arr.shape}"
+        )
+    result: list[dict[str, channels.StyleChannel]] = []
+    for row in rows:
+        _, channel = channels.resolve_style_channel(
+            row, n_items, label, minimum=0.0, components=components
+        )
+        assert channel is not None
+        result.append({"corner_radius": channel})
+    return 0.0, result
 
 
 def _append_segment_trace(
@@ -36,8 +226,8 @@ def _append_segment_trace(
     *,
     name: Optional[str],
     color: Optional[str],
-    opacity: float,
-    width: float,
+    opacity: Any,
+    width: Any,
     role: str,
     color_ch: Optional[channels.ColorChannel] = None,
     count: Optional[int] = None,
@@ -52,14 +242,33 @@ def _append_segment_trace(
     renderer.
     """
     name = self._optional_text(name, f"{kind} name")
-    opacity = self._opacity(opacity, f"{kind} opacity")
-    width = self._positive_scalar(width, f"{kind} width")
     arrays = [
         self._as_1d_float(v, f"{kind} {label}")
         for label, v in (("x0", x0), ("x1", x1), ("y0", y0), ("y1", y1))
     ]
     if len({len(v) for v in arrays}) != 1:
         raise ValueError(f"{kind} segment columns must have equal length")
+    n = len(arrays[0])
+    style_channels: dict[str, channels.StyleChannel] = {}
+    opacity_value = _direct_style(
+        opacity,
+        n,
+        f"{kind} opacity",
+        style_channels,
+        "opacity",
+        default=1.0,
+        minimum=0.0,
+        maximum=1.0,
+    )
+    width_value = _direct_style(
+        width,
+        n,
+        f"{kind} width",
+        style_channels,
+        "width",
+        default=1.2,
+        minimum=0.0,
+    )
     checkpoint = self._checkpoint()
     try:
         x0c, x1c, y0c, y1c = [self.store.ingest(v) for v in arrays]
@@ -80,13 +289,14 @@ def _append_segment_trace(
                 name=name,
                 style={
                     "color": color,
-                    "opacity": opacity,
-                    "width": width,
+                    "opacity": opacity_value,
+                    "width": width_value,
                     "role": role,
                     **({"dash": dash} if dash else {}),
                     **(extra_style or {}),
                 },
                 color_ch=color_ch,
+                style_channels=style_channels,
                 count=count,
             )
         )
@@ -106,8 +316,8 @@ def segments(
     color: Union[str, ArrayLike, None] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
-    width: float = 1.2,
-    opacity: float = 1.0,
+    width: Any = 1.2,
+    opacity: Any = 1.0,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add independent line segments through the shared instanced renderer."""
@@ -157,9 +367,9 @@ def triangle_mesh(
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     name: Optional[str] = None,
-    opacity: float = 1.0,
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    opacity: Any = 1.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add independently colored filled triangles as one instanced mesh."""
@@ -169,11 +379,6 @@ def triangle_mesh(
     stroke = css.get("stroke", stroke)
     stroke_width = css.get("stroke_width", stroke_width)
     name = self._optional_text(name, "triangle_mesh name")
-    opacity = self._opacity(opacity, "triangle_mesh opacity")
-    stroke = self._optional_css_color(stroke, "triangle_mesh stroke")
-    stroke_width = self._nonnegative_scalar(stroke_width, "triangle_mesh stroke_width")
-    if stroke is not None and stroke_width == 0.0:
-        stroke_width = 1.0
     arrays = [
         self._as_1d_float(values, f"triangle_mesh {label}")
         for label, values in (
@@ -188,6 +393,33 @@ def triangle_mesh(
     if len({len(values) for values in arrays}) != 1:
         raise ValueError("triangle_mesh coordinate columns must have equal length")
     n = len(arrays[0])
+    style_channels: dict[str, channels.StyleChannel] = {}
+    opacity_value = _direct_style(
+        opacity,
+        n,
+        "triangle_mesh opacity",
+        style_channels,
+        "opacity",
+        default=1.0,
+        minimum=0.0,
+        maximum=1.0,
+    )
+    stroke_value, stroke_ch = _stroke_channel(stroke, n, "triangle_mesh stroke")
+    stroke_width_value = _direct_style(
+        stroke_width,
+        n,
+        "triangle_mesh stroke_width",
+        style_channels,
+        "stroke_width",
+        default=0.0,
+        minimum=0.0,
+    )
+    if (
+        (stroke_value is not None or stroke_ch is not None)
+        and not stroke_width_value
+        and ("stroke_width" not in style_channels)
+    ):
+        stroke_width_value = 1.0
     default_color = self._next_default_color()
     color_ch = channels.resolve_color(color, n, colormap=colormap, default_constant=default_color)
     if domain is not None:
@@ -197,12 +429,12 @@ def triangle_mesh(
     checkpoint = self._checkpoint()
     try:
         x0c, y0c, x1c, y1c, x2c, y2c = [self.store.ingest(values) for values in arrays]
-        style: dict[str, Any] = {"opacity": opacity, "role": "triangle-mesh"}
+        style: dict[str, Any] = {"opacity": opacity_value, "role": "triangle-mesh"}
         style.update(styles._opacity_channels(css))
-        if stroke is not None:
-            style["stroke"] = stroke
-        if stroke_width:
-            style["stroke_width"] = stroke_width
+        if stroke_value is not None:
+            style["stroke"] = stroke_value
+        if stroke_width_value:
+            style["stroke_width"] = stroke_width_value
         self.traces.append(
             Trace(
                 id=len(self.traces),
@@ -216,6 +448,8 @@ def triangle_mesh(
                 name=name,
                 style=style,
                 color_ch=color_ch,
+                stroke_ch=stroke_ch,
+                style_channels=style_channels,
                 count=n,
             )
         )
@@ -359,25 +593,23 @@ def _bar_like(
     y: ArrayLike,
     *,
     name: Optional[str],
-    color: Union[str, Sequence[str], None],
+    color: Any,
     colors: Optional[list[str]],
     width: float,
     base: Union[Scalar, ArrayLike],
     mode: str,
     orientation: str,
     series: Optional[list[str]],
-    opacity: float,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    opacity: Any,
+    corner_radius: Any = 0.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    artist_alpha: Any = None,
     fill: Union[str, dict[str, str], None] = None,
     style_extra: Optional[dict[str, Any]] = None,
 ) -> "Figure":
     name = self._optional_text(name, f"{kind} name")
     width = self._positive_scalar(width, f"{kind} width")
-    opacity = self._opacity(opacity, f"{kind} opacity")
-    mark_style = self._rect_mark_style(kind, corner_radius, stroke, stroke_width, fill)
-    mark_style.update(style_extra or {})
     if mode not in {"grouped", "stacked", "normalized"}:
         raise ValueError(f"{kind} mode must be 'grouped', 'stacked', or 'normalized'")
     if orientation not in {"vertical", "horizontal"}:
@@ -385,6 +617,7 @@ def _bar_like(
     category_axis = "x" if orientation == "vertical" else "y"
     pos, category_labels = self._axis_positions_with_labels(x, category_axis)
     vals = self._bar_value_matrix(y, len(pos), kind)
+    n_series, n_items = vals.shape
     if mode == "normalized":
         if np.any(vals < 0):
             raise ValueError(
@@ -397,8 +630,69 @@ def _bar_like(
         totals = np.nansum(vals, axis=0)
         vals = vals / np.where(totals > 0.0, totals, 1.0)
     base_vals = self._broadcast_base(base, len(pos), kind)
-    series_names = self._series_names(name, series, vals.shape[0])
-    series_colors = self._series_colors(color, colors, vals.shape[0])
+    series_names = self._series_names(name, series, n_series)
+    direct_colors = _series_direct_paints(color, n_series, n_items, f"{kind} color")
+    series_colors = (
+        [None] * n_series
+        if direct_colors is not None
+        else self._series_colors(color, colors, n_series)
+    )
+    direct_strokes = _series_direct_paints(stroke, n_series, n_items, f"{kind} stroke")
+    scalar_stroke = stroke if direct_strokes is None else None
+    opacity_values, opacity_channels = _series_style_values(
+        opacity,
+        n_series,
+        n_items,
+        f"{kind} opacity",
+        "opacity",
+        default=0.85,
+        minimum=0.0,
+        maximum=1.0,
+    )
+    stroke_width_values, stroke_width_channels = _series_style_values(
+        stroke_width,
+        n_series,
+        n_items,
+        f"{kind} stroke_width",
+        "stroke_width",
+        default=0.0,
+        minimum=0.0,
+    )
+    constant_radius, radius_channels = _series_corner_radius(
+        corner_radius, n_series, n_items, f"{kind} corner_radius"
+    )
+    alpha_values, alpha_channels = _series_style_values(
+        artist_alpha,
+        n_series,
+        n_items,
+        f"{kind} alpha",
+        "artist_alpha",
+        default=-1.0,
+        minimum=-1.0,
+        maximum=1.0,
+    )
+    series_styles: list[dict[str, Any]] = []
+    series_channels: list[dict[str, channels.StyleChannel]] = []
+    for index in range(n_series):
+        mark_style = self._rect_mark_style(
+            kind,
+            constant_radius,
+            scalar_stroke,
+            stroke_width_values[index],
+            fill,
+        )
+        mark_style.update(style_extra or {})
+        merged_channels = {
+            **opacity_channels[index],
+            **stroke_width_channels[index],
+            **radius_channels[index],
+            **alpha_channels[index],
+        }
+        if alpha_values[index] >= 0.0:
+            # Constants remain spec-only. -1 means use intrinsic paint alpha.
+            mark_style["artist_alpha"] = alpha_values[index]
+        series_styles.append(mark_style)
+        series_channels.append(merged_channels)
     checkpoint = self._checkpoint()
     try:
         if category_labels is not None:
@@ -414,11 +708,14 @@ def _bar_like(
                 base_vals + vals[0],
                 name=name,
                 color=series_colors[0],
-                opacity=opacity,
+                opacity=opacity_values[0],
                 # grouped/stacked are no-ops for one series, but normalized
                 # rescales even a single series — record it (§28).
                 role=f"{kind}-normalized" if mode == "normalized" else kind,
-                extra_style=mark_style,
+                extra_style=series_styles[0],
+                color_ch=None if direct_colors is None else direct_colors[0],
+                stroke_ch=None if direct_strokes is None else direct_strokes[0],
+                style_channels=series_channels[0],
             )
         elif mode == "grouped":
             slot = width / vals.shape[0]
@@ -433,9 +730,12 @@ def _bar_like(
                     base_vals + row,
                     name=series_names[i],
                     color=series_colors[i],
-                    opacity=opacity,
+                    opacity=opacity_values[i],
                     role=f"{kind}-grouped",
-                    extra_style=mark_style,
+                    extra_style=series_styles[i],
+                    color_ch=None if direct_colors is None else direct_colors[i],
+                    stroke_ch=None if direct_strokes is None else direct_strokes[i],
+                    style_channels=series_channels[i],
                 )
         else:
             pos_base = base_vals.astype(np.float64, copy=True)
@@ -452,9 +752,12 @@ def _bar_like(
                     y1,
                     name=series_names[i],
                     color=series_colors[i],
-                    opacity=opacity,
+                    opacity=opacity_values[i],
                     role=f"{kind}-{mode}",
-                    extra_style=mark_style,
+                    extra_style=series_styles[i],
+                    color_ch=None if direct_colors is None else direct_colors[i],
+                    stroke_ch=None if direct_strokes is None else direct_strokes[i],
+                    style_channels=series_channels[i],
                 )
                 pos_base = np.where(row >= 0, y1, pos_base)
                 neg_base = np.where(row < 0, y1, neg_base)
@@ -1018,14 +1321,15 @@ def scatter(
     name: Optional[str] = None,
     color: Union[str, ArrayLike, None] = None,
     size: Union[Scalar, ArrayLike, None] = 4.0,
-    opacity: float = 0.8,
+    opacity: Any = 0.8,
     colormap: str = channels.DEFAULT_COLORMAP,
     color_domain: Optional[tuple[float, float]] = None,
     size_range: tuple[float, float] = (2.0, 18.0),
     density: Optional[bool] = None,
-    symbol: str = "circle",
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    symbol: Any = "circle",
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    _artist_alpha: Any = None,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add a scatter trace.
@@ -1043,31 +1347,70 @@ def scatter(
     stroke = css.get("stroke", stroke)
     stroke_width = css.get("stroke_width", stroke_width)
     name = self._optional_text(name, "scatter name")
-    opacity = self._opacity(opacity, "scatter opacity")
     density = self._optional_bool(density, "scatter density")
-    symbol = _validate.point_symbol(symbol, "scatter symbol")
-    stroke = self._optional_css_color(stroke, "scatter stroke")
-    stroke_width = self._nonnegative_scalar(stroke_width, "scatter stroke_width")
-    if stroke is not None and stroke_width == 0.0:
-        stroke_width = 1.0
     checkpoint = self._checkpoint()
     try:
         xc, yc = self._ingest_xy(x, y, "scatter")
         n = len(xc)
+        style_channels: dict[str, channels.StyleChannel] = {}
+        opacity_value = _direct_style(
+            opacity,
+            n,
+            "scatter opacity",
+            style_channels,
+            "opacity",
+            default=0.8,
+            minimum=0.0,
+            maximum=1.0,
+        )
+        artist_alpha_value: Optional[float] = None
+        if _artist_alpha is not None:
+            alpha_value, alpha_ch = channels.resolve_style_channel(
+                _artist_alpha, n, "scatter alpha", minimum=0.0, maximum=1.0
+            )
+            if alpha_ch is not None:
+                style_channels["artist_alpha"] = alpha_ch
+            elif alpha_value is not None:
+                artist_alpha_value = float(alpha_value)
+        symbol_value = _direct_symbols(symbol, n, style_channels)
+        stroke_value, stroke_ch = _stroke_channel(stroke, n, "scatter stroke")
+        stroke_width_value = _direct_style(
+            stroke_width,
+            n,
+            "scatter stroke_width",
+            style_channels,
+            "stroke_width",
+            default=0.0,
+            minimum=0.0,
+        )
+        if (
+            (stroke_value is not None or stroke_ch is not None)
+            and not stroke_width_value
+            and ("stroke_width" not in style_channels)
+        ):
+            stroke_width_value = 1.0
+        if (
+            stroke_value is None
+            and stroke_ch is None
+            and (stroke_width_value or "stroke_width" in style_channels)
+        ):
+            stroke_ch = channels.ColorChannel(mode="match_fill")
         default_color = self._next_default_color()
         color_ch = channels.resolve_color(
             color, n, colormap=colormap, default_constant=default_color, domain=color_domain
         )
         size_ch = channels.resolve_size(size, n, range_px=size_range)
 
-        point_style: dict[str, Any] = {"opacity": opacity}
+        point_style: dict[str, Any] = {"opacity": opacity_value}
+        if artist_alpha_value is not None:
+            point_style["artist_alpha"] = artist_alpha_value
         point_style.update(styles._opacity_channels(css))
-        if symbol != "circle":
-            point_style["symbol"] = symbol
-        if stroke is not None:
-            point_style["stroke"] = stroke
-        if stroke_width:
-            point_style["stroke_width"] = stroke_width
+        if symbol_value != "circle":
+            point_style["symbol"] = symbol_value
+        if stroke_value is not None:
+            point_style["stroke"] = stroke_value
+        if stroke_width_value:
+            point_style["stroke_width"] = stroke_width_value
 
         trace = Trace(
             id=len(self.traces),
@@ -1077,17 +1420,19 @@ def scatter(
             name=name,
             style=point_style,
             color_ch=color_ch,
+            stroke_ch=stroke_ch,
             size_ch=size_ch,
+            style_channels=style_channels,
             force_density=density,
         )
 
-        per_point = color_ch.mode != "constant" or size_ch.mode != "constant"
-        if density is None and per_point and n > DIRECT_SOFT_CEILING:
+        dropped_channels = trace.per_item_channel_names()
+        if density is None and dropped_channels and n > DIRECT_SOFT_CEILING:
             warnings.warn(
-                f"scatter has {n:,} points with per-point color/size — above the "
+                f"scatter has {n:,} points with per-point styles — above the "
                 f"direct ceiling ({DIRECT_SOFT_CEILING:,}). Falling back to a "
-                "density surface; per-point channels are dropped (aggregating "
-                "arbitrary color/size needs the §5-F5 aggregation algebra, not yet "
+                f"density surface; dropped channels: {', '.join(dropped_channels)} "
+                "(aggregating arbitrary instance styles needs the §5-F5 aggregation algebra, not yet "
                 "implemented). Pass density=False to keep direct draw at your risk.",
                 RuntimeWarning,
                 stacklevel=2,
@@ -1128,11 +1473,12 @@ def histogram(
     density: bool = False,
     cumulative: bool = False,
     name: Optional[str] = None,
-    color: Optional[str] = None,
-    opacity: float = 0.85,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    color: Any = None,
+    opacity: Any = 0.85,
+    corner_radius: Any = 0.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    _artist_alpha: Any = None,
     fill: Union[str, dict[str, str], None] = None,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
@@ -1150,9 +1496,6 @@ def histogram(
     stroke_width = css.get("stroke_width", stroke_width)
     fill = css.get("fill", fill)
     name = self._optional_text(name, "histogram name")
-    opacity = self._opacity(opacity, "histogram opacity")
-    mark_style = self._rect_mark_style("histogram", corner_radius, stroke, stroke_width, fill)
-    mark_style.update(styles._opacity_channels(css))
     density = self._bool_param(density, "histogram density")
     cumulative = self._bool_param(cumulative, "histogram cumulative")
     vals = self._as_1d_float(values, "histogram values")
@@ -1183,6 +1526,56 @@ def histogram(
         # last bin is ~1.0 (exactly 1.0 when every value is in range); count
         # mode simply accumulates bin counts.
         counts = np.cumsum(counts * np.diff(edges)) if density else np.cumsum(counts)
+    n_bins = len(counts)
+    direct_color = (
+        channels.resolve_color(color, n_bins, default_constant=DEFAULT_PALETTE[0])
+        if color is not None and not isinstance(color, str)
+        else None
+    )
+    color_value = color if direct_color is None else None
+    stroke_value, stroke_channel = _stroke_channel(stroke, n_bins, "histogram stroke")
+    opacity_value, opacity_channels = _series_style_values(
+        opacity,
+        1,
+        n_bins,
+        "histogram opacity",
+        "opacity",
+        default=0.85,
+        minimum=0.0,
+        maximum=1.0,
+    )
+    width_value, width_channels = _series_style_values(
+        stroke_width,
+        1,
+        n_bins,
+        "histogram stroke_width",
+        "stroke_width",
+        default=0.0,
+        minimum=0.0,
+    )
+    constant_radius, radius_channels = _series_corner_radius(
+        corner_radius, 1, n_bins, "histogram corner_radius"
+    )
+    _, alpha_channels = _series_style_values(
+        _artist_alpha,
+        1,
+        n_bins,
+        "histogram alpha",
+        "artist_alpha",
+        default=-1.0,
+        minimum=-1.0,
+        maximum=1.0,
+    )
+    mark_style = self._rect_mark_style(
+        "histogram", constant_radius, stroke_value, width_value[0], fill
+    )
+    mark_style.update(styles._opacity_channels(css))
+    style_channels = {
+        **opacity_channels[0],
+        **width_channels[0],
+        **radius_channels[0],
+        **alpha_channels[0],
+    }
     zeros = np.zeros_like(counts, dtype=np.float64)
     self._append_rect_trace(
         "histogram",
@@ -1191,11 +1584,14 @@ def histogram(
         zeros,
         counts,
         name=name,
-        color=color,
-        opacity=opacity,
+        color=color_value,
+        opacity=opacity_value[0],
         role="histogram",
         count=int(len(vals)),
         extra_style={"cumulative": cumulative, "density": density, **mark_style},
+        color_ch=direct_color,
+        stroke_ch=stroke_channel,
+        style_channels=style_channels,
     )
     return self
 
@@ -1209,11 +1605,12 @@ def hist(
     density: bool = False,
     cumulative: bool = False,
     name: Optional[str] = None,
-    color: Optional[str] = None,
-    opacity: float = 0.85,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    color: Any = None,
+    opacity: Any = 0.85,
+    corner_radius: Any = 0.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    _artist_alpha: Any = None,
     fill: Union[str, dict[str, str], None] = None,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
@@ -1230,6 +1627,7 @@ def hist(
         corner_radius=corner_radius,
         stroke=stroke,
         stroke_width=stroke_width,
+        _artist_alpha=_artist_alpha,
         fill=fill,
         style=style,
     )
@@ -1819,17 +2217,18 @@ def bar(
     y: ArrayLike,
     *,
     name: Optional[str] = None,
-    color: Union[str, Sequence[str], None] = None,
+    color: Any = None,
     colors: Optional[list[str]] = None,
     width: float = 0.8,
     base: Union[Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
     series: Optional[list[str]] = None,
-    opacity: float = 0.85,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    opacity: Any = 0.85,
+    corner_radius: Any = 0.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    _artist_alpha: Any = None,
     fill: Union[str, dict[str, str], None] = None,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
@@ -1863,6 +2262,7 @@ def bar(
         corner_radius=corner_radius,
         stroke=stroke,
         stroke_width=stroke_width,
+        artist_alpha=_artist_alpha,
         fill=fill,
         style_extra=styles._opacity_channels(css),
     )

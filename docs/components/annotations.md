@@ -1,6 +1,18 @@
 ---
 title: Annotations
 description: Add rules, bands, labels, markers, arrows, thresholds, and callouts.
+components:
+  - xy.vline
+  - xy.hline
+  - xy.x_band
+  - xy.y_band
+  - xy.threshold
+  - xy.threshold_zone
+  - xy.text
+  - xy.label
+  - xy.marker
+  - xy.arrow
+  - xy.callout
 ---
 
 # Annotations

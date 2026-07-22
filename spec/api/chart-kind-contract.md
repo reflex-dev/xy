@@ -23,7 +23,7 @@ reduces to a few GPU primitives on top of the shared infrastructure.
 
 Establish the primitive once; the charts sharing it are mostly wiring.
 
-The registry is the authority on what exists. `MARK_KINDS` (`js/src/55_marks.js`)
+The registry is the authority on what exists. `MARK_KINDS` (`js/src/55_marks.ts`)
 holds eighteen kinds today — `area`, `bar`, `box`, `box_median`, `box_whisker`,
 `column`, `contour`, `error_band`, `errorbar`, `heatmap`, `hexbin`, `histogram`,
 `line`, `scatter`, `segments`, `stem`, `triangle_mesh`, `violin` — each with a
@@ -65,7 +65,7 @@ constant (`hex_dx`/`hex_dy`). Each renderer expands the six-triangle fan locally
 so the wire cost stays O(cells) instead of O(cells × vertices × channels).
 
 Three renderers expand it today and must agree exactly: `_buildHexbinMark`
-(`js/src/50_chartview.js:2038`, WebGL), `HEX_RING`/`hexbin_ring()`
+(`js/src/50_chartview.ts:2038`, WebGL), `HEX_RING`/`hexbin_ring()`
 (`python/xy/_svg.py:2074`, the reference ring), and `_emit_hexbin`
 (`python/xy/_raster.py:1413`, raster export, consuming `hexbin_ring`). Only code
 comments bind them; changing one without the others silently desynchronizes
@@ -112,7 +112,7 @@ cell came from.
 
 **Fill.** One color per cell, applied to the whole hexagon, with fill alpha
 `style.opacity × style.fill_opacity` — the same product in all three
-(`_svg._fill_opacity`, `_raster._fill_opacity`, `50_chartview.js:1880`).
+(`_svg._fill_opacity`, `_raster._fill_opacity`, `50_chartview.ts:1880`).
 
 Cells are unstroked, but the three renderers reach that outcome differently and
 only the style keeps them agreeing: `marks.hexbin` builds its style from
@@ -140,13 +140,13 @@ style, per-cell data on the wire, one ring definition the other renderers cite.
 
 ### 2. Client — `js/src/`
 
-- **`55_marks.js`: a `MARK_KINDS[K]` entry** with `build(view, g, trace, buffer)`
+- **`55_marks.ts`: a `MARK_KINDS[K]` entry** with `build(view, g, trace, buffer)`
   (GPU setup onto the gpu record `g`) and `draw(view, g, x0, x1, y0, y1)` (one
   frame). Reuse `view._buildXY` and `view._map` for xy-shaped marks; a mark with
   its own vertex layout (bars, candles = instanced rects) uploads its own
   buffers and computes its own transform. This is the only place the render loop
   learns about a new kind.
-- **Shaders** (if the mark needs a new primitive): add to `40_gl.js`. Fragment
+- **Shaders** (if the mark needs a new primitive): add to `40_gl.ts`. Fragment
   shaders must be `precision highp` for any uniform shared with the vertex stage
   (a caught precision-mismatch bug). Reuse `POINT`/`LINE` programs where the
   geometry matches.
@@ -169,15 +169,16 @@ benchmark tracks this as part of the core 2D payload budget.
 ## What you get for free (do not re-implement)
 
 - **Interaction**: pan, wheel zoom (cursor-anchored), box-zoom, modebar, reset,
-  dblclick — all operate on the view rectangle and `_map` uniforms, mark-blind.
-  A new kind inherits them without writing any interaction code, but they are
-  not unconditional: `navigation`/`pan`/`zoom` default to on and can be turned
-  off per figure. [interaction.md](interaction.md) is the authority on the
-  switches, defaults, gesture map, and event payloads.
+  dblclick — all operate on the per-axis view `ranges` and `_map` uniforms,
+  mark-blind. A new kind inherits them without writing any interaction code, but
+  they are not unconditional: `navigation`/`pan`/`zoom` default to on and can be
+  turned off — or scoped to specific axes — per figure.
+  [interaction.md](interaction.md) is the authority on the switches, per-axis
+  policy, defaults, gesture map, and event payloads.
 - **Responsive sizing**: `width/height:"100%"` + ResizeObserver.
 - **Precision**: canonical f64 CPU-side; f32 upload offset-encoded and
   re-centered on deep zoom (§16). Never send f64 through the GPU path.
-- **LOD/drill framework** (`lod.py` + `45_lod.js`): the visible-count tier
+- **LOD/drill framework** (`lod.py` + `45_lod.ts`): the visible-count tier
   decision with hysteresis, drilled-subset versioning (`drill_seq`), window
   encoding, screen-derived grid shaping, entry/exit fades, the density-source
   cache, and eased normalization. An *aggregating* kind supplies its own

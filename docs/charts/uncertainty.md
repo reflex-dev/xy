@@ -1,6 +1,9 @@
 ---
 title: Error Bars and Bands
 description: Show point uncertainty, intervals, and confidence regions.
+components:
+  - xy.error_band_chart
+  - xy.errorbar_chart
 ---
 
 # Error Bars and Bands

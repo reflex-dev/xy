@@ -288,6 +288,65 @@ _ANNOTATION_ALIGNMENT_PROBE = """
 </script>
 """
 
+_ATOMIC_RESIZE_PROBE = """
+<script>
+(() => {
+  try {
+    const view = window.__fcProbeView;
+    if (!view) throw new Error("no probe view captured");
+    if (!view.gl) throw new Error("no WebGL context");
+    if (view._raf) cancelAnimationFrame(view._raf);
+    view._raf = null;
+    view._drawNow();
+
+    const sampleCenterAlpha = () => {
+      const pixel = new Uint8Array(4);
+      view.gl.readPixels(
+        Math.floor(view.canvas.width / 2),
+        Math.floor(view.canvas.height / 2),
+        1, 1, view.gl.RGBA, view.gl.UNSIGNED_BYTE, pixel
+      );
+      return pixel[3];
+    };
+    const beforeAlpha = sampleCenterAlpha();
+
+    // _resize used to clear every backing store and defer replacement paint to
+    // another animation frame. Sampling immediately after it therefore caught
+    // the exact transparent frame users saw while dragging a narrow viewport.
+    view._resize(390, 500);
+    const afterResizeAlpha = sampleCenterAlpha();
+    const compactNodes = [...view._colorbar.querySelectorAll(
+      '[data-xy-slot="colorbar_tick"], [data-xy-slot="colorbar_title"]'
+    )];
+    const compactState = {
+      plotWidth: view.plot.w,
+      colorbarWidth: view._colorbar.getBoundingClientRect().width,
+      compact: view._colorbar.dataset.xyCompact,
+      hiddenChrome: compactNodes.filter((node) => node.hidden).length,
+      chromeCount: compactNodes.length,
+    };
+
+    view._resize(760, 500);
+    const restoredState = {
+      compact: view._colorbar.dataset.xyCompact,
+      hiddenChrome: compactNodes.filter((node) => node.hidden).length,
+    };
+    document.body.setAttribute("data-xy-atomic-resize", JSON.stringify({
+      beforeAlpha,
+      afterResizeAlpha,
+      compactState,
+      restoredState,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-atomic-resize-error",
+      String((err && err.stack) || err)
+    );
+  }
+})();
+</script>
+"""
+
 
 def _probe_maxheight(chromium: str, document: str, page: Path) -> dict:
     """Render + probe the legend max-height across a responsive resize."""
@@ -318,6 +377,13 @@ def _probe_annotation_alignment(chromium: str, document: str, page: Path) -> dic
         page,
         "data-xy-annotation-alignment",
         label="annotation alignment probe",
+    )
+
+
+def _probe_atomic_resize(chromium: str, document: str, page: Path) -> dict:
+    """Resize a painted heatmap and inspect the immediate replacement frame."""
+    return run_browser_probe(
+        chromium, document, page, "data-xy-atomic-resize", label="atomic resize probe"
     )
 
 
@@ -356,6 +422,55 @@ def test_snake_case_legend_max_height_survives_resize() -> None:
     assert payload["afterResize"] == "50px", (
         f"resize clobbered the explicit snake_case max_height: {payload}"
     )
+
+
+def test_narrow_fluid_resize_stays_painted_and_preserves_plot_space() -> None:
+    chromium = find_chromium()
+    if not chromium:
+        pytest.skip("no chromium available for the resize regression probe")
+
+    chart = xy.heatmap_chart(
+        xy.heatmap(
+            [
+                [1.00, 0.72, 0.61, 0.55],
+                [1.00, 0.74, 0.64, 0.58],
+                [1.00, 0.69, 0.58, 0.51],
+                [1.00, 0.77, 0.67, 0.61],
+            ],
+            name="Retention",
+            colormap="viridis",
+            domain=(0, 1),
+        ),
+        xy.colorbar(title="Users retained", ticks=[0, 0.25, 0.5, 0.75, 1.0]),
+        width="100%",
+        height=500,
+        padding=[72, 106, 70, 92],
+    )
+
+    document = chart.to_html()
+    render_call = next((call for call in _RENDER_CALLS if call in document), None)
+    assert render_call is not None
+    document = document.replace(
+        render_call,
+        render_call.replace(
+            "xy.renderStandalone(", "window.__fcProbeView = xy.renderStandalone(", 1
+        ),
+        1,
+    )
+    document = document.replace("</body>", _ATOMIC_RESIZE_PROBE + "\n</body>", 1)
+
+    with tempfile.TemporaryDirectory() as td:
+        payload = _probe_atomic_resize(chromium, document, Path(td) / "atomic_resize.html")
+
+    assert payload["beforeAlpha"] > 0, payload
+    assert payload["afterResizeAlpha"] > 0, payload
+    assert payload["compactState"]["plotWidth"] >= 280, payload
+    assert payload["compactState"]["colorbarWidth"] == pytest.approx(18, abs=1), payload
+    assert payload["compactState"]["compact"] == "true", payload
+    assert payload["compactState"]["hiddenChrome"] == payload["compactState"]["chromeCount"], (
+        payload
+    )
+    assert payload["restoredState"] == {"compact": "false", "hiddenChrome": 0}, payload
 
 
 def test_long_legend_and_edge_tooltip_stay_inside_narrow_chart() -> None:
@@ -416,7 +531,6 @@ def test_long_legend_and_edge_tooltip_stay_inside_narrow_chart() -> None:
             crosshair=True,
             select=True,
             brush=True,
-            view_change=True,
         ),
         class_names={"tooltip": "xy-probe-tooltip"},
         width="100%",

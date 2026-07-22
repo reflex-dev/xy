@@ -142,6 +142,14 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **Streaming append ships once, split, per tick (protocol v5).** The
+  `append` refresh now uses the same split buffer layout as first paint (no
+  packed join copy), and on the notebook widget it rides the single
+  `spec`/`buffers` trait update — which doubles as reopen state — instead of
+  being transmitted twice (trait re-sync plus a custom message). The client
+  applies appends when `spec.append.seq` advances; the Reflex socket push is
+  unchanged in shape apart from the split buffers. Halves streaming wire
+  bytes and removes two full-payload copies per tick.
 - **Responsive, author-defeatable browser chrome.** XY's visual defaults now
   live in a low-priority cascade layer, so Tailwind utilities, ordinary author
   CSS, and slot styles override them without `!important`. Long legends remain
@@ -378,8 +386,15 @@ in the README).
   removed. On platforms with no wheel and no local Rust build, importing the
   compute layer raises a clear, actionable `ImportError` instead of silently
   degrading. `import xy` remains lightweight.
-- The Reflex example app moved from `reflex_xy_app/` to
-  `examples/reflex/`.
+- The example apps were restructured. `examples/reflex/` is now a pure
+  `reflex-xy` showcase (figure-var drilldown with hover/click/select events, a
+  slider-driven and cross-filtered histogram, a streaming line, an
+  `on_view_change`-computed detail chart, and both fixed-data tiers), and a new
+  `examples/fastapi/` app serves the same charts plus a live 100M-point
+  drilldown from a plain FastAPI app. Both read their own source with
+  `inspect.getsource` for the on-page code panels, and neither commits static
+  chart HTML (everything is generated live). The old
+  `python/reflex-xy/examples/demo_app` was removed.
 - 10M scatter payload build is ~3x faster (fused kernels; ABI v6), and the
   published benchmark tables were re-measured with a warmup-corrected,
   tracer-free harness. Benchmark methodology fixes: library warmup before

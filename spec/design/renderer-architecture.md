@@ -4,13 +4,15 @@
 should converge to as chart kinds multiply. Findings below are verified
 against the source, not hypothetical.
 
-**Scope.** The client builds from 14 parts, concatenated in filename order into
-one bundle by `js/build.mjs`. The audit findings in §2 cover the render path —
-`40_gl.js`, `45_lod.js`, `50_chartview.js`, `55_marks.js`, `60_entries.js`.
-The module inventory below covers all 14. Ticks and axis label formatting
-(`30_ticks.js`) are specified in §6; the gesture contract in `53_interaction.js`
+**Scope.** The client builds from TypeScript ES modules under `js/src` (one
+module per former concat part; explicit imports replaced filename-order
+concatenation), bundled and minified by vite via `js/build.mjs`. The audit
+findings in §2 cover the render path —
+`40_gl.ts`, `45_lod.ts`, `50_chartview.ts`, `55_marks.ts`, `60_entries.ts`.
+The module inventory below covers all 15. Ticks and axis label formatting
+(`30_ticks.ts`) are specified in §6; the gesture contract in `53_interaction.ts`
 is specified in [interaction.md](../api/interaction.md) §5, and the client half of
-the kernel channel (`54_kernel.js`) in [wire-protocol.md](wire-protocol.md).
+the kernel channel (`54_kernel.ts`) in [wire-protocol.md](wire-protocol.md).
 What remains normatively unspecified is the ARIA/DOM accessibility contract —
 see R11.
 
@@ -21,27 +23,28 @@ relative mass, not as a budget (see §3 on why a line count failed as a metric).
 
 | Module | Lines | Responsibility |
 | --- | ---: | --- |
-| `00_header.js` | 172 | Bundle preamble: the client-wide design comment, the `PROTOCOL` version constant, and the binary frame codec (`XY_FRAME_MAGIC` `"XYBF"`, `decodeFrame`, 8-byte alignment). Every inbound frame is validated here — magic/version, u64 fields, zero-padding, and per-field size limits — before any other module sees it. |
-| `10_colormaps.js` | 51 | The `COLORMAP_STOPS` table (§36 CVD-safe defaults) as compact RGB stop lists, and `buildLutData`, which linearly interpolates a stop list into the 256-texel RGBA LUT uploaded once per colormap as a texture. |
-| `20_theme.js` | 163 | Resolves chrome and mark colors: arbitrary CSS color expressions and `--chart-*` custom properties are resolved against a live probe element into f32 RGBA for GL, with a fallback on unparseable input. Also owns `XY_CHROME_CSS` and its one-time stylesheet injection. |
-| `30_ticks.js` | 224 | CPU-side tick generation in f64 for linear, log, category and time axes, plus every axis/colorbar label formatter (automatic and `format=`-driven). Specified in §6. |
-| `40_gl.js` | 829 | WebGL2 primitives: shader compile/link, `makeProgram` with its per-program uniform-location memo (R1), the fixed `ATTR_SLOTS` attribute-slot table bound at link time, and the shader inventory itself. The only module that is GPU-API-specific by design (§4). |
-| `45_lod.js` | 567 | View-dependent level-of-detail orchestration, deliberately chart-agnostic: tier selection, drill enter/exit hysteresis (`LOD_DRILL_EXIT_FACTOR`), cross-tier fades, and the retained tier caches. Calls back into `view._draw*` rather than drawing itself, which is the seam tests intercept. |
-| `46_worker.js` | 59 | The standalone density re-bin worker: a worker source string carried inside the bundle and booted from a Blob URL. Re-bins the retained sample off the main thread so kernel-less (`to_html`) density charts refine on zoom instead of stretching the overview texture; absence of workers falls back to stretching. |
-| `50_chartview.js` | 4167 | The `ChartView` class: the four drawing surfaces, scale/view state, chrome (background, grid, axes, legend, colorbar), GL buffer and VAO management (R2), and pick orchestration. Modules 51–54 extend this same class. |
-| `51_annotations.js` | 591 | The 2D overlay canvas above the marks canvas: annotation markers, arrows, shape fills, and collision-nudged labels. Separates canvas shape style keys from label CSS so annotation styling never leaks into the DOM label. |
-| `52_tooltip.js` | 260 | Hit → source row → tooltip DOM. Renders the local f32-decoded row immediately, then replaces it with the kernel's exact f64 row when that reply arrives (sequence- and `drill_seq`-guarded); composes text nodes, never HTML. |
-| `53_interaction.js` | 1803 | The entire user-facing interaction surface: pointer/drag/wheel wiring, crosshair, box select, box zoom, lasso, the modebar and its export menu, and the animated pan/zoom view state machine. The gesture→action mapping, the modebar tool inventory and the `interaction_config` switches are specified in [interaction.md](../api/interaction.md) §2 and §5. |
-| `54_kernel.js` | 408 | The client half of the kernel channel: debounced density/decimated view-requests, streaming `append` handling, the inbound message dispatcher, and the deep-zoom drill lifecycle (§16). Degrades to `46_worker.js` when there is no comm. The message catalog it consumes is specified in [wire-protocol.md](wire-protocol.md). |
-| `55_marks.js` | 220 | The `MARK_KINDS` registry — `build`/`draw` per kind plus the `pointPick`/`retainCpu`/`refreshColor` capability flags — mirroring the kernel's `_emit_<kind>` dispatch so adding a 2D chart is an entry here, not a branch in `ChartView`. |
-| `60_entries.js` | 76 | Mount/unmount entry points for both hosts (`render` for anywidget, `renderStandalone` for exported HTML) and `payloadBuffers`, which materializes first-paint columns in whichever layout the spec declares. Keeps aligned views zero-copy; a spec/transport disagreement throws. |
+| `00_header.ts` | 172 | Bundle preamble: the client-wide design comment, the `PROTOCOL` version constant, and the binary frame codec (`XY_FRAME_MAGIC` `"XYBF"`, `decodeFrame`, 8-byte alignment). Every inbound frame is validated here — magic/version, u64 fields, zero-padding, and per-field size limits — before any other module sees it. |
+| `10_colormaps.ts` | 51 | The `COLORMAP_STOPS` table (§36 CVD-safe defaults) as compact RGB stop lists, and `buildLutData`, which linearly interpolates a stop list into the 256-texel RGBA LUT uploaded once per colormap as a texture. |
+| `20_theme.ts` | 163 | Resolves chrome and mark colors: arbitrary CSS color expressions and `--chart-*` custom properties are resolved against a live probe element into f32 RGBA for GL, with a fallback on unparseable input. Also owns `XY_CHROME_CSS` and its one-time stylesheet injection. |
+| `30_ticks.ts` | 224 | CPU-side tick generation in f64 for linear, log, category and time axes, plus every axis/colorbar label formatter (automatic and `format=`-driven). Specified in §6. |
+| `40_gl.ts` | 829 | WebGL2 primitives: shader compile/link, `makeProgram` with its per-program uniform-location memo (R1), the fixed `ATTR_SLOTS` attribute-slot table bound at link time, and the shader inventory itself. The only module that is GPU-API-specific by design (§4). |
+| `45_lod.ts` | 567 | View-dependent level-of-detail orchestration, deliberately chart-agnostic: tier selection, drill enter/exit hysteresis (`LOD_DRILL_EXIT_FACTOR`), cross-tier fades, and the retained tier caches. Calls back into `view._draw*` rather than drawing itself, which is the seam tests intercept. |
+| `46_worker.ts` | 59 | The standalone density re-bin worker: a worker source string carried inside the bundle and booted from a Blob URL. Re-bins the retained sample off the main thread so kernel-less (`to_html`) density charts refine on zoom instead of stretching the overview texture; absence of workers falls back to stretching. |
+| `50_chartview.ts` | 4175 | The `ChartView` class: the four drawing surfaces, scale/view state, chrome (background, grid, axes, legend, colorbar), GL buffer and VAO management (R2), and pick orchestration. Modules 51–54 extend this same class. |
+| `51_annotations.ts` | 591 | The 2D overlay canvas above the marks canvas: annotation markers, arrows, shape fills, and collision-nudged labels. Separates canvas shape style keys from label CSS so annotation styling never leaks into the DOM label. |
+| `52_tooltip.ts` | 321 | Hit → source row → tooltip DOM. Anchors the tooltip at the picked point's data coordinates and reprojects it every draw ([interaction.md](../api/interaction.md) §7). Renders the local f32-decoded row immediately, then replaces it with the kernel's exact f64 row when that reply arrives (sequence- and `drill_seq`-guarded); composes text nodes, never HTML. |
+| `53_interaction.ts` | 1820 | The entire user-facing interaction surface: pointer/drag/wheel wiring, crosshair, box select, box zoom, lasso, the modebar and its export menu, and the animated pan/zoom view state machine. The gesture→action mapping, the modebar tool inventory and the `interaction_config` switches are specified in [interaction.md](../api/interaction.md) §2 and §5. |
+| `54_kernel.ts` | 437 | The client half of the kernel channel: debounced density/decimated view-requests, streaming `append` handling, the inbound message dispatcher, and the deep-zoom drill lifecycle (§16). Degrades to `46_worker.ts` when there is no comm. The message catalog it consumes is specified in [wire-protocol.md](wire-protocol.md). |
+| `55_marks.ts` | 220 | The `MARK_KINDS` registry — `build`/`draw` per kind plus the `pointPick`/`retainCpu`/`refreshColor` capability flags — mirroring the kernel's `_emit_<kind>` dispatch so adding a 2D chart is an entry here, not a branch in `ChartView`. |
+| `56_animation.ts` | — | Declarative entrance/update/exit state machine, easing/spring evaluation, bounded identity matching, full-payload replacement, interruption, reduced-motion resolution, and lifecycle events. Its normative behavior is in [animation.md](animation.md). |
+| `60_entries.ts` | 76 | Mount/unmount entry points for both hosts (`render` for anywidget, `renderStandalone` for exported HTML) and `payloadBuffers`, which materializes first-paint columns in whichever layout the spec declares. Keeps aligned views zero-copy; a spec/transport disagreement throws. |
 
 ## 1. What's structurally right (keep)
 
 - **Mark registry** (`MARK_KINDS` + capabilities `pointPick/retainCpu/
   refreshColor` + `markOf` fallback): the render loop is kind-blind; new
   kinds are entries. This is the load-bearing decision — preserve it.
-- **LOD module** (`45_lod.js`): tier orchestration/fades/caches are outside
+- **LOD module** (`45_lod.ts`): tier orchestration/fades/caches are outside
   ChartView and call back through `view._draw*`, so tests intercept the
   renderer and future kinds can swap mark drawing. Keep the callback seam.
 - **Four-surface layering**, bottom to top: 2D chrome canvas (background,
@@ -72,8 +75,8 @@ relative mass, not as a budget (see §3 on why a line count failed as a metric).
   (`build_payload_split` in `python/xy/widget.py` and
   `python/reflex-xy/reflex_xy/namespace.py`); packed remains for standalone
   export and for streaming `append`, which always re-ships packed
-  (`python/xy/interaction.py`). `payloadBuffers` (`60_entries.js`) and
-  `_columnView` (`50_chartview.js`) treat any spec/transport disagreement as a
+  (`python/xy/interaction.py`). `payloadBuffers` (`60_entries.ts`) and
+  `_columnView` (`50_chartview.ts`) treat any spec/transport disagreement as a
   thrown error — fail loud, never a silent fallback.
 - **DPR correctness**: backing stores sized `css × devicePixelRatio`
   everywhere including the pick FBO and its lazy resize-realloc; line widths
@@ -100,8 +103,8 @@ Ordered by how much each compounds as kinds multiply.
   `getParameter(MAX_VERTEX_ATTRIBS)` driver round-trip. `_deleteVaos` frees
   them on teardown; the grid quad holds its own VAO. Landed ahead of the R9
   rect-pick trigger it was originally sequenced behind. Note the VAO
-  utilities live in `50_chartview.js`, next to the GL context they mutate,
-  not in `40_gl.js` as §3 originally projected.
+  utilities live in `50_chartview.ts`, next to the GL context they mutate,
+  not in `40_gl.ts` as §3 originally projected.
 - **R3 — Draw-state discipline.** Re-audit: the discipline is currently
   sound — BLEND is enabled once at init and toggled in exactly one place
   (the pick pass, correctly paired), and every texture bind sets its unit
@@ -133,7 +136,7 @@ Ordered by how much each compounds as kinds multiply.
   is duplicated across `RECT_VS` and `BAR_VS`, not once per kind. The
   duplication the finding predicted is therefore real but small, and
   `GLSL_COMMON` does not exist yet. *Fix, still pending:* extract shared VS
-  chunks (corner tables, px↔clip helpers) via string includes in `40_gl.js`
+  chunks (corner tables, px↔clip helpers) via string includes in `40_gl.ts`
   (`GLSL_COMMON`), not a shader framework. Deliberately stop there — a
   "shader graph" is over-engineering at this scale. The original "fine at 5
   kinds" deferral rationale has expired; the trigger is now a third
@@ -145,9 +148,12 @@ Ordered by how much each compounds as kinds multiply.
 - **R8 — Lifecycle cleanup.** ✅ **Already complete** (re-audit): `destroy()`
   → `_destroyGlResources` frees per-trace static + drill buffers, density/
   heatmap/LUT textures (dedup via `texSeen`), pick FBO/texture, the quad, and
-  all programs. The original finding is stale. Remaining nicety only: move
-  per-kind buffer-name lists into a registry `dispose` hook when a kind
-  arrives whose resources don't fit the shared name list.
+  all programs, then releases the GL context itself via `WEBGL_lose_context`
+  so a torn-down view (including a full-payload republish's destroy+rebuild)
+  frees its context slot immediately instead of waiting for GC. The original
+  finding is stale. Remaining nicety only: move per-kind buffer-name lists into
+  a registry `dispose` hook when a kind arrives whose resources don't fit the
+  shared name list.
 - **R9 — Picking model won't stretch as-is.** GPU ID pass is point-only
   (`pointPick`); rect-family picking (bars/candles) is planned as a
   registry `pick` step (contract). The ID encoding is a single *global*
@@ -167,9 +173,9 @@ Ordered by how much each compounds as kinds multiply.
   contract (`{x, y?, ohlc?, color_*?}` + `_dist` for non-point hover) so new
   kinds emit compatible rows — doc task, no code.
 - **R11 — Client parts are unspecified.** *Mostly closed.* Every module now
-  has a one-paragraph contract in the inventory above; `30_ticks.js` has a
+  has a one-paragraph contract in the inventory above; `30_ticks.ts` has a
   full specification in §6; and the two largest remaining gaps have since been
-  written down. `53_interaction.js` is the second-largest module in the bundle
+  written down. `53_interaction.ts` is the second-largest module in the bundle
   and defines the entire user-facing gesture and chrome-interaction contract —
   drag pan, wheel zoom, box select and box zoom, lasso, double-click reset,
   the modebar and its export menu, tooltip show/hide, and keyboard point
@@ -178,20 +184,20 @@ Ordered by how much each compounds as kinds multiply.
   renderer reads anywhere in `js/src/`) with the per-gesture required
   switches, §5 also carries the modebar tool inventory, §2 is the
   `interaction_config` switch table with defaults, §3 the event payloads, and
-  §7 the unconditional behaviors. `54_kernel.js` (the client half of the
+  §7 the unconditional behaviors. `54_kernel.ts` (the client half of the
   channel protocol) is specified in [wire-protocol.md](wire-protocol.md), as
-  are `00_header.js`'s `PROTOCOL` constant and XYBF envelope (§7 there);
-  `20_theme.js`'s token resolution is specified in [export.md](../api/export.md)
-  §6, and `46_worker.js`'s standalone re-bin role in design-dossier.md §8.
-  Only `51_annotations.js`, `52_tooltip.js` and `10_colormaps.js` still have
+  are `00_header.ts`'s `PROTOCOL` constant and XYBF envelope (§7 there);
+  `20_theme.ts`'s token resolution is specified in [export.md](../api/export.md)
+  §6, and `46_worker.ts`'s standalone re-bin role in design-dossier.md §8.
+  Only `51_annotations.ts`, `52_tooltip.ts` and `10_colormaps.ts` still have
   no spec reference beyond the inventory above. **Remaining doc task:** the
   ARIA/DOM accessibility contract. interaction.md states *that* keyboard
   traversal and a live-region readout exist and are unconditional. What no
   document states *normatively* is the DOM that implements them: the
   `role="region"` root with its `aria-label`/`aria-describedby` summary, the
   `role="status"` `aria-live="polite"` readout, the `role="img"` focusable
-  canvas (`50_chartview.js:1110-1147`, `:1212`), and the modebar's
-  toolbar/menu roles and roving `tabIndex` (`53_interaction.js:718-1000`).
+  canvas (`50_chartview.ts:1110-1147`, `:1212`), and the modebar's
+  toolbar/menu roles and roving `tabIndex` (`53_interaction.ts:718-1000`).
   Those citations are accurate but descriptive — dossier §20 sketches the
   intent, production-readiness.md tracks the status, and this paragraph
   inventories the attributes. None of the three binds an implementer, so a
@@ -224,8 +230,8 @@ Ordered by how much each compounds as kinds multiply.
 so `this.*` is unchanged across the split — the file boundary is an editing
 seam, not a module boundary. Two projections in the original table did not
 hold: interaction is no longer a `50_chartview` responsibility, and the VAO
-utilities landed in `50_chartview.js` (with the GL context) rather than in
-`40_gl.js`. `GLSL_COMMON` (R6) is still unwritten.
+utilities landed in `50_chartview.ts` (with the GL context) rather than in
+`40_gl.ts`. `GLSL_COMMON` (R6) is still unwritten.
 
 ChartView's steady-state responsibilities: own the GL context + view rect +
 event wiring + chrome; delegate everything mark-shaped to the registry and
@@ -233,7 +239,7 @@ everything tier-shaped to lod. It should *lose* lines as kinds are added, not
 gain them.
 
 **The line-count form of that metric has failed and is retired.**
-`50_chartview.js` was 1707 lines when this document was written and is 4167
+`50_chartview.ts` was 1707 lines when this document was written and is 4167
 today — 2.4× the original figure — and that is *after* the annotations,
 tooltip, interaction and kernel extractions moved a further 3062 lines into
 51–54. The whole file is one `class ChartView`, so there is no small-class
@@ -242,9 +248,9 @@ refreshed, which is exactly how a raw line count fails as a metric.
 
 Replacement metric, which does not go stale on every edit: **no per-kind
 branches in `ChartView`.** Any `if (kind === …)` or kind-name switch outside
-`55_marks.js` is the regression to catch; growth in shared machinery
+`55_marks.ts` is the regression to catch; growth in shared machinery
 (buffers, VAOs, pick, chrome) is expected and fine. Track the count of
-kind-name literals in `50_chartview.js`, not its length.
+kind-name literals in `50_chartview.ts`, not its length.
 
 ## 4. WebGPU migration path
 
@@ -254,7 +260,7 @@ Tier-2 compute (atomic-add binning in a compute shader, dossier §5) and
 storage-buffer picking. The architecture above is deliberately the portable
 subset:
 
-1. Everything GPU-API-specific already lives in `40_gl.js` + the `_draw*`/
+1. Everything GPU-API-specific already lives in `40_gl.ts` + the `_draw*`/
    `_upload*` methods; marks talk to buffers/uniform-maps, not raw GL, once
    R1-R3 land. That interface (`createProgram/uploadBuffer/draw(markState)`)
    is implementable on WebGPU nearly 1:1 (uniform maps → bind groups,
@@ -283,11 +289,11 @@ subset:
 6. R11 interaction/module contracts — done (interaction.md, wire-protocol.md);
    the ARIA/DOM accessibility contract is the residue, doc-only, no trigger.
 
-## 6. Axis ticks and label formatting (`30_ticks.js`)
+## 6. Axis ticks and label formatting (`30_ticks.ts`)
 
 Ticks are computed on the CPU in f64 and never round-trip through the f32
 render path (§16). `ChartView._ticksFor` dispatches on the axis
-(`50_chartview.js:395–398`), checking in this order: `kind === "time"` →
+(`50_chartview.ts:395–398`), checking in this order: `kind === "time"` →
 `timeTicks`, `kind === "category"` → `categoryTicks`, `scale === "log"` →
 `logTicks`, otherwise `linearTicks`. Every generator takes `(lo, hi, target)`
 with `target = 6` by default and returns `{ ticks, step }`; `logTicks` adds
@@ -352,7 +358,7 @@ With no `format=` on the axis, labels come from the step:
 - `fmtGeneral` reproduces Python's `:g` (default 6 significant digits) and is
   used for *explicit* colorbar ticks, whose precision is authored and must not
   be inferred from an unrelated automatic step. The colorbar itself ticks with
-  `linearTicks(lo, hi, 8)` (`50_chartview.js:1467`).
+  `linearTicks(lo, hi, 8)` (`50_chartview.ts:1467`).
 
 ### 6.3 The `format=` mini-language
 

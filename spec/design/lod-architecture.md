@@ -2,7 +2,7 @@
 
 **Status:** design + implementation plan. Supersedes nothing — this refines
 dossier §5/§10/§16/§17/§22/§28 into a buildable spec, grounded in what already
-ships (`python/xy/lod.py`, `js/src/45_lod.js`, `interaction.py`,
+ships (`python/xy/lod.py`, `js/src/45_lod.ts`, `interaction.py`,
 kernels ABI v3). The whole XY claim rests on one sentence:
 
 > **Large data stays truthful and interactive.**
@@ -18,7 +18,7 @@ Interactive means: pan/zoom stays inside the §17 frame budget at any N.
 A **tier is a property of a (trace, viewport) pair**, never of a dataset:
 what ships is count-only, `tier = f(visible_count)`, hysteresis-guarded (§5).
 `drill_decision(visible, budget, in_drill, exit_factor)` in `python/xy/lod.py`
-returns `visible <= budget * (exit_factor if in_drill else 1.0)`; `js/src/45_lod.js`
+returns `visible <= budget * (exit_factor if in_drill else 1.0)`; `js/src/45_lod.ts`
 mirrors it. Implemented today for scatter (drill-in/out with hysteresis); this
 doc extends the same rule to every kind. Folding `mark_pixel_area × overdraw`
 into the decision is dossier F3 — *specified, pending, not implemented*; no
@@ -185,7 +185,7 @@ reply  = compose(tiles) → one grid ≤ (screen px) — done kernel-side today,
 ```
 
 - **Pan = tile reuse:** only newly exposed edge tiles ship. The client keeps
-  the multi-window density cache it already has (`densityCache` in 45_lod.js)
+  the multi-window density cache it already has (`densityCache` in 45_lod.ts)
   — the pyramid formalizes it into keyed tiles instead of ad-hoc windows.
 - **Zoom = adjacent level:** crossfade between level textures is the exact
   crossfade the client already does for density switches (`_densitySwitchPrev`).
@@ -233,8 +233,19 @@ invariants so future kinds don't regress them:
 - **T6 — invalid requests do not mutate:** malformed viewport/screen requests
   fail before `enter_drill`, `exit_drill`, cache replacement, or buffer
   version changes. The previous representation remains the authority.
+- **T7 — cached textures outlive every live reference:** the multi-window
+  density cache (`densityCache`, capped LRU) may free an *evicted* grid's GPU
+  texture, but never one still reachable from the trace. `lodDensityPinned`
+  pins the active grid, the previous grid, the crossfade source
+  (`_densitySwitchPrev`), the last-drawn grid (`_shownDensity`, which becomes
+  the *next* crossfade source), and the standalone overview restore point
+  (`_homeDensity`). Freeing a still-referenced texture makes the next crossfade
+  bind a deleted handle — a hard WebGL error (`bindTexture: … deleted object`)
+  that drops the density frame and strands drilled points over a stale surface.
+  Every `_drawDensity` also skips a grid whose texture is not `gl.isTexture`, so
+  the invariant can never surface as a GL error even if a new reference is added.
 
-Any new tiered kind must state how it satisfies T1–T6 in its chart-kind
+Any new tiered kind must state how it satisfies T1–T7 in its chart-kind
 contract entry before it lands.
 
 ---
@@ -280,7 +291,7 @@ contract entry before it lands.
    and near-drill windows fall through to the exact `range_indices` +
    `bin_2d` path. Level is recorded per update as `binning: "pyramid-L<l>"`.
 8. Client: tile-keyed cache replaces window-keyed `densityCache` (same
-   eviction, same crossfades). Still pending — `js/src/45_lod.js` keys the
+   eviction, same crossfades). Still pending — `js/src/45_lod.ts` keys the
    cache by density window, and no client code reads the served level.
 9. Bench gate: 100M pan p95 < 16ms kernel time, zoom step < 50ms, memory
    within 1.5× finest level.

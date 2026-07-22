@@ -27,6 +27,7 @@ DEFAULT_DOCS = (
     "spec/process/contributing.md",
     "spec/process/production-readiness.md",
     "examples/reflex/README.md",
+    "examples/fastapi/README.md",
 )
 
 BROAD_SUPERLATIVE_RE = re.compile(

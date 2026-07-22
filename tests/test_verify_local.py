@@ -86,7 +86,7 @@ def test_example_checks_are_known_as_targeted_gate() -> None:
     assert [check.name for check in selected] == ["examples"]
     assert selected[0].command[-2:] == (
         "tests/test_docs_examples.py",
-        "tests/test_reflex_example_assets.py",
+        "tests/test_example_apps.py",
     )
     assert selected[0].requires_modules == ("pytest",)
 
@@ -369,7 +369,7 @@ def test_dry_run_includes_examples_gate(capsys) -> None:
     assert rc == 0
     assert "examples" in out
     assert "tests/test_docs_examples.py" in out
-    assert "tests/test_reflex_example_assets.py" in out
+    assert "tests/test_example_apps.py" in out
 
 
 def test_dry_run_includes_security_export_gate(capsys) -> None:

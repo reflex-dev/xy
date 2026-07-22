@@ -1,6 +1,6 @@
 """Arrow-annotation path geometry shared by the SVG and raster exporters.
 
-Mirrors ``xyArrowGeometry`` in ``js/src/51_annotations.js`` — keep the two in
+Mirrors ``xyArrowGeometry`` in ``js/src/51_annotations.ts`` — keep the two in
 sync. Style keys: ``curve`` (matplotlib arc3 rad — quadratic bulge as a
 fraction of chord length), ``angle_a``/``angle_b`` (matplotlib angle3/angle
 departure/arrival angles, degrees, y-up screen space — the control point is

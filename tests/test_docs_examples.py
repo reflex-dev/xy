@@ -526,9 +526,9 @@ def test_production_docs_define_sdist_wheel_boundary() -> None:
     text = " ".join(PRODUCTION_DOC.read_text(encoding="utf-8").split())
     required = [
         "Source distributions include the release support surface",
-        "Reflex example app source plus generated chart assets",
+        "example apps' source (FastAPI and Reflex)",
         "Wheels must stay package-only",
-        "docs, tests, benchmarks, scripts, and `examples/reflex/` are sdist-only",
+        "docs, tests, benchmarks, scripts, and the `examples/` apps are sdist-only",
         "Platform wheel contains package-only files",
         "No-toolchain wheel contains package-only files",
     ]

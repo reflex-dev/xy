@@ -43,7 +43,7 @@ not `Engine.default` to the browser, so `Engine.auto` there means Chromium, not
 `ExportConfig` is pure description. Beyond seeding the Python defaults above it
 governs the client modebar's download menu (formats and order, filename
 basename); `pdf` and `html` are accepted in `formats=` but are Python-side only
-and are skipped in the browser menu (`js/src/53_interaction.js:1020-1038`, where
+and are skipped in the browser menu (`js/src/53_interaction.ts:1020-1038`, where
 `EXPORT_ITEMS` enumerates only png/jpeg/webp/svg/csv and the build loop drops any
 configured name with no entry). With no `export` spec the menu falls back to
 `["png", "svg", "csv"]`; an explicit empty list hides the download items.
@@ -152,9 +152,9 @@ style).
 **Open gap: screen/export theme parity.** Kernel-side export resolves color
 tokens statically from `spec["dom"]["style"]` — the tokens the chart declared in
 Python (`_svg._resolve_static_css_vars`). The live client instead reads
-*computed* CSS off the chart root (`readTheme`, `js/src/20_theme.js:51`) and
+*computed* CSS off the chart root (`readTheme`, `js/src/20_theme.ts:51`) and
 re-reads it on scheme change or a class mutation via `refreshTheme()`
-(`js/src/50_chartview.js:4037`). That refresh is **local to the browser**: no
+(`js/src/50_chartview.ts:4037`). That refresh is **local to the browser**: no
 theme snapshot ever travels back. The eight client→kernel request types are
 enumerated exhaustively in [wire-protocol.md](../design/wire-protocol.md) §2, and
 their fields are view geometry, screen dimensions, trace/vertex indices,

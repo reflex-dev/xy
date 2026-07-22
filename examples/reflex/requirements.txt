@@ -1,4 +1,0 @@
-reflex>=0.8
-numpy>=1.24
-plotly>=6
--e ..
