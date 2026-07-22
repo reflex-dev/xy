@@ -168,7 +168,12 @@ How the push travels is per-host, and the payload crosses the wire exactly
 once per tick. On the anywidget comm the `spec`/`buffers` trait update (one
 `hold_sync` message) is both the live push — the client applies an append
 when `spec.append.seq` advances — and the notebook-reopen state; no custom
-message is sent. The `/_xy` namespace has no synced traits, so it wraps the
+message is sent. Because a host may surface the two trait writes
+non-atomically, the client listens to *both* change events, defers a torn
+pair — a column that no longer fits its buffer — without consuming the seq,
+and keys applied state on (seq, buffers identity), so the write that
+completes the pair re-fires the apply and repairs even a same-shape tear.
+The `/_xy` namespace has no synced traits, so it wraps the
 same spec and buffers in a room-wide `msg` push. In both cases the client
 reads the buffer layout from `spec.buffer_layout`, never from the shape of
 what arrived (§5).

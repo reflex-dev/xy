@@ -1,4 +1,4 @@
-import { bytesToSpan, decodeFrame, payloadBuffers } from "./00_header";
+import { bytesToSpan, decodeFrame, payloadBuffers, payloadCoherent } from "./00_header";
 import { ChartView } from "./50_chartview";
 import { MARK_KINDS, markOf } from "./55_marks";
 // Prototype-augmentation modules: imported for their side effect of attaching
@@ -34,20 +34,30 @@ export function render({ model, el }) {
   // comm message per tick that doubles as notebook-reopen state. A fresh
   // render above already painted the streamed state, so only a *subsequent*
   // advance of `spec.append.seq` applies as an incremental append.
-  let appendSeq = spec.append?.seq ?? null;
-  const onSpecChange = () => {
+  //
+  // Hosts are not guaranteed to set the two traits atomically: one change
+  // event may fire between the spec write and the buffers write (in either
+  // order). Both events funnel here, a torn pair (a column that no longer
+  // fits its buffer) defers without consuming the seq, and applied state is
+  // keyed on (seq, buffers identity) — so if a same-length torn pair slips
+  // past the fit check, the buffers' own change event re-applies and repairs.
+  const applied = { seq: spec.append?.seq ?? null, buffers: model.get("buffers") };
+  const onAppendState = () => {
     const nextSpec = model.get("spec");
     const tag = nextSpec?.append;
-    if (!tag || tag.seq === appendSeq) return;
-    appendSeq = tag.seq;
-    view._applyAppend(
-      { type: "append", affected: tag.affected, spec: nextSpec },
-      model.get("buffers"),
-    );
+    if (!tag) return;
+    const nextBuffers = model.get("buffers");
+    if (tag.seq === applied.seq && nextBuffers === applied.buffers) return;
+    if (!payloadCoherent(nextSpec, nextBuffers)) return; // torn: wait for the pair
+    applied.seq = tag.seq;
+    applied.buffers = nextBuffers;
+    view._applyAppend({ type: "append", affected: tag.affected, spec: nextSpec }, nextBuffers);
   };
-  model.on("change:spec", onSpecChange);
+  model.on("change:spec", onAppendState);
+  model.on("change:buffers", onAppendState);
   return () => {
-    model.off?.("change:spec", onSpecChange);
+    model.off?.("change:spec", onAppendState);
+    model.off?.("change:buffers", onAppendState);
     view.destroy();
   };
 }

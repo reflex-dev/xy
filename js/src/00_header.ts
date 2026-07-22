@@ -53,6 +53,29 @@ export function bytesToSpan(b) {
   return span.byteOffset % 4 === 0 ? span : new Uint8Array(span);
 }
 
+/** True when every column in the spec fits inside the supplied buffers.
+ * Trait-transported appends can observe a torn update on hosts that set
+ * spec and buffers non-atomically (one change event fires between the two
+ * writes); a torn pair must be deferred to the other change event, not
+ * applied and not treated as fatal. Message- and first-paint transports
+ * deliver the pair together, so for them a mismatch stays a loud
+ * `payloadBuffers`/`_columnView` error, never this soft check. */
+export function payloadCoherent(spec, raw) {
+  const cols = spec?.columns;
+  if (!Array.isArray(cols)) return false;
+  const size = (c) => (c.dtype === "u8" ? 1 : 4);
+  if (spec.buffer_layout === "split") {
+    if (!Array.isArray(raw)) return false;
+    return cols.every((c) => {
+      if (!Number.isInteger(c.buf)) return true; // raster-only borrowed span
+      const b = raw[c.buf];
+      return !!b && c.len * size(c) <= b.byteLength;
+    });
+  }
+  if (Array.isArray(raw) || !raw) return false;
+  return cols.every((c) => c.byte_offset + c.len * size(c) <= raw.byteLength);
+}
+
 /** Wire buffers in the shape the spec declares (§29): packed is one blob;
  * split is one span per column. Aligned views stay zero-copy; only a
  * legacy unaligned view pays a narrow view-sized copy. A spec/transport
