@@ -17,6 +17,7 @@ from xy_docs.api_reference import (
     component_api_paths,
     component_api_references,
     component_page_api,
+    split_faq_section,
 )
 from xy_docs.examples import chart_example_demo
 
@@ -144,20 +145,26 @@ class XyDocsMarkdownTransformer(ReflexDocTransformer):
 def render_xy_markdown_page(page: DocsPage) -> rx.Component:
     """Render one discovered XY documentation page."""
     source_path = page.source_path.resolve()
-    document = parse_document(page.content)
-    transformer = XyDocsMarkdownTransformer(
-        virtual_filepath=str(source_path),
-        filename=str(source_path),
-    )
-    content = transformer.transform(document)
+
+    def _render(markdown_text: str) -> rx.Component:
+        transformer = XyDocsMarkdownTransformer(
+            virtual_filepath=str(source_path),
+            filename=str(source_path),
+        )
+        return transformer.transform(parse_document(markdown_text))
+
     component_paths = component_api_paths(page.metadata)
     if not component_paths:
-        return content
+        return _render(page.content)
+    # The generated API section renders between the body and any FAQ, matching
+    # the per-page Markdown and llms-full.txt order (append_component_api_markdown).
+    body, faq = split_faq_section(page.content)
     references = component_api_references(component_paths)
     return rx.fragment(
-        content,
+        _render(body),
         _heading_link(API_REFERENCE_HEADING, 2),
         component_page_api(references),
+        *((_render(faq),) if faq is not None else ()),
     )
 
 

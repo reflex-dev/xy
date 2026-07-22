@@ -41,6 +41,7 @@ from xy_docs.api_reference import (
     CHART_FACTORY_GROUPS,
     CHROME_AND_BEHAVIOR,
     MARKS,
+    append_component_api_markdown,
     axes_and_annotations_api,
     chart_containers_api,
     chart_factories_api,
@@ -1024,7 +1025,7 @@ def test_chart_gallery_grid_renders_every_type_as_inline_svg(
     chart_section = next(
         leaves for title, _landing_route, _icon, leaves in DOCS_SECTIONS if title == "Chart Gallery"
     )
-    assert len(chart_section) == 8
+    assert len(chart_section) == 14
     assert "XYChart" not in rendered
     assert rendered.count("dangerouslySetInnerHTML") == 28
     assert rendered.count('id:"xy-chart-gallery"') == 1
@@ -1158,51 +1159,49 @@ def test_chart_gallery_cards_link_to_family_pages_with_live_demo_anchors() -> No
                 anchored_items.append((item.title, destination))
 
     assert anchored_items == [
-        ("Step + Stairs", "/charts/line-and-area/#step-and-stairs"),
-        ("ECDF", "/charts/distributions/#ecdf"),
-        ("Box", "/charts/distributions/#box"),
-        ("Violin", "/charts/distributions/#violin"),
-        ("Hexbin", "/charts/density-and-grids/#hexbin"),
-        ("Contour", "/charts/density-and-grids/#contour"),
-        ("Segments", "/charts/specialized/#segments"),
-        ("Triangle Mesh", "/charts/specialized/#triangle-mesh"),
+        ("Step + Stairs", "/charts/area-chart/#step-and-stairs"),
         ("Threshold", "/components/annotations/#threshold"),
         ("Horizontal Line", "/components/annotations/#horizontal-line"),
         ("Bands", "/components/annotations/#bands"),
         ("Arrow", "/components/annotations/#arrow"),
         ("Label", "/components/annotations/#label"),
         ("Text", "/components/annotations/#text"),
-        ("Facet Chart", "/charts/facets-and-layers/#facet-chart"),
+        ("Facet Chart", "/components/facets-and-layers/#facet-chart"),
     ]
 
-    line_and_area = pages["/charts/line-and-area/"]
+    line_and_area = pages["/charts/area-chart/"]
     assert "### Step and Stairs" in line_and_area.content
     assert "def step_and_stairs_demo():" in line_and_area.content
     assert "xy.step(" in line_and_area.content
     assert "xy.stairs(" in line_and_area.content
     assert 'id:"step-and-stairs"' in str(render_xy_markdown_page(line_and_area))
 
-    distributions = pages["/charts/distributions/"]
-    assert "### ECDF" in distributions.content
-    assert "def ecdf_demo():" in distributions.content
-    assert "xy.ecdf(" in distributions.content
-    assert "def box_demo():" in distributions.content
-    assert "xy.box(" in distributions.content
-    assert "def violin_demo():" in distributions.content
-    assert "xy.violin(" in distributions.content
-    rendered_distributions = str(render_xy_markdown_page(distributions))
-    for fragment in ("ecdf", "box", "violin"):
-        assert f'id:"{fragment}"' in rendered_distributions
+    # Every chart type now has its own dedicated, SEO-focused page carrying its
+    # mark's live demo.
+    standalone_chart_marks = {
+        "/charts/line-chart/": "xy.line(",
+        "/charts/bar-chart/": "xy.bar(",
+        "/charts/histogram/": "xy.histogram(",
+        "/charts/ecdf/": "xy.ecdf(",
+        "/charts/box-plot/": "xy.box(",
+        "/charts/violin-plot/": "xy.violin(",
+        "/charts/heatmap/": "xy.heatmap(",
+        "/charts/hexbin/": "xy.hexbin(",
+        "/charts/contour-plot/": "xy.contour(",
+        "/charts/stem-plot/": "xy.stem(",
+        "/charts/segments/": "xy.segments(",
+        "/components/triangle-mesh/": "xy.triangle_mesh(",
+    }
+    for route, mark in standalone_chart_marks.items():
+        assert route in pages, route
+        assert mark in pages[route].content, route
+
+    # Bar and column share one page: the bar page carries the column chart as a
+    # subsidiary section.
+    assert "xy.column(" in pages["/charts/bar-chart/"].content
+    assert "/charts/column-chart/" not in pages
 
     dedicated_pages = {
-        "/charts/density-and-grids/": {
-            "hexbin": ("def hexbin_demo():", "xy.hexbin("),
-            "contour": ("def contour_demo():", "xy.contour("),
-        },
-        "/charts/specialized/": {
-            "segments": ("def segments_demo():", "xy.segments("),
-            "triangle-mesh": ("def triangle_mesh_demo():", "xy.triangle_mesh("),
-        },
         "/components/annotations/": {
             "threshold": ("def threshold_demo():", "xy.threshold("),
             "horizontal-line": ("def horizontal_line_demo():", "xy.hline("),
@@ -1211,7 +1210,7 @@ def test_chart_gallery_cards_link_to_family_pages_with_live_demo_anchors() -> No
             "label": ("def label_demo():", "xy.label("),
             "text": ("def text_demo():", "xy.text("),
         },
-        "/charts/facets-and-layers/": {
+        "/components/facets-and-layers/": {
             "facet-chart": ("def facet_chart_demo():", "xy.facet_chart("),
         },
     }
@@ -1237,7 +1236,7 @@ def test_chart_gallery_combines_only_the_requested_related_tiles() -> None:
     combined_group = _GALLERY_GROUPS[2]
     assert combined_group.route is None
     assert [(item.title, item.route) for item in combined_group.items] == [
-        ("Bar + Column", "/charts/bar-and-column/"),
+        ("Bar + Column", "/charts/bar-chart/"),
         ("Scatter", "/charts/scatter/"),
     ]
     assert {"Step + Stairs", "Bar + Column"} <= titles
@@ -1258,7 +1257,7 @@ def test_chart_gallery_combines_only_the_requested_related_tiles() -> None:
 def test_annotations_have_one_canonical_guide_and_a_legacy_redirect() -> None:
     """Keep annotation guidance consolidated without breaking the old chart URL."""
     pages = discover_docs(DOCS_CONFIG)
-    annotation_pages = [page for page in pages if page.title == "Annotations"]
+    annotation_pages = [page for page in pages if page.title == "Annotations in Python"]
     chart_section = next(
         leaves for title, _landing_route, _icon, leaves in DOCS_SECTIONS if title == "Chart Gallery"
     )
@@ -1746,32 +1745,26 @@ def test_component_guides_append_frontmatter_driven_api_tables() -> None:
 def test_chart_gallery_pages_append_factory_api_tables() -> None:
     """Generate focused chart-factory tables without changing the gallery index."""
     expected = {
-        "/charts/line-and-area/": (
-            "xy.line_chart",
+        "/charts/line-chart/": ("xy.line_chart",),
+        "/charts/area-chart/": (
             "xy.area_chart",
             "xy.step_chart",
             "xy.stairs_chart",
         ),
         "/charts/scatter/": ("xy.scatter_chart",),
-        "/charts/bar-and-column/": ("xy.bar_chart", "xy.column_chart"),
-        "/charts/distributions/": (
-            "xy.histogram_chart",
-            "xy.ecdf_chart",
-            "xy.box_chart",
-            "xy.violin_chart",
-        ),
-        "/charts/density-and-grids/": (
-            "xy.hexbin_chart",
-            "xy.heatmap_chart",
-            "xy.contour_chart",
-        ),
+        "/charts/bar-chart/": ("xy.bar_chart", "xy.column_chart"),
+        "/charts/histogram/": ("xy.histogram_chart",),
+        "/charts/ecdf/": ("xy.ecdf_chart",),
+        "/charts/box-plot/": ("xy.box_chart",),
+        "/charts/violin-plot/": ("xy.violin_chart",),
+        "/charts/heatmap/": ("xy.heatmap_chart",),
+        "/charts/hexbin/": ("xy.hexbin_chart",),
+        "/charts/contour-plot/": ("xy.contour_chart",),
         "/charts/uncertainty/": ("xy.error_band_chart", "xy.errorbar_chart"),
-        "/charts/specialized/": (
-            "xy.stem_chart",
-            "xy.segments_chart",
-            "xy.triangle_mesh_chart",
-        ),
-        "/charts/facets-and-layers/": ("xy.chart", "xy.facet_chart"),
+        "/charts/stem-plot/": ("xy.stem_chart",),
+        "/charts/segments/": ("xy.segments_chart",),
+        "/components/triangle-mesh/": ("xy.triangle_mesh_chart",),
+        "/components/facets-and-layers/": ("xy.chart", "xy.facet_chart"),
     }
     pages = {page.route: page for page in discover_docs(DOCS_CONFIG)}
 
@@ -1790,6 +1783,16 @@ def test_chart_gallery_pages_append_factory_api_tables() -> None:
     )
     assert "Props" in scatter_rendered
     assert "Preview" not in scatter_rendered
+
+    # The FAQ renders below the generated API section on both surfaces.
+    scatter_faq_question = "How do I make a scatter plot in Python?"
+    assert scatter_rendered.index(API_REFERENCE_HEADING) < scatter_rendered.index(
+        scatter_faq_question
+    )
+    scatter_markdown = append_component_api_markdown(
+        pages["/charts/scatter/"].content, pages["/charts/scatter/"].metadata
+    )
+    assert scatter_markdown.index(f"## {API_REFERENCE_HEADING}") < scatter_markdown.index("## FAQ")
 
 
 def test_chart_factory_api_expands_forwarded_chart_props() -> None:

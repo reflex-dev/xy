@@ -117,38 +117,38 @@ main:has(#xy-chart-gallery) > div:has(article #xy-chart-gallery) {
 _GALLERY_GROUPS: tuple[GalleryGroup, ...] = (
     GalleryGroup(
         "Line and Area",
-        "/charts/line-and-area/",
+        "/charts/area-chart/",
         (
-            GalleryItem("Line"),
+            GalleryItem("Line", route="/charts/line-chart/"),
             GalleryItem("Area"),
             GalleryItem("Step + Stairs", "step-and-stairs"),
         ),
     ),
     GalleryGroup(
         "Distributions",
-        "/charts/distributions/",
+        None,
         (
-            GalleryItem("Histogram"),
-            GalleryItem("ECDF", "ecdf"),
-            GalleryItem("Box", "box"),
-            GalleryItem("Violin", "violin"),
+            GalleryItem("Histogram", route="/charts/histogram/"),
+            GalleryItem("ECDF", route="/charts/ecdf/"),
+            GalleryItem("Box", route="/charts/box-plot/"),
+            GalleryItem("Violin", route="/charts/violin-plot/"),
         ),
     ),
     GalleryGroup(
         "Bar, Column, and Scatter",
         None,
         (
-            GalleryItem("Bar + Column", route="/charts/bar-and-column/"),
+            GalleryItem("Bar + Column", route="/charts/bar-chart/"),
             GalleryItem("Scatter", route="/charts/scatter/"),
         ),
     ),
     GalleryGroup(
         "Density and Grids",
-        "/charts/density-and-grids/",
+        None,
         (
-            GalleryItem("Hexbin", "hexbin"),
-            GalleryItem("Heatmap"),
-            GalleryItem("Contour", "contour"),
+            GalleryItem("Hexbin", route="/charts/hexbin/"),
+            GalleryItem("Heatmap", route="/charts/heatmap/"),
+            GalleryItem("Contour", route="/charts/contour-plot/"),
         ),
     ),
     GalleryGroup(
@@ -161,11 +161,11 @@ _GALLERY_GROUPS: tuple[GalleryGroup, ...] = (
     ),
     GalleryGroup(
         "Specialized",
-        "/charts/specialized/",
+        None,
         (
-            GalleryItem("Stem"),
-            GalleryItem("Segments", "segments"),
-            GalleryItem("Triangle Mesh", "triangle-mesh"),
+            GalleryItem("Stem", route="/charts/stem-plot/"),
+            GalleryItem("Segments", route="/charts/segments/"),
+            GalleryItem("Triangle Mesh", route="/components/triangle-mesh/"),
         ),
     ),
     GalleryGroup(
@@ -185,7 +185,7 @@ _GALLERY_GROUPS: tuple[GalleryGroup, ...] = (
     ),
     GalleryGroup(
         "Facets and Layers",
-        "/charts/facets-and-layers/",
+        "/components/facets-and-layers/",
         (
             GalleryItem("Facet Chart", "facet-chart"),
             GalleryItem("Layered Marks"),

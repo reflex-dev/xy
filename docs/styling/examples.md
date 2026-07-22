@@ -831,6 +831,6 @@ chart_playground()
 These examples use the same public composition model as the rest of XY. Start
 from the closest pattern, replace the data, then tune the mark colors, axes,
 tooltip, and theme. For the full option surface, continue to
-[Line and Area](/docs/xy/charts/line-and-area/),
-[Bar and Column](/docs/xy/charts/bar-and-column/), or the broader
+[Line](/docs/xy/charts/line-chart/),
+[Bar](/docs/xy/charts/bar-chart/), or the broader
 [Styling Gallery](/docs/xy/styling/gallery/).

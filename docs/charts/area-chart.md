@@ -1,24 +1,25 @@
 ---
-title: Line and Area Charts
-description: Render trends, ranges, baselines, smooth curves, and layered series.
+title: Area Charts in Python
+description: Fill trends to a baseline with area charts, and show piecewise-constant states with step and stairs charts in Python using xy.
 components:
-  - xy.line_chart
   - xy.area_chart
   - xy.step_chart
   - xy.stairs_chart
 ---
 
-# Line and Area Charts
+# Area, Step, and Stairs Charts in Python
+
+> Looking for line charts? See the dedicated
+> [line chart guide](/docs/xy/charts/line-chart/).
 
 ## When to Use
 
-Use `line` for trends and `area` when the magnitude relative to a baseline is
-important. Both support smooth curves, screen-space dash patterns, opacity, and
-named axes.
-
-Use `step` for state changes attached to samples and `stairs` when you already
-have bin edges. For isolated impulses, use the
-[specialized chart guide](/docs/xy/charts/specialized/).
+Use an `area` chart (also called an area plot or area graph) when the magnitude
+relative to a baseline matters, `step` for state
+changes attached to samples, and `stairs` when you already have bin edges. All
+support screen-space dash patterns, opacity, and named axes. For a plain trend
+line, use a [line chart](/docs/xy/charts/line-chart/); for isolated impulses,
+use a [stem plot](/docs/xy/charts/stem-plot/).
 
 ## Live Demo
 
@@ -53,12 +54,6 @@ def plan_and_actual():
 ~~~
 
 ## Chart Types
-
-### Line
-
-Use `line` for continuous trends, ordered observations, and comparisons between
-series. Add `curve="smooth"` when interpolation is appropriate, or keep the
-default straight segments when each observation should remain explicit.
 
 ### Area
 
@@ -104,6 +99,53 @@ def step_and_stairs_demo():
     return reflex_xy.chart(chart, height="320px")
 ~~~
 
+## Stacked Areas with an Array Base
+
+Stack series by passing the running total of the layers below as each area's
+`base`, and set `stroke_perimeter=True` with a `line_width` to keep every upper
+boundary readable:
+
+~~~python demo exec
+import numpy as np
+import reflex_xy
+import xy
+
+rng_stack = np.random.default_rng(5)
+months = np.arange(0, 12, dtype=float)
+mobile = 20 + 1.6 * months + rng_stack.normal(0.0, 1.0, months.size)
+desktop = 34 + 0.7 * months + rng_stack.normal(0.0, 1.2, months.size)
+
+stacked_area_chart = xy.chart(
+    xy.area(
+        months,
+        mobile,
+        name="Mobile",
+        color="#6e56cf",
+        opacity=0.55,
+        stroke_perimeter=True,
+        line_width=1.5,
+    ),
+    xy.area(
+        months,
+        mobile + desktop,
+        base=mobile,
+        name="Desktop",
+        color="#2563eb",
+        opacity=0.55,
+        stroke_perimeter=True,
+        line_width=1.5,
+    ),
+    xy.x_axis(label="month"),
+    xy.y_axis(label="sessions (k)"),
+    xy.legend(),
+    title="Traffic by platform",
+)
+
+
+def stacked_area_demo():
+    return reflex_xy.chart(stacked_area_chart, height="320px")
+~~~
+
 ## Variants
 
 - Layer several named `line` or `area` marks and add `legend()`.
@@ -128,3 +170,26 @@ accepts `edges` and otherwise generates integer edges.
 
 For very long lines, XY decimates to the visible resolution and refines again
 when the viewport changes.
+
+## FAQ
+
+### How do I make an area chart in Python?
+
+Call `xy.area(x, y)` inside a chart and render it; set `base` to fill from a
+non-zero baseline and `fill` for a gradient.
+
+### What is the difference between a step chart and a stairs chart?
+
+`step` draws piecewise-constant states from x/y samples; `stairs` draws levels
+from explicit bin edges. Both use `where="pre"`, `"mid"`, or `"post"` to place
+transitions.
+
+### How do I fill the area under a line in Python?
+
+Use an `xy.area` mark instead of (or beneath) `xy.line`; its `fill` accepts a
+solid color or a gradient such as `linear-gradient(currentColor, transparent)`.
+
+### How do I show a plan-versus-actual comparison?
+
+Layer an `area` for the actual values with a dashed `line` (`dash="dashed"`) for
+the plan, and add `xy.legend()` to label them.

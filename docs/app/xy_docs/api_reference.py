@@ -467,16 +467,39 @@ def component_api_markdown(
     return "\n".join(lines).rstrip() + "\n"
 
 
+_FAQ_HEADING = re.compile(r"^## FAQ\s*$", re.MULTILINE)
+
+
+def split_faq_section(content: str) -> tuple[str, str | None]:
+    """Split authored Markdown at its FAQ heading.
+
+    The generated API Reference is inserted between the body and the FAQ, so
+    the FAQ stays the final section on every surface (HTML page, per-page
+    Markdown, and llms-full.txt).
+    """
+    match = _FAQ_HEADING.search(content)
+    if match is None:
+        return content, None
+    return content[: match.start()], content[match.start() :]
+
+
 def append_component_api_markdown(
     content: str,
     metadata: Mapping[str, Any],
 ) -> str:
-    """Append a generated Markdown API section when frontmatter declares one."""
+    """Insert a generated Markdown API section when frontmatter declares one.
+
+    The section lands after the authored body but before any FAQ, matching the
+    rendered page order.
+    """
     paths = component_api_paths(metadata)
     if not paths:
         return content
     section = component_api_markdown(component_api_references(paths))
-    return f"{content.rstrip()}\n\n{section}"
+    body, faq = split_faq_section(content)
+    if faq is None:
+        return f"{content.rstrip()}\n\n{section}"
+    return f"{body.rstrip()}\n\n{section.rstrip()}\n\n{faq.strip()}\n"
 
 
 def chart_factories_api() -> rx.Component:
