@@ -8,3 +8,5 @@ __pycache__/
 .ruff_cache/
 node_modules/
 *.egg-info/
+.web/
+**/assets/xy/*.xyf
