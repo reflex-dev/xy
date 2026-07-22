@@ -11,8 +11,13 @@ Install ergonomics, by audience (design dossier §33):
   NumPy fallback, importing the compute layer then raises a clear, actionable
   error (see `xy.kernels`). Install a Rust toolchain, or use a published
   wheel, for a working compute backend.
-- The JS client (`python/xy/static/*`) is a **committed artifact**, so
-  Node is only needed to *edit* the client, never to install.
+- The JS client (`python/xy/static/*.js`) is a **generated artifact, not
+  committed to git** (§33): this hook builds it with `node js/build.mjs` when a
+  Node toolchain is present and force-includes it into the wheel and sdist —
+  exactly as it does the Rust core. So a *published* wheel or sdist carries the
+  client already built (end users still need no Node), while building from a raw
+  clone needs Node just as it needs Rust. An unpacked sdist already carries the
+  bundle, so `pip install <sdist>` needs no Node even though this hook re-runs.
 
 Env switches:
 - `XY_SKIP_CARGO=1` — don't invoke cargo; use an already-built lib if
@@ -20,6 +25,12 @@ Env switches:
 - `XY_REQUIRE_CARGO=1` — the native core MUST end up in the wheel; a
   missing toolchain or failed build is an error. CI wheel builds set this so a
   published wheel never silently ships without the core.
+- `XY_SKIP_NODE=1` — don't invoke node; use an already-built JS bundle if
+  present. (Symmetric with XY_SKIP_CARGO for a prebuilt-client CI step.)
+- `XY_REQUIRE_NODE=1` — the render-client bundles MUST end up in the
+  distribution; a missing Node toolchain or failed build (with no bundle already
+  on disk) is an error. CI wheel/sdist builds set this so a published artifact
+  never silently ships without the client.
 - `XY_CARGO_TARGET=<triple>` — cross-compile the core for a Rust target
   triple (e.g. `aarch64-unknown-linux-musl`, `aarch64-pc-windows-msvc`). The
   built lib is looked for under `target/<triple>/release/` instead of
@@ -107,16 +118,39 @@ def _cargo_target() -> Optional[str]:
     return target or None
 
 
+# The two render-client bundles `node js/build.mjs` emits into python/xy/static.
+_JS_BUNDLES = ("index.js", "standalone.js")
+
+
+def _static_dir(root: Path) -> Path:
+    return root / "python" / "xy" / "static"
+
+
+def _bundles_present(static_dir: Path) -> bool:
+    return all((static_dir / name).exists() for name in _JS_BUNDLES)
+
+
 class CustomBuildHook(BuildHookInterface):
     """Wheel build hook: builds (or reuses) the Rust core cdylib and ships it
     inside the wheel as a platform artifact."""
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
-        """Place the native library into the wheel before it is assembled."""
-        if self.target_name != "wheel":
+        """Place the render client and native library into the distribution."""
+        if self.target_name not in ("wheel", "sdist"):
             return
 
         root = Path(self.root)
+
+        # Render-client bundles: generated (not committed, §33), needed by both
+        # the wheel and the sdist. Build them onto disk here; the `artifacts`
+        # config in pyproject.toml is what carries the git-ignored bundles past
+        # the VCS-ignore filter into both distributions.
+        self._provision_js(root, os.environ.get("XY_REQUIRE_NODE") == "1")
+
+        # The native core is a wheel-only, per-platform artifact.
+        if self.target_name != "wheel":
+            return
+
         lib_name = _lib_filename()
         dest_dir = root / "python" / "xy" / "_native_lib"
         dest = dest_dir / lib_name
@@ -147,6 +181,53 @@ class CustomBuildHook(BuildHookInterface):
             )
             build_data["pure_python"] = True
             build_data["tag"] = "py3-none-any"
+
+    def _provision_js(self, root: Path, require: bool) -> Optional[Path]:
+        """Return the directory holding the render-client bundles, if available.
+
+        The bundles (`static/index.js`, `static/standalone.js`) are generated,
+        not committed (§33). Build them with `node js/build.mjs` when a Node
+        toolchain is installed; otherwise reuse a copy already on disk — e.g.
+        one carried inside an unpacked sdist, which is what lets
+        `pip install <sdist>` work with no Node. Missing bundles that cannot be
+        built is a hard error only under XY_REQUIRE_NODE (CI distribution
+        builds); otherwise it degrades to a loud skip and the widget/export path
+        raises a clear runtime error on first use (see `xy.widget`).
+        """
+        static_dir = _static_dir(root)
+
+        if os.environ.get("XY_SKIP_NODE") != "1" and shutil.which("node") is not None:
+            # Build only when the dev/build-time toolchain is installed (npm ci
+            # pulls vite/tsc into node_modules); the shipped client itself stays
+            # runtime-dependency-free.
+            if (root / "node_modules").is_dir():
+                try:
+                    subprocess.run(["node", "js/build.mjs"], cwd=root, check=True)
+                except (subprocess.CalledProcessError, OSError) as e:
+                    if require:
+                        raise RuntimeError(f"node js/build.mjs failed: {e}") from e
+            elif require:
+                raise RuntimeError(
+                    "XY_REQUIRE_NODE=1 but node_modules is missing — run "
+                    "`npm ci` before building the distribution."
+                )
+
+        if _bundles_present(static_dir):
+            return static_dir
+        if require:
+            raise RuntimeError(
+                "XY_REQUIRE_NODE=1 but the render-client bundles are missing and "
+                "could not be built. Install Node (https://nodejs.org) and run "
+                "`npm ci && node js/build.mjs`, or build from a published sdist."
+            )
+        print(
+            "xy: building WITHOUT the JS render client (node not found or "
+            "skipped, and no prebuilt bundle present). The notebook widget and "
+            "standalone HTML export will raise a clear error until the client "
+            "is built with `npm ci && node js/build.mjs`.",
+            file=sys.stderr,
+        )
+        return None
 
     def _provision_native(
         self, root: Path, lib_name: str, dest: Path, require: bool

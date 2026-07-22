@@ -1,6 +1,7 @@
-# LF everywhere for the JS client: the committed static/ bundles must compare
-# byte-equal to a fresh `node js/build.mjs` on every platform, including
-# Windows checkouts with autocrlf.
+# LF everywhere for the JS client sources so `node js/build.mjs` produces a
+# reproducible bundle on every platform, including Windows checkouts with
+# autocrlf. (The static/ bundles themselves are generated, not committed — see
+# .gitignore and hatch_build.py.)
 *.js text eol=lf
 *.mjs text eol=lf
 *.ts text eol=lf

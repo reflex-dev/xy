@@ -17,16 +17,21 @@ screen-bounded performance core, but the stable commitments today are narrower:
   widget dependencies stay deferred until `.widget()`/display, and standalone
   HTML export reads its static bundle without importing the widget stack.
 - Published wheels include only the shippable `xy/` package,
-  `.dist-info`, static JavaScript bundles, `py.typed`, and, for native wheels,
-  the Rust core. End users do not need Rust, Node, npm, or a CDN.
+  `.dist-info`, the render-client JavaScript bundles, `py.typed`, and, for native
+  wheels, the Rust core. The JS bundles are a generated artifact (not committed to
+  git): the build hook builds them into the wheel/sdist, so **end users do not need
+  Rust, Node, npm, or a CDN.**
 - Source distributions include the release support surface: docs, tests,
   benchmark harnesses/baselines, scripts, Rust/JS source, and the example apps'
   source (FastAPI and Reflex). Charts are generated live by the apps, so no
-  static chart HTML is committed or packaged.
-- Source installs require a Rust toolchain to build the native core. There is no
-  NumPy fallback: on a platform with no wheel and no local Rust build, importing
-  the compute layer raises a clear, actionable error naming the supported
-  platforms.
+  static chart HTML is committed or packaged. The prebuilt render client is built
+  into the sdist by the hook, so installing from an sdist needs no Node.
+- Building from a raw source checkout (`pip install` from a clone, or the dev
+  workflow) requires a Rust toolchain for the native core and Node/npm for the
+  render client — the same two toolchains CI uses. There is no NumPy fallback: on a
+  platform with no wheel and no local Rust build, importing the compute layer raises
+  a clear, actionable error naming the supported platforms; a missing render client
+  raises a clear error the moment a widget or HTML export needs it.
 - Standalone HTML exports embed the same render client and data payloads used
   by notebooks.
 - Benchmark reports must label rendering modes explicitly: `direct`,
@@ -73,7 +78,7 @@ These must pass before publishing or making a broad performance claim.
 | Matplotlib reference | The reviewed compatibility snapshot matches the pinned released matplotlib reference, and the `xy.pyplot` shim passes its interoperability and dual-engine corpus suites | `python scripts/sync_matplotlib_compat.py --check` and `pytest tests/pyplot` |
 | Rust core | Native kernels pass and lint clean | `cargo test` and `cargo clippy --all-targets -- -D warnings` |
 | Native ABI | C ABI can be loaded from the built core | `python scripts/abi_smoke.py` |
-| JavaScript | Committed bundles match source | `node js/build.mjs --check` |
+| JavaScript | Render client builds cleanly from source | `node js/build.mjs` |
 | Browser render | WebGL smoke reaches real pixels | `python scripts/render_smoke_nonumpy.py <chromium>` |
 | Accessibility / cross-browser | Semantic interaction checks plus tolerant WebGL/layout comparison pass in Chromium, Firefox, and WebKit | `make check-conformance` |
 | Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |

@@ -814,10 +814,12 @@ Where it must run, and what each environment denies us:
 **Bundle size.** The shipped client is a single minified JS bundle —
 `python/xy/static/index.js`, ~277 KB minified / ~76 KB gzipped (vite/oxc; built from
 the TypeScript sources in `js/src`) — with no WASM payload and no lazily-loaded trace
-modules. The one size gate CI enforces is on the **wheel**: `.github/workflows/ci.yml`
-asserts the built wheel is ≤ 15 MB (§33). CI also verifies the committed JS bundles are
-*fresh* (`node js/build.mjs` reproduces them byte-for-byte), but it does not measure
-their bytes.
+modules. It is a **generated artifact, not committed to git** (§33): the hatch build
+hook runs `node js/build.mjs` at packaging time and force-includes the result into the
+wheel and sdist, so a published distribution carries it prebuilt. The one size gate CI
+enforces is on the **wheel**: `.github/workflows/ci.yml` asserts the built wheel is
+≤ 15 MB (§33). CI builds the client fresh from source in every relevant job but does not
+measure its bytes.
 
 *Pending:* a gzipped-size budget on the client bundle, failing the build exactly like a
 perf regression (§12), plus per-trace-family lazy feature modules (Plotly's
@@ -1057,8 +1059,12 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
    is a release failure, not an end-user surprise.
 2. **The JS/WebGL2 render client as bundled static assets** inside the same wheel —
    versioned, no CDN dependency (notebooks are often airgapped; §23's CSP rules
-   apply). A WASM client is a future pure-browser/export path, not the current shipped
-   client.
+   apply). The bundles (`python/xy/static/*.js`) are a **generated artifact, not
+   committed to git**: the Hatchling build hook builds them with `node js/build.mjs`
+   and force-includes them into the wheel and sdist, exactly as it does the native
+   core. Published wheels and sdists carry them prebuilt (end users need no Node);
+   building from a raw clone needs Node, just as it needs Rust for the core. A WASM
+   client is a future pure-browser/export path, not the current shipped client.
 3. **The notebook integration via `anywidget`** — the current standard: one widget
    implementation works across Jupyter, JupyterLab, VS Code, Colab, and Marimo, and
    gives us the binary comm channel (§29's Jupyter row) without maintaining N

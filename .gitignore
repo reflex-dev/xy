@@ -10,3 +10,7 @@ node_modules/
 *.egg-info/
 .web/
 **/assets/xy/*.xyf
+# Generated render-client bundles (§33): built by `node js/build.mjs` and
+# force-included into the wheel/sdist by hatch_build.py, never committed.
+python/xy/static/index.js
+python/xy/static/standalone.js
