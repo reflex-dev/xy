@@ -1289,7 +1289,7 @@ source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Fi
 
 [[package]]
 name = "reflex-site-shared"
-version = "0.0.37.post1.dev0+f79d011d"
+version = "0.0.38"
 source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-site-shared&rev=main#f79d011d07050cfedabff5cc8b3670363617a4d8" }
 dependencies = [
     { name = "email-validator" },
@@ -1709,6 +1709,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pytest-codspeed", marker = "extra == 'codspeed'", specifier = ">=5,<6" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.8" },
+    { name = "starlette", marker = "extra == 'dev'", specifier = ">=0.36" },
     { name = "ty", marker = "extra == 'dev'" },
 ]
 provides-extras = ["dev", "bench", "codspeed"]

@@ -265,9 +265,18 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-022 — Multi-ecosystem dependency vulnerability policy
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: CodeQL and a dated audit do not continuously audit the actual
-  root, docs, adapter, Rust, and JavaScript dependency environments.
+- Status: `IMPLEMENTED`
+- Evidence: [`dependency-auditing.md`](dependency-auditing.md),
+  `spec/testing/dependency-audit-policy.json`,
+  `scripts/dependency_audit.py`, the hard `dependency_audit` job in `ci.yml`,
+  the patched `docs/app/reflex.lock/package.json` and
+  `docs/app/reflex.lock/bun.lock`,
+  `scripts/verify_ci_workflow.py::validate_ci_workflow`,
+  `tests/test_dependency_audit.py`, and
+  `tests/test_verify_ci_workflow.py`.
+- Current gap: closed; every active committed root, docs, adapter, benchmark,
+  Rust, Bun, and npm lock is scanned under one fail-closed policy, while the
+  only historical-lock exclusion is exact and validator-owned.
 - Implemented when: supported scanners audit the relevant Python locks/
   environments, `Cargo.lock`, and `package-lock.json`; reviewed severities fail;
   scanner/database timestamps and machine-readable findings are retained; and

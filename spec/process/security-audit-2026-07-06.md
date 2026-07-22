@@ -188,9 +188,17 @@ path — which pulls in eight transitive crates: `bitflags`, `crc32fast`,
 `Cargo.lock` therefore holds nine third-party packages plus `xy-core`.
 
 The tree is still shallow and single-rooted, but "no third-party Rust crates"
-is no longer an accurate standing control. Follow-up pending: add `cargo audit`
-(or `cargo deny`) to CI now that a third-party tree exists, matching the
-`pip-audit` coverage already run on the Python side.
+is no longer an accurate standing control.
+
+#### Status as of 2026-07-21 (Dependency Audit Follow-up Closed)
+
+The pending dependency-audit follow-up is now closed by the hard
+`dependency_audit` CI job. Pinned OSV-Scanner coverage includes `Cargo.lock`,
+all active Python locks, the root npm lock, and the documentation app's
+committed Bun lock under the reviewed policy in
+`spec/testing/dependency-audit-policy.json`. This dated audit remains historical
+evidence; [`dependency-auditing.md`](../testing/dependency-auditing.md) is the
+durable current contract.
 
 ## Tooling Evidence
 
@@ -230,10 +238,9 @@ is no longer an accurate standing control. Follow-up pending: add `cargo audit`
 - The Reflex demo live-drilldown endpoint is local/demo infrastructure and is
   not authenticated or rate-limited as a production API. Add auth, quotas, and
   request-size policy before exposing an equivalent service publicly.
-- Bun was not installed locally and the Reflex-generated frontend uses
-  `bun.lock`, not an npm lockfile, so the JS dependency advisory audit for the
-  demo app could not be run faithfully here. Run `bun audit` in an environment
-  with Bun installed.
+- Bun was not installed during this dated manual audit, so its generated lock
+  was not checked at that time. The current hard dependency lane now scans the
+  committed `docs/app/reflex.lock/bun.lock` directly with OSV-Scanner.
 - This audit did not perform browser fuzzing, GPU-driver fuzzing, native memory
   sanitizer runs, or a hosted-app penetration test.
 

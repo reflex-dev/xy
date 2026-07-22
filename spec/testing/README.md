@@ -20,6 +20,9 @@ The testing specification has three responsibilities:
   coverage and enforcement. IDs remain in place after completion; incomplete
   entries are explicitly `NOT IMPLEMENTED`, while closed entries cite their
   evidence and are marked `IMPLEMENTED`.
+- [`dependency-auditing.md`](dependency-auditing.md) defines the hard
+  multi-ecosystem lock inventory, severity and exception policy, and retained
+  vulnerability evidence.
 
 ## Status vocabulary
 

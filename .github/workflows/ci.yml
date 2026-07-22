@@ -14,6 +14,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  dependency_audit:
+    name: Multi-ecosystem dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate dependency audit policy
+        run: python3 scripts/dependency_audit.py validate
+      - name: Install pinned OSV-Scanner
+        env:
+          OSV_SCANNER_URL: "https://github.com/google/osv-scanner/releases/download/v2.4.0/osv-scanner_linux_amd64"
+          OSV_SCANNER_SHA256: "15314940c10d26af9c6649f150b8a47c1262e8fc7e17b1d1029b0e479e8ed8a0"
+        run: |
+          mkdir -p .dependency-audit/bin dependency-audit
+          curl --fail --location --retry 3 --retry-all-errors "$OSV_SCANNER_URL" --output .dependency-audit/bin/osv-scanner
+          printf '%s  %s\n' "$OSV_SCANNER_SHA256" .dependency-audit/bin/osv-scanner | sha256sum --check --strict
+          chmod +x .dependency-audit/bin/osv-scanner
+      - name: Audit every active dependency environment
+        run: >-
+          python3 scripts/dependency_audit.py scan --scanner .dependency-audit/bin/osv-scanner --output-dir dependency-audit
+      - name: Retain dependency audit evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dependency-audit
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            dependency-audit/*.json
+            dependency-audit/*.txt
+
   matplotlib_reference:
     name: Matplotlib 3.11 reference compatibility
     runs-on: ubuntu-latest

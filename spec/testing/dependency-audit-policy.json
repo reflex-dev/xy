@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "scanner": {
+    "name": "osv-scanner",
+    "version": "2.4.0",
+    "artifacts": {
+      "darwin-arm64": {
+        "url": "https://github.com/google/osv-scanner/releases/download/v2.4.0/osv-scanner_darwin_arm64",
+        "sha256": "9ca3185ad63e9ab54f7cb90f46a7362be02d80e37f0123d095a54355ea202f5d"
+      },
+      "linux-x86_64": {
+        "url": "https://github.com/google/osv-scanner/releases/download/v2.4.0/osv-scanner_linux_amd64",
+        "sha256": "15314940c10d26af9c6649f150b8a47c1262e8fc7e17b1d1029b0e479e8ed8a0"
+      }
+    }
+  },
+  "fail_severities": [
+    "CRITICAL",
+    "HIGH",
+    "MODERATE",
+    "LOW",
+    "UNKNOWN"
+  ],
+  "environments": [
+    {
+      "subsystem": "root-python",
+      "path": "uv.lock",
+      "format": "uv.lock"
+    },
+    {
+      "subsystem": "docs-python",
+      "path": "docs/app/uv.lock",
+      "format": "uv.lock"
+    },
+    {
+      "subsystem": "docs-javascript",
+      "path": "docs/app/reflex.lock/bun.lock",
+      "format": "bun.lock"
+    },
+    {
+      "subsystem": "reflex-adapter-python",
+      "path": "python/reflex-xy/uv.lock",
+      "format": "uv.lock"
+    },
+    {
+      "subsystem": "benchmark-python",
+      "path": "benchmarks/requirements-ci.lock",
+      "format": "requirements.txt"
+    },
+    {
+      "subsystem": "native-rust",
+      "path": "Cargo.lock",
+      "format": "Cargo.lock"
+    },
+    {
+      "subsystem": "browser-javascript",
+      "path": "package-lock.json",
+      "format": "package-lock.json"
+    }
+  ],
+  "excluded_locks": [
+    {
+      "path": "benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/uv.lock",
+      "owner": "@reflex-dev/xy",
+      "reason": "Immutable historical launch-measurement evidence; it is never installed or executed by a current subsystem."
+    }
+  ],
+  "exceptions": []
+}
