@@ -405,7 +405,14 @@ Not yet safe:
   every chart nonblank when visited, recovery p95 ~8 ms, heap sublinear
   (28 MB at 50 charts) — but a layout keeping more than the budget visible
   at once can still hit browser-side eviction, so do not claim unbounded
-  simultaneous live charts.
+  simultaneous live charts. The browser cap is process-wide (shared across a
+  tab's iframes), so the governor shares one budget across **same-origin**
+  frames over a `BroadcastChannel` (§18): a chart-per-iframe page (the
+  `examples/fastapi` gallery) stays under the cap instead of flooding the
+  console with "Too many active WebGL contexts". Cross-origin and
+  `sandbox`-without-`allow-same-origin` frames cannot share the channel and
+  fall back to per-document budgeting — many such isolated frames in one tab
+  can still collectively exceed the cap.
 
 ## Hardening Backlog
 

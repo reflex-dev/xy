@@ -1925,16 +1925,24 @@ views: new Set(),
 seq: 1,
 hiddenReleaseChannel: null,
 hiddenReleaseQueue: [],
+frameId: null,
+channel: null,
+foreign: null,
+_announcedLive: -1,
+_crossFrameReady: false,
+_rebalanceScheduled: false,
 budget() {
 const v = typeof window !== "undefined" ? window.XY_CONTEXT_BUDGET : null;
 return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 12;
 },
 register(view) {
+this._initCrossFrame();
 this.views.add(view);
 },
 unregister(view) {
 view._ctxPendingReservation = false;
 this.views.delete(view);
+this._announceLive();
 },
 reserve(requester) {
 const live = [];
@@ -1965,9 +1973,89 @@ if (view._releaseContext()) over -= 1;
 },
 acquired(requester) {
 requester._ctxPendingReservation = false;
+this._rebalance();
+this._announceLive();
 },
 cancel(requester) {
 requester._ctxPendingReservation = false;
+},
+_initCrossFrame() {
+if (this._crossFrameReady) return;
+this._crossFrameReady = true;
+this.foreign = new Map();
+if (typeof BroadcastChannel === "undefined") return;
+try {
+this.frameId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+this.channel = new BroadcastChannel("xy-webgl-context-governor");
+this.channel.onmessage = (event) => this._onForeignMessage(event.data);
+this._post({ t: "hello", id: this.frameId });
+if (typeof window !== "undefined" && window.addEventListener) {
+window.addEventListener("pagehide", () => this._post({ t: "bye", id: this.frameId }));
+window.addEventListener("pageshow", (event) => {
+if (!event || !event.persisted) return;
+this.foreign.clear();
+this._announcedLive = -1;
+this._post({ t: "hello", id: this.frameId });
+this._announceLive(true);
+});
+}
+} catch (_err) {
+this.channel = null;
+}
+},
+_post(msg) {
+try {
+if (this.channel) this.channel.postMessage(msg);
+} catch (_err) {
+
+}
+},
+_onForeignMessage(msg) {
+if (!msg || !this.foreign || msg.id === this.frameId) return;
+if (msg.t === "live") {
+this.foreign.set(msg.id, msg.n | 0);
+this._rebalance();
+} else if (msg.t === "hello") {
+this._announceLive(true);
+} else if (msg.t === "bye") {
+this.foreign.delete(msg.id);
+}
+},
+localLive() {
+let n = 0;
+for (const view of this.views) {
+if (view.gl && !view._glLost && !view._destroyed) n += 1;
+}
+return n;
+},
+foreignLive() {
+let n = 0;
+if (this.foreign) for (const count of this.foreign.values()) n += count;
+return n;
+},
+_announceLive(force) {
+if (!this.channel) return;
+const n = this.localLive();
+if (!force && n === this._announcedLive) return;
+this._announcedLive = n;
+this._post({ t: "live", id: this.frameId, n });
+},
+_rebalance() {
+if (this.localLive() + this.foreignLive() - this.budget() <= 0) return;
+let target = null;
+for (const view of this.views) {
+if (view.gl && !view._glLost && !view._destroyed && !view._ctxVisible) {
+if (!target || (view._ctxSeenSeq || 0) < (target._ctxSeenSeq || 0)) target = view;
+}
+}
+if (!target || !target._releaseContext()) return;
+if (this.localLive() + this.foreignLive() - this.budget() > 0 && !this._rebalanceScheduled) {
+this._rebalanceScheduled = true;
+setTimeout(() => {
+this._rebalanceScheduled = false;
+this._rebalance();
+}, 0);
+}
 },
 scheduleHiddenReleases() {
 if (this.hiddenReleaseChannel !== null) return;
@@ -2076,6 +2164,8 @@ this._glLost = false;
 this._ctxReleasedExt = null;
 this._ctxReleases = 0;
 this._ctxRecoveries = 0;
+this._ctxLostPending = false;
+this._ctxRecoverRequested = false;
 this._ctxVisible = xyInitiallyVisible(el);
 XY_CONTEXT_GOVERNOR.register(this);
 if (this._ctxVisible) this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
@@ -2577,7 +2667,9 @@ if (this._destroyed) return;
 const governedRelease = this.canvas.dataset.xyCtx === "released";
 if (this._glLost && !governedRelease) return;
 this._glLost = true;
+this._ctxLostPending = false;
 if (!governedRelease) this.canvas.dataset.xyCtx = "lost";
+XY_CONTEXT_GOVERNOR._announceLive();
 this._contextLossCount += 1;
 this._contextRecoveryError = null;
 this.root.dataset.xyContextState = "lost";
@@ -2624,6 +2716,12 @@ this._recoverContext();
 }
 }, 0);
 }
+if (governedRelease && this._ctxRecoverRequested && !this._destroyed && this._ctxVisible) {
+this._ctxRecoverRequested = false;
+setTimeout(() => {
+if (!this._destroyed && this._glLost && this._ctxVisible) this._recoverContext();
+}, 0);
+}
 });
 this._listen(this.canvas, "webglcontextrestored", () => {
 if (this._destroyed || this._contextRecoveryError) return;
@@ -2665,6 +2763,7 @@ this._contextRecoveryError = null;
 this._ctxRecoveryDelay = 0;
 this.canvas.dataset.xyCtx = "live";
 this.root.dataset.xyContextState = "ready";
+XY_CONTEXT_GOVERNOR._announceLive();
 this._scheduleViewRequest(this.view, { delay: 0 });
 this._dropContextSnapshot();
 this._dispatchChartEvent("context_restored", {
@@ -2681,10 +2780,12 @@ this._snapshotBeforeRelease();
 this._ctxReleasedExt = ext;
 this._ctxReleases += 1;
 this._glLost = true;
+this._ctxLostPending = true;
 this.canvas.dataset.xyCtx = "released";
 if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
 ext.loseContext();
+XY_CONTEXT_GOVERNOR._announceLive();
 return true;
 }
 _snapshotBeforeRelease() {
@@ -2746,6 +2847,10 @@ this._ctxSnapshot = null;
 }
 _recoverContext() {
 if (this._destroyed || !this._glLost) return;
+if (this._ctxReleasedExt && this._ctxLostPending) {
+this._ctxRecoverRequested = true;
+return;
+}
 this._ctxRecoveries += 1;
 if (this._ctxReleasedExt) {
 const ext = this._ctxReleasedExt;
@@ -2816,6 +2921,7 @@ return;
 }
 this._ctxRecoveryDelay = 0;
 this.canvas.dataset.xyCtx = "live";
+XY_CONTEXT_GOVERNOR._announceLive();
 this._scheduleViewRequest(this.view, { delay: 0 });
 this._dropContextSnapshot();
 }
@@ -2852,6 +2958,8 @@ if (this._ctxVisible) {
 this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
 if (this._glLost && !this._destroyed) this._recoverContext();
 if (this._healStaleTheme()) this.draw();
+} else if (!this._destroyed) {
+XY_CONTEXT_GOVERNOR._rebalance();
 }
 },
 { rootMargin: "25% 0px 25% 0px" },

@@ -47,11 +47,34 @@ const UNITLESS_STYLE_PROPS = new Set([
 // view ever releases, so pages with few charts behave exactly as before.
 // Every decision is observable (§28): `data-xy-ctx` on the canvas reads
 // "live" | "released" | "lost", and views count releases/recoveries.
+//
+// The browser cap is *process-wide* — shared across every same-origin iframe —
+// but the machinery above is per-document, so it sees only its own charts. A
+// page that puts each chart in its own iframe (docs sites, SaaS dashboards,
+// the FastAPI gallery example) would therefore blow the cap: no per-document
+// governor ever releases (each frame is under budget on its own), the browser
+// LRU-evicts live charts, and the evicted charts fight to recover and re-evict
+// — a scroll-driven "Too many active WebGL contexts" storm. The governor
+// closes that gap by sharing one budget across same-origin frames over a
+// BroadcastChannel (§18): each frame announces its live-context count, and any
+// frame over the shared budget sheds its own *off-screen* views (never a
+// visible one — a neighbor loading must not blank a chart the user is looking
+// at). Cross-origin frames cannot share a channel and fall back to the
+// per-document behavior. Over-counting a crashed frame that never said goodbye
+// is safe: it only lowers the effective budget, releasing a few extra
+// off-screen contexts that revive on demand — it never evicts or blanks.
 const XY_CONTEXT_GOVERNOR = {
   views: new Set(),
   seq: 1,
   hiddenReleaseChannel: null,
   hiddenReleaseQueue: [],
+  // Cross-frame coordination (initialized lazily on first register()).
+  frameId: null,
+  channel: null,
+  foreign: null, // Map<frameId, liveCount> reported by other same-origin frames
+  _announcedLive: -1,
+  _crossFrameReady: false,
+  _rebalanceScheduled: false,
   budget() {
     const v = typeof window !== "undefined" ? window.XY_CONTEXT_BUDGET : null;
     // 12 leaves headroom under Chrome's ~16 so host-page GL (maps, editors)
@@ -59,11 +82,13 @@ const XY_CONTEXT_GOVERNOR = {
     return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 12;
   },
   register(view) {
+    this._initCrossFrame();
     this.views.add(view);
   },
   unregister(view) {
     view._ctxPendingReservation = false;
     this.views.delete(view);
+    this._announceLive();
   },
   // Called before a view acquires (or re-acquires) a GL context. Releases
   // least-recently-visible off-screen views until the requester fits the
@@ -103,9 +128,129 @@ const XY_CONTEXT_GOVERNOR = {
   },
   acquired(requester) {
     requester._ctxPendingReservation = false;
+    // A context just came live. Shed our own off-screen views if that pushed
+    // the shared budget over, then tell peer frames the new count so theirs
+    // can shed too (the newly visible chart stays; off-screen ones give way).
+    this._rebalance();
+    this._announceLive();
   },
   cancel(requester) {
     requester._ctxPendingReservation = false;
+  },
+  // --- Cross-frame budget sharing over BroadcastChannel (§18) ---------------
+  // Same-origin frames share one WebGL-context budget so a per-chart-iframe
+  // page cannot collectively exceed the browser's process-wide cap. Guarded
+  // and lazy: a lone top-level page opens a channel but never hears a peer, so
+  // foreignLive() stays 0 and every path below is a no-op — identical to the
+  // per-document behavior. Cross-origin frames get their own opaque channel
+  // scope (or none) and likewise fall back.
+  _initCrossFrame() {
+    if (this._crossFrameReady) return;
+    this._crossFrameReady = true;
+    this.foreign = new Map();
+    if (typeof BroadcastChannel === "undefined") return;
+    try {
+      this.frameId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      this.channel = new BroadcastChannel("xy-webgl-context-governor");
+      this.channel.onmessage = (event) => this._onForeignMessage(event.data);
+      // Announce arrival so already-open frames re-advertise their counts, and
+      // drop our contribution from theirs when we go away.
+      this._post({ t: "hello", id: this.frameId });
+      if (typeof window !== "undefined" && window.addEventListener) {
+        // `pagehide` fires on real unload AND when the document is frozen into
+        // the back/forward cache; either way peers should stop counting us (a
+        // frozen frame can't respond to shed requests). `pageshow` with
+        // persisted=true is a bfcache restore: re-announce so peers add us back
+        // — without it a restored frame stays absent from the shared budget and
+        // the page can silently exceed the browser cap.
+        window.addEventListener("pagehide", () => this._post({ t: "bye", id: this.frameId }));
+        window.addEventListener("pageshow", (event) => {
+          if (!event || !event.persisted) return;
+          // Peers may have come and gone while we were frozen, and a departed
+          // peer sent its `bye` to a channel we could not hear. Drop the stale
+          // map and rebuild it from live peers' replies to our `hello` rather
+          // than counting contexts that no longer exist.
+          this.foreign.clear();
+          this._announcedLive = -1; // force the announcement below to re-send
+          this._post({ t: "hello", id: this.frameId }); // relearn peers' counts
+          this._announceLive(true); // and re-advertise ours
+        });
+      }
+    } catch (_err) {
+      this.channel = null; // sandboxed context: stay per-document
+    }
+  },
+  _post(msg) {
+    try {
+      if (this.channel) this.channel.postMessage(msg);
+    } catch (_err) {
+      /* channel closed mid-teardown */
+    }
+  },
+  _onForeignMessage(msg) {
+    if (!msg || !this.foreign || msg.id === this.frameId) return;
+    if (msg.t === "live") {
+      this.foreign.set(msg.id, msg.n | 0);
+      this._rebalance();
+    } else if (msg.t === "hello") {
+      // A frame joined: re-advertise so it learns our current count.
+      this._announceLive(true);
+    } else if (msg.t === "bye") {
+      this.foreign.delete(msg.id);
+    }
+  },
+  localLive() {
+    let n = 0;
+    for (const view of this.views) {
+      if (view.gl && !view._glLost && !view._destroyed) n += 1;
+    }
+    return n;
+  },
+  foreignLive() {
+    let n = 0;
+    if (this.foreign) for (const count of this.foreign.values()) n += count;
+    return n;
+  },
+  // Broadcast this frame's live-context count when it changes (deduped so a
+  // burst of releases collapses to one message). `force` re-sends the current
+  // count in reply to a peer's hello even when it is unchanged.
+  _announceLive(force) {
+    if (!this.channel) return;
+    const n = this.localLive();
+    if (!force && n === this._announcedLive) return;
+    this._announcedLive = n;
+    this._post({ t: "live", id: this.frameId, n });
+  },
+  // Shared budget crossed (a peer announced, we acquired, or one of our charts
+  // scrolled off): release the single least-recently-visible *off-screen* view.
+  // Visible views are never released here — the shared cap can only be honored
+  // by dropping off-screen contexts, and blanking a chart the user is looking
+  // at because a sibling frame loaded is worse than the documented
+  // >budget-simultaneously-visible limit.
+  //
+  // One release per call, not the whole computed excess: several frames all see
+  // the same over-budget snapshot at once, and if each dropped the full deficit
+  // they would collectively over-release (N frames each shedding K → N×K gone).
+  // Shedding one and re-arming on a task lets every frame's release announce and
+  // be observed before the next round, so the page converges on the budget
+  // instead of overshooting it. Re-arming (rather than stopping) also means a
+  // frame that must shed several never under-releases when peers are quiet.
+  _rebalance() {
+    if (this.localLive() + this.foreignLive() - this.budget() <= 0) return;
+    let target = null;
+    for (const view of this.views) {
+      if (view.gl && !view._glLost && !view._destroyed && !view._ctxVisible) {
+        if (!target || (view._ctxSeenSeq || 0) < (target._ctxSeenSeq || 0)) target = view;
+      }
+    }
+    if (!target || !target._releaseContext()) return;
+    if (this.localLive() + this.foreignLive() - this.budget() > 0 && !this._rebalanceScheduled) {
+      this._rebalanceScheduled = true;
+      setTimeout(() => {
+        this._rebalanceScheduled = false;
+        this._rebalance();
+      }, 0);
+    }
   },
   // Releasing a context takes a synchronous framebuffer readback. Queue one
   // chart per task when a document is hidden so visibilitychange itself stays
@@ -242,6 +387,11 @@ class ChartView {
     this._ctxReleasedExt = null;
     this._ctxReleases = 0;
     this._ctxRecoveries = 0;
+    // A governed release's webglcontextlost event is dispatched a task later;
+    // restoreContext() called before it lands is silently dropped by Chromium,
+    // so recovery that races ahead is deferred until the loss handler fires.
+    this._ctxLostPending = false;
+    this._ctxRecoverRequested = false;
     this._ctxVisible = xyInitiallyVisible(el);
     XY_CONTEXT_GOVERNOR.register(this);
     if (this._ctxVisible) this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
@@ -846,9 +996,14 @@ class ChartView {
       // that first governed event; only ignore duplicate ungoverned losses.
       if (this._glLost && !governedRelease) return;
       this._glLost = true;
+      this._ctxLostPending = false; // the loss event has now dispatched
       // Governed releases already stamped "released"; anything else is a
       // browser-side eviction/driver reset (§28: the difference stays legible).
       if (!governedRelease) this.canvas.dataset.xyCtx = "lost";
+      // Either way a live context just went away; let peer frames know the
+      // shared budget has room (a governed release already announced; this is
+      // deduped, and it is what tells peers about a browser-side eviction).
+      XY_CONTEXT_GOVERNOR._announceLive();
       this._contextLossCount += 1;
       this._contextRecoveryError = null;
       this.root.dataset.xyContextState = "lost";
@@ -906,6 +1061,17 @@ class ChartView {
           }
         }, 0);
       }
+      // A governed release whose re-acquire raced ahead of this event deferred
+      // its restoreContext() (see _recoverContext). Schedule the retry on the
+      // next task rather than calling it here: restoreContext() invoked
+      // synchronously inside the webglcontextlost dispatch is also ignored by
+      // Chromium — it must run after the loss event fully unwinds.
+      if (governedRelease && this._ctxRecoverRequested && !this._destroyed && this._ctxVisible) {
+        this._ctxRecoverRequested = false;
+        setTimeout(() => {
+          if (!this._destroyed && this._glLost && this._ctxVisible) this._recoverContext();
+        }, 0);
+      }
     });
     this._listen(this.canvas, "webglcontextrestored", () => {
       // A failed recovery replaced the canvas with the error message; a later
@@ -959,6 +1125,7 @@ class ChartView {
       this._ctxRecoveryDelay = 0;
       this.canvas.dataset.xyCtx = "live";
       this.root.dataset.xyContextState = "ready";
+      XY_CONTEXT_GOVERNOR._announceLive(); // context recovered; peers rebalance
       this._scheduleViewRequest(this.view, { delay: 0 });
       this._dropContextSnapshot(); // live frame is back; retire the stand-in
       this._dispatchChartEvent("context_restored", {
@@ -981,10 +1148,12 @@ class ChartView {
     this._ctxReleasedExt = ext;
     this._ctxReleases += 1;
     this._glLost = true; // synchronous: the lost *event* arrives as a task
+    this._ctxLostPending = true; // ...and restoreContext() must wait for it
     this.canvas.dataset.xyCtx = "released";
     if (this._raf) cancelAnimationFrame(this._raf);
     this._raf = null;
     ext.loseContext();
+    XY_CONTEXT_GOVERNOR._announceLive(); // one fewer live context on this frame
     return true;
   }
 
@@ -1072,6 +1241,15 @@ class ChartView {
   // fresh one and rebuilt from the retained spec + payload.
   _recoverContext() {
     if (this._destroyed || !this._glLost) return;
+    // Governed release, but its webglcontextlost event has not dispatched yet
+    // (scrolled back into view in the same task it was released). Chromium
+    // drops a restoreContext() issued before the loss event, stranding the
+    // context lost forever — so defer; the loss handler re-invokes us once the
+    // event lands (and restoreContext is then honored).
+    if (this._ctxReleasedExt && this._ctxLostPending) {
+      this._ctxRecoverRequested = true;
+      return;
+    }
     this._ctxRecoveries += 1;
     if (this._ctxReleasedExt) {
       const ext = this._ctxReleasedExt;
@@ -1163,6 +1341,7 @@ class ChartView {
     }
     this._ctxRecoveryDelay = 0;
     this.canvas.dataset.xyCtx = "live";
+    XY_CONTEXT_GOVERNOR._announceLive(); // rebuilt on a fresh canvas; peers rebalance
     this._scheduleViewRequest(this.view, { delay: 0 });
     this._dropContextSnapshot();
   }
@@ -1214,6 +1393,11 @@ class ChartView {
           this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
           if (this._glLost && !this._destroyed) this._recoverContext();
           if (this._healStaleTheme()) this.draw();
+        } else if (!this._destroyed) {
+          // Now off-screen and releasable: if a sibling frame has pushed the
+          // shared budget over, give this context back rather than waiting for
+          // the browser to evict some other frame's visible chart.
+          XY_CONTEXT_GOVERNOR._rebalance();
         }
       },
       { rootMargin: "25% 0px 25% 0px" },
