@@ -33,6 +33,30 @@ else:
     _Host = object
 
 
+# Trace kinds whose emitters never read the axis ranges, so their append emit
+# key (§4 append reuse) omits them and a neighbor's growing axis does not bust
+# their cached emission. Membership is pinned by
+# tests/test_streaming.py::test_range_free_kinds_emit_identically_across_ranges,
+# which emits every kind here under disjoint range pairs and asserts
+# byte-identical output — add a kind ONLY together with a builder there.
+# Unknown kinds default to range-dependent keying, the safe direction.
+RANGE_FREE_KINDS = frozenset(
+    {
+        "hexbin",
+        "heatmap",
+        "segments",
+        "triangle_mesh",
+        "histogram",
+        "bar",
+        "column",
+        "box",
+        "box_whisker",
+        "box_median",
+        "violin",
+    }
+)
+
+
 class _AppendCacheBust(Exception):
     """Positional splice invalidated mid-build (column-table drift) — the
     append build retries once with an empty cache, which cannot bust."""
@@ -302,23 +326,15 @@ class PayloadMixin(_Host):
     def _trace_emit_key(self, t: Trace, xr: tuple, yr: tuple, px_width: int) -> tuple:
         """Everything that determines a trace's emitted bytes and fragment.
 
-        Range-free emissions (verified per emitter) key only on data revision,
-        so a neighbor's growing axis does not bust them; range-dependent tiers
-        (M4 decimation, density grids) key on the axis ranges they bin over.
+        Range-free emissions (pinned per kind by the RANGE_FREE_KINDS test)
+        key only on data revision, so a neighbor's growing axis does not bust
+        them; range-dependent tiers (M4 decimation, density grids) key on the
+        axis ranges they bin over.
         """
         range_free = (
             (t.kind == "scatter" and not t.use_density())
             or (t.kind in {"line", "area", "error_band"} and t.n_points <= DECIMATION_THRESHOLD)
-            or t.kind
-            in {
-                "hexbin",
-                "heatmap",
-                "segments",
-                "triangle_mesh",
-                "rect",
-                "histogram",
-                "bar_compact",
-            }
+            or t.kind in RANGE_FREE_KINDS
         )
         return (
             t.data_rev,

@@ -253,7 +253,14 @@ absent means f32), and, for offset-encoded geometry,
 `offset`/`scale`/`kind`. Split entries additionally carry `cid`, a
 deterministic content identity (`t<trace>.<emit-key digest>.<ordinal>`,
 assigned per trace scope by the writer): same cid ⇒ same bytes, because the
-digest covers everything that feeds the emission. An `append` message may
+digest covers everything that feeds the emission. Cross-build stability is a
+**requirement, not an accident of the digest**: independent builds over the
+same inputs must derive identical cids, because every baseline reset (new
+subscriber first paint, reopen sync, `refresh` reply) re-ships columns under
+the cids the next append will address, and a client mounted from reopen
+state resolves the following push against them. Salting the digest or
+feeding it any build-local input would silently degrade every reset and
+multi-client stream to per-tick `refresh` round-trips. An `append` message may
 ship an entry with `cid` and **no** `buf` — the client resolves it from the
 payload it last applied (§4 append reuse) and normalizes the table back to
 `buf: i` before use, so `_columnView`, context restore, and the animation

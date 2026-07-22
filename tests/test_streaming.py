@@ -423,6 +423,74 @@ def test_append_range_growth_busts_range_dependent_neighbors_only():
     assert fig._append_emit_cache[fig.traces[2].id] is direct_cache
 
 
+# The range-free claim, pinned. `_trace_emit_key` omits the axis ranges for
+# the kinds below, so the append emit cache serves their cached bytes across
+# range changes — sound only while their emitters truly never read the
+# ranges. Each builder constructs every kind the claim covers; the test
+# emits each trace under two disjoint range pairs and asserts the emission
+# (spec fragment, column table incl. cids, buffer bytes) is identical. A
+# kind added to `RANGE_FREE_KINDS` without a builder here fails the
+# coverage test; an emitter that grows range dependence fails the emission
+# test.
+_RANGE_FREE_BUILDERS = {
+    # Conditional direct tiers (range-free below their aggregation
+    # thresholds — the key condition in `_trace_emit_key`).
+    "scatter_direct": lambda f: f.scatter(np.arange(20.0), np.arange(20.0)),
+    "line_direct": lambda f: f.line(np.arange(20.0), np.sin(np.arange(20.0))),
+    "area": lambda f: f.area([0.0, 1.0, 2.0], [1.0, 2.0, 1.5]),
+    "error_band": lambda f: f.error_band([0.0, 1.0, 2.0], [1.0, 2.0, 1.5], [2.0, 3.0, 2.5]),
+    # Always range-free kinds (`RANGE_FREE_KINDS`).
+    "hexbin": lambda f: f.hexbin(np.arange(200.0) % 17.0, np.arange(200.0) % 13.0, gridsize=6),
+    "heatmap": lambda f: f.heatmap([[1.0, 2.0], [3.0, 4.0]]),
+    "segments": lambda f: f.segments(x0=[0.0, 1.0], y0=[0.0, 1.0], x1=[1.0, 2.0], y1=[1.0, 0.0]),
+    "triangle_mesh": lambda f: f.triangle_mesh(
+        x0=[0.0], y0=[0.0], x1=[1.0], y1=[0.0], x2=[0.5], y2=[1.0]
+    ),
+    "histogram": lambda f: f.histogram(np.random.default_rng(7).normal(size=200)),
+    "bar": lambda f: f.bar(["a", "b", "c"], [1.0, 2.0, 3.0]),
+    "column": lambda f: f.column(["a", "b"], [1.0, 2.0]),
+    "box": lambda f: f.box([[1.0, 2.0, 3.0], [2.0, 3.0, 4.0]]),  # +whisker/median
+    "violin": lambda f: f.violin([[1.0, 2.0, 3.0, 2.5], [2.0, 3.0, 4.0, 3.5]]),
+}
+
+
+def _range_free_fig(case: str) -> Figure:
+    fig = Figure()
+    _RANGE_FREE_BUILDERS[case](fig)
+    return fig
+
+
+@pytest.mark.parametrize("case", sorted(_RANGE_FREE_BUILDERS))
+def test_range_free_kinds_emit_identically_across_ranges(case):
+    from xy._payload import _PayloadWriter
+
+    fig = _range_free_fig(case)
+    px = fig._resolve_px_width(None)
+    disjoint = (((0.0, 1.0), (0.0, 1.0)), ((1e6, 2e6), (-5e5, -4e5)))
+    for t in fig.traces:
+        keys, emissions = [], []
+        for xr, yr in disjoint:
+            pw = _PayloadWriter(split=True)
+            entry, _record = fig._emit_trace_scoped(t, pw, xr, yr, px)
+            keys.append(fig._trace_emit_key(t, xr, yr, px))
+            emissions.append((entry, pw.columns, [bytes(b) for b in pw.buffers()]))
+        # The key claims range independence...
+        assert keys[0] == keys[1], t.kind
+        # ...and the emitter honors it: same fragment, same column table
+        # (cids included — the cross-build identity §5 relies on), same bytes.
+        assert emissions[0] == emissions[1], t.kind
+
+
+def test_range_free_kind_list_is_fully_pinned():
+    from xy._payload import RANGE_FREE_KINDS
+
+    covered = set()
+    for case in _RANGE_FREE_BUILDERS:
+        covered |= {t.kind for t in _range_free_fig(case).traces}
+    missing = RANGE_FREE_KINDS - covered
+    assert not missing, f"range-free kinds without a pinned builder: {sorted(missing)}"
+
+
 def test_refresh_request_returns_full_append_shaped_payload():
     from xy.channel import handle_message
 

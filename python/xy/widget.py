@@ -119,7 +119,14 @@ class FigureWidget(anywidget.AnyWidget):
         as cid-only addressing (§4 append reuse). Notebook-reopen state (the
         synced spec/buffers traits) re-syncs as a complete payload on a
         debounce, so a saved output is at most `REOPEN_SYNC_INTERVAL_S` stale
-        instead of paying a full-payload trait sync every tick."""
+        instead of paying a full-payload trait sync every tick.
+
+        The debounce timer needs an asyncio event loop running in the
+        *calling* thread (the Jupyter kernel's main thread always has one).
+        Without one — plain scripts, worker threads — there is nothing to
+        defer to, so every append re-syncs the reopen state inline: still
+        correct, but the stream pays a full-payload trait sync per tick, so
+        high-rate producers should append from the loop thread."""
         msg, buffers = self._figure.append(
             trace_id,
             x,
