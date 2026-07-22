@@ -1470,6 +1470,27 @@ const dia = s.sizeMode === 1 && s.sizeRange
 const k = (s.n * Math.PI * dia * dia) / (4 * winScreenArea);
 return k > 1 ? 1 - Math.pow(1 - band, 1 / k) : band;
 }
+function lodSampleForView(view, g) {
+const cache = g.densityCache || (g.density ? [g.density] : []);
+let contained = null;
+let fallback = null;
+let fallbackAlpha = 0;
+const seen = new Set();
+for (const d of cache) {
+const o = d && d.overlay;
+if (!o || !o.n || !o.win || seen.has(o)) continue;
+seen.add(o);
+if (view._viewInside(o.win)) {
+if (!contained || lodWindowArea(o.win) < lodWindowArea(contained.win)) contained = o;
+} else if (view._viewOverlaps(o.win)) {
+const a = lodSampleViewAlpha(view, o);
+if (a > fallbackAlpha) { fallback = o; fallbackAlpha = a; }
+}
+}
+if (contained) return { overlay: contained, alpha: 1 };
+if (fallback && fallbackAlpha > 0) return { overlay: fallback, alpha: fallbackAlpha };
+return null;
+}
 function lodDensityForView(view, g) {
 const cache = g.densityCache || (g.density ? [g.density] : []);
 let best = null;
@@ -1520,7 +1541,13 @@ drop = i;
 }
 if (drop < 0) break;
 const old = g.densityCache.splice(drop, 1)[0];
-if (!lodDensityPinned(g, old)) view.gl.deleteTexture(old.tex);
+if (!lodDensityPinned(g, old)) {
+view.gl.deleteTexture(old.tex);
+if (old.overlay && old.overlay !== g.sampleOverlay) {
+view._destroySampleOverlay(old.overlay);
+old.overlay = null;
+}
+}
 }
 }
 function lodApplyDrill(view, g, upd, buffers) {
@@ -1622,9 +1649,12 @@ gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.density_val.buf]), gl.STA
 d.dlut = view._lut(upd.density_colormap || "viridis");
 const first = d.lodBlend === undefined;
 d.lodBlend = Math.min(1, upd.lod_blend ?? 0);
-if (first) d.lodBlendShown = d.lodBlend;
+d._lodBlendNative = d.lodBlend;
+if (fresh) d.lodBlendShown = 1;
+else if (first) d.lodBlendShown = d.lodBlend;
 } else {
 d.lodBlend = 0;
+d._lodBlendNative = 0;
 }
 if (fresh) {
 g._drillFadeStart = view._now();
@@ -1717,6 +1747,9 @@ if (g._drillShownAlpha != null) return g._drillShownAlpha;
 return g._drillWasInside ? 1 : 0;
 }
 function lodEnterDrillContinuous(view, g) {
+if (g.drill && g.drill.dBuf && g.drill._lodBlendNative !== undefined) {
+g.drill.lodBlend = g.drill._lodBlendNative;
+}
 const alpha = lodDrillShownAlpha(view, g);
 g._drillShownAlpha = alpha;
 g._drillExitFadeStart = null;
@@ -1724,6 +1757,7 @@ g._drillFadeStart =
 alpha >= 1 ? null : view._now() - LOD_ENTRY_FADE_MS * lodFadeInvert(alpha);
 }
 function lodBeginDrillExitContinuous(view, g) {
+if (g.drill && g.drill.dBuf) g.drill.lodBlend = 1;
 if (g._drillExitFadeStart != null) return;
 const alpha = lodDrillShownAlpha(view, g);
 g._drillShownAlpha = alpha;
@@ -1792,53 +1826,37 @@ g._drillWasInside = true;
 }
 const inside = d && !g._drillDying && view._viewInside(d.win);
 const density = lodDensityForView(view, g);
+const drawMarks = (alpha) => view._drawPoints(
+d,
+view._map(d.xMeta, x0, x1, d.xAxis),
+view._map(d.yMeta, y0, y1, d.yAxis),
+alpha
+);
 if (inside) {
 if (!g._drillWasInside || g._drillExitFadeStart != null) lodEnterDrillContinuous(view, g);
 g._drillWasInside = true;
 g._drillExitFadeStart = null;
 const fade = lodFade(view, g._drillFadeStart);
 g._drillShownAlpha = fade;
-g._shownDensity = fade < 1 ? density : null;
-g._densitySwitchPrev = null;
-g._densitySwitchFadeStart = null;
-if (fade < 1 && density && density.tex) {
-view._drawDensity(g, density, 1 - fade);
-view._drawPoints(
-d,
-view._map(d.xMeta, x0, x1, d.xAxis),
-view._map(d.yMeta, y0, y1, d.yAxis),
-fade
-);
+if (density && density.tex) lodDrawDensityWithFade(view, g, density);
+if (fade < 1) {
+drawMarks(fade);
 view.draw();
 } else {
 g._drillFadeStart = null;
-view._drawPoints(
-d,
-view._map(d.xMeta, x0, x1, d.xAxis),
-view._map(d.yMeta, y0, y1, d.yAxis)
-);
+drawMarks(1);
 }
 } else if (density && density.tex) {
 if (lodHoldPendingDrill(view, g, d)) {
 lodEnterDrillContinuous(view, g);
 const fade = lodFade(view, g._drillFadeStart);
 g._drillShownAlpha = fade;
+lodDrawDensityWithFade(view, g, density);
 if (fade < 1) {
-view._drawDensity(g, density, 1 - fade);
-view._drawPoints(
-d,
-view._map(d.xMeta, x0, x1, d.xAxis),
-view._map(d.yMeta, y0, y1, d.yAxis),
-fade
-);
-view.draw();
+drawMarks(fade);
 } else {
 g._drillFadeStart = null;
-view._drawPoints(
-d,
-view._map(d.xMeta, x0, x1, d.xAxis),
-view._map(d.yMeta, y0, y1, d.yAxis)
-);
+drawMarks(1);
 }
 view.draw();
 return;
@@ -1848,13 +1866,8 @@ if (exitingDrill) lodBeginDrillExitContinuous(view, g);
 const exitFade = exitingDrill ? lodDrillExitFade(view, g) : 1;
 if (d) g._drillShownAlpha = exitingDrill && exitFade < 1 ? 1 - exitFade : 0;
 if (exitingDrill && exitFade < 1) {
-lodDrawDensityWithFade(view, g, density, exitFade);
-view._drawPoints(
-d,
-view._map(d.xMeta, x0, x1, d.xAxis),
-view._map(d.yMeta, y0, y1, d.yAxis),
-1 - exitFade
-);
+lodDrawDensityWithFade(view, g, density);
+drawMarks(1 - exitFade);
 view.draw();
 } else {
 if (g._drillDying) lodDropDrill(view, g);
@@ -1863,11 +1876,7 @@ lodDrawDensityWithFade(view, g, density);
 view._drawDensitySample(g, x0, x1, y0, y1);
 }
 } else if (d) {
-view._drawPoints(
-d,
-view._map(d.xMeta, x0, x1, d.xAxis),
-view._map(d.yMeta, y0, y1, d.yAxis)
-);
+drawMarks(1);
 }
 }
 const XY_REBIN_WORKER_SRC = `
@@ -3050,9 +3059,8 @@ const traces = this.gpuTraces && this.gpuTraces.length
 for (const entry of traces) {
 const t = entry.trace || entry;
 if (t.tier !== "density" || !t.density) continue;
-const sample = entry.sampleOverlay && entry.sampleOverlay.sample
-? entry.sampleOverlay.sample
-: t.density.sample;
+const shown = entry._shownSampleOverlay || entry.sampleOverlay;
+const sample = shown && shown.sample ? shown.sample : t.density.sample;
 if (sample && Number(sample.n) > 0 && !entry._sampleFadedOut) {
 items.push(`sampled ${this._compactInt(sample.n)} of ${this._compactInt(sample.visible)}`);
 }
@@ -3436,6 +3444,8 @@ tex: this._uploadGrid(grid, d.w, d.h, d.max),
 lut: this._lut(d.colormap),
 };
 g.sampleOverlay = this._buildDensitySample(t, d.sample, buffer);
+g.density.overlay = g.sampleOverlay;
+g._shownSampleOverlay = g.sampleOverlay;
 g._shownDensity = g.density;
 lodRememberDensity(this, g, g.density);
 return g;
@@ -3582,19 +3592,33 @@ y0: sample.y_range[0], y1: sample.y_range[1],
 g.sample = { n: sample.n, visible: sample.visible };
 return g;
 }
-_destroyDensitySample(g) {
-if (g) g._sampleFadedOut = false;
-const s = g && g.sampleOverlay;
+_destroySampleOverlay(s) {
 if (!s || !this.gl) return;
 for (const b of [s.xBuf, s.yBuf, s.cBuf, s.rgbaBuf, s.sBuf, s.styleBuf,
 s.strokeBuf, s.selBuf, s.dBuf]) {
 if (b) this.gl.deleteBuffer(b);
 }
+}
+_destroyDensitySample(g) {
+if (!g) return;
+g._sampleFadedOut = false;
+g._shownSampleOverlay = null;
+const owners = [...(g.densityCache || []),
+g.density, g.prevDensity, g._shownDensity, g._densitySwitchPrev, g._homeDensity];
+const seen = new Set();
+for (const d of owners) {
+const s = d && d.overlay;
+if (s && !seen.has(s)) { seen.add(s); this._destroySampleOverlay(s); }
+if (d) d.overlay = null;
+}
+if (g.sampleOverlay && !seen.has(g.sampleOverlay)) {
+this._destroySampleOverlay(g.sampleOverlay);
+}
 g.sampleOverlay = null;
 }
 _applyDensitySample(g, sample, buffers) {
-this._destroyDensitySample(g);
 if (!sample || !sample.x || !sample.y || sample.x.buf === undefined || sample.y.buf === undefined) {
+if (g.density) g.density.overlay = null;
 this._refreshReductionBadges();
 return;
 }
@@ -3692,24 +3716,27 @@ if (sample.stroke && sample.stroke.mode === "direct_rgba") {
 s.strokeBuf = this._upload(this._asU8(buffers[sample.stroke.buf]));
 }
 this._pointMarkStyle(s, trace);
-g.sampleOverlay = s;
+if (g.density) {
+if (g.density.overlay && g.density.overlay !== g.sampleOverlay) {
+this._destroySampleOverlay(g.density.overlay);
+}
+g.density.overlay = s;
+}
 this._refreshReductionBadges();
 }
 _drawDensitySample(g, x0, x1, y0, y1, opacityScale = 1) {
-const s = g && g.sampleOverlay;
-if (!s || !s.n || !this._viewOverlaps(s.win)) return;
-const alpha = lodSampleViewAlpha(this, s);
-const faded = alpha <= 0;
-if (faded !== !!g._sampleFadedOut) {
-g._sampleFadedOut = faded;
-this._refreshReductionBadges();
-}
-if (faded) return;
+const pick = lodSampleForView(this, g);
+const s = pick && pick.overlay;
+const changed = (g._shownSampleOverlay || null) !== (s || null);
+g._shownSampleOverlay = s || null;
+g._sampleFadedOut = !s;
+if (changed) this._refreshReductionBadges();
+if (!s) return;
 this._drawPoints(
 s,
 this._map(s.xMeta, x0, x1, s.xAxis),
 this._map(s.yMeta, y0, y1, s.yAxis),
-opacityScale * alpha
+opacityScale * pick.alpha
 );
 }
 _resolveMarkFill(style, markColor) {

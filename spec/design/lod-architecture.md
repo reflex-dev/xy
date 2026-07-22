@@ -226,7 +226,16 @@ invariants so future kinds don't regress them:
   the aggregate→marks transition only — restarting per refresh reads as
   flashing; exit fade with the "dying" state so buffers outlive the fade).
 - **T3 — color-continuous:** the two sides of a transition display the same
-  statistic at the boundary (lod_blend density-ramp handoff).
+  statistic at the boundary (lod_blend density-ramp handoff). The kernel's
+  blend weight (`visible/budget`) is only ≈1 when the swap happens at the
+  budget boundary — a fast zoom skips levels and lands marks with a
+  mostly-native weight, a visible recolor at the swap (live-drilldown field
+  capture). The BOUNDARY is therefore the transition itself, client-side:
+  fresh marks arrive with the shown blend seeded at 1 (wearing the
+  aggregate's colormap) and ease to the kernel's native weight, and
+  dying/exiting marks re-target blend 1 so they melt into the texture as
+  they fade (`lodApplyDrill`, `lodBeginDrillExitContinuous`; revives restore
+  the native weight via `lodEnterDrillContinuous`).
 - **T4 — normalization is eased, never stepped** (exposure-style normMax).
 - **T5 — stale replies die:** seq on view updates, drill_seq on subsets,
   pending-view hold for prefetched drills.
@@ -256,32 +265,52 @@ invariants so future kinds don't regress them:
   drive it out of the hold, so the drilled subset stayed painted and the full
   point cloud never returned. (Complements T7, which fixes the same visible
   symptom from the texture-lifetime side.)
-- **T9 — a retained sample is bounded by its window:** the deterministic
+- **T9 — the drawn sample describes the displayed window:** the deterministic
   point sample shipped with an exact-scan density reply represents *its*
-  window only. It is retained across replies that omit a sample (pyramid and
-  integral-image zoom-out paths ship none by design — Phase 2 item 5) so the
-  hybrid "density + points" look survives pans and mild zoom-outs, but far
-  past its window the same ~8k points compress and overplot into a solid
-  false cluster (the zoom-out "stuck point blob", pinned by a live-drilldown
-  wire capture: the blob's extent matched the last sample-bearing reply's
-  window exactly while the density surface kept updating under it). The
-  client therefore fades the retained overlay with the window's share of the
-  view area — full alpha at ≥ `LOD_SAMPLE_FADE_COVER_HI` (1/4), hidden at
-  ≤ `LOD_SAMPLE_FADE_COVER_LO` (1/32), log-eased between (`js/src/45_lod.js`
-  `lodSampleViewAlpha`, applied in `_drawDensitySample`). The band value is a
-  *composited* opacity target, not a per-point alpha: mid-band the window's
-  screen footprint has shrunk enough that many points stack per pixel, and
-  compositing k overplotted layers of alpha a reads as 1−(1−a)^k — at k≈10
-  even a=0.2 renders a near-opaque slab (the first cut of this invariant
-  failed in the field exactly this way: a "fading" sample that never looked
-  faded). The per-point alpha is solved as a = 1−(1−band)^(1/k), with k
-  estimated from the drawn count, mean point footprint, and the window's
-  on-screen area; k ≤ 1 degenerates to the band value exactly. The alpha is a
-  pure function of (view, overlay): every zoom frame re-derives it, nothing
-  latches. The "sampled n of N" badge tracks what is actually drawn — a
-  hidden overlay must not keep advertising its points.
+  window only, so every sample overlay rides the density cache entry it was
+  computed for (`density.overlay`; replies that omit a sample — pyramid and
+  integral-image zoom-out paths, Phase 2 item 5 — simply add no overlay to
+  their entry). Each frame draws the overlay of the best cached window for
+  the current view (`lodSampleForView`, mirroring `lodDensityForView`): the
+  smallest window covering the view wins at full alpha, so a deep zoom-out
+  falls back through the cache to the HOME sample and the full point cloud
+  returns — points on screen always describe the window being displayed.
+  (The pre-pairing client retained one global sample and drew it whenever
+  the view merely overlapped its window: a drilled window's sample lingered
+  over every later zoom-out as an opaque "stuck point blob", pinned by a
+  live-drilldown wire capture — the blob's extent matched the last
+  sample-bearing reply's window exactly while the density surface kept
+  updating under it.) Only a view that NO cached window covers draws a
+  partial overlay, faded by the window's share of the view area — full alpha
+  at ≥ `LOD_SAMPLE_FADE_COVER_HI` (1/4), hidden at
+  ≤ `LOD_SAMPLE_FADE_COVER_LO` (1/32), log-eased between
+  (`lodSampleViewAlpha`). The band value is a *composited* opacity target,
+  not a per-point alpha: mid-band the window's screen footprint has shrunk
+  enough that many points stack per pixel, and compositing k overplotted
+  layers of alpha a reads as 1−(1−a)^k — at k≈10 even a=0.2 renders a
+  near-opaque slab (a "fading" sample that never looked faded). The
+  per-point alpha is solved as a = 1−(1−band)^(1/k), with k estimated from
+  the drawn count, mean point footprint, and the window's on-screen area;
+  k ≤ 1 degenerates to the band value exactly. Selection and alpha are pure
+  functions of (view, cache): every zoom frame re-derives them, nothing
+  latches. Overlays die with their evicted cache entry (except the home/init
+  overlay, the standalone re-bin worker's CPU-side source), and the
+  "sampled n of N" badge reports the overlay actually drawn.
+- **T10 — the aggregate backdrop is continuous:** the density texture draws
+  under the marks in EVERY drill state — entering, settled inside, held,
+  exiting — never only until the entry fade completes. The background of a
+  drilled frame and a density frame is the same texture, so every drill
+  transition is a marks-layer fade over a stable context, not a full-frame
+  swap. (Previously marks "owned the frame" once their entry fade finished:
+  the backdrop flipped to the blank chart background, and interleaved
+  density/points replies during a continuous zoom flashed
+  green-texture ⇄ points-on-blank — the live-drilldown flicker. It also
+  kept the aggregate context visible while drilled, which is the §28 hybrid
+  intent.) `lodDrawDensityTier` routes every branch's backdrop through
+  `lodDrawDensityWithFade`, so cached-window crossfades stay continuous
+  while drilled too.
 
-Any new tiered kind must state how it satisfies T1–T9 in its chart-kind
+Any new tiered kind must state how it satisfies T1–T10 in its chart-kind
 contract entry before it lands.
 
 ---
@@ -308,8 +337,10 @@ contract entry before it lands.
    deterministic sampled exact points, with a visible "sampled n of N" badge.
    Pyramid-served density views still need tile-aware sample overlays so the
    same anti-shimmer contract holds without rescanning raw rows. Until they
-   exist, sample-less zoom-out replies retain the previous overlay, bounded
-   by the T9 coverage fade so it can never persist as a false cluster.
+   exist, a sample-less reply's window carries no overlay of its own and the
+   T9 window pairing serves the best cached window's sample instead (the
+   home overlay above all, so zoom-outs keep representative points), bounded
+   by the coverage fade when nothing covers the view.
 
 **Phase 3 — pyramid (build + serve shipped; client cache and bench gate open)**
 6. **Done (count plane only):** `src/tiles.rs` builds a square count pyramid

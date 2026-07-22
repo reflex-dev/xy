@@ -727,8 +727,22 @@ async function sendMessage(msg) {{
       clearStaleUpdatingStatus();
     }}
   }} catch (err) {{
-    statusEl.textContent = "offline";
-    console.error("xy drilldown request failed", err);
+    if (err && err.name === "AbortError" && msg.type === "density_view") {{
+      // Client-side timeout, not an outage: a first deep exact scan over the
+      // full source can legitimately outlast REQUEST_TIMEOUT_MS (observed at
+      // 15.007s vs the 15s budget). Re-park the request so the pump retries
+      // it — parkedMsgStale still drops it if the view moved on — instead of
+      // stranding the window behind a misleading "offline".
+      if (!pendingDensityMsg && (msg._retries = (msg._retries || 0) + 1) <= 2) {{
+        pendingDensityMsg = msg;
+        statusEl.textContent = "updating";
+      }} else if (!pendingDensityMsg) {{
+        statusEl.textContent = "timed out";
+      }}
+    }} else {{
+      statusEl.textContent = "offline";
+      console.error("xy drilldown request failed", err);
+    }}
   }} finally {{
     clearTimeout(timeout);
   }}

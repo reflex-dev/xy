@@ -1429,12 +1429,11 @@ class ChartView {
     for (const entry of traces) {
       const t = entry.trace || entry;
       if (t.tier !== "density" || !t.density) continue;
-      const sample = entry.sampleOverlay && entry.sampleOverlay.sample
-        ? entry.sampleOverlay.sample
-        : t.density.sample;
-      // A sample past its T9 zoom-out bound is not drawn; badging it would
-      // claim points that are not on screen (_drawDensitySample keeps
-      // _sampleFadedOut in sync and re-refreshes on every flip).
+      // Badge what is actually drawn: the overlay _drawDensitySample chose
+      // for the current view (T9 pairing). Before the first frame runs, the
+      // home overlay (or the spec's sample counts) stands in.
+      const shown = entry._shownSampleOverlay || entry.sampleOverlay;
+      const sample = shown && shown.sample ? shown.sample : t.density.sample;
       if (sample && Number(sample.n) > 0 && !entry._sampleFadedOut) {
         items.push(`sampled ${this._compactInt(sample.n)} of ${this._compactInt(sample.visible)}`);
       }
@@ -1864,6 +1863,11 @@ class ChartView {
         lut: this._lut(d.colormap),
       };
       g.sampleOverlay = this._buildDensitySample(t, d.sample, buffer);
+      // The overlay rides its density window (T9 pairing): the home sample
+      // belongs to the home grid, so a deep zoom-out that falls back to the
+      // home texture brings the full-extent point sample back with it.
+      g.density.overlay = g.sampleOverlay;
+      g._shownSampleOverlay = g.sampleOverlay;
       g._shownDensity = g.density;
       lodRememberDensity(this, g, g.density);
       return g;
@@ -2025,20 +2029,43 @@ class ChartView {
     return g;
   }
 
-  _destroyDensitySample(g) {
-    if (g) g._sampleFadedOut = false; // T9 fade state belongs to the overlay
-    const s = g && g.sampleOverlay;
+  _destroySampleOverlay(s) {
     if (!s || !this.gl) return;
     for (const b of [s.xBuf, s.yBuf, s.cBuf, s.rgbaBuf, s.sBuf, s.styleBuf,
       s.strokeBuf, s.selBuf, s.dBuf]) {
       if (b) this.gl.deleteBuffer(b);
     }
+  }
+
+  // Full teardown of every sample overlay this tier owns. Overlays ride their
+  // density cache entries (T9 pairing), so sweep the cache plus the aliased
+  // references — an overlay can be reachable from several of them at once.
+  _destroyDensitySample(g) {
+    if (!g) return;
+    g._sampleFadedOut = false;
+    g._shownSampleOverlay = null;
+    const owners = [...(g.densityCache || []),
+      g.density, g.prevDensity, g._shownDensity, g._densitySwitchPrev, g._homeDensity];
+    const seen = new Set();
+    for (const d of owners) {
+      const s = d && d.overlay;
+      if (s && !seen.has(s)) { seen.add(s); this._destroySampleOverlay(s); }
+      if (d) d.overlay = null;
+    }
+    if (g.sampleOverlay && !seen.has(g.sampleOverlay)) {
+      this._destroySampleOverlay(g.sampleOverlay);
+    }
     g.sampleOverlay = null;
   }
 
+  // Build the overlay a sample-bearing reply shipped and attach it to the
+  // density entry it was computed for (T9 pairing) — the draw path picks the
+  // overlay of the best cached window for the view, so overlays for OTHER
+  // windows (the home sample above all) stay alive and take over on zoom-out.
+  // An explicit `sample: null` clears this window's overlay only.
   _applyDensitySample(g, sample, buffers) {
-    this._destroyDensitySample(g);
     if (!sample || !sample.x || !sample.y || sample.x.buf === undefined || sample.y.buf === undefined) {
+      if (g.density) g.density.overlay = null;
       this._refreshReductionBadges();
       return;
     }
@@ -2136,35 +2163,36 @@ class ChartView {
       s.strokeBuf = this._upload(this._asU8(buffers[sample.stroke.buf]));
     }
     this._pointMarkStyle(s, trace);
-    g.sampleOverlay = s;
+    if (g.density) {
+      if (g.density.overlay && g.density.overlay !== g.sampleOverlay) {
+        this._destroySampleOverlay(g.density.overlay);
+      }
+      g.density.overlay = s;
+    }
     this._refreshReductionBadges();
   }
 
+  // Draw the sample overlay belonging to the best cached window for the view
+  // (T9 pairing, lodSampleForView): points on screen always describe the
+  // window being displayed — a deep zoom-out falls back through the cache to
+  // the home sample, so the full point cloud returns instead of a drilled
+  // cluster lingering. Only a view no cached window covers draws a partial
+  // overlay, bounded by the T9 coverage fade (overplot-compensated, so the
+  // band value is what actually composites on screen — a fading sample must
+  // LOOK faded). The "sampled n of N" badge tracks what is actually drawn.
   _drawDensitySample(g, x0, x1, y0, y1, opacityScale = 1) {
-    const s = g && g.sampleOverlay;
-    // Draw the retained sample whenever it overlaps the view, not only when the
-    // view sits fully inside the sample window: a pan or zoom-out must keep the
-    // same "density + points" look instead of dropping the points the instant
-    // the view crosses the sample's home extent (the density grid stays, so the
-    // points have to as well). Off-screen points are clipped by the GPU.
-    if (!s || !s.n || !this._viewOverlaps(s.win)) return;
-    // …but not past the T9 zoom-out bound: far outside its home window the
-    // sample overplots into a false dense cluster (the stuck "point blob"), so
-    // it fades with window/view coverage — overplot-compensated, so the band
-    // value is what actually composites on screen. The badge tracks what is
-    // drawn — a hidden overlay must not keep advertising "sampled n of N".
-    const alpha = lodSampleViewAlpha(this, s);
-    const faded = alpha <= 0;
-    if (faded !== !!g._sampleFadedOut) {
-      g._sampleFadedOut = faded;
-      this._refreshReductionBadges();
-    }
-    if (faded) return;
+    const pick = lodSampleForView(this, g);
+    const s = pick && pick.overlay;
+    const changed = (g._shownSampleOverlay || null) !== (s || null);
+    g._shownSampleOverlay = s || null;
+    g._sampleFadedOut = !s;
+    if (changed) this._refreshReductionBadges();
+    if (!s) return;
     this._drawPoints(
       s,
       this._map(s.xMeta, x0, x1, s.xAxis),
       this._map(s.yMeta, y0, y1, s.yAxis),
-      opacityScale * alpha
+      opacityScale * pick.alpha
     );
   }
 
