@@ -71,7 +71,7 @@ fn main() -> ExitCode {
                 stats.nodes as f64 / secs / 1e6,
                 stats.blocks,
                 if stats.sparse_nodes > 0 {
-                    format!("; WARNING {} non-dense nodes skipped", stats.sparse_nodes)
+                    format!(" (incl. {} non-dense nodes)", stats.sparse_nodes)
                 } else {
                     String::new()
                 },

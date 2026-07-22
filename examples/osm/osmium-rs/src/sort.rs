@@ -40,6 +40,7 @@ fn read_f64_at(f: &File, buf: &mut [f64], point_off: u64) -> io::Result<()> {
     f.read_exact_at(bytes, point_off * 8)
 }
 
+#[derive(Debug)]
 pub struct SortStats {
     pub n: u64,
     pub g: usize,
@@ -86,8 +87,24 @@ pub fn spatial_sort(
     y1: f64,
     n_partitions: usize,
 ) -> io::Result<SortStats> {
+    // Validate the caller/CLI options up front so a bad value returns an error
+    // through the normal path instead of panicking deep in a worker: g==0 would
+    // index an empty histogram, n_partitions==0 would divide by zero, and g must
+    // fit the u32 the index header stores (with g*g not overflowing usize).
+    let bad = |m: &str| io::Error::new(io::ErrorKind::InvalidInput, m.to_string());
+    if g == 0 {
+        return Err(bad("--grid must be >= 1"));
+    }
+    if g > u32::MAX as usize {
+        return Err(bad("--grid too large (must fit in a u32)"));
+    }
+    if n_partitions == 0 {
+        return Err(bad("--partitions must be >= 1"));
+    }
+    let cells = g
+        .checked_mul(g)
+        .ok_or_else(|| bad("--grid too large (g*g overflows)"))?;
     let n = File::open(lon_path)?.metadata()?.len() / 8;
-    let cells = g * g;
     let inv_x = g as f64 / (x1 - x0);
     let inv_y = g as f64 / (y1 - y0);
     let block = 1usize << 20; // 1M values per I/O chunk
@@ -323,4 +340,30 @@ pub fn spatial_sort(
         partitions: used_parts,
         max_partition,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn tmp_f64(name: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("osmsort_{}_{}", std::process::id(), name));
+        File::create(&p)
+            .unwrap()
+            .write_all(&1.0f64.to_le_bytes())
+            .unwrap();
+        p
+    }
+
+    #[test]
+    fn invalid_grid_and_partitions_error_not_panic() {
+        let (lon, lat) = (tmp_f64("lon"), tmp_f64("lat"));
+        let out = std::env::temp_dir().join(format!("osmsort_{}_idx", std::process::id()));
+        let call = |g, p| spatial_sort(&lon, &lat, &out, g, -180.0, 180.0, -90.0, 90.0, p);
+        assert_eq!(call(0, 4).unwrap_err().kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(call(2, 0).unwrap_err().kind(), io::ErrorKind::InvalidInput);
+        // A sane call succeeds.
+        assert!(call(2, 4).is_ok());
+    }
 }

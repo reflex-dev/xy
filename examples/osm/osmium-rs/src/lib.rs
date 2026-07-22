@@ -158,7 +158,8 @@ fn inflate_blob(blob: &[u8]) -> io::Result<Vec<u8>> {
 // ---- PrimitiveBlock / DenseNodes decode ------------------------------------
 
 /// Decode every node coordinate in a `PrimitiveBlock`, appending degrees to
-/// `lon`/`lat`. Returns the count of non-dense `Node` entries seen (skipped).
+/// `lon`/`lat`. Returns the count of non-dense `Node` entries seen (also
+/// decoded, not skipped) — reported for information only.
 fn decode_primitive_block(buf: &[u8], lon: &mut Vec<f64>, lat: &mut Vec<f64>) -> u64 {
     // Pass 1: coordinate scaling (granularity=17 default 100, lat_offset=19,
     // lon_offset=20, all int, appear *after* the groups in the byte stream) and
@@ -212,15 +213,46 @@ fn decode_group(
                 pos += len;
             }
             (1, 2) => {
-                // repeated Node (sparse) — count and skip; planet has none.
-                sparse += 1;
+                // repeated Node (sparse encoding). The planet file uses
+                // DenseNodes exclusively, but hand-made extracts may carry
+                // these — decode them too so "every node" actually holds.
                 let len = read_varint(buf, &mut pos) as usize;
+                decode_node(&buf[pos..pos + len], scale, lat_off, lon_off, lon, lat);
+                sparse += 1;
                 pos += len;
             }
             (_, w) => skip_field(buf, &mut pos, w),
         }
     }
     sparse
+}
+
+/// Decode one sparse `Node` message: `lat` (field 8) and `lon` (field 9) are
+/// single zigzag sint64 varints, scaled exactly like DenseNodes. A node
+/// missing either coordinate is skipped (malformed).
+fn decode_node(
+    buf: &[u8],
+    scale: f64,
+    lat_off: f64,
+    lon_off: f64,
+    lon: &mut Vec<f64>,
+    lat: &mut Vec<f64>,
+) {
+    let mut pos = 0;
+    let (mut lat_v, mut lon_v) = (None, None);
+    while pos < buf.len() {
+        let tag = read_varint(buf, &mut pos);
+        let (field, wire) = (tag >> 3, tag & 0x7);
+        match (field, wire) {
+            (8, 0) => lat_v = Some(zigzag(read_varint(buf, &mut pos))),
+            (9, 0) => lon_v = Some(zigzag(read_varint(buf, &mut pos))),
+            (_, w) => skip_field(buf, &mut pos, w),
+        }
+    }
+    if let (Some(la), Some(lo)) = (lat_v, lon_v) {
+        lat.push(1e-9 * (lat_off + scale * la as f64));
+        lon.push(1e-9 * (lon_off + scale * lo as f64));
+    }
 }
 
 fn decode_dense(
@@ -341,25 +373,20 @@ pub fn decode_pbf_nodes(
     // Reader: stream blobs sequentially; hand OSMData blobs to the pool.
     let read_result = (|| -> io::Result<()> {
         let mut reader = BufReader::with_capacity(1 << 22, File::open(pbf)?);
-        let mut len_buf = [0u8; 4];
-        // A short read anywhere is a truncated tail (e.g. a partial download):
-        // stop cleanly with whatever whole blobs we have, rather than erroring.
+        // A clean stream ends exactly at a blob boundary — EOF *before* the next
+        // 4-byte length prefix. EOF anywhere inside a length prefix, header, or
+        // blob means the file is truncated (e.g. a partial download) and is a
+        // hard error: incomplete data must never masquerade as a complete decode.
         loop {
-            match reader.read_exact(&mut len_buf) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(e),
-            }
-            let hlen = u32::from_be_bytes(len_buf) as usize;
+            let hlen = match read_len_prefix(&mut reader)? {
+                None => break, // clean end at a boundary
+                Some(hlen) => hlen,
+            };
             let mut hbuf = vec![0u8; hlen];
-            if read_full_or_eof(&mut reader, &mut hbuf)?.is_none() {
-                break;
-            }
+            read_exact_or_truncated(&mut reader, &mut hbuf)?;
             let (btype, datasize) = parse_blob_header(&hbuf)?;
             let mut blob = vec![0u8; datasize];
-            if read_full_or_eof(&mut reader, &mut blob)?.is_none() {
-                break;
-            }
+            read_exact_or_truncated(&mut reader, &mut blob)?;
             if btype == "OSMData" {
                 // Send fails only if all workers died (their error surfaces on join).
                 if tx.send(blob).is_err() {
@@ -408,6 +435,39 @@ fn read_full_or_eof<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<Option<()>
         }
     }
     Ok(Some(()))
+}
+
+fn truncated() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "truncated PBF: unexpected end of file mid-blob (incomplete download?)",
+    )
+}
+
+/// Read the 4-byte big-endian blob-length prefix. `Ok(None)` only when the
+/// stream ends cleanly *at* the boundary (0 bytes available); a 1–3 byte
+/// partial read is a truncated file, not a clean end.
+fn read_len_prefix<R: Read>(r: &mut R) -> io::Result<Option<usize>> {
+    let mut buf = [0u8; 4];
+    let mut filled = 0;
+    while filled < 4 {
+        match r.read(&mut buf[filled..]) {
+            Ok(0) if filled == 0 => return Ok(None),
+            Ok(0) => return Err(truncated()),
+            Ok(n) => filled += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(Some(u32::from_be_bytes(buf) as usize))
+}
+
+/// Fill `buf` fully; an EOF before it is full means the file is truncated.
+fn read_exact_or_truncated<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<()> {
+    match read_full_or_eof(r, buf)? {
+        Some(()) => Ok(()),
+        None => Err(truncated()),
+    }
 }
 
 #[inline]
@@ -463,5 +523,54 @@ mod tests {
             })
             .collect();
         assert_eq!(cum, vec![1, 2, 1]);
+    }
+
+    fn put_varint(buf: &mut Vec<u8>, mut x: u64) {
+        loop {
+            let mut b = (x & 0x7F) as u8;
+            x >>= 7;
+            if x != 0 {
+                b |= 0x80;
+            }
+            buf.push(b);
+            if x == 0 {
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn read_len_prefix_distinguishes_clean_end_from_truncation() {
+        // 0 bytes at a boundary → clean end.
+        assert!(read_len_prefix(&mut &[][..]).unwrap().is_none());
+        // A full 4-byte prefix decodes big-endian.
+        assert_eq!(read_len_prefix(&mut &[0, 0, 1, 0][..]).unwrap(), Some(256));
+        // 1–3 bytes then EOF → truncation error, never a silent stop.
+        let err = read_len_prefix(&mut &[0, 0][..]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn read_exact_or_truncated_errors_on_short_blob() {
+        let mut buf = [0u8; 8];
+        let err = read_exact_or_truncated(&mut &[1, 2, 3][..], &mut buf).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn decode_node_extracts_sparse_coordinates() {
+        // A sparse Node message with lat (field 8) and lon (field 9) as zigzag
+        // sint64 varints — the encoding planet files omit but extracts may use.
+        let (scale, lat_off, lon_off) = (100.0, 0.0, 0.0);
+        let (lat_raw, lon_raw) = (10_000_000i64, -20_000_000i64);
+        let mut msg = Vec::new();
+        msg.push((8 << 3) | 0); // field 8, varint
+        put_varint(&mut msg, ((lat_raw << 1) ^ (lat_raw >> 63)) as u64);
+        msg.push((9 << 3) | 0); // field 9, varint
+        put_varint(&mut msg, ((lon_raw << 1) ^ (lon_raw >> 63)) as u64);
+        let (mut lon, mut lat) = (Vec::new(), Vec::new());
+        decode_node(&msg, scale, lat_off, lon_off, &mut lon, &mut lat);
+        assert_eq!(lat, vec![1e-9 * scale * lat_raw as f64]);
+        assert_eq!(lon, vec![1e-9 * scale * lon_raw as f64]);
     }
 }

@@ -40,6 +40,9 @@ from xy._ooc import open_f64  # noqa: E402
 # `node js/build.mjs`; the viewer errors clearly below if it is missing.
 STATIC = os.path.join(_REPO_ROOT, "python", "xy", "static", "index.js")
 
+# Client /msg bodies are small JSON; reject anything larger (defensive bound).
+_MAX_MSG_BYTES = 1 << 20
+
 PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>OSM nodes — xy out-of-core scatter</title>
 <style>
@@ -176,6 +179,11 @@ def main() -> None:
                 self.send_error(404)
                 return
             n = int(self.headers.get("Content-Length", 0))
+            # Client messages are tiny JSON (a viewport + a few scalars); cap the
+            # body so a stray/hostile request can't make the demo allocate wildly.
+            if n > _MAX_MSG_BYTES:
+                self.send_error(413)
+                return
             content = json.loads(self.rfile.read(n) or b"{}")
             with lock:
                 reply = channel.handle_message(fig, content)
