@@ -107,6 +107,11 @@ jobs:
           echo "using $CHROME"
           python3 scripts/render_smoke_nonumpy.py "$CHROME"
 
+      - name: Streaming append smoke (stdlib + Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          python3 scripts/append_stream_smoke.py "$CHROME"
+
       - name: Static PNG export smoke (stdlib + Chromium)
         run: XY_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")" python3 scripts/png_export_smoke.py
 

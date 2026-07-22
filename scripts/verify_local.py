@@ -217,6 +217,13 @@ def _base_checks(
             requires_chromium=True,
         ),
         Check(
+            "append_stream_smoke",
+            "streaming-append tail uploads + coalesced refines in Chromium",
+            (py, "scripts/append_stream_smoke.py", chromium_arg),
+            requires_paths=chromium_paths,
+            requires_chromium=True,
+        ),
+        Check(
             "smoke_render",
             "real composed-chart HTML render smoke in Chromium",
             (py, "scripts/smoke_render.py", chromium_arg),
@@ -292,6 +299,7 @@ FULL_EXTRA_CHECKS = (
 )
 BROWSER_CHECKS = (
     "render_smoke_nonumpy",
+    "append_stream_smoke",
     "smoke_render",
     "reflex_lifecycle_smoke",
     "visual_regression_smoke",

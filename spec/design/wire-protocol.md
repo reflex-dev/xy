@@ -224,14 +224,41 @@ additionally carries `append: {seq, affected}` — a monotonic apply signal, so
 a host whose transport is the payload itself can detect the refresh without a
 message envelope. The kernel re-emits a complete fresh payload rather
 than a delta, because every tier's payload is screen-bounded by construction.
-Without animation, the client swaps `spec` and the retained payload together,
-rebuilds only the GPU traces named in `affected`, then re-requests its current
-view with `delay: 0`. With animation configured it routes the full payload
-through `ChartView.updatePayload`, retaining one previous scene for matching
-and positional interpolation while preserving append's
+Without animation, the client swaps `spec` and the retained payload together
+and updates only the GPU traces named in `affected` — in place when it can,
+rebuilt otherwise:
+
+- **Tail-only fast path.** A direct scatter/line whose encoding is unchanged
+  between the previous and the fresh spec — same per-column
+  `offset`/`scale`/`dtype`, same channel shapes (a continuous color/size
+  domain that expanded fails this on purpose: its shipped values are
+  normalized over the domain), same style, no transition keys, no
+  `curve: "smooth"`/`step` vertex expansion — extends its existing GPU
+  buffers with a tail-only `bufferSubData`. Buffer *objects* are retained
+  (VAO attachments stay valid); data stores grow with doubling capacity,
+  mirroring `Column.append` kernel-side, so a steady stream costs O(rows
+  appended) GPU upload per tick instead of O(N). The client derives
+  prefix-compatibility entirely from the two specs (no extra wire fields);
+  the kernel makes it *hold* in the common case by keeping each column's
+  encode offset sticky across appends while every value stays within one
+  span of it (`Column.suggest_offset`, ≤1 f32 mantissa bit vs a fresh
+  midpoint — a right-growing stream never exceeds that bound).
+- Any precondition failure falls back to destroy + rebuild of that trace,
+  which is always correct.
+
+It then re-requests its current view through the ordinary
+stale-while-revalidate path, **coalesced**: `delay: 120` with
+`maxWait: 300`, so a single tick refines after the standard debounce while a
+continuous stream pays at most one re-decimation/re-bin round-trip per
+300 ms instead of one per tick. Parked at home, decimated traces skip the
+re-request entirely when the append payload's recorded `decimation_px`
+(emitted on every decimated line/area entry, §28's recorded-decision rule)
+already covers the plot width — the payload itself was M4-decimated over
+exactly that view. With animation configured the client routes the full
+payload through `ChartView.updatePayload`, retaining one previous scene for
+matching and positional interpolation while preserving append's
 home/live-edge/history follow policy. Unsupported layouts snap to the new
 representation without an opacity animation.
-
 How the push travels is per-host, and the payload crosses the wire exactly
 once per tick. On the anywidget comm the `spec`/`buffers` trait update (one
 `hold_sync` message) is both the live push — the client applies an append
@@ -304,6 +331,11 @@ spec's `columns` table is the addressing scheme, and it comes in two layouts:
 Column entries otherwise carry `len`, an optional `dtype` (`"u8"` or `"u32"`;
 absent means f32), and, for offset-encoded geometry,
 `offset`/`scale`/`kind`.
+
+Decimated line/area trace entries additionally record `decimation_px`, the px
+width their M4 pass was computed for (§28: every decimation decision is
+recorded, never silent). The client reads it to skip a redundant at-home
+re-request after a streaming append (§4).
 
 The client picks the layout from the spec, never from the shape of what
 arrived, and **a disagreement is a fatal error, not a fallback**.

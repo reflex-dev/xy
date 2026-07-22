@@ -8,6 +8,15 @@ import {
 import { xyCreateRebinWorker } from "./46_worker";
 import { ChartView } from "./50_chartview";
 
+// Streaming-append refine cadence (§17 stale-while-revalidate): the append
+// payload itself already repainted the new data, so the follow-up kernel
+// round-trip that re-decimates/re-bins the *current* window only sharpens
+// it. One tick settles after the ordinary interaction debounce; a continuous
+// stream coalesces to at most one round-trip per MAX_WAIT instead of one per
+// tick (10 Hz -> ~3/s).
+const APPEND_REFINE_DELAY_MS = 120;
+const APPEND_REFINE_MAX_WAIT_MS = 300;
+
 // ChartView <-> kernel comm: debounced density view-requests, streaming
 // appends, the inbound message handler, and the deep-zoom drill lifecycle
 // (§16). Split out of 50_chartview.js; augments the prototype so `this.*`
@@ -22,7 +31,11 @@ Object.assign(ChartView.prototype, {
       this._scheduleSampleRebin(viewOverride, opts);
       return;
     }
-    const needsDecimated = this.spec.traces.some((t) => t.tier === "decimated");
+    // opts.decimated === false: the caller knows the shipped decimation
+    // already covers this exact view (streaming append at home, §28's
+    // recorded decimation_px), so only density traces re-request.
+    const needsDecimated =
+      opts.decimated !== false && this.spec.traces.some((t) => t.tier === "decimated");
     const needsDensity = this.gpuTraces.some((g) => g.tier === "density");
     if (!needsDecimated && !needsDensity) return;
     const seq = opts.seq ?? ++this.seq;
@@ -372,17 +385,16 @@ Object.assign(ChartView.prototype, {
   // Streaming append (rust-engine §5). The kernel ships a complete fresh
   // payload — screen-bounded by construction (§29), so this is O(pixels) no
   // matter how much data has accumulated — and names the traces whose data
-  // changed. Only those GPU traces rebuild; everything else keeps its state.
-  // Tiered traces then refine to the *current* window through the normal
-  // stale-while-revalidate request path (§17). The payload arrives in
-  // whichever layout the spec declares — split (per-column buffers, the
-  // current kernel) or a legacy packed blob from an older saved state.
+  // changed. An affected direct scatter/line whose encoding is unchanged
+  // updates GPU buffers in place with a tail-only upload; everything else
+  // rebuilds. Payloads may use split or legacy packed layout.
   _applyAppend(msg, buffers) {
     const spec = msg.spec;
     if (!spec || !spec.traces) return;
     const raw = spec.buffer_layout === "split" ? buffers : buffers && buffers[0];
     if (raw == null) return;
     const payload = payloadBuffers(spec, raw);
+    const prevSpec = this.spec;
     // Follow policy, decided against the OLD home view before it moves:
     // - at home (never zoomed, or axes reset): the chart follows its data —
     //   refit both axes to the new domain, the live-dashboard default.
@@ -414,7 +426,7 @@ Object.assign(ChartView.prototype, {
       // domain (history inspection must remain stationary).
       if (this._transitionView) this._transitionView.to = { ...nextView };
       else this.view = { ...nextView };
-      this._scheduleViewRequest(nextView, { delay: 0 });
+      this._scheduleAppendRefine(nextView, atHome);
       return;
     }
     // Swap spec + retained payload together so GL context restore (§27)
@@ -441,12 +453,233 @@ Object.assign(ChartView.prototype, {
       const i = this.gpuTraces.findIndex((g) => g.trace.id === id);
       const ts = spec.traces.find((t) => t.id === id);
       if (i < 0 || !ts) continue;
+      const prevTs = prevSpec && prevSpec.traces
+        ? prevSpec.traces.find((t) => t.id === id)
+        : null;
+      if (this._appendTraceInPlace(this.gpuTraces[i], prevTs, prevSpec, ts, payload)) continue;
       this._destroyTraceResources(this.gpuTraces[i], texSeen);
       this.gpuTraces[i] = this._buildTrace(payload, ts);
     }
     this._updatePickable();
-    this._scheduleViewRequest(this.view, { delay: 0 });
+    this._scheduleAppendRefine(this.view, atHome);
     this.draw();
+  },
+
+  // Post-append window refinement, coalesced (see APPEND_REFINE_* above).
+  // Parked at home, the append payload itself was M4-decimated over exactly
+  // this view at a recorded px width (§28 `decimation_px`); when that width
+  // covers the plot, a "view" round-trip would recompute the same windows,
+  // so only density traces re-request.
+  _scheduleAppendRefine(view, atHome) {
+    const plotPx = Math.round(this.plot.w);
+    const decimatedCovered =
+      atHome &&
+      this.spec.traces.every(
+        (t) => t.tier !== "decimated" || (t.decimation_px || 0) >= plotPx,
+      );
+    this._scheduleViewRequest(view, {
+      delay: APPEND_REFINE_DELAY_MS,
+      maxWait: APPEND_REFINE_MAX_WAIT_MS,
+      decimated: !decimatedCovered,
+    });
+  },
+
+  // In-place streaming update for a direct scatter/line: when the fresh
+  // payload's encoding matches what this view already uploaded (same
+  // offsets/scales/domains — guaranteed prefix-identical bytes, because an
+  // append never rewrites canonical rows), extend the existing GPU buffers
+  // with a tail-only bufferSubData instead of destroy + bufferData. Buffer
+  // *objects* are retained (VAO attachments stay valid); their data stores
+  // grow with doubling capacity, mirroring `Column.append` kernel-side.
+  // Returns false when any precondition fails — the caller falls back to the
+  // full rebuild, which is always correct.
+  _appendTraceInPlace(g, oldT, oldSpec, t, payload) {
+    const gl = this.gl;
+    if (!g || !oldT || !oldSpec || !gl) return false;
+    if (g.tier !== "direct" || oldT.tier !== "direct" || t.tier !== "direct") return false;
+    if (t.kind !== oldT.kind || (t.kind !== "scatter" && t.kind !== "line")) return false;
+    if (t.keys || oldT.keys) return false; // key-matched transitions rebuild
+    const style = t.style || {};
+    if (style.curve === "smooth" || style.step) return false; // expanded vertices
+    if (JSON.stringify(oldT.style || {}) !== JSON.stringify(style)) return false;
+    const oldCols = oldSpec.columns;
+    const newCols = this.spec.columns;
+
+    // A new column extends an old one when dtype and offset/scale encoding
+    // match and it only grew — the shipped prefix is then byte-identical.
+    const grown = (a, b) => {
+      const om = Number.isInteger(a) ? oldCols[a] : null;
+      const nm = Number.isInteger(b) ? newCols[b] : null;
+      if (!om || !nm) return null;
+      if ((om.dtype || "f32") !== (nm.dtype || "f32")) return null;
+      if ((om.offset ?? null) !== (nm.offset ?? null)) return null;
+      if ((om.scale ?? null) !== (nm.scale ?? null)) return null;
+      if (!(nm.len >= om.len)) return null;
+      return { old: om.len, next: nm.len, meta: nm };
+    };
+    // Channel spec equality modulo per-build fields (buffer index, count):
+    // a continuous channel whose domain expanded fails this on purpose — its
+    // shipped values are normalized over the domain, so the prefix changed.
+    const shapeEqual = (a, b) => {
+      const strip = (s) => {
+        if (!s || typeof s !== "object") return s ?? null;
+        const { buf, n, ...rest } = s;
+        return rest;
+      };
+      return JSON.stringify(strip(a)) === JSON.stringify(strip(b));
+    };
+
+    const x = grown(oldT.x, t.x);
+    const y = grown(oldT.y, t.y);
+    if (!x || !y) return false;
+    const oldN = Math.min(x.old, y.old);
+    const newN = Math.min(x.next, y.next);
+    if (newN < oldN) return false;
+    // Tie the fast path to this view's actual GPU state, not just the spec
+    // history: a view restored from another payload rebuilds instead.
+    if (!g._cpu || !g._cpu.x || g._cpu.x.length !== x.old || g._cpu.y.length !== y.old) {
+      return false;
+    }
+    if (!g.xMeta || g.xMeta.offset !== x.meta.offset || g.xMeta.scale !== x.meta.scale) return false;
+    if (!g.yMeta || g.yMeta.offset !== y.meta.offset || g.yMeta.scale !== y.meta.scale) return false;
+
+    // Collect every per-point buffer update, then validate all before
+    // mutating any (a half-updated trace must be impossible).
+    const jobs = [];
+    const column = (idx) => this._columnView(payload, newCols[idx]);
+    const addColumnJob = (buf, growth, colIdx) => {
+      if (!buf || !growth) return false;
+      const view = column(colIdx);
+      jobs.push({ buf, full: view, oldElems: growth.old });
+      return true;
+    };
+    if (!addColumnJob(g.xBuf, x, t.x) || !addColumnJob(g.yBuf, y, t.y)) return false;
+
+    let cpuColor = null;
+    let cpuSize = null;
+    if (t.kind === "scatter") {
+      if (!shapeEqual(oldT.color, t.color) || !shapeEqual(oldT.size, t.size)) return false;
+      if (!shapeEqual(oldT.stroke, t.stroke)) return false;
+      if (t.color && Number.isInteger(t.color.buf)) {
+        const c = grown(oldT.color.buf, t.color.buf);
+        const target = t.color.mode === "direct_rgba" ? g.rgbaBuf : g.cBuf;
+        if (!c || !addColumnJob(target, c, t.color.buf)) return false;
+        cpuColor = t.color.mode === "direct_rgba" ? { rgba: column(t.color.buf) } : { color: column(t.color.buf) };
+      } else if (t.color && t.color.mode !== "constant" && t.color.mode !== "match_fill") {
+        return false;
+      }
+      if (t.size && Number.isInteger(t.size.buf)) {
+        const s = grown(oldT.size.buf, t.size.buf);
+        if (!s || !addColumnJob(g.sBuf, s, t.size.buf)) return false;
+        cpuSize = column(t.size.buf);
+      }
+      if (t.stroke && Number.isInteger(t.stroke.buf)) {
+        const s = grown(oldT.stroke.buf, t.stroke.buf);
+        if (!s || !addColumnJob(g.strokeBuf, s, t.stroke.buf)) return false;
+      }
+      const oldNames = Object.keys(oldT.channels || {}).sort();
+      const newNames = Object.keys(t.channels || {}).sort();
+      if (JSON.stringify(oldNames) !== JSON.stringify(newNames)) return false;
+      const INTERLEAVED = ["opacity", "artist_alpha", "stroke_width", "symbol"];
+      for (const name of newNames) {
+        // corner_radius (and any future channel) feeds its own derived
+        // buffer this path doesn't extend — rebuild.
+        if (!INTERLEAVED.includes(name)) return false;
+        if (!shapeEqual(oldT.channels[name], t.channels[name])) return false;
+        if (!grown(oldT.channels[name].buf, t.channels[name].buf)) return false;
+      }
+      if (newNames.length) {
+        if (!g.styleBuf) return false;
+        // The interleaved style buffer is derived per row; materialize rows
+        // [from, newN) on demand (full range when the store reallocates).
+        const dpr = this.dpr;
+        const artistScalar = Number(style.artist_alpha);
+        const makeStyle = (fromElem) => {
+          const from = fromElem / 4;
+          const values = new Float32Array((newN - from) * 4);
+          for (let i = 0; i < newN - from; i++) {
+            values[i * 4] = 1;
+            values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
+            values[i * 4 + 2] = -1;
+            values[i * 4 + 3] = -1;
+          }
+          const copy = (name, component, scale = 1) => {
+            const cspec = t.channels && t.channels[name];
+            if (!cspec) return;
+            const source = column(cspec.buf);
+            const k = cspec.components || 1;
+            for (let i = 0; i < newN - from; i++) {
+              values[i * 4 + component] = source[(from + i) * k] * scale;
+            }
+          };
+          copy("opacity", 0);
+          copy("artist_alpha", 1);
+          copy("stroke_width", 2, dpr);
+          copy("symbol", 3);
+          return values;
+        };
+        jobs.push({ buf: g.styleBuf, fullElems: newN * 4, oldElems: oldN * 4, make: makeStyle });
+      } else if (g.styleBuf) {
+        // styleBuf exists only for a scalar artist_alpha; its rows are
+        // constant, so extend it like a derived buffer with no channels.
+        const artistScalar = Number(style.artist_alpha);
+        if (!Number.isFinite(artistScalar)) return false;
+        const makeStyle = (fromElem) => {
+          const from = fromElem / 4;
+          const values = new Float32Array((newN - from) * 4);
+          for (let i = 0; i < newN - from; i++) {
+            values[i * 4] = 1;
+            values[i * 4 + 1] = artistScalar;
+            values[i * 4 + 2] = -1;
+            values[i * 4 + 3] = -1;
+          }
+          return values;
+        };
+        jobs.push({ buf: g.styleBuf, fullElems: newN * 4, oldElems: oldN * 4, make: makeStyle });
+      }
+      if (g.radiusBuf) return false; // corner_radius derived buffer: rebuild
+    }
+
+    // All checks passed: apply every upload. Tail-only bufferSubData while
+    // the store has room; on overflow, reallocate the same buffer object
+    // with doubled capacity and re-upload the full column once (amortized
+    // O(rows appended), like the kernel's growth buffer).
+    for (const job of jobs) {
+      const buf = job.buf;
+      const bpe = job.full ? job.full.BYTES_PER_ELEMENT : 4;
+      const fullElems = job.full ? job.full.length : job.fullElems;
+      const bytes = fullElems * bpe;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      if (bytes > (buf._fcCapBytes || 0)) {
+        const cap = Math.max(bytes * 2, 4096);
+        gl.bufferData(gl.ARRAY_BUFFER, cap, gl.DYNAMIC_DRAW);
+        buf._fcCapBytes = cap;
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, job.full || job.make(0));
+      } else if (fullElems > job.oldElems) {
+        gl.bufferSubData(
+          gl.ARRAY_BUFFER,
+          job.oldElems * bpe,
+          job.full ? job.full.subarray(job.oldElems) : job.make(job.oldElems),
+        );
+      }
+    }
+
+    const newX = column(t.x);
+    const newY = column(t.y);
+    g.trace = t;
+    g.n = newN;
+    g.xMeta = { ...newCols[t.x] };
+    g.yMeta = { ...newCols[t.y] };
+    g._cpu = { x: newX, y: newY, xMeta: g.xMeta, yMeta: g.yMeta, ...(cpuColor || {}) };
+    if (cpuSize) g._cpu.size = cpuSize;
+    if (t.kind === "line") {
+      g._dashX = newX;
+      g._dashY = newY;
+    }
+    // Selection masks are sized to the shipped vertex count; the rebuild
+    // path drops them on append, so the fast path matches that behavior.
+    g.selActive = false;
+    return true;
   },
 
   _onKernelMsg(msg, buffers) {

@@ -307,6 +307,106 @@ def test_incremental_pyramid_keeps_gc_finalizer_armed():
     assert not kernels.pyramid_free(old_handle)
 
 
+# --------------------------------------------------------------------------
+# Append payload prefix stability — the client tail-upload contract
+# (wire-protocol §4: sticky offsets keep consecutive payload prefixes
+# byte-identical, so the browser extends GPU buffers with bufferSubData
+# instead of re-uploading O(N) per tick).
+# --------------------------------------------------------------------------
+
+
+def _column_bytes(spec, blob, ref):
+    meta = spec["columns"][ref]
+    width = 1 if meta.get("dtype") == "u8" else 4
+    start = meta["byte_offset"]
+    return meta, blob[start : start + meta["len"] * width]
+
+
+def test_append_keeps_offsets_sticky_and_prefixes_byte_identical():
+    fig = Figure().scatter(np.arange(100.0), np.sin(np.arange(100.0)))
+    spec0, blob0 = fig.build_payload()
+    prev_spec, prev_blob = spec0, blob0
+    for i in range(5):
+        base = 100.0 + i * 3
+        msg, buffers = fig.append(0, base + np.arange(3.0), np.sin(base + np.arange(3.0)))
+        spec, blob = msg["spec"], bytes(buffers[0])
+        for axis in ("x", "y"):
+            old_meta, old_bytes = _column_bytes(prev_spec, prev_blob, prev_spec["traces"][0][axis])
+            new_meta, new_bytes = _column_bytes(spec, blob, spec["traces"][0][axis])
+            # Sticky offset: the encoding is unchanged even though the x
+            # domain grew, so the old column is a byte-prefix of the new one.
+            assert new_meta["offset"] == old_meta["offset"], axis
+            assert new_meta["scale"] == old_meta["scale"], axis
+            assert new_meta["len"] == old_meta["len"] + 3, axis
+            assert new_bytes[: len(old_bytes)] == old_bytes, axis
+        prev_spec, prev_blob = spec, blob
+
+
+def test_append_prefix_stability_covers_stable_domain_channels():
+    # Channel values inside the existing domain don't rebind the color/size
+    # normalization, so those buffers extend too; rgba/style channels are raw
+    # and always extend.
+    x = np.arange(50.0)
+    fig = Figure().scatter(
+        x,
+        x,
+        color=np.linspace(0.0, 1.0, 50),
+        size=np.linspace(0.0, 1.0, 50),
+    )
+    # Pin the domains by seeding the extremes; later appends stay inside.
+    spec0, blob0 = fig.build_payload()
+    msg, buffers = fig.append(0, [50.0], [50.0], color=[0.5], size=[0.5])
+    spec, blob = msg["spec"], bytes(buffers[0])
+    for channel in ("color", "size"):
+        old = spec0["traces"][0][channel]
+        new = spec["traces"][0][channel]
+        assert new["domain"] == old["domain"], channel
+        _, old_bytes = _column_bytes(spec0, blob0, old["buf"])
+        _, new_bytes = _column_bytes(spec, blob, new["buf"])
+        assert new_bytes[: len(old_bytes)] == old_bytes, channel
+
+
+def test_append_expanding_channel_domain_rewrites_channel_but_not_geometry():
+    x = np.arange(50.0)
+    fig = Figure().scatter(x, x, color=np.linspace(0.0, 1.0, 50))
+    spec0, blob0 = fig.build_payload()
+    msg, buffers = fig.append(0, [50.0], [50.0], color=[100.0])  # domain grows
+    spec, blob = msg["spec"], bytes(buffers[0])
+    old = spec0["traces"][0]["color"]
+    new = spec["traces"][0]["color"]
+    assert new["domain"] != old["domain"]  # the client rebuilds this trace
+    for axis in ("x", "y"):
+        old_meta, old_bytes = _column_bytes(spec0, blob0, spec0["traces"][0][axis])
+        new_meta, new_bytes = _column_bytes(spec, blob, spec["traces"][0][axis])
+        assert new_meta["offset"] == old_meta["offset"]
+        assert new_bytes[: len(old_bytes)] == old_bytes
+
+
+def test_ship_offset_recenters_when_stale_center_leaves_domain():
+    # Pure appends keep the last offset inside [lo, hi] forever (the sticky
+    # bound); re-centering guards the hypothetical mutation that moves the
+    # domain away from a recorded center.
+    col = ColumnStore().ingest(np.arange(10.0))
+    assert col.suggest_offset() == 4.5
+    assert col.suggest_offset() == 4.5  # stable across rebuilds
+    col._ship_offset = 1e6  # outside [0, 9]: worse than one span of precision
+    assert col.suggest_offset() == 4.5  # re-centered to the fresh midpoint
+
+
+def test_decimated_entries_record_their_px_width():
+    from xy.config import DECIMATION_THRESHOLD
+
+    n = DECIMATION_THRESHOLD + 1
+    fig = Figure().line(np.arange(float(n)), np.arange(float(n)))
+    spec, _ = fig.build_payload(px_width=800)
+    entry = spec["traces"][0]
+    assert entry["tier"] == "decimated"
+    assert entry["decimation_px"] == 800
+
+    msg, _ = fig.append(0, [float(n)], [0.0])
+    assert msg["spec"]["traces"][0]["decimation_px"] > 0
+
+
 def test_memory_report_itemizes_pyramid_bytes():
     from xy.config import PYRAMID_MIN_POINTS
     from xy.interaction import _ensure_pyramid, _pyramid_resident_bytes
