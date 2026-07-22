@@ -60,7 +60,7 @@ Object.assign(ChartView.prototype, {
       if (xKind !== undefined) row.x_kind = xKind;
       if (yKind !== undefined) row.y_kind = yKind;
       const norm = g._cpuHeatmap.grid[hit.index];
-      row.color_value = this._denormalizeUnit(norm, g.trace.color && g.trace.color.domain);
+      row.color_value = this._channelDisplayValue(norm, g.trace.color);
     } else if (g._cpuRect) {
       const r = g._cpuRect;
       const x0 = this._decodeValue(r.x0, r.x0Meta, hit.index);
@@ -94,12 +94,12 @@ Object.assign(ChartView.prototype, {
             row.color_category = String(color.categories[code]);
           }
         } else if (color.mode === "continuous") {
-          row.color_value = this._denormalizeUnit(cpu.color[hit.index], color.domain);
+          row.color_value = this._channelDisplayValue(cpu.color[hit.index], color);
         }
       }
       const size = g.trace.size;
       if (cpu.size && size && size.mode === "continuous") {
-        row.size_value = this._denormalizeUnit(cpu.size[hit.index], size.domain);
+        row.size_value = this._channelDisplayValue(cpu.size[hit.index], size);
       }
     }
     this._applySharedTooltipFields(row);
@@ -130,10 +130,10 @@ Object.assign(ChartView.prototype, {
     }
     if (channel === "color_value") {
       if (g._cpuHeatmap && g._cpuHeatmap.grid && g.trace.color) {
-        return [this._denormalizeUnit(g._cpuHeatmap.grid[index], g.trace.color.domain), undefined];
+        return [this._channelDisplayValue(g._cpuHeatmap.grid[index], g.trace.color), undefined];
       }
       if (g._cpu && g._cpu.color && g.trace.color) {
-        return [this._denormalizeUnit(g._cpu.color[index], g.trace.color.domain), undefined];
+        return [this._channelDisplayValue(g._cpu.color[index], g.trace.color), undefined];
       }
     }
     if (channel === "color_category" && g._cpu && g._cpu.color && g.trace.color) {
@@ -142,7 +142,7 @@ Object.assign(ChartView.prototype, {
       if (code >= 0 && code < categories.length) return [String(categories[code]), undefined];
     }
     if (channel === "size_value" && g._cpu && g._cpu.size && g.trace.size) {
-      return [this._denormalizeUnit(g._cpu.size[index], g.trace.size.domain), undefined];
+      return [this._channelDisplayValue(g._cpu.size[index], g.trace.size), undefined];
     }
     return [undefined, undefined];
   },
@@ -168,6 +168,17 @@ Object.assign(ChartView.prototype, {
       row[field] = value;
       if (kind !== undefined) row[`${field}_kind`] = kind;
     }
+  },
+
+  // Shipped-value → display-value for a continuous channel: raw-encoded
+  // buffers already hold data units (wire-protocol §3); unit-encoded ones
+  // (legacy, heatmap grids, f32 fallback) denormalize over the spec domain.
+  _channelDisplayValue(value, spec) {
+    if (spec && spec.enc === "raw") {
+      const v = Number(value);
+      return v;
+    }
+    return this._denormalizeUnit(value, spec && spec.domain);
   },
 
   _denormalizeUnit(value, domain) {

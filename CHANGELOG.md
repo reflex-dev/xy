@@ -142,6 +142,15 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **Continuous channels ship raw values; domains map in the shader
+  (protocol v7).** Color/size buffers now carry data-unit f32 with
+  `enc: "raw"`; the client normalizes through the spec domain as a vertex-
+  shader uniform, so a domain change (streaming growth, colormap re-bind) is
+  a uniform update instead of an O(N) re-encode and re-ship. Non-finite
+  values scrub to the domain floor in one native pass (`xy_sanitize_f32`);
+  f32-hostile domains keep the legacy unit encode. Rendering is
+  pixel-identical to the previous encode; standalone hover readouts gain
+  exact data units.
 - **Streaming append skips unchanged traces entirely (protocol v6).** An
   append tick now costs O(affected trace), not O(figure): unchanged traces
   splice from a per-trace emit cache (no gathers, no f64→f32 re-encode, no

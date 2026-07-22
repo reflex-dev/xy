@@ -226,7 +226,10 @@ def test_normalize_to_unit():
 # -- payload: channels shipped as ≤4 B/pt scalars ----------------------------
 
 
-def test_continuous_color_shipped_normalized():
+def test_continuous_color_shipped_raw_with_domain():
+    # Raw-channel wire (wire-protocol §3): data-unit f32 values plus
+    # enc:"raw"; the client maps through the spec domain in the shader, so a
+    # domain change is a uniform update, never a re-encode.
     n = 1000
     x = np.arange(n, dtype=np.float64)
     val = np.linspace(-50, 50, n)
@@ -235,11 +238,38 @@ def test_continuous_color_shipped_normalized():
     tr = spec["traces"][0]
     assert tr["color"]["mode"] == "continuous"
     assert tr["color"]["colormap"] == "viridis"
+    assert tr["color"]["enc"] == "raw"
+    assert tr["color"]["domain"] == [-50.0, 50.0]
     cbuf = _col(spec, blob, tr["color"]["buf"])
-    assert cbuf.min() >= 0.0 and cbuf.max() <= 1.0
-    assert np.isclose(cbuf[0], 0.0) and np.isclose(cbuf[-1], 1.0)
+    np.testing.assert_allclose(cbuf, val.astype(np.float32), rtol=0)
     # one f32 per point — the ≤4 B/pt channel budget (§2)
     assert len(cbuf) == n
+
+
+def test_continuous_color_scrubs_nonfinite_to_domain_floor():
+    # §19: NaN never reaches a vertex buffer — raw wire scrubs to the domain
+    # floor, which the shader maps to LUT coordinate 0 (the legacy visual).
+    x = np.arange(4.0)
+    val = np.array([1.0, np.nan, 3.0, np.inf])
+    fig = Figure().scatter(x, x, color=val)
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    cbuf = _col(spec, blob, tr["color"]["buf"])
+    lo = tr["color"]["domain"][0]
+    assert cbuf[1] == np.float32(lo) and cbuf[3] == np.float32(lo)
+
+
+def test_continuous_channel_falls_back_to_unit_for_f32_hostile_domain():
+    # A domain the f32 wire cannot represent keeps the legacy pre-normalized
+    # unit encode (no enc marker), so the shader's identity map applies.
+    x = np.arange(3.0)
+    val = np.array([-1e300, 0.0, 1e300])
+    fig = Figure().scatter(x, x, color=val)
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    assert "enc" not in tr["color"]
+    cbuf = _col(spec, blob, tr["color"]["buf"])
+    assert cbuf.min() >= 0.0 and cbuf.max() <= 1.0
 
 
 def test_categorical_color_palette():
@@ -276,7 +306,9 @@ def test_numeric_object_color_payload_is_continuous():
     assert tr["color"]["mode"] == "continuous"
     assert tr["color"]["domain"] == [1.0, 3.0]
     cbuf = _col(spec, blob, tr["color"]["buf"])
-    np.testing.assert_allclose(cbuf, [0.0, 0.0, 1.0, 0.0])
+    # Raw wire (§3): data units, nulls scrubbed to the domain floor.
+    assert tr["color"]["enc"] == "raw"
+    np.testing.assert_allclose(cbuf, [1.0, 1.0, 3.0, 1.0])
 
 
 def test_numeric_object_size_payload_is_continuous():
@@ -288,7 +320,8 @@ def test_numeric_object_size_payload_is_continuous():
     assert tr["size"]["range_px"] == [2.0, 20.0]
     assert tr["size"]["domain"] == [1.0, 3.0]
     sbuf = _col(spec, blob, tr["size"]["buf"])
-    np.testing.assert_allclose(sbuf, [0.0, 0.0, 1.0, 0.0])
+    assert tr["size"]["enc"] == "raw"
+    np.testing.assert_allclose(sbuf, [1.0, 1.0, 3.0, 1.0])
 
 
 def test_variable_size_shipped():
@@ -316,10 +349,13 @@ def test_constant_numeric_color_and_size_channels_ship_midpoint_values():
     tr = spec["traces"][0]
     cbuf = _col(spec, blob, tr["color"]["buf"])
     sbuf = _col(spec, blob, tr["size"]["buf"])
-    np.testing.assert_allclose(cbuf, np.full(4, 0.5, dtype=np.float32))
-    np.testing.assert_allclose(sbuf, np.full(4, 0.5, dtype=np.float32))
+    # Raw wire: the constant value ships as-is; the widened domain centers it,
+    # so the shader still lands on the LUT midpoint (the legacy 0.5 visual).
+    np.testing.assert_allclose(cbuf, np.full(4, 7.0, dtype=np.float32))
+    np.testing.assert_allclose(sbuf, np.full(4, 5.0, dtype=np.float32))
     lo, hi = tr["color"]["domain"]
     assert lo < 7.0 < hi
+    assert np.isclose((7.0 - lo) / (hi - lo), 0.5)
 
 
 def test_numpy_scalar_size_range_is_json_serializable():

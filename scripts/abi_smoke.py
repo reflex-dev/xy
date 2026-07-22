@@ -198,6 +198,8 @@ def load() -> ctypes.CDLL:
     ]
     lib.xy_normalize_f32.restype = ctypes.c_int32
     lib.xy_normalize_f32.argtypes = [F64P, ctypes.c_size_t, D, D, ctypes.c_int32, F32P]
+    lib.xy_sanitize_f32.restype = ctypes.c_int32
+    lib.xy_sanitize_f32.argtypes = [F64P, ctypes.c_size_t, ctypes.c_float, F32P]
     lib.xy_valid_indices_f64.restype = ctypes.c_size_t
     lib.xy_valid_indices_f64.argtypes = [ctypes.POINTER(F64P), Z, Z, ctypes.c_uint64, U32P, Z]
     lib.xy_range_indices.restype = ctypes.c_size_t
@@ -612,6 +614,18 @@ def main() -> None:
     ok(
         lib.xy_normalize_f32(null_f64, 0, 0.0, 1.0, 0, null_f32) == 1,
         "normalize_f32 empty/null ok status",
+    )
+    ok(
+        lib.xy_sanitize_f32(null_f64, 0, 0.0, null_f32) == 1,
+        "sanitize_f32 empty/null ok status",
+    )
+    tiny_raw = array("d", [2.5, float("nan"), float("inf")])
+    raw_out = array("f", [0.0, 0.0, 0.0])
+    ok(
+        lib.xy_sanitize_f32(_ptr(tiny_raw, ctypes.c_double), 3, -1.0, _ptr(raw_out, ctypes.c_float))
+        == 1
+        and list(raw_out) == [2.5, -1.0, -1.0],
+        "sanitize_f32 casts finite, fills non-finite",
     )
     tiny_norm = array("f", [123.0])
     status = lib.xy_normalize_f32(null_f64, 1, 0.0, 1.0, 0, _ptr(tiny_norm, ctypes.c_float))

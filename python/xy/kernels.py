@@ -57,6 +57,7 @@ heatmap_rgba = _impl.heatmap_rgba
 histogram2d = _impl.histogram2d
 indexed_triangles = _impl.indexed_triangles
 normalize_f32 = _impl.normalize_f32
+sanitize_f32 = _impl.sanitize_f32
 valid_indices_f64 = _impl.valid_indices_f64
 remap_u8 = _impl.remap_u8
 range_indices = _impl.range_indices
@@ -129,6 +130,7 @@ __all__ = [
     "rfft",
     "sample_mask",
     "sample_range_indices",
+    "sanitize_f32",
     "sector_triangles",
     "spectrogram",
     "stacked_bounds",

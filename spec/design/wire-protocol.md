@@ -270,6 +270,19 @@ negative `byte_offset`/`len`, a column extending past the payload, and a
 misaligned start. Aligned spans stay zero-copy; only a legacy view whose
 `byteOffset` is not a multiple of 4 pays one view-sized copy.
 
+Continuous color/size channel buffers ship **raw data-unit f32** with
+`enc: "raw"` on the channel spec: the client maps them through the spec
+`domain` in the vertex shader (`(v - d0) / (d1 - d0)`, LUT/px-range lookup
+unchanged), so a domain change is a uniform update — never a re-encode, and
+never a byte of channel traffic. Non-finite source values scrub to the
+domain floor kernel-side (`xy_sanitize_f32`, §19: NaN never reaches a vertex
+buffer); the shader maps the floor to LUT coordinate 0, the legacy visual. A
+domain the f32 wire cannot represent (magnitude beyond f32, degenerate span)
+falls back to the legacy pre-normalized unit encode with no `enc` marker,
+which the client draws through the identity map — both encodings render
+pixel-identically. Kernel-side readouts stay canonical f64; standalone
+hover reads shipped values and denormalizes only unit-encoded ones.
+
 Stable animation identity is the second intentional u32 use beside selection
 indices. A keyed direct trace carries `keys: {lo, hi}` referring to two u32
 columns that form one stable 64-bit identity per shipped mark. Aggregate and
@@ -325,9 +338,10 @@ Two independent version constants:
   version of their own — the handshake happens once, at first paint, before
   any request is possible. v5 moved streaming append to split buffers shipped
   once per tick; v6 added append reuse (§4/§5: `cid` column identities,
-  partial buffer lists, the `refresh` recovery request) — a cached pre-v6
-  bundle would fail loudly on a cid-only column instead of rendering, so the
-  handshake catches it at first paint.
+  partial buffer lists, the `refresh` recovery request); v7 moved continuous
+  channels to the raw data-unit encode (§5) — a pre-v7 bundle would clamp
+  raw values as if they were unit coordinates and render wrong colors
+  silently, exactly the failure class the handshake exists to catch.
 - **Transport frame.** `FRAME_MAGIC` `"XYBF"` with `FRAME_VERSION = 1`
   versions the binary envelope separately, so the transport and the renderer
   can evolve without coupling.

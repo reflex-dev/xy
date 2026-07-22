@@ -13,7 +13,9 @@ from __future__ import annotations
 # may ship cid-only entries the client resolves from bytes it already holds
 # (recovery via the `refresh` request), and the widget's synced traits become
 # debounced reopen state while the per-tick push is a custom message again.
-PROTOCOL_VERSION = 6
+# v7: continuous color/size channels ship raw data-unit f32 (`enc: "raw"`);
+# the client maps them through the spec domain in the vertex shader.
+PROTOCOL_VERSION = 7
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the

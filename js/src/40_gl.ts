@@ -64,6 +64,19 @@ export function makeProgram(gl, vs, fs) {
   return p;
 }
 
+// Domain map for a continuous channel spec (wire-protocol §3 raw channels):
+// raw-encoded buffers carry data-unit values the shader maps through
+// (v - map[0]) * map[1]; unit-encoded (legacy / f32-fallback) buffers use the
+// identity map. Same uniform serves both, so mixed traces draw uniformly.
+export function xyChannelMap(spec) {
+  if (spec && spec.enc === "raw" && Array.isArray(spec.domain)) {
+    const d0 = +spec.domain[0];
+    const span = +spec.domain[1] - d0;
+    if (Number.isFinite(d0) && Number.isFinite(span) && span > 0) return [d0, 1 / span];
+  }
+  return [0, 1];
+}
+
 export function uniformOf(gl, prog, name) {
   let loc = prog._u[name];
   if (loc === undefined) {
@@ -105,8 +118,8 @@ in float a_cval; in float a_sval; in float a_sel; in float a_dval;
 in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
-uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange;
-uniform int u_colorMode; uniform float u_dpr; uniform int u_selActive;
+uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange; uniform vec2 u_svalMap;
+uniform int u_colorMode; uniform vec2 u_cvalMap; uniform float u_dpr; uniform int u_selActive;
 uniform float u_selectedOpacity; uniform float u_unselectedOpacity;
 uniform float u_transitionProgress; uniform int u_transitionActive;
 out float v_lutCoord; out float v_dim; out float v_dval; out float v_ptSize; out float v_sel;
@@ -116,7 +129,7 @@ void main() {
   float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
   float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
   gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode), xyMap(y, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
-  float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
+  float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, clamp((a_sval - u_svalMap.x) * u_svalMap.y, 0.0, 1.0)) : u_size;
   gl_PointSize = sz * u_dpr;
   v_ptSize = sz * u_dpr;
   v_sel = a_sel;
@@ -124,7 +137,7 @@ void main() {
   v_style = a_style;
   v_stroke = a_stroke;
   // continuous: coord = value in [0,1]; categorical: center of texel a_cval.
-  v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : (a_cval - u_cvalMap.x) * u_cvalMap.y;
   // Local log-density LUT coord (drill handoff, §5): lets freshly drilled
   // points wear the density colormap so the texture->points swap is seamless.
   v_dval = a_dval;
@@ -333,7 +346,7 @@ export const PICK_VS = `#version 300 es
 in float ax; in float ay; in float a_prevx; in float a_prevy; in float a_sval;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
-uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange; uniform float u_dpr;
+uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange; uniform vec2 u_svalMap; uniform float u_dpr;
 uniform float u_transitionProgress; uniform int u_transitionActive;
 flat out int v_id;
 ${AXIS_GLSL}
@@ -341,7 +354,7 @@ void main() {
   float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
   float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
   gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode), xyMap(y, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
-  float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
+  float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, clamp((a_sval - u_svalMap.x) * u_svalMap.y, 0.0, 1.0)) : u_size;
   gl_PointSize = max(sz, 6.0) * u_dpr; // enlarge hit target
   v_id = gl_VertexID;
 }`;
@@ -438,7 +451,7 @@ export const LINE_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1;
 in float a_prevx; in float a_prevy; in float a_prevx1; in float a_prevy1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
-uniform int u_colorMode;
+uniform int u_colorMode; uniform vec2 u_cvalMap;
 uniform float u_transitionProgress; uniform int u_transitionActive;
 uniform float u_revealProgress; uniform float u_revealSegments;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
@@ -511,7 +524,7 @@ in float ax0; in float ay0; in float ax1; in float ay1; in float a_cval; in vec4
 in float a_dash0; in float a_dashDir;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
 uniform float u_animationProgress;
-uniform int u_colorMode;
+uniform int u_colorMode; uniform vec2 u_cvalMap;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
 uniform int u_x0mode; uniform int u_x1mode; uniform int u_y0mode; uniform int u_y1mode;
 out float v_off; out float v_cval; out float v_dash; out vec4 v_rgba; out vec4 v_style;
@@ -535,7 +548,7 @@ void main() {
   vec2 pos = mix(pix0, pix1, c.x) + dir * (c.x * 2.0 - 1.0) * 0.5 + n * c.y * half_w;
   gl_Position = vec4(pos / u_res * 2.0 - 1.0, 0.0, 1.0);
   v_off = c.y * half_w;
-  v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : (a_cval - u_cvalMap.x) * u_cvalMap.y;
   v_dash = a_dash0 + c.x * len * a_dashDir;
   v_rgba = a_rgba; v_style = a_style;
 }`;
@@ -579,7 +592,7 @@ uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_x2meta;
 uniform vec2 u_y0meta; uniform vec2 u_y1meta; uniform vec2 u_y2meta;
 uniform int u_x0mode; uniform int u_x1mode; uniform int u_x2mode;
 uniform int u_y0mode; uniform int u_y1mode; uniform int u_y2mode;
-uniform int u_colorMode;
+uniform int u_colorMode; uniform vec2 u_cvalMap;
 out float v_cval; out vec3 v_bary; out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke;
 ${AXIS_GLSL}
 void main() {
@@ -591,7 +604,7 @@ void main() {
   int xmode = vertex == 0 ? u_x0mode : (vertex == 1 ? u_x1mode : u_x2mode);
   int ymode = vertex == 0 ? u_y0mode : (vertex == 1 ? u_y1mode : u_y2mode);
   gl_Position = vec4(xyMap(x, u_xmap, xm, xmode), xyMap(y, u_ymap, ym, ymode), 0.0, 1.0);
-  v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : (a_cval - u_cvalMap.x) * u_cvalMap.y;
   v_bary = vertex == 0 ? vec3(1.,0.,0.) : (vertex == 1 ? vec3(0.,1.,0.) : vec3(0.,0.,1.));
   v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke;
 }`;
@@ -720,7 +733,7 @@ uniform int u_xmode; uniform int u_ymode;
 uniform vec4 u_edgePad;
 uniform vec2 u_res;
 in float a_cval; in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke; in vec2 a_radius;
-uniform int u_colorMode;
+uniform int u_colorMode; uniform vec2 u_cvalMap;
 out float v_lutCoord;
 out vec2 v_local; out vec2 v_half; out float v_t;
 out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke; out vec2 v_radius;
@@ -732,7 +745,7 @@ void main() {
   float x1 = xyMap(ax1, u_x1map, u_x1meta, u_xmode) + u_edgePad.y;
   float y0 = xyMap(ay0, u_y0map, u_y0meta, u_ymode) + u_edgePad.z;
   float y1 = xyMap(ay1, u_y1map, u_y1meta, u_ymode) + u_edgePad.w;
-  v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : (a_cval - u_cvalMap.x) * u_cvalMap.y;
   // Pixel-space local frame for the rounded-corner/stroke SDF (v_half is
   // constant across the quad; v_local interpolates to the fragment offset).
   vec2 pA = (vec2(x0, y0) * 0.5 + 0.5) * u_res;
@@ -760,7 +773,7 @@ uniform float u_v0EdgePad;
 uniform float u_animationProgress;
 uniform float u_transitionProgress; uniform int u_transitionActive; uniform float u_prevWidth;
 uniform vec2 u_res;
-uniform int u_colorMode;
+uniform int u_colorMode; uniform vec2 u_cvalMap;
 out float v_lutCoord;
 out vec2 v_local; out vec2 v_half; out float v_t;
 out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke; out vec2 v_radius;
@@ -786,7 +799,7 @@ void main() {
   v0 += u_v0EdgePad;
   v1 = mix(v0, v1, u_animationProgress);
   float halfW = abs(width * u_pmap.x) * 0.5;
-  v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : (a_cval - u_cvalMap.x) * u_cvalMap.y;
   vec2 clipA, clipB;
   if (u_orientation == 0) {
     clipA = vec2(p - halfW, v0); clipB = vec2(p + halfW, v1);

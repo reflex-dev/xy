@@ -307,11 +307,11 @@ def test_standalone_tooltips_retain_encoded_color_and_size_channels() -> None:
             f"{path} drops color_category"
         )
         assert (
-            "row.color_value = this._denormalizeUnit(cpu.color[hit.index], color.domain);" in text
+            "row.color_value = this._channelDisplayValue(cpu.color[hit.index], color);" in text
         ), f"{path} drops color_value"
-        assert (
-            "row.size_value = this._denormalizeUnit(cpu.size[hit.index], size.domain);" in text
-        ), f"{path} drops size_value"
+        assert "row.size_value = this._channelDisplayValue(cpu.size[hit.index], size);" in text, (
+            f"{path} drops size_value"
+        )
 
     entries = (ROOT / "js/src/60_entries.ts").read_text(encoding="utf-8")
     assert "g._cpu.color = column(g.trace.color.buf);" in entries

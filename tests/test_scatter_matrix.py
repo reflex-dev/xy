@@ -99,8 +99,11 @@ def test_all_colormaps(cm):
 def test_continuous_int_and_float_color():
     for vals in (np.arange(10), np.linspace(-5, 5, 10)):
         spec, blob = _payload(Figure().scatter(np.arange(10.0), np.arange(10.0), color=vals))
-        buf = _col(spec, blob, spec["traces"][0]["color"]["buf"])
-        assert buf.min() >= 0.0 and buf.max() <= 1.0
+        tr = spec["traces"][0]["color"]
+        buf = _col(spec, blob, tr["buf"])
+        # Raw wire: values in data units, bounded by the spec domain.
+        lo, hi = tr["domain"]
+        assert buf.min() >= np.float32(lo) and buf.max() <= np.float32(hi)
 
 
 def test_categorical_many_categories_cycle_palette():
@@ -158,7 +161,8 @@ def test_size_continuous_and_range():
     )
     assert spec["traces"][0]["size"]["range_px"] == [1.0, 30.0]
     buf = _col(spec, blob, spec["traces"][0]["size"]["buf"])
-    assert buf.min() == 0.0 and buf.max() == pytest.approx(1.0)
+    # Raw wire: data units; the shader maps [1, 10] onto the px range.
+    assert buf.min() == pytest.approx(1.0) and buf.max() == pytest.approx(10.0)
 
 
 def test_color_and_size_both_per_point():
@@ -243,13 +247,17 @@ def test_inf_in_xy_dropped_and_range_finite():
     assert np.all(np.isfinite(xbuf)) and len(xbuf) == 3
 
 
-def test_inf_in_color_channel_stays_unit():
+def test_inf_in_color_channel_scrubs_to_domain_floor():
     x = np.arange(6.0)
     color = np.array([0.0, 1.0, np.inf, 2.0, -np.inf, 3.0])
-    # x/y finite so all 6 ship; color inf must normalize into [0,1]
+    # x/y finite so all 6 ship; raw wire (§3) scrubs ±inf to the domain floor
+    # (§19), which the shader maps to LUT coordinate 0 — the legacy visual.
     spec, blob = _payload(Figure().scatter(x, x, color=color))
-    buf = _col(spec, blob, spec["traces"][0]["color"]["buf"])
-    assert np.all((buf >= 0.0) & (buf <= 1.0))
+    tr = spec["traces"][0]["color"]
+    buf = _col(spec, blob, tr["buf"])
+    lo, hi = tr["domain"]
+    assert np.all((buf >= np.float32(lo)) & (buf <= np.float32(hi)))
+    np.testing.assert_allclose(buf, [0.0, 1.0, lo, 2.0, lo, 3.0])
 
 
 def test_all_nan_column():
