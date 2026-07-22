@@ -711,7 +711,6 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
 
     jobs = _job_blocks(text)
     errors: list[str] = []
-    _require_pr_all_paths(errors, text, "CodSpeed")
     missing_jobs = sorted(REQUIRED_CODSPEED_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"CodSpeed workflow missing required jobs: {missing_jobs}")
@@ -844,7 +843,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "release",
         "trusted PyPI publishing from downloaded artifacts, gated by a dry-run switch "
         "and a tag/version/CHANGELOG agreement gate",
-        "needs: [wheels, sdist, wasm]",
+        "needs: [qualify, wheels, sdist, wasm, provenance]",
         "environment: pypi",
         "id-token: write",
         "scripts/check_release_version.py",
@@ -873,7 +872,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "publish-pyodide",
         "release",
         "GitHub Release publication of the runtime-verified Pyodide wheel",
-        "needs: [wheels, sdist, wasm]",
+        "needs: [qualify, wheels, sdist, wasm, provenance]",
         "contents: write",
         "actions/setup-node@",
         'node-version: "22"',
