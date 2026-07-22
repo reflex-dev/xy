@@ -718,8 +718,10 @@ per-document behavior.
 
 **Device/context loss is a first-class event:** all GPU state is derived state, rebuilt
 from the scene graph + column store on a new context. The visible cost is one reupload
-flicker, never lost data. The governor depends on this — a governed release is a
-deliberate context loss put through the same restore path.
+flicker, never lost data — and never a lost view: the settled pan/zoom is preserved across
+the loss and re-requested on restore, so a backgrounded tab or a scrolled-away chart comes
+back where the user left it, not at home (#156). The governor depends on this — a governed
+release is a deliberate context loss put through the same restore path.
 
 *Unimplemented design option — shared-context compositing:*
 

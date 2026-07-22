@@ -1064,8 +1064,16 @@ export class ChartView {
       }
       this._dataAnim = null;
       this._transitionOldTraces = null; // handles died with the context
+      // Preserve the user's zoom/pan across the loss (#156): a backgrounded
+      // tab or a scrolled-away chart must come back to where the user left it,
+      // not home — the retained spec + payload rebuild the same context, so the
+      // settled view is still valid. `this.view` can be a mid-flight
+      // interpolation frame, though, so snap any in-progress navigation (view
+      // animation or domain transition) to its resting target — the view the
+      // user actually settled on — before tearing those animations down.
+      const settledView = this._viewAnim?.target || this._transitionView?.to || this.view;
       this._transitionView = null;
-      if (this.view0) this.view = { ...this.view0 };
+      this.view = this._copyView(settledView || this.view0);
       this._cancelViewAnimation();
       clearTimeout(this._viewTimer);
       this._viewTimer = null;
