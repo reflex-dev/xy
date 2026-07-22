@@ -32,10 +32,35 @@ Object.assign(ChartView.prototype, {
     this.root.appendChild(this.selLasso);
     this._lassoPolygon = null;
     let lassoHandleDrag = null;
+    let lassoHandleClick = null;
+
+    const removeLassoHandle = (index) => {
+      if (!this._lassoPolygon || this._lassoPolygon.length <= 3
+          || !Number.isInteger(index) || !this._lassoPolygon[index]) return false;
+      const polygon = this._lassoPolygon.filter((_point, pointIndex) => pointIndex !== index);
+      this._sendSelectPolygon(polygon, {
+        source: "lasso_handle_remove",
+        interactionId: ++this._interactionSeq,
+      });
+      return true;
+    };
 
     const moveLassoHandle = (e) => {
       if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId
           || !this._lassoPolygon) return;
+      const distance = Math.hypot(
+        e.clientX - lassoHandleDrag.startX,
+        e.clientY - lassoHandleDrag.startY,
+      );
+      if (!lassoHandleDrag.moved && distance <= 1) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (!lassoHandleDrag.moved) {
+        lassoHandleDrag.moved = true;
+        lassoHandleDrag.interactionId = ++this._interactionSeq;
+      }
       const rect = c.getBoundingClientRect();
       const cssX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
       const cssY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
@@ -54,6 +79,10 @@ Object.assign(ChartView.prototype, {
         pointerId: e.pointerId,
         original: [...this._lassoPolygon[index]],
         handle,
+        startX: e.clientX,
+        startY: e.clientY,
+        moved: false,
+        interactionId: null,
       };
       handle.dataset.xyActive = "";
       this._hideTooltip();
@@ -65,10 +94,27 @@ Object.assign(ChartView.prototype, {
     this._listen(this.selLasso, "pointerup", (e) => {
       if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
       moveLassoHandle(e);
-      const handle = lassoHandleDrag.handle;
+      const completedDrag = lassoHandleDrag;
       lassoHandleDrag = null;
-      delete handle.dataset.xyActive;
-      if (this._lassoPolygon) this._sendSelectPolygon(this._lassoPolygon);
+      delete completedDrag.handle.dataset.xyActive;
+      if (completedDrag.moved && this._lassoPolygon) {
+        lassoHandleClick = null;
+        this._sendSelectPolygon(this._lassoPolygon, {
+          source: "lasso_handle_drag",
+          interactionId: completedDrag.interactionId,
+        });
+        return;
+      }
+      const now = this._now();
+      const doubleClick = lassoHandleClick?.index === completedDrag.index
+        && lassoHandleClick.polygon === this._lassoPolygon
+        && now - lassoHandleClick.at <= 500;
+      lassoHandleClick = doubleClick
+        ? null
+        : { index: completedDrag.index, polygon: this._lassoPolygon, at: now };
+      if (doubleClick) {
+        removeLassoHandle(completedDrag.index);
+      }
     });
     this._listen(this.selLasso, "pointercancel", (e) => {
       if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
@@ -77,6 +123,7 @@ Object.assign(ChartView.prototype, {
       }
       delete lassoHandleDrag.handle.dataset.xyActive;
       lassoHandleDrag = null;
+      lassoHandleClick = null;
       if (this._lassoPolygon) this._renderLassoSelection();
       e.stopPropagation();
     });
@@ -126,13 +173,13 @@ Object.assign(ChartView.prototype, {
         const previousLasso = mode.startsWith("select") && this._lassoPolygon
           ? this._lassoPolygon.map((point) => [...point])
           : null;
-        if (mode.startsWith("select")) this._clearLassoOverlay();
         const firstLassoPoint = mode === "select-lasso" ? lassoPointAt(e.clientX, e.clientY) : null;
         const d0 = firstLassoPoint ? firstLassoPoint.data : dataAt(e.clientX, e.clientY);
         band = {
           mode, sx: e.clientX, sy: e.clientY, d0,
           points: firstLassoPoint ? [firstLassoPoint] : null,
           previousLasso,
+          replacingLasso: false,
         };
         try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
         this._hideTooltip();
@@ -290,6 +337,16 @@ Object.assign(ChartView.prototype, {
     }, { passive: false });
 
     this._listen(c, "dblclick", () => {
+      if (this.dragMode === "select-lasso") {
+        if (this._stateSelection !== null && this._stateSelection !== undefined) {
+          this._clearSelection({
+            source: "lasso_double_click",
+            interactionId: ++this._interactionSeq,
+          });
+          this.draw();
+        }
+        return;
+      }
       if (this.dragMode !== "pan") return;
       if (!this._interactionFlag("navigation", true)) return;
       if (!this._interactionFlag("double_click_reset", true)) return;
@@ -504,6 +561,13 @@ Object.assign(ChartView.prototype, {
   _updateBand(band, e) {
     const rect = this.canvas.getBoundingClientRect();
     const rootRect = this.root.getBoundingClientRect();
+    if (band.mode.startsWith("select") && band.previousLasso && !band.replacingLasso) {
+      const movedPastThreshold = Math.abs(e.clientX - band.sx) > 3
+        || Math.abs(e.clientY - band.sy) > 3;
+      if (!movedPastThreshold) return;
+      this._clearLassoOverlay();
+      band.replacingLasso = true;
+    }
     if (band.mode === "select-lasso") {
       const previous = band.points[band.points.length - 1];
       const cssX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
@@ -675,7 +739,12 @@ Object.assign(ChartView.prototype, {
       handle.dataset.xySelectionLassoHandle = String(index);
       handle.setAttribute("cx", String(points[index][0]));
       handle.setAttribute("cy", String(points[index][1]));
-      handle.setAttribute("aria-label", `Lasso point ${index + 1}`);
+      const removable = points.length > 3;
+      const label = `Lasso point ${index + 1}; drag to move${
+        removable ? ", double-click to remove" : ""
+      }`;
+      handle.setAttribute("aria-label", label);
+      handle.setAttribute("title", label);
     });
   },
 

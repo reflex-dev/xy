@@ -362,6 +362,125 @@ def test_history_switch_disables_buttons_and_snapshots(tmp_path: Path) -> None:
     assert result == {"noButtons": True, "noSnapshots": True}
 
 
+_LASSO_DOUBLE_CLICK_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    const polygon = [[0, 0], [4, 0], [4, 16], [0, 16]];
+    view._sendSelectPolygon(polygon);
+
+    // Pan-mode double-click remains a viewport reset and preserves selection.
+    view._setDragMode("pan");
+    view.canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    const panPreservedSelection = view.root.xy.state().selection?.polygon?.length === 4;
+
+    let clearEvents = 0;
+    view.root.addEventListener("xy:select", (event) => {
+      if (event.detail?.view?.source === "select_clear") clearEvents += 1;
+    });
+    view._setDragMode("select-lasso");
+
+    const clickHandle = (handle, pointerId) => {
+      const clientX = Number(handle.getAttribute("cx"));
+      const clientY = Number(handle.getAttribute("cy"));
+      handle.dispatchEvent(new PointerEvent("pointerdown", {
+        pointerId, pointerType: "mouse", button: 0, buttons: 1,
+        clientX, clientY, bubbles: true,
+      }));
+      handle.dispatchEvent(new PointerEvent("pointerup", {
+        pointerId, pointerType: "mouse", button: 0, buttons: 0,
+        clientX, clientY, bubbles: true,
+      }));
+    };
+
+    const historyBeforeRemoval = view._historyPast.length;
+    const removedPoint = [...polygon[1]];
+    const removableHandle = view.selLassoHandles.children[1];
+    clickHandle(removableHandle, 101);
+    const singleClickDidNothing = view.root.xy.state().selection?.polygon?.length === 4
+      && view._historyPast.length === historyBeforeRemoval;
+    clickHandle(removableHandle, 102);
+    const afterRemoval = view.root.xy.state().selection?.polygon;
+    const handleRemoved = afterRemoval?.length === 3
+      && !afterRemoval.some((point) =>
+        point[0] === removedPoint[0] && point[1] === removedPoint[1])
+      && view.selLassoHandles.childElementCount === 3;
+    const removalRecordedOnce = view._historyPast.length === historyBeforeRemoval + 1;
+
+    // Three vertices are the minimum valid polygon; removing another is a no-op.
+    const historyAtMinimum = view._historyPast.length;
+    const minimumHandle = view.selLassoHandles.children[0];
+    clickHandle(minimumHandle, 103);
+    clickHandle(minimumHandle, 104);
+    const minimumPreserved = view.root.xy.state().selection?.polygon?.length === 3
+      && view._historyPast.length === historyAtMinimum;
+
+    // A click or tiny pointer jitter outside the polygon must not hide it
+    // while the client waits to see whether a replacement drag begins.
+    const canvasRect = view.canvas.getBoundingClientRect();
+    const outsideX = canvasRect.left + 12;
+    const outsideY = canvasRect.top + 12;
+    view.canvas.dispatchEvent(new PointerEvent("pointerdown", {
+      pointerId: 201, pointerType: "mouse", button: 0, buttons: 1,
+      clientX: outsideX, clientY: outsideY, bubbles: true,
+    }));
+    const stayedVisibleOnPointerDown = view.selLasso.style.display === "block"
+      && view._lassoPolygon?.length === 3;
+    view.canvas.dispatchEvent(new PointerEvent("pointermove", {
+      pointerId: 201, pointerType: "mouse", button: 0, buttons: 1,
+      clientX: outsideX + 1, clientY: outsideY + 1, bubbles: true,
+    }));
+    const stayedVisibleThroughJitter = view.selLasso.style.display === "block"
+      && view._lassoPolygon?.length === 3;
+    view.canvas.dispatchEvent(new PointerEvent("pointerup", {
+      pointerId: 201, pointerType: "mouse", button: 0, buttons: 0,
+      clientX: outsideX + 1, clientY: outsideY + 1, bubbles: true,
+    }));
+    const clickPreservedLasso = view.selLasso.style.display === "block"
+      && view.root.xy.state().selection?.polygon?.length === 3;
+
+    const historyBeforeClear = view._historyPast.length;
+    const realDraw = view.draw;
+    let redraws = 0;
+    view.draw = () => { redraws += 1; };
+    view.canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    view.draw = realDraw;
+
+    document.body.setAttribute("data-xy-lasso-dblclick-probe", JSON.stringify({
+      panPreservedSelection,
+      singleClickDidNothing,
+      handleRemoved,
+      removalRecordedOnce,
+      minimumPreserved,
+      stayedVisibleOnPointerDown,
+      stayedVisibleThroughJitter,
+      clickPreservedLasso,
+      selectionCleared: view.root.xy.state().selection === null,
+      overlayCleared: view._lassoPolygon === null && view.selLasso.style.display === "none",
+      masksCleared: view.gpuTraces.every((trace) =>
+        !trace.selActive && (!trace.drill || !trace.drill.selActive)),
+      brushCleared: view._lastBrush === null,
+      clearEventEmittedOnce: clearEvents === 1,
+      historyRecordedOnce: view._historyPast.length === historyBeforeClear + 1,
+      redrawnOnce: redraws === 1,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-lasso-dblclick-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_lasso_mode_double_click_clears_selection(tmp_path: Path) -> None:
+    result = _run(
+        tmp_path,
+        _chart_html().replace(_RENDER_CALL, _LASSO_DOUBLE_CLICK_PROBE),
+        "data-xy-lasso-dblclick-probe",
+        label="lasso double-click clear probe",
+    )
+    assert result == {key: True for key in result}
+
+
 _ROWS_PROBE = """
   const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
   try {

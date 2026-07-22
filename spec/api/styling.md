@@ -309,7 +309,9 @@ to avoid clipping the chart edge. Pan starts active and toggles off to release
 drag and wheel gestures back to the containing page. Zoom and
 selection modes are grouped into menus; completed lasso selections expose up
 to 16 adaptively simplified handles that can be dragged to refine the selected
-range. The export menu defaults to PNG, SVG, and the chart's resident data as
+range or double-clicked to remove a vertex down to a three-vertex minimum;
+double-clicking the chart in Lasso Select mode clears that selection. The
+export menu defaults to PNG, SVG, and the chart's resident data as
 CSV. `xy.export_config(formats=[...])` governs which of `png`, `jpeg`, `webp`,
 `svg`, and `csv` appear and in what order; `pdf` and `html` are Python-side
 formats and are skipped in the client menu. An explicit empty list hides the

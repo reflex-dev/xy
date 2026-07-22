@@ -53,13 +53,13 @@ the switch is never set. The non-boolean viewport keys — `default_drag_action`
 | `select` | on | Suppresses the `xy:select` event and the `select_clear` message, removes the modebar Selection menu, and (with `brush`) disables shift-drag. |
 | `brush` | on | Same conjunction: `canBrush = brush && select` (`53_interaction.ts:115`) gates every selection drag and the modebar Selection menu. |
 | `crosshair` | off | The two guide elements are created only when the flag is true, at init (`53_interaction.ts:80`). Not togglable after mount. |
-| `navigation` | on | Master gate on pointer-drag pan, wheel zoom, box-zoom drags, dblclick reset, and every modebar viewport control. |
+| `navigation` | on | Master gate on pointer-drag pan, wheel zoom, box-zoom drags, pan-mode dblclick reset, and every modebar viewport control. Lasso-mode double-click clear is a selection action and is unaffected. |
 | `pan` | on | Plain-drag pan is ignored, the modebar Pan button is not built, and every zoom-enabled axis is contained (§2.2). Requires `navigation`. Pans `pan_axes` (§2.1). |
 | `zoom` | on | Master zoom gate: wheel zoom, box zoom, and the zoom actions inside the modebar menu are all ignored. The same dropdown can remain for view history when `history` is on. Requires `navigation`. Zooms `zoom_axes` (§2.1). |
 | `wheel_zoom` | on | Cursor-anchored wheel/trackpad zoom is ignored and the page keeps scrolling; box and button zoom are unaffected. Requires `navigation` and `zoom` (`53_interaction.ts:271-273`). |
 | `box_zoom` | on | Box-zoom drags and the modebar Box Zoom button are removed, and `default_drag_action="zoom"` has no usable drag tool. Requires `navigation` and `zoom` (`53_interaction.ts:112-113`, `50_chartview.ts:419`). |
 | `zoom_buttons` | on | The modebar Zoom In (×0.5) / Zoom Out (×2) commands are removed; wheel and box zoom keep working. Requires `navigation` and `zoom` (`53_interaction.ts:883`). |
-| `double_click_reset` | on | Double-click no longer resets the view. The modebar Reset View button is unaffected. Requires `navigation` only — reset is independent of `zoom` (`53_interaction.ts:283-284`). |
+| `double_click_reset` | on | Pan-mode double-click no longer resets the view. The modebar Reset View button and lasso-mode double-click clear are unaffected. Requires `navigation` only — reset is independent of `zoom` (`53_interaction.ts`). |
 | `history` | on | Removes Back/Next from the modebar zoom menu and stops durable-state snapshotting entirely (`57_viewstate.ts`). The full history contract is [`../design/view-state.md`](../design/view-state.md) §4: a client-local 64-entry stack of durable-state snapshots, coalesced per gesture by `interaction_id`; linked and history-sourced writes never push; reset pushes (Back undoes a double-click). |
 | `link_group` | unset | See §4. |
 | `link_axes` | all declared axes | See §4. |
@@ -279,9 +279,11 @@ renderer reads anywhere in `js/src/`.
 | Drag in `select` / `select-lasso` / `select-x` / `select-y` mode | That selection shape | `brush`, `select`, `_pickable` |
 | Drag in `zoom` mode | Box zoom, fitting `zoom_axes` on release | `navigation`, `zoom`, and `box_zoom` |
 | Wheel | Cursor-anchored zoom of `zoom_axes`, factor `1.0015 ** deltaY`; `preventDefault` | `navigation`, `zoom`, and `wheel_zoom` |
-| Double click | Reset `reset_axes` to home (animated); does **not** clear selection | `navigation` and `double_click_reset` |
+| Double click in `pan` mode | Reset `reset_axes` to home (animated); does **not** clear selection | `navigation` and `double_click_reset` |
+| Double click in `select-lasso` mode | Clear the active selection and editable polygon; no-op when no selection exists | active selection |
 | Click without drag | Pick; a drag past threshold sets `_ignoreNextClick` and swallows the click | `click` |
 | Pointer down on a lasso vertex handle | Drag that vertex; re-runs the selection on release | an existing lasso |
+| Double click a lasso vertex handle | Remove that vertex and re-run the selection; no-op at the three-vertex polygon minimum | an existing lasso with at least four vertices |
 | Hover an axis band (tick strip + 6 px plot-side gutter) | Resize cursor (`ew-resize` x, `ns-resize` y) when the axis can zoom; a pan-only axis shows a grab hand (`grabbing` while dragging) | axis navigable: `navigation` and (`pan` ∧ in `pan_axes`, or `zoom` ∧ in `zoom_axes`) |
 | Wheel over an axis band | Cursor-anchored zoom of **that axis only** | `navigation`, `zoom`, `wheel_zoom`, axis in `zoom_axes` |
 | Drag **along** an axis band | Pan that axis only (containment clamps as in §2.2) | `navigation`, and `pan` ∧ in `pan_axes` (or contained) |
@@ -293,6 +295,9 @@ A box gesture counts as moved past 3 px in either axis; a lasso needs at
 least 3 sampled vertices, sampled at 3 px spacing and capped at 2048. In
 `select-x` the y bounds are replaced with the full current view and in
 `select-y` the x bounds are, so those modes brush one axis.
+An existing lasso remains rendered until a replacement selection gesture
+crosses that movement threshold; a plain click or sub-threshold pointer jitter
+does not temporarily hide or replace it.
 
 Axis bands are geometric scopes, not new state: secondary axes get their band
 on their own side (`y` left, `y2` right, top-side x axes on top), so scoping
