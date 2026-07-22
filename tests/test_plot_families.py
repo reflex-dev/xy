@@ -292,6 +292,32 @@ def test_failing_filled_contour_rolls_back_the_heatmap() -> None:
     assert len(fig.store) == 0
 
 
+@pytest.mark.parametrize(
+    "levels",
+    [
+        np.array([0.0, 6.0, 12.0, 18.0, 24.0]),
+        np.array([12.0]),
+    ],
+    ids=["banded", "direct"],
+)
+@pytest.mark.parametrize(
+    ("name", "expected_name"), [("Predicted yield", "Predicted yield"), (None, None)]
+)
+def test_filled_contour_heatmap_retains_name(levels, name, expected_name) -> None:
+    fig = Figure().contour(
+        np.arange(25, dtype=float).reshape(5, 5),
+        levels=levels,
+        filled=True,
+        name=name,
+    )
+
+    spec, _ = fig.build_payload()
+
+    assert len(spec["traces"]) == 1
+    assert spec["traces"][0]["kind"] == "heatmap"
+    assert spec["traces"][0]["name"] == expected_name
+
+
 def test_failing_box_and_violin_commit_no_axis_categories() -> None:
     for mark in ("box", "violin"):
         fig = Figure()

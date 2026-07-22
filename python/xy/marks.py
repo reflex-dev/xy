@@ -2185,13 +2185,20 @@ def contour(
                     banded,
                     x=dense_x,
                     y=dense_y,
-                    name=None,
+                    name=name,
                     colormap=colormap,
                     domain=(float(edges[0]), float(edges[-1])),
                     opacity=min(opacity, 0.9),
                 )
             else:
-                self.heatmap(arr, x=x, y=y, name=None, colormap=colormap, opacity=min(opacity, 0.7))
+                self.heatmap(
+                    arr,
+                    x=x,
+                    y=y,
+                    name=name,
+                    colormap=colormap,
+                    opacity=min(opacity, 0.7),
+                )
         x0, x1, y0, y1, level_values = _contour_segments(arr, xpos, ypos, level_values)
         if len(x0) == 0:
             raise ValueError("contour levels do not intersect the finite grid")
