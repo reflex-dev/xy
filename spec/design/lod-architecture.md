@@ -222,6 +222,34 @@ the "other" bucket for tail categories, which the spec records
   be resident. Columns too large to build in RAM are streamed to disk by
   `xy._ooc.MemmapF64Builder`; `tests/test_ooc.py` covers ingest-without-copy and
   screen-bounded density rendering over a memmap-backed scatter.
+- **Windowed-exact spatial index (landed).** A disk-backed companion to the
+  pyramid for the zoomed-*in* regime, where the pyramid's upsampled floor is
+  blocky (its finest cell is kilometres wide over a planet-scale extent).
+  Points are pre-sorted into a row-major grid of cells with a cumulative-offset
+  header (`osmium-rs`'s `osm-sort`, dossier §32b); `xy._spatial.SpatialIndex`
+  reads only the cells a viewport overlaps — one contiguous memmap slice per
+  grid row. Cost is O(points in window), so detail *sharpens and cheapens* with
+  depth; the cheap offsets-only `window_count` (whole-cell overhang, an upper
+  bound) gates the read, then the cells are gathered **once** and the render
+  tier keyed on the *actual* in-window count:
+  - **≤ `SCATTER_DENSITY_THRESHOLD` in-window → real points** (`binning:
+    "spatial-points"`), shipped straight from the index as vertices so deep zoom
+    is *crisp individual marks*, not a raster — the out-of-core drill-in the
+    canonical rescan can't afford. Position-only: the derived index has no row
+    ids or channels (§27), so it is gated to constant-styled traces and a pick
+    can't resolve to a canonical row (an empty drill subset makes that explicit —
+    exact-or-nothing, §16/§17).
+  - **otherwise → exact grid** (`binning: "spatial-exact"`), re-binned via
+    `kernels.bin_2d_f32` (f32-input, no f64 widening) at **full screen
+    resolution** (one cell per pixel) and uploaded with **nearest-neighbour**
+    filtering — no coarser aggregate grid stretched over the viewport, so there
+    is neither upscale blur nor pixelation. The upsampled pyramid keeps `linear`
+    (smooth aggregate); the wire carries the choice as `density.filter`.
+
+  It engages while `window_count` is under `SPATIAL_EXACT_MAX_POINTS` and yields
+  to the instant upsampled pyramid above it. `tests/test_spatial.py` covers cell
+  grouping, windowed count/gather, exact-bin parity with a direct `bin_2d`, and
+  the points-vs-grid tier decision keyed on the true in-window count.
 
 ---
 
@@ -380,12 +408,23 @@ contract entry before it lands.
 7. **Done:** `density_view` estimates the window with `pyramid_count` and
    serves it with `pyramid_compose` when that estimate sits safely above the
    drill threshold; `compose` picks the coarsest level that still meets the
-   render resolution and refuses beyond `MAX_UPSAMPLE` (2×), so below-floor
-   and near-drill windows fall through to the exact `range_indices` +
-   `bin_2d` path. Level is recorded per update as `binning: "pyramid-L<l>"`.
+   render resolution. Its `max_upsample` bound is 2× for in-RAM traces (so
+   below-floor and near-drill windows fall through to the exact
+   `range_indices` + `bin_2d` path), but unbounded for out-of-core / huge
+   traces, which are served upsampled from an adaptively finer finest level
+   (`~sqrt(N/target)`, capped `PYRAMID_MAX_DIM`) rather than rescanned. Level
+   and mode are recorded per update as `binning: "pyramid-L<l>[-upsampled]"`.
    Traces on a nonlinear (log/symlog) axis skip the pyramid entirely — its
    raw-space levels cannot compose a scale-coordinate grid (dossier §28) —
    and always take the exact path.
+   When an out-of-core trace also carries a Tier-3 **spatial index**
+   (`_spatial.SpatialIndex`, built by `osmium-rs osm-sort`), a window the
+   pyramid could only serve `-upsampled` is instead answered exactly from just
+   its in-window points: drilled to crisp real points when the count fits the
+   direct budget, else binned to a **full-screen-resolution** grid served with
+   nearest-neighbour filtering (`binning: "spatial-exact"`, `filter: "nearest"`)
+   — no interpolation blur. Gated by an offsets-only `window_count` upper bound
+   (`SPATIAL_EXACT_MAX_POINTS`); wider windows keep the instant upsampled pyramid.
 8. Client: tile-keyed cache replaces window-keyed `densityCache` (same
    eviction, same crossfades). Still pending — `js/src/45_lod.ts` keys the
    cache by density window, and no client code reads the served level.

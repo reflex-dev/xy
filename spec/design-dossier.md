@@ -309,12 +309,44 @@ is `PYRAMID_BASE_DIM`² (2048², `python/xy/config.py`), each coarser level an e
 u64 sum saturating to u32 down to 1². Built lazily on the first density view at
 ≥ `PYRAMID_MIN_POINTS` (2,000,000). There is no per-tile fetch entry point and no tile
 addressing — the C ABI is `xy_pyramid_build` / `_append` / `_count` / `_compose` /
-`_free`, and composition happens kernel-side over the whole window, refusing past
-`MAX_UPSAMPLE` (2×, `src/tiles.rs`) so below-floor windows fall back to the exact
-`range_indices` + `bin_2d` path. Only the `count` plane exists; the per-channel `sum` /
-`argmax+purity` planes above are not built. *Pending:* tiling proper (per-tile build,
-fetch, and pan-time reuse), so "pan is pure tile reuse" is design, not behavior. See
-`spec/design/lod-architecture.md` §4 for the full design and its shipped-status ledger.
+`_free`, and composition happens kernel-side over the whole window. `_compose` takes a
+`max_upsample` bound: in-RAM traces cap it at 2× so a below-floor window falls back to
+the exact `range_indices` + `bin_2d` re-bin, but **out-of-core / huge traces**
+(disk-backed `np.memmap`, or > `PYRAMID_NO_RESCAN_ROWS`) pass it unbounded and are
+served upsampled from the finest level — an O(N) rescan of a 100 GB+ mmap is not
+interactive, and past 2³²−1 rows the per-row index kernels would overflow u32 anyway.
+Those traces also get a finer finest level (adaptive `~sqrt(N/target)`, capped
+`PYRAMID_MAX_DIM` = 16384²) so the upsampled floor stays as sharp as memory allows.
+Level and mode are recorded per update (`binning: "pyramid-L<l>[-upsampled]"`). Only the
+`count` plane exists; the per-channel `sum` / `argmax+purity` planes above are not built.
+
+*Windowed-exact tier for out-of-core scatter (`python/xy/_spatial.py`):* the pyramid's
+upsampled floor is blocky at metro/city zoom (its finest cell is kilometres wide over a
+planet-scale extent). When a trace carries a **spatial index** — points pre-sorted on
+disk into a row-major grid of cells with a cumulative-offset header, built by
+`osmium-rs`'s `osm-sort` — a zoomed-in window the pyramid can only upsample reads just
+the cells it overlaps (one contiguous memmap slice per grid row). This is O(points in
+window), not O(N), so deep zoom gets *sharper and cheaper* the further in you go; it
+engages only while that count is affordable (`SPATIAL_EXACT_MAX_POINTS`, above which the
+instant upsampled pyramid stands). The cheap offsets-only `window_count` (whole-cell
+overhang — an upper bound) gates the read; the cells are then gathered **once** and the
+tier keyed on the *actual* in-window count:
+- **≤ `SCATTER_DENSITY_THRESHOLD` → real points** (`binning: "spatial-points"`), shipped
+  from the index as vertices — deep zoom is *crisp individual marks*, the out-of-core
+  drill-in the canonical rescan can't afford. Position-only (the index has no row ids /
+  channels, §27): gated to constant-styled traces, and a pick returns nothing rather than
+  a wrong row (empty drill subset → exact-or-nothing, §16/§17).
+- **otherwise → exact grid** (`binning: "spatial-exact"`) via `kernels.bin_2d_f32` (an
+  f32-input twin of `bin_2d` that skips the f64 widening that otherwise dominates the
+  gather; bit-identical result), binned at **full screen resolution** (one cell per pixel)
+  and uploaded **nearest-neighbour** — no coarser grid stretched over the viewport, so no
+  upscale blur and no pixelation. The upsampled pyramid keeps `linear` (smooth aggregate);
+  the choice rides the wire as `density.filter`.
+
+The sorted columns are a derived **f32** cache (§27: canonical stays f64, every derived
+buffer is rebuildable). *Pending:* tiling proper (per-tile build, fetch, and pan-time reuse), so
+"pan is pure tile reuse" is design, not behavior. See `spec/design/lod-architecture.md`
+§4 for the full design and its shipped-status ledger.
 
 So the honest cost model of the tiled design: **O(points) once at build, O(visible tiles) per frame,
 O(visible points) on deep zoom past the pyramid floor.** This is also exactly the

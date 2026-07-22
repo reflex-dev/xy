@@ -3006,6 +3006,101 @@ pub fn bin_2d(
     );
 }
 
+/// f32-input twin of [`bin_2d`] for the out-of-core spatial index
+/// (`_spatial.py`): bins memmap'd f32 (lon, lat) slices **directly**, skipping
+/// the f64 widening that otherwise dominates a windowed gather (an f32→f64 copy
+/// of every in-window point — measured at ~half the whole query). Cell math
+/// widens each value to f64 and matches `bin_2d` bit-for-bit over the same
+/// points cast to f64, so the index's exact-density result is unchanged.
+/// Parallel with private grids + an integer merge, so counts are thread-count
+/// invariant.
+#[allow(clippy::too_many_arguments)]
+pub fn bin_2d_f32(
+    x: &[f32],
+    y: &[f32],
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    out: &mut [f32],
+) {
+    assert_eq!(x.len(), y.len());
+    assert_eq!(out.len(), w * h);
+    assert!(w > 0 && h > 0 && x1_gt_x0(x0, x1) && x1_gt_x0(y0, y1));
+    let n = x.len();
+    let threads = bin_2d_threads(n, w * h);
+    if threads <= 1 || n < threads {
+        let mut grid = vec![0u32; w * h];
+        bin_2d_count_f32_scalar(x, y, x0, x1, y0, y1, w, h, &mut grid);
+        for (o, c) in out.iter_mut().zip(grid) {
+            *o = c as f32;
+        }
+        return;
+    }
+    let chunk = n.div_ceil(threads);
+    let grids: Vec<Vec<u32>> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..threads)
+            .map(|t| {
+                let lo = (t * chunk).min(n);
+                let hi = ((t + 1) * chunk).min(n);
+                let (xs, ys) = (&x[lo..hi], &y[lo..hi]);
+                s.spawn(move || {
+                    let mut grid = vec![0u32; w * h];
+                    bin_2d_count_f32_scalar(xs, ys, x0, x1, y0, y1, w, h, &mut grid);
+                    grid
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|hd| hd.join().expect("bin_2d_f32 worker panicked"))
+            .collect()
+    });
+    let cell_chunk = (w * h).div_ceil(threads);
+    let grids_ref = &grids;
+    std::thread::scope(|s| {
+        for (ci, oseg) in out.chunks_mut(cell_chunk).enumerate() {
+            let base = ci * cell_chunk;
+            s.spawn(move || {
+                for (j, o) in oseg.iter_mut().enumerate() {
+                    let c: u64 = grids_ref.iter().map(|g| u64::from(g[base + j])).sum();
+                    *o = c as f32;
+                }
+            });
+        }
+    });
+}
+
+/// f32 clone of [`bin_2d_count_scalar`]: widen each value to f64 so cell
+/// indexing is identical to the f64 path, then count into a u32 grid.
+#[allow(clippy::too_many_arguments)]
+fn bin_2d_count_f32_scalar(
+    x: &[f32],
+    y: &[f32],
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    grid: &mut [u32],
+) {
+    let sx = w as f64 / (x1 - x0);
+    let sy = h as f64 / (y1 - y0);
+    for i in 0..x.len() {
+        let xv = x[i] as f64;
+        let yv = y[i] as f64;
+        if !xv.is_finite() || !yv.is_finite() || xv < x0 || xv >= x1 || yv < y0 || yv >= y1 {
+            continue;
+        }
+        let cx = (((xv - x0) * sx) as usize).min(w - 1);
+        let cy = (((yv - y0) * sy) as usize).min(h - 1);
+        grid[cy * w + cx] = grid[cy * w + cx].saturating_add(1);
+    }
+}
+
 /// Row-scan kernels fan out across cores only past this size, where thread
 /// spawn + merge cost is well amortized. Threading stays inside the call —
 /// the ABI remains synchronous (engine doc E5).
@@ -5915,6 +6010,41 @@ mod tests {
         assert!(out[1] > 0.0);
         assert_eq!(out[2], 0.0);
         assert_eq!(out[3], 0.0);
+    }
+
+    #[test]
+    fn bin_2d_f32_matches_bin_2d_over_widened_points() {
+        // The out-of-core spatial-index path bins f32 columns directly; its
+        // grid must equal bin_2d over the *same points cast to f64* — the
+        // contract _spatial.density_grid and its parity test rely on. Cover a
+        // grid big enough to trip the parallel path (private grids + merge).
+        let mut s = 0x9e3779b97f4a7c15u64;
+        let mut next = || {
+            s ^= s >> 12;
+            s ^= s << 25;
+            s ^= s >> 27;
+            (s.wrapping_mul(0x2545f4914f6cdd1d) >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let n = 300_000usize;
+        let (mut xf, mut yf) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        for _ in 0..n {
+            xf.push((next() * 20.0 - 10.0) as f32);
+            yf.push((next() * 20.0 - 10.0) as f32);
+        }
+        // A few non-finite / out-of-window values must be skipped identically.
+        xf[0] = f32::NAN;
+        yf[1] = f32::INFINITY;
+        xf[2] = 1e30;
+        let (w, h) = (128usize, 96usize);
+        let (x0, x1, y0, y1) = (-8.0, 7.5, -6.0, 6.5);
+        let xd: Vec<f64> = xf.iter().map(|&v| v as f64).collect();
+        let yd: Vec<f64> = yf.iter().map(|&v| v as f64).collect();
+        let mut a = vec![0.0f32; w * h];
+        let mut b = vec![0.0f32; w * h];
+        bin_2d(&xd, &yd, x0, x1, y0, y1, w, h, &mut a);
+        bin_2d_f32(&xf, &yf, x0, x1, y0, y1, w, h, &mut b);
+        assert_eq!(a, b);
+        assert!(b.iter().sum::<f32>() > 0.0);
     }
 }
 

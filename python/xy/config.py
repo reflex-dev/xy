@@ -114,3 +114,28 @@ def default_palette_color(index: int, *, stacklevel: int = 3) -> str:
 # base level is PYRAMID_BASE_DIM² u32 counts (~4·dim² bytes + 1/3 overhead).
 PYRAMID_MIN_POINTS = 2_000_000
 PYRAMID_BASE_DIM = 2048
+# Above this row count (or for any disk-backed/out-of-core column), a density
+# window that outresolves the pyramid is served upsampled from the finest level
+# rather than triggering an exact O(N) re-bin: a full rescan is cheap in RAM but
+# a multi-second scan for a 100 GB+ mmap'd column. Below it, the exact re-bin
+# (sharp, drillable) still runs. Recorded per update as `pyramid-L0-upsampled`.
+PYRAMID_NO_RESCAN_ROWS = 200_000_000
+# No-rescan traces get a finer finest level so the upsampled deep-zoom floor
+# stays sharp (the whole extent / dim per cell). Sized ~sqrt(N/target) and
+# capped here (16384² u32 ≈ 1 GB + 1/3 pyramid overhead). Normal traces keep
+# PYRAMID_BASE_DIM, so their memory is unchanged.
+PYRAMID_MAX_DIM = 16384
+# When a trace carries a spatial index (`_spatial.SpatialIndex`), a zoomed-in
+# window the pyramid can only serve blurry is re-binned *exactly* from just its
+# in-window points — but only when that count is affordable to read/bin at
+# interactive latency. Binning the on-disk f32 columns directly (kernels
+# .bin_2d_f32, no f64 widening) makes an ~80M-point NorCal-scale window ≈ 0.9 s
+# and a 50M metro window ≈ 165 ms, so the exact/sharp tier engages all the way
+# out to a multi-degree region. Above the cap the instant upsampled pyramid
+# stands — but note a *sparse* large window (desert, ocean margin) has few
+# points and still engages the exact tier, so blockiness only ever appears where
+# the window is simultaneously huge *and* dense, i.e. saturated at world zoom
+# where a smooth aggregate gradient is already the maximum meaningful detail.
+# The cap trades transient RAM (gather is ~8·N bytes: 80M ≈ 0.65 GB, freed after
+# the view) and worst-case latency against how far out crisp detail reaches.
+SPATIAL_EXACT_MAX_POINTS = 80_000_000

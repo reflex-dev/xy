@@ -80,7 +80,7 @@ unsafe fn borrowed_byte_spans<'a>(
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 37;
+pub const ABI_VERSION: u32 = 39;
 const FACTORIZE_CAPACITY_EXCEEDED: usize = usize::MAX - 1;
 
 #[no_mangle]
@@ -1639,6 +1639,53 @@ pub unsafe extern "C" fn xy_bin_2d(
     })
 }
 
+/// f32-input density bin for the out-of-core spatial index (`_spatial.py`):
+/// bins memmap'd f32 (lon, lat) directly into a `w*h` f32 grid, skipping the
+/// f64 widening that dominates a windowed gather. Bit-identical to `xy_bin_2d`
+/// over the same points cast to f64. Returns 1 on success, 0 on bad args.
+///
+/// # Safety
+/// `x`/`y` must each point to `len` readable f32 (or be null iff `len == 0`);
+/// `out` must point to `w*h` writable f32.
+#[no_mangle]
+pub unsafe extern "C" fn xy_bin_2d_f32(
+    x: *const f32,
+    y: *const f32,
+    len: usize,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    out: *mut f32,
+) -> i32 {
+    let bad = w == 0 || h == 0 || !finite_gt(x0, x1) || !finite_gt(y0, y1);
+    if bad || out.is_null() {
+        return 0;
+    }
+    let grid_len = match w.checked_mul(h) {
+        Some(n) => n,
+        None => return 0,
+    };
+    let (x, y) = if len == 0 {
+        (&[][..], &[][..])
+    } else {
+        if x.is_null() || y.is_null() {
+            return 0;
+        }
+        (
+            std::slice::from_raw_parts(x, len),
+            std::slice::from_raw_parts(y, len),
+        )
+    };
+    let out = std::slice::from_raw_parts_mut(out, grid_len);
+    ffi_guard(0, || {
+        kernels::bin_2d_f32(x, y, x0, x1, y0, y1, w, h, out);
+        1
+    })
+}
+
 /// Native PNG rasterizer (dossier Phase 3). Paints a Python-built display list
 /// (`cmd[0..cmd_len]`, see `raster.rs`/`_raster.py`) into a caller-owned
 /// straight-alpha RGBA8 framebuffer `out` of `w*h*4` bytes. Returns 1 on
@@ -2805,6 +2852,7 @@ pub unsafe extern "C" fn xy_pyramid_compose(
     hi_y: f64,
     w: usize,
     h: usize,
+    max_upsample: usize,
     out: *mut f32,
 ) -> i32 {
     if out.is_null() || w == 0 || h == 0 || !finite_gt(lo_x, hi_x) || !finite_gt(lo_y, hi_y) {
@@ -2815,9 +2863,10 @@ pub unsafe extern "C" fn xy_pyramid_compose(
         None => return -1,
     };
     let out = std::slice::from_raw_parts_mut(out, out_len);
+    let max_upsample = max_upsample.max(1);
     ffi_guard(-1, || {
         match tiles::reg_with(handle, |p| {
-            tiles::compose(p, lo_x, hi_x, lo_y, hi_y, w, h, out)
+            tiles::compose(p, lo_x, hi_x, lo_y, hi_y, w, h, max_upsample, out)
         }) {
             Some(Some(level)) => level as i32,
             Some(None) => -2,
@@ -3064,7 +3113,7 @@ mod tests {
                 usize::MAX
             );
             assert_eq!(
-                xy_pyramid_compose(0, 0.0, 1.0, 0.0, 1.0, huge, 2, grid.as_mut_ptr()),
+                xy_pyramid_compose(0, 0.0, 1.0, 0.0, 1.0, huge, 2, 2, grid.as_mut_ptr()),
                 -1
             );
         }
