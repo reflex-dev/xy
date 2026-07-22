@@ -52,22 +52,32 @@ REQUIRED_FILES = {
     "benchmarks/bench_workflows.py",
     "benchmarks/categories.py",
     "benchmarks/environment.py",
-    "docs/engineering/api-examples.md",
-    "docs/engineering/benchmark.md",
-    "docs/engineering/chart-roadmap.md",
-    "docs/engineering/contributing.md",
-    "docs/engineering/production-readiness.md",
+    "spec/README.md",
+    "spec/design-dossier.md",
+    "spec/api/api-examples.md",
+    "spec/api/chart-roadmap.md",
+    "spec/benchmarks/results.md",
+    "spec/design/renderer-architecture.md",
+    "spec/matplotlib/compat.md",
+    "spec/process/contributing.md",
+    "spec/process/production-readiness.md",
+    "spec/assets/benchmark-snapshot.svg",
+    "spec/assets/launch-benchmark-comparison.svg",
     "hatch_build.py",
     "pyproject.toml",
-    "js/src/00_header.js",
-    "js/src/10_colormaps.js",
-    "js/src/20_theme.js",
-    "js/src/30_ticks.js",
-    "js/src/40_gl.js",
-    "js/src/45_lod.js",
-    "js/src/50_chartview.js",
-    "js/src/55_marks.js",
-    "js/src/60_entries.js",
+    "js/build.mjs",
+    "js/tsconfig.json",
+    "js/src/00_header.ts",
+    "js/src/10_colormaps.ts",
+    "js/src/20_theme.ts",
+    "js/src/30_ticks.ts",
+    "js/src/40_gl.ts",
+    "js/src/45_lod.ts",
+    "js/src/50_chartview.ts",
+    "js/src/55_marks.ts",
+    "js/src/60_entries.ts",
+    "package.json",
+    "package-lock.json",
     "python/xy/__init__.py",
     "python/xy/_framing.py",
     "python/xy/_native.py",
@@ -85,26 +95,16 @@ REQUIRED_FILES = {
     "python/xy/static/index.js",
     "python/xy/static/standalone.js",
     "python/xy/widget.py",
+    "examples/fastapi/README.md",
+    "examples/fastapi/pyproject.toml",
+    "examples/fastapi/app.py",
+    "examples/fastapi/charts.py",
+    "examples/fastapi/live_drilldown.py",
     "examples/reflex/README.md",
-    "examples/reflex/requirements.txt",
+    "examples/reflex/pyproject.toml",
     "examples/reflex/rxconfig.py",
-    "examples/reflex/assets/charts/area.html",
-    "examples/reflex/assets/charts/bar_column.html",
-    "examples/reflex/assets/charts/business_overview.html",
-    "examples/reflex/assets/charts/colored_scatter.html",
-    "examples/reflex/assets/charts/density_scatter.html",
-    "examples/reflex/assets/charts/heatmap.html",
-    "examples/reflex/assets/charts/histogram.html",
-    "examples/reflex/assets/charts/horizontal_bar.html",
-    "examples/reflex/assets/charts/line_walk.html",
-    "examples/reflex/assets/charts/live_drilldown_100m.html",
-    "examples/reflex/assets/charts/live_drilldown_10m.html",
-    "examples/reflex/assets/charts/plotly_colored_scatter.html",
-    "examples/reflex/assets/charts/stacked_bar.html",
-    "examples/reflex/reflex_xy_app/__init__.py",
-    "examples/reflex/reflex_xy_app/live_drilldown.py",
-    "examples/reflex/reflex_xy_app/reflex_xy_app.py",
-    "examples/reflex/scripts/build_charts.py",
+    "examples/reflex/xy_reflex_demo/__init__.py",
+    "examples/reflex/xy_reflex_demo/xy_reflex_demo.py",
     "scripts/check_public_api.py",
     "scripts/check_claim_guardrails.py",
     "scripts/check_python_floor.py",
@@ -125,7 +125,7 @@ REQUIRED_FILES = {
     "tests/test_bench_pyplot_vs_matplotlib.py",
     "tests/test_check_regressions.py",
     "tests/test_docs_examples.py",
-    "tests/test_reflex_example_assets.py",
+    "tests/test_example_apps.py",
     "tests/test_type_surface.py",
     "tests/test_verify_benchmark_report.py",
     "tests/test_verify_ci_workflow.py",
@@ -290,11 +290,32 @@ def _require_baseline_json(path: str, root: str) -> None:
         raise AssertionError("benchmarks/baseline.json must contain a non-empty metrics object")
 
 
+# Every grouped subdirectory of spec/ must survive packaging. Pinning
+# individual files alone would let a whole group be dropped as long as the
+# pinned member stayed, so require each group to be non-empty in its own right.
+SPEC_SUBDIRS = ("api", "benchmarks", "design", "matplotlib", "process")
+
+
+def _require_spec_layout(files: set[str]) -> None:
+    empty = [
+        name
+        for name in SPEC_SUBDIRS
+        if not any(f.startswith(f"spec/{name}/") and f.endswith(".md") for f in files)
+    ]
+    if empty:
+        raise AssertionError(f"sdist has no markdown under spec/ subdirectories: {empty}")
+
+    svgs = sorted(f for f in files if f.startswith("spec/assets/") and f.endswith(".svg"))
+    if len(svgs) < 2:
+        raise AssertionError(f"sdist is missing spec/assets SVG evidence snapshots: {svgs}")
+
+
 def verify_sdist(path: str) -> None:
     root, files = _normalized_files(path)
     missing = sorted(REQUIRED_FILES - files)
     if missing:
         raise AssertionError(f"sdist missing required files: {missing}")
+    _require_spec_layout(files)
 
     forbidden = sorted(
         name
@@ -311,19 +332,27 @@ def verify_sdist(path: str) -> None:
         path,
         root,
         "python/xy/static/index.js",
-        {"export { render", "function render(", "function decodeFrame(", "class ChartView"},
+        # The bundle is minified (identifiers renamed), so markers are the
+        # export aliases the minifier must preserve.
+        {"as render", "as renderStandalone", "as decodeFrame", "as ChartView"},
     )
     _require_file_contains(
         path,
         root,
         "python/xy/static/standalone.js",
-        {"window.xy", "function renderStandalone(", "function decodeFrame(", "class ChartView"},
+        # Minified IIFE: a top-level `var xy` namespace (window.xy in the
+        # classic <script> that to_html emits) carrying the public surface.
+        {"var xy=", ".renderStandalone=", ".decodeFrame=", ".ChartView="},
     )
     _require_file_contains(
         path,
         root,
-        "js/src/60_entries.js",
-        {"function render(", "function renderStandalone(", "// ---- exports ----"},
+        "js/src/60_entries.ts",
+        {
+            "export function render(",
+            "export function renderStandalone(",
+            "export default { render, decodeFrame };",
+        },
     )
     _require_file_contains(
         path,
@@ -332,14 +361,14 @@ def verify_sdist(path: str) -> None:
         {
             "Stable vs. Experimental",
             "Python 3.11+",
-            "docs/engineering/api-examples.md",
+            "spec/api/api-examples.md",
             "make check-examples",
         },
     )
     _require_file_contains(
         path,
         root,
-        "docs/engineering/api-examples.md",
+        "spec/api/api-examples.md",
         {
             "Chart Family Quick Reference",
             "Small Business Chart",
@@ -351,11 +380,11 @@ def verify_sdist(path: str) -> None:
     _require_file_contains(
         path,
         root,
-        "docs/engineering/benchmark.md",
+        "spec/benchmarks/results.md",
         {
             "benchmark-report",
             "regression-benchmark-report",
-            "docs/engineering/benchmark_metrics.md",
+            "spec/benchmarks/metrics.md",
             "scatter.json",
             "kernel.json",
         },
@@ -363,12 +392,12 @@ def verify_sdist(path: str) -> None:
     _require_file_contains(
         path,
         root,
-        "docs/engineering/production-readiness.md",
+        "spec/process/production-readiness.md",
         {
             "Release-Blocking Gates",
             "make check-artifacts",
             "make check-examples",
-            "Reflex example app",
+            "example apps' source",
             "package-only",
             "sdist-only",
             "scripts/verify_benchmark_report.py",
@@ -379,7 +408,7 @@ def verify_sdist(path: str) -> None:
     _require_file_contains(
         path,
         root,
-        "docs/engineering/contributing.md",
+        "spec/process/contributing.md",
         {
             "Pull Request Checklist",
             "make check-full",
@@ -393,18 +422,13 @@ def verify_sdist(path: str) -> None:
         path,
         root,
         "examples/reflex/README.md",
-        {
-            "xy Reflex Example",
-            "Business overview",
-            "assets/charts/business_overview.html",
-            "python scripts/build_charts.py",
-        },
+        {"reflex-xy showcase", "reflex run", "reflex_xy.XYPlugin()"},
     )
     _require_file_contains(
         path,
         root,
-        "examples/reflex/assets/charts/business_overview.html",
-        {"xy.renderStandalone", "Small business overview", "Revenue", "Pipeline"},
+        "examples/fastapi/README.md",
+        {"FastAPI", "chart.to_html()", "/api/xy/drilldown"},
     )
     _require_file_contains(
         path,

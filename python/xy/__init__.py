@@ -2,7 +2,7 @@
 
 Cost scales with pixels on screen, not points in the dataset: native Rust core
 in the Python process, offset-encoded f32 binary transport, M4 decimation, GPU
-density aggregation, and a WebGL2 render client. See docs/engineering/design-dossier.md.
+density aggregation, and a WebGL2 render client. See spec/design-dossier.md.
 
 One declarative API over one engine — Reflex-flavored composition with
 `on_*` event props:
@@ -29,6 +29,7 @@ __version__ = "0.0.1"
 
 _EXPORTS = {
     "Annotation": ".components",
+    "Animation": ".components",
     "Axis": ".components",
     "CHART_DOM_SLOTS": ".dom",
     "Chart": ".components",
@@ -37,16 +38,19 @@ _EXPORTS = {
     "ColumnStore": ".columns",
     "Component": ".components",
     "Engine": ".export",
+    "ExportConfig": ".components",
     "FacetChart": ".components",
     "Interaction": ".components",
     "Legend": ".components",
     "Mark": ".components",
     "Modebar": ".components",
     "Selection": "._figure",
+    "Spring": ".components",
     "Theme": ".components",
     "Tooltip": ".components",
     "ZoneMaps": ".columns",
     "area": ".components",
+    "animation": ".components",
     "area_chart": ".components",
     "arrow": ".components",
     "bar": ".components",
@@ -67,6 +71,7 @@ _EXPORTS = {
     "error_band_chart": ".components",
     "errorbar": ".components",
     "errorbar_chart": ".components",
+    "export_config": ".components",
     "hexbin": ".components",
     "hexbin_chart": ".components",
     "heatmap": ".components",
@@ -92,6 +97,7 @@ _EXPORTS = {
     "stairs_chart": ".components",
     "stem": ".components",
     "stem_chart": ".components",
+    "spring": ".components",
     "threshold": ".components",
     "threshold_zone": ".components",
     "triangle_mesh": ".components",
@@ -101,6 +107,7 @@ _EXPORTS = {
     "text": ".components",
     "vline": ".components",
     "x_band": ".components",
+    "write_images": ".export",
     "x_axis": ".components",
     "y_band": ".components",
     "y_axis": ".components",
@@ -110,6 +117,7 @@ _EXPORTS = {
 
 __all__ = [
     "CHART_DOM_SLOTS",
+    "Animation",
     "Annotation",
     "Axis",
     "Chart",
@@ -118,16 +126,19 @@ __all__ = [
     "ColumnStore",
     "Component",
     "Engine",
+    "ExportConfig",
     "FacetChart",
     "Interaction",
     "Legend",
     "Mark",
     "Modebar",
     "Selection",
+    "Spring",
     "Theme",
     "Tooltip",
     "ZoneMaps",
     "__version__",
+    "animation",
     "area",
     "area_chart",
     "arrow",
@@ -148,6 +159,7 @@ __all__ = [
     "error_band_chart",
     "errorbar",
     "errorbar_chart",
+    "export_config",
     "facet_chart",
     "heatmap",
     "heatmap_chart",
@@ -168,6 +180,7 @@ __all__ = [
     "scatter_chart",
     "segments",
     "segments_chart",
+    "spring",
     "stairs",
     "stairs_chart",
     "stem",
@@ -184,6 +197,7 @@ __all__ = [
     "violin",
     "violin_chart",
     "vline",
+    "write_images",
     "x_axis",
     "x_band",
     "y_axis",
@@ -244,6 +258,7 @@ if TYPE_CHECKING:
         error_band_chart,
         errorbar,
         errorbar_chart,
+        export_config,
         facet_chart,
         heatmap,
         heatmap_chart,
@@ -282,4 +297,4 @@ if TYPE_CHECKING:
         y_band,
     )
     from .dom import CHART_DOM_SLOTS
-    from .export import Engine
+    from .export import Engine, write_images

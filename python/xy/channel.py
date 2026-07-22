@@ -1,4 +1,4 @@
-"""Transport-agnostic message dispatcher (docs/engineering/design/reflex-integration.md §3.1).
+"""Transport-agnostic message dispatcher (spec/design/reflex-integration.md §3.1).
 
 One kernel-side dispatcher for every transport: the anywidget comm today, and
 any future host (the planned Reflex adapter's HTTP routes) tomorrow. A
@@ -31,6 +31,7 @@ Contracts (moved verbatim from `FigureWidget._on_custom_msg`):
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
@@ -63,6 +64,8 @@ __all__ = [
     "FRAME_HEADER_SIZE",
     "FRAME_MAGIC",
     "FRAME_VERSION",
+    "SELECTION_EVENT_ID_LIMIT",
+    "SELECTION_EVENT_ROW_LIMIT",
     "ChannelCallbacks",
     "DecodedFrame",
     "FrameDecodeError",
@@ -78,6 +81,11 @@ __all__ = [
 # (reply message, buffers to ship beside it — None when the reply has none).
 Reply = tuple[dict[str, Any], Optional[list[bytes]]]
 
+# Reflex semantic selection events include bounded JSON projections. The
+# complete canonical Selection remains server-side and can be re-resolved.
+SELECTION_EVENT_ROW_LIMIT = 1000
+SELECTION_EVENT_ID_LIMIT = 10000
+
 
 @dataclass(frozen=True)
 class ChannelCallbacks:
@@ -92,6 +100,8 @@ class ChannelCallbacks:
     on_brush: Optional[Callable[[dict[str, Any]], None]] = None
     on_select: Optional[Callable[[Selection], None]] = None
     on_view_change: Optional[Callable[[dict[str, Any]], None]] = None
+    on_animation_start: Optional[Callable[[dict[str, Any]], None]] = None
+    on_animation_end: Optional[Callable[[dict[str, Any]], None]] = None
 
 
 _NO_CALLBACKS = ChannelCallbacks()
@@ -102,6 +112,10 @@ def _selection_reply(
     selected: dict[int, Any],
     callbacks: ChannelCallbacks,
     brush: dict[str, Any],
+    *,
+    include_rows: bool = False,
+    kind: Optional[str] = None,
+    seq: Any = None,
 ) -> Reply:
     if callbacks.on_brush is not None:
         callbacks.on_brush(brush)
@@ -124,7 +138,44 @@ def _selection_reply(
         total += len(idx)
     if callbacks.on_select is not None:
         callbacks.on_select(Selection(fig, selected))
-    return {"type": "selection", "traces": traces, "total": total}, out
+    message: dict[str, Any] = {"type": "selection", "traces": traces, "total": total}
+    if seq is not None:
+        message["seq"] = seq
+    if include_rows:
+        canonical_row_ids = []
+        ids_remaining = SELECTION_EVENT_ID_LIMIT
+        ids_truncated = False
+        for tid in sorted(selected):
+            canonical = sorted(int(value) for value in selected[tid])
+            kept = canonical[:ids_remaining]
+            canonical_row_ids.append({"trace": int(tid), "ids": kept})
+            ids_remaining -= len(kept)
+            if len(kept) < len(canonical):
+                ids_truncated = True
+            if ids_remaining == 0:
+                ids_truncated = ids_truncated or any(
+                    len(selected[other_tid]) for other_tid in sorted(selected) if other_tid > tid
+                )
+                break
+        rows, rows_truncated = (
+            Selection(fig, selected).rows(SELECTION_EVENT_ROW_LIMIT),
+            (total > SELECTION_EVENT_ROW_LIMIT),
+        )
+        message.update(
+            {
+                "version": 1,
+                "kind": kind,
+                "mode": "replace",
+                "canonical_row_ids": canonical_row_ids,
+                "rows": rows,
+                "truncated": ids_truncated or rows_truncated,
+            }
+        )
+        if kind == "box":
+            message["bounds"] = dict(brush)
+        elif kind == "lasso":
+            message["polygon"] = brush["polygon"]
+    return message, out
 
 
 def handle_message(
@@ -142,6 +193,18 @@ def handle_message(
     if not isinstance(content, dict):
         return None
     kind = content.get("type")
+    if kind in {"animation_start", "animation_end"}:
+        callback = (
+            callbacks.on_animation_start
+            if kind == "animation_start"
+            else callbacks.on_animation_end
+        )
+        if callback is not None:
+            event: dict[str, Any] = {"phase": str(content.get("phase", "update"))}
+            if kind == "animation_end" and isinstance(content.get("cancelled"), bool):
+                event["cancelled"] = content["cancelled"]
+            callback(event)
+        return None
     if kind == "view":
         # Zoom/pan crossed what the shipped decimation can serve: recompute
         # for the visible window only (§28), stale-while-revalidate on the
@@ -214,22 +277,53 @@ def handle_message(
             callbacks.on_click(row)
         return None
     if kind == "view_change":
-        if callbacks.on_view_change is None:
-            return None
         try:
-            x0, x1, y0, y1 = normalize_window(
-                content["x0"], content["x1"], content["y0"], content["y1"], require_area=False
-            )
+            raw_ranges = content.get("ranges")
+            ranges: dict[str, list[float]] = {}
+            if isinstance(raw_ranges, dict):
+                for axis_id, raw_range in raw_ranges.items():
+                    if axis_id not in fig.axis_options:
+                        continue
+                    if not isinstance(raw_range, (tuple, list)) or len(raw_range) != 2:
+                        raise ValueError("invalid view range")
+                    lo, hi = float(raw_range[0]), float(raw_range[1])
+                    if not math.isfinite(lo) or not math.isfinite(hi) or lo == hi:
+                        raise ValueError("invalid view range")
+                    ranges[axis_id] = [lo, hi]
+            if not ranges:
+                x0, x1, y0, y1 = normalize_window(
+                    content["x0"],
+                    content["x1"],
+                    content["y0"],
+                    content["y1"],
+                    require_area=False,
+                )
+                ranges = {"x": [x0, x1], "y": [y0, y1]}
+            x_range = ranges.get("x")
+            y_range = ranges.get("y")
             view = {
-                "x0": x0,
-                "x1": x1,
-                "y0": y0,
-                "y1": y1,
+                "ranges": ranges,
                 "source": str(content.get("source", "view")),
+                "axes": [
+                    axis_id
+                    for axis_id in content.get("axes", [])
+                    if isinstance(axis_id, str) and axis_id in ranges
+                ],
+                "phase": str(content.get("phase", "end")),
+                "interaction_id": content.get("interaction_id"),
             }
+            if x_range is not None:
+                view.update({"x0": x_range[0], "x1": x_range[1]})
+            if y_range is not None:
+                view.update({"y0": y_range[0], "y1": y_range[1]})
         except (KeyError, TypeError, ValueError):
             return None
-        callbacks.on_view_change(view)
+        # Every committed view event feeds the figure's durable-state cache
+        # (view-state.md §5.1) — the reason end-phase events always ship —
+        # independent of whether a Python callback is registered.
+        fig._record_view_ranges(ranges)
+        if callbacks.on_view_change is not None:
+            callbacks.on_view_change(view)
         return None
     if kind == "select":
         # Box-select → range predicate (§34 Tier A). Ship a selection mask
@@ -251,11 +345,15 @@ def handle_message(
             )
         except (KeyError, TypeError, ValueError):
             return None
+        fig._record_selection({"range": {"x0": x0, "x1": x1, "y0": y0, "y1": y1}})
         return _selection_reply(
             fig,
             sel,
             callbacks,
             {"x0": x0, "x1": x1, "y0": y0, "y1": y1},
+            include_rows=bool(content.get("include_rows")),
+            kind="box",
+            seq=content.get("seq"),
         )
     if kind == "select_polygon":
         try:
@@ -264,9 +362,33 @@ def handle_message(
             polygon = [[float(point[0]), float(point[1])] for point in points]
         except (IndexError, KeyError, TypeError, ValueError):
             return None
-        return _selection_reply(fig, sel, callbacks, {"polygon": polygon})
+        fig._record_selection({"polygon": polygon})
+        return _selection_reply(
+            fig,
+            sel,
+            callbacks,
+            {"polygon": polygon},
+            include_rows=bool(content.get("include_rows")),
+            kind="lasso",
+            seq=content.get("seq"),
+        )
     if kind == "select_clear":
+        fig._record_selection(None)
         if callbacks.on_select is not None:
             callbacks.on_select(Selection(fig, {}))
-        return {"type": "selection", "traces": [], "total": 0}, None
+        message: dict[str, Any] = {"type": "selection", "traces": [], "total": 0}
+        if content.get("seq") is not None:
+            message["seq"] = content["seq"]
+        if content.get("include_rows"):
+            message.update(
+                {
+                    "version": 1,
+                    "kind": "clear",
+                    "mode": "replace",
+                    "canonical_row_ids": [],
+                    "rows": [],
+                    "truncated": False,
+                }
+            )
+        return message, None
     return None

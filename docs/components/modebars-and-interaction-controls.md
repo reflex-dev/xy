@@ -1,6 +1,9 @@
 ---
 title: Modebars & Controls
 description: Configure XY's toolbar, gestures, selection, exports, and linked viewports.
+components:
+  - xy.modebar
+  - xy.interaction_config
 ---
 
 # Modebars & Controls
@@ -52,7 +55,6 @@ chart = xy.scatter_chart(
         select=True,
         brush=True,
         crosshair=True,
-        view_change=True,
     ),
 )
 ~~~
@@ -60,6 +62,62 @@ chart = xy.scatter_chart(
 Supplying a Python callback on the chart automatically enables its matching
 interaction. Browser gestures still work in standalone HTML, but Python
 callbacks require a live notebook or framework transport.
+
+## Configure Pan and Zoom
+
+Limit an action to concrete declared axis IDs with `pan_axes` or `zoom_axes`.
+The zoom policy applies consistently to wheel zoom, modebar zoom-in/out, and box
+zoom:
+
+~~~python
+chart = xy.line_chart(
+    xy.line([0, 1, 2, 3], [1, 3, 2, 5]),
+    xy.interaction_config(zoom_axes=("x",)),
+)
+~~~
+
+Use `zoom_axes=("y",)` for y-only zoom. Omitting the option preserves the
+default of all declared axes. On a multi-axis chart, IDs are exact:
+`zoom_axes=("x", "y2")` changes x and y2 while primary y remains fixed.
+
+`default_drag_action` controls only an unmodified primary-button drag. The default
+`"auto"` chooses pan when available, then box zoom, then selection. Use `"zoom"`
+for box zoom, `"none"` for no plain-drag action, or one of `"select"`,
+`"select-x"`, `"select-y"`, and `"select-lasso"`. It does not enable the
+corresponding capability.
+
+The complete navigation policy is:
+
+| Option | Purpose |
+| --- | --- |
+| `navigation` | Master switch for local pan, zoom, and reset input. |
+| `pan`, `pan_axes` | Enable pan and name the exact axes it moves freely. An axis zoom can navigate but pan cannot is contained: it drags only within its home extents. |
+| `zoom`, `zoom_axes` | Enable zoom and name the exact axes it changes. |
+| `zoom_limits` | Set `(minimum, maximum)` magnification relative to the original range, globally or by axis ID. |
+| `wheel_zoom` | Enable wheel and trackpad zoom. |
+| `box_zoom` | Make box zoom available as a drag tool. |
+| `zoom_buttons` | Show modebar Zoom In and Zoom Out commands. |
+| `double_click_reset` | Let double-click restore the configured reset axes. |
+| `reset_axes` | Name the exact axes restored by Reset View. |
+
+Omitted `zoom_limits` resolves to `(1.0, None)` on every zoom axis. This prevents
+zooming out past the original window while leaving zoom-in unconstrained except by
+axis bounds and renderer precision. A tuple applies to all zoom axes; a mapping can
+set independent limits:
+
+~~~python
+xy.interaction_config(
+    default_drag_action="zoom",
+    pan_axes=("x", "y2"),
+    zoom_axes=("x", "y2"),
+    zoom_limits={"x": (1.0, None), "y2": (0.5, 32.0)},
+    reset_axes=("x", "y2"),
+)
+~~~
+
+Reset is independent from zoom and does not clear selection. `navigation=False`
+blocks local viewport input, but linked and application-driven ranges may still
+update the chart.
 
 Selection controls include box, lasso, x-range, and y-range modes. The
 `on_select` callback receives a canonical `Selection`; `on_brush` receives the

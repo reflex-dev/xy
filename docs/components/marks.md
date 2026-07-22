@@ -1,6 +1,26 @@
 ---
 title: Marks
 description: Bind data to XY marks, channels, axes, styles, and layers.
+components:
+  - xy.line
+  - xy.scatter
+  - xy.area
+  - xy.bar
+  - xy.column
+  - xy.histogram
+  - xy.box
+  - xy.violin
+  - xy.ecdf
+  - xy.heatmap
+  - xy.hexbin
+  - xy.contour
+  - xy.errorbar
+  - xy.error_band
+  - xy.step
+  - xy.stairs
+  - xy.stem
+  - xy.segments
+  - xy.triangle_mesh
 ---
 
 # Marks
@@ -70,12 +90,16 @@ family-specific choices.
   declarations depend on the mark kind and invalid declarations fail early.
 - Children draw in declaration order, so broad fills normally come before
   lines and points.
+- `key=` supplies stable row identity for keyed browser data transitions, and
+  mark-level `animation=` overrides or disables the chart's `xy.animation()`
+  policy. See [Animations and data transitions](/docs/xy/styling/animations/).
 
 Canvas and WebGL marks are not DOM elements. CSS selectors and Tailwind classes
 cannot paint their geometry; use `style=` or the mark's paint props. In
 particular, `class_name=` is adapter-only trace metadata, not a mark-painting
 hook in the shipped browser, Reflex, SVG, or native renderers. See
-[Mark styles](/docs/xy/styling/mark-styles/) for the compiled CSS subset.
+[Customize Each Part](/docs/xy/styling/customize/#fill,-stroke,-opacity,-and-gradients)
+for the compiled CSS subset.
 
 ## Representation Does Not Change the Mark
 

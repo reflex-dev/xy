@@ -12,6 +12,7 @@ question — the widget (or any other frontend) is a thin transport over these.
 
 from __future__ import annotations
 
+import math
 import operator
 import weakref
 from typing import TYPE_CHECKING, Any, Optional
@@ -21,6 +22,7 @@ import numpy as np
 from . import channels, columns, kernels, lod
 from .config import (
     DECIMATION_THRESHOLD,
+    DEFAULT_PALETTE,
     DENSITY_SAMPLE_SEED,
     DENSITY_SAMPLE_TARGET,
     DENSITY_TARGET_POINTS_PER_CELL,  # noqa: F401  (historic import path)
@@ -92,25 +94,80 @@ def pick(
         idx = int(shipped_sel[idx])
     if idx < 0 or idx >= t.n_points:
         return None
+    return row_dict(fig, t, idx)
+
+
+def _json_scalar(value: Any) -> Any:
+    """Return the small scalar values used by semantic events as JSON values."""
+    item = getattr(value, "item", None)
+    if callable(item):
+        value = item()
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+def row_dict(fig: "Figure", t: "Trace", idx: int) -> dict[str, Any]:
+    """Project one canonical trace row using the exact pick-result shape."""
+    del fig  # Kept in the signature for symmetry with other interaction helpers.
+    if t.grid_shape is not None:
+        # Heatmap x/y contain only the outer edges. The client already has the
+        # cell center (including categorical labels), so return only grid data.
+        _, cols = t.grid_shape
+        row, col = divmod(idx, cols)
+        out: dict[str, Any] = {
+            "trace": t.id,
+            "index": idx,
+            "row": row,
+            "col": col,
+        }
+        if t.grid is not None:
+            val = float(t.grid.values[idx])
+            if np.isfinite(val):
+                out["color_value"] = val
+        return out
     out: dict[str, Any] = {
         "trace": t.id,
         "index": idx,
-        "x": float(t.x.values[idx]),
-        "y": float(t.y.values[idx]),
+        "x": _json_scalar(float(t.x.values[idx])),
+        "y": _json_scalar(float(t.y.values[idx])),
         "x_kind": t.x.kind,
         "y_kind": t.y.kind,
     }
     cc = t.color_ch
     if cc and cc.mode == "continuous" and cc.values is not None:
-        out["color_value"] = float(cc.values[idx])
+        out["color_value"] = _json_scalar(float(cc.values[idx]))
     elif cc and cc.mode == "categorical" and cc.codes is not None and cc.categories is not None:
         code = int(cc.codes[idx])
         if 0 <= code < len(cc.categories):
-            out["color_category"] = cc.categories[code]
+            out["color_category"] = _json_scalar(cc.categories[code])
     sc = t.size_ch
     if sc and sc.mode == "continuous" and sc.values is not None:
-        out["size_value"] = float(sc.values[idx])
+        out["size_value"] = _json_scalar(float(sc.values[idx]))
     return out
+
+
+def selection_rows(
+    fig: "Figure", per_trace: dict[int, np.ndarray], limit: Optional[int] = None
+) -> tuple[list[dict[str, Any]], bool]:
+    """Deterministic, JSON-safe row projection for a selection.
+
+    Traces are ascending by trace id and canonical indices are ascending
+    within a trace. ``limit=None`` means unbounded. The boolean reports
+    whether rows were omitted by the limit.
+    """
+    max_rows = None if limit is None else max(0, operator.index(limit))
+    rows: list[dict[str, Any]] = []
+    total = sum(len(indices) for indices in per_trace.values())
+    for tid in sorted(per_trace):
+        t = _trace(fig, tid)
+        for raw_idx in np.sort(np.asarray(per_trace[tid]).ravel()):
+            if max_rows is not None and len(rows) >= max_rows:
+                return rows, len(rows) < total
+            idx = int(raw_idx)
+            if 0 <= idx < t.n_points:
+                rows.append(row_dict(fig, t, idx))
+    return rows, len(rows) < total
 
 
 def select_range(
@@ -265,7 +322,11 @@ def decimate_view(
             continue
         if t.kind == "area" and t.base is None:
             continue
-        idx = kernels.m4_indices(t.x.values, t.y.values, lo_x, hi_x, max(16, px_width))
+        x_scale = fig._axis_scale(t.x_axis)
+        y_scale = fig._axis_scale(t.y_axis)
+        # Bucket in scale coordinates so every bucket covers one screen strip.
+        mx, (m_lo, m_hi) = fig._binning_coords(t.x_axis, t.x.values, (lo_x, hi_x))
+        idx = kernels.m4_indices(mx, t.y.values, m_lo, m_hi, max(16, px_width))
         if len(idx):
             xv, yv = t.x.values[idx], t.y.values[idx]
             bv = t.base.values[idx] if t.kind == "area" and t.base is not None else None
@@ -276,15 +337,19 @@ def decimate_view(
         else:
             xv, yv = t.x.values[:0], t.y.values[:0]
             bv = t.base.values[:0] if t.kind == "area" and t.base is not None else None
-        x_col = lod.encode_f32_values(xv, (lo_x + hi_x) / 2.0, lo_x, hi_x)
-        y_col = lod.encode_f32_values(yv, t.y.suggest_offset(), t.y.min, t.y.max)
+        x_col = lod.encode_f32_values(xv, lod.geometry_offset(x_scale, lo_x, hi_x), lo_x, hi_x)
+        y_col = lod.encode_f32_values(
+            yv, lod.geometry_offset(y_scale, t.y.min, t.y.max), t.y.min, t.y.max
+        )
         update = {
             "id": t.id,
             "x": writer.add_encoded(x_col),
             "y": writer.add_encoded(y_col),
         }
         if bv is not None and t.base is not None:
-            b_col = lod.encode_f32_values(bv, t.base.suggest_offset(), t.base.min, t.base.max)
+            b_col = lod.encode_f32_values(
+                bv, lod.geometry_offset(y_scale, t.base.min, t.base.max), t.base.min, t.base.max
+            )
             update["base"] = writer.add_encoded(b_col)
         updates.append(update)
     return {"traces": updates}, writer.buffers
@@ -397,14 +462,24 @@ def _density_sample_update(
     if len(sample_sel) == 0:
         return None
     xs, ys = t.x.values[sample_sel], t.y.values[sample_sel]
-    x_ref, y_ref = lod.add_window_xy(writer, xs, ys, lo_x, hi_x, lo_y, hi_y)
+    x_ref, y_ref = lod.add_window_xy(
+        writer,
+        xs,
+        ys,
+        lo_x,
+        hi_x,
+        lo_y,
+        hi_y,
+        fig._axis_scale(t.x_axis),
+        fig._axis_scale(t.y_axis),
+    )
     color_spec, size_spec = fig._ship_channels(t, sample_sel, writer.add_f32, writer.add_u8)
     style = dict(t.style)
     try:
         style["opacity"] = min(float(style.get("opacity", 0.8)), 0.55)
     except (TypeError, ValueError):
         style["opacity"] = 0.55
-    return {
+    sample = {
         "mode": "sampled",
         "n": int(len(sample_sel)),
         "visible": int(visible),
@@ -419,6 +494,15 @@ def _density_sample_update(
         "size": size_spec,
         "style": style,
     }
+    if t.stroke_ch is not None:
+        sample["stroke"] = channels.ship_color_channel(
+            t.stroke_ch, sample_sel, writer.add_f32, writer.add_u8, DEFAULT_PALETTE
+        )
+    if t.style_channels:
+        sample["channels"] = channels.ship_style_channels(
+            t.style_channels, sample_sel, writer.add_f32, writer.add_u8
+        )
+    return sample
 
 
 def density_view(
@@ -440,6 +524,11 @@ def density_view(
     if not t.use_density():
         return {"traces": []}, []
     xv, yv = t.x.values, t.y.values
+    # Nonlinear axes aggregate in scale coordinates (§28) so grid cells are
+    # uniform on screen. The raw-space tile pyramid can't compose such a grid,
+    # so those traces always take the exact scan; selection/count queries stay
+    # raw (monotone transforms preserve window membership).
+    nonlinear = fig._axis_scale(t.x_axis) != "linear" or fig._axis_scale(t.y_axis) != "linear"
     # Tile-pyramid fast path (§5 Tier 3): when the window is clearly still in
     # density territory, the view is served from pre-binned counts in
     # O(visible cells) — no O(N) rescan. The margin keeps the approximate
@@ -447,7 +536,7 @@ def density_view(
     # budget we fall through to the exact scan that drilling needs anyway.
     binning = "exact"
     grid = None
-    pyr = _ensure_pyramid(t)
+    pyr = None if nonlinear else _ensure_pyramid(t)
     if pyr is not None:
         est = kernels.pyramid_count(pyr, lo_x, hi_x, lo_y, hi_y)
         if est is not None and est > SCATTER_DENSITY_THRESHOLD * DRILL_EXIT_FACTOR * 1.5:
@@ -474,7 +563,9 @@ def density_view(
 
         lod.exit_drill(t)
         w, h = plan.grid_w, plan.grid_h
-        grid = kernels.bin_2d(xv, yv, lo_x, hi_x, lo_y, hi_y, w, h)
+        bx, (bx0, bx1) = fig._binning_coords(t.x_axis, xv, (lo_x, hi_x))
+        by, (by0, by1) = fig._binning_coords(t.y_axis, yv, (lo_y, hi_y))
+        grid = kernels.bin_2d(bx, by, bx0, bx1, by0, by1, w, h)
     else:
         plan = lod.plan_view_lod(
             request,
@@ -547,15 +638,28 @@ def _drill_points(
     color-continuous instead of a palette jump (§5)."""
     xs, ys = t.x.values[sel], t.y.values[sel]
     writer = lod.BufferWriter()
-    x_ref, y_ref = lod.add_window_xy(writer, xs, ys, lo_x, hi_x, lo_y, hi_y)
+    x_ref, y_ref = lod.add_window_xy(
+        writer,
+        xs,
+        ys,
+        lo_x,
+        hi_x,
+        lo_y,
+        hi_y,
+        fig._axis_scale(t.x_axis),
+        fig._axis_scale(t.y_axis),
+    )
     buffers = writer.buffers
 
     color_spec, size_spec = fig._ship_channels(t, sel, writer.add_f32, writer.add_u8)
 
     # Local log-density per drilled point, binned at the same screen-derived
-    # grid shape density would use, so the two representations line up.
+    # grid shape density would use — in the same (scale-coordinate) binning
+    # space — so the two representations line up.
     gw, gh = lod.grid_shape(w, h, visible)
-    dval_buf = writer.add_f32(lod.local_log_density(xs, ys, lo_x, hi_x, lo_y, hi_y, gw, gh))
+    dx, (d_x0, d_x1) = fig._binning_coords(t.x_axis, xs, (lo_x, hi_x))
+    dy, (d_y0, d_y1) = fig._binning_coords(t.y_axis, ys, (lo_y, hi_y))
+    dval_buf = writer.add_f32(lod.local_log_density(dx, dy, d_x0, d_x1, d_y0, d_y1, gw, gh))
     drill_seq = lod.enter_drill(t, sel)
     # 1.0 right at the boundary → density-colored points; →0 as zoom deepens.
     lod_blend = float(min(1.0, visible / SCATTER_DENSITY_THRESHOLD))
@@ -564,35 +668,37 @@ def _drill_points(
         if (t.color_ch and t.color_ch.mode == "continuous")
         else channels.DEFAULT_COLORMAP
     )
-    return (
-        {
-            "traces": [
-                {
-                    "id": t.id,
-                    "mode": "points",
-                    "tier": "direct",
-                    "visible": visible,
-                    "reduction": "none",
-                    # The window these points cover: the client draws points
-                    # while the view stays inside it, and falls back to the
-                    # density overview the instant a zoom-out leaves it — so
-                    # zooming out is never blank (§5 smooth transitions).
-                    "x_range": [lo_x, hi_x],
-                    "y_range": [lo_y, hi_y],
-                    "x": x_ref,
-                    "y": y_ref,
-                    "color": color_spec,
-                    "size": size_spec,
-                    "density_val": {"buf": dval_buf},
-                    "lod_blend": lod_blend,
-                    "density_colormap": cmap,
-                    "drill_seq": drill_seq,
-                    "style": dict(t.style),
-                }
-            ]
-        },
-        buffers,
-    )
+    trace_update = {
+        "id": t.id,
+        "mode": "points",
+        "tier": "direct",
+        "visible": visible,
+        "reduction": "none",
+        # The window these points cover: the client draws points
+        # while the view stays inside it, and falls back to the
+        # density overview the instant a zoom-out leaves it — so
+        # zooming out is never blank (§5 smooth transitions).
+        "x_range": [lo_x, hi_x],
+        "y_range": [lo_y, hi_y],
+        "x": x_ref,
+        "y": y_ref,
+        "color": color_spec,
+        "size": size_spec,
+        "density_val": {"buf": dval_buf},
+        "lod_blend": lod_blend,
+        "density_colormap": cmap,
+        "drill_seq": drill_seq,
+        "style": dict(t.style),
+    }
+    if t.stroke_ch is not None:
+        trace_update["stroke"] = channels.ship_color_channel(
+            t.stroke_ch, sel, writer.add_f32, writer.add_u8, DEFAULT_PALETTE
+        )
+    if t.style_channels:
+        trace_update["channels"] = channels.ship_style_channels(
+            t.style_channels, sel, writer.add_f32, writer.add_u8
+        )
+    return ({"traces": [trace_update]}, buffers)
 
 
 def append_data(
@@ -602,16 +708,25 @@ def append_data(
     y: Any,
     color: Any = None,
     size: Any = None,
-) -> tuple[dict[str, Any], list[bytes]]:
+    stroke: Any = None,
+    opacity: Any = None,
+    alpha: Any = None,
+    stroke_width: Any = None,
+    symbol: Any = None,
+) -> tuple[dict[str, Any], list[memoryview]]:
     """Streaming append (Phase-0): extend a trace's canonical
     columns in place and return the client refresh message.
 
     The wire never ships deltas because it never needs to: every tier's payload
     is screen-bounded by construction (design dossier §29 — direct ≤ budget,
     M4 ≤ 4·px, density = grid), so re-emitting the affected trace costs
-    O(pixels), not O(N). The message carries a complete fresh payload; the
-    client rebuilds only the traces named in `affected` and re-requests its
-    current view through the normal stale-while-revalidate path.
+    O(pixels), not O(N). The message carries a complete fresh payload in the
+    split layout (per-column borrowed views, no join copy); the client rebuilds
+    only the traces named in `affected` and re-requests its current view
+    through the normal stale-while-revalidate path. The spec carries
+    `append: {seq, affected}` so a host whose transport is the payload itself
+    (the widget's spec+buffers trait update) can detect and apply the refresh
+    without a separate message envelope.
 
     Phase-0 contract (violations raise before anything mutates):
     - scatter and line traces only;
@@ -657,22 +772,91 @@ def append_data(
             )
 
     def _channel_tail(ch: Any, values: Any, name: str) -> Optional[np.ndarray]:
-        has = ch is not None and ch.mode != "constant"
-        if has and ch.mode != "continuous":
+        has = ch is not None and ch.mode not in {"constant", "match_fill"}
+        if has and ch.mode not in {"continuous", "direct_rgba"}:
             raise ValueError(f"append does not support categorical {name} channels yet")
         if has and values is None:
-            raise ValueError(f"trace {t.id} has a continuous {name} channel; pass {name}=")
+            qualifier = "continuous" if ch.mode == "continuous" else "per-point"
+            raise ValueError(f"trace {t.id} has a {qualifier} {name} channel; pass {name}=")
         if not has and values is not None:
             raise ValueError(f"trace {t.id} has no per-point {name} channel")
         if values is None:
             return None
+        if ch.mode == "direct_rgba":
+            resolved = channels.resolve_color(values, len(ax), default_constant="#000000")
+            if resolved.mode != "direct_rgba" or resolved.rgba is None:
+                raise ValueError(f"appended {name} must be an RGB(A) array")
+            return resolved.rgba
         arr = np.asarray(values, dtype=np.float64).ravel()
         if len(arr) != len(ax):
             raise ValueError(f"{name} length {len(arr)} != appended row count {len(ax)}")
         return arr
 
+    symbol_ids = {
+        name: index
+        for index, name in enumerate(
+            (
+                "circle",
+                "square",
+                "diamond",
+                "triangle",
+                "cross",
+                "hexagon",
+                "pentagon",
+                "star",
+                "triangle_down",
+                "triangle_left",
+                "triangle_right",
+                "x",
+                "point",
+                "pixel",
+                "thin_diamond",
+                "plus_line",
+                "x_line",
+            )
+        )
+    }
+
+    def _style_tail(name: str, values: Any) -> Optional[np.ndarray]:
+        channel = t.style_channels.get(name)
+        if channel is None:
+            if values is not None:
+                raise ValueError(f"trace {t.id} has no per-point {name} channel")
+            return None
+        if values is None:
+            raise ValueError(f"trace {t.id} has a per-point {name} channel; pass {name}=")
+        if name == "symbol":
+            raw = np.asarray(values)
+            if raw.shape != (len(ax),):
+                raise ValueError(f"symbol length {raw.size} != appended row count {len(ax)}")
+            try:
+                result = np.asarray([symbol_ids[str(value)] for value in raw], dtype=np.uint8)
+            except KeyError as exc:
+                raise ValueError(f"unsupported appended symbol {exc.args[0]!r}") from None
+            return result
+        expected = (len(ax),) if channel.components == 1 else (len(ax), channel.components)
+        arr = np.asarray(values, dtype=np.float64)
+        if arr.shape != expected:
+            raise ValueError(f"{name} array must have shape {expected}, got {arr.shape}")
+        if not np.isfinite(arr).all():
+            raise ValueError(f"{name} array must contain only finite values")
+        if name in {"opacity", "artist_alpha"} and (
+            np.any(arr < (-1.0 if name == "artist_alpha" else 0.0)) or np.any(arr > 1.0)
+        ):
+            raise ValueError(f"{name} array values must be within [0, 1]")
+        if name == "stroke_width" and np.any(arr < 0.0):
+            raise ValueError("stroke_width array values must be non-negative")
+        return np.ascontiguousarray(arr)
+
     color_tail = _channel_tail(t.color_ch, color, "color")
     size_tail = _channel_tail(t.size_ch, size, "size")
+    stroke_tail = _channel_tail(t.stroke_ch, stroke, "stroke")
+    style_tails = {
+        "opacity": _style_tail("opacity", opacity),
+        "artist_alpha": _style_tail("artist_alpha", alpha),
+        "stroke_width": _style_tail("stroke_width", stroke_width),
+        "symbol": _style_tail("symbol", symbol),
+    }
 
     appended = {id(t.x), id(t.y)}
     for other in fig.traces:
@@ -698,9 +882,18 @@ def append_data(
     t.x.append(ax)
     t.y.append(ay)
     if color_tail is not None:
-        channels.append_continuous(t.color_ch, color_tail, "color")
+        if t.color_ch.mode == "direct_rgba":
+            t.color_ch.rgba = np.concatenate((t.color_ch.rgba, color_tail), axis=0)
+        else:
+            channels.append_continuous(t.color_ch, color_tail, "color")
     if size_tail is not None:
         channels.append_continuous(t.size_ch, size_tail, "size")
+    if stroke_tail is not None:
+        t.stroke_ch.rgba = np.concatenate((t.stroke_ch.rgba, stroke_tail), axis=0)
+    for name, tail in style_tails.items():
+        if tail is not None:
+            channel = t.style_channels[name]
+            channel.values = np.concatenate((channel.values, tail), axis=0)
 
     pyramid = getattr(t, "_pyr_handle", None)
     if t.kind == "scatter" and pyramid:
@@ -712,5 +905,13 @@ def append_data(
         t._pyr_handle = None
     lod.exit_drill(t)
 
-    spec, blob = fig.build_payload()
-    return {"type": "append", "affected": [t.id], "spec": spec}, [blob]
+    # Split layout, same as first paint (§29): per-column borrowed views, no
+    # join copy. The spec itself names the append — `append.seq` is the apply
+    # signal for the widget host, where the refresh rides the spec+buffers
+    # trait update as one comm message that doubles as notebook-reopen state.
+    # The socket.io host wraps the same spec in an `append` message push.
+    fig._append_seq += 1
+    seq = fig._append_seq
+    spec, buffers = fig.build_payload_split()
+    spec["append"] = {"seq": seq, "affected": [t.id]}
+    return {"type": "append", "affected": [t.id], "spec": spec}, buffers

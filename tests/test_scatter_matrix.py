@@ -104,12 +104,16 @@ def test_continuous_int_and_float_color():
 
 
 def test_categorical_many_categories_cycle_palette():
-    # More categories than the base palette (10) → palette entries cycle, no crash.
+    # More categories than the eight-slot default palette → palette entries
+    # cycle, no crash — and the wrap is never silent (§28).
     cats = np.array([f"c{i}" for i in range(25)] * 2)
-    fig = Figure().scatter(np.arange(50.0), np.arange(50.0), color=cats)
+    with pytest.warns(RuntimeWarning, match="colors repeat"):
+        fig = Figure().scatter(np.arange(50.0), np.arange(50.0), color=cats)
     spec, _ = _payload(fig)
     assert len(spec["traces"][0]["color"]["categories"]) == 25
     assert len(spec["traces"][0]["color"]["palette"]) == 25
+    palette = spec["traces"][0]["color"]["palette"]
+    assert palette[8] == palette[0]  # documented cycle, not a distinct 9th hue
 
 
 def test_categorical_single_category():
@@ -298,6 +302,53 @@ def test_tier_just_below_and_above_threshold():
     assert hi.traces[0].use_density()
 
 
+def test_per_item_channels_share_the_direct_density_ceiling(monkeypatch):
+    import xy._trace as trace_module
+
+    monkeypatch.setattr(trace_module, "SCATTER_DENSITY_THRESHOLD", 2)
+    monkeypatch.setattr(trace_module, "DIRECT_SOFT_CEILING", 4)
+
+    x = np.arange(3.0)
+    plain = Figure().scatter(x, x).traces[0]
+    opacity = Figure().scatter(x, x, opacity=[0.2, 0.5, 0.8]).traces[0]
+    stroke = (
+        Figure()
+        .scatter(
+            x,
+            x,
+            stroke=np.array([[1.0, 0.0, 0.0, 1.0]] * 3),
+        )
+        .traces[0]
+    )
+    match_fill = Figure().scatter(x, x, stroke_width=1.0).traces[0]
+    vector_width = Figure().scatter(x, x, stroke_width=[1.0, 2.0, 3.0]).traces[0]
+
+    assert plain.use_density()
+    assert not opacity.use_density()
+    assert not stroke.use_density()
+    assert opacity.per_item_channel_names() == ("opacity",)
+    assert stroke.per_item_channel_names() == ("stroke",)
+    assert match_fill.per_item_channel_names() == ()
+    assert vector_width.per_item_channel_names() == ("stroke_width",)
+
+    over_ceiling = Figure().scatter(np.arange(5.0), np.arange(5.0), opacity=np.ones(5)).traces[0]
+    assert over_ceiling.use_density()
+
+
+def test_style_only_density_warning_and_payload_list_exact_dropped_channels(monkeypatch):
+    import xy.marks as marks_module
+
+    monkeypatch.setattr(marks_module, "DIRECT_SOFT_CEILING", 4)
+    x = np.arange(5.0)
+    with pytest.warns(RuntimeWarning, match="dropped channels: opacity, stroke_width"):
+        fig = Figure().scatter(x, x, opacity=np.ones(5), stroke_width=np.ones(5))
+
+    spec, _ = fig.build_payload()
+    density = spec["traces"][0]["density"]
+    assert density["channels_dropped"] is True
+    assert density["dropped_channels"] == ["opacity", "stroke_width"]
+
+
 def test_force_density_on_small():
     fig = Figure().scatter(np.arange(100.0), np.arange(100.0), density=True)
     spec, blob = _payload(fig)
@@ -329,6 +380,20 @@ def test_multi_scatter_distinct_default_colors():
     c0 = spec["traces"][0]["color"]["color"]
     c1 = spec["traces"][1]["color"]["color"]
     assert c0 != c1  # palette cycles per trace
+
+
+def test_default_colors_wrap_past_palette_warns():
+    # The default palette is eight slots; the ninth default-colored trace wraps
+    # to slot one, and the wrap warns instead of silently aliasing series (§28).
+    fig = Figure()
+    for i in range(8):
+        fig.scatter(np.arange(3.0), np.arange(3.0) + i)
+    with pytest.warns(RuntimeWarning, match="repeats every"):
+        fig.scatter(np.arange(3.0), np.arange(3.0) + 8)
+    spec, _ = _payload(fig)
+    colors = [t["color"]["color"] for t in spec["traces"]]
+    assert len(set(colors[:8])) == 8  # first eight stay distinct
+    assert colors[8] == colors[0]  # ninth wraps, but loudly
 
 
 def test_scatter_and_line_mixed():

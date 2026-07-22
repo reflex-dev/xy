@@ -9,6 +9,15 @@ from pathlib import Path
 # so fixtures strip a step by its action *path*, not a version tag — a SHA bump
 # must not silently turn these negative tests into no-ops.
 _UPLOAD_ARTIFACT_USES = re.compile(r" *- uses: actions/upload-artifact@\S+.*\n")
+_NODE24_ACTION_PINS = {
+    "actions/cache": "55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+    "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+    "actions/download-artifact": "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+    "actions/setup-node": "820762786026740c76f36085b0efc47a31fe5020",
+    "actions/setup-python": "5fda3b95a4ea91299a34e894583c3862153e4b97",
+    "actions/upload-artifact": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    "astral-sh/setup-uv": "11f9893b081a58869d3b5fccaea48c9e9e46f990",
+}
 
 
 def _load_verify_module():
@@ -48,6 +57,35 @@ def test_all_workflows_accept_current_gates() -> None:
     assert verify_ci_workflow.validate_all_workflows() == []
 
 
+def test_workflows_use_consistent_node24_action_pins() -> None:
+    workflow_text = "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(Path(".github/workflows").glob("*.yml"))
+    )
+
+    for action, sha in _NODE24_ACTION_PINS.items():
+        uses_lines = [line for line in workflow_text.splitlines() if f"uses: {action}@" in line]
+        assert uses_lines, f"expected at least one {action} use"
+        assert all(f"uses: {action}@{sha}" in line for line in uses_lines), uses_lines
+
+
+def test_setup_uv_cache_is_only_enabled_intentionally() -> None:
+    for path in sorted(Path(".github/workflows").glob("*.yml")):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for index, line in enumerate(lines):
+            if "uses: astral-sh/setup-uv@" not in line:
+                continue
+            step_indent = len(line) - len(line.lstrip())
+            boundary_indent = step_indent - 2 if line.lstrip().startswith("uses:") else step_indent
+            block: list[str] = []
+            for following in lines[index + 1 :]:
+                indent = len(following) - len(following.lstrip())
+                if following.strip() and indent <= boundary_indent:
+                    break
+                block.append(following)
+            setting = "\n".join(block)
+            assert "enable-cache:" in setting, f"{path}:{index + 1} relies on auto cache mode"
+
+
 def test_ci_workflow_rejects_blocking_benchmark_job(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
@@ -56,6 +94,118 @@ def test_ci_workflow_rejects_blocking_benchmark_job(tmp_path: Path) -> None:
     errors = verify_ci_workflow.validate_workflow(path)
 
     assert any("benchmark" in error and "continue-on-error" in error for error in errors)
+
+
+def test_ci_workflow_rejects_regrouped_expensive_cross_library_adapters(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("          - name: plotly-svg\n", "", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("benchmark_vs" in error and "plotly-svg" in error for error in errors)
+
+
+def test_ci_workflow_rejects_substring_preserving_adapter_regrouping(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "            libraries: plotly_svg\n",
+            "            libraries: plotly_svg,bokeh_canvas\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "matrix entry 'plotly-svg'" in error
+        and "must exactly equal" in error
+        and "plotly_svg,bokeh_canvas" in error
+        for error in errors
+    )
+
+
+def test_ci_workflow_rejects_unconditional_cross_library_browser_setup(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Install Chromium (Playwright)\n        if: matrix.browser\n",
+            "      - name: Install Chromium (Playwright)\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "Install Chromium (Playwright)" in error and "matrix.browser" in error for error in errors
+    )
+
+
+def test_ci_workflow_rejects_unconditional_cross_library_native_build(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Build native core\n        if: matrix.xy\n",
+            "      - name: Build native core\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Build native core" in error and "matrix.xy" in error for error in errors)
+
+
+def test_ci_workflow_rejects_missing_cross_library_job_timeout(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("    timeout-minutes: 10\n", "", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("benchmark_vs" in error and "timeout-minutes: 10" in error for error in errors)
+
+
+def test_ci_workflow_rejects_unlocked_competitor_install(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "            --constraint benchmarks/requirements-ci.lock ${{ matrix.packages }}\n",
+            "            ${{ matrix.packages }}\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "Install selected competitors" in error and "requirements-ci.lock" in error
+        for error in errors
+    )
 
 
 def test_ci_workflow_rejects_benchmark_upload_that_skips_after_failures(
@@ -143,9 +293,11 @@ def test_ci_workflow_rejects_benchmark_job_without_required_native_install(
         workflow.replace(
             '        env:\n          XY_REQUIRE_CARGO: "1"\n'
             "        run: |\n          uv venv .venv\n"
-            "          uv pip install -p .venv/bin/python -e .\n",
+            "          uv pip install -p .venv/bin/python \\\n"
+            "            --constraint benchmarks/requirements-ci.lock -e .\n",
             "        run: |\n          uv venv .venv\n"
-            "          uv pip install -p .venv/bin/python -e .\n",
+            "          uv pip install -p .venv/bin/python \\\n"
+            "            --constraint benchmarks/requirements-ci.lock -e .\n",
         ),
         encoding="utf-8",
     )
@@ -301,7 +453,7 @@ def test_ci_workflow_rejects_missing_playwright_browser_cache(tmp_path: Path) ->
     path.write_text(
         text.replace(
             "      - name: Cache Playwright browsers\n"
-            "        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3\n"
+            "        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n"
             "        with:\n"
             "          path: ~/.cache/ms-playwright\n"
             "          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}\n",
@@ -321,7 +473,7 @@ def test_ci_workflow_rejects_missing_regression_gate(tmp_path: Path) -> None:
     path.write_text(
         workflow.replace(
             "          python3 scripts/check_regressions.py --scatter scatter.json --kernel kernel.json \\\n"
-            "            --transport transport.json --emit-md docs/engineering/benchmark_metrics.md\n",
+            "            --transport transport.json --emit-md spec/benchmarks/metrics.md\n",
             "",
         ),
         encoding="utf-8",

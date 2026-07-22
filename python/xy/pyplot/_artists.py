@@ -11,11 +11,12 @@ from __future__ import annotations
 import warnings
 from collections.abc import Iterator
 from itertools import pairwise
+from operator import index as operator_index
 from typing import Any, Optional
 
 import numpy as np
 
-from ._colors import resolve_color
+from ._colors import resolve_color, resolve_rgba_array, scalar_float
 from ._rc import rcParams
 from ._transforms import Bbox, IdentityTransform
 
@@ -386,6 +387,89 @@ class PathCollection(Artist):
         self._entry["y"] = arr[:, 1]
         self._touch()
 
+    def _count(self) -> int:
+        return len(np.asarray(self._entry.get("x", [])).reshape(-1))
+
+    def get_facecolors(self) -> np.ndarray:
+        return resolve_rgba_array(
+            self._entry["kwargs"].get("color", "transparent"),
+            self._count(),
+            "collection facecolors",
+        )
+
+    get_facecolor = get_facecolors
+
+    def set_facecolors(self, colors: Any) -> None:
+        self._entry["kwargs"]["color"] = resolve_rgba_array(
+            colors, self._count(), "collection facecolors"
+        )
+        self._touch()
+
+    set_facecolor = set_facecolors
+
+    def get_edgecolors(self) -> np.ndarray:
+        stroke = self._entry["kwargs"].get("stroke", self._entry["kwargs"].get("color"))
+        return resolve_rgba_array(stroke, self._count(), "collection edgecolors")
+
+    get_edgecolor = get_edgecolors
+
+    def set_edgecolors(self, colors: Any) -> None:
+        self._entry["kwargs"]["stroke"] = resolve_rgba_array(
+            colors, self._count(), "collection edgecolors"
+        )
+        self._touch()
+
+    set_edgecolor = set_edgecolors
+
+    def set_alpha(self, alpha: Any) -> None:
+        if alpha is None:
+            self._entry["kwargs"].pop("_artist_alpha", None)
+        elif np.isscalar(alpha):
+            self._entry["kwargs"]["_artist_alpha"] = scalar_float(alpha)
+        else:
+            values = np.asarray(alpha, dtype=np.float64).reshape(-1)
+            if len(values) != self._count():
+                raise ValueError(
+                    f"collection alpha must have length {self._count()}, got {len(values)}"
+                )
+            self._entry["kwargs"]["_artist_alpha"] = values
+        self._touch()
+
+    def get_alpha(self) -> Any:
+        return self._entry["kwargs"].get("_artist_alpha")
+
+    def set_linewidths(self, widths: Any) -> None:
+        values = np.asarray(widths, dtype=np.float64)
+        scaled = values * self._axes._point_scale()
+        self._entry["kwargs"]["stroke_width"] = (
+            float(scaled) if scaled.ndim == 0 else scaled.reshape(-1)
+        )
+        self._touch()
+
+    set_linewidth = set_linewidths
+
+    def get_linewidths(self) -> np.ndarray:
+        return np.atleast_1d(
+            np.asarray(self._entry["kwargs"].get("stroke_width", 0.0), dtype=np.float64)
+        )
+
+    get_linewidth = get_linewidths
+
+    def set_sizes(self, sizes: Any, dpi: Any = 72.0) -> None:
+        del dpi  # compat-noop: xy sizes use the owning figure DPI
+        from ._translate import marker_size_to_scatter_size
+
+        self._entry["kwargs"]["size"] = marker_size_to_scatter_size(
+            sizes,
+            default=6.0 * self._axes._point_scale(),
+            point_scale=self._axes._point_scale(),
+        )
+        self._touch()
+
+    def get_sizes(self) -> np.ndarray:
+        sizes = np.asarray(self._entry["kwargs"].get("size", 0.0), dtype=np.float64)
+        return np.atleast_1d(sizes**2)
+
     def legend_elements(
         self, prop: str = "colors", num: Any = "auto", **kwargs: Any
     ) -> tuple[list["PathCollection"], list[str]]:
@@ -570,7 +654,34 @@ class BarContainer(Artist):
         self.datavalues = entry.get("y")
         self.orientation = entry.get("kwargs", {}).get("orientation", "vertical")
         self.errorbar = None
+        count = np.asarray(entry.get("y", [])).reshape(-1).size
+        # A categorical bar chart can contain thousands of bars while most
+        # callers never inspect its Matplotlib-compatible patch handles.
+        # Keep those indexed views lazy so the batched trace stays O(1) in
+        # Python objects on the chart-build hot path.
+        self.patches = _BarPatchViews(self, count)
         axes._register_container(self)
+
+    def __len__(self) -> int:
+        return len(self.patches)
+
+    def __iter__(self) -> Iterator["BarPatch"]:
+        return iter(self.patches)
+
+    def __getitem__(self, index: int | slice) -> Any:
+        return self.patches[index]
+
+    def set_alpha(self, alpha: Any) -> None:
+        if alpha is None:
+            self._entry["kwargs"].pop("_artist_alpha", None)
+        else:
+            self._entry["kwargs"]["_artist_alpha"] = (
+                scalar_float(alpha) if np.isscalar(alpha) else np.asarray(alpha, dtype=np.float64)
+            )
+        self._touch()
+
+    def get_alpha(self) -> Any:
+        return self._entry["kwargs"].get("_artist_alpha")
 
     def remove(self) -> None:
         super().remove()
@@ -593,6 +704,121 @@ class BarContainer(Artist):
         import numpy as np
 
         return self.bottoms + np.asarray(self.datavalues, dtype=np.float64)
+
+
+class _BarPatchViews:
+    """Stable list-like bar patch views, materialized only when inspected."""
+
+    def __init__(self, container: BarContainer, count: int) -> None:
+        self._container = container
+        self._count = count
+        self._cache: dict[int, "BarPatch"] = {}
+
+    def __len__(self) -> int:
+        return self._count
+
+    def _get(self, index: int) -> "BarPatch":
+        resolved = operator_index(index)
+        if resolved < 0:
+            resolved += self._count
+        if resolved < 0 or resolved >= self._count:
+            raise IndexError("bar patch index out of range")
+        patch = self._cache.get(resolved)
+        if patch is None:
+            patch = BarPatch(self._container, resolved)
+            self._cache[resolved] = patch
+        return patch
+
+    def __getitem__(self, index: int | slice) -> "BarPatch" | list["BarPatch"]:
+        if isinstance(index, slice):
+            return [self._get(item) for item in range(*index.indices(self._count))]
+        return self._get(index)
+
+    def __iter__(self) -> Iterator["BarPatch"]:
+        return (self._get(index) for index in range(self._count))
+
+
+class BarPatch:
+    """One indexed view over a batched bar trace."""
+
+    def __init__(self, container: BarContainer, index: int) -> None:
+        self._container = container
+        self._entry = container._entry
+        self._index = index
+
+    def _count(self) -> int:
+        return len(self._container)
+
+    def _paint(self, key: str, fallback: Any) -> np.ndarray:
+        return resolve_rgba_array(
+            self._entry["kwargs"].get(key, fallback), self._count(), f"bar {key}"
+        )
+
+    def set_facecolor(self, color: Any) -> None:
+        values = self._paint("color", "transparent")
+        values[self._index] = resolve_rgba_array(color, 1, "bar facecolor")[0]
+        self._entry["kwargs"]["color"] = values
+        self._container._touch()
+
+    set_fc = set_facecolor
+
+    def get_facecolor(self) -> tuple[float, float, float, float]:
+        return tuple(self._paint("color", "transparent")[self._index])
+
+    def set_edgecolor(self, color: Any) -> None:
+        values = self._paint("stroke", self._entry["kwargs"].get("color", "transparent"))
+        values[self._index] = resolve_rgba_array(color, 1, "bar edgecolor")[0]
+        self._entry["kwargs"]["stroke"] = values
+        self._container._touch()
+
+    set_ec = set_edgecolor
+
+    def get_edgecolor(self) -> tuple[float, float, float, float]:
+        fallback = self._entry["kwargs"].get("color", "transparent")
+        return tuple(self._paint("stroke", fallback)[self._index])
+
+    def set_alpha(self, alpha: Optional[float]) -> None:
+        current = self._entry["kwargs"].get("_artist_alpha")
+        if current is None or np.isscalar(current):
+            initial = -1.0 if current is None else scalar_float(current)
+            values = np.full(self._count(), initial, dtype=np.float64)
+        else:
+            values = np.asarray(current, dtype=np.float64).copy()
+        values[self._index] = -1.0 if alpha is None else float(alpha)
+        self._entry["kwargs"]["_artist_alpha"] = values
+        self._container._touch()
+
+    def get_alpha(self) -> Optional[float]:
+        current = self._entry["kwargs"].get("_artist_alpha")
+        if current is None:
+            return None
+        value = (
+            scalar_float(current)
+            if np.isscalar(current)
+            else float(np.asarray(current)[self._index])
+        )
+        return None if value < 0.0 else value
+
+    def set_linewidth(self, width: float) -> None:
+        current = self._entry["kwargs"].get("stroke_width", 0.0)
+        values = (
+            np.full(self._count(), scalar_float(current), dtype=np.float64)
+            if np.isscalar(current)
+            else np.asarray(current, dtype=np.float64).copy()
+        )
+        values[self._index] = float(width)
+        self._entry["kwargs"]["stroke_width"] = values
+        self._container._touch()
+
+    set_lw = set_linewidth
+
+    def get_linewidth(self) -> float:
+        current = self._entry["kwargs"].get("stroke_width", 0.0)
+        return (
+            scalar_float(current)
+            if np.isscalar(current)
+            else float(np.asarray(current)[self._index])
+        )
 
 
 class StepPatch(Artist):

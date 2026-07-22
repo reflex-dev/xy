@@ -58,14 +58,18 @@ jobs:
           - { os: windows-latest, target: i686-pc-windows-msvc, plat: win32, zig: false, native: false }
           - { os: windows-latest, target: aarch64-pc-windows-msvc, plat: win_arm64, zig: false, native: false }
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           targets: ${{ matrix.target }}
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
+      - name: Install JS build toolchain
+        run: npm ci
       - name: Verify committed JS bundles are fresh
         run: node js/build.mjs --check
       - name: Build JS client
@@ -116,31 +120,35 @@ jobs:
           uv pip install -p smoke dist/*.whl numpy anywidget
           ./smoke/bin/python -c "import xy.kernels as k; assert k.BACKEND=='native', k.BACKEND; print('native', k.__file__)" \
             || ./smoke/Scripts/python.exe -c "import xy.kernels as k; assert k.BACKEND=='native', k.BACKEND; print('native')"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist-${{ matrix.plat }}
           path: dist/*.whl
 
   # Pyodide / Emscripten WASM wheel for in-browser CPython. Pyodide's platform
   # ABI is compiler-sensitive, so keep Rust, Emscripten, the wheel tag, and the
-  # runtime probe pinned as one tested set (see docs/engineering/production-readiness.md).
+  # runtime probe pinned as one tested set (see spec/process/production-readiness.md).
   wasm:
     name: Wheel Pyodide (runtime verified)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: 1.97.0
           targets: wasm32-unknown-emscripten
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
       - uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
         with:
           # Pyodide 0.29.x / pyodide_2025_0 ABI compiler version.
           version: "4.0.9"
+      - name: Install JS build toolchain
+        run: npm ci
       - name: Verify committed JS bundles are fresh
         run: node js/build.mjs --check
       - name: Build JS client
@@ -172,7 +180,7 @@ jobs:
           npm i --no-save pyodide@0.29.4
           whl=$(ls dist/*.whl)
           python scripts/pyodide_load_smoke.py "$whl"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # Keep this outside the dist-* namespace: PyPI rejects Pyodide's
           # pyodide_* platform tags, so this wheel is retained as a workflow
@@ -184,15 +192,19 @@ jobs:
     name: sdist
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
       # The sdist carries the committed JS bundle; it builds the Rust core on the
       # user's machine if they install from sdist and have a toolchain. There is
       # no fallback: without a toolchain the compute layer raises a clear
       # ImportError on first use (hatch_build.py). Wheels are the normal path.
+      - name: Install JS build toolchain
+        run: npm ci
       - name: Verify committed JS bundles are fresh
         run: node js/build.mjs --check
       - name: Build sdist
@@ -225,7 +237,7 @@ jobs:
           else:
               raise SystemExit("expected ImportError without the native core")
           PY
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist-sdist
           path: dist/*.tar.gz
@@ -241,7 +253,7 @@ jobs:
     permissions:
       id-token: write # PyPI trusted publishing (OIDC) — no API token stored
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The artifact verifiers check everything inside the wheels/sdist, but
       # only this gate stops a mismatched tag from publishing whatever version
       # sits in pyproject.toml: the tag must equal v<project.version> and
@@ -249,7 +261,7 @@ jobs:
       - name: Release version gate (tag == pyproject == CHANGELOG)
         if: github.event_name == 'push'
         run: python3 scripts/check_release_version.py
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
           pattern: dist-*
@@ -281,11 +293,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: pyodide-wheel
           path: dist-pyodide

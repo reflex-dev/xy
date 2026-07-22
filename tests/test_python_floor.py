@@ -26,7 +26,7 @@ def _write_floor_repo(
     readme: str = "Install with Python 3.11+.\n",
     production_readiness: str = "The current contract is Python 3.11+ only.\n",
 ) -> None:
-    root.joinpath("docs", "engineering").mkdir(parents=True)
+    root.joinpath("spec", "process").mkdir(parents=True)
     root.joinpath("pyproject.toml").write_text(
         "[project]\n"
         f'requires-python = "{requires_python}"\n'
@@ -36,7 +36,7 @@ def _write_floor_repo(
         encoding="utf-8",
     )
     root.joinpath("README.md").write_text(readme, encoding="utf-8")
-    root.joinpath("docs", "engineering", "production-readiness.md").write_text(
+    root.joinpath("spec", "process", "production-readiness.md").write_text(
         production_readiness,
         encoding="utf-8",
     )

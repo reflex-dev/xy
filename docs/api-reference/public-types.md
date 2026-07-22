@@ -22,6 +22,8 @@ construct lowercase factory results and only name these types in annotations.
 | `Modebar` | Toolbar visibility and DOM styling |
 | `Theme` | Validated chart theme tokens |
 | `Interaction` | Browser interaction and linked-viewport configuration |
+| `Animation` | Browser entrance/update policy and lifecycle callbacks |
+| `Spring` | Serializable spring easing policy used by `animation()` |
 | `Chart` | Public composed chart with display, export, and readout methods |
 | `FacetChart` | Public small-multiple wrapper |
 
@@ -33,9 +35,11 @@ but the lowercase factories perform the intended validation and normalization.
 | Type | Role |
 | --- | --- |
 | `Selection` | Canonical selected indices grouped by trace, plus `index` and `xy()` helpers |
-| `Engine` | PNG engine choice: `default` or `chromium` |
+| `Engine` | Static-image engine choice: `auto`, `default`, or `chromium` |
 
-`Engine.default` currently selects XY's native, browser-free renderer.
+`Engine.auto` is the default for `to_image()` and `write_image()`: it selects
+XY's native, browser-free renderer unless `custom_css` requires a browser CSS
+engine. `Engine.default` explicitly selects the native renderer, while
 `Engine.chromium` selects browser-fidelity export. Use enum members rather than
 temporary historical string values.
 

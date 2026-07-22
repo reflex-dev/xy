@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/engineering/assets/launch-benchmark-comparison.svg" alt="Grouped horizontal bar-chart comparison of xy, Matplotlib, and Plotly cold-render times at 10 million points; xy has the lowest measured time in all three output modes in this recorded run." width="1200">
+  <img src="spec/assets/launch-benchmark-comparison.svg" alt="Grouped horizontal bar-chart comparison of xy, Matplotlib, and Plotly cold-render times at 10 million points; xy has the lowest measured time in all three output modes in this recorded run." width="1200">
 </p>
 
 xy is an experimental Python charting library for large, interactive datasets.
@@ -29,7 +29,8 @@ Its Rust core and WebGL2 renderer keep work bounded by what the screen can show.
 - **Interactive by default.** Pan, zoom, hover, select, and inspect exact source
   rows without shipping the entire dataset as JSON.
 - **One chart, many outputs.** Display in Jupyter, VS Code, Colab, and Marimo,
-  or export self-contained HTML, browser-free PNG, and SVG.
+  or export self-contained HTML plus browser-free PNG, JPEG, WebP, SVG, and
+  PDF through one `to_image`/`write_image` API.
 - **Designed for applications.** Layer marks and style both chart chrome and
   marks with CSS/Tailwind-friendly hooks, gradients, strokes, and curves.
 
@@ -72,7 +73,7 @@ The same chart can be exported without changing how it is built.
 xy currently includes line, scatter, area, histogram, bar and column, heatmap,
 error bar and band, box, violin, ECDF, hexbin, contour, step, stairs, stem,
 triangle mesh, and faceted charts. See the
-[copyable examples](docs/engineering/api-examples.md) for the complete surface.
+[copyable examples](spec/api/api-examples.md) for the complete surface.
 
 ### Coming from matplotlib
 
@@ -90,7 +91,7 @@ plt.show()
 ```
 
 The shim intentionally covers common plotting workflows rather than every
-matplotlib feature. See the [compatibility guide](docs/engineering/matplotlib-compat.md).
+matplotlib feature. See the [compatibility guide](spec/matplotlib/compat.md).
 
 ## Benchmarks
 
@@ -162,7 +163,7 @@ hover and selection can still return original rows.
 For benchmark methodology and measured results, see the
 [benchmark runbook](benchmarks/README.md) and the committed
 [launch report](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md).
-For the full design, see the [design dossier](docs/engineering/design-dossier.md).
+For the full design, see the [design dossier](spec/design-dossier.md).
 
 ## Stable vs. Experimental
 
@@ -201,12 +202,12 @@ needed for browser behavior.
 
 Engineering references:
 
-- [API examples](docs/engineering/api-examples.md)
-- [Styling](docs/engineering/styling.md)
+- [API examples](spec/api/api-examples.md)
+- [Styling](spec/api/styling.md)
 - [Benchmarks](benchmarks/README.md)
-- [Matplotlib compatibility](docs/engineering/matplotlib-compat.md)
-- [Architecture and design](docs/engineering/design-dossier.md)
-- [Production readiness](docs/engineering/production-readiness.md)
+- [Matplotlib compatibility](spec/matplotlib/compat.md)
+- [Architecture and design](spec/design-dossier.md)
+- [Production readiness](spec/process/production-readiness.md)
 - [Security](SECURITY.md)
 - [Changelog](CHANGELOG.md)
 

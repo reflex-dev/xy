@@ -807,12 +807,35 @@ def encode_f32_values(
     return EncodedColumn(meta=meta, values=enc)
 
 
+def geometry_offset(scale: str | None, lo: float, hi: float) -> float:
+    """Precision center for offset-encoded geometry (§4/§16).
+
+    Linear axes re-center on the window/domain midpoint so f32 precision
+    follows the viewport. Log-family axes (log, symlog) pin the offset to
+    0.0: the shader applies the transform *after* decoding, and with a large
+    midpoint offset the f32 subtraction collapses exactly the values the
+    scale exists to separate (symlog's linear hole around zero, log's small
+    decades). With offset 0 the encode error is a ~2⁻²⁴ *relative* error,
+    which the log-family transform maps to a bounded sub-pixel coordinate
+    error at every magnitude."""
+    if scale in ("log", "symlog") or not (np.isfinite(lo) and np.isfinite(hi)):
+        return 0.0
+    return (lo + hi) / 2.0
+
+
 def encode_window_xy_columns(
-    xs: np.ndarray, ys: np.ndarray, lo_x: float, hi_x: float, lo_y: float, hi_y: float
+    xs: np.ndarray,
+    ys: np.ndarray,
+    lo_x: float,
+    hi_x: float,
+    lo_y: float,
+    hi_y: float,
+    x_scale: str | None = None,
+    y_scale: str | None = None,
 ) -> tuple[EncodedColumn, EncodedColumn]:
     """Window-centered x/y encoding shared by drilled or sampled point updates."""
-    x_off = (lo_x + hi_x) / 2.0
-    y_off = (lo_y + hi_y) / 2.0
+    x_off = geometry_offset(x_scale, lo_x, hi_x)
+    y_off = geometry_offset(y_scale, lo_y, hi_y)
     return (
         encode_f32_values(xs, x_off, lo_x, hi_x),
         encode_f32_values(ys, y_off, lo_y, hi_y),
@@ -827,6 +850,8 @@ def add_window_xy(
     hi_x: float,
     lo_y: float,
     hi_y: float,
+    x_scale: str | None = None,
+    y_scale: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Append a viewport-centered x/y pair to a shared LOD buffer writer.
 
@@ -834,18 +859,25 @@ def add_window_xy(
     should share this path so deep-zoom f32 precision and `{buf, len, offset,
     scale}` wire metadata stay identical across tiered chart kinds.
     """
-    x_col, y_col = encode_window_xy_columns(xs, ys, lo_x, hi_x, lo_y, hi_y)
+    x_col, y_col = encode_window_xy_columns(xs, ys, lo_x, hi_x, lo_y, hi_y, x_scale, y_scale)
     return writer.add_encoded(x_col), writer.add_encoded(y_col)
 
 
 def encode_window_xy(
-    xs: np.ndarray, ys: np.ndarray, lo_x: float, hi_x: float, lo_y: float, hi_y: float
+    xs: np.ndarray,
+    ys: np.ndarray,
+    lo_x: float,
+    hi_x: float,
+    lo_y: float,
+    hi_y: float,
+    x_scale: str | None = None,
+    y_scale: str | None = None,
 ) -> tuple[dict, dict, np.ndarray, np.ndarray]:
     """Offset-encode a drilled subset re-centered on the window midpoint (the
     design dossier's §16 deep-zoom rule) — f32 precision follows the viewport,
-    not the dataset. Returns wire metas ({offset, scale}) plus the encoded
-    arrays."""
-    x_col, y_col = encode_window_xy_columns(xs, ys, lo_x, hi_x, lo_y, hi_y)
+    not the dataset (log-family axes pin offset 0; see `geometry_offset`).
+    Returns wire metas ({offset, scale}) plus the encoded arrays."""
+    x_col, y_col = encode_window_xy_columns(xs, ys, lo_x, hi_x, lo_y, hi_y, x_scale, y_scale)
     return (x_col.meta, y_col.meta, x_col.values, y_col.values)
 
 

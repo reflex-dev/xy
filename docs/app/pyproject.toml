@@ -36,7 +36,7 @@ extend = "../../pyproject.toml"
 
 [tool.codespell]
 skip = "*/.venv/*,*/.web/*,*/assets/external/*,*/assets/xy/*,*/reflex.lock/*,*/uv.lock"
-ignore-words-list = "inout"
+ignore-words-list = "inout,lod"
 
 [tool.uv]
 required-version = ">=0.7.0"

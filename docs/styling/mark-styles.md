@@ -58,7 +58,7 @@ surfaces set the same rendered property. Inside `style`, use `stroke` for
 line-like geometry and `fill` for filled geometry; `color` is deliberately not
 a CSS paint alias there.
 
-## Live renderer check
+## Combine mark styles
 
 This example combines the main paint paths in one chart: a gradient area, a
 dashed line, bordered diamond markers, and explicitly styled axes.
@@ -75,18 +75,18 @@ styled_marks = xy.chart(
         x,
         y,
         style={
-            "fill": "linear-gradient(currentColor, transparent)",
-            "fill-opacity": 0.45,
-            "stroke": "#6e56cf",
+            "fill": "linear-gradient(#8e51ff4d 5%, #8e51ff00 95%)",
+            "fill-opacity": 1,
+            "stroke": "#8e51ff",
             "stroke-width": 2,
         },
-        color="#6e56cf",
+        color="#8e51ff",
     ),
     xy.line(
         x,
         y,
         style={
-            "stroke": "#6e56cf",
+            "stroke": "#8e51ff",
             "stroke-width": 2,
             "stroke-dasharray": "7px 4px",
         },
@@ -98,16 +98,31 @@ styled_marks = xy.chart(
         size=9,
         style={
             "fill": "#f8fafc",
-            "stroke": "#6e56cf",
+            "stroke": "#8e51ff",
             "stroke-width": 2,
         },
     ),
     xy.x_axis(
-        label="sample",
-        style={"grid_dash": "dotted", "tick_direction": "out"},
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "grid_opacity": 0,
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
     ),
-    xy.y_axis(label="value"),
-    title="Compiled mark styles",
+    xy.y_axis(
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
+    ),
 )
 
 
@@ -210,8 +225,8 @@ and declaration safety at chart-build time:
 
 CSS selectors cannot target individual canvas points, bars, line segments, or
 annotation shapes. A mark `class_name` does not turn its geometry into a DOM
-element. It is retained as adapter-only trace metadata; the shipped browser,
-Reflex, SVG, and native renderers do not interpret it as a paint selector. Use
+element. XY preserves it as trace metadata, but browser, Reflex, SVG, and
+native renderers do not interpret it as a paint selector. Use
 mark props, channels, and the compiled `style=` subset for data geometry.
 
 Arrow shafts, markers, rules, and filled annotation zones are also

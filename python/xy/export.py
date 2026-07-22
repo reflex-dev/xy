@@ -18,20 +18,24 @@ from contextlib import suppress
 from enum import StrEnum
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, SupportsFloat, SupportsIndex, cast
+from typing import TYPE_CHECKING, Any, Optional, SupportsFloat, SupportsIndex, cast
 
 if TYPE_CHECKING:
     from ._figure import Figure
 
 
 class Engine(StrEnum):
-    """PNG export engine.
+    """Static-export engine.
 
     ``default`` is XY's fast, deterministic native renderer. ``chromium``
     renders the standalone chart with an automatically discovered installed
-    Chromium-family browser for browser CSS/WebGL fidelity.
+    Chromium-family browser for browser CSS/WebGL fidelity. ``auto`` picks
+    deterministically per format: native for every natively supported format
+    (all of them — png/jpeg/webp/svg/pdf), chromium only when the request
+    needs a real CSS engine (``custom_css``).
     """
 
+    auto = "auto"
     default = "default"
     chromium = "chromium"
 
@@ -192,6 +196,27 @@ _DECODE_B64_JS = (
 )
 
 
+def _atomic_write_bytes(path: str | PathLike[str], data: bytes) -> None:
+    """Write bytes through a same-directory temp file, then replace atomically."""
+    target = Path(path)
+    fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            fd = -1
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, target)
+    except Exception:
+        if fd != -1:
+            with suppress(OSError):
+                os.close(fd)
+        with suppress(FileNotFoundError):
+            tmp_path.unlink()
+        raise
+
+
 def _atomic_write_text(path: str | PathLike[str], text: str) -> None:
     """Write text through a same-directory temp file, then replace atomically."""
     target = Path(path)
@@ -242,6 +267,7 @@ def to_html(
     path: Optional[str | PathLike[str]] = None,
     *,
     custom_css: Optional[str] = None,
+    animation_progress: Optional[float] = None,
 ) -> str:
     """Render `fig` to a standalone interactive HTML string (optionally saved).
 
@@ -253,6 +279,11 @@ def to_html(
     utility classes referenced by `class_names` (e.g. Tailwind) resolve in the
     standalone export; it must not contain a `</style>` breakout sequence."""
     spec, blob = fig.build_payload()
+    if animation_progress is not None:
+        progress = float(animation_progress)
+        if not math.isfinite(progress) or not 0.0 <= progress <= 1.0:
+            raise ValueError("animation progress must be between 0 and 1")
+        spec["animation_capture_progress"] = progress
     if len(blob) > EMBED_WARN_BYTES:
         import warnings
 
@@ -506,61 +537,150 @@ def html_to_png(
 
 
 def write_images(
-    figs: "list[Figure]",
-    paths: list[str | PathLike[str]],
+    figs: Optional[list[Any]] = None,
+    paths: Optional[list[str | PathLike[str]]] = None,
     *,
-    scale: float = 2.0,
-    engine: Engine = Engine.default,
+    figures: Optional[list[Any]] = None,
+    files: Optional[list[str | PathLike[str]]] = None,
+    formats: Optional[str | list[str]] = None,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    scale: Optional[float] = None,
+    background: Optional[str] = None,
+    engine: Engine | str = Engine.auto,
+    quality: Optional[int] = None,
+    optimize: bool = False,
     custom_css: Optional[str] = None,
     sandbox: bool = True,
     gl: str = "software",
 ) -> list[bytes]:
-    """Export many figures to PNGs through ONE browser session.
+    """Export many figures through ONE amortized pipeline (mixed formats OK).
 
-    `html_to_png` launches a fresh browser per image, so a loop over figures
-    pays ~1-2 s of browser startup each time — the classic batch-export trap.
-    `engine=Engine.chromium` keeps one installed Chromium-family browser alive
-    (CDP; `_chromium.py`) and renders every figure as a tab navigation +
-    screenshot, amortizing startup across the list. The default
-    `engine=Engine.default` simply loops the millisecond-fast, browser-free
-    native rasterizer.
-
-    Figures with fluid ("100%") sizes fall back to the same explicit export
-    dimensions as `to_png`. `custom_css` is available only with Chromium,
-    where it is injected into every standalone document."""
+    Each file's format is inferred from its extension (`formats=` overrides:
+    one string for all files or one per file) across the full unified matrix —
+    PNG/JPEG/WebP/SVG/PDF plus standalone HTML. Native exports simply loop the
+    millisecond-fast, browser-free renderers; every Chromium-resolved export
+    in the batch shares a single persistent browser session (CDP;
+    `_chromium.py`) instead of paying ~1-2 s of startup per figure — the
+    classic batch-export trap. `figures=`/`files=` are keyword aliases for
+    the positional pair, and composed charts (anything with a `.figure()`)
+    are accepted directly — a chart's `export_config` defaults fill any
+    omitted width/height/scale/background/quality for that chart's files,
+    exactly as in `Chart.to_image`. Writes are atomic per file; on error,
+    files already exported remain. Other options match `to_image`; quality
+    applies to JPEG and Chromium WebP and is ignored by the other formats
+    (native WebP stays lossless), so mixed batches stay ergonomic."""
+    if figures is not None:
+        if figs is not None:
+            raise ValueError("pass figs positionally or figures=, not both")
+        figs = figures
+    if files is not None:
+        if paths is not None:
+            raise ValueError("pass paths positionally or files=, not both")
+        paths = files
+    if figs is None or paths is None:
+        raise ValueError("write_images needs both figures and files")
     if len(figs) != len(paths):
         raise ValueError(f"write_images got {len(figs)} figures but {len(paths)} paths")
-    scale = _positive_finite_float(scale, "PNG scale")
-    sandbox = _bool_option(sandbox, "PNG sandbox")
+    if isinstance(formats, str):
+        fmts = [_normalize_format(formats, allow_html=True)] * len(paths)
+    elif formats is not None:
+        if len(formats) != len(paths):
+            raise ValueError(f"write_images got {len(formats)} formats but {len(paths)} paths")
+        fmts = [_normalize_format(f, allow_html=True) for f in formats]
+    else:
+        fmts = [_infer_format(p) for p in paths]
+    if scale is not None:
+        scale = _positive_finite_float(scale, "export scale")
+    if quality is not None:
+        # Range-check once up front; per-file policy below decides where the
+        # value actually applies (JPEG + Chromium WebP).
+        _validated_quality(quality, "jpeg", "native")
+    optimize = _bool_option(optimize, "export optimize")
+    sandbox = _bool_option(sandbox, "export sandbox")
     gl = _gl_option(gl)
-    resolved_engine = _png_engine(engine)
-    if resolved_engine == "native":
-        if custom_css is not None:
-            raise ValueError("custom_css requires engine=Engine.chromium")
-        return [
-            to_png(fig, path, scale=scale, engine=Engine.default)
-            for fig, path in zip(figs, paths, strict=True)
-        ]
-    _custom_css_block(custom_css)
-    exe = find_browser()
-    if exe is None:
-        raise RuntimeError(
-            "batch browser PNG export needs a supported Chrome/Chromium/Edge "
-            f"executable and none was found. Set ${_BROWSER_ENV} to select one."
+
+    # Resolve the whole plan before any I/O so bad arguments fail the batch
+    # up front instead of after a partial export. Chart wrappers are kept
+    # long enough to resolve their declarative export_config defaults; only
+    # then are they compiled down to figures.
+    plan: list[
+        tuple["Figure", str | PathLike[str], str, str, dict[str, Any], Optional[int], Optional[str]]
+    ] = []
+    for obj, path, fmt in zip(figs, paths, fmts, strict=True):
+        fig = obj.figure() if callable(getattr(obj, "figure", None)) else obj
+        if fmt == "html":
+            plan.append((fig, path, fmt, "html", {}, None, None))
+            continue
+        resolved = _resolve_image_engine(engine, fmt, custom_css)
+        if callable(getattr(obj, "_export_defaults", None)):
+            settings = obj._export_defaults(
+                fmt,
+                width,
+                height,
+                scale,
+                background,
+                quality,
+                lossy_webp=resolved == "browser",
+            )
+        else:
+            settings = {
+                "width": width,
+                "height": height,
+                "scale": scale if scale is not None else 2.0,
+                "background": background,
+                "quality": quality,
+            }
+        file_quality = (
+            _validated_quality(settings["quality"], fmt, resolved)
+            if fmt == "jpeg" or (fmt == "webp" and resolved == "browser")
+            else None
         )
-    from ._chromium import ChromiumSession
+        try:
+            file_background = _validated_background(settings["background"], fmt)
+        except ValueError as exc:
+            raise ValueError(f"{path}: {exc}") from None
+        plan.append((fig, path, fmt, resolved, settings, file_quality, file_background))
 
     out: list[bytes] = []
-    with ChromiumSession(exe, gl=gl, sandbox=sandbox) as session:
-        for fig, path in zip(figs, paths, strict=True):
-            w = _positive_pixel_count(fig.width if isinstance(fig.width, int) else 800, "PNG width")
-            h = _positive_pixel_count(
-                fig.height if isinstance(fig.height, int) else 500, "PNG height"
-            )
-            data = session.render_png(to_html(fig, custom_css=custom_css), w, h, scale=scale)
-            with open(path, "wb") as f:
-                f.write(data)
+    session: Optional[Any] = None
+    try:
+        for fig, path, fmt, resolved, settings, file_quality, file_background in plan:
+            if resolved == "html":
+                out.append(to_html(fig, path, custom_css=custom_css).encode("utf-8"))
+                continue
+            w, h = _export_dimensions(fig, settings["width"], settings["height"])
+            file_scale = _positive_finite_float(settings["scale"], "export scale")
+            if resolved == "native":
+                data = _native_image(
+                    fig,
+                    fmt,
+                    width=w,
+                    height=h,
+                    scale=file_scale,
+                    background=file_background,
+                    quality=file_quality,
+                    optimize=optimize,
+                )
+            else:
+                if session is None:
+                    session = _browser_session(gl=gl, sandbox=sandbox)
+                data = _browser_image(
+                    session,
+                    fig,
+                    fmt,
+                    width=w,
+                    height=h,
+                    scale=file_scale,
+                    background=file_background,
+                    quality=file_quality,
+                    custom_css=custom_css,
+                )
+            _atomic_write_bytes(path, data)
             out.append(data)
+    finally:
+        if session is not None:
+            session.close()
     return out
 
 
@@ -610,7 +730,7 @@ def to_png(
 
         data = _raster.to_png(fig, None, width=w, height=h, scale=scale, fast=not optimize)
     else:
-        doc = to_html(fig, custom_css=custom_css)
+        doc = to_html(fig, custom_css=custom_css, animation_progress=1.0)
         data = html_to_png(
             doc,
             w,
@@ -622,4 +742,396 @@ def to_png(
     if path is not None:
         with open(path, "wb") as f:
             f.write(data)
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Unified format-selecting export (ENG-10447): one API across PNG/JPEG/WebP/
+# SVG/PDF (+ HTML routing in `write_image`), with deterministic per-format
+# engine selection and a shared background policy. The per-format methods
+# above (`to_png`, `to_html`, `_svg.to_svg`) remain the compatibility surface.
+# ---------------------------------------------------------------------------
+
+# Formats `to_image` can produce. HTML is deliberately not an image format —
+# `write_image("chart.html")` routes to `to_html`, and `to_image("html")`
+# points there — matching the issue's "interactive/data, not image" split.
+IMAGE_FORMATS = ("png", "jpeg", "webp", "svg", "pdf")
+_FORMAT_ALIASES = {"jpg": "jpeg"}
+_LOSSY_QUALITY_FORMATS = ("jpeg", "webp")
+_DEFAULT_QUALITY = 90
+
+# Conservative CSS <color> shape for export backgrounds: enough for every
+# color syntax (named, hex, rgb[a]/hsl[a]/oklch) while excluding anything able
+# to escape a style declaration it is interpolated into ({}, ;, quotes, <).
+_BACKGROUND_RE = _re.compile(r"^[A-Za-z0-9#().,%/\s+-]+$")
+
+
+def _normalize_format(value: object, *, allow_html: bool = False) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"format must be one of {IMAGE_FORMATS}, got {value!r}")
+    fmt = _FORMAT_ALIASES.get(value.lower().lstrip("."), value.lower().lstrip("."))
+    if fmt == "html":
+        if allow_html:
+            return fmt
+        raise ValueError(
+            "html is not an image format — use to_html() (or write_image('chart.html'), "
+            "which routes there)"
+        )
+    if fmt not in IMAGE_FORMATS:
+        raise ValueError(f"format must be one of {IMAGE_FORMATS} (or 'jpg'), got {value!r}")
+    return fmt
+
+
+def _infer_format(path: str | PathLike[str]) -> str:
+    suffix = Path(path).suffix.lower().lstrip(".")
+    if suffix in ("html", "htm"):
+        return "html"
+    if not suffix:
+        raise ValueError(
+            f"cannot infer an export format from {str(path)!r}: add a file extension "
+            f"({', '.join('.' + f for f in (*IMAGE_FORMATS, 'jpg', 'html'))}) "
+            "or pass format= explicitly"
+        )
+    try:
+        return _normalize_format(suffix, allow_html=True)
+    except ValueError:
+        raise ValueError(
+            f"cannot infer an export format from {str(path)!r}: unknown extension "
+            f"{'.' + suffix!r}. Supported: "
+            f"{', '.join('.' + f for f in (*IMAGE_FORMATS, 'jpg', 'html'))}, "
+            "or pass format= explicitly"
+        ) from None
+
+
+def _resolve_image_engine(engine: object, fmt: str, custom_css: Optional[str]) -> str:
+    """Deterministic engine selection: -> "native" | "browser".
+
+    auto => native for every format (they are all natively supported;
+    browser-free is the architectural fast path), except that `custom_css`
+    forces chromium since utility-class CSS needs a real CSS engine. SVG is
+    native-only: a screenshotting browser cannot emit vector SVG.
+    """
+    if engine in (Engine.auto, "auto", None):
+        resolved = "browser" if custom_css is not None else "native"
+    else:
+        resolved = _png_engine(engine, fmt.upper())
+    if resolved == "browser" and fmt == "svg":
+        raise ValueError(
+            "SVG export is native-only (a browser screenshot cannot produce vector "
+            "SVG); drop engine=Engine.chromium and custom_css"
+        )
+    if resolved == "native" and custom_css is not None:
+        raise ValueError("custom_css requires engine=Engine.chromium")
+    return resolved
+
+
+def _validated_quality(quality: object, fmt: str, resolved_engine: str) -> Optional[int]:
+    if quality is None:
+        return _DEFAULT_QUALITY if fmt in _LOSSY_QUALITY_FORMATS else None
+    if fmt not in _LOSSY_QUALITY_FORMATS:
+        raise ValueError(f"quality applies to {'/'.join(_LOSSY_QUALITY_FORMATS)}, not {fmt}")
+    if isinstance(quality, bool) or not isinstance(quality, numbers.Integral):
+        raise ValueError(f"quality must be an integer in 1..100, got {quality!r}")
+    out = int(quality)
+    if not 1 <= out <= 100:
+        raise ValueError(f"quality must be an integer in 1..100, got {out}")
+    if fmt == "webp" and resolved_engine == "native":
+        raise ValueError(
+            "native WebP export is always lossless (deterministic policy); "
+            "drop quality=, or use engine=Engine.chromium for lossy WebP"
+        )
+    return out
+
+
+def _validated_background(background: object, fmt: str) -> Optional[str]:
+    """Shared background policy (documented in docs/export.md).
+
+    None ("auto") keeps each renderer's default backdrop: opaque white for
+    raster/browser output, transparent for SVG/PDF vector output. A CSS color
+    paints one canvas backdrop consistently across formats. "transparent" is
+    valid everywhere alpha exists — JPEG has no alpha channel, so it is
+    rejected there rather than silently flattened."""
+    if background in (None, "auto"):
+        return None
+    if not isinstance(background, str) or not background.strip():
+        raise ValueError(f"background must be a CSS color or 'transparent', got {background!r}")
+    value = background.strip()
+    if not _BACKGROUND_RE.fullmatch(value):
+        raise ValueError(f"background is not a safe CSS color: {background!r}")
+    if value.lower() in ("transparent", "none"):
+        if fmt == "jpeg":
+            raise ValueError(
+                "JPEG has no alpha channel; pass an opaque background= (default white) "
+                "or export PNG/WebP for transparency"
+            )
+        return "transparent"
+    return value
+
+
+def _export_dimensions(
+    fig: "Figure", width: Optional[int], height: Optional[int]
+) -> tuple[int, int]:
+    w = _positive_pixel_count(
+        width if width is not None else (fig.width if isinstance(fig.width, int) else 800),
+        "export width",
+    )
+    h = _positive_pixel_count(
+        height if height is not None else (fig.height if isinstance(fig.height, int) else 500),
+        "export height",
+    )
+    return w, h
+
+
+def _flatten_alpha(rgba: "Any") -> "Any":
+    """Composite leftover alpha over white — the JPEG determinism backstop."""
+    import numpy as np
+
+    alpha = rgba[..., 3:4].astype(np.uint16)
+    rgb = (rgba[..., :3].astype(np.uint16) * alpha + 255 * (255 - alpha) + 127) // 255
+    out = np.empty_like(rgba)
+    out[..., :3] = rgb.astype(np.uint8)
+    out[..., 3] = 255
+    return out
+
+
+def _background_css(background: Optional[str]) -> str:
+    """Page CSS for the export `background=` override in browser capture.
+
+    Mirrors `_svg.apply_export_background`: the override replaces the whole
+    painted backdrop, so it must beat the chart root's inline theme background
+    and the `--chart-bg` plot token the render client reads from computed
+    style (`!important` outranks inline styles and the token becomes
+    transparent so translucent overrides composite exactly once)."""
+    if background is None:
+        return ""
+    return (
+        f"html,body{{background:{background} !important;}}"
+        f".xy{{background:{background} !important;--chart-bg:transparent !important;}}"
+    )
+
+
+def _browser_html(fig: "Figure", custom_css: Optional[str], background: Optional[str]) -> str:
+    """Standalone document for browser capture, with the export background
+    override injected as page CSS (validated by `_validated_background`)."""
+    css = _background_css(background) + (custom_css or "")
+    return to_html(fig, custom_css=css or None, animation_progress=1.0)
+
+
+def _browser_session(*, gl: str, sandbox: bool) -> "Any":
+    """One launched ChromiumSession, mirroring `html_to_png`'s sandbox retry."""
+    exe = find_browser()
+    if exe is None:
+        raise RuntimeError(
+            "browser image export needs a supported Chrome/Chromium/Edge executable "
+            f"and none was found. Set ${_BROWSER_ENV} to its executable path "
+            "or install a supported browser. Native export (engine=Engine.default) "
+            "and HTML export need nothing extra."
+        )
+    from ._chromium import ChromiumError, ChromiumSession
+
+    try:
+        return ChromiumSession(exe, gl=gl, sandbox=sandbox)
+    except ChromiumError:
+        if not sandbox:
+            raise
+        return ChromiumSession(exe, gl=gl, sandbox=False)
+
+
+def _native_image(
+    fig: "Figure",
+    fmt: str,
+    *,
+    width: int,
+    height: int,
+    scale: float,
+    background: Optional[str],
+    quality: Optional[int],
+    optimize: bool,
+) -> bytes:
+    from . import _raster
+
+    if fmt == "png":
+        return _raster.to_png(
+            fig,
+            None,
+            width=width,
+            height=height,
+            scale=scale,
+            fast=not optimize,
+            background=background,
+        )
+    if fmt == "svg":
+        from . import _svg
+
+        return _svg.to_svg(fig, None, width=width, height=height, background=background).encode(
+            "utf-8"
+        )
+    if fmt == "pdf":
+        from . import _pdf, _svg
+
+        svg = _svg.to_svg(fig, None, width=width, height=height, background=background)
+        return _pdf.svg_to_pdf(svg)
+    rgba = _raster.to_rgba(fig, width=width, height=height, scale=scale, background=background)
+    if fmt == "jpeg":
+        from . import _jpeg
+
+        return _jpeg.encode(_flatten_alpha(rgba), quality=quality or _DEFAULT_QUALITY)
+    if fmt == "webp":
+        from . import _webp
+
+        return _webp.encode(rgba)
+    raise AssertionError(f"unreachable native format {fmt!r}")
+
+
+def _browser_image(
+    session: "Any",
+    fig: "Figure",
+    fmt: str,
+    *,
+    width: int,
+    height: int,
+    scale: float,
+    background: Optional[str],
+    quality: Optional[int],
+    custom_css: Optional[str],
+) -> bytes:
+    doc = _browser_html(fig, custom_css, background)
+    if fmt == "pdf":
+        return session.render_pdf(doc, width, height)
+    return session.render_image(
+        doc,
+        width,
+        height,
+        format=fmt,
+        scale=scale,
+        quality=quality,
+        transparent=background == "transparent",
+    )
+
+
+def to_image(
+    fig: "Figure",
+    format: str = "png",
+    *,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    scale: float = 2.0,
+    background: Optional[str] = None,
+    engine: Engine | str = Engine.auto,
+    quality: Optional[int] = None,
+    optimize: bool = False,
+    custom_css: Optional[str] = None,
+    sandbox: bool = True,
+    gl: str = "software",
+) -> bytes:
+    """Render `fig` to image bytes in the requested `format`.
+
+    Formats: "png", "jpeg"/"jpg", "webp", "svg", "pdf" (SVG returns UTF-8
+    bytes; for interactive HTML use `to_html`). `engine=Engine.auto` (default)
+    is deterministic: every format uses the browser-free native path unless
+    `custom_css` forces Chromium; `engine=Engine.chromium` renders the
+    standalone HTML in an installed browser for CSS/WebGL fidelity (all
+    formats except SVG, which is native-only). Native WebP is lossless;
+    `quality` (1-100, default 90) applies to JPEG and to Chromium's lossy
+    WebP. `background` is "auto" per-format, a CSS color, or "transparent"
+    (rejected for JPEG). `scale` is the device-pixel-ratio for raster output
+    and is ignored by the vector formats (SVG/PDF are resolution-independent).
+    PDF keeps text/axes/marks as vectors; density and heatmap layers embed as
+    bounded rasters (the documented hybrid-vector policy)."""
+    fmt = _normalize_format(format)
+    resolved_engine = _resolve_image_engine(engine, fmt, custom_css)
+    quality = _validated_quality(quality, fmt, resolved_engine)
+    background = _validated_background(background, fmt)
+    w, h = _export_dimensions(fig, width, height)
+    scale = _positive_finite_float(scale, "export scale")
+    optimize = _bool_option(optimize, "export optimize")
+    sandbox = _bool_option(sandbox, "export sandbox")
+    gl = _gl_option(gl)
+    if resolved_engine == "native":
+        return _native_image(
+            fig,
+            fmt,
+            width=w,
+            height=h,
+            scale=scale,
+            background=background,
+            quality=quality,
+            optimize=optimize,
+        )
+    with _browser_session(gl=gl, sandbox=sandbox) as session:
+        return _browser_image(
+            session,
+            fig,
+            fmt,
+            width=w,
+            height=h,
+            scale=scale,
+            background=background,
+            quality=quality,
+            custom_css=custom_css,
+        )
+
+
+def write_image(
+    fig: "Figure",
+    path: str | PathLike[str],
+    *,
+    format: Optional[str] = None,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    scale: float = 2.0,
+    background: Optional[str] = None,
+    engine: Engine | str = Engine.auto,
+    quality: Optional[int] = None,
+    optimize: bool = False,
+    custom_css: Optional[str] = None,
+    sandbox: bool = True,
+    gl: str = "software",
+) -> bytes:
+    """Export `fig` to `path`, inferring the format from the extension.
+
+    `format=` overrides inference (required when the path has no/unknown
+    extension). Writes are atomic: a same-directory temp file is fsynced then
+    renamed over the target, so readers never observe a partial image.
+    ".html" routes to `to_html` (interactive export; raster-only options are
+    rejected there). Returns the written bytes. All other options match
+    `to_image`."""
+    fmt = _normalize_format(format, allow_html=True) if format is not None else _infer_format(path)
+    if fmt == "html":
+        rejected = [
+            name
+            for name, value, default in (
+                ("width", width, None),
+                ("height", height, None),
+                ("scale", scale, 2.0),
+                ("background", background, None),
+                ("quality", quality, None),
+                ("optimize", optimize, False),
+            )
+            if value != default
+        ]
+        if engine not in (Engine.auto, "auto"):
+            rejected.append("engine")
+        if rejected:
+            raise ValueError(
+                f"HTML export is interactive and ignores {', '.join(sorted(rejected))}; "
+                "drop them or export an image format"
+            )
+        doc = to_html(fig, path, custom_css=custom_css)
+        return doc.encode("utf-8")
+    data = to_image(
+        fig,
+        fmt,
+        width=width,
+        height=height,
+        scale=scale,
+        background=background,
+        engine=engine,
+        quality=quality,
+        optimize=optimize,
+        custom_css=custom_css,
+        sandbox=sandbox,
+        gl=gl,
+    )
+    _atomic_write_bytes(path, data)
     return data

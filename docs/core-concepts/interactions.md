@@ -14,7 +14,7 @@ an event.
 
 Set flags directly on a chart or compose an `interaction_config()` child:
 
-~~~python
+~~~python demo exec
 import xy
 
 chart = xy.scatter_chart(
@@ -25,13 +25,22 @@ chart = xy.scatter_chart(
         select=True,
         brush=True,
         crosshair=True,
-        view_change=True,
     ),
 )
+
+
+def browser_behavior_demo():
+    import reflex_xy
+
+    return reflex_xy.chart(chart, height="360px")
 ~~~
 
 Standalone HTML keeps these local browser behaviors. It cannot invoke Python
 because no kernel or server is attached.
+
+Viewport DOM events are always available. Add ``on_view_change`` to a live
+notebook or Reflex adapter when Python needs the semantic range events; there
+is no separate transport configuration flag.
 
 ## Python callbacks
 
@@ -39,7 +48,10 @@ Core chart containers accept `on_hover`, `on_click`, `on_brush`, `on_select`,
 and `on_view_change`. Supplying a callback enables the corresponding browser
 interaction automatically.
 
-~~~python
+~~~python demo exec
+import xy
+
+
 def selected(selection):
     if len(selection):
         xs, ys = selection.xy(0)
@@ -50,6 +62,12 @@ chart = xy.scatter_chart(
     xy.scatter([0, 1, 2], [2, 4, 3]),
     on_select=selected,
 )
+
+
+def python_callbacks_demo():
+    import reflex_xy
+
+    return reflex_xy.chart(chart, height="360px")
 ~~~
 
 These callbacks run through a live notebook widget. They are ordinary Python
@@ -76,7 +94,15 @@ Reflex event props work with a live adapter source—an `inline()` token or an
 The renderer may display a decimated line, density grid, or retained sample,
 but XY keeps canonical rows in Python:
 
-~~~python
+~~~python demo exec
+import xy
+
+chart = xy.scatter_chart(
+    xy.scatter([0, 1, 2, 3], [1, 3, 2, 5]),
+    xy.x_axis(label="x"),
+    xy.y_axis(label="y"),
+)
+
 row = chart.pick(trace_id=0, index=1)
 
 selection = chart.select_range(
@@ -86,6 +112,12 @@ selection = chart.select_range(
     y1=5.0,
 )
 xs, ys = selection.xy(0)
+
+
+def exact_readout_demo():
+    import reflex_xy
+
+    return reflex_xy.chart(chart, height="360px")
 ~~~
 
 `Selection` stores canonical row indices per trace, supports
@@ -97,7 +129,9 @@ resolves their canonical rows.
 
 Give related charts the same `link_group` and choose which axes participate:
 
-~~~python
+~~~python demo exec
+import xy
+
 overview = xy.line_chart(
     xy.line([0, 1, 2], [2, 4, 3]),
     link_group="revenue",
@@ -109,6 +143,17 @@ detail = xy.scatter_chart(
     link_group="revenue",
     link_axes=("x",),
 )
+
+
+def linked_views_demo():
+    import reflex as rx
+    import reflex_xy
+
+    return rx.el.div(
+        reflex_xy.chart(overview, height="280px"),
+        reflex_xy.chart(detail, height="280px"),
+        class_name="grid w-full grid-cols-1 gap-4 lg:grid-cols-2",
+    )
 ~~~
 
 Pan or zoom changes propagate between mounted charts in that group. Linking

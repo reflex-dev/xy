@@ -10,6 +10,7 @@ import reflex as rx
 import reflex_xy
 
 import xy
+from xy.channel import decode_frame
 
 
 class CompState(rx.State):
@@ -110,6 +111,36 @@ def test_static_chart_classes_are_visible_to_tailwind_source_scan(app_cwd):
         assert class_string in rendered
 
 
+def test_static_facet_chart_compiles_as_grid_of_panel_payloads(app_cwd):
+    data = {
+        "x": [0, 1, 2, 0, 1, 2],
+        "y": [1, 2, 3, 3, 2, 1],
+        "region": ["West", "West", "West", "East", "East", "East"],
+    }
+    facets = xy.facet_chart(
+        xy.scatter(x="x", y="y", color="#6e56cf"),
+        by="region",
+        data=data,
+        cols=2,
+        share_x=True,
+        share_y=True,
+    )
+
+    rendered = str(reflex_xy.chart(facets, id="regional-grid"))
+
+    assert "regional-grid" in rendered
+    assert "repeat(2, minmax(0, 1fr))" in rendered
+    assert rendered.count("XYChart") == 2
+    assert rendered.count("/xy/") == 2
+    asset_files = list((pathlib.Path(app_cwd) / "assets" / "xy").glob("*.xyf"))
+    assert len(asset_files) == 2
+    # Facet identity is not in the JSX: each panel payload carries its facet
+    # label as the figure title (facets.py builds panels that way), which the
+    # render client draws as the panel heading.
+    titles = {decode_frame(path.read_bytes()).message["title"] for path in asset_files}
+    assert titles == {"West", "East"}
+
+
 def test_live_chart_does_not_claim_runtime_classes_are_compile_time_known(app_cwd):
     rendered = str(reflex_xy.chart("xyfig-runtime"))
     assert "tailwindClassTokens" not in rendered
@@ -125,9 +156,20 @@ def test_component_creation_does_not_touch_repo_root():
     assert os.getcwd() != str(repo_root) or True
 
 
-def test_lasso_selection_summary_keeps_polygon_geometry():
+def test_semantic_event_wrapper_contracts_are_present():
     source = (
         pathlib.Path(__file__).parents[2] / "python/reflex-xy/reflex_xy/assets/XYChart.jsx"
     ).read_text()
     assert 'm.type === "select_polygon"' in source
     assert 'lastSelect?.type === "select_polygon" ? lastSelect.points : null' in source
+    assert "interaction.click = true" in source
+    assert "interaction.view_change = true" in source
+    assert "include_rows: true" in source
+    assert "HOVER_THROTTLE_MS = 120" in source
+    assert "VIEW_THROTTLE_MS = 120" in source
+    assert "envelope.v = payloadVersion" in source
+    assert "restoreSelectionSeqs.delete(message.seq)" in source
+    assert "restoringSelection" not in source
+    assert 'pointEnvelope("point_click"' in source
+    assert 'type: "select_end"' in source
+    assert 'type: "view_change"' in source

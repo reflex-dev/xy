@@ -8,6 +8,8 @@ work is forbidden on the client).
 
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping
 from os import PathLike
 from typing import Any, Optional, TypeAlias
 
@@ -39,6 +41,10 @@ from .dom import validate_dom_slots
 
 _FigureCheckpoint: TypeAlias = tuple[ColumnStoreCheckpoint, int, dict[str, list[str]], int]
 
+# "selection not passed" sentinel for state_patch_message: None is meaningful
+# there (clear the selection), so absence needs its own marker.
+_STATE_UNSET: Any = object()
+
 
 class Selection:
     """The payload handed to an `on_select` callback. Holds the selected
@@ -66,6 +72,15 @@ class Selection:
         if idx is None:
             return np.empty(0), np.empty(0)
         return t.x.values[idx], t.y.values[idx]
+
+    def rows(self, limit: int | None = None) -> list[dict[str, Any]]:
+        """Return deterministic JSON rows based on canonical indices.
+
+        Traces and their indices are ordered ascending. ``limit`` bounds the
+        projection without changing the complete selection held by this object.
+        """
+        rows, _ = interaction.selection_rows(self._figure, self.per_trace, limit)
+        return rows
 
 
 class Figure(AnnotationsMixin, PayloadMixin):
@@ -113,6 +128,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # pyplot sets an explicit Matplotlib-style spine list.
         self.frame_sides: Optional[list[str]] = None
         self.colorbar_options: Optional[dict[str, Any]] = None
+        # Declarative export defaults (xy.export_config): governs the client
+        # modebar's format menu + filename and the Python export defaults.
+        self.export_options: Optional[dict[str, Any]] = None
         self.show_modebar = True
         self.show_tooltip = True
         self.class_name: Optional[str] = None
@@ -121,6 +139,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         self.chrome_styles: dict[str, dict[str, str | int | float]] = {}
         self.tooltip: Optional[dict[str, Any]] = None
         self.interaction: dict[str, Any] = {}
+        # Browser-only motion policy. Static/native exporters intentionally
+        # ignore this and always render the deterministic final scene.
+        self.animation_options: Optional[dict[str, Any]] = None
         self.mark_style: dict[str, dict[str, str | int | float]] = {}
         self.annotations: list[dict[str, Any]] = []
         self._axis_categories: dict[str, list[str]] = {}
@@ -130,6 +151,16 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # so category registries stay independent for x, x2, y, y2, ... .
         self._active_axis_ids: dict[str, str] = {"x": "x", "y": "y"}
         self._widget: Any = None
+        # Kernel-side durable view-state cache (spec/design/view-state.md
+        # §5.1): the browser client owns the live state; this mirror is fed
+        # by the view/selection events the transports already deliver, so
+        # `view_state()` never round-trips. Reads are eventually consistent.
+        self._view_state_ranges: Optional[dict[str, list[float]]] = None
+        self._view_state_selection: Optional[dict[str, Any]] = None
+        # Monotonic streaming-append counter; rides the spec as
+        # `append.seq` so trait-transported hosts can detect the refresh
+        # (wire-protocol §4).
+        self._append_seq = 0
 
     # -- axis config --------------------------------------------------------
 
@@ -142,7 +173,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         label_offset: Optional[float] = None,
         label_angle: Optional[float] = None,
         type_: Optional[str] = None,
+        constant: Optional[float] = None,
         domain: Optional[tuple[float, float]] = None,
+        bounds: Any = None,
         reverse: bool = False,
         format: Optional[str] = None,
         tick_count: Optional[int] = None,
@@ -157,12 +190,25 @@ class Figure(AnnotationsMixin, PayloadMixin):
     ) -> "Figure":
         axis_id = self._axis_id(axis_id, "axis id")
         axis_dim = self._axis_dim(axis_id)
-        if type_ is not None and type_ not in {"linear", "time", "log"}:
-            raise ValueError("axis type_ must be one of None, 'linear', 'time', or 'log'")
+        if type_ is not None and type_ not in {"linear", "time", "log", "symlog"}:
+            raise ValueError("axis type_ must be one of None, 'linear', 'time', 'log', or 'symlog'")
+        if constant is not None:
+            constant = self._finite_scalar(constant, f"{axis_id} axis constant")
+            if constant <= 0:
+                raise ValueError(f"{axis_id} axis constant must be positive")
+            if type_ != "symlog":
+                raise ValueError(f"{axis_id} axis constant is only valid for a symlog axis")
         if domain is not None:
             domain = self._finite_increasing_pair(domain, f"{axis_id} axis domain")
             if type_ == "log" and domain[0] <= 0:
                 raise ValueError(f"{axis_id} log axis domain must be positive")
+        if isinstance(bounds, str):
+            if bounds != "data":
+                raise ValueError(f"{axis_id} axis bounds must be an increasing pair or 'data'")
+        elif bounds is not None:
+            bounds = self._finite_increasing_pair(bounds, f"{axis_id} axis bounds")
+            if type_ == "log" and bounds[0] <= 0:
+                raise ValueError(f"{axis_id} log axis bounds must be positive")
         if side is None:
             side = "bottom" if axis_dim == "x" else ("right" if axis_id != "y" else "left")
         elif axis_dim == "x" and side not in {"top", "bottom"}:
@@ -187,7 +233,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
             ),
             "label_angle": self._optional_finite_scalar(label_angle, f"{axis_id} axis label_angle"),
             "type": type_,
+            "constant": constant,
             "domain": domain,
+            "bounds": bounds,
             "reverse": self._bool_param(reverse, f"{axis_id} axis reverse"),
             "format": self._optional_text(format, f"{axis_id} axis format"),
             "tick_count": self._optional_positive_int(tick_count, f"{axis_id} axis tick_count"),
@@ -236,9 +284,22 @@ class Figure(AnnotationsMixin, PayloadMixin):
         select: Optional[bool] = None,
         brush: Optional[bool] = None,
         crosshair: Optional[bool] = None,
-        view_change: Optional[bool] = None,
+        navigation: Optional[bool] = None,
+        pan: Optional[bool] = None,
+        pan_axes: Optional[tuple[str, ...]] = None,
+        zoom: Optional[bool] = None,
+        default_drag_action: Optional[str] = None,
+        zoom_axes: Optional[tuple[str, ...]] = None,
+        zoom_limits: Any = None,
+        wheel_zoom: Optional[bool] = None,
+        box_zoom: Optional[bool] = None,
+        zoom_buttons: Optional[bool] = None,
+        double_click_reset: Optional[bool] = None,
+        reset_axes: Optional[tuple[str, ...]] = None,
         link_group: Optional[str] = None,
-        link_axes: tuple[str, ...] = ("x", "y"),
+        link_axes: Optional[tuple[str, ...]] = None,
+        link_select: Optional[bool] = None,
+        history: Optional[bool] = None,
     ) -> "Figure":
         updates: dict[str, Any] = {}
         for name, value in (
@@ -247,17 +308,37 @@ class Figure(AnnotationsMixin, PayloadMixin):
             ("select", select),
             ("brush", brush),
             ("crosshair", crosshair),
-            ("view_change", view_change),
+            ("navigation", navigation),
+            ("pan", pan),
+            ("zoom", zoom),
+            ("wheel_zoom", wheel_zoom),
+            ("box_zoom", box_zoom),
+            ("zoom_buttons", zoom_buttons),
+            ("double_click_reset", double_click_reset),
+            ("link_select", link_select),
+            ("history", history),
         ):
             normalized = self._optional_bool(value, f"interaction {name}")
             if normalized is not None:
                 updates[name] = normalized
+        for name, axes in (
+            ("pan_axes", pan_axes),
+            ("zoom_axes", zoom_axes),
+            ("reset_axes", reset_axes),
+        ):
+            if axes is not None:
+                updates[name] = self._axis_policy(axes, name)
+        if zoom_limits is not None:
+            updates["zoom_limits"] = zoom_limits
+        if default_drag_action is not None:
+            updates["default_drag_action"] = self._default_drag_action(default_drag_action)
         if link_group is not None:
             group = self._optional_text(link_group, "interaction link_group")
             if not group:
                 raise ValueError("interaction link_group must be a non-empty string or None")
             updates["link_group"] = group
-            updates["link_axes"] = self._link_axes(link_axes)
+        if link_axes is not None:
+            updates["link_axes"] = self._axis_policy(link_axes, "link_axes")
         self.interaction.update(updates)
         return self
 
@@ -400,6 +481,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         opacity: float,
         role: str,
         extra_style: Optional[dict[str, Any]] = None,
+        color_ch: Optional[ColorChannel] = None,
+        stroke_ch: Optional[ColorChannel] = None,
+        style_channels: Optional[dict[str, Any]] = None,
     ) -> None:
         if orientation == "vertical":
             self._append_rect_trace(
@@ -414,6 +498,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 role=role,
                 orientation=orientation,
                 extra_style=extra_style,
+                color_ch=color_ch,
+                stroke_ch=stroke_ch,
+                style_channels=style_channels,
             )
         else:
             self._append_rect_trace(
@@ -428,6 +515,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 role=role,
                 orientation=orientation,
                 extra_style=extra_style,
+                color_ch=color_ch,
+                stroke_ch=stroke_ch,
+                style_channels=style_channels,
             )
 
     @staticmethod
@@ -464,18 +554,119 @@ class Figure(AnnotationsMixin, PayloadMixin):
     def _axis_dim(axis_id: str) -> str:
         return "x" if axis_id.startswith("x") else "y"
 
-    @staticmethod
-    def _link_axes(value: Any) -> list[str]:
+    def _axis_policy(self, value: Any, name: str) -> list[str]:
         if not isinstance(value, (tuple, list)):
-            raise ValueError("interaction link_axes must be a tuple/list containing 'x' and/or 'y'")
+            raise ValueError(f"interaction {name} must be a tuple/list of declared axis IDs")
         axes = list(value)
-        if not axes or any(axis not in {"x", "y"} for axis in axes):
-            raise ValueError("interaction link_axes must contain only 'x' and/or 'y'")
+        if not axes:
+            raise ValueError(f"interaction {name} must contain at least one axis")
+        unknown = [axis for axis in axes if axis not in self.axis_options]
+        if unknown:
+            raise ValueError(
+                f"interaction {name} contains unknown axis IDs {unknown!r}; "
+                f"declared axes are {list(self.axis_options)!r}"
+            )
         out: list[str] = []
         for axis in axes:
             if axis not in out:
                 out.append(axis)
         return out
+
+    @staticmethod
+    def _default_drag_action(value: Any) -> str:
+        allowed = {
+            "auto",
+            "none",
+            "pan",
+            "zoom",
+            "select",
+            "select-x",
+            "select-y",
+            "select-lasso",
+        }
+        if not isinstance(value, str) or value not in allowed:
+            choices = ", ".join(repr(mode) for mode in sorted(allowed))
+            raise ValueError(f"interaction default_drag_action must be one of {choices}")
+        return value
+
+    @staticmethod
+    def _zoom_limit_pair(value: Any, label: str) -> list[Optional[float]]:
+        if not isinstance(value, (tuple, list)) or len(value) != 2:
+            raise ValueError(f"{label} must be a two-item tuple/list")
+        normalized: list[Optional[float]] = []
+        for endpoint in value:
+            if endpoint is None:
+                normalized.append(None)
+                continue
+            if isinstance(endpoint, (bool, np.bool_)):
+                raise ValueError(f"{label} endpoints must be positive finite numbers or None")
+            try:
+                number = float(endpoint)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{label} endpoints must be positive finite numbers or None"
+                ) from exc
+            if not np.isfinite(number) or number <= 0:
+                raise ValueError(f"{label} endpoints must be positive finite numbers or None")
+            normalized.append(number)
+        lower, upper = normalized
+        if lower is not None and upper is not None and lower > upper:
+            raise ValueError(f"{label} lower endpoint must not exceed its upper endpoint")
+        if (lower is not None and lower > 1.0) or (upper is not None and upper < 1.0):
+            raise ValueError(f"{label} must contain home magnification 1.0")
+        return normalized
+
+    def _zoom_limits(self, value: Any) -> dict[str, list[Optional[float]]]:
+        selected = self._interaction_axes("zoom_axes")
+        default = [1.0, None]
+        if isinstance(value, Mapping):
+            unknown = [axis for axis in value if axis not in self.axis_options]
+            if unknown:
+                raise ValueError(f"interaction zoom_limits contains unknown axis IDs {unknown!r}")
+            normalized = {axis: list(default) for axis in selected}
+            for axis in self.axis_options:
+                if axis in value:
+                    normalized[axis] = self._zoom_limit_pair(
+                        value[axis], f"interaction zoom_limits[{axis!r}]"
+                    )
+            return normalized
+        pair = self._zoom_limit_pair(value, "interaction zoom_limits")
+        return {axis: list(pair) for axis in selected}
+
+    def _interaction_axes(self, name: str) -> list[str]:
+        value = self.interaction.get(name)
+        return list(self.axis_options) if value is None else self._axis_policy(value, name)
+
+    def _validate_interaction(self) -> None:
+        for name in ("pan_axes", "zoom_axes", "reset_axes", "link_axes"):
+            if name in self.interaction:
+                self._axis_policy(self.interaction[name], name)
+        if "zoom_limits" in self.interaction:
+            self._zoom_limits(self.interaction["zoom_limits"])
+        action = self.interaction.get("default_drag_action")
+        if action is None:
+            return
+        action = self._default_drag_action(action)
+        if action in {"auto", "none"}:
+            return
+
+        def enabled(name: str) -> bool:
+            return self.interaction.get(name, True) is not False
+
+        if action == "pan" and not (enabled("navigation") and enabled("pan")):
+            raise ValueError("interaction default_drag_action='pan' requires navigation and pan")
+        if action == "zoom" and not (
+            enabled("navigation") and enabled("zoom") and enabled("box_zoom")
+        ):
+            raise ValueError(
+                "interaction default_drag_action='zoom' requires navigation, zoom, and box_zoom"
+            )
+        if action.startswith("select") and not (
+            enabled("select") and enabled("brush") and any(t.kind == "scatter" for t in self.traces)
+        ):
+            raise ValueError(
+                f"interaction default_drag_action={action!r} requires select, brush, and pickable data"
+            )
 
     _axis_label_position = staticmethod(_validate.axis_label_position)
 
@@ -752,7 +943,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         role: str,
         orientation: Optional[str] = None,
         color_ch: Optional[ColorChannel] = None,
+        stroke_ch: Optional[ColorChannel] = None,
         size_ch: Optional[SizeChannel] = None,
+        style_channels: Optional[dict[str, Any]] = None,
         count: Optional[int] = None,
         extra_style: Optional[dict[str, Any]] = None,
     ) -> None:
@@ -792,7 +985,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
                     name=name,
                     style=style,
                     color_ch=color_ch,
+                    stroke_ch=stroke_ch,
                     size_ch=size_ch,
+                    style_channels=style_channels or {},
                     count=count,
                 )
             )
@@ -817,10 +1012,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
     def y_range(self) -> tuple[float, float]:
         return self._range("y")
 
-    def _range(self, axis_id: str) -> tuple[float, float]:
+    def _range(self, axis_id: str, *, use_domain: bool = True) -> tuple[float, float]:
         opts = self.axis_options.get(axis_id, {})
         fixed = opts.get("domain")
-        if fixed is not None:
+        if use_domain and fixed is not None:
             lo, hi = fixed
             return (hi, lo) if opts.get("reverse") else (lo, hi)
 
@@ -894,7 +1089,20 @@ class Figure(AnnotationsMixin, PayloadMixin):
         return None
 
     def _axis_scale(self, axis_id: str) -> str:
-        return "log" if self.axis_options.get(axis_id, {}).get("type") == "log" else "linear"
+        scale = self.axis_options.get(axis_id, {}).get("type")
+        return scale if scale in {"log", "symlog"} else "linear"
+
+    def _axis_coord(self, axis_id: str, values: Any) -> np.ndarray:
+        """Map values to axis coordinates for screen-space aggregation."""
+        v = np.asarray(values, dtype=np.float64)
+        scale = self._axis_scale(axis_id)
+        if scale == "log":
+            with np.errstate(divide="ignore", invalid="ignore"):
+                return np.where(v > 0.0, np.log10(v), np.nan)
+        if scale == "symlog":
+            constant = float(self.axis_options.get(axis_id, {}).get("constant") or 1.0)
+            return np.sign(v) * np.log1p(np.abs(v) / constant)
+        return v
 
     def _axis_kind(self, axis_id: str) -> str:
         axis = self._axis_dim(axis_id)
@@ -979,12 +1187,22 @@ class Figure(AnnotationsMixin, PayloadMixin):
             spec["tick_label_anchor"] = tick_label_anchor
         if tick_label_min_gap is not None:
             spec["tick_label_min_gap"] = tick_label_min_gap
-        if self._axis_scale(axis_id) == "log":
-            spec["scale"] = "log"
+        scale = self._axis_scale(axis_id)
+        if scale != "linear":
+            spec["scale"] = scale
+        if scale == "symlog":
+            spec["constant"] = opts.get("constant") or 1.0
         if opts.get("reverse"):
             spec["reverse"] = True
         if opts.get("domain") is not None:
             spec["domain"] = list(opts["domain"])
+        bounds = opts.get("bounds")
+        if bounds == "data":
+            # Resolve once on the Python side so the client receives concrete
+            # limits even when an independent explicit domain sets view0.
+            bounds = self._range(axis_id, use_domain=False)
+        if bounds is not None:
+            spec["bounds"] = sorted(bounds)
         if opts.get("format") is not None:
             spec["format"] = opts["format"]
         style = styles.compile_axis_style(opts.get("style"), f"{axis_id} axis style")
@@ -1017,17 +1235,41 @@ class Figure(AnnotationsMixin, PayloadMixin):
     # -- payload --------------------------------------------------------------
 
     def _interaction_spec(self) -> dict[str, Any]:
+        self._validate_interaction()
         spec: dict[str, Any] = {}
-        for name in ("hover", "click", "select", "brush", "crosshair", "view_change"):
+        for name in (
+            "hover",
+            "click",
+            "select",
+            "brush",
+            "crosshair",
+            "navigation",
+            "pan",
+            "zoom",
+            "wheel_zoom",
+            "box_zoom",
+            "zoom_buttons",
+            "double_click_reset",
+            "link_select",
+            "history",
+        ):
             if name in self.interaction:
                 spec[name] = self._bool_param(self.interaction[name], f"interaction {name}")
+        for name in ("pan_axes", "zoom_axes", "reset_axes", "link_axes"):
+            if name in self.interaction:
+                spec[name] = self._axis_policy(self.interaction[name], name)
+        if "zoom_limits" in self.interaction:
+            spec["zoom_limits"] = self._zoom_limits(self.interaction["zoom_limits"])
+        if "default_drag_action" in self.interaction:
+            spec["default_drag_action"] = self._default_drag_action(
+                self.interaction["default_drag_action"]
+            )
         link_group = self.interaction.get("link_group")
         if link_group is not None:
             group = self._optional_text(link_group, "interaction link_group")
             if not group:
                 raise ValueError("interaction link_group must be a non-empty string or None")
             spec["link_group"] = group
-            spec["link_axes"] = self._link_axes(self.interaction.get("link_axes", ("x", "y")))
         return spec
 
     def _mark_style_spec(self) -> dict[str, Any]:
@@ -1168,14 +1410,214 @@ class Figure(AnnotationsMixin, PayloadMixin):
         return interaction.decimate_view(self, x0, x1, px_width)
 
     def append(
-        self, trace_id: int, x: Any, y: Any, *, color: Any = None, size: Any = None
+        self,
+        trace_id: int,
+        x: Any,
+        y: Any,
+        *,
+        color: Any = None,
+        size: Any = None,
+        stroke: Any = None,
+        opacity: Any = None,
+        alpha: Any = None,
+        stroke_width: Any = None,
+        symbol: Any = None,
     ) -> tuple[dict[str, Any], list[bytes]]:
         """Streaming append: extend a scatter/line trace's canonical columns
         and get the client refresh message back. The widget's `append` sends
         it; headless callers can inspect or discard it. Payloads stay
         screen-bounded, so this is O(pixels) on the wire regardless of how
         much data has accumulated."""
-        return interaction.append_data(self, trace_id, x, y, color, size)
+        return interaction.append_data(
+            self,
+            trace_id,
+            x,
+            y,
+            color,
+            size,
+            stroke,
+            opacity,
+            alpha,
+            stroke_width,
+            symbol,
+        )
+
+    # -- unified view state (spec/design/view-state.md) ---------------------
+
+    def _validated_state_ranges(self, ranges: Any) -> dict[str, list[float]]:
+        """Validate a partial ranges mapping against the declared axes.
+
+        Boundary rules match the §2 state document: exact axis IDs only,
+        finite ``[lo, hi]`` pairs, no coercion of NaN/infinity.
+        """
+        if not isinstance(ranges, dict) or not ranges:
+            raise ValueError("ranges must be a non-empty mapping of axis id to (lo, hi)")
+        out: dict[str, list[float]] = {}
+        for axis_id, pair in ranges.items():
+            if axis_id not in self.axis_options:
+                raise ValueError(f"unknown axis id {axis_id!r}")
+            if not isinstance(pair, (tuple, list)) or len(pair) != 2:
+                raise ValueError(f"range for axis {axis_id!r} must be a (lo, hi) pair")
+            lo, hi = float(pair[0]), float(pair[1])
+            if not math.isfinite(lo) or not math.isfinite(hi) or lo == hi:
+                raise ValueError(f"range for axis {axis_id!r} must be finite and non-empty")
+            out[axis_id] = [lo, hi]
+        return out
+
+    @staticmethod
+    def _validated_state_selection(
+        range: Any = None, polygon: Any = None
+    ) -> Optional[dict[str, Any]]:
+        """Normalize a geometric selection to its §2 wire shape (or None)."""
+        if range is not None and polygon is not None:
+            raise ValueError("pass range= or polygon=, not both")
+        if range is not None:
+            if isinstance(range, dict):
+                try:
+                    values = [float(range[key]) for key in ("x0", "x1", "y0", "y1")]
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise ValueError("selection range must supply finite x0, x1, y0, y1") from exc
+            else:
+                try:
+                    values = [float(v) for v in range]
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        "selection range must be a (x0, x1, y0, y1) tuple or dict"
+                    ) from exc
+                if len(values) != 4:
+                    raise ValueError("selection range must have exactly x0, x1, y0, y1")
+            if not all(math.isfinite(v) for v in values):
+                raise ValueError("selection range must be finite")
+            x0, x1, y0, y1 = values
+            return {"range": {"x0": x0, "x1": x1, "y0": y0, "y1": y1}}
+        if polygon is not None:
+            try:
+                points = [[float(p[0]), float(p[1])] for p in polygon]
+            except (TypeError, ValueError, IndexError) as exc:
+                raise ValueError("selection polygon must be a sequence of (x, y)") from exc
+            if len(points) < 3:
+                raise ValueError("selection polygon needs at least 3 points")
+            if not all(math.isfinite(v) for point in points for v in point):
+                raise ValueError("selection polygon must be finite")
+            return {"polygon": points}
+        return None
+
+    def state_patch_message(
+        self,
+        *,
+        ranges: Any = None,
+        selection: Any = _STATE_UNSET,
+        animate: bool = True,
+        history: bool = True,
+    ) -> dict[str, Any]:
+        """Build one §8 ``state_patch`` message (merge-patch semantics: absent
+        keys leave that facet of the client state alone)."""
+        state: dict[str, Any] = {"v": 1}
+        if ranges is not None:
+            state["ranges"] = self._validated_state_ranges(ranges)
+        if selection is not _STATE_UNSET:
+            state["selection"] = selection
+        if "ranges" not in state and "selection" not in state:
+            raise ValueError("state patch must change ranges or selection")
+        return {
+            "type": "state_patch",
+            "state": state,
+            "animate": bool(animate),
+            "history": bool(history),
+        }
+
+    def view_nav_message(self, axes: Any = None) -> dict[str, Any]:
+        """Build the §8 ``view_nav`` reset message (axes=None → the client's
+        configured reset_axes)."""
+        message: dict[str, Any] = {"type": "view_nav", "op": "reset"}
+        if axes is not None:
+            message["axes"] = self._axis_policy(tuple(axes), "reset axes")
+        return message
+
+    def selection_rows_message(self, rows: Any) -> tuple[dict[str, Any], list[bytes]]:
+        """Kernel-resolve a per-trace row-index selection into the same binary
+        mask buffers the gesture selection path ships (§5.1). Rows-selections
+        are non-durable by design; the client applies them outside history."""
+        if rows is None:
+            raise ValueError("rows selection requires per-trace row indices")
+        if not isinstance(rows, dict):
+            rows = {0: rows}
+        traces: list[dict[str, Any]] = []
+        out: list[bytes] = []
+        total = 0
+        for trace_id, indices in rows.items():
+            tid = int(trace_id)
+            if not 0 <= tid < len(self.traces):
+                raise ValueError(f"unknown trace id {trace_id!r}")
+            raw = np.asarray(indices)
+            # Canonical row indices are validated here, before the uint32
+            # wire encoding: a negative or oversized value would otherwise
+            # wrap/ship silently (-1 -> 4294967295) and inflate `total`
+            # while the browser highlights nothing (staff-review finding).
+            integral = raw.size == 0 or (
+                raw.dtype != np.bool_
+                and (
+                    np.issubdtype(raw.dtype, np.integer)
+                    or (
+                        np.issubdtype(raw.dtype, np.floating)
+                        and bool(np.all(np.isfinite(raw)))
+                        and bool(np.all(np.equal(np.mod(raw, 1), 0)))
+                    )
+                )
+            )
+            if not integral:
+                raise ValueError(
+                    f"row indices for trace {tid} must be integers, got dtype {raw.dtype}"
+                )
+            idx = np.unique(np.asarray(raw, dtype=np.int64).ravel())
+            n_rows = len(self.traces[tid].x)
+            if idx.size and (int(idx[0]) < 0 or int(idx[-1]) >= n_rows):
+                raise ValueError(
+                    f"row indices for trace {tid} must be in [0, {n_rows}), "
+                    f"got {int(idx[0])}..{int(idx[-1])}"
+                )
+            wire_idx = self.to_shipped_indices(tid, idx)
+            traces.append(
+                {
+                    "id": tid,
+                    "count": int(len(wire_idx)),
+                    "buf": len(out),
+                    "drill_seq": self.traces[tid].drill_seq,
+                }
+            )
+            out.append(wire_idx.tobytes())
+            # Deduplicated, validated canonical rows — not the raw request
+            # length and not only the currently-shipped subset.
+            total += int(idx.size)
+        return {"type": "selection_rows", "traces": traces, "total": total}, out
+
+    def view_state(self) -> dict[str, Any]:
+        """The last committed durable state (§5.1). Served from the kernel's
+        event-fed cache — no client round-trip; reads are eventually
+        consistent and start at the home ranges before any event arrives."""
+        if self._view_state_ranges is not None:
+            ranges = {axis_id: list(pair) for axis_id, pair in self._view_state_ranges.items()}
+        else:
+            ranges = {axis_id: list(self._range(axis_id)) for axis_id in self.axis_options}
+        selection = self._view_state_selection
+        if isinstance(selection, dict):
+            selection = dict(selection)
+        return {"v": 1, "ranges": ranges, "selection": selection}
+
+    def _record_view_ranges(self, ranges: dict[str, list[float]]) -> None:
+        """Fold a committed view event's ranges into the state cache."""
+        if self._view_state_ranges is None:
+            self._view_state_ranges = {
+                axis_id: list(self._range(axis_id)) for axis_id in self.axis_options
+            }
+        for axis_id, pair in ranges.items():
+            if axis_id in self.axis_options:
+                self._view_state_ranges[axis_id] = [float(pair[0]), float(pair[1])]
+
+    def _record_selection(self, selection: Optional[dict[str, Any]]) -> None:
+        """Fold a committed selection into the state cache; rows-selections
+        are recorded only as the opaque ``{"rows": true}`` marker (§2)."""
+        self._view_state_selection = selection
 
     # -- output -----------------------------------------------------------
 
@@ -1199,21 +1641,32 @@ class Figure(AnnotationsMixin, PayloadMixin):
         path: Optional[str | PathLike[str]] = None,
         *,
         custom_css: Optional[str] = None,
+        animation_progress: Optional[float] = None,
     ) -> str:
         """Standalone interactive HTML: JS client + spec + base64 buffers in
         one self-contained file (base64 carries a ~33% size tax). `custom_css`
         injects an author stylesheet so `class_names` utility classes
         (e.g. Tailwind) resolve in the export."""
-        return export.to_html(self, path, custom_css=custom_css)
+        return export.to_html(
+            self,
+            path,
+            custom_css=custom_css,
+            animation_progress=animation_progress,
+        )
 
     def html(
         self,
         path: Optional[str | PathLike[str]] = None,
         *,
         custom_css: Optional[str] = None,
+        animation_progress: Optional[float] = None,
     ) -> str:
         """Alias for ``to_html`` for component-style API symmetry."""
-        return self.to_html(path, custom_css=custom_css)
+        return self.to_html(
+            path,
+            custom_css=custom_css,
+            animation_progress=animation_progress,
+        )
 
     def _repr_html_(self) -> str:
         """Notebook HTML repr isolated from the host document's styles."""
@@ -1263,6 +1716,76 @@ class Figure(AnnotationsMixin, PayloadMixin):
             height=height,
             scale=scale,
             engine=engine,
+            optimize=optimize,
+            custom_css=custom_css,
+            sandbox=sandbox,
+            gl=gl,
+        )
+
+    def to_image(
+        self,
+        format: str = "png",
+        *,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        scale: float = 2.0,
+        background: Optional[str] = None,
+        engine: export.Engine | str = export.Engine.auto,
+        quality: Optional[int] = None,
+        optimize: bool = False,
+        custom_css: Optional[str] = None,
+        sandbox: bool = True,
+        gl: str = "software",
+    ) -> bytes:
+        """Unified static export: PNG/JPEG/WebP/SVG/PDF bytes (export.py).
+
+        `engine=Engine.auto` is deterministic — the browser-free native path
+        for every format, Chromium only when `custom_css` needs a real CSS
+        engine. See `export.to_image` for the format, quality, and background
+        policies."""
+        return export.to_image(
+            self,
+            format,
+            width=width,
+            height=height,
+            scale=scale,
+            background=background,
+            engine=engine,
+            quality=quality,
+            optimize=optimize,
+            custom_css=custom_css,
+            sandbox=sandbox,
+            gl=gl,
+        )
+
+    def write_image(
+        self,
+        path: str | PathLike[str],
+        *,
+        format: Optional[str] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        scale: float = 2.0,
+        background: Optional[str] = None,
+        engine: export.Engine | str = export.Engine.auto,
+        quality: Optional[int] = None,
+        optimize: bool = False,
+        custom_css: Optional[str] = None,
+        sandbox: bool = True,
+        gl: str = "software",
+    ) -> bytes:
+        """Atomic file export with extension-inferred format (export.py):
+        .png/.jpg/.jpeg/.webp/.svg/.pdf, plus .html routing to `to_html`."""
+        return export.write_image(
+            self,
+            path,
+            format=format,
+            width=width,
+            height=height,
+            scale=scale,
+            background=background,
+            engine=engine,
+            quality=quality,
             optimize=optimize,
             custom_css=custom_css,
             sandbox=sandbox,

@@ -21,12 +21,13 @@ DEFAULT_DOCS = (
     "README.md",
     "SECURITY.md",
     "CONTRIBUTING.md",
-    "docs/engineering/api-examples.md",
-    "docs/engineering/benchmark.md",
-    "docs/engineering/chart-roadmap.md",
-    "docs/engineering/contributing.md",
-    "docs/engineering/production-readiness.md",
+    "spec/api/api-examples.md",
+    "spec/benchmarks/results.md",
+    "spec/api/chart-roadmap.md",
+    "spec/process/contributing.md",
+    "spec/process/production-readiness.md",
     "examples/reflex/README.md",
+    "examples/fastapi/README.md",
 )
 
 BROAD_SUPERLATIVE_RE = re.compile(
@@ -82,7 +83,7 @@ QUALIFIER_GROUPS = (
     re.compile(
         r"\b(?:benchmark|measured|documented|ttfr|payload|memory|ms|mb|gb|artifact)\b", re.I
     ),
-    re.compile(r"\b(?:chart type|data size|mode|row|table|docs/engineering/benchmark\.md)\b", re.I),
+    re.compile(r"\b(?:chart type|data size|mode|row|table|spec/benchmarks/results\.md)\b", re.I),
 )
 
 
@@ -193,7 +194,7 @@ def _default_paths() -> list[Path]:
     public_docs = (
         path
         for path in sorted((ROOT / "docs").rglob("*.md"))
-        if not {"app", "engineering"}.intersection(path.relative_to(ROOT / "docs").parts)
+        if "app" not in path.relative_to(ROOT / "docs").parts
     )
     return list(dict.fromkeys((*paths, *public_docs)))
 

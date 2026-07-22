@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
-ABI_VERSION = 36
+ABI_VERSION = 37
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.

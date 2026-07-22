@@ -5,13 +5,14 @@
 interactivity, and streaming updates — with chart data riding the app's
 **existing websocket**, not a sidecar API.
 
-Status: **prototype** implementing `docs/engineering/design/reflex-integration.md`.
+Status: **prototype** implementing `spec/design/reflex-integration.md`.
 
 ## How it works
 
 - **Control plane (Reflex-native).** The only chart state is a token string,
   minted by a `@reflex_xy.figure` computed var. Semantic events —
-  `on_point_hover(row)`, `on_select_end(summary)` — arrive as ordinary Reflex
+  `on_point_hover(event)`, `on_point_click(event)`, `on_select_end(event)`, and
+  `on_view_change(event)` — arrive as ordinary Reflex
   event handlers with small JSON payloads.
 - **Data plane (xy-native).** A second socket.io namespace (`/_xy`)
   multiplexed onto the app's own engine.io websocket ships the spec as JSON
@@ -85,6 +86,40 @@ rule as `rx.var`) — await a database, HTTP endpoint, or dataframe store:
 Streaming: `reflex_xy.append(token, x=[...], y=[...])` from any handler or
 background task pushes an incremental update over the same socket.
 
+## Events and cross-filtering
+
+Live token-backed charts emit versioned, bounded dictionaries with a stable
+token and canonical row IDs. Selection rows can update ordinary State, which
+causes dependent `@reflex_xy.figure` builders to republish without changing
+their tokens or remounting the chart:
+
+```python
+class Dash(rx.State):
+    selected_groups: list[str] = []
+
+    @rx.event
+    def filter_groups(self, event: dict):
+        selection = event["selection"]
+        self.selected_groups = [] if selection["cleared"] else sorted({
+            row["color_category"] for row in selection["rows"]
+        })
+
+def index():
+    return rx.grid(
+        reflex_xy.chart(Dash.groups, on_select_end=Dash.filter_groups),
+        reflex_xy.chart(Dash.filtered_detail),
+    )
+```
+
+Selection JSON is capped and reports `total_count` plus `truncated`; call
+`reflex_xy.resolve_selection(event)` in the handler when all canonical rows
+are required. Hover and view changes are latest-wins throttled (view changes
+stream live during a gesture and always end on a `final`-phase event), and
+view/selection state survives dependent republishes without feedback events.
+The complete envelopes, limits, clear/shared-handler/viewport examples, and
+static-versus-live availability are documented in
+`docs/engineering/design/reflex-integration.md`.
+
 ## Fixed-data charts
 
 For a chart that doesn't depend on state, skip the state var entirely —
@@ -119,5 +154,12 @@ direct Chart (static) → `inline()` (fixed data, live kernel) →
 
 ## Demo
 
-`examples/demo_app/` in this directory is a runnable dashboard (drilldown
-scatter, hover readout, box-select cross-filter, live streaming line).
+The repository's [`examples/reflex/`](../../examples/reflex) is a runnable
+showcase of every linking method: a drillable figure var with hover / click /
+box-select events, a histogram driven by a slider and cross-filtered by the
+selection, a streaming line, a detail chart recomputed from `on_view_change`,
+and the two fixed-data tiers (a direct `xy.Chart` and an `inline()` token).
+Each section shows its own source, read live with `inspect.getsource`.
+
+For serving the same charts without Reflex, [`examples/fastapi/`](../../examples/fastapi)
+renders standalone HTML and a live 100M-point drilldown from a plain FastAPI app.

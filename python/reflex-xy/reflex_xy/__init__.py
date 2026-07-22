@@ -1,7 +1,7 @@
 """reflex-xy: xy figures as first-class Reflex components.
 
 The integration in one paragraph (full design:
-docs/engineering/design/reflex-integration.md in the xy repo): chart data rides
+spec/design/reflex-integration.md in the xy repo): chart data rides
 the app's *existing* websocket as a second socket.io namespace — binary
 columns, no JSON numbers, no extra endpoints to proxy. Figures live in a
 per-process registry keyed by tokens; the tokens live in Reflex state. A
@@ -43,26 +43,54 @@ import hashlib
 import json
 from typing import Any
 
-from .app import XYPlugin, append, setup
+from .app import XYPlugin, append, clear_selection, reset_view, select, set_view, setup
 from .component import chart
+from .events import (
+    CanonicalRowIdGroup,
+    DataBounds,
+    Modifiers,
+    PointClickEvent,
+    PointData,
+    PointHoverEvent,
+    ScreenPoint,
+    SelectEndEvent,
+    SelectionPayload,
+    ViewChangeEvent,
+)
 from .namespace import XY_NAMESPACE, XYNamespace
 from .registry import FigureRegistry, _figure_of, registry
+from .selections import resolve_selection
 from .vars import AsyncFigureVar, FigureVar, figure
 
 __all__ = [
     "XY_NAMESPACE",
     "AsyncFigureVar",
+    "CanonicalRowIdGroup",
+    "DataBounds",
     "FigureRegistry",
     "FigureVar",
+    "Modifiers",
+    "PointClickEvent",
+    "PointData",
+    "PointHoverEvent",
+    "ScreenPoint",
+    "SelectEndEvent",
+    "SelectionPayload",
+    "ViewChangeEvent",
     "XYNamespace",
     "XYPlugin",
     "append",
     "chart",
+    "clear_selection",
     "figure",
     "inline",
     "register",
     "registry",
     "release",
+    "reset_view",
+    "resolve_selection",
+    "select",
+    "set_view",
     "setup",
 ]
 

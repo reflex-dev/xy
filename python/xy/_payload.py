@@ -19,7 +19,9 @@ from .config import (
     DENSITY_GRID,
     DENSITY_SAMPLE_SEED,
     DENSITY_SAMPLE_TARGET,
+    MAX_ANIMATION_MATCH_ROWS,
     PROTOCOL_VERSION,
+    default_palette_color,
 )
 
 if TYPE_CHECKING:
@@ -53,13 +55,17 @@ class _PayloadWriter:
         self.borrow_heatmaps = borrow_heatmaps
         self.borrowed: list[np.ndarray] = []
 
-    def ship(self, values: np.ndarray, col: "Column") -> int:
+    def ship(self, values: np.ndarray, col: "Column", *, scale: str | None = None) -> int:
         """Offset-encoded geometry column: `(v - offset) * scale` as f32
         (§4/§16). Scale is 1.0 except for absurd-magnitude domains, where it
-        normalizes so finite f64 can't overflow to ±inf in f32 (§19)."""
+        normalizes so finite f64 can't overflow to ±inf in f32 (§19).
+        `scale` is the target axis scale: log-family axes pin the offset to
+        0.0 (`lod.geometry_offset`) so relative f32 precision survives the
+        shader-side transform."""
+        offset = lod.geometry_offset(scale, col.min, col.max)
         encoded = lod.encode_f32_values(
             values,
-            col.suggest_offset(),
+            offset,
             col.min,
             col.max,
             kind=col.kind,
@@ -96,6 +102,15 @@ class _PayloadWriter:
             self._pos += padding
         return index
 
+    def ship_u32(self, values: np.ndarray) -> int:
+        """Raw uint32 identity words used by keyed transitions.
+
+        Keys remain binary row data, never JSON metadata. Packed and split
+        layouts share the ordinary four-byte alignment contract.
+        """
+        enc = np.ascontiguousarray(values, dtype="<u4").reshape(-1)
+        return self._append(enc, {"dtype": "u32"})
+
     def borrow_f64(self, values: np.ndarray) -> int:
         """Register canonical f64 storage as a synchronous raster-only span.
 
@@ -109,12 +124,14 @@ class _PayloadWriter:
         self.columns.append({"span": span, "byte_offset": 0, "len": int(len(arr)), "dtype": "f64"})
         return index
 
-    def ship_values(self, values: np.ndarray, *, kind: str = "float") -> int:
+    def ship_values(
+        self, values: np.ndarray, *, kind: str = "float", scale: str | None = None
+    ) -> int:
         """Offset-encoded temporary geometry not backed by a canonical Column."""
         vals = np.ascontiguousarray(values, dtype=np.float64)
         bounds = kernels.min_max(vals)
-        offset = (bounds[0] + bounds[1]) / 2.0 if bounds is not None else 0.0
         lo, hi = bounds if bounds is not None else (0.0, 0.0)
+        offset = lod.geometry_offset(scale, lo, hi) if bounds is not None else 0.0
         encoded = lod.encode_f32_values(vals, offset, lo, hi, kind=kind)
         return self._append(encoded.values, encoded.meta)
 
@@ -240,6 +257,9 @@ class PayloadMixin(_Host):
             "columns": pw.columns,
             "backend": kernels.BACKEND,
             "show_legend": self.show_legend,
+            "view": {
+                "ranges": {axis_id: list(axis["range"]) for axis_id, axis in axis_specs.items()}
+            },
         }
         if self.legend_options:
             spec["legend"] = self.legend_options
@@ -252,6 +272,9 @@ class PayloadMixin(_Host):
             spec["colorbar"] = self.colorbar_options
         if self.show_modebar is False:
             spec["show_modebar"] = False
+        export_options = getattr(self, "export_options", None)
+        if export_options:
+            spec["export"] = export_options
         if self.show_tooltip is False:
             spec["show_tooltip"] = False
         if self.padding is not None:
@@ -270,7 +293,38 @@ class PayloadMixin(_Host):
         annotations = self._annotation_specs()
         if annotations:
             spec["annotations"] = annotations
+        if self.animation_options is not None:
+            spec["animation"] = dict(self.animation_options)
         return spec
+
+    @staticmethod
+    def _transition_entry(
+        entry: dict[str, Any],
+        t: Trace,
+        pw: "_PayloadWriter",
+        sel: Optional[np.ndarray] = None,
+        key_values: Optional[np.ndarray] = None,
+    ) -> dict[str, Any]:
+        """Attach bounded declarative transition metadata to one trace spec."""
+        if t.animation is not None and "animation" not in entry:
+            entry["animation"] = dict(t.animation)
+        keys = t.transition_keys if key_values is None else key_values
+        if keys is not None and entry.get("tier") != "direct":
+            entry["animation_fallback"] = "snap:aggregate"
+            return entry
+        if keys is not None:
+            values = keys if key_values is not None or sel is None else keys[sel]
+            if len(values) == int(entry.get("n_marks", len(values))):
+                if len(values) > MAX_ANIMATION_MATCH_ROWS:
+                    entry["animation_fallback"] = "snap:key-limit"
+                    return entry
+                entry["keys"] = {
+                    "lo": pw.ship_u32(values[:, 0]),
+                    "hi": pw.ship_u32(values[:, 1]),
+                }
+            else:
+                entry["animation_fallback"] = "index:key-count-mismatch"
+        return entry
 
     def _emit_trace(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
@@ -284,7 +338,7 @@ class PayloadMixin(_Host):
         self, t: Trace, pw: "_PayloadWriter", xv: np.ndarray, yv: np.ndarray, tier: str, style: dict
     ) -> dict[str, Any]:
         """The shared spec skeleton for any xy trace that ships x/y geometry."""
-        return {
+        entry = {
             "id": t.id,
             "kind": t.kind,
             "name": t.name,
@@ -292,11 +346,14 @@ class PayloadMixin(_Host):
             "tier": tier,
             "n_points": t.n_points,
             "n_marks": int(len(xv)),
-            "x": pw.ship(xv, t.x),
-            "y": pw.ship(yv, t.y),
+            "x": pw.ship(xv, t.x, scale=self._axis_scale(t.x_axis)),
+            "y": pw.ship(yv, t.y, scale=self._axis_scale(t.y_axis)),
             "x_axis": t.x_axis,
             "y_axis": t.y_axis,
         }
+        if t.animation is not None:
+            entry["animation"] = dict(t.animation)
+        return entry
 
     @staticmethod
     def _finite_sel(t: Trace, xv: np.ndarray, yv: np.ndarray) -> np.ndarray | None:
@@ -329,32 +386,54 @@ class PayloadMixin(_Host):
             mask &= np.isfinite(base)
         return mask
 
+    def _binning_coords(
+        self, axis_id: str, values: np.ndarray, bounds: tuple[float, float]
+    ) -> tuple[np.ndarray, tuple[float, float]]:
+        """Column values and window bounds in the axis's binning space.
+
+        Nonlinear axes aggregate in scale coordinates (§28) so grid cells are
+        uniform on screen; linear axes pass through untouched. Falls back to
+        raw values when the transformed window degenerates (e.g. a log axis
+        asked to bin a window that touches zero) — a uniform-in-data grid is
+        better than no grid."""
+        if self._axis_scale(axis_id) == "linear":
+            return values, (float(bounds[0]), float(bounds[1]))
+        c0, c1 = (float(v) for v in self._axis_coord(axis_id, bounds))
+        if not (np.isfinite(c0) and np.isfinite(c1) and c1 > c0):
+            return values, (float(bounds[0]), float(bounds[1]))
+        return self._axis_coord(axis_id, values), (c0, c1)
+
     @staticmethod
     def _default_styled(t: Trace) -> dict[str, Any]:
         """Trace style dict with the per-trace palette default when no color
         was given — the one place this rule lives (was copy-pasted per kind)."""
         style = dict(t.style)
         if style.get("color") is None:
-            style["color"] = DEFAULT_PALETTE[t.id % len(DEFAULT_PALETTE)]
+            style["color"] = default_palette_color(t.id)
         return style
 
-    @staticmethod
     def _m4_decimate(
-        t: Trace, xr: tuple, px_width: int, *arrays: np.ndarray
+        self, t: Trace, xr: tuple, px_width: int, *arrays: np.ndarray
     ) -> tuple[str, tuple[np.ndarray, ...]]:
         """M4-decimate the parallel `arrays` (x first) when the trace is over
         the threshold; M4 already excludes non-finite within the window (§19).
-        Returns `(tier, arrays)` — shared by the line and area emitters."""
+        Returns `(tier, arrays)` — shared by the line and area emitters.
+
+        On a nonlinear x axis the buckets are laid out in scale coordinates so
+        each bucket covers a uniform strip of *screen*, not of raw data (§28);
+        monotone transforms keep per-bucket min/max rows identical, so y stays
+        raw and the gathered rows ship untransformed."""
         if t.n_points <= DECIMATION_THRESHOLD:
             return "direct", arrays
+        eps = float(np.finfo(np.float64).eps)
+        mx, (m0, m1) = self._binning_coords(t.x_axis, arrays[0], xr)
+        if mx is not arrays[0]:
+            idx = kernels.m4_indices(mx, arrays[1], m0, m1 + eps, px_width)
+            return "decimated", tuple(a[idx] for a in arrays)
         if len(arrays) == 2:
-            selected = _native.m4_points(
-                arrays[0], arrays[1], xr[0], xr[1] + np.finfo(np.float64).eps, px_width
-            )
+            selected = _native.m4_points(arrays[0], arrays[1], xr[0], xr[1] + eps, px_width)
             return "decimated", selected
-        idx = kernels.m4_indices(
-            arrays[0], arrays[1], xr[0], xr[1] + np.finfo(np.float64).eps, px_width
-        )
+        idx = kernels.m4_indices(arrays[0], arrays[1], xr[0], xr[1] + eps, px_width)
         if len(idx):
             return "decimated", tuple(a[idx] for a in arrays)
         return "decimated", tuple(a[:0] for a in arrays)
@@ -363,6 +442,7 @@ class PayloadMixin(_Host):
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
     ) -> dict[str, Any]:
         tier, (xv, yv) = self._m4_decimate(t, xr, px_width, t.x.values, t.y.values)
+        sel = None
         if tier == "direct":
             sel = self._finite_sel(t, xv, yv)
             if sel is not None:
@@ -370,8 +450,13 @@ class PayloadMixin(_Host):
         if len(xv):
             finite = self._log_visible_mask(t, xv, yv)
             if not bool(np.all(finite)):
+                sel = np.flatnonzero(finite) if sel is None else sel[finite]
                 xv, yv = xv[finite], yv[finite]
-        return self._base_entry(t, pw, xv, yv, tier, self._default_styled(t))
+        entry = self._base_entry(t, pw, xv, yv, tier, self._default_styled(t))
+        # Attach direct keys in the same finite/log-filtered row order.
+        if t.transition_keys is not None:
+            self._transition_entry(entry, t, pw, sel)
+        return entry
 
     def _emit_area(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
@@ -385,7 +470,9 @@ class PayloadMixin(_Host):
         if len(sel) != len(xv):
             xv, yv, bv = xv[sel], yv[sel], bv[sel]
         entry = self._base_entry(t, pw, xv, yv, tier, self._default_styled(t))
-        entry["base"] = pw.ship(bv, t.base)
+        if t.transition_keys is not None:
+            self._transition_entry(entry, t, pw, sel)
+        entry["base"] = pw.ship(bv, t.base, scale=self._axis_scale(t.y_axis))
         return entry
 
     def _emit_error_band(
@@ -399,7 +486,8 @@ class PayloadMixin(_Host):
         if t.use_density():
             t.shipped_sel = None  # no per-point marks, no pick mapping
             t.drill_mode = False  # full view: density until a zoom drills in
-            return self._density_trace_spec(t, xr, yr, *DENSITY_GRID, pw)
+            entry = self._density_trace_spec(t, xr, yr, *DENSITY_GRID, pw)
+            return self._transition_entry(entry, t, pw)
         xv, yv = t.x.values, t.y.values
         sel = self._finite_sel(t, xv, yv)
         if sel is not None:
@@ -410,7 +498,10 @@ class PayloadMixin(_Host):
                 sel = np.flatnonzero(visible) if sel is None else sel[visible]
                 xv, yv = xv[visible], yv[visible]
         entry = self._base_entry(t, pw, xv, yv, "direct", dict(t.style))
+        if t.transition_keys is not None:
+            self._transition_entry(entry, t, pw, sel)
         entry["color"], entry["size"] = self._ship_channels(t, sel, pw.ship_scalar, pw.ship_u8)
+        self._ship_trace_styles(entry, t, sel, pw)
         t.shipped_sel = sel  # pick/selection translation (§17)
         return entry
 
@@ -436,8 +527,8 @@ class PayloadMixin(_Host):
             "n_marks": int(len(xv)),
             "x_axis": t.x_axis,
             "y_axis": t.y_axis,
-            "x": pw.ship_values(xv),
-            "y": pw.ship_values(yv),
+            "x": pw.ship_values(xv, scale=self._axis_scale(t.x_axis)),
+            "y": pw.ship_values(yv, scale=self._axis_scale(t.y_axis)),
         }
         entry["color"], _size = self._ship_channels(t, sel, pw.ship_scalar, pw.ship_u8)
         return entry
@@ -533,24 +624,44 @@ class PayloadMixin(_Host):
             raise ValueError(f"{t.kind} trace missing segment columns")
         x0v, x1v, y0v, y1v = t.x0.values, t.x1.values, t.y0.values, t.y1.values
         tier = "direct"
+        source_sel: Optional[np.ndarray] = None
+        segment_sources: Optional[np.ndarray] = None
+        segment_roles: Optional[np.ndarray] = None
         if t.kind == "errorbar" and t.count:
             # Segments ship grouped by role, count per group: 3 groups with
             # caps (main + two cap blocks), 1 without. Decimate per point
             # across every group so caps stay attached to their bars.
             seg_per, remainder = divmod(len(x0v), t.count)
+            if remainder == 0 and seg_per >= 1:
+                segment_sources = np.tile(np.arange(t.count, dtype=np.int64), seg_per)
+                segment_roles = np.repeat(np.arange(seg_per, dtype=np.uint32), t.count)
             max_groups = max(1024, int(px_width) * 4)
             if remainder == 0 and seg_per >= 1 and t.count > max_groups:
                 chosen = np.linspace(0, t.count - 1, max_groups, dtype=np.int64)
                 indices = np.concatenate([chosen + k * t.count for k in range(seg_per)])
                 x0v, x1v, y0v, y1v = x0v[indices], x1v[indices], y0v[indices], y1v[indices]
+                source_sel = indices
+                if segment_sources is not None and segment_roles is not None:
+                    segment_sources = segment_sources[indices]
+                    segment_roles = segment_roles[indices]
                 tier = "decimated"
         elif t.kind == "stem" and len(x0v) > max(1024, int(px_width) * 4):
             chosen = np.linspace(0, len(x0v) - 1, max(1024, int(px_width) * 4), dtype=np.int64)
             x0v, x1v, y0v, y1v = x0v[chosen], x1v[chosen], y0v[chosen], y1v[chosen]
+            source_sel = chosen
             tier = "decimated"
-        sel_arg = self._rect_finite_sel(t, x0v, x1v, y0v, y1v)
-        if sel_arg is not None:
-            x0v, x1v, y0v, y1v = x0v[sel_arg], x1v[sel_arg], y0v[sel_arg], y1v[sel_arg]
+        finite_sel = self._rect_finite_sel(t, x0v, x1v, y0v, y1v)
+        if finite_sel is not None:
+            x0v, x1v, y0v, y1v = (
+                x0v[finite_sel],
+                x1v[finite_sel],
+                y0v[finite_sel],
+                y1v[finite_sel],
+            )
+            source_sel = finite_sel if source_sel is None else source_sel[finite_sel]
+            if segment_sources is not None and segment_roles is not None:
+                segment_sources = segment_sources[finite_sel]
+                segment_roles = segment_roles[finite_sel]
         entry = {
             "id": t.id,
             "kind": t.kind,
@@ -561,14 +672,30 @@ class PayloadMixin(_Host):
             "n_marks": int(len(x0v)),
             "x_axis": t.x_axis,
             "y_axis": t.y_axis,
-            "x0": pw.ship(x0v, t.x0),
-            "x1": pw.ship(x1v, t.x1),
-            "y0": pw.ship(y0v, t.y0),
-            "y1": pw.ship(y1v, t.y1),
+            "x0": pw.ship(x0v, t.x0, scale=self._axis_scale(t.x_axis)),
+            "x1": pw.ship(x1v, t.x1, scale=self._axis_scale(t.x_axis)),
+            "y0": pw.ship(y0v, t.y0, scale=self._axis_scale(t.y_axis)),
+            "y1": pw.ship(y1v, t.y1, scale=self._axis_scale(t.y_axis)),
         }
         if t.color_ch is not None:
-            entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar, pw.ship_u8)
-        return entry
+            entry["color"], _size = self._ship_channels(t, source_sel, pw.ship_scalar, pw.ship_u8)
+        self._ship_trace_styles(entry, t, source_sel, pw)
+        key_values = None
+        if (
+            tier == "direct"
+            and t.transition_keys is not None
+            and segment_sources is not None
+            and segment_roles is not None
+        ):
+            # An errorbar point expands into independently rendered main/cap
+            # segments. Derive a stable role-qualified key so the browser can
+            # key-match those segments without duplicate identities.
+            key_values = np.array(t.transition_keys[segment_sources], copy=True)
+            key_values[:, 0] ^= segment_roles * np.uint32(0x9E3779B9)
+            key_values[:, 1] ^= segment_roles * np.uint32(0x85EBCA6B)
+            if len(np.unique(key_values, axis=0)) != len(key_values):
+                raise ValueError("errorbar role-qualified animation key collision")
+        return self._transition_entry(entry, t, pw, source_sel, key_values)
 
     def _emit_triangle_mesh(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
@@ -601,16 +728,17 @@ class PayloadMixin(_Host):
             "n_marks": int(len(x0v)),
             "x_axis": t.x_axis,
             "y_axis": t.y_axis,
-            "x0": pw.ship(x0v, t.x0),
-            "x1": pw.ship(x1v, t.x1),
-            "x2": pw.ship(x2v, t.x),
-            "y0": pw.ship(y0v, t.y0),
-            "y1": pw.ship(y1v, t.y1),
-            "y2": pw.ship(y2v, t.y),
+            "x0": pw.ship(x0v, t.x0, scale=self._axis_scale(t.x_axis)),
+            "x1": pw.ship(x1v, t.x1, scale=self._axis_scale(t.x_axis)),
+            "x2": pw.ship(x2v, t.x, scale=self._axis_scale(t.x_axis)),
+            "y0": pw.ship(y0v, t.y0, scale=self._axis_scale(t.y_axis)),
+            "y1": pw.ship(y1v, t.y1, scale=self._axis_scale(t.y_axis)),
+            "y2": pw.ship(y2v, t.y, scale=self._axis_scale(t.y_axis)),
         }
         if t.color_ch is not None:
             entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar, pw.ship_u8)
-        return entry
+        self._ship_trace_styles(entry, t, sel_arg, pw)
+        return self._transition_entry(entry, t, pw, sel_arg)
 
     def _emit_errorbar(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
@@ -658,14 +786,15 @@ class PayloadMixin(_Host):
             "n_marks": int(len(x0v)),
             "x_axis": t.x_axis,
             "y_axis": t.y_axis,
-            "x0": pw.ship(x0v, t.x0),
-            "x1": pw.ship(x1v, t.x1),
-            "y0": pw.ship(y0v, t.y0),
-            "y1": pw.ship(y1v, t.y1),
+            "x0": pw.ship(x0v, t.x0, scale=self._axis_scale(t.x_axis)),
+            "x1": pw.ship(x1v, t.x1, scale=self._axis_scale(t.x_axis)),
+            "y0": pw.ship(y0v, t.y0, scale=self._axis_scale(t.y_axis)),
+            "y1": pw.ship(y1v, t.y1, scale=self._axis_scale(t.y_axis)),
         }
         if t.color_ch is not None:
             entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar, pw.ship_u8)
-        return entry
+        self._ship_trace_styles(entry, t, sel_arg, pw)
+        return self._transition_entry(entry, t, pw, sel_arg)
 
     def _emit_bar_compact(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
@@ -685,8 +814,8 @@ class PayloadMixin(_Host):
             pos = t.x.values if sel_arg is None else t.x.values[sel_arg]
             value0 = y0v
             value1 = t.y.values if sel_arg is None else t.y.values[sel_arg]
-            pos_ref = pw.ship(pos, t.x)
-            value1_ref = pw.ship(value1, t.y)
+            pos_ref = pw.ship(pos, t.x, scale=self._axis_scale(t.x_axis))
+            value1_ref = pw.ship(value1, t.y, scale=self._axis_scale(t.y_axis))
             value0_col = t.y0
             value_axis = "y"
         elif orientation == "horizontal":
@@ -694,8 +823,8 @@ class PayloadMixin(_Host):
             pos = (y0v + y1v) / 2.0
             value0 = x0v
             value1 = x1v
-            pos_ref = pw.ship_values(pos)
-            value1_ref = pw.ship(value1, t.x1)
+            pos_ref = pw.ship_values(pos, scale=self._axis_scale(t.y_axis))
+            value1_ref = pw.ship(value1, t.x1, scale=self._axis_scale(t.x_axis))
             value0_col = t.x0
             value_axis = "x"
         else:
@@ -719,7 +848,11 @@ class PayloadMixin(_Host):
         if len(value0) and np.isfinite(value0).all() and np.all(value0 == value0[0]):
             bar_spec["value0_const"] = float(value0[0])
         else:
-            bar_spec["value0"] = pw.ship(value0, value0_col)
+            bar_spec["value0"] = pw.ship(
+                value0,
+                value0_col,
+                scale=self._axis_scale(t.y_axis if value_axis == "y" else t.x_axis),
+            )
 
         entry = {
             "id": t.id,
@@ -735,12 +868,25 @@ class PayloadMixin(_Host):
         }
         if t.color_ch is not None:
             entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar, pw.ship_u8)
-        return entry
+        self._ship_trace_styles(entry, t, sel_arg, pw)
+        return self._transition_entry(entry, t, pw, sel_arg)
 
     def _ship_channels(self, t: Trace, sel, ship_scalar, ship_u8) -> tuple[Any, Any]:  # noqa: ANN001
         """Ship a trace's color/size channels (delegates to channels.py — the
         same wire shape serves the build path and drill-in view updates)."""
         return channels.ship_channels(t, sel, ship_scalar, ship_u8, DEFAULT_PALETTE)
+
+    @staticmethod
+    def _ship_trace_styles(entry: dict[str, Any], t: Trace, sel, pw: "_PayloadWriter") -> None:  # noqa: ANN001
+        """Attach outline paint and direct instance attributes to a trace spec."""
+        if t.stroke_ch is not None:
+            entry["stroke"] = channels.ship_color_channel(
+                t.stroke_ch, sel, pw.ship_scalar, pw.ship_u8, DEFAULT_PALETTE
+            )
+        if t.style_channels:
+            entry["channels"] = channels.ship_style_channels(
+                t.style_channels, sel, pw.ship_scalar, pw.ship_u8
+            )
 
     def _density_sample_spec(
         self,
@@ -773,9 +919,13 @@ class PayloadMixin(_Host):
             style["opacity"] = min(float(style.get("opacity", 0.8)), 0.55)
         except (TypeError, ValueError):
             style["opacity"] = 0.55
-        x_col = pw.ship_values(t.x.values[sample_sel], kind=t.x.kind)
-        y_col = pw.ship_values(t.y.values[sample_sel], kind=t.y.kind)
-        return {
+        x_col = pw.ship_values(
+            t.x.values[sample_sel], kind=t.x.kind, scale=self._axis_scale(t.x_axis)
+        )
+        y_col = pw.ship_values(
+            t.y.values[sample_sel], kind=t.y.kind, scale=self._axis_scale(t.y_axis)
+        )
+        sample = {
             "mode": "sampled",
             "n": int(len(sample_sel)),
             "visible": int(visible),
@@ -790,6 +940,8 @@ class PayloadMixin(_Host):
             "size": size_spec,
             "style": style,
         }
+        self._ship_trace_styles(sample, t, sample_sel, pw)
+        return sample
 
     def _density_trace_spec(self, t: Trace, xr, yr, w, h, pw: "_PayloadWriter") -> dict[str, Any]:  # noqa: ANN001
         """Bin a scatter into a density grid and build its spec entry (§5 Tier 2).
@@ -809,6 +961,13 @@ class PayloadMixin(_Host):
             and t.color_ch.codes is not None
             and t.color_ch.codes.dtype == np.uint8
         )
+        # Density grids are uniform in axis-scale coordinates (§28): on a
+        # nonlinear axis the columns and window are transformed before binning
+        # so every cell covers the same strip of *screen*. The wire keeps raw
+        # `x_range`/`y_range` endpoints; renderers interpolate between their
+        # scale coordinates.
+        bx, (bx0, bx1) = self._binning_coords(t.x_axis, t.x.values, xr)
+        by, (by0, by1) = self._binning_coords(t.y_axis, t.y.values, yr)
         full_identity = (
             (not categorical or compact_categorical)
             and not (t.x.zone.null_count or t.y.zone.null_count)
@@ -825,14 +984,14 @@ class PayloadMixin(_Host):
                 assert t.color_ch is not None and t.color_ch.codes is not None
                 if t.color_ch.counts is not None:
                     grid, sample_sel = lod.bin_2d_stratified_sample_row_range_for_target(
-                        t.x.values,
-                        t.y.values,
+                        bx,
+                        by,
                         t.color_ch.codes,
                         len(t.color_ch.categories or ()),
-                        xr[0],
-                        xr[1],
-                        yr[0],
-                        yr[1],
+                        bx0,
+                        bx1,
+                        by0,
+                        by1,
                         w,
                         h,
                         DENSITY_SAMPLE_TARGET,
@@ -843,7 +1002,7 @@ class PayloadMixin(_Host):
                     # Defensive compatibility for traces assembled outside the
                     # normal resolver; production factorization always emits
                     # counts and takes the fused path.
-                    grid = kernels.bin_2d(t.x.values, t.y.values, xr[0], xr[1], yr[0], yr[1], w, h)
+                    grid = kernels.bin_2d(bx, by, bx0, bx1, by0, by1, w, h)
                     sample_sel = lod.stratified_sample_row_range_for_target(
                         t.color_ch.codes,
                         len(t.color_ch.categories or ()),
@@ -852,12 +1011,12 @@ class PayloadMixin(_Host):
                     )
             else:
                 grid, sample_sel = lod.bin_2d_sample_row_range_for_target(
-                    t.x.values,
-                    t.y.values,
-                    xr[0],
-                    xr[1],
-                    yr[0],
-                    yr[1],
+                    bx,
+                    by,
+                    bx0,
+                    bx1,
+                    by0,
+                    by1,
                     w,
                     h,
                     DENSITY_SAMPLE_TARGET,
@@ -866,9 +1025,7 @@ class PayloadMixin(_Host):
         else:
             # Fused single pass: grid (bin_2d semantics) + visible rows
             # (range_indices semantics) without re-reading full columns twice.
-            grid, sel = kernels.bin_2d_indices(
-                t.x.values, t.y.values, xr[0], xr[1], yr[0], yr[1], w, h
-            )
+            grid, sel = kernels.bin_2d_indices(bx, by, bx0, bx1, by0, by1, w, h)
             visible = int(len(sel))
         encoded_grid, gmax = kernels.density_log_u8(grid)
         # Honor the user's colormap for the density ramp even though the per-point
@@ -880,9 +1037,7 @@ class PayloadMixin(_Host):
             if (t.color_ch and t.color_ch.mode in ("constant", "continuous"))
             else channels.DEFAULT_COLORMAP
         )
-        color_dropped = bool(t.color_ch and t.color_ch.mode != "constant")
-        size_dropped = bool(t.size_ch and t.size_ch.mode != "constant")
-        dropped = color_dropped or size_dropped
+        dropped_channels = list(t.per_item_channel_names())
         density = {
             "buf": pw.ship_u8(encoded_grid),
             "w": w,
@@ -892,7 +1047,8 @@ class PayloadMixin(_Host):
             "colormap": cmap,
             "x_range": list(xr),
             "y_range": list(yr),
-            "channels_dropped": dropped,  # never silent (§28)
+            "channels_dropped": bool(dropped_channels),  # compatibility boolean
+            "dropped_channels": dropped_channels,  # complete, actionable list (§28)
         }
         if t.color_ch and t.color_ch.mode == "constant" and t.color_ch.constant is not None:
             density["color"] = t.color_ch.constant

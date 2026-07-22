@@ -1,6 +1,9 @@
 ---
 title: Axes
 description: Configure XY scale types, domains, ticks, labels, and named axes.
+components:
+  - xy.x_axis
+  - xy.y_axis
 ---
 
 # Axes
@@ -92,4 +95,4 @@ style for output that must agree across HTML, SVG, and native PNG.
 
 For the scale model, including datetime and category handling, see
 [Axes and scales](/docs/xy/core-concepts/axes-and-scales/). For styling, see
-[Mark styles](/docs/xy/styling/mark-styles/).
+[Customize Each Part](/docs/xy/styling/customize/#axes,-grid,-and-ticks).

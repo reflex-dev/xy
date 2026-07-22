@@ -143,6 +143,31 @@ def _fmt(v) -> str:
     return str(v)
 
 
+def _report_provenance(*reports: object) -> str | None:
+    commits: set[str] = set()
+    timestamps: set[str] = set()
+    for report in reports:
+        if not isinstance(report, dict):
+            continue
+        environment = report.get("environment")
+        if not isinstance(environment, dict):
+            continue
+        timestamp = environment.get("generated_at_utc")
+        if isinstance(timestamp, str) and timestamp:
+            timestamps.add(timestamp)
+        git = environment.get("git")
+        if isinstance(git, dict):
+            commit = git.get("commit")
+            if isinstance(commit, str) and commit:
+                commits.add(commit)
+    details: list[str] = []
+    if commits:
+        details.append("commit " + ", ".join(f"`{commit}`" for commit in sorted(commits)))
+    if timestamps:
+        details.append(f"latest measurement `{max(timestamps)}`")
+    return "Source CI reports: " + "; ".join(details) + "." if details else None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--scatter", default=None, help="bench_scatter_native.py --json output")
@@ -215,10 +240,12 @@ def main() -> None:
             print(f"  - {mid}: {_fmt(b)} -> {_fmt(c)}")
 
     if args.emit_md:
+        provenance = _report_provenance(scatter, kernel, transport)
         lines = [
             "### Auto-generated benchmark metrics",
             "",
             "Regenerated from the CI benchmark run; do not hand-edit.",
+            *(["", provenance] if provenance else []),
             "",
             "| metric | value |",
             "|---|---:|",

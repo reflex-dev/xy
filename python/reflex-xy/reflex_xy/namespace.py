@@ -1,6 +1,6 @@
 """The xy data plane as a second socket.io namespace on Reflex's server.
 
-Transport decision (docs/engineering/design/reflex-integration.md): instead of new HTTP
+Transport decision (spec/design/reflex-integration.md): instead of new HTTP
 endpoints, the data plane multiplexes onto the app's existing engine.io
 websocket as its own namespace (`/_xy`). socket.io multiplexing means the
 browser keeps ONE physical connection for app state and chart data; this
@@ -155,6 +155,13 @@ class XYNamespace(AsyncNamespace):
         token, entry = await self._entry_for(sid, data, allow_rebuild=True)
         if token is None or entry is None:
             return
+        if isinstance(data, dict) and data.get("v") is not None:
+            try:
+                message_version = int(data["v"])
+            except (TypeError, ValueError):
+                message_version = entry.version
+            if message_version != entry.version:
+                return
         content = data.get("m") if isinstance(data, dict) else None
         async with entry.lock:
             # Kernel work off the event loop: the Rust kernels release the

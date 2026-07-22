@@ -38,6 +38,6 @@ browser-free native PNG, pure SVG export, CSS-compiled mark styling, and the
 experimental `xy.pyplot` compatibility layer.
 
 Read [Chart methods](/docs/xy/api-reference/figure-methods/),
-[Mark styles](/docs/xy/styling/mark-styles/), and
+[Customize Each Part](/docs/xy/styling/customize/#fill,-stroke,-opacity,-and-gradients), and
 [Limitations and alpha status](/docs/xy/api-reference/limitations-and-alpha-status/)
 when upgrading code across alpha releases.

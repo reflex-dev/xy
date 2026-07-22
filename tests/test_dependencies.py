@@ -45,6 +45,6 @@ def test_core_package_does_not_import_reflex() -> None:
                     violations.append(f"{path.relative_to(ROOT)} imports from {node.module}")
 
     assert violations == [], (
-        "xy core must stay framework-free; Reflex imports belong in "
-        f"reflex_xy_app or a separate adapter: {violations}"
+        "xy core must stay framework-free; Reflex imports belong in the "
+        f"example apps or the reflex-xy adapter package: {violations}"
     )

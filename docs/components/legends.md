@@ -1,6 +1,8 @@
 ---
 title: Legends
 description: Label named series and configure built-in or framework-rendered legends.
+components:
+  - xy.legend
 ---
 
 # Legends
@@ -34,7 +36,8 @@ the last one supplies the effective built-in configuration.
 `legend_swatch` slots. Those are browser DOM hooks; native SVG and PNG use the
 legend options and renderable style values carried in the chart specification.
 
-See [Chrome slots](/docs/xy/styling/chrome-slots/) for the stable slot contract.
+See [Customize Each Part](/docs/xy/styling/customize/#legend) for the stable
+legend-slot contract.
 
 ## Supply Framework Content
 

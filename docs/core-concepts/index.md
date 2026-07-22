@@ -53,12 +53,20 @@ node is present, the last node of that family supplies the effective settings.
 
 Family containers make a single-family chart easy to scan:
 
-~~~python
+~~~python demo exec
+import xy
+
 chart = xy.scatter_chart(
     xy.scatter([1, 2, 3], [4, 2, 7]),
     xy.x_axis(label="x"),
     xy.y_axis(label="y"),
 )
+
+
+def family_container_demo():
+    import reflex_xy
+
+    return reflex_xy.chart(chart, height="360px")
 ~~~
 
 Use neutral `chart()` when different mark kinds share one panel. Containers
@@ -77,7 +85,7 @@ interface. `facet_chart()` repeats a template over groups and returns a
 | Annotations | Rules, bands, thresholds, text, labels, arrows, and callouts |
 | Chrome | Legends, tooltips, colorbars, and the modebar |
 | Appearance | Themes, CSS/Tailwind slots, and rendered-mark styles |
-| Behavior | `interaction_config()` and Reflex-shaped `on_*` callback props |
+| Behavior | `interaction_config()`, `animation()`, and Reflex-shaped `on_*` callback props |
 
 ## Application behavior stays outside the tree
 
@@ -98,3 +106,6 @@ Every composed chart exposes `show()`, `widget()`, `to_html()`, `to_png()`,
 `to_svg()`, and `memory_report()`. Continue with
 [Data and columns](/docs/xy/core-concepts/data/) or browse the
 [Gallery](/docs/xy/overview/gallery/).
+
+For browser entrance and live-data motion, continue with
+[Animations and data transitions](/docs/xy/styling/animations/).

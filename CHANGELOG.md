@@ -35,6 +35,29 @@ in the README).
   to the internal engine object.
 
 ### Added
+- **Export format parity and a unified export API (ENG-10447).**
+  `to_image(format=...)` and extension-inferred, atomic `write_image(path)`
+  on charts, facet grids, and the internal figure cover PNG, JPEG/JPG, WebP,
+  SVG, and PDF alongside interactive HTML; `to_png`/`to_svg`/`to_html`
+  remain as compatibility conveniences. All five image formats export
+  browser-free by default: JPEG uses a new pure-numpy baseline encoder
+  (4:4:4, quality 1-100), WebP a new bit-exact lossless VP8L encoder with
+  alpha, and PDF a new vector backend that converts XY's own SVG output
+  (vector text via Helvetica metrics, axial-shading gradients, embedded
+  rasters for density/heatmap layers — the documented hybrid-vector
+  policy). `engine=Engine.auto` deterministically selects native per
+  format and switches to Chromium only for `custom_css`;
+  `Engine.chromium` adds browser-fidelity JPEG/WebP (CDP screenshots) and
+  PDF (`printToPDF`). A shared background policy spans every format
+  ("auto"/CSS color/"transparent", JPEG rejects transparent instead of
+  silently flattening). `xy.write_images(figures=..., files=...)` batches
+  mixed formats through one reused browser session with atomic per-file
+  writes. `xy.export_config()` declares formats/filename/dimensions/
+  scale/background/quality on the chart itself, governing both Python
+  defaults and the modebar's download menu, which now offers PNG, JPEG,
+  WebP, SVG, and CSV (client-safe subset) with the same filename and
+  background semantics — including in standalone HTML with no kernel and
+  in Reflex apps.
 - **Declarative continuous colorbars.** `xy.colorbar()` derives the domain,
   colormap, and default title from the last compatible heatmap, continuous
   scatter, hexbin, contour, segment, or triangle-mesh mark, with explicit
@@ -96,7 +119,7 @@ in the README).
   values.
 - `xy.pyplot`: a matplotlib-flavored shim over the composition
   API (`import xy.pyplot as plt`). Corpus-defined compatibility —
-  see `docs/engineering/matplotlib-compat.md`; fully contained in
+  see `spec/matplotlib/compat.md`; fully contained in
   `python/xy/pyplot/` with boundary guardrails.
 - **Statistical and density chart breadth.** Added first-class `errorbar`/
   `error_band`, `box`, `violin`, `ecdf`, `hexbin`, and `contour` marks plus
@@ -119,6 +142,14 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **Streaming append ships once, split, per tick (protocol v5).** The
+  `append` refresh now uses the same split buffer layout as first paint (no
+  packed join copy), and on the notebook widget it rides the single
+  `spec`/`buffers` trait update — which doubles as reopen state — instead of
+  being transmitted twice (trait re-sync plus a custom message). The client
+  applies appends when `spec.append.seq` advances; the Reflex socket push is
+  unchanged in shape apart from the split buffers. Halves streaming wire
+  bytes and removes two full-payload copies per tick.
 - **Responsive, author-defeatable browser chrome.** XY's visual defaults now
   live in a low-priority cascade layer, so Tailwind utilities, ordinary author
   CSS, and slot styles override them without `!important`. Long legends remain
@@ -276,7 +307,7 @@ in the README).
   as a ~58 KB, resolution-independent SVG); covers every chart kind including
   density/heatmap rasters, and the full mark styling surface (gradients,
   dashes, symbols, rounded bars, smooth curves as exact cubic Béziers).
-- **Mark-level styling** (both APIs; `docs/engineering/styling.md#styling-the-marks`):
+- **Mark-level styling** (both APIs; `spec/api/styling.md#styling-the-marks`):
   - `fill="linear-gradient(...)"` on `area`/`bar`/`column`/`histogram` — real
     CSS gradient syntax (2–8 stops, `%` positions, `currentColor` = the mark's
     own resolved color, hue-preserving fades to `transparent`); mark-space by
@@ -339,7 +370,7 @@ in the README).
   Linux glibc **and** musl/Alpine (x86-64, aarch64, armv7), macOS (x86-64,
   Apple Silicon), and Windows (x86, x64, arm64). An experimental
   Pyodide/Emscripten WASM wheel is built but does not yet load in-browser
-  (`docs/engineering/production-readiness.md` documents the exact linker failure and fix
+  (`spec/process/production-readiness.md` documents the exact linker failure and fix
   direction).
 - Release workflow `workflow_dispatch` dry-run mode: builds and verifies the
   full artifact matrix without publishing to PyPI (default for manual runs).
@@ -355,8 +386,15 @@ in the README).
   removed. On platforms with no wheel and no local Rust build, importing the
   compute layer raises a clear, actionable `ImportError` instead of silently
   degrading. `import xy` remains lightweight.
-- The Reflex example app moved from `reflex_xy_app/` to
-  `examples/reflex/`.
+- The example apps were restructured. `examples/reflex/` is now a pure
+  `reflex-xy` showcase (figure-var drilldown with hover/click/select events, a
+  slider-driven and cross-filtered histogram, a streaming line, an
+  `on_view_change`-computed detail chart, and both fixed-data tiers), and a new
+  `examples/fastapi/` app serves the same charts plus a live 100M-point
+  drilldown from a plain FastAPI app. Both read their own source with
+  `inspect.getsource` for the on-page code panels, and neither commits static
+  chart HTML (everything is generated live). The old
+  `python/reflex-xy/examples/demo_app` was removed.
 - 10M scatter payload build is ~3x faster (fused kernels; ABI v6), and the
   published benchmark tables were re-measured with a warmup-corrected,
   tracer-free harness. Benchmark methodology fixes: library warmup before

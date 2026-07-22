@@ -118,6 +118,46 @@ def test_codspeed_suite_covers_native_core_hardening_workloads() -> None:
         assert "benchmark" in args, f"{name} must be timed by pytest-codspeed"
 
 
+def test_codspeed_suite_covers_backend_selection_workloads() -> None:
+    source = (ROOT / "benchmarks" / "test_codspeed_selection.py").read_text(encoding="utf-8")
+    required_markers = [
+        "SELECT_N = 1_000_000",
+        "PICK_N = 100_000",
+        "CROSSFILTER_N = 100_000",
+        "require_native_backend",
+        'k.BACKEND == "native"',
+    ]
+    for marker in required_markers:
+        assert marker in source
+
+    module = ast.parse(source)
+    functions = {node.name: node for node in module.body if isinstance(node, ast.FunctionDef)}
+    required_benchmarks = {
+        "test_pick_hover_categorical_readout",
+        "test_select_box_zone_pruned_1m",
+        "test_select_box_message_full_scan_1m",
+        "test_select_lasso_message_1m",
+        "test_selection_rows_message_crossfilter",
+    }
+    missing = sorted(required_benchmarks - set(functions))
+    assert missing == []
+
+    for name in sorted(required_benchmarks):
+        args = {arg.arg for arg in functions[name].args.args}
+        assert "benchmark" in args, f"{name} must be timed by pytest-codspeed"
+
+
+def test_codspeed_animation_module_guards_backend_and_split_transport() -> None:
+    source = (ROOT / "benchmarks" / "test_codspeed_animation.py").read_text(encoding="utf-8")
+    # This module collects first alphabetically, so it must carry its own
+    # backend assertion and lazy-import warmup, and its payload pair must
+    # track the widget's production split transport.
+    assert "require_native_backend" in source
+    assert 'k.BACKEND == "native"' in source
+    assert "warm_lazy_modules" in source
+    assert "build_payload_split" in source
+
+
 def test_codspeed_dependency_is_declared_and_shared_by_ci_and_runbook() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     workflow = (ROOT / ".github" / "workflows" / "codspeed.yml").read_text(encoding="utf-8")
@@ -224,17 +264,83 @@ def test_dashboard_benchmark_reports_eviction_and_scroll_telemetry() -> None:
 def test_context_governor_reserves_pending_restores() -> None:
     """Concurrent visibility callbacks must count restores before their
     asynchronous ``webglcontextrestored`` events acquire the contexts."""
-    client = (ROOT / "js" / "src" / "50_chartview.js").read_text(encoding="utf-8")
+    client = (ROOT / "js" / "src" / "50_chartview.ts").read_text(encoding="utf-8")
 
     assert "view._ctxPendingReservation" in client
-    recover = client.index("_recoverContext()")
+    constructor = client[client.index("  constructor(") : client.index("  _listen(")]
+    assert 'this.root.textContent = "xy: WebGL2 unavailable in this browser.";' in constructor
+    init_gl = client[client.index("  _initGl(buffer) {") : client.index("  _buildTrace(")]
+    assert "WebGL2 unavailable in this browser" not in init_gl
+    recover = client.index("  _recoverContext() {")
     reserve = client.index("XY_CONTEXT_GOVERNOR.reserve(this);", recover)
     restore = client.index("ext.restoreContext();", recover)
     assert reserve < restore
 
+    snapshot = client[client.index("_snapshotBeforeRelease()") : recover]
+    draw = snapshot.index("this._drawNow();")
+    finish = snapshot.index("gl.finish();")
+    read = snapshot.index("gl.readPixels(")
+    assert draw < finish < read
+    assert "drawImage(this.canvas" not in snapshot
+    release_start = client.index("  _releaseContext() {")
+    release_end = client.index("  _snapshotBeforeRelease() {", release_start + 1)
+    release = client[release_start:release_end]
+    assert release.index("this._snapshotBeforeRelease();") < release.index("ext.loseContext();")
+
+    # A native browser eviction can happen while a chart is already visible
+    # (for example when other tabs consume Chrome's process-wide GL budget).
+    # It must not wait for an IntersectionObserver transition that may never
+    # arrive, while governed releases should remain snapshot/demand driven.
+    loss_handler = client[
+        client.index('this._listen(this.canvas, "webglcontextlost"') : client.index(
+            'this._listen(this.canvas, "webglcontextrestored"'
+        )
+    ]
+    assert "!governedRelease && this._ctxVisible && documentVisible" in loss_handler
+    assert 'this.canvas.dataset.xyCtx === "lost"' in loss_handler
+    assert "this._recoverContext();" in loss_handler
+
+    visibility_start = client.index("  _armContextVisibilityWatch() {")
+    visibility_watch = client[
+        visibility_start : client.index("  _resize(cssW, cssH)", visibility_start)
+    ]
+    assert 'this._listen(document, "visibilitychange"' in visibility_watch
+    assert 'document.visibilityState === "hidden"' in visibility_watch
+    assert "XY_CONTEXT_GOVERNOR.scheduleHiddenReleases();" in visibility_watch
+    assert "XY_CONTEXT_GOVERNOR.cancelHiddenReleases();" in visibility_watch
+    hidden_release = client[: client.index("// Initial visibility estimate")]
+    assert "const channel = new MessageChannel();" in hidden_release
+    assert "channel.port2.postMessage(null);" in hidden_release
+    assert "view._releaseContext();" in hidden_release
+    assert 'document.visibilityState === "visible"' in visibility_watch
+    assert "this._recoverContext();" in visibility_watch
+
+    # Recovery is transactional: a freshly created context must paint its
+    # real mark programs successfully before the snapshot is dropped or the
+    # canvas advertises itself as live. Transient process-wide pressure stays
+    # retryable instead of surfacing a null-log pick-shader exception.
+    restored_start = client.index('this._listen(this.canvas, "webglcontextrestored"')
+    restored = client[restored_start:release_start]
+    assert restored.index("this._drawNow();") < restored.index(
+        'this.canvas.dataset.xyCtx = "live";'
+    )
+    assert restored.index('this._assertContextFrameReady("restore");') < restored.index(
+        'this.canvas.dataset.xyCtx = "live";'
+    )
+    assert restored.index('this.canvas.dataset.xyCtx = "live";') < restored.index(
+        "this._dropContextSnapshot();"
+    )
+    assert 'includes("shader compile: null")' in restored
+    assert "this._scheduleContextRecovery();" in restored
+
+    pick_start = client.index("  _pickAt(cssX, cssY) {")
+    pick = client[pick_start : client.index("  _decodeValue(", pick_start)]
+    assert "this.gl.isContextLost()" in pick
+    assert "if (!this.gl || this.gl.isContextLost()) return null;" in pick
+
 
 def test_triangle_mesh_resource_cleanup_deletes_every_coordinate_buffer() -> None:
-    client = (ROOT / "js" / "src" / "50_chartview.js").read_text(encoding="utf-8")
+    client = (ROOT / "js" / "src" / "50_chartview.ts").read_text(encoding="utf-8")
     cleanup = client[client.index("_destroyTraceResources(g, texSeen)") :]
     cleanup = cleanup[: cleanup.index("_destroyGlResources()")]
     for name in ("x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf"):

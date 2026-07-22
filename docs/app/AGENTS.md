@@ -72,7 +72,7 @@ xy_docs/                 # App entry point and XY-specific site composition
 scripts/                 # Post-build sitemap, Markdown, and HTML validators
 tests/                   # Docs, links, live-preview, and integration tests
 ../                      # Public Markdown sources
-../engineering/          # Internal project docs; never published
+../../spec/              # Internal project docs; never published
 ```
 
 ## Commands
@@ -100,6 +100,13 @@ repository root.
 - Public pages are Markdown files discovered through `DocsSiteConfig`. Add
   routes and sidebar order to `DOCS_NAVIGATION`; do not add ordering
   frontmatter to individual files.
+- Leaf pages that own public callable APIs declare them in ordered
+  `components:` frontmatter, using exported `xy.*` or `reflex_xy.*` names. The
+  docs app appends the same generated API Reference to HTML, per-page Markdown,
+  and `llms-full.txt`; do not author that section manually. Invalid, duplicate,
+  private, or non-callable entries fail docs compilation. Overview and general
+  guide pages should omit this key when a focused component or reference page
+  already owns the API.
 - Use `python demo exec` fences for code with a live preview, matching the
   official Reflex docs. Reserve `python demo-only exec` for intentionally
   hidden duplicate code. Demos must compile into real `reflex_xy.chart`
