@@ -75,6 +75,16 @@ export function payloadResolve(spec, wire, cache) {
     } else if (c.cid != null && cache) {
       span = cache.get(c.cid) || null;
     }
+    // A span shorter than the column's declared extent counts as missing:
+    // letting it through would tear the client later, when _columnView
+    // throws mid-apply — after the spec and retained payload have already
+    // been swapped and trace resources destroyed — instead of falling back
+    // to the refresh round-trip here.
+    if (span) {
+      const need = (Number(c.byte_offset) || 0) +
+        Number(c.len) * (c.dtype === "u8" ? 1 : 4);
+      if (Number.isFinite(need) && need > span.byteLength) span = null;
+    }
     if (!span) missing.push(c.cid ?? String(i));
     spans[i] = span;
   }
