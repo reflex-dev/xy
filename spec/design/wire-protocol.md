@@ -150,8 +150,11 @@ assembled and `on_select` after — that order is the invariant. An empty
 
 ## 4. Server push
 
-**`append`** — `{type: "append", affected: [trace_id], spec}` with a single
-packed blob attachment. The kernel re-emits a complete fresh payload rather
+**`append`** — `{type: "append", affected: [trace_id], spec}` with
+split-layout buffers, one per column, exactly like first paint (§5). The spec
+additionally carries `append: {seq, affected}` — a monotonic apply signal, so
+a host whose transport is the payload itself can detect the refresh without a
+message envelope. The kernel re-emits a complete fresh payload rather
 than a delta, because every tier's payload is screen-bounded by construction.
 Without animation, the client swaps `spec` and the retained payload together,
 rebuilds only the GPU traces named in `affected`, then re-requests its current
@@ -160,8 +163,20 @@ through `ChartView.updatePayload`, retaining one previous scene for matching
 and positional interpolation while preserving append's
 home/live-edge/history follow policy. Unsupported layouts snap to the new
 representation without an opacity animation.
-The widget also re-syncs its `spec`/`buffers` traits so a re-rendered output
-shows the streamed state.
+
+How the push travels is per-host, and the payload crosses the wire exactly
+once per tick. On the anywidget comm the `spec`/`buffers` trait update (one
+`hold_sync` message) is both the live push — the client applies an append
+when `spec.append.seq` advances — and the notebook-reopen state; no custom
+message is sent. Because a host may surface the two trait writes
+non-atomically, the client listens to *both* change events, defers a torn
+pair — a column that no longer fits its buffer — without consuming the seq,
+and keys applied state on (seq, buffers identity), so the write that
+completes the pair re-fires the apply and repairs even a same-shape tear.
+The `/_xy` namespace has no synced traits, so it wraps the
+same spec and buffers in a room-wide `msg` push. In both cases the client
+reads the buffer layout from `spec.buffer_layout`, never from the shape of
+what arrived (§5).
 
 **`state_patch`** — `{type, state, animate, history}`, no buffers. `state` is
 one view-state document (view-state.md §2: `v: 1`, optional partial `ranges`,
@@ -204,16 +219,19 @@ spec's `columns` table is the addressing scheme, and it comes in two layouts:
 
 - **Packed** (`build_payload`) — one blob. Column entries carry a global
   `byte_offset` into it. `u8` columns are followed by padding to the next
-  4-byte boundary so later f32/u32 columns stay aligned. This is the layout used
-  by static HTML export and by streaming-refresh reopen state.
+  4-byte boundary so later f32/u32 columns stay aligned. This is the layout
+  used by static HTML export and the static `.xyf` payload assets; an older
+  notebook output saved before appends went split may also hold a packed
+  reopen blob, which the client still applies by layout declaration.
 - **Split** (`build_payload_split`) — one wire buffer per column. The spec
   sets `buffer_layout: "split"`, and every column entry carries `buf` (its
   index into the buffer list) with `byte_offset: 0`. The alignment padding for
   a `u8` column is folded into that column's own buffer, and `len` still
   counts only real values, so split is a byte-identical repack of packed. This
   is what both live hosts ship at first paint — `FigureWidget`
-  (`python/xy/widget.py:76`) and the `/_xy` namespace
-  (`python/reflex-xy/reflex_xy/namespace.py:135`, `:197`) — with no join copy.
+  (`python/xy/widget.py`) and the `/_xy` namespace
+  (`python/reflex-xy/reflex_xy/namespace.py`) — and on streaming append (§4),
+  with no join copy anywhere on a live path.
 
 Column entries otherwise carry `len`, an optional `dtype` (`"u8"` or `"u32"`;
 absent means f32), and, for offset-encoded geometry,
@@ -276,13 +294,15 @@ The reassembled bytes are identical to the source blob, which is what keeps
 
 Two independent version constants:
 
-- **Renderer/spec protocol.** `PROTOCOL_VERSION = 3` (`python/xy/config.py`)
+- **Renderer/spec protocol.** `PROTOCOL_VERSION = 5` (`python/xy/config.py`)
   rides every first-paint spec as `spec["protocol"]`; the client's
-  `PROTOCOL = 3` (`js/src/00_header.ts`) is checked in the `ChartView`
+  `PROTOCOL = 5` (`js/src/00_header.ts`) is checked in the `ChartView`
   constructor. A mismatch replaces the chart element with "update the xy
   package and restart the kernel" and throws. Requests and replies carry no
   version of their own — the handshake happens once, at first paint, before
-  any request is possible.
+  any request is possible. v5 changed the append contract (§4: split
+  buffers, trait-ride on the widget host) — a cached pre-v5 bundle would
+  otherwise wait forever for a custom append message that no longer exists.
 - **Transport frame.** `FRAME_MAGIC` `"XYBF"` with `FRAME_VERSION = 1`
   versions the binary envelope separately, so the transport and the renderer
   can evolve without coupling.

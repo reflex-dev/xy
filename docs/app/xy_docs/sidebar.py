@@ -68,23 +68,39 @@ def _top_level_link(
 ) -> rx.Component:
     """Render an icon-led direct link aligned with sidebar group headings."""
     active = url == href
-    row_classes = (
-        "relative m-0 flex h-8 w-[calc(100%-2.5rem)] items-center "
-        "justify-start !ml-[2.5rem] rounded-lg !px-0 !py-1 no-underline "
-        "transition-colors xl:max-w-[14rem]"
-    )
     return rx.el.li(
-        rx.link(
-            rx.icon(tag=icon, size=16, class_name="mr-4 shrink-0"),
-            rx.text(title, class_name="m-0 text-sm font-[525]"),
-            href=href,
-            underline="none",
-            aria_current=rx.cond(active, "page", None),
-            class_name=rx.cond(
+        rx.el.a(
+            rx.cond(
                 active,
-                f"{row_classes} bg-secondary-3 text-primary-10",
-                (f"{row_classes} bg-transparent text-secondary-11 hover:text-secondary-12"),
+                rx.el.div(
+                    class_name=(
+                        "absolute left-0 top-1/2 -z-10 h-8 w-full "
+                        "-translate-y-1/2 rounded-lg bg-secondary-3"
+                    ),
+                ),
+                rx.fragment(),
             ),
+            rx.box(
+                rx.icon(tag=icon, size=16, class_name="mr-4 shrink-0"),
+                rx.text(title, class_name="m-0 text-sm font-[525]"),
+                class_name=rx.cond(
+                    active,
+                    (
+                        "ml-[2.5rem] flex h-8 w-[calc(100%-2.5rem)] "
+                        "items-center justify-start text-primary-10 "
+                        "xl:max-w-[14rem]"
+                    ),
+                    (
+                        "ml-[2.5rem] flex h-8 w-[calc(100%-2.5rem)] "
+                        "items-center justify-start text-secondary-11 "
+                        "transition-colors group-hover:text-primary-10 "
+                        "dark:group-hover:text-primary-9 xl:max-w-[14rem]"
+                    ),
+                ),
+            ),
+            href=href,
+            aria_current=rx.cond(active, "page", None),
+            class_name="group relative block h-8 w-full no-underline",
         ),
         class_name="m-0 w-full list-none border-none bg-transparent p-0",
     )

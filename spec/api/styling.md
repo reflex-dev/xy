@@ -275,7 +275,7 @@ Set them on `.xy` or any ancestor:
 | `--chart-axis` | Axis lines (canvas) | `currentColor` @ 55% |
 | `--chart-tooltip-bg` / `--chart-tooltip-text` | Tooltip | `rgba(20,24,33,.92)` / `#fff` |
 | `--chart-legend-bg` | Legend background | `rgba(128,128,128,.08)` |
-| `--chart-badge-bg` / `--chart-badge-text` | Reduction badges | light: `rgba(255,255,255,.82)` / `#0f172a`; dark: `rgba(30,35,44,.9)` / `#e5e7eb` |
+| `--chart-badge-bg` / `--chart-badge-text` | Reduction badges | `rgba(255,255,255,.82)` / `#0f172a` (light; see below) |
 | `--chart-tick-label-max-width` | Maximum browser width of categorical y-axis tick labels | available space between the transformed label and chart edge |
 | `--chart-modebar-bg` / `--chart-modebar-active` | Modebar / active button | `rgba(255,255,255,.78)` / `rgba(128,128,128,.2)` (light; see below) |
 | `--chart-selection` / `--chart-selection-fill` | Box-select rectangle | `rgba(90,140,240,.9)` / `…,.15)` |
@@ -285,12 +285,14 @@ Set them on `.xy` or any ancestor:
 | `--chart-cursor` / `--chart-cursor-pan` | Plot cursor (box-zoom / pan) | `crosshair` / `grab` |
 | `--chart-focus` | Keyboard focus ring on the plot canvas and modebar buttons | `#2563eb` |
 
-The badge and modebar defaults are **scheme-aware**: a `.dark` class on the
-chart root or any ancestor flips their internal fallbacks. The public
-`--chart-badge-*` and `--chart-modebar-*` tokens override both schemes; their
-shadows and the modebar border have no public tokens and remain internal
-`--xy-*` defaults. `--chart-focus` is likewise not carried into client-side
-PNG/SVG export, which snapshots the other `--chart-*` tokens.
+The modebar and badge defaults are **scheme-aware**: a `.dark` class on the
+chart root or any ancestor flips the internal fallbacks — modebar to
+`rgba(37,42,52,.9)` / `rgba(255,255,255,.16)`, badges to `rgba(30,35,44,.88)`
+bg / `#f8fafc` text. The public `--chart-modebar-*` and `--chart-badge-*`
+tokens override both schemes; the modebar's border and shadow and the badge's
+shadow have no public token and are internal `--xy-modebar-*` /
+`--xy-badge-shadow` defaults only. `--chart-focus` is likewise not carried into
+client-side PNG/SVG export, which snapshots the other `--chart-*` tokens.
 
 The **figure background** (matplotlib's `figure.facecolor` — the whole card
 including margins, title, and tick labels) is not a token: `theme(background=)`

@@ -1,6 +1,11 @@
 ---
 title: Distribution Charts
 description: Explore distributions with histograms, box plots, violins, and ECDFs.
+components:
+  - xy.histogram_chart
+  - xy.ecdf_chart
+  - xy.box_chart
+  - xy.violin_chart
 ---
 
 # Distribution Charts
