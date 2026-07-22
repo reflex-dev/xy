@@ -2,9 +2,11 @@
 """Verify xy source distributions before upload/install smoke tests.
 
 An sdist is the escape hatch for users without a prebuilt wheel. It must carry
-the Rust source, committed JS bundles, package typing marker, and build hook,
-while never carrying generated caches or platform-native binaries from a local
-checkout. Stdlib-only so CI can run it before installing anything.
+the Rust source, the prebuilt render-client bundles (built into it by the hatch
+build hook so a from-sdist install needs no Node; §33), the package typing
+marker, and the build hook, while never carrying generated caches or
+platform-native binaries from a local checkout. Stdlib-only so CI can run it
+before installing anything.
 """
 
 from __future__ import annotations

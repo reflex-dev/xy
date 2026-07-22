@@ -453,7 +453,20 @@ _LASSO_DOUBLE_CLICK_PROBE = """
       view._setDragMode(mode);
       const historyBefore = view._historyPast.length;
       const clearEventsBefore = clearEvents;
-      view.canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      // The browser reports a double-click's second press before it emits the
+      // later `dblclick` event. That press must clear every range selection
+      // without starting a replacement brush.
+      view.canvas.dispatchEvent(new PointerEvent("pointerdown", {
+        pointerId: 300, pointerType: "mouse", button: 0, buttons: 1,
+        detail: 2, clientX: outsideX, clientY: outsideY, bubbles: true,
+      }));
+      view.canvas.dispatchEvent(new PointerEvent("pointerup", {
+        pointerId: 300, pointerType: "mouse", button: 0, buttons: 0,
+        detail: 2, clientX: outsideX, clientY: outsideY, bubbles: true,
+      }));
+      view.canvas.dispatchEvent(new MouseEvent("dblclick", {
+        detail: 2, clientX: outsideX, clientY: outsideY, bubbles: true,
+      }));
       return view.root.xy.state().selection === null
         && view._historyPast.length === historyBefore + 1
         && clearEvents === clearEventsBefore + 1;

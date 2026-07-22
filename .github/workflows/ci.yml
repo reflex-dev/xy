@@ -25,6 +25,13 @@ jobs:
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: false
+      # The editable install below builds the render client from source via the
+      # hatch hook (generated, not committed; §33) — the pyplot corpus exports
+      # HTML, which inlines the client bundle. Pin Node so the build uses a
+      # vite-compatible version rather than the runner's system Node.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
       - name: Install xy and released reference wheel
         run: |
           uv venv .venv
@@ -57,8 +64,6 @@ jobs:
 
       - name: Install JS build toolchain
         run: npm ci
-      - name: Verify committed JS bundles are fresh
-        run: node js/build.mjs --check
 
       - name: Rust unit tests
         run: cargo test
@@ -221,8 +226,8 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium firefox webkit
-      - name: Verify committed JS bundles are fresh
-        run: node js/build.mjs --check
+      - name: Build render client
+        run: node js/build.mjs
       - name: Run accessibility and cross-browser conformance
         # Headless Firefox on GitHub's Linux runners exposes no WebGL2. Use the
         # virtual display installed by Playwright so every engine still runs
@@ -244,12 +249,22 @@ jobs:
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
 
       - name: Verify syntax/annotation floor
         run: python scripts/check_python_floor.py
 
       - name: Build native core
         run: cargo build --release
+
+      # The render client is a generated artifact (§33): build it so the full
+      # test suite (which reads python/xy/static/*.js) has it on disk.
+      - name: Build render client
+        run: |
+          npm ci
+          node js/build.mjs
 
       - name: Install package for Python 3.11
         run: |
@@ -557,10 +572,11 @@ jobs:
 
       - name: Install JS build toolchain
         run: npm ci
-      - name: Verify committed JS bundles are fresh
-        run: node js/build.mjs --check
 
       - name: Build sdist
+        # The hatch build hook builds the render client (node) and the artifacts
+        # config carries it into the sdist. The client is required by default, so
+        # a client-less sdist fails the build here rather than shipping broken.
         run: uv build --sdist
 
       - name: Verify sdist contents
@@ -617,15 +633,11 @@ jobs:
 
       - name: Install JS build toolchain
         run: npm ci
-      - name: Verify committed JS bundles are fresh
-        run: node js/build.mjs --check
-
-      - name: Build JS client
-        run: node js/build.mjs
 
       - name: Build wheel
-        # REQUIRE_CARGO: a published wheel must carry the native core — never
-        # silently fall back to pure-Python at wheel-build time.
+        # The hatch build hook builds both artifacts. The render client is
+        # required by default; REQUIRE_CARGO additionally forbids the native core
+        # from silently falling back to a pure-Python wheel here.
         env:
           XY_REQUIRE_CARGO: "1"
         run: uv build --wheel
@@ -684,6 +696,13 @@ jobs:
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: false
+      # The render client is independent of the native core (§33): this job
+      # drops Rust but keeps Node so the coreless wheel still carries the client.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install JS build toolchain
+        run: npm ci
       # GitHub runners preinstall Rust (which would defeat this job's purpose
       # by happily compiling the core!) — strip every cargo from PATH so the
       # build genuinely exercises the no-toolchain path.
@@ -695,6 +714,9 @@ jobs:
           if command -v cargo; then echo "cargo still present"; exit 1; fi
           echo "cargo is gone"
       - name: Build wheel with no toolchain
+        # No Rust (pure-Python wheel), but the render client is required by
+        # default and must still ship — this job exercises exactly that split
+        # (verify_wheel.py --expect-pure below asserts the client is present).
         run: uv build --wheel
       - name: Wheel is pure-Python (py3-none-any)
         shell: bash

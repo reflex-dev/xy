@@ -29,17 +29,20 @@ chart easy to read; neutral `chart()` layers different marks in one panel.
 
 Looking for a specific family?
 
-- [Line and area](/docs/xy/charts/line-and-area/) for trends and ranges
+- [Line](/docs/xy/charts/line-chart/) for trends, and
+  [area, step, and stairs](/docs/xy/charts/area-chart/) for ranges and states
 - [Scatter](/docs/xy/charts/scatter/) for relationships and encoded channels
-- [Bar and column](/docs/xy/charts/bar-and-column/) for category comparisons
-- [Distributions](/docs/xy/charts/distributions/) for histograms, ECDFs, boxes,
-  and violins
-- [Density and grids](/docs/xy/charts/density-and-grids/) for heatmaps,
-  hexbins, and contours
+- [Bar and column](/docs/xy/charts/bar-chart/) for category comparisons
+- Distributions: [histogram](/docs/xy/charts/histogram/),
+  [ECDF](/docs/xy/charts/ecdf/), [box plot](/docs/xy/charts/box-plot/), and
+  [violin plot](/docs/xy/charts/violin-plot/)
+- Density and grids: [heatmap](/docs/xy/charts/heatmap/),
+  [hexbin](/docs/xy/charts/hexbin/), and [contour](/docs/xy/charts/contour-plot/)
 - [Uncertainty](/docs/xy/charts/uncertainty/) for error bars and bands
-- [Specialized charts](/docs/xy/charts/specialized/) for stems, segments,
-  and triangle meshes
+- Specialized: [stem](/docs/xy/charts/stem-plot/),
+  [segments](/docs/xy/charts/segments/), and
+  [triangle mesh](/docs/xy/components/triangle-mesh/)
 - [Annotations](/docs/xy/components/annotations/) for rules, bands, labels, arrows,
   callouts, and threshold zones
-- [Facets and layers](/docs/xy/charts/facets-and-layers/) for small multiples
+- [Facets and layers](/docs/xy/components/facets-and-layers/) for small multiples
   and composed overlays

@@ -22,9 +22,10 @@ def _read(path: Path) -> str:
 # renamed, whitespace collapsed), so exact source lines cannot be asserted
 # against them. Only string-literal / property-name invariants are (see
 # test_built_bundles_keep_minification_safe_invariants); every source-level
-# check still transfers to the shipped bundles because `node js/build.mjs
-# --check` (CI + `make js-check`) proves the committed bundles are compiled
-# from exactly this source.
+# check still transfers to the shipped bundles because `node js/build.mjs`
+# (which builds them for the wheel/sdist, §33) compiles them from exactly this
+# source. The bundles are generated, not committed — run `npm ci &&
+# node js/build.mjs` once per checkout so this suite has them on disk.
 _CLIENT_SRC = (
     "js/src/*.ts",
     "\n".join(_read(p) for p in sorted((ROOT / "js" / "src").glob("*.ts"))),
@@ -919,8 +920,8 @@ def test_built_bundles_keep_minification_safe_invariants() -> None:
     only invariants that survive minification are asserted here: string-literal
     content (the chrome stylesheet, channel names, badges) and property-name
     sinks. Everything line-level is asserted against js/src/*.ts above and
-    transfers because `node js/build.mjs --check` proves the committed bundles
-    are compiled from exactly that source."""
+    transfers because `node js/build.mjs` compiles the shipped bundles from
+    exactly that source."""
     src_inner_html = _CLIENT_SRC[1].count(".innerHTML")
     for path, text in BUNDLES:
         # Security: no HTML-parsing sinks, and no innerHTML sites beyond the

@@ -52,11 +52,14 @@ instead of treating the implementation alone as authoritative.
   former concat part; `60_entries.ts` is the entry and the only public export
   surface). `node js/build.mjs` typechecks (`js/tsconfig.json`), lints the
   shaders, and has vite bundle + minify into `python/xy/static/index.js`
-  (anywidget ESM) and `standalone.js` (IIFE, `window.xy`) — committed,
-  minified artifacts; the minified bundles are what ships to the client.
-  npm devDependencies (vite/typescript/playwright, pinned in
-  `package-lock.json`) are build/test-time only — the shipped client stays
-  runtime-dependency-free. Run `npm ci` once per checkout.
+  (anywidget ESM) and `standalone.js` (IIFE, `window.xy`). Those bundles are a
+  **generated artifact, git-ignored, not committed** (§33): `hatch_build.py`
+  builds them and force-includes them into the wheel/sdist at packaging time
+  (exactly as it does the Rust core), so published distributions carry them
+  prebuilt. From a source checkout run `npm ci && node js/build.mjs` once so the
+  widget, HTML export, and tests have the bundles on disk. npm devDependencies
+  (vite/typescript/playwright, pinned in `package-lock.json`) are build/test-time
+  only — the shipped client stays runtime-dependency-free.
 - `tests/`, `scripts/bench.py` (§12 harness), `scripts/smoke_render.py`
   (headless Chromium pixel probe).
 

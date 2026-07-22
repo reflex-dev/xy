@@ -155,9 +155,30 @@ Object.assign(ChartView.prototype, {
         data: this._dataFromCanvas(cssX, cssY),
       };
     };
+    const clearSelectionOnDoubleClick = () => {
+      if (!this.dragMode.startsWith("select")
+          || this._stateSelection === null || this._stateSelection === undefined) {
+        return false;
+      }
+      this._clearSelection({
+        source: "selection_double_click",
+        interactionId: ++this._interactionSeq,
+      });
+      this.draw();
+      return true;
+    };
 
     this._listen(c, "pointerdown", (e) => {
       this._cancelViewAnimation();
+      // A browser reports the click count on the second pointer press, before
+      // it emits `dblclick`. Clear there so range modes cannot start a second
+      // brush gesture that races with (or swallows) the later dblclick event.
+      // Lasso handles own their pointer events above, so their double-click
+      // remains the vertex-removal gesture.
+      if (e.detail >= 2 && clearSelectionOnDoubleClick()) {
+        e.preventDefault();
+        return;
+      }
       const canPan = this._interactionFlag("pan", true);
       const canZoom = this._interactionFlag("zoom", true);
       const canNavigate = this._interactionFlag("navigation", true);
@@ -338,13 +359,7 @@ Object.assign(ChartView.prototype, {
 
     this._listen(c, "dblclick", () => {
       if (this.dragMode.startsWith("select")) {
-        if (this._stateSelection !== null && this._stateSelection !== undefined) {
-          this._clearSelection({
-            source: "selection_double_click",
-            interactionId: ++this._interactionSeq,
-          });
-          this.draw();
-        }
+        clearSelectionOnDoubleClick();
         return;
       }
       if (this.dragMode !== "pan") return;

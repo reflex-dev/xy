@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Optional
 import numpy as np
 
 from . import channels, columns, kernels, lod
+from ._ooc import is_memmapped
 from .config import (
     DECIMATION_THRESHOLD,
     DEFAULT_PALETTE,
@@ -28,13 +29,21 @@ from .config import (
     DENSITY_TARGET_POINTS_PER_CELL,  # noqa: F401  (historic import path)
     DRILL_EXIT_FACTOR,
     PYRAMID_BASE_DIM,
+    PYRAMID_MAX_DIM,
     PYRAMID_MIN_POINTS,
+    PYRAMID_NO_RESCAN_ROWS,
     SCATTER_DENSITY_THRESHOLD,
+    SPATIAL_EXACT_MAX_POINTS,
 )
 
 if TYPE_CHECKING:
     from ._figure import Figure
     from ._trace import Trace
+
+# Passed to pyramid_compose for no-rescan traces so the finest level is served
+# upsampled instead of refusing (Rust saturating-multiplies, so this never
+# overflows); every practical zoom then stays O(visible tiles).
+_PYRAMID_UNBOUNDED_UPSAMPLE = 1 << 30
 
 
 def _integer_id(value: int, label: str) -> int:
@@ -355,6 +364,19 @@ def decimate_view(
     return {"traces": updates}, writer.buffers
 
 
+def _pyramid_base_dim_for(t: Trace) -> int:
+    """Finest-level dimension for a trace's pyramid. Normal traces use the
+    default; no-rescan traces (huge or out-of-core) get a finer level so the
+    upsampled deep-zoom floor stays sharp, sized ~sqrt(N / target-per-cell) and
+    capped at PYRAMID_MAX_DIM (§28 / dossier §5)."""
+    n = len(t.x)
+    if not (is_memmapped(t.x.values) or n > PYRAMID_NO_RESCAN_ROWS):
+        return PYRAMID_BASE_DIM
+    ideal_side = math.sqrt(max(2.0, n / DENSITY_TARGET_POINTS_PER_CELL))
+    pow2 = 1 << max(1, math.ceil(math.log2(ideal_side)))
+    return int(min(PYRAMID_MAX_DIM, max(PYRAMID_BASE_DIM, pow2)))
+
+
 def _ensure_pyramid(t: Trace) -> int | None:
     """Lazily build the trace's count pyramid (§5 Tier 3). Cached on the
     trace; 0 is remembered as "tried and not applicable" so we never rebuild.
@@ -375,8 +397,10 @@ def _ensure_pyramid(t: Trace) -> int | None:
     # (bin_2d's window is half-open).
     x1 += (x1 - x0) * 1e-9
     y1 += (y1 - y0) * 1e-9
-    handle = kernels.pyramid_build(t.x.values, t.y.values, x0, x1, y0, y1, PYRAMID_BASE_DIM)
+    base_dim = _pyramid_base_dim_for(t)
+    handle = kernels.pyramid_build(t.x.values, t.y.values, x0, x1, y0, y1, base_dim)
     t._pyr_handle = handle
+    t._pyr_base_dim = base_dim
     if handle:
         # §27: the pyramid is native-side memory owned by this trace. Tie its
         # lifetime to the Trace object so a discarded Figure (the notebook
@@ -414,8 +438,12 @@ def _pyramid_resident_bytes(base_dim: int = PYRAMID_BASE_DIM) -> int:
 
 def pyramid_report_bytes(fig: Any) -> int:
     """Memory-report line (design dossier §27): native bytes held by live
-    trace pyramids."""
-    return sum(_pyramid_resident_bytes() for t in fig.traces if getattr(t, "_pyr_handle", 0))
+    trace pyramids, at each trace's actual (possibly adaptive) base dim."""
+    return sum(
+        _pyramid_resident_bytes(getattr(t, "_pyr_base_dim", None) or PYRAMID_BASE_DIM)
+        for t in fig.traces
+        if getattr(t, "_pyr_handle", 0)
+    )
 
 
 def _encode_log_u8(grid: np.ndarray) -> tuple[bytes, float]:
@@ -505,6 +533,75 @@ def _density_sample_update(
     return sample
 
 
+def _has_point_channels(t: "Trace") -> bool:
+    """True when the trace carries any per-point (non-constant) encoding —
+    color/size/stroke/style data the position-only spatial index can't restore
+    per row (§27). Such a trace keeps the exact density grid at deep zoom; a
+    plain constant-styled trace can drill to real points straight from the
+    index."""
+    cc, sc = t.color_ch, t.size_ch
+    if cc is not None and cc.mode in {"continuous", "categorical", "direct_rgba"}:
+        return True
+    if sc is not None and sc.mode == "continuous":
+        return True
+    return t.stroke_ch is not None or bool(t.style_channels)
+
+
+def _ship_index_points(
+    t: "Trace",
+    request: Any,
+    xs: np.ndarray,
+    ys: np.ndarray,
+    lo_x: float,
+    hi_x: float,
+    lo_y: float,
+    hi_y: float,
+) -> tuple[dict[str, Any], list[bytes]]:
+    """Ship a spatial-indexed trace's in-window points as real point vertices
+    (§5 drill-in), straight from the disk index — crisp marks at deep zoom
+    without the O(N) canonical rescan the out-of-core path forbids. `xs`/`ys`
+    are the already-gathered, already-window-clipped f32 coordinates.
+
+    Position-only: the caller guarantees the trace has no per-point channels, so
+    color/size ride their constant spec. Hover can't resolve an index point back
+    to a canonical row (the derived index carries no row ids), and entering the
+    drill with an empty subset makes that explicit — a pick maps into the empty
+    subset and returns nothing rather than a wrong row (§16/§17)."""
+    xs = np.asarray(xs, dtype=np.float64)
+    ys = np.asarray(ys, dtype=np.float64)
+    visible = int(len(xs))
+    writer = lod.BufferWriter()
+    x_ref, y_ref = lod.add_window_xy(writer, xs, ys, lo_x, hi_x, lo_y, hi_y)
+    gw, gh = lod.grid_shape(request.width, request.height, visible)
+    dval_buf = writer.add_f32(lod.local_log_density(xs, ys, lo_x, hi_x, lo_y, hi_y, gw, gh))
+    drill_seq = lod.enter_drill(t, np.empty(0, dtype=np.uint32))
+    lod_blend = float(min(1.0, visible / SCATTER_DENSITY_THRESHOLD))
+    color_spec = (
+        t.color_ch.spec() if t.color_ch is not None else {"mode": "constant", "color": None}
+    )
+    size_spec = t.size_ch.spec() if t.size_ch is not None else {"mode": "constant", "size": 4.0}
+    trace_update = {
+        "id": t.id,
+        "mode": "points",
+        "tier": "direct",
+        "visible": visible,
+        "reduction": "none",
+        "binning": "spatial-points",
+        "x_range": [lo_x, hi_x],
+        "y_range": [lo_y, hi_y],
+        "x": x_ref,
+        "y": y_ref,
+        "color": color_spec,
+        "size": size_spec,
+        "density_val": {"buf": dval_buf},
+        "lod_blend": lod_blend,
+        "density_colormap": channels.DEFAULT_COLORMAP,
+        "drill_seq": drill_seq,
+        "style": dict(t.style),
+    }
+    return {"traces": [trace_update]}, writer.buffers
+
+
 def density_view(
     fig: "Figure", trace_id: int, x0: float, x1: float, y0: float, y1: float, w: int, h: int
 ) -> tuple[dict[str, Any], list[bytes]]:
@@ -536,24 +633,101 @@ def density_view(
     # budget we fall through to the exact scan that drilling needs anyway.
     binning = "exact"
     grid = None
+    # Texture sampling for the density grid: "nearest" when the grid is at full
+    # screen resolution (exact deep-zoom detail — crisp, no interpolation bleed),
+    # "linear" when it is upsampled from a coarser tier (smooth aggregate).
+    density_filter = "linear"
+    # A window that outresolves the pyramid normally refuses → exact O(N) re-bin,
+    # which is cheap for in-RAM traces but a multi-second full scan for a huge
+    # out-of-core column. Past PYRAMID_NO_RESCAN_ROWS (and always past 2³²-1
+    # rows, where per-row index kernels overflow u32 and would allocate tens of
+    # GB), we forbid the rescan: the pyramid is served upsampled (progressively
+    # blurry, floored at its cell size) instead, so every zoom stays O(tiles).
+    no_rescan = is_memmapped(xv) or len(xv) > PYRAMID_NO_RESCAN_ROWS
+    max_upsample = _PYRAMID_UNBOUNDED_UPSAMPLE if no_rescan else 2
+    est = None
+    # Nonlinear axes can't compose from the raw-space pyramid (see above) → no
+    # pyramid, exact scan instead.
     pyr = None if nonlinear else _ensure_pyramid(t)
     if pyr is not None:
         est = kernels.pyramid_count(pyr, lo_x, hi_x, lo_y, hi_y)
-        if est is not None and est > SCATTER_DENSITY_THRESHOLD * DRILL_EXIT_FACTOR * 1.5:
+        # Serve from the pyramid when the window is clearly aggregate territory,
+        # or unconditionally for no-rescan traces (drilling to exact points is
+        # unavailable there — the exact path is what we are avoiding).
+        if no_rescan or (
+            est is not None and est > SCATTER_DENSITY_THRESHOLD * DRILL_EXIT_FACTOR * 1.5
+        ):
             plan = lod.plan_view_lod(
                 request,
-                int(est),
+                int(est) if est is not None else SCATTER_DENSITY_THRESHOLD * 2,
                 SCATTER_DENSITY_THRESHOLD,
                 False,
                 aggregate_reduction="pyramid-count",
             )
-            res = kernels.pyramid_compose(pyr, lo_x, hi_x, lo_y, hi_y, plan.grid_w, plan.grid_h)
+            res = kernels.pyramid_compose(
+                pyr, lo_x, hi_x, lo_y, hi_y, plan.grid_w, plan.grid_h, max_upsample
+            )
             if res is not None:
                 grid, level = res
                 visible = plan.visible
                 w, h = plan.grid_w, plan.grid_h
-                binning = f"pyramid-L{level}"
+                binning = f"pyramid-L{level}{'-upsampled' if no_rescan and level == 0 else ''}"
                 lod.exit_drill(t)
+    # Tier-3 spatial index: when the pyramid can only serve this window blurry
+    # (upsampled), re-bin it *exactly* from just its in-window points — as long
+    # as that count is affordable to read. This is what turns a blocky deep zoom
+    # into real detail (streets), and it gets cheaper the deeper you go.
+    sidx = getattr(t, "_spatial_index", None)
+    # `window_count` is a cheap (offsets-only, no point reads) upper bound —
+    # whole overlapping cells, which at tight zoom overshoots the true in-window
+    # count by orders of magnitude. Use it only to gate the read; once the cells
+    # are affordable, gather **once** and decide by the *actual* in-window count.
+    if (
+        sidx is not None
+        and (grid is None or binning.endswith("-upsampled"))
+        and sidx.window_count(lo_x, hi_x, lo_y, hi_y) <= SPATIAL_EXACT_MAX_POINTS
+    ):
+        lon, lat = sidx._gather_f32(lo_x, hi_x, lo_y, hi_y)
+        inside = (lon >= lo_x) & (lon <= hi_x) & (lat >= lo_y) & (lat <= hi_y)
+        in_window = int(inside.sum())
+        # Fits the direct budget → ship the real in-window points so they render
+        # *crisp* (individual marks) rather than as a blocky ~16-points-per-cell
+        # grid. Position-only: the derived index stores no channels (§27), so
+        # this drill needs a constant-styled trace; a channelled trace keeps the
+        # exact grid below.
+        if in_window <= SCATTER_DENSITY_THRESHOLD and not _has_point_channels(t):
+            return _ship_index_points(t, request, lon[inside], lat[inside], lo_x, hi_x, lo_y, hi_y)
+        # Otherwise bin the same gathered points to a grid at **full screen
+        # resolution** — one cell per pixel, not the ~16-points-per-cell
+        # aggregate grid that would then be stretched (and blur). At this zoom we
+        # have the exact points, so the raster should be as sharp as the display;
+        # it is uploaded with nearest-neighbour filtering (no interpolation
+        # bleed) since there is no upscaling to smooth. The cell overhang outside
+        # the window is dropped by bin_2d's half-open range test. This is the
+        # deep-zoom detail (streets) the blurry upsampled pyramid can't give.
+        w, h = _screen_shape(request.width, request.height)
+        grid = kernels.bin_2d_f32(lon, lat, lo_x, hi_x, lo_y, hi_y, w, h)
+        visible = in_window
+        binning = "spatial-exact"
+        density_filter = "nearest"
+        lod.exit_drill(t)
+    if grid is None and no_rescan:
+        # No pyramid (below PYRAMID_MIN_POINTS is impossible here) or compose
+        # still declined: bin the window once rather than never rendering. This
+        # is the O(N) path we normally avoid, kept only as a correctness net.
+        approx = int(est) if est is not None else len(xv)
+        plan = lod.plan_view_lod(
+            request,
+            max(approx, SCATTER_DENSITY_THRESHOLD + 1),
+            SCATTER_DENSITY_THRESHOLD,
+            False,
+            aggregate_reduction="bin2d-oversized",
+        )
+        visible = plan.visible
+        w, h = plan.grid_w, plan.grid_h
+        grid = kernels.bin_2d(xv, yv, lo_x, hi_x, lo_y, hi_y, w, h)
+        binning = "bin2d-oversized"
+        lod.exit_drill(t)
     if grid is None:
         sel = kernels.range_indices(xv, yv, lo_x, hi_x, lo_y, hi_y)
         plan = lod.plan_view_lod(request, len(sel), SCATTER_DENSITY_THRESHOLD, t.drill_mode)
@@ -591,6 +765,7 @@ def density_view(
         # The client's texture is 8-bit log anyway, so the
         # round-trip is visually exact; `max` restores scale.
         "enc": "log-u8",
+        "filter": density_filter,
         "x_range": [lo_x, hi_x],
         "y_range": [lo_y, hi_y],
     }

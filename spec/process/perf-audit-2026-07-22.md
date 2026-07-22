@@ -26,6 +26,27 @@ kernel (boundary sizes, NaN placement, exact-edge values, undersized
 capacity), plus the 103 in-crate tests and `scripts/abi_smoke.py` (121
 checks). No C-ABI signature changed; `ABI_VERSION` is untouched.
 
+### XY-PERF-2026-04: out-of-core figure build rescanned the whole column — ~5000× (disk cache)
+
+Building a `Figure` over a disk-backed `np.memmap` column folds its zone maps
+(§22) — a full sequential read of the file. For planet OSM (2 × 86 GB f64
+columns) that is a ~53 s NVMe-bound scan paid on **every** process start
+(each viewer restart), even though the maps are a pure derived cache (§27) of
+an immutable file.
+
+Fix (`columns.py`, Python side — no kernel/ABI change): persist the fold to a
+`<column>.xyzones` sidecar and reload it on the next build instead of
+rescanning. The sidecar carries the source file's size + mtime and the
+`(ZONE_CHUNK, row-count)` it was folded at; any mismatch rejects it, so an
+edited or truncated column is never trusted. First build pays the scan and
+writes the sidecar (21 MB for both planet columns); every later build loads it
+bit-identically. Measured on the real 10.74 B-row planet columns: **52.8 s →
+0.01 s** figure build, identical domain. The fused `zone_maps_pair` still does
+both columns in one pass on a cold miss; only genuinely disk-backed columns are
+cached (in-RAM ingest is byte-for-byte unchanged). Full range-pruning is
+preserved (unlike a domain-only shortcut) because the complete per-chunk maps
+are what round-trips.
+
 ### XY-PERF-2026-01: `histogram2d` was fully serial — 3.75× (4 cores)
 
 `kernels::histogram2d_into` (the irregular-edges compatibility path behind

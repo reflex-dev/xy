@@ -313,7 +313,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "~/.cache/ms-playwright",
         "playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}",
         "npx playwright install --with-deps chromium firefox webkit",
-        "node js/build.mjs --check",
+        "node js/build.mjs",
         "node scripts/browser_conformance.mjs",
     )
     _require_job_contains(
@@ -649,7 +649,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "astral-sh/setup-uv@",
         "actions/setup-node@",
         'node-version: "22"',
-        "node js/build.mjs --check",
+        "npm ci",
         "cargo-zigbuild",
         "uv build --wheel",
         "XY_REQUIRE_CARGO",
@@ -699,7 +699,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "astral-sh/setup-uv@",
         "actions/setup-node@",
         'node-version: "22"',
-        "node js/build.mjs --check",
+        "npm ci",
         "uv build --sdist",
         "scripts/verify_sdist.py",
         "XY_SKIP_CARGO",

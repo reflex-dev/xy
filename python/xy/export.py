@@ -101,8 +101,10 @@ def _bundled_js(which: str = "standalone") -> str:
     path = _STATIC / name
     if not path.exists():
         raise FileNotFoundError(
-            f"{path} missing — the JS client was not bundled into this install. "
-            "Dev checkout: run `npm run build` in js/."
+            f"{path} missing — the JS render client was not bundled into this "
+            "install. The bundle is a generated artifact (not committed to git); "
+            "a published wheel/sdist ships it prebuilt. From a source checkout, "
+            "build it once with `npm ci && node js/build.mjs`."
         )
     return path.read_text(encoding="utf-8")
 

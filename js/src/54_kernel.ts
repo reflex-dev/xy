@@ -123,7 +123,7 @@ Object.assign(ChartView.prototype, {
         const hd = g._homeDensity;
         this._applySampleRebinGrid(g, {
           ...hd,
-          tex: this._uploadGrid(hd.grid, hd.w, hd.h, hd.normMax || hd.max || 1),
+          tex: this._uploadGrid(hd.grid, hd.w, hd.h, hd.normMax || hd.max || 1, hd.filter),
         }, false);
       }
       return;

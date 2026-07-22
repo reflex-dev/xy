@@ -76,6 +76,10 @@ class Trace:
     # The finalizer frees the native side when the trace is collected.
     _pyr_handle: Optional[int] = field(default=None, init=False, repr=False, compare=False)
     _pyr_finalizer: Optional[Any] = field(default=None, init=False, repr=False, compare=False)
+    _pyr_base_dim: int = field(default=0, init=False, repr=False, compare=False)
+    # Optional Tier-3 spatial index (xy._spatial.SpatialIndex) for O(window)
+    # exact deep-zoom density; attached out-of-band, duck-typed in interaction.
+    _spatial_index: Any = field(default=None, init=False, repr=False, compare=False)
 
     @property
     def n_points(self) -> int:

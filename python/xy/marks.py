@@ -1327,6 +1327,9 @@ def scatter(
     color: Union[str, ArrayLike, None] = None,
     size: Union[Scalar, ArrayLike, None] = 4.0,
     opacity: Any = 0.8,
+    zoom_size_factor: float = 1.0,
+    zoom_opacity: Optional[float] = None,
+    zoom_emphasis: float = 16.0,
     colormap: str = channels.DEFAULT_COLORMAP,
     color_domain: Optional[tuple[float, float]] = None,
     size_range: tuple[float, float] = (2.0, 18.0),
@@ -1345,6 +1348,11 @@ def scatter(
     one of the 17 renderer-backed marker shapes; `stroke` / `stroke_width`
     draw a point border. Large scatters automatically switch to an aggregated
     density surface; pass `density=True/False` to force or disable it.
+
+    `zoom_size_factor` multiplies marker sizes and `zoom_opacity` sets their
+    target opacity at `zoom_emphasis` times the initial view scale. The client
+    interpolates both in logarithmic zoom space and clamps at the target.
+    Defaults keep marker styling fixed at every zoom level.
     """
     css = styles.compile_mark_style("scatter", style)
     color = css.get("color", color)
@@ -1352,6 +1360,14 @@ def scatter(
     stroke = css.get("stroke", stroke)
     stroke_width = css.get("stroke_width", stroke_width)
     name = self._optional_text(name, "scatter name")
+    zoom_size_factor = self._nonnegative_scalar(zoom_size_factor, "scatter zoom_size_factor")
+    if zoom_size_factor == 0.0:
+        raise ValueError("scatter zoom_size_factor must be > 0")
+    if zoom_opacity is not None:
+        zoom_opacity = self._opacity(zoom_opacity, "scatter zoom_opacity")
+    zoom_emphasis = self._nonnegative_scalar(zoom_emphasis, "scatter zoom_emphasis")
+    if zoom_emphasis <= 1.0:
+        raise ValueError("scatter zoom_emphasis must be > 1")
     density = self._optional_bool(density, "scatter density")
     checkpoint = self._checkpoint()
     try:
@@ -1409,6 +1425,12 @@ def scatter(
         point_style: dict[str, Any] = {"opacity": opacity_value}
         if artist_alpha_value is not None:
             point_style["artist_alpha"] = artist_alpha_value
+        if zoom_size_factor != 1.0:
+            point_style["zoom_size_factor"] = zoom_size_factor
+        if zoom_opacity is not None:
+            point_style["zoom_opacity"] = zoom_opacity
+        if zoom_size_factor != 1.0 or zoom_opacity is not None:
+            point_style["zoom_emphasis"] = zoom_emphasis
         point_style.update(styles._opacity_channels(css))
         if symbol_value != "circle":
             point_style["symbol"] = symbol_value
@@ -2163,13 +2185,20 @@ def contour(
                     banded,
                     x=dense_x,
                     y=dense_y,
-                    name=None,
+                    name=name,
                     colormap=colormap,
                     domain=(float(edges[0]), float(edges[-1])),
                     opacity=min(opacity, 0.9),
                 )
             else:
-                self.heatmap(arr, x=x, y=y, name=None, colormap=colormap, opacity=min(opacity, 0.7))
+                self.heatmap(
+                    arr,
+                    x=x,
+                    y=y,
+                    name=name,
+                    colormap=colormap,
+                    opacity=min(opacity, 0.7),
+                )
         x0, x1, y0, y1, level_values = _contour_segments(arr, xpos, ypos, level_values)
         if len(x0) == 0:
             raise ValueError("contour levels do not intersect the finite grid")

@@ -32,6 +32,12 @@ jobs:
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: false
+      # The editable install below builds the render client from source via the
+      # hatch hook (generated, not committed; §33). Pin Node so that build uses
+      # a vite-compatible version rather than the runner's system Node.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
       # native kernels (BACKEND == "native"); without it, importing the compute
       # layer errors rather than running.
       - name: Build native core

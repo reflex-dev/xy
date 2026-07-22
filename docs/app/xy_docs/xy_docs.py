@@ -1,5 +1,8 @@
 """Markdown-backed XY documentation site."""
 
+import dataclasses
+import re
+
 import reflex as rx
 from reflex_site_shared import styles
 from reflex_site_shared.docs import DocsLayoutConfig, build_docs_routes
@@ -51,11 +54,26 @@ _LAYOUT_CONFIG = DocsLayoutConfig(
 )
 
 
+# FAQ sections stay on the page but are omitted from the right-sidebar
+# "On This Page" list: docs_layout derives that list from page.content, so
+# stripping the FAQ section from a copy of the page hides its headings from
+# the TOC without touching the rendered body.
+_FAQ_SECTION = re.compile(r"^## FAQ\s*$.*?(?=^## |\Z)", re.MULTILINE | re.DOTALL)
+
+
+def _without_faq_in_toc(page):
+    """Return the page with its FAQ section removed from TOC-visible content."""
+    stripped = _FAQ_SECTION.sub("", page.content)
+    if stripped == page.content:
+        return page
+    return dataclasses.replace(page, content=stripped)
+
+
 def xy_docs_layout(page, content, navigation) -> rx.Component:
     """Render the shared docs layout with Reflex's TOC scroll highlighter."""
     return rx.box(
         docs_layout(
-            page_with_api_reference_toc(page),
+            page_with_api_reference_toc(_without_faq_in_toc(page)),
             content,
             navigation,
             config=_LAYOUT_CONFIG,

@@ -1,5 +1,5 @@
 ---
-title: Marks
+title: Marks in Python
 description: Bind data to XY marks, channels, axes, styles, and layers.
 components:
   - xy.line
@@ -23,7 +23,7 @@ components:
   - xy.triangle_mesh
 ---
 
-# Marks
+# Marks in Python
 
 A mark describes data geometry inside a chart. Factories such as `line()`,
 `scatter()`, and `histogram()` return lightweight `Mark` objects; the chart
@@ -111,3 +111,33 @@ transport; a standalone export can only inspect its resident representation.
 See [Large data and performance](/docs/xy/core-concepts/large-data-and-performance/)
 for the tiering contract and [Marks and components reference](/docs/xy/api-reference/marks-and-components/)
 for signatures and defaults.
+
+## FAQ
+
+### How do I combine multiple marks in one chart in Python?
+
+Pass several mark factories as children of one chart container, e.g.
+`xy.line_chart(xy.area(...), xy.line(...), xy.scatter(...))`. Give each mark a
+`name=` for the legend, and pass `data=` once on the chart to share a table
+across marks (a mark-level `data=` overrides it).
+
+### How do I control which mark draws on top of another?
+
+Marks render in declaration order: later children paint over earlier ones. Put
+broad fills such as `xy.area()` first and overlays such as `xy.line()` or
+`xy.scatter()` after them.
+
+### How do I style each series differently in one chart?
+
+Every mark takes its own paint options — for example `xy.line(..., color=...)`
+or a `style=` dict of CSS declarations compiled for WebGL, SVG, and native
+raster output. CSS selectors, Tailwind classes, and `class_name=` cannot paint
+canvas or WebGL geometry, so per-series styling always goes through the mark
+itself.
+
+### Can I plot a mark against a second y-axis?
+
+Yes — bind the mark with `y_axis="y2"` (or `x_axis=` for x) and add a matching
+`xy.y_axis(id="y2", side="right")` component to the chart. X-axis identifiers
+must start with `x` and y-axis identifiers with `y`, and every named binding
+needs a matching axis component.

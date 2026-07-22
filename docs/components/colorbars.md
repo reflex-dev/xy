@@ -1,11 +1,11 @@
 ---
-title: Colorbars
+title: Colorbars in Python
 description: Author, orient, and style built-in continuous-scale colorbars or replace them in a custom adapter.
 components:
   - xy.colorbar
 ---
 
-# Colorbars
+# Colorbars in Python
 
 A colorbar explains a continuous color scale. Add `xy.colorbar()` after a
 compatible continuous-color mark and XY derives the validated domain,
@@ -133,3 +133,34 @@ See the
 [Reflex integration](/docs/xy/integrations/reflex/) for the shipped chart
 adapter and [Marks and components reference](/docs/xy/api-reference/marks-and-components/)
 for the complete signature.
+
+## FAQ
+
+### How do I add a color scale to a chart in Python?
+
+Add `xy.colorbar()` as a chart child after a continuous-color mark such as a
+heatmap or a scatter with a numeric `color=` channel. XY derives the validated
+domain, colormap, and a default title from that mark, and the built-in colorbar
+renders in the browser, SVG, native PNG, and Chromium PNG.
+
+### How do I set custom ticks and a title on a colorbar?
+
+Pass them to the component: `xy.colorbar(title="Temperature (°C)", ticks=[-3, 0, 5])`.
+`title=` overrides the default title derived from the field or mark name, and
+`ticks=` supplies explicit finite tick positions; both work in either
+orientation.
+
+### Can I make the colorbar horizontal instead of vertical?
+
+Yes — `xy.colorbar(orientation="horizontal")`. The `orientation=` option
+accepts `"vertical"` (the default) or `"horizontal"`, and both orientations
+share the same `title` and `ticks` API.
+
+### Why is no colorbar showing on my chart?
+
+XY only derives colorbars for continuous-color marks: heatmaps, continuous
+scatter, hexbin, contour, continuous segments, and triangle meshes. Constant or
+categorical color, RGB(A) heatmaps, and density-tier scatter whose per-row
+color channel is not resident in the browser deliberately get no built-in
+colorbar. When several continuous scales are layered, the last compatible mark
+wins, and `xy.colorbar(show=False)` removes an inferred scale you don't want.
