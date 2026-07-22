@@ -251,19 +251,44 @@ function lodDensityForView(view, g) {
   return best || broadest || g.density;
 }
 
+// The hold's density estimate, reused by retirement (T11): scale the drill
+// window's known count by the target window's area to predict whether that
+// window could still be answered with direct points.
+function lodEstimatedVisible(d, win) {
+  const drillArea = lodWindowArea(d.win);
+  const winArea = lodWindowArea(win);
+  if (!Number.isFinite(drillArea) || !Number.isFinite(winArea) || drillArea <= 0) return NaN;
+  const baseVisible = Number.isFinite(d.visible) ? d.visible : d.n;
+  if (!Number.isFinite(baseVisible) || baseVisible <= 0) return NaN;
+  return baseVisible * Math.max(1, winArea / drillArea);
+}
+
 function lodHoldPendingDrill(view, g, d) {
   const pending = g._lodPendingView;
   if (!d || !pending || g._drillDying) return false;
   if (g._lodPendingSeq !== view.seq) return false;
   if (g._lodPendingAt && view._now() - g._lodPendingAt > 1200) return false;
   if (!lodWindowCenterInside(d.win, pending)) return false;
-  const drillArea = lodWindowArea(d.win);
-  const pendingArea = lodWindowArea(pending);
-  if (!Number.isFinite(drillArea) || !Number.isFinite(pendingArea) || drillArea <= 0) return false;
-  const baseVisible = Number.isFinite(d.visible) ? d.visible : d.n;
-  if (!Number.isFinite(baseVisible) || baseVisible <= 0) return false;
-  const estimatedVisible = baseVisible * Math.max(1, pendingArea / drillArea);
+  const estimatedVisible = lodEstimatedVisible(d, pending);
+  if (!Number.isFinite(estimatedVisible)) return false;
   return estimatedVisible <= LOD_DIRECT_POINT_BUDGET * LOD_DRILL_EXIT_FACTOR;
+}
+
+// Geometry-only retirement (T11): an entered-then-exited drill is kept as a
+// revive cache — a rapid zoom back into its window hands the exact marks
+// back with no kernel round-trip — but only while a nearby view could still
+// plausibly be points-tier. Once the view outgrows the window past the drill
+// budget, the kernel would answer density for anything around here, so the
+// retained buffers can no longer serve a revive that survives; free them
+// without waiting for a reply (zooming out with no kernel attached — or a
+// coalesced-away reply — must not strand a drill's GPU buffers forever).
+// Never-entered drills are exempt: they are prefetches en route to their
+// window, and the view being far from it is their normal transient state.
+function lodDrillOutgrown(view, g, d) {
+  const v = view.view;
+  const estimatedVisible = lodEstimatedVisible(d, v);
+  if (!Number.isFinite(estimatedVisible)) return false;
+  return estimatedVisible > LOD_DIRECT_POINT_BUDGET * LOD_DRILL_EXIT_FACTOR;
 }
 
 // Every density object still reachable from the trace, so eviction never
@@ -446,6 +471,7 @@ function lodApplyDrill(view, g, upd, buffers) {
   if (fresh) {
     g._drillFadeStart = view._now();
     g._drillWasInside = false;
+    g._drillEverInside = false;
     g._drillShownAlpha = 0;
     g._drillExitFadeStart = null;
     g._drillDying = false;
@@ -505,6 +531,7 @@ function lodDropDrill(view, g) {
   g._drillFadeStart = null;
   g._drillExitFadeStart = null;
   g._drillWasInside = false;
+  g._drillEverInside = false;
   g._drillShownAlpha = null;
   g._drillDying = false;
   g._drillDiedInsideWin = false;
@@ -706,6 +733,7 @@ function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
     // from the marks alpha currently on screen; never a snap to full.
     if (!g._drillWasInside || g._drillExitFadeStart != null) lodEnterDrillContinuous(view, g);
     g._drillWasInside = true;
+    g._drillEverInside = true; // arms geometry-only retirement (T11)
     g._drillExitFadeStart = null;
     const fade = lodFade(view, g._drillFadeStart);
     g._drillShownAlpha = fade;
@@ -756,6 +784,15 @@ function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
     } else {
       if (g._drillDying) lodDropDrill(view, g); // fade done: free the buffers
       else if (exitingDrill) g._drillWasInside = false;
+      // Geometry-only retirement (T11): an entered drill whose exit has
+      // completed frees its buffers once the view outgrows its window past
+      // the drill budget — no kernel reply required, and it must run on the
+      // completion frame itself (a settled view schedules no further frames).
+      // A dying drill was just dropped above; a never-entered prefetch is
+      // exempt (its window is simply ahead of the view).
+      if (g.drill && g._drillEverInside && lodDrillOutgrown(view, g, d)) {
+        lodDropDrill(view, g);
+      }
       lodDrawDensityWithFade(view, g, density);
       view._drawDensitySample(g, x0, x1, y0, y1);
     }

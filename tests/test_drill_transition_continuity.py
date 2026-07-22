@@ -21,6 +21,9 @@ The fixes, each asserted here against the real client in headless Chromium:
 - A points reply whose window the view has grown far past still applies (the
   kernel may prefetch), but its marks are not drawn for a view that never
   entered the window — the frame stays on the aggregate.
+- T11 geometry-only retirement: an entered-then-exited drill frees its GPU
+  buffers once the view outgrows its window past the drill budget, with no
+  kernel reply required; never-entered prefetches are exempt.
 """
 
 from __future__ import annotations
@@ -121,16 +124,32 @@ _PROBE = """
     view._onKernelMsg(pointsReply(view.seq, 2), [xs.buffer, ys.buffer, dv.buffer]);
     const departedApplied = !!g.drill;
     const departedLayers = frameLayers();
+    // A never-entered (prefetch-shaped) drill survives frames at a view far
+    // past its window — T11 retirement is armed only by a completed entry.
+    const departedStillAllocated = !!g.drill;
 
     // The same reply while the view is INSIDE the window draws marks again.
     view.view = { x0: wx0, x1: wx1, y0: wy0, y1: wy1 };
     view._onKernelMsg(pointsReply(view.seq, 3), [xs.buffer, ys.buffer, dv.buffer]);
     const insideLayers = frameLayers();
 
+    // Geometry-only retirement (T11): the entered drill exits by zoom alone —
+    // no pending request, no density reply — and once the view outgrows its
+    // window past the drill budget the buffers free without a kernel
+    // round-trip (previously they were stranded until a density reply).
+    view.view = {
+      x0: cx - (wx1 - wx0) * 8, x1: cx + (wx1 - wx0) * 8,
+      y0: cy - (wy1 - wy0) * 8, y1: cy + (wy1 - wy0) * 8,
+    };
+    view._drawNow();
+    clk += 500; view._drawNow();
+    const geometryRetired = !g.drill;
+
     document.body.setAttribute("data-xy-transition-probe", JSON.stringify({
       enterBlendShown, enterBlendTarget,
       settledInside, exitBlendTarget, exitLayers,
-      departedApplied, departedLayers, insideLayers,
+      departedApplied, departedLayers, departedStillAllocated,
+      insideLayers, geometryRetired,
     }));
   } catch (err) {
     document.body.setAttribute(
@@ -191,5 +210,12 @@ def test_drill_transitions_are_continuous(tmp_path: Path) -> None:
     assert result["departedApplied"] is True
     assert result["departedLayers"]["density"] >= 1
     assert result["departedLayers"]["marks"] == 0
+    # …and the never-entered drill survives those frames: T11 retirement is
+    # armed only by a completed entry, so prefetches are never reaped while
+    # the view is (normally) still far from their window.
+    assert result["departedStillAllocated"] is True
     # The same reply while the view sits inside its window draws marks.
     assert result["insideLayers"]["marks"] >= 1
+    # Geometry-only retirement (T11): entered, then zoomed far out with no
+    # pending and no reply — the drill frees on the exit-completion frame.
+    assert result["geometryRetired"] is True

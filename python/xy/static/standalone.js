@@ -1504,19 +1504,29 @@ if (!best || lodDensityArea(d) < lodDensityArea(best)) best = d;
 }
 return best || broadest || g.density;
 }
+function lodEstimatedVisible(d, win) {
+const drillArea = lodWindowArea(d.win);
+const winArea = lodWindowArea(win);
+if (!Number.isFinite(drillArea) || !Number.isFinite(winArea) || drillArea <= 0) return NaN;
+const baseVisible = Number.isFinite(d.visible) ? d.visible : d.n;
+if (!Number.isFinite(baseVisible) || baseVisible <= 0) return NaN;
+return baseVisible * Math.max(1, winArea / drillArea);
+}
 function lodHoldPendingDrill(view, g, d) {
 const pending = g._lodPendingView;
 if (!d || !pending || g._drillDying) return false;
 if (g._lodPendingSeq !== view.seq) return false;
 if (g._lodPendingAt && view._now() - g._lodPendingAt > 1200) return false;
 if (!lodWindowCenterInside(d.win, pending)) return false;
-const drillArea = lodWindowArea(d.win);
-const pendingArea = lodWindowArea(pending);
-if (!Number.isFinite(drillArea) || !Number.isFinite(pendingArea) || drillArea <= 0) return false;
-const baseVisible = Number.isFinite(d.visible) ? d.visible : d.n;
-if (!Number.isFinite(baseVisible) || baseVisible <= 0) return false;
-const estimatedVisible = baseVisible * Math.max(1, pendingArea / drillArea);
+const estimatedVisible = lodEstimatedVisible(d, pending);
+if (!Number.isFinite(estimatedVisible)) return false;
 return estimatedVisible <= LOD_DIRECT_POINT_BUDGET * LOD_DRILL_EXIT_FACTOR;
+}
+function lodDrillOutgrown(view, g, d) {
+const v = view.view;
+const estimatedVisible = lodEstimatedVisible(d, v);
+if (!Number.isFinite(estimatedVisible)) return false;
+return estimatedVisible > LOD_DIRECT_POINT_BUDGET * LOD_DRILL_EXIT_FACTOR;
 }
 function lodDensityPinned(g, d) {
 return d === g.density || d === g.prevDensity || d === g._densitySwitchPrev ||
@@ -1660,6 +1670,7 @@ d._lodBlendNative = 0;
 if (fresh) {
 g._drillFadeStart = view._now();
 g._drillWasInside = false;
+g._drillEverInside = false;
 g._drillShownAlpha = 0;
 g._drillExitFadeStart = null;
 g._drillDying = false;
@@ -1710,6 +1721,7 @@ g.drill = null;
 g._drillFadeStart = null;
 g._drillExitFadeStart = null;
 g._drillWasInside = false;
+g._drillEverInside = false;
 g._drillShownAlpha = null;
 g._drillDying = false;
 g._drillDiedInsideWin = false;
@@ -1836,6 +1848,7 @@ alpha
 if (inside) {
 if (!g._drillWasInside || g._drillExitFadeStart != null) lodEnterDrillContinuous(view, g);
 g._drillWasInside = true;
+g._drillEverInside = true;
 g._drillExitFadeStart = null;
 const fade = lodFade(view, g._drillFadeStart);
 g._drillShownAlpha = fade;
@@ -1873,6 +1886,9 @@ view.draw();
 } else {
 if (g._drillDying) lodDropDrill(view, g);
 else if (exitingDrill) g._drillWasInside = false;
+if (g.drill && g._drillEverInside && lodDrillOutgrown(view, g, d)) {
+lodDropDrill(view, g);
+}
 lodDrawDensityWithFade(view, g, density);
 view._drawDensitySample(g, x0, x1, y0, y1);
 }

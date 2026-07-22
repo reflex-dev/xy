@@ -309,8 +309,22 @@ invariants so future kinds don't regress them:
   intent.) `lodDrawDensityTier` routes every branch's backdrop through
   `lodDrawDensityWithFade`, so cached-window crossfades stay continuous
   while drilled too.
+- **T11 — an exited drill is a bounded revive cache:** a drill whose entry
+  completed and whose exit fade has finished is retained so a rapid zoom
+  back into its window hands the exact marks back with no kernel round-trip
+  (the revive hysteresis) — but only while a nearby view could still
+  plausibly be points-tier. Once the view outgrows the window past the drill
+  budget (the hold's own `visible × area-ratio` estimate vs
+  `LOD_DIRECT_POINT_BUDGET × LOD_DRILL_EXIT_FACTOR`), the buffers free on
+  that frame with no kernel reply required (`lodDrillOutgrown` in
+  `lodDrawDensityTier`) — geometry alone must never strand a drill's GPU
+  buffers indefinitely (§27: every GPU buffer is a rebuildable cache).
+  Never-entered drills are exempt: they are prefetches en route to their
+  window, and the view being far from it is their normal transient state.
+  A dying drill (kernel chose density) still frees via the exit fade as in
+  T2, independent of geometry.
 
-Any new tiered kind must state how it satisfies T1–T10 in its chart-kind
+Any new tiered kind must state how it satisfies T1–T11 in its chart-kind
 contract entry before it lands.
 
 ---
