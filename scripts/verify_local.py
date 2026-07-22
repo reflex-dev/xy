@@ -256,6 +256,13 @@ def _base_checks(
             requires_chromium=True,
         ),
         Check(
+            "animation_smoke",
+            "keyed/replacement/frozen animation smoke in Chromium",
+            (py, "scripts/animation_smoke.py", chromium_arg),
+            requires_paths=chromium_paths,
+            requires_chromium=True,
+        ),
+        Check(
             "pick_boundary_smoke",
             "256-slot and large-index pick boundary/cache smoke in Chromium",
             (py, "scripts/pick_boundary_smoke.py", chromium_arg),
@@ -312,6 +319,7 @@ BROWSER_CHECKS = (
     "reflex_lifecycle_smoke",
     "visual_regression_smoke",
     "step_tier_smoke",
+    "animation_smoke",
     "pick_boundary_smoke",
     "interaction_stress_smoke",
 )

@@ -185,9 +185,9 @@ make check-docs
 
 The browser gates are split into app-facing checks that match the CI step
 names: `Browser lifecycle smoke (Chromium)`, `Browser visual regression smoke
-(Chromium)`, `Step tier-update smoke (Chromium)`, `Pick boundary smoke
-(Chromium)`, `Browser interaction stress smoke (Chromium)`, and `Browser
-dashboard reliability smoke (Chromium)`.
+(Chromium)`, `Step tier-update smoke (Chromium)`, `Animation smoke (Chromium)`,
+`Pick boundary smoke (Chromium)`, `Browser interaction stress smoke
+(Chromium)`, and `Browser dashboard reliability smoke (Chromium)`.
 `make check-browser` runs all of these except the dashboard reliability smoke,
 which runs in CI only. The lifecycle and visual smokes both boot the
 `examples/fastapi` app under uvicorn and drive Chromium at its live routes (no
@@ -198,7 +198,13 @@ drilldown and requires each to report nonblank pixels through `initial`,
 embedded iframes paint; the visual regression smoke screenshots every gallery
 route and checks nonblank/colored/occupancy plus tick-label overlap. The
 `context-restore` phase forces `WEBGL_lose_context` loss/restoration and
-requires the rebuilt chart to remain nonblank. The interaction stress smoke
+requires the rebuilt chart to remain nonblank. The animation smoke requires
+keyed and fallback matching, ghost-free interpolation pixels, rapid
+latest-wins replacement, the previous+next allocation bound, balanced
+lifecycle events, representative errorbar/vertical-bar/horizontal-bar marks,
+reduced motion, and deterministic frozen capture in real Chromium. A missing
+or hung browser is a hard failure, and CI retains its JSON title/assertion
+diagnostic with `if: always()`. The interaction stress smoke
 validates the real `ChartView` wheel zoom, pan, hover, crosshair, box zoom, and
 brush-select paths with p95 budgets plus visual invariants for blank frames,
 tick-label overlap, tooltip stability, crosshair visibility, view changes, box

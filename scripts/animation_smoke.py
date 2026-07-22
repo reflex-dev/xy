@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import base64
 import json
 import re
@@ -11,7 +12,10 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from _protocol import PROTOCOL_VERSION
+
 ROOT = Path(__file__).resolve().parent.parent
+STATIC = ROOT / "python" / "xy" / "static"
 CHROME = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
@@ -20,11 +24,17 @@ CHROME = [
 ]
 
 
-def _chrome() -> str:
+def _chrome(explicit: str | None = None) -> str:
+    if explicit:
+        resolved = explicit if Path(explicit).is_file() else shutil.which(explicit)
+        if resolved:
+            return str(resolved)
+        raise RuntimeError(f"configured chromium not found: {explicit}")
     for candidate in CHROME:
-        if Path(candidate).is_file() or shutil.which(candidate):
-            return candidate
-    raise SystemExit("no chromium found")
+        resolved = candidate if Path(candidate).is_file() else shutil.which(candidate)
+        if resolved:
+            return str(resolved)
+    raise RuntimeError("no chromium found")
 
 
 def _payload(rows: list[tuple[float, float, int]]) -> tuple[dict, bytes]:
@@ -48,7 +58,7 @@ def _payload(rows: list[tuple[float, float, int]]) -> tuple[dict, bytes]:
     lo = ship([row[2] for row in rows], "u32")
     hi = ship([0 for _ in rows], "u32")
     spec = {
-        "protocol": 3,
+        "protocol": PROTOCOL_VERSION,
         "width": 360,
         "height": 240,
         "title": "animation smoke",
@@ -104,7 +114,7 @@ def _errorbar_payload() -> tuple[dict, bytes]:
         return len(columns) - 1
 
     spec = {
-        "protocol": 3,
+        "protocol": PROTOCOL_VERSION,
         "width": 360,
         "height": 240,
         "title": "errorbar animation smoke",
@@ -169,7 +179,7 @@ def _bar_payload(rows: list[tuple[float, float, int]]) -> tuple[dict, bytes]:
     lo = ship([row[2] for row in rows], "u32")
     hi = ship([0 for _ in rows], "u32")
     spec = {
-        "protocol": 3,
+        "protocol": PROTOCOL_VERSION,
         "width": 360,
         "height": 240,
         "title": "bar animation smoke",
@@ -217,8 +227,68 @@ def _bar_payload(rows: list[tuple[float, float, int]]) -> tuple[dict, bytes]:
     return spec, bytes(blob)
 
 
-def main() -> None:
-    bundle = (ROOT / "python/xy/static/standalone.js").read_text()
+EXPECTED_ASSERTIONS = (
+    "XY_ANIM_OK",
+    "match=[[1,0],[0,1]]",
+    "scratch=1",
+    "ghost=1",
+    "pixel=1",
+    "partial=1",
+    "missing=1",
+    "active=1",
+    "pick=1",
+    "bounded=1",
+    "replacement=1",
+    "done=1",
+    "lifecycle=1",
+    "reduced=1",
+    "frozen=1",
+    "destroy=1",
+    "errorbar=1",
+    "bar=1",
+    "hbar=1",
+)
+
+
+def _write_evidence(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _evidence(
+    *,
+    title: str,
+    chromium: str | None,
+    returncode: int | None,
+    stderr: str = "",
+    timed_out: bool = False,
+) -> dict:
+    reported = frozenset(title.split())
+    missing = [assertion for assertion in EXPECTED_ASSERTIONS if assertion not in reported]
+    passed = returncode == 0 and not missing
+    return {
+        "status": "ok" if passed else "failed",
+        "title": title,
+        "chromium": chromium,
+        "chromium_returncode": returncode,
+        "timed_out": timed_out,
+        "missing_assertions": missing,
+        "stderr_tail": stderr[-4000:],
+        "protocol": PROTOCOL_VERSION,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("chromium", nargs="?", default=None)
+    parser.add_argument(
+        "--evidence",
+        type=Path,
+        default=None,
+        help="write compact JSON diagnostics for CI artifact retention",
+    )
+    args = parser.parse_args(argv)
+    bundle = (STATIC / "standalone.js").read_text(encoding="utf-8")
     payloads = [
         _payload([(2, 3, 1), (12, 8, 2)]),
         _payload([(22, 18, 2), (7, 14, 1)]),
@@ -316,6 +386,32 @@ try{{
     &&hbarTrace._transitionPositionProgress===0.5
     &&hbarView.gl.getError()===hbarView.gl.NO_ERROR;
   hbarView.destroy();hbarHost.remove();
+  const frozenRun=()=>{{
+    const frozenHost=document.createElement("div");document.body.appendChild(frozenHost);
+    let frozenStarts=0,frozenEnds=0;
+    frozenHost.addEventListener("xy:animation_start",()=>frozenStarts++);
+    frozenHost.addEventListener("xy:animation_end",()=>frozenEnds++);
+    const frozenSpec=JSON.parse(JSON.stringify(payloads[0].spec));
+    frozenSpec.animation_capture_progress=0.5;
+    const frozenView=xy.renderStandalone(frozenHost,frozenSpec,unpack(payloads[0]));
+    frozenView._drawNow();
+    const frozenTrace=frozenView.gpuTraces[0];
+    const pixels=new Uint8Array(frozenView.canvas.width*frozenView.canvas.height*4);
+    frozenView.gl.readPixels(0,0,frozenView.canvas.width,frozenView.canvas.height,
+      frozenView.gl.RGBA,frozenView.gl.UNSIGNED_BYTE,pixels);
+    let hash=2166136261,lit=0;
+    for(let i=0;i<pixels.length;i++){{
+      hash=Math.imul(hash^pixels[i],16777619)>>>0;
+      if((i&3)===3&&pixels[i]>0)lit++;
+    }}
+    const fixedProgress=Math.abs(frozenTrace._transitionScale-0.5)<0.01
+      &&!frozenView._dataAnim&&frozenView._dataAnimRaf==null
+      &&frozenView.gl.getError()===frozenView.gl.NO_ERROR&&lit>0;
+    frozenView.destroy();frozenHost.remove();
+    return {{ok:fixedProgress&&frozenStarts===0&&frozenEnds===0,hash}};
+  }};
+  const frozenA=frozenRun(),frozenB=frozenRun();
+  const frozen=frozenA.ok&&frozenB.ok&&frozenA.hash===frozenB.hash;
   const missingHost=document.createElement("div");document.body.appendChild(missingHost);
   const missingView=xy.renderStandalone(missingHost,payloads[0].spec,unpack(payloads[0]));
   const missingSpec=JSON.parse(JSON.stringify(payloads[1].spec));
@@ -357,7 +453,12 @@ try{{
       &&view.gpuTraces[0].n===3
       &&view._transitionOldTraces[0]._transitionOpacity===0
       &&!view.gpuTraces[0].trace.animation_fallback;
+    const obsoleteOld=view._transitionOldTraces[0];
+    const replacementSource=view.gpuTraces[0];
     view.updatePayload(payloads[3].spec,unpack(payloads[3]));
+    const replacement=view._transitionOldTraces[0]===replacementSource
+      &&view.gpuTraces[0]!==replacementSource
+      &&obsoleteOld.xBuf===null&&obsoleteOld._cpu===null;
     const bounded=view.gpuTraces.length===1&&view._transitionOldTraces.length===1;
     if(view._dataAnimRaf) cancelAnimationFrame(view._dataAnimRaf);
     view._dataAnimRaf=null;
@@ -366,55 +467,84 @@ try{{
     setTimeout(()=>{{
       const done=!view._dataAnim&&!view._transitionOldTraces
         && !view.gpuTraces[0]._transitionPrevXBuf;
-      document.title=`XY_ANIM_OK match=${{match}} scratch=${{+scratch}} ghost=${{+ghostFree}} pixel=${{+pixelClean}} partial=${{+partial}} missing=${{+missingRecorded}} active=${{+active}} pick=${{+pickable}} bounded=${{+bounded}} done=${{+done}} reduced=${{+reduced}} destroy=${{+destroyBalanced}} errorbar=${{+errorbarGrow}} bar=${{+barInterpolates}} hbar=${{+horizontalBarInterpolates}} events=${{starts}}/${{ends}}`;
+      const lifecycle=starts===ends&&starts>=4;
+      document.title=`XY_ANIM_OK match=${{match}} scratch=${{+scratch}} ghost=${{+ghostFree}} pixel=${{+pixelClean}} partial=${{+partial}} missing=${{+missingRecorded}} active=${{+active}} pick=${{+pickable}} bounded=${{+bounded}} replacement=${{+replacement}} done=${{+done}} lifecycle=${{+lifecycle}} reduced=${{+reduced}} frozen=${{+frozen}} destroy=${{+destroyBalanced}} errorbar=${{+errorbarGrow}} bar=${{+barInterpolates}} hbar=${{+horizontalBarInterpolates}} events=${{starts}}/${{ends}}`;
     }},80);
   }},80);
 }}catch(error){{document.title="XY_ANIM_ERROR "+(error.stack||error.message)}}
 </script></body></html>"""
+    try:
+        executable = _chrome(args.chromium)
+    except RuntimeError as exc:
+        title = f"XY_ANIM_ERROR {exc}"
+        evidence = _evidence(title=title, chromium=args.chromium, returncode=None)
+        if args.evidence is not None:
+            _write_evidence(args.evidence, evidence)
+        print(title)
+        return 1
+
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "animation.html"
-        path.write_text(page)
-        result = subprocess.run(
-            [
-                _chrome(),
-                "--headless=new",
-                "--no-sandbox",
-                "--use-angle=swiftshader",
-                "--enable-unsafe-swiftshader",
-                "--force-prefers-reduced-motion=reduce",
-                "--virtual-time-budget=1400",
-                "--dump-dom",
-                path.as_uri(),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
+        path.write_text(page, encoding="utf-8")
+        command = [
+            executable,
+            "--headless=new",
+            "--no-sandbox",
+            "--use-angle=swiftshader",
+            "--enable-unsafe-swiftshader",
+            "--force-prefers-reduced-motion=reduce",
+            "--virtual-time-budget=1400",
+            "--dump-dom",
+            path.as_uri(),
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired as exc:
+            stderr = exc.stderr or ""
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode(errors="replace")
+            title = "XY_ANIM_ERROR browser timeout after 60s"
+            evidence = _evidence(
+                title=title,
+                chromium=executable,
+                returncode=None,
+                stderr=stderr,
+                timed_out=True,
+            )
+            if args.evidence is not None:
+                _write_evidence(args.evidence, evidence)
+            print(title)
+            if stderr:
+                print(stderr[-2000:])
+            return 1
+        except OSError as exc:
+            title = f"XY_ANIM_ERROR browser startup failed: {exc}"
+            evidence = _evidence(title=title, chromium=executable, returncode=None)
+            if args.evidence is not None:
+                _write_evidence(args.evidence, evidence)
+            print(title)
+            return 1
     title_match = re.search(r"<title>([^<]+)</title>", result.stdout)
     title = title_match.group(1) if title_match else "(none)"
+    evidence = _evidence(
+        title=title,
+        chromium=executable,
+        returncode=result.returncode,
+        stderr=result.stderr,
+    )
+    if args.evidence is not None:
+        _write_evidence(args.evidence, evidence)
     print(title)
-    expected = [
-        "XY_ANIM_OK",
-        "match=[[1,0],[0,1]]",
-        "scratch=1",
-        "ghost=1",
-        "pixel=1",
-        "partial=1",
-        "missing=1",
-        "active=1",
-        "pick=1",
-        "bounded=1",
-        "done=1",
-        "reduced=1",
-        "destroy=1",
-        "errorbar=1",
-        "bar=1",
-        "hbar=1",
-    ]
-    if not all(value in title for value in expected):
+    if evidence["status"] != "ok":
         print(result.stderr[-2000:])
-        raise SystemExit("animation smoke failed")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

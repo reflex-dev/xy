@@ -153,10 +153,13 @@ an exact deterministic progress without starting a frame loop.
 
 - `tests/test_animation.py` owns validation, serialization, identity, wire,
   sorting, errorbar expansion, and deterministic-export contracts.
-- `scripts/animation_smoke.py` exercises pixel-checked, ghost-free keyed interpolation,
-  explicit partial-match fallback, GPU scratch buffers, rapid replacement,
-  bounded lifetime, lifecycle balance (including destroy), and reduced motion
-  in headless Chrome.
+- `scripts/animation_smoke.py` is a hard CI and `make check-browser` gate. Its
+  fixtures derive the shared wire protocol and real Chromium must pass
+  pixel-checked, ghost-free keyed interpolation, explicit partial-match
+  fallback, GPU scratch buffers, rapid replacement, bounded lifetime,
+  lifecycle balance (including destroy), representative marks, reduced motion,
+  and deterministic frozen capture. Browser startup, timeout, assertion, and
+  nonzero-exit failures are blocking and retain JSON evidence.
 - `benchmarks/test_codspeed_animation.py` attributes key encoding and animated
   payload build overhead separately from the plain payload path.
 - Browser frame/allocation measurements belong to the real-Chrome benchmark

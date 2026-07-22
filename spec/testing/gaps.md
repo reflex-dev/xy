@@ -154,9 +154,11 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-013 — Animation browser gate
 
-- Status: `NOT IMPLEMENTED`
-- Current gap: `scripts/animation_smoke.py` is documented but unwired and used a
-  stale hard-coded renderer protocol.
+- Status: `IMPLEMENTED`
+- Evidence: `scripts/animation_smoke.py`, `tests/test_animation_smoke.py`,
+  `make check-browser`, and the hard-CI `animation-browser-evidence` artifact.
+- Current gap: closed; fixtures derive the shared protocol and configured Chrome
+  hard-gates animation semantics, pixels, allocation, lifecycle, and teardown.
 - Implemented when: fixtures derive the shared protocol, the smoke runs in local
   browser checks and hard CI, and it asserts keyed interpolation, fallback,
   ghost-free pixels, allocation bounds, replacement, balanced lifecycle,

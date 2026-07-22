@@ -310,11 +310,16 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "scripts/smoke_render.py",
         "Browser lifecycle smoke",
         "Browser visual regression smoke",
+        "Animation smoke",
         "Pick boundary smoke",
         "Browser interaction stress smoke",
         "Browser dashboard reliability smoke",
         "scripts/reflex_lifecycle_smoke.py",
         "scripts/visual_regression_smoke.py",
+        "scripts/animation_smoke.py",
+        "--evidence animation-browser-evidence.json",
+        "Upload animation browser evidence",
+        "animation-browser-evidence",
         "scripts/pick_boundary_smoke.py",
         "--evidence pick-boundary-evidence.json",
         "Upload pick boundary evidence",
@@ -346,6 +351,25 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "transport.json",
     )
     hard_test = jobs.get("test", "")
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Animation smoke (Chromium)",
+        "hard animation command and diagnostic path",
+        "scripts/animation_smoke.py",
+        "--evidence animation-browser-evidence.json",
+    )
+    _require_step_contains(
+        errors,
+        hard_test,
+        "Upload animation browser evidence",
+        "failure-retaining animation artifact policy",
+        "if: always()",
+        "actions/upload-artifact@",
+        "animation-browser-evidence",
+        "if-no-files-found: error",
+        "animation-browser-evidence.json",
+    )
     _require_step_contains(
         errors,
         hard_test,

@@ -75,7 +75,7 @@ index. Missing additions are tracked by ID in [`gaps.md`](gaps.md).
 | Axes, layout, styling, chrome, and facets | Axis/viewport, facets, CSS mark styles, export, legend-resize, and gallery browser tests | Mixed hard evidence | `PARTIALLY IMPLEMENTED` | Representative axes, facets, legends, annotations, colorbars, CSS, and layout behavior are covered, but named/reversed/log/category combinations, formatter semantics, collision behavior, and cross-renderer parity lack one catalog. See TST-NI-008, TST-NI-010, TST-NI-011, and TST-NI-014. |
 | Pan/zoom contract | Focused Python regressions and Chromium interaction smoke | Mixed | `PARTIALLY IMPLEMENTED` | The specified linear/log/reversed/category/dual-axis, bounds, links, no-op, reduced-motion, and Reflex matrix is not implemented. See TST-NI-011. |
 | Animation Python contract | `tests/test_animation.py`; Python-only CodSpeed microbenchmarks | Hard root suite / advisory CodSpeed | `IMPLEMENTED` | Validation, payload, and deterministic static behavior have evidence. |
-| Required animation browser gate | `scripts/animation_smoke.py` exists as supporting evidence | Unwired and stale | `NOT IMPLEMENTED` | It is absent from CI/Makefile/local browser checks and hard-coded protocol 3 at audit time. Real-browser animation measurement is also unwired. See TST-NI-013 and TST-NI-048. |
+| Required animation browser gate | `scripts/animation_smoke.py`; `tests/test_animation_smoke.py` | Hard Chromium CI/browser lane with retained JSON evidence | `IMPLEMENTED` | Protocol-derived fixtures prove keyed/fallback interpolation, representative marks, ghost-free pixels, allocation, replacement, lifecycle, reduced motion, frozen capture, and teardown. TST-NI-013 records the completed gate; real-browser performance measurement remains TST-NI-048. |
 | Dashboard context governance | `benchmarks/bench_dashboard.py` at 10/20/50 plus strict outcome validation and mutation negatives in `tests/test_verify_benchmark_report.py` | Hard CI selects `--profile strict` and retains `dashboard-health-evidence`; timing reports remain advisory | `IMPLEMENTED` | Every requested row must be complete or governed, create and visit-paint every chart, and contain no unexplained context loss. See TST-NI-002. |
 | Accessibility | Source contracts plus the focused three-engine semantic fixture | Mixed hard evidence | `PARTIALLY IMPLEMENTED` | Roles and selected keyboard/live behavior have evidence, but there is no normative rendered matrix for direct/aggregate charts, focus, forced colors, or a table alternative. See TST-NI-017 and TST-NI-039. |
 | Anywidget/Jupyter | Python widget and transport tests | Hard root suite | `PARTIALLY IMPLEMENTED` | No supported notebook frontend mounts the shipped widget and drives bidirectional behavior. See TST-NI-018 and TST-NI-019. |
@@ -141,7 +141,7 @@ described above.
 |---|---|
 | `make check` | Fast local verifier selection |
 | `make check-full` | Non-browser Python, JavaScript freshness, Rust debug/clippy, Rust release build, and ABI checks; not a release-equivalent suite |
-| `make check-browser CHROMIUM=...` | Configured Chromium smokes including pick-boundary but except dashboard; does not include animation, Reflex, or cross-engine conformance |
+| `make check-browser CHROMIUM=...` | Configured Chromium smokes including animation and pick-boundary but except dashboard; does not include Reflex or cross-engine conformance |
 | `make check-conformance` | Focused Chromium/Firefox/WebKit fixture |
 | `make check-docs` | Executable examples and claim guardrails |
 | `make check-examples` | README/API examples and Reflex asset-registry checks |
@@ -196,7 +196,7 @@ automation, not whether the helper is valuable.
 | `scripts/interaction_stress_smoke.py` | Wheel/pan/hover/crosshair/box/brush behavior and budgets | Hard Chromium CI; worker may skip |
 | `scripts/browser_conformance.mjs` | Focused semantic/accessibility/layout/raster comparison | Hard Chromium/Firefox/WebKit CI |
 | `scripts/pick_boundary_smoke.py` | Large trace/index picking limits | Hard Chromium CI/browser lane with retained JSON evidence; `IMPLEMENTED` |
-| `scripts/animation_smoke.py` | Real-browser animation lifecycle/pixels/allocation | Exists locally but was stale and unwired; required gate `NOT IMPLEMENTED` |
+| `scripts/animation_smoke.py` | Real-browser animation lifecycle/pixels/allocation | Hard Chromium CI/browser lane with retained JSON evidence; `IMPLEMENTED` |
 | `scripts/reflex_ws_smoke.py` | Real Reflex websocket/browser path | Exists locally and is unwired; required gate `NOT IMPLEMENTED` |
 | `scripts/pyodide_load_smoke.py` | Built WASM wheel runtime load | Release-only exact-artifact evidence |
 | `scripts/verify_released_docs_quickstart.py` | Public quickstarts against the published wheel | Docs released-quickstart job |
