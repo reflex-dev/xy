@@ -1,8 +1,10 @@
+import type { AxisSpec, TickResult } from "./05_types";
+
 // ---------------------------------------------------------------------------
 // Ticks (computed in f64 on the CPU — never through f32, §16)
 // ---------------------------------------------------------------------------
 
-function niceStep(rough) {
+function niceStep(rough: number): number {
   rough = Math.abs(rough);
   if (!Number.isFinite(rough) || rough <= 0) return 1;
   const mag = Math.pow(10, Math.floor(Math.log10(rough)));
@@ -12,7 +14,7 @@ function niceStep(rough) {
   return 10 * mag;
 }
 
-export function linearTicks(lo, hi, target = 6) {
+export function linearTicks(lo: number, hi: number, target = 6): TickResult {
   if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { ticks: [], step: 1 };
   const a = Math.min(lo, hi);
   const b = Math.max(lo, hi);
@@ -26,7 +28,7 @@ export function linearTicks(lo, hi, target = 6) {
   return { ticks: out, step };
 }
 
-export function logTicks(lo, hi, target = 6) {
+export function logTicks(lo: number, hi: number, target = 6): TickResult {
   if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { ticks: [], step: 1 };
   const a = Math.min(lo, hi);
   const b = Math.max(lo, hi);
@@ -52,7 +54,7 @@ export function logTicks(lo, hi, target = 6) {
   return { ticks: out, labels: labels.length ? labels : out, step: 1, log: true };
 }
 
-export function categoryTicks(lo, hi, categories, target = 6) {
+export function categoryTicks(lo: number, hi: number, categories: string[] | undefined, target = 6): TickResult {
   if (!categories || !categories.length) return { ticks: [], step: 1 };
   const start = Math.max(0, Math.ceil(Math.min(lo, hi)));
   const stop = Math.min(categories.length - 1, Math.floor(Math.max(lo, hi)));
@@ -73,7 +75,7 @@ const TIME_STEPS = [
   MS.d, 2 * MS.d, 7 * MS.d, 14 * MS.d,
 ];
 
-export function timeTicks(lo, hi, target = 6) {
+export function timeTicks(lo: number, hi: number, target = 6): TickResult {
   if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { ticks: [], step: MS.d };
   const a = Math.min(lo, hi);
   const b = Math.max(lo, hi);
@@ -90,7 +92,7 @@ export function timeTicks(lo, hi, target = 6) {
   return { ticks: out, step };
 }
 
-function calendarTicks(lo, hi, rough) {
+function calendarTicks(lo: number, hi: number, rough: number): TickResult {
   const monthsRough = rough / (30 * MS.d);
   const monthSteps = [1, 2, 3, 6, 12, 24, 60, 120];
   let stepM = monthSteps[monthSteps.length - 1];
@@ -112,9 +114,9 @@ function calendarTicks(lo, hi, rough) {
   return { ticks: out, step: stepM * 30 * MS.d };
 }
 
-function fmtTime(ms, step) {
+function fmtTime(ms: number, step: number): string {
   const d = new Date(ms);
-  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  const pad = (n: number, w = 2) => String(n).padStart(w, "0");
   if (step >= 28 * MS.d) {
     const mo = d.getUTCMonth();
     return mo === 0 ? String(d.getUTCFullYear())
@@ -126,7 +128,7 @@ function fmtTime(ms, step) {
   return `${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}.${pad(d.getUTCMilliseconds(), 3)}`;
 }
 
-export function fmtLinear(v, step) {
+export function fmtLinear(v: number, step: number): string {
   const av = Math.abs(v);
   if (av >= 1e6 || (av !== 0 && av < 1e-4)) return v.toExponential(1).replace("e+", "e");
   let dec = step ? Math.max(0, Math.ceil(-Math.log10(Math.abs(step)))) : 0;
@@ -137,7 +139,7 @@ export function fmtLinear(v, step) {
 // Match Python's default ``:g`` formatting used by the SVG/native colorbar
 // exporters. Explicit ticks are authored values, so their precision must not
 // be inferred from the unrelated automatic tick step for the whole domain.
-export function fmtGeneral(v, precision = 6) {
+export function fmtGeneral(v: number, precision = 6): string {
   const value = Number(v);
   if (!Number.isFinite(value)) return String(v);
   if (value === 0) return Object.is(value, -0) ? "-0" : "0";
@@ -155,12 +157,12 @@ export function fmtGeneral(v, precision = 6) {
   return text;
 }
 
-export function fmtCategory(v, categories) {
+export function fmtCategory(v: number, categories: string[] | undefined): string {
   const i = Math.round(v);
   return i >= 0 && i < categories.length ? String(categories[i]) : "";
 }
 
-export function fmtNumberSpec(v, format) {
+export function fmtNumberSpec(v: number, format: string): string {
   if (typeof format !== "string" || !Number.isFinite(Number(v))) return null;
   const percent = format.endsWith("%");
   const raw = percent ? format.slice(0, -1) : format;
@@ -177,11 +179,11 @@ export function fmtNumberSpec(v, format) {
   return percent ? `${text}%` : text;
 }
 
-function fmtTimeSpec(ms, format) {
+function fmtTimeSpec(ms: number, format: string): string {
   if (typeof format !== "string") return null;
   const d = new Date(ms);
   if (!Number.isFinite(d.getTime())) return null;
-  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  const pad = (n: number, w = 2) => String(n).padStart(w, "0");
   const shortMonth = d.toLocaleString("en", { month: "short", timeZone: "UTC" });
   const longMonth = d.toLocaleString("en", { month: "long", timeZone: "UTC" });
   return format.replace(/%[YmdHMSbB]/g, (token) => {
@@ -199,7 +201,7 @@ function fmtTimeSpec(ms, format) {
   });
 }
 
-export function fmtAxis(axis, v, tickStep) {
+export function fmtAxis(axis: AxisSpec, v: number, tickStep?: number): string {
   if (axis && axis.kind === "category") return fmtCategory(v, axis.categories || []);
   if (axis && axis.kind === "time") return fmtTimeSpec(v, axis.format) || fmtTime(v, tickStep);
   const formatted = fmtNumberSpec(v, axis && axis.format);
@@ -209,9 +211,11 @@ export function fmtAxis(axis, v, tickStep) {
   return formatted || fmtLinear(v, tickStep);
 }
 
-export function fmtValue(v, kind?: any) {
+export function fmtValue(v: unknown, kind?: string): string {
   if (kind === "time_ms") {
-    const d = new Date(v);
+    // time_ms values arrive as epoch millis; a date string is equally valid to
+    // the Date constructor, so the cast admits both rather than narrowing.
+    const d = new Date(v as number | string);
     return d.toISOString().replace("T", " ").replace(".000Z", "Z");
   }
   if (typeof v === "string") return v;

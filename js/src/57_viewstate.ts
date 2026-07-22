@@ -1,4 +1,5 @@
 import { ChartView } from "./50_chartview";
+import type { GpuTrace, Hit, Row } from "./05_types";
 
 // Unified view state (spec/design/view-state.md): the canonical durable-state
 // document, the single apply-a-state-patch implementation every writer calls,
@@ -8,6 +9,40 @@ import { ChartView } from "./50_chartview";
 // History capacity (view-state.md §4): snapshots are a handful of floats;
 // the bound is for predictability, not memory.
 const XY_HISTORY_CAPACITY = 64;
+
+/** The geometric selection mirror (§2/§5.1): a box, a lasso, or the opaque
+ * marker standing in for a kernel-resolved rows-selection. */
+interface StateSelection {
+  rows?: boolean;
+  range?: { x0: number; x1: number; y0: number; y1: number };
+  polygon?: number[][];
+}
+
+/** A §2 state document, or the merge patch that writes one. */
+interface StatePatch {
+  v?: number;
+  ranges?: Record<string, number[]>;
+  selection?: StateSelection | null;
+}
+
+/** A history snapshot: always a complete document, never a partial patch. */
+interface DurableState {
+  v: number;
+  ranges: Record<string, number[]>;
+  selection: StateSelection | null;
+}
+
+/** One in-flight axis-band drag (§6), scoped to the axis its band belongs to. */
+interface BandDrag {
+  pointerId: number;
+  sx: number;
+  sy: number;
+  view: any;
+  d0: number;
+  mode: string | null;
+  interactionId: number;
+  changedAxes: string[];
+}
 
 Object.assign(ChartView.prototype, {
   // -- durable state (§2) ----------------------------------------------------
@@ -24,7 +59,7 @@ Object.assign(ChartView.prototype, {
     // The whole public JS control surface (§5.3) — one object on the chart
     // root, identical in notebook, Reflex, and standalone HTML mounts.
     this.root.xy = {
-      applyState: (patch, opts: any = {}) => this._applyStatePatch(patch, {
+      applyState: (patch: StatePatch, opts: any = {}) => this._applyStatePatch(patch, {
         source: "api",
         animate: opts.animate === true,
         history: opts.history !== false,
@@ -35,7 +70,7 @@ Object.assign(ChartView.prototype, {
     };
   },
 
-  _durableState() {
+  _durableState(): DurableState {
     const ranges = Object.fromEntries(
       this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
     );
@@ -46,14 +81,14 @@ Object.assign(ChartView.prototype, {
         ? { rows: true }
         : sel.range
           ? { range: { ...sel.range } }
-          : { polygon: sel.polygon.map((point) => [...point]) };
+          : { polygon: sel.polygon.map((point: number[]) => [...point]) };
     return { v: 1, ranges, selection };
   },
 
   // Validate one §2 document/patch. Returns an error string or null. v:1 is
   // strict: unknown keys and unknown axis IDs are errors, not ignored —
   // forward compatibility comes from bumping v.
-  _validateStatePatch(patch) {
+  _validateStatePatch(patch: any) {
     if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
       return "state patch must be an object";
     }
@@ -108,7 +143,7 @@ Object.assign(ChartView.prototype, {
   // The one implementation of "apply a state patch" (§3): merge-patch
   // semantics, every entry point in view-state.md is a caller. Returns
   // true when the patch was accepted (even if it was a no-op).
-  _applyStatePatch(patch, opts: any = {}) {
+  _applyStatePatch(patch: StatePatch, opts: any = {}) {
     if (this._destroyed) return false;
     const error = this._validateStatePatch(patch);
     if (error) {
@@ -190,7 +225,7 @@ Object.assign(ChartView.prototype, {
     return true;
   },
 
-  _historyApply(snapshot) {
+  _historyApply(snapshot: DurableState) {
     // A stored snapshot mentions everything, but a rows-selection snapshot
     // carries only the opaque marker — restore the geometry it can express
     // and leave the marker out (rows-selections are non-durable, §5.1).
@@ -204,7 +239,7 @@ Object.assign(ChartView.prototype, {
   },
 
   _updateHistoryButtons() {
-    const set = (btn, enabled) => {
+    const set = (btn: HTMLButtonElement, enabled: boolean) => {
       if (!btn) return;
       btn.disabled = !enabled;
       btn.setAttribute("aria-disabled", String(!enabled));
@@ -216,7 +251,7 @@ Object.assign(ChartView.prototype, {
 
   // -- kernel-initiated navigation (§8) -------------------------------------
 
-  _navReset(axes) {
+  _navReset(axes: string[] | null) {
     const override = Array.isArray(axes)
       ? axes.filter((axisId) => this._axisIds().includes(axisId))
       : null;
@@ -226,7 +261,7 @@ Object.assign(ChartView.prototype, {
   // Kernel-resolved rows-selection (§5.1/§8): the same mask buffers the
   // selection reply ships, applied as a NON-durable selection — never in
   // history, reported in state only as the opaque marker.
-  _applyRowsSelection(msg, buffers) {
+  _applyRowsSelection(msg: Record<string, any>, buffers: any) {
     this._clearLassoOverlay();
     // A rows document replaces the whole selection. The message carries
     // buffers only for the traces it names, so deactivate every existing
@@ -254,7 +289,7 @@ Object.assign(ChartView.prototype, {
 
   // -- axis-band gestures (§6) ----------------------------------------------
 
-  _axisBandNavigable(axisId) {
+  _axisBandNavigable(axisId: string) {
     if (!this._interactionFlag("navigation", true)) return false;
     const pan = this._interactionFlag("pan", true)
       && this._axisPolicy("pan_axes").includes(axisId);
@@ -266,7 +301,7 @@ Object.assign(ChartView.prototype, {
   // The band cursor advertises the axis's actual capability (§6): a resize
   // arrow only when the axis can zoom; a pan-only axis shows a grab hand
   // instead, so the cursor never promises a zoom the policy would ignore.
-  _axisBandCursor(axisId, dim) {
+  _axisBandCursor(axisId: string, dim: string) {
     const zoom = this._interactionFlag("zoom", true)
       && this._axisPolicy("zoom_axes").includes(axisId);
     if (zoom) return dim === "x" ? "ew-resize" : "ns-resize";
@@ -326,7 +361,7 @@ Object.assign(ChartView.prototype, {
   },
 
   // Data value at a client coordinate along one axis, clamped to the plot box.
-  _axisBandValue(axisId, clientX, clientY) {
+  _axisBandValue(axisId: string, clientX: number, clientY: number) {
     const rect = this.canvas.getBoundingClientRect();
     const dim = this._axisDim(axisId);
     if (dim === "x") {
@@ -337,10 +372,10 @@ Object.assign(ChartView.prototype, {
     return this._dataFromCanvas(0, cssY, "x", axisId)[1];
   },
 
-  _bindAxisBand(band, axisId, dim) {
-    let drag = null;
+  _bindAxisBand(band: HTMLElement, axisId: string, dim: string) {
+    let drag: BandDrag | null = null;
 
-    this._listen(band, "wheel", (e) => {
+    this._listen(band, "wheel", (e: WheelEvent) => {
       if (!this._interactionFlag("navigation", true)) return;
       if (!this._interactionFlag("zoom", true)) return;
       if (!this._interactionFlag("wheel_zoom", true)) return;
@@ -353,7 +388,7 @@ Object.assign(ChartView.prototype, {
       this._queueWheelZoom(factor, fx, fy, [axisId]);
     }, { passive: false });
 
-    this._listen(band, "pointerdown", (e) => {
+    this._listen(band, "pointerdown", (e: PointerEvent) => {
       if (e.pointerType === "mouse" && e.button !== 0) return;
       if (!this._interactionFlag("navigation", true)) return;
       this._cancelViewAnimation();
@@ -381,7 +416,7 @@ Object.assign(ChartView.prototype, {
       && this._interactionFlag("box_zoom", true)
       && this._axisPolicy("zoom_axes").includes(axisId);
 
-    this._listen(band, "pointermove", (e) => {
+    this._listen(band, "pointermove", (e: PointerEvent) => {
       if (!drag || e.pointerId !== drag.pointerId) return;
       const dx = e.clientX - drag.sx;
       const dy = e.clientY - drag.sy;
@@ -450,7 +485,7 @@ Object.assign(ChartView.prototype, {
       e.preventDefault();
     });
 
-    const end = (e) => {
+    const end = (e: PointerEvent) => {
       if (!drag || e.pointerId !== drag.pointerId) return;
       const finished = drag;
       drag = null;
@@ -496,10 +531,10 @@ Object.assign(ChartView.prototype, {
 
   // -- structured hover payload (§7) ----------------------------------------
 
-  _seriesColorCss(g) {
+  _seriesColorCss(g: GpuTrace) {
     const c = g && g.color;
     if (!Array.isArray(c) || c.length < 3) return null;
-    const channel = (v) => Math.max(0, Math.min(255, Math.round(Number(v) * 255)));
+    const channel = (v: number) => Math.max(0, Math.min(255, Math.round(Number(v) * 255)));
     return `rgb(${channel(c[0])}, ${channel(c[1])}, ${channel(c[2])})`;
   },
 
@@ -507,12 +542,12 @@ Object.assign(ChartView.prototype, {
   // by exact axis ID (one entry per declared axis — a chart-root pixel maps
   // to a different value on every axis, so a bare {x, y} would be ambiguous
   // with a y2 declared).
-  _hoverPayload(row, hit, clientX, clientY, exact = false) {
+  _hoverPayload(row: Row, hit: Hit, clientX: number, clientY: number, exact = false) {
     const rootRect = this.root.getBoundingClientRect();
     const canvasRect = this.canvas.getBoundingClientRect();
     const cssX = Math.max(0, Math.min(canvasRect.width, clientX - canvasRect.left));
     const cssY = Math.max(0, Math.min(canvasRect.height, clientY - canvasRect.top));
-    const data = {};
+    const data: Record<string, number> = {};
     for (const axisId of this._axisIds()) {
       const dim = this._axisDim(axisId);
       const [x, y] = this._dataFromCanvas(
@@ -549,7 +584,7 @@ Object.assign(ChartView.prototype, {
   // inside the built-in tooltip container, so it inherits the placement
   // logic (flip-at-edges included) and every show/hide site; the built-in
   // line rendering and box chrome are suppressed while it is mounted.
-  setCustomTooltip(el) {
+  setCustomTooltip(el: HTMLElement | null) {
     if (!this.tooltip) return;
     if (!el) {
       this._customTooltip = null;
@@ -571,4 +606,4 @@ Object.assign(ChartView.prototype, {
     el.style.display = "";
     this.tooltip.replaceChildren(el);
   },
-});
+} as ThisType<ChartView> & Record<string, unknown>);

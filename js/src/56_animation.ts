@@ -1,11 +1,12 @@
 import { PROTOCOL } from "./00_header";
 import { ChartView } from "./50_chartview";
+import type { ChartSpec, ColumnMeta, GpuTrace, PayloadBuffers, TraceSpec } from "./05_types";
 
 // Declarative data animation: one browser clock, bounded previous/next GPU
 // state, no Python round-trips per frame. Full scene refreshes call
 // updatePayload(); rapid updates cancel/coalesce latest-wins.
 
-const XY_EASINGS = {
+const XY_EASINGS: Record<string, number[]> = {
   linear: [0, 0, 1, 1],
   ease: [0.25, 0.1, 0.25, 1],
   "ease-in": [0.42, 0, 1, 1],
@@ -13,14 +14,71 @@ const XY_EASINGS = {
   "ease-in-out": [0.42, 0, 0.58, 1],
 };
 
-function xyCubicBezierProgress(value, points) {
+/** `easing: {type: "spring", ...}` — a duration-independent spring policy. */
+interface SpringEasing {
+  type?: string;
+  stiffness?: number;
+  damping?: number;
+  mass?: number;
+}
+
+/** `easing`: a named curve, four explicit bezier control points, or a spring. */
+type Easing = string | number[] | SpringEasing;
+
+/** The figure-level `animation` block merged with a trace's own override, as
+ * `_resolvedAnimation` returns it. Open like the rest of the wire: the kernel
+ * may ship keys this client ignores. */
+interface AnimationConfig {
+  _present?: boolean;
+  enabled?: boolean;
+  enter?: string;
+  update?: string;
+  easing?: Easing;
+  delay?: number;
+  duration?: number;
+  match?: string;
+  interpolate?: string[];
+  [key: string]: any;
+}
+
+/** One trace's in-flight transition, resolved once at the start of a run. */
+interface AnimationRecord {
+  g: GpuTrace;
+  config: AnimationConfig;
+  phase: string;
+  delay: number;
+  duration: number;
+}
+
+/** Old→new index pairing for one trace (`g._transitionMatch`). `fallback`
+ * records the §28 reason whenever the requested strategy was not honored. */
+interface TransitionMatch {
+  strategy: string;
+  pairs: [number, number][];
+  fallback: string | null;
+}
+
+/** The CPU-side bar cache (`g._cpuBar`) bar interpolation reads back. */
+interface BarCpu {
+  pos: Float32Array;
+  value1: Float32Array;
+  value0: Float32Array | null;
+  value0Const?: number;
+  posMeta: ColumnMeta;
+  value1Meta: ColumnMeta;
+  value0Meta: ColumnMeta | null;
+  width: number;
+  [key: string]: any;
+}
+
+function xyCubicBezierProgress(value: number, points: number[]) {
   const x1 = Number(points[0]), y1 = Number(points[1]);
   const x2 = Number(points[2]), y2 = Number(points[3]);
-  const sample = (t, a, b) => {
+  const sample = (t: number, a: number, b: number) => {
     const u = 1 - t;
     return 3 * u * u * t * a + 3 * u * t * t * b + t * t * t;
   };
-  const slope = (t, a, b) => {
+  const slope = (t: number, a: number, b: number) => {
     const u = 1 - t;
     return 3 * u * u * a + 6 * u * t * (b - a) + 3 * t * t * (1 - b);
   };
@@ -38,7 +96,7 @@ function xyCubicBezierProgress(value, points) {
   return sample(t, y1, y2);
 }
 
-function xySpringProgress(value, policy) {
+function xySpringProgress(value: number, policy: SpringEasing) {
   const stiffness = Math.max(1e-6, Number(policy.stiffness) || 170);
   const damping = Math.max(1e-6, Number(policy.damping) || 26);
   const mass = Math.max(1e-6, Number(policy.mass) || 1);
@@ -48,7 +106,7 @@ function xySpringProgress(value, policy) {
   // sampled response by its value at the endpoint so progress reaches 1
   // continuously instead of snapping from a nearly-settled value on the last
   // frame.
-  const response = (progress) => {
+  const response = (progress: number) => {
     const time = progress * 6 / w0;
     if (zeta < 1) {
       const wd = w0 * Math.sqrt(1 - zeta * zeta);
@@ -62,16 +120,16 @@ function xySpringProgress(value, policy) {
   return Math.max(0, Math.min(1.15, result));
 }
 
-function xyAnimationEase(value, easing) {
+function xyAnimationEase(value: number, easing: Easing) {
   if (easing && typeof easing === "object" && !Array.isArray(easing) && easing.type === "spring") {
     return xySpringProgress(value, easing);
   }
-  const points = Array.isArray(easing) ? easing : XY_EASINGS[easing] || XY_EASINGS["ease-out"];
+  const points = Array.isArray(easing) ? easing : XY_EASINGS[easing as string] || XY_EASINGS["ease-out"];
   return xyCubicBezierProgress(value, points);
 }
 
 Object.assign(ChartView.prototype, {
-  _resolvedAnimation(trace) {
+  _resolvedAnimation(trace: TraceSpec): AnimationConfig {
     return {
       ...(this.spec.animation || {}),
       ...((trace && trace.animation) || {}),
@@ -79,21 +137,21 @@ Object.assign(ChartView.prototype, {
     };
   },
 
-  _animationEnabled(config) {
+  _animationEnabled(config: AnimationConfig) {
     if (!config._present) return false;
     if (config.enabled === false) return false;
     if (config.enabled === true) return true; // explicit opt-in overrides reduced motion
     return !this._prefersReducedMotion();
   },
 
-  _defaultEntrance(kind) {
+  _defaultEntrance(kind: string) {
     if (kind === "line" || kind === "area" || kind === "error_band") return "reveal";
     if (kind === "bar" || kind === "column") return "grow";
     if (kind === "scatter" || kind === "errorbar") return "scale";
     return "none";
   },
 
-  _setTransitionVisual(g, phase, progress, config) {
+  _setTransitionVisual(g: GpuTrace, phase: string, progress: number, config: AnimationConfig) {
     const p = Math.max(0, Math.min(1, progress));
     g._transitionOpacity = 1;
     g._transitionScale = 1;
@@ -126,7 +184,7 @@ Object.assign(ChartView.prototype, {
     if (enter === "grow") g._transitionGrow = p;
   },
 
-  _clearTransitionVisual(g) {
+  _clearTransitionVisual(g: GpuTrace) {
     delete g._transitionOpacity;
     delete g._transitionScale;
     delete g._transitionReveal;
@@ -146,17 +204,17 @@ Object.assign(ChartView.prototype, {
     ]);
   },
 
-  _emitAnimationLifecycle(stage, phase, extra = {}) {
+  _emitAnimationLifecycle(stage: string, phase: string, extra: Record<string, any> = {}) {
     const detail = { stage, phase, ...extra, view: this._eventView(`animation_${stage}`) };
     this._dispatchChartEvent(`animation_${stage}`, detail);
     this.comm?.send?.({ type: `animation_${stage}`, phase, ...extra });
   },
 
-  _runDataAnimation(phase, current, exiting = []) {
+  _runDataAnimation(phase: string, current: GpuTrace[], exiting: GpuTrace[] = []) {
     if (this._dataAnimRaf) cancelAnimationFrame(this._dataAnimRaf);
     const epoch = (this._dataAnimEpoch || 0) + 1;
     this._dataAnimEpoch = epoch;
-    const records = [];
+    const records: AnimationRecord[] = [];
     for (const g of current) {
       const config = this._resolvedAnimation(g.trace);
       const recordPhase = g._transitionPhase || phase;
@@ -221,7 +279,7 @@ Object.assign(ChartView.prototype, {
     return true;
   },
 
-  _finishDataAnimation(phase) {
+  _finishDataAnimation(phase: string) {
     this._dataAnim = null;
     if (this._transitionView) {
       this.view = { ...this._transitionView.to };
@@ -258,9 +316,9 @@ Object.assign(ChartView.prototype, {
     this._transitionOldTraces = null;
   },
 
-  _transitionMatches(previous, next, config) {
+  _transitionMatches(previous: GpuTrace, next: GpuTrace, config: AnimationConfig): TransitionMatch {
     let strategy = config.match || "index";
-    const pairs = [];
+    const pairs: [number, number][] = [];
     let fallback = next.trace.animation_fallback || null;
     if ((previous.n || 0) > 200000 || (next.n || 0) > 200000) {
       return {
@@ -310,7 +368,7 @@ Object.assign(ChartView.prototype, {
     };
   },
 
-  _recordAnimationFallback(trace, fallback) {
+  _recordAnimationFallback(trace: TraceSpec, fallback: string | null) {
     if (!trace || !fallback) return;
     trace.animation_fallback = fallback;
     if (this.root && this.root.dataset) {
@@ -318,7 +376,7 @@ Object.assign(ChartView.prototype, {
     }
   },
 
-  _preparePositionInterpolation(previous, next, config) {
+  _preparePositionInterpolation(previous: GpuTrace, next: GpuTrace, config: AnimationConfig) {
     const match = next._transitionMatch;
     const policies = config.interpolate || [];
     if (config.update !== "interpolate" || !policies.includes("position") || !match) return false;
@@ -333,8 +391,8 @@ Object.assign(ChartView.prototype, {
     }
     const startX = new Float32Array(next._cpu.x);
     const startY = new Float32Array(next._cpu.y);
-    const encode = (value, meta) => (value - (Number(meta.offset) || 0)) * (Number(meta.scale) || 1);
-    const displayedValue = (axis, index) => {
+    const encode = (value: number, meta: ColumnMeta) => (value - (Number(meta.offset) || 0)) * (Number(meta.scale) || 1);
+    const displayedValue = (axis: string, index: number) => {
       const cpu = previous._cpu[axis];
       const starts = previous[axis === "x" ? "_transitionPrevXValues" : "_transitionPrevYValues"];
       const progress = previous._transitionPositionProgress;
@@ -363,9 +421,9 @@ Object.assign(ChartView.prototype, {
     return true;
   },
 
-  _prepareBarPositionInterpolation(previous, next, match) {
-    const oldBar = previous._cpuBar;
-    const newBar = next._cpuBar;
+  _prepareBarPositionInterpolation(previous: GpuTrace, next: GpuTrace, match: TransitionMatch) {
+    const oldBar: BarCpu = previous._cpuBar;
+    const newBar: BarCpu = next._cpuBar;
     if (!oldBar || !newBar || previous.orientation !== next.orientation ||
         next.n !== newBar.pos.length || previous.n !== oldBar.pos.length) {
       match.fallback ||= "snap:layout-mismatch";
@@ -374,17 +432,17 @@ Object.assign(ChartView.prototype, {
     const startPos = new Float32Array(newBar.pos);
     const startValue1 = new Float32Array(newBar.value1);
     const startValue0 = new Float32Array(next.n);
-    const encode = (value, meta) => (value - (Number(meta.offset) || 0)) * (Number(meta.scale) || 1);
-    const decode = (value, meta) => value / (Number(meta.scale) || 1) + (Number(meta.offset) || 0);
-    const value0At = (bar, index) => bar.value0
+    const encode = (value: number, meta: ColumnMeta) => (value - (Number(meta.offset) || 0)) * (Number(meta.scale) || 1);
+    const decode = (value: number, meta: ColumnMeta) => value / (Number(meta.scale) || 1) + (Number(meta.offset) || 0);
+    const value0At = (bar: BarCpu, index: number) => bar.value0
       ? decode(bar.value0[index], bar.value0Meta)
       : Number(bar.value0Const) || 0;
-    const displayed = (values, current, meta, index) => {
+    const displayed = (values: Float32Array, current: Float32Array, meta: ColumnMeta, index: number) => {
       const progress = previous._transitionPositionProgress;
       if (!values || !Number.isFinite(progress)) return decode(current[index], meta);
       return decode(values[index] + (current[index] - values[index]) * progress, meta);
     };
-    const displayedValue0 = (index) => {
+    const displayedValue0 = (index: number) => {
       const starts = previous._transitionPrevValue0Values;
       const progress = previous._transitionPositionProgress;
       const current = value0At(oldBar, index);
@@ -432,7 +490,7 @@ Object.assign(ChartView.prototype, {
     return true;
   },
 
-  updatePayload(spec, buffer) {
+  updatePayload(spec: ChartSpec, buffer: PayloadBuffers) {
     if (this._destroyed || !spec || spec.protocol !== PROTOCOL) return false;
     if (this._dataAnimRaf) cancelAnimationFrame(this._dataAnimRaf);
     this._dataAnimRaf = null;
@@ -472,7 +530,7 @@ Object.assign(ChartView.prototype, {
     }
     this.gpuTraces = spec.traces.map((trace) => this._buildTrace(buffer, trace));
     for (const next of this.gpuTraces) {
-      const old = previous.find((candidate) => candidate.trace.id === next.trace.id && candidate.trace.kind === next.trace.kind);
+      const old = previous.find((candidate: GpuTrace) => candidate.trace.id === next.trace.id && candidate.trace.kind === next.trace.kind);
       if (old) {
         const config = this._resolvedAnimation(next.trace);
         old._transitionExitTrace = next.trace;
@@ -487,7 +545,7 @@ Object.assign(ChartView.prototype, {
       }
     }
     this._transitionOldTraces = previous;
-    const animateDomain = this.gpuTraces.some((g) => {
+    const animateDomain = this.gpuTraces.some((g: GpuTrace) => {
       const config = this._resolvedAnimation(g.trace);
       return this._animationEnabled(config) && config.update === "interpolate" &&
         (config.interpolate || []).includes("domain");
@@ -501,4 +559,4 @@ Object.assign(ChartView.prototype, {
     }
     return true;
   },
-});
+} as ThisType<ChartView> & Record<string, unknown>);

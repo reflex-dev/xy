@@ -2,7 +2,25 @@
 // WebGL2 helpers
 // ---------------------------------------------------------------------------
 
-function compile(gl, type, src) {
+/** Any CPU-side coordinate source: a decoded column view of whatever dtype
+ * the wire shipped, or a plain array. */
+type NumericArray = Float32Array | Float64Array | Uint8Array | Uint32Array | number[];
+
+/** A linked program plus its uniform-location memo (renderer audit R1). */
+export interface XyProgram extends WebGLProgram {
+  _u: Record<string, WebGLUniformLocation | null>;
+}
+
+/** Densified monotone-cubic samples; `extra` mirrors an optional third
+ * channel (an area chart's baseline) resampled on the same knots. */
+export interface SmoothResample {
+  x: Float32Array;
+  y: Float32Array;
+  extra: Float32Array | null;
+  n: number;
+}
+
+function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader {
   const sh = gl.createShader(type);
   gl.shaderSource(sh, src);
   gl.compileShader(sh);
@@ -38,8 +56,8 @@ export const ATTR_SLOTS = {
   a_rgba: 12, a_style: 13, a_stroke: 14, a_radius: 15,
 };
 
-export function makeProgram(gl, vs, fs) {
-  const p = gl.createProgram();
+export function makeProgram(gl: WebGL2RenderingContext, vs: string, fs: string): XyProgram {
+  const p = gl.createProgram() as XyProgram;
   const vsh = compile(gl, gl.VERTEX_SHADER, vs);
   const fsh = compile(gl, gl.FRAGMENT_SHADER, fs);
   gl.attachShader(p, vsh);
@@ -64,7 +82,11 @@ export function makeProgram(gl, vs, fs) {
   return p;
 }
 
-export function uniformOf(gl, prog, name) {
+export function uniformOf(
+  gl: WebGL2RenderingContext,
+  prog: XyProgram,
+  name: string
+): WebGLUniformLocation | null {
   let loc = prog._u[name];
   if (loc === undefined) {
     loc = gl.getUniformLocation(prog, name);
@@ -870,7 +892,7 @@ void main() {
 // offset-encoded f32 columns (§4) is exact. Output is capped at `maxOut`
 // vertices; past that the polyline is sub-pixel dense and smoothing is a no-op.
 // ---------------------------------------------------------------------------
-function xyMonotoneTangents(x, y, n) {
+function xyMonotoneTangents(x: NumericArray, y: NumericArray, n: number): Float64Array {
   const d = new Float64Array(n - 1);
   const m = new Float64Array(n);
   for (let i = 0; i < n - 1; i++) {
@@ -894,7 +916,13 @@ function xyMonotoneTangents(x, y, n) {
   return m;
 }
 
-export function xySmoothResample(x, y, extra, n, maxOut) {
+export function xySmoothResample(
+  x: NumericArray,
+  y: NumericArray,
+  extra: NumericArray | null,
+  n: number,
+  maxOut: number
+): SmoothResample | null {
   if (n < 3) return null;
   const sub = Math.max(1, Math.min(16, Math.floor(maxOut / n)));
   if (sub <= 1) return null; // already pixel-dense; identity at pixel scale

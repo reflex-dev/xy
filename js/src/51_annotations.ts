@@ -1,3 +1,4 @@
+import type { Rgba, StyleBag } from "./05_types";
 import { safeCssPaint } from "./20_theme";
 import { ChartView } from "./50_chartview";
 
@@ -5,6 +6,28 @@ import { ChartView } from "./50_chartview";
 // in _drawChrome; this part owns the 2D-canvas overlay — markers, arrows,
 // shape fills, and collision-nudged labels. Split out of 50_chartview.js;
 // augments the prototype so `this.*` is unchanged.
+
+/** One `spec.annotations` entry. `kind` dispatches and the per-kind members
+ * (endpoints, span bounds, symbol…) stay open the way the rest of the wire
+ * does. */
+interface AnnotationSpec {
+  kind?: string;
+  style?: StyleBag;
+  [key: string]: any;
+}
+
+/** A point (or a unit tangent) in canvas px, y-down. */
+type Point2 = number[];
+
+/** A resolved arrow path: gap-trimmed endpoints, the optional quadratic
+ * control point, and the unit tangents INTO p0/p1 (head/tail orientation). */
+interface ArrowGeometry {
+  p0: Point2;
+  p1: Point2;
+  control: Point2 | null;
+  dir0: Point2;
+  dir1: Point2;
+}
 
 // Annotation style keys consumed by the canvas shape (shaft/head/marker
 // geometry and paint) — never forwarded to the DOM label as CSS.
@@ -48,10 +71,10 @@ const XY_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
 // ("left,right,up,down" px, y-down) is the start label's extents rectangle
 // around the shifted start: the start trims to where the departure tangent
 // exits it — matplotlib's text-patch clipping.
-function xyLabelClearExit(style, tangent) {
+function xyLabelClearExit(style: StyleBag, tangent: Point2): number {
   if (typeof style.label_clear !== "string") return 0;
   const parts = style.label_clear.split(",").map(Number);
-  if (parts.length !== 4 || parts.some((p) => !Number.isFinite(p) || p < 0)) return 0;
+  if (parts.length !== 4 || parts.some((p: number) => !Number.isFinite(p) || p < 0)) return 0;
   const [left, right, up, down] = parts;
   const [tx, ty] = tangent;
   const exitX = tx > 1e-9 ? right / tx : tx < -1e-9 ? left / -tx : Infinity;
@@ -60,8 +83,10 @@ function xyLabelClearExit(style, tangent) {
   return Number.isFinite(exit) ? exit : 0;
 }
 
-function xyArrowGeometry(x0, y0, x1, y1, style) {
-  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+function xyArrowGeometry(
+  x0: number, y0: number, x1: number, y1: number, style: StyleBag,
+): ArrowGeometry {
+  const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : null);
   if (typeof style.start_offset === "string") {
     const offset = style.start_offset.split(",").map(Number);
     if (offset.length === 2 && offset.every(Number.isFinite)) {
@@ -90,7 +115,7 @@ function xyArrowGeometry(x0, y0, x1, y1, style) {
     cx = (x0 + x1) / 2 + curve * dy;
     cy = (y0 + y1) / 2 - curve * dx;
   }
-  const toward = (px, py, qx, qy) => {
+  const toward = (px: number, py: number, qx: number, qy: number): Point2 => {
     const d = Math.hypot(qx - px, qy - py) || 1;
     return [(qx - px) / d, (qy - py) / d];
   };
@@ -109,7 +134,7 @@ function xyArrowGeometry(x0, y0, x1, y1, style) {
 }
 
 // The shaft as a point list (quadratic Bézier sampled when curved).
-function xyArrowShaftPoints(geom, samples = 24) {
+function xyArrowShaftPoints(geom: ArrowGeometry, samples = 24): Point2[] {
   const [x0, y0] = geom.p0;
   const [x1, y1] = geom.p1;
   if (!geom.control) return [[x0, y0], [x1, y1]];
@@ -125,7 +150,7 @@ function xyArrowShaftPoints(geom, samples = 24) {
 
 // The polyline with `trim` px of arclength removed from its end (a tapered
 // shaft ends at the head BASE — a full-length shaft would swallow the head).
-function xyTrimPolylineEnd(points, trim) {
+function xyTrimPolylineEnd(points: Point2[], trim: number): Point2[] {
   if (!(trim > 0) || points.length < 2) return points;
   const out = points.slice();
   let remaining = trim;
@@ -146,7 +171,7 @@ function xyTrimPolylineEnd(points, trim) {
 
 // The shaft as a filled polygon whose width interpolates from w0 to w1
 // (matplotlib's fancy/simple/wedge arrowstyles are filled tapered shafts).
-function xyTaperPolygon(points, w0, w1) {
+function xyTaperPolygon(points: Point2[], w0: number, w1: number): Point2[] {
   const left = [];
   const right = [];
   const count = points.length;
@@ -165,19 +190,22 @@ function xyTaperPolygon(points, w0, w1) {
 }
 
 Object.assign(ChartView.prototype, {
-  _annotationPaint(style, fallback) {
+  _annotationPaint(style: StyleBag, fallback: Rgba) {
     return safeCssPaint(this.root, style && style.color, fallback);
   },
 
-  _annotationLabelPaint(style, fallback) {
+  _annotationLabelPaint(style: StyleBag, fallback: Rgba) {
     return safeCssPaint(this.root, style && (style.label_color || style.color), fallback);
   },
 
-  _annotationStrokePaint(style, fallback) {
+  _annotationStrokePaint(style: StyleBag, fallback: Rgba) {
     return safeCssPaint(this.root, style && style.stroke_color, fallback);
   },
 
-  _drawAnnotationMarker(ctx, x, y, style, ann) {
+  _drawAnnotationMarker(
+    ctx: CanvasRenderingContext2D, x: number, y: number,
+    style: StyleBag, ann: AnnotationSpec,
+  ) {
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     const r = Math.max(1, this._styleNumber(style, "size", Number(ann.size) || 8) / 2);
     const symbol = ["circle", "square", "diamond", "cross"].includes(ann.symbol) ? ann.symbol : "circle";
@@ -213,7 +241,10 @@ Object.assign(ChartView.prototype, {
     ctx.restore();
   },
 
-  _drawArrowLine(ctx, x0, y0, x1, y1, style) {
+  _drawArrowLine(
+    ctx: CanvasRenderingContext2D,
+    x0: number, y0: number, x1: number, y1: number, style: StyleBag,
+  ) {
     if (![x0, y0, x1, y1].every(Number.isFinite)) return;
     const geom = xyArrowGeometry(x0, y0, x1, y1, style);
     ctx.save();
@@ -257,7 +288,10 @@ Object.assign(ChartView.prototype, {
   // One arrow endpoint decoration. dir is the unit tangent INTO the point;
   // styles mirror matplotlib arrowstyles: "triangle" (filled, "-|>"/fancy),
   // "v" (open stroke, "->"), "bar" ("|-|" caps), "none".
-  _drawArrowEnd(ctx, point, dir, endStyle, head) {
+  _drawArrowEnd(
+    ctx: CanvasRenderingContext2D, point: Point2, dir: Point2,
+    endStyle: string, head: number,
+  ) {
     if (endStyle === "none") return;
     const [px, py] = point;
     const angle = Math.atan2(dir[1], dir[0]);
@@ -268,7 +302,7 @@ Object.assign(ChartView.prototype, {
       ctx.stroke();
       return;
     }
-    const wing = (side) => [
+    const wing = (side: number): Point2 => [
       px - head * Math.cos(angle - side * Math.PI / 6),
       py - head * Math.sin(angle - side * Math.PI / 6),
     ];
@@ -288,7 +322,7 @@ Object.assign(ChartView.prototype, {
     ctx.fill();
   },
 
-  _drawAnnotationShapes(ctx) {
+  _drawAnnotationShapes(ctx: CanvasRenderingContext2D) {
     const annotations = Array.isArray(this.spec.annotations) ? this.spec.annotations : [];
     if (!annotations.length) return;
     const p = this.plot;
@@ -369,7 +403,7 @@ Object.assign(ChartView.prototype, {
     ctx.restore();
   },
 
-  _drawAnnotationLabels(updateLabels) {
+  _drawAnnotationLabels(updateLabels: boolean) {
     if (!updateLabels) return;
     const annotations = Array.isArray(this.spec.annotations) ? this.spec.annotations : [];
     if (!annotations.length) return;
@@ -510,7 +544,7 @@ Object.assign(ChartView.prototype, {
       // rule stroke / arrow / marker alpha (exporter semantics), not a label
       // dimmer; only text/callout labels own their opacity.
       const opacityIsShape = ann.kind !== "text" && ann.kind !== "callout";
-      const labelStyle = {};
+      const labelStyle: StyleBag = {};
       for (const [key, value] of Object.entries(style)) {
         if (key === "opacity" && ann.kind === "text") {
           labelStyle[key] = value;
@@ -538,7 +572,7 @@ Object.assign(ChartView.prototype, {
       // its text edge, not its box edge — shift the translate by the leading
       // padding+border on each anchored side (a no-op for plain labels).
       const cs = getComputedStyle(d);
-      const edge = (pad, border) => (parseFloat(pad) || 0) + (parseFloat(border) || 0);
+      const edge = (pad: string, border: string) => (parseFloat(pad) || 0) + (parseFloat(border) || 0);
       const padL = edge(cs.paddingLeft, cs.borderLeftWidth);
       const padR = edge(cs.paddingRight, cs.borderRightWidth);
       const padT = edge(cs.paddingTop, cs.borderTopWidth);
@@ -591,4 +625,4 @@ Object.assign(ChartView.prototype, {
       }
     }
   },
-});
+} as ThisType<ChartView> & Record<string, unknown>);

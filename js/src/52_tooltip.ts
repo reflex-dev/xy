@@ -1,3 +1,4 @@
+import type { GpuTrace, Hit, Row } from "./05_types";
 import { fmtCategory, fmtNumberSpec, fmtValue } from "./30_ticks";
 import { ChartView } from "./50_chartview";
 
@@ -5,8 +6,16 @@ import { ChartView } from "./50_chartview";
 // row, denormalize units, and compose the tooltip lines/DOM. Split out of
 // 50_chartview.js; augments the prototype so `this.*` is unchanged.
 
+/** One `spec.tooltip.sources[field]` entry: the trace and channel a shared
+ * tooltip field reads from when the hovered trace doesn't carry it. */
+interface TooltipSource {
+  trace: number;
+  channel: string;
+  [key: string]: any;
+}
+
 Object.assign(ChartView.prototype, {
-  _showTooltip(hit, clientX, clientY) {
+  _showTooltip(hit: Hit, clientX: number, clientY: number) {
     const row = this._localRow(hit);
     this._lastRow = row;
     this._setTooltipAnchor(hit, row, clientX, clientY);
@@ -40,7 +49,7 @@ Object.assign(ChartView.prototype, {
     }
   },
 
-  _localRow(hit) {
+  _localRow(hit: Hit) {
     // Approximate readout from the resident f32 (used in standalone export and
     // as the instant value before the kernel's exact reply, §37). Only present
     // when CPU copies were retained (renderStandalone); the widget path replaces
@@ -106,7 +115,7 @@ Object.assign(ChartView.prototype, {
     return row;
   },
 
-  _sourceDisplayValue(g, channel, value, kind) {
+  _sourceDisplayValue(g: GpuTrace, channel: string, value: number, kind: string | undefined) {
     const axis = channel === "x" ? this._axis(g && g.xAxis) : this._axis(g && g.yAxis);
     if (channel === "x" && axis.kind === "category") {
       return [fmtCategory(value, axis.categories || []), undefined];
@@ -117,7 +126,7 @@ Object.assign(ChartView.prototype, {
     return [value, kind];
   },
 
-  _sourceValue(g, source, index) {
+  _sourceValue(g: GpuTrace, source: TooltipSource, index: number) {
     if (!g || index < 0) return [undefined, undefined];
     const channel = source.channel;
     if (channel === "x" || channel === "y") {
@@ -147,14 +156,14 @@ Object.assign(ChartView.prototype, {
     return [undefined, undefined];
   },
 
-  _applySharedTooltipFields(row) {
+  _applySharedTooltipFields(row: Row) {
     const sources = this.spec.tooltip && this.spec.tooltip.sources;
     if (!sources || typeof sources !== "object" || row.x === undefined) return;
     for (const [field, entries] of Object.entries(sources)) {
       if (!Array.isArray(entries) || row[field] !== undefined) continue;
       const source = entries.find((entry) => entry.trace === row.trace) || entries[0];
       if (!source || !Number.isFinite(Number(source.trace))) continue;
-      const g = this.gpuTraces.find((trace) => trace.trace.id === source.trace);
+      const g = this.gpuTraces.find((trace: GpuTrace) => trace.trace.id === source.trace);
       if (!g) continue;
       let idx = Number.isInteger(row.index) && source.trace === row.trace ? row.index : -1;
       if (
@@ -170,7 +179,7 @@ Object.assign(ChartView.prototype, {
     }
   },
 
-  _denormalizeUnit(value, domain) {
+  _denormalizeUnit(value: unknown, domain: number[] | undefined) {
     const v = Number(value);
     if (!Number.isFinite(v)) return v;
     if (!Array.isArray(domain) || domain.length < 2) return v;
@@ -180,7 +189,7 @@ Object.assign(ChartView.prototype, {
     return lo + v * (hi - lo);
   },
 
-  _defaultTooltipLines(row) {
+  _defaultTooltipLines(row: Row) {
     const lines = [];
     if (row.x !== undefined) lines.push(`x: ${fmtValue(row.x, row.x_kind)}`);
     if (row.y !== undefined) lines.push(`y: ${fmtValue(row.y, row.y_kind)}`);
@@ -191,26 +200,26 @@ Object.assign(ChartView.prototype, {
     return lines;
   },
 
-  _tooltipLookup(row, field) {
+  _tooltipLookup(row: Row, field: string) {
     const aliases = (this.spec.tooltip && this.spec.tooltip.aliases) || {};
     const key = row[field] !== undefined ? field : aliases[field];
     if (!key || row[key] === undefined) return [undefined, undefined];
     return [row[key], row[`${key}_kind`]];
   },
 
-  _formatTooltipValue(value, kind, format) {
+  _formatTooltipValue(value: any, kind: string | undefined, format: string) {
     const formatted = fmtNumberSpec(value, format);
     if (formatted !== null) return formatted;
     return fmtValue(value, kind);
   },
 
-  _tooltipLines(row) {
+  _tooltipLines(row: Row) {
     const tooltip = this.spec.tooltip || {};
     if (!tooltip.title && !Array.isArray(tooltip.fields)) return this._defaultTooltipLines(row);
     const formats = tooltip.format || {};
     const lines = [];
     if (typeof tooltip.title === "string") {
-      const title = tooltip.title.replace(/\{([^}]+)\}/g, (_, field) => {
+      const title = tooltip.title.replace(/\{([^}]+)\}/g, (_: string, field: string) => {
         const [value, kind] = this._tooltipLookup(row, field);
         return value === undefined ? "" : this._formatTooltipValue(value, kind, formats[field]);
       });
@@ -228,7 +237,7 @@ Object.assign(ChartView.prototype, {
   },
 
   // Anchor in data space so view changes carry the tooltip with its point.
-  _setTooltipAnchor(hit, row, clientX, clientY) {
+  _setTooltipAnchor(hit: Hit, row: Row, clientX: number, clientY: number) {
     const g = hit.g;
     if (!g) { this._tooltipAnchor = null; return; }
     const xAxis = g.xAxis || "x";
@@ -277,7 +286,7 @@ Object.assign(ChartView.prototype, {
     this._placeTooltip(pos.lx, pos.ly);
   },
 
-  _placeTooltip(lx, ly) {
+  _placeTooltip(lx: number, ly: number) {
     const tw = this.tooltip.offsetWidth;
     const th = this.tooltip.offsetHeight;
     const edge = 4;
@@ -291,7 +300,7 @@ Object.assign(ChartView.prototype, {
     this.tooltip.style.top = top + "px";
   },
 
-  _renderTooltip(row, clientX, clientY, options: any = {}) {
+  _renderTooltip(row: Row, clientX: number, clientY: number, options: any = {}) {
     if (!row || this.spec.show_tooltip === false) {
       this._hideTooltip();
       return;
@@ -301,7 +310,7 @@ Object.assign(ChartView.prototype, {
       // Text nodes, not innerHTML: category labels are user data and must never
       // be parsed as markup (a category named "<img onerror=…>" is just a label).
       this.tooltip.textContent = "";
-      lines.forEach((ln, i) => {
+      lines.forEach((ln: string, i: number) => {
         if (i) this.tooltip.appendChild(document.createElement("br"));
         this.tooltip.appendChild(document.createTextNode(ln));
       });
@@ -326,4 +335,4 @@ Object.assign(ChartView.prototype, {
       this._placeTooltip(clientX - rect.left, clientY - rect.top);
     }
   },
-});
+} as ThisType<ChartView> & Record<string, unknown>);

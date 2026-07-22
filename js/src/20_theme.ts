@@ -1,8 +1,10 @@
+import type { Rgba, Theme } from "./05_types";
+
 // ---------------------------------------------------------------------------
 // Colors & theming (§36: chrome inherits CSS; marks read --chart-* tokens)
 // ---------------------------------------------------------------------------
 
-function resolveCssColor(host, expr) {
+function resolveCssColor(host: HTMLElement, expr: string): Rgba | null {
   const probe = document.createElement("span");
   probe.style.display = "none";
   probe.style.color = expr;
@@ -16,12 +18,12 @@ function resolveCssColor(host, expr) {
   return [r / 255, g / 255, b / 255, a];
 }
 
-function cssToken(el, name) {
+function cssToken(el: HTMLElement, name: string): string | null {
   const v = getComputedStyle(el).getPropertyValue(name).trim();
   return v || null;
 }
 
-export function hexColor(hex) {
+export function hexColor(hex: string): Rgba | null {
   const h = hex.replace("#", "");
   if (!/^(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(h)) {
     return null;
@@ -32,7 +34,7 @@ export function hexColor(hex) {
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, a];
 }
 
-export function parseColor(host, c, fallback) {
+export function parseColor(host: HTMLElement, c: unknown, fallback: Rgba): Rgba {
   if (!c) return fallback;
   if (typeof c !== "string") return fallback;
   const expr = c.trim();
@@ -48,10 +50,10 @@ export function parseColor(host, c, fallback) {
   return fallback;
 }
 
-export function readTheme(root) {
+export function readTheme(root: HTMLElement): Theme {
   const text = resolveCssColor(root, "currentColor") || [0.2, 0.2, 0.2, 1];
-  const withA = (c, a) => [c[0], c[1], c[2], a];
-  const tok = (name) => {
+  const withA = (c: Rgba, a: number): Rgba => [c[0], c[1], c[2], a];
+  const tok = (name: string): Rgba | null => {
     const v = cssToken(root, name);
     return v ? resolveCssColor(root, v) || null : null;
   };
@@ -63,7 +65,7 @@ export function readTheme(root) {
   };
 }
 
-export function cssColor([r, g, b, a]: any) {
+export function cssColor([r, g, b, a]: Rgba): string {
   return `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${a})`;
 }
 
@@ -141,8 +143,8 @@ export const XY_CHROME_CSS = `
 
 // Inject XY_CHROME_CSS once per DOM root (document head or shadow root), so
 // multiple charts on one page share a single stylesheet.
-export function ensureChromeStylesheet(node) {
-  let root = node && node.getRootNode ? node.getRootNode() : document;
+export function ensureChromeStylesheet(node: Node | null): void {
+  let root: any = node && node.getRootNode ? node.getRootNode() : document;
   const isShadow = typeof ShadowRoot !== "undefined" && root instanceof ShadowRoot;
   if (!isShadow && !(root instanceof Document)) root = document; // detached subtree
   const scope = isShadow ? root : (root.head || document.head || root.documentElement);
@@ -154,9 +156,9 @@ export function ensureChromeStylesheet(node) {
   scope.appendChild(style);
 }
 
-export function safeCssPaint(host, expr, fallback = [0.5, 0.5, 0.5, 1]) {
+export function safeCssPaint(host: HTMLElement, expr: unknown, fallback: Rgba = [0.5, 0.5, 0.5, 1]): string {
   const parsed = parseColor(host, expr, fallback);
-  const color = Array.isArray(parsed) && parsed.length >= 4 && parsed.every(Number.isFinite)
+  const color: Rgba = Array.isArray(parsed) && parsed.length >= 4 && parsed.every(Number.isFinite)
     ? parsed
     : fallback;
   return cssColor(color);

@@ -1,7 +1,8 @@
 {
   "compilerOptions": {
     // The client targets evergreen WebGL2 browsers (design dossier §32);
-    // Vite/esbuild does the emit, tsc is typecheck-only.
+    // vite/oxc does the emit, tsc is typecheck-only and gates every build
+    // (js/build.mjs runs it first — oxc strips types without checking them).
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
@@ -11,13 +12,30 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    // Migration posture: the source was converted from untyped concat-order JS
-    // (see git history of js/src/*.js). Params and `this` in augmentation
-    // literals stay implicitly `any` until annotated; tighten these flags as
-    // real types land.
-    "strict": false,
-    "noImplicitAny": false,
-    "noImplicitThis": false
+
+    // Every parameter, local, and `this` in the client is typed: no value
+    // acquires `any` implicitly. Wire-shaped data is described in src/05_types.ts.
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "strictBindCallApply": true,
+    "strictFunctionTypes": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "useUnknownInCatchVariables": true,
+
+    // Not yet enabled, in dependency order — each is its own reviewable change:
+    //
+    // 1. Remove `ChartView`'s `[key: string]: any` index signature
+    //    (src/50_chartview.ts). It is what still lets `this.typo` compile and
+    //    what stops the annotated method signatures in 51–57 from being
+    //    enforced at call sites. Requires declaring ChartView's full surface:
+    //    ~172 class methods, ~119 prototype-augmented methods across 51–57
+    //    (via `declare module` merging), and ~112 instance fields.
+    // 2. `strictNullChecks` — the client leans on truthiness guards throughout;
+    //    this is the flag that would catch the null-deref classes noted during
+    //    the annotation pass. Largest remaining win, largest diff.
+    // 3. `strict: true` once 1 and 2 land.
+    "strict": false
   },
   "include": ["src/**/*.ts"]
 }

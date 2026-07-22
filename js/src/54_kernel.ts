@@ -1,4 +1,5 @@
 import { bytesToSpan } from "./00_header";
+import type { GpuTrace, TraceSpec } from "./05_types";
 import { lodApplyDensityUpdate, lodApplyDrill, lodDropDrill, lodRememberDensity } from "./45_lod";
 import { xyCreateRebinWorker } from "./46_worker";
 import { ChartView } from "./50_chartview";
@@ -8,8 +9,74 @@ import { ChartView } from "./50_chartview";
 // (§16). Split out of 50_chartview.js; augments the prototype so `this.*`
 // is unchanged.
 
+/** An inbound kernel message. `type` dispatches; the rest is wire data the
+ * kernel may widen at any time (§29), so it stays open — each branch below
+ * reads only the members its own message kind carries. */
+interface KernelMessage {
+  type: string;
+  [key: string]: any;
+}
+
+/** One per-trace entry of a `tier_update` / `density_update` / `selection`
+ * reply. Members are per-message-kind, so this stays as open as the wire. */
+interface TraceUpdate {
+  id: number;
+  [key: string]: any;
+}
+
+/** The comm's binary side-channel: one blob per `*.buf` index. The concrete
+ * view type depends on the transport (widget comm vs websocket), and every
+ * consumer re-wraps it (`_asF32`/`_asU32`/`bytesToSpan`). */
+type WireBuffers = any[];
+
+/** A resolved view as `_copyView` emits it: per-axis ranges (§9.2) plus the
+ * x/y shorthands every single-axis path reads. */
+interface ViewState {
+  ranges: Record<string, number[]>;
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}
+
+/** A data-space rectangle: a drilled window, or a view being tested against
+ * one. */
+interface DataWindow {
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}
+
+/** A density grid plus its uploaded texture — the 45_lod density cache shape.
+ * Every member is a rebuildable cache (§27), so per-producer extras stay. */
+interface DensityGrid {
+  w: number;
+  h: number;
+  max: number;
+  normMax?: number;
+  grid: Float32Array;
+  tex: WebGLTexture;
+  [key: string]: any;
+}
+
+/** A "grid" reply from the bundled re-bin worker (46_worker). */
+interface RebinResult {
+  type: string;
+  seq: number;
+  trace: string | number;
+  w: number;
+  h: number;
+  max: number;
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+  grid: ArrayBuffer;
+}
+
 Object.assign(ChartView.prototype, {
-  _scheduleViewRequest(viewOverride = this.view, opts: any = {}) {
+  _scheduleViewRequest(this: ChartView, viewOverride: ViewState = this.view, opts: any = {}) {
     if (this._destroyed || this._glLost) return;
     if (!this.comm) {
       // Kernel-less (standalone HTML): density traces refine via the bundled
@@ -17,8 +84,8 @@ Object.assign(ChartView.prototype, {
       this._scheduleSampleRebin(viewOverride, opts);
       return;
     }
-    const needsDecimated = this.spec.traces.some((t) => t.tier === "decimated");
-    const needsDensity = this.gpuTraces.some((g) => g.tier === "density");
+    const needsDecimated = this.spec.traces.some((t: TraceSpec) => t.tier === "decimated");
+    const needsDensity = this.gpuTraces.some((g: GpuTrace) => g.tier === "density");
     if (!needsDecimated && !needsDensity) return;
     const seq = opts.seq ?? ++this.seq;
     const view = this._copyView(viewOverride);
@@ -80,10 +147,10 @@ Object.assign(ChartView.prototype, {
   // Standalone (kernel-less) density refinement. Debounced like the kernel
   // request path, then the retained §28 sample re-bins in the bundled worker —
   // off the main thread — and applies like a density_update.
-  _scheduleSampleRebin(viewOverride = this.view, opts: any = {}) {
+  _scheduleSampleRebin(this: ChartView, viewOverride: ViewState = this.view, opts: any = {}) {
     if (this._destroyed || this._glLost || this._sampleRebinDisabled) return;
     const targets = (this.gpuTraces || []).filter(
-      (g) => g.tier === "density" && g.sampleOverlay && g.sampleOverlay._cpu
+      (g: GpuTrace) => g.tier === "density" && g.sampleOverlay && g.sampleOverlay._cpu
     );
     if (!targets.length) return;
     const seq = opts.seq ?? ++this.seq;
@@ -95,7 +162,7 @@ Object.assign(ChartView.prototype, {
     }, opts.delay ?? 120);
   },
 
-  _requestSampleRebin(g, view, seq) {
+  _requestSampleRebin(g: GpuTrace, view: ViewState, seq: number) {
     if (!g._homeDensity) g._homeDensity = g.density;
     // The full overview grid — binned kernel-side from every source point at
     // export — has enough resolution for any view that is not zoomed in
@@ -135,7 +202,7 @@ Object.assign(ChartView.prototype, {
         this._sampleRebinDisabled = true; // no worker: stretched overview stays
         return;
       }
-      this._rebinWorker.onmessage = (e) => this._onRebinResult(e.data);
+      this._rebinWorker.onmessage = (e: MessageEvent) => this._onRebinResult(e.data);
       this._rebinInit = new Set();
     }
     if (!this._rebinInit.has(g.trace.id)) {
@@ -163,9 +230,9 @@ Object.assign(ChartView.prototype, {
     });
   },
 
-  _onRebinResult(msg) {
+  _onRebinResult(msg: RebinResult) {
     if (this._destroyed || this._glLost || !msg || msg.type !== "grid" || msg.seq !== this.seq) return;
-    const g = this.gpuTraces.find((t) => t.trace.id === msg.trace && t.tier === "density");
+    const g = this.gpuTraces.find((t: GpuTrace) => t.trace.id === msg.trace && t.tier === "density");
     if (!g) return;
     const grid = new Float32Array(msg.grid);
     this._applySampleRebinGrid(g, {
@@ -181,7 +248,7 @@ Object.assign(ChartView.prototype, {
   // Swap the density grid/texture only — unlike lodApplyDensityUpdate this
   // leaves the retained sample overlay alone (it is the re-bin source and the
   // deep-zoom point overlay). Texture lifetime stays with the LOD cache.
-  _applySampleRebinGrid(g, density, rebinned) {
+  _applySampleRebinGrid(g: GpuTrace, density: DensityGrid, rebinned: boolean) {
     g.prevDensity = g.density;
     g._densityFadeStart = this._now();
     g.densityNormMax = density.normMax || density.max;
@@ -198,7 +265,7 @@ Object.assign(ChartView.prototype, {
   // changed. Only those GPU traces rebuild; everything else keeps its state.
   // Tiered traces then refine to the *current* window through the normal
   // stale-while-revalidate request path (§17).
-  _applyAppend(msg, buffers) {
+  _applyAppend(msg: KernelMessage, buffers: WireBuffers) {
     const spec = msg.spec;
     const blobRaw = buffers && buffers[0];
     if (!spec || !blobRaw || !spec.traces) return;
@@ -209,7 +276,7 @@ Object.assign(ChartView.prototype, {
     // - zoomed with the right edge pinned to the old live edge: slide the
     //   window forward at constant width (tail-follow).
     // - zoomed anywhere else: the user is inspecting history; don't move them.
-    const spanEps = (lo, hi) => Math.max(Math.abs(hi - lo), 1e-300) * 1e-9;
+    const spanEps = (lo: number, hi: number) => Math.max(Math.abs(hi - lo), 1e-300) * 1e-9;
     const ex = spanEps(this.view0.x0, this.view0.x1);
     const ey = spanEps(this.view0.y0, this.view0.y1);
     const atHome =
@@ -227,7 +294,7 @@ Object.assign(ChartView.prototype, {
       const w = this.view.x1 - this.view.x0;
       nextView = { ...this.view, x1: nextHome.x1, x0: nextHome.x1 - w };
     }
-    const animated = !!spec.animation || spec.traces.some((trace) => !!trace.animation);
+    const animated = !!spec.animation || spec.traces.some((trace: TraceSpec) => !!trace.animation);
     if (animated && !this._glLost && this.gl && this.updatePayload(spec, blob)) {
       // updatePayload owns previous/next GPU lifetime and matching. Preserve
       // append's follow policy instead of always animating to the new home
@@ -258,8 +325,8 @@ Object.assign(ChartView.prototype, {
     if (this._glLost || !this.gl) return;
     const texSeen = new Set();
     for (const id of msg.affected || []) {
-      const i = this.gpuTraces.findIndex((g) => g.trace.id === id);
-      const ts = spec.traces.find((t) => t.id === id);
+      const i = this.gpuTraces.findIndex((g: GpuTrace) => g.trace.id === id);
+      const ts = spec.traces.find((t: TraceSpec) => t.id === id);
       if (i < 0 || !ts) continue;
       this._destroyTraceResources(this.gpuTraces[i], texSeen);
       this.gpuTraces[i] = this._buildTrace(blob, ts);
@@ -269,14 +336,14 @@ Object.assign(ChartView.prototype, {
     this.draw();
   },
 
-  _onKernelMsg(msg, buffers) {
+  _onKernelMsg(msg: KernelMessage, buffers: WireBuffers) {
     if (this._destroyed) return;
     if (!msg) return;
     if (this._glLost && msg.type !== "append" && msg.type !== "pick_result") return;
     if (msg.type === "tier_update") {
       if (msg.seq !== this.seq) return;
       for (const upd of msg.traces) {
-        const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
+        const g = this.gpuTraces.find((t: GpuTrace) => t.trace.id === upd.id);
         if (!g) continue;
         const gl = this.gl;
         const xArr = this._asF32(buffers[upd.x.buf]);
@@ -310,12 +377,12 @@ Object.assign(ChartView.prototype, {
     } else if (msg.type === "density_update") {
       if (msg.seq !== undefined && msg.seq !== this.seq) return;
       const densityTraces = msg.traces || [];
-      const pendingTraceIds = new Set(densityTraces.map((upd) => Number(upd.id)));
+      const pendingTraceIds = new Set(densityTraces.map((upd: TraceUpdate) => Number(upd.id)));
       if (pendingTraceIds.size === 0 && msg.trace !== undefined) {
         pendingTraceIds.add(Number(msg.trace));
       }
       const clearAllPending = pendingTraceIds.size === 0 && msg.stale;
-      const clearPending = (g) => {
+      const clearPending = (g: GpuTrace) => {
         if (msg.seq !== undefined && g._lodPendingSeq !== msg.seq) return;
         g._lodPendingView = null;
         g._lodPendingSeq = null;
@@ -329,7 +396,7 @@ Object.assign(ChartView.prototype, {
         }
       }
       for (const upd of densityTraces) {
-        const g = this.gpuTraces.find((t) => t.trace.id === upd.id && t.tier === "density");
+        const g = this.gpuTraces.find((t: GpuTrace) => t.trace.id === upd.id && t.tier === "density");
         if (!g) continue;
         clearPending(g);
         if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
@@ -421,7 +488,7 @@ Object.assign(ChartView.prototype, {
 
   // Shared mask application for kernel "selection" replies and pushed
   // "selection_rows" messages — both carry the same per-trace index buffers.
-  _applySelectionBuffers(msg, buffers) {
+  _applySelectionBuffers(msg: KernelMessage, buffers: WireBuffers) {
     if (!msg.traces || !msg.traces.length) {
       for (const g of this.gpuTraces) {
         g.selActive = false;
@@ -430,7 +497,7 @@ Object.assign(ChartView.prototype, {
       return;
     }
     for (const upd of msg.traces) {
-      const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
+      const g = this.gpuTraces.find((t: GpuTrace) => t.trace.id === upd.id);
       if (!g) continue;
       // Aggregate density has no per-point marks, but a drilled view does —
       // the kernel's indices are in the drilled subset's space (§17).
@@ -453,18 +520,18 @@ Object.assign(ChartView.prototype, {
   // Drill lifecycle, exit fades, and the density-source cache live in
   // 45_lod.js (chart-agnostic). These delegates keep the ChartView API
   // stable for tests and callers.
-  _applyDrill(g, upd, buffers) {
+  _applyDrill(g: GpuTrace, upd: any, buffers: WireBuffers) {
     lodApplyDrill(this, g, upd, buffers);
   },
 
-  _dropDrill(g) {
+  _dropDrill(g: GpuTrace) {
     lodDropDrill(this, g);
   },
 
   // Is the current view fully covered by a drilled window? A tiny epsilon
   // absorbs f32 round-trip slop so we don't flip to the overview at the exact
   // window edge right after drilling in.
-  _viewInside(win) {
+  _viewInside(win: DataWindow) {
     if (!win) return false;
     const { x0, x1, y0, y1 } = this.view;
     const ex = Math.abs(x1 - x0) * 1e-4, ey = Math.abs(y1 - y0) * 1e-4;
@@ -479,7 +546,7 @@ Object.assign(ChartView.prototype, {
   // it)? Used to keep the retained density sample on screen through pans and
   // zoom-outs — the points are positioned in data space and the GPU clips the
   // off-screen ones, so overlap is the right test, not containment.
-  _viewOverlaps(win) {
+  _viewOverlaps(win: DataWindow) {
     if (!win) return false;
     const { x0, x1, y0, y1 } = this.view;
     const vx0 = Math.min(x0, x1), vx1 = Math.max(x0, x1);
@@ -489,8 +556,8 @@ Object.assign(ChartView.prototype, {
     return vx0 <= wx1 && vx1 >= wx0 && vy0 <= wy1 && vy1 >= wy0;
   },
 
-  _viewInsideRange(xRange, yRange) {
+  _viewInsideRange(xRange: number[], yRange: number[]) {
     if (!xRange || !yRange) return false;
     return this._viewInside({ x0: xRange[0], x1: xRange[1], y0: yRange[0], y1: yRange[1] });
   },
-});
+} as ThisType<ChartView> & Record<string, unknown>);

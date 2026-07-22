@@ -1,17 +1,95 @@
 import { XY_CHROME_CSS } from "./20_theme";
 import { ChartView } from "./50_chartview";
 import { markOf } from "./55_marks";
+import type { GpuTrace } from "./05_types";
 
 // ChartView interaction: pointer/drag/wheel wiring, crosshair, box + lasso
 // selection, the modebar, and the animated view (pan/zoom) state machine.
 // Split out of 50_chartview.js; augments the prototype so `this.*` is
 // unchanged. Method bodies reference kernel-comm helpers (54) at call time.
 
+/** One lasso vertex: client coordinates for the drag hit-test, plus the
+ * data-space anchor the finished polygon is actually sent in. */
+interface LassoPoint {
+  x: number;
+  y: number;
+  data: number[];
+}
+
+/** In-flight drag of one vertex handle on the editable lasso overlay.
+ * `original` restores the vertex if the gesture is cancelled. */
+interface LassoHandleDrag {
+  index: number;
+  pointerId: number;
+  original: number[];
+  handle: SVGElement;
+}
+
+/** In-flight rubber-band gesture: box zoom, box/axis select, or lasso select.
+ * `points` is lasso-only; `previousLasso` restores a replaced polygon when the
+ * new gesture turns out not to have moved. */
+interface BandState {
+  mode: string;
+  sx: number;
+  sy: number;
+  d0: number[];
+  points: LassoPoint[] | null;
+  previousLasso: number[][] | null;
+}
+
+/** In-flight pan drag: the view it started from, the axes it may move, and the
+ * union of axes it has actually changed (the "end" event's payload). */
+interface DragState {
+  px: number;
+  py: number;
+  view: any;
+  moved: boolean;
+  interactionId: number;
+  axes: string[];
+  changedAxes: string[];
+}
+
+/** In-flight modebar reposition drag off the grip. */
+interface ModebarDragState {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  dx: number;
+  dy: number;
+  moved: boolean;
+}
+
+/** A view write: per-axis `[lo, hi]` ranges keyed by axis id. Stays open — the
+ * view object's full shape is owned by 50_chartview. */
+interface ViewInput {
+  ranges?: Record<string, number[]>;
+  [key: string]: any;
+}
+
+/** Options bag threaded through the durable-state writers (view changes,
+ * selection, history): provenance, animation, and the dispatch/broadcast
+ * opt-outs that linked and history-driven applies use. */
+interface InteractionOpts {
+  source?: string;
+  interactionId?: number;
+  history?: boolean;
+  animate?: boolean;
+  duration?: number;
+  phase?: string;
+  broadcast?: boolean;
+  dispatch?: boolean;
+  anchors?: Record<string, number>;
+  axes?: string[];
+  request?: boolean;
+  requestDelay?: number;
+  requestMaxWait?: number;
+}
+
 Object.assign(ChartView.prototype, {
   _initInteraction() {
     const c = this.canvas;
-    let drag = null;
-    let band = null;
+    let drag: DragState | null = null;
+    let band: BandState | null = null;
 
     // Rubber-band overlay for box-select (§34) — DOM, above the canvas.
     // border/background come from the stylesheet (--chart-selection*).
@@ -31,9 +109,9 @@ Object.assign(ChartView.prototype, {
     this.selLasso.appendChild(this.selLassoHandles);
     this.root.appendChild(this.selLasso);
     this._lassoPolygon = null;
-    let lassoHandleDrag = null;
+    let lassoHandleDrag: LassoHandleDrag | null = null;
 
-    const moveLassoHandle = (e) => {
+    const moveLassoHandle = (e: PointerEvent) => {
       if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId
           || !this._lassoPolygon) return;
       const rect = c.getBoundingClientRect();
@@ -44,8 +122,8 @@ Object.assign(ChartView.prototype, {
       e.preventDefault();
       e.stopPropagation();
     };
-    this._listen(this.selLasso, "pointerdown", (e) => {
-      const handle = e.target.closest?.("[data-xy-selection-lasso-handle]");
+    this._listen(this.selLasso, "pointerdown", (e: PointerEvent) => {
+      const handle = (e.target as Element).closest?.("[data-xy-selection-lasso-handle]") as SVGElement;
       if (!handle || !this._lassoPolygon) return;
       const index = Number(handle.dataset.xySelectionLassoHandle);
       if (!Number.isInteger(index) || !this._lassoPolygon[index]) return;
@@ -62,7 +140,7 @@ Object.assign(ChartView.prototype, {
       e.stopPropagation();
     });
     this._listen(this.selLasso, "pointermove", moveLassoHandle);
-    this._listen(this.selLasso, "pointerup", (e) => {
+    this._listen(this.selLasso, "pointerup", (e: PointerEvent) => {
       if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
       moveLassoHandle(e);
       const handle = lassoHandleDrag.handle;
@@ -70,7 +148,7 @@ Object.assign(ChartView.prototype, {
       delete handle.dataset.xyActive;
       if (this._lassoPolygon) this._sendSelectPolygon(this._lassoPolygon);
     });
-    this._listen(this.selLasso, "pointercancel", (e) => {
+    this._listen(this.selLasso, "pointercancel", (e: PointerEvent) => {
       if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
       if (this._lassoPolygon) {
         this._lassoPolygon[lassoHandleDrag.index] = lassoHandleDrag.original;
@@ -94,11 +172,11 @@ Object.assign(ChartView.prototype, {
       this.root.appendChild(this.crosshairY);
     }
 
-    const dataAt = (clientX, clientY) => {
+    const dataAt = (clientX: number, clientY: number) => {
       const r = c.getBoundingClientRect();
       return this._dataFromCanvas(clientX - r.left, clientY - r.top);
     };
-    const lassoPointAt = (clientX, clientY) => {
+    const lassoPointAt = (clientX: number, clientY: number): LassoPoint => {
       const r = c.getBoundingClientRect();
       const cssX = Math.max(0, Math.min(r.width, clientX - r.left));
       const cssY = Math.max(0, Math.min(r.height, clientY - r.top));
@@ -109,7 +187,7 @@ Object.assign(ChartView.prototype, {
       };
     };
 
-    this._listen(c, "pointerdown", (e) => {
+    this._listen(c, "pointerdown", (e: PointerEvent) => {
       this._cancelViewAnimation();
       const canPan = this._interactionFlag("pan", true);
       const canZoom = this._interactionFlag("zoom", true);
@@ -124,7 +202,7 @@ Object.assign(ChartView.prototype, {
         : this.dragMode === "zoom" && canNavigate && canZoom && canBoxZoom ? "zoom" : null;
       if (mode) {
         const previousLasso = mode.startsWith("select") && this._lassoPolygon
-          ? this._lassoPolygon.map((point) => [...point])
+          ? this._lassoPolygon.map((point: number[]) => [...point])
           : null;
         if (mode.startsWith("select")) this._clearLassoOverlay();
         const firstLassoPoint = mode === "select-lasso" ? lassoPointAt(e.clientX, e.clientY) : null;
@@ -158,7 +236,7 @@ Object.assign(ChartView.prototype, {
         this._hideTooltip();
       }
     });
-    this._listen(c, "pointermove", (e) => {
+    this._listen(c, "pointermove", (e: PointerEvent) => {
       if (band) { this._updateBand(band, e); return; }
       if (drag) {
         drag.moved = true;
@@ -191,7 +269,7 @@ Object.assign(ChartView.prototype, {
       this._updateCrosshair(e);
       this._hover(e);
     });
-    const end = (e) => {
+    const end = (e: PointerEvent) => {
       if (band) {
         // Pointermove is not guaranteed to run at the pointer-up coordinate.
         // Capture that final vertex before deciding whether the gesture moved;
@@ -214,7 +292,7 @@ Object.assign(ChartView.prototype, {
           } else if (band.mode === "select-lasso") {
             if (band.points.length >= 3) {
               const editable = this._simplifyLassoPoints(band.points);
-              this._sendSelectPolygon(editable.map((point) => point.data));
+              this._sendSelectPolygon(editable.map((point: LassoPoint) => point.data));
             } else if (band.previousLasso) {
               this._lassoPolygon = band.previousLasso;
               this._renderLassoSelection();
@@ -269,14 +347,14 @@ Object.assign(ChartView.prototype, {
     // prefix — keyboard traversal also stores an XY for exact replies, but
     // its readout must survive mouse movement elsewhere; Escape owns it),
     // any pointerover whose target left the chart root runs the same exit.
-    this._listen(document, "pointerover", (e) => {
+    this._listen(document, "pointerover", (e: PointerEvent) => {
       if (!this._lastHoverXY || this._a11yKeyboardReadout) return;
-      if (this.root.contains(e.target)) return;
+      if (this.root.contains(e.target as Node)) return;
       this._pointerHoverExit();
     });
-    this._listen(c, "click", (e) => this._click(e));
+    this._listen(c, "click", (e: MouseEvent) => this._click(e));
 
-    this._listen(c, "wheel", (e) => {
+    this._listen(c, "wheel", (e: WheelEvent) => {
       if (!this._interactionFlag("navigation", true)) return;
       if (!this._interactionFlag("zoom", true)) return;
       if (!this._interactionFlag("wheel_zoom", true)) return;
@@ -293,7 +371,7 @@ Object.assign(ChartView.prototype, {
       if (!this._interactionFlag("double_click_reset", true)) return;
       this._resetView(true, "reset");
     });
-    this._listen(c, "keydown", (e) => {
+    this._listen(c, "keydown", (e: KeyboardEvent) => {
       if (e.key === "Escape" && (band || drag)) {
         this.selRect.style.display = "none";
         this.selLasso.style.display = "none";
@@ -303,7 +381,7 @@ Object.assign(ChartView.prototype, {
         e.stopImmediatePropagation();
       }
     });
-    this._listen(c, "keydown", (e) => this._onA11yKey(e));
+    this._listen(c, "keydown", (e: KeyboardEvent) => this._onA11yKey(e));
   },
 
   // Shared exit path for canvas pointerleave and the document-level missed-
@@ -326,13 +404,13 @@ Object.assign(ChartView.prototype, {
   },
 
   _a11yPointGroups() {
-    return (this.gpuTraces || []).filter((g) =>
+    return (this.gpuTraces || []).filter((g: GpuTrace) =>
       markOf(g.trace.kind).pointPick && g.tier !== "density" && g._cpu &&
       g._cpu.x && g._cpu.y && Math.min(g._cpu.x.length, g._cpu.y.length) > 0);
   },
 
-  _onA11yKey(e) {
-    const direction = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+  _onA11yKey(e: KeyboardEvent) {
+    const direction = ({ ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 } as Record<string, number>)[e.key];
     const activate = e.key === "Enter" || e.key === " ";
     if (direction === undefined && e.key !== "Home" && e.key !== "End" && e.key !== "Escape"
         && !activate) {
@@ -395,7 +473,7 @@ Object.assign(ChartView.prototype, {
     // density handoff, or animated tier frame.
     if (this._interactionTransitionActive()) return;
     const groups = this._a11yPointGroups();
-    const total = groups.reduce((sum, g) => sum + Math.min(g._cpu.x.length, g._cpu.y.length), 0);
+    const total = groups.reduce((sum: number, g: GpuTrace) => sum + Math.min(g._cpu.x.length, g._cpu.y.length), 0);
     if (!total) return;
     // Traversal intentionally follows trace/series data order, not visual x
     // order: sorting would change source-row identity and make streamed appends
@@ -431,7 +509,7 @@ Object.assign(ChartView.prototype, {
     this._drawKeepPick();
   },
 
-  _updateCrosshair(e) {
+  _updateCrosshair(e: PointerEvent) {
     if (!this.crosshairX || !this.crosshairY) return;
     const rect = this.canvas.getBoundingClientRect();
     const rootRect = this.root.getBoundingClientRect();
@@ -458,7 +536,7 @@ Object.assign(ChartView.prototype, {
     if (this.crosshairY) this.crosshairY.style.display = "none";
   },
 
-  _click(e) {
+  _click(e: MouseEvent) {
     if (this._ignoreNextClick) {
       this._ignoreNextClick = false;
       return;
@@ -499,7 +577,7 @@ Object.assign(ChartView.prototype, {
     }
   },
 
-  _updateBand(band, e) {
+  _updateBand(band: BandState, e: PointerEvent) {
     const rect = this.canvas.getBoundingClientRect();
     const rootRect = this.root.getBoundingClientRect();
     if (band.mode === "select-lasso") {
@@ -512,7 +590,7 @@ Object.assign(ChartView.prototype, {
           && Math.hypot(clientX - previous.x, clientY - previous.y) >= 3) {
         band.points.push({ x: clientX, y: clientY, data: this._dataFromCanvas(cssX, cssY) });
       }
-      const points = band.points.map((point) => [
+      const points = band.points.map((point: LassoPoint) => [
         Math.max(this.plot.x, Math.min(this.plot.x + this.plot.w, point.x - rootRect.left)),
         Math.max(this.plot.y, Math.min(this.plot.y + this.plot.h, point.y - rootRect.top)),
       ]);
@@ -521,7 +599,7 @@ Object.assign(ChartView.prototype, {
       this.selLasso.setAttribute("width", String(this.root.clientWidth));
       this.selLasso.setAttribute("height", String(this.root.clientHeight));
       this.selLassoPath.setAttribute(
-        "d", points.map((point, i) => `${i ? "L" : "M"}${point[0]} ${point[1]}`).join(" ") + " Z"
+        "d", points.map((point: number[], i: number) => `${i ? "L" : "M"}${point[0]} ${point[1]}`).join(" ") + " Z"
       );
       return;
     }
@@ -550,15 +628,15 @@ Object.assign(ChartView.prototype, {
     void rect;
   },
 
-  _simplifyLassoPoints(points, tolerance = 6, maxPoints = 16) {
-    const source = points.filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y));
+  _simplifyLassoPoints(points: LassoPoint[], tolerance = 6, maxPoints = 16) {
+    const source = points.filter((point: LassoPoint) => point && Number.isFinite(point.x) && Number.isFinite(point.y));
     if (source.length > 3) {
       const first = source[0], last = source[source.length - 1];
       if (Math.hypot(first.x - last.x, first.y - last.y) <= tolerance) source.pop();
     }
     if (source.length <= 3) return source.slice();
 
-    const distanceToSegmentSq = (point, start, end) => {
+    const distanceToSegmentSq = (point: LassoPoint, start: LassoPoint, end: LassoPoint) => {
       const dx = end.x - start.x, dy = end.y - start.y;
       if (dx === 0 && dy === 0) {
         return (point.x - start.x) ** 2 + (point.y - start.y) ** 2;
@@ -569,7 +647,7 @@ Object.assign(ChartView.prototype, {
       const x = start.x + t * dx, y = start.y + t * dy;
       return (point.x - x) ** 2 + (point.y - y) ** 2;
     };
-    const simplifyAt = (currentTolerance) => {
+    const simplifyAt = (currentTolerance: number) => {
       const keep = new Uint8Array(source.length);
       keep[0] = 1;
       keep[source.length - 1] = 1;
@@ -590,7 +668,7 @@ Object.assign(ChartView.prototype, {
           stack.push([start, furthest], [furthest, end]);
         }
       }
-      return source.filter((_point, index) => keep[index]);
+      return source.filter((_point: LassoPoint, index: number) => keep[index]);
     };
     let simplified = simplifyAt(tolerance);
     if (simplified.length < 3) {
@@ -677,7 +755,7 @@ Object.assign(ChartView.prototype, {
     });
   },
 
-  _sendSelect(d0, d1, opts: any = {}) {
+  _sendSelect(d0: number[], d1: number[], opts: InteractionOpts = {}) {
     this._clearLassoOverlay();
     const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
     const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
@@ -703,7 +781,7 @@ Object.assign(ChartView.prototype, {
     }
   },
 
-  _sendSelectPolygon(points, opts: any = {}) {
+  _sendSelectPolygon(points: number[][], opts: InteractionOpts = {}) {
     if (!Array.isArray(points) || points.length < 3) return;
     const polygon = points.map((point) => [point[0], point[1]]);
     if (!polygon.every((point) => point.every(Number.isFinite))) return;
@@ -728,12 +806,12 @@ Object.assign(ChartView.prototype, {
     }
   },
 
-  _selectLocalPolygon(points, opts: any = {}) {
-    const xs = points.map((point) => point[0]);
-    const ys = points.map((point) => point[1]);
+  _selectLocalPolygon(points: number[][], opts: InteractionOpts = {}) {
+    const xs = points.map((point: number[]) => point[0]);
+    const ys = points.map((point: number[]) => point[1]);
     const minX = Math.min(...xs), maxX = Math.max(...xs);
     const minY = Math.min(...ys), maxY = Math.max(...ys);
-    const inside = (x, y) => {
+    const inside = (x: number, y: number) => {
       let hit = false;
       for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
         const [xi, yi] = points[i], [xj, yj] = points[j];
@@ -774,7 +852,7 @@ Object.assign(ChartView.prototype, {
   },
 
   // Standalone selection (no kernel): mask the retained CPU f32 columns (§37).
-  _selectLocal(x0, x1, y0, y1, opts: any = {}) {
+  _selectLocal(x0: number, x1: number, y0: number, y1: number, opts: InteractionOpts = {}) {
     let total = 0;
     for (const g of this.gpuTraces) {
       // _cpu only exists where the standalone entry retained copies (retainCpu).
@@ -804,7 +882,7 @@ Object.assign(ChartView.prototype, {
     }
   },
 
-  _applySelMask(g, maskF32) {
+  _applySelMask(g: GpuTrace, maskF32: Float32Array) {
     const gl = this.gl;
     if (!g.selBuf) g.selBuf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, g.selBuf);
@@ -812,7 +890,7 @@ Object.assign(ChartView.prototype, {
     g.selActive = true;
   },
 
-  _clearSelection(opts: any = {}) {
+  _clearSelection(opts: InteractionOpts = {}) {
     this._clearLassoOverlay();
     // Clearing a durable selection is itself a durable-state change; linked
     // applies (dispatch: false) and no-op clears push nothing.
@@ -840,7 +918,7 @@ Object.assign(ChartView.prototype, {
     }
   },
 
-  _clampModebar(left, top) {
+  _clampModebar(left?: number, top?: number) {
     const bar = this._modebar;
     if (!bar || !this.root) return;
     const currentLeft = left ?? (Number.parseFloat(bar.style.left) || 0);
@@ -851,7 +929,7 @@ Object.assign(ChartView.prototype, {
     bar.style.top = `${Math.max(0, Math.min(maxTop, currentTop))}px`;
   },
 
-  _buildModebar(root) {
+  _buildModebar(root: HTMLElement) {
     if (this.spec.show_modebar === false) return;
     const bar = document.createElement("div");
     // The modebar is chrome, so keep it out of the way until the chart is
@@ -870,7 +948,7 @@ Object.assign(ChartView.prototype, {
     let setSelectMenuOpen: any = () => {};
     let setExportMenuOpen: any = () => {};
 
-    const setVisible = (visible) => {
+    const setVisible = (visible: boolean) => {
       const show = visible || this._modebarDragging || bar.contains(document.activeElement);
       bar.style.opacity = show ? "1" : "0";
       bar.style.pointerEvents = show ? "auto" : "none";
@@ -883,8 +961,8 @@ Object.assign(ChartView.prototype, {
       setExportMenuOpen(false);
     });
     this._listen(bar, "focusin", () => setVisible(true));
-    this._listen(bar, "focusout", (e) => {
-      if (!bar.contains(e.relatedTarget) && !root.matches(":hover")) setVisible(false);
+    this._listen(bar, "focusout", (e: FocusEvent) => {
+      if (!bar.contains(e.relatedTarget as Node) && !root.matches(":hover")) setVisible(false);
     });
 
     // One combined grip/menu control avoids a second, visually redundant dots
@@ -905,9 +983,9 @@ Object.assign(ChartView.prototype, {
     bar.appendChild(grip);
 
     const DRAG_THRESHOLD_PX = 6;
-    let modebarDrag = null;
+    let modebarDrag: ModebarDragState | null = null;
     let suppressGripClickUntil = 0;
-    this._listen(grip, "pointerdown", (e) => {
+    this._listen(grip, "pointerdown", (e: PointerEvent) => {
       if (e.pointerType === "mouse" && e.button !== 0) return;
       e.stopPropagation();
       const barRect = bar.getBoundingClientRect();
@@ -922,7 +1000,7 @@ Object.assign(ChartView.prototype, {
       try { grip.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
       setVisible(true);
     });
-    this._listen(grip, "pointermove", (e) => {
+    this._listen(grip, "pointermove", (e: PointerEvent) => {
       if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
       const distance = Math.hypot(e.clientX - modebarDrag.startX, e.clientY - modebarDrag.startY);
       if (!modebarDrag.moved) {
@@ -940,7 +1018,7 @@ Object.assign(ChartView.prototype, {
       const top = e.clientY - rootRect.top - modebarDrag.dy;
       this._clampModebar(left, top);
     });
-    const endModebarDrag = (e) => {
+    const endModebarDrag = (e: PointerEvent) => {
       if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
       const moved = modebarDrag.moved;
       const cancelled = e.type === "pointercancel";
@@ -954,7 +1032,7 @@ Object.assign(ChartView.prototype, {
     };
     this._listen(grip, "pointerup", endModebarDrag);
     this._listen(grip, "pointercancel", endModebarDrag);
-    this._listen(grip, "click", (e) => {
+    this._listen(grip, "click", (e: MouseEvent) => {
       e.stopPropagation();
       if (performance.now() <= suppressGripClickUntil) {
         suppressGripClickUntil = 0;
@@ -963,7 +1041,7 @@ Object.assign(ChartView.prototype, {
       setExportMenuOpen(!this._exportMenuOpen);
     });
 
-    const mk = (name, title, onClick, toggles?: any) => {
+    const mk = (name: string, title: string, onClick: () => void, toggles?: string) => {
       const b = document.createElement("button");
       b.type = "button";
       b.title = title;
@@ -975,8 +1053,8 @@ Object.assign(ChartView.prototype, {
       b.style.cssText =
         "display:flex;align-items:center;justify-content:center;pointer-events:auto;";
       this._applySlot(b, "modebar_button");
-      this._listen(b, "pointerdown", (e) => e.stopPropagation());
-      this._listen(b, "click", (e) => { e.stopPropagation(); onClick(); });
+      this._listen(b, "pointerdown", (e: PointerEvent) => e.stopPropagation());
+      this._listen(b, "click", (e: MouseEvent) => { e.stopPropagation(); onClick(); });
       bar.appendChild(b);
       if (toggles) this._modeBtns[toggles] = b;
       return b;
@@ -1064,8 +1142,8 @@ Object.assign(ChartView.prototype, {
         "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
       bar.appendChild(zoomMenu);
     }
-    const zoomMenuItems = [];
-    const mkZoomItem = (name, label, onClick, toggles?: any, separator = false) => {
+    const zoomMenuItems: HTMLButtonElement[] = [];
+    const mkZoomItem = (name: string, label: string, onClick: () => void, toggles?: string, separator = false) => {
       const button = document.createElement("button");
       button.type = "button";
       button.tabIndex = -1;
@@ -1082,8 +1160,8 @@ Object.assign(ChartView.prototype, {
       const text = document.createElement("span");
       text.textContent = label;
       button.appendChild(text);
-      this._listen(button, "pointerdown", (e) => e.stopPropagation());
-      this._listen(button, "click", (e) => {
+      this._listen(button, "pointerdown", (e: PointerEvent) => e.stopPropagation());
+      this._listen(button, "click", (e: MouseEvent) => {
         e.stopPropagation();
         setZoomMenuOpen(false, true);
         onClick();
@@ -1119,8 +1197,8 @@ Object.assign(ChartView.prototype, {
     selectMenu.style.cssText =
       "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
     bar.appendChild(selectMenu);
-    const selectMenuItems = [];
-    const mkSelectItem = (name, label, mode) => {
+    const selectMenuItems: HTMLButtonElement[] = [];
+    const mkSelectItem = (name: string, label: string, mode: string) => {
       const button = document.createElement("button");
       button.type = "button";
       button.tabIndex = -1;
@@ -1136,8 +1214,8 @@ Object.assign(ChartView.prototype, {
       const text = document.createElement("span");
       text.textContent = label;
       button.appendChild(text);
-      this._listen(button, "pointerdown", (e) => e.stopPropagation());
-      this._listen(button, "click", (e) => {
+      this._listen(button, "pointerdown", (e: PointerEvent) => e.stopPropagation());
+      this._listen(button, "click", (e: MouseEvent) => {
         e.stopPropagation();
         setSelectMenuOpen(false, true);
         this._setDragMode(mode);
@@ -1161,8 +1239,8 @@ Object.assign(ChartView.prototype, {
     exportMenu.style.cssText =
       "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
     bar.appendChild(exportMenu);
-    const exportMenuItems = [];
-    const mkExportItem = (name, label, onClick, separator = false) => {
+    const exportMenuItems: HTMLButtonElement[] = [];
+    const mkExportItem = (name: string, label: string, onClick: () => unknown, separator = false) => {
       const button = document.createElement("button");
       button.type = "button";
       button.tabIndex = -1;
@@ -1179,8 +1257,8 @@ Object.assign(ChartView.prototype, {
       const text = document.createElement("span");
       text.textContent = label;
       button.appendChild(text);
-      this._listen(button, "pointerdown", (e) => e.stopPropagation());
-      this._listen(button, "click", (e) => {
+      this._listen(button, "pointerdown", (e: PointerEvent) => e.stopPropagation());
+      this._listen(button, "click", (e: MouseEvent) => {
         e.stopPropagation();
         setExportMenuOpen(false, true);
         Promise.resolve(onClick()).catch((error) => console.error(`xy: ${label} failed`, error));
@@ -1194,7 +1272,7 @@ Object.assign(ChartView.prototype, {
     // subset renders here — pdf/html entries are Python-side formats and are
     // skipped. No config keeps the historical png/svg/csv menu; an explicit
     // empty list hides the download items entirely.
-    const EXPORT_ITEMS = {
+    const EXPORT_ITEMS: Record<string, [string, () => unknown]> = {
       png: ["Export PNG", () => this._exportRaster("png")],
       jpeg: ["Export JPEG", () => this._exportRaster("jpeg")],
       webp: ["Export WebP", () => this._exportRaster("webp")],
@@ -1210,7 +1288,7 @@ Object.assign(ChartView.prototype, {
     }
 
     if (zoomTrigger) {
-      setZoomMenuOpen = (open, restoreFocus = false) => {
+      setZoomMenuOpen = (open: boolean, restoreFocus = false) => {
         const show = Boolean(open);
         if (show) {
           setSelectMenuOpen(false);
@@ -1243,7 +1321,7 @@ Object.assign(ChartView.prototype, {
         zoomMenu.style.visibility = "visible";
       };
     }
-    setSelectMenuOpen = (open, restoreFocus = false) => {
+    setSelectMenuOpen = (open: boolean, restoreFocus = false) => {
       if (!selectTrigger) return;
       const show = Boolean(open);
       if (show) {
@@ -1276,7 +1354,7 @@ Object.assign(ChartView.prototype, {
       selectMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
       selectMenu.style.visibility = "visible";
     };
-    setExportMenuOpen = (open, restoreFocus = false) => {
+    setExportMenuOpen = (open: boolean, restoreFocus = false) => {
       // export_config(formats=[]) leaves nothing to show: the grip stays a
       // pure drag handle rather than opening an empty menu.
       const show = Boolean(open) && exportMenuItems.length > 0;
@@ -1327,13 +1405,13 @@ Object.assign(ChartView.prototype, {
       selectTrigger.style.display = on ? "flex" : "none";
     };
     this._syncModebarSelect();
-    this._listen(document, "pointerdown", (e) => {
-      if (this._zoomMenuOpen && !bar.contains(e.target)) setZoomMenuOpen(false);
-      if (this._selectMenuOpen && !bar.contains(e.target)) setSelectMenuOpen(false);
-      if (this._exportMenuOpen && !bar.contains(e.target)) setExportMenuOpen(false);
+    this._listen(document, "pointerdown", (e: PointerEvent) => {
+      if (this._zoomMenuOpen && !bar.contains(e.target as Node)) setZoomMenuOpen(false);
+      if (this._selectMenuOpen && !bar.contains(e.target as Node)) setSelectMenuOpen(false);
+      if (this._exportMenuOpen && !bar.contains(e.target as Node)) setExportMenuOpen(false);
     });
     if (zoomTrigger) {
-      this._listen(zoomTrigger, "keydown", (e) => {
+      this._listen(zoomTrigger, "keydown", (e: KeyboardEvent) => {
         if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
         e.preventDefault();
         e.stopPropagation();
@@ -1341,7 +1419,7 @@ Object.assign(ChartView.prototype, {
         const index = e.key === "ArrowDown" ? 0 : zoomMenuItems.length - 1;
         zoomMenuItems[index].focus();
       });
-      this._listen(zoomMenu, "keydown", (e) => {
+      this._listen(zoomMenu, "keydown", (e: KeyboardEvent) => {
         if (e.key === "Escape") {
           e.preventDefault();
           e.stopPropagation();
@@ -1350,7 +1428,7 @@ Object.assign(ChartView.prototype, {
         }
         if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
         e.preventDefault();
-        const current = zoomMenuItems.indexOf(document.activeElement);
+        const current = zoomMenuItems.indexOf(document.activeElement as HTMLButtonElement);
         let next = e.key === "Home" ? 0 : e.key === "End" ? zoomMenuItems.length - 1 : current;
         if (e.key === "ArrowDown") next = (current + 1) % zoomMenuItems.length;
         if (e.key === "ArrowUp") next = (current - 1 + zoomMenuItems.length) % zoomMenuItems.length;
@@ -1358,7 +1436,7 @@ Object.assign(ChartView.prototype, {
       });
     }
     if (selectTrigger) {
-      this._listen(selectTrigger, "keydown", (e) => {
+      this._listen(selectTrigger, "keydown", (e: KeyboardEvent) => {
         if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
         e.preventDefault();
         e.stopPropagation();
@@ -1366,7 +1444,7 @@ Object.assign(ChartView.prototype, {
         const index = e.key === "ArrowDown" ? 0 : selectMenuItems.length - 1;
         selectMenuItems[index].focus();
       });
-      this._listen(selectMenu, "keydown", (e) => {
+      this._listen(selectMenu, "keydown", (e: KeyboardEvent) => {
         if (e.key === "Escape") {
           e.preventDefault();
           e.stopPropagation();
@@ -1375,7 +1453,7 @@ Object.assign(ChartView.prototype, {
         }
         if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
         e.preventDefault();
-        const current = selectMenuItems.indexOf(document.activeElement);
+        const current = selectMenuItems.indexOf(document.activeElement as HTMLButtonElement);
         let next = e.key === "Home" ? 0 : e.key === "End" ? selectMenuItems.length - 1 : current;
         if (e.key === "ArrowDown") next = (current + 1) % selectMenuItems.length;
         if (e.key === "ArrowUp") {
@@ -1384,7 +1462,7 @@ Object.assign(ChartView.prototype, {
         selectMenuItems[next].focus();
       });
     }
-    this._listen(grip, "keydown", (e) => {
+    this._listen(grip, "keydown", (e: KeyboardEvent) => {
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
       // export_config(formats=[]) (or a PDF/HTML-only list) leaves no
       // client-side items: nothing to open or focus.
@@ -1395,7 +1473,7 @@ Object.assign(ChartView.prototype, {
       const index = e.key === "ArrowDown" ? 0 : exportMenuItems.length - 1;
       exportMenuItems[index].focus();
     });
-    this._listen(exportMenu, "keydown", (e) => {
+    this._listen(exportMenu, "keydown", (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -1404,7 +1482,7 @@ Object.assign(ChartView.prototype, {
       }
       if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
       e.preventDefault();
-      const current = exportMenuItems.indexOf(document.activeElement);
+      const current = exportMenuItems.indexOf(document.activeElement as HTMLButtonElement);
       let next = e.key === "Home" ? 0 : e.key === "End" ? exportMenuItems.length - 1 : current;
       if (e.key === "ArrowDown") next = (current + 1) % exportMenuItems.length;
       if (e.key === "ArrowUp") {
@@ -1442,7 +1520,7 @@ Object.assign(ChartView.prototype, {
     this._clampModebar();
   },
 
-  _setDragMode(mode) {
+  _setDragMode(mode: string) {
     this.dragMode = mode;
     // Cursor telegraphs the gesture (grab for pan, crosshair for box-zoom) but
     // lives in the defeatable :where([data-xy-slot="canvas"]) stylesheet keyed on
@@ -1456,12 +1534,12 @@ Object.assign(ChartView.prototype, {
     }
     this._zoomMenuButton?.classList.toggle("xy-active", mode === "zoom");
     this._selectMenuButton?.classList.toggle("xy-active", mode.startsWith("select"));
-    const selectionMode = {
+    const selectionMode = ({
       select: ["select", "Box Select"],
       "select-lasso": ["lasso", "Lasso Select"],
       "select-x": ["selectx", "X Range"],
       "select-y": ["selecty", "Y Range"],
-    }[mode];
+    } as Record<string, [string, string]>)[mode];
     if (selectionMode && this._selectMenuButton && this._selectMenuIcon) {
       const [iconName, label] = selectionMode;
       this._selectMenuIcon.innerHTML = this._icon(iconName);
@@ -1470,7 +1548,7 @@ Object.assign(ChartView.prototype, {
     }
   },
 
-  _actionLabel(action, axes) {
+  _actionLabel(action: string, axes: Iterable<string>) {
     const ids = Array.isArray(axes) ? axes : [...axes || []];
     if (!ids.length) return action;
     return `${action} on ${ids.join(" and ")} ${ids.length === 1 ? "axis" : "axes"}`;
@@ -1478,7 +1556,7 @@ Object.assign(ChartView.prototype, {
 
   _updateZoomMenuLabel() {
     if (!this._zoomMenuLabel || !this.view || !this.view0) return;
-    const axisPercent = (axisId, lo, hi, homeLo, homeHi) => {
+    const axisPercent = (axisId: string, lo: number, hi: number, homeLo: number, homeHi: number) => {
       const axis = this._axis(axisId);
       const span = Math.abs(this._axisCoord(axis, hi) - this._axisCoord(axis, lo));
       const homeSpan = Math.abs(
@@ -1517,7 +1595,7 @@ Object.assign(ChartView.prototype, {
     this._viewAnim = null;
   },
 
-  _setView(next, opts: any = {}) {
+  _setView(next: ViewInput, opts: InteractionOpts = {}) {
     if (this._destroyed) return [];
     const target = this._clampView(this._viewFrom(next), { anchors: opts.anchors });
     const changedAxes = this._axisIds().filter((axisId) => {
@@ -1591,22 +1669,22 @@ Object.assign(ChartView.prototype, {
       interactionId: opts.interactionId,
       broadcast: opts.broadcast,
     };
-    const lerp = (a, b, t) => a + (b - a) * t;
-    const span = (v) => Math.max(
+    const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+    const span = (v: ViewInput) => Math.max(
       ...this._axisIds().map((axisId) => {
         const [lo, hi] = this._axisRange(axisId, v);
         return Math.abs(hi - lo);
       }),
       1e-12,
     );
-    const closeEnough = (a, b) => {
+    const closeEnough = (a: ViewInput, b: ViewInput) => {
       const tol = span(b) * 1e-4;
       return Math.max(...this._axisIds().flatMap((axisId) => {
         const ar = this._axisRange(axisId, a), br = this._axisRange(axisId, b);
         return [Math.abs(ar[0] - br[0]), Math.abs(ar[1] - br[1])];
       })) <= tol;
     };
-    const step = (nowFrame) => {
+    const step = (nowFrame: number) => {
       if (this._destroyed) { this._animRaf = null; return; }
       const anim = this._viewAnim;
       if (!anim) { this._animRaf = null; return; }
@@ -1614,7 +1692,7 @@ Object.assign(ChartView.prototype, {
       anim.last = nowFrame;
       const k = 1 - Math.exp(-dt / anim.tau);
       const t = closeEnough(this.view, anim.target) ? 1 : k;
-      const ranges = {};
+      const ranges: Record<string, number[]> = {};
       for (const axisId of this._axisIds()) {
         const current = this._axisRange(axisId), targetRange = this._axisRange(axisId, anim.target);
         ranges[axisId] = [
@@ -1647,7 +1725,7 @@ Object.assign(ChartView.prototype, {
   // Keep a proposed viewport wholly inside each axis's optional hard bounds.
   // Work in scale coordinates so log bounds clamp multiplicatively, while
   // preserving the range direction used by reversed axes.
-  _zoomLimitForAxis(axisId) {
+  _zoomLimitForAxis(axisId: string) {
     if (!this._axisPolicy("zoom_axes").includes(axisId)) return [null, null];
     const configured = this.interaction?.zoom_limits;
     if (configured && typeof configured === "object" && !Array.isArray(configured)) {
@@ -1657,7 +1735,7 @@ Object.assign(ChartView.prototype, {
     return [1, null];
   },
 
-  _clampAxisRange(axisId, lo, hi, anchorFrac = 0.5) {
+  _clampAxisRange(axisId: string, lo: number, hi: number, anchorFrac = 0.5) {
     const axis = this._axis(axisId);
     let c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
     if (![c0, c1].every(Number.isFinite) || c0 === c1) return this._axisRange(axisId, this.view0);
@@ -1716,9 +1794,9 @@ Object.assign(ChartView.prototype, {
     return [this._axisValue(axis, first), this._axisValue(axis, second)];
   },
 
-  _clampView(view, opts: any = {}) {
+  _clampView(view: ViewInput, opts: InteractionOpts = {}) {
     const candidate = this._viewFrom(view, this.view0);
-    const ranges = {};
+    const ranges: Record<string, number[]> = {};
     for (const axisId of this._axisIds()) {
       const [lo, hi] = this._axisRange(axisId, candidate);
       ranges[axisId] = this._clampAxisRange(axisId, lo, hi, opts.anchors?.[axisId] ?? 0.5);
@@ -1732,7 +1810,7 @@ Object.assign(ChartView.prototype, {
     return new Set(this._axisPolicy("zoom_axes"));
   },
 
-  _zoomBy(f, animate = false, source = f < 1 ? "zoom_in" : "zoom_out") {
+  _zoomBy(f: number, animate = false, source = f < 1 ? "zoom_in" : "zoom_out") {
     const base = this._viewAnim ? this._viewAnim.target : this.view;
     const axes = this._zoomAxes();
     const ranges = Object.fromEntries(
@@ -1751,7 +1829,7 @@ Object.assign(ChartView.prototype, {
     });
   },
 
-  _zoomAxisRange(axisId, lo, hi, f, anchorFrac) {
+  _zoomAxisRange(axisId: string, lo: number, hi: number, f: number, anchorFrac: number) {
     const axis = this._axis(axisId);
     const c0 = this._axisCoord(axis, lo);
     const c1 = this._axisCoord(axis, hi);
@@ -1791,17 +1869,17 @@ Object.assign(ChartView.prototype, {
     ];
   },
 
-  _zoomAt(f, fx, fy, animate = false, duration = 120, opts: any = {}) {
+  _zoomAt(f: number, fx: number, fy: number, animate = false, duration = 120, opts: InteractionOpts = {}) {
     const base = this._viewAnim ? this._viewAnim.target : this.view;
     // An axis-band gesture scopes the zoom to the hovered axis (§6 of
     // view-state.md); the policy still filters, never grants.
     const axes = Array.isArray(opts.axes)
-      ? new Set(opts.axes.filter((axisId) => this._zoomAxes().has(axisId)))
+      ? new Set(opts.axes.filter((axisId: string) => this._zoomAxes().has(axisId)))
       : this._zoomAxes();
     const ranges = Object.fromEntries(
       this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId, base)]])
     );
-    const anchors = {};
+    const anchors: Record<string, number> = {};
     for (const axisId of axes) {
       const anchor = this._axisDim(axisId) === "x" ? fx : fy;
       const [lo, hi] = ranges[axisId];
@@ -1819,7 +1897,7 @@ Object.assign(ChartView.prototype, {
     });
   },
 
-  _queueWheelZoom(factor, fx, fy, axesScope = null) {
+  _queueWheelZoom(factor: number, fx: number, fy: number, axesScope: string[] | null = null) {
     if (!Number.isFinite(factor) || factor <= 0) return;
     // A queued delta keeps the gesture open: kill the pending end timer here,
     // not in the rAF. Otherwise a wheel event landing just before the 90 ms
@@ -1893,9 +1971,9 @@ Object.assign(ChartView.prototype, {
 
   // Box-zoom: fit the view to the dragged data rectangle (§16 precision floor;
   // ignore degenerate drags that would collapse a span below f32 resolution).
-  _zoomToBox(d0, d1, animate = false, opts: any = {}) {
+  _zoomToBox(d0: number[], d1: number[], animate = false, opts: InteractionOpts = {}) {
     const axes = this._zoomAxes();
-    const fractions = {};
+    const fractions: Record<string, number[]> = {};
     for (const dim of ["x", "y"]) {
       const primary = this._axis(dim);
       const [lo, hi] = this._axisRange(dim);
@@ -1908,7 +1986,7 @@ Object.assign(ChartView.prototype, {
     const ranges = Object.fromEntries(
       this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
     );
-    const anchors = {};
+    const anchors: Record<string, number> = {};
     for (const axisId of axes) {
       const axis = this._axis(axisId);
       const [lo, hi] = ranges[axisId];
@@ -1934,7 +2012,7 @@ Object.assign(ChartView.prototype, {
     });
   },
 
-  _resetView(animate = true, source = "reset", axesOverride = null) {
+  _resetView(animate = true, source = "reset", axesOverride: string[] | null = null) {
     const ranges = Object.fromEntries(
       this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId)]])
     );
@@ -1957,7 +2035,7 @@ Object.assign(ChartView.prototype, {
     return config && typeof config === "object" ? config : {};
   },
 
-  _exportFilename(extension) {
+  _exportFilename(extension: string) {
     const configured = this._exportConfig().filename;
     if (typeof configured === "string" && configured) return `${configured}.${extension}`;
     const title = String(this.spec.title || "xy-chart")
@@ -1968,7 +2046,7 @@ Object.assign(ChartView.prototype, {
     return `${title}.${extension}`;
   },
 
-  _downloadExport(blob, filename) {
+  _downloadExport(blob: Blob, filename: string) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -2039,7 +2117,7 @@ Object.assign(ChartView.prototype, {
       '[data-xy-slot="modebar"],[data-xy-slot="tooltip"],' +
       '[data-xy-slot="selection"],[data-xy-selection-lasso-overlay],' +
       '[data-xy-slot="crosshair_x"],[data-xy-slot="crosshair_y"]'
-    ).forEach((node) => node.remove());
+    ).forEach((node: Element) => node.remove());
     const stylesheet = document.createElement("style");
     stylesheet.textContent = XY_CHROME_CSS;
     clone.prepend(stylesheet);
@@ -2061,12 +2139,12 @@ Object.assign(ChartView.prototype, {
     return this._exportRaster("png");
   },
 
-  _exportRaster(format) {
+  _exportRaster(format: string) {
     const svg = this._exportSvgMarkup();
     const sourceUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
     const image = new Image();
     const config = this._exportConfig();
-    const mime = { png: "image/png", jpeg: "image/jpeg", webp: "image/webp" }[format];
+    const mime = ({ png: "image/png", jpeg: "image/jpeg", webp: "image/webp" } as Record<string, string>)[format];
     if (!mime) return Promise.reject(new Error(`unsupported raster export ${format}`));
     return new Promise<void>((resolve, reject) => {
       image.onload = () => {
@@ -2121,7 +2199,7 @@ Object.assign(ChartView.prototype, {
   _exportCsvText() {
     const columns = ["trace", "name", "kind", "index", "x", "y", "x0", "x1", "y0", "y1", "value"];
     const rows = [columns];
-    const clean = (value) => Number.isFinite(value) ? value : "";
+    const clean = (value: number) => Number.isFinite(value) ? value : "";
     for (const g of this.gpuTraces || []) {
       const trace = g.trace || {};
       const prefix = [trace.id ?? "", trace.name ?? "", trace.kind ?? ""];
@@ -2159,7 +2237,7 @@ Object.assign(ChartView.prototype, {
           "", "", "", "", ""]);
       }
     }
-    const quote = (value) => {
+    const quote = (value: unknown) => {
       const text = String(value ?? "");
       const escaped = text.split('"').join('""');
       return text.includes(",") || text.includes('"') || text.includes("\r") || text.includes("\n")
@@ -2176,9 +2254,9 @@ Object.assign(ChartView.prototype, {
     );
   },
 
-  _icon(name) {
+  _icon(name: string) {
     // Inline stroke SVGs (currentColor) — no external assets (§33 no supply chain).
-    const svg = (body) =>
+    const svg = (body: string) =>
       `<svg width="15" height="15" viewBox="0 0 20 20" fill="none" ` +
       `stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ` +
       `stroke-linejoin="round">${body}</svg>`;
@@ -2252,4 +2330,4 @@ Object.assign(ChartView.prototype, {
         return svg("");
     }
   },
-});
+} as ThisType<ChartView> & Record<string, unknown>);
