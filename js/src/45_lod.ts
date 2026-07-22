@@ -285,6 +285,49 @@ export function lodSampleForView(view, g) {
   return null;
 }
 
+// Overlay liveness: overlays die with their evicted cache entries (T9), so a
+// reference retained across frames (`_shownSampleOverlay`) must be
+// revalidated against the cache before another frame draws with it —
+// otherwise a hold could draw an overlay whose GL buffers were deleted.
+function lodOverlayAlive(g, s) {
+  if (!s) return false;
+  if (s === g.sampleOverlay) return true;
+  const cache = g.densityCache || (g.density ? [g.density] : []);
+  for (const d of cache) {
+    if (d && d.overlay === s) return true;
+  }
+  return !!(g.density && g.density.overlay === s);
+}
+
+// The T9 pick with the T5 stale-while-revalidate hold: while a FRESH refresh
+// for this view is in flight, switching the drawn overlay to a *broader*
+// cached window's sample — on zoom-out the smallest covering window is the
+// home/init one — reads as the chart resetting to its initial view while it
+// loads, and the reply switches it again moments later (the double
+// transition, live-drilldown field report). Keep the overlay already on
+// screen instead: its alpha stays the pure T9 coverage function of (view,
+// window) — full while its window covers the view amply, coverage-faded
+// (overplot-compensated) beyond, invisible past the band — so a held overlay
+// can never read as a false cluster, and a deep-enough zoom-out simply draws
+// no points until the reply lands (the density backdrop keeps T1). Finer or
+// same-size content is never a "reset": those switches happen immediately.
+// The reply — or the T8 age-out for a stranded pending — releases the hold
+// and the pure (view, cache) selection above resumes.
+export function lodSampleForViewHeld(view, g) {
+  const pick = lodSampleForView(view, g);
+  const shown = g._shownSampleOverlay;
+  if (!shown || (pick && pick.overlay === shown)) return pick;
+  if (
+    pick && pick.overlay && shown.win &&
+    lodWindowArea(pick.overlay.win) <= lodWindowArea(shown.win)
+  ) {
+    return pick;
+  }
+  if (!lodPendingFresh(view, g) || !lodOverlayAlive(g, shown)) return pick;
+  const alpha = lodSampleViewAlpha(view, shown);
+  return alpha > 0 ? { overlay: shown, alpha } : null;
+}
+
 function lodDensityForView(view, g) {
   const cache = g.densityCache || (g.density ? [g.density] : []);
   let best = null;

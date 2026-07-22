@@ -3,7 +3,7 @@ import { buildLutData, colormapStops } from "./10_colormaps";
 import { cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
 import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
-import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
+import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodRememberDensity, lodSampleForViewHeld, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
 
 // ---------------------------------------------------------------------------
@@ -2424,9 +2424,13 @@ export class ChartView {
   // cluster lingering. Only a view no cached window covers draws a partial
   // overlay, bounded by the T9 coverage fade (overplot-compensated, so the
   // band value is what actually composites on screen — a fading sample must
-  // LOOK faded). The "sampled n of N" badge tracks what is actually drawn.
+  // LOOK faded). While a FRESH refresh for this view is in flight the pick is
+  // held to the overlay already on screen instead of switching to a broader
+  // (home/init) window's sample — stale-while-revalidate, T5; the reply or
+  // the T8 age-out releases it (lodSampleForViewHeld). The "sampled n of N"
+  // badge tracks what is actually drawn.
   _drawDensitySample(g, x0, x1, y0, y1, opacityScale = 1) {
-    const pick = lodSampleForView(this, g);
+    const pick = lodSampleForViewHeld(this, g);
     const s = pick && pick.overlay;
     const changed = (g._shownSampleOverlay || null) !== (s || null);
     g._shownSampleOverlay = s || null;

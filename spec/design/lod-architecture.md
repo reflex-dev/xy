@@ -373,9 +373,21 @@ invariants so future kinds don't regress them:
   per-point alpha is solved as a = 1−(1−band)^(1/k), with k estimated from
   the drawn count, mean point footprint, and the window's on-screen area;
   k ≤ 1 degenerates to the band value exactly. Selection and alpha are pure
-  functions of (view, cache): every zoom frame re-derives them, nothing
-  latches. Overlays die with their evicted cache entry (except the home/init
-  overlay, the standalone re-bin worker's CPU-side source), and the
+  functions of (view, cache) — with ONE bounded exception: while a FRESH
+  refresh for the view is in flight, the pick is held to the overlay already
+  on screen instead of switching to a *broader* cached window's sample
+  (`lodSampleForViewHeld`). On zoom-out the smallest covering window is the
+  home/init one, and flashing the initial view's point cloud mid-load — then
+  switching again when the reply landed — read as the chart resetting
+  (live-drilldown field report). The held overlay's alpha stays this
+  invariant's pure coverage function (a deep-enough zoom-out draws no points
+  until the reply lands; the density backdrop keeps T1), finer/same-size
+  switches are never held (zoom-in unchanged), and the hold is released by
+  the reply or the T8 age-out — so nothing latches beyond one round-trip.
+  Overlays die with their evicted cache entry (except the home/init
+  overlay, the standalone re-bin worker's CPU-side source) and a held
+  reference is revalidated against the cache every frame
+  (`lodOverlayAlive`), and the
   "sampled n of N" badge reports the overlay actually drawn.
 - **T10 — the aggregate backdrop is continuous through transitions, and
   retires when the drill settles:** the density texture draws under the

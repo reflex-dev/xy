@@ -35,6 +35,18 @@ in the README).
   to the internal engine object.
 
 ### Changed
+- **Zooming out no longer flashes the initial view's point sample while the
+  fresh reply loads (T5/T9).** The T9 overlay selection draws the sample of
+  the smallest cached window covering the view — on zoom-out that is the
+  home/init overlay, so the initial point cloud popped in at full alpha
+  mid-load and was replaced again when the reply landed. While a fresh
+  refresh for the view is in flight, `lodSampleForViewHeld` now keeps the
+  overlay already on screen instead of switching to a broader window's
+  sample; its alpha stays the pure T9 coverage fade (a deep-enough zoom-out
+  draws no points until the reply lands — the density backdrop keeps the
+  frame covered), finer/same-size switches (zoom-in) are never held, and the
+  hold releases on the reply or the T8 age-out, so nothing latches beyond
+  one round-trip.
 - **Zooming out of a drill keeps the exact points on screen until the fresh
   reply lands (T5/T8).** The client exit-faded drilled marks the moment the
   view left their window, even with a refresh already in flight — the frame
