@@ -112,6 +112,8 @@ RELEASE_YML = (
     "    permissions:\n"
     "      id-token: write\n"
     "    steps:\n"
+    "      - run: python scripts/verify_source_qualification.py --help\n"
+    "      - run: python scripts/release_provenance.py --help\n"
     "      - uses: pypa/gh-action-pypi-publish@release/v1\n" + ("release workflow padding\n" * 100)
 )
 DEFAULT_PKG_INFO = (

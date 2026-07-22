@@ -18,6 +18,7 @@ on:
       - "20[0-9][0-9].[0-9]*"
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -58,9 +59,40 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "source_sha=$SHA" >> "$GITHUB_OUTPUT"
 
+  qualify:
+    name: Qualify Exact Tagged Source
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch main and tags
+        run: git fetch --force origin main:refs/remotes/origin/main 'refs/tags/*:refs/tags/*'
+
+      - name: Require hard CI and exact tag
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: >-
+          python3 scripts/verify_source_qualification.py
+          --sha "$SOURCE_SHA"
+          --repository "$GITHUB_REPOSITORY"
+          --tag "$VERSION"
+          --wait-seconds 3600
+
   build:
     name: Build Versioned Images
-    needs: prepare
+    needs: [prepare, qualify]
     permissions:
       contents: read
     uses: ./.github/workflows/_build-docs-images.yml
@@ -79,6 +111,8 @@ jobs:
       image_tag: ${{ needs.prepare.outputs.version }}
       environment: stg
       source_ref: ${{ needs.prepare.outputs.source_sha }}
+      frontend_digest: ${{ needs.build.outputs.frontend_digest }}
+      backend_digest: ${{ needs.build.outputs.backend_digest }}
       auto_merge: true
     secrets: inherit
 
@@ -93,9 +127,50 @@ jobs:
     steps:
       - run: echo "Approved for production promotion"
 
+  verify-prod-artifacts:
+    name: Verify Production Image Digests
+    needs: [prepare, build, await-prod-approval]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885 # v6.1.1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+          mask-aws-account-id: true
+
+      - name: Verify promoted images are the built artifacts
+        env:
+          IMAGE_TAG: ${{ needs.prepare.outputs.version }}
+          EXPECTED_FRONTEND: ${{ needs.build.outputs.frontend_digest }}
+          EXPECTED_BACKEND: ${{ needs.build.outputs.backend_digest }}
+        run: |
+          ACTUAL_FRONTEND=$(aws ecr describe-images \
+            --repository-name xy/frontend \
+            --image-ids "imageTag=${IMAGE_TAG}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
+          ACTUAL_BACKEND=$(aws ecr describe-images \
+            --repository-name xy/backend \
+            --image-ids "imageTag=${IMAGE_TAG}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
+          if [[ "$ACTUAL_FRONTEND" != "$EXPECTED_FRONTEND" ]]; then
+            echo "::error::frontend tag changed after the qualified build"
+            exit 1
+          fi
+          if [[ "$ACTUAL_BACKEND" != "$EXPECTED_BACKEND" ]]; then
+            echo "::error::backend tag changed after the qualified build"
+            exit 1
+          fi
+
   release:
     name: Create GitHub Release
-    needs: [prepare, await-prod-approval]
+    needs: [prepare, build, verify-prod-artifacts]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -106,13 +181,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
           SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          FRONTEND_DIGEST: ${{ needs.build.outputs.frontend_digest }}
+          BACKEND_DIGEST: ${{ needs.build.outputs.backend_digest }}
           REPO: ${{ github.repository }}
         run: |
           if gh release view "$VERSION" --repo "$REPO" >/dev/null 2>&1; then
             echo "::notice::Release $VERSION already exists"
             exit 0
           fi
-          NOTES=$(printf "Production deployment of XY docs.\n\n**Source SHA:** \`%s\`\n**Image tag:** \`%s\`" "$SOURCE_SHA" "$VERSION")
+          NOTES=$(printf "Production deployment of XY docs.\n\n**Source SHA:** \`%s\`\n**Image tag:** \`%s\`\n**Frontend digest:** \`%s\`\n**Backend digest:** \`%s\`" "$SOURCE_SHA" "$VERSION" "$FRONTEND_DIGEST" "$BACKEND_DIGEST")
           gh release create "$VERSION" \
             --repo "$REPO" \
             --title "Release $VERSION" \
@@ -121,7 +198,7 @@ jobs:
 
   helm-pr-prod:
     name: Update Production Helm Values
-    needs: [prepare, await-prod-approval, release]
+    needs: [prepare, build, verify-prod-artifacts, release]
     permissions:
       contents: read
     uses: ./.github/workflows/_helm-docs-pr.yml
@@ -129,5 +206,7 @@ jobs:
       image_tag: ${{ needs.prepare.outputs.version }}
       environment: prod
       source_ref: ${{ needs.prepare.outputs.source_sha }}
+      frontend_digest: ${{ needs.build.outputs.frontend_digest }}
+      backend_digest: ${{ needs.build.outputs.backend_digest }}
       auto_merge: true
     secrets: inherit

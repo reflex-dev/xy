@@ -19,6 +19,14 @@ on:
         description: "Source commit SHA from reflex-dev/xy"
         required: true
         type: string
+      frontend_digest:
+        description: "Immutable sha256 digest for the frontend image"
+        required: true
+        type: string
+      backend_digest:
+        description: "Immutable sha256 digest for the backend image"
+        required: true
+        type: string
       auto_merge:
         description: "Merge the Helm PR immediately"
         required: false
@@ -46,6 +54,8 @@ jobs:
           IMAGE_TAG: ${{ inputs.image_tag }}
           ENVIRONMENT: ${{ inputs.environment }}
           SOURCE_REF: ${{ inputs.source_ref }}
+          FRONTEND_DIGEST: ${{ inputs.frontend_digest }}
+          BACKEND_DIGEST: ${{ inputs.backend_digest }}
         run: |
           if [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9._-]+$ ]] || [[ "${#IMAGE_TAG}" -gt 128 ]]; then
             echo "::error::image_tag must match [A-Za-z0-9._-]+ and be <=128 characters"
@@ -59,6 +69,12 @@ jobs:
             echo "::error::source_ref contains unsafe characters"
             exit 1
           fi
+          for DIGEST in "$FRONTEND_DIGEST" "$BACKEND_DIGEST"; do
+            if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::image digests must be sha256 digests"
+              exit 1
+            fi
+          done
 
       - name: Generate GitHub App token
         id: app-token
@@ -132,11 +148,15 @@ jobs:
         env:
           BRANCH: ${{ steps.check.outputs.branch }}
           IMAGE_TAG: ${{ inputs.image_tag }}
+          FRONTEND_DIGEST: ${{ inputs.frontend_digest }}
+          BACKEND_DIGEST: ${{ inputs.backend_digest }}
           VALUES_FILE: ${{ steps.values.outputs.file }}
         run: |
           git checkout -b "$BRANCH"
-          IMAGE_TAG="$IMAGE_TAG" yq -i '.apps.xy.frontend.image.tag = strenv(IMAGE_TAG)' "$VALUES_FILE"
-          IMAGE_TAG="$IMAGE_TAG" yq -i '.apps.xy.backend.image.tag = strenv(IMAGE_TAG)' "$VALUES_FILE"
+          FRONTEND_REF="${IMAGE_TAG}@${FRONTEND_DIGEST}" \
+            yq -i '.apps.xy.frontend.image.tag = strenv(FRONTEND_REF)' "$VALUES_FILE"
+          BACKEND_REF="${IMAGE_TAG}@${BACKEND_DIGEST}" \
+            yq -i '.apps.xy.backend.image.tag = strenv(BACKEND_REF)' "$VALUES_FILE"
           # ChartVersion reconcile strategy: Flux only repackages the chart
           # when Chart.yaml's version changes, so bump patch every deploy.
           CHART_FILE="$(dirname "$VALUES_FILE")/Chart.yaml"
@@ -176,6 +196,8 @@ jobs:
           VALUES_FILE: ${{ steps.values.outputs.file }}
           FRONTEND_IMAGE: ${{ env.FRONTEND_IMAGE }}
           BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
+          FRONTEND_DIGEST: ${{ inputs.frontend_digest }}
+          BACKEND_DIGEST: ${{ inputs.backend_digest }}
           REPO: ${{ github.repository }}
           SERVER_URL: ${{ github.server_url }}
           RUN_ID: ${{ github.run_id }}
@@ -187,10 +209,10 @@ jobs:
             echo "**Values file:** \`${VALUES_FILE}\`"
             echo "**Image tag:** \`${IMAGE_TAG}\`"
             echo ""
-            echo "**Frontend:** \`${FRONTEND_IMAGE}:${IMAGE_TAG}\`"
-            echo "**Backend:** \`${BACKEND_IMAGE}:${IMAGE_TAG}\`"
+            echo "**Frontend:** \`${FRONTEND_IMAGE}:${IMAGE_TAG}@${FRONTEND_DIGEST}\`"
+            echo "**Backend:** \`${BACKEND_IMAGE}:${IMAGE_TAG}@${BACKEND_DIGEST}\`"
             echo ""
-            echo "Updates \`apps.xy.frontend.image.tag\` and \`apps.xy.backend.image.tag\`."
+            echo "Pins \`apps.xy.frontend.image.tag\` and \`apps.xy.backend.image.tag\` to immutable digests."
             echo ""
             echo "---"
             echo "**Source commit:** https://github.com/${REPO}/commit/${SOURCE_REF}"
@@ -229,6 +251,8 @@ jobs:
           ENVIRONMENT: ${{ inputs.environment }}
           IMAGE_TAG: ${{ inputs.image_tag }}
           VALUES_FILE: ${{ steps.values.outputs.file }}
+          FRONTEND_DIGEST: ${{ inputs.frontend_digest }}
+          BACKEND_DIGEST: ${{ inputs.backend_digest }}
         run: |
           {
             echo "### XY docs Helm PR created"
@@ -236,4 +260,6 @@ jobs:
             echo "**Environment:** ${ENVIRONMENT}"
             echo "**Values file:** \`${VALUES_FILE}\`"
             echo "**Image tag:** \`${IMAGE_TAG}\`"
+            echo "**Frontend digest:** \`${FRONTEND_DIGEST}\`"
+            echo "**Backend digest:** \`${BACKEND_DIGEST}\`"
           } >> "$GITHUB_STEP_SUMMARY"

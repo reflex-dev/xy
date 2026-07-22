@@ -18,7 +18,69 @@ on:
         type: boolean
         default: true
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
+  qualify:
+    name: Qualify exact source SHA
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      release_tag: ${{ steps.source.outputs.release_tag }}
+      release_metadata: ${{ steps.source.outputs.release_metadata }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch qualification refs
+        run: git fetch --force origin main:refs/remotes/origin/main 'refs/tags/*:refs/tags/*'
+      - name: Resolve immutable release source
+        id: source
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          source_sha=$(git rev-parse "${EVENT_SHA}^{commit}")
+          release_tag="$REF_NAME"
+          release_metadata=true
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+            release_tag="v${version}"
+            if [[ "$DRY_RUN" == "true" ]]; then
+              release_metadata=false
+            fi
+          fi
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "release_metadata=$release_metadata" >> "$GITHUB_OUTPUT"
+      - name: Require exact-SHA hard-suite success
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_METADATA: ${{ steps.source.outputs.release_metadata }}
+          RELEASE_TAG: ${{ steps.source.outputs.release_tag }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          args=(
+            --sha "$SOURCE_SHA"
+            --repository "$GITHUB_REPOSITORY"
+            --tag "$RELEASE_TAG"
+            --wait-seconds 3600
+          )
+          if [[ "$RELEASE_METADATA" == "true" ]]; then
+            args+=(--release-metadata)
+          else
+            # A pre-tag dry run still requires main ancestry and exact hard CI;
+            # only publication metadata is deferred because nothing publishes.
+            args=(--sha "$SOURCE_SHA" --repository "$GITHUB_REPOSITORY" --wait-seconds 3600)
+          fi
+          python3 scripts/verify_source_qualification.py "${args[@]}"
+
   # One wheel per platform (the C-ABI core is CPython-version-independent, so
   # each entry produces a single py3-none-<platform> wheel). Coverage matches
   # what the native core can target: Linux glibc + musl across x86-64/aarch64/
@@ -28,6 +90,7 @@ jobs:
   # the platform tag (XY_CARGO_TARGET / XY_WHEEL_PLATFORM).
   wheels:
     name: Wheel ${{ matrix.plat }}
+    needs: qualify
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -59,6 +122,9 @@ jobs:
           - { os: windows-latest, target: aarch64-pc-windows-msvc, plat: win_arm64, zig: false, native: false }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.qualify.outputs.source_sha }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           targets: ${{ matrix.target }}
@@ -130,9 +196,13 @@ jobs:
   # runtime probe pinned as one tested set (see spec/process/production-readiness.md).
   wasm:
     name: Wheel Pyodide (runtime verified)
+    needs: qualify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.qualify.outputs.source_sha }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: 1.97.0
@@ -190,9 +260,13 @@ jobs:
 
   sdist:
     name: sdist
+    needs: qualify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.qualify.outputs.source_sha }}
+          persist-credentials: false
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: false
@@ -242,30 +316,98 @@ jobs:
           name: dist-sdist
           path: dist/*.tar.gz
 
+  provenance:
+    name: Hash release artifacts and record provenance
+    needs: [qualify, wheels, sdist, wasm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.qualify.outputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: release-inputs/dist
+          pattern: dist-*
+          merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pyodide-wheel
+          path: release-inputs/pyodide
+      - name: Create and self-verify artifact provenance
+        env:
+          RELEASE_TAG: ${{ needs.qualify.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.qualify.outputs.source_sha }}
+        run: |
+          python3 scripts/release_provenance.py create release-inputs \
+            --output release-provenance.json \
+            --source-sha "$SOURCE_SHA" \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --tag "$RELEASE_TAG"
+          mapfile -t artifacts < <(find release-inputs -type f -print | sort)
+          python3 scripts/release_provenance.py verify release-provenance.json \
+            "${artifacts[@]}" \
+            --source-sha "$SOURCE_SHA" \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --tag "$RELEASE_TAG"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-provenance
+          if-no-files-found: error
+          path: release-provenance.json
+
   publish:
     name: Publish to PyPI
     # Publishing still requires the runtime-verified Pyodide job to pass, but
     # only native wheels and the sdist use dist-* artifact names. PyPI does not
     # accept Pyodide platform tags, so its wheel remains a separate artifact.
-    needs: [wheels, sdist, wasm]
+    needs: [qualify, wheels, sdist, wasm, provenance]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
+      contents: read
+      actions: read
       id-token: write # PyPI trusted publishing (OIDC) — no API token stored
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.qualify.outputs.source_sha }}
+          persist-credentials: false
       # The artifact verifiers check everything inside the wheels/sdist, but
       # only this gate stops a mismatched tag from publishing whatever version
       # sits in pyproject.toml: the tag must equal v<project.version> and
       # CHANGELOG.md must carry a dated entry for it.
       - name: Release version gate (tag == pyproject == CHANGELOG)
-        if: github.event_name == 'push'
-        run: python3 scripts/check_release_version.py
+        if: github.event_name == 'push' || github.event.inputs.dry_run != 'true'
+        run: python3 scripts/check_release_version.py --tag "${{ needs.qualify.outputs.release_tag }}"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
           pattern: dist-*
           merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pyodide-wheel
+          path: dist-pyodide
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-provenance
+          path: provenance
+      - name: Verify immutable package hashes
+        env:
+          RELEASE_TAG: ${{ needs.qualify.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.qualify.outputs.source_sha }}
+        run: |
+          python3 scripts/release_provenance.py verify \
+            provenance/release-provenance.json \
+            dist/*.whl dist/*.tar.gz dist-pyodide/*.whl \
+            --source-sha "$SOURCE_SHA" \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --tag "$RELEASE_TAG"
       - name: List artifacts
         run: ls -la dist/
       # A manual workflow_dispatch defaults to dry_run=true: every wheel/sdist/
@@ -288,12 +430,16 @@ jobs:
   publish-pyodide:
     name: Publish Pyodide wheel
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
-    needs: [wheels, sdist, wasm]
+    needs: [qualify, wheels, sdist, wasm, provenance]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.qualify.outputs.source_sha }}
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
@@ -301,6 +447,30 @@ jobs:
         with:
           name: pyodide-wheel
           path: dist-pyodide
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist-release
+          pattern: dist-*
+          merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-provenance
+          path: provenance
+      - name: Verify immutable Pyodide wheel hash
+        env:
+          RELEASE_TAG: ${{ needs.qualify.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.qualify.outputs.source_sha }}
+        shell: bash
+        run: |
+          wheel=$(find dist-pyodide -maxdepth 1 -name '*.whl' -print -quit)
+          test -n "$wheel"
+          python3 scripts/release_provenance.py verify \
+            provenance/release-provenance.json \
+            dist-release/*.whl dist-release/*.tar.gz "$wheel" \
+            --source-sha "$SOURCE_SHA" \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --tag "$RELEASE_TAG"
       # PyPI rejects Pyodide platform tags. Publish the runtime-verified wheel
       # as a release asset instead; micropip supports installing binary WASM
       # wheels directly from HTTPS URLs.
@@ -323,9 +493,10 @@ jobs:
           wheel=$(find dist-pyodide -maxdepth 1 -name '*.whl' -print -quit)
           test -n "$wheel"
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "$wheel" --clobber
+            gh release upload "$tag" "$wheel" provenance/release-provenance.json --clobber
           else
-            gh release create "$tag" "$wheel" --verify-tag --generate-notes --title "$tag"
+            gh release create "$tag" "$wheel" provenance/release-provenance.json \
+              --verify-tag --generate-notes --title "$tag"
           fi
           url="https://github.com/${GH_REPO}/releases/download/${tag}/$(basename "$wheel")"
           echo "wheel_url=$url" >> "$GITHUB_OUTPUT"

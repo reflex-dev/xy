@@ -17,6 +17,13 @@ on:
         description: "Exact reflex-dev/xy commit or tag to build"
         required: true
         type: string
+    outputs:
+      frontend_digest:
+        description: "Immutable ECR digest for the frontend image"
+        value: ${{ jobs.build-and-push.outputs.frontend_digest }}
+      backend_digest:
+        description: "Immutable ECR digest for the backend image"
+        value: ${{ jobs.build-and-push.outputs.backend_digest }}
 
 permissions:
   contents: read
@@ -33,6 +40,9 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    outputs:
+      frontend_digest: ${{ steps.digests.outputs.frontend_digest }}
+      backend_digest: ${{ steps.digests.outputs.backend_digest }}
     steps:
       - name: Validate inputs
         env:
@@ -123,7 +133,7 @@ jobs:
             --tag "${CADDY_IMAGE}:${IMAGE_TAG}" \
             --push \
             --platform linux/amd64,linux/arm64 \
-            --provenance=false \
+            --provenance=mode=max \
             ./docs/app
 
       - name: Build and push backend image
@@ -139,20 +149,46 @@ jobs:
             --tag "${BACKEND_IMAGE}:${IMAGE_TAG}" \
             --push \
             --platform linux/amd64,linux/arm64 \
-            --provenance=false \
+            --provenance=mode=max \
             .
+
+      - name: Resolve immutable image digests
+        id: digests
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          FRONTEND_DIGEST=$(aws ecr describe-images \
+            --repository-name xy/frontend \
+            --image-ids "imageTag=${IMAGE_TAG}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
+          BACKEND_DIGEST=$(aws ecr describe-images \
+            --repository-name xy/backend \
+            --image-ids "imageTag=${IMAGE_TAG}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
+          for DIGEST in "$FRONTEND_DIGEST" "$BACKEND_DIGEST"; do
+            if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::ECR returned an invalid image digest: $DIGEST"
+              exit 1
+            fi
+          done
+          echo "frontend_digest=$FRONTEND_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "backend_digest=$BACKEND_DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Summary
         env:
           IMAGE_TAG: ${{ inputs.image_tag }}
           CADDY_IMAGE: ${{ env.CADDY_IMAGE }}
           BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
+          FRONTEND_DIGEST: ${{ steps.digests.outputs.frontend_digest }}
+          BACKEND_DIGEST: ${{ steps.digests.outputs.backend_digest }}
         run: |
           {
             echo "### XY docs images built"
             echo ""
             echo "**Tag:** \`${IMAGE_TAG}\`"
             echo ""
-            echo "- Frontend: \`${CADDY_IMAGE}:${IMAGE_TAG}\`"
-            echo "- Backend: \`${BACKEND_IMAGE}:${IMAGE_TAG}\`"
+            echo "- Frontend: \`${CADDY_IMAGE}:${IMAGE_TAG}@${FRONTEND_DIGEST}\`"
+            echo "- Backend: \`${BACKEND_IMAGE}:${IMAGE_TAG}@${BACKEND_DIGEST}\`"
           } >> "$GITHUB_STEP_SUMMARY"

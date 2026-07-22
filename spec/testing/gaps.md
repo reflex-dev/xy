@@ -45,11 +45,12 @@ and retained artifact to the relevant entry before changing its status.
 
 ### TST-NI-003 — Exact-SHA release, deployment, and provenance preflight
 
-- Status: `NOT IMPLEMENTED`
+- Status: `IMPLEMENTED`
 - Owner: unassigned — file a tracking issue before implementation starts
-- Current gap: publication and deployment do not prove that their exact source
-  SHA passed the hard suite; manual production publication can bypass the
-  push-only version gate, and dev deployment can race CI.
+- Evidence: `scripts/verify_source_qualification.py`, `scripts/release_provenance.py`, `tests/test_verify_source_qualification.py`, `tests/test_release_provenance.py`, `tests/test_verify_ci_workflow.py`, and the `qualify` / `provenance` release and deployment jobs.
+- Current gap: closed; package publication qualifies the exact tagged source
+  and full artifact set, while docs deployments qualify the exact source and
+  pin the same provenance-attested images by ECR digest across environments.
 - Implemented when: every publish or promotion path verifies tag/version/
   changelog, tag SHA, `main` ancestry, exact-SHA hard-test success, and artifact
   hashes/provenance; manual dispatch cannot bypass it; dev/stage/production wait

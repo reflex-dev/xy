@@ -71,7 +71,7 @@ These must pass before publishing or making a broad performance claim.
 | Public API | `__all__`, lazy exports, `__version__`, the source `py.typed` marker, focused type-surface tests, and fresh-process import-time budget stay coherent | `make check-api` |
 | Import-time budget | `xy.__init__`, `dir(xy)`, export helpers, chart construction, and `.widget()` keep their lazy import boundaries | `make check-import` |
 | Claim guardrails | Public docs and package metadata avoid broad, unqualified performance claims | `make check-claims` |
-| CI/release workflows | Hard gates, non-blocking benchmarks, best-effort benchmark artifact upload/download, trusted publishing, and no-Rust clear-error jobs stay wired | `make check-ci` |
+| CI/release workflows | Hard gates, non-blocking benchmarks, exact-SHA qualification, immutable artifact/image provenance, benchmark artifact upload/download, trusted publishing, and no-Rust clear-error jobs stay wired | `make check-ci` |
 | HTML export safety | Inline JSON/script escaping, atomic path writes, hostile user strings, and browser client text-node insertion stay protected | `make check-security` |
 | Python tests | Native backend passes | `pytest -q` |
 | Python style | Library, tests, scripts, and benchmarks lint clean | `ruff check .` and `ruff format --check .` |
@@ -348,6 +348,22 @@ running them. The full local gate expects Node 18+ plus a Rust toolchain with
 `cargo`, `rustc`, and clippy (`rustup component add clippy`). Missing Rust,
 Node, Chrome, `ruff`, `ty`, or `pytest` produce direct install/skip guidance.
 
+## Deployment Qualification and Promotion
+
+Docs deployment uses the same exact-source rule as package publication. Dev
+resolves an immutable 40-character SHA, proves that it is on `main`, and waits
+for the newest `Required CI` job for that SHA before building. Staging and
+production additionally require the CalVer deployment tag to resolve to that
+exact commit. A manual dispatch follows these same dependencies; approval
+cannot bypass qualification.
+
+The reusable build emits maximum BuildKit provenance and resolves each pushed
+multi-platform image's ECR `sha256` digest. Staging Helm values are written as
+`tag@sha256:digest` references. After production approval, the promotion job
+queries ECR again and requires both tags still to resolve to the original build
+digests before opening the production Helm PR. Production therefore promotes
+the staging artifacts rather than rebuilding or trusting a mutable tag.
+
 ## Release Checklist
 
 Before tagging a release:
@@ -356,11 +372,13 @@ Before tagging a release:
   applies.
 - Run `make check-full` for the non-browser layer, then confirm each applicable
   browser, conformance, dashboard, packaging, and host-integration gate in the
-  [current testing inventory](../testing/current.md). Exact-SHA automated
-  qualification remains [TST-NI-003](../testing/gaps.md#tst-ni-003--exact-sha-release-deployment-and-provenance-preflight),
-  so this confirmation is manual until that gap is implemented.
+  [current testing inventory](../testing/current.md). Release automation then
+  verifies that the exact tagged commit is on `main`, that its newest
+  `Required CI` run passed, and that tag, package version, and dated changelog
+  agree; manual real publication uses the same preflight.
 - Run `make check-ci` to confirm CI and release workflow
-  gates still include artifact verification, upload/download, and trusted PyPI
+  gates still include exact-source qualification, complete-set artifact hash
+  verification, upload/download, docs image digest promotion, and trusted PyPI
   publishing.
 - Before the first release after a change to the wheel matrix (new target,
   cross-compile toolchain, or tagging scheme), manually run the release
@@ -397,6 +415,11 @@ Before tagging a release:
   file exactly once with matching `sha256` and size fields. Wheels must stay
   package-only: docs, tests, benchmarks, scripts, and the `examples/` apps
   are sdist-only.
+- Confirm the `release-provenance.json` artifact records the qualified source
+  SHA and the exact complete wheel/sdist/Pyodide set. Both publishers download
+  the full set, reject omissions or additions, and verify size and SHA-256
+  before publishing; the manifest is retained with the workflow and attached
+  to the GitHub Release.
 - Confirm the wheel size budget is still below 15 MB.
 - Confirm README examples and `spec/api/api-examples.md` run against the tagged API.
 - Confirm package metadata uses measured, scoped language rather than broad
@@ -467,8 +490,8 @@ Keep pushing these in low-conflict increments:
   now builds and verifies every wheel/sdist/wasm artifact without publishing;
   remaining follow-up is wiring an actual TestPyPI upload into that dry-run
   path (today it only stops short of a real publish, it doesn't yet push to a
-  test index), plus tying it to version-bump/tag validation and refreshed
-  benchmark reports.
+  test index) and tying it to refreshed benchmark reports. Manual real
+  publication already uses the exact-tag/version/changelog preflight.
 - Keep the two example apps focused: `examples/reflex` on the reflex-xy
   integration surfaces (figure vars, events, state-driven and streaming
   updates, `on_view_change`), and `examples/fastapi` on the framework-neutral

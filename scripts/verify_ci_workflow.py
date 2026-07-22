@@ -19,6 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 DEFAULT_CODSPEED_WORKFLOW = ROOT / ".github" / "workflows" / "codspeed.yml"
 DEFAULT_RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+DEFAULT_DEPLOY_DEV_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-docs-dev.yml"
+DEFAULT_DEPLOY_STG_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-docs-stg.yml"
+DEFAULT_BUILD_DOCS_WORKFLOW = ROOT / ".github" / "workflows" / "_build-docs-images.yml"
+DEFAULT_HELM_DOCS_WORKFLOW = ROOT / ".github" / "workflows" / "_helm-docs-pr.yml"
 DEFAULT_WORKFLOW = DEFAULT_CI_WORKFLOW
 REQUIRED_CI_JOBS = {
     "browser_conformance",
@@ -34,7 +38,15 @@ REQUIRED_CI_JOBS = {
     "required_ci",
 }
 REQUIRED_CODSPEED_JOBS = {"benchmarks"}
-REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "publish-pyodide", "wasm"}
+REQUIRED_RELEASE_JOBS = {
+    "qualify",
+    "wheels",
+    "sdist",
+    "provenance",
+    "publish",
+    "publish-pyodide",
+    "wasm",
+}
 
 
 def _job_blocks(text: str) -> dict[str, str]:
@@ -772,9 +784,27 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         errors,
         text,
         "release",
-        "tag and manual triggers",
+        "tag and manual triggers plus exact-SHA Actions access",
         'tags: ["v*"]',
         "workflow_dispatch:",
+        "actions: read",
+    )
+    _require_job_contains(
+        errors,
+        jobs,
+        "qualify",
+        "release",
+        "unconditional exact-SHA, main-ancestry, hard-CI, tag, version, and changelog preflight",
+        "fetch-depth: 0",
+        "main:refs/remotes/origin/main",
+        "refs/tags/*:refs/tags/*",
+        "source_sha=$(git rev-parse",
+        "scripts/verify_source_qualification.py",
+        '--sha "$SOURCE_SHA"',
+        '--repository "$GITHUB_REPOSITORY"',
+        '--tag "$RELEASE_TAG"',
+        "--release-metadata",
+        "--wait-seconds 3600",
     )
     _require_job_contains(
         errors,
@@ -799,6 +829,8 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "assert k.BACKEND=='native'",
         "actions/upload-artifact@",
         "dist/*.whl",
+        "needs: qualify",
+        "ref: ${{ needs.qualify.outputs.source_sha }}",
     )
     wheels_job = jobs.get("wheels", "")
     if "continue-on-error:" in wheels_job:
@@ -823,6 +855,8 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "scripts/verify_wheel.py",
         "--expect-native",
         "name: pyodide-wheel",
+        "needs: qualify",
+        "ref: ${{ needs.qualify.outputs.source_sha }}",
     )
     wasm_job = jobs.get("wasm", "")
     if "continue-on-error:" in wasm_job:
@@ -843,7 +877,39 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "native Rust core",
         "actions/upload-artifact@",
         "dist/*.tar.gz",
+        "needs: qualify",
+        "ref: ${{ needs.qualify.outputs.source_sha }}",
     )
+    _require_job_contains(
+        errors,
+        jobs,
+        "provenance",
+        "release",
+        "one immutable hash manifest for the exact artifacts built in this run",
+        "needs: [qualify, wheels, sdist, wasm]",
+        "pattern: dist-*",
+        "name: pyodide-wheel",
+        "scripts/release_provenance.py create",
+        "scripts/release_provenance.py verify",
+        '--source-sha "$SOURCE_SHA"',
+        '--repository "$GITHUB_REPOSITORY"',
+        '--workflow-run-id "$GITHUB_RUN_ID"',
+        '--tag "$RELEASE_TAG"',
+        "name: release-provenance",
+        "if-no-files-found: error",
+    )
+    provenance_job = jobs.get("provenance", "")
+    for identity_argument in (
+        '--source-sha "$SOURCE_SHA"',
+        '--repository "$GITHUB_REPOSITORY"',
+        '--workflow-run-id "$GITHUB_RUN_ID"',
+        '--tag "$RELEASE_TAG"',
+    ):
+        if provenance_job.count(identity_argument) != 2:
+            errors.append(
+                "release provenance job must bind "
+                f"{identity_argument} during both creation and self-verification"
+            )
     _require_job_contains(
         errors,
         jobs,
@@ -851,10 +917,16 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "release",
         "trusted PyPI publishing from downloaded artifacts, gated by a dry-run switch "
         "and a tag/version/CHANGELOG agreement gate",
-        "needs: [wheels, sdist, wasm]",
+        "needs: [qualify, wheels, sdist, wasm, provenance]",
         "environment: pypi",
         "id-token: write",
         "scripts/check_release_version.py",
+        "scripts/release_provenance.py verify",
+        '--repository "$GITHUB_REPOSITORY"',
+        '--workflow-run-id "$GITHUB_RUN_ID"',
+        '--tag "$RELEASE_TAG"',
+        "name: release-provenance",
+        "ref: ${{ needs.qualify.outputs.source_sha }}",
         "actions/download-artifact@",
         "pattern: dist-*",
         "merge-multiple: true",
@@ -880,7 +952,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "publish-pyodide",
         "release",
         "GitHub Release publication of the runtime-verified Pyodide wheel",
-        "needs: [wheels, sdist, wasm]",
+        "needs: [qualify, wheels, sdist, wasm, provenance]",
         "contents: write",
         "actions/setup-node@",
         'node-version: "22"',
@@ -888,8 +960,15 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "name: pyodide-wheel",
         "dry_run",
         "scripts/check_release_version.py",
+        "scripts/release_provenance.py verify",
+        '--repository "$GITHUB_REPOSITORY"',
+        '--workflow-run-id "$GITHUB_RUN_ID"',
+        '--tag "$RELEASE_TAG"',
+        "name: release-provenance",
+        "ref: ${{ needs.qualify.outputs.source_sha }}",
         "GH_TOKEN",
         "gh release upload",
+        "provenance/release-provenance.json",
         "--clobber",
         "gh release create",
         "--verify-tag",
@@ -899,6 +978,9 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
     )
 
     publish = jobs.get("publish", "")
+    qualify = jobs.get("qualify", "")
+    if re.search(r"^    if:", qualify, flags=re.MULTILINE):
+        errors.append("release qualify job must be unconditional; publication cannot bypass it")
     if "password:" in publish or "api-token" in publish:
         errors.append("release publish job should use trusted publishing, not a PyPI token")
     if "pypa/gh-action-pypi-publish@" in publish and not _step_is_conditioned(
@@ -912,15 +994,222 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
     return errors
 
 
+def validate_deploy_workflows(
+    dev_path: Path = DEFAULT_DEPLOY_DEV_WORKFLOW,
+    stg_path: Path = DEFAULT_DEPLOY_STG_WORKFLOW,
+    build_path: Path = DEFAULT_BUILD_DOCS_WORKFLOW,
+    helm_path: Path = DEFAULT_HELM_DOCS_WORKFLOW,
+) -> list[str]:
+    """Verify exact-source qualification and immutable docs promotion."""
+    texts: dict[str, str] = {}
+    errors: list[str] = []
+    for label, path in (
+        ("docs dev deploy", dev_path),
+        ("docs stage/prod deploy", stg_path),
+        ("docs image build", build_path),
+        ("docs Helm promotion", helm_path),
+    ):
+        try:
+            texts[label] = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            errors.append(f"cannot read {label} workflow {path}: {exc}")
+            texts[label] = ""
+
+    dev_text = texts["docs dev deploy"]
+    dev_jobs = _job_blocks(dev_text)
+    _require_workflow_contains(
+        errors,
+        dev_text,
+        "docs dev deploy",
+        "exact-SHA Actions access",
+        "actions: read",
+    )
+    _require_job_contains(
+        errors,
+        dev_jobs,
+        "qualify",
+        "docs dev deploy",
+        "exact-SHA main-ancestry and hard-CI preflight",
+        "needs: prepare",
+        "fetch-depth: 0",
+        "main:refs/remotes/origin/main",
+        "scripts/verify_source_qualification.py",
+        '--sha "$SOURCE_SHA"',
+        '--repository "$GITHUB_REPOSITORY"',
+        "--wait-seconds 3600",
+    )
+    _require_job_contains(
+        errors,
+        dev_jobs,
+        "build",
+        "docs dev deploy",
+        "qualified exact-source build dependency",
+        "needs: [prepare, qualify]",
+        "source_ref: ${{ needs.prepare.outputs.source_sha }}",
+    )
+    _require_job_contains(
+        errors,
+        dev_jobs,
+        "helm-pr",
+        "docs dev deploy",
+        "immutable build digest promotion",
+        "frontend_digest: ${{ needs.build.outputs.frontend_digest }}",
+        "backend_digest: ${{ needs.build.outputs.backend_digest }}",
+    )
+
+    stg_text = texts["docs stage/prod deploy"]
+    stg_jobs = _job_blocks(stg_text)
+    _require_workflow_contains(
+        errors,
+        stg_text,
+        "docs stage/prod deploy",
+        "exact-SHA Actions access",
+        "actions: read",
+    )
+    _require_job_contains(
+        errors,
+        stg_jobs,
+        "qualify",
+        "docs stage/prod deploy",
+        "exact tagged source, main-ancestry, and hard-CI preflight",
+        "needs: prepare",
+        "fetch-depth: 0",
+        "main:refs/remotes/origin/main",
+        "refs/tags/*:refs/tags/*",
+        "scripts/verify_source_qualification.py",
+        '--sha "$SOURCE_SHA"',
+        '--tag "$VERSION"',
+        "--wait-seconds 3600",
+    )
+    _require_job_contains(
+        errors,
+        stg_jobs,
+        "build",
+        "docs stage/prod deploy",
+        "qualified exact-source build dependency",
+        "needs: [prepare, qualify]",
+        "source_ref: ${{ needs.prepare.outputs.source_sha }}",
+    )
+    _require_job_contains(
+        errors,
+        stg_jobs,
+        "helm-pr-stg",
+        "docs stage/prod deploy",
+        "immutable staging digest promotion",
+        "frontend_digest: ${{ needs.build.outputs.frontend_digest }}",
+        "backend_digest: ${{ needs.build.outputs.backend_digest }}",
+    )
+    _require_job_contains(
+        errors,
+        stg_jobs,
+        "verify-prod-artifacts",
+        "docs stage/prod deploy",
+        "post-approval ECR digest verification against the original build",
+        "needs: [prepare, build, await-prod-approval]",
+        "EXPECTED_FRONTEND: ${{ needs.build.outputs.frontend_digest }}",
+        "EXPECTED_BACKEND: ${{ needs.build.outputs.backend_digest }}",
+        '[[ "$ACTUAL_FRONTEND" != "$EXPECTED_FRONTEND" ]]',
+        '[[ "$ACTUAL_BACKEND" != "$EXPECTED_BACKEND" ]]',
+    )
+    _require_job_contains(
+        errors,
+        stg_jobs,
+        "release",
+        "docs stage/prod deploy",
+        "verified digest provenance in the deployment release",
+        "needs: [prepare, build, verify-prod-artifacts]",
+        "FRONTEND_DIGEST: ${{ needs.build.outputs.frontend_digest }}",
+        "BACKEND_DIGEST: ${{ needs.build.outputs.backend_digest }}",
+    )
+    _require_job_contains(
+        errors,
+        stg_jobs,
+        "helm-pr-prod",
+        "docs stage/prod deploy",
+        "verified immutable production promotion",
+        "needs: [prepare, build, verify-prod-artifacts, release]",
+        "frontend_digest: ${{ needs.build.outputs.frontend_digest }}",
+        "backend_digest: ${{ needs.build.outputs.backend_digest }}",
+    )
+
+    build_text = texts["docs image build"]
+    build_jobs = _job_blocks(build_text)
+    _require_workflow_contains(
+        errors,
+        build_text,
+        "docs image build",
+        "reusable immutable digest outputs",
+        "frontend_digest:",
+        "backend_digest:",
+        "value: ${{ jobs.build-and-push.outputs.frontend_digest }}",
+        "value: ${{ jobs.build-and-push.outputs.backend_digest }}",
+    )
+    _require_job_contains(
+        errors,
+        build_jobs,
+        "build-and-push",
+        "docs image build",
+        "ECR digest resolution and provenance attestations",
+        "id: digests",
+        "--repository-name xy/frontend",
+        "--repository-name xy/backend",
+        "frontend_digest=$FRONTEND_DIGEST",
+        "backend_digest=$BACKEND_DIGEST",
+        "^sha256:[0-9a-f]{64}$",
+    )
+    if build_text.count("--provenance=mode=max") != 2:
+        errors.append("docs image build must enable max provenance on both image builds")
+    if "--provenance=false" in build_text:
+        errors.append("docs image build must not disable image provenance")
+
+    helm_text = texts["docs Helm promotion"]
+    helm_jobs = _job_blocks(helm_text)
+    _require_workflow_contains(
+        errors,
+        helm_text,
+        "docs Helm promotion",
+        "required immutable digest inputs",
+        "frontend_digest:",
+        "backend_digest:",
+        'description: "Immutable sha256 digest for the frontend image"',
+        'description: "Immutable sha256 digest for the backend image"',
+    )
+    _require_job_contains(
+        errors,
+        helm_jobs,
+        "open-helm-pr",
+        "docs Helm promotion",
+        "digest validation and tag-at-digest chart pins",
+        "^sha256:[0-9a-f]{64}$",
+        'FRONTEND_REF="${IMAGE_TAG}@${FRONTEND_DIGEST}"',
+        'BACKEND_REF="${IMAGE_TAG}@${BACKEND_DIGEST}"',
+        ".apps.xy.frontend.image.tag = strenv(FRONTEND_REF)",
+        ".apps.xy.backend.image.tag = strenv(BACKEND_REF)",
+        "FRONTEND_IMAGE}:${IMAGE_TAG}@${FRONTEND_DIGEST}",
+        "BACKEND_IMAGE}:${IMAGE_TAG}@${BACKEND_DIGEST}",
+    )
+    return errors
+
+
 def validate_all_workflows(
     ci_path: Path = DEFAULT_CI_WORKFLOW,
     codspeed_path: Path = DEFAULT_CODSPEED_WORKFLOW,
     release_path: Path = DEFAULT_RELEASE_WORKFLOW,
+    deploy_dev_path: Path = DEFAULT_DEPLOY_DEV_WORKFLOW,
+    deploy_stg_path: Path = DEFAULT_DEPLOY_STG_WORKFLOW,
+    build_docs_path: Path = DEFAULT_BUILD_DOCS_WORKFLOW,
+    helm_docs_path: Path = DEFAULT_HELM_DOCS_WORKFLOW,
 ) -> list[str]:
     return [
         *validate_ci_workflow(ci_path),
         *validate_codspeed_workflow(codspeed_path),
         *validate_release_workflow(release_path),
+        *validate_deploy_workflows(
+            deploy_dev_path,
+            deploy_stg_path,
+            build_docs_path,
+            helm_docs_path,
+        ),
     ]
 
 
@@ -935,6 +1224,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--ci-workflow", type=Path, default=DEFAULT_CI_WORKFLOW)
     parser.add_argument("--codspeed-workflow", type=Path, default=DEFAULT_CODSPEED_WORKFLOW)
     parser.add_argument("--release-workflow", type=Path, default=DEFAULT_RELEASE_WORKFLOW)
+    parser.add_argument("--deploy-dev-workflow", type=Path, default=DEFAULT_DEPLOY_DEV_WORKFLOW)
+    parser.add_argument("--deploy-stg-workflow", type=Path, default=DEFAULT_DEPLOY_STG_WORKFLOW)
+    parser.add_argument("--build-docs-workflow", type=Path, default=DEFAULT_BUILD_DOCS_WORKFLOW)
+    parser.add_argument("--helm-docs-workflow", type=Path, default=DEFAULT_HELM_DOCS_WORKFLOW)
     parser.add_argument("--ci-only", action="store_true")
     parser.add_argument("--codspeed-only", action="store_true")
     parser.add_argument("--release-only", action="store_true")
@@ -958,9 +1251,23 @@ def main(argv: Optional[list[str]] = None) -> int:
         checked = [args.release_workflow]
     else:
         errors = validate_all_workflows(
-            args.ci_workflow, args.codspeed_workflow, args.release_workflow
+            args.ci_workflow,
+            args.codspeed_workflow,
+            args.release_workflow,
+            args.deploy_dev_workflow,
+            args.deploy_stg_workflow,
+            args.build_docs_workflow,
+            args.helm_docs_workflow,
         )
-        checked = [args.ci_workflow, args.codspeed_workflow, args.release_workflow]
+        checked = [
+            args.ci_workflow,
+            args.codspeed_workflow,
+            args.release_workflow,
+            args.deploy_dev_workflow,
+            args.deploy_stg_workflow,
+            args.build_docs_workflow,
+            args.helm_docs_workflow,
+        ]
 
     if errors:
         print(

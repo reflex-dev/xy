@@ -9,6 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -50,9 +51,39 @@ jobs:
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           fi
 
+  qualify:
+    name: Qualify Exact Source SHA
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch main ancestry
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+
+      - name: Require hard CI for exact source
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: >-
+          python3 scripts/verify_source_qualification.py
+          --sha "$SOURCE_SHA"
+          --repository "$GITHUB_REPOSITORY"
+          --wait-seconds 3600
+
   build:
     name: Build Dev Images
-    needs: prepare
+    needs: [prepare, qualify]
     if: needs.prepare.outputs.should_build == 'true'
     permissions:
       contents: read
@@ -73,6 +104,8 @@ jobs:
       image_tag: ${{ needs.prepare.outputs.image_tag }}
       environment: dev
       source_ref: ${{ needs.prepare.outputs.source_sha }}
+      frontend_digest: ${{ needs.build.outputs.frontend_digest }}
+      backend_digest: ${{ needs.build.outputs.backend_digest }}
       auto_merge: true
     secrets: inherit
 

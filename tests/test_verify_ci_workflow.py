@@ -794,8 +794,11 @@ def test_release_workflow_rejects_nonblocking_pyodide_probe(tmp_path: Path) -> N
     path = tmp_path / "release.yml"
     path.write_text(
         workflow.replace(
-            "    runs-on: ubuntu-latest\n",
-            "    runs-on: ubuntu-latest\n    continue-on-error: true\n",
+            "  wasm:\n    name: Wheel Pyodide (runtime verified)\n"
+            "    needs: qualify\n    runs-on: ubuntu-latest\n",
+            "  wasm:\n    name: Wheel Pyodide (runtime verified)\n"
+            "    needs: qualify\n    runs-on: ubuntu-latest\n"
+            "    continue-on-error: true\n",
             1,
         ),
         encoding="utf-8",
@@ -909,3 +912,87 @@ def test_release_workflow_rejects_non_retryable_pypi_publish(tmp_path: Path) -> 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
     assert any("release publish job" in error and "skip-existing" in error for error in errors)
+
+
+def test_release_workflow_rejects_missing_exact_source_metadata_gate(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace("            args+=(--release-metadata)\n", ""), encoding="utf-8"
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("release qualify job" in error and "--release-metadata" in error for error in errors)
+
+
+def test_release_workflow_rejects_unbound_provenance_identity(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace('            --workflow-run-id "$GITHUB_RUN_ID" \\\n', "", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "release provenance job" in error and "--workflow-run-id" in error for error in errors
+    )
+
+
+def test_docs_dev_deploy_rejects_missing_exact_sha_preflight(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/deploy-docs-dev.yml").read_text(encoding="utf-8")
+    path = tmp_path / "deploy-docs-dev.yml"
+    path.write_text(
+        workflow.replace("          python3 scripts/verify_source_qualification.py\n", ""),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_deploy_workflows(dev_path=path)
+
+    assert any("docs dev deploy qualify job" in error for error in errors)
+
+
+def test_docs_prod_deploy_rejects_mutable_artifact_promotion(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        workflow.replace(
+            '          if [[ "$ACTUAL_FRONTEND" != "$EXPECTED_FRONTEND" ]]; then\n', ""
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_deploy_workflows(stg_path=path)
+
+    assert any("verify-prod-artifacts" in error and "ACTUAL_FRONTEND" in error for error in errors)
+
+
+def test_docs_image_build_rejects_disabled_provenance(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/_build-docs-images.yml").read_text(encoding="utf-8")
+    path = tmp_path / "_build-docs-images.yml"
+    path.write_text(
+        workflow.replace("--provenance=mode=max", "--provenance=false", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_deploy_workflows(build_path=path)
+
+    assert any("provenance" in error for error in errors)
+
+
+def test_docs_helm_promotion_rejects_mutable_tags(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/_helm-docs-pr.yml").read_text(encoding="utf-8")
+    path = tmp_path / "_helm-docs-pr.yml"
+    path.write_text(
+        workflow.replace(
+            '          FRONTEND_REF="${IMAGE_TAG}@${FRONTEND_DIGEST}" \\\n',
+            '          FRONTEND_REF="$IMAGE_TAG" \\\n',
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_deploy_workflows(helm_path=path)
+
+    assert any("docs Helm promotion open-helm-pr job" in error for error in errors)
