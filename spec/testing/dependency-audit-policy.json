@@ -63,6 +63,16 @@
       "path": "benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/uv.lock",
       "owner": "@reflex-dev/xy",
       "reason": "Immutable historical launch-measurement evidence; it is never installed or executed by a current subsystem."
+    },
+    {
+      "path": "examples/reflex/.web/bun.lock",
+      "owner": "@reflex-dev/xy",
+      "reason": "Example fixture lock is not an installed production subsystem."
+    },
+    {
+      "path": "examples/reflex/reflex.lock/bun.lock",
+      "owner": "@reflex-dev/xy",
+      "reason": "Example fixture lock is not an installed production subsystem."
     }
   ],
   "exceptions": []
