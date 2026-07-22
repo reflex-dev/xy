@@ -747,6 +747,28 @@ def test_first_payload_scatter_continuous_channels(benchmark, medium_data):
     assert sum(b.nbytes for b in buffers) == 4 * len(x) * 4
 
 
+def test_first_payload_scatter_direct_rgba(benchmark, medium_data):
+    """Direct RGBA8 packing without payload-sized chained temporaries."""
+    x, y = medium_data
+    rgba = np.column_stack(
+        (
+            np.linspace(0.0, 1.0, len(x)),
+            np.linspace(1.0, 0.0, len(x)),
+            np.full(len(x), 0.5),
+            np.full(len(x), 0.25),
+        )
+    )
+
+    def build():
+        fig = xy.chart(xy.scatter(x=x, y=y, color=rgba)).figure()
+        return fig.build_payload_split(N_BUCKETS)
+
+    spec, buffers = benchmark(build)
+    color = spec["traces"][0]["color"]
+    assert color["mode"] == "direct_rgba" and color["dtype"] == "u8"
+    assert sum(b.nbytes for b in buffers) == 12 * len(x)
+
+
 def test_first_payload_line_unsorted_x(benchmark, medium_data):
     """Large line ingestion through the sort-and-reingest branch."""
     x, y = medium_data
@@ -848,6 +870,24 @@ def test_first_payload_bar_core_2d(benchmark, core_2d_data):
     assert isinstance(values, np.ndarray)
     payload_bytes = benchmark(_bar_payload, categories, values)
     assert 0 < payload_bytes < values.nbytes * 2
+
+
+def test_first_payload_stacked_bar_reuses_category_geometry(benchmark):
+    """Stacked series build shared rectangle edges/centers once."""
+    n = 100_000
+    categories = [f"C{i:06d}" for i in range(n)]
+    x = np.arange(n, dtype=np.float64)
+    values = np.vstack([1.0 + np.sin(x * 0.0001 + i) ** 2 for i in range(8)])
+
+    def build():
+        fig = xy.chart(xy.bar(categories, values, mode="stacked")).figure()
+        spec, buffers = fig.build_payload_split(N_BUCKETS)
+        return fig, spec, buffers
+
+    fig, spec, buffers = benchmark(build)
+    assert all(trace.x is fig.traces[0].x for trace in fig.traces[1:])
+    assert len(spec["traces"]) == 8
+    assert sum(buffer.nbytes for buffer in buffers) > 0
 
 
 def test_first_payload_heatmap_core_2d(benchmark, core_2d_data):

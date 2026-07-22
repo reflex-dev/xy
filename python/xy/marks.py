@@ -738,6 +738,15 @@ def _bar_like(
                     style_channels=series_channels[i],
                 )
         else:
+            # Every stacked series shares the category edges. Build them and
+            # their vertical-bar center once so the column store can retain
+            # one canonical set instead of recomputing equal, unrelated
+            # arrays for every layer.
+            stack_pos0 = pos - half
+            stack_pos1 = pos + half
+            stack_x_center = (
+                self._rect_midpoint(stack_pos0, stack_pos1) if orientation == "vertical" else None
+            )
             pos_base = base_vals.astype(np.float64, copy=True)
             neg_base = base_vals.astype(np.float64, copy=True)
             for i, row in enumerate(vals):
@@ -746,8 +755,8 @@ def _bar_like(
                 self._append_bar_rect(
                     kind,
                     orientation,
-                    pos - half,
-                    pos + half,
+                    stack_pos0,
+                    stack_pos1,
                     y0,
                     y1,
                     name=series_names[i],
@@ -758,6 +767,7 @@ def _bar_like(
                     color_ch=None if direct_colors is None else direct_colors[i],
                     stroke_ch=None if direct_strokes is None else direct_strokes[i],
                     style_channels=series_channels[i],
+                    x_center=stack_x_center,
                 )
                 pos_base = np.where(row >= 0, y1, pos_base)
                 neg_base = np.where(row < 0, y1, neg_base)

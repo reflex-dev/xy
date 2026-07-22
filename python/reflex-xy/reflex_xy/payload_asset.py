@@ -34,9 +34,10 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from secrets import token_hex
 from typing import Any
 
-from xy.channel import encode_frame
+from xy.channel import encode_frame_parts
 
 from .registry import _figure_of
 
@@ -65,8 +66,14 @@ def payload_asset(chart_or_figure: Any) -> str:
 
     figure = _figure_of(chart_or_figure)
     spec, blob = figure.build_payload()
-    frame = encode_frame(spec, [blob])
-    digest = hashlib.sha256(frame).hexdigest()[:_DIGEST_CHARS]
+    # Keep the packed payload owner alive while the scatter/gather views are
+    # hashed and consumed. This preserves the exact XYBF bytes without a
+    # second payload-sized `b"".join(...)` allocation.
+    frame_parts = encode_frame_parts(spec, [blob])
+    frame_hash = hashlib.sha256()
+    for part in frame_parts:
+        frame_hash.update(part)
+    digest = frame_hash.hexdigest()[:_DIGEST_CHARS]
     name = f"{digest}{_SUFFIX}"
 
     if _should_write():
@@ -75,10 +82,22 @@ def payload_asset(chart_or_figure: Any) -> str:
         dest = asset_dir / name
         if not dest.exists():
             # Content-addressed, so concurrent writers (multiple workers
-            # importing the app module) produce identical bytes; the rename
-            # keeps a racing reader from ever seeing a partial file.
-            tmp = asset_dir / f".{name}.tmp"
-            tmp.write_bytes(frame)
-            tmp.replace(dest)
+            # importing the app module) produce identical bytes. A unique
+            # sibling temp avoids writers clobbering one another, and the
+            # final rename keeps readers from ever seeing a partial frame.
+            tmp: Path | None = None
+            try:
+                # `xb` gives the temp the same umask-governed permissions as
+                # the old direct `write_bytes` path while still refusing an
+                # existing name. The random suffix makes that name private to
+                # this writer without the 0600 mode imposed by mkstemp.
+                tmp = asset_dir / f".{name}.{token_hex(16)}.tmp"
+                with tmp.open("xb") as stream:
+                    for part in frame_parts:
+                        stream.write(part)
+                tmp.replace(dest)
+            finally:
+                if tmp is not None:
+                    tmp.unlink(missing_ok=True)
 
     return AssetPathStr(f"/{ASSET_SUBDIR}/{name}")

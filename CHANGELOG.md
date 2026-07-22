@@ -325,6 +325,12 @@ in the README).
 - `LICENSE` (Apache-2.0), `CHANGELOG.md`, `SECURITY.md`, root `CONTRIBUTING.md`.
 
 ### Changed
+- **Transport hot paths:** split-layout `u8` columns no longer copy packed-only
+  alignment tails; direct RGBA8 packing and rectangle midpoint construction use
+  bounded scratch; stacked bars reuse shared category geometry; static Reflex
+  assets hash/write XYBF frame parts incrementally through unique atomic temps;
+  and equal-sized line/area tier refinements update existing GPU storage with
+  `bufferSubData` while size changes retain the safe `bufferData` path.
 - **Rendering hardening:** context loss now quiesces draw/animation/re-bin work,
   invalidates pre-loss replies, retains streamed canonical payloads, reports
   recovery state, and rebuilds without throwing an unhandled event error. The

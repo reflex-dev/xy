@@ -22,7 +22,9 @@ def test_client_source_is_the_installed_bundle():
     source = _client_source()
     assert source == pathlib.Path(xy.__file__).resolve().parent / "static" / "index.js"
     text = source.read_text(encoding="utf-8")
-    for marker in ("function renderStandalone(", "function decodeFrame(", "class ChartView"):
+    # Production bundles are minified; exported names are the stable contract,
+    # not local function/class spellings.
+    for marker in ("as renderStandalone", "as decodeFrame", "as ChartView"):
         assert marker in text
 
 

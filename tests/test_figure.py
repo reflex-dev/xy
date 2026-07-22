@@ -31,6 +31,18 @@ def _decoded_payload_col(spec, blob, ref):
     return vals.astype(np.float64) / meta.get("scale", 1.0) + meta.get("offset", 0.0)
 
 
+def _assert_split_columns_match_packed(spec_p, blob, spec_s, bufs):
+    """Split buffers carry every meaningful column byte, without blob padding."""
+    assert len(bufs) == len(spec_p["columns"]) == len(spec_s["columns"])
+    for packed, split in zip(spec_p["columns"], spec_s["columns"], strict=True):
+        itemsize = 1 if packed.get("dtype") == "u8" else 4
+        meaningful = packed["len"] * itemsize
+        start = packed["byte_offset"]
+        wire = bufs[split["buf"]]
+        assert wire.nbytes == meaningful
+        assert bytes(wire) == blob[start : start + meaningful]
+
+
 def _bar_payload(spec, blob, tr):
     bar = tr["bar"]
     pos = _decoded_payload_col(spec, blob, bar["pos"])
@@ -73,8 +85,8 @@ def test_spec_is_dataless_json():
 
 def test_build_payload_split_matches_packed():
     # Split layout (§29 multi-buffer first paint) is a transport repack, never
-    # a re-encode: same spec, same bytes, delivered one borrowed buffer per
-    # column instead of one joined blob.
+    # a re-encode: same meaningful column bytes, delivered one borrowed buffer
+    # per column instead of one joined blob.
     rng = np.random.default_rng(5)
     x = np.arange(5000, dtype=np.float64)
     fig = Figure().scatter(x, rng.normal(size=5000), color=np.sin(x * 0.01), size=2 + x % 7)
@@ -87,7 +99,7 @@ def test_build_payload_split_matches_packed():
     assert isinstance(bufs, list)
     assert all(isinstance(b, memoryview) for b in bufs)
     assert len(bufs) == len(spec_s["columns"])
-    assert b"".join(bytes(b) for b in bufs) == blob
+    _assert_split_columns_match_packed(spec_p, blob, spec_s, bufs)
     for i, (col_p, col_s) in enumerate(zip(spec_p["columns"], spec_s["columns"], strict=True)):
         assert col_s["buf"] == i
         assert col_s["byte_offset"] == 0
@@ -109,21 +121,21 @@ def test_build_payload_split_density_tier():
     spec_p, blob = fig.build_payload()
     spec_s, bufs = fig.build_payload_split()
     assert spec_p["traces"][0]["tier"] == "density"
-    assert b"".join(bytes(b) for b in bufs) == blob
+    _assert_split_columns_match_packed(spec_p, blob, spec_s, bufs)
     sample = spec_s["traces"][0]["density"].get("sample")
     if sample is not None:
         assert sample["x"]["buf"] == sample["x"]["col"]
         assert sample["x"]["byte_offset"] == 0
 
 
-def test_build_payload_split_folds_u8_alignment_padding_into_column_buffer():
+def test_build_payload_split_omits_packed_u8_alignment_padding():
     fig = Figure().scatter(
         np.arange(5.0),
         np.arange(5.0),
         color=np.array(["a", "b", "a", "b", "a"]),
     )
 
-    _spec_p, blob = fig.build_payload()
+    spec_p, blob = fig.build_payload()
     spec_s, bufs = fig.build_payload_split()
     color_col = spec_s["traces"][0]["color"]["buf"]
     meta = spec_s["columns"][color_col]
@@ -131,8 +143,12 @@ def test_build_payload_split_folds_u8_alignment_padding_into_column_buffer():
     assert meta["dtype"] == "u8"
     assert meta["len"] == 5
     assert meta["byte_offset"] == 0
-    assert bufs[meta["buf"]].nbytes == 8
-    assert b"".join(bytes(buf) for buf in bufs) == blob
+    assert bufs[meta["buf"]].nbytes == 5
+    _assert_split_columns_match_packed(spec_p, blob, spec_s, bufs)
+    # Packed still owns the three zero bytes needed to align its next f32
+    # column; a self-contained split buffer has no next column to align.
+    packed = spec_p["columns"][color_col]
+    assert blob[packed["byte_offset"] + 5 : packed["byte_offset"] + 8] == b"\0\0\0"
 
 
 def test_offset_encoding_roundtrip():
@@ -543,6 +559,39 @@ def test_rect_trace_midpoint_avoids_large_domain_overflow():
         role="histogram",
     )
     assert np.isfinite(fig.traces[0].x.values).all()
+
+
+def test_rect_midpoint_reuses_one_scratch_without_bit_drift():
+    left = np.array([-1.0e308, -3.0, 0.0, 1.0, 1.0e308], dtype=np.float64)
+    right = np.array(
+        [np.nextafter(-1.0e308, np.inf), 7.0, 1.0, 9.0, np.nextafter(1.0e308, np.inf)],
+        dtype=np.float64,
+    )
+    expected = left + (right - left) / 2.0
+    actual = Figure._rect_midpoint(left, right)  # noqa: SLF001 - allocation regression.
+    np.testing.assert_array_equal(actual.view(np.uint64), expected.view(np.uint64))
+    assert not np.shares_memory(actual, left)
+    assert not np.shares_memory(actual, right)
+
+
+def test_stacked_bar_reuses_shared_category_geometry():
+    values = np.array([[1.0, 2.0, 3.0], [4.0, -1.0, 2.0], [2.0, 3.0, 1.0]])
+    fig = Figure().bar(["a", "b", "c"], values, mode="stacked")
+
+    first, *rest = fig.traces
+    assert all(trace.x0 is first.x0 for trace in rest)
+    assert all(trace.x1 is first.x1 for trace in rest)
+    assert all(trace.x is first.x for trace in rest)
+    np.testing.assert_array_equal(first.x.values, [0.0, 1.0, 2.0])
+
+
+def test_horizontal_stacked_bar_reuses_shared_category_edges():
+    values = np.array([[1.0, 2.0, 3.0], [4.0, -1.0, 2.0], [2.0, 3.0, 1.0]])
+    fig = Figure().bar(["a", "b", "c"], values, mode="stacked", orientation="horizontal")
+
+    first, *rest = fig.traces
+    assert all(trace.y0 is first.y0 for trace in rest)
+    assert all(trace.y1 is first.y1 for trace in rest)
 
 
 def test_bar_with_categories_sets_category_axis():

@@ -78,6 +78,9 @@ relative mass, not as a budget (see §3 on why a line count failed as a metric).
   (`python/xy/interaction.py`). `payloadBuffers` (`60_entries.ts`) and
   `_columnView` (`50_chartview.ts`) treat any spec/transport disagreement as a
   thrown error — fail loud, never a silent fallback.
+  Split `u8` buffers contain only meaningful bytes: the packed layout's
+  alignment tail belongs between shared-blob columns and is unnecessary when
+  every next column starts in a separately aligned attachment.
 - **DPR correctness**: backing stores sized `css × devicePixelRatio`
   everywhere including the pick FBO and its lazy resize-realloc; line widths
   and point sizes multiply by dpr. Audited clean. (Gap: DPR *changes* — see

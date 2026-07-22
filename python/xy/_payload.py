@@ -73,20 +73,20 @@ class _PayloadWriter:
         return self._append(enc, {})
 
     def ship_u8(self, values: np.ndarray) -> int:
-        """Raw byte column, padded so every later f32 column stays aligned."""
+        """Raw byte column; packed mode pads only between shared-blob columns."""
         enc = np.ascontiguousarray(values, dtype=np.uint8).reshape(-1)
         index = len(self.columns)
         if self._split:
-            # One buffer per column: fold the alignment padding into the u8
-            # buffer itself (spec `len` still counts only real values), so the
-            # split layout stays a byte-identical repack of the packed blob.
-            padding = (-len(enc)) % 4
-            padded = np.concatenate([enc, np.zeros(padding, np.uint8)]) if padding else enc
+            # A split column starts at offset zero in its own wire buffer, so
+            # padding that only aligned the *next* packed-blob column is dead
+            # transport. Retain the encoded owner and ship its meaningful
+            # bytes directly; the client already addresses it by (`buf`, 0,
+            # `len`) and therefore observes the exact same column values.
             self.columns.append(
                 {"buf": len(self._chunks), "byte_offset": 0, "len": int(len(enc)), "dtype": "u8"}
             )
-            self._chunks.append(padded)
-            self._pos += padded.nbytes
+            self._chunks.append(enc)
+            self._pos += enc.nbytes
             return index
         self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), "dtype": "u8"})
         self._chunks.append(enc)

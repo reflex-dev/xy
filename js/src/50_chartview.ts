@@ -2829,9 +2829,21 @@ export class ChartView {
     // drill swap) gets a new id, so any VAO built over the old one rebuilds.
     buf._fcId = ++this._bufSeq;
     buf._fcType = view instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
+    buf._fcBytes = view.byteLength;
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.bufferData(gl.ARRAY_BUFFER, view, gl.STATIC_DRAW);
     return buf;
+  }
+
+  _uploadTierBuffer(buf, view) {
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    if (buf._fcBytes === view.byteLength) {
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, view);
+    } else {
+      gl.bufferData(gl.ARRAY_BUFFER, view, gl.STATIC_DRAW);
+      buf._fcBytes = view.byteLength;
+    }
   }
 
   // -- vertex-array objects ---------------------------------------------------

@@ -278,7 +278,6 @@ Object.assign(ChartView.prototype, {
       for (const upd of msg.traces) {
         const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
         if (!g) continue;
-        const gl = this.gl;
         const xArr = this._asF32(buffers[upd.x.buf]);
         const yArr = this._asF32(buffers[upd.y.buf]);
         const bArr = upd.base && g.baseBuf ? this._asF32(buffers[upd.base.buf]) : null;
@@ -291,17 +290,14 @@ Object.assign(ChartView.prototype, {
         const sm = this._smoothArrays(g.trace, xArr, yArr, bArr, n);
         const src = sm || { x: xArr, y: yArr, n };
         const st = this._stepArrays(g.trace, src.x, src.y, src.n);
-        gl.bindBuffer(gl.ARRAY_BUFFER, g.xBuf);
-        gl.bufferData(gl.ARRAY_BUFFER, st ? st.x : src.x, gl.STATIC_DRAW);
-        gl.bindBuffer(gl.ARRAY_BUFFER, g.yBuf);
-        gl.bufferData(gl.ARRAY_BUFFER, st ? st.y : src.y, gl.STATIC_DRAW);
+        this._uploadTierBuffer(g.xBuf, st ? st.x : src.x);
+        this._uploadTierBuffer(g.yBuf, st ? st.y : src.y);
         g.xMeta = { ...g.xMeta, offset: upd.x.offset, scale: upd.x.scale };
         g.yMeta = { ...g.yMeta, offset: upd.y.offset, scale: upd.y.scale };
         g._dashX = st ? st.x : src.x;
         g._dashY = st ? st.y : src.y;
         if (bArr) {
-          gl.bindBuffer(gl.ARRAY_BUFFER, g.baseBuf);
-          gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.extra : bArr, gl.STATIC_DRAW);
+          this._uploadTierBuffer(g.baseBuf, sm ? sm.extra : bArr);
           g.baseMeta = { ...g.baseMeta, offset: upd.base.offset, scale: upd.base.scale };
         }
         g.n = st ? st.n : src.n;

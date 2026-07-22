@@ -472,6 +472,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         color_ch: Optional[ColorChannel] = None,
         stroke_ch: Optional[ColorChannel] = None,
         style_channels: Optional[dict[str, Any]] = None,
+        x_center: Optional[np.ndarray] = None,
     ) -> None:
         if orientation == "vertical":
             self._append_rect_trace(
@@ -489,6 +490,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 color_ch=color_ch,
                 stroke_ch=stroke_ch,
                 style_channels=style_channels,
+                x_center=x_center,
             )
         else:
             self._append_rect_trace(
@@ -936,6 +938,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         style_channels: Optional[dict[str, Any]] = None,
         count: Optional[int] = None,
         extra_style: Optional[dict[str, Any]] = None,
+        x_center: Optional[np.ndarray] = None,
     ) -> None:
         name = self._optional_text(name, f"{kind} name")
         opacity = self._opacity(opacity, f"{kind} opacity")
@@ -945,6 +948,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             self._rect_edge_len(y0, f"{kind} y0"),
             self._rect_edge_len(y1, f"{kind} y1"),
         }
+        if x_center is not None:
+            lengths.add(self._rect_edge_len(x_center, f"{kind} x center"))
         if len(lengths) != 1:
             raise ValueError(f"{kind} rectangle columns must have equal length")
         checkpoint = self._checkpoint()
@@ -953,7 +958,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
             x1c = self.store.ingest(x1)
             y0c = self.store.ingest(y0)
             y1c = self.store.ingest(y1)
-            xc = self.store.ingest(x0c.values + (x1c.values - x0c.values) / 2.0)
+            center = (
+                x_center if x_center is not None else self._rect_midpoint(x0c.values, x1c.values)
+            )
+            xc = self.store.ingest(center)
             yc = self.store.ingest(y1c.values)
             style: dict[str, Any] = {"color": color, "opacity": opacity, "role": role}
             if orientation is not None:
@@ -982,6 +990,19 @@ class Figure(AnnotationsMixin, PayloadMixin):
         except Exception:
             self._rollback(checkpoint)
             raise
+
+    @staticmethod
+    def _rect_midpoint(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+        """Overflow-safe midpoint with one owned temporary.
+
+        Keep the historical operation order (`left + (right-left)/2`) so
+        encoded bytes do not drift, but reuse the subtraction output for the
+        divide and add instead of materializing three full-size temporaries.
+        """
+        center = np.subtract(right, left)
+        np.divide(center, 2.0, out=center)
+        np.add(left, center, out=center)
+        return center
 
     @staticmethod
     def _rect_edge_len(values: Any, label: str) -> int:

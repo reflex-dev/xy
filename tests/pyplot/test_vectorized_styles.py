@@ -5,6 +5,7 @@ import pytest
 
 import xy.pyplot as plt
 from xy._figure import Figure
+from xy.channels import ColorChannel, ship_color_channel
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +33,38 @@ def test_direct_rgba_payload_is_four_packed_bytes_per_mark() -> None:
     assert column["len"] == 8
     packed = np.frombuffer(blob, dtype=np.uint8, count=8, offset=column["byte_offset"])
     np.testing.assert_array_equal(packed.reshape(2, 4), [[255, 0, 128, 64], [0, 255, 0, 255]])
+
+
+@pytest.mark.parametrize("selection", [None, np.array([5, 1, 4, 0]), slice(None, None, 2)])
+def test_direct_rgba_packing_is_legacy_exact_and_never_mutates_source(selection) -> None:
+    rgba = np.array(
+        [
+            [-1.0, 0.0, 0.5 / 255.0, 1.5 / 255.0],
+            [2.5 / 255.0, 63.5 / 255.0, 64.5 / 255.0, 127.5 / 255.0],
+            [128.5 / 255.0, 191.5 / 255.0, 254.5 / 255.0, 1.0],
+            [np.nextafter(0.0, 1.0), np.nextafter(1.0, 0.0), 0.25, 0.75],
+            [0.1, 0.2, 0.3, 0.4],
+            [2.0, -2.0, 0.499, 0.501],
+        ],
+        dtype=np.float64,
+    )
+    before = rgba.copy()
+    selected = rgba if selection is None else rgba[selection]
+    expected = np.rint(np.clip(selected, 0.0, 1.0) * 255.0).astype(np.uint8)
+    shipped = []
+
+    paint = ship_color_channel(
+        ColorChannel(mode="direct_rgba", rgba=rgba),
+        selection,
+        lambda _values: pytest.fail("direct RGBA must not use the scalar shipper"),
+        lambda values: shipped.append(values.copy()) or 7,
+        [],
+    )
+
+    assert paint["buf"] == 7
+    assert paint["n"] == len(selected)
+    np.testing.assert_array_equal(shipped[0].reshape(expected.shape), expected)
+    np.testing.assert_array_equal(rgba, before)
 
 
 def test_invalid_vector_style_is_atomic() -> None:
