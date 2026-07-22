@@ -51,11 +51,27 @@ codspeed = [
     "pytest-codspeed>=5,<6",
 ]
 
+[tool.hatch.build]
+# The render-client bundles are a generated artifact — built by hatch_build.py
+# (`node js/build.mjs`) and git-ignored (§33), never committed. `artifacts`
+# re-includes them in both the wheel and the sdist even though the VCS ignores
+# them; the build hook guarantees they exist on disk before file collection.
+artifacts = [
+    "python/xy/static/index.js",
+    "python/xy/static/standalone.js",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["python/xy"]
 dev-mode-dirs = ["python"]
 
 [tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
+# The sdist runs the same hook (guarded to build only the render client for
+# this target, never the native core) so the generated bundles exist on disk
+# for the `artifacts` include — a fresh CI checkout has no committed bundle.
+[tool.hatch.build.targets.sdist.hooks.custom]
 path = "hatch_build.py"
 
 [tool.hatch.build.targets.sdist]

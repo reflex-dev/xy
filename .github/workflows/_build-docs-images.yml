@@ -75,8 +75,8 @@ jobs:
 
       - name: Install JS build toolchain
         run: npm ci
-      - name: Verify committed render client
-        run: node js/build.mjs --check
+      - name: Build render client
+        run: node js/build.mjs
 
       - name: Install docs dependencies
         env:

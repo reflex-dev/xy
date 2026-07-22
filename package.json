@@ -4,7 +4,6 @@
   "description": "Development-only dependencies for xy: the vite/typescript client build toolchain and browser test runner",
   "scripts": {
     "build": "node js/build.mjs",
-    "check": "node js/build.mjs --check",
     "typecheck": "tsc -p js/tsconfig.json"
   },
   "devDependencies": {
