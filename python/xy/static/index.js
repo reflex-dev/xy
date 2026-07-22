@@ -241,24 +241,31 @@ const XY_CHROME_CSS = `
 :where(.xy [data-xy-slot="colorbar_title"]){font-weight:500}
 :where(.xy [data-xy-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
 :where(.xy [data-xy-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
-:where(.xy){--xy-modebar-bg:rgba(255,255,255,.78);--xy-modebar-menu-bg:rgba(255,255,255,.94);--xy-modebar-border:rgba(128,128,128,.18);--xy-modebar-menu-border:rgba(128,128,128,.22);--xy-modebar-active:rgba(128,128,128,.2);--xy-modebar-shadow:0 1px 4px rgba(0,0,0,.08);--xy-modebar-menu-shadow:0 5px 18px rgba(15,23,42,.18)}
-:where(.dark .xy,.xy.dark){--xy-modebar-bg:rgba(37,42,52,.9);--xy-modebar-menu-bg:rgba(30,35,44,.97);--xy-modebar-border:rgba(255,255,255,.14);--xy-modebar-menu-border:rgba(255,255,255,.16);--xy-modebar-active:rgba(255,255,255,.16);--xy-modebar-shadow:0 1px 4px rgba(0,0,0,.5);--xy-modebar-menu-shadow:0 8px 24px rgba(0,0,0,.6)}
-:where(.xy [data-xy-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,var(--xy-modebar-bg));border:1px solid var(--xy-modebar-border);border-radius:4px;padding:1px;box-shadow:var(--xy-modebar-shadow)}
-:where(.xy [data-xy-slot="modebar_button"]){width:24px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-text,currentColor);cursor:pointer}
-:where(.xy [data-xy-modebar-drag-handle]){position:relative;width:22px;margin-right:4px;cursor:move}
-:where(.xy [data-xy-modebar-drag-handle])::after{content:"";position:absolute;top:4px;right:-3px;bottom:4px;width:1px;background:rgba(128,128,128,.28);pointer-events:none}
-:where(.xy [data-xy-modebar-menu-trigger]){width:auto;min-width:48px;gap:1px;padding:0 4px;font-size:11px;font-variant-numeric:tabular-nums}
-:where(.xy [data-xy-modebar-select-trigger]){width:auto;min-width:42px;gap:2px;padding:0 4px}
+:where(.xy){--xy-modebar-bg:#fff;--xy-modebar-menu-bg:#fff;--xy-modebar-hover:#edf1f6;--xy-modebar-text:#5c6573;--xy-modebar-text-strong:#1b212a;--xy-modebar-text-soft:#798495;--xy-modebar-text-subtle:#9aa4b2;--xy-modebar-border:rgba(27,33,42,.12);--xy-modebar-separator:rgba(27,33,42,.08);--xy-modebar-active:#edf1f6;--xy-modebar-shadow:0 8px 24px rgba(28,32,36,.1),0 2px 6px rgba(28,32,36,.06);--xy-modebar-menu-shadow:0 8px 24px rgba(28,32,36,.12);--xy-modebar-button-shadow:0 1px 2px rgba(28,32,36,.06)}
+:where(.dark .xy,.xy.dark){--xy-modebar-bg:#1b1d20;--xy-modebar-menu-bg:#1b1d20;--xy-modebar-hover:#282b31;--xy-modebar-text:#adb4bf;--xy-modebar-text-strong:#eceef1;--xy-modebar-text-soft:#adb4bf;--xy-modebar-text-subtle:#7f8996;--xy-modebar-border:rgba(236,238,241,.14);--xy-modebar-separator:rgba(236,238,241,.1);--xy-modebar-active:#282b31;--xy-modebar-shadow:0 8px 24px rgba(0,0,0,.3),0 2px 6px rgba(0,0,0,.22);--xy-modebar-menu-shadow:0 8px 24px rgba(0,0,0,.34);--xy-modebar-button-shadow:0 1px 2px rgba(0,0,0,.22)}
+:where(.xy [data-xy-slot="modebar"]){align-items:center;gap:6px;background:var(--chart-modebar-bg,var(--xy-modebar-bg));border:1px solid var(--xy-modebar-border);border-radius:10px;padding:2px;color:var(--xy-modebar-text);box-shadow:var(--xy-modebar-shadow);font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:16px;line-height:normal}
+:where(.xy) button[data-xy-slot="modebar_button"]{box-sizing:border-box;display:inline-flex;min-width:28px;width:auto;height:28px;align-items:center;justify-content:center;gap:4px;padding:0 6px;border:1px solid transparent;background:transparent;border-radius:8px;color:var(--xy-modebar-text-soft);cursor:pointer;font:inherit;outline:none}
+:where(.xy) button[data-xy-slot="modebar_button"]:hover{background:var(--chart-modebar-active,var(--xy-modebar-hover));color:var(--xy-modebar-text-strong)}
+:where(.xy) button[data-xy-slot="modebar_button"][aria-expanded="true"]{background:var(--chart-modebar-active,var(--xy-modebar-hover));color:var(--xy-modebar-text-strong);box-shadow:none}
+:where(.xy) button[data-xy-slot="modebar_button"] svg{display:block;width:14px;height:14px}
+:where(.xy) button[data-xy-slot="modebar_button"][data-xy-modebar-drag-handle]{min-width:28px;width:28px;padding:0;touch-action:none;cursor:grab;transition:transform .15s ease-out}
+:where(.xy [data-xy-modebar-drag-handle]:active,.xy [data-xy-modebar-drag-handle].xy-dragging){transform:scale(.98);cursor:grabbing}
+:where(.xy [data-xy-modebar-separator]){display:block;flex:0 0 auto;width:1px;height:16px;background:var(--xy-modebar-border)}
+:where(.xy [data-xy-modebar-tool-group]){display:flex;align-items:center;gap:2px}
+:where(.xy) button[data-xy-slot="modebar_button"][data-xy-modebar-menu-trigger]{min-width:60px;gap:3px;padding:0 5px;color:var(--xy-modebar-text-strong);font-size:12px;font-variant-numeric:tabular-nums}
+:where(.xy) button[data-xy-slot="modebar_button"][data-xy-modebar-select-trigger]{min-width:47px;gap:4px;padding:0 6px}
+:where(.xy) button[data-xy-slot="modebar_button"][data-xy-modebar-action="pan"],:where(.xy) button[data-xy-slot="modebar_button"][data-xy-modebar-export-trigger]{min-width:28px;width:28px;padding:0}
 :where(.xy [data-xy-modebar-select-icon]){display:flex;flex:0 0 auto}
 :where(.xy [data-xy-modebar-menu-indicator]){display:flex;flex:0 0 auto;transition:transform .15s}
-:where(.xy [data-xy-modebar-menu-indicator] svg){width:11px;height:11px}
-:where(.xy [data-xy-modebar-menu]){min-width:148px;gap:1px;padding:4px;background:var(--chart-modebar-bg,var(--xy-modebar-menu-bg));border:1px solid var(--xy-modebar-menu-border);border-radius:7px;box-shadow:var(--xy-modebar-menu-shadow);backdrop-filter:blur(8px)}
-:where(.xy [data-xy-modebar-menu-item]){width:100%;height:28px;justify-content:flex-start;padding:0 9px;border-radius:4px;text-align:left;white-space:nowrap}
-:where(.xy [data-xy-modebar-menu-item]:hover,.xy [data-xy-modebar-menu-item]:focus-visible){background:var(--chart-modebar-active,var(--xy-modebar-active));outline:none}
-:where(.xy [data-xy-modebar-menu-item][data-xy-separator]){margin-top:3px;border-top:1px solid rgba(128,128,128,.2);border-radius:0 0 4px 4px}
-:where(.xy [data-xy-modebar-menu-icon]){display:flex;width:16px;margin-right:7px}
+:where(.xy) button[data-xy-slot="modebar_button"] [data-xy-modebar-menu-indicator] svg{width:10px;height:10px;color:var(--xy-modebar-text-subtle)}
+:where(.xy [data-xy-modebar-menu]){box-sizing:border-box;width:144px;gap:0;padding:4px;background:var(--chart-modebar-bg,var(--xy-modebar-menu-bg));border:1px solid var(--xy-modebar-border);border-radius:8px;color:var(--xy-modebar-text);box-shadow:var(--xy-modebar-menu-shadow)}
+:where(.xy [data-xy-modebar-export-menu]){width:112px}
+:where(.xy) button[data-xy-modebar-menu-item]{display:grid;width:100%;height:26px;min-height:26px;grid-template-columns:14px 1fr;align-items:center;gap:8px;padding:4px 6px;border:0;border-radius:6px;background:transparent;color:var(--xy-modebar-text);font-size:12px;line-height:16px;text-align:left;white-space:nowrap}
+:where(.xy) button[data-xy-modebar-menu-item]:hover,:where(.xy) button[data-xy-modebar-menu-item]:focus-visible{background:var(--chart-modebar-active,var(--xy-modebar-hover));color:var(--xy-modebar-text-strong);outline:none}
+:where(.xy [data-xy-modebar-menu-separator]){display:block;height:1px;margin:4px -4px;background:var(--xy-modebar-separator);transform:scaleY(.5);transform-origin:center}
+:where(.xy [data-xy-modebar-menu-icon]){display:flex;width:14px;flex:0 0 auto}
 :where(.xy [data-xy-modebar-menu-icon] svg){width:14px;height:14px}
-:where(.xy [data-xy-slot="modebar_button"].xy-active){background:var(--chart-modebar-active,var(--xy-modebar-active))}
+:where(.xy) button[data-xy-slot="modebar_button"].xy-active{border-color:var(--xy-modebar-border);background:var(--chart-modebar-bg,var(--xy-modebar-bg));color:var(--xy-modebar-text-strong);box-shadow:var(--xy-modebar-button-shadow)}
 :where(.xy [data-xy-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
 :where(.xy [data-xy-slot="selection"][data-xy-band="zoom"]){border-color:var(--chart-zoom-selection,rgba(120,120,120,.9));background:var(--chart-zoom-selection-fill,rgba(120,120,120,.12))}
 :where(.xy [data-xy-selection-lasso]){fill:var(--chart-selection-fill,rgba(90,140,240,.15));stroke:var(--chart-selection,rgba(90,140,240,.9));stroke-width:1.5;stroke-linejoin:round;pointer-events:none}
@@ -270,9 +277,11 @@ const XY_CHROME_CSS = `
 :where(.xy [data-xy-slot="annotation_label"]){font-size:11px;line-height:1.2;font-weight:500;color:var(--chart-annotation-text,var(--chart-text,inherit))}
 :where(.xy [data-xy-slot="canvas"]){cursor:var(--chart-cursor,crosshair)}
 :where(.xy [data-xy-slot="canvas"][data-xy-dragmode="pan"]){cursor:var(--chart-cursor-pan,grab)}
-:where(.xy [data-xy-slot="canvas"]:focus-visible,.xy [data-xy-slot="modebar_button"]:focus-visible){outline:2px solid var(--chart-focus,#2563eb);outline-offset:2px}
-@media (prefers-reduced-motion:reduce){:where(.xy [data-xy-slot="modebar"]){transition-duration:0s!important}}
-@media (forced-colors:active){:where(.xy [data-xy-slot="modebar"],.xy [data-xy-slot="tooltip"]){border:1px solid CanvasText}:where(.xy [data-xy-slot="modebar_button"].xy-active){outline:2px solid Highlight}:where(.xy [data-xy-slot="canvas"]:focus){outline:2px solid Highlight}}
+:where(.xy [data-xy-slot="canvas"][data-xy-dragmode="none"]){cursor:default}
+:where(.xy [data-xy-slot="canvas"]:focus-visible){outline:2px solid var(--chart-focus,#aa99ec);outline-offset:2px}
+:where(.xy) button[data-xy-slot="modebar_button"]:focus-visible{box-shadow:0 0 0 2px var(--chart-focus,#aa99ec),0 0 0 3px var(--chart-modebar-bg,var(--xy-modebar-bg));outline:none}
+@media (prefers-reduced-motion:reduce){:where(.xy [data-xy-slot="modebar"]),:where(.xy) button[data-xy-slot="modebar_button"],:where(.xy [data-xy-modebar-menu-indicator]){transition-duration:0s!important}}
+@media (forced-colors:active){:where(.xy [data-xy-slot="modebar"],.xy [data-xy-slot="tooltip"]){border:1px solid CanvasText}:where(.xy) button[data-xy-slot="modebar_button"].xy-active{outline:2px solid Highlight}:where(.xy [data-xy-slot="canvas"]:focus){outline:2px solid Highlight}}
 }
 /* VS Code's Jupyter webview wraps ipywidget outputs in an opaque white card so
    widgets that assume a light page stay legible on dark editor themes — the
@@ -6111,7 +6120,7 @@ try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
 this.tooltip.style.display = "none";
 return;
 }
-if (canNavigate && canPan) {
+if (this.dragMode === "pan" && canNavigate && canPan) {
 drag = { px: e.clientX, py: e.clientY, view: { ...this.view }, moved: false };
 try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
 this.tooltip.style.display = "none";
@@ -6209,6 +6218,7 @@ if (hadHover) this._drawKeepPick();
 });
 this._listen(c, "click", (e) => this._click(e));
 this._listen(c, "wheel", (e) => {
+if (this.dragMode !== "pan") return;
 if (!this._interactionFlag("navigation", true)) return;
 if (!this._interactionFlag("zoom", true)) return;
 e.preventDefault();
@@ -6219,6 +6229,7 @@ const fy = 1 - (e.clientY - r.top) / r.height;
 this._queueWheelZoom(f, fx, fy);
 }, { passive: false });
 this._listen(c, "dblclick", () => {
+if (this.dragMode !== "pan") return;
 if (!this._interactionFlag("navigation", true)) return;
 if (!this._interactionFlag("zoom", true)) return;
 this._clearSelection();
@@ -6669,13 +6680,9 @@ if (!bar.contains(e.relatedTarget) && !root.matches(":hover")) setVisible(false)
 });
 const grip = document.createElement("button");
 grip.type = "button";
-grip.title = "Click for toolbar options; drag to move";
-grip.setAttribute("aria-label", "Toolbar options");
-grip.setAttribute("aria-haspopup", "menu");
-grip.setAttribute("aria-expanded", "false");
+grip.title = "Drag toolbar";
+grip.setAttribute("aria-label", "Drag toolbar");
 grip.dataset.xyModebarDragHandle = "";
-grip.dataset.xyModebarExport = "";
-grip.dataset.xyModebarExportTrigger = "";
 grip.innerHTML = this._icon("drag");
 grip.style.cssText =
 "display:flex;align-items:center;justify-content:center;pointer-events:auto;touch-action:none;";
@@ -6683,10 +6690,10 @@ this._applySlot(grip, "modebar_button");
 bar.appendChild(grip);
 const DRAG_THRESHOLD_PX = 6;
 let modebarDrag = null;
-let suppressGripClickUntil = 0;
 this._listen(grip, "pointerdown", (e) => {
 if (e.pointerType === "mouse" && e.button !== 0) return;
 e.stopPropagation();
+grip.classList.add("xy-dragging");
 const barRect = bar.getBoundingClientRect();
 modebarDrag = {
 pointerId: e.pointerId,
@@ -6720,30 +6727,21 @@ this._clampModebar(left, top);
 const endModebarDrag = (e) => {
 if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
 const moved = modebarDrag.moved;
-const cancelled = e.type === "pointercancel";
 modebarDrag = null;
 this._modebarDragging = false;
 bar.style.transition = "opacity .15s";
 setVisible(root.matches(":hover"));
-if (moved || cancelled) {
-suppressGripClickUntil = performance.now() + 100;
-}
+grip.classList.remove("xy-dragging");
+if (!moved && e.type !== "pointercancel") grip.focus();
 };
 this._listen(grip, "pointerup", endModebarDrag);
 this._listen(grip, "pointercancel", endModebarDrag);
-this._listen(grip, "click", (e) => {
-e.stopPropagation();
-if (performance.now() <= suppressGripClickUntil) {
-suppressGripClickUntil = 0;
-return;
-}
-setExportMenuOpen(!this._exportMenuOpen);
-});
-const mk = (name, title, onClick, toggles) => {
+const mk = (name, title, onClick, toggles, parent = bar) => {
 const b = document.createElement("button");
 b.type = "button";
 b.title = title;
 b.setAttribute("aria-label", title);
+b.dataset.xyModebarAction = name;
 if (toggles) b.setAttribute("aria-pressed", "false");
 b.innerHTML = this._icon(name);
 b.style.cssText =
@@ -6751,12 +6749,34 @@ b.style.cssText =
 this._applySlot(b, "modebar_button");
 this._listen(b, "pointerdown", (e) => e.stopPropagation());
 this._listen(b, "click", (e) => { e.stopPropagation(); onClick(); });
-bar.appendChild(b);
+parent.appendChild(b);
 if (toggles) this._modeBtns[toggles] = b;
 return b;
 };
 const canPan = this._interactionFlag("pan", true);
 const canZoom = this._interactionFlag("zoom", true);
+const canSelect = this._pickable
+&& this._interactionFlag("brush", true)
+&& this._interactionFlag("select", true);
+const EXPORT_ITEMS = {
+png: ["Export PNG", () => this._exportRaster("png")],
+jpeg: ["Export JPEG", () => this._exportRaster("jpeg")],
+webp: ["Export WebP", () => this._exportRaster("webp")],
+svg: ["Export SVG", () => this._exportSvg()],
+csv: ["Export CSV", () => this._exportCsv()],
+};
+const configuredFormats = Array.isArray(this._exportConfig().formats)
+? this._exportConfig().formats
+: ["png", "svg", "csv"];
+const clientExportFormats = configuredFormats.filter((name) => EXPORT_ITEMS[name]);
+const hasToolGroup = canSelect || canPan || clientExportFormats.length > 0;
+const appendSeparator = () => {
+const separator = document.createElement("span");
+separator.dataset.xyModebarSeparator = "";
+separator.setAttribute("aria-hidden", "true");
+bar.appendChild(separator);
+};
+if (canZoom || hasToolGroup) appendSeparator();
 let zoomTrigger = null;
 let zoomIndicator = null;
 this._zoomMenuButton = null;
@@ -6780,16 +6800,17 @@ this._zoomMenuLabel = zoomPercent;
 zoomTrigger.setAttribute("aria-haspopup", "menu");
 zoomTrigger.setAttribute("aria-expanded", "false");
 }
-const canSelect = this._pickable
-&& this._interactionFlag("brush", true)
-&& this._interactionFlag("select", true);
+if (canZoom && hasToolGroup) appendSeparator();
+const toolGroup = document.createElement("div");
+toolGroup.dataset.xyModebarToolGroup = "";
+if (hasToolGroup) bar.appendChild(toolGroup);
 let selectTrigger = null;
 let selectIndicator = null;
 let selectModeIcon = null;
 if (canSelect) {
 selectTrigger = mk("select", "Selection controls", () => {
 setSelectMenuOpen(!this._selectMenuOpen);
-});
+}, null, toolGroup);
 selectTrigger.dataset.xyModebarSelect = "";
 selectTrigger.dataset.xyModebarSelectTrigger = "";
 selectTrigger.setAttribute("aria-haspopup", "menu");
@@ -6806,7 +6827,21 @@ selectTrigger.appendChild(selectIndicator);
 this._selectMenuButton = selectTrigger;
 this._selectMenuIcon = selectModeIcon;
 }
-if (canPan) mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
+if (canPan) {
+mk("pan", "Pan", () => {
+this._setDragMode(this.dragMode === "pan" ? "none" : "pan");
+}, "pan", toolGroup);
+}
+let exportTrigger = null;
+if (clientExportFormats.length > 0) {
+exportTrigger = mk("export", "Export options", () => {
+setExportMenuOpen(!this._exportMenuOpen);
+}, null, toolGroup);
+exportTrigger.dataset.xyModebarExport = "";
+exportTrigger.dataset.xyModebarExportTrigger = "";
+exportTrigger.setAttribute("aria-haspopup", "menu");
+exportTrigger.setAttribute("aria-expanded", "false");
+}
 let zoomMenu = null;
 if (canZoom) {
 zoomMenu = document.createElement("div");
@@ -6818,15 +6853,13 @@ zoomMenu.style.cssText =
 bar.appendChild(zoomMenu);
 }
 const zoomMenuItems = [];
-const mkZoomItem = (name, label, onClick, toggles, separator = false) => {
+const mkZoomItem = (name, label, onClick, toggles) => {
 const button = document.createElement("button");
 button.type = "button";
 button.tabIndex = -1;
 button.dataset.xyModebarMenuItem = name;
-if (separator) button.dataset.xySeparator = "";
 button.setAttribute("role", "menuitem");
-button.style.cssText =
-"display:flex;align-items:center;pointer-events:auto;";
+button.style.cssText = "pointer-events:auto;";
 this._applySlot(button, "modebar_button");
 const icon = document.createElement("span");
 icon.dataset.xyModebarMenuIcon = "";
@@ -6847,6 +6880,7 @@ if (toggles) this._modeBtns[toggles] = button;
 return button;
 };
 if (canZoom) {
+const fitData = () => this._setView(this.view0, { animate: true });
 const resetView = () => {
 this._clearSelection();
 this._setView(this.view0, { animate: true });
@@ -6854,7 +6888,12 @@ this._setView(this.view0, { animate: true });
 mkZoomItem("zoomin", "Zoom In", () => this._zoomBy(0.5, true));
 mkZoomItem("zoomout", "Zoom Out", () => this._zoomBy(2, true));
 mkZoomItem("zoom", "Box Zoom", () => this._setDragMode("zoom"), "zoom");
-mkZoomItem("reset", "Reset View", resetView, null, true);
+const menuSeparator = document.createElement("span");
+menuSeparator.dataset.xyModebarMenuSeparator = "";
+menuSeparator.setAttribute("role", "separator");
+zoomMenu.appendChild(menuSeparator);
+mkZoomItem("fit", "Fit Data", fitData);
+mkZoomItem("reset", "Reset View", resetView);
 }
 const selectMenu = document.createElement("div");
 selectMenu.dataset.xyModebarMenu = "";
@@ -6872,7 +6911,7 @@ button.tabIndex = -1;
 button.dataset.xyModebarMenuItem = name;
 button.dataset.xyModebarSelectItem = mode;
 button.setAttribute("role", "menuitem");
-button.style.cssText = "display:flex;align-items:center;pointer-events:auto;";
+button.style.cssText = "pointer-events:auto;";
 this._applySlot(button, "modebar_button");
 const icon = document.createElement("span");
 icon.dataset.xyModebarMenuIcon = "";
@@ -6901,7 +6940,7 @@ const exportMenu = document.createElement("div");
 exportMenu.dataset.xyModebarMenu = "";
 exportMenu.dataset.xyModebarExportMenu = "";
 exportMenu.setAttribute("role", "menu");
-exportMenu.setAttribute("aria-label", "Toolbar options");
+exportMenu.setAttribute("aria-label", "Export options");
 exportMenu.style.cssText =
 "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
 bar.appendChild(exportMenu);
@@ -6914,7 +6953,7 @@ button.dataset.xyModebarMenuItem = name;
 button.dataset.xyModebarExportItem = name;
 if (separator) button.dataset.xySeparator = "";
 button.setAttribute("role", "menuitem");
-button.style.cssText = "display:flex;align-items:center;pointer-events:auto;";
+button.style.cssText = "pointer-events:auto;";
 this._applySlot(button, "modebar_button");
 const icon = document.createElement("span");
 icon.dataset.xyModebarMenuIcon = "";
@@ -6933,20 +6972,11 @@ exportMenu.appendChild(button);
 exportMenuItems.push(button);
 return button;
 };
-const EXPORT_ITEMS = {
-png: ["Export PNG", () => this._exportRaster("png")],
-jpeg: ["Export JPEG", () => this._exportRaster("jpeg")],
-webp: ["Export WebP", () => this._exportRaster("webp")],
-svg: ["Export SVG", () => this._exportSvg()],
-csv: ["Export CSV", () => this._exportCsv()],
-};
-const configuredFormats = Array.isArray(this._exportConfig().formats)
-? this._exportConfig().formats
-: ["png", "svg", "csv"];
-for (const name of configuredFormats) {
+for (const name of clientExportFormats) {
 const item = EXPORT_ITEMS[name];
-if (item) mkExportItem(name, item[0], item[1]);
+mkExportItem(name, item[0], item[1]);
 }
+const MODEBAR_MENU_GAP = 6;
 if (zoomTrigger) {
 setZoomMenuOpen = (open, restoreFocus = false) => {
 const show = Boolean(open);
@@ -6966,11 +6996,14 @@ zoomMenu.style.display = "flex";
 zoomMenu.style.visibility = "hidden";
 const rootRect = root.getBoundingClientRect();
 const barRect = bar.getBoundingClientRect();
+const triggerRect = zoomTrigger.getBoundingClientRect();
 const rootLeft = barRect.left - rootRect.left;
 const rootTop = barRect.top - rootRect.top;
-const below = bar.offsetHeight + 6;
-const above = -zoomMenu.offsetHeight - 6;
-const preferredTop = barRect.bottom + 6 + zoomMenu.offsetHeight <= rootRect.bottom
+const below = triggerRect.bottom - barRect.top + MODEBAR_MENU_GAP - bar.clientTop;
+const above = triggerRect.top - barRect.top
+- zoomMenu.offsetHeight - MODEBAR_MENU_GAP - bar.clientTop;
+const preferredTop = triggerRect.bottom + MODEBAR_MENU_GAP
++ zoomMenu.offsetHeight <= rootRect.bottom
 ? below
 : above;
 zoomIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
@@ -7000,47 +7033,56 @@ selectMenu.style.display = "flex";
 selectMenu.style.visibility = "hidden";
 const rootRect = root.getBoundingClientRect();
 const barRect = bar.getBoundingClientRect();
+const triggerRect = selectTrigger.getBoundingClientRect();
 const rootLeft = barRect.left - rootRect.left;
 const rootTop = barRect.top - rootRect.top;
-const below = bar.offsetHeight + 6;
-const above = -selectMenu.offsetHeight - 6;
-const preferredTop = barRect.bottom + 6 + selectMenu.offsetHeight <= rootRect.bottom
+const below = triggerRect.bottom - barRect.top + MODEBAR_MENU_GAP - bar.clientTop;
+const above = triggerRect.top - barRect.top
+- selectMenu.offsetHeight - MODEBAR_MENU_GAP - bar.clientTop;
+const preferredTop = triggerRect.bottom + MODEBAR_MENU_GAP
++ selectMenu.offsetHeight <= rootRect.bottom
 ? below
 : above;
 selectIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
 const maxLeft = root.clientWidth - rootLeft - selectMenu.offsetWidth;
 const maxTop = root.clientHeight - rootTop - selectMenu.offsetHeight;
-selectMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, selectTrigger.offsetLeft))}px`;
+const menuLeft = triggerRect.left - barRect.left - bar.clientLeft;
+selectMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, menuLeft))}px`;
 selectMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
 selectMenu.style.visibility = "visible";
 };
 setExportMenuOpen = (open, restoreFocus = false) => {
-const show = Boolean(open) && exportMenuItems.length > 0;
+const show = Boolean(open) && Boolean(exportTrigger) && exportMenuItems.length > 0;
 if (show) {
 setZoomMenuOpen(false);
 setSelectMenuOpen(false);
 }
 this._exportMenuOpen = show;
-grip.setAttribute("aria-expanded", String(show));
+exportTrigger?.setAttribute("aria-expanded", String(show));
 if (!show) {
 exportMenu.style.display = "none";
-if (restoreFocus) grip.focus();
+if (restoreFocus) exportTrigger?.focus();
 return;
 }
 exportMenu.style.display = "flex";
 exportMenu.style.visibility = "hidden";
 const rootRect = root.getBoundingClientRect();
 const barRect = bar.getBoundingClientRect();
+const triggerRect = exportTrigger.getBoundingClientRect();
 const rootLeft = barRect.left - rootRect.left;
 const rootTop = barRect.top - rootRect.top;
-const below = bar.offsetHeight + 6;
-const above = -exportMenu.offsetHeight - 6;
-const preferredTop = barRect.bottom + 6 + exportMenu.offsetHeight <= rootRect.bottom
+const below = triggerRect.bottom - barRect.top + MODEBAR_MENU_GAP - bar.clientTop;
+const above = triggerRect.top - barRect.top
+- exportMenu.offsetHeight - MODEBAR_MENU_GAP - bar.clientTop;
+const preferredTop = triggerRect.bottom + MODEBAR_MENU_GAP
++ exportMenu.offsetHeight <= rootRect.bottom
 ? below
 : above;
 const maxLeft = root.clientWidth - rootLeft - exportMenu.offsetWidth;
 const maxTop = root.clientHeight - rootTop - exportMenu.offsetHeight;
-exportMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, grip.offsetLeft))}px`;
+const triggerRight = triggerRect.right - barRect.left;
+const menuLeft = triggerRight - exportMenu.offsetWidth - bar.clientLeft;
+exportMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, menuLeft))}px`;
 exportMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
 exportMenu.style.visibility = "visible";
 };
@@ -7106,15 +7148,16 @@ next = (current - 1 + selectMenuItems.length) % selectMenuItems.length;
 selectMenuItems[next].focus();
 });
 }
-this._listen(grip, "keydown", (e) => {
+if (exportTrigger) {
+this._listen(exportTrigger, "keydown", (e) => {
 if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-if (!exportMenuItems.length) return;
 e.preventDefault();
 e.stopPropagation();
 setExportMenuOpen(true);
 const index = e.key === "ArrowDown" ? 0 : exportMenuItems.length - 1;
 exportMenuItems[index].focus();
 });
+}
 this._listen(exportMenu, "keydown", (e) => {
 if (e.key === "Escape") {
 e.preventDefault();
@@ -7577,75 +7620,84 @@ this._exportFilename("csv")
 );
 },
 _icon(name) {
-const svg = (body) =>
-`<svg width="15" height="15" viewBox="0 0 20 20" fill="none" ` +
-`stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ` +
+const aliases = {
+zoommenu: "box", zoomin: "zoom-in", zoomout: "zoom-out", zoom: "box",
+select: "box", selectx: "x-range", selecty: "y-range", pan: "move",
+chevrondown: "chevron", jpeg: "export", webp: "export",
+};
+const paths = {
+drag: [
+"M16 6C16 6.552 15.552 7 15 7S14 6.552 14 6s.448-1 1-1 1 .448 1 1Z",
+"M10 6C10 6.552 9.552 7 9 7S8 6.552 8 6s.448-1 1-1 1 .448 1 1Z",
+"M16 18C16 18.552 15.552 19 15 19s-1-.448-1-1 .448-1 1-1 1 .448 1 1Z",
+"M16 12C16 12.552 15.552 13 15 13s-1-.448-1-1 .448-1 1-1 1 .448 1 1Z",
+"M10 18C10 18.552 9.552 19 9 19s-1-.448-1-1 .448-1 1-1 1 .448 1 1Z",
+"M10 12C10 12.552 9.552 13 9 13s-1-.448-1-1 .448-1 1-1 1 .448 1 1Z",
+],
+chevron: ["M18 9S13.581 15 12 15 6 9 6 9"],
+"zoom-in": [
+"M17 17 21 21",
+"M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z",
+"M7.5 11h7M11 7.5v7",
+],
+"zoom-out": [
+"M17 17 21 21",
+"M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z",
+"M7.5 11h7",
+],
+box: [
+"M5 2v6M2 5h6",
+"M12 5h3M12 22h3M18 5h.5A3.5 3.5 0 0 1 22 8.5V9M22 18v.5a3.5 3.5 0 0 1-3.5 3.5H18M9 22h-.5A3.5 3.5 0 0 1 5 18.5V18M22 12v3M5 12v3",
+],
+fit: [
+"M3 4v16M21 4v16",
+"m15.622 9 .878.879C17.5 10.879 18 11.379 18 12s-.5 1.121-1.5 2.121l-.878.879M8.379 9 7.5 9.879C6.5 10.879 6 11.379 6 12s.5 1.121 1.5 2.121l.879.879M6.379 12h11.243",
+],
+reset: [
+"M20.488 15A9 9 0 1 1 20.294 8.5",
+"M15 9h3c1.414 0 2.121 0 2.56-.44C21 8.122 21 7.414 21 6V3",
+],
+lasso: [
+"m16.401 12.815 3.017 1.18c1.74.681 2.61 1.021 2.581 1.562-.028.54-.936.787-2.752 1.283-.541.147-.811.221-.999.408-.187.188-.261.458-.408.999-.496 1.816-.743 2.724-1.283 2.752-.541.029-.881-.841-1.562-2.581l-1.18-3.017c-.713-1.821-1.069-2.732-.608-3.194.462-.461 1.373-.105 3.194.608Z",
+"M5 17a2 2 0 1 1 0-4 2 2 0 0 1 0 4Zm0 0c0 1.6 1.333 2.667 2 3M21.899 11c.066-.327.101-.66.101-1 0-3.866-4.477-7-10-7S2 6.134 2 10c0 1.32.522 2.554 1.429 3.608M6.846 16A12.7 12.7 0 0 0 10 16.86",
+],
+"x-range": [
+"M2.5 12c0-4.478 0-6.718 1.391-8.109C5.282 2.5 7.522 2.5 12 2.5s6.718 0 8.109 1.391C21.5 5.282 21.5 7.522 21.5 12s0 6.718-1.391 8.109C18.718 21.5 16.478 21.5 12 21.5s-6.718 0-8.109-1.391C2.5 18.718 2.5 16.478 2.5 12Z",
+"M6 12h12M6 12c0-.7 1.994-2.008 2.5-2.5M6 12c0 .7 1.994 2.009 2.5 2.5M18 12c0-.7-1.994-2.008-2.5-2.5M18 12c0 .7-1.994 2.009-2.5 2.5",
+],
+"y-range": [
+"M12 18V6m0 12c.7 0 2.009-1.994 2.5-2.5M12 18c-.7 0-2.008-1.994-2.5-2.5M12 6c.7 0 2.009 1.994 2.5 2.5M12 6c-.7 0-2.008 1.994-2.5 2.5",
+"M2.5 12c0-4.478 0-6.718 1.391-8.109C5.282 2.5 7.522 2.5 12 2.5s6.718 0 8.109 1.391C21.5 5.282 21.5 7.522 21.5 12s0 6.718-1.391 8.109C18.718 21.5 16.478 21.5 12 21.5s-6.718 0-8.109-1.391C2.5 18.718 2.5 16.478 2.5 12Z",
+],
+move: [
+"M12 3v6M3 12h6M21 12h-6M12 21v-6.5",
+"m9 6 1.705-1.952C11.316 3.349 11.621 3 12 3s.685.349 1.295 1.048L15 6",
+"m15 18-1.705 1.952C12.685 20.651 12.379 21 12 21s-.685-.349-1.295-1.048L9 18",
+"m18 9 1.952 1.705C20.651 11.315 21 11.621 21 12s-.349.685-1.048 1.295L18 15",
+"m6 15-1.952-1.705C3.349 12.685 3 12.379 3 12s.349-.685 1.048-1.295L6 9",
+],
+export: [
+"M20 14v-3.343c0-.818 0-1.226-.152-1.594-.153-.367-.442-.656-1.02-1.235l-4.736-4.736c-.499-.499-.748-.748-1.058-.896-.064-.031-.13-.058-.197-.082C12.514 2 12.161 2 11.456 2 8.211 2 6.588 2 5.489 2.886a4 4 0 0 0-.603.603C4 4.588 4 6.211 4 9.456V14c0 3.771 0 5.657 1.172 6.828C6.343 22 8.229 22 12 22M13 2.5V3c0 2.828 0 4.243.879 5.121C14.757 9 16.172 9 19 9h.5",
+"M17 22c.607-.59 3-2.16 3-3s-2.393-2.41-3-3M19 19h-7",
+],
+png: [
+"M20 13v-2.343c0-.818 0-1.226-.152-1.594-.153-.367-.442-.656-1.02-1.235l-4.736-4.736c-.499-.499-.748-.748-1.058-.896-.064-.031-.13-.058-.197-.082C12.514 2 12.161 2 11.456 2 8.211 2 6.588 2 5.489 2.886a4 4 0 0 0-.603.603C4 4.588 4 6.211 4 9.456V13M13 2.5V3c0 2.828 0 4.243.879 5.121C14.757 9 16.172 9 19 9h.5",
+"M4 22v-6h2a1.5 1.5 0 0 1 0 3H4m16-2a1 1 0 0 0-1-1h-1.5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1H19a1 1 0 0 0 1-1v-1.5h-1M10 22v-6l4 6v-6",
+],
+svg: [
+"M20 13v-2.343c0-.818 0-1.226-.152-1.594-.153-.367-.442-.656-1.02-1.235l-4.736-4.736c-.499-.499-.748-.748-1.058-.896-.064-.031-.13-.058-.197-.082C12.514 2 12.161 2 11.456 2 8.211 2 6.588 2 5.489 2.886a4 4 0 0 0-.603.603C4 4.588 4 6.211 4 9.456V13M13 2.5V3c0 2.828 0 4.243.879 5.121C14.757 9 16.172 9 19 9h.5",
+"M7 16H5a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1h1a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1H4M14 16l-1.921 5.763a.347.347 0 0 1-.658 0L9.5 16M20 17a1 1 0 0 0-1-1h-1.5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1H19a1 1 0 0 0 1-1v-1.5h-1",
+],
+csv: [
+"M7.5 17.22C7.445 16.029 6.622 16 5.505 16 3.785 16 3.5 16.406 3.5 18v2c0 1.594.285 2 2.005 2 1.117 0 1.94-.029 1.995-1.22M20.5 16l-1.777 4.695C18.394 21.565 18.229 22 17.968 22s-.426-.435-.755-1.305L15.436 16m-2.56 0h-1.181c-.472 0-.708 0-.894.076-.634.26-.625.869-.625 1.424 0 .555-.009 1.165.625 1.424.186.076.422.076.894.076s.708 0 .894.076c.634.26.625.869.625 1.424 0 .555-.009 1.165-.625 1.424-.186.076-.422.076-.894.076h-1.286",
+"M20 13v-2.343c0-.818 0-1.226-.152-1.594-.153-.367-.442-.656-1.02-1.235l-4.736-4.736c-.499-.499-.748-.748-1.058-.896-.064-.031-.13-.058-.197-.082C12.514 2 12.161 2 11.456 2 8.211 2 6.588 2 5.489 2.886a4 4 0 0 0-.603.603C4 4.588 4 6.211 4 9.456V13M13 2.5V3c0 2.828 0 4.243.879 5.121C14.757 9 16.172 9 19 9h.5",
+],
+};
+const iconPaths = paths[aliases[name] || name] || [];
+const body = iconPaths.map((path) => `<path d="${path}"/>`).join("");
+return `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false" ` +
+`stroke="currentColor" stroke-width="1.8" stroke-linecap="round" ` +
 `stroke-linejoin="round">${body}</svg>`;
-switch (name) {
-case "zoomin":
-return svg('<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5 L17 17"/>' +
-'<path d="M8.5 6 V11 M6 8.5 H11"/>');
-case "zoomout":
-return svg('<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5 L17 17"/>' +
-'<path d="M6 8.5 H11"/>');
-case "pan":
-return svg('<path d="M10 3 V17 M3 10 H17"/><path d="M10 3 L8 5 M10 3 L12 5"/>' +
-'<path d="M10 17 L8 15 M10 17 L12 15"/><path d="M3 10 L5 8 M3 10 L5 12"/>' +
-'<path d="M17 10 L15 8 M17 10 L15 12"/>');
-case "zoom":
-return svg('<path d="M7 3.5 H3.5 V7 M13 3.5 H16.5 V7 ' +
-'M3.5 13 V16.5 H7 M16.5 13 V16.5 H13"/>');
-case "select":
-return svg('<path d="M7 4 H4 V7 M13 4 H16 V7 M4 13 V16 H7 ' +
-'M16 13 V16 H13"/><circle cx="7" cy="8" r="1" fill="currentColor" ' +
-'stroke="none"/><circle cx="12.5" cy="9" r="1" fill="currentColor" stroke="none"/>' +
-'<circle cx="9.5" cy="13" r="1" fill="currentColor" stroke="none"/>');
-case "lasso":
-return svg('<path d="M5 5.5 C7 3 13.5 3.5 15.5 7 C17 10 14 15.5 9 15.5 ' +
-'C4.5 15.5 2.5 11 4 7.5 Z"/><circle cx="5" cy="5.5" r="1" ' +
-'fill="currentColor" stroke="none"/><circle cx="15.5" cy="7" r="1" ' +
-'fill="currentColor" stroke="none"/><circle cx="9" cy="15.5" r="1" ' +
-'fill="currentColor" stroke="none"/>');
-case "selectx":
-return svg('<path d="M5 4 V16 M15 4 V16 M7 10 H13 ' +
-'M7 10 L9 8 M7 10 L9 12 M13 10 L11 8 M13 10 L11 12"/>');
-case "selecty":
-return svg('<path d="M4 5 H16 M4 15 H16 M10 7 V13 ' +
-'M10 7 L8 9 M10 7 L12 9 M10 13 L8 11 M10 13 L12 11"/>');
-case "chevrondown":
-return svg('<path d="M6 8 L10 12 L14 8"/>');
-case "collapse":
-return svg('<path d="M4 5 H16 M4 15 H16 M7 8 L10 11 L13 8"/>');
-case "expand":
-return svg('<path d="M4 5 H16 M4 15 H16 M7 12 L10 9 L13 12"/>');
-case "png":
-return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
-'<path d="M7 13 L9 10.5 L11 12 L13.5 9 V15 H7 Z"/>');
-case "jpeg":
-return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
-'<circle cx="8.5" cy="10" r="1.2"/><path d="M7 15 L10 12 L13.5 15 Z"/>');
-case "webp":
-return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
-'<path d="M7 11 C8 10 9 10 10 11 C11 12 12 12 13.5 11"/>' +
-'<path d="M7 14 C8 13 9 13 10 14 C11 15 12 15 13.5 14"/>');
-case "svg":
-return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
-'<path d="M7 13 L9 9 L11 14 L13.5 10"/>');
-case "csv":
-return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
-'<path d="M7 9 H13 M7 12 H13 M7 15 H13 M9 8 V16"/>');
-case "reset":
-return svg('<path d="M4 10 a6 6 0 1 1 1.8 4.3"/><path d="M4 6 V10 H8"/>');
-case "drag":
-return svg('<circle cx="7" cy="5" r=".8" fill="currentColor" stroke="none"/>' +
-'<circle cx="13" cy="5" r=".8" fill="currentColor" stroke="none"/>' +
-'<circle cx="7" cy="10" r=".8" fill="currentColor" stroke="none"/>' +
-'<circle cx="13" cy="10" r=".8" fill="currentColor" stroke="none"/>' +
-'<circle cx="7" cy="15" r=".8" fill="currentColor" stroke="none"/>' +
-'<circle cx="13" cy="15" r=".8" fill="currentColor" stroke="none"/>');
-default:
-return svg("");
-}
 },
 });
 Object.assign(ChartView.prototype, {

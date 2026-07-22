@@ -623,8 +623,6 @@ def test_sdf_plot_grid_is_cached_and_uses_reflex_toolbar_tokens() -> None:
 
     rendered = str(xy_sdf_plot_grid(config))
     expected_tokens = {
-        "--chart-modebar-bg": "var(--secondary-2)",
-        "--chart-modebar-active": "var(--primary-a4)",
         "--chart-text": "var(--secondary-11)",
         "--chart-focus": "var(--primary-9)",
     }

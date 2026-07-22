@@ -298,15 +298,17 @@ unless `plot_background` (`--chart-bg`) paints the rect separately. Static SVG
 and PNG exports reproduce both fills (solid colors; gradients stay
 browser-only), so a dark card exports dark.
 
-The compact toolbar appears while the chart is hovered or one of its controls
-has keyboard focus. Drag its grip to move it within the chart. Zoom and
+The compact toolbar appears at the plot's top-left while the chart is hovered
+or one of its controls has keyboard focus. Drag its grip to move it within the
+chart. Pan starts active and toggles off to release drag and wheel gestures
+back to the containing page. Zoom and
 selection modes are grouped into menus; completed lasso selections expose up
 to 16 adaptively simplified handles that can be dragged to refine the selected
 range. The grip's menu defaults to PNG, SVG, and the chart's resident data as
 CSV. `xy.export_config(formats=[...])` governs which of `png`, `jpeg`, `webp`,
 `svg`, and `csv` appear and in what order; `pdf` and `html` are Python-side
 formats and are skipped in the client menu. An explicit empty list hides the
-download items, leaving the grip a drag handle only.
+download items, leaving the grip as a drag handle only.
 Client PNG and SVG export snapshot the chart's computed `--chart-*` tokens,
 text color, and font styles so themes inherited from a host application are
 preserved in the downloaded image.

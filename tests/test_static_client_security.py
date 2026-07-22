@@ -33,8 +33,8 @@ THEME_FILES = (("js/src/20_theme.js", _read(ROOT / "js/src/20_theme.js")), _INDE
 
 
 def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
-    """Chrome styling lives in a layered, zero-specificity :where() stylesheet
-    so user class_names / styles always win (the CSS+Tailwind contract).
+    """Chrome styling lives in a low-priority layer with reset-resistant buttons,
+    so user class_names / styles still win (the CSS+Tailwind contract).
     Every chrome slot's visual defaults + --chart-* token must be present, and
     the elements must carry only structural inline styles (no inline
     background/color that would beat a utility class)."""
@@ -43,10 +43,10 @@ def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
         ':where(.xy [data-xy-slot="legend"]){',
         ':where(.xy [data-xy-slot="legend_swatch"]){',
         ':where(.xy [data-xy-slot="modebar"]){',
-        ':where(.xy [data-xy-slot="modebar_button"]){',
+        ':where(.xy) button[data-xy-slot="modebar_button"]{',
         ":where(.xy [data-xy-modebar-menu]){",
-        ":where(.xy [data-xy-modebar-menu-item]){",
-        ':where(.xy [data-xy-slot="modebar_button"].xy-active){',
+        ":where(.xy) button[data-xy-modebar-menu-item]{",
+        ':where(.xy) button[data-xy-slot="modebar_button"].xy-active{',
         ':where(.xy [data-xy-slot="selection"]){',
         ':where(.xy [data-xy-slot="badge_item"]){',
         ':where(.xy [data-xy-slot="tick_label"]){',
@@ -54,6 +54,7 @@ def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
         ':where(.xy [data-xy-slot="annotation_label"]){',
         ':where(.xy [data-xy-slot="canvas"]){cursor:',
         ':where(.xy [data-xy-slot="canvas"][data-xy-dragmode="pan"]){cursor:',
+        ':where(.xy [data-xy-slot="canvas"][data-xy-dragmode="none"]){cursor:',
     )
     tokens = (
         "--chart-tooltip-bg",
@@ -143,7 +144,7 @@ def test_selection_mode_icons_are_crisp_and_the_trigger_tracks_active_mode() -> 
         )
 
     for path, text in THEME_FILES:
-        assert "min-width:42px" in text, f"{path} crowds the selection icon and chevron"
+        assert "min-width:47px" in text, f"{path} crowds the selection icon and chevron"
         assert "[data-xy-modebar-select-icon]" in text, path
 
 

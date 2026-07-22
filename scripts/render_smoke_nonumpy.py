@@ -280,9 +280,15 @@ try{{
     // Modebar: button row present, and its zoom controls actually move the view.
     const bar = v._modebar;
     const btns = bar ? bar.querySelectorAll("button").length : 0;
-    const modebarHidden = bar && bar.style.opacity === "0" && bar.style.pointerEvents === "none" ? 1 : 0;
+    v.root.dispatchEvent(new PointerEvent("pointerleave", {{bubbles:true}}));
+    const modebarHiddenAtRest = bar && bar.style.opacity === "0"
+      && bar.style.pointerEvents === "none" ? 1 : 0;
+    const modebarTopLeft = bar
+      && Math.abs(parseFloat(bar.style.left) - (v.plot.x + 4)) < 0.01
+      && Math.abs(parseFloat(bar.style.top) - (v.plot.y + 4)) < 0.01 ? 1 : 0;
     v.root.dispatchEvent(new PointerEvent("pointerenter", {{bubbles:true}}));
-    const modebarHover = bar && bar.style.opacity === "1" && bar.style.pointerEvents === "auto" ? 1 : 0;
+    const modebarHoverReveal = bar && bar.style.opacity === "1"
+      && bar.style.pointerEvents === "auto" ? 1 : 0;
     const grip = bar && bar.querySelector("[data-xy-modebar-drag-handle]");
     const modebarNoCollapse = bar && !bar.hasAttribute("data-xy-collapsed")
       && !bar.querySelector("[data-xy-modebar-collapse-item]")
@@ -291,11 +297,15 @@ try{{
     const zoomTrigger = bar && bar.querySelector("[data-xy-modebar-menu-trigger]");
     const zoomMenu = bar && bar.querySelector("[data-xy-modebar-menu]");
     const selectButton = bar && bar.querySelector("[data-xy-modebar-select]");
+    const panButton = bar && bar.querySelector('[data-xy-modebar-action="pan"]');
     const selectMenu = bar && bar.querySelector("[data-xy-modebar-select-menu]");
     const exportButton = bar && bar.querySelector("[data-xy-modebar-export]");
     const exportMenu = bar && bar.querySelector("[data-xy-modebar-export-menu]");
     const zoomPercent = zoomTrigger && zoomTrigger.querySelector("[data-xy-modebar-zoom-percent]");
     const zoomIndicator = zoomTrigger && zoomTrigger.querySelector("[data-xy-modebar-menu-indicator] svg");
+    const panInitiallyEnabled = panButton && v.dragMode === "pan"
+      && panButton.getAttribute("aria-pressed") === "true"
+      && panButton.classList.contains("xy-active");
     const zoomTriggerInitial = zoomPercent && zoomPercent.textContent === "100%" && zoomIndicator;
     const zoomLabelView = {{...v.view}};
     v.view = {{...v.view, x1:v.view.x0+(v.view.x1-v.view.x0)/4000}};
@@ -307,7 +317,8 @@ try{{
     if (zoomTrigger) zoomTrigger.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
     const menuOpened = zoomMenu && zoomMenu.style.display === "flex"
       && zoomTrigger.getAttribute("aria-expanded") === "true"
-      && zoomMenu.querySelectorAll("[data-xy-modebar-menu-item]").length === 4;
+      && zoomMenu.querySelectorAll("[data-xy-modebar-menu-item]").length === 5
+      && zoomMenu.querySelector("[data-xy-modebar-menu-separator]");
     if (zoomMenu) zoomMenu.dispatchEvent(new KeyboardEvent("keydown", {{key:"Escape",bubbles:true}}));
     const modebarMenu = menuOpened && zoomMenu.style.display === "none"
       && zoomTrigger.getAttribute("aria-expanded") === "false" ? 1 : 0;
@@ -401,6 +412,29 @@ try{{
       && exportButton.getAttribute("aria-expanded") === "false"
       && exportThemePreserved && shortcutHintsAbsent ? 1 : 0;
     v._setDragMode("pan");
+    const lockedView = JSON.stringify(v.view);
+    if (panButton) panButton.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
+    const panDisabled = panButton && v.dragMode === "none"
+      && v.canvas.dataset.xyDragmode === "none"
+      && panButton.getAttribute("aria-pressed") === "false"
+      && !panButton.classList.contains("xy-active");
+    const unlockedWheel = new WheelEvent("wheel", {{
+      deltaY:120,bubbles:true,cancelable:true,clientX:120,clientY:120,
+    }});
+    const wheelPassedThrough = v.canvas.dispatchEvent(unlockedWheel)
+      && !unlockedWheel.defaultPrevented && !v._wheelZoomRaf && !v._pendingWheelZoom;
+    const lockedRect = v.canvas.getBoundingClientRect();
+    pointer(v.canvas, "pointerdown", lockedRect.left + 80, lockedRect.top + 80, 74);
+    pointer(v.canvas, "pointermove", lockedRect.left + 120, lockedRect.top + 105, 74);
+    pointer(v.canvas, "pointerup", lockedRect.left + 120, lockedRect.top + 105, 74);
+    const dragStayedLocked = JSON.stringify(v.view) === lockedView;
+    if (panButton) panButton.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
+    const panRestored = panButton && v.dragMode === "pan"
+      && v.canvas.dataset.xyDragmode === "pan"
+      && panButton.getAttribute("aria-pressed") === "true"
+      && panButton.classList.contains("xy-active");
+    const panToggle = panInitiallyEnabled && panDisabled && wheelPassedThrough
+      && dragStayedLocked && panRestored ? 1 : 0;
     const spanX = () => v.view.x1 - v.view.x0;
     const s0 = spanX();
     v._zoomBy(0.5);                 // zoom in -> span shrinks
@@ -1043,7 +1077,7 @@ try{{
     const gLn=vSm.gpuTraces[0], gAr=vSm.gpuTraces[1];
     const msmooth=(gLn.n===65 && gLn._cpu.x.length===5 && gAr.n===65 && gAr._cpu.base.length===5)?1:0;
     vSm.destroy();holderSm.remove();
-    const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
+    const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHiddenAtRest}} modebarTopLeft=${{modebarTopLeft}} modebarHover=${{modebarHoverReveal}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} panToggle=${{panToggle}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -1213,6 +1247,7 @@ try{{
     active = int(re.search(r"active=(\d+)", title).group(1))
     btns = int(re.search(r"btns=(\d+)", title).group(1))
     modebar_hidden = int(re.search(r"modebarHidden=(\d+)", title).group(1))
+    modebar_top_left = int(re.search(r"modebarTopLeft=(\d+)", title).group(1))
     modebar_hover = int(re.search(r"modebarHover=(\d+)", title).group(1))
     modebar_no_collapse = int(re.search(r"modebarNoCollapse=(\d+)", title).group(1))
     modebar_menu = int(re.search(r"modebarMenu=(\d+)", title).group(1))
@@ -1220,6 +1255,7 @@ try{{
     modebar_select = int(re.search(r"modebarSelect=(\d+)", title).group(1))
     lasso_edit = int(re.search(r"lassoEdit=(\d+)", title).group(1))
     modebar_export = int(re.search(r"modebarExport=(\d+)", title).group(1))
+    pan_toggle = int(re.search(r"panToggle=(\d+)", title).group(1))
     zin = int(re.search(r"zin=(\d+)", title).group(1))
     smooth = int(re.search(r"smooth=(\d+)", title).group(1))
     label_throttle = int(re.search(r"labelThrottle=(\d+)", title).group(1))
@@ -1283,8 +1319,8 @@ try{{
     print(
         f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, "
         f"row-decoded: {rowok}, select all/sub: {sel_all}/{sel_some}, mask active: {active}, "
-        f"modebar btns: {btns}, hidden/hover/no-collapse/menu/drag/select/lasso-edit/export: "
-        f"{modebar_hidden}/{modebar_hover}/{modebar_no_collapse}/{modebar_menu}/"
+        f"modebar btns: {btns}, hidden/top-left/hover/no-collapse/menu/drag/select/lasso-edit/export: "
+        f"{modebar_hidden}/{modebar_top_left}/{modebar_hover}/{modebar_no_collapse}/{modebar_menu}/"
         f"{modebar_drag}/{modebar_select}/{lasso_edit}/{modebar_export}, "
         f"zoom-in: {zin}, box-zoom: {box}, zoom-mode: {zmode}, "
         f"fluid: {fluid}, resize grew: {grew}, pick realloc: {pick2}, "
@@ -1309,7 +1345,9 @@ try{{
     if btns < 15:
         raise SystemExit(f"modebar missing buttons: {btns}")
     if modebar_hidden != 1 or modebar_hover != 1:
-        raise SystemExit("modebar did not hide at rest and show on chart hover")
+        raise SystemExit("modebar did not hide at rest and reveal on hover")
+    if modebar_top_left != 1:
+        raise SystemExit("modebar did not start at the plot's top-left")
     if modebar_no_collapse != 1:
         raise SystemExit("modebar still exposes collapsible toolbar behavior")
     if modebar_menu != 1:
@@ -1322,6 +1360,8 @@ try{{
         raise SystemExit("completed lasso did not expose draggable editable points")
     if modebar_export != 1:
         raise SystemExit("modebar export menu did not produce PNG/SVG/CSV actions")
+    if pan_toggle != 1:
+        raise SystemExit("Pan did not start active, toggle navigation off, and restore it")
     if zin != 1:
         raise SystemExit("modebar zoom-in did not shrink the view span")
     if smooth != 1:

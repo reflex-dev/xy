@@ -7,7 +7,12 @@ description: Configure XY's toolbar, gestures, selection, exports, and linked vi
 
 Interactive charts include a compact modebar by default. It exposes pan, zoom
 in/out, box zoom, reset, selection modes when selection is enabled, and local
-PNG, SVG, and CSV export.
+PNG, SVG, and CSV export. The modebar appears at the plot's top-left on chart
+hover or keyboard focus and can be dragged elsewhere within the chart.
+
+Pan is enabled by default. Click the active Pan button to disable drag, wheel,
+and double-click navigation; wheel gestures then scroll the containing page.
+Click Pan again—or choose it after a selection mode—to restore navigation.
 
 Use `modebar()` to hide or style the toolbar:
 

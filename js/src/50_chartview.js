@@ -195,7 +195,8 @@ class ChartView {
     this._hoverTarget = null;
     this._viewEventRaf = null;
     this._linkedSource = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    // pan | zoom | internal selection modes (the modebar exposes only pan/zoom)
+    // pan | none | zoom | internal selection modes. Pan starts enabled; the
+    // modebar can toggle into `none` so embedded charts do not trap page scroll.
     this.dragMode = "pan";
 
     // Responsive size: "100%" means the *container* owns that axis — measure
