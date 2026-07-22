@@ -104,6 +104,8 @@ These commands match the non-blocking GitHub Actions measurement lane:
   --json heatmap-4b.json
 .venv/bin/python benchmarks/bench_interaction.py --sizes 1e4,2.5e5 \
   --reps 24 --chromium "$CHROME" --json interaction.json
+.venv/bin/python benchmarks/bench_hexbin_client.py --gridsize 256 \
+  --reps 9 --chromium "$CHROME" --json hexbin-client.json
 .venv/bin/python benchmarks/bench_transport.py --n 1e6 --reps 15 \
   --browser-reps 12 --chromium "$CHROME" --require-browser \
   --json transport.json
@@ -124,6 +126,13 @@ be painted.
 
 The browser helpers force SwiftShader themselves. Validate every artifact before
 publication with `scripts/verify_benchmark_report.py --kind ...`.
+
+`bench_hexbin_client.py` isolates occupied-cell trace construction, GPU upload,
+and synchronized draw time in the standalone client. It reads the three live
+attribute-buffer sizes from WebGL and reports the exact former 42-float fan
+layout beside the current result; Python/native binning is setup, not timing.
+When running an older checkout that still has the fan-expanded renderer, pass
+`--expect-layout legacy`; `either` is available for side-by-side automation.
 
 `bench_transport.py` is a loopback transport diagnostic: both HTTP response
 formats dispatch through `channel.handle_message()`. Its binary arm uses xy's

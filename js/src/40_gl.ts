@@ -569,6 +569,39 @@ void main() {
   outColor = vec4(rgb * alpha, alpha);
 }`;
 
+// Hexbin cells: one instance per occupied cell.  The six-triangle fan is a
+// compile-time ring addressed by gl_VertexID, so each instance needs only its
+// encoded center and scalar color value.  Keep the triangle/barycentric shape
+// identical to MESH_VS: MESH_FS then preserves the existing edge coverage and
+// stroke behavior without allocating six copies of seven attributes per cell.
+export const HEXBIN_VS = `#version 300 es
+in float ax; in float ay; in float a_cval;
+uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform vec2 u_xmeta; uniform vec2 u_ymeta;
+uniform int u_xmode; uniform int u_ymode;
+uniform vec2 u_hexDelta; uniform int u_colorMode;
+out float v_cval; out vec3 v_bary; out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke;
+${AXIS_GLSL}
+vec2 xyHexRing(int index) {
+  if (index == 0 || index == 6) return vec2(0.0, -1.0 / 3.0);
+  if (index == 1) return vec2(0.5, -1.0 / 6.0);
+  if (index == 2) return vec2(0.5, 1.0 / 6.0);
+  if (index == 3) return vec2(0.0, 1.0 / 3.0);
+  if (index == 4) return vec2(-0.5, 1.0 / 6.0);
+  return vec2(-0.5, -1.0 / 6.0);
+}
+void main() {
+  int triangle = gl_VertexID / 3;
+  int vertex = gl_VertexID - triangle * 3;
+  vec2 ring = vertex == 0 ? vec2(0.0) : xyHexRing(triangle + vertex - 1);
+  float x = ax + ring.x * u_hexDelta.x;
+  float y = ay + ring.y * u_hexDelta.y;
+  gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode), xyMap(y, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  v_bary = vertex == 0 ? vec3(1.,0.,0.) : (vertex == 1 ? vec3(0.,1.,0.) : vec3(0.,0.,1.));
+  v_rgba = vec4(0.0); v_style = vec4(1.0, -1.0, -1.0, -1.0); v_stroke = vec4(0.0);
+}`;
+
 // Filled triangle meshes: one instance per triangle, with optional scalar LUT
 // color and antialiased barycentric edge strokes.
 export const MESH_VS = `#version 300 es

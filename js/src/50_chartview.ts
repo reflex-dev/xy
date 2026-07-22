@@ -2,7 +2,7 @@ import { PROTOCOL, xyByteSpan } from "./00_header";
 import { buildLutData, colormapStops } from "./10_colormaps";
 import { cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
-import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
+import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, HEXBIN_VS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
 import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodRememberDensity, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
 
@@ -1990,6 +1990,7 @@ export class ChartView {
   get lineProg() { return this._prog("line", LINE_VS, LINE_FS); }
   get segmentProg() { return this._prog("segment", SEGMENT_VS, SEGMENT_FS); }
   get meshProg() { return this._prog("mesh", MESH_VS, MESH_FS); }
+  get hexbinProg() { return this._prog("hexbin", HEXBIN_VS, MESH_FS); }
   get areaProg() { return this._prog("area", AREA_VS, AREA_FS); }
   get rectProg() { return this._prog("rect", RECT_VS, RECT_FS); }
   get barProg() { return this._prog("bar", BAR_VS, RECT_FS); }
@@ -2558,54 +2559,30 @@ export class ChartView {
     g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
   }
 
-  // Hexbin ships cell centers plus one color value per cell; every hexagon
-  // shares the same geometry (style hex_dx/hex_dy), so the six-triangle fan
-  // expands here instead of on the wire. Vertices stay in the centers'
-  // encoded space: stored = (value - offset) * scale, so a data-space delta
-  // scales by meta.scale and the center columns' metas serve every vertex.
-  // The ring must match HEX_RING in python/xy/_svg.py.
+  // Hexbin ships and uploads one center plus one color value per cell.  The
+  // dedicated vertex shader generates the shared six-triangle fan directly
+  // from gl_VertexID; unlike the generic mesh path, no O(cells * 6) CPU arrays
+  // or repeated GPU attributes exist.  Deltas stay in the centers' encoded
+  // space: stored = (value - offset) * scale, so a data-space delta scales by
+  // meta.scale.  The shader ring must match HEX_RING in python/xy/_svg.py.
   _buildHexbinMark(g, t, buffer) {
     const cx = this._columnView(buffer, this.spec.columns[t.x]);
     const cy = this._columnView(buffer, this.spec.columns[t.y]);
-    const xMeta = { ...this.spec.columns[t.x] };
-    const yMeta = { ...this.spec.columns[t.y] };
-    const n = Math.min(cx.length, cy.length);
+    g.xMeta = { ...this.spec.columns[t.x] };
+    g.yMeta = { ...this.spec.columns[t.y] };
+    g.n = Math.min(cx.length, cy.length);
+    g.xBuf = this._upload(cx);
+    g.yBuf = this._upload(cy);
     const style = t.style || {};
-    const dx = (Number(style.hex_dx) || 0) * (xMeta.scale || 1);
-    const dy = (Number(style.hex_dy) || 0) * (yMeta.scale || 1);
-    const ringX = [0, dx / 2, dx / 2, 0, -dx / 2, -dx / 2, 0];
-    const ringY = [-dy / 3, -dy / 6, dy / 6, dy / 3, dy / 6, -dy / 6, -dy / 3];
-    const parts: any = {};
-    for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) parts[name] = new Float32Array(n * 6);
-    for (let i = 0; i < n; i++) {
-      const px = cx[i], py = cy[i];
-      for (let k = 0; k < 6; k++) {
-        const j = i * 6 + k;
-        parts.x0[j] = px;
-        parts.y0[j] = py;
-        parts.x1[j] = px + ringX[k];
-        parts.y1[j] = py + ringY[k];
-        parts.x2[j] = px + ringX[k + 1];
-        parts.y2[j] = py + ringY[k + 1];
-      }
-    }
-    for (const name of ["x0", "x1", "x2"]) {
-      g[name + "Meta"] = { ...xMeta };
-      g[name + "Buf"] = this._upload(parts[name]);
-    }
-    for (const name of ["y0", "y1", "y2"]) {
-      g[name + "Meta"] = { ...yMeta };
-      g[name + "Buf"] = this._upload(parts[name]);
-    }
-    g.n = n * 6;
+    g.hexDelta = [
+      (Number(style.hex_dx) || 0) * (g.xMeta.scale || 1),
+      (Number(style.hex_dy) || 0) * (g.yMeta.scale || 1),
+    ];
     g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
     g.colorMode = 0;
     if (t.color && (t.color.mode === "continuous" || t.color.mode === "categorical")) {
       g.colorMode = t.color.mode === "continuous" ? 1 : 2;
-      const cval = this._columnView(buffer, this.spec.columns[t.color.buf]);
-      const expanded = new Float32Array(n * 6);
-      for (let i = 0; i < n; i++) expanded.fill(cval[i], i * 6, i * 6 + 6);
-      g.cBuf = this._upload(expanded);
+      g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
       g.lut = t.color.mode === "continuous" ? this._lut(t.color.colormap) : this._paletteLut(t.color.palette);
     }
     g.meshStrokeWidth = Number(style.stroke_width) || 0;
@@ -3535,6 +3512,39 @@ export class ChartView {
     if (!g.styleBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
     if (!g.strokeBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...stroke);
     gl.drawArraysInstanced(gl.TRIANGLES, 0, 3, g.n);
+  }
+
+  _drawHexbin(g, xm, ym) {
+    if (g.n < 1) return;
+    const gl = this.gl;
+    const prog = this.hexbinProg;
+    gl.useProgram(prog);
+    const u = (n) => uniformOf(gl, prog, n);
+    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+    this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
+    this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+    gl.uniform2f(u("u_hexDelta"), g.hexDelta[0], g.hexDelta[1]);
+    gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
+    gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], g.color[3]);
+    const stroke = g.meshStroke || [0, 0, 0, 0];
+    gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
+    gl.uniform1f(u("u_strokeWidth"), g.meshStrokeWidth || 0);
+    gl.uniform1i(u("u_strokeMode"), 0);
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style));
+    if (g.colorMode && g.lut) {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, g.lut);
+      gl.uniform1i(u("u_lut"), 0);
+    }
+    this._bindVao(g, "hexbin", [g.xBuf._fcId, g.yBuf._fcId, g.cBuf ? g.cBuf._fcId : 0], () => {
+      this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ay, g.yBuf, 0, 1);
+      if (g.cBuf) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+    });
+    if (!g.cBuf) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, 18, g.n);
   }
 
   // Dash setup for a line/area outline: recompute per-vertex cumulative

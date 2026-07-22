@@ -124,6 +124,9 @@ inferred presentation.
 
 `hexbin` bins source points in the native engine and ships occupied cell
 centers plus values, so its rendered geometry is bounded by `gridsize`; the
-binning pass still scales with source rows. `heatmap` ships the supplied grid
-as a GPU texture, and contour work scales with grid cells times levels. These
-marks do not use scatter's automatic density tier.
+binning pass still scales with source rows. The browser keeps that compact
+shape on the GPU—three floats per occupied cell—and generates the shared
+hexagon ring in an instanced vertex shader; it does not materialize or upload
+six triangles per cell. `heatmap` ships the supplied grid as a GPU texture, and
+contour work scales with grid cells times levels. These marks do not use
+scatter's automatic density tier.

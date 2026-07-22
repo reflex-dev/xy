@@ -172,7 +172,7 @@ export const MARK_KINDS = {
     draw: (view, g) => {
       const [x0, x1] = view._axisRange(g.xAxis);
       const [y0, y1] = view._axisRange(g.yAxis);
-      view._drawMesh(g, view._map(g.x0Meta, x0, x1, g.xAxis), view._map(g.y0Meta, y0, y1, g.yAxis));
+      view._drawHexbin(g, view._map(g.xMeta, x0, x1, g.xAxis), view._map(g.yMeta, y0, y1, g.yAxis));
     },
     refreshColor: (view, g) => {
       if (g.colorMode === 0 && g.trace.color) g.color = parseColor(view.root, g.trace.color.color, g.color);
