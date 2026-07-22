@@ -551,6 +551,15 @@ class _Scale:
         span = (self.hi - self.lo) or 1.0
         return self.px0 + (c - self.lo) / span * (self.px1 - self.px0)
 
+    def value(self, c: Any) -> Any:
+        """Inverse of `coord`: scale coordinate back to a data value."""
+        if self.log:
+            return np.power(10.0, c)
+        if self.symlog:
+            c = np.asarray(c)
+            return np.sign(c) * self.constant * np.expm1(np.abs(c))
+        return c
+
     @property
     def affine(self) -> bool:
         return not (self.log or self.symlog)
@@ -2476,6 +2485,77 @@ def _rect_marks(
     return "".join(out)
 
 
+def warp_axis_indices(scale: _Scale, lo: float, hi: float, n_src: int) -> Optional[np.ndarray]:
+    """Source-cell index per output cell for a *data-uniform* grid shown on a
+    nonlinear axis, or None when no warp is needed (affine axis).
+
+    A data-uniform grid (heatmap) stretched linearly between its transformed
+    endpoints places every internal cell edge wrong on a log/symlog axis; the
+    fix is to resample it into a grid that is uniform in scale coordinates
+    (== uniform on screen), nearest-neighbor so cells stay crisp. Output
+    resolution is at least the source's and at most the pixel span (capped),
+    so no cell is lost and no image explodes. Shared by the SVG and native
+    raster exporters. Density grids are already uniform in scale coordinates
+    (§28) and must NOT be warped."""
+    if scale.affine:
+        return None
+    c0, c1 = float(scale.coord(lo)), float(scale.coord(hi))
+    if not (np.isfinite(c0) and np.isfinite(c1)) or c0 == c1:
+        return None
+    px_span = abs(float(scale(hi)) - float(scale(lo)))
+    n_out = int(np.clip(round(px_span), n_src, 4096))
+    centers = c0 + (np.arange(n_out, dtype=np.float64) + 0.5) * ((c1 - c0) / n_out)
+    values = np.asarray(scale.value(centers), dtype=np.float64)
+    idx = np.floor((values - lo) / (hi - lo) * n_src).astype(np.int64)
+    return np.clip(idx, 0, n_src - 1)
+
+
+def warp_grid_rgba(
+    rgba: np.ndarray, x_range: list, y_range: list, sx: _Scale, sy: _Scale
+) -> np.ndarray:
+    """Resample a data-uniform (h, w, 4) grid so it is uniform in scale
+    coordinates; identity on affine axes. Row 0 stays the y_range bottom."""
+    h, w = rgba.shape[:2]
+    cols = warp_axis_indices(sx, float(x_range[0]), float(x_range[1]), w)
+    rows = warp_axis_indices(sy, float(y_range[0]), float(y_range[1]), h)
+    if cols is not None:
+        rgba = rgba[:, cols]
+    if rows is not None:
+        rgba = rgba[rows, :]
+    return rgba
+
+
+def _heatmap_rgba_grid(
+    hm: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    style: dict[str, Any],
+    borrowed: tuple[np.ndarray, ...] = (),
+) -> np.ndarray:
+    """Decode a heatmap as an `(h, w, 4)` uint8 grid, row 0 at the bottom."""
+    w, h = int(hm["w"]), int(hm["h"])
+    if "rgba_bufs" in hm:
+        channels = [_column(blob, cols[index]) for index in hm["rgba_bufs"]]
+        rgba = np.clip(np.column_stack(channels) * 255.0, 0, 255).astype(np.uint8)
+        rgba[:, 3] = (rgba[:, 3].astype(np.float64) * _fill_opacity(style)).astype(np.uint8)
+        return rgba.reshape(h, w, 4)
+
+    meta = cols[hm["buf"]]
+    if hm.get("enc") == "canonical-f64":
+        values = np.asarray(borrowed[int(meta["span"]) - 1], dtype=np.float64)[: int(meta["len"])]
+        d0, d1 = (float(value) for value in hm["domain"])
+        values = (values - d0) / ((d1 - d0) or 1.0)
+    else:
+        values = _column(blob, meta)
+    raw = values.reshape(h, w)
+    finite = np.isfinite(raw)
+    t = np.clip(np.where(finite, raw, 0.0), 0.0, 1.0)
+    rgb = _lut(hm.get("colormap", "viridis"), t.reshape(-1)).reshape(h, w, 3)
+    alpha = np.full((h, w), int(255 * _fill_opacity(style, 0.95)), dtype=np.uint8)
+    alpha[~finite] = 0
+    return np.dstack([rgb, alpha])
+
+
 def _grid_image(
     w: int, h: int, rgba: bytes, x_range: list, y_range: list, sx: _Scale, sy: _Scale
 ) -> str:
@@ -2514,22 +2594,14 @@ def _density_image(
 
 
 def _heatmap_image(hm: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict) -> str:
-    w, h = int(hm["w"]), int(hm["h"])
-    if "rgba_bufs" in hm:
-        channels = [_column(blob, cols[index]) for index in hm["rgba_bufs"]]
-        rgba_array = np.clip(np.column_stack(channels) * 255.0, 0, 255).astype(np.uint8)
-        rgba_array[:, 3] = (rgba_array[:, 3].astype(np.float64) * _fill_opacity(style)).astype(
-            np.uint8
-        )
-        rgba = rgba_array.reshape(h, w, 4)[::-1].tobytes()
-        return _grid_image(w, h, rgba, hm["x_range"], hm["y_range"], sx, sy)
-    raw = _column(blob, cols[hm["buf"]]).reshape(h, w)
-    t = np.clip(raw, 0.0, 1.0)
-    rgb = _lut(hm.get("colormap", "viridis"), t.reshape(-1)).reshape(h, w, 3)
-    alpha = np.full((h, w), int(255 * _fill_opacity(style, 0.95)), dtype=np.uint8)
-    alpha[~np.isfinite(raw)] = 0
-    rgba = np.dstack([rgb, alpha])[::-1].tobytes()
-    return _grid_image(w, h, rgba, hm["x_range"], hm["y_range"], sx, sy)
+    grid_rgba = _heatmap_rgba_grid(hm, blob, cols, style)
+    # Heatmap cells are uniform in *data* space; on a nonlinear axis the image
+    # must be resampled so internal cell edges land at their transformed
+    # positions, not on a linear stretch between the endpoints.
+    grid_rgba = warp_grid_rgba(grid_rgba, hm["x_range"], hm["y_range"], sx, sy)
+    out_h, out_w = grid_rgba.shape[:2]
+    rgba = grid_rgba[::-1].tobytes()
+    return _grid_image(out_w, out_h, rgba, hm["x_range"], hm["y_range"], sx, sy)
 
 
 # Trace kinds whose legend entry is a short line sample rather than a marker

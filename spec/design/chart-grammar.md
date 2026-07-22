@@ -155,8 +155,11 @@ panes is layout the Figure grid owns.
   (`python/xy/components.py:4370`), a sibling registry to `_MARK_APPLIERS`
   (`components.py:4347`) with the same kind→applier shape.
 - Chrome: `x_axis`/`y_axis` ★ (take `id=`, so named secondary scales are
-  already expressible; grows `type_="log"|"category"` ★partial), `legend` ★,
-  `title` (prop today, node later if styling demands).
+  already expressible; grows `type_="log"|"symlog"|"category"` ★partial —
+  `symlog` is the zero-inclusive long-tail scale
+  `coord = sign(v)·log1p(|v|/constant)`, taking `constant=` for the linear
+  half-width around zero; precision/aggregation rules in dossier §16/§28),
+  `legend` ★, `title` (prop today, node later if styling demands).
 - Events ★: `on_hover`, `on_click`, `on_brush`, `on_select`,
   `on_view_change`. All five are `Chart` constructor params
   (`python/xy/components.py:2559-2563`), fields of `ChannelCallbacks`

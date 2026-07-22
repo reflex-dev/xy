@@ -111,8 +111,11 @@ rejects non-finite values and clamps to `[16, MAX_SCREEN_DIM]`.
 Each entry is `{id, x, y, base?}`, where each column ref is
 `{buf, len, offset, scale}`: `buf` indexes the attachment list, and the client
 recovers data space as `value * scale + offset`. The `x` offset re-centers on
-the requested window midpoint so f32 precision follows the viewport. The
-client drops the message unless `msg.seq === this.seq`.
+the requested window midpoint so f32 precision follows the viewport — except
+on log-family axes (log, symlog), where every geometry offset is pinned to
+0.0: the shader transforms *after* decoding, and relative f32 precision is
+what survives a log-family transform (dossier §16). The client drops the
+message unless `msg.seq === this.seq`.
 
 **`density_update`** — `{type, seq, traces}`. Each entry carries a `mode` that
 states which representation this view resolved to:
@@ -121,6 +124,13 @@ states which representation this view resolved to:
   `density` is `{buf, w, h, max, enc: "log-u8", x_range, y_range}` plus
   optional `color` (a constant-channel color) and `sample` (the retained
   point-sample overlay). `binning` is `"exact"` or `"pyramid-L<level>"`.
+  `x_range`/`y_range` are raw data endpoints, but the grid's cells are
+  **uniform in the axis's scale coordinates** (identical to raw on a linear
+  axis): on a log/symlog axis the kernel bins transformed values so every
+  cell covers the same strip of screen, and renderers interpolate cell edges
+  between the *transformed* endpoints (dossier §28). The raw-space tile
+  pyramid cannot compose such a grid, so nonlinear-axis traces always report
+  `binning: "exact"`.
 - `mode: "points"` — the deep-zoom drill:
   `{id, mode, tier: "direct", visible, reduction: "none", x_range, y_range,
   x, y, color, size, density_val, lod_blend, density_colormap, drill_seq,
@@ -276,13 +286,16 @@ The reassembled bytes are identical to the source blob, which is what keeps
 
 Two independent version constants:
 
-- **Renderer/spec protocol.** `PROTOCOL_VERSION = 3` (`python/xy/config.py`)
+- **Renderer/spec protocol.** `PROTOCOL_VERSION = 5` (`python/xy/config.py`)
   rides every first-paint spec as `spec["protocol"]`; the client's
-  `PROTOCOL = 3` (`js/src/00_header.ts`) is checked in the `ChartView`
+  `PROTOCOL = 5` (`js/src/00_header.ts`) is checked in the `ChartView`
   constructor. A mismatch replaces the chart element with "update the xy
   package and restart the kernel" and throws. Requests and replies carry no
   version of their own — the handshake happens once, at first paint, before
-  any request is possible.
+  any request is possible. The version bumps whenever a spec the old client
+  would *silently misrender* becomes producible — v5: the symlog axis scale
+  (`scale: "symlog"` + `constant` on an axis spec) and scale-coordinate
+  density grids; a v4 client would draw both as linear without erroring.
 - **Transport frame.** `FRAME_MAGIC` `"XYBF"` with `FRAME_VERSION = 1`
   versions the binary envelope separately, so the transport and the renderer
   can evolve without coupling.

@@ -322,7 +322,11 @@ def decimate_view(
             continue
         if t.kind == "area" and t.base is None:
             continue
-        idx = kernels.m4_indices(t.x.values, t.y.values, lo_x, hi_x, max(16, px_width))
+        x_scale = fig._axis_scale(t.x_axis)
+        y_scale = fig._axis_scale(t.y_axis)
+        # Bucket in scale coordinates so every bucket covers one screen strip.
+        mx, (m_lo, m_hi) = fig._binning_coords(t.x_axis, t.x.values, (lo_x, hi_x))
+        idx = kernels.m4_indices(mx, t.y.values, m_lo, m_hi, max(16, px_width))
         if len(idx):
             xv, yv = t.x.values[idx], t.y.values[idx]
             bv = t.base.values[idx] if t.kind == "area" and t.base is not None else None
@@ -333,15 +337,19 @@ def decimate_view(
         else:
             xv, yv = t.x.values[:0], t.y.values[:0]
             bv = t.base.values[:0] if t.kind == "area" and t.base is not None else None
-        x_col = lod.encode_f32_values(xv, (lo_x + hi_x) / 2.0, lo_x, hi_x)
-        y_col = lod.encode_f32_values(yv, t.y.suggest_offset(), t.y.min, t.y.max)
+        x_col = lod.encode_f32_values(xv, lod.geometry_offset(x_scale, lo_x, hi_x), lo_x, hi_x)
+        y_col = lod.encode_f32_values(
+            yv, lod.geometry_offset(y_scale, t.y.min, t.y.max), t.y.min, t.y.max
+        )
         update = {
             "id": t.id,
             "x": writer.add_encoded(x_col),
             "y": writer.add_encoded(y_col),
         }
         if bv is not None and t.base is not None:
-            b_col = lod.encode_f32_values(bv, t.base.suggest_offset(), t.base.min, t.base.max)
+            b_col = lod.encode_f32_values(
+                bv, lod.geometry_offset(y_scale, t.base.min, t.base.max), t.base.min, t.base.max
+            )
             update["base"] = writer.add_encoded(b_col)
         updates.append(update)
     return {"traces": updates}, writer.buffers
@@ -454,7 +462,17 @@ def _density_sample_update(
     if len(sample_sel) == 0:
         return None
     xs, ys = t.x.values[sample_sel], t.y.values[sample_sel]
-    x_ref, y_ref = lod.add_window_xy(writer, xs, ys, lo_x, hi_x, lo_y, hi_y)
+    x_ref, y_ref = lod.add_window_xy(
+        writer,
+        xs,
+        ys,
+        lo_x,
+        hi_x,
+        lo_y,
+        hi_y,
+        fig._axis_scale(t.x_axis),
+        fig._axis_scale(t.y_axis),
+    )
     color_spec, size_spec = fig._ship_channels(t, sample_sel, writer.add_f32, writer.add_u8)
     style = dict(t.style)
     try:
@@ -506,6 +524,11 @@ def density_view(
     if not t.use_density():
         return {"traces": []}, []
     xv, yv = t.x.values, t.y.values
+    # Nonlinear axes aggregate in scale coordinates (§28) so grid cells are
+    # uniform on screen. The raw-space tile pyramid can't compose such a grid,
+    # so those traces always take the exact scan; selection/count queries stay
+    # raw (monotone transforms preserve window membership).
+    nonlinear = fig._axis_scale(t.x_axis) != "linear" or fig._axis_scale(t.y_axis) != "linear"
     # Tile-pyramid fast path (§5 Tier 3): when the window is clearly still in
     # density territory, the view is served from pre-binned counts in
     # O(visible cells) — no O(N) rescan. The margin keeps the approximate
@@ -513,7 +536,7 @@ def density_view(
     # budget we fall through to the exact scan that drilling needs anyway.
     binning = "exact"
     grid = None
-    pyr = _ensure_pyramid(t)
+    pyr = None if nonlinear else _ensure_pyramid(t)
     if pyr is not None:
         est = kernels.pyramid_count(pyr, lo_x, hi_x, lo_y, hi_y)
         if est is not None and est > SCATTER_DENSITY_THRESHOLD * DRILL_EXIT_FACTOR * 1.5:
@@ -540,7 +563,9 @@ def density_view(
 
         lod.exit_drill(t)
         w, h = plan.grid_w, plan.grid_h
-        grid = kernels.bin_2d(xv, yv, lo_x, hi_x, lo_y, hi_y, w, h)
+        bx, (bx0, bx1) = fig._binning_coords(t.x_axis, xv, (lo_x, hi_x))
+        by, (by0, by1) = fig._binning_coords(t.y_axis, yv, (lo_y, hi_y))
+        grid = kernels.bin_2d(bx, by, bx0, bx1, by0, by1, w, h)
     else:
         plan = lod.plan_view_lod(
             request,
@@ -613,15 +638,28 @@ def _drill_points(
     color-continuous instead of a palette jump (§5)."""
     xs, ys = t.x.values[sel], t.y.values[sel]
     writer = lod.BufferWriter()
-    x_ref, y_ref = lod.add_window_xy(writer, xs, ys, lo_x, hi_x, lo_y, hi_y)
+    x_ref, y_ref = lod.add_window_xy(
+        writer,
+        xs,
+        ys,
+        lo_x,
+        hi_x,
+        lo_y,
+        hi_y,
+        fig._axis_scale(t.x_axis),
+        fig._axis_scale(t.y_axis),
+    )
     buffers = writer.buffers
 
     color_spec, size_spec = fig._ship_channels(t, sel, writer.add_f32, writer.add_u8)
 
     # Local log-density per drilled point, binned at the same screen-derived
-    # grid shape density would use, so the two representations line up.
+    # grid shape density would use — in the same (scale-coordinate) binning
+    # space — so the two representations line up.
     gw, gh = lod.grid_shape(w, h, visible)
-    dval_buf = writer.add_f32(lod.local_log_density(xs, ys, lo_x, hi_x, lo_y, hi_y, gw, gh))
+    dx, (d_x0, d_x1) = fig._binning_coords(t.x_axis, xs, (lo_x, hi_x))
+    dy, (d_y0, d_y1) = fig._binning_coords(t.y_axis, ys, (lo_y, hi_y))
+    dval_buf = writer.add_f32(lod.local_log_density(dx, dy, d_x0, d_x1, d_y0, d_y1, gw, gh))
     drill_seq = lod.enter_drill(t, sel)
     # 1.0 right at the boundary → density-colored points; →0 as zoom deepens.
     lod_blend = float(min(1.0, visible / SCATTER_DENSITY_THRESHOLD))

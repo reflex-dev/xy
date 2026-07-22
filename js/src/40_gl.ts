@@ -367,35 +367,40 @@ void main() {
 }`;
 
 // Shared grid-texture vertex stage (density Tier 2 + heatmap): a fullscreen
-// quad; each fragment reconstructs its data-space coordinate from the view
-// range so the fragment shader can sample the grid texture (§5, §F6). Data
-// outside the grid range is transparent — a stale grid stays correctly
-// positioned during pan until the re-bin arrives (§17). The two consumers
-// differ only in their fragment stage (log-density alpha ramp vs byte-
-// quantized heatmap values).
+// quad; the vertex stage emits the *scale coordinate* at each corner (linear
+// across the screen by construction) so each fragment can locate itself in
+// scale space, and — for data-uniform grids — invert back to its data value
+// (§5, §F6). Data outside the grid range is transparent — a stale grid stays
+// correctly positioned during pan until the re-bin arrives (§17). The two
+// consumers differ in their fragment stage: density grids are uniform in
+// scale coordinates (§28) and sample by coordinate directly; heatmap grids
+// are uniform in data space and invert per fragment.
 export const GRID_VS = `#version 300 es
 in vec2 a_corner;
 uniform vec4 u_view; // x0,x1,y0,y1
 uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
-out vec2 v_data;
+out vec2 v_coord;
 ${AXIS_GLSL}
 void main() {
   gl_Position = vec4(a_corner * 2.0 - 1.0, 0.0, 1.0);
   float x = mix(xyViewCoord(u_view.x, u_xmode, u_xconstant), xyViewCoord(u_view.y, u_xmode, u_xconstant), a_corner.x);
   float y = mix(xyViewCoord(u_view.z, u_ymode, u_yconstant), xyViewCoord(u_view.w, u_ymode, u_yconstant), a_corner.y);
-  v_data = vec2(xyViewValue(x, u_xmode, u_xconstant), xyViewValue(y, u_ymode, u_yconstant));
+  v_coord = vec2(x, y);
 }`;
 
+// Density grids are binned uniformly in scale coordinates (§28), so
+// u_gridRange arrives as *scale coordinates* of the grid's raw x/y ranges and
+// the fragment's uv is a straight affine map of v_coord — no inverse needed.
 export const DENSITY_FS = `#version 300 es
 precision highp float;
 uniform sampler2D u_grid; uniform sampler2D u_lut;
-uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
+uniform vec4 u_gridRange; // coord(gx0),coord(gx1),coord(gy0),coord(gy1)
 uniform float u_opacity; uniform vec4 u_color; uniform int u_constantColor;
-in vec2 v_data;
+in vec2 v_coord;
 out vec4 outColor;
 void main() {
-  vec2 uv = vec2((v_data.x - u_gridRange.x) / (u_gridRange.y - u_gridRange.x),
-                 (v_data.y - u_gridRange.z) / (u_gridRange.w - u_gridRange.z));
+  vec2 uv = vec2((v_coord.x - u_gridRange.x) / (u_gridRange.y - u_gridRange.x),
+                 (v_coord.y - u_gridRange.z) / (u_gridRange.w - u_gridRange.z));
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
   float t = texture(u_grid, uv).r;
   if (t <= 0.0) discard;
@@ -410,18 +415,25 @@ void main() {
 
 // Heatmap grid: a regular value matrix as one R8 texture. Byte 0 means missing
 // (transparent); bytes 1..255 map back to normalized values [0,1]. Vertex
-// stage is the shared GRID_VS above.
+// stage is the shared GRID_VS above. Cells are uniform in *data* space, so on
+// a nonlinear axis each fragment inverts its scale coordinate back to a data
+// value before sampling — a per-vertex data value interpolated across the
+// quad would place every internal cell edge on a linear stretch instead.
 export const HEATMAP_FS = `#version 300 es
 precision highp float;
+precision highp int; // u_xmode/u_ymode are shared with the vertex stage, which defaults ints to highp
 uniform sampler2D u_grid; uniform sampler2D u_lut;
-uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
+uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1 (raw data units)
+uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
 uniform float u_opacity;
 uniform int u_truecolor;
-in vec2 v_data;
+in vec2 v_coord;
 out vec4 outColor;
+${AXIS_GLSL}
 void main() {
-  vec2 uv = vec2((v_data.x - u_gridRange.x) / (u_gridRange.y - u_gridRange.x),
-                 (v_data.y - u_gridRange.z) / (u_gridRange.w - u_gridRange.z));
+  vec2 data = vec2(xyViewValue(v_coord.x, u_xmode, u_xconstant), xyViewValue(v_coord.y, u_ymode, u_yconstant));
+  vec2 uv = vec2((data.x - u_gridRange.x) / (u_gridRange.y - u_gridRange.x),
+                 (data.y - u_gridRange.z) / (u_gridRange.w - u_gridRange.z));
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
   vec4 sampled = texture(u_grid, uv);
   if (u_truecolor == 1) {

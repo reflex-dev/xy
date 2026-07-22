@@ -614,8 +614,21 @@ detail inside a decade of millisecond timestamps).
   (`_map`, `js/src/50_chartview.ts`). Decoding to absolute coordinates in-shader
   first would discard the low bits whenever a deeply zoomed window is far smaller
   than the offset — after which zooming back out could never recover the point
-  spread. Only log axes decode before mapping, because log10 is not affine.
-  *Augments §4.*
+  spread. Only log-family axes (log, symlog) decode before mapping, because their
+  transforms are not affine. *Augments §4.*
+- **Log-family axes pin the encode offset to 0.0** (`lod.geometry_offset`) instead
+  of re-centering on a midpoint. A midpoint offset makes f32 error *absolute*
+  (~span/10⁷), which under symlog collapses exactly the neighborhood of zero the
+  scale exists to spread (x=0 and x=1 encode to the same word when the domain
+  reaches 10¹²), and under log destroys the small decades. With offset 0 the f32
+  error is *relative* (~2⁻²⁴·|v|), and d(coord)/dv ≈ 1/(c+|v|) (symlog) or
+  1/(v·ln10) (log) maps that to a bounded ≤~2⁻²⁴ coordinate error at every
+  magnitude — sub-pixel everywhere. The traded-away capability is §16 midpoint
+  re-centering *along that axis*: zooming a log-family axis into a window
+  narrower than ~10⁻⁵ of its center's magnitude re-hits f32 granularity. That
+  zoom depth spans a sliver of a decade (invisible on any log-family display)
+  and is the same class of limit matplotlib accepts; recorded here per §28's
+  no-silent-decisions rule.
 - **Time is i64 end-to-end** (Arrow timestamp columns), with calendar-aware tick
   generation (months are not 30×86400s). Plotly gets this right; matching it is
   table stakes and it must not be routed through any float path.
@@ -908,6 +921,35 @@ Contract-wide invariants: every tier transition is hysteresis-guarded and logged
 (no silent quality change); every aggregated visual states its aggregation in the
 hover UI; every derived artifact is reproducible from (canonical, viewport, params) —
 which is what makes both the §21 determinism tests and the §27 eviction rules valid.
+
+**Nonlinear axes bin in scale coordinates.** Screen-uniform aggregation is the
+point of every reduction above, and on a log/symlog axis "uniform on screen"
+means uniform in the axis's scale coordinates, not in raw data. Concretely:
+
+- **Density grids** (first paint and `density_view` re-bins) transform values
+  and window bounds through the axis coordinate map (`Figure._axis_coord_fn`)
+  before `bin_2d`; the wire keeps raw `x_range`/`y_range` endpoints and the
+  rule "cells are uniform in scale coordinates" (wire-protocol.md §3). Without
+  this, clusters at x=1 and x=1000 share one cell on a symlog axis despite
+  being a third of the screen apart. The drill handoff's per-point
+  `local_log_density` bins in the same space so its colors match the grid's.
+- **The raw-space tile pyramid** (Tier 3) cannot compose a scale-coordinate
+  grid, so traces on a nonlinear axis skip pyramid build/compose and always
+  take the exact scan (`binning: "exact"`). Cost: the O(visible) rescan the
+  pyramid would have skipped — accepted, recorded here.
+- **M4 line decimation** buckets on transformed x (first paint and
+  `decimate_view`) so each bucket is one screen column; the selected rows ship
+  raw. Monotone y transforms preserve per-bucket argmin/argmax, so y never
+  transforms.
+- **Hexbin** stays data-uniform by design — its cells are explicit data-space
+  geometry whose vertices transform individually, so cells *render* warped
+  and merely have data-dependent screen sizes, like matplotlib's.
+- **Static exports**: density images are scale-coordinate-uniform and stretch
+  linearly between transformed endpoints (exact); heatmap grids are
+  *data*-uniform, so SVG/PNG resample them per pixel through the inverse
+  transform (`_svg.warp_axis_indices`) and the WebGL heatmap shader inverts
+  per fragment (`HEATMAP_FS`) — otherwise internal cell edges land on a
+  linear stretch between the endpoints.
 
 ## 29. Transport Matrix — copies, format, and fallback per environment
 

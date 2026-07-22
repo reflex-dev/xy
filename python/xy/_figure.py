@@ -1088,6 +1088,18 @@ class Figure(AnnotationsMixin, PayloadMixin):
         scale = self.axis_options.get(axis_id, {}).get("type")
         return scale if scale in {"log", "symlog"} else "linear"
 
+    def _axis_coord(self, axis_id: str, values: Any) -> np.ndarray:
+        """Map values to axis coordinates for screen-space aggregation."""
+        v = np.asarray(values, dtype=np.float64)
+        scale = self._axis_scale(axis_id)
+        if scale == "log":
+            with np.errstate(divide="ignore", invalid="ignore"):
+                return np.where(v > 0.0, np.log10(v), np.nan)
+        if scale == "symlog":
+            constant = float(self.axis_options.get(axis_id, {}).get("constant") or 1.0)
+            return np.sign(v) * np.log1p(np.abs(v) / constant)
+        return v
+
     def _axis_kind(self, axis_id: str) -> str:
         axis = self._axis_dim(axis_id)
         forced = self.axis_options.get(axis_id, {}).get("type")

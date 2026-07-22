@@ -3287,7 +3287,15 @@ export class ChartView {
     gl.uniform1f(u("u_xconstant"), this._axisConstant(g.xAxis));
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     gl.uniform1f(u("u_yconstant"), this._axisConstant(g.yAxis));
-    gl.uniform4f(u("u_gridRange"), d.xRange[0], d.xRange[1], d.yRange[0], d.yRange[1]);
+    // Density grids are uniform in scale coordinates (§28): the shader's uv
+    // is an affine map of the interpolated coordinate, so the grid range
+    // ships to the GPU already transformed (f64 here, cheap — 4 scalars).
+    const xAxis = this._axis(g.xAxis), yAxis = this._axis(g.yAxis);
+    gl.uniform4f(
+      u("u_gridRange"),
+      this._axisCoord(xAxis, d.xRange[0]), this._axisCoord(xAxis, d.xRange[1]),
+      this._axisCoord(yAxis, d.yRange[0]), this._axisCoord(yAxis, d.yRange[1]),
+    );
     gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * opacityScale);
     const constant = d.color;
     gl.uniform1i(u("u_constantColor"), constant ? 1 : 0);
