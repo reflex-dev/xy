@@ -132,6 +132,10 @@ def _facet_grid(grid: Any, *, tooltip: Any, props: dict[str, Any]) -> Any:
     # HTML), while each panel retains the dimensions chosen by facet_chart.
     event_props = {key: value for key, value in props.items() if key.startswith("on_")}
     panels = []
+    # grid.labels needs no separate strip: facet_chart builds every panel
+    # figure with its facet label as the figure title, so the label ships
+    # inside each panel's payload and renders as the panel heading (the same
+    # contract FacetGrid.to_html relies on).
     for figure in grid.figures:
         panel_props = dict(event_props)
         panel_props.update(width="100%", height=f"{grid.panel_height}px")

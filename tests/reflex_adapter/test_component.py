@@ -10,6 +10,7 @@ import reflex as rx
 import reflex_xy
 
 import xy
+from xy.channel import decode_frame
 
 
 class CompState(rx.State):
@@ -131,7 +132,13 @@ def test_static_facet_chart_compiles_as_grid_of_panel_payloads(app_cwd):
     assert "repeat(2, minmax(0, 1fr))" in rendered
     assert rendered.count("XYChart") == 2
     assert rendered.count("/xy/") == 2
-    assert len(list((pathlib.Path(app_cwd) / "assets" / "xy").glob("*.xyf"))) == 2
+    asset_files = list((pathlib.Path(app_cwd) / "assets" / "xy").glob("*.xyf"))
+    assert len(asset_files) == 2
+    # Facet identity is not in the JSX: each panel payload carries its facet
+    # label as the figure title (facets.py builds panels that way), which the
+    # render client draws as the panel heading.
+    titles = {decode_frame(path.read_bytes()).message["title"] for path in asset_files}
+    assert titles == {"West", "East"}
 
 
 def test_live_chart_does_not_claim_runtime_classes_are_compile_time_known(app_cwd):

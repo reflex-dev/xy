@@ -291,7 +291,10 @@ responsive CSS grid containing one content-addressed static `XYChart` per
 panel. The grid title, column count, gap, and panel height come from the core
 `FacetGrid`; container props stay on the grid while semantic event handlers
 are forwarded to each panel (with the static tier's event limitations
-unchanged).
+unchanged). Facet labels need no extra markup: `facet_chart` builds each
+panel figure with its facet label as the figure title, so the label ships
+inside the panel's payload and the render client draws it as the panel
+heading — the same contract `FacetGrid.to_html` relies on.
 
 **`inline()` — fixed data that still wants the kernel.**
 `token = reflex_xy.inline(chart)` at **module scope** registers the figure
