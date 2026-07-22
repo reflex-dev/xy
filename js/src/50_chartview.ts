@@ -3115,8 +3115,10 @@ export class ChartView {
     if ((targetSizeFactor === 1 && targetOpacity === baseOpacity) || emphasis <= 1) {
       return { sizeFactor: 1, opacity: baseOpacity, strokeOpacity: baseStrokeOpacity };
     }
-    const axisZoom = (axisId, lo, hi, homeLo, homeHi) => {
+    const axisZoom = (axisId) => {
       const axis = this._axis(axisId);
+      const [lo, hi] = this._axisRange(axisId);
+      const [homeLo, homeHi] = this._axisRange(axisId, this.view0);
       const span = Math.abs(this._axisCoord(axis, hi) - this._axisCoord(axis, lo));
       const homeSpan = Math.abs(
         this._axisCoord(axis, homeHi) - this._axisCoord(axis, homeLo)
@@ -3125,10 +3127,9 @@ export class ChartView {
         ? homeSpan / span
         : null;
     };
-    const zoom = Math.max(
-      axisZoom("x", this.view.x0, this.view.x1, this.view0.x0, this.view0.x1) ?? 1,
-      axisZoom("y", this.view.y0, this.view.y1, this.view0.y0, this.view0.y1) ?? 1
-    );
+    // Zoom against the trace's own axes: a scatter on x2/y2 must respond to
+    // its axes, not the primary view ranges.
+    const zoom = Math.max(axisZoom(g.xAxis || "x") ?? 1, axisZoom(g.yAxis || "y") ?? 1);
     const t = Math.max(0, Math.min(1, Math.log(Math.max(1, zoom)) / Math.log(emphasis)));
     // zoom_opacity is a shared target: strokes interpolate from their own
     // stroke_opacity base toward it in step with the fill.
