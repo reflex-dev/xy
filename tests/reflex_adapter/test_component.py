@@ -10,6 +10,7 @@ import reflex as rx
 import reflex_xy
 
 import xy
+from xy.channel import decode_frame
 
 
 class CompState(rx.State):
@@ -108,6 +109,36 @@ def test_static_chart_classes_are_visible_to_tailwind_source_scan(app_cwd):
         "hover:bg-slate-100 focus:ring-2",
     ):
         assert class_string in rendered
+
+
+def test_static_facet_chart_compiles_as_grid_of_panel_payloads(app_cwd):
+    data = {
+        "x": [0, 1, 2, 0, 1, 2],
+        "y": [1, 2, 3, 3, 2, 1],
+        "region": ["West", "West", "West", "East", "East", "East"],
+    }
+    facets = xy.facet_chart(
+        xy.scatter(x="x", y="y", color="#6e56cf"),
+        by="region",
+        data=data,
+        cols=2,
+        share_x=True,
+        share_y=True,
+    )
+
+    rendered = str(reflex_xy.chart(facets, id="regional-grid"))
+
+    assert "regional-grid" in rendered
+    assert "repeat(2, minmax(0, 1fr))" in rendered
+    assert rendered.count("XYChart") == 2
+    assert rendered.count("/xy/") == 2
+    asset_files = list((pathlib.Path(app_cwd) / "assets" / "xy").glob("*.xyf"))
+    assert len(asset_files) == 2
+    # Facet identity is not in the JSX: each panel payload carries its facet
+    # label as the figure title (facets.py builds panels that way), which the
+    # render client draws as the panel heading.
+    titles = {decode_frame(path.read_bytes()).message["title"] for path in asset_files}
+    assert titles == {"West", "East"}
 
 
 def test_live_chart_does_not_claim_runtime_classes_are_compile_time_known(app_cwd):

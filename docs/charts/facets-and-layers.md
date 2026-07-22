@@ -69,16 +69,7 @@ facet_detail_chart = xy.facet_chart(
 
 
 def facet_chart_demo():
-    facet_grid = facet_detail_chart.figure()
-    return rx.grid(
-        *[
-            reflex_xy.chart(panel, height="260px")
-            for panel in facet_grid.figures
-        ],
-        columns="2",
-        gap="3",
-        width="100%",
-    )
+    return reflex_xy.chart(facet_detail_chart)
 ~~~
 
 `cols` controls wrapping, `gap` controls panel spacing, and shared axes keep
