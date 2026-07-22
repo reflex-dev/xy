@@ -375,6 +375,7 @@ def triangle_mesh(
     opacity: Any = 1.0,
     stroke: Any = None,
     stroke_width: Any = 0.0,
+    _joined_fill: bool = False,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add independently colored filled triangles as one instanced mesh."""
@@ -431,10 +432,22 @@ def triangle_mesh(
         if color_ch.mode != "continuous":
             raise ValueError("triangle_mesh domain requires a continuous numeric color array")
         color_ch.domain = self._finite_increasing_pair(domain, "triangle_mesh domain")
+    # A width without an explicit stroke means "outline in the face color".
+    # Constant paints already get that fallback from the renderer; direct and
+    # semantic color channels need the explicit buffer-free match mode.
+    if (
+        stroke_value is None
+        and stroke_ch is None
+        and color_ch.mode != "constant"
+        and (stroke_width_value or "stroke_width" in style_channels)
+    ):
+        stroke_ch = channels.ColorChannel(mode="match_fill")
     checkpoint = self._checkpoint()
     try:
         x0c, y0c, x1c, y1c, x2c, y2c = [self.store.ingest(values) for values in arrays]
         style: dict[str, Any] = {"opacity": opacity_value, "role": "triangle-mesh"}
+        if _joined_fill:
+            style["joined_fill"] = True
         style.update(styles._opacity_channels(css))
         if stroke_value is not None:
             style["stroke"] = stroke_value
@@ -698,6 +711,17 @@ def _bar_like(
             mark_style["artist_alpha"] = alpha_values[index]
         series_styles.append(mark_style)
         series_channels.append(merged_channels)
+    if direct_strokes is None and direct_colors is not None:
+        resolved_strokes: list[Optional[channels.ColorChannel]] = [
+            (
+                channels.ColorChannel(mode="match_fill")
+                if stroke_width_values[index] or "stroke_width" in series_channels[index]
+                else None
+            )
+            for index in range(n_series)
+        ]
+    else:
+        resolved_strokes = [None] * n_series if direct_strokes is None else list(direct_strokes)
     checkpoint = self._checkpoint()
     try:
         if category_labels is not None:
@@ -719,7 +743,7 @@ def _bar_like(
                 role=f"{kind}-normalized" if mode == "normalized" else kind,
                 extra_style=series_styles[0],
                 color_ch=None if direct_colors is None else direct_colors[0],
-                stroke_ch=None if direct_strokes is None else direct_strokes[0],
+                stroke_ch=resolved_strokes[0],
                 style_channels=series_channels[0],
             )
         elif mode == "grouped":
@@ -739,7 +763,7 @@ def _bar_like(
                     role=f"{kind}-grouped",
                     extra_style=series_styles[i],
                     color_ch=None if direct_colors is None else direct_colors[i],
-                    stroke_ch=None if direct_strokes is None else direct_strokes[i],
+                    stroke_ch=resolved_strokes[i],
                     style_channels=series_channels[i],
                 )
         else:
@@ -761,7 +785,7 @@ def _bar_like(
                     role=f"{kind}-{mode}",
                     extra_style=series_styles[i],
                     color_ch=None if direct_colors is None else direct_colors[i],
-                    stroke_ch=None if direct_strokes is None else direct_strokes[i],
+                    stroke_ch=resolved_strokes[i],
                     style_channels=series_channels[i],
                 )
                 pos_base = np.where(row >= 0, y1, pos_base)

@@ -2417,7 +2417,7 @@ export class ChartView {
     // stack in and premultiplies there (uniform and buffer strokes alike).
     const sc = g.strokeColor || [0, 0, 0, 0];
     gl.uniform4f(u("u_stroke"), sc[0], sc[1], sc[2], sc[3]);
-    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : (g.strokeMatchFill ? 2 : 0));
     gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}));
     this._setGradientUniforms(prog, g.grad);
   }
@@ -2433,6 +2433,7 @@ export class ChartView {
       ? [Number(cr[0]) || 0, Number(cr[1]) || 0]
       : [Number(cr) || 0, Number(cr) || 0];
     g.strokeWidth = Number(s.stroke_width) || 0;
+    g.strokeMatchFill = !!(t.stroke && t.stroke.mode === "match_fill");
     const opaque = [g.color[0], g.color[1], g.color[2], 1];
     g.strokeColor = s.stroke ? parseColor(this.root, s.stroke, opaque) : opaque;
     g.grad = this._resolveMarkFill(s, g.color);
@@ -2556,6 +2557,7 @@ export class ChartView {
     const style = t.style || {};
     g.meshStrokeWidth = Number(style.stroke_width) || 0;
     g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
+    g.strokeMatchFill = !!(t.stroke && t.stroke.mode === "match_fill");
   }
 
   // Hexbin ships cell centers plus one color value per cell; every hexagon
@@ -3511,7 +3513,7 @@ export class ChartView {
     const stroke = g.meshStroke || [0, 0, 0, 0];
     gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
     gl.uniform1f(u("u_strokeWidth"), g.meshStrokeWidth || 0);
-    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : (g.strokeMatchFill ? 2 : 0));
     gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style));
     if (g.colorMode && g.lut) {
       gl.activeTexture(gl.TEXTURE0);

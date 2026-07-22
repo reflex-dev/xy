@@ -906,6 +906,7 @@ def triangle_mesh(
     opacity: Any = 1.0,
     stroke: Any = None,
     stroke_width: Any = 0.0,
+    _joined_fill: bool = False,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -952,6 +953,7 @@ def triangle_mesh(
             "opacity": opacity,
             "stroke": stroke,
             "stroke_width": stroke_width,
+            "_joined_fill": _joined_fill,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -4613,6 +4615,7 @@ def _apply_triangle_mesh(fig: Figure, m: Mark, data: Any) -> None:
         opacity=m.props["opacity"],
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
+        _joined_fill=m.props["_joined_fill"],
         style=m.style,
     )
 

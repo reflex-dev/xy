@@ -775,6 +775,12 @@ class Axes(PlotTypeMixin):
                 _transform_entry_axis(entry, axis, {"name": "linear"}, spec)
                 nonlinear_axes.append((axis, spec))
         host._entries.append(entry)
+        # Aspect modes may be selected before any data is added (the
+        # Matplotlib fill gallery does exactly this with ``axis("equal")``).
+        # Keep their bounds tied to the current autoscaled data until the user
+        # explicitly pins a domain instead of freezing the empty (0, 1) view.
+        if host._aspect_equal and not host._explicit_domains:
+            host._set_aspect_equal_from_current()
         for axis, spec in nonlinear_axes:
             # scale-generated ticks were derived from the extent at
             # set_*scale time; new data must refresh them (user-set ticks
@@ -1475,7 +1481,7 @@ class Axes(PlotTypeMixin):
             if orientation == "vertical":
                 ex, ey, exerr, eyerr = positions, bases + values, xerr, yerr
             else:
-                ex, ey, exerr, eyerr = bases + values, positions, yerr, xerr
+                ex, ey, exerr, eyerr = bases + values, positions, xerr, yerr
             err_kwargs = {
                 "xerr": exerr,
                 "yerr": eyerr,
@@ -1918,8 +1924,8 @@ class Axes(PlotTypeMixin):
         }
         if interpolation not in supported_interpolation:
             raise ValueError(f"unsupported imshow interpolation: {interpolation!r}")
-        if interpolation_stage not in (None, "data"):
-            raise not_implemented(f"imshow(interpolation_stage={interpolation_stage!r})")
+        if interpolation_stage not in (None, "auto", "data", "rgba"):
+            raise ValueError("imshow interpolation_stage must be 'auto', 'data', 'rgba', or None")
         if clip_on is not True:
             raise not_implemented("imshow(clip_on=False)")
         if transform not in (None, self.transData, self.transAxes):
@@ -2036,17 +2042,33 @@ class Axes(PlotTypeMixin):
                 )
                 grid = np.dstack((rgb.reshape(grid.shape + (3,)) / 255.0, alpha_array))
                 truecolor = True
+        effective_interpolation = (
+            rcParams["image.interpolation"] if interpolation is None else interpolation
+        )
         if (
             not truecolor
-            and interpolation not in (None, "none", "nearest")
-            and min(grid.shape) >= 2
+            and interpolation_stage == "rgba"
+            and effective_interpolation not in ("none", "nearest")
         ):
+            grid = _scalar_grid_rgba(
+                grid,
+                cmap if cmap is not None else rcParams["image.cmap"],
+                vmin,
+                vmax,
+            )
+            truecolor = True
+        if effective_interpolation not in ("none", "nearest") and min(grid.shape[:2]) >= 2:
             # The notebook's ordinary image box is ~369 px per side. A 128²
             # intermediate left each interpolated sample covering about 3×3
             # display pixels because heatmaps intentionally use nearest texture
             # sampling. Keep a bounded 512² surface so non-nearest imshow output
             # is at least display-resolution while nearest retains source cells.
-            grid = _upsample_grid(grid, max(512, grid.shape[1]), max(512, grid.shape[0]))
+            grid = _resample_grid(
+                grid,
+                max(512, grid.shape[1]),
+                max(512, grid.shape[0]),
+                effective_interpolation,
+            )
         if transform == self.transAxes and extent is not None:
             xlo, xhi = self._axis_props("x").get("domain", self._entry_extent("x"))
             ylo, yhi = self._axis_props("y").get("domain", self._entry_extent("y"))
@@ -2743,9 +2765,16 @@ class Axes(PlotTypeMixin):
             self._aspect_equal = False
             self._aspect_adjustable = "box"
             self._aspect_bounds = None
-            self._set_tight_domains()
+            # Calling an aspect/autoscale mode on an empty Axes must not turn
+            # the placeholder (0, 1) view into explicit limits. Matplotlib
+            # continues autoscaling when artists are added afterwards.
+            if self._entries:
+                self._set_tight_domains()
             if arg in {"equal", "scaled", "image", "square"}:
-                self._set_aspect_equal_from_current()
+                if self._entries:
+                    self._set_aspect_equal_from_current()
+                else:
+                    self._aspect_equal = True
             if arg == "equal":
                 # Matplotlib spells axis("equal") as
                 # set_aspect("equal", adjustable="datalim"): retain the axes
@@ -5230,16 +5259,108 @@ def _masked_float(value: Any) -> np.ndarray:
     return np.ma.asarray(value, dtype=np.float64).filled(np.nan)
 
 
-def _upsample_grid(grid: np.ndarray, width: int, height: int) -> np.ndarray:
-    """Small dependency-free bilinear resampler for interpolated imshow gradients."""
-    source_y = np.linspace(0.0, 1.0, grid.shape[0])
-    source_x = np.linspace(0.0, 1.0, grid.shape[1])
-    target_y = np.linspace(0.0, 1.0, height)
-    target_x = np.linspace(0.0, 1.0, width)
-    horizontal = np.vstack([np.interp(target_x, source_x, row) for row in grid])
-    return np.vstack(
-        [np.interp(target_y, source_y, horizontal[:, column]) for column in range(width)]
-    ).T
+def _interpolation_weights(source: int, target: int, method: str) -> np.ndarray:
+    """Return a normalized target-by-source matrix for a separable filter."""
+    positions = np.linspace(0.0, source - 1.0, target)[:, None]
+    distance = positions - np.arange(source, dtype=np.float64)[None, :]
+    absolute = np.abs(distance)
+
+    def keys(a: float) -> np.ndarray:
+        first = (a + 2.0) * absolute**3 - (a + 3.0) * absolute**2 + 1.0
+        second = a * absolute**3 - 5.0 * a * absolute**2 + 8.0 * a * absolute - 4.0 * a
+        return np.where(absolute <= 1.0, first, np.where(absolute < 2.0, second, 0.0))
+
+    if method == "bilinear":
+        weights = np.maximum(0.0, 1.0 - absolute)
+    elif method == "hanning":
+        weights = np.where(absolute < 1.0, 0.5 + 0.5 * np.cos(np.pi * absolute), 0.0)
+    elif method == "hamming":
+        weights = np.where(absolute < 1.0, 0.54 + 0.46 * np.cos(np.pi * absolute), 0.0)
+    elif method == "gaussian":
+        weights = np.where(absolute < 2.0, np.exp(-2.0 * absolute**2), 0.0)
+    elif method == "kaiser":
+        radius = 3.0
+        weights = np.where(
+            absolute < radius,
+            np.i0(5.0 * np.sqrt(np.maximum(0.0, 1.0 - (absolute / radius) ** 2))) / np.i0(5.0),
+            0.0,
+        )
+    elif method == "sinc":
+        weights = np.where(absolute < 4.0, np.sinc(distance), 0.0)
+    elif method == "lanczos":
+        weights = np.where(absolute < 3.0, np.sinc(distance) * np.sinc(distance / 3.0), 0.0)
+    elif method == "bessel":
+        # A windowed-sinc approximation keeps this dependency-free; unlike the
+        # old bilinear alias it still preserves the filter's ringing character.
+        weights = np.where(absolute < 4.0, np.sinc(distance) * np.sinc(distance / 4.0), 0.0)
+    elif method == "mitchell":
+        b = c = 1.0 / 3.0
+        first = (
+            (12 - 9 * b - 6 * c) * absolute**3 + (-18 + 12 * b + 6 * c) * absolute**2 + (6 - 2 * b)
+        ) / 6.0
+        second = (
+            (-b - 6 * c) * absolute**3
+            + (6 * b + 30 * c) * absolute**2
+            + (-12 * b - 48 * c) * absolute
+            + (8 * b + 24 * c)
+        ) / 6.0
+        weights = np.where(absolute < 1.0, first, np.where(absolute < 2.0, second, 0.0))
+    else:
+        cubic_a = {
+            "bicubic": -0.75,
+            "catrom": -0.5,
+            "hermite": 0.0,
+            "quadric": -0.25,
+            "spline16": -1.0,
+            "spline36": -0.35,
+            "antialiased": -0.5,
+        }.get(method, -0.5)
+        weights = keys(cubic_a)
+    totals = weights.sum(axis=1, keepdims=True)
+    return weights / np.where(np.abs(totals) > 1e-12, totals, 1.0)
+
+
+def _resample_grid(grid: np.ndarray, width: int, height: int, method: str) -> np.ndarray:
+    """Dependency-free separable resampling for scalar and RGB(A) images."""
+    values = np.asarray(grid, dtype=np.float64)
+    wy = _interpolation_weights(values.shape[0], height, method)
+    wx = _interpolation_weights(values.shape[1], width, method)
+
+    def resample(channel: np.ndarray) -> np.ndarray:
+        finite = np.isfinite(channel)
+        if finite.all():
+            return wy @ channel @ wx.T
+        # Renormalize around masked samples instead of allowing IEEE
+        # ``0 * nan`` terms to poison every output pixel touched by a filter.
+        numerator = wy @ np.where(finite, channel, 0.0) @ wx.T
+        denominator = wy @ finite.astype(np.float64) @ wx.T
+        return np.divide(
+            numerator,
+            denominator,
+            out=np.full_like(numerator, np.nan),
+            where=np.abs(denominator) > 1e-12,
+        )
+
+    if values.ndim == 2:
+        return resample(values)
+    channels = [resample(values[..., index]) for index in range(values.shape[2])]
+    return np.stack(channels, axis=-1)
+
+
+def _scalar_grid_rgba(grid: np.ndarray, cmap: Any, vmin: Any, vmax: Any) -> np.ndarray:
+    """Map scalar samples before RGBA-stage interpolation."""
+    from xy._svg import _lut
+
+    values = np.asarray(grid, dtype=np.float64)
+    finite = values[np.isfinite(values)]
+    lo = float(vmin) if vmin is not None else (float(finite.min()) if finite.size else 0.0)
+    hi = float(vmax) if vmax is not None else (float(finite.max()) if finite.size else 1.0)
+    normalized = np.clip((values - lo) / ((hi - lo) or 1.0), 0.0, 1.0)
+    rgb = _lut(resolve_cmap(cmap), np.nan_to_num(normalized, nan=0.0).reshape(-1)).reshape(
+        values.shape + (3,)
+    )
+    alpha = np.where(np.isfinite(values), 1.0, 0.0)
+    return np.dstack((rgb / 255.0, alpha))
 
 
 def _marked_values(x: Any, y: Any, markevery: Any) -> tuple[Any, Any]:

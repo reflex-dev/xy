@@ -356,6 +356,41 @@ def _uniform_mesh_axes(
     return x_centers, y_centers
 
 
+def _gouraud_rect_axes(
+    x: Any, y: Any, shape: tuple[int, int]
+) -> Optional[tuple[np.ndarray, np.ndarray]]:
+    """Return same-shape, uniform rectilinear vertices for Gouraud shading."""
+    rows, cols = shape
+    xa, ya = np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64)
+    if xa.ndim == ya.ndim == 2:
+        if xa.shape != shape or ya.shape != shape:
+            raise ValueError("pcolormesh Gouraud X, Y, and C must have matching shapes")
+        if not np.allclose(xa, xa[:1, :], equal_nan=True) or not np.allclose(
+            ya, ya[:, :1], equal_nan=True
+        ):
+            return None
+        xa, ya = xa[0], ya[:, 0]
+    elif xa.shape != (cols,) or ya.shape != (rows,):
+        raise ValueError("pcolormesh Gouraud X, Y, and C must have matching shapes")
+    if (len(xa) > 2 and not np.allclose(np.diff(xa), np.diff(xa)[0])) or (
+        len(ya) > 2 and not np.allclose(np.diff(ya), np.diff(ya)[0])
+    ):
+        return None
+    return xa, ya
+
+
+def _bilinear_grid(grid: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Small NumPy-only bilinear expansion used by regular Gouraud meshes."""
+    source_y = np.linspace(0.0, 1.0, grid.shape[0])
+    source_x = np.linspace(0.0, 1.0, grid.shape[1])
+    target_y = np.linspace(0.0, 1.0, height)
+    target_x = np.linspace(0.0, 1.0, width)
+    horizontal = np.vstack([np.interp(target_x, source_x, row) for row in grid])
+    return np.vstack(
+        [np.interp(target_y, source_y, horizontal[:, column]) for column in range(width)]
+    ).T
+
+
 def _regular_mesh_axes(x: Any, y: Any, shape: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
     """Return axes for a rectilinear grid, including non-uniform spacing."""
     rows, cols = shape
@@ -847,6 +882,7 @@ class PlotTypeMixin:
                 "color": resolve_color(chosen) if chosen is not None else self._next_color(),
                 "name": None if label is None else str(label),
                 "opacity": 1.0 if alpha is None else float(alpha),
+                "_joined_fill": True,
             }
             entry = self._add(
                 "@mark",
@@ -3381,6 +3417,38 @@ class PlotTypeMixin:
             vmax = norm_vmax
         domain = (float(vmin), float(vmax)) if vmin is not None and vmax is not None else None
         regular = None if x is None else _uniform_mesh_axes(x, y, z.shape)
+        if shading == "gouraud":
+            gouraud_axes = (
+                (np.arange(z.shape[1], dtype=float), np.arange(z.shape[0], dtype=float))
+                if x is None
+                else _gouraud_rect_axes(x, y, z.shape)
+            )
+            no_edges = edgecolors is None or (
+                isinstance(edgecolors, str) and edgecolors.lower() == "none"
+            )
+            if gouraud_axes is not None and no_edges:
+                width = max(2, min(512, max(256, z.shape[1] * 32)))
+                height = max(2, min(512, max(256, z.shape[0] * 32)))
+                smooth = _bilinear_grid(z, width, height)
+                gx, gy = gouraud_axes
+                mark_kwargs: dict[str, Any] = {
+                    "x": np.linspace(float(gx[0]), float(gx[-1]), width),
+                    "y": np.linspace(float(gy[0]), float(gy[-1]), height),
+                    "colormap": colormap,
+                    "opacity": opacity,
+                }
+                if domain is not None:
+                    mark_kwargs["domain"] = domain
+                entry = self._add(
+                    "@mark",
+                    {
+                        "factory": "heatmap",
+                        "args": (smooth,),
+                        "kwargs": mark_kwargs,
+                        "source_z": z,
+                    },
+                )
+                return PolyCollection(self, entry)
         if x is None or (regular is not None and shading != "gouraud"):
             if regular is not None:
                 x, y = regular

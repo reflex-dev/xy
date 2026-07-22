@@ -2251,7 +2251,9 @@ def _triangle_mesh_marks(
 
     face = _trace_paint_rgba(t, "color", n, fallback, read)
     fills = _paint.effective_rgba(face, t, read, component="fill", default_opacity=1.0)
-    if t.get("stroke") is not None:
+    if (t.get("stroke") or {}).get("mode") == "match_fill":
+        stroke_face = face
+    elif t.get("stroke") is not None:
         stroke_face = _trace_paint_rgba(t, "stroke", n, fallback, read)
     elif style.get("stroke") is not None:
         stroke_face = np.tile(
@@ -2265,6 +2267,21 @@ def _triangle_mesh_marks(
         t, "stroke_width", n, read, float(style.get("stroke_width", 0.0))
     )
     x0, y0, x1, y1, x2, y2 = vertices
+    if (
+        style.get("joined_fill")
+        and n
+        and np.all(fills == fills[0])
+        and np.all(stroke_widths == 0.0)
+    ):
+        boundary = _paint.triangle_mesh_boundary(x0, y0, x1, y1, x2, y2)
+        if boundary is not None:
+            points = " ".join(f"{_num(float(sx(x)))},{_num(float(sy(y)))}" for x, y in boundary)
+            fill = fills[0]
+            return (
+                f'<polygon points="{points}" fill="rgb({round(fill[0] * 255)},'
+                f'{round(fill[1] * 255)},{round(fill[2] * 255)})" '
+                f'fill-opacity="{_num(float(fill[3]))}"/>'
+            )
     out = ["<g>"]
     for i in range(n):
         points = " ".join(
@@ -2334,7 +2351,9 @@ def _rect_svg_styles(
 
     face = _trace_paint_rgba(trace, "color", n, fallback, read)
     fills_rgba = _paint.effective_rgba(face, trace, read, component="fill", default_opacity=0.85)
-    if trace.get("stroke") is not None:
+    if (trace.get("stroke") or {}).get("mode") == "match_fill":
+        stroke_face = face
+    elif trace.get("stroke") is not None:
         stroke_face = _trace_paint_rgba(trace, "stroke", n, fallback, read)
     elif style.get("stroke") is not None:
         stroke_face = np.tile(
