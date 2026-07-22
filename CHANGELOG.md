@@ -142,6 +142,16 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **Inactive animation keys no longer add O(N) build work or 8 bytes/row to
+  payloads.** Mark keys are resolved, digested, retained, and shipped only for
+  an effective keyed update (a policy exists, is not explicitly disabled,
+  uses `match="key"`, and has updates enabled); `enabled="auto"` remains
+  eligible. Keyed marks above the 200k browser-match bound skip digesting and
+  reuse the existing explicit `snap:key-limit`/`snap:aggregate` fallback.
+  Active, bounded key validation and binary identity bytes are unchanged. On
+  a 100k-row disabled-animation scatter, median local chart construction fell
+  from 76.0 ms to 0.25 ms, payload assembly from 0.224 ms to 0.129 ms, and the
+  payload from 1.6 MB to 0.8 MB.
 - **Responsive, author-defeatable browser chrome.** XY's visual defaults now
   live in a low-priority cascade layer, so Tailwind utilities, ordinary author
   CSS, and slot styles override them without `!important`. Long legends remain

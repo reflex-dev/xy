@@ -2,7 +2,8 @@
 
 Browser frame pacing and GPU allocation lifetime are measured by
 ``bench_animation.py``. These rows isolate the Python work: stable identity
-encoding and the extra binary columns in an otherwise identical payload.
+encoding, inactive-key chart construction, and the extra binary columns in an
+otherwise identical payload.
 """
 
 from __future__ import annotations
@@ -28,11 +29,12 @@ def animation_data() -> tuple[np.ndarray, np.ndarray, list[str]]:
 def payload_figures(animation_data):
     x, y, keys = animation_data
     plain = xy.scatter_chart(xy.scatter(x=x, y=y)).figure()
+    inactive = xy.scatter_chart(xy.scatter(x=x, y=y, key=keys, animation=False)).figure()
     animated = xy.scatter_chart(
         xy.scatter(x=x, y=y, key=keys),
         xy.animation(match="key", duration=250),
     ).figure()
-    return plain, animated
+    return plain, inactive, animated
 
 
 def test_animation_encode_100k_stable_keys(benchmark, animation_data) -> None:
@@ -43,15 +45,35 @@ def test_animation_encode_100k_stable_keys(benchmark, animation_data) -> None:
 
 
 def test_animation_plain_payload_100k(benchmark, payload_figures) -> None:
-    plain, _animated = payload_figures
+    plain, _inactive, _animated = payload_figures
     spec, blob = benchmark(plain.build_payload)
     assert spec["traces"][0]["n_marks"] == N
     assert "keys" not in spec["traces"][0]
     assert blob
 
 
+def test_animation_inactive_key_build_100k(benchmark, animation_data) -> None:
+    x, y, keys = animation_data
+
+    def build():
+        return xy.scatter_chart(xy.scatter(x=x, y=y, key=keys, animation=False)).figure()
+
+    figure = benchmark(build)
+    assert figure.traces[0].transition_keys is None
+
+
+def test_animation_inactive_key_payload_100k(benchmark, payload_figures) -> None:
+    _plain, inactive, _animated = payload_figures
+    spec, blob = benchmark(inactive.build_payload)
+    trace = spec["traces"][0]
+    assert trace["n_marks"] == N
+    assert "keys" not in trace
+    assert all(column.get("dtype") != "u32" for column in spec["columns"])
+    assert len(blob) == N * 8
+
+
 def test_animation_keyed_payload_100k(benchmark, payload_figures) -> None:
-    _plain, animated = payload_figures
+    _plain, _inactive, animated = payload_figures
     spec, blob = benchmark(animated.build_payload)
     trace = spec["traces"][0]
     assert trace["n_marks"] == N

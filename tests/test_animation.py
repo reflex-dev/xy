@@ -154,6 +154,132 @@ def test_keyed_scatter_ships_identity_as_binary_u32_words() -> None:
     assert [column.get("dtype") for column in spec["columns"]].count("u32") == 2
 
 
+@pytest.mark.parametrize(
+    ("chart_animation", "mark_animation", "expected_keys"),
+    [
+        pytest.param(None, None, False, id="no-policy"),
+        pytest.param(None, True, False, id="mark-enabled-without-key-match"),
+        pytest.param(xy.animation(match="index"), None, False, id="chart-index-match"),
+        pytest.param(
+            xy.animation(enabled=False, match="key"),
+            None,
+            False,
+            id="chart-disabled",
+        ),
+        pytest.param(
+            xy.animation(match="key", update="none"),
+            None,
+            False,
+            id="chart-update-none",
+        ),
+        pytest.param(xy.animation(match="key"), False, False, id="mark-disabled"),
+        pytest.param(
+            xy.animation(match="key"),
+            xy.animation(match="index"),
+            False,
+            id="mark-index-override",
+        ),
+        pytest.param(
+            xy.animation(match="key"),
+            xy.animation(match="key", update="none"),
+            False,
+            id="mark-update-none-override",
+        ),
+        pytest.param(None, xy.animation(match="key"), True, id="mark-key-match"),
+        pytest.param(
+            xy.animation(enabled="auto", match="key"),
+            None,
+            True,
+            id="chart-auto-key-match",
+        ),
+        pytest.param(
+            xy.animation(enabled=True, match="key"),
+            None,
+            True,
+            id="chart-enabled-key-match",
+        ),
+        pytest.param(xy.animation(match="key"), True, True, id="mark-enabled-inherits"),
+        pytest.param(
+            xy.animation(match="index"),
+            xy.animation(match="key"),
+            True,
+            id="mark-key-override",
+        ),
+    ],
+)
+def test_only_effective_keyed_updates_attach_transition_keys(
+    chart_animation: object | None,
+    mark_animation: object | None,
+    expected_keys: bool,
+) -> None:
+    children = [
+        xy.scatter(
+            x=[1.0, 2.0],
+            y=[3.0, 4.0],
+            key=["a", "b"],
+            animation=mark_animation,
+        )
+    ]
+    if chart_animation is not None:
+        children.append(chart_animation)
+    figure = xy.scatter_chart(*children).figure()
+
+    assert (figure.traces[0].transition_keys is not None) is expected_keys
+    spec, _ = figure.build_payload()
+    trace = spec["traces"][0]
+    assert ("keys" in trace) is expected_keys
+    assert sum(column.get("dtype") == "u32" for column in spec["columns"]) == (
+        2 if expected_keys else 0
+    )
+
+
+@pytest.mark.parametrize(
+    ("chart_animation", "mark_animation"),
+    [
+        pytest.param(None, None, id="no-policy"),
+        pytest.param(xy.animation(match="index"), None, id="index-match"),
+        pytest.param(xy.animation(enabled=False, match="key"), None, id="disabled"),
+        pytest.param(xy.animation(match="key", update="none"), None, id="no-update"),
+        pytest.param(xy.animation(match="key"), False, id="disabled-override"),
+    ],
+)
+def test_inactive_key_policies_do_not_digest(
+    monkeypatch,
+    chart_animation: object | None,
+    mark_animation: object | None,
+) -> None:
+    def unexpected_digest(*_args, **_kwargs):
+        raise AssertionError("inactive animation key was digested")
+
+    monkeypatch.setattr("xy.components._encode_transition_keys", unexpected_digest)
+    children = [
+        xy.scatter(
+            x=[1.0, 2.0],
+            y=[3.0, 4.0],
+            key=["duplicate", "duplicate"],
+            animation=mark_animation,
+        )
+    ]
+    if chart_animation is not None:
+        children.append(chart_animation)
+
+    figure = xy.scatter_chart(*children).figure()
+    assert figure.traces[0].transition_keys is None
+
+
+def test_inactive_key_column_is_not_resolved_or_validated() -> None:
+    figure = xy.scatter_chart(
+        xy.scatter(
+            x="x",
+            y="y",
+            key="missing-key-column",
+            data={"x": [1.0, 2.0], "y": [3.0, 4.0]},
+        )
+    ).figure()
+
+    assert figure.traces[0].transition_keys is None
+
+
 def test_stable_keys_are_type_sensitive_and_deterministic() -> None:
     chart = xy.scatter_chart(
         xy.scatter(x=[1.0, 2.0, 3.0], y=[3.0, 4.0, 5.0], key=[1, 1.0, True]),
@@ -183,7 +309,7 @@ def test_aggregate_tier_records_key_matching_fallback() -> None:
             y=[3.0, 4.0, 5.0],
             key=["a", "b", "c"],
             density=True,
-            animation=xy.animation(duration=90),
+            animation=xy.animation(duration=90, match="key"),
         ),
         xy.animation(match="key"),
     )
@@ -195,6 +321,111 @@ def test_aggregate_tier_records_key_matching_fallback() -> None:
     assert trace["animation_fallback"] == "snap:aggregate"
     assert trace["animation"]["duration"] == 90.0
     assert "keys" not in trace
+
+
+@pytest.mark.parametrize(
+    ("mark", "expected_fallback"),
+    [
+        pytest.param(
+            lambda: xy.scatter(
+                x=[1.0, 2.0, 3.0],
+                y=[3.0, 4.0, 5.0],
+                key=["a", "b", "c"],
+                density=False,
+            ),
+            "snap:key-limit",
+            id="scatter-direct",
+        ),
+        pytest.param(
+            lambda: xy.scatter(
+                x=[1.0, 2.0, 3.0],
+                y=[3.0, 4.0, 5.0],
+                key=["a", "b", "c"],
+                density=True,
+            ),
+            "snap:aggregate",
+            id="scatter-aggregate",
+        ),
+        pytest.param(
+            lambda: xy.line([1.0, 2.0, 3.0], [3.0, 4.0, 5.0], key=["a", "b", "c"]),
+            "snap:key-limit",
+            id="line",
+        ),
+        pytest.param(
+            lambda: xy.area([1.0, 2.0, 3.0], [3.0, 4.0, 5.0], key=["a", "b", "c"]),
+            "snap:key-limit",
+            id="area",
+        ),
+        pytest.param(
+            lambda: xy.error_band(
+                [1.0, 2.0, 3.0],
+                [2.0, 3.0, 4.0],
+                [4.0, 5.0, 6.0],
+                key=["a", "b", "c"],
+            ),
+            "snap:key-limit",
+            id="error-band",
+        ),
+        pytest.param(
+            lambda: xy.bar([1.0, 2.0, 3.0], [3.0, 4.0, 5.0], key=["a", "b", "c"]),
+            "snap:key-limit",
+            id="bar",
+        ),
+        pytest.param(
+            lambda: xy.column([1.0, 2.0, 3.0], [3.0, 4.0, 5.0], key=["a", "b", "c"]),
+            "snap:key-limit",
+            id="column",
+        ),
+        pytest.param(
+            lambda: xy.errorbar(
+                [1.0, 2.0, 3.0],
+                [3.0, 4.0, 5.0],
+                yerr=[0.1, 0.2, 0.3],
+                key=["a", "b", "c"],
+            ),
+            "snap:key-limit",
+            id="errorbar",
+        ),
+    ],
+)
+def test_over_limit_keys_skip_digest_and_record_fallback(
+    monkeypatch,
+    mark,
+    expected_fallback: str,
+) -> None:
+    monkeypatch.setattr("xy.components.MAX_ANIMATION_MATCH_ROWS", 2)
+
+    def unexpected_digest(*_args, **_kwargs):
+        raise AssertionError("over-limit animation key was digested")
+
+    monkeypatch.setattr("xy.components._encode_transition_keys", unexpected_digest)
+    figure = xy.chart(
+        mark(),
+        xy.animation(match="key"),
+    ).figure()
+
+    assert all(trace.transition_keys is None for trace in figure.traces)
+    assert all(trace.transition_key_fallback == "snap:key-limit" for trace in figure.traces)
+    spec, _ = figure.build_payload()
+    assert all(trace["animation_fallback"] == expected_fallback for trace in spec["traces"])
+    assert all("keys" not in trace for trace in spec["traces"])
+    assert all(column.get("dtype") != "u32" for column in spec["columns"])
+
+
+def test_over_limit_active_key_column_is_still_resolved(monkeypatch) -> None:
+    monkeypatch.setattr("xy.components.MAX_ANIMATION_MATCH_ROWS", 2)
+    chart = xy.scatter_chart(
+        xy.scatter(
+            x="x",
+            y="y",
+            key="missing-key-column",
+            data={"x": [1.0, 2.0, 3.0], "y": [3.0, 4.0, 5.0]},
+        ),
+        xy.animation(match="key"),
+    )
+
+    with pytest.raises(ValueError, match=r"scatter\.key column 'missing-key-column'"):
+        chart.figure()
 
 
 def test_mark_animation_overrides_chart_defaults() -> None:
@@ -277,6 +508,15 @@ def test_key_matching_requires_a_key_on_every_animated_mark() -> None:
     )
     with pytest.raises(ValueError, match="match='key' requires key"):
         chart.figure()
+
+
+def test_key_matching_without_updates_does_not_require_a_key() -> None:
+    figure = xy.line_chart(
+        xy.line(x=[1.0, 2.0], y=[3.0, 4.0]),
+        xy.animation(match="key", update="none"),
+    ).figure()
+
+    assert figure.traces[0].transition_keys is None
 
 
 def test_line_keys_follow_the_geometry_sort_order() -> None:

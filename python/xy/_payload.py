@@ -302,8 +302,12 @@ class PayloadMixin(_Host):
         if t.animation is not None and "animation" not in entry:
             entry["animation"] = dict(t.animation)
         keys = t.transition_keys if key_values is None else key_values
-        if keys is not None and entry.get("tier") != "direct":
+        has_key_metadata = keys is not None or t.transition_key_fallback is not None
+        if has_key_metadata and entry.get("tier") != "direct":
             entry["animation_fallback"] = "snap:aggregate"
+            return entry
+        if t.transition_key_fallback is not None:
+            entry["animation_fallback"] = t.transition_key_fallback
             return entry
         if keys is not None:
             values = keys if key_values is not None or sel is None else keys[sel]
@@ -425,7 +429,7 @@ class PayloadMixin(_Host):
                 xv, yv = xv[finite], yv[finite]
         entry = self._base_entry(t, pw, xv, yv, tier, self._default_styled(t))
         # Attach direct keys in the same finite/log-filtered row order.
-        if t.transition_keys is not None:
+        if t.transition_keys is not None or t.transition_key_fallback is not None:
             self._transition_entry(entry, t, pw, sel)
         return entry
 
@@ -441,7 +445,7 @@ class PayloadMixin(_Host):
         if len(sel) != len(xv):
             xv, yv, bv = xv[sel], yv[sel], bv[sel]
         entry = self._base_entry(t, pw, xv, yv, tier, self._default_styled(t))
-        if t.transition_keys is not None:
+        if t.transition_keys is not None or t.transition_key_fallback is not None:
             self._transition_entry(entry, t, pw, sel)
         entry["base"] = pw.ship(bv, t.base)
         return entry
@@ -469,7 +473,7 @@ class PayloadMixin(_Host):
                 sel = np.flatnonzero(visible) if sel is None else sel[visible]
                 xv, yv = xv[visible], yv[visible]
         entry = self._base_entry(t, pw, xv, yv, "direct", dict(t.style))
-        if t.transition_keys is not None:
+        if t.transition_keys is not None or t.transition_key_fallback is not None:
             self._transition_entry(entry, t, pw, sel)
         entry["color"], entry["size"] = self._ship_channels(t, sel, pw.ship_scalar, pw.ship_u8)
         self._ship_trace_styles(entry, t, sel, pw)

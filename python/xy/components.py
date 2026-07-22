@@ -46,6 +46,7 @@ import numpy as np
 from . import _validate, channels, export, styles
 from ._figure import Figure, Selection
 from ._typing import ArrayLike, ColorLike, Scalar, TableLike
+from .config import MAX_ANIMATION_MATCH_ROWS
 from .dom import CHART_DOM_SLOTS, validate_dom_slots
 
 # Shared validators (single source of truth in `_validate`); these aliases keep
@@ -3697,38 +3698,48 @@ def _apply_mark_transition_metadata(
     else:
         raise ValueError(f"{mark.kind} animation must be xy.animation(...), bool, or None")
     effective = {**(chart_spec or {}), **(mark_spec or {})}
-    if (
-        effective.get("enabled") is not False
+    can_key_match = (
+        (chart_spec is not None or mark_spec is not None)
+        and effective.get("enabled") is not False
         and effective.get("match") == "key"
-        and mark.key is None
-    ):
+        and effective.get("update") != "none"
+    )
+    if can_key_match and mark.key is None:
         raise ValueError(f"{mark.kind} animation match='key' requires key=")
-    keys: np.ndarray | None = None
-    if mark.key is not None:
-        raw = (
-            _resolve(data, mark.key, context=f"{mark.kind}.key")
-            if isinstance(mark.key, str)
-            else mark.key
-        )
-        if not traces:
-            raise ValueError(
-                f"{mark.kind} key cannot be attached because the mark emitted no traces"
-            )
-        expected = int(traces[0].n_points)
-        keys = _encode_transition_keys(raw, expected, f"{mark.kind} key")
-        if mark.kind in {"line", "area", "error_band"}:
-            positions = _original_mark_positions(fig, mark, data, expected)
-            if positions is not None:
-                keys = keys[np.argsort(positions, kind="stable")]
     for trace in traces:
         trace.animation = None if mark_spec is None else dict(mark_spec)
-        if keys is not None:
-            if trace.n_points != len(keys):
-                raise ValueError(
-                    f"{mark.kind} key has {len(keys)} rows but emitted trace {trace.id} "
-                    f"has {trace.n_points} logical rows"
-                )
-            trace.transition_keys = keys
+    # A declarative key is inert unless this mark can actually use keyed
+    # update matching. In particular, do not resolve a column name or run the
+    # per-row canonicalization/digest loop for first-paint-only keys.
+    if not can_key_match:
+        return
+    raw = (
+        _resolve(data, mark.key, context=f"{mark.kind}.key")
+        if isinstance(mark.key, str)
+        else mark.key
+    )
+    if not traces:
+        raise ValueError(f"{mark.kind} key cannot be attached because the mark emitted no traces")
+    expected = int(traces[0].n_points)
+    if expected > MAX_ANIMATION_MATCH_ROWS:
+        # The browser will snap rather than allocate an unbounded identity
+        # map. Record that existing wire fallback without paying to digest
+        # keys which cannot be shipped or consumed.
+        for trace in traces:
+            trace.transition_key_fallback = "snap:key-limit"
+        return
+    keys = _encode_transition_keys(raw, expected, f"{mark.kind} key")
+    if mark.kind in {"line", "area", "error_band"}:
+        positions = _original_mark_positions(fig, mark, data, expected)
+        if positions is not None:
+            keys = keys[np.argsort(positions, kind="stable")]
+    for trace in traces:
+        if trace.n_points != len(keys):
+            raise ValueError(
+                f"{mark.kind} key has {len(keys)} rows but emitted trace {trace.id} "
+                f"has {trace.n_points} logical rows"
+            )
+        trace.transition_keys = keys
 
 
 def _colorbar_source_title(mark: Mark) -> Optional[str]:

@@ -58,15 +58,27 @@ points are dropped. Layouts that cannot share positional buffers record a
 
 `key=` is accepted by line, area, bar, column, scatter, error-band, and
 errorbar marks. It may be an array or a column name resolved through `data=`.
-`match="key"` requires a key on every effectively keyed mark.
+`match="key"` requires a key on every effectively keyed update. A key is
+effective only when a chart- or mark-level animation policy is present, its
+merged `enabled` value is not explicitly `False`, its merged `match` is
+`"key"`, and `update` is not `"none"`. `enabled="auto"` remains effective
+because reduced-motion preference is resolved only in the browser. Supplied
+keys outside that effective policy are inert: Python does not resolve a key
+column, validate/digest its rows, retain it on the trace, or ship identity
+columns. This includes first paint with no animation policy, index/append
+matching, disabled chart or mark policies, and update-disabled policies.
 
 Keys are canonicalized type-sensitively and hashed once in Python to a stable
 64-bit identity, shipped as two binary `u32` columns. Strings, finite numbers,
 booleans, bytes, dates, datetimes, and NumPy equivalents are supported.
-Missing, unsupported, wrong-length, or duplicate values fail during figure
-construction. Line-like keys follow the same stable geometry sort as their
-coordinates. Errorbar point keys are role-qualified after expansion so the
-main segment and caps remain unique and stable.
+For effective keyed updates within the matching limit, missing, unsupported,
+wrong-length, or duplicate values fail during figure construction. Line-like
+keys follow the same stable geometry sort as their coordinates. Errorbar point
+keys are role-qualified after expansion so the main segment and caps remain
+unique and stable. Above `MAX_ANIMATION_MATCH_ROWS`, a column-name key is still
+resolved, but per-row canonicalization, validation, and digesting are skipped:
+the identity cannot be consumed by the bounded browser matcher, so the trace
+records `snap:key-limit` instead of paying unbounded Python-object work.
 
 The browser builds a bounded key→old-index map. `append` instead matches the
 old/new x identity and `index` pairs equal positions. Above
@@ -152,13 +164,15 @@ an exact deterministic progress without starting a frame loop.
 ## 7. Verification and performance gates
 
 - `tests/test_animation.py` owns validation, serialization, identity, wire,
-  sorting, errorbar expansion, and deterministic-export contracts.
+  sorting, errorbar expansion, effective-policy overrides, bounded no-digest
+  fallbacks, and deterministic-export contracts.
 - `scripts/animation_smoke.py` exercises pixel-checked, ghost-free keyed interpolation,
   explicit partial-match fallback, GPU scratch buffers, rapid replacement,
   bounded lifetime, lifecycle balance (including destroy), and reduced motion
   in headless Chrome.
-- `benchmarks/test_codspeed_animation.py` attributes key encoding and animated
-  payload build overhead separately from the plain payload path.
+- `benchmarks/test_codspeed_animation.py` attributes inactive-key construction,
+  key encoding, and animated payload build overhead separately from the plain
+  payload path.
 - Browser frame/allocation measurements belong to the real-Chrome benchmark
   lane, not CodSpeed simulation; the animation smoke asserts the hard
   previous+next allocation bound.
