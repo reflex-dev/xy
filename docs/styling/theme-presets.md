@@ -31,6 +31,16 @@ def preset_example(preset: str, scheme: str):
     )
 
 
+def preset_pair(preset: str):
+    return rx.grid(
+        reflex_xy.chart(preset_example(preset, "light"), height="280px"),
+        reflex_xy.chart(preset_example(preset, "dark"), height="280px"),
+        columns="2",
+        spacing="4",
+        width="100%",
+    )
+
+
 def theme_preset_gallery_preview():
     return rx.grid(
         *[
@@ -48,21 +58,46 @@ def theme_preset_gallery_preview():
 
 The default XY identity balances neutral chrome with a clear indigo accent.
 
+~~~python demo exec
+def xy_preset_preview():
+    return preset_pair("xy")
+~~~
+
 ## Minimal
 
 Minimal removes the grid and uses a restrained muted palette.
+
+~~~python demo exec
+def minimal_preset_preview():
+    return preset_pair("minimal")
+~~~
 
 ## Dashboard
 
 Dashboard adds a distinct plot card and a vivid categorical palette.
 
+~~~python demo exec
+def dashboard_preset_preview():
+    return preset_pair("dashboard")
+~~~
+
 ## Publication
 
 Publication emphasizes dark axes, restrained colors, and print-like clarity.
 
+~~~python demo exec
+def publication_preset_preview():
+    return preset_pair("publication")
+~~~
+
 ## High contrast
 
 High contrast uses pure foregrounds and the CVD-safe Okabe–Ito palette.
+
+~~~python demo exec
+def high_contrast_preset_preview():
+    return preset_pair("high_contrast")
+~~~
 
 Use `palette=`, `accent=`, `contrast=`, named low-level arguments, or token
 `style` overrides to adapt any preset. See
