@@ -512,6 +512,88 @@ def normalize_to_unit(values: npt.NDArray[np.float64], domain: tuple[float, floa
     return kernels.normalize_f32(values, domain, nonfinite="zero")
 
 
+def colormap_lut_rgba8(colormap: str) -> npt.NDArray[np.uint8]:
+    """The client's 256-texel colormap LUT as (256, 4) straight-alpha RGBA8.
+
+    Built from the same stop tables the SVG exporter mirrors from
+    `js/src/10_colormaps.ts`, so a value binned through this LUT wears the
+    byte-identical color its drawn point does."""
+    from . import _svg  # deferred: channels is core, _svg owns the stop tables
+
+    lut = np.empty((256, 4), dtype=np.uint8)
+    lut[:, :3] = _svg._lut(colormap, np.linspace(0.0, 1.0, 256))
+    lut[:, 3] = 255
+    return lut
+
+
+def palette_rgba8(palette: list[str], n_categories: int) -> npt.NDArray[np.uint8]:
+    """Categorical palette colors as straight-alpha RGBA8 LUT rows.
+
+    One row per category up to 256; beyond that callers fold codes modulo the
+    base palette instead (`resolve_bin_colors`), which is the same repeat rule
+    `ship_color_channel` applies."""
+    rows = min(n_categories, MAX_CATEGORIES)
+    lut = np.empty((max(rows, 1), 4), dtype=np.uint8)
+    for i in range(lut.shape[0]):
+        status, rgba = kernels.css_check(kernels.CSS_COLOR, str(palette[i % len(palette)]))
+        if status != 1 or rgba is None:
+            rgba = (0.0, 0.0, 0.0, 1.0)
+        lut[i] = [round(c * 255) for c in rgba]
+    return lut
+
+
+def bins_mean_color(cc: Optional[ColorChannel]) -> bool:
+    """Whether this channel aggregates to a mean-color density plane at
+    Tier 2 (LOD doc §2) instead of being dropped. Cheap predicate — no
+    arrays are touched — for warning/spec sites; `resolve_bin_colors` is
+    gated on exactly this."""
+    return cc is not None and cc.mode in ("continuous", "categorical", "direct_rgba")
+
+
+def resolve_bin_colors(cc: Optional[ColorChannel], sel: Any, palette: list[str]) -> Optional[dict]:
+    """Kernel color source for mean-color density binning (LOD doc §2).
+
+    Returns `kernels.bin_2d_mean_color`-style kwargs — ``{"idx", "lut"}`` for
+    palette/colormap channels, ``{"rgba"}`` for direct RGBA — resolved to the
+    straight-alpha RGBA8 each point *draws* with, so the aggregated surface
+    and the drawn marks share one color story. Constant channels return
+    ``None``: their mean is the constant, so the count-only grid plus the
+    client-side tint reproduces it exactly with no per-cell color plane.
+    """
+    if not bins_mean_color(cc):
+        return None
+    assert cc is not None
+    if cc.mode == "direct_rgba":
+        rgba = cc.rgba
+        if rgba is None:
+            raise ValueError("direct RGBA color channel missing values")
+        values = rgba if sel is None else rgba[sel]
+        return {"rgba": np.rint(np.clip(values, 0.0, 1.0) * 255.0).astype(np.uint8)}
+    if cc.mode == "continuous":
+        values = cc.values
+        domain = cc.domain
+        if values is None or domain is None:
+            raise ValueError("continuous color channel missing values or domain")
+        vals = values if sel is None else values[sel]
+        # Same normalization the wire ships, quantized to the nearest of the
+        # client's 256 LUT texels.
+        unit = normalize_to_unit(vals, domain)
+        idx = np.rint(np.asarray(unit, dtype=np.float64) * 255.0).astype(np.uint8)
+        return {"idx": idx, "lut": colormap_lut_rgba8(cc.colormap)}
+    code_values = cc.codes
+    categories = cc.categories
+    if code_values is None or categories is None:
+        raise ValueError("categorical color channel missing codes or categories")
+    codes = code_values if sel is None else code_values[sel]
+    if codes.dtype == np.uint8:
+        return {"idx": codes, "lut": palette_rgba8(palette, len(categories))}
+    # >256 categories ship wide codes; palette colors repeat every
+    # len(palette) categories, so folding the codes onto the base palette
+    # bins each point with exactly the color it draws with.
+    folded = (codes % len(palette)).astype(np.uint8)
+    return {"idx": folded, "lut": palette_rgba8(palette, len(palette))}
+
+
 def ship_channels(
     trace: Any,
     sel: Any,

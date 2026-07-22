@@ -2577,8 +2577,18 @@ def _density_image(
     grid = _density_column(blob, cols[d["buf"]], d).reshape(h, w)
     gmax = float(d.get("max") or 1.0) or 1.0
     tnorm = np.clip(grid / gmax, 0.0, 1.0)
-    paint_alpha = 1.0
-    if d.get("color") is not None:
+    paint_alpha: float | np.ndarray = 1.0
+    if d.get("rgba") is not None:
+        # Mean point color per cell (LOD doc §2): rgb from the shipped plane,
+        # count drives only the alpha ramp, scaled by the cell's mean point
+        # alpha — the same law as the client's DENSITY_FS.
+        meta = cols[d["rgba"]]
+        mean = np.frombuffer(
+            blob, dtype=np.uint8, count=meta["len"], offset=meta["byte_offset"]
+        ).reshape(h, w, 4)
+        rgb = mean[..., :3]
+        paint_alpha = mean[..., 3].astype(np.float64) / 255.0
+    elif d.get("color") is not None:
         red, green, blue, alpha8 = _paint_rgba8(d["color"])
         rgb = np.empty((h, w, 3), dtype=np.uint8)
         rgb[:] = (red, green, blue)

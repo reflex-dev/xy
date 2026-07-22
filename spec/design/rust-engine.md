@@ -25,7 +25,7 @@ clear ImportError when it can't load, with no pure-Python fallback.
 
 | Concern | Today | Verdict |
 |---|---|---|
-| zone maps, encode_f32, m4, bin_2d, min_max, histogram_uniform, normalize_f32, range/validity indices, local_log_density | Rust (ABI v36) | correct — new equal-length x/y columns use a paired zone-map call with bit-identical per-column reductions; full-domain density first paint fuses binning with uniform or counted-u8 overlay sampling while retaining exact standalone outputs; mesh/rectangle validity scans consume only columns not already proven finite by zone metadata |
+| zone maps, encode_f32, m4, bin_2d, bin_2d_mean_color, min_max, histogram_uniform, normalize_f32, range/validity indices, local_log_density | Rust (ABI v38) | correct — new equal-length x/y columns use a paired zone-map call with bit-identical per-column reductions; full-domain density first paint fuses binning with uniform or counted-u8 overlay sampling while retaining exact standalone outputs; mean-color binning (LOD doc §2) is an integer-only pipeline (checked-in sRGB⇄linear-u16 tables, alpha-weighted u64 sums) so grids are bitwise deterministic across thread counts and platforms; mesh/rectangle validity scans consume only columns not already proven finite by zone metadata |
 | fixed-width string/bytes/bool factorization | Rust (ABI v36) | correct — compact palettes use a bounded L1-resident codebook with full-record collision checks and emit exact counts; U1 uses a direct Unicode-scalar table with endian support; ≥512k rows probe a prefix then encode disjoint chunks in parallel, merging late labels by canonical first-row order before any retry; Python sees only unique labels and retains display-label ordering policy |
 | static display-list raster, row-banded polyline/point/segment paint, batched fill+stroke triangle meshes, affine scatter projection plus typed color/size resolution, density/heatmap colormap and sampling | Rust (ABI v36) | correct — commands borrow f32/u8 payload or canonical spans synchronously; compact stratified sampling reuses factorization counts; batched/banded output is byte-identical |
 | signal processing: `xy_rfft`, `xy_welch_spectra`, `xy_spectrogram` | Rust (ABI v36) | correct — O(N) transforms over sample columns; window/segment policy stays in Python |
@@ -101,8 +101,11 @@ src/                                          # 15,423 lines shipped, 8 modules
                         #   rest of SVG scene construction stays in Python.
   simd.rs        (448)  # AVX2 twins of eligible kernels, runtime-dispatched (§3.4).
                         #   The one module besides lib.rs allowed `unsafe`.
-  tiles.rs       (481)  # pyramid build/compose/incremental append. Owns tile memory;
-                        #   handles are opaque u64 ids passed over the ABI (§3.3).
+  tiles.rs       (829)  # pyramid build/compose/incremental append, plus the
+                        #   mean-color planes for channel-bearing traces
+                        #   (build_color/compose_color, LOD doc §2/§4.1; colored
+                        #   pyramids refuse appends and rebuild lazily). Owns tile
+                        #   memory; handles are opaque u64 ids over the ABI (§3.3).
   stream.rs             # (plan) Rust-owned canonical append buffers.
   stats.rs              # (plan) quantiles/box/violin/factorize.
 ```
@@ -213,8 +216,10 @@ Arrays-in/arrays-out stops working when Rust must own long-lived state
 uint64_t xy_pyramid_build(const double* x, const double* y, size_t len,
                           double x0, double x1, double y0, double y1,
                           uint32_t base_dim);
-/* append: 1 applied; 0 on stale/busy handle, bad args, or a point outside
-   the pyramid's original domain (never partially mutates) */
+/* append: 1 applied; 0 on stale/busy handle, bad args, a point outside
+   the pyramid's original domain, or a colored pyramid (its colors are
+   unknown to this entry point — caller invalidates and rebuilds lazily).
+   Never partially mutates. */
 int32_t xy_pyramid_append(uint64_t handle, const double* x,
                           const double* y, size_t len);
 /* count over a window: 1 ok, 0 on stale handle/bad args */

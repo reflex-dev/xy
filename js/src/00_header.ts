@@ -11,9 +11,11 @@
  *  - per-point size: constant or continuous (mapped to a px range)
  *  - GPU picking → exact-row hover tooltip (§7/§17 Tier-0 hover; exact values
  *    come from the kernel's f64 canonical store, §16)
- *  - Tier-2 density surface for massive scatter (§5): a kernel-binned count grid
- *    uploaded as a log-normalized R8 texture and colormapped at composite time,
- *    re-binned on zoom via a kernel round-trip (stale grid stays drawn until
+ *  - Tier-2 density surface for massive scatter (§5): a kernel-binned count
+ *    grid whose log-normalized count drives the ALPHA channel; channel-bearing
+ *    traces add a per-cell mean point-color plane (premultiplied RGBA8
+ *    texture), constant-color traces tint a 1-byte count texture (LOD doc §2).
+ *    Re-binned on zoom via a kernel round-trip (stale grid stays drawn until
  *    then, §17)
  *
  * Dependency-free: this file is the whole client. DOM is used only for chrome —

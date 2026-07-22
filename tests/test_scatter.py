@@ -702,15 +702,17 @@ def test_density_view_drills_to_points_when_window_fits():
     row = fig.pick(0, 0)
     assert row is not None and 0.0 <= row["x"] <= 10.0
     assert "color_value" in row
-    # Color-continuous handoff: per-point local log-density in [0,1], a blend
-    # weight = visible/budget, and the colormap the density surface uses —
-    # so freshly drilled points wear the density ramp (§5, never a palette jump).
+    # Intensity-continuous handoff: per-point local log-density in [0,1] and a
+    # blend weight = visible/budget — freshly drilled points enter at their
+    # cell's count-alpha and ease to native opacity (§5). Hue needs no handoff
+    # (the surface wears the mean point color, LOD doc §2), so the old
+    # density_colormap field is gone from the wire.
     dbuf = np.frombuffer(bufs[tr["density_val"]["buf"]], dtype=np.float32)
     assert len(dbuf) == inwin
     assert dbuf.min() >= 0.0 and dbuf.max() <= 1.0
     assert dbuf.max() == pytest.approx(1.0)  # the hottest cell hits the ramp top
     assert tr["lod_blend"] == pytest.approx(inwin / SCATTER_DENSITY_THRESHOLD)
-    assert tr["density_colormap"] == "viridis"  # continuous channel's colormap
+    assert "density_colormap" not in tr
     # Channels are normalized over the *global* domain after slicing (staff
     # review: slice-first must not change values — colors stay view-stable).
     cbuf2 = np.frombuffer(bufs[tr["color"]["buf"]], dtype=np.float32)
@@ -827,8 +829,9 @@ def test_drill_lod_blend_shrinks_as_zoom_deepens():
     assert upd_wide["traces"][0]["mode"] == "points"
     assert upd_deep["traces"][0]["mode"] == "points"
     assert upd_deep["traces"][0]["lod_blend"] < upd_wide["traces"][0]["lod_blend"]
-    # constant-color scatter still gets the default density ramp for the handoff
-    assert upd_deep["traces"][0]["density_colormap"] == ch.DEFAULT_COLORMAP
+    # the handoff is intensity-only (hue is continuous by construction, LOD
+    # doc §2) — no colormap rides the points wire anymore
+    assert "density_colormap" not in upd_deep["traces"][0]
 
 
 def test_density_view_returns_to_density_on_zoom_out():
@@ -867,17 +870,42 @@ def test_drill_hysteresis_holds_points_mode_near_boundary():
     assert upd2["traces"][0]["mode"] == "density"  # cold entry aggregates
 
 
-def test_huge_scatter_with_channels_warns_and_drops():
+def test_huge_scatter_with_color_channel_warns_and_aggregates_mean_color():
     from xy._figure import DIRECT_SOFT_CEILING
 
     n = DIRECT_SOFT_CEILING + 1
     x = np.zeros(n)
     color = np.arange(n, dtype=np.float64)
-    with pytest.warns(RuntimeWarning, match="dropped"):
+    # Color is not dropped anymore: it aggregates to the surface's per-cell
+    # mean point color (LOD doc §2) — the warning says so.
+    with pytest.warns(RuntimeWarning, match="mean point color"):
         fig = Figure().scatter(x, x, color=color)
     spec, _ = fig.build_payload()
-    assert spec["traces"][0]["tier"] == "density"
-    assert spec["traces"][0]["density"]["channels_dropped"] is True
+    tr = spec["traces"][0]
+    assert tr["tier"] == "density"
+    assert tr["density"]["channels_dropped"] is False
+    assert tr["density"]["dropped_channels"] == []
+    assert tr["density"]["color_agg"] == "mean"
+    assert "rgba" in tr["density"]
+
+
+def test_huge_scatter_with_size_channel_still_warns_and_drops():
+    from xy._figure import DIRECT_SOFT_CEILING
+
+    n = DIRECT_SOFT_CEILING + 1
+    x = np.zeros(n)
+    size = np.ones(n, dtype=np.float64)
+    size[0] = 2.0
+    # Size has no honest per-cell aggregate (LOD doc §2 rule 4): still
+    # dropped, still recorded, still warned about.
+    with pytest.warns(RuntimeWarning, match="dropped channels: size"):
+        fig = Figure().scatter(x, x, size=size)
+    spec, _ = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["tier"] == "density"
+    assert tr["density"]["channels_dropped"] is True
+    assert tr["density"]["dropped_channels"] == ["size"]
+    assert "rgba" not in tr["density"]
 
 
 # -- pick / hover drill ------------------------------------------------------
