@@ -24,8 +24,12 @@ const staticDir = join(root, "python", "xy", "static");
 // Typecheck first: a bundle must never be built from source tsc rejects
 // (esbuild strips types without checking them, so this is the only gate).
 {
-  const tsc = join(root, "node_modules", ".bin", "tsc");
-  const res = spawnSync(tsc, ["-p", join(here, "tsconfig.json")], { stdio: "inherit" });
+  // Invoke tsc through the current node binary rather than the .bin shim:
+  // on Windows the shim is tsc.cmd, which spawnSync cannot exec (ENOENT).
+  const tsc = join(root, "node_modules", "typescript", "bin", "tsc");
+  const res = spawnSync(process.execPath, [tsc, "-p", join(here, "tsconfig.json")], {
+    stdio: "inherit",
+  });
   if (res.error) {
     console.error(`tsc failed to start (${res.error.message}); run \`npm install\` first`);
     process.exit(1);
