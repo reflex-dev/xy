@@ -382,11 +382,21 @@ Object.assign(ChartView.prototype, {
       ["size", ts.size && ts.size.buf, "sBuf", 4, "size"],
       ["stroke", ts.stroke && ts.stroke.buf, "strokeBuf", 1, "stroke"],
     ];
+    // Validate every referenced role before touching any state: _growColumn
+    // advances meta.len and swaps the retained span, so a mid-loop failure
+    // would leave earlier columns extended against an unchanged g.n — a torn
+    // tail the pending refresh cannot un-write and a queued delta could then
+    // extend again (its prev_marks check only sees g.n).
+    const writes: any[] = [];
     for (const [role, ci, bufKey, bpv, cpuKey] of roles) {
       const ref = cols[role];
       if (!ref) continue;
       if (!Number.isInteger(ci) || !buffers[ref.buf]) { this._requestRefresh(); return; }
       const tail = bytesToSpan(buffers[ref.buf]);
+      if (tail.byteLength !== ref.len * bpv) { this._requestRefresh(); return; }
+      writes.push([role, ci, bufKey, bpv, cpuKey, ref, tail]);
+    }
+    for (const [role, ci, bufKey, bpv, cpuKey, ref, tail] of writes) {
       const usedBytes = this.spec.columns[ci].len * bpv;
       const span = this._growColumn(ci, tail, bpv, ref.len);
       if (!this._glLost && this.gl) {
@@ -404,13 +414,18 @@ Object.assign(ChartView.prototype, {
     }
     // Any other enabled per-point attribute must keep covering n (WebGL
     // validates attrib ranges at draw): today that is only the selection
-    // mask — new rows join unselected. The mask has no CPU mirror, so the
-    // rare capacity realloc re-uploads zeros; the next selection reply
-    // (masks re-resolve kernel-side on every brush) repaints it.
+    // mask — new rows join unselected. Grow the retained CPU mirror
+    // (written by _applySelMask) alongside, so the capacity realloc
+    // re-uploads the live mask instead of wiping existing rows to zero.
     if (g.selBuf && !this._glLost && this.gl) {
       const zeros = new Uint8Array(msg.added * 4); // f32 zeros
       const usedBytes = msg.prev_marks * 4;
-      const full = new Uint8Array(usedBytes + zeros.byteLength);
+      const grown = new Float32Array(msg.prev_marks + msg.added);
+      if (g._selMask) {
+        grown.set(g._selMask.subarray(0, Math.min(g._selMask.length, msg.prev_marks)));
+        g._selMask = grown;
+      }
+      const full = new Uint8Array(grown.buffer, 0, usedBytes + zeros.byteLength);
       this._growGpuBuffer(g, "sel", g.selBuf, full, usedBytes, zeros);
     }
     g.n = msg.prev_marks + msg.added;
