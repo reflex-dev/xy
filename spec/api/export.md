@@ -33,7 +33,7 @@ adds one behavior the `Figure` methods do not have: omitted
 `facets.py:430`) mirror the same format matrix but expose no `width`/`height`
 and no `export_config` defaulting — grid geometry is fixed by its panels.
 
-Legacy per-format surfaces remain: `to_html` (interactive standalone document),
+Legacy per-format surfaces remain: `to_html` (interactive standalone document, §9),
 `Figure.to_png` (`engine=Engine.default` by default), `_svg.to_svg` (carries
 `id_prefix=` for composing several exports into one document). `to_png` routes
 through `_png_engine`, which has no `auto` case — it maps any `Engine` that is
@@ -216,3 +216,46 @@ Writes are atomic per file (same-directory temp file, fsync, `os.replace`), so a
 reader never observes a partial image. Failure mid-batch is not transactional:
 files already written stay on disk. The return value is the list of written
 byte strings, in input order.
+
+## 9. Standalone HTML delivery (`to_html`)
+
+A standalone export is one self-contained file: the IIFE render client
+(`static/standalone.js`), the spec JSON, and the data blob as 3-byte-aligned
+base64 chunks (§29 static-export row; chunking rationale in
+`export._base64_chunks`). At small point counts the inlined client dominates
+the file — ~304 KB against ~107 KB of base64 data at 10k scatter points — so
+the delivery lever is compression, not client surgery: the severable
+widget-comm code is ~16 KB of the bundle, while the core renderer that every
+path needs is ~187 KB (measured 2026-07-24 by building entry-trimmed variants
+with the repo vite config).
+
+`compress=True` (on `export.to_html`, `Figure.to_html`/`html`,
+`Chart.to_html`/`html`, `FacetGrid.to_html`, `FacetChart.to_html`) makes the
+file self-extracting:
+
+- The client and the data blob each embed as base64 of their gzip bytes
+  (client level 9, data level 6), reusing the same chunk machinery; gzip
+  pins `mtime=0` so identical exports stay byte-identical (§4 determinism).
+- An inline loader (`_INFLATE_JS`) inflates both via the browser-native
+  `DecompressionStream("gzip")` — no bundled inflate code. The client is then
+  injected as a script element (an inline script under the unchanged
+  `_STANDALONE_CSP`; executed synchronously on append) before first render.
+- Measured at 10k scatter points: 413 KB → 215 KB (~49% smaller), and the
+  Chromium screenshot of the compressed document is pixel-identical to the
+  plain one.
+- Floor: browsers without `DecompressionStream` (pre-mid-2023) get a
+  plain-text notice (`textContent`, never markup) instead of a chart. The
+  default `compress=False` output is byte-for-byte the pre-existing format.
+
+The default stays uncompressed because the export is also consumed by
+machine paths (Chromium screenshot engine, `notebook_iframe` srcdoc) and
+files served with HTTP `Content-Encoding` get equivalent savings for free —
+`compress=True` is for files that travel as files (email, attachments, no
+server compression). Coverage: `tests/test_html_export_modes.py` pins the
+loader, exact-bytes chunk roundtrip, determinism, and facet parity.
+
+A shared-external-client mode (`<script src>` + sibling bundle, plotly's
+`include_plotlyjs='directory'` shape) was evaluated and deliberately not
+shipped: the multi-chart-page economics it buys are already served by the
+reflex adapter (client as a cached compressed chunk), and it would widen the
+CSP and add sibling-file lifecycle for a single-file product surface.
