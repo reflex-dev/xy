@@ -1,7 +1,9 @@
 import { payloadBuffers } from "./00_header";
 import { buildLutData } from "./10_colormaps";
 import { parseColor } from "./20_theme";
-import { lodApplyDensityUpdate, lodApplyDrill, lodDropDrill, lodRememberDensity } from "./45_lod";
+import {
+  lodApplyDensityUpdate, lodApplyDrill, lodDrillServesView, lodDropDrill, lodRememberDensity,
+} from "./45_lod";
 import { xyCreateRebinWorker } from "./46_worker";
 import { ChartView } from "./50_chartview";
 
@@ -30,6 +32,18 @@ Object.assign(ChartView.prototype, {
       const now = this._now();
       for (const g of this.gpuTraces) {
         if (g.tier !== "density") continue;
+        // Zoom-in request elision (T12): a view contained in an exact drill's
+        // window is already answered by the marks on the GPU — the smaller
+        // window's points are a subset of the shipped ones — so this trace
+        // goes neither pending nor on the wire. The seq bump above stands, so
+        // an in-flight reply for an older, wider view dies stale instead of
+        // yanking the exact marks out from under the view it can't improve.
+        if (this._drillServesView(g, view)) {
+          g._lodPendingView = null;
+          g._lodPendingSeq = null;
+          g._lodPendingAt = null;
+          continue;
+        }
         g._lodPendingView = view;
         g._lodPendingSeq = seq;
         g._lodPendingAt = now;
@@ -60,6 +74,17 @@ Object.assign(ChartView.prototype, {
       if (needsDensity) {
         for (const g of this.gpuTraces) {
           if (g.tier !== "density") continue;
+          // T12 re-check at actual send time: a drill that landed during the
+          // debounce elides the request it made unnecessary; one that died
+          // during it re-arms the request the schedule-time check skipped.
+          if (this._drillServesView(g, view)) {
+            if (g._lodPendingSeq === seq) {
+              g._lodPendingView = null;
+              g._lodPendingSeq = null;
+              g._lodPendingAt = null;
+            }
+            continue;
+          }
           const [x0, x1] = this._axisRange(g.xAxis, view);
           const [y0, y1] = this._axisRange(g.yAxis, view);
           this.comm.send({
@@ -511,6 +536,17 @@ Object.assign(ChartView.prototype, {
 
   _dropDrill(g) {
     lodDropDrill(this, g);
+  },
+
+  // Can `view` be answered locally from this trace's live drill, with no
+  // kernel round-trip (T12)? True only for an exact (reduction "none"),
+  // non-dying drill whose window contains the view's per-axis ranges, and
+  // only until the zoom outgrows the §16 f32 encode precision.
+  _drillServesView(g, view) {
+    if (!g.drill) return false;
+    const [x0, x1] = this._axisRange(g.xAxis, view);
+    const [y0, y1] = this._axisRange(g.yAxis, view);
+    return lodDrillServesView(g, x0, x1, y0, y1);
   },
 
   // Is the current view fully covered by a drilled window? A tiny epsilon

@@ -677,6 +677,15 @@ detail inside a decade of millisecond timestamps).
   zoom depth spans a sliver of a decade (invisible on any log-family display)
   and is the same class of limit matplotlib accepts; recorded here per §28's
   no-silent-decisions rule.
+- **Zooming inside an exact scatter drill is request-free until re-centering is
+  due.** A view contained in a drill window that shipped exactly (`reduction:
+  "none"`) needs no new data — the shipped subset already holds every point of
+  it — so the client elides the `density_view` round-trip entirely (LOD doc §5,
+  T12). It re-requests only once the view span falls below 1/256 of the drilled
+  window's span on either axis, an f32-safe margin (at 2⁻⁸ of the window the
+  ~2⁻²⁴ encode quantum is still ≲0.1 px on a 4k-wide plot); that request exists
+  to re-center the offset encoding per this section, and the re-centered reply
+  re-arms the elision around its own window.
 - **Time is i64 end-to-end** (Arrow timestamp columns), with calendar-aware tick
   generation (months are not 30×86400s). Plotly gets this right; matching it is
   table stakes and it must not be routed through any float path.
@@ -981,7 +990,7 @@ recomputes on zoom.*
 | Trace kind | Canonical requirement | Tier ladder | Hover/select | On zoom |
 |---|---|---|---|---|
 | **Line / area / time series** | x sorted (or engine sorts once at ingest, stated) | direct → min-max per-px-column decimation → zone-map-pruned chunk streaming | exact point (binary search on x in canonical) at every tier | recompute decimation for visible x-range only; zone maps prune chunks |
-| **Scatter** | none for Tiers 0–1; spatial bucketing pass at ingest for Tiers 2–3 | direct instanced → *no Tier 1 (decimating unordered points misleads)* → density pyramid → out-of-core tiles | Tier 0: GPU pick, exact row. Tiers 2–3: bin summary + async drill to top-k rows | pan = tile reuse; zoom = adjacent pyramid level; below pyramid floor = re-bin visible via tile index |
+| **Scatter** | none for Tiers 0–1; spatial bucketing pass at ingest for Tiers 2–3 | direct instanced → *no Tier 1 (decimating unordered points misleads)* → density pyramid → out-of-core tiles | Tier 0: GPU pick, exact row. Tiers 2–3: bin summary + async drill to top-k rows | pan = tile reuse; zoom = adjacent pyramid level; below pyramid floor = re-bin visible via tile index; inside an exact drill window = nothing recomputes and no request is sent — the client already holds every point (§16, LOD doc T12) |
 | **Heatmap / image** | gridded input | direct texture → mip pyramid (same machinery, degenerate case) | cell value (exact, from canonical grid) | mip level selection; nothing recomputes |
 | **Bar / histogram** | histogram: raw column; bar: categories | bars are visually bounded (≤ ~10⁴ on screen) → direct; histogram re-bins from canonical on range change (cheap: 1-D, visible range only, zone-map-pruned) | exact bar/bin | 1-D re-bin, worker, stale-while-revalidate |
 | **Streaming (any kind)** | ring capacity declared up front | ring buffer + incremental decimation (Tier-1 buckets updated, not rebuilt); pyramid tiles updated incrementally for touched cells | same as base kind, within retained window | append is O(appended); eviction from ring updates affected buckets only |

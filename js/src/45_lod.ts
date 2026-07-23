@@ -316,6 +316,35 @@ function lodHoldPendingDrill(view, g, d) {
   return estimatedVisible <= LOD_DIRECT_POINT_BUDGET * LOD_DRILL_EXIT_FACTOR;
 }
 
+// Zoom-in request elision (T12): a drill that shipped its window EXACTLY
+// (reduction "none" — the subset IS every point in the window) already holds
+// every point of any view contained in that window, so drilling deeper needs
+// no kernel round-trip. What a deeper zoom eventually needs is precision, not
+// data: the shipped geometry is f32, offset-encoded around the window midpoint
+// (§16), so once the view span drops below LOD_DRILL_REENCODE_SPAN of the
+// window span on either axis one request goes out purely to re-center the
+// encoding (at 2^-8 of the window the ~2^-24 encode quantum is still ≲0.1 px
+// on a 4k-wide plot). A dying drill never elides — the kernel chose a
+// different representation and the reply flow owns that transition.
+const LOD_DRILL_REENCODE_SPAN = 1 / 256;
+
+export function lodDrillServesView(g, x0, x1, y0, y1) {
+  const d = g && g.drill;
+  if (!d || !d.exact || !d.win || g._drillDying) return false;
+  const vx0 = Math.min(x0, x1), vx1 = Math.max(x0, x1);
+  const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
+  const wx0 = Math.min(d.win.x0, d.win.x1), wx1 = Math.max(d.win.x0, d.win.x1);
+  const wy0 = Math.min(d.win.y0, d.win.y1), wy1 = Math.max(d.win.y0, d.win.y1);
+  // Same edge tolerance as _viewInside: f32 round-trip slop at the window
+  // boundary must not force a request right after drilling in.
+  const ex = (vx1 - vx0) * 1e-4, ey = (vy1 - vy0) * 1e-4;
+  if (vx0 < wx0 - ex || vx1 > wx1 + ex || vy0 < wy0 - ey || vy1 > wy1 + ey) return false;
+  return (
+    vx1 - vx0 >= (wx1 - wx0) * LOD_DRILL_REENCODE_SPAN &&
+    vy1 - vy0 >= (wy1 - wy0) * LOD_DRILL_REENCODE_SPAN
+  );
+}
+
 // Geometry-only retirement (T11): an entered-then-exited drill is kept as a
 // revive cache — a rapid zoom back into its window hands the exact marks
 // back with no kernel round-trip — but only while a nearby view could still
@@ -405,6 +434,11 @@ export function lodApplyDrill(view, g, upd, buffers) {
   d.win = { x0: upd.x_range[0], x1: upd.x_range[1], y0: upd.y_range[0], y1: upd.y_range[1] };
   d.n = Math.min(upd.x.len, upd.y.len);
   d.visible = upd.visible ?? d.n;
+  // The kernel's exactness claim (§28 Invariant L2): reduction "none" means
+  // the subset IS every point in the window — the fact that arms T12's
+  // zoom-in request elision. Anything else (or a reply that doesn't say)
+  // keeps the request path live.
+  d.exact = upd.reduction === "none";
   d.seq = upd.drill_seq; // subset version — echoed with picks, gates selections
   d.selActive = false; // drilled subset changed; old mask indices are stale
   // §34 selection continuity: the swapped subset invalidates the old mask

@@ -44,7 +44,7 @@ real marks with real channels — never a sample, never an aggregate.
 
 | Kind | Tier 0 | Tier 1 | Tier 2 | zoom-in recovery |
 |---|---|---|---|---|
-| scatter | points | — (unordered decimation lies, §28) | mean-color density grid (§2; count planes + color planes, §4 below) | drill-in ships exact visible points + channels (shipped) |
+| scatter | points | — (unordered decimation lies, §28) | mean-color density grid (§2; count planes + color planes, §4 below) | drill-in ships exact visible points + channels (shipped); deeper zooms inside the exact window are answered locally, no request (T12) |
 | line/area | polyline | M4 per column (extrema-exact) | — (M4 already screen-bounded) | re-decimate window (shipped) |
 | heatmap | cell rects | — | mip-style tile reduction of the user grid (max/mean recorded) | finer pyramid level, then exact cells |
 | histogram/bar | rects | re-bin at viewport resolution | — (bins are already aggregates) | re-bin visible window (finer bins = more truth, never less) |
@@ -417,8 +417,31 @@ invariants so future kinds don't regress them:
   window, and the view being far from it is their normal transient state.
   A dying drill (kernel chose density) still frees via the exit fade as in
   T2, independent of geometry.
+- **T12 — a zoom inside an exact drill elides the request:** once a points
+  reply has shipped its window EXACTLY (`reduction: "none"` — Invariant L2's
+  subset IS every point in the window), any requested view contained in that
+  window is already answered by the marks on the GPU: the smaller window's
+  points are a subset of the shipped ones, so `_scheduleViewRequest` sends no
+  `density_view` for that trace and clears its pending markers
+  (`lodDrillServesView` in `js/src/45_lod.ts`, re-checked at debounced send
+  time so a drill landing or dying mid-debounce flips the decision). The seq
+  still bumps, so an in-flight reply for an older, wider view dies stale
+  instead of yanking exact marks out from under a view it cannot improve.
+  Two things re-arm the request: leaving the window (any edge, same epsilon
+  as `_viewInside`), and depth — the shipped geometry is f32, offset-encoded
+  around the window midpoint (dossier §16), so once the view span drops below
+  `LOD_DRILL_REENCODE_SPAN` (1/256) of the window span on either axis one
+  request goes out purely to re-center the encoding (at 2⁻⁸ of the window the
+  ~2⁻²⁴ encode quantum is still ≲0.1 px on a 4k-wide plot; the reply's
+  re-centered window then re-arms the elision around itself). A dying drill
+  never elides — the kernel chose a different representation and the reply
+  flow owns that transition. Data changes cannot serve stale marks through
+  the elision: streaming append and full payload updates rebuild the GPU
+  trace, which drops the drill and with it the elision. Non-exact replies
+  (anything but `reduction: "none"`, including replies that don't say) never
+  arm it.
 
-Any new tiered kind must state how it satisfies T1–T11 in its chart-kind
+Any new tiered kind must state how it satisfies T1–T12 in its chart-kind
 contract entry before it lands.
 
 ---
