@@ -2117,7 +2117,7 @@ export class ChartView {
         grid: lodCopyGrid(grid),
         rgba,
         filter,
-        tex: this._uploadGrid(grid, d.w, d.h, d.max, rgba, filter),
+        tex: this._uploadGrid(grid, d.w, d.h, d.max, rgba, filter, this._fillOpacity(t.style)),
         lut: this._lut(d.colormap),
       };
       g.sampleOverlay = this._buildDensitySample(t, d.sample, buffer);
@@ -2864,10 +2864,10 @@ export class ChartView {
     return tex;
   }
 
-  _uploadGrid(f32, w, h, maxVal, rgba = null, filter = "linear") {
+  _uploadGrid(f32, w, h, maxVal, rgba = null, filter = "linear", pointAlpha = 1) {
     const gl = this.gl;
     const tex = gl.createTexture();
-    lodWriteGridTexture(gl, tex, f32, w, h, maxVal, rgba, filter);
+    lodWriteGridTexture(gl, tex, f32, w, h, maxVal, rgba, filter, pointAlpha);
     return tex;
   }
 
@@ -3453,7 +3453,14 @@ export class ChartView {
       this._axisCoord(xAxis, d.xRange[0]), this._axisCoord(xAxis, d.xRange[1]),
       this._axisCoord(yAxis, d.yRange[0]), this._axisCoord(yAxis, d.yRange[1]),
     );
-    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * opacityScale);
+    // Mean-color textures bake the style opacity INSIDE their physical
+    // compositing (LOD doc §2 rule 1 — dense cells saturate past it exactly
+    // like overplotted marks), so the uniform carries only the transition
+    // fades for them; count-only grids keep style opacity here as before.
+    gl.uniform1f(
+      u("u_opacity"),
+      (d.rgba ? 1 : this._fillOpacity(g.trace.style)) * opacityScale,
+    );
     // Mean-color grids carry their colors in the texture (LOD doc §2);
     // count-only grids tint with the constant trace color or, failing that,
     // fall back to the LUT ramp (hand-built/legacy specs).

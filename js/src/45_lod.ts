@@ -54,37 +54,58 @@ export function lodCopyGrid(f32) {
   return f32.slice ? f32.slice() : new Float32Array(f32);
 }
 
-// Log tone-mapped grid upload: stable perception across renormalization, and
-// the u_max swings between rebins compress logarithmically (§5/§F6).
+
+// Grid upload. Count-only grids upload as R8 log tone-mapped (the shader
+// tints/LUTs them): count is their only structure, and the u_max swings
+// between rebins compress logarithmically (§5/§F6).
 //
-// Count-only grids upload as R8 (the shader tints/LUTs them). Mean-color
-// grids (LOD doc §2) pass the straight-alpha RGBA plane shipped by the
-// kernel: rgb = per-cell mean point color, a = mean point alpha. The texture
-// bakes the count tone curve into the alpha and stores rgb PREMULTIPLIED —
-// in sRGB space, exactly like the mark shaders' outputs — so bilinear
-// filtering weights color by coverage instead of dragging occupied cells
-// toward transparent-black neighbors. Exposure easing re-calls this per
-// norm step; rgb is re-premultiplied against the eased alpha each time.
+// Mean-color grids (LOD doc §2) pass the straight-alpha RGBA plane shipped
+// by the kernel: rgb = per-cell mean point color, a = mean point alpha.
+// Their displayed alpha is the PHYSICAL compositing of the cell's own
+// points — `1 − (1 − a_pt)^k` for k points whose drawn per-point alpha is
+// a_pt = channel alpha × the trace's style opacity (`pointAlpha`) — exactly
+// what the eye would see if every point were drawn sub-pixel, so the
+// texture and real marks agree on lightness at every zoom and the
+// texture↔points swap never shifts tone (the old window-normalized
+// log-count curve made lightness swing across that boundary and between
+// windows). Style opacity folds INSIDE the exponent — dense cells saturate
+// past it exactly like overplotted marks do — so the draw path applies only
+// transition fades on top of these textures, never the style opacity again.
+// Count's display role reduces to occupancy and the compositing exponent;
+// no per-window normalization touches these textures (max-independent
+// upload). rgb stores PREMULTIPLIED — in sRGB space, exactly like the mark
+// shaders' outputs — so bilinear filtering weights color by coverage
+// instead of dragging occupied cells toward transparent-black neighbors.
 // `filter` picks the sampling the reply asked for (spatial-exact grids ship
 // "nearest"); it applies to both texture layouts.
-export function lodWriteGridTexture(gl, tex, f32, w, h, maxVal, rgba = null, filter = "linear") {
+export function lodWriteGridTexture(
+  gl, tex, f32, w, h, maxVal, rgba = null, filter = "linear", pointAlpha = 1,
+) {
   const denom = Math.log1p(Math.max(0, maxVal || 0));
   let data;
   if (rgba) {
     data = new Uint8Array(f32.length * 4);
-    if (denom > 0) {
-      for (let i = 0; i < f32.length; i++) {
-        const c = f32[i];
-        if (!(c > 0) || !Number.isFinite(c)) continue;
-        const t = Math.min(1, Math.log1p(c) / denom);
-        const shaped = Math.min(1, t * 1.35) * (rgba[i * 4 + 3] / 255);
-        if (shaped <= 0) continue;
-        const a = Math.max(1, Math.round(255 * shaped));
-        data[i * 4] = Math.round(rgba[i * 4] * a / 255);
-        data[i * 4 + 1] = Math.round(rgba[i * 4 + 1] * a / 255);
-        data[i * 4 + 2] = Math.round(rgba[i * 4 + 2] * a / 255);
-        data[i * 4 + 3] = a;
-      }
+    // ln(1 − a_pt) per possible channel-alpha byte, so the per-cell work is
+    // one exp(). NaN marks saturation (a_pt == 1 → any occupied cell is 1).
+    const op = Math.min(1, Math.max(0, pointAlpha));
+    const logOneMinus = new Float64Array(256);
+    for (let a8 = 0; a8 < 256; a8++) {
+      const aPt = (a8 / 255) * op;
+      logOneMinus[a8] = aPt >= 1 ? NaN : Math.log1p(-aPt);
+    }
+    for (let i = 0; i < f32.length; i++) {
+      const c = f32[i];
+      if (!(c > 0) || !Number.isFinite(c)) continue;
+      const a8 = rgba[i * 4 + 3];
+      if (a8 === 0) continue; // an all-invisible cell never invents coverage
+      const lg = logOneMinus[a8];
+      const shaped = Number.isNaN(lg) ? 1 : 1 - Math.exp(c * lg);
+      if (shaped <= 0) continue;
+      const a = Math.max(1, Math.round(255 * shaped));
+      data[i * 4] = Math.round(rgba[i * 4] * a / 255);
+      data[i * 4 + 1] = Math.round(rgba[i * 4 + 1] * a / 255);
+      data[i * 4 + 2] = Math.round(rgba[i * 4 + 2] * a / 255);
+      data[i * 4 + 3] = a;
     }
   } else {
     data = new Uint8Array(f32.length);
@@ -145,7 +166,7 @@ function lodStartNormAnim(view, g, start, target) {
     g.densityNormMax = target;
     lodWriteGridTexture(
       view.gl, g.density.tex, g.density.grid, g.density.w, g.density.h, target,
-      g.density.rgba, g.density.filter,
+      g.density.rgba, g.density.filter, view._fillOpacity(g.trace.style),
     );
     return;
   }
@@ -169,7 +190,10 @@ function lodStepNorm(view, g) {
   if (rel > 0.004 || t >= 1) {
     d.normMax = norm;
     g.densityNormMax = norm;
-    lodWriteGridTexture(view.gl, d.tex, d.grid, d.w, d.h, norm, d.rgba, d.filter);
+    lodWriteGridTexture(
+      view.gl, d.tex, d.grid, d.w, d.h, norm, d.rgba, d.filter,
+      view._fillOpacity(g.trace.style),
+    );
   }
   if (t < 1) {
     view.draw();
@@ -820,12 +844,15 @@ export function lodApplyDrill(view, g, upd, buffers) {
     gl.bufferData(gl.ARRAY_BUFFER, values, gl.STATIC_DRAW);
   }
   view._pointMarkStyle(d, d.trace);
-  // Intensity-continuous handoff (§5): per-point local log-density + a blend
-  // weight. The density surface already wears the mean point color (LOD doc
-  // §2), so hue is continuous by construction; fresh at the boundary
-  // (blend≈1) each mark enters at its cell's count-alpha and deeper zooms
-  // ship smaller blends, easing marks to native opacity.
-  if (upd.density_val && upd.density_val.buf !== undefined) {
+  // Intensity handoff (§5): per-point local log-density + a blend weight.
+  // A mean-color surface needs NONE of it (§2, physical alpha): its texture
+  // composites exactly like the points themselves, so marks enter and exit
+  // at native opacity and the entry/exit alpha fades alone carry the swap —
+  // running the count-alpha ramp against a physically-composited backdrop
+  // would re-introduce the lightness step it exists to avoid. Count-only
+  // surfaces keep the ramp (their texture still wears the log tone curve).
+  const meanColorSurface = !!(g.density && g.density.rgba);
+  if (!meanColorSurface && upd.density_val && upd.density_val.buf !== undefined) {
     const dvalValues = upd.density_val.dtype === "u8"
       ? view._asU8(buffers[upd.density_val.buf])
       : view._asF32(buffers[upd.density_val.buf]);
@@ -1040,7 +1067,9 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
     grid,
     rgba,
     filter,
-    tex: view._uploadGrid(grid, d.w, d.h, normMax, rgba, filter),
+    tex: view._uploadGrid(
+      grid, d.w, d.h, normMax, rgba, filter, view._fillOpacity(g.trace.style),
+    ),
     lut: g.density.lut,
   };
   // Exact scans include a view-specific sample and replace the overlay.
@@ -1051,7 +1080,11 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
   if (Object.prototype.hasOwnProperty.call(d, "sample")) {
     view._applyDensitySample(g, d.sample, buffers);
   }
-  lodStartNormAnim(view, g, normMax, d.max);
+  // Exposure easing (T4) is a count-only concern: a mean-color texture's
+  // physical alpha is max-independent, so re-uploading it per norm step
+  // would rewrite identical bytes.
+  if (rgba) g._densityNormAnim = null;
+  else lodStartNormAnim(view, g, normMax, d.max);
   lodRememberDensity(view, g, g.density);
 }
 

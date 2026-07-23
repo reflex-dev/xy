@@ -471,8 +471,9 @@ F3, still pending (above).
 - **WebGPU primary, WebGL2 fallback.** One `<canvas>`, everything is GPU primitives.
 - **Instanced draws** for markers/bars/lines — one draw call for millions of marks.
 - **Density textures** for aggregated tiers (§5, Tier 2) — mean point color per
-  cell, count as alpha (LOD doc §2); premultiplied RGBA8 upload for
-  channel-bearing traces, tinted R8 count texture for constant-color ones.
+  cell, composited at the points' own alpha (`1−(1−a_pt)^count`, LOD doc §2);
+  premultiplied RGBA8 upload for channel-bearing traces, tinted R8
+  log-count-ramp texture for constant-color ones.
 - **DOM/SVG only for chrome** — axis tick labels, legend, title, tooltip. Little of it,
   and it stays crisp/accessible/selectable.
 - **Retained scene graph**, spec-diff → buffer-diff. Pan/zoom is a view-matrix uniform
@@ -1015,9 +1016,10 @@ means uniform in the axis's scale coordinates, not in raw data. Concretely:
   before `bin_2d`; the wire keeps raw `x_range`/`y_range` endpoints and the
   rule "cells are uniform in scale coordinates" (wire-protocol.md §3). Without
   this, clusters at x=1 and x=1000 share one cell on a symlog axis despite
-  being a third of the screen apart. The drill handoff's per-point
+  being a third of the screen apart. The count-only drill handoff's per-point
   `local_log_density` bins in the same space so its count-alpha matches the
-  grid's (hue already matches — the grid wears the mean point color, LOD doc §2).
+  grid's (mean-color surfaces need no handoff at all — they composite like
+  the points themselves, LOD doc §2 rules 1/5).
 - **The raw-space tile pyramid** (Tier 3) cannot compose a scale-coordinate
   grid, so traces on a nonlinear axis skip pyramid build/compose and always
   take the exact scan (`binning: "exact"`). Cost: the O(visible) rescan the

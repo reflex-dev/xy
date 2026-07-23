@@ -44,6 +44,17 @@ in the README).
   the view's estimated in-view count fits the direct point budget, i.e. when
   individual points are actually resolvable; real points still ship the
   moment a window fits the budget, so drilldown behavior is unchanged.
+- **Mean-color density surfaces composite like the points they aggregate
+  (LOD doc §2).** A channel-bearing cell's displayed alpha is now the
+  physical compositing of its own points — `1 − (1 − ā)^count` for mean
+  point alpha ā — instead of a per-window log-count tone curve. Lightness
+  no longer swings between windows or across the texture↔points boundary
+  (the aggregate is exactly as saturated as overplotted real marks), the
+  texture upload is normalization-free (no exposure re-uploads), and
+  mean-color drills swap at native opacity with no intensity handoff.
+  Count-only (constant-color) surfaces keep the log ramp — count is their
+  only structure. Same law in the client, the SVG/PNG exporters, and the
+  standalone re-bin worker.
 - **The aggregate tier no longer refines; density requests only probe the
   points band (LOD doc T13).** Whatever density texture already covers the
   view stands — however blurry — until the estimated in-view count comes

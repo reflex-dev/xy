@@ -239,7 +239,10 @@ Object.assign(ChartView.prototype, {
         const hd = g._homeDensity;
         this._applySampleRebinGrid(g, {
           ...hd,
-          tex: this._uploadGrid(hd.grid, hd.w, hd.h, hd.normMax || hd.max || 1, hd.rgba, hd.filter),
+          tex: this._uploadGrid(
+            hd.grid, hd.w, hd.h, hd.normMax || hd.max || 1, hd.rgba, hd.filter,
+            this._fillOpacity(g.trace.style),
+          ),
         }, false);
       }
       return;
@@ -336,7 +339,10 @@ Object.assign(ChartView.prototype, {
       xRange: [msg.x0, msg.x1], yRange: [msg.y0, msg.y1],
       grid,
       rgba,
-      tex: this._uploadGrid(grid, msg.w, msg.h, msg.max || 1, rgba),
+      tex: this._uploadGrid(
+        grid, msg.w, msg.h, msg.max || 1, rgba, "linear",
+        this._fillOpacity(g.trace.style),
+      ),
       lut: g.density.lut,
     }, true);
   },

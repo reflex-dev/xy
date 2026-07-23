@@ -24,8 +24,9 @@ DECIMATION_THRESHOLD = 10_000
 # Scatter above this many points switches to Tier-2 density aggregation (§5):
 # instead of shipping/drawing every point (fill-rate + the ~1 GB single-alloc
 # cliff, §5 F3), the kernel bins the viewport into a density grid the client
-# draws with the trace's own colors — count drives only the alpha (LOD doc
-# §2). Screen-bounded transport and VRAM regardless of point count.
+# draws with the trace's own colors, composited at the points' own alpha
+# (LOD doc §2; count-only surfaces keep the log count ramp). Screen-bounded
+# transport and VRAM regardless of point count.
 SCATTER_DENSITY_THRESHOLD = 200_000
 
 # Absolute direct-draw ceiling; above this, density is forced even if the user

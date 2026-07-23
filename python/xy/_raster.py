@@ -41,6 +41,7 @@ from ._svg import (
     _heatmap_rgba_grid,
     _legend_layout,
     _lut,
+    _physical_density_alpha,
     _px_size,
     _resolve_static_css_vars,
     _Scale,
@@ -1895,24 +1896,17 @@ def _emit_grid(
         dx, dy, dw, dh = _scene.grid_dest_rect(xr, yr, sx, sy)
         if g.get("rgba") is not None:
             # Mean point color per cell (LOD doc §2): rgb from the shipped
-            # plane; count drives only the alpha ramp, scaled by the cell's
-            # mean point alpha — the same law as _svg._density_image and the
-            # client's DENSITY_FS. Precomposed here and emitted as a plain
-            # image op; the count→LUT density op cannot express per-cell color.
+            # plane; displayed alpha is the PHYSICAL compositing of the
+            # cell's points (`_svg._physical_density_alpha` — the same law
+            # as _svg._density_image and the client's texture upload).
+            # Precomposed here and emitted as a plain image op; the
+            # count→LUT density op cannot express per-cell color.
             rgba_meta = cols[g["rgba"]]
             mean = np.frombuffer(
                 blob, dtype=np.uint8, count=rgba_meta["len"], offset=rgba_meta["byte_offset"]
             ).reshape(h, w, 4)
             counts = _density_column(blob, meta, g).reshape(h, w)
-            gmax = float(g.get("max") or 1.0) or 1.0
-            tnorm = np.clip(counts / gmax, 0.0, 1.0)
-            alpha = (
-                np.clip(tnorm * 1.35, 0, 1)
-                * 255
-                * _fill_opacity(style, 0.85)
-                * (mean[..., 3].astype(np.float64) / 255.0)
-            ).astype(np.uint8)
-            alpha[tnorm <= 0] = 0
+            alpha = _physical_density_alpha(counts, mean[..., 3], _fill_opacity(style, 0.85))
             rgba = np.ascontiguousarray(np.dstack([mean[..., :3], alpha])[::-1])
             cmd.image(dx, dy, dw, dh, w, h, rgba.tobytes(), nearest=False)
             return

@@ -1464,7 +1464,7 @@ def scatter(
         )
         mean_color_note = (
             " The color channel is kept as the surface's per-cell mean point color"
-            " (count drives the alpha)."
+            " (composited at the points' own alpha)."
             if color_aggregates
             else ""
         )

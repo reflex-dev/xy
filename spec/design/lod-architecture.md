@@ -28,7 +28,7 @@ pixel-area or overdraw term exists in `python/xy/` or `js/src/` today.
 |---|---|---|---|---|
 | 0 | Direct | every visible mark, exact | O(visible) verts | shipped (all kinds) |
 | 1 | Shape-preserving reduction | per-pixel-column aggregate that IS the mark's meaning (M4 for lines; OHLC-bucket for candles when finance returns; max-bin for bars) | O(px) verts | shipped (line) |
-| 2 | Density / aggregate surface | mean-point-color texture, count as alpha (§2) | O(screen) texels | shipped (scatter) |
+| 2 | Density / aggregate surface | mean-point-color texture composited at the points' own alpha (§2) | O(screen) texels | shipped (scatter) |
 | 3 | Out-of-core tiles | Tier-2 pyramid where not all tiles are resident | O(visible tiles) | **this doc** |
 
 **Invariant L1 (recorded reduction):** every update carries `tier`, `mode`,
@@ -94,19 +94,33 @@ metadata, or encoded-buffer assembly.
 
 Aggregating positions is easy; aggregating **color/size/category** without
 lying is the hard part (§5-F5). The governing principle, shipped: **the
-density surface wears the data's own colors; count drives only the alpha.**
-A cell's color is what the eye would see if every one of its points were
-drawn sub-pixel — the physically downsampled image — so the aggregate view
-and the point view are two magnifications of the same picture, not two
-different charts. More points → deeper (more opaque) color; fewer points →
-lighter; the color itself always comes from the represented points.
+density surface wears the data's own colors, and it composites like the
+data's own points.** A cell is what the eye would see if every one of its
+points were drawn sub-pixel — the physically downsampled image — so the
+aggregate view and the point view are two magnifications of the same
+picture, not two different charts: same hue (the mean point color), same
+lightness (the points' own alpha compositing).
 
-1. **Count is always channel 0, and it is the ALPHA channel.** The count
-   grid ships log-tone-mapped (`buf` + `max`, log-u8) and drives opacity
-   exclusively. Color rides on top of count, never instead of it —
-   otherwise sparse-but-extreme cells look as important as dense ones. No
-   shipped path colormaps counts anymore (the client keeps a count→LUT
-   fallback solely for hand-built/legacy count-only specs).
+1. **A mean-color cell's displayed alpha is the PHYSICAL compositing of its
+   own points:** `1 − (1 − a_pt)^k` for k points whose drawn per-point
+   alpha is `a_pt = mean channel alpha × trace style opacity` — exactly
+   what k overplotted marks composite to, saturating after a few points
+   just as real marks do. Style opacity folds INSIDE the exponent (dense
+   cells saturate past it exactly like real overplot), so the draw path
+   applies only transition fades on top of these textures — never the
+   style opacity again. No window normalization touches the alpha, so
+   lightness cannot swing between windows or across the texture↔points
+   boundary (the previous law — a per-window log-count tone curve driving
+   opacity — did both: a field capture of the 100M drilldown showed the
+   surface visibly lighter/darker than the very points it aggregated). The
+   count grid still ships (`buf` + `max`, log-u8): it marks occupancy, is
+   the compositing exponent, and remains the ONLY structure — and the alpha
+   ramp — for count-only surfaces (constant-color traces, hand-built/legacy
+   specs), which keep the log tone curve and its eased normalization (T4).
+   The recorded cost of physical alpha: density beyond a few points per
+   cell no longer reads in the surface (real overplotted points saturate
+   identically — the aggregate is exactly as saturated as the truth it
+   downsamples; drill-in is where per-point structure returns).
 2. **Per-point colors → per-cell alpha-weighted MEAN of the *resolved*
    colors, averaged in linear light.** One law for every channel mode —
    continuous (colormapped value), categorical (palette color), and
@@ -115,9 +129,10 @@ lighter; the color itself always comes from the represented points.
    pipeline: checked-in sRGB⇄linear-u16 tables, u64 sums — bitwise
    deterministic across thread counts and platforms), then quantized back to
    sRGB. Ships as a `w*h*4` straight-alpha RGBA8 plane (`rgba`, mean color +
-   mean point alpha) with `color_agg: "mean"` recorded; displayed alpha =
-   count tone-curve × mean point alpha. A cell of one point shows that
-   point's exact color; an all-invisible (alpha-0) cell never invents one.
+   mean point alpha) with `color_agg: "mean"` recorded; displayed alpha
+   follows rule 1 (physical compositing of ā over the cell count). A cell
+   of one point shows that point's exact color at that point's own alpha;
+   an all-invisible (alpha-0) cell never invents one.
    Constant-color traces ship no plane — the mean of a constant IS the
    constant, so the wire keeps the 1-byte count grid plus `color` and the
    client tints (bit-equivalent, 4× cheaper). Cost, recorded: a
@@ -146,13 +161,16 @@ lighter; the color itself always comes from the represented points.
    `channels_dropped: true` + `dropped_channels` naming it. Color is *not*
    listed there when it aggregates — `color_agg: "mean"` records the
    transform instead (aggregated ≠ dropped).
-5. **The drill handoff is intensity-only now:** hue is continuous by
-   construction (both sides show the points' colors), so freshly drilled
-   points arrive in their native colors and only their opacity hands off —
-   entering at the cell's count-alpha (`density_val` through the same tone
-   curve as the texture) and easing to native opacity as `lod_blend` → 0.
-   The same rule runs outbound: exiting marks re-target the aggregate's
-   count-alpha and melt into a surface that already matches their hue.
+5. **Mean-color surfaces need no drill handoff at all:** hue is continuous
+   by construction (both sides show the points' colors) and, under rule
+   1's physical alpha, so is lightness — the texture composites exactly
+   like the marks replacing it. Drilled points therefore enter and exit at
+   NATIVE opacity; the entry/exit alpha fades (T2) alone carry the swap,
+   and the client ignores `density_val`/`lod_blend` on such traces (the
+   wire still carries them — count-only surfaces keep the intensity
+   handoff: marks enter at the cell's count-alpha through the same tone
+   curve as their texture and ease to native as `lod_blend` → 0, and
+   exiting marks re-target it to melt into the ramp).
 
 **Invariant L4 (badge):** any active reduction that drops or transforms a
 channel renders a visible "aggregated: mean/…" badge sourced from the spec
@@ -311,20 +329,24 @@ invariants so future kinds don't regress them:
   the aggregate→marks transition only — restarting per refresh reads as
   flashing; exit fade with the "dying" state so buffers outlive the fade).
 - **T3 — color-continuous:** the two sides of a transition display the same
-  statistic at the boundary. Hue is continuous *by construction* — the
-  aggregate surface wears the mean point color (§2), so marks and texture
-  agree on color at every zoom — and intensity hands off via the lod_blend
-  count-alpha ramp. The kernel's blend weight (`visible/budget`) is only ≈1
-  when the swap happens at the budget boundary — a fast zoom skips levels
-  and lands marks with a mostly-native weight, a visible intensity pop at
-  the swap (live-drilldown field capture). The BOUNDARY is therefore the
-  transition itself, client-side: fresh marks arrive with the shown blend
-  seeded at 1 (entering at the aggregate's local count-alpha) and ease to
-  the kernel's native weight, and dying/exiting marks re-target blend 1 so
-  they melt into the texture as they fade (`lodApplyDrill`,
-  `lodBeginDrillExitContinuous`; revives restore the native weight via
-  `lodEnterDrillContinuous`).
-- **T4 — normalization is eased, never stepped** (exposure-style normMax).
+  statistic at the boundary. On a mean-color surface BOTH channels are
+  continuous by construction — hue because the surface wears the mean point
+  color (§2 rule 2), lightness because it composites like the points
+  themselves (§2 rule 1) — so marks swap at native opacity with no
+  intensity handoff at all (§2 rule 5). Count-only surfaces keep the
+  lod_blend count-alpha ramp: the kernel's blend weight (`visible/budget`)
+  is only ≈1 when the swap happens at the budget boundary — a fast zoom
+  skips levels and lands marks with a mostly-native weight, a visible
+  intensity pop at the swap (live-drilldown field capture) — so the
+  BOUNDARY is the transition itself, client-side: fresh marks arrive with
+  the shown blend seeded at 1 (entering at the aggregate's local
+  count-alpha) and ease to the kernel's native weight, and dying/exiting
+  marks re-target blend 1 so they melt into the texture as they fade
+  (`lodApplyDrill`, `lodBeginDrillExitContinuous`; revives restore the
+  native weight via `lodEnterDrillContinuous`).
+- **T4 — normalization is eased, never stepped** (exposure-style normMax) —
+  count-only surfaces; a mean-color texture's physical alpha is
+  max-independent, so it has no normalization to ease.
 - **T5 — stale replies die:** seq on view updates, drill_seq on subsets,
   pending-view hold for prefetched drills.
 - **T6 — invalid requests do not mutate:** malformed viewport/screen requests
@@ -558,8 +580,9 @@ contract entry before it lands.
    (`_payload._density_trace_spec`), `density_view` (exact and pyramid
    paths), the static SVG/PNG exporters, and the standalone re-bin worker;
    DENSITY_FS gained the `u_meanColor` branch (premultiplied RGBA8 texture,
-   count tone-curve baked into alpha at upload so bilinear filtering weights
-   color by coverage); the drill handoff became intensity-only (§2 rule 5).
+   the §2 rule-1 physical alpha baked at upload so bilinear filtering
+   weights color by coverage); mean-color drills swap at native opacity
+   with no intensity handoff (§2 rule 5; count-only drills keep it).
    The colorbar for a continuous channel now stays on density traces — the
    surface really shows the channel's colors.
 3. Legend/badge rendering from spec facts (`color_agg`, `dropped_channels`)
