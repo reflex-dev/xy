@@ -272,6 +272,39 @@ def test_continuous_channel_falls_back_to_unit_for_f32_hostile_domain():
     assert cbuf.min() >= 0.0 and cbuf.max() <= 1.0
 
 
+def test_continuous_channel_falls_back_when_domain_collapses_in_f32():
+    # Endpoints distinct in f64 but equal after f32 rounding: the raw encode
+    # would ship every value as the same f32 and the shader would map them
+    # all to the domain floor. Must fall back to the unit encode, which
+    # normalizes in f64 before the wire.
+    x = np.arange(3.0)
+    val = np.array([1e30, 1e30 + 5e19, 1e30 + 1e20])
+    assert np.float32(val[0]) == np.float32(val[-1])  # the hostile premise
+    fig = Figure().scatter(x, x, color=val)
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    assert "enc" not in tr["color"]
+    cbuf = _col(spec, blob, tr["color"]["buf"])
+    assert cbuf.min() >= 0.0 and cbuf.max() <= 1.0
+    assert cbuf.max() > cbuf.min()  # f64 normalization keeps the spread
+
+
+def test_continuous_channel_falls_back_when_f32_inverse_span_overflows():
+    # A span representable in f32 whose reciprocal is not (subnormal spans):
+    # the client's map uniform would carry Inf and every mapped value would
+    # be Inf/NaN. Must fall back to the unit encode.
+    x = np.arange(3.0)
+    val = np.array([0.0, 5e-46, 1e-45])
+    lo32, hi32 = np.float32(val[0]), np.float32(val[-1])
+    assert lo32 < hi32 and not np.isfinite(np.float32(1.0 / (float(hi32) - float(lo32))))
+    fig = Figure().scatter(x, x, color=val)
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    assert "enc" not in tr["color"]
+    cbuf = _col(spec, blob, tr["color"]["buf"])
+    assert cbuf.min() >= 0.0 and cbuf.max() <= 1.0
+
+
 def test_categorical_color_palette():
     n = 30
     cats = np.array(["red", "green", "blue"] * 10)

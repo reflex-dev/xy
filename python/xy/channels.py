@@ -507,13 +507,16 @@ _F32_ABS_MAX = 3.0e38
 def _raw_wire_ok(domain: tuple[float, float]) -> bool:
     lo, hi = float(domain[0]), float(domain[1])
     span = hi - lo
-    return (
-        abs(lo) < _F32_ABS_MAX
-        and abs(hi) < _F32_ABS_MAX
-        and np.isfinite(span)
-        and span > 0.0
-        and float(np.float32(span)) > 0.0
-    )
+    if not (abs(lo) < _F32_ABS_MAX and abs(hi) < _F32_ABS_MAX and np.isfinite(span) and span > 0.0):
+        return False
+    # The shader only ever sees f32: endpoints distinct in f64 can still
+    # round to the same f32 (e.g. [1e30, 1e30 + 1e20]), collapsing every
+    # shipped value onto the domain floor; and a tiny-but-representable span
+    # (e.g. [0, 1e-45]) sends an infinite reciprocal into the map uniform.
+    # Either way the raw encode would render wrong silently — fall back to
+    # the unit encode, which normalizes in f64 before the wire.
+    lo32, hi32 = float(np.float32(lo)), float(np.float32(hi))
+    return lo32 < hi32 and bool(np.isfinite(np.float32(1.0 / (hi32 - lo32))))
 
 
 def quantize_unit_u8(values: Any, domain: tuple[float, float]) -> np.ndarray:
