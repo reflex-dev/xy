@@ -225,18 +225,62 @@ def compatibility_kernel_data() -> dict[str, np.ndarray]:
     }
 
 
+def _expect_drill_window(fig: Figure, x: np.ndarray, y: np.ndarray) -> None:
+    """Stash the deep view's expected drill count on the figure.
+
+    A drill reply ships the widest aligned window that still fits the budget
+    (T13), so `visible` counts the SHIPPED window — the reply's own
+    `x_range`/`y_range`, deterministic for fixed data — not the raw view.
+    Reading it from a warm reply keeps the assertion exact without hardcoding
+    the pad ladder.
+    """
+    deep, _ = fig.density_view(0, 0.0, 10.0, 0.0, 10.0, GRID_W, GRID_H)
+    trace = deep["traces"][0]
+    assert trace["mode"] == "points"
+    (wx0, wx1), (wy0, wy1) = trace["x_range"], trace["y_range"]
+    assert wx0 <= 0.0 and wx1 >= 10.0 and wy0 <= 0.0 and wy1 >= 10.0
+    fig._benchmark_deep_expected = int(
+        np.count_nonzero((x >= wx0) & (x <= wx1) & (y >= wy0) & (y <= wy1))
+    )
+    assert fig._benchmark_deep_expected == trace["visible"]
+
+
 @pytest.fixture(scope="module")
 def drilldown_figure() -> Figure:
     rng = np.random.default_rng(17)
     x = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
     y = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
     fig = xy.chart(xy.scatter(x=x, y=y, density=True)).figure()
-    fig._benchmark_deep_expected = int(np.count_nonzero((x < 10.0) & (y < 10.0)))
 
     # Warm the lazily-built pyramid so CodSpeed tracks interactive viewport
     # refresh cost, not one-time index construction.
     fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
-    fig.density_view(0, 0.0, 10.0, 0.0, 10.0, GRID_W, GRID_H)
+    _expect_drill_window(fig, x, y)
+    fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+    return fig
+
+
+@pytest.fixture(scope="module")
+def colored_drilldown_figure() -> Figure:
+    """The drilldown workload with a continuous color channel — the FastAPI
+    100M-demo shape, where every grid reply carries the mean-color plane
+    (LOD doc §2) and drills restore per-point channels.
+
+    Warm calls build the colored pyramid AND the trace's cached full-column
+    color resolution (`interaction.trace_bin_colors`), so the measured region
+    tracks steady-state per-request cost. That cost must stay free of any
+    O(N) full-column channel pass: before the resolution was cached, every
+    reply of every tier re-quantized the whole color column, costing the 100M
+    drilldown demo 1-2 s per request against ~10-400 ms of real tier work.
+    """
+    rng = np.random.default_rng(23)
+    x = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
+    y = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
+    color = np.hypot(x - 50.0, y - 50.0)
+    fig = xy.chart(xy.scatter(x=x, y=y, color=color, colormap="viridis", density=True)).figure()
+
+    fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+    _expect_drill_window(fig, x, y)
     fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
     return fig
 
@@ -1092,6 +1136,52 @@ def _adaptive_drilldown_cycle(fig: Figure) -> int:
 def test_adaptive_drilldown_cycle(benchmark, drilldown_figure):
     """Adaptive scatter: density overview -> exact visible points -> density out."""
     result = benchmark(_adaptive_drilldown_cycle, drilldown_figure)
+    assert result > DRILL_N
+
+
+def _colored_drilldown_cycle(fig: Figure) -> int:
+    wide, wide_buffers = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+    # ~12.5% of the uniform domain: between the drill budget and the pyramid
+    # margin, so this window takes the exact re-bin plus its mean-color scan.
+    mid, mid_buffers = fig.density_view(0, 0.0, 39.0, 0.0, 32.0, GRID_W, GRID_H)
+    deep, deep_buffers = fig.density_view(0, 0.0, 10.0, 0.0, 10.0, GRID_W, GRID_H)
+
+    wide_trace = wide["traces"][0]
+    mid_trace = mid["traces"][0]
+    deep_trace = deep["traces"][0]
+    assert wide_trace["mode"] == "density"
+    assert str(wide_trace.get("binning", "")).startswith("pyramid-L")
+    assert wide_trace["density"].get("color_agg") == "mean"  # prebuilt planes rode along
+    assert mid_trace["mode"] == "density"
+    assert mid_trace["binning"] == "exact"
+    assert mid_trace["density"].get("color_agg") == "mean"  # cached-idx mean-color scan
+    assert deep_trace["mode"] == "points"
+    assert deep_trace["visible"] == fig._benchmark_deep_expected
+    assert deep_trace["color"]["mode"] == "continuous"  # drill restores channels
+
+    back, back_buffers = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+    back_trace = back["traces"][0]
+    assert back_trace["mode"] == "density"
+    assert str(back_trace.get("binning", "")).startswith("pyramid-L")
+    return (
+        int(wide_trace["visible"])
+        + int(mid_trace["visible"])
+        + int(deep_trace["visible"])
+        + int(back_trace["visible"])
+        + sum(len(buffer) for buffer in wide_buffers + mid_buffers + deep_buffers + back_buffers)
+    )
+
+
+def test_adaptive_drilldown_cycle_mean_color(benchmark, colored_drilldown_figure):
+    """The drilldown cycle on a channel-bearing trace (the FastAPI demo shape).
+
+    Regression tripwire for per-request full-column channel work: every reply
+    here must reuse the trace's cached bin-color resolution (LOD doc §2), so
+    the cycle costs the tier work itself — pyramid compose, one exact re-bin
+    with its mean-color scan, one drill gather. Re-resolving the channel per
+    request multiplies this row by the column length and shows up as a
+    step-function regression."""
+    result = benchmark(_colored_drilldown_cycle, colored_drilldown_figure)
     assert result > DRILL_N
 
 
