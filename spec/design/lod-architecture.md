@@ -480,13 +480,48 @@ invariants so future kinds don't regress them:
   history (`Trace.drill_history`, `DRILL_HISTORY_KEEP`) so picks against a
   recent retired window still translate exactly; expired seqs drop the pick
   (§16 exact-or-nothing), and data changes clear the history. Finally, an
-  identical request never rides the wire twice: a `density_view` whose
-  window and screen size match the trace's last sent request is suppressed —
-  already answered ⇒ nothing to refresh (the reply is deterministic for
-  unchanged data; rebuilds reset the memo), still in flight ⇒ the trace
-  keeps waiting on the ORIGINAL request's seq and that reply is accepted
-  per-trace instead of dying to the global seq race (bounded by the same
-  1200ms window as the T8 hold, so a lost reply can't suppress forever).
+  identical request never rides the wire twice: a `density_view` within half
+  an output texel per edge of the trace's last sent request (gesture-end and
+  settle emit sub-pixel twins; a grid shifted below half a texel is the same
+  picture) is suppressed — already answered ⇒ nothing to refresh (the reply
+  is deterministic for unchanged data; rebuilds reset the memo), still in
+  flight ⇒ the trace keeps waiting on the ORIGINAL request's seq and that
+  reply is accepted per-trace instead of dying to the global seq race
+  (bounded by the same 1200ms window as the T8 hold, so a lost reply can't
+  suppress forever).
+
+  The same economy governs the AGGREGATE tier's own traffic (the 100M field
+  HAR: ~2.7 MB full-screen grids re-shipped on every pan/zoom step at
+  200–450%, drawn over a home-texture fallback that blurred the frame the
+  moment a pan left the freshest window):
+  - **Source-clamped grids:** a pyramid-served reply never composes more
+    cells than the finest level resolves under the window
+    (`interaction._pyramid_source_shape` — `ceil(base·frac)+1` per axis);
+    a full-screen grid of upsampled base cells is the same picture at
+    several times the bytes, and the client's texture filtering reproduces
+    the upscale. The attainable per-axis cell size rides the reply as
+    `density.min_cell`; exact/spatial grids (true full-detail bins) omit it.
+  - **Density-side request elision** (`lodDensityCacheServes`): a cached
+    texture that CONTAINS the view and is as detailed as anything the kernel
+    could return — one texel per screen pixel, or already at `min_cell`
+    (zooming into a source-limited texture cannot sharpen it) — answers the
+    view with no round-trip. Guards keep the kernel in charge where it can
+    do better: the estimated in-view count (window count × area share) must
+    exceed `LOD_DIRECT_POINT_BUDGET × LOD_DENSITY_ELIDE_EST_FACTOR` (the
+    exact-rebin/points regimes stay reachable), and the cached window may be
+    at most `LOD_DENSITY_ELIDE_MAX_AREA_RATIO` × the view's area (the
+    uniform-density estimate overshoots in sparse corners; a deep dive
+    re-requests so real counts decide). Entries without recorded counts
+    never elide.
+  - **Finer-detail layering** (`lodDensityDetailForView`): when no fine
+    cached window contains the view, the smallest cached texture overlapping
+    ≥ `LOD_DENSITY_DETAIL_MIN_COVER` of it draws ON TOP of the broad
+    backdrop (after every crossfade layer), so the already-fetched region
+    stays sharp while the request for the rest is in flight — a resolution
+    seam at the window edge beats uniform blur (standard tile-pyramid
+    behavior). A fresh grid for an already-cached window supersedes its
+    unpinned twin in the cache (`lodRememberDensity` dedupe), so elision
+    always reads current facts.
 
 Any new tiered kind must state how it satisfies T1–T13 in its chart-kind
 contract entry before it lands.

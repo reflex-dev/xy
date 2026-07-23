@@ -502,6 +502,34 @@ def _decode_log_u8(buf: bytes, gmax: float) -> np.ndarray:
 # worker keeps as its CPU source.
 
 
+def _pyramid_source_shape(
+    t: Any, lo_x: float, hi_x: float, lo_y: float, hi_y: float
+) -> tuple[int, int, float, float] | None:
+    """The pyramid's finest-level cell budget under a window, plus cell size.
+
+    Wire economy (§29 / #225 follow-up): composing a pyramid-served window to
+    full screen resolution upsamples blocky base cells into a grid several
+    times larger than the information it carries — a ~2.7 MB reply whose
+    content is a few hundred KB of source cells. Clamping the composed grid
+    to `(cells under the window at the finest level) + 1` per axis ships the
+    same detail (the client's own texture filtering reproduces the upscale)
+    at a fraction of the bytes. The returned per-axis cell sizes ride the
+    reply as `min_cell`: the finest resolution this trace's aggregate tier
+    can attain, which lets the client skip requests a cached texture already
+    answers (LOD doc T13).
+    """
+    base = int(getattr(t, "_pyr_base_dim", 0) or PYRAMID_BASE_DIM)
+    ex0, ex1, ey0, ey1 = t.x.min, t.x.max, t.y.min, t.y.max
+    span_x, span_y = ex1 - ex0, ey1 - ey0
+    if not all(np.isfinite(v) for v in (ex0, ex1, ey0, ey1)) or span_x <= 0 or span_y <= 0:
+        return None
+    frac_x = min(1.0, max(0.0, (hi_x - lo_x) / span_x))
+    frac_y = min(1.0, max(0.0, (hi_y - lo_y) / span_y))
+    cells_x = max(1, math.ceil(base * frac_x) + 1)
+    cells_y = max(1, math.ceil(base * frac_y) + 1)
+    return cells_x, cells_y, span_x / base, span_y / base
+
+
 def _padded_drill_window(
     fig: "Figure",
     t: Any,
@@ -664,6 +692,10 @@ def density_view(
     # budget we fall through to the exact scan that drilling needs anyway.
     binning = "exact"
     grid = None
+    # Finest attainable per-axis cell size for pyramid-served replies (data
+    # units); rides the reply as `min_cell` so the client knows when a cached
+    # texture is already as sharp as this tier can get (LOD doc T13).
+    min_cell: list[float] | None = None
     # Mean point color plane (LOD doc §2): channel-bearing traces ship it
     # alongside the counts wherever a grid is produced below.
     rgba_grid: np.ndarray | None = None
@@ -699,24 +731,35 @@ def density_view(
                 False,
                 aggregate_reduction="pyramid-count",
             )
+            # Wire economy: never compose more grid cells than the finest
+            # level resolves under this window — a full-screen grid of
+            # upsampled base cells is the same picture at several times the
+            # bytes (the client's texture filtering does the upscale). The
+            # attainable cell size rides the reply as `min_cell` so the
+            # client can elide requests a cached texture already answers.
+            gw, gh = plan.grid_w, plan.grid_h
+            source = _pyramid_source_shape(t, lo_x, hi_x, lo_y, hi_y)
+            if source is not None:
+                gw = max(16, min(gw, source[0]))
+                gh = max(16, min(gh, source[1]))
             # Colored pyramids compose the mean-color plane with the counts
             # (same level, same max_upsample); both refusals (outresolved
             # window, missing planes) fall through to the paths below.
             if getattr(t, "_pyr_colored", False):
                 res_color = kernels.pyramid_compose_color(
-                    pyr, lo_x, hi_x, lo_y, hi_y, plan.grid_w, plan.grid_h, max_upsample
+                    pyr, lo_x, hi_x, lo_y, hi_y, gw, gh, max_upsample
                 )
                 res = (res_color[0], res_color[2]) if res_color is not None else None
                 rgba_grid = res_color[1] if res_color is not None else None
             else:
-                res = kernels.pyramid_compose(
-                    pyr, lo_x, hi_x, lo_y, hi_y, plan.grid_w, plan.grid_h, max_upsample
-                )
+                res = kernels.pyramid_compose(pyr, lo_x, hi_x, lo_y, hi_y, gw, gh, max_upsample)
             if res is not None:
                 grid, level = res
                 visible = plan.visible
-                w, h = plan.grid_w, plan.grid_h
+                w, h = gw, gh
                 binning = f"pyramid-L{level}{'-upsampled' if no_rescan and level == 0 else ''}"
+                if source is not None:
+                    min_cell = [source[2], source[3]]
                 lod.exit_drill(t)
     # Tier-3 spatial index: when the pyramid can only serve this window blurry
     # (upsampled), re-bin it *exactly* from just its in-window points — as long
@@ -760,6 +803,7 @@ def density_view(
         visible = in_window
         binning = "spatial-exact"
         density_filter = "nearest"
+        min_cell = None  # exact full-resolution bins replace the pyramid grid
         lod.exit_drill(t)
     if grid is None and no_rescan:
         # No pyramid (below PYRAMID_MIN_POINTS is impossible here) or compose
@@ -786,6 +830,7 @@ def density_view(
         lod.exit_drill(t)
     if grid is None:
         rgba_grid = None
+        min_cell = None
         sel = kernels.range_indices(xv, yv, lo_x, hi_x, lo_y, hi_y)
         plan = lod.plan_view_lod(request, len(sel), SCATTER_DENSITY_THRESHOLD, t.drill_mode)
         visible = plan.visible
@@ -835,6 +880,8 @@ def density_view(
         "x_range": [lo_x, hi_x],
         "y_range": [lo_y, hi_y],
     }
+    if min_cell is not None:
+        density["min_cell"] = min_cell
     if rgba_grid is not None:
         density["rgba"] = writer.add_u8(np.ascontiguousarray(rgba_grid).reshape(-1))
         density["color_agg"] = "mean"

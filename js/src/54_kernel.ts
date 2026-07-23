@@ -2,8 +2,8 @@ import { payloadBuffers } from "./00_header";
 import { buildLutData } from "./10_colormaps";
 import { parseColor } from "./20_theme";
 import {
-  lodApplyDensityUpdate, lodApplyDrill, lodDrillServesView, lodDropDrill,
-  lodPromoteCachedDrill, lodRememberDensity,
+  lodApplyDensityUpdate, lodApplyDrill, lodDensityCacheServes, lodDrillServesView,
+  lodDropDrill, lodPromoteCachedDrill, lodRememberDensity,
 } from "./45_lod";
 import { xyCreateRebinWorker } from "./46_worker";
 import { ChartView } from "./50_chartview";
@@ -39,7 +39,8 @@ Object.assign(ChartView.prototype, {
         // goes neither pending nor on the wire. The seq bump above stands, so
         // an in-flight reply for an older, wider view dies stale instead of
         // yanking the exact marks out from under the view it can't improve.
-        if (this._drillServesView(g, view)) {
+        if (this._drillServesView(g, view) ||
+            this._densityCacheServesView(g, view, plotW, plotH)) {
           g._lodPendingView = null;
           g._lodPendingSeq = null;
           g._lodPendingAt = null;
@@ -87,10 +88,12 @@ Object.assign(ChartView.prototype, {
         const sendNow = this._now();
         for (const g of this.gpuTraces) {
           if (g.tier !== "density") continue;
-          // T12 re-check at actual send time: a drill that landed during the
-          // debounce elides the request it made unnecessary; one that died
-          // during it re-arms the request the schedule-time check skipped.
-          if (this._drillServesView(g, view)) {
+          // T12/T13 re-check at actual send time: a drill or an adequate
+          // cached texture that landed during the debounce elides the
+          // request it made unnecessary; one that died during it re-arms
+          // the request the schedule-time check skipped.
+          if (this._drillServesView(g, view) ||
+              this._densityCacheServesView(g, view, plotW, plotH)) {
             if (g._lodPendingSeq === seq) {
               g._lodPendingView = null;
               g._lodPendingSeq = null;
@@ -112,18 +115,13 @@ Object.assign(ChartView.prototype, {
             }
             continue;
           }
-          const [x0, x1] = this._axisRange(g.xAxis, view);
-          const [y0, y1] = this._axisRange(g.yAxis, view);
+          const win = this._densityRequestWindow(g, view);
           this.comm.send({
             type: "density_view", seq, trace: g.trace.id,
-            x0: Math.min(x0, x1), x1: Math.max(x0, x1),
-            y0: Math.min(y0, y1), y1: Math.max(y0, y1),
+            x0: win[0], x1: win[1], y0: win[2], y1: win[3],
             w: plotW, h: plotH,
           });
-          g._lastDensityReq = {
-            key: this._densityRequestKey(g, view, plotW, plotH),
-            seq, sentAt: sendNow, answered: false,
-          };
+          g._lastDensityReq = { win, w: plotW, h: plotH, seq, sentAt: sendNow, answered: false };
         }
       }
     };
@@ -135,15 +133,26 @@ Object.assign(ChartView.prototype, {
     return seq;
   },
 
-  _densityRequestKey(g, view, plotW, plotH) {
+  _densityRequestWindow(g, view) {
     const [x0, x1] = this._axisRange(g.xAxis, view);
     const [y0, y1] = this._axisRange(g.yAxis, view);
-    return `${Math.min(x0, x1)},${Math.max(x0, x1)},` +
-      `${Math.min(y0, y1)},${Math.max(y0, y1)},${plotW},${plotH}`;
+    return [Math.min(x0, x1), Math.max(x0, x1), Math.min(y0, y1), Math.max(y0, y1)];
+  },
+
+  // Same request within half an output texel per edge: gesture-end and
+  // settle produce windows differing by sub-pixel amounts (field HAR: 0.03%
+  // shifts back-to-back), and a grid shifted below half a texel is visually
+  // identical — re-shipping it is pure wire waste.
+  _densityRequestSame(last, win, plotW, plotH) {
+    if (!last || last.w !== plotW || last.h !== plotH) return false;
+    const tx = (win[1] - win[0]) / plotW / 2;
+    const ty = (win[3] - win[2]) / plotH / 2;
+    return Math.abs(last.win[0] - win[0]) <= tx && Math.abs(last.win[1] - win[1]) <= tx &&
+      Math.abs(last.win[2] - win[2]) <= ty && Math.abs(last.win[3] - win[3]) <= ty;
   },
 
   // The last density_view actually sent for this GPU record, when a new
-  // request would be its byte-identical twin: either already answered (the
+  // request would be its (sub-texel) twin: either already answered (the
   // reply is deterministic for unchanged data, so there is nothing to
   // refresh) or still in flight (bounded by the same 1200ms window as the T8
   // pending hold, so a lost reply can never suppress refresh forever). The
@@ -151,9 +160,21 @@ Object.assign(ChartView.prototype, {
   // restore) starts it fresh, so data changes are never suppressed.
   _densityRequestDup(g, view, plotW, plotH, now) {
     const last = g._lastDensityReq;
-    if (!last || last.key !== this._densityRequestKey(g, view, plotW, plotH)) return null;
+    if (!last || !this._densityRequestSame(last, this._densityRequestWindow(g, view), plotW, plotH)) {
+      return null;
+    }
     if (last.answered) return last;
     return now - last.sentAt < 1200 ? last : null;
+  },
+
+  // Density-side elision (T13): a cached texture that is as detailed as
+  // anything the kernel could return for this view (lodDensityCacheServes)
+  // makes the round-trip moot — the pyramid cannot sharpen past its source
+  // cells, and zoom-outs inside an exact grid already have their texels.
+  _densityCacheServesView(g, view, plotW, plotH) {
+    const [x0, x1] = this._axisRange(g.xAxis, view);
+    const [y0, y1] = this._axisRange(g.yAxis, view);
+    return lodDensityCacheServes(this, g, x0, x1, y0, y1, plotW, plotH);
   },
 
   // A reply whose seq lost the global race can still be current in substance:

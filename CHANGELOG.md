@@ -44,6 +44,18 @@ in the README).
   the view's estimated in-view count fits the direct point budget, i.e. when
   individual points are actually resolvable; real points still ship the
   moment a window fits the budget, so drilldown behavior is unchanged.
+- **Density traffic is source-bounded, elided, and layered (LOD doc T13).**
+  Pyramid-served density replies are clamped to the source resolution the
+  window actually has — no more full-screen grids of upsampled base cells
+  (a 100M-scatter field capture shipped ~2.7 MB per pan/zoom step at 200-450%
+  zoom; the same views now cost a fraction of that) — and record `min_cell`,
+  the finest attainable cell size. The client elides `density_view` requests
+  a cached texture already answers (contained view, texture at screen or
+  attainable resolution, guarded so exact re-bins and drill-in stay
+  reachable), suppresses re-requests within half an output texel of the last
+  one (gesture-end/settle twins), and draws the finest overlapping cached
+  texture on top of the broad backdrop during pans/zooms instead of dropping
+  the frame to the blurriest texture it holds.
 - **Full-point windows are padded, aligned, cached, and never re-requested
   (LOD doc T13).** A points-tier reply now ships the largest aligned window
   around the view whose exact count still fits the budget (bounds snapped to

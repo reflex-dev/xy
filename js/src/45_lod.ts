@@ -322,6 +322,91 @@ function lodDensityForView(view, g) {
   return best || broadest || g.density;
 }
 
+// Finer-detail layer over the chosen backdrop (T13): when the view is not
+// contained in any fine cached window, lodDensityForView falls back to the
+// broadest texture — but a finer cached window usually still covers most of
+// the view mid-pan/zoom, and drawing only the broad texture renders the
+// frame at its blurriest exactly when the user is moving. Pick the
+// smallest-area cached texture that overlaps the view meaningfully and is
+// finer than the primary; the draw path paints it on top (GPU clips it to
+// its window), so the region already fetched stays sharp while the request
+// for the rest is in flight. Standard tile-pyramid behavior: a resolution
+// seam at the window edge beats uniform blur.
+const LOD_DENSITY_DETAIL_MIN_COVER = 0.05; // of the view area
+
+function lodDensityDetailForView(view, g, primary) {
+  if (!primary) return null;
+  const cache = g.densityCache || [];
+  const v = view.view;
+  const vx0 = Math.min(v.x0, v.x1), vx1 = Math.max(v.x0, v.x1);
+  const vy0 = Math.min(v.y0, v.y1), vy1 = Math.max(v.y0, v.y1);
+  const viewArea = (vx1 - vx0) * (vy1 - vy0);
+  if (!(viewArea > 0)) return null;
+  const primaryArea = lodDensityArea(primary);
+  let best = null;
+  for (const d of cache) {
+    if (!d || !d.tex || d === primary || d === g._densitySwitchPrev) continue;
+    if (!(lodDensityArea(d) < primaryArea)) continue;
+    const wx0 = Math.min(d.xRange[0], d.xRange[1]), wx1 = Math.max(d.xRange[0], d.xRange[1]);
+    const wy0 = Math.min(d.yRange[0], d.yRange[1]), wy1 = Math.max(d.yRange[0], d.yRange[1]);
+    const ox = Math.min(vx1, wx1) - Math.max(vx0, wx0);
+    const oy = Math.min(vy1, wy1) - Math.max(vy0, wy0);
+    if (ox <= 0 || oy <= 0 || (ox * oy) / viewArea < LOD_DENSITY_DETAIL_MIN_COVER) continue;
+    if (!best || lodDensityArea(d) < lodDensityArea(best)) best = d;
+  }
+  return best;
+}
+
+// Density-side request elision (T13): skip the density_view round-trip when
+// a cached texture is already as detailed as anything the kernel could
+// return for this view. Two ways to qualify, both requiring the cached
+// window to CONTAIN the view:
+// - screen-resolution adequacy: the texture resolves at least one texel per
+//   screen pixel of the current view (zoom-outs and pan-returns inside an
+//   exact-scan grid);
+// - source-resolution adequacy: the texture already sits at the trace's
+//   finest attainable aggregate cell size (`min_cell`, pyramid-served
+//   replies) — zooming further in cannot sharpen it, so re-requesting the
+//   same blur is pure wire waste (the HAR behind this: repeated ~2.7 MB
+//   grids per pan/zoom step at 200-450% on a 100M scatter).
+// Guards keep the exact/drill regimes reachable: the estimated in-view count
+// must sit clearly above the budget (the kernel would still answer with the
+// pyramid, not an exact re-bin or points), and the view must not have dived
+// more than MAX_AREA_RATIO below the cached window (the area estimate
+// overshoots in sparse corners; a deep dive re-requests so the kernel can
+// re-decide with real counts).
+const LOD_DENSITY_ELIDE_EST_FACTOR = 2; // × LOD_DIRECT_POINT_BUDGET
+const LOD_DENSITY_ELIDE_MAX_AREA_RATIO = 8; // cached-window area ÷ view area
+
+export function lodDensityCacheServes(view, g, x0, x1, y0, y1, plotW, plotH) {
+  const cache = g.densityCache || (g.density ? [g.density] : []);
+  const vx0 = Math.min(x0, x1), vx1 = Math.max(x0, x1);
+  const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
+  const vSpanX = vx1 - vx0, vSpanY = vy1 - vy0;
+  if (!(vSpanX > 0 && vSpanY > 0 && plotW > 0 && plotH > 0)) return false;
+  const needX = vSpanX / plotW, needY = vSpanY / plotH;
+  const ex = vSpanX * 1e-4, ey = vSpanY * 1e-4;
+  for (const d of cache) {
+    if (!d || !d.tex || !d.xRange || !d.yRange || !(d.w > 0) || !(d.h > 0)) continue;
+    const wx0 = Math.min(d.xRange[0], d.xRange[1]), wx1 = Math.max(d.xRange[0], d.xRange[1]);
+    const wy0 = Math.min(d.yRange[0], d.yRange[1]), wy1 = Math.max(d.yRange[0], d.yRange[1]);
+    if (vx0 < wx0 - ex || vx1 > wx1 + ex || vy0 < wy0 - ey || vy1 > wy1 + ey) continue;
+    const winArea = (wx1 - wx0) * (wy1 - wy0);
+    if (winArea > vSpanX * vSpanY * LOD_DENSITY_ELIDE_MAX_AREA_RATIO) continue;
+    const cellX = (wx1 - wx0) / d.w, cellY = (wy1 - wy0) / d.h;
+    const mc = d.minCell;
+    if (cellX > Math.max(needX, mc ? mc[0] : 0) * 1.001) continue;
+    if (cellY > Math.max(needY, mc ? mc[1] : 0) * 1.001) continue;
+    // Unknown counts never elide: the kernel must stay free to choose a
+    // sharper representation (exact re-bin, points) the moment it can.
+    if (!Number.isFinite(d.visible) || !(d.visible > 0)) continue;
+    const est = d.visible * Math.min(1, (vSpanX * vSpanY) / winArea);
+    if (est <= LOD_DIRECT_POINT_BUDGET * LOD_DENSITY_ELIDE_EST_FACTOR) continue;
+    return true;
+  }
+  return false;
+}
+
 // The hold's density estimate, reused by retirement (T11): scale the drill
 // window's known count by the target window's area to predict whether that
 // window could still be answered with direct points.
@@ -411,11 +496,35 @@ function lodDensityPinned(g, d) {
     d === g._shownDensity || d === g._homeDensity;
 }
 
+function lodSameDensityWindow(a, b) {
+  if (!a || !b || !a.xRange || !b.xRange || !a.yRange || !b.yRange) return false;
+  const eps =
+    (Math.abs(a.xRange[1] - a.xRange[0]) + Math.abs(a.yRange[1] - a.yRange[0])) * 1e-9 + 1e-300;
+  return Math.abs(a.xRange[0] - b.xRange[0]) <= eps && Math.abs(a.xRange[1] - b.xRange[1]) <= eps &&
+    Math.abs(a.yRange[0] - b.yRange[0]) <= eps && Math.abs(a.yRange[1] - b.yRange[1]) <= eps;
+}
+
 export function lodRememberDensity(view, g, d) {
   if (!d || !d.tex) return;
   d._stamp = ++view._densityStamp;
   if (!g.densityCache) g.densityCache = [];
-  if (!g.densityCache.includes(d)) g.densityCache.push(d);
+  if (!g.densityCache.includes(d)) {
+    // A fresh grid for a window already cached supersedes its twin: same
+    // coverage, newer facts (count, resolution, min_cell) — and request
+    // elision reads those facts, so a stale twin must not shadow them.
+    // Pinned twins (mid-crossfade, home) stay; eviction sweeps them later.
+    for (let i = g.densityCache.length - 1; i >= 0; i--) {
+      const old = g.densityCache[i];
+      if (old === d || lodDensityPinned(g, old) || !lodSameDensityWindow(old, d)) continue;
+      g.densityCache.splice(i, 1);
+      view.gl.deleteTexture(old.tex);
+      if (old.overlay && old.overlay !== g.sampleOverlay) {
+        view._destroySampleOverlay(old.overlay);
+        old.overlay = null;
+      }
+    }
+    g.densityCache.push(d);
+  }
   const maxCached = 8;
   while (g.densityCache.length > maxCached) {
     let drop = -1;
@@ -904,6 +1013,12 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
     w: d.w, h: d.h, max: d.max, normMax, colormap: d.colormap || g.density.colormap,
     color: d.color ? parseColor(view.root, d.color, [0.3, 0.47, 0.66, 1]) : g.density.color,
     xRange: d.x_range, yRange: d.y_range,
+    // Request-elision facts (T13): the window's point count, and — for
+    // pyramid-served replies — the finest cell size this trace's aggregate
+    // tier can attain, so lodDensityCacheServes knows when this texture is
+    // already as sharp as a re-request could be.
+    visible: upd.visible,
+    minCell: Array.isArray(d.min_cell) ? d.min_cell : null,
     grid,
     rgba,
     filter,
@@ -941,6 +1056,7 @@ function lodDrawDensityWithFade(view, g, density, opacityScale = 1) {
   if (fade < 1) {
     view._drawDensity(g, prev, (1 - fade) * opacityScale);
     view._drawDensity(g, density, fade * opacityScale);
+    lodDrawDensityDetail(view, g, density, opacityScale);
     view.draw();
     return;
   }
@@ -951,6 +1067,15 @@ function lodDrawDensityWithFade(view, g, density, opacityScale = 1) {
     if (density === g.density) g._densityFadeStart = null;
   }
   view._drawDensity(g, density, opacityScale);
+  lodDrawDensityDetail(view, g, density, opacityScale);
+}
+
+// The finer-detail layer rides every backdrop draw (T13): painted after the
+// primary (and after both crossfade layers) so the sharpest fetched region
+// stays on top while the rest of the view shows the broad context.
+function lodDrawDensityDetail(view, g, density, opacityScale) {
+  const detail = lodDensityDetailForView(view, g, density);
+  if (detail && detail.tex) view._drawDensity(g, detail, opacityScale);
 }
 
 // The drilled frame's backdrop opacity, eased continuously (T10). The
