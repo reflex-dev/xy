@@ -1318,6 +1318,12 @@ struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
+    /// Bound allocations driven by an untrusted element count to the number
+    /// of complete elements that the unread command buffer could contain.
+    fn bounded_capacity(&self, count: usize, item_size: usize) -> usize {
+        count.min(self.b.len().saturating_sub(self.i) / item_size)
+    }
+
     fn u8(&mut self) -> Option<u8> {
         let v = *self.b.get(self.i)?;
         self.i += 1;
@@ -1358,7 +1364,7 @@ impl<'a> Reader<'a> {
         ])
     }
     fn pts(&mut self, n: usize) -> Option<Vec<(f32, f32)>> {
-        let mut v = Vec::with_capacity(n);
+        let mut v = Vec::with_capacity(self.bounded_capacity(n, 8));
         for _ in 0..n {
             v.push((self.f32()?, self.f32()?));
         }
@@ -1912,7 +1918,7 @@ fn rasterize_with_spans(
                     let pts = r.pts(n)?;
                     let (g0x, g0y, g1x, g1y) = (r.f32()?, r.f32()?, r.f32()?, r.f32()?);
                     let ns = r.u32()? as usize;
-                    let mut stops = Vec::with_capacity(ns);
+                    let mut stops = Vec::with_capacity(r.bounded_capacity(ns, 8));
                     for _ in 0..ns {
                         stops.push((r.f32()?, r.rgba()?));
                     }
@@ -1930,7 +1936,7 @@ fn rasterize_with_spans(
                     let c = r.rgba()?;
                     let closed = r.u8()? != 0;
                     let nd = r.u32()? as usize;
-                    let mut dash = Vec::with_capacity(nd);
+                    let mut dash = Vec::with_capacity(r.bounded_capacity(nd, 4));
                     for _ in 0..nd {
                         dash.push(r.f32()?);
                     }
@@ -2375,7 +2381,7 @@ fn rasterize_with_spans(
                     let width = r.f32()?;
                     let color = r.rgba()?;
                     let nd = r.u32()? as usize;
-                    let mut dash = Vec::with_capacity(nd);
+                    let mut dash = Vec::with_capacity(r.bounded_capacity(nd, 4));
                     for _ in 0..nd {
                         dash.push(r.f32()?);
                     }
@@ -2660,9 +2666,31 @@ mod tests {
 
     #[test]
     fn malformed_buffer_is_rejected_not_panicked() {
-        let cmd = vec![OP_FILL_POLY, 9, 9, 9, 9]; // claims a huge point count
         let mut out = vec![0u8; 4 * 4 * 4];
-        assert!(!rasterize_into(&cmd, 4, 4, &mut out));
+
+        let huge = [9, 9, 9, 9];
+        let points = vec![OP_FILL_POLY, huge[0], huge[1], huge[2], huge[3]];
+
+        let mut gradient_stops = vec![OP_FILL_POLY_GRAD];
+        gradient_stops.extend(u32le(0));
+        gradient_stops.extend([0; 16]);
+        gradient_stops.extend(huge);
+
+        let mut stroke_dashes = vec![OP_STROKE];
+        stroke_dashes.extend(u32le(0));
+        stroke_dashes.extend([0; 9]); // width, RGBA, and closed flag
+        stroke_dashes.extend(huge);
+
+        let mut smooth_dashes = vec![OP_SMOOTH_STROKE];
+        smooth_dashes.extend(u32le(2));
+        smooth_dashes.extend([0; 64]); // x and y affine scales
+        smooth_dashes.extend([0; 32]); // two f64 x values and two f64 y values
+        smooth_dashes.extend([0; 8]); // width and RGBA
+        smooth_dashes.extend(huge);
+
+        for cmd in [points, gradient_stops, stroke_dashes, smooth_dashes] {
+            assert!(!rasterize_into(&cmd, 4, 4, &mut out));
+        }
     }
 
     fn one_point(
