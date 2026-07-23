@@ -115,6 +115,22 @@ aligned, zero-copy into `Float32Array`s. No JSON numbers for data, no
 base64, no custom framing (§29 preserved; the socket.io protocol already
 length-prefixes attachments).
 
+**Attachment cap (hard browser limit).** socket.io-parser's `Decoder` ships
+with `maxAttachments: 10`; one binary packet with more attachments makes the
+browser throw `"too many attachments"`, which `Manager.ondata` converts into
+closing the *entire shared websocket* as a parse error — the app plane then
+reconnects, every chart re-`sub`s, the oversized payload is re-sent, and the
+connection loops forever with no console error. The namespace therefore never
+emits more than 10 attachments per packet (`_MAX_WIRE_ATTACHMENTS`):
+payloads whose split layout would exceed the cap fall back to the joined
+single-blob `build_payload()` form (no `buffer_layout: "split"` in the spec;
+the wrapper's `toSpans` already dispatches on that flag), trading the join
+copy for staying inside the parser's budget. `msg` replies are bounded by
+channel construction; the namespace enforces the same cap as a contract
+check and answers `err` instead of emitting an unparseable packet.
+Regression: `tests/reflex_adapter/test_socket_data_plane.py::`
+`test_sub_over_attachment_limit_ships_single_blob`.
+
 The envelope is below; the `m` payload it carries is specified field by field
 in `spec/design/wire-protocol.md`.
 
@@ -508,6 +524,14 @@ the replacement. The client retains brush geometry, so points arriving in a
 re-drill can reconstruct their selection mask without a second selection
 request.
 
+Viewport and selection are the *only* interaction state that survives a
+republish. A hover highlight is dropped the moment its trace's GPU resources
+are destroyed (the cached pick references freed buffers; the next pointer
+move re-resolves it against the new traces), and mount-time DOM chrome that
+mirrors the spec — the title and the container's `aria-label` — is re-synced
+on every in-place swap, so a figure whose title carries live state (the
+flights page's aircraft counter) stays current without a teardown.
+
 One handler can route several charts by stable token:
 
 ```python
@@ -571,11 +595,23 @@ python/reflex-xy/
   reflex_xy/payload_asset.py static tier: Chart -> content-addressed XYBF
                              asset in assets/xy/ (§3.4)
   reflex_xy/assets/          XYChart.jsx; links xy's installed render client
-examples/reflex/  (repo root) reflex-xy showcase: figure-var drilldown with
-                             hover/click/select events, a slider-driven +
-                             cross-filtered histogram, a streaming line, an
-                             on_view_change-computed detail chart, and both
-                             fixed-data tiers (direct Chart + inline() token)
+examples/reflex/  (repo root) reflex-xy showcase, two pages. "/": figure-var
+                             drilldown with hover/click/select events, a
+                             slider-driven + cross-filtered histogram, a
+                             streaming line, an on_view_change-computed detail
+                             chart, and both fixed-data tiers (direct Chart +
+                             inline() token). "/flights": the same patterns as
+                             a throughput showcase on live ADS-B data — world
+                             mode (default) polls OpenSky /states/all (~14k
+                             aircraft globally, full-figure republish per
+                             cycle as one multi-MB blob, Natural Earth 50m
+                             world basemap via segments marks, trails); region
+                             mode polls an adsb.fi 250nm circle at up-to-1s
+                             cadence. Click-to-follow, box-select cross-
+                             filter; offline fallback = bundled real captures
+                             (region: 10 frames; world: one 14k-aircraft
+                             capture dead-reckoned along track at ground
+                             speed)
 examples/fastapi/ (repo root) the same charts + a live 100M drilldown served
                              from a plain FastAPI app (no committed HTML)
 tests/reflex_adapter/        69 tests: token/registry/var/bridge/payload-asset

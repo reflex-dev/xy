@@ -58,6 +58,26 @@ XY_NAMESPACE = "/_xy"
 _MAX_PX_HINT = 8192
 _MIN_PX_HINT = 16
 
+# socket.io-parser's Decoder ships with `maxAttachments: 10`; a binary packet
+# with more attachments makes the BROWSER close the whole shared websocket as
+# a parse error — which the app plane then re-opens, re-subscribing every
+# chart into an infinite reconnect loop. Figures stay under the limit or fall
+# back to the joined single-blob payload (`buffer_layout` != "split", which
+# the client's `toSpans` already handles).
+_MAX_WIRE_ATTACHMENTS = 10
+
+
+def _build_wire_payload(
+    figure: "Figure", px: Optional[int] = None
+) -> tuple[dict[str, Any], list[Any]]:
+    """Split-buffer payload, unless it would exceed the attachment limit."""
+    spec, raw = figure.build_payload_split(px)
+    if len(raw) <= _MAX_WIRE_ATTACHMENTS:
+        return spec, list(raw)
+    spec, blob = figure.build_payload(px)
+    return spec, [blob]
+
+
 # An async callable(token) -> Figure | None: given a parseable figure token,
 # rebuild the figure from Reflex state (wired by app.setup; see state_bridge).
 RebuildHook = Callable[[str], Awaitable[Optional["Figure"]]]
@@ -132,7 +152,7 @@ class XYNamespace(AsyncNamespace):
         px = self._px_hint(data)
         await self.enter_room(sid, self._room(token))
         async with entry.lock:
-            spec, raw = await asyncio.to_thread(entry.figure.build_payload_split, px)
+            spec, raw = await asyncio.to_thread(_build_wire_payload, entry.figure, px)
         await self.emit(
             "payload",
             {
@@ -170,10 +190,19 @@ class XYNamespace(AsyncNamespace):
         if reply is None:
             return
         message, buffers = reply
+        wire_buffers = _buffer_bytes(buffers)
+        if len(wire_buffers) > _MAX_WIRE_ATTACHMENTS:
+            # Never exceed the browser parser's attachment limit: one oversized
+            # packet closes the shared websocket for the whole app. Channel
+            # replies are bounded by construction, so this is a contract check.
+            await self.emit(
+                "err", {"fig": token, "error": "reply exceeds wire attachment limit"}, to=sid
+            )
+            return
         envelope: dict[str, Any] = {
             "fig": token,
             "message": _plain(message),
-            "buffers": _buffer_bytes(buffers),
+            "buffers": wire_buffers,
         }
         # Replies are mount-addressed: several charts on one page share one
         # socket, so the client tags requests with a mount id and we echo it.
@@ -201,7 +230,7 @@ class XYNamespace(AsyncNamespace):
     async def broadcast_payload(self, token: str, entry: FigureEntry) -> None:
         """Push a full refreshed payload (figure rebuilt) to subscribers."""
         async with entry.lock:
-            spec, raw = await asyncio.to_thread(entry.figure.build_payload_split)
+            spec, raw = await asyncio.to_thread(_build_wire_payload, entry.figure)
         await self.emit(
             "payload",
             {

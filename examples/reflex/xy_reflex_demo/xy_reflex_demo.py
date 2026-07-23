@@ -1,7 +1,9 @@
 """reflex-xy showcase: ways to link chart data into a Reflex app.
 
-One page of five sections; each has a "Code" accordion showing its own source
-via `inspect.getsource`.
+Two pages: this module is the concepts page (five sections, each with a
+"Code" accordion showing its own source via `inspect.getsource`), and
+`flights.py` (route ``/flights``) applies the same patterns to real ADS-B
+air-traffic data.
 
 1. **Live figure var + events.** A 1M-point drillable scatter from an
    ``@reflex_xy.figure`` state method; its data rides the app websocket while
@@ -26,16 +28,16 @@ Run from ``examples/reflex``::
 from __future__ import annotations
 
 import asyncio
-import inspect
 from functools import lru_cache
-from typing import Any
 
 import numpy as np
 import reflex as rx
 import reflex_xy
-from reflex_xy.tokens import BUILDER_ATTR
 
 import xy
+
+from . import flights
+from .ui import code_accordion, kv, nav, section
 
 POINTS = 1_000_000
 RNG_SEED = 11
@@ -294,77 +296,7 @@ class Demo(rx.State):
             await asyncio.sleep(0.25)
 
 
-# --- introspection: the "Code" accordions -----------------------------------
-
-
-def _source(obj: Any) -> str:
-    """Source of a plain function, an ``@reflex_xy.figure`` var, or an
-    ``@rx.event`` handler."""
-    fget = getattr(obj, "_fget", None)
-    if fget is not None:  # a @reflex_xy.figure / computed var
-        builder = getattr(fget, BUILDER_ATTR, None)
-        return inspect.getsource(builder if builder is not None else fget)
-    handler = getattr(obj, "fn", None)
-    if handler is not None:  # an @rx.event handler
-        return inspect.getsource(handler)
-    return inspect.getsource(obj)
-
-
-def code_accordion(*objs: Any) -> rx.Component:
-    source = "\n\n".join(inspect.cleandoc("\n" + _source(obj)) for obj in objs)
-    return rx.el.details(
-        rx.el.summary(
-            "Code",
-            cursor="pointer",
-            padding="0.75rem 1rem",
-            font_weight="700",
-            font_size="0.85rem",
-            list_style="none",
-        ),
-        rx.el.pre(
-            rx.el.code(source),
-            margin="0",
-            padding="1rem 1.15rem",
-            background="#0b1120",
-            color="#e5e7eb",
-            font_size="0.78rem",
-            line_height="1.55",
-            overflow_x="auto",
-            white_space="pre",
-            border_top="1px solid rgba(148,163,184,0.2)",
-        ),
-        border_top="1px solid var(--gray-5)",
-        width="100%",
-    )
-
-
-# --- layout -----------------------------------------------------------------
-
-
-def section(title: str, blurb: str, body: rx.Component, code: rx.Component) -> rx.Component:
-    return rx.box(
-        rx.box(
-            rx.heading(title, size="5"),
-            rx.text(blurb, color_scheme="gray", size="2", margin_top="0.25rem"),
-            padding="1rem 1.15rem",
-        ),
-        rx.box(body, padding="0 1.15rem 1.15rem"),
-        code,
-        border="1px solid var(--gray-5)",
-        border_radius="12px",
-        background="var(--gray-1)",
-        overflow="hidden",
-        width="100%",
-    )
-
-
-def kv(label: str, value: Any) -> rx.Component:
-    return rx.hstack(
-        rx.badge(label),
-        rx.text(value, font_family="monospace", font_size="13px"),
-        spacing="3",
-        align="center",
-    )
+# --- layout (shared furniture lives in ui.py) --------------------------------
 
 
 # §1 wiring — the live figure var and its semantic events
@@ -439,6 +371,7 @@ def index() -> rx.Component:
     return rx.container(
         rx.vstack(
             rx.heading("xy × reflex", size="8"),
+            nav("concepts"),
             rx.text(
                 "Chart data rides the app websocket as binary buffers, with "
                 "kernel-side drilldown. Each section shows its own source below.",
@@ -534,3 +467,4 @@ def index() -> rx.Component:
 
 app = rx.App()
 app.add_page(index, title="reflex-xy showcase")
+app.add_page(flights.page, route="/flights", title="reflex-xy — live flights")

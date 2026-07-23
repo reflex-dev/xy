@@ -245,6 +245,7 @@ Object.assign(ChartView.prototype, {
     this.spec = spec;
     this.axes = this._normalizeAxes(spec);
     this._payload = payload;
+    this._syncTitle();
     this.view0 = this._copyView({
       ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]: any) => [id, [...axis.range]])),
     });

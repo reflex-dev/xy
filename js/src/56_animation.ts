@@ -450,6 +450,7 @@ Object.assign(ChartView.prototype, {
     this.markStyle = spec.mark_style || {};
     this.axes = this._normalizeAxes(spec);
     this._payload = buffer;
+    this._syncTitle();
     // A full payload re-homes the view to its own axis ranges (reflex-integration
     // §4 "state-driven rebuild"): unlike streaming append, it carries no
     // follow-policy, so it behaves like a fresh mount of the new data. Clear the
