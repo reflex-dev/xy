@@ -58,6 +58,14 @@ in the README).
   channel is no longer listed in `dropped_channels` at Tier 2, and a
   continuous-channel density scatter renders its colorbar again. C ABI v40
   (`xy_bin_2d_mean_color` + pyramid color entry points).
+- **The FastAPI live-drilldown example is a thin transport over the engine.**
+  Every window is served through `Figure.density_view` (mean-color pyramid
+  warmed at startup); the demo's pre-pyramid density machinery — an
+  integral-image overview server-side and ~350 lines of page JS (local
+  re-bins, request parking, per-client staleness maps), all count-only — is
+  gone, and the page JS is a POST transport plus a status badge. Round-trip
+  replies ship as `XYBF` binary frames (wire-protocol §7) instead of
+  base64-in-JSON.
 
 ### Added
 - **Export format parity and a unified export API (ENG-10447).**
