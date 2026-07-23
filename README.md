@@ -177,13 +177,3 @@ Start with the [xy documentation](https://reflex.dev/docs/xy/) for installation,
 the chart gallery, guides, and API reference. The repository also includes
 [copyable API examples](spec/api/api-examples.md),
 [benchmark details](benchmarks/README.md), and the [changelog](CHANGELOG.md).
-
-## Contributing
-
-```bash
-make setup  # installs .[dev] and builds the required native core
-make check
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete contributor workflow
-and focused validation commands.
