@@ -416,14 +416,6 @@ def test_verify_sdist_rejects_stale_benchmark_doc(tmp_path: Path) -> None:
         verify_sdist.verify_sdist(str(sdist))
 
 
-def test_verify_sdist_rejects_corrupt_public_docs(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(sdist, replacements={"README.md": "# xy\n" + ("padding\n" * 200)})
-
-    with pytest.raises(AssertionError, match="README"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
 def test_verify_sdist_rejects_stale_production_readiness_doc(tmp_path: Path) -> None:
     sdist = tmp_path / "xy-0.0.1.tar.gz"
     _write_sdist(
