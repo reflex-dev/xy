@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="236" height="32" viewBox="0 0 118 16" fill="none" role="img" aria-label="Reflex XY">
+  <style>
+    .wordmark { fill: #1b212a; }
+    @media (prefers-color-scheme: dark) {
+      .wordmark { fill: #ffffff; }
+    }
+  </style>
+  <path class="wordmark" d="M29 16H32V10H39V7H32V4H39V1H29V16ZM42 16H52V13H45V1H42V16ZM55 16H65V13H58.0439L58 10H65V7H58V4H65V1H55V16ZM68 7H71V10H68V16H71V10H77V16H80V10H77V7H80V1H77V7H71V1H68V7Z" fill-rule="evenodd" clip-rule="evenodd"/>
+  <path class="wordmark" d="M16 16V1H26V4H19V7H26V10H19L19.0439 13H26V16H16Z"/>
+  <path class="wordmark" d="M10 10V16H13V10H10Z"/>
+  <path class="wordmark" d="M1 1V16H4V10H10V7H4V4H10V7H13V1H1Z"/>
+  <path d="M90 7H93V10H90V16H93V10H99V16H102V10H99V7H102V1H99V7H93V1H90V7Z" fill="#6e56cf" fill-rule="evenodd" clip-rule="evenodd"/>
+  <path d="M108 7V10H113H115V7H108Z" fill="#6e56cf"/>
+  <path d="M115 7H118V1H115V7Z" fill="#6e56cf"/>
+  <path d="M105 1V7H108V1H105Z" fill="#6e56cf"/>
+  <path d="M110 10V16H113V10H110Z" fill="#6e56cf"/>
+</svg>
