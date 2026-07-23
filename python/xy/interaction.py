@@ -24,12 +24,10 @@ from .config import (
     DECIMATION_THRESHOLD,
     DEFAULT_PALETTE,
     DENSITY_SAMPLE_SEED,
-    DENSITY_SAMPLE_TARGET,
     DENSITY_TARGET_POINTS_PER_CELL,  # noqa: F401  (historic import path)
     DRILL_EXIT_FACTOR,
     PYRAMID_BASE_DIM,
     PYRAMID_MIN_POINTS,
-    SCATTER_DENSITY_THRESHOLD,
 )
 
 if TYPE_CHECKING:
@@ -475,10 +473,11 @@ def _density_sample_update(
     # Near-boundary ramp (LOD doc §3): the overlay grows toward the drill
     # budget as the visible count approaches it, so the density→points swap
     # is continuous in drawn point count instead of an ~8k → budget jump.
+    # Budget and base target are per-trace tunables with config defaults.
     target = lod.density_sample_target(
         visible,
-        SCATTER_DENSITY_THRESHOLD,
-        DENSITY_SAMPLE_TARGET,
+        t.drill_budget(),
+        t.sample_target(),
         n_categories=None if categories is None else len(t.color_ch.categories or ()),
     )
     sample_sel = lod.sample_rows_for_target(
@@ -562,6 +561,8 @@ def density_view(
     # O(visible cells) — no O(N) rescan. The margin keeps the approximate
     # pyramid count from ever usurping a would-be drill; anywhere near the
     # budget we fall through to the exact scan that drilling needs anyway.
+    # The budget is a per-trace tunable with the config default (§28).
+    budget = t.drill_budget()
     binning = "exact"
     grid = None
     rgba_grid: np.ndarray | None = None
@@ -569,11 +570,11 @@ def density_view(
     pyr = None if nonlinear else _ensure_pyramid(t)
     if pyr is not None:
         est = kernels.pyramid_count(pyr, lo_x, hi_x, lo_y, hi_y)
-        if est is not None and est > SCATTER_DENSITY_THRESHOLD * DRILL_EXIT_FACTOR * 1.5:
+        if est is not None and est > budget * DRILL_EXIT_FACTOR * 1.5:
             plan = lod.plan_view_lod(
                 request,
                 int(est),
-                SCATTER_DENSITY_THRESHOLD,
+                budget,
                 False,
                 aggregate_reduction="pyramid-count",
             )
@@ -597,7 +598,7 @@ def density_view(
     if grid is None:
         rgba_grid = None
         sel = kernels.range_indices(xv, yv, lo_x, hi_x, lo_y, hi_y)
-        plan = lod.plan_view_lod(request, len(sel), SCATTER_DENSITY_THRESHOLD, t.drill_mode)
+        plan = lod.plan_view_lod(request, len(sel), budget, t.drill_mode)
         visible = plan.visible
         if plan.exact:
             return _drill_points(fig, t, sel, visible, lo_x, hi_x, lo_y, hi_y, w, h)
@@ -615,7 +616,7 @@ def density_view(
         plan = lod.plan_view_lod(
             request,
             visible,
-            SCATTER_DENSITY_THRESHOLD,
+            budget,
             False,
             aggregate_reduction="pyramid-count",
         )
@@ -638,6 +639,9 @@ def density_view(
         "enc": "log-u8",
         "x_range": [lo_x, hi_x],
         "y_range": [lo_y, hi_y],
+        # The trace's visible-point budget, so client-side heuristics
+        # (drill retirement geometry) track a per-trace override (§28).
+        "budget": int(budget),
     }
     if rgba_grid is not None:
         density["rgba"] = writer.add_u8(np.ascontiguousarray(rgba_grid).reshape(-1))
@@ -715,13 +719,17 @@ def _drill_points(
     # local count-alpha; →0 as zoom deepens. Hue needs no handoff anymore:
     # the surface already wears the mean point color (LOD doc §2), so the
     # marks arrive in their native colors and only intensity eases.
-    lod_blend = float(min(1.0, visible / SCATTER_DENSITY_THRESHOLD))
+    budget = t.drill_budget()
+    lod_blend = float(min(1.0, visible / budget))
     trace_update = {
         "id": t.id,
         "mode": "points",
         "tier": "direct",
         "visible": visible,
         "reduction": "none",
+        # The budget these points were admitted under: the client's drill
+        # retirement/hold geometry estimates track a per-trace override.
+        "budget": int(budget),
         # The window these points cover: the client draws points
         # while the view stays inside it, and falls back to the
         # density overview the instant a zoom-out leaves it — so

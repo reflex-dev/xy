@@ -63,7 +63,8 @@ relative mass, not as a budget (see §3 on why a line count failed as a metric).
   the screen: `DECIMATION_THRESHOLD` = 10_000 for lines/areas,
   `SCATTER_DENSITY_THRESHOLD` = 200_000 for scatter, raised to
   `DIRECT_SOFT_CEILING` = 2_000_000 when a per-point color or size channel is
-  present (`python/xy/config.py`). Dossier §31 states the same claim
+  present (`python/xy/config.py`; a scatter's `density_threshold=` overrides
+  both per trace and rides the wire as `density.budget`). Dossier §31 states the same claim
   mode-scoped: 12–24 bytes/point in direct modes, screen-bounded *resident*
   memory in the aggregated ones.
 - **Two first-paint wire layouts**, and the renderer branches on the spec, not

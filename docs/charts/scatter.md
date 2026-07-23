@@ -83,3 +83,12 @@ Large point collections automatically switch to a bounded density surface when
 individual markers become sub-pixel. Set `density=True` to force aggregation,
 `False` to keep points, or leave it as `None` for automatic selection. Zooming
 can refine the visible window back toward exact points.
+
+Two per-series knobs tune the tier machinery without touching global config:
+`density_threshold` sets the series' visible-point budget — views with at most
+this many visible points render every point, larger views aggregate (default
+200,000; 2,000,000 when per-point channels are present) — and
+`density_sample_target` sets the base size of the sampled-point overlay drawn
+over the density surface (default 8,192). The overlay grows automatically
+toward `density_threshold` as a view approaches it, so the switch to exact
+points never jumps in rendered point count.

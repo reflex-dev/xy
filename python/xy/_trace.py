@@ -10,7 +10,7 @@ from typing import Any, Optional
 
 from .channels import ColorChannel, SizeChannel, StyleChannel
 from .columns import Column
-from .config import DIRECT_SOFT_CEILING, SCATTER_DENSITY_THRESHOLD
+from .config import DENSITY_SAMPLE_TARGET, DIRECT_SOFT_CEILING, SCATTER_DENSITY_THRESHOLD
 
 
 @dataclass
@@ -56,6 +56,15 @@ class Trace:
     # Tri-state density override: None = auto (threshold), True/False = forced.
     # (A bool here silently ignored density=False — staff-review finding.)
     force_density: Optional[bool] = None
+    # Per-trace LOD tuning (§28): None = the config defaults. `density_threshold`
+    # is the visible-point budget — views at/under it render every point, above
+    # it the trace aggregates (it also replaces the auto Tier-0→Tier-2 count
+    # threshold in `use_density`). `density_sample_target` is the hybrid
+    # overlay's base sample size (the floor of the near-boundary ramp, LOD doc
+    # §3). Both are recorded on the wire: the budget rides the density spec and
+    # every drill update, the per-view sample target rides `sample.target`.
+    density_threshold: Optional[int] = None
+    density_sample_target: Optional[int] = None
     # Shipped-row → canonical-row mapping, set by build_payload when the shipped
     # copy drops NaN rows (§19), and by the drill-in view path when a Tier-2
     # trace ships its visible subset. The client's GPU pick and selection masks
@@ -102,15 +111,36 @@ class Trace:
         """Whether this trace must preserve independently styled items."""
         return bool(self.per_item_channel_names())
 
+    def drill_budget(self) -> int:
+        """The visible-point budget for view-LOD planning and drill decisions
+        (§5): the per-trace `density_threshold` when set, else the config
+        default."""
+        if self.density_threshold is not None:
+            return self.density_threshold
+        return SCATTER_DENSITY_THRESHOLD
+
+    def sample_target(self) -> int:
+        """Base size of the hybrid density overlay's deterministic point
+        sample — the floor of the near-boundary ramp (LOD doc §3): the
+        per-trace `density_sample_target` when set, else the config default."""
+        if self.density_sample_target is not None:
+            return self.density_sample_target
+        return DENSITY_SAMPLE_TARGET
+
     def use_density(self) -> bool:
         """Whether this scatter renders as a Tier-2 density grid (§5)."""
         if self.kind != "scatter":
             return False
         if self.force_density is not None:
             return self.force_density
-        # Per-point channels keep direct draw until the hard ceiling; plain
-        # scatter aggregates earlier (its whole win is not drawing 10M dots).
-        threshold = (
-            DIRECT_SOFT_CEILING if self.has_per_item_channels() else SCATTER_DENSITY_THRESHOLD
-        )
+        # An explicit per-trace threshold replaces the auto choice outright;
+        # otherwise per-point channels keep direct draw until the hard ceiling
+        # while plain scatter aggregates earlier (its whole win is not drawing
+        # 10M dots).
+        if self.density_threshold is not None:
+            threshold = self.density_threshold
+        else:
+            threshold = (
+                DIRECT_SOFT_CEILING if self.has_per_item_channels() else SCATTER_DENSITY_THRESHOLD
+            )
         return self.n_points > threshold

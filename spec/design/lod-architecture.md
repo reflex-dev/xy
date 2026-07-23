@@ -19,7 +19,10 @@ A **tier is a property of a (trace, viewport) pair**, never of a dataset:
 what ships is count-only, `tier = f(visible_count)`, hysteresis-guarded (§5).
 `drill_decision(visible, budget, in_drill, exit_factor)` in `python/xy/lod.py`
 returns `visible <= budget * (exit_factor if in_drill else 1.0)`; `js/src/45_lod.ts`
-mirrors it. Implemented today for scatter (drill-in/out with hysteresis); this
+mirrors it. The budget itself is per-trace (`Trace.drill_budget()`): the
+public scatter API's `density_threshold=` when set, else the config default —
+and it rides the wire (`density.budget`, drill-update `budget`) so the
+client's heuristics track overrides instead of assuming the default. Implemented today for scatter (drill-in/out with hysteresis); this
 doc extends the same rule to every kind. Folding `mark_pixel_area × overdraw`
 into the decision is dossier F3 — *specified, pending, not implemented*; no
 pixel-area or overdraw term exists in `python/xy/` or `js/src/` today.
@@ -76,6 +79,10 @@ Tiered chart kinds must enter through the common LOD primitives in
 - `sample_rows_for_target(...)` is the shared target-bounded subset primitive:
   density overlays and future sampled tiers ask for "about N stable rows from
   this viewport" in one place instead of copying target-fraction math.
+  `density_sample_target(...)` sizes that N for hybrid overlays (the §3
+  near-boundary ramp); its budget and floor are per-trace tunables
+  (`Trace.drill_budget()` / `Trace.sample_target()`, set by the scatter API's
+  `density_threshold=` / `density_sample_target=`) with config defaults.
 - `local_log_density(...)` provides the transition handoff values used when an
   aggregate view drills into exact points without a visual hard cut.
 

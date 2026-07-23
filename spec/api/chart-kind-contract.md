@@ -79,7 +79,7 @@ needs:
 | Field | Meaning |
 | --- | --- |
 | `kind` | `"hexbin"` |
-| `tier` | always `"direct"`; hexbin aggregates at build time and is never re-tiered, decimated, or view-updated — `Trace.use_density()` returns `False` for every non-`scatter` kind (`_trace.py:74-77`), and the view-update path returns no traces without it (`interaction.py:456`) |
+| `tier` | always `"direct"`; hexbin aggregates at build time and is never re-tiered, decimated, or view-updated — `Trace.use_density()` returns `False` for every non-`scatter` kind (`_trace.py`), and the view-update path returns no traces without it (`interaction.py` `density_view`) |
 | `x`, `y` | column indices for the cell centers, one entry per occupied cell, offset-encoded f32 (§4/§16). Shipped via `pw.ship_values`, not `pw.ship` — the centers are derived geometry with no canonical `Column` behind them, so the offset is the midpoint of their own bounds |
 | `n_marks` | occupied cell count — the length of `x`/`y` |
 | `n_points` | input row count before binning; reporting only |

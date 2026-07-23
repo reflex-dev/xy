@@ -112,14 +112,13 @@ def test_symlog_density_grid_bins_in_scale_coordinates() -> None:
     assert any(abs(c - expected_1000) <= 1 for c in occupied)
 
 
-def test_symlog_density_view_rebins_in_scale_coordinates(monkeypatch) -> None:
-    from xy import interaction
-
-    monkeypatch.setattr(interaction, "SCATTER_DENSITY_THRESHOLD", 50)
+def test_symlog_density_view_rebins_in_scale_coordinates() -> None:
     n = 400
     x = np.concatenate([np.full(n, 1.0), np.full(n, 1000.0), [1e9]])
     y = np.linspace(0.0, 1.0, len(x))
-    fig = Figure().scatter(x, y)
+    # The drill budget is the per-trace tunable (density_threshold), so no
+    # module-constant monkeypatching is needed to keep this view aggregated.
+    fig = Figure().scatter(x, y, density_threshold=50)
     fig.traces[0].force_density = True
     fig.set_axis("x", type_="symlog", constant=1.0)
     fig.build_payload()

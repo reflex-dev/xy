@@ -119,12 +119,13 @@ def test_scatter_density_view_routes_through_shared_lod_primitives(monkeypatch) 
     monkeypatch.setattr(interaction.lod, "encode_window_xy_columns", wrapped_encode)
     monkeypatch.setattr(interaction.lod, "enter_drill", wrapped_enter)
     monkeypatch.setattr(interaction.lod, "exit_drill", wrapped_exit)
-    monkeypatch.setattr(interaction, "SCATTER_DENSITY_THRESHOLD", 80)
     monkeypatch.setattr(interaction, "PYRAMID_MIN_POINTS", 1_000_000)
 
     x = np.linspace(0.0, 99.0, 500)
     y = np.sin(x / 8.0) + x / 100.0
-    fig = Figure().scatter(x, y, density=True)
+    # The drill budget is the per-trace tunable (density_threshold), so no
+    # module-constant monkeypatching is needed to exercise a tiny budget.
+    fig = Figure().scatter(x, y, density=True, density_threshold=80)
 
     wide, _ = fig.density_view(0, 0.0, 99.0, -2.0, 2.0, 320, 240)
     drilled, _ = fig.density_view(0, 0.0, 4.0, -2.0, 2.0, 320, 240)
@@ -145,12 +146,11 @@ def test_density_view_rejects_bad_viewport_before_mutating_drill_state(monkeypat
     from xy import interaction
     from xy._figure import Figure
 
-    monkeypatch.setattr(interaction, "SCATTER_DENSITY_THRESHOLD", 80)
     monkeypatch.setattr(interaction, "PYRAMID_MIN_POINTS", 1_000_000)
 
     x = np.linspace(0.0, 99.0, 500)
     y = np.sin(x / 8.0) + x / 100.0
-    fig = Figure().scatter(x, y, density=True)
+    fig = Figure().scatter(x, y, density=True, density_threshold=80)
     trace = fig.traces[0]
 
     drilled, _ = fig.density_view(0, 0.0, 4.0, -2.0, 2.0, 320, 240)

@@ -18,10 +18,8 @@ from .config import (
     DEFAULT_PALETTE,
     DENSITY_GRID,
     DENSITY_SAMPLE_SEED,
-    DENSITY_SAMPLE_TARGET,
     MAX_ANIMATION_MATCH_ROWS,
     PROTOCOL_VERSION,
-    SCATTER_DENSITY_THRESHOLD,
     default_palette_color,
 )
 
@@ -905,13 +903,14 @@ class PayloadMixin(_Host):
         # Near-boundary ramp (LOD doc §3): the same pure function of the
         # visible count the live density_view path applies, so the first
         # payload and every later refinement agree on the overlay size.
+        # Budget and base target are per-trace tunables with config defaults.
         categorical = bool(
             t.color_ch and t.color_ch.mode == "categorical" and t.color_ch.codes is not None
         )
         target = lod.density_sample_target(
             visible,
-            SCATTER_DENSITY_THRESHOLD,
-            DENSITY_SAMPLE_TARGET,
+            t.drill_budget(),
+            t.sample_target(),
             n_categories=len(t.color_ch.categories or ()) if categorical else None,
         )
         if sample_sel is None:
@@ -994,8 +993,8 @@ class PayloadMixin(_Host):
             # same near-boundary ramp `_density_sample_spec` records (§28).
             target = lod.density_sample_target(
                 visible,
-                SCATTER_DENSITY_THRESHOLD,
-                DENSITY_SAMPLE_TARGET,
+                t.drill_budget(),
+                t.sample_target(),
                 n_categories=len(t.color_ch.categories or ()) if categorical else None,
             )
             sel = np.empty(0, dtype=np.uint32)
@@ -1068,6 +1067,9 @@ class PayloadMixin(_Host):
             "colormap": cmap,
             "x_range": list(xr),
             "y_range": list(yr),
+            # The trace's visible-point budget (per-trace override or the
+            # config default), so client-side drill heuristics track it (§28).
+            "budget": int(t.drill_budget()),
         }
         if bin_colors is not None:
             # Mean point color per cell, straight-alpha RGBA8: the color the

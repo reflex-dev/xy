@@ -1331,6 +1331,8 @@ def scatter(
     color_domain: Optional[tuple[float, float]] = None,
     size_range: tuple[float, float] = (2.0, 18.0),
     density: Optional[bool] = None,
+    density_threshold: Optional[int] = None,
+    density_sample_target: Optional[int] = None,
     symbol: Any = "circle",
     stroke: Any = None,
     stroke_width: Any = 0.0,
@@ -1345,6 +1347,11 @@ def scatter(
     one of the 17 renderer-backed marker shapes; `stroke` / `stroke_width`
     draw a point border. Large scatters automatically switch to an aggregated
     density surface; pass `density=True/False` to force or disable it.
+    `density_threshold` sets this trace's visible-point budget (views at or
+    under it render every point; above it the trace aggregates), replacing
+    the config default and the auto per-channel choice; `density_sample_target`
+    sets the base size of the sampled-point overlay drawn over the density
+    surface (the floor of the near-boundary ramp, LOD doc §3).
     """
     css = styles.compile_mark_style("scatter", style)
     color = css.get("color", color)
@@ -1353,6 +1360,10 @@ def scatter(
     stroke_width = css.get("stroke_width", stroke_width)
     name = self._optional_text(name, "scatter name")
     density = self._optional_bool(density, "scatter density")
+    density_threshold = self._optional_positive_int(density_threshold, "scatter density_threshold")
+    density_sample_target = self._optional_positive_int(
+        density_sample_target, "scatter density_sample_target"
+    )
     checkpoint = self._checkpoint()
     try:
         xc, yc = self._ingest_xy(x, y, "scatter")
@@ -1429,6 +1440,8 @@ def scatter(
             size_ch=size_ch,
             style_channels=style_channels,
             force_density=density,
+            density_threshold=density_threshold,
+            density_sample_target=density_sample_target,
         )
 
         # The color channel survives aggregation as the density surface's
@@ -1446,7 +1459,32 @@ def scatter(
             if color_aggregates
             else ""
         )
-        if density is None and dropped_channels and n > DIRECT_SOFT_CEILING:
+        if density is None and density_threshold is not None:
+            # An explicit per-trace threshold replaces the auto tier choice
+            # (use_density), so none of the soft-ceiling auto-forcing below
+            # applies — but the consequences stay §28-loud.
+            if n > density_threshold and dropped_channels:
+                warnings.warn(
+                    f"scatter has {n:,} points, above this trace's "
+                    f"density_threshold ({density_threshold:,}); the density "
+                    f"surface drops per-point channels: {', '.join(dropped_channels)} "
+                    "(aggregating arbitrary instance styles needs the §5-F5 "
+                    f"aggregation algebra, not yet implemented).{mean_color_note}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            elif n <= density_threshold and n > DIRECT_SOFT_CEILING:
+                # Same contract as density=False: opting into direct draw
+                # above the ceiling is allowed but never silent (§5 F3).
+                warnings.warn(
+                    f"density_threshold={density_threshold:,} keeps {n:,} points "
+                    f"direct-drawn above the ceiling ({DIRECT_SOFT_CEILING:,}); "
+                    "expect fill-rate-bound frames and possible "
+                    "buffer-allocation failure.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+        elif density is None and dropped_channels and n > DIRECT_SOFT_CEILING:
             warnings.warn(
                 f"scatter has {n:,} points with per-point styles — above the "
                 f"direct ceiling ({DIRECT_SOFT_CEILING:,}). Falling back to a "

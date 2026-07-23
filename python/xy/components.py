@@ -511,6 +511,8 @@ def scatter(
     size_range: tuple[float, float] = (2.0, 18.0),
     opacity: Any = 0.8,
     density: Optional[bool] = None,
+    density_threshold: Optional[int] = None,
+    density_sample_target: Optional[int] = None,
     symbol: Any = "circle",
     stroke: Any = None,
     stroke_width: Any = 0.0,
@@ -536,6 +538,14 @@ def scatter(
         size_range: Minimum and maximum rendered marker sizes.
         opacity: Marker opacity from zero to one.
         density: Whether to force or disable density aggregation.
+        density_threshold: This series' visible-point budget — views with at
+            most this many visible points render every point, larger views
+            aggregate to the density surface. Replaces the config default
+            (200,000; 2,000,000 with per-point channels).
+        density_sample_target: Base size of the sampled-point overlay drawn
+            over the density surface — the floor of the near-boundary ramp
+            that grows the sample toward ``density_threshold`` as a view
+            approaches it. Replaces the config default (8,192).
         symbol: Marker symbol name.
         stroke: Optional marker outline color.
         stroke_width: Marker outline width in pixels.
@@ -565,6 +575,8 @@ def scatter(
             "size_range": size_range,
             "opacity": opacity,
             "density": density,
+            "density_threshold": density_threshold,
+            "density_sample_target": density_sample_target,
             "symbol": symbol,
             "stroke": stroke,
             "stroke_width": stroke_width,
@@ -4521,6 +4533,8 @@ def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
             size_range=m.props["size_range"],
             opacity=m.props["opacity"],
             density=m.props["density"],
+            density_threshold=m.props.get("density_threshold"),
+            density_sample_target=m.props.get("density_sample_target"),
             symbol=m.props["symbol"],
             stroke=m.props["stroke"],
             stroke_width=m.props["stroke_width"],

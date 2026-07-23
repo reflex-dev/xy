@@ -7,6 +7,19 @@ const LOD_DRILL_EXIT_FACTOR = 1.15;
 // How long a pending refresh may hold the previous representation on screen
 // (drilled marks, sample overlays) before it is treated as stranded (T8).
 const LOD_PENDING_HOLD_MS = 1200;
+
+// The trace's visible-point budget for client-side heuristics. The kernel is
+// the tier authority; the client only needs the budget to *estimate* (drill
+// retirement geometry, T11), so it reads the per-trace value the wire ships —
+// drill updates and the density spec both carry `budget` (§28 per-trace
+// override) — and falls back to the config default for older kernels/specs.
+function lodDrillBudget(g) {
+  const fromDrill = g.drill && g.drill.budget;
+  if (Number.isFinite(fromDrill) && fromDrill > 0) return fromDrill;
+  const fromSpec = g.trace && g.trace.density && g.trace.density.budget;
+  if (Number.isFinite(fromSpec) && fromSpec > 0) return fromSpec;
+  return LOD_DIRECT_POINT_BUDGET;
+}
 // Retained-sample zoom-out fade band (T9): full alpha while the sample's home
 // window still covers ≥ HI of the view area, gone below LO (log-eased between,
 // applied as composited opacity — see lodSampleViewAlpha).
@@ -385,7 +398,7 @@ function lodDrillOutgrown(view, g, d) {
   const v = view.view;
   const estimatedVisible = lodEstimatedVisible(d, v);
   if (!Number.isFinite(estimatedVisible)) return false;
-  return estimatedVisible > LOD_DIRECT_POINT_BUDGET * LOD_DRILL_EXIT_FACTOR;
+  return estimatedVisible > lodDrillBudget(g) * LOD_DRILL_EXIT_FACTOR;
 }
 
 // Every density object still reachable from the trace, so eviction never
@@ -460,6 +473,7 @@ export function lodApplyDrill(view, g, upd, buffers) {
   d.win = { x0: upd.x_range[0], x1: upd.x_range[1], y0: upd.y_range[0], y1: upd.y_range[1] };
   d.n = Math.min(upd.x.len, upd.y.len);
   d.visible = upd.visible ?? d.n;
+  d.budget = upd.budget; // per-trace budget these points were admitted under
   d.seq = upd.drill_seq; // subset version — echoed with picks, gates selections
   d.selActive = false; // drilled subset changed; old mask indices are stale
   // §34 selection continuity: the swapped subset invalidates the old mask

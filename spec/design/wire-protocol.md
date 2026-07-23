@@ -121,7 +121,11 @@ message unless `msg.seq === this.seq`.
 states which representation this view resolved to:
 
 - `mode: "density"` — `{id, mode, tier, visible, reduction, binning, density}`.
-  `density` is `{buf, w, h, max, enc: "log-u8", x_range, y_range}` plus, for
+  `density` is `{buf, w, h, max, enc: "log-u8", x_range, y_range, budget}`
+  (`budget` is the trace's visible-point budget — the per-trace
+  `density_threshold` override or the config default — so client heuristics
+  never assume the 200k default; the first-payload density spec carries the
+  same field) plus, for
   channel-bearing traces, `rgba` (a `w*h*4` straight-alpha RGBA8 plane: each
   occupied cell's alpha-weighted **mean point color**, averaged in linear
   light, plus the cell's mean point alpha) with `color_agg: "mean"` recording
@@ -142,11 +146,15 @@ states which representation this view resolved to:
   The raw-space tile pyramid cannot compose such a grid, so nonlinear-axis
   traces always report `binning: "exact"`.
 - `mode: "points"` — the deep-zoom drill:
-  `{id, mode, tier: "direct", visible, reduction: "none", x_range, y_range,
-  x, y, color, size, density_val, lod_blend, drill_seq, style}`.
+  `{id, mode, tier: "direct", visible, reduction: "none", budget, x_range,
+  y_range, x, y, color, size, density_val, lod_blend, drill_seq, style}`.
   `x_range`/`y_range` are the window these points cover; the client falls
-  back to the density overview the moment the view leaves it. `density_val`
-  (per-point local log-density) and `lod_blend` drive the intensity-only
+  back to the density overview the moment the view leaves it. `budget` is
+  the visible-point budget these points were admitted under (per-trace
+  `density_threshold` override or the config default), which client-side
+  drill-retirement geometry estimates use. `density_val`
+  (per-point local log-density) and `lod_blend` (normalized against that
+  same budget) drive the intensity-only
   handoff: hue is continuous by construction because the aggregate surface
   wears the mean point color, so the historical `density_colormap` field is
   gone from the wire.

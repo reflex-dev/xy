@@ -108,6 +108,22 @@ in the README).
   badge.
 
 ### Added
+- **Per-series density tuning: `density_threshold=` and
+  `density_sample_target=` on `xy.scatter(...)`.** The each-point-rendered
+  threshold (the visible-point budget: views with at most this many visible
+  points render every point, larger views aggregate) and the hybrid
+  overlay's base sample size were process-wide constants
+  (`SCATTER_DENSITY_THRESHOLD`, `DENSITY_SAMPLE_TARGET`); both are now
+  per-trace with the config values as defaults. An explicit
+  `density_threshold` replaces the auto tier choice (including the per-point
+  channel soft ceiling — still §28-loud: dropping channels or direct-drawing
+  above the ceiling warns), governs every `density_view` tier decision, the
+  pyramid fast-path margin, the drill handoff's `lod_blend` normalization,
+  and the sample ramp's top; `density_sample_target` sets the ramp's floor.
+  The budget ships on the wire (`density.budget` in the spec and every
+  density update, `budget` on drill updates), and the render client's
+  drill-retirement estimate reads it instead of assuming the 200k default
+  (which remains the fallback for older kernels and hand-built specs).
 - **Export format parity and a unified export API (ENG-10447).**
   `to_image(format=...)` and extension-inferred, atomic `write_image(path)`
   on charts, facet grids, and the internal figure cover PNG, JPEG/JPG, WebP,
