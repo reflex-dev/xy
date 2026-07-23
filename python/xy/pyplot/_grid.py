@@ -230,7 +230,13 @@ def stitch_png(
 ) -> bytes:
     from xy import _png, _raster  # sanctioned escape hatch (see module doc)
 
-    scale = 2.0
+    # pyplot charts are already built at ``figsize * dpi`` logical pixels.
+    # Rasterizing those pixels at the core exporter's 2x quality default made
+    # savefig silently double both output dimensions and every point-sized
+    # artist compared with Matplotlib.  The pyplot compatibility boundary is
+    # physical pixels, so keep its raster scale at one; callers that use the
+    # native Figure API directly retain that API's explicit 2x default.
+    scale = 1.0
     if (
         len(charts) == 1
         and positions is None
@@ -267,7 +273,10 @@ def stitch_png(
 
     if positions is not None and canvas_size is not None:
         background = np.asarray(_raster._parse_color(facecolor), dtype=np.uint8)
-        canvas = np.empty((canvas_size[1] * 2, canvas_size[0] * 2, 4), dtype=np.uint8)
+        canvas = np.empty(
+            (round(canvas_size[1] * scale), round(canvas_size[0] * scale), 4),
+            dtype=np.uint8,
+        )
         canvas[...] = background
         for tile, (left, bottom, _width, height) in zip(tiles, positions, strict=True):
             x = round(left * canvas.shape[1])

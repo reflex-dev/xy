@@ -216,11 +216,11 @@ def _normalize_mask(mask: np.ndarray, size: int = 256) -> np.ndarray:
 
 @pytest.mark.parametrize("family", ["line", "bar", "image"])
 def test_reference_pngs_have_tolerant_perceptual_and_geometry_agreement(family: str) -> None:
-    # xy rasterizes its 320x240 logical canvas at 2x.  Render the Matplotlib
-    # reference at the same physical size and effective DPI so point-sized
-    # strokes, markers, and text remain comparable at 640x480.
+    # Both backends rasterize the 4x3-inch figure at the requested 80 DPI, so
+    # point-sized strokes, markers, and text are compared at the same physical
+    # size rather than hiding a pyplot-only 2x export scale in the reference.
     xyfig, xyax = xyplt.subplots(figsize=(4, 3), dpi=80)
-    mplfig, mplax = mplplt.subplots(figsize=(4, 3), dpi=160)
+    mplfig, mplax = mplplt.subplots(figsize=(4, 3), dpi=80)
     if family == "line":
         for ax in (xyax, mplax):
             ax.plot([0, 1, 2, 3], [0, 2, 1, 3], "o-", color="#2563eb", linewidth=2)
@@ -236,9 +236,9 @@ def test_reference_pngs_have_tolerant_perceptual_and_geometry_agreement(family: 
             ax.set_title("image")
     xybytes = xyfig._to_png()
     reference = BytesIO()
-    mplfig.savefig(reference, format="png", dpi=160)
+    mplfig.savefig(reference, format="png", dpi=80)
     xypixels, mplpixels = _png_pixels(xybytes), _png_pixels(reference.getvalue())
-    assert xypixels.shape == mplpixels.shape == (480, 640, 4)
+    assert xypixels.shape == mplpixels.shape == (240, 320, 4)
     xymask, mplmask = _foreground_mask(xypixels), _foreground_mask(mplpixels)
     normalized_xy = _dilate(_normalize_mask(xymask))
     normalized_mpl = _dilate(_normalize_mask(mplmask))

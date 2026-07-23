@@ -86,6 +86,7 @@ def test_savefig_file_objects_support_common_export_options() -> None:
     fig.savefig(tight, format="png", bbox_inches="tight", pad_inches=0)
     regular_size = struct.unpack(">II", regular.getvalue()[16:24])
     tight_size = struct.unpack(">II", tight.getvalue()[16:24])
+    assert regular_size == (320, 240)
     # a strict shrink on both axes: equality would mean tight-crop is a no-op
     assert tight_size[0] < regular_size[0] and tight_size[1] < regular_size[1]
 
@@ -109,6 +110,8 @@ def test_savefig_dpi_changes_output_dimensions_without_mutating_figure() -> None
 
     low = dimensions(60)
     high = dimensions(120)
+    assert low == (240, 180)
+    assert high == (480, 360)
     assert high[0] == 2 * low[0]
     assert high[1] == 2 * low[1]
     assert fig.get_dpi() == 80

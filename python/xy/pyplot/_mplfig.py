@@ -950,7 +950,7 @@ class Figure:
             canvas_size=canvas_size if positions is not None else None,
             facecolor=self._facecolor,
             bbox_tight=bbox_tight,
-            pad_pixels=max(0, round(pad_inches * float(self._dpi or 100.0) * 2.0)),
+            pad_pixels=max(0, round(pad_inches * float(self._dpi or 100.0))),
         )
 
     def _to_html(self) -> str:
