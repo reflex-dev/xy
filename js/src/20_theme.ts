@@ -133,7 +133,7 @@ export const XY_CHROME_CSS = `
 :where(.xy [data-xy-modebar-menu-separator]){display:block;height:1px;margin:4px -4px;background:var(--xy-modebar-separator);transform:scaleY(.5);transform-origin:center}
 :where(.xy [data-xy-modebar-menu-icon]){display:flex;width:14px;flex:0 0 auto}
 :where(.xy [data-xy-modebar-menu-icon] svg){width:14px;height:14px}
-:where(.xy) button[data-xy-slot="modebar_button"].xy-active{border-color:var(--xy-modebar-border);background:var(--chart-modebar-bg,var(--xy-modebar-bg));color:var(--xy-modebar-text-strong);box-shadow:var(--xy-modebar-button-shadow)}
+:where(.xy) button[data-xy-slot="modebar_button"].xy-active{border-color:var(--xy-modebar-border);background:var(--chart-modebar-active,var(--xy-modebar-active));color:var(--xy-modebar-text-strong);box-shadow:var(--xy-modebar-button-shadow)}
 :where(.xy [data-xy-slot="selection"]){border:1px solid var(--chart-selection,var(--xy-selection));background:var(--chart-selection-fill,var(--xy-selection-fill))}
 :where(.xy [data-xy-slot="selection"][data-xy-band="zoom"]){border-color:var(--chart-zoom-selection,var(--xy-selection));background:var(--chart-zoom-selection-fill,var(--xy-selection-fill))}
 :where(.xy [data-xy-slot="selection"][data-xy-band="select-x"]){border-top:0;border-bottom:0}
