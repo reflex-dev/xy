@@ -1,1 +1,0 @@
-/Users/tomgotsman/projects/random_python_scripts/xy_practice/xy/python/reflex-xy/reflex_xy/assets/XYChart.jsx
