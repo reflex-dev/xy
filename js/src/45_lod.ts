@@ -385,6 +385,79 @@ function lodDensityForView(view, g) {
 // never be the default when the kernel might hold a sharper representation.
 const LOD_POINTS_REQUEST_BAND = 4; // × LOD_DIRECT_POINT_BUDGET
 
+// Stepped aggregate ladder (T13): between the home texture and real points
+// the aggregate sharpens in QUANTIZED steps, never per-view. A step-k
+// texture covers the view snapped outward to a power-of-STEP_FACTOR block
+// grid over the data extent, per axis — the same aligned-window law as the
+// kernel's padded drills — so every view in a region resolves to the SAME
+// window (pan-stable, dedupable, cacheable) and a zoom sees at most
+// STEP_MAX smooth-to-smooth texture swaps before points land. Per-view
+// windows were the field-captured failure mode (a fresh texture per
+// pan/zoom step reads as jumping); the ladder bounds worst-case softness
+// (≈ STEP_FACTOR× stretch per axis) instead of eliminating blur.
+const LOD_AGG_STEP_FACTOR = 4; // block span shrinks 4× per step, per axis
+const LOD_AGG_STEP_MAX = 2; // intermediate steps below home before points
+// A covering texture within this area factor of the desired step window is
+// "fine enough" — no upgrade request.
+const LOD_AGG_STEP_SLACK = 1.5;
+
+function lodAlignedStepSpan(lo, hi, e0, e1, blocks) {
+  const extent = e1 - e0;
+  if (!(extent > 0) || !(blocks >= 1)) return [lo, hi];
+  const block = extent / blocks;
+  const b0 = Math.floor((lo - e0) / block);
+  const b1 = Math.ceil((hi - e0) / block);
+  // min/max guards keep containment through float rounding at block edges.
+  return [Math.min(lo, e0 + b0 * block), Math.max(hi, e0 + b1 * block)];
+}
+
+// The aligned step window the view's aggregate SHOULD be served at, or null
+// when no upgrade is needed (home is step 0; a covering cached texture
+// already at — or finer than — the desired step satisfies it).
+export function lodAggregateStepWindow(view, g, x0, x1, y0, y1) {
+  const cache = g.densityCache || (g.density ? [g.density] : []);
+  const vx0 = Math.min(x0, x1), vx1 = Math.max(x0, x1);
+  const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
+  const vSpanX = vx1 - vx0, vSpanY = vy1 - vy0;
+  if (!(vSpanX > 0 && vSpanY > 0)) return null;
+  // The broadest textured entry is the extent anchor (the home texture).
+  let extent = null;
+  for (const d of cache) {
+    if (!d || !d.tex || !d.xRange || !d.yRange) continue;
+    if (!extent || lodDensityArea(d) > lodDensityArea(extent)) extent = d;
+  }
+  if (!extent) return null;
+  const ex0 = Math.min(extent.xRange[0], extent.xRange[1]);
+  const ex1 = Math.max(extent.xRange[0], extent.xRange[1]);
+  const ey0 = Math.min(extent.yRange[0], extent.yRange[1]);
+  const ey1 = Math.max(extent.yRange[0], extent.yRange[1]);
+  const exSpan = ex1 - ex0, eySpan = ey1 - ey0;
+  if (!(exSpan > 0 && eySpan > 0)) return null;
+  const stepOf = (extentSpan, viewSpan) => Math.max(0, Math.min(
+    LOD_AGG_STEP_MAX,
+    Math.floor(Math.log(extentSpan / Math.max(viewSpan, 1e-300)) / Math.log(LOD_AGG_STEP_FACTOR)),
+  ));
+  const kx = stepOf(exSpan, vSpanX);
+  const ky = stepOf(eySpan, vSpanY);
+  if (kx === 0 && ky === 0) return null;
+  const wx = lodAlignedStepSpan(vx0, vx1, ex0, ex1, Math.pow(LOD_AGG_STEP_FACTOR, kx));
+  const wy = lodAlignedStepSpan(vy0, vy1, ey0, ey1, Math.pow(LOD_AGG_STEP_FACTOR, ky));
+  const winArea = (wx[1] - wx[0]) * (wy[1] - wy[0]);
+  if (!(winArea > 0)) return null;
+  // Fine enough already? The smallest covering TEXTURE decides.
+  let covering = null;
+  const exEps = vSpanX * 1e-4, eyEps = vSpanY * 1e-4;
+  for (const d of cache) {
+    if (!d || !d.tex || !d.xRange || !d.yRange) continue;
+    const cx0 = Math.min(d.xRange[0], d.xRange[1]), cx1 = Math.max(d.xRange[0], d.xRange[1]);
+    const cy0 = Math.min(d.yRange[0], d.yRange[1]), cy1 = Math.max(d.yRange[0], d.yRange[1]);
+    if (vx0 < cx0 - exEps || vx1 > cx1 + exEps || vy0 < cy0 - eyEps || vy1 > cy1 + eyEps) continue;
+    if (!covering || lodDensityArea(d) < lodDensityArea(covering)) covering = d;
+  }
+  if (covering && lodDensityArea(covering) <= winArea * LOD_AGG_STEP_SLACK) return null;
+  return [wx[0], wx[1], wy[0], wy[1]];
+}
+
 // Unbiased local count estimate from the retained deterministic sample: the
 // first-payload sample is a fixed-rate thinning of the whole trace, so
 // (in-view sample rows) × (total ÷ sample size) estimates the in-view count
@@ -714,6 +787,7 @@ export function lodPromoteCachedDrill(view, g, x0, x1, y0, y1) {
 // trace; the tier draw uses it until the kernel switches back.
 export function lodApplyDrill(view, g, upd, buffers) {
   const gl = view.gl;
+  g._stepReqWin = null; // real points supersede any outstanding ladder step
   const win = {
     x0: upd.x_range[0], x1: upd.x_range[1],
     y0: upd.y_range[0], y1: upd.y_range[1],
@@ -1074,23 +1148,34 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
   lodMarkDrillDying(view, g);
   const d = upd.density;
   // Display side of the stands-rule (T13, user-directed #225 follow-up):
-  // with a kernel attached, an aggregate reply never REPLACES a texture
-  // that already covers the view. The standing (smooth, possibly stale)
-  // surface holds until REAL points land — the transition band's exact
-  // grids have a hard speckled character (sparse cells at the points' own
-  // alpha), and repainting the smooth surface with one on every band probe
-  // read as jumping between zoom levels in the field capture. The reply
-  // still lands as FACTS (its window's exact count recalibrates the
-  // points-band gate), and the drill lifecycle above proceeds — marks fade
-  // into the standing surface. Coverage failure (a pan past every cached
-  // window) still applies the reply: silence must never blank a frame
-  // (T1). Standalone clients keep applying everything — their re-binned
-  // grids are the only refinement they have.
+  // with a kernel attached, an aggregate reply REPLACES a covering texture
+  // only when the client asked for exactly this window as a LADDER STEP
+  // (the quantized aligned windows of the stepped aggregate — smooth,
+  // pan-stable, at most STEP_MAX swaps before points). Every other covered
+  // reply — the points-band probes above all — lands as FACTS only (its
+  // window's exact count recalibrates the gate): the band's exact grids
+  // have a hard speckled character (sparse cells at the points' own
+  // alpha), and repainting the smooth surface with one on every probe read
+  // as jumping between zoom levels in the field capture. The drill
+  // lifecycle above proceeds either way — dying marks fade into the
+  // standing surface. Coverage failure (a pan past every cached window)
+  // still applies the reply: silence must never blank a frame (T1).
+  // Standalone clients keep applying everything — their re-binned grids
+  // are the only refinement they have.
   if (view.comm) {
-    const covering = lodDensityForView(view, g);
-    if (covering && covering.tex && view._viewInsideRange(covering.xRange, covering.yRange)) {
-      lodRememberDensityFacts(view, g, upd);
-      return;
+    const sw = g._stepReqWin;
+    const tol = sw ? (Math.abs(sw[1] - sw[0]) + Math.abs(sw[3] - sw[2])) * 1e-6 + 1e-300 : 0;
+    const isStepReply = !!sw && Array.isArray(d.x_range) && Array.isArray(d.y_range) &&
+      Math.abs(d.x_range[0] - sw[0]) <= tol && Math.abs(d.x_range[1] - sw[1]) <= tol &&
+      Math.abs(d.y_range[0] - sw[2]) <= tol && Math.abs(d.y_range[1] - sw[3]) <= tol;
+    if (isStepReply) {
+      g._stepReqWin = null;
+    } else {
+      const covering = lodDensityForView(view, g);
+      if (covering && covering.tex && view._viewInsideRange(covering.xRange, covering.yRange)) {
+        lodRememberDensityFacts(view, g, upd);
+        return;
+      }
     }
   }
   const grid = d.enc === "log-u8"

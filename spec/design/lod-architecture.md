@@ -541,17 +541,34 @@ invariants so future kinds don't regress them:
     with no recorded counts anywhere always requests. A fresh grid for an
     already-cached window supersedes its unpinned twin
     (`lodRememberDensity` dedupe), so the gate always reads current facts.
-    *Display side:* with a kernel attached, an aggregate reply never
-    REPLACES a texture that already covers the view — the standing surface
-    holds until real POINTS land, and the reply contributes only a
+    *Display side — the stepped ladder:* the aggregate sharpens in
+    QUANTIZED steps, never per view. While standing, the one density
+    request allowed is the next LADDER STEP window
+    (`lodAggregateStepWindow`): the view snapped outward to a
+    power-of-`LOD_AGG_STEP_FACTOR` block grid over the data extent, per
+    axis, at most `LOD_AGG_STEP_MAX` steps below home, requested only when
+    every covering texture is coarser than the step
+    (`LOD_AGG_STEP_SLACK`). Quantization makes step windows pan-stable and
+    dedupable — every view in a region resolves to the SAME window, pans
+    inside a step repaint nothing, revisits hit the cache — so a zoom sees
+    at most `LOD_AGG_STEP_MAX` smooth-to-smooth swaps before points, and
+    worst-case softness is bounded (≈ `LOD_AGG_STEP_FACTOR`× stretch per
+    axis) instead of unbounded home-stretch. Per-view refinement was the
+    recorded failure mode twice over: multi-MB re-ships per pan/zoom step
+    (the HAR), and fresh textures per view reading as jumping. A step
+    reply is the ONE density reply that may repaint a covered view
+    (matched against the marked request window, `g._stepReqWin`); every
+    other covered reply — the band probes above all — lands as a
     facts-only cache entry (window + exact count,
-    `lodRememberDensityFacts`) that recalibrates this gate. The
-    transition band's exact grids have a hard speckled character (sparse
-    cells at the points' own §2 alpha), and repainting the smooth standing
-    surface with one on every band probe read as jumping between zoom
-    levels (field capture). A reply for an UNCOVERED view still applies —
-    silence must never blank a frame (T1) — and standalone clients apply
-    everything (their re-binned grids are the only refinement they have).
+    `lodRememberDensityFacts`) that recalibrates this gate: the band's
+    exact grids have a hard speckled character (sparse cells at the
+    points' own §2 alpha), and repainting the smooth surface with one per
+    probe read as jumping between zoom levels (field capture). A reply for
+    an UNCOVERED view still applies — silence must never blank a frame
+    (T1) — and standalone clients apply everything (their re-binned grids
+    are the only refinement they have). Recorded trade-off: inside the
+    points band the raw-view probe takes the single request slot, so a
+    view can briefly outrun its ladder step until points land.
   - **Source-clamped grids:** the transition-band replies that do go out
     stay cheap — a pyramid-served reply never composes more cells than the
     finest level resolves under the window

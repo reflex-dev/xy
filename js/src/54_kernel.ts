@@ -2,8 +2,8 @@ import { payloadBuffers } from "./00_header";
 import { buildLutData } from "./10_colormaps";
 import { parseColor } from "./20_theme";
 import {
-  lodAggregateStands, lodApplyDensityUpdate, lodApplyDrill, lodDrillServesView,
-  lodDropDrill, lodPromoteCachedDrill, lodRememberDensity,
+  lodAggregateStands, lodAggregateStepWindow, lodApplyDensityUpdate, lodApplyDrill,
+  lodDrillServesView, lodDropDrill, lodPromoteCachedDrill, lodRememberDensity,
 } from "./45_lod";
 import { xyCreateRebinWorker } from "./46_worker";
 import { ChartView } from "./50_chartview";
@@ -39,7 +39,8 @@ Object.assign(ChartView.prototype, {
         // goes neither pending nor on the wire. The seq bump above stands, so
         // an in-flight reply for an older, wider view dies stale instead of
         // yanking the exact marks out from under the view it can't improve.
-        if (this._drillServesView(g, view) || this._aggregateStandsForView(g, view)) {
+        const plan = this._drillServesView(g, view) ? null : this._densityRequestPlan(g, view);
+        if (!plan) {
           g._lodPendingView = null;
           g._lodPendingSeq = null;
           g._lodPendingAt = null;
@@ -49,7 +50,7 @@ Object.assign(ChartView.prototype, {
         // screen): keep waiting on ITS seq instead of arming a new one that
         // would kill the incoming reply just to resend the same window —
         // the "constantly re-requesting the same points" loop (#225 notes).
-        const dup = this._densityRequestDup(g, view, plotW, plotH, now);
+        const dup = this._densityRequestDup(g, plan.win, plotW, plotH, now);
         if (dup) {
           g._lodPendingView = view;
           g._lodPendingSeq = dup.seq;
@@ -89,10 +90,11 @@ Object.assign(ChartView.prototype, {
           if (g.tier !== "density") continue;
           // T12/T13 re-check at actual send time: a drill that landed during
           // the debounce — or a reply that moved the view back out of the
-          // points band — elides the request it made unnecessary; a drill
-          // that died during it re-arms the request the schedule-time check
-          // skipped.
-          if (this._drillServesView(g, view) || this._aggregateStandsForView(g, view)) {
+          // points band with its step already covered — elides the request
+          // it made unnecessary; a drill that died during it re-arms the
+          // request the schedule-time check skipped.
+          const plan = this._drillServesView(g, view) ? null : this._densityRequestPlan(g, view);
+          if (!plan) {
             if (g._lodPendingSeq === seq) {
               g._lodPendingView = null;
               g._lodPendingSeq = null;
@@ -105,7 +107,7 @@ Object.assign(ChartView.prototype, {
           // reply is deterministic for unchanged data; a data change rebuilds
           // this GPU record and clears the memo) or still in flight (its
           // reply was adopted as this trace's pending marker above).
-          const dup = this._densityRequestDup(g, view, plotW, plotH, sendNow);
+          const dup = this._densityRequestDup(g, plan.win, plotW, plotH, sendNow);
           if (dup) {
             if (dup.answered && g._lodPendingSeq === seq) {
               g._lodPendingView = null;
@@ -114,12 +116,15 @@ Object.assign(ChartView.prototype, {
             }
             continue;
           }
-          const win = this._densityRequestWindow(g, view);
+          const win = plan.win;
           this.comm.send({
             type: "density_view", seq, trace: g.trace.id,
             x0: win[0], x1: win[1], y0: win[2], y1: win[3],
             w: plotW, h: plotH,
           });
+          // A ladder-step request's reply is the one density reply allowed
+          // to repaint a covered view (lodApplyDensityUpdate).
+          if (plan.step) g._stepReqWin = win;
           g._lastDensityReq = { win, w: plotW, h: plotH, seq, sentAt: sendNow, answered: false };
         }
       }
@@ -130,12 +135,6 @@ Object.assign(ChartView.prototype, {
       this._viewTimer = setTimeout(send, delay);
     }
     return seq;
-  },
-
-  _densityRequestWindow(g, view) {
-    const [x0, x1] = this._axisRange(g.xAxis, view);
-    const [y0, y1] = this._axisRange(g.yAxis, view);
-    return [Math.min(x0, x1), Math.max(x0, x1), Math.min(y0, y1), Math.max(y0, y1)];
   },
 
   // Same request within half an output texel per edge: gesture-end and
@@ -157,22 +156,31 @@ Object.assign(ChartView.prototype, {
   // pending hold, so a lost reply can never suppress refresh forever). The
   // memo lives on the GPU record — a rebuild (append, payload update, context
   // restore) starts it fresh, so data changes are never suppressed.
-  _densityRequestDup(g, view, plotW, plotH, now) {
+  _densityRequestDup(g, win, plotW, plotH, now) {
     const last = g._lastDensityReq;
-    if (!last || !this._densityRequestSame(last, this._densityRequestWindow(g, view), plotW, plotH)) {
-      return null;
-    }
+    if (!last || !this._densityRequestSame(last, win, plotW, plotH)) return null;
     if (last.answered) return last;
     return now - last.sentAt < 1200 ? last : null;
   },
 
-  // The aggregate never refines (T13, revised): the covering texture stands
-  // until the view could plausibly resolve into real points, so a density
-  // request goes out only inside that band (lodAggregateStands).
-  _aggregateStandsForView(g, view) {
+  // What (if anything) this trace should ask the kernel for at `view`
+  // (T13, revised): inside the points band, the RAW VIEW window — the
+  // kernel decides the tier there, and its density replies land as facts
+  // only; while the aggregate stands, the next LADDER STEP window when
+  // every covering texture is coarser than the view's step (a quantized
+  // aligned window, so pans resolve to the same request), else nothing.
+  // Drill/point-cache service is the caller's earlier check.
+  _densityRequestPlan(g, view) {
     const [x0, x1] = this._axisRange(g.xAxis, view);
     const [y0, y1] = this._axisRange(g.yAxis, view);
-    return lodAggregateStands(this, g, x0, x1, y0, y1);
+    if (!lodAggregateStands(this, g, x0, x1, y0, y1)) {
+      return {
+        win: [Math.min(x0, x1), Math.max(x0, x1), Math.min(y0, y1), Math.max(y0, y1)],
+        step: false,
+      };
+    }
+    const win = lodAggregateStepWindow(this, g, x0, x1, y0, y1);
+    return win ? { win, step: true } : null;
   },
 
   // A reply whose seq lost the global race can still be current in substance:

@@ -1,19 +1,24 @@
-"""The aggregate tier never refines; requests only probe the points band
-(LOD doc T13, revised on #225 field feedback).
+"""The aggregate sharpens in QUANTIZED ladder steps and probes the points
+band with raw views (LOD doc T13, revised on #225 field feedback).
 
 The field HAR behind this (100M live drilldown): every pan and zoom step
 re-requested a multi-MB density grid — including back-to-back windows
 differing by sub-pixel amounts — for a picture that was the same aggregate
-with marginally different blur. The revised contract: whatever density
-texture already covers the view STANDS, however blurry, until the view could
-plausibly resolve into REAL points (estimated in-view count within
-LOD_POINTS_REQUEST_BAND × the direct budget); only then does a density_view
-go out, and the kernel answers it with exact points once the count fits.
-Sub-texel twins of the last sent request are suppressed outright, and the
-frame always draws ONE aggregate texture (a tried fine-over-broad detail
-layer was reverted: density textures alpha-composite, so overlaps
-double-count opacity, and per-window normalization makes the seam a
-brightness step — the field capture's "stale rectangle").
+with marginally different blur, and per-view textures read as zoom/pan
+jumping. The revised contract: while the estimated in-view count sits above
+the points band (LOD_POINTS_REQUEST_BAND × the direct budget), the only
+density request allowed is the next LADDER STEP — the view snapped outward
+to a power-of-LOD_AGG_STEP_FACTOR block grid over the extent, at most
+LOD_AGG_STEP_MAX steps below home — whose reply is the one density reply
+that may repaint a covered view (a smooth-to-smooth swap; pans inside a
+step re-resolve to the same window). Inside the band the RAW view is
+requested so the kernel decides the tier with real counts; its density
+replies land as facts only. Sub-texel twins of the last sent request are
+suppressed outright, and the frame always draws ONE aggregate texture (a
+tried fine-over-broad detail layer was reverted: density textures
+alpha-composite, so overlaps double-count opacity, and per-window
+normalization makes the seam a brightness step — the field capture's
+"stale rectangle").
 
 This drives the real client in headless Chromium with a captured comm.
 """
@@ -96,15 +101,37 @@ _PROBE = """
       (c) => c && !c.tex && c.visible === 10000000);
 
     // Zooming inside W at half its span: ~2.5M estimated in view — nowhere
-    // near points territory, so the texture stands and NOTHING is requested,
-    // pending markers included.
-    const insideElided = request(viewAt(0.5, 0.5, 0.25, 0.25)) === 0;
+    // near points territory, so the aggregate stands. The one request the
+    // stepped ladder allows: the QUANTIZED step-1 window (the view snapped
+    // outward to extent/4 blocks — here exactly W's bounds), never the raw
+    // view window.
+    const stepView = viewAt(0.5, 0.5, 0.25, 0.25);
+    const stepSent = request(stepView) === 1;
+    const stepMsg = sent.filter((m) => m.type === "density_view").pop();
+    const stepTol = sx * 1e-9;
+    const stepAligned = stepMsg &&
+      Math.abs(stepMsg.x0 - wx0) <= stepTol && Math.abs(stepMsg.x1 - wx1) <= stepTol &&
+      Math.abs(stepMsg.y0 - wy0) <= stepTol && Math.abs(stepMsg.y1 - wy1) <= stepTol;
+    const stepMarked = Array.isArray(g._stepReqWin);
+    // The step reply is the ONE density reply allowed to repaint a covered
+    // view: it replaces the standing texture (smooth-to-smooth swap).
+    applyDensity(stepMsg.x0, stepMsg.x1, stepMsg.y0, stepMsg.y1, 200, 150, 10000000);
+    const stepApplied = g.density !== shownBefore &&
+      Math.abs(g.density.xRange[0] - wx0) <= stepTol && g._stepReqWin === null;
+
+    // Re-requesting a view the step texture now covers sends nothing.
+    const insideElided = request(stepView) === 0;
     const elisionClearedPending = g._lodPendingView === null;
 
     // Deeper inside W (1/16 of its area): ~625k estimated — inside the
-    // points band (budget x 4), so the request goes out and the kernel
-    // decides with real counts.
-    const bandRequested = request(viewAt(0.5, 0.5, 0.12, 0.12)) === 1;
+    // points band (budget x 4), so the RAW VIEW request goes out and the
+    // kernel decides with real counts.
+    const bandView = viewAt(0.5, 0.5, 0.12, 0.12);
+    const bandRequested = request(bandView) === 1;
+    const bandMsg = sent.filter((m) => m.type === "density_view").pop();
+    const bandIsRawView = bandMsg &&
+      Math.abs(bandMsg.x0 - bandView.x0) <= stepTol &&
+      Math.abs(bandMsg.x1 - bandView.x1) <= stepTol;
 
     // A window whose count is already points-scale requests immediately.
     const w2x0 = v0.x0 + sx * 0.10, w2x1 = v0.x0 + sx * 0.40;
@@ -114,9 +141,12 @@ _PROBE = """
 
     // Sub-texel dedup: a settle re-request shifted by 0.2 output texels is
     // the same picture — suppressed while the first is in flight; a shift of
-    // 3 texels is a genuinely different window — sent. (These views sit
-    // inside the 60k home count, i.e. always in the points band, so only
-    // the dedup memo gates them.)
+    // 3 texels is a genuinely different window — sent. Restore the honest
+    // 60k sample weighting first so these views sit in the points band and
+    // request RAW windows (a standing view would quantize to the same
+    // aligned step window under any sub-block shift, gating on alignment
+    // rather than the dedup memo this section pins).
+    g.sampleOverlay.sample.visible = 60000;
     const plotW = Math.round(view.plot.w);
     const base = viewAt(0.75, 0.75, 0.2, 0.2);
     const sentBase = request(base) === 1;
@@ -150,7 +180,9 @@ _PROBE = """
 
     document.body.setAttribute("data-xy-economy-probe", JSON.stringify({
       hasDensity: !!g, homeHasCount, standingHeld, factsStored,
-      insideElided, elisionClearedPending, bandRequested, nearDrillRequested,
+      stepSent, stepAligned, stepMarked, stepApplied,
+      insideElided, elisionClearedPending, bandRequested, bandIsRawView,
+      nearDrillRequested,
       sentBase, subTexelSuppressed, texelsRequested,
       densityDraws, uncoveredApplied,
     }));
@@ -202,13 +234,21 @@ def test_aggregate_stands_until_points_band(tmp_path: Path) -> None:
     assert result["standingHeld"] is True
     assert result["factsStored"] is True
     assert result["uncoveredApplied"] is True
-    # The aggregate stands: no refinement requests while the estimated
-    # in-view count sits clearly above points territory.
+    # The stepped ladder: a standing view whose covering texture is coarser
+    # than its step requests the QUANTIZED aligned step window (never the
+    # raw view window), marks it, and that reply repaints; the same view
+    # afterwards requests nothing.
+    assert result["stepSent"] is True
+    assert result["stepAligned"] is True
+    assert result["stepMarked"] is True
+    assert result["stepApplied"] is True
     assert result["insideElided"] is True
     assert result["elisionClearedPending"] is True
-    # The points band and points-scale windows still request — the kernel
-    # keeps deciding with real counts everywhere it could answer sharper.
+    # The points band and points-scale windows still request the RAW view —
+    # the kernel keeps deciding with real counts everywhere it could answer
+    # sharper.
     assert result["bandRequested"] is True
+    assert result["bandIsRawView"] is True
     assert result["nearDrillRequested"] is True
     # Sub-texel dedup: same picture, no second request; a real shift sends.
     assert result["sentBase"] is True
