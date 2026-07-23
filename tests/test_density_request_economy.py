@@ -84,7 +84,16 @@ _PROBE = """
     };
     const wx0 = cx - sx * 0.25, wx1 = cx + sx * 0.25;
     const wy0 = cy - sy * 0.25, wy1 = cy + sy * 0.25;
+    const shownBefore = g.density;
     applyDensity(wx0, wx1, wy0, wy1, 200, 150, 10000000);
+    // Display side of the stands-rule: the home texture covers the view, so
+    // the reply changed no pixels — it landed as a FACTS-ONLY cache entry
+    // (window + exact count) that the points-band gate reads below. The
+    // field capture behind this: transition-band exact grids repainting the
+    // smooth standing surface on every probe read as zoom-level jumping.
+    const standingHeld = g.density === shownBefore;
+    const factsStored = (g.densityCache || []).some(
+      (c) => c && !c.tex && c.visible === 10000000);
 
     // Zooming inside W at half its span: ~2.5M estimated in view — nowhere
     // near points territory, so the texture stands and NOTHING is requested,
@@ -133,11 +142,17 @@ _PROBE = """
     view._drawNow();
     view._drawDensity = real;
 
+    // Coverage failure still applies the reply: a view panned past every
+    // cached window must never sit on a blank frame waiting for points (T1).
+    view.view = { x0: v0.x1 + sx, x1: v0.x1 + 2 * sx, y0: v0.y0, y1: v0.y1 };
+    applyDensity(v0.x1 + sx, v0.x1 + 2 * sx, v0.y0, v0.y1, 50, 40, 5000000);
+    const uncoveredApplied = g.density !== shownBefore && g.density.visible === 5000000;
+
     document.body.setAttribute("data-xy-economy-probe", JSON.stringify({
-      hasDensity: !!g, homeHasCount,
+      hasDensity: !!g, homeHasCount, standingHeld, factsStored,
       insideElided, elisionClearedPending, bandRequested, nearDrillRequested,
       sentBase, subTexelSuppressed, texelsRequested,
-      densityDraws,
+      densityDraws, uncoveredApplied,
     }));
   } catch (err) {
     document.body.setAttribute(
@@ -181,6 +196,12 @@ def test_aggregate_stands_until_points_band(tmp_path: Path) -> None:
 
     assert result["hasDensity"] is True
     assert result["homeHasCount"] is True
+    # Display side: a mid-band aggregate reply repaints NOTHING while a
+    # covering texture stands — it lands as facts for the gate; a reply for
+    # an uncovered view still applies (never a blank frame, T1).
+    assert result["standingHeld"] is True
+    assert result["factsStored"] is True
+    assert result["uncoveredApplied"] is True
     # The aggregate stands: no refinement requests while the estimated
     # in-view count sits clearly above points territory.
     assert result["insideElided"] is True

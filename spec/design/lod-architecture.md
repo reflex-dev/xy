@@ -541,6 +541,17 @@ invariants so future kinds don't regress them:
     with no recorded counts anywhere always requests. A fresh grid for an
     already-cached window supersedes its unpinned twin
     (`lodRememberDensity` dedupe), so the gate always reads current facts.
+    *Display side:* with a kernel attached, an aggregate reply never
+    REPLACES a texture that already covers the view — the standing surface
+    holds until real POINTS land, and the reply contributes only a
+    facts-only cache entry (window + exact count,
+    `lodRememberDensityFacts`) that recalibrates this gate. The
+    transition band's exact grids have a hard speckled character (sparse
+    cells at the points' own §2 alpha), and repainting the smooth standing
+    surface with one on every band probe read as jumping between zoom
+    levels (field capture). A reply for an UNCOVERED view still applies —
+    silence must never blank a frame (T1) — and standalone clients apply
+    everything (their re-binned grids are the only refinement they have).
   - **Source-clamped grids:** the transition-band replies that do go out
     stay cheap — a pyramid-served reply never composes more cells than the
     finest level resolves under the window

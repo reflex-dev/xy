@@ -561,7 +561,7 @@ export function lodRememberDensity(view, g, d) {
       const old = g.densityCache[i];
       if (old === d || lodDensityPinned(g, old) || !lodSameDensityWindow(old, d)) continue;
       g.densityCache.splice(i, 1);
-      view.gl.deleteTexture(old.tex);
+      if (old.tex) view.gl.deleteTexture(old.tex);
       if (old.overlay && old.overlay !== g.sampleOverlay) {
         view._destroySampleOverlay(old.overlay);
         old.overlay = null;
@@ -585,7 +585,7 @@ export function lodRememberDensity(view, g, d) {
     if (drop < 0) break;
     const old = g.densityCache.splice(drop, 1)[0];
     if (!lodDensityPinned(g, old)) {
-      view.gl.deleteTexture(old.tex);
+      if (old.tex) view.gl.deleteTexture(old.tex);
       // The window's sample overlay rides its cache entry (T9 pairing) and
       // dies with it — except the home/init overlay, which the standalone
       // re-bin worker keeps as its CPU-side source.
@@ -1038,12 +1038,61 @@ function lodBeginDrillExitContinuous(view, g) {
 
 // -- aggregate updates & tier drawing ----------------------------------------
 
+// Facts-only cache entry for a display-suppressed aggregate reply (T13): no
+// texture, just the window and its exact count — the points-band gate
+// (lodAggregateStands) reads it to recalibrate local estimates while the
+// standing texture keeps owning the frame.
+function lodRememberDensityFacts(view, g, upd) {
+  const d = upd.density;
+  if (!d || !Array.isArray(d.x_range) || !Array.isArray(d.y_range)) return;
+  if (!Number.isFinite(upd.visible)) return;
+  const entry: any = {
+    xRange: [d.x_range[0], d.x_range[1]],
+    yRange: [d.y_range[0], d.y_range[1]],
+    visible: upd.visible,
+  };
+  if (!g.densityCache) g.densityCache = [];
+  for (let i = g.densityCache.length - 1; i >= 0; i--) {
+    const old = g.densityCache[i];
+    if (lodDensityPinned(g, old) || !lodSameDensityWindow(old, entry)) continue;
+    if (old.tex) continue; // never displace a real texture with bare facts
+    g.densityCache.splice(i, 1);
+  }
+  entry._stamp = ++view._densityStamp;
+  g.densityCache.push(entry);
+  while (g.densityCache.length > 12) {
+    const idx = g.densityCache.findIndex((c) => c && !c.tex && c !== entry);
+    if (idx < 0) break;
+    g.densityCache.splice(idx, 1);
+  }
+}
+
 // Apply a kernel "density"-mode update: new grid texture with eased exposure
 // normalization, previous grid kept for the crossfade, source remembered in
 // the per-trace cache.
 export function lodApplyDensityUpdate(view, g, upd, buffers) {
   lodMarkDrillDying(view, g);
   const d = upd.density;
+  // Display side of the stands-rule (T13, user-directed #225 follow-up):
+  // with a kernel attached, an aggregate reply never REPLACES a texture
+  // that already covers the view. The standing (smooth, possibly stale)
+  // surface holds until REAL points land — the transition band's exact
+  // grids have a hard speckled character (sparse cells at the points' own
+  // alpha), and repainting the smooth surface with one on every band probe
+  // read as jumping between zoom levels in the field capture. The reply
+  // still lands as FACTS (its window's exact count recalibrates the
+  // points-band gate), and the drill lifecycle above proceeds — marks fade
+  // into the standing surface. Coverage failure (a pan past every cached
+  // window) still applies the reply: silence must never blank a frame
+  // (T1). Standalone clients keep applying everything — their re-binned
+  // grids are the only refinement they have.
+  if (view.comm) {
+    const covering = lodDensityForView(view, g);
+    if (covering && covering.tex && view._viewInsideRange(covering.xRange, covering.yRange)) {
+      lodRememberDensityFacts(view, g, upd);
+      return;
+    }
+  }
   const grid = d.enc === "log-u8"
     ? lodDecodeLogU8(buffers[d.buf], d.max)
     : lodCopyGrid(view._asF32(buffers[d.buf]));

@@ -63,7 +63,14 @@ in the README).
   count fits. The estimate takes the lower of an area-scaled cached-window
   count and the retained first-payload sample counted in-view — the sample
   follows the data's actual distribution, so sparse regions reach their
-  points without being stranded in blur by uniform-density assumptions. A 100M-scatter field capture had shipped a ~2.7 MB full-screen
+  points without being stranded in blur by uniform-density assumptions.
+  Display-side, a kernel-attached client never repaints a covering
+  aggregate texture with a mid-band density reply (the band's exact grids
+  have a speckled character that read as zoom-level jumping against the
+  smooth standing surface); such replies land as facts-only cache entries
+  for the gate, and the picture changes only aggregate→points and back —
+  replies for uncovered views still apply, and standalone clients keep
+  applying everything. A 100M-scatter field capture had shipped a ~2.7 MB full-screen
   grid on every pan/zoom step (including sub-pixel window twins, now deduped
   within half an output texel) for what was the same aggregate with
   marginally different blur; intermediate-zoom blur is the accepted,
