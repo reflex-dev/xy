@@ -140,6 +140,17 @@ lightness (the points' own alpha compositing).
    re-bin (the count grid and sample selection stay fused as before; plain
    scatters are byte-identical to the pre-color pipeline), +4 B/cell on the
    wire, and the §4 pyramid's color planes at +8 B/cell.
+   The kernel's per-point color *source* (LUT indices or packed RGBA8) is a
+   full-column O(N) quantize over immutable channel values and their global
+   domain, so it is resolved **once per trace** and cached
+   (`interaction.trace_bin_colors`; a rebuildable §27 derived buffer,
+   itemized as `memory_report()["bin_color_bytes"]`, dropped on append and
+   lazily re-resolved by the append's own refresh emit). `density_view`
+   resolves it only in the branches that feed `bin_2d_mean_color` — pyramid
+   replies compose the §4 prebuilt color planes and point drills ship sliced
+   channels, so a per-request or per-tier resolve is a regression (it charged
+   the 100M FastAPI drilldown demo 1–2 s per reply, ~10–100× the tier work;
+   tripwire: `test_adaptive_drilldown_cycle_mean_color`).
    *Why mean-of-colors and not colormap(mean value):* the mean color is
    representation-agnostic (categories have no mean value), matches the
    drilled points' downsample exactly (the anti-jarring contract, T3), and
@@ -603,7 +614,10 @@ contract entry before it lands.
    LUT indices + a ≤256-entry RGBA8 LUT (continuous quantizes to the
    client's 256 texels; categorical passes codes, wide codes fold modulo the
    palette) or per-point straight RGBA8 (`direct_rgba`) —
-   `channels.resolve_bin_colors` maps every channel mode onto one of the two.
+   `channels.resolve_bin_colors` maps every channel mode onto one of the two,
+   and `interaction.trace_bin_colors` caches the full-column resolution per
+   trace (§2 cost note) so pyramid build, first-paint emit, and every exact
+   re-bin share one O(N) quantize instead of paying it per request.
 2. **Done:** mean-color planes wired through the initial emit
    (`_payload._density_trace_spec`), `density_view` (exact and pyramid
    paths), the static SVG/PNG exporters, and the standalone re-bin worker;

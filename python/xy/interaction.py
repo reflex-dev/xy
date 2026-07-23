@@ -385,6 +385,40 @@ def _pyramid_base_dim_for(t: Trace) -> int:
     return int(min(PYRAMID_MAX_DIM, max(PYRAMID_BASE_DIM, pow2)))
 
 
+def trace_bin_colors(t: Trace) -> Optional[dict]:
+    """The trace's full-column kernel color source for mean-color binning
+    (LOD doc §2), resolved once and cached on the trace.
+
+    `channels.resolve_bin_colors` over the full column quantizes every
+    canonical row — an O(N) pass whose NumPy temporaries reach multiple GB on
+    a 100M-point trace — while its result depends only on the channel's
+    immutable values and global domain. Cache it so each of its consumers
+    (pyramid build, the exact and no-rescan mean-color re-bins, the
+    first-paint density emit) pays that pass once per trace instead of once
+    per request; `density_view` must never resolve it for a reply that ships
+    no mean-color grid (pyramid replies use the prebuilt color planes, drills
+    ship sliced channels). A rebuildable derived cache (§27), dropped by
+    `append_data` (appended rows' colors and a possibly moved channel domain
+    both change the resolution)."""
+    cached = t._bin_colors
+    if cached is None:
+        resolved = channels.resolve_bin_colors(t.color_ch, None, DEFAULT_PALETTE)
+        t._bin_colors = 0 if resolved is None else resolved
+        return resolved
+    return None if cached == 0 else cached
+
+
+def bin_color_cache_bytes(fig: Any) -> int:
+    """Memory-report line (design dossier §27): bytes held by resolved
+    bin-color caches (per-row idx/rgba planes plus their LUTs)."""
+    total = 0
+    for t in fig.traces:
+        cached = getattr(t, "_bin_colors", None)
+        if cached:
+            total += sum(int(v.nbytes) for v in cached.values() if isinstance(v, np.ndarray))
+    return total
+
+
 def _ensure_pyramid(t: Trace) -> int | None:
     """Lazily build the trace's count pyramid (§5 Tier 3). Cached on the
     trace; 0 is remembered as "tried and not applicable" so we never rebuild.
@@ -412,7 +446,7 @@ def _ensure_pyramid(t: Trace) -> int | None:
     x1 += (x1 - x0) * 1e-9
     y1 += (y1 - y0) * 1e-9
     base_dim = _pyramid_base_dim_for(t)
-    bin_colors = channels.resolve_bin_colors(t.color_ch, None, DEFAULT_PALETTE)
+    bin_colors = trace_bin_colors(t)
     if bin_colors is not None:
         handle = kernels.pyramid_build_color(
             t.x.values, t.y.values, x0, x1, y0, y1, base_dim, **bin_colors
@@ -688,9 +722,16 @@ def density_view(
     binning = "exact"
     grid = None
     # Mean point color plane (LOD doc §2): channel-bearing traces ship it
-    # alongside the counts wherever a grid is produced below.
+    # alongside the counts wherever a grid is produced below. Only the cheap
+    # does-it-bin-colors fact is decided up front; the full-column idx/lut
+    # source (`trace_bin_colors` — an O(N) resolve, cached on the trace) is
+    # materialized solely by the branches that feed `bin_2d_mean_color`.
+    # Pyramid replies compose prebuilt color planes and point drills ship
+    # sliced channels, so resolving here would charge every request a
+    # full-column pass those tiers never consume (the 100M drilldown demo
+    # paid 1–2 s per reply for it).
     rgba_grid: np.ndarray | None = None
-    bin_colors = channels.resolve_bin_colors(t.color_ch, None, DEFAULT_PALETTE)
+    mean_colors = channels.bins_mean_color(t.color_ch)
     # Texture sampling for the density grid: "nearest" when the grid is at full
     # screen resolution (exact deep-zoom detail — crisp, no interpolation bleed),
     # "linear" when it is upsampled from a coarser tier (smooth aggregate).
@@ -763,7 +804,7 @@ def density_view(
     # are affordable, gather **once** and decide by the *actual* in-window count.
     if (
         sidx is not None
-        and bin_colors is None
+        and not mean_colors
         and (grid is None or binning.endswith("-upsampled"))
         and sidx.window_count(lo_x, hi_x, lo_y, hi_y) <= SPATIAL_EXACT_MAX_POINTS
     ):
@@ -806,6 +847,7 @@ def density_view(
         visible = plan.visible
         w, h = plan.grid_w, plan.grid_h
         grid = kernels.bin_2d(xv, yv, lo_x, hi_x, lo_y, hi_y, w, h)
+        bin_colors = trace_bin_colors(t) if mean_colors else None
         if bin_colors is not None:
             # This branch is already the O(N) correctness net; the mean-color
             # pass (LOD doc §2) rides the same full-column scan cost.
@@ -837,6 +879,7 @@ def density_view(
         bx, (bx0, bx1) = fig._binning_coords(t.x_axis, xv, (lo_x, hi_x))
         by, (by0, by1) = fig._binning_coords(t.y_axis, yv, (lo_y, hi_y))
         grid = kernels.bin_2d(bx, by, bx0, bx1, by0, by1, w, h)
+        bin_colors = trace_bin_colors(t) if mean_colors else None
         if bin_colors is not None:
             # Mean point color per cell (LOD doc §2): same window, same
             # binning space, occupied cells match the count grid exactly.
@@ -1186,6 +1229,9 @@ def append_data(
         # The trace crossed the lazy-index threshold after an earlier
         # "not applicable" result; let the next wide view build it.
         t._pyr_handle = None
+    # The cached bin-color resolution covered the pre-append rows over the
+    # pre-append domain; drop it for a lazy full re-resolve (LOD doc §2).
+    t._bin_colors = None
     lod.exit_drill(t)
     # Remembered subsets were computed against the pre-append canonical state;
     # the client rebuilds its GPU traces (and drops its cached point windows)
