@@ -74,7 +74,7 @@ from xy_docs.sidebar import (
     xy_docs_sidebar,
     xy_docs_sidebar_comp,
 )
-from xy_docs.xy_docs import _DOCS_ROUTES, app
+from xy_docs.xy_docs import _CHART_STYLE, _DOCS_ROUTES, app
 
 import xy
 from xy.components import _MARK_APPLIERS
@@ -269,6 +269,10 @@ def test_docs_app_configures_the_reflex_xy_adapter() -> None:
     """Compile live documentation examples through the shipped Reflex adapter."""
     assert config.telemetry_enabled is False
     assert any(isinstance(plugin, reflex_xy.XYPlugin) for plugin in config.plugins)
+
+
+def test_docs_app_does_not_override_the_builtin_toolbar_palette() -> None:
+    assert not any(key.startswith("--chart-modebar-") for key in _CHART_STYLE)
 
 
 def test_tailwind_styling_docs_match_the_reflex_plugin_contract() -> None:

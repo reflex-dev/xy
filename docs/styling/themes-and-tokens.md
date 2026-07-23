@@ -296,7 +296,8 @@ move together across the whole chart.
 | `--chart-legend-bg` | Legend background | faint neutral fill |
 | `--chart-badge-bg` / `--chart-badge-text` | Reduction badges | light / dark |
 | `--chart-tick-label-max-width` | Maximum browser width of categorical y-axis tick labels | available edge space |
-| `--chart-modebar-bg` / `--chart-modebar-active` | Toolbar and active button | light or dark translucent (follows a `.dark` root class) / neutral |
+| `--chart-modebar-bg` / `--chart-modebar-active` | Toolbar and active button | scheme-aware white/dark surface / `#edf1f6` light, `#121417` dark |
+| `--chart-modebar-focus` | Toolbar keyboard focus ring | `#1b212a` light, `#e2e5e9` dark |
 | `--chart-selection` / `--chart-selection-fill` | Selection outline/fill | neutral grey matching the toolbar (follows a `.dark` root class) |
 | `--chart-zoom-selection` / `--chart-zoom-selection-fill` | Box-zoom outline/fill | same neutral grey as selection |
 | `--chart-crosshair` | Crosshair lines | translucent dark |
@@ -512,11 +513,10 @@ color already follows the inherited text color, so the toolbar stays readable in
 both modes with no configuration. An explicit `.light` class (or no class at
 all) keeps the light palette.
 
-That is only the built-in default. A `--chart-modebar-bg` or
-`--chart-modebar-active` value you set — through `theme()`, chart `style=`, or a
-host stylesheet — still wins in either mode, so mapping the toolbar onto your
-own adaptive design tokens (for example Radix's `--secondary-2`) replaces the
-automatic palette entirely.
+These neutral colors are built into every toolbar; an app does not need to map
+them to its own secondary palette. A `--chart-modebar-bg`,
+`--chart-modebar-active`, or `--chart-modebar-focus` value you set through
+`theme()`, chart `style=`, or a host stylesheet still wins in either mode.
 
 ## Dark mode in a standalone export
 

@@ -284,19 +284,20 @@ Set them on `.xy` or any ancestor:
 | `--chart-legend-bg` | Legend background | `rgba(128,128,128,.08)` |
 | `--chart-badge-bg` / `--chart-badge-text` | Reduction badges | `rgba(255,255,255,.82)` / `#0f172a` (light; see below) |
 | `--chart-tick-label-max-width` | Maximum browser width of categorical y-axis tick labels | available space between the transformed label and chart edge |
-| `--chart-modebar-bg` / `--chart-modebar-active` | Modebar / active button | `rgba(255,255,255,.78)` / `rgba(128,128,128,.2)` (light; see below) |
+| `--chart-modebar-bg` / `--chart-modebar-active` | Modebar / active button | `#fff` / `#edf1f6` light; `#1b1d20` / `#121417` dark |
+| `--chart-modebar-focus` | Modebar keyboard focus ring | `#1b212a` light; `#e2e5e9` dark |
 | `--chart-selection` / `--chart-selection-fill` | Box/lasso/x-range/y-range select | modebar grey: `rgba(92,101,115,.6)` / `…,.12)` (light; see below) |
 | `--chart-zoom-selection` / `--chart-zoom-selection-fill` | Box-zoom drag rectangle | same modebar grey as selection (see below) |
 | `--chart-crosshair` | Crosshair lines | `rgba(15,23,42,.42)` |
 | `--chart-annotation-text` | Annotation label color | falls back to `--chart-text` |
 | `--chart-cursor` / `--chart-cursor-pan` | Plot cursor (box-zoom / pan) | `crosshair` / `grab` |
-| `--chart-focus` | Keyboard focus ring on the plot canvas and modebar buttons | `#2563eb` |
+| `--chart-focus` | Keyboard focus ring on the plot canvas | `#aa99ec` |
 
 The modebar, badge, and selection-band defaults are **scheme-aware**: a `.dark`
-class on the chart root or any ancestor flips the internal fallbacks — modebar
-to `rgba(37,42,52,.9)` / `rgba(255,255,255,.16)`, badges to `rgba(30,35,44,.88)`
-bg / `#f8fafc` text, selection/zoom bands to the dark modebar grey
-`rgba(173,180,191,.6)` stroke / `…,.12)` fill (light scheme:
+class on the chart root or any ancestor flips the internal fallbacks — the
+modebar active fill to `#121417` and focus ring to `#e2e5e9`, badges to
+`rgba(30,35,44,.88)` bg / `#f8fafc` text, selection/zoom bands to the dark
+modebar grey `rgba(173,180,191,.6)` stroke / `…,.12)` fill (light scheme:
 `rgba(92,101,115,.6)` / `…,.12)`, the modebar's text greys). Box, lasso, and
 x/y-range selections **persist** after the drag — like the lasso, they stay
 drawn (re-projected through pan/zoom) until the selection is cleared. The

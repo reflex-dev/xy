@@ -84,21 +84,29 @@ def test_modebar_active_button_uses_dark_active_color(tmp_path: Path) -> None:
     );
     const darkActiveBackground = getComputedStyle(active).backgroundColor;
     const darkBarBackground = getComputedStyle(bar).backgroundColor;
+    active.focus();
+    const darkFocusShadow = getComputedStyle(active).boxShadow;
     view.root.style.setProperty("--chart-modebar-active", "#ff00ff");
+    view.root.style.setProperty("--chart-modebar-focus", "#00ff00");
     const customActiveBackground = getComputedStyle(active).backgroundColor;
+    const customFocusShadow = getComputedStyle(active).boxShadow;
     document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
       darkActiveBackground,
       darkBarBackground,
+      darkFocusShadow,
       customActiveBackground,
+      customFocusShadow,
     }));
 """
         + _POSTLUDE
     )
     result = _probe(chart, script, tmp_path, "dark active modebar button")
 
-    assert result["darkActiveBackground"] == "rgb(40, 43, 49)", result
+    assert result["darkActiveBackground"] == "rgb(18, 20, 23)", result
     assert result["darkBarBackground"] == "rgb(27, 29, 32)", result
+    assert "rgb(226, 229, 233)" in result["darkFocusShadow"], result
     assert result["customActiveBackground"] == "rgb(255, 0, 255)", result
+    assert "rgb(0, 255, 0)" in result["customFocusShadow"], result
 
 
 def test_narrow_annotation_labels_stay_inside_and_do_not_collide(tmp_path: Path) -> None:
