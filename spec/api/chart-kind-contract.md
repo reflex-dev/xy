@@ -207,9 +207,13 @@ usually wrong). Each has an explicit trigger:
 - **Picking** (`_renderPick`, `_pickAt`): point-geometry only today
   (`pointPick`). *Trigger: first pickable non-point mark (bar/candle)* — add a
   `pick` step to `MARK_KINDS` and give the mark its own ID-pass geometry.
-- **Legend** (`_buildLegend`): keyed on *channel modes* (density / categorical /
+- **Legend** (`_buildLegend`): keyed on *channel modes* (categorical /
   continuous / named-series), not mark kinds — a colored bar inherits swatches
-  for free. *Trigger: a mark needing a swatch that isn't channel-shaped.*
+  for free. A density-tier surface gets no gradient swatch of its own: count is
+  encoded as alpha, not color (LOD doc §2), so a colormap gradient would read as
+  "color == density" and mislead; a named density trace falls through to the
+  plain named-series swatch, matching the static exporters. *Trigger: a mark
+  needing a swatch that isn't channel-shaped.*
 - **Decimation** (`interaction.decimate_view`): line and area-like marks use the
   shared M4 path on first payload; errorbar/stem segments reduce to a
   pixel-derived cap at emit time. Contour is NOT pixel-bounded: its segment
