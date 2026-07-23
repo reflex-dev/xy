@@ -193,6 +193,34 @@ and then received the pushes can resolve every cid. In all cases the client
 reads the buffer layout from `spec.buffer_layout`, never from the shape of
 what arrived (§5).
 
+**`append_rows`** — `{type, seq, trace, affected, prev_marks, added,
+n_points, axes, columns, domains?}` plus one tail buffer per per-point
+column: the O(K) delta frame a streaming append ships when the affected
+trace's emission is a **pure tail extension** of what the client holds.
+`columns` maps roles (`x`, `y`, `color`, `size`, `stroke`) to
+`{buf, len, offset?, scale?}`; geometry tails are encoded with the same
+offset/scale as the client's buffers (verified client-side), raw channels
+ship data-unit tails with the grown `domains` applied as a uniform, and
+`axes` carries fresh per-axis ranges for append's follow policy. The client
+applies it in place — capacity-doubling GPU buffers via `bufferSubData`,
+retained CPU spans grown the same way (context restore stays whole), spec
+metas advanced — with no payload swap and no trace rebuild. `prev_marks`
+must equal the client's current vertex count and the encode params must
+match exactly; any disagreement (missed message, drifted baseline) sends
+one `refresh` instead of writing a torn tail.
+
+Eligibility is strict kernel-side, and every exclusion is recorded as
+`append.delta_fallback` on the full message it falls back to (§28):
+direct-tier scatter/line only; no tier flip; no keyed/configured animation;
+no per-point style channels; no step/smooth vertex expansion; no log axes;
+no dropped rows (previous ships and the tail must be fully finite); raw-
+encoded channels only; and an offset-drift budget — tails encode with the
+offsets the client already holds, capped at 1024× the encoded half-span
+recorded at the last full ship (~0.25 px worst-case error at 2048 px),
+after which one full re-ship re-centers exactly like deep zoom (§4/§16).
+Screen-bounded tiers (decimated, density) always take the full path: their
+whole payload is already O(pixels).
+
 **`state_patch`** — `{type, state, animate, history}`, no buffers. `state` is
 one view-state document (view-state.md §2: `v: 1`, optional partial `ranges`,
 optional `selection`) applied by the client as a merge-patch through the same
@@ -277,6 +305,19 @@ negative `byte_offset`/`len`, a column extending past the payload, and a
 misaligned start. Aligned spans stay zero-copy; only a legacy view whose
 `byteOffset` is not a multiple of 4 pays one view-sized copy.
 
+Continuous color/size channel buffers ship **raw data-unit f32** with
+`enc: "raw"` on the channel spec: the client maps them through the spec
+`domain` in the vertex shader (`(v - d0) / (d1 - d0)`, LUT/px-range lookup
+unchanged), so a domain change is a uniform update — never a re-encode, and
+never a byte of channel traffic. Non-finite source values scrub to the
+domain floor kernel-side (`xy_sanitize_f32`, §19: NaN never reaches a vertex
+buffer); the shader maps the floor to LUT coordinate 0, the legacy visual. A
+domain the f32 wire cannot represent (magnitude beyond f32, degenerate span)
+falls back to the legacy pre-normalized unit encode with no `enc` marker,
+which the client draws through the identity map — both encodings render
+pixel-identically. Kernel-side readouts stay canonical f64; standalone
+hover reads shipped values and denormalizes only unit-encoded ones.
+
 Stable animation identity is the second intentional u32 use beside selection
 indices. A keyed direct trace carries `keys: {lo, hi}` referring to two u32
 columns that form one stable 64-bit identity per shipped mark. Aggregate and
@@ -332,9 +373,12 @@ Two independent version constants:
   version of their own — the handshake happens once, at first paint, before
   any request is possible. v5 moved streaming append to split buffers shipped
   once per tick; v6 added append reuse (§4/§5: `cid` column identities,
-  partial buffer lists, the `refresh` recovery request) — a cached pre-v6
-  bundle would fail loudly on a cid-only column instead of rendering, so the
-  handshake catches it at first paint.
+  partial buffer lists, the `refresh` recovery request); v7 moved continuous
+  channels to the raw data-unit encode (§5); v8 added the `append_rows`
+  delta frame (§4) — a pre-v7 bundle would clamp raw values as if they were
+  unit coordinates and render wrong colors silently, and a pre-v8 bundle
+  would drop delta frames on the floor mid-stream: both are the failure
+  class the handshake exists to catch.
 - **Transport frame.** `FRAME_MAGIC` `"XYBF"` with `FRAME_VERSION = 1`
   versions the binary envelope separately, so the transport and the renderer
   can evolve without coupling.

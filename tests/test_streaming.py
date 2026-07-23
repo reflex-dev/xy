@@ -173,7 +173,7 @@ def test_append_channel_contract():
 
 def test_append_continuous_channels_expand_domains_and_reuse_buffers():
     values = np.arange(8.0)
-    fig = Figure().scatter(values, values, color=values, size=values)
+    fig = Figure().scatter(values, values + 0.5, color=values, size=values)
     trace = fig.traces[0]
 
     fig.append(0, [8.0], [8.0], color=[100.0], size=[-50.0])
@@ -194,7 +194,7 @@ def test_append_continuous_channels_expand_domains_and_reuse_buffers():
 
 def test_append_continuous_channels_repairs_rebound_prefix():
     values = np.arange(8.0)
-    fig = Figure().scatter(values, values, color=values)
+    fig = Figure().scatter(values, values + 0.5, color=values)
     channel = fig.traces[0].color_ch
     fig.append(0, [8.0], [8.0], color=[8.0])  # initialize the capacity buffer
 
@@ -357,9 +357,11 @@ def test_append_emit_cache_skips_reencode_for_unchanged_traces():
     fig = _two_trace_fig()
     tid0 = fig.traces[0].id
     tid1 = fig.traces[1].id
-    fig.append(tid0, [100.0], [0.0])
+    # NaN tails keep every tick on the full build path (delta-ineligible),
+    # which is the machinery under test here.
+    fig.append(tid0, [np.nan], [0.0])
     first = fig._append_emit_cache[tid1]
-    fig.append(tid0, [101.0], [0.0])
+    fig.append(tid0, [np.nan], [0.0])
     second = fig._append_emit_cache[tid1]
     # Cache hit: the unchanged trace's capture (records incl. encoded chunks)
     # is the SAME object — its emitter never ran on the second tick.
@@ -416,7 +418,9 @@ def test_append_range_growth_busts_range_dependent_neighbors_only():
     fig.append(tid0, [float(n) + 1.0], [0.0])  # seed cache; x range grows past line
     line_key = fig._append_emit_cache[fig.traces[1].id]["key"]
     direct_cache = fig._append_emit_cache[fig.traces[2].id]
-    fig.append(tid0, [float(n) + 500.0], [0.0])  # grows the shared x range again
+    # A NaN row keeps this tick on the full build path while the finite row
+    # still grows the shared x range.
+    fig.append(tid0, [float(n) + 500.0, np.nan], [0.0, 0.0])
     # The decimated line re-emitted (its M4 window follows the range)...
     assert fig._append_emit_cache[fig.traces[1].id]["key"] != line_key
     # ...while the range-free direct scatter spliced from cache.
@@ -504,3 +508,126 @@ def test_refresh_request_returns_full_append_shaped_payload():
     cols = msg["spec"]["columns"]
     assert all("buf" in c for c in cols)  # complete: no cid-only entries
     assert len(buffers) == len([c for c in cols if "buf" in c])
+
+
+# --------------------------------------------------------------------------
+# append_rows delta frames (§4): O(K) wire for direct-tier streams
+# --------------------------------------------------------------------------
+
+
+def _delta_fig(n=100):
+    x = np.arange(float(n))
+    fig = Figure().scatter(x, x + 0.5, color=np.arange(float(n)), size=np.arange(float(n)))
+    fig.build_payload_split()
+    return fig
+
+
+def test_append_rejects_xy_aliased_to_one_column():
+    # Store dedup aliases scatter(v, v) to a single canonical column; a
+    # two-tail append would interleave x and y into it (pre-existing bug,
+    # now rejected like cross-trace sharing).
+    vals = np.arange(10.0)
+    fig = Figure().scatter(vals, vals)
+    if fig.traces[0].x is fig.traces[0].y:
+        with pytest.raises(ValueError, match="shares one column"):
+            fig.append(0, [10.0], [1.0])
+        assert len(fig.traces[0].x) == 10  # nothing mutated
+
+
+def test_append_rows_delta_after_baseline():
+    fig = _delta_fig()
+    m1, _ = fig.append(0, [100.0], [1.0], color=[5.0], size=[5.0])
+    assert m1["type"] == "append"  # first tick seeds the emit-cache baseline
+    assert m1["spec"]["append"]["delta_fallback"] == "no-baseline"
+
+    m2, bufs = fig.append(0, [101.0, 102.0], [2.0, 3.0], color=[500.0, 1.0], size=[6.0, 7.0])
+    assert m2["type"] == "append_rows"
+    assert m2["prev_marks"] == 101 and m2["added"] == 2
+    assert m2["n_points"] == 103
+    # Tails only: 2 f32 per geometry/channel column.
+    assert all(len(b) == 8 for b in bufs)
+    # The grown color domain rides the message (a client uniform update).
+    assert m2["domains"]["color"] == [0.0, 500.0]
+    assert "x" in m2["columns"] and "offset" in m2["columns"]["x"]
+    # Kernel state advanced: pick reads the streamed rows exactly.
+    row = fig.pick(0, 102)
+    assert row["x"] == 102.0 and row["color_value"] == 1.0
+
+    m3, _ = fig.append(0, [103.0], [4.0], color=[2.0], size=[8.0])
+    assert m3["type"] == "append_rows"
+    assert m3["prev_marks"] == 103  # consecutive deltas track shipped marks
+
+
+def test_append_rows_falls_back_and_recovers():
+    fig = _delta_fig()
+    fig.append(0, [100.0], [1.0], color=[1.0], size=[1.0])  # baseline
+
+    # Offset drift: a tail absurdly far from the shipped offset re-centers
+    # via a full re-ship (§4/§16), never a torn delta.
+    m, _ = fig.append(0, [1e12], [1.0], color=[1.0], size=[1.0])
+    assert m["type"] == "append"
+    assert m["spec"]["append"]["delta_fallback"] == "offset-drift"
+
+    # The full build re-seeded the baseline: deltas resume.
+    m2, _ = fig.append(0, [1.1e12], [1.0], color=[1.0], size=[1.0])
+    assert m2["type"] == "append_rows"
+
+
+def test_append_rows_fallback_reasons():
+    # Non-finite tail rows would fork the shipped row order.
+    fig = _delta_fig()
+    fig.append(0, [100.0], [1.0], color=[1.0], size=[1.0])
+    m, _ = fig.append(0, [np.nan], [1.0], color=[1.0], size=[1.0])
+    assert m["type"] == "append"
+    assert m["spec"]["append"]["delta_fallback"] == "nonfinite-tail"
+
+    # Keyed transitions need full-payload matching.
+    vals = np.arange(10.0)
+    keyed = Figure().scatter(vals, vals + 0.5)
+    keyed.traces[0].transition_keys = np.zeros((10, 2), dtype=np.uint32)
+    keyed.append(0, [10.0], [1.0])
+    m, _ = keyed.append(0, [11.0], [1.0])
+    assert m["spec"]["append"]["delta_fallback"] == "animation"
+
+    # Crossing the density threshold flips the tier: full re-ship.
+    n = SCATTER_DENSITY_THRESHOLD - 2
+    rng = np.random.default_rng(17)
+    big = Figure().scatter(rng.uniform(0, 100, n), rng.uniform(0, 100, n))
+    big.append(0, [1.0], [1.0])
+    m, _ = big.append(0, np.full(10, 2.0), np.full(10, 2.0))
+    assert m["type"] == "append"
+    assert m["spec"]["append"]["delta_fallback"] == "tier-flip"
+    assert m["spec"]["traces"][0]["tier"] == "density"
+
+
+def test_append_rows_then_full_build_stays_coherent():
+    fig = _delta_fig()
+    fig.append(0, [100.0], [1.0], color=[1.0], size=[1.0])
+    fig.append(0, [101.0], [2.0], color=[2.0], size=[2.0])  # delta
+    spec, bufs = fig.build_payload_split()
+    tr = spec["traces"][0]
+    assert tr["n_points"] == 102
+    x = np.frombuffer(bytes(bufs[spec["columns"][tr["x"]]["buf"]]), dtype=np.float32)
+    assert len(x) == 102
+
+
+def test_append_rows_then_neighbor_append_reships_streamed_trace():
+    # After deltas mutate trace 0, a full append for trace 1 must re-ship
+    # trace 0's columns (its data_rev moved, so its cids no longer match the
+    # client baseline) — never leave the client resolving stale bytes.
+    vals = np.arange(50.0)
+    fig = Figure()
+    fig.scatter(vals, vals + 0.5)
+    fig.scatter(vals * 2.0, vals + 1.0)
+    fig.build_payload_split()
+    fig.append(0, [50.0], [1.0])  # baseline for trace 0
+    m, _ = fig.append(0, [51.0], [2.0])
+    assert m["type"] == "append_rows"
+    # Force a full build (NaN tail): trace 0 was mutated by deltas since its
+    # cache entry, so its columns must re-ship with fresh bytes — its old
+    # cids no longer describe what the client holds.
+    m2, bufs2 = fig.append(1, [100.0, np.nan], [1.0, 1.0])
+    assert m2["type"] == "append"
+    cols = m2["spec"]["columns"]
+    t0 = next(t for t in m2["spec"]["traces"] if t["id"] == 0)
+    assert "buf" in cols[t0["x"]] and "buf" in cols[t0["y"]]

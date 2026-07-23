@@ -80,7 +80,7 @@ unsafe fn borrowed_byte_spans<'a>(
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 37;
+pub const ABI_VERSION: u32 = 38;
 const FACTORIZE_CAPACITY_EXCEEDED: usize = usize::MAX - 1;
 
 #[no_mangle]
@@ -2301,6 +2301,35 @@ pub unsafe extern "C" fn xy_normalize_f32(
     let nan_value = if nan_mode == 1 { f32::NAN } else { 0.0 };
     ffi_guard(0, || {
         kernels::normalize_f32_into(data, lo, hi, nan_value, out);
+        1
+    })
+}
+
+/// Raw f32 channel cast with non-finite scrub (§19/§29 raw-channel wire):
+/// `out[i] = data[i] as f32` when finite, else `fill`. One fused pass — the
+/// raw counterpart of `xy_normalize_f32` for shader-side domain mapping.
+/// Returns 1 on success (including the empty no-op), 0 on null arguments or
+/// a non-finite `fill`.
+///
+/// # Safety
+/// `data` must point to `len` readable f64s; `out` to `len` writable f32s.
+#[no_mangle]
+pub unsafe extern "C" fn xy_sanitize_f32(
+    data: *const f64,
+    len: usize,
+    fill: f32,
+    out: *mut f32,
+) -> i32 {
+    if len == 0 {
+        return 1;
+    }
+    if data.is_null() || out.is_null() || !fill.is_finite() {
+        return 0;
+    }
+    let data = std::slice::from_raw_parts(data, len);
+    let out = std::slice::from_raw_parts_mut(out, len);
+    ffi_guard(0, || {
+        kernels::sanitize_f32_into(data, fill, out);
         1
     })
 }

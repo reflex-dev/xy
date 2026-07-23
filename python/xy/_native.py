@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
-ABI_VERSION = 37
+ABI_VERSION = 38
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -494,6 +494,13 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_double,
         ctypes.c_int32,
+        ctypes.c_void_p,
+    ]
+    lib.xy_sanitize_f32.restype = ctypes.c_int32
+    lib.xy_sanitize_f32.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_float,
         ctypes.c_void_p,
     ]
     lib.xy_valid_indices_f64.restype = ctypes.c_size_t
@@ -2216,6 +2223,22 @@ def histogram_uniform(
         raise ValueError("invalid histogram arguments")
     edges = np.linspace(lo, hi, n_bins + 1, dtype=np.float64)
     return counts, edges
+
+
+def sanitize_f32(data: npt.NDArray[np.float64], fill: float) -> npt.NDArray[np.float32]:
+    """Raw f32 channel cast: finite values cast, non-finite become `fill`
+    (§19 — NaN never reaches a vertex buffer). The raw counterpart of
+    `normalize_f32` for shader-side domain mapping (wire-protocol §3)."""
+    data = _as_f64(data, "data")
+    fill32 = float(np.float32(fill))
+    if not np.isfinite(fill32):
+        raise ValueError("fill must be finite in f32")
+    out = np.empty(len(data), dtype=np.float32)
+    if len(data):
+        ok = _lib.xy_sanitize_f32(_ptr_f64(data), len(data), fill32, out.ctypes.data)
+        if ok != 1:
+            raise RuntimeError("xy native sanitize_f32 failed (output undefined)")
+    return out
 
 
 def normalize_f32(

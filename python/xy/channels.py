@@ -497,6 +497,39 @@ def normalize_to_unit(values: npt.NDArray[np.float64], domain: tuple[float, floa
     return kernels.normalize_f32(values, domain, nonfinite="zero")
 
 
+# f32-representability guard for the raw-channel wire (§29): raw values must
+# survive the f64→f32 cast (they are bounded by the domain) and the shader's
+# (v - d0) * inv_span map must be finite and non-degenerate in f32. Anything
+# else keeps the legacy unit encode.
+_F32_ABS_MAX = 3.0e38
+
+
+def _raw_wire_ok(domain: tuple[float, float]) -> bool:
+    lo, hi = float(domain[0]), float(domain[1])
+    span = hi - lo
+    return (
+        abs(lo) < _F32_ABS_MAX
+        and abs(hi) < _F32_ABS_MAX
+        and np.isfinite(span)
+        and span > 0.0
+        and float(np.float32(span)) > 0.0
+    )
+
+
+def ship_continuous(spec: dict[str, Any], vals: Any, domain: Any, ship_scalar: Any) -> None:
+    """Continuous channel wire encode (wire-protocol §3): **raw** f32 values
+    with `enc: "raw"` — the client maps them through the spec `domain` in the
+    vertex shader, so a domain change is a uniform update, never a re-encode —
+    falling back to the legacy pre-normalized unit encode when the domain is
+    not representable in f32. Non-finite values scrub to the domain floor
+    either way (§19: NaN never reaches a vertex buffer)."""
+    if _raw_wire_ok(domain):
+        spec["enc"] = "raw"
+        spec["buf"] = ship_scalar(kernels.sanitize_f32(vals, float(domain[0])))
+    else:
+        spec["buf"] = ship_scalar(normalize_to_unit(vals, domain))
+
+
 def ship_channels(
     trace: Any,
     sel: Any,
@@ -523,7 +556,7 @@ def ship_channels(
         if values is None or domain is None:
             raise ValueError("continuous size channel missing values or domain")
         vals = values if sel is None else values[sel]
-        size_spec["buf"] = ship_scalar(normalize_to_unit(vals, domain))
+        ship_continuous(size_spec, vals, domain, ship_scalar)
     return color_spec, size_spec
 
 
@@ -548,7 +581,7 @@ def ship_color_channel(
         if values is None or domain is None:
             raise ValueError("continuous color channel missing values or domain")
         vals = values if sel is None else values[sel]
-        color_spec["buf"] = ship_scalar(normalize_to_unit(vals, domain))
+        ship_continuous(color_spec, vals, domain, ship_scalar)
     elif cc.mode == "categorical":
         code_values = cc.codes
         categories = cc.categories

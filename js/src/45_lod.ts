@@ -1,4 +1,5 @@
 import { parseColor } from "./20_theme";
+import { xyChannelMap } from "./40_gl";
 
 // ---------------------------------------------------------------------------
 
@@ -258,6 +259,8 @@ export function lodApplyDrill(view, g, upd, buffers) {
   view._hoverId = -1;
   view._lastRow = null;
   d.colorMode = 0;
+  d.cvalMap = xyChannelMap(upd.color);
+  d.svalMap = xyChannelMap(upd.size);
   d.color = parseColor(view.root, upd.color && upd.color.color, [0.3, 0.47, 0.66, 1]);
   if (upd.color && upd.color.buf !== undefined) {
     d.colorMode = upd.color.mode === "continuous" ? 1 :

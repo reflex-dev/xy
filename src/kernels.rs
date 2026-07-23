@@ -4088,6 +4088,34 @@ fn histogram_uniform_impl(data: &[f64], lo: f64, hi: f64, threads: usize, out: &
     total
 }
 
+/// Raw f32 cast with non-finite scrub: `out[i] = data[i] as f32` when finite,
+/// else `fill` (the raw-channel wire's §19 guarantee — NaN never reaches a
+/// vertex buffer; the shader maps raw values through the domain uniform).
+pub fn sanitize_f32_into(data: &[f64], fill: f32, out: &mut [f32]) {
+    assert_eq!(data.len(), out.len());
+    let one = move |dst: &mut f32, v: f64| {
+        *dst = if v.is_finite() { v as f32 } else { fill };
+    };
+    let threads = par_threads(data.len());
+    if threads <= 1 {
+        for (dst, &v) in out.iter_mut().zip(data) {
+            one(dst, v);
+        }
+        return;
+    }
+    // Element-wise: disjoint output segments, bitwise identical to serial.
+    let chunk = data.len().div_ceil(threads);
+    std::thread::scope(|s| {
+        for (dseg, oseg) in data.chunks(chunk).zip(out.chunks_mut(chunk)) {
+            s.spawn(move || {
+                for (dst, &v) in oseg.iter_mut().zip(dseg) {
+                    one(dst, v);
+                }
+            });
+        }
+    });
+}
+
 /// Normalize values over `[lo, hi]` into f32 `[0,1]`. Non-finite values either
 /// become 0.0 (channel path: no poison vertices) or NaN (heatmap path:
 /// transparent missing cells on the client).
@@ -6077,6 +6105,24 @@ mod fuzz {
                     assert!((0.0..=1.0).contains(&o), "unit it={it} i={i} o={o}");
                 } else {
                     assert_eq!(o, 0.0, "nan_value it={it} i={i}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fuzz_sanitize_f32_casts_and_scrubs() {
+        let mut rng = Rng(0x5EED_0038);
+        for it in 0..200 {
+            let n = (rng.next() % 200) as usize;
+            let data = rng.hostile_vec(n, -1e3, 1e3);
+            let mut out = vec![0f32; n];
+            sanitize_f32_into(&data, -7.5, &mut out);
+            for (i, (&v, &o)) in data.iter().zip(&out).enumerate() {
+                if v.is_finite() {
+                    assert_eq!(o, v as f32, "cast it={it} i={i}");
+                } else {
+                    assert_eq!(o, -7.5, "fill it={it} i={i}");
                 }
             }
         }

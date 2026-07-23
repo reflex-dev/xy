@@ -2,7 +2,7 @@ import { PROTOCOL, xyByteSpan } from "./00_header";
 import { buildLutData, colormapStops } from "./10_colormaps";
 import { cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
-import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
+import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xyChannelMap, xySmoothResample } from "./40_gl";
 import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodRememberDensity, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
 
@@ -2147,6 +2147,7 @@ export class ChartView {
   _buildScatterMark(g, t, buffer) {
     this._buildXY(g, t, buffer);
     g.colorMode = 0;
+    g.cvalMap = xyChannelMap(t.color);
     g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
     if (t.color && t.color.mode === "continuous") {
       g.colorMode = 1;
@@ -2164,6 +2165,7 @@ export class ChartView {
       g.rgbaBuf = this._upload(g._cpu.rgba);
     }
     g.sizeMode = 0;
+    g.svalMap = xyChannelMap(t.size);
     g.size = (t.size && t.size.size) || 4.0;
     g.sizeRange = [2, 18];
     if (t.size && t.size.mode === "continuous") {
@@ -2282,6 +2284,8 @@ export class ChartView {
     gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.x.buf]), gl.STATIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, s.yBuf);
     gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.y.buf]), gl.STATIC_DRAW);
+    s.cvalMap = xyChannelMap(sample.color);
+    s.svalMap = xyChannelMap(sample.size);
     if (sample.color && sample.color.buf !== undefined) {
       s.colorMode = sample.color.mode === "continuous" ? 1 :
         (sample.color.mode === "categorical" ? 2 : 3);
@@ -2519,6 +2523,7 @@ export class ChartView {
     g._segmentCpu = { x0, x1, y0, y1 };
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
     g.colorMode = 0;
+    g.cvalMap = xyChannelMap(t.color);
     if (t.color && t.color.mode === "continuous") {
       g.colorMode = 1;
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
@@ -2544,6 +2549,7 @@ export class ChartView {
     }
     g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
     g.colorMode = 0;
+    g.cvalMap = xyChannelMap(t.color);
     if (t.color && t.color.mode === "continuous") {
       g.colorMode = 1;
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
@@ -2604,6 +2610,7 @@ export class ChartView {
     g.n = n * 6;
     g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
     g.colorMode = 0;
+    g.cvalMap = xyChannelMap(t.color);
     if (t.color && (t.color.mode === "continuous" || t.color.mode === "categorical")) {
       g.colorMode = t.color.mode === "continuous" ? 1 : 2;
       const cval = this._columnView(buffer, this.spec.columns[t.color.buf]);
@@ -2657,6 +2664,7 @@ export class ChartView {
     g.y1Buf = this._upload(y1);
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
     g.colorMode = 0;
+    g.cvalMap = xyChannelMap(t.color);
     if (t.color && t.color.mode === "continuous") {
       g.colorMode = 1;
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
@@ -2709,6 +2717,7 @@ export class ChartView {
       : { x: pos, y: v1, xMeta: g.posMeta, yMeta: g.value1Meta, value0: g._cpuValue0 };
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
     g.colorMode = 0;
+    g.cvalMap = xyChannelMap(t.color);
     if (t.color && t.color.mode === "continuous") {
       g.colorMode = 1;
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
@@ -2963,6 +2972,17 @@ export class ChartView {
     return 0;
   }
 
+  // Continuous-channel domain maps (wire-protocol §3 raw channels): identity
+  // for unit-encoded buffers, (d0, 1/span) for raw ones. Set beside every
+  // colorMode/sizeMode uniform so all programs agree.
+  _setChannelMapUniforms(prog, g) {
+    const gl = this.gl;
+    const c = g.cvalMap || [0, 1];
+    const s = g.svalMap || [0, 1];
+    gl.uniform2f(uniformOf(gl, prog, "u_cvalMap"), c[0], c[1]);
+    gl.uniform2f(uniformOf(gl, prog, "u_svalMap"), s[0], s[1]);
+  }
+
   _setAxisUniforms(prog, prefix, meta, axisId) {
     const gl = this.gl;
     const u = (n) => uniformOf(gl, prog, n);
@@ -3068,6 +3088,7 @@ export class ChartView {
     gl.uniform1f(u("u_size"), g.size * animationScale);
     gl.uniform1i(u("u_sizeMode"), g.sizeMode);
     gl.uniform2f(u("u_sizeRange"), g.sizeRange[0] * animationScale, g.sizeRange[1] * animationScale);
+    this._setChannelMapUniforms(prog, g);
     gl.uniform1i(u("u_colorMode"), g.colorMode);
     const markOpacity = this._fillOpacity(g.trace.style, 0.8) * opacityScale;
     gl.uniform1f(u("u_opacity"), markOpacity);
@@ -3406,6 +3427,7 @@ export class ChartView {
     gl.uniform4f(u("u_color"), r, gg, b, a);
     gl.uniform1f(u("u_opacity"), this._strokeOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+    this._setChannelMapUniforms(prog, g);
     const dashed = this._segmentDash(g, prog);
     if (g.colorMode && g.lut) {
       gl.activeTexture(gl.TEXTURE0);
@@ -3526,6 +3548,7 @@ export class ChartView {
     for (const name of ["x0", "x1", "x2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.xAxis);
     for (const name of ["y0", "y1", "y2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.yAxis);
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+    this._setChannelMapUniforms(prog, g);
     gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
     gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], g.color[3]);
     // Straight alpha: MESH_FS folds u_strokeOpacity and the per-item alpha
@@ -3659,6 +3682,7 @@ export class ChartView {
     gl.uniform4f(u("u_color"), r, gg, b, a);
     gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+    this._setChannelMapUniforms(prog, g);
     this._setRectStyleUniforms(prog, g);
     const colorOn = !!g.cBuf;
     const rgbaOn = !!g.rgbaBuf;
@@ -3731,6 +3755,7 @@ export class ChartView {
     gl.uniform4f(u("u_color"), r, gg, b, a);
     gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+    this._setChannelMapUniforms(prog, g);
     this._setRectStyleUniforms(prog, g);
     const v0On = g.value0Mode === 1 && g.value0Buf;
     const colorOn = !!g.cBuf;
@@ -4424,6 +4449,7 @@ export class ChartView {
       gl.uniform1f(u("u_size"), pg.size);
       gl.uniform1i(u("u_sizeMode"), pg.sizeMode);
       gl.uniform2f(u("u_sizeRange"), pg.sizeRange[0], pg.sizeRange[1]);
+      this._setChannelMapUniforms(prog, pg);
       const transitionOn = !!(pg._transitionPrevXBuf && pg._transitionPrevYBuf);
       gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
       gl.uniform1f(u("u_transitionProgress"), pg._transitionPositionProgress ?? 1);
