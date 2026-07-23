@@ -6,8 +6,9 @@ design:
 
 1. ONE physical websocket to the backend carries both the app plane and the
    chart data plane (socket.io namespace multiplexing) — counted via CDP.
-2. All three charts paint real pixels from binary socket payloads (screenshot
-   evidence; there are no HTTP data endpoints to fall back on).
+2. The charts paint real pixels from binary socket payloads (screenshot
+   evidence; there are no HTTP data endpoints to fall back on) — including
+   the §6 fastapi-parity drilldown chart's density surface.
 3. Deep zoom drills the 1M-point density scatter to exact points
    (density_view round-trips over the socket, §16), and hovering a drilled
    point closes the semantic loop: kernel pick -> reflex event -> state
@@ -241,9 +242,9 @@ def main() -> None:
     with ChromiumSession(chromium, gl="software", sandbox=False) as session:
         probe = Probe(session, args.frontend)
 
-        # 1) every chart mounts a view (six live figure vars + one static Chart)
+        # 1) every chart mounts a view (seven live sources + one static Chart)
         probe.wait_for(
-            "window.__xy_views && window.__xy_views.size >= 6",
+            "window.__xy_views && window.__xy_views.size >= 7",
             timeout_s=120.0,
             label="mounted chart views",
         )
@@ -257,17 +258,32 @@ def main() -> None:
             failures.append(f"expected exactly 1 backend websocket (shared transport), got {ws}")
 
         # 2b) the direct-Chart mount is truly static: it never subscribes. The
-        #     six live sources (five figure vars + one inline() token) each sub.
+        #     seven live sources (five figure vars + two inline() tokens: the
+        #     orbits and the §6 drilldown) each sub.
         subs = probe.sent_ws_frames('"sub"')
         print(f"sub frames sent: {len(subs)}")
-        if len(subs) < 6:
-            failures.append(f"expected >= 6 sub frames (live sources), got {len(subs)}")
+        if len(subs) < 7:
+            failures.append(f"expected >= 7 sub frames (live sources), got {len(subs)}")
 
         # 3) pixels: every chart paints ink inside its rect (full-page shot,
-        #    rects in page coordinates so below-the-fold charts count too)
+        #    rects in page coordinates so below-the-fold charts count too).
+        #    The §6 drilldown's first payload bins its full source (100M at
+        #    the default XY_LIVE_POINTS), so wait for its trace explicitly.
+        probe.wait_for(
+            "(() => { const v = window.__xy_views.get('drilldown');"
+            " return !!(v && v.gpuTraces && v.gpuTraces[0]); })()",
+            timeout_s=120.0,
+            label="drilldown density payload",
+        )
         time.sleep(1.0)
         png = probe.screenshot()
-        checks = (("cloud", 0.02), ("hist", 0.02), ("live", 0.005), ("inline", 0.005))
+        checks = (
+            ("cloud", 0.02),
+            ("hist", 0.02),
+            ("live", 0.005),
+            ("inline", 0.005),
+            ("drilldown", 0.02),
+        )
         for chart_id, min_ink in checks:
             frac = ink_fraction(png, probe.rect(chart_id, page_coords=True), 1.0)
             print(f"{chart_id}: ink fraction {frac:.2%}")

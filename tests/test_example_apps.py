@@ -150,6 +150,11 @@ def test_reflex_app_shows_every_linking_method_and_event() -> None:
         "reflex_xy.append(",  # streaming
         "reflex_xy.inline(",  # inline() token tier
         "sparkline_chart()",  # static Chart tier passed directly
+        # the FastAPI 100M drilldown, served adapter-natively (§6); both apps
+        # honor the same point-count override for side-by-side comparison.
+        "def drilldown_chart",
+        "reflex_xy.inline(drilldown_chart())",
+        "XY_LIVE_POINTS",
         "on_point_hover=",
         "on_point_click=",
         "on_select_end=",
@@ -178,6 +183,9 @@ def test_reflex_app_introspection_and_composition(tmp_path, monkeypatch) -> None
     pytest.importorskip("reflex_xy")
     # A static chart compiles a payload asset into cwd/assets/xy; keep it in tmp.
     monkeypatch.chdir(tmp_path)
+    # The §6 drilldown builds its columns at import; keep the test-time build
+    # cheap (same override the fastapi app test uses).
+    monkeypatch.setenv("XY_LIVE_POINTS", "50000")
     sys.path.insert(0, str(REFLEX_DIR))
     module = _load(REFLEX_APP, "xy_reflex_demo_under_test")
 
@@ -186,8 +194,10 @@ def test_reflex_app_introspection_and_composition(tmp_path, monkeypatch) -> None
     assert "@reflex_xy.figure" in module._source(module.Demo.cloud)
     assert "def cloud" in module._source(module.Demo.cloud)
     assert "def on_view" in module._source(module.Demo.on_view)
-    # The page composes without error and mints an inline() token at import.
+    # The page composes without error and mints inline() tokens at import.
     assert module.ORBITS_TOKEN.startswith("xyin-")
+    assert module.DRILLDOWN_TOKEN.startswith("xyin-")
+    assert module.DRILLDOWN_POINTS == 50000
     assert module.index() is not None
 
 
