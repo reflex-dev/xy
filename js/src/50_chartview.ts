@@ -1721,9 +1721,12 @@ export class ChartView {
     const items = [];
     if (s.show_legend !== false) {
       for (const t of s.traces) {
-        if (t.tier === "density") {
-          items.push({ swatch: "gradient", cmap: t.density.colormap, name: t.name || "density" });
-        } else if (t.color && t.color.mode === "categorical") {
+        // A density-tier surface now encodes count as alpha, not color (its
+        // color is the mean point color, LOD doc §2), so it gets no colormap
+        // gradient swatch — that legend read as "color == density" and was
+        // misleading. A named density trace still falls through to the plain
+        // marker swatch below, matching the static SVG/raster exporters.
+        if (t.color && t.color.mode === "categorical") {
           t.color.categories.forEach((cat, i) =>
             items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} }));
         } else if (t.color && t.color.mode === "continuous") {
