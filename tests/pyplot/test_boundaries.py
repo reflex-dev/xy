@@ -11,7 +11,12 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
+from xy.pyplot._translate import check_unsupported, not_implemented
+
 PACKAGE = Path(__file__).resolve().parents[2] / "python" / "xy"
+SUPPORT_REQUEST_URL = "https://github.com/reflex-dev/xy/issues"
 
 
 def _run_fresh(code: str) -> None:
@@ -82,6 +87,22 @@ def test_shim_never_imports_real_matplotlib_statically() -> None:
                 assert not any(a.name.split(".")[0] == "matplotlib" for a in node.names), path
             if isinstance(node, ast.ImportFrom):
                 assert (node.module or "").split(".")[0] != "matplotlib", path
+
+
+def test_unsupported_errors_link_to_support_requests() -> None:
+    assert str(not_implemented("polar charts")) == (
+        "xy.pyplot does not implement polar charts. See the compatibility table: "
+        "https://github.com/reflex-dev/xy/blob/main/spec/matplotlib/compat.md. "
+        f"Request support: {SUPPORT_REQUEST_URL}"
+    )
+    with pytest.raises(TypeError) as exc_info:
+        check_unsupported({"projection": "polar"}, "subplot()")
+    assert str(exc_info.value) == (
+        "xy.pyplot subplot() got unsupported keyword(s): projection. "
+        "See the compatibility table: "
+        "https://github.com/reflex-dev/xy/blob/main/spec/matplotlib/compat.md. "
+        f"Request support: {SUPPORT_REQUEST_URL}"
+    )
 
 
 def test_complete_supported_corpus_runs_when_matplotlib_imports_fail() -> None:

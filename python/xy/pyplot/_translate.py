@@ -13,6 +13,7 @@ import numpy as np
 from ._colors import resolve_color
 
 COMPAT_URL = "https://github.com/reflex-dev/xy/blob/main/spec/matplotlib/compat.md"
+SUPPORT_REQUEST_URL = "https://github.com/reflex-dev/xy/issues"
 
 # Matplotlib's unscaled named dash patterns, in points (rcParams
 # lines.{dashed,dotted,dashdot}_pattern). Matplotlib multiplies these by the
@@ -72,7 +73,8 @@ MARKER_TO_SYMBOL = {
 def not_implemented(name: str, alternative: Optional[str] = None) -> "NotImplementedError":
     hint = f" Try {alternative} instead." if alternative else ""
     return NotImplementedError(
-        f"xy.pyplot does not implement {name}.{hint} See the compatibility table: {COMPAT_URL}"
+        f"xy.pyplot does not implement {name}.{hint} See the compatibility table: {COMPAT_URL}. "
+        f"Request support: {SUPPORT_REQUEST_URL}"
     )
 
 
@@ -134,5 +136,6 @@ def check_unsupported(kwargs: dict[str, Any], where: str) -> None:
         names = ", ".join(sorted(kwargs))
         raise TypeError(
             f"xy.pyplot {where} got unsupported keyword(s): {names}. "
-            f"See the compatibility table: {COMPAT_URL}"
+            f"See the compatibility table: {COMPAT_URL}. "
+            f"Request support: {SUPPORT_REQUEST_URL}"
         )
