@@ -132,6 +132,36 @@ def test_sub_delivers_spec_and_binary_columns(_fresh_registry):
     run(main())
 
 
+def test_sub_over_attachment_limit_ships_single_blob(_fresh_registry):
+    """socket.io-parser's browser Decoder defaults to `maxAttachments: 10` and
+    closes the WHOLE shared websocket ("too many attachments" -> "parse
+    error") on any binary packet exceeding it — which then reconnect-loops
+    the app. Buffer-heavy figures must fall back to the joined single-blob
+    payload, which the wrapper's `toSpans` handles via `buffer_layout`."""
+
+    async def main():
+        xs = np.linspace(0.0, 1.0, 64)
+        figure = xy.scatter_chart(
+            *[xy.scatter(xs, xs * k, color=xs, size=xs) for k in (1.0, 2.0, 3.0)],
+            width=640,
+            height=400,
+        ).figure()
+        _, raw = figure.build_payload_split(640)
+        assert len(raw) > 10, "premise: this figure must exceed the parser cap"
+        token = registry.register(figure)
+        async with data_plane_server() as (url, _):
+            client = await connect_client(url)
+            collector = Collector(client)
+            await client.emit("sub", {"fig": token, "px": 640}, namespace="/_xy")
+            payload = await collector.next(collector.payloads)
+            await client.disconnect()
+        assert payload["fig"] == token
+        assert payload["spec"].get("buffer_layout") != "split"
+        assert len(payload["buffers"]) == 1
+
+    run(main())
+
+
 def test_msg_round_trip_pick_and_select(_fresh_registry):
     async def main():
         token = registry.register(make_figure(16))
