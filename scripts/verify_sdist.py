@@ -277,6 +277,22 @@ def _require_exact_file(path: str, root: str, member: str, expected: bytes) -> N
         raise AssertionError(f"{member} must be an empty full-package PEP 561 marker")
 
 
+def _require_file_matches_source(
+    path: str, root: str, member: str, source: Path
+) -> None:
+    with tarfile.open(path, "r:gz") as tf:
+        data = tf.extractfile(f"{root}/{member}")
+        if data is None:
+            raise AssertionError(f"{member} is missing")
+        actual = data.read()
+    try:
+        expected = source.read_bytes()
+    except OSError as exc:
+        raise AssertionError(f"cannot read source file {source}: {exc}") from exc
+    if actual != expected:
+        raise AssertionError(f"{member} does not match the source file")
+
+
 def _require_baseline_json(path: str, root: str) -> None:
     with tarfile.open(path, "r:gz") as tf:
         data = tf.extractfile(f"{root}/benchmarks/baseline.json")
@@ -329,6 +345,7 @@ def verify_sdist(path: str) -> None:
         raise AssertionError(f"sdist contains generated/native artifacts: {forbidden}")
     _require_pkg_info(path, root)
     _require_exact_file(path, root, "python/xy/py.typed", b"")
+    _require_file_matches_source(path, root, "README.md", ROOT / "README.md")
     _require_baseline_json(path, root)
     _require_file_contains(
         path,
