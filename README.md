@@ -210,9 +210,3 @@ Start with the [XY documentation](https://reflex.dev/docs/xy/) for installation,
 the chart gallery, guides, and API reference. The repository also includes
 [copyable API examples](spec/api/api-examples.md),
 [benchmark details](benchmarks/README.md), and the [changelog](CHANGELOG.md).
-
-## Contributing and license
-
-Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
-Report security issues through [SECURITY.md](SECURITY.md). XY is licensed under
-[Apache-2.0](LICENSE).
