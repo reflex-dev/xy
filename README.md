@@ -22,9 +22,9 @@ what the screen can show; find guides, API reference, and examples in the
   tooltips, and callbacks—or use the familiar `xy.pyplot` interface.
 - **Interactive by default.** Pan, zoom, hover, select, and inspect exact source
   rows without shipping the entire dataset as JSON.
-- **One chart, many outputs.** Display in Jupyter, VS Code, Colab, and Marimo,
-  or export self-contained HTML plus browser-free PNG, JPEG, WebP, SVG, and
-  PDF through one `to_image`/`write_image` API.
+- **One chart, many outputs.** Display in Jupyter, VS Code, and Colab, or
+  export self-contained HTML plus browser-free PNG, JPEG, WebP, SVG, and PDF
+  through one `to_image`/`write_image` API.
 - **Designed for applications.** Layer marks and style both chart chrome and
   marks with CSS/Tailwind-friendly hooks, gradients, strokes, and curves.
 
