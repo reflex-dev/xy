@@ -1393,6 +1393,196 @@ def main() -> None:
     ok(lib.xy_pyramid_free(ctypes.c_uint64(handle)) == 1, "pyramid free")
     ok(lib.xy_pyramid_free(ctypes.c_uint64(handle)) == 0, "double free is an error code")
 
+    # Mean-color density (LOD doc §2): per-cell mean point color + count-only
+    # alpha. One red and one blue point per side of a 2x1 grid, then both in
+    # one cell: pure cells keep exact colors, the mixed cell averages in
+    # linear light (255,0,0)+(0,0,255) -> (188,0,188).
+    ZZ = ctypes.c_size_t
+    DD = ctypes.c_double
+    lib.xy_bin_2d_mean_color.restype = ctypes.c_int32
+    lib.xy_bin_2d_mean_color.argtypes = [
+        F64P,
+        F64P,
+        ZZ,
+        U8P,
+        U8P,
+        U8P,
+        ZZ,
+        DD,
+        DD,
+        DD,
+        DD,
+        ZZ,
+        ZZ,
+        U8P,
+    ]
+    mc_x = array("d", [0.25, 0.75])
+    mc_y = array("d", [0.5, 0.5])
+    mc_idx = array("B", [0, 1])
+    mc_lut = array("B", [255, 0, 0, 255, 0, 0, 255, 255])
+    mc_out = array("B", bytes(2 * 1 * 4))
+    ok(
+        lib.xy_bin_2d_mean_color(
+            _ptr(mc_x, ctypes.c_double),
+            _ptr(mc_y, ctypes.c_double),
+            2,
+            _ptr(mc_idx, ctypes.c_uint8),
+            U8P(),
+            _ptr(mc_lut, ctypes.c_uint8),
+            2,
+            0.0,
+            1.0,
+            0.0,
+            1.0,
+            2,
+            1,
+            _ptr(mc_out, ctypes.c_uint8),
+        )
+        == 1,
+        "bin_2d_mean_color ok flag",
+    )
+    ok(list(mc_out[0:4]) == [255, 0, 0, 255], "mean color pure red cell")
+    ok(list(mc_out[4:8]) == [0, 0, 255, 255], "mean color pure blue cell")
+    mc_y_one = array("d", [0.5, 0.5])
+    mc_x_one = array("d", [0.5, 0.5])
+    mc_one = array("B", bytes(4))
+    ok(
+        lib.xy_bin_2d_mean_color(
+            _ptr(mc_x_one, ctypes.c_double),
+            _ptr(mc_y_one, ctypes.c_double),
+            2,
+            _ptr(mc_idx, ctypes.c_uint8),
+            U8P(),
+            _ptr(mc_lut, ctypes.c_uint8),
+            2,
+            0.0,
+            1.0,
+            0.0,
+            1.0,
+            1,
+            1,
+            _ptr(mc_one, ctypes.c_uint8),
+        )
+        == 1
+        and list(mc_one) == [188, 0, 188, 255],
+        "mean color mixed cell averages in linear light",
+    )
+    ok(
+        lib.xy_bin_2d_mean_color(
+            _ptr(mc_x_one, ctypes.c_double),
+            _ptr(mc_y_one, ctypes.c_double),
+            2,
+            _ptr(mc_idx, ctypes.c_uint8),
+            _ptr(mc_lut, ctypes.c_uint8),  # both sources set: invalid
+            _ptr(mc_lut, ctypes.c_uint8),
+            2,
+            0.0,
+            1.0,
+            0.0,
+            1.0,
+            1,
+            1,
+            _ptr(mc_one, ctypes.c_uint8),
+        )
+        == 0,
+        "mean color rejects ambiguous color source",
+    )
+
+    # Colored pyramid: same counts as the plain build, mean-color plane on
+    # compose, appends refused (colors unknown; caller rebuilds lazily).
+    lib.xy_pyramid_build_color.restype = ctypes.c_uint64
+    lib.xy_pyramid_build_color.argtypes = [
+        F64P,
+        F64P,
+        ZZ,
+        U8P,
+        U8P,
+        U8P,
+        ZZ,
+        DD,
+        DD,
+        DD,
+        DD,
+        ctypes.c_uint32,
+    ]
+    lib.xy_pyramid_compose_color.restype = ctypes.c_int32
+    lib.xy_pyramid_compose_color.argtypes = [
+        ctypes.c_uint64,
+        DD,
+        DD,
+        DD,
+        DD,
+        ZZ,
+        ZZ,
+        ZZ,  # max_upsample
+        F32P,
+        U8P,
+    ]
+    pc_idx = array("B", [1 if px[i] >= 4.0 else 0 for i in range(n_p)])
+    chandle = lib.xy_pyramid_build_color(
+        _ptr(px, ctypes.c_double),
+        _ptr(py, ctypes.c_double),
+        n_p,
+        _ptr(pc_idx, ctypes.c_uint8),
+        U8P(),
+        _ptr(mc_lut, ctypes.c_uint8),
+        2,
+        0.0,
+        8.0,
+        0.0,
+        8.0,
+        8,
+    )
+    ok(chandle != 0, "colored pyramid build returns a handle")
+    cgrid = array("f", bytes(4 * 8 * 8))
+    crgba = array("B", bytes(8 * 8 * 4))
+    ok(
+        lib.xy_pyramid_compose_color(
+            ctypes.c_uint64(chandle),
+            0.0,
+            8.0,
+            0.0,
+            8.0,
+            8,
+            8,
+            2,
+            _ptr(cgrid, ctypes.c_float),
+            _ptr(crgba, ctypes.c_uint8),
+        )
+        == 0,
+        "colored compose full window uses level 0",
+    )
+    ok(sum(cgrid) == float(n_p), "colored compose conserves the count")
+    left_ok = all(
+        list(crgba[(r * 8 + c) * 4 : (r * 8 + c) * 4 + 4]) == [255, 0, 0, 255]
+        for r in range(8)
+        for c in range(4)
+    )
+    right_ok = all(
+        list(crgba[(r * 8 + c) * 4 : (r * 8 + c) * 4 + 4]) == [0, 0, 255, 255]
+        for r in range(8)
+        for c in range(4, 8)
+    )
+    ok(left_ok and right_ok, "colored compose keeps per-side colors exact")
+    ok(
+        lib.xy_pyramid_append(
+            ctypes.c_uint64(chandle),
+            _ptr(append_x, ctypes.c_double),
+            _ptr(append_y, ctypes.c_double),
+            len(append_x),
+        )
+        == 0,
+        "colored pyramid refuses appends (rebuilds lazily)",
+    )
+    ok(
+        lib.xy_pyramid_compose(
+            ctypes.c_uint64(chandle), 0.0, 8.0, 0.0, 8.0, 8, 8, 2, _ptr(grid_p, ctypes.c_float)
+        )
+        == 0,
+        "count-only compose still serves a colored pyramid",
+    )
+    ok(lib.xy_pyramid_free(ctypes.c_uint64(chandle)) == 1, "colored pyramid free")
+
     # rasterize: caller-owned RGBA8 framebuffer; empty command buffer clears to
     # transparent, a malformed op is rejected, and a null out is refused.
     null_u8 = U8P()

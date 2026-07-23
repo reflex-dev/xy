@@ -74,7 +74,10 @@ class Trace:
     # Count-pyramid cache (§5 Tier 3), managed by `interaction.py`: None =
     # never tried, 0 = tried and not applicable, otherwise the native handle.
     # The finalizer frees the native side when the trace is collected.
+    # `_pyr_colored` records whether the handle carries mean-color planes
+    # (LOD doc §2) — compose must ask for them, and the memory report counts them.
     _pyr_handle: Optional[int] = field(default=None, init=False, repr=False, compare=False)
+    _pyr_colored: bool = field(default=False, init=False, repr=False, compare=False)
     _pyr_finalizer: Optional[Any] = field(default=None, init=False, repr=False, compare=False)
     _pyr_base_dim: int = field(default=0, init=False, repr=False, compare=False)
     # Optional Tier-3 spatial index (xy._spatial.SpatialIndex) for O(window)

@@ -740,15 +740,17 @@ def test_density_view_drills_to_points_when_window_fits():
     row = fig.pick(0, 0)
     assert row is not None and 0.0 <= row["x"] <= 10.0
     assert "color_value" in row
-    # Color-continuous handoff: per-point local log-density in [0,1], a blend
-    # weight = visible/budget, and the colormap the density surface uses —
-    # so freshly drilled points wear the density ramp (§5, never a palette jump).
+    # Intensity handoff (§5): per-point local log-density (u8, like every
+    # unit-scalar live channel) and a blend weight = visible/budget. Freshly
+    # drilled points enter at their cell's count-alpha and ease to native
+    # opacity; the surface wears the mean point color (LOD doc §2), so no
+    # density_colormap rides the points wire.
     assert tr["density_val"]["dtype"] == "u8"
     dbuf = np.frombuffer(bufs[tr["density_val"]["buf"]], dtype=np.uint8)
     assert len(dbuf) == inwin
-    assert dbuf.max() == 255  # the hottest cell hits the ramp top
+    assert dbuf.max() == 255  # the hottest cell reaches full handoff alpha
     assert tr["lod_blend"] == pytest.approx(inwin / SCATTER_DENSITY_THRESHOLD)
-    assert tr["density_colormap"] == "viridis"  # continuous channel's colormap
+    assert "density_colormap" not in tr
     # Channels are normalized over the *global* domain after slicing (staff
     # review: slice-first must not change values — colors stay view-stable),
     # then quantized: every byte within half a step of the exact unit value.
@@ -865,8 +867,9 @@ def test_drill_lod_blend_shrinks_as_zoom_deepens():
     assert upd_wide["traces"][0]["mode"] == "points"
     assert upd_deep["traces"][0]["mode"] == "points"
     assert upd_deep["traces"][0]["lod_blend"] < upd_wide["traces"][0]["lod_blend"]
-    # constant-color scatter still gets the default density ramp for the handoff
-    assert upd_deep["traces"][0]["density_colormap"] == ch.DEFAULT_COLORMAP
+    # the handoff is intensity-only (hue is continuous by construction, LOD
+    # doc §2), so no colormap rides the points wire
+    assert "density_colormap" not in upd_deep["traces"][0]
 
 
 def test_density_view_returns_to_density_on_zoom_out():
@@ -905,17 +908,42 @@ def test_drill_hysteresis_holds_points_mode_near_boundary():
     assert upd2["traces"][0]["mode"] == "density"  # cold entry aggregates
 
 
-def test_huge_scatter_with_channels_warns_and_drops():
+def test_huge_scatter_with_color_channel_warns_and_aggregates_mean_color():
     from xy._figure import DIRECT_SOFT_CEILING
 
     n = DIRECT_SOFT_CEILING + 1
     x = np.zeros(n)
     color = np.arange(n, dtype=np.float64)
-    with pytest.warns(RuntimeWarning, match="dropped"):
+    # Color survives aggregation as the surface's per-cell mean point color
+    # (LOD doc §2), and the warning says so.
+    with pytest.warns(RuntimeWarning, match="mean point color"):
         fig = Figure().scatter(x, x, color=color)
     spec, _ = fig.build_payload()
-    assert spec["traces"][0]["tier"] == "density"
-    assert spec["traces"][0]["density"]["channels_dropped"] is True
+    tr = spec["traces"][0]
+    assert tr["tier"] == "density"
+    assert tr["density"]["channels_dropped"] is False
+    assert tr["density"]["dropped_channels"] == []
+    assert tr["density"]["color_agg"] == "mean"
+    assert "rgba" in tr["density"]
+
+
+def test_huge_scatter_with_size_channel_warns_and_drops():
+    from xy._figure import DIRECT_SOFT_CEILING
+
+    n = DIRECT_SOFT_CEILING + 1
+    x = np.zeros(n)
+    size = np.ones(n, dtype=np.float64)
+    size[0] = 2.0
+    # Size has no honest per-cell aggregate (LOD doc §2 rule 4): dropped,
+    # recorded in `dropped_channels`, and warned about.
+    with pytest.warns(RuntimeWarning, match="dropped channels: size"):
+        fig = Figure().scatter(x, x, size=size)
+    spec, _ = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["tier"] == "density"
+    assert tr["density"]["channels_dropped"] is True
+    assert tr["density"]["dropped_channels"] == ["size"]
+    assert "rgba" not in tr["density"]
 
 
 # -- pick / hover drill ------------------------------------------------------

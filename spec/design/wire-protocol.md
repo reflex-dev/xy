@@ -121,28 +121,39 @@ message unless `msg.seq === this.seq`.
 states which representation this view resolved to:
 
 - `mode: "density"` — `{id, mode, tier, visible, reduction, binning, density}`.
-  `density` is `{buf, w, h, max, enc: "log-u8", x_range, y_range}` plus
-  optional `color` (a constant-channel color) and `sample` (the retained
-  point-sample overlay). `binning` is `"exact"` or `"pyramid-L<level>"`.
-  `x_range`/`y_range` are raw data endpoints, but the grid's cells are
-  **uniform in the axis's scale coordinates** (identical to raw on a linear
-  axis): on a log/symlog axis the kernel bins transformed values so every
-  cell covers the same strip of screen, and renderers interpolate cell edges
-  between the *transformed* endpoints (dossier §28). The raw-space tile
-  pyramid cannot compose such a grid, so nonlinear-axis traces always report
-  `binning: "exact"`.
+  `density` is `{buf, w, h, max, enc: "log-u8", x_range, y_range}` plus, for
+  channel-bearing traces, `rgba` (a `w*h*4` straight-alpha RGBA8 plane: each
+  occupied cell's alpha-weighted **mean point color**, averaged in linear
+  light, plus the cell's mean point alpha) with `color_agg: "mean"` recording
+  the aggregation (LOD doc §2); constant-color traces ship `color` (the
+  constant) instead and no color plane — the mean of a constant IS the
+  constant, so the client tints the count texture. Count always rides `buf`
+  as log-u8 and drives only the drawn **alpha**; renderers must never
+  colormap counts when either color source is present. Optional `sample` is
+  the retained point-sample overlay. `binning` is `"exact"` or
+  `"pyramid-L<level>"`. `x_range`/`y_range` are raw data endpoints, but the
+  grid's cells are **uniform in the axis's scale coordinates** (identical to
+  raw on a linear axis): on a log/symlog axis the kernel bins transformed
+  values so every cell covers the same strip of screen, and renderers
+  interpolate cell edges between the *transformed* endpoints (dossier §28).
+  The raw-space tile pyramid cannot compose such a grid, so nonlinear-axis
+  traces always report `binning: "exact"`.
 - `mode: "points"` — the deep-zoom drill:
   `{id, mode, tier: "direct", visible, reduction: "none", x_range, y_range,
-  x, y, color, size, density_val, lod_blend, density_colormap, drill_seq,
-  style}`. `x_range`/`y_range` are the window these points cover; the client
-  falls back to the density overview the moment the view leaves it.
+  x, y, color, size, density_val, lod_blend, drill_seq, style}`.
+  `x_range`/`y_range` are the window these points cover; the client falls
+  back to the density overview the moment the view leaves it. `density_val`
+  (per-point local log-density) and `lod_blend` drive the intensity-only
+  handoff: hue is continuous by construction because the aggregate surface
+  wears the mean point color, so no `density_colormap` field rides this
+  message (clients ignore one if present).
 
   Channel encodings on this (and the sampled-overlay) live wire: `x`/`y` are
   offset-encoded f32 (position precision is load-bearing, dossier §16), but
-  every unit-scalar channel — continuous `color`, continuous `size`,
-  `density_val` — ships as **u8 LUT coordinates** with a `dtype: "u8"`
-  marker (absent means f32; the client accepts both), and categorical color
-  ships u8 codes. The quantization is safe precisely because these values are
+  every unit-scalar channel — continuous `color` and `size` (LUT/ramp
+  coordinates), `density_val` (the handoff weight) — ships quantized to
+  **u8** with a `dtype: "u8"` marker (absent means f32; the client accepts
+  both), and categorical color ships u8 codes. The quantization is safe precisely because these values are
   never read back into displayed numbers on a live path: hover/pick answers
   come from the kernel's canonical columns (`pick_result` above). The *build*
   payload keeps continuous channels as unit f32 — the client retains those

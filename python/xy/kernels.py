@@ -51,6 +51,7 @@ min_max = _impl.min_max
 bin_2d = _impl.bin_2d
 bin_2d_f32 = _impl.bin_2d_f32
 bin_2d_indices = _impl.bin_2d_indices
+bin_2d_mean_color = _impl.bin_2d_mean_color
 bin_2d_sample_range = _impl.bin_2d_sample_range
 bin_2d_stratified_sample_range_u8_counted = _impl.bin_2d_stratified_sample_range_u8_counted
 histogram_uniform = _impl.histogram_uniform
@@ -70,9 +71,11 @@ streamlines = _impl.streamlines
 triangle_edges = _impl.triangle_edges
 local_log_density = _impl.local_log_density
 pyramid_build = _impl.pyramid_build
+pyramid_build_color = _impl.pyramid_build_color
 pyramid_append = _impl.pyramid_append
 pyramid_count = _impl.pyramid_count
 pyramid_compose = _impl.pyramid_compose
+pyramid_compose_color = _impl.pyramid_compose_color
 pyramid_free = _impl.pyramid_free
 polygon_triangles = _impl.polygon_triangles
 quad_mesh_triangles = _impl.quad_mesh_triangles
@@ -94,6 +97,7 @@ __all__ = [
     "bin_2d",
     "bin_2d_f32",
     "bin_2d_indices",
+    "bin_2d_mean_color",
     "bin_2d_sample_range",
     "bin_2d_stratified_sample_range_u8_counted",
     "correlation",
@@ -120,7 +124,9 @@ __all__ = [
     "polygon_triangles",
     "pyramid_append",
     "pyramid_build",
+    "pyramid_build_color",
     "pyramid_compose",
+    "pyramid_compose_color",
     "pyramid_count",
     "pyramid_free",
     "quad_mesh_triangles",

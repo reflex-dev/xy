@@ -292,9 +292,12 @@ and drill updates emit the same wire shape.
   step, O(visible tiles) per frame after a one-pass build (~1.33× cost).
 - *Progressive refinement* (§17) — bin a 1-in-k sample first so a coarse
   density appears <100 ms, refine over subsequent frames.
-- *Per-bin channel aggregation* (§5-F5) — mean/max color per density cell, so
-  a zoomed-out colored scatter keeps *some* channel signal instead of
-  `channels_dropped`.
+- *Per-bin channel aggregation* (§5-F5) — **color shipped.** Density cells
+  carry the alpha-weighted mean of their points' resolved colors with count as
+  the alpha channel (LOD doc §2) — continuous, categorical, and direct-RGBA
+  channels alike, at every tier including the pyramid — recorded as
+  `color_agg: "mean"` instead of `channels_dropped`. Non-color aggregates
+  (mean/max of a value channel read as data, size) remain open.
 
 ## Cross-Cutting: Styling & Theming
 

@@ -23,13 +23,16 @@ DECIMATION_THRESHOLD = 10_000
 
 # Scatter above this many points switches to Tier-2 density aggregation (§5):
 # instead of shipping/drawing every point (fill-rate + the ~1 GB single-alloc
-# cliff, §5 F3), the kernel bins the viewport into a density grid and the client
-# colormaps it. Screen-bounded transport and VRAM regardless of point count.
+# cliff, §5 F3), the kernel bins the viewport into a density grid the client
+# draws with the trace's own colors — count drives only the alpha (LOD doc
+# §2). Screen-bounded transport and VRAM regardless of point count.
 SCATTER_DENSITY_THRESHOLD = 200_000
 
 # Absolute direct-draw ceiling; above this, density is forced even if the user
-# asked for per-point channels (they can't survive count-aggregation without the
-# §5-F5 aggregation algebra — we warn and drop them, never silently mislead).
+# asked for per-point channels. The color channel survives as the surface's
+# per-cell mean point color (LOD doc §2); the rest (size, stroke, styles) have
+# no honest per-cell aggregate yet (§5 F5) — we warn and drop them, never
+# silently mislead.
 DIRECT_SOFT_CEILING = 2_000_000
 
 # Stable-key matching retains a browser-side identity table for only bounded
