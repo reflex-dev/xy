@@ -12,26 +12,54 @@ reports the available x/y values and encoded color or size values. Add
 `tooltip()` to choose fields, format values, supply a title template, hide the
 tooltip, or register framework-rendered content.
 
+## Default Hover Tooltip
+
+With a bare `xy.tooltip()` (or none at all), hovering a point reports its x and
+y values without any further configuration.
+
+~~~python demo exec
+import reflex_xy
+import xy
+
+default_tooltip_chart = xy.scatter_chart(
+    xy.scatter(
+        [1, 2, 3, 4, 5, 6],
+        [3.2, 4.1, 2.8, 5.0, 4.4, 5.6],
+        color="#6e56cf",
+        size=8,
+    ),
+    xy.tooltip(),
+    xy.x_axis(label="trial"),
+    xy.y_axis(label="score"),
+    title="Hover any point",
+)
+
+
+def default_tooltip_demo():
+    return reflex_xy.chart(default_tooltip_chart, height="320px")
+~~~
+
 ## Choose Fields and Formats
 
 Named source columns that feed x, y, color, size, or heatmap-value channels can
 be used as tooltip fields:
 
-~~~python
+~~~python demo exec
+import reflex_xy
 import xy
 
-data = {
+tooltip_fields_data = {
     "month": [1, 2, 3, 4],
     "revenue": [42_000, 47_000, 45_000, 53_000],
     "growth": [0.04, 0.12, 0.01, 0.18],
 }
 
-chart = xy.scatter_chart(
+tooltip_fields_chart = xy.scatter_chart(
     xy.scatter(
         x="month",
         y="revenue",
         size="growth",
-        data=data,
+        data=tooltip_fields_data,
     ),
     xy.tooltip(
         fields=["revenue", "growth"],
@@ -39,12 +67,64 @@ chart = xy.scatter_chart(
         format={"revenue": ",.0f", "growth": ".1%"},
     ),
 )
+
+
+def tooltip_fields_demo():
+    return reflex_xy.chart(tooltip_fields_chart, height="320px")
 ~~~
 
 Braced field names in `title` are replaced from the hovered row. `format` maps
 field names to the client's numeric format strings. A source column that is not
 bound to a rendered channel is not shipped merely because its name appears in
 `fields`.
+
+### Title Templates Across Multiple Series
+
+One tooltip configuration serves every mark in the chart: the braced `{day}`
+title, the field selection, and the per-field number formats apply to both the
+dashed forecast line and the margin-sized revenue points below.
+
+~~~python demo exec
+import reflex_xy
+import xy
+
+tooltip_title_data = {
+    "day": [1, 2, 3, 4, 5],
+    "revenue": [1450, 1720, 1610, 1980, 2240],
+    "forecast": [1500, 1650, 1750, 1900, 2100],
+    "margin": [0.21, 0.24, 0.19, 0.27, 0.31],
+}
+
+tooltip_title_chart = xy.line_chart(
+    xy.line(
+        x="day",
+        y="forecast",
+        data=tooltip_title_data,
+        name="Forecast",
+        color="#94a3b8",
+        dash="dashed",
+    ),
+    xy.scatter(
+        x="day",
+        y="revenue",
+        size="margin",
+        data=tooltip_title_data,
+        name="Revenue",
+        color="#6e56cf",
+    ),
+    xy.tooltip(
+        title="Day {day}",
+        fields=["revenue", "forecast", "margin"],
+        format={"revenue": ",.0f", "forecast": ",.0f", "margin": ".1%"},
+    ),
+    xy.legend(loc="upper left"),
+    title="Daily revenue vs forecast",
+)
+
+
+def tooltip_title_demo():
+    return reflex_xy.chart(tooltip_title_chart, height="320px")
+~~~
 
 ## Exact and Resident Readout
 

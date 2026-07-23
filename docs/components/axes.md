@@ -12,17 +12,43 @@ Add `x_axis()` and `y_axis()` children when a chart needs an explicit scale or
 presentation contract. Without them, XY infers ordinary numeric, datetime, and
 categorical behavior from the bound data.
 
-## Set the Scale Contract
+## Label the Axes and Fix the Domain
 
-~~~python
+The most common axis contract is a label, an explicit `domain=(min, max)`, and
+a requested `tick_count=` so the view stays put regardless of the data:
+
+~~~python demo exec
 import numpy as np
+import reflex_xy
 import xy
 
-x = np.logspace(0, 6, 240)
-y = 96 - np.log10(x) * 11.5
+ax_hours = np.arange(0, 25, 3)
+ax_temp = np.array([12.1, 11.4, 13.0, 17.6, 21.3, 23.8, 22.0, 17.2, 13.9])
 
-chart = xy.line_chart(
-    xy.line(x, y),
+ax_domain_chart = xy.chart(
+    xy.line(ax_hours, ax_temp, color="#6e56cf", width=2.5),
+    xy.x_axis(label="hour of day", domain=(0, 24), tick_count=9),
+    xy.y_axis(label="temperature (°C)", domain=(0, 30), tick_count=4),
+    title="Fixed domains with requested tick counts",
+)
+
+
+def axes_domain_demo():
+    return reflex_xy.chart(ax_domain_chart, height="320px")
+~~~
+
+## Set the Scale Contract
+
+~~~python demo exec
+import numpy as np
+import reflex_xy
+import xy
+
+log_x = np.logspace(0, 6, 240)
+log_y = 96 - np.log10(log_x) * 11.5
+
+log_chart = xy.line_chart(
+    xy.line(log_x, log_y),
     xy.x_axis(
         type_="log",
         domain=(1, 1_000_000),
@@ -31,6 +57,10 @@ chart = xy.line_chart(
     ),
     xy.y_axis(domain=(0, 100), reverse=True, label="rank"),
 )
+
+
+def axes_scale_contract_demo():
+    return reflex_xy.chart(log_chart, height="320px")
 ~~~
 
 Use `type_="linear"`, `"time"`, or `"log"` when inference is not the desired
@@ -56,6 +86,43 @@ Formatting, label placement, rotation, minimum gaps, and collision strategy
 let the renderer adapt the axis to a dashboard or publication layout. Exact
 option names and defaults are in the
 [generated component reference](/docs/xy/api-reference/marks-and-components/).
+
+Here the x-axis carries category names with `tick_values=` + `tick_labels=`,
+rotated with `tick_label_angle=` and anchored at their ends, while
+`label_position=` and `label_offset=` move the axis title out of the way:
+
+~~~python demo exec
+import numpy as np
+import reflex_xy
+import xy
+
+tick_stage = np.arange(5)
+tick_rate = np.array([1.0, 0.62, 0.38, 0.21, 0.09])
+
+tick_style_chart = xy.chart(
+    xy.bar(tick_stage, tick_rate, color="#0ea5e9", width=0.6),
+    xy.x_axis(
+        tick_values=[0, 1, 2, 3, 4],
+        tick_labels=["Visited", "Signed up", "Activated", "Subscribed", "Renewed"],
+        tick_label_angle=-30,
+        tick_label_anchor="end",
+        label="funnel stage",
+        label_position="end",
+        label_offset=28,
+    ),
+    xy.y_axis(
+        domain=(0, 1),
+        tick_values=[0, 0.25, 0.5, 0.75, 1],
+        tick_labels=["0%", "25%", "50%", "75%", "100%"],
+        label="conversion",
+    ),
+    title="Exact ticks with rotated labels",
+)
+
+
+def axes_tick_styling_demo():
+    return reflex_xy.chart(tick_style_chart, height="320px")
+~~~
 
 ## Bind Marks to Named Axes
 
@@ -84,6 +151,51 @@ chart = xy.chart(
     ),
     xy.legend(),
 )
+~~~
+
+Named axes compose with every mark kind. Below, monthly rain probability rides
+a right-hand percentage axis (`id="y2"`, `side="right"`, `format=".0%"`) while
+temperature keeps the primary y-axis:
+
+~~~python demo exec
+import numpy as np
+import reflex_xy
+import xy
+
+dual_month = np.arange(1, 13)
+dual_temp = np.array(
+    [2.1, 3.0, 6.8, 11.2, 15.6, 19.3, 21.8, 21.2, 17.0, 11.9, 6.4, 3.2]
+)
+dual_rain = np.array(
+    [0.18, 0.14, 0.12, 0.09, 0.07, 0.05, 0.04, 0.05, 0.09, 0.13, 0.17, 0.19]
+)
+
+dual_axis_chart = xy.chart(
+    xy.bar(
+        dual_month,
+        dual_rain,
+        y_axis="y2",
+        name="Rain probability",
+        color="#93c5fd",
+        opacity=0.6,
+    ),
+    xy.line(dual_month, dual_temp, name="Temperature", color="#dc2626", width=2.5),
+    xy.x_axis(label="month", tick_count=12),
+    xy.y_axis(label="temperature (°C)", domain=(0, 25)),
+    xy.y_axis(
+        id="y2",
+        side="right",
+        label="rain probability",
+        domain=(0, 0.4),
+        format=".0%",
+    ),
+    xy.legend(),
+    title="Two units, one panel",
+)
+
+
+def axes_dual_axis_demo():
+    return reflex_xy.chart(dual_axis_chart, height="320px")
 ~~~
 
 ## Style Axes

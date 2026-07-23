@@ -92,17 +92,23 @@ class StandaloneHtmlProbe(HTMLParser):
 
 
 def extract_quickstart(page: Path, label: str) -> str:
-    """Return the single exportable XY quickstart fenced on ``page``."""
+    """Return the single exportable XY quickstart fenced on ``page``.
+
+    The quickstart is the beginner script that exports ``scatter.html``; other
+    exportable showcase fences on the page (for example the large-data demo)
+    are not part of this release contract.
+    """
     text = page.read_text(encoding="utf-8")
     candidates = [
         match.group("code").strip()
         for match in PYTHON_FENCE_RE.finditer(text)
-        if "xy.scatter_chart(" in match.group("code") and "chart.to_html(" in match.group("code")
+        if "xy.scatter_chart(" in match.group("code")
+        and 'chart.to_html("scatter.html")' in match.group("code")
     ]
     require(
         len(candidates) == 1,
-        f"expected exactly one exportable Python quickstart in {label} ({page}), "
-        f"found {len(candidates)}",
+        f"expected exactly one Python quickstart exporting scatter.html in {label} "
+        f"({page}), found {len(candidates)}",
     )
     return candidates[0]
 

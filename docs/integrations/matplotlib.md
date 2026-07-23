@@ -1,5 +1,5 @@
 ---
-title: Matplotlib (`xy.pyplot`)
+title: Matplotlib (xy.pyplot)
 description: Migrate common Matplotlib workflows through XY's pyplot compatibility layer.
 ---
 

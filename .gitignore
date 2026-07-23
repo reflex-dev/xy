@@ -14,3 +14,4 @@ node_modules/
 # force-included into the wheel/sdist by hatch_build.py, never committed.
 python/xy/static/index.js
 python/xy/static/standalone.js
+**/assets/external/

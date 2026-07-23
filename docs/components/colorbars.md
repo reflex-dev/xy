@@ -78,6 +78,85 @@ RGB(A) heatmaps, or density-tier scatter whose per-row color channel is not
 resident in the browser. `colorbar(show=False)` removes an inferred scale.
 `xy.pyplot` has its own Matplotlib-shaped colorbar-authoring API.
 
+### Pinning the scale with a fixed domain
+
+Passing an explicit mark `domain=` pins the colorbar to a known range instead
+of the data extent, so the scale stays comparable across refreshes:
+
+~~~python demo exec
+import numpy as np
+import reflex_xy
+import xy
+
+rng_load = np.random.default_rng(7)
+cpu_load = (rng_load.random((6, 6)) * 60 + 20).round(1)
+
+pinned_scale = xy.heatmap_chart(
+    xy.heatmap(cpu_load, name="load", colormap="magma", domain=(0, 100)),
+    xy.colorbar(title="Load (%)", ticks=[0, 25, 50, 75, 100]),
+    title="Pinned 0–100 scale",
+)
+
+
+def pinned_domain_colorbar():
+    return reflex_xy.chart(pinned_scale, height="330px")
+~~~
+
+### Derived scales on hexbin and layered marks
+
+A hexbin's aggregated counts feed the colorbar just like any continuous
+channel, and when several continuous marks are layered the colorbar derives
+from the last compatible one — here the stations scatter (0–50 PPM on
+viridis), not the heatmap beneath it:
+
+~~~python demo exec
+import numpy as np
+import reflex as rx
+import reflex_xy
+import xy
+
+rng_bins = np.random.default_rng(21)
+hexbin_density = xy.hexbin_chart(
+    xy.hexbin(
+        rng_bins.normal(0.0, 1.0, 400),
+        rng_bins.normal(0.0, 1.0, 400),
+        gridsize=12,
+        colormap="plasma",
+    ),
+    xy.colorbar(title="Points per bin", orientation="horizontal"),
+    title="Horizontal hexbin scale",
+)
+
+rng_layers = np.random.default_rng(3)
+layered_scales = xy.heatmap_chart(
+    xy.heatmap(
+        [[4.0, 9.0], [14.0, 22.0]],
+        name="model grid",
+        colormap="cividis",
+        domain=(0, 25),
+    ),
+    xy.scatter(
+        rng_layers.uniform(0.0, 1.0, 12),
+        rng_layers.uniform(0.0, 1.0, 12),
+        color=(rng_layers.random(12) * 40 + 10).round(1),
+        colormap="viridis",
+        color_domain=(0, 50),
+        size=12,
+        name="stations",
+    ),
+    xy.colorbar(title="Station PPM"),
+    title="Last compatible mark wins",
+)
+
+
+def derived_scale_sources():
+    return rx.el.div(
+        reflex_xy.chart(hexbin_density, height="330px"),
+        reflex_xy.chart(layered_scales, height="330px"),
+        class_name="grid w-full grid-cols-1 gap-5 xl:grid-cols-2",
+    )
+~~~
+
 ## Framework-owned replacement
 
 `render=` (or one positional child) remains an opaque integration hook:
