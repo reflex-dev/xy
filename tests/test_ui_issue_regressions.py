@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from pathlib import Path
 
 import pytest
@@ -280,3 +282,79 @@ def test_categorical_tick_bounds_follow_anchor_rotation_and_extra_axis_side(
     assert extra, result
     assert all(row["side"] == "" for row in extra), result
     assert all(row["pinnedRight"] for row in extra), result
+
+
+def test_republish_clears_stale_hover_and_syncs_title(tmp_path: Path) -> None:
+    """An in-place payload swap must not leave mount-time interaction chrome
+    pointing at the outgoing scene.
+
+    Reported from the reflex flights page (a figure var republished every poll
+    cycle): hovering an aircraft caches a direct trace-group reference, and the
+    swap frees that group's GPU buffers — the very next draw crashed on the
+    nulled ``xBuf`` (``Cannot read properties of null (reading '_fcId')``).
+    The title is the same class of bug in the other direction: it is plain DOM
+    built at mount, so a republished title (here carrying a live counter)
+    silently kept its mount-time text.
+    """
+    before = xy.scatter_chart(
+        xy.scatter([0.0, 1.0, 2.0], [0.0, 1.0, 0.5]),
+        title="3 aircraft · idle",
+        width=320,
+        height=240,
+    )
+    after = xy.scatter_chart(
+        xy.scatter([0.0, 1.0, 2.0, 3.0], [0.5, 0.0, 1.0, 0.25]),
+        title="4 aircraft · live",
+        width=320,
+        height=240,
+    )
+    next_spec, next_buf = after.figure().build_payload()
+    script = (
+        _PRELUDE
+        + f"const NEXT_SPEC = {json.dumps(next_spec)};\n"
+        + f'const NEXT_B64 = "{base64.b64encode(next_buf).decode("ascii")}";\n'
+        + """
+    const b64ToBytes = (b64) => {
+      const bin = atob(b64);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    };
+    const titleBefore = view._titleEl ? view._titleEl.textContent : null;
+    const g = view.gpuTraces.find((t) => t.trace.kind === "scatter");
+    // What a real pointer pick caches (ChartView._hover): a direct group ref.
+    view._hoverTarget = { g, index: 0, trace: 0 };
+    // Non-animated in-place swap: destroys the outgoing groups synchronously.
+    const applied = view.updatePayload(NEXT_SPEC, b64ToBytes(NEXT_B64));
+    const hoverCleared = view._hoverTarget === null;
+    const oldBuffersFreed = g.xBuf === null;
+    let drawError = null;
+    try {
+      view._drawNow();
+      view._raf = null;
+    } catch (error) {
+      drawError = String(error);
+    }
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      applied,
+      titleBefore,
+      titleAfter: view._titleEl ? view._titleEl.textContent : null,
+      ariaAfter: view.root.getAttribute("aria-label"),
+      hoverCleared,
+      oldBuffersFreed,
+      drawError,
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(before, script, tmp_path, "republish hover and title")
+
+    assert result["applied"] is True, result
+    assert result["titleBefore"] == "3 aircraft · idle", result
+    # The destroyed group's buffers really were freed, so a surviving hover
+    # reference would have been the crash.
+    assert result["oldBuffersFreed"] is True, result
+    assert result["hoverCleared"] is True, result
+    assert result["drawError"] is None, result
+    assert result["titleAfter"] == "4 aircraft · live", result
+    assert result["ariaAfter"] == "Chart: 4 aircraft · live", result

@@ -524,6 +524,14 @@ the replacement. The client retains brush geometry, so points arriving in a
 re-drill can reconstruct their selection mask without a second selection
 request.
 
+Viewport and selection are the *only* interaction state that survives a
+republish. A hover highlight is dropped the moment its trace's GPU resources
+are destroyed (the cached pick references freed buffers; the next pointer
+move re-resolves it against the new traces), and mount-time DOM chrome that
+mirrors the spec — the title and the container's `aria-label` — is re-synced
+on every in-place swap, so a figure whose title carries live state (the
+flights page's aircraft counter) stays current without a teardown.
+
 One handler can route several charts by stable token:
 
 ```python

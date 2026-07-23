@@ -1468,13 +1468,13 @@ export class ChartView {
   // FBO realloc is deferred to the next actual pick (_renderPick checks dims).
   // The view request re-decimates/re-bins at the new pixel size (§28), so a
   // bigger chart gains real detail, not just stretched pixels.
-  _resize(cssW, cssH) {
+  _resize(cssW, cssH, force = false) {
     const w = this.fluid && cssW ? Math.max(120, Math.round(cssW)) : this.size.w;
     const h = this.fluidH && cssH ? Math.max(120, Math.round(cssH)) : this.size.h;
     // Browser zoom changes devicePixelRatio with no container resize (R7);
     // re-read it so backing stores stay crisp on a pure-DPR change too.
     const dpr = window.devicePixelRatio || 1;
-    if (w === this.size.w && h === this.size.h && dpr === this.dpr) return;
+    if (!force && w === this.size.w && h === this.size.h && dpr === this.dpr) return;
     this.dpr = dpr;
     this.size.w = w;
     this.size.h = h;
@@ -1511,6 +1511,36 @@ export class ChartView {
     this._raf = null;
     this._drawNow();
     this._scheduleViewRequest();
+  }
+
+  _makeTitleEl(text) {
+    const t = document.createElement("div");
+    t.textContent = text;
+    t.style.cssText = "position:absolute;top:6px;left:0;right:0;";
+    this._applySlot(t, "title");
+    return t;
+  }
+
+  // A payload swap replaces this.spec wholesale, but the title is plain DOM
+  // chrome built at mount — re-sync it (and the region's aria-label) or a
+  // republished figure keeps showing its mount-time title. A presence change
+  // moves the plot's top margin (_layout), so it forces the resize path.
+  _syncTitle() {
+    const title = this.spec.title;
+    this.root.setAttribute("aria-label", title ? `Chart: ${title}` : "Interactive chart");
+    if (title && this._titleEl) {
+      this._titleEl.textContent = title;
+      return;
+    }
+    if (!title && !this._titleEl) return;
+    if (title) {
+      this._titleEl = this._makeTitleEl(title);
+      this.root.insertBefore(this._titleEl, this.chrome);
+    } else {
+      this._titleEl.remove();
+      this._titleEl = null;
+    }
+    this._resize(this.size.w, this.size.h, true);
   }
 
   _buildDom(el) {
@@ -1559,12 +1589,10 @@ export class ChartView {
     this.a11yLive.style.cssText = XY_SR_ONLY_STYLE;
     root.appendChild(this.a11yLive);
 
+    this._titleEl = null;
     if (s.title) {
-      const t = document.createElement("div");
-      t.textContent = s.title;
-      t.style.cssText = "position:absolute;top:6px;left:0;right:0;";
-      this._applySlot(t, "title");
-      root.appendChild(t);
+      this._titleEl = this._makeTitleEl(s.title);
+      root.appendChild(this._titleEl);
     }
 
     this.chrome = document.createElement("canvas");
@@ -3353,6 +3381,10 @@ export class ChartView {
     if (!hit || !hit.g) return;
     const g = hit.g;
     if (g.trace.kind !== "scatter" || g.tier === "density") return;
+    // Structural guard: a destroyed group has null buffers (§27 — GPU state
+    // is a rebuildable cache); drawing from one is a hard error, so treat a
+    // stale hit as "nothing to highlight".
+    if (!g.xBuf || !g.yBuf) return;
     if (!Number.isInteger(hit.index) || hit.index < 0 || hit.index >= g.n) return;
     const [x0, x1] = this._axisRange(g.xAxis);
     const [y0, y1] = this._axisRange(g.yAxis);
@@ -5072,6 +5104,14 @@ export class ChartView {
 
   _destroyTraceResources(g, texSeen) {
     if (!g) return;
+    // The hover hit caches a direct group reference; once this group's
+    // buffers are freed it must not survive into the next draw (a republish
+    // rebuilds the groups, so the pick is re-resolved on the next move).
+    if (this._hoverTarget && this._hoverTarget.g === g) {
+      this._hoverTarget = null;
+      this._hoverId = -1;
+      this._hideTooltip();
+    }
     this._destroyDensitySample(g);
     this._deleteVaos(g);
     this._deleteVaos(g.drill);
