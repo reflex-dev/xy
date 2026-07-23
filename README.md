@@ -37,6 +37,18 @@ share interactive notebook results, or ship self-contained charts on the web.
 Build charts once, then display them in notebooks and apps or export them as
 HTML, images, and vector graphics.
 
+## Benchmarks
+
+<p align="center">
+  <img src="spec/assets/launch-benchmark-comparison.svg" alt="Cold-render time for a 10-million-point chart in xy, Matplotlib, and Plotly. Lower is better." width="1200">
+</p>
+
+The committed launch baseline uses identical seeded data, a 900×420 output,
+and three isolated cold runs. See the
+[launch report](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md)
+and [benchmark runbook](benchmarks/README.md) for the environment,
+methodology, and raw results.
+
 ## Installation
 
 ```bash
@@ -147,18 +159,6 @@ The chart keeps its built-in hover, pan, and zoom behavior. For charts driven
 by Reflex state, events, or live streams, see the
 [Reflex integration guide](https://reflex.dev/docs/xy/integrations/reflex/)
 and the [runnable example app](examples/reflex/).
-
-## Benchmarks
-
-<p align="center">
-  <img src="spec/assets/launch-benchmark-comparison.svg" alt="Cold-render time for a 10-million-point chart in xy, Matplotlib, and Plotly. Lower is better." width="1200">
-</p>
-
-The committed launch baseline uses identical seeded data, a 900×420 output,
-and three isolated cold runs. See the
-[launch report](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md)
-and [benchmark runbook](benchmarks/README.md) for the environment,
-methodology, and raw results.
 
 ## How it works
 
