@@ -365,10 +365,13 @@ invariants so future kinds don't regress them:
   aggregate) — and the density surface, which wears the data's own colors
   (§2), stands alone. Interactive `density_view` replies therefore ship NO
   sample at all: the only retained overlay is the first-payload one, which
-  doubles as the standalone re-bin worker's CPU source and draws only below
-  the gate (kernel mode ships real points before that, so the hybrid look is
-  transient at most; standalone deep zooms keep it as their only point
-  representation; datasets under the budget keep it everywhere). For the
+  doubles as the standalone re-bin worker's CPU source. A KERNEL-ATTACHED
+  client never draws it at any zoom (field follow-up): wherever a view is
+  resolvable the kernel ships REAL points, and a handful of retained sample
+  rows at full alpha there reads as data that isn't. The overlay is the
+  standalone (kernel-less) client's fallback — drawn only below the
+  resolvability gate, where it is the only point representation that build
+  will ever have. For the
   overlays that DO draw, window pairing holds: every sample rides the
   density cache entry it was computed for (`density.overlay`), and each
   frame draws the overlay of the best cached window for the current view
@@ -490,38 +493,50 @@ invariants so future kinds don't regress them:
   (bounded by the same 1200ms window as the T8 hold, so a lost reply can't
   suppress forever).
 
-  The same economy governs the AGGREGATE tier's own traffic (the 100M field
-  HAR: ~2.7 MB full-screen grids re-shipped on every pan/zoom step at
-  200–450%, drawn over a home-texture fallback that blurred the frame the
-  moment a pan left the freshest window):
-  - **Source-clamped grids:** a pyramid-served reply never composes more
-    cells than the finest level resolves under the window
-    (`interaction._pyramid_source_shape` — `ceil(base·frac)+1` per axis);
-    a full-screen grid of upsampled base cells is the same picture at
-    several times the bytes, and the client's texture filtering reproduces
-    the upscale. The attainable per-axis cell size rides the reply as
-    `density.min_cell`; exact/spatial grids (true full-detail bins) omit it.
-  - **Density-side request elision** (`lodDensityCacheServes`): a cached
-    texture that CONTAINS the view and is as detailed as anything the kernel
-    could return — one texel per screen pixel, or already at `min_cell`
-    (zooming into a source-limited texture cannot sharpen it) — answers the
-    view with no round-trip. Guards keep the kernel in charge where it can
-    do better: the estimated in-view count (window count × area share) must
-    exceed `LOD_DIRECT_POINT_BUDGET × LOD_DENSITY_ELIDE_EST_FACTOR` (the
-    exact-rebin/points regimes stay reachable), and the cached window may be
-    at most `LOD_DENSITY_ELIDE_MAX_AREA_RATIO` × the view's area (the
-    uniform-density estimate overshoots in sparse corners; a deep dive
-    re-requests so real counts decide). Entries without recorded counts
-    never elide.
-  - **Finer-detail layering** (`lodDensityDetailForView`): when no fine
-    cached window contains the view, the smallest cached texture overlapping
-    ≥ `LOD_DENSITY_DETAIL_MIN_COVER` of it draws ON TOP of the broad
-    backdrop (after every crossfade layer), so the already-fetched region
-    stays sharp while the request for the rest is in flight — a resolution
-    seam at the window edge beats uniform blur (standard tile-pyramid
-    behavior). A fresh grid for an already-cached window supersedes its
-    unpinned twin in the cache (`lodRememberDensity` dedupe), so elision
-    always reads current facts.
+  The AGGREGATE tier's own traffic is governed by a stronger rule, adopted
+  from field feedback on the 100M drilldown (a HAR showed ~2.7 MB
+  full-screen grids re-shipped on every pan/zoom step at 200–450% zoom for
+  what was the same aggregate with marginally different blur): **the
+  aggregate never refines.** Whatever density texture already covers the
+  view stands — however blurry — until the view could plausibly resolve
+  into REAL points; only then is a round-trip worth anything, and the
+  kernel answers it with exact points once the window's count fits the
+  budget. Blur at intermediate zooms is an accepted, recorded cost.
+  - **The points-band gate** (`lodAggregateStands`): a `density_view` goes
+    out only when the estimated in-view count sits within
+    `LOD_DIRECT_POINT_BUDGET × LOD_POINTS_REQUEST_BAND`. Two independent
+    estimators, LOWER wins (an over-estimate must never hold a view in blur
+    when either signal says points could be close): the smallest cached
+    density window CONTAINING the view (recorded `visible`, exact for its
+    window, area-scaled — seeded by the home texture's first-payload
+    count), and the retained deterministic sample counted in-view and
+    re-weighted by `visible/n` (`lodSampleViewCount`) — a fixed-rate
+    thinning of the whole trace, so it follows the data's ACTUAL
+    distribution where area-scaling assumes uniformity and over-estimates
+    sparse tails by orders of magnitude (~65 expected sample rows right at
+    the band ⇒ ±12% noise; kernel-attached clients never DRAW the sample,
+    T9 — estimating from it CPU-side is what it is retained for). A trace
+    with no recorded counts anywhere always requests. A fresh grid for an
+    already-cached window supersedes its unpinned twin
+    (`lodRememberDensity` dedupe), so the gate always reads current facts.
+  - **Source-clamped grids:** the transition-band replies that do go out
+    stay cheap — a pyramid-served reply never composes more cells than the
+    finest level resolves under the window
+    (`interaction._pyramid_source_shape`, `ceil(base·frac)+1` per axis); a
+    full-screen grid of upsampled base cells is the same picture at several
+    times the bytes, and the client's texture filtering reproduces the
+    upscale. Exact/spatial grids (true full-detail bins) keep screen
+    resolution.
+  - **One texture per frame (recorded reversal):** a fine-over-broad detail
+    layer — drawing the smallest cached texture overlapping the view on top
+    of the broad backdrop during pans — was tried and REVERTED: density
+    textures alpha-composite, so the overlap double-counts opacity, and
+    each window's texture is baked against its own eased normMax, so the
+    seam is also a brightness step (field capture: a stale darker
+    rectangle). Doing it right requires the backdrop scissored out of the
+    detail region plus a shared normalization across cached textures;
+    under the never-refines rule the case barely arises, so the tier draws
+    one texture per frame.
 
 Any new tiered kind must state how it satisfies T1–T13 in its chart-kind
 contract entry before it lands.

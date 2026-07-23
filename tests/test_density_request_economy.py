@@ -1,22 +1,19 @@
-"""Density requests are elided, deduped, and drawn sharp (LOD doc T13).
+"""The aggregate tier never refines; requests only probe the points band
+(LOD doc T13, revised on #225 field feedback).
 
-The field HAR behind this (100M live drilldown, 200-450% zoom): every pan and
-zoom step re-requested a ~2.7 MB full-screen density grid — including
-back-to-back windows differing by sub-pixel amounts — while the draw path fell
-back to the blurriest cached texture the moment a pan left the freshest
-window. Three client rules fix it:
-
-- **source-resolution elision**: a cached texture that already sits at the
-  kernel's finest attainable aggregate cell size (`min_cell`, pyramid-served
-  replies) answers any contained view — zooming further in cannot sharpen it —
-  guarded so the exact/drill regimes stay reachable (estimated in-view count
-  above the budget band, bounded window/view area ratio);
-- **sub-texel request dedup**: a request within half an output texel of the
-  trace's last sent request is suppressed (answered → nothing to refresh;
-  in flight → keep waiting on the original seq);
-- **finer-detail layering**: when no fine window contains the view, the
-  smallest cached texture overlapping it draws on top of the broad backdrop
-  instead of the frame dropping to uniform blur.
+The field HAR behind this (100M live drilldown): every pan and zoom step
+re-requested a multi-MB density grid — including back-to-back windows
+differing by sub-pixel amounts — for a picture that was the same aggregate
+with marginally different blur. The revised contract: whatever density
+texture already covers the view STANDS, however blurry, until the view could
+plausibly resolve into REAL points (estimated in-view count within
+LOD_POINTS_REQUEST_BAND × the direct budget); only then does a density_view
+go out, and the kernel answers it with exact points once the count fits.
+Sub-texel twins of the last sent request are suppressed outright, and the
+frame always draws ONE aggregate texture (a tried fine-over-broad detail
+layer was reverted: density textures alpha-composite, so overlaps
+double-count opacity, and per-window normalization makes the seam a
+brightness step — the field capture's "stale rectangle").
 
 This drives the real client in headless Chromium with a captured comm.
 """
@@ -61,8 +58,16 @@ _PROBE = """
       y0: v0.y0 + sy * fcy - sy * fspany / 2, y1: v0.y0 + sy * fcy + sy * fspany / 2,
     });
 
-    // A pyramid-served reply: grid at the trace's SOURCE resolution
-    // (cell == min_cell), `visible` points in-window.
+    // The home texture carries the payload's recorded count (60k here).
+    const homeHasCount = Number.isFinite(g.density.visible);
+    // Model a huge cloud: this probe chart holds 60k points (points-band
+    // everywhere, so nothing would ever stand). Re-weight the retained
+    // sample's claim so each sample row represents ~1.2M points — the
+    // distribution-true estimator then reads like a 10B-point trace, and
+    // the window-count fixtures below drive the area estimator.
+    g.sampleOverlay.sample.visible = 10000000000;
+
+    // A density reply for window W = central 50% of home, 10M in-window.
     const applyDensity = (x0d, x1d, y0d, y1d, gw, gh, visible) => {
       const grid = new Float32Array(gw * gh).fill(3);
       view._onKernelMsg({
@@ -73,32 +78,26 @@ _PROBE = """
           density: {
             buf: 0, w: gw, h: gh, max: 3,
             x_range: [x0d, x1d], y_range: [y0d, y1d],
-            min_cell: [(x1d - x0d) / gw, (y1d - y0d) / gh],
           },
         }],
       }, [grid.buffer]);
     };
-    // Window W = central 50% of home, 10M points in-window.
     const wx0 = cx - sx * 0.25, wx1 = cx + sx * 0.25;
     const wy0 = cy - sy * 0.25, wy1 = cy + sy * 0.25;
     applyDensity(wx0, wx1, wy0, wy1, 200, 150, 10000000);
-    const cached = g.density;
-    const storedFacts = Number.isFinite(cached.visible) && !!cached.minCell;
 
-    // Zooming INSIDE W (half its span, area ratio 4): the kernel could not
-    // return anything sharper than the cached source-resolution texture, and
-    // ~2.5M estimated points are nowhere near drill — no request.
+    // Zooming inside W at half its span: ~2.5M estimated in view — nowhere
+    // near points territory, so the texture stands and NOTHING is requested,
+    // pending markers included.
     const insideElided = request(viewAt(0.5, 0.5, 0.25, 0.25)) === 0;
     const elisionClearedPending = g._lodPendingView === null;
 
-    // A deep dive (area ratio 16 > 8) re-requests: the uniform-density
-    // estimate overshoots in sparse corners, so let the kernel re-decide.
-    const deepDiveRequested = request(viewAt(0.5, 0.5, 0.12, 0.12)) === 1;
+    // Deeper inside W (1/16 of its area): ~625k estimated — inside the
+    // points band (budget x 4), so the request goes out and the kernel
+    // decides with real counts.
+    const bandRequested = request(viewAt(0.5, 0.5, 0.12, 0.12)) === 1;
 
-    // Near the exact/drill regime the kernel CAN do better: a separate
-    // window with only 300k in-window — a half-span view inside it
-    // estimates ~75k, points territory, so the request must go out even
-    // though the cached texture is source-limited.
+    // A window whose count is already points-scale requests immediately.
     const w2x0 = v0.x0 + sx * 0.10, w2x1 = v0.x0 + sx * 0.40;
     const w2y0 = v0.y0 + sy * 0.10, w2y1 = v0.y0 + sy * 0.40;
     applyDensity(w2x0, w2x1, w2y0, w2y1, 100, 75, 300000);
@@ -106,7 +105,9 @@ _PROBE = """
 
     // Sub-texel dedup: a settle re-request shifted by 0.2 output texels is
     // the same picture — suppressed while the first is in flight; a shift of
-    // 3 texels is a genuinely different window — sent.
+    // 3 texels is a genuinely different window — sent. (These views sit
+    // inside the 60k home count, i.e. always in the points band, so only
+    // the dedup memo gates them.)
     const plotW = Math.round(view.plot.w);
     const base = viewAt(0.75, 0.75, 0.2, 0.2);
     const sentBase = request(base) === 1;
@@ -116,30 +117,27 @@ _PROBE = """
     const shifted = { ...base, x0: base.x0 + texel * 3, x1: base.x1 + texel * 3 };
     const texelsRequested = request(shifted) === 1;
 
-    // Finer-detail layering: pan half-out of W (not contained, ~50% overlap).
-    // The home texture is the containing backdrop, but W's fine texture must
-    // draw ON TOP of it instead of the frame dropping to home's blur.
+    // One aggregate texture per frame (the reverted detail layer must stay
+    // reverted): straddle W's edge — home contains the view and draws alone
+    // once the crossfade settles; W's finer texture must NOT stack on top.
     view.view = viewAt(0.75, 0.5, 0.5, 0.5);
     view._drawNow();
-    clk += 1000; // land the density crossfade so the detail layer engages
+    clk += 1000; // land the density crossfade
     view._drawNow();
-    const drawnRanges = [];
+    let densityDraws = 0;
     const real = view._drawDensity;
     view._drawDensity = function (gg, dd, op) {
-      if (gg === g && dd && dd.xRange) drawnRanges.push([dd.xRange[0], dd.xRange[1], op]);
+      if (gg === g) densityDraws++;
       return real.apply(this, arguments);
     };
     view._drawNow();
     view._drawDensity = real;
-    const fineIdx = drawnRanges.findIndex((r) => Math.abs(r[0] - wx0) < sx * 1e-9);
-    const broadIdx = drawnRanges.findIndex((r) => r[0] < wx0 - sx * 0.1);
-    const detailDrawn = fineIdx >= 0 && broadIdx >= 0 && fineIdx > broadIdx;
 
     document.body.setAttribute("data-xy-economy-probe", JSON.stringify({
-      hasDensity: !!g, storedFacts,
-      insideElided, elisionClearedPending, deepDiveRequested, nearDrillRequested,
+      hasDensity: !!g, homeHasCount,
+      insideElided, elisionClearedPending, bandRequested, nearDrillRequested,
       sentBase, subTexelSuppressed, texelsRequested,
-      drawnCount: drawnRanges.length, detailDrawn,
+      densityDraws,
     }));
   } catch (err) {
     document.body.setAttribute(
@@ -167,7 +165,7 @@ def _density_html() -> str:
     return html
 
 
-def test_density_requests_elided_deduped_and_layered(tmp_path: Path) -> None:
+def test_aggregate_stands_until_points_band(tmp_path: Path) -> None:
     chromium = find_chromium()
     if chromium is None:
         pytest.skip("Chromium unavailable")
@@ -182,18 +180,18 @@ def test_density_requests_elided_deduped_and_layered(tmp_path: Path) -> None:
     )
 
     assert result["hasDensity"] is True
-    assert result["storedFacts"] is True
-    # Source-resolution elision: a zoom inside a source-limited cached window
-    # sends nothing (the kernel cannot sharpen it) and clears its pending
-    # marker like every other elision.
+    assert result["homeHasCount"] is True
+    # The aggregate stands: no refinement requests while the estimated
+    # in-view count sits clearly above points territory.
     assert result["insideElided"] is True
     assert result["elisionClearedPending"] is True
-    # The guards keep the kernel in charge where it can do better.
-    assert result["deepDiveRequested"] is True
+    # The points band and points-scale windows still request — the kernel
+    # keeps deciding with real counts everywhere it could answer sharper.
+    assert result["bandRequested"] is True
     assert result["nearDrillRequested"] is True
     # Sub-texel dedup: same picture, no second request; a real shift sends.
     assert result["sentBase"] is True
     assert result["subTexelSuppressed"] is True
     assert result["texelsRequested"] is True
-    # The finest overlapping cached texture draws over the broad backdrop.
-    assert result["detailDrawn"] is True
+    # Exactly one aggregate texture per settled frame — no detail stacking.
+    assert result["densityDraws"] == 1

@@ -74,11 +74,13 @@ already answered there is nothing to refresh (replies are deterministic for
 unchanged data; data changes rebuild the GPU trace and reset the memo), and
 if it is still in flight the trace keeps waiting on the original request's
 `seq`, whose reply is then accepted per-trace instead of dying to the global
-seq race. Independently, a cached density texture that contains the view and
-is as detailed as anything the kernel could return — one texel per screen
-pixel, or already at the trace's attainable `min_cell` resolution — elides
-the request entirely, guarded so the exact-rebin and points regimes stay
-reachable (LOD doc T13).
+seq race. More fundamentally, the aggregate tier never refines (LOD doc T13,
+revised): a `density_view` goes out only when the estimated in-view count —
+the smallest cached window containing the view, area-scaled, seeded by the
+first payload's recorded count — sits within the points band
+(`LOD_DIRECT_POINT_BUDGET × LOD_POINTS_REQUEST_BAND`). Outside that band the
+covering texture stands, however blurry; traces with no recorded counts
+always request.
 
 **`pick`** — `trace` and `index` pass through `_integer_id`. `index` is a
 *shipped-vertex* index, translated kernel-side to a canonical row when the
@@ -157,10 +159,10 @@ states which representation this view resolved to:
   resolution** — never more cells per axis than the finest level resolves
   under the window (a full-screen grid of upsampled cells is the same
   picture at several times the bytes; the client's texture filtering does
-  the upscale) — and carry `min_cell: [cx, cy]`, the finest attainable
-  per-axis cell size in data units, which the client's request elision reads
-  (LOD doc T13). Exact and spatial grids are true full-detail bins and omit
-  `min_cell`. `x_range`/`y_range` are raw data endpoints, but the
+  the upscale). Exact and spatial grids are true full-detail bins at screen
+  resolution. `visible` — the window's point count — is the fact the
+  client's points-band gate scales to decide whether any later view is
+  worth a request at all (LOD doc T13). `x_range`/`y_range` are raw data endpoints, but the
   grid's cells are **uniform in the axis's scale coordinates** (identical to
   raw on a linear axis): on a log/symlog axis the kernel bins transformed
   values so every cell covers the same strip of screen, and renderers

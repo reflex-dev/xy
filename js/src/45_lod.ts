@@ -287,6 +287,14 @@ function lodOverlayResolvable(view, o) {
 // Every candidate passes the #225 resolvability gate first: above the direct
 // budget the aggregate stands alone.
 export function lodSampleForView(view, g) {
+  // Kernel-attached clients never draw retained samples (#225 field
+  // follow-up): whenever a view is resolvable the kernel answers with REAL
+  // points — the retained sample is a handful of arbitrary rows drawn at
+  // full alpha exactly where exact marks are one request away (or already
+  // on screen), which reads as data that isn't there. The overlay exists
+  // for the standalone (kernel-less) client, whose re-binned sample is the
+  // only point representation it will ever have.
+  if (view.comm) return null;
   const cache = g.densityCache || (g.density ? [g.density] : []);
   let contained = null;
   let fallback = null;
@@ -322,89 +330,101 @@ function lodDensityForView(view, g) {
   return best || broadest || g.density;
 }
 
-// Finer-detail layer over the chosen backdrop (T13): when the view is not
-// contained in any fine cached window, lodDensityForView falls back to the
-// broadest texture — but a finer cached window usually still covers most of
-// the view mid-pan/zoom, and drawing only the broad texture renders the
-// frame at its blurriest exactly when the user is moving. Pick the
-// smallest-area cached texture that overlaps the view meaningfully and is
-// finer than the primary; the draw path paints it on top (GPU clips it to
-// its window), so the region already fetched stays sharp while the request
-// for the rest is in flight. Standard tile-pyramid behavior: a resolution
-// seam at the window edge beats uniform blur.
-const LOD_DENSITY_DETAIL_MIN_COVER = 0.05; // of the view area
+// NOTE (recorded reversal, T13): a "finer-detail layer" — drawing the
+// smallest cached texture overlapping the view on top of the broad backdrop
+// during pans — was tried here and reverted after a field capture showed it
+// as a stale darker rectangle: density textures alpha-composite, so the
+// overlap region double-counts opacity, and each window's texture is baked
+// against its own eased normMax, so the seam is also a brightness step.
+// Doing it right needs the backdrop scissored out of the detail region plus
+// a shared normalization across cached textures (or kernel-side padded
+// aligned density windows, so the primary texture simply keeps containing
+// the view). Until then the tier draws ONE texture per frame.
 
-function lodDensityDetailForView(view, g, primary) {
-  if (!primary) return null;
-  const cache = g.densityCache || [];
-  const v = view.view;
-  const vx0 = Math.min(v.x0, v.x1), vx1 = Math.max(v.x0, v.x1);
-  const vy0 = Math.min(v.y0, v.y1), vy1 = Math.max(v.y0, v.y1);
-  const viewArea = (vx1 - vx0) * (vy1 - vy0);
-  if (!(viewArea > 0)) return null;
-  const primaryArea = lodDensityArea(primary);
-  let best = null;
-  for (const d of cache) {
-    if (!d || !d.tex || d === primary || d === g._densitySwitchPrev) continue;
-    if (!(lodDensityArea(d) < primaryArea)) continue;
-    const wx0 = Math.min(d.xRange[0], d.xRange[1]), wx1 = Math.max(d.xRange[0], d.xRange[1]);
-    const wy0 = Math.min(d.yRange[0], d.yRange[1]), wy1 = Math.max(d.yRange[0], d.yRange[1]);
-    const ox = Math.min(vx1, wx1) - Math.max(vx0, wx0);
-    const oy = Math.min(vy1, wy1) - Math.max(vy0, wy0);
-    if (ox <= 0 || oy <= 0 || (ox * oy) / viewArea < LOD_DENSITY_DETAIL_MIN_COVER) continue;
-    if (!best || lodDensityArea(d) < lodDensityArea(best)) best = d;
+// T13 (revised on #225 field feedback): the aggregate tier does NOT refine.
+// Whatever density texture already covers the view stands — however blurry —
+// until the view could plausibly resolve into REAL points; only then is a
+// round-trip worth anything, and the kernel answers it with exact points
+// once the window's count fits the budget. Blur at intermediate zooms is an
+// accepted cost: a refreshed aggregate at 300% zoom is the same picture with
+// marginally softer edges, and the field capture behind the old refinement
+// loop paid megabytes per pan/zoom step for it.
+//
+// The estimate comes from the smallest cached density window CONTAINING the
+// view — its recorded count is exact for its window, area-scaled down to the
+// view (home's total count is the fallback everything starts from). The
+// band factor absorbs area-scaling error against non-uniform data: dense
+// cores under-estimate (a wasted-but-small transition request whose density
+// reply recalibrates the local count), sparse tails over-estimate (points
+// arrive a few zoom steps later than ideal — more of the accepted blur). A
+// trace with no recorded counts anywhere always requests: silence must
+// never be the default when the kernel might hold a sharper representation.
+const LOD_POINTS_REQUEST_BAND = 4; // × LOD_DIRECT_POINT_BUDGET
+
+// Unbiased local count estimate from the retained deterministic sample: the
+// first-payload sample is a fixed-rate thinning of the whole trace, so
+// (in-view sample rows) × (total ÷ sample size) estimates the in-view count
+// following the data's ACTUAL distribution — with ~65 expected sample rows
+// right at the gating band, ±12% noise. Area-scaling alone cannot do this:
+// it assumes uniform density, over-estimating sparse tails by orders of
+// magnitude, which under the stands-rule would strand them in blur far past
+// the zoom where real points are available. Kernel-attached clients never
+// DRAW this sample (T9); estimating from it CPU-side is exactly the kind of
+// use it is retained for (like the standalone re-bin worker). NaN when no
+// sample is retained (overlay omitted past u32 rows, hand-built specs).
+function lodSampleViewCount(view, g, x0, x1, y0, y1) {
+  const o = g.sampleOverlay;
+  const cpu = o && o._cpu;
+  const meta = o && o.sample;
+  if (!cpu || !cpu.x || !cpu.y || !meta || !Number.isFinite(meta.visible) || !(meta.n > 0)) {
+    return NaN;
   }
-  return best;
+  // Containment tested in the sample's own encoded space (§16): enc =
+  // (raw − offset) × scale, with a swap guard for negative scales.
+  const sx = cpu.xMeta.scale || 1, ox = cpu.xMeta.offset || 0;
+  const sy = cpu.yMeta.scale || 1, oy = cpu.yMeta.offset || 0;
+  let ex0 = (Math.min(x0, x1) - ox) * sx, ex1 = (Math.max(x0, x1) - ox) * sx;
+  if (ex0 > ex1) { const t = ex0; ex0 = ex1; ex1 = t; }
+  let ey0 = (Math.min(y0, y1) - oy) * sy, ey1 = (Math.max(y0, y1) - oy) * sy;
+  if (ey0 > ey1) { const t = ey0; ey0 = ey1; ey1 = t; }
+  const n = Math.min(cpu.x.length, cpu.y.length);
+  let k = 0;
+  for (let i = 0; i < n; i++) {
+    const xv = cpu.x[i], yv = cpu.y[i];
+    if (xv >= ex0 && xv <= ex1 && yv >= ey0 && yv <= ey1) k++;
+  }
+  return k * (meta.visible / meta.n);
 }
 
-// Density-side request elision (T13): skip the density_view round-trip when
-// a cached texture is already as detailed as anything the kernel could
-// return for this view. Two ways to qualify, both requiring the cached
-// window to CONTAIN the view:
-// - screen-resolution adequacy: the texture resolves at least one texel per
-//   screen pixel of the current view (zoom-outs and pan-returns inside an
-//   exact-scan grid);
-// - source-resolution adequacy: the texture already sits at the trace's
-//   finest attainable aggregate cell size (`min_cell`, pyramid-served
-//   replies) — zooming further in cannot sharpen it, so re-requesting the
-//   same blur is pure wire waste (the HAR behind this: repeated ~2.7 MB
-//   grids per pan/zoom step at 200-450% on a 100M scatter).
-// Guards keep the exact/drill regimes reachable: the estimated in-view count
-// must sit clearly above the budget (the kernel would still answer with the
-// pyramid, not an exact re-bin or points), and the view must not have dived
-// more than MAX_AREA_RATIO below the cached window (the area estimate
-// overshoots in sparse corners; a deep dive re-requests so the kernel can
-// re-decide with real counts).
-const LOD_DENSITY_ELIDE_EST_FACTOR = 2; // × LOD_DIRECT_POINT_BUDGET
-const LOD_DENSITY_ELIDE_MAX_AREA_RATIO = 8; // cached-window area ÷ view area
-
-export function lodDensityCacheServes(view, g, x0, x1, y0, y1, plotW, plotH) {
+export function lodAggregateStands(view, g, x0, x1, y0, y1) {
   const cache = g.densityCache || (g.density ? [g.density] : []);
   const vx0 = Math.min(x0, x1), vx1 = Math.max(x0, x1);
   const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
   const vSpanX = vx1 - vx0, vSpanY = vy1 - vy0;
-  if (!(vSpanX > 0 && vSpanY > 0 && plotW > 0 && plotH > 0)) return false;
-  const needX = vSpanX / plotW, needY = vSpanY / plotH;
+  if (!(vSpanX > 0 && vSpanY > 0)) return false;
   const ex = vSpanX * 1e-4, ey = vSpanY * 1e-4;
+  let winArea = 0;
+  let est = NaN;
   for (const d of cache) {
-    if (!d || !d.tex || !d.xRange || !d.yRange || !(d.w > 0) || !(d.h > 0)) continue;
+    if (!d || !d.xRange || !d.yRange || !Number.isFinite(d.visible)) continue;
     const wx0 = Math.min(d.xRange[0], d.xRange[1]), wx1 = Math.max(d.xRange[0], d.xRange[1]);
     const wy0 = Math.min(d.yRange[0], d.yRange[1]), wy1 = Math.max(d.yRange[0], d.yRange[1]);
     if (vx0 < wx0 - ex || vx1 > wx1 + ex || vy0 < wy0 - ey || vy1 > wy1 + ey) continue;
-    const winArea = (wx1 - wx0) * (wy1 - wy0);
-    if (winArea > vSpanX * vSpanY * LOD_DENSITY_ELIDE_MAX_AREA_RATIO) continue;
-    const cellX = (wx1 - wx0) / d.w, cellY = (wy1 - wy0) / d.h;
-    const mc = d.minCell;
-    if (cellX > Math.max(needX, mc ? mc[0] : 0) * 1.001) continue;
-    if (cellY > Math.max(needY, mc ? mc[1] : 0) * 1.001) continue;
-    // Unknown counts never elide: the kernel must stay free to choose a
-    // sharper representation (exact re-bin, points) the moment it can.
-    if (!Number.isFinite(d.visible) || !(d.visible > 0)) continue;
-    const est = d.visible * Math.min(1, (vSpanX * vSpanY) / winArea);
-    if (est <= LOD_DIRECT_POINT_BUDGET * LOD_DENSITY_ELIDE_EST_FACTOR) continue;
-    return true;
+    const a = (wx1 - wx0) * (wy1 - wy0);
+    if (!(a > 0)) continue;
+    if (!(winArea > 0) || a < winArea) {
+      winArea = a;
+      est = d.visible * Math.min(1, (vSpanX * vSpanY) / a);
+    }
   }
-  return false;
+  // Two independent estimators, keep the LOWER: never let an over-estimate
+  // hold a view in blur when either signal says points could be close. The
+  // area estimate under-shoots dense cores (a small early transition request
+  // whose reply recalibrates); the sample estimate is distribution-true.
+  const sampleEst = lodSampleViewCount(view, g, x0, x1, y0, y1);
+  if (Number.isFinite(sampleEst)) est = Number.isFinite(est) ? Math.min(est, sampleEst) : sampleEst;
+  if (!Number.isFinite(est)) return false;
+  return est > LOD_DIRECT_POINT_BUDGET * LOD_POINTS_REQUEST_BAND;
 }
 
 // The hold's density estimate, reused by retirement (T11): scale the drill
@@ -1013,12 +1033,10 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
     w: d.w, h: d.h, max: d.max, normMax, colormap: d.colormap || g.density.colormap,
     color: d.color ? parseColor(view.root, d.color, [0.3, 0.47, 0.66, 1]) : g.density.color,
     xRange: d.x_range, yRange: d.y_range,
-    // Request-elision facts (T13): the window's point count, and — for
-    // pyramid-served replies — the finest cell size this trace's aggregate
-    // tier can attain, so lodDensityCacheServes knows when this texture is
-    // already as sharp as a re-request could be.
+    // Request-gating fact (T13): the window's exact point count — the local
+    // estimate lodAggregateStands scales to decide whether a view is close
+    // enough to points territory to be worth a round-trip at all.
     visible: upd.visible,
-    minCell: Array.isArray(d.min_cell) ? d.min_cell : null,
     grid,
     rgba,
     filter,
@@ -1056,7 +1074,6 @@ function lodDrawDensityWithFade(view, g, density, opacityScale = 1) {
   if (fade < 1) {
     view._drawDensity(g, prev, (1 - fade) * opacityScale);
     view._drawDensity(g, density, fade * opacityScale);
-    lodDrawDensityDetail(view, g, density, opacityScale);
     view.draw();
     return;
   }
@@ -1067,15 +1084,6 @@ function lodDrawDensityWithFade(view, g, density, opacityScale = 1) {
     if (density === g.density) g._densityFadeStart = null;
   }
   view._drawDensity(g, density, opacityScale);
-  lodDrawDensityDetail(view, g, density, opacityScale);
-}
-
-// The finer-detail layer rides every backdrop draw (T13): painted after the
-// primary (and after both crossfade layers) so the sharpest fetched region
-// stays on top while the rest of the view shows the broad context.
-function lodDrawDensityDetail(view, g, density, opacityScale) {
-  const detail = lodDensityDetailForView(view, g, density);
-  if (detail && detail.tex) view._drawDensity(g, detail, opacityScale);
 }
 
 // The drilled frame's backdrop opacity, eased continuously (T10). The

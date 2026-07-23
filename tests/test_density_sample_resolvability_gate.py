@@ -16,7 +16,9 @@ This drives the real client in headless Chromium: an overlay whose window
 holds far more points than the budget must NOT draw even when its window
 covers the view exactly (badge off — density-only), while zooming deep enough
 into the same window that the estimated in-view count fits the budget brings
-the overlay (and badge) back.
+the overlay (and badge) back. With a kernel attached the overlay never draws
+at all — resolvable views get REAL points from the kernel, so retained
+sample rows there read as data that isn't (#225 field follow-up).
 """
 
 from __future__ import annotations
@@ -132,11 +134,23 @@ _PROBE = """
     const atHome = sampleDrawn();
     const atHomeBadge = badgeShowsSample();
 
+    // Kernel-attached clients NEVER draw retained samples (#225 field
+    // follow-up): wherever a view is resolvable, the kernel ships REAL
+    // points — a handful of arbitrary sample rows at full alpha there reads
+    // as data that isn't. The overlay is the standalone client's fallback.
+    view.comm = { send: () => {} };
+    const kernelAtHome = sampleDrawn();
+    zoomTo(1 / 16);
+    const kernelDeepIn = sampleDrawn();
+    const kernelBadge = badgeShowsSample();
+    view.comm = null;
+    view.view = { ...v0 };
+
     document.body.setAttribute("data-xy-gate-probe", JSON.stringify({
       hasOverlays: !!(g.densityCache && g.densityCache.some((d) => d && d.overlay)),
       windowN: N,
       atWindow, atWindowBadge, atBigHome, deepIn, deepInBadge, midway,
-      atHome, atHomeBadge,
+      atHome, atHomeBadge, kernelAtHome, kernelDeepIn, kernelBadge,
     }));
   } catch (err) {
     document.body.setAttribute(
@@ -194,6 +208,11 @@ def test_sample_overlay_gated_by_resolvable_count(tmp_path: Path) -> None:
     assert result["deepIn"]["alpha"] == 1
     assert result["deepInBadge"] is True
     # A dataset under the budget is resolvable everywhere: its home overlay
-    # keeps drawing (nothing changes for small charts).
+    # keeps drawing (nothing changes for small charts) — in STANDALONE mode.
     assert result["atHome"] is not None
     assert result["atHomeBadge"] is True
+    # With a kernel attached the overlay never draws at any zoom: resolvable
+    # views get real points from the kernel, not retained sample rows.
+    assert result["kernelAtHome"] is None
+    assert result["kernelDeepIn"] is None
+    assert result["kernelBadge"] is False

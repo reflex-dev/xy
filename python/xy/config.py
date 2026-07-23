@@ -65,14 +65,16 @@ DRILL_EXIT_FACTOR = 1.15
 DENSITY_TARGET_POINTS_PER_CELL = 16.0
 
 # Deterministic point sample retained with the FIRST density payload only
-# (§28/#225): the client draws it solely when the view it would describe could
-# be points-tier (estimated in-view count within the drill budget) — a
-# fixed-size sample above that resolution reads as individual data points at a
-# zoom where real points are sub-pixel, misrepresenting the dataset. Its other
-# job is unchanged: it is the standalone (kernel-less) re-bin worker's CPU
-# source. Interactive density_view replies ship no samples at all — the
+# (§28/#225): interactive density_view replies ship no samples at all — the
 # density surface already wears the data's own colors (LOD doc §2), and real
-# points arrive the moment a window fits the budget.
+# points arrive the moment a window fits the budget. Kernel-attached clients
+# never DRAW the retained sample either (a fixed-size sample reads as
+# individual data points at zooms where real points are sub-pixel or one
+# request away); they use it CPU-side as the distribution-true estimator for
+# the points-band request gate (LOD doc T13, `lodSampleViewCount`). The
+# standalone (kernel-less) client keeps it as its re-bin worker's CPU source
+# and draws it below the resolvable-count gate, where it is the only point
+# representation that build will ever have.
 DENSITY_SAMPLE_TARGET = 8_192
 DENSITY_SAMPLE_SEED = 0
 

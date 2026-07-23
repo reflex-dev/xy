@@ -2110,6 +2110,10 @@ export class ChartView {
         w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
         color: d.color ? parseColor(this.root, d.color, [0.3, 0.47, 0.66, 1]) : null,
         xRange: d.x_range, yRange: d.y_range,
+        // The home window's count seeds lodAggregateStands (T13): every
+        // zoom's points-band estimate starts from this until a closer
+        // window's reply recalibrates it.
+        visible: t.visible,
         grid: lodCopyGrid(grid),
         rgba,
         filter,

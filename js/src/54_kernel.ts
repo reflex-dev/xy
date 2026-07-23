@@ -2,7 +2,7 @@ import { payloadBuffers } from "./00_header";
 import { buildLutData } from "./10_colormaps";
 import { parseColor } from "./20_theme";
 import {
-  lodApplyDensityUpdate, lodApplyDrill, lodDensityCacheServes, lodDrillServesView,
+  lodAggregateStands, lodApplyDensityUpdate, lodApplyDrill, lodDrillServesView,
   lodDropDrill, lodPromoteCachedDrill, lodRememberDensity,
 } from "./45_lod";
 import { xyCreateRebinWorker } from "./46_worker";
@@ -39,8 +39,7 @@ Object.assign(ChartView.prototype, {
         // goes neither pending nor on the wire. The seq bump above stands, so
         // an in-flight reply for an older, wider view dies stale instead of
         // yanking the exact marks out from under the view it can't improve.
-        if (this._drillServesView(g, view) ||
-            this._densityCacheServesView(g, view, plotW, plotH)) {
+        if (this._drillServesView(g, view) || this._aggregateStandsForView(g, view)) {
           g._lodPendingView = null;
           g._lodPendingSeq = null;
           g._lodPendingAt = null;
@@ -88,12 +87,12 @@ Object.assign(ChartView.prototype, {
         const sendNow = this._now();
         for (const g of this.gpuTraces) {
           if (g.tier !== "density") continue;
-          // T12/T13 re-check at actual send time: a drill or an adequate
-          // cached texture that landed during the debounce elides the
-          // request it made unnecessary; one that died during it re-arms
-          // the request the schedule-time check skipped.
-          if (this._drillServesView(g, view) ||
-              this._densityCacheServesView(g, view, plotW, plotH)) {
+          // T12/T13 re-check at actual send time: a drill that landed during
+          // the debounce — or a reply that moved the view back out of the
+          // points band — elides the request it made unnecessary; a drill
+          // that died during it re-arms the request the schedule-time check
+          // skipped.
+          if (this._drillServesView(g, view) || this._aggregateStandsForView(g, view)) {
             if (g._lodPendingSeq === seq) {
               g._lodPendingView = null;
               g._lodPendingSeq = null;
@@ -167,14 +166,13 @@ Object.assign(ChartView.prototype, {
     return now - last.sentAt < 1200 ? last : null;
   },
 
-  // Density-side elision (T13): a cached texture that is as detailed as
-  // anything the kernel could return for this view (lodDensityCacheServes)
-  // makes the round-trip moot — the pyramid cannot sharpen past its source
-  // cells, and zoom-outs inside an exact grid already have their texels.
-  _densityCacheServesView(g, view, plotW, plotH) {
+  // The aggregate never refines (T13, revised): the covering texture stands
+  // until the view could plausibly resolve into real points, so a density
+  // request goes out only inside that band (lodAggregateStands).
+  _aggregateStandsForView(g, view) {
     const [x0, x1] = this._axisRange(g.xAxis, view);
     const [y0, y1] = this._axisRange(g.yAxis, view);
-    return lodDensityCacheServes(this, g, x0, x1, y0, y1, plotW, plotH);
+    return lodAggregateStands(this, g, x0, x1, y0, y1);
   },
 
   // A reply whose seq lost the global race can still be current in substance:

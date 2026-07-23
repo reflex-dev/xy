@@ -16,7 +16,6 @@ from __future__ import annotations
 import math
 
 import numpy as np
-import pytest
 
 from xy import interaction
 from xy._figure import Figure
@@ -37,20 +36,18 @@ def test_pyramid_source_shape_math() -> None:
 
     t = _T()
     # A quarter-extent window resolves ~256 (+1 straddle) source cells.
-    cells_x, cells_y, cell_x, cell_y = interaction._pyramid_source_shape(t, 10.0, 35.0, 5.0, 17.5)
+    cells_x, cells_y = interaction._pyramid_source_shape(t, 10.0, 35.0, 5.0, 17.5)
     assert cells_x == math.ceil(1024 * 0.25) + 1
     assert cells_y == math.ceil(1024 * 0.25) + 1
-    assert cell_x == pytest.approx(100.0 / 1024)
-    assert cell_y == pytest.approx(50.0 / 1024)
     # Windows wider than the extent clamp to the full base.
-    cells_x, _, _, _ = interaction._pyramid_source_shape(t, -50.0, 250.0, 0.0, 50.0)
+    cells_x, _ = interaction._pyramid_source_shape(t, -50.0, 250.0, 0.0, 50.0)
     assert cells_x == 1024 + 1
     # Degenerate extents refuse rather than divide by zero.
     t.y = _Col(5.0, 5.0)
     assert interaction._pyramid_source_shape(t, 0.0, 1.0, 0.0, 1.0) is None
 
 
-def test_pyramid_reply_records_min_cell_and_exact_reply_does_not() -> None:
+def test_pyramid_reply_grid_bounded_by_source_cells() -> None:
     n = 2_500_000
     rng = np.random.default_rng(3)
     x = rng.uniform(0.0, 100.0, n)
@@ -65,20 +62,19 @@ def test_pyramid_reply_records_min_cell_and_exact_reply_does_not() -> None:
     assert tr["binning"].startswith("pyramid")
     d = tr["density"]
     base = getattr(t, "_pyr_base_dim", 0) or PYRAMID_BASE_DIM
-    assert d["min_cell"][0] == pytest.approx((t.x.max - t.x.min) / base)
-    assert d["min_cell"][1] == pytest.approx((t.y.max - t.y.min) / base)
     # The grid never exceeds the source cells under the window (+1 straddle).
     assert d["w"] <= math.ceil(base * 0.5) + 1 + 1
     assert d["h"] <= math.ceil(base * 0.5) + 1 + 1
+    # The reply carries the window's count — the fact the client's
+    # points-band gate (lodAggregateStands, T13) scales for later zooms.
+    assert tr["visible"] > 0
 
     # A window near the drill budget (~260k in-window: over the budget, under
-    # the pyramid-serve margin) takes the exact path: true full-detail bins,
-    # so no min_cell rides the reply (nothing finer exists to attain).
+    # the pyramid-serve margin) takes the exact path: true full-detail bins.
     upd2, _ = fig.density_view(0, 0.0, 35.0, 0.0, 30.0, 512, 384)
     tr2 = upd2["traces"][0]
     assert tr2["mode"] == "density"
     assert tr2["binning"] == "exact"
-    assert "min_cell" not in tr2["density"]
 
 
 def test_pyramid_grid_clamped_to_source_resolution() -> None:

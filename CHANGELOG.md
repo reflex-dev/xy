@@ -44,18 +44,27 @@ in the README).
   the view's estimated in-view count fits the direct point budget, i.e. when
   individual points are actually resolvable; real points still ship the
   moment a window fits the budget, so drilldown behavior is unchanged.
-- **Density traffic is source-bounded, elided, and layered (LOD doc T13).**
-  Pyramid-served density replies are clamped to the source resolution the
-  window actually has — no more full-screen grids of upsampled base cells
-  (a 100M-scatter field capture shipped ~2.7 MB per pan/zoom step at 200-450%
-  zoom; the same views now cost a fraction of that) — and record `min_cell`,
-  the finest attainable cell size. The client elides `density_view` requests
-  a cached texture already answers (contained view, texture at screen or
-  attainable resolution, guarded so exact re-bins and drill-in stay
-  reachable), suppresses re-requests within half an output texel of the last
-  one (gesture-end/settle twins), and draws the finest overlapping cached
-  texture on top of the broad backdrop during pans/zooms instead of dropping
-  the frame to the blurriest texture it holds.
+- **The aggregate tier no longer refines; density requests only probe the
+  points band (LOD doc T13).** Whatever density texture already covers the
+  view stands — however blurry — until the estimated in-view count comes
+  within `LOD_POINTS_REQUEST_BAND ×` the direct budget; only then does a
+  `density_view` go out, and the kernel answers with exact points once the
+  count fits. The estimate takes the lower of an area-scaled cached-window
+  count and the retained first-payload sample counted in-view — the sample
+  follows the data's actual distribution, so sparse regions reach their
+  points without being stranded in blur by uniform-density assumptions. A 100M-scatter field capture had shipped a ~2.7 MB full-screen
+  grid on every pan/zoom step (including sub-pixel window twins, now deduped
+  within half an output texel) for what was the same aggregate with
+  marginally different blur; intermediate-zoom blur is the accepted,
+  recorded cost. Transition-band replies that do go out are clamped to the
+  pyramid's source resolution — never more cells than the finest level
+  resolves under the window. Kernel-attached clients also no longer draw the
+  retained first-payload sample at any zoom (resolvable views get real
+  points, not retained sample rows); it remains the standalone client's
+  fallback, gated by resolvability. A tried fine-over-broad texture layering
+  was reverted (recorded): density textures alpha-composite, so overlaps
+  double-count opacity, and per-window normalization makes the seam a
+  brightness step.
 - **Full-point windows are padded, aligned, cached, and never re-requested
   (LOD doc T13).** A points-tier reply now ships the largest aligned window
   around the view whose exact count still fits the budget (bounds snapped to
