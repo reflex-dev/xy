@@ -630,7 +630,7 @@ pub fn compose_color(
     }
     for (bin, quad) in out_rgba.chunks_exact_mut(4).enumerate() {
         let weight = weight_sum[bin];
-        if !(count_sum[bin] > 0.0) || !(weight > 0.0) {
+        if !(count_sum[bin] > 0.0 && weight > 0.0) {
             continue;
         }
         let mean = |s: f64| (s / weight).round().clamp(0.0, 65535.0) as u16;

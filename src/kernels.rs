@@ -6250,9 +6250,9 @@ mod tests {
 
     #[test]
     fn srgb_linear_table_roundtrips_every_byte() {
-        for byte in 0..=255usize {
+        for (byte, &linear) in SRGB_TO_LINEAR_U16.iter().enumerate() {
             assert_eq!(
-                linear_u16_to_srgb_u8(SRGB_TO_LINEAR_U16[byte]),
+                linear_u16_to_srgb_u8(linear),
                 byte as u8,
                 "table entry {byte} must invert exactly"
             );
