@@ -594,7 +594,9 @@ def test_what_is_xy_restores_the_sdf_hero_and_ends_with_a_short_pitch() -> None:
     assert "/docs/xy/overview/first-chart/" in content
     assert "/docs/xy/overview/why-xy/" not in content
     assert not (DOCS_ROOT / "overview/why-xy.md").exists()
-    assert len(why_copy.split()) < 230
+    # The pitch-length cap measures prose; embedded demo fences don't count.
+    why_prose = re.sub(r"~~~.*?~~~", "", why_copy, flags=re.DOTALL)
+    assert len(why_prose.split()) < 230
     assert "10-million-point launch benchmark" in why_copy
     assert "Compare by workflow, not by slogan" not in why_copy
 
