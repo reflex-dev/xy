@@ -390,8 +390,9 @@ def trace_bin_colors(t: Trace) -> Optional[dict]:
     (LOD doc §2), resolved once and cached on the trace.
 
     `channels.resolve_bin_colors` over the full column quantizes every
-    canonical row — an O(N) pass whose NumPy temporaries reach multiple GB on
-    a 100M-point trace — while its result depends only on the channel's
+    canonical row — an O(N) pass (chunked, so its temporaries stay bounded
+    even over a disk-backed column larger than RAM; the u8 result is the one
+    column-sized allocation) — while its result depends only on the channel's
     immutable values and global domain. Cache it so each of its consumers
     (pyramid build, the exact and no-rescan mean-color re-bins, the
     first-paint density emit) pays that pass once per trace instead of once

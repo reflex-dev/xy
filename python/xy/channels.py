@@ -60,6 +60,10 @@ DEFAULT_COLORMAP = "viridis"
 MAX_CATEGORIES = 256
 _FACTORIZE_PROBE_ROWS = 4096
 _FACTORIZE_NATIVE_MAX_PROBE_CATEGORIES = 512
+# Rows per continuous-quantize pass in `resolve_bin_colors`: bounds its f32/f64
+# temporaries (~12 B/row) to ~50 MB regardless of column length, so resolving a
+# disk-backed out-of-core column (§27) never materializes column-sized RAM.
+_BIN_COLOR_CHUNK = 1 << 22
 
 
 @dataclass
@@ -587,9 +591,15 @@ def resolve_bin_colors(cc: Optional[ColorChannel], sel: Any, palette: list[str])
             raise ValueError("continuous color channel missing values or domain")
         vals = values if sel is None else values[sel]
         # Same normalization the wire ships, quantized to the nearest of the
-        # client's 256 LUT texels.
-        unit = normalize_to_unit(vals, domain)
-        idx = np.rint(np.asarray(unit, dtype=np.float64) * 255.0).astype(np.uint8)
+        # client's 256 LUT texels. Chunked (`_BIN_COLOR_CHUNK`) with the exact
+        # per-element math of a whole-column pass, so only the u8 result is
+        # ever column-sized.
+        idx = np.empty(len(vals), dtype=np.uint8)
+        for start in range(0, len(vals), _BIN_COLOR_CHUNK):
+            unit = normalize_to_unit(vals[start : start + _BIN_COLOR_CHUNK], domain)
+            idx[start : start + _BIN_COLOR_CHUNK] = np.rint(
+                np.asarray(unit, dtype=np.float64) * 255.0
+            ).astype(np.uint8)
         return {"idx": idx, "lut": colormap_lut_rgba8(cc.colormap)}
     code_values = cc.codes
     categories = cc.categories

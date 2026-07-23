@@ -38,6 +38,18 @@ on first use:
 XY_LIVE_POINTS=1000000 uv run uvicorn app:app
 ```
 
+A request whose dataset would consume over 75% of the machine's RAM (four
+canonical f64 columns, 32 bytes per point) is never materialized in memory:
+generation streams each column to a disk memmap (`xy._ooc.MemmapF64Builder`)
+and the figure serves those files directly, the kernels paging them through
+the OS cache — resident memory stays screen-bounded rather than data-bounded.
+`XY_LIVE_POINTS_DIR` picks where the backing files live (default: the system
+temp dir — point it at a real disk if your temp dir is a RAM-backed tmpfs);
+they are removed at exit. One recorded trade rides along: an out-of-core
+trace never pays a whole-file rescan per view, so deep zooms keep serving
+the aggregate density surface (upsampled past the pyramid floor) instead of
+drilling to exact points.
+
 ## Layout
 
 | File | Role |

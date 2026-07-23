@@ -142,7 +142,10 @@ lightness (the points' own alpha compositing).
    wire, and the §4 pyramid's color planes at +8 B/cell.
    The kernel's per-point color *source* (LUT indices or packed RGBA8) is a
    full-column O(N) quantize over immutable channel values and their global
-   domain, so it is resolved **once per trace** and cached
+   domain — walked in bounded chunks (`channels._BIN_COLOR_CHUNK`), so its
+   f32/f64 temporaries never scale with the column and an out-of-core column
+   larger than RAM resolves without materializing; only the u8/RGBA8 result
+   is column-sized — so it is resolved **once per trace** and cached
    (`interaction.trace_bin_colors`; a rebuildable §27 derived buffer,
    itemized as `memory_report()["bin_color_bytes"]`, dropped on append and
    lazily re-resolved by the append's own refresh emit). `density_view`
@@ -297,7 +300,14 @@ ever extrapolates.
   OS page cache, so building/serving the pyramid never requires the raw rows to
   be resident. Columns too large to build in RAM are streamed to disk by
   `xy._ooc.MemmapF64Builder`; `tests/test_ooc.py` covers ingest-without-copy and
-  screen-bounded density rendering over a memmap-backed scatter.
+  screen-bounded density rendering over a memmap-backed scatter. The
+  live-drilldown demo apps exercise the path end-to-end: an `XY_LIVE_POINTS`
+  request whose dataset would consume over 75% of the machine's RAM is
+  generated straight to disk via the builder and served from the memmaps, on
+  the no-rescan aggregate ladder of Phase-3 item 7
+  (`examples/fastapi/live_drilldown.py`, `examples/reflex` §6;
+  `XY_LIVE_POINTS_DIR` places the backing files, `tests/test_example_apps.py`
+  pins the threshold, the RAM/disk data parity, and the served tiers).
 - **Windowed-exact spatial index (landed).** A disk-backed companion to the
   pyramid for the zoomed-*in* regime, where the pyramid's upsampled floor is
   blocky (its finest cell is kilometres wide over a planet-scale extent).

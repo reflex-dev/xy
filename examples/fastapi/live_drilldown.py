@@ -19,15 +19,32 @@ the render client debounces its requests, drops stale replies by `seq`, and
 keeps the best cached density texture drawn until a fresh one lands (§17
 stale-while-revalidate), so the host app carries no aggregation or request
 bookkeeping of its own.
+
+An over-RAM request is served out-of-core: when ``XY_LIVE_POINTS`` asks for a
+dataset over 75% of the machine's RAM (four canonical f64 columns), generation
+streams each column to a disk memmap via ``xy._ooc.MemmapF64Builder`` — peak
+RAM is one 1M-point chunk — and the figure serves those files directly, the
+kernels paging them through the OS cache (dossier §27; LOD doc §4.4).
+``XY_LIVE_POINTS_DIR`` picks where the backing files live (default: the
+system temp dir; point it at a real disk if yours is a RAM-backed tmpfs).
+The recorded trade (LOD doc Phase-3 item 7): an out-of-core trace never pays
+an O(N) file rescan per view, so deep zooms keep serving the aggregate
+density surface (pyramid, upsampled past its floor) instead of drilling to
+exact points.
 """
 
 from __future__ import annotations
 
+import atexit
 import base64
 import json
 import os
+import shutil
+import sys
+import tempfile
 import threading
 import warnings
+from collections.abc import Iterator
 from functools import lru_cache
 from typing import Any, Union
 
@@ -41,6 +58,11 @@ import xy
 # so it works on the internal figure compiled from the public composition API
 # via `Chart.figure()`.
 from xy._figure import Figure
+
+# Over-RAM datasets stream to disk-backed columns (dossier §27 "mmap
+# (native)"): the builder writes canonical f64 one chunk at a time and the
+# ordinary chart API consumes the finished read-only memmap views unchanged.
+from xy._ooc import MemmapF64Builder
 
 # `encode_frame` builds the XYBF binary transport frame (wire-protocol.md §7)
 # the browser decodes with the bundled `xy.decodeFrame`; it is re-exported from
@@ -90,27 +112,112 @@ def _point_label(n: int) -> str:
     return f"{n:,}"
 
 
+# The dataset is four canonical f64 columns (x, y, color, size).
+_BYTES_PER_POINT = 4 * 8
+# Requests whose dataset would consume over this fraction of physical RAM are
+# generated out to disk memmaps and served from there (dossier §27).
+_MMAP_RAM_FRACTION = 0.75
+
+
+def _total_ram_bytes() -> int | None:
+    """Total physical RAM in bytes, or ``None`` where it can't be read.
+
+    ``SC_PAGE_SIZE``/``SC_PHYS_PAGES`` are POSIX; on a platform without them
+    the dataset simply stays in RAM (the pre-mmap behavior).
+    """
+    try:
+        page = os.sysconf("SC_PAGE_SIZE")
+        pages = os.sysconf("SC_PHYS_PAGES")
+    except (AttributeError, ValueError, OSError):
+        return None
+    if page <= 0 or pages <= 0:
+        return None
+    return page * pages
+
+
+def _mmap_needed(n: int) -> bool:
+    """True when ``n`` points would consume over 75% of the machine's RAM."""
+    ram = _total_ram_bytes()
+    return ram is not None and n * _BYTES_PER_POINT > ram * _MMAP_RAM_FRACTION
+
+
+def _scatter_chunks(n: int) -> Iterator[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+    """Yield the seed-11 drilldown cloud as ``(x, y, color, size)`` f64 chunks.
+
+    Both storage paths — in-RAM arrays and disk memmaps — consume this one
+    stream, so the dataset is bit-identical wherever it lands (and identical
+    to the reflex showcase's §6 chart, which mirrors this generation).
+    """
+    rng = np.random.default_rng(11)
+    chunk = 1_000_000
+    for start in range(0, n, chunk):
+        m = min(start + chunk, n) - start
+        xs = rng.normal(0, 1.0, m)
+        ys = rng.normal(0, 0.55, m)
+        ys += xs * 0.55
+        ss = rng.normal(6, 2.5, m)
+        np.abs(ss, out=ss)
+        np.clip(ss, 2, 16, out=ss)
+        yield xs, ys, np.hypot(xs, ys), ss
+
+
+def _mmap_scatter_data(n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Generate the cloud straight to disk memmaps (over-RAM requests).
+
+    Each column streams through `xy._ooc.MemmapF64Builder` one chunk at a
+    time, and the finished read-only views feed the ordinary chart API: the
+    kernels scan them via the OS page cache, so resident memory stays
+    screen-bounded, never data-bounded (dossier §27; LOD doc §4.4). The
+    backing files live under ``XY_LIVE_POINTS_DIR`` (default: the system temp
+    dir) and are removed at interpreter exit.
+    """
+    root = os.environ.get("XY_LIVE_POINTS_DIR") or None
+    if root is not None:
+        os.makedirs(root, exist_ok=True)
+    tmpdir = tempfile.mkdtemp(prefix="xy-live-drilldown-", dir=root)
+    atexit.register(shutil.rmtree, tmpdir, ignore_errors=True)
+    ram = _total_ram_bytes() or 0
+    print(
+        f"xy live drilldown: {n:,} points × 4 f64 columns "
+        f"({n * _BYTES_PER_POINT / 2**30:.1f} GiB) exceed "
+        f"{_MMAP_RAM_FRACTION:.0%} of {ram / 2**30:.1f} GiB RAM; streaming to "
+        f"disk memmaps under {tmpdir} (XY_LIVE_POINTS_DIR overrides the location)",
+        file=sys.stderr,
+    )
+    builders = [
+        MemmapF64Builder(os.path.join(tmpdir, f"{name}.f64"), capacity=n)
+        for name in ("x", "y", "color", "size")
+    ]
+    for columns in _scatter_chunks(n):
+        for builder, column in zip(builders, columns, strict=True):
+            builder.extend(column)
+    x, y, color, size = (builder.finalize() for builder in builders)
+    return x, y, color, size
+
+
 def colored_scatter_data(
     n: int = LIVE_SCATTER_POINTS,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    rng = np.random.default_rng(11)
+    """The drilldown dataset — in RAM, or on disk when RAM can't hold it.
+
+    A request over 75% of physical memory (`_mmap_needed`) is generated out to
+    disk memmap files and served from those; anything smaller materializes in
+    RAM exactly as before.
+    """
+    if _mmap_needed(n):
+        return _mmap_scatter_data(n)
     x = np.empty(n, dtype=np.float64)
     y = np.empty(n, dtype=np.float64)
     color = np.empty(n, dtype=np.float64)
     size = np.empty(n, dtype=np.float64)
-    chunk = 1_000_000
-    for start in range(0, n, chunk):
-        end = min(start + chunk, n)
-        xs = rng.normal(0, 1.0, end - start)
-        ys = rng.normal(0, 0.55, end - start)
-        ys += xs * 0.55
-        ss = rng.normal(6, 2.5, end - start)
-        np.abs(ss, out=ss)
-        np.clip(ss, 2, 16, out=ss)
-        x[start:end] = xs
-        y[start:end] = ys
-        np.hypot(xs, ys, out=color[start:end])
-        size[start:end] = ss
+    cursor = 0
+    for xs, ys, cs, ss in _scatter_chunks(n):
+        end = cursor + xs.shape[0]
+        x[cursor:end] = xs
+        y[cursor:end] = ys
+        color[cursor:end] = cs
+        size[cursor:end] = ss
+        cursor = end
     return x, y, color, size
 
 

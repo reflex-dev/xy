@@ -20,7 +20,11 @@ via `inspect.getsource`.
 6. **The drilldown, adapter-native.** The 100M-point live drilldown
    scatter from ``examples/fastapi`` — identical data and mark config — as one
    ``reflex_xy.inline`` token with zero transport code, for A/B-ing the two
-   hosts. ``XY_LIVE_POINTS`` resizes it (both apps honor the same override).
+   hosts. ``XY_LIVE_POINTS`` resizes it (both apps honor the same override),
+   and both apps generate a dataset over 75% of the machine's RAM out to disk
+   memmaps and serve it from there (``xy._ooc``; ``XY_LIVE_POINTS_DIR`` picks
+   where the backing files live; deep zooms then stay on the aggregate
+   no-rescan ladder instead of drilling to exact points).
 
 Run from ``examples/reflex``::
 
@@ -30,9 +34,14 @@ Run from ``examples/reflex``::
 from __future__ import annotations
 
 import asyncio
+import atexit
 import inspect
 import os
+import shutil
+import sys
+import tempfile
 import warnings
+from collections.abc import Iterator
 from functools import lru_cache
 from typing import Any
 
@@ -42,6 +51,10 @@ import reflex_xy
 from reflex_xy.tokens import BUILDER_ATTR
 
 import xy
+
+# Over-RAM datasets stream to disk-backed columns (dossier §27 "mmap
+# (native)"), exactly as in the fastapi app this demo A/Bs against.
+from xy._ooc import MemmapF64Builder
 
 POINTS = 1_000_000
 RNG_SEED = 11
@@ -153,29 +166,105 @@ def _point_label(n: int) -> str:
     return f"{n:,}"
 
 
-def drilldown_chart(n: int = DRILLDOWN_POINTS) -> xy.Chart:
-    """The ``examples/fastapi`` live-drilldown scatter: same seed, same chunked
-    generation, same mark config. That app wires the chart through its own
-    HTTP transport (a Starlette endpoint plus a comm bridge); here the
-    kernel's density tiers answer every pan/zoom over the app websocket."""
+# The dataset is four canonical f64 columns (x, y, color, size); a request
+# over 75% of physical RAM is generated out to disk memmaps and served from
+# there (dossier §27) — the same threshold and files the fastapi app uses.
+_BYTES_PER_POINT = 4 * 8
+_MMAP_RAM_FRACTION = 0.75
+
+
+def _total_ram_bytes() -> int | None:
+    """Total physical RAM in bytes, or ``None`` where it can't be read
+    (non-POSIX ``sysconf``; the dataset then simply stays in RAM)."""
+    try:
+        page = os.sysconf("SC_PAGE_SIZE")
+        pages = os.sysconf("SC_PHYS_PAGES")
+    except (AttributeError, ValueError, OSError):
+        return None
+    if page <= 0 or pages <= 0:
+        return None
+    return page * pages
+
+
+def _mmap_needed(n: int) -> bool:
+    """True when ``n`` points would consume over 75% of the machine's RAM."""
+    ram = _total_ram_bytes()
+    return ram is not None and n * _BYTES_PER_POINT > ram * _MMAP_RAM_FRACTION
+
+
+def _scatter_chunks(n: int) -> Iterator[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+    """Yield the seed-11 drilldown cloud as ``(x, y, color, size)`` f64 chunks;
+    both storage paths consume this one stream, so the dataset is bit-identical
+    wherever it lands (and identical to ``examples/fastapi``'s)."""
     rng = np.random.default_rng(11)
+    chunk = 1_000_000
+    for start in range(0, n, chunk):
+        m = min(start + chunk, n) - start
+        xs = rng.normal(0, 1.0, m)
+        ys = rng.normal(0, 0.55, m)
+        ys += xs * 0.55
+        ss = rng.normal(6, 2.5, m)
+        np.abs(ss, out=ss)
+        np.clip(ss, 2, 16, out=ss)
+        yield xs, ys, np.hypot(xs, ys), ss
+
+
+def _mmap_scatter_data(n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Stream the cloud to disk memmaps (`xy._ooc.MemmapF64Builder`) and return
+    the read-only views; the kernels page them through the OS cache, so
+    resident memory stays screen-bounded, never data-bounded (dossier §27).
+    Backing files live under ``XY_LIVE_POINTS_DIR`` (default: the system temp
+    dir) and are removed at interpreter exit."""
+    root = os.environ.get("XY_LIVE_POINTS_DIR") or None
+    if root is not None:
+        os.makedirs(root, exist_ok=True)
+    tmpdir = tempfile.mkdtemp(prefix="xy-live-drilldown-", dir=root)
+    atexit.register(shutil.rmtree, tmpdir, ignore_errors=True)
+    ram = _total_ram_bytes() or 0
+    print(
+        f"xy live drilldown: {n:,} points × 4 f64 columns "
+        f"({n * _BYTES_PER_POINT / 2**30:.1f} GiB) exceed "
+        f"{_MMAP_RAM_FRACTION:.0%} of {ram / 2**30:.1f} GiB RAM; streaming to "
+        f"disk memmaps under {tmpdir} (XY_LIVE_POINTS_DIR overrides the location)",
+        file=sys.stderr,
+    )
+    builders = [
+        MemmapF64Builder(os.path.join(tmpdir, f"{name}.f64"), capacity=n)
+        for name in ("x", "y", "color", "size")
+    ]
+    for columns in _scatter_chunks(n):
+        for builder, column in zip(builders, columns, strict=True):
+            builder.extend(column)
+    x, y, color, size = (builder.finalize() for builder in builders)
+    return x, y, color, size
+
+
+def _drilldown_data(n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """The drilldown dataset — in RAM, or on disk when RAM can't hold it."""
+    if _mmap_needed(n):
+        return _mmap_scatter_data(n)
     x = np.empty(n, dtype=np.float64)
     y = np.empty(n, dtype=np.float64)
     color = np.empty(n, dtype=np.float64)
     size = np.empty(n, dtype=np.float64)
-    chunk = 1_000_000
-    for start in range(0, n, chunk):
-        end = min(start + chunk, n)
-        xs = rng.normal(0, 1.0, end - start)
-        ys = rng.normal(0, 0.55, end - start)
-        ys += xs * 0.55
-        ss = rng.normal(6, 2.5, end - start)
-        np.abs(ss, out=ss)
-        np.clip(ss, 2, 16, out=ss)
-        x[start:end] = xs
-        y[start:end] = ys
-        np.hypot(xs, ys, out=color[start:end])
-        size[start:end] = ss
+    cursor = 0
+    for xs, ys, cs, ss in _scatter_chunks(n):
+        end = cursor + xs.shape[0]
+        x[cursor:end] = xs
+        y[cursor:end] = ys
+        color[cursor:end] = cs
+        size[cursor:end] = ss
+        cursor = end
+    return x, y, color, size
+
+
+def drilldown_chart(n: int = DRILLDOWN_POINTS) -> xy.Chart:
+    """The ``examples/fastapi`` live-drilldown scatter: same seed, same chunked
+    generation, same over-RAM disk-memmap spill, same mark config. That app
+    wires the chart through its own HTTP transport (a Starlette endpoint plus
+    a comm bridge); here the kernel's density tiers answer every pan/zoom over
+    the app websocket."""
+    x, y, color, size = _drilldown_data(n)
     return xy.scatter_chart(
         xy.scatter(x, y, color=color, size=size, colormap="viridis", opacity=0.72, density=True),
         xy.x_axis(label="feature A"),
@@ -614,9 +703,10 @@ def index() -> rx.Component:
                 "same mark config — with the adapter replacing that app's custom "
                 "HTTP transport (Starlette endpoint plus comm bridge). Zoom until "
                 "the density surface drills into exact points; XY_LIVE_POINTS "
-                "resizes both apps for side-by-side comparison.",
+                "resizes both apps for side-by-side comparison, and a request "
+                "over 75% of RAM streams to disk memmaps in both.",
                 drilldown_view(),
-                code_accordion(drilldown_chart, drilldown_view),
+                code_accordion(_drilldown_data, drilldown_chart, drilldown_view),
             ),
             spacing="5",
             width="100%",

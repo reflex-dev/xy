@@ -303,6 +303,22 @@ def test_resolve_bin_colors_modes():
     assert list(out["rgba"][0]) == [255, 0, 0, 128]
 
 
+def test_resolve_bin_colors_chunked_matches_whole_column(monkeypatch):
+    # The continuous quantize walks the column in bounded chunks so resolving a
+    # disk-backed out-of-core column (§27) never materializes column-sized f32/
+    # f64 temporaries. Chunking must be invisible: bit-identical to one pass.
+    rng = np.random.default_rng(7)
+    vals = rng.normal(0.0, 3.0, 10_001)
+    vals[::97] = np.nan  # the nonfinite→floor policy must survive chunking
+    cc = channels.resolve_color(vals, len(vals), default_constant="#000000")
+    one_pass = channels.resolve_bin_colors(cc, None, DEFAULT_PALETTE)
+    monkeypatch.setattr(channels, "_BIN_COLOR_CHUNK", 1000)  # many chunks + ragged tail
+    chunked = channels.resolve_bin_colors(cc, None, DEFAULT_PALETTE)
+    assert one_pass is not None and chunked is not None
+    assert np.array_equal(one_pass["idx"], chunked["idx"])
+    assert np.array_equal(one_pass["lut"], chunked["lut"])
+
+
 def test_mean_color_weights_by_point_alpha():
     # A 20%-alpha red and an opaque blue in one cell: the mean must lean blue,
     # and the cell's mean alpha rides the wire so display intensity follows.

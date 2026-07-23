@@ -48,11 +48,21 @@ points; box-select to cross-filter the histogram; press **go live** to stream.
 honors, so both apps build the identical dataset at any size. Unlike the
 FastAPI app (lazy, on first use) the columns are built at import, because
 `inline()` registers at module scope; the default 100M costs a few gigabytes
-of RAM and some startup seconds, so dial it down on small machines:
+and some startup seconds, so dial it down on small machines:
 
 ```bash
 XY_LIVE_POINTS=1000000 uv run reflex run
 ```
+
+A request whose dataset would consume over 75% of the machine's RAM is never
+materialized in memory: both apps generate the columns out to disk memmap
+files (`xy._ooc.MemmapF64Builder`) and serve them from there, the kernels
+paging the data through the OS cache. `XY_LIVE_POINTS_DIR` picks where the
+backing files live (default: the system temp dir — point it at a real disk if
+your temp dir is a RAM-backed tmpfs); they are removed at exit. One recorded
+trade rides along: an out-of-core trace never pays a whole-file rescan per
+view, so deep zooms keep serving the aggregate density surface (upsampled
+past the pyramid floor) instead of drilling to exact points.
 
 The adapter is wired in one line — `plugins=[reflex_xy.XYPlugin()]` in
 [`rxconfig.py`](rxconfig.py).

@@ -449,8 +449,13 @@ Keep pushing these in low-conflict increments:
   drilldown chart itself: `examples/reflex` §6 serves the identical dataset
   adapter-natively (an `inline()` token, no transport code) so cross-host
   behavior can be A/B'd against fastapi's hand-rolled transport; both honor
-  `XY_LIVE_POINTS`. Neither commits static chart HTML, and both surface their
-  own source via `inspect.getsource`.
+  `XY_LIVE_POINTS`, and both generate a request whose dataset would consume
+  over 75% of the machine's RAM out to disk memmaps
+  (`xy._ooc.MemmapF64Builder`, dossier §27) and serve the columns from there
+  — `XY_LIVE_POINTS_DIR` places the backing files, and deep zooms then stay
+  on the aggregate no-rescan ladder (LOD doc Phase-3 item 7) rather than
+  drilling to exact points. Neither commits static chart HTML, and both
+  surface their own source via `inspect.getsource`.
 - Add first-class docs for the supported-platform matrix and the clear-error
   behavior when the native core is unavailable.
 - Move advisory type checking to a hard gate once the checker and codebase agree

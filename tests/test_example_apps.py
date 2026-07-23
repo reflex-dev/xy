@@ -14,6 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -155,6 +156,10 @@ def test_reflex_app_shows_every_linking_method_and_event() -> None:
         "def drilldown_chart",
         "reflex_xy.inline(drilldown_chart())",
         "XY_LIVE_POINTS",
+        # an over-RAM request streams to disk memmaps in both apps (§27).
+        "MemmapF64Builder",
+        "def _drilldown_data",
+        "XY_LIVE_POINTS_DIR",
         "on_point_hover=",
         "on_point_click=",
         "on_select_end=",
@@ -199,6 +204,120 @@ def test_reflex_app_introspection_and_composition(tmp_path, monkeypatch) -> None
     assert module.DRILLDOWN_TOKEN.startswith("xyin-")
     assert module.DRILLDOWN_POINTS == 50000
     assert module.index() is not None
+
+
+# --- over-RAM XY_LIVE_POINTS requests spill to disk memmaps (§27) ------------
+# Both drilldown hosts generate a dataset over 75% of physical RAM out to disk
+# via xy._ooc.MemmapF64Builder and serve the memmap-backed columns directly.
+# RAM detection is stubbed per-test so the threshold is exercised with small n.
+
+
+@pytest.fixture(scope="module")
+def drilldown_mod():
+    pytest.importorskip("starlette")
+    pytest.importorskip("anywidget")  # live_drilldown imports xy.widget
+    sys.path.insert(0, str(FASTAPI_DIR))
+    return _load(FASTAPI_DIR / "live_drilldown.py", "xy_example_live_drilldown")
+
+
+def test_mmap_threshold_is_over_75_percent_of_ram(drilldown_mod, monkeypatch) -> None:
+    mod = drilldown_mod
+    monkeypatch.setattr(mod, "_total_ram_bytes", lambda: 1000 * mod._BYTES_PER_POINT)
+    assert not mod._mmap_needed(750)  # exactly 75% — stays in RAM
+    assert mod._mmap_needed(751)  # over 75% — spills to disk
+    # Unknown RAM (non-POSIX sysconf): keep the pre-mmap in-RAM behavior.
+    monkeypatch.setattr(mod, "_total_ram_bytes", lambda: None)
+    assert not mod._mmap_needed(10**12)
+
+
+def test_over_ram_request_streams_to_disk_and_data_is_identical(
+    drilldown_mod, monkeypatch, tmp_path
+) -> None:
+    from xy._ooc import backing_path, is_memmapped
+
+    mod = drilldown_mod
+    n = 4096
+    in_ram = mod.colored_scatter_data(n)
+    assert not any(is_memmapped(col) for col in in_ram)
+
+    monkeypatch.setenv("XY_LIVE_POINTS_DIR", str(tmp_path / "cols"))
+    monkeypatch.setattr(mod, "_total_ram_bytes", lambda: n * mod._BYTES_PER_POINT)
+    spilled = mod.colored_scatter_data(n)
+    for ram_col, disk_col in zip(in_ram, spilled, strict=True):
+        assert is_memmapped(disk_col)
+        path = backing_path(disk_col)
+        assert path is not None and Path(path).is_relative_to(tmp_path / "cols")
+        # The dataset is bit-identical wherever it lands (one chunk stream).
+        np.testing.assert_array_equal(np.asarray(disk_col), ram_col)
+
+
+def test_over_ram_figure_serves_from_the_memmapped_columns(
+    drilldown_mod, monkeypatch, tmp_path
+) -> None:
+    from xy._ooc import is_memmapped
+
+    mod = drilldown_mod
+    n = 50_000
+    monkeypatch.setenv("XY_LIVE_POINTS_DIR", str(tmp_path))
+    monkeypatch.setattr(mod, "_total_ram_bytes", lambda: n * mod._BYTES_PER_POINT)
+    fig = mod.colored_scatter_figure(n)
+
+    # x/y canonical live in the store as mapped bytes, nothing RAM-resident;
+    # the color/size channels kept the same disk backing (no ingest copy).
+    rep = fig.store.memory_report()
+    assert rep["canonical_bytes"] == 0
+    assert rep["canonical_mapped_bytes"] == n * 8 * 2
+    trace = fig.traces[0]
+    assert is_memmapped(trace.color_ch.values)
+    assert is_memmapped(trace.size_ch.values)
+
+    # The engine answers density views straight off the files.
+    x0, x1 = fig.x_range()
+    y0, y1 = fig.y_range()
+    update, buffers = fig.density_view(0, x0, x1, y0, y1, 256, 192)
+    assert buffers
+
+    # Out-of-core traces ride the no-rescan aggregate ladder (LOD doc Phase-3
+    # item 7): a deep zoom stays a density surface with its tier recorded in
+    # `binning` — never an O(N) file rescan to drill exact points — the
+    # colored trace keeps its mean-color plane, and a pick without a drill
+    # subset degrades to None instead of crashing.
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    dx, dy = (x1 - x0) * 0.005, (y1 - y0) * 0.005
+    deep, deep_buffers = fig.density_view(0, cx - dx, cx + dx, cy - dy, cy + dy, 256, 192)
+    deep_trace = deep["traces"][0]
+    assert deep_trace["mode"] == "density"
+    assert deep_trace["binning"] == "bin2d-oversized" or deep_trace["binning"].startswith("pyramid")
+    assert "rgba" in deep_trace["density"]
+    assert deep_buffers
+    assert fig.pick(0, 0, None) is None
+
+
+def test_reflex_drilldown_spills_like_fastapi_and_matches_it(
+    drilldown_mod, monkeypatch, tmp_path
+) -> None:
+    pytest.importorskip("reflex")
+    pytest.importorskip("reflex_xy")
+    from xy._ooc import is_memmapped
+
+    monkeypatch.chdir(tmp_path)  # static-tier assets stay out of the repo
+    monkeypatch.setenv("XY_LIVE_POINTS", "50000")  # cheap import-time token build
+    sys.path.insert(0, str(REFLEX_DIR))
+    module = _load(REFLEX_APP, "xy_reflex_demo_mmap_under_test")
+
+    # Cross-host A/B contract: the two apps generate the identical dataset…
+    n = 4096
+    fastapi_cols = drilldown_mod.colored_scatter_data(n)
+    for fastapi_col, reflex_col in zip(fastapi_cols, module._drilldown_data(n), strict=True):
+        np.testing.assert_array_equal(fastapi_col, reflex_col)
+
+    # …and spill it to disk past the same over-75%-of-RAM threshold.
+    monkeypatch.setenv("XY_LIVE_POINTS_DIR", str(tmp_path / "cols"))
+    monkeypatch.setattr(module, "_total_ram_bytes", lambda: n * module._BYTES_PER_POINT)
+    spilled = module._drilldown_data(n)
+    for fastapi_col, disk_col in zip(fastapi_cols, spilled, strict=True):
+        assert is_memmapped(disk_col)
+        np.testing.assert_array_equal(np.asarray(disk_col), fastapi_col)
 
 
 # --- retargeted browser smokes: import cleanly, pure helpers unit-tested -----
