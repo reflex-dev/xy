@@ -226,19 +226,22 @@ def compatibility_kernel_data() -> dict[str, np.ndarray]:
 
 
 def _expect_drill_window(fig: Figure, x: np.ndarray, y: np.ndarray) -> None:
-    """Stash the deep view's expected drill count on the figure.
+    """Stash the deep view's expected drill window and count on the figure.
 
-    A drill reply ships the widest aligned window that still fits the budget
-    (T13), so `visible` counts the SHIPPED window — the reply's own
-    `x_range`/`y_range`, deterministic for fixed data — not the raw view.
-    Reading it from a warm reply keeps the assertion exact without hardcoding
-    the pad ladder.
+    A drill reply ships the widest ALIGNED window around the view that still
+    fits the budget (LOD doc T13), so `visible` counts the SHIPPED window —
+    the reply's own `x_range`/`y_range` — not the raw view. Alignment is a
+    pure function of the extent and the view's span bucket, so every
+    benchmark iteration resolves to the same window and the same exact count;
+    reading both from a warm reply keeps the assertions exact without
+    hardcoding the pad ladder.
     """
     deep, _ = fig.density_view(0, 0.0, 10.0, 0.0, 10.0, GRID_W, GRID_H)
     trace = deep["traces"][0]
     assert trace["mode"] == "points"
     (wx0, wx1), (wy0, wy1) = trace["x_range"], trace["y_range"]
     assert wx0 <= 0.0 and wx1 >= 10.0 and wy0 <= 0.0 and wy1 >= 10.0
+    fig._benchmark_deep_window = (wx0, wx1, wy0, wy1)
     fig._benchmark_deep_expected = int(
         np.count_nonzero((x >= wx0) & (x <= wx1) & (y >= wy0) & (y <= wy1))
     )
@@ -1112,6 +1115,10 @@ def _adaptive_drilldown_cycle(fig: Figure) -> int:
     assert wide_trace["mode"] == "density"
     assert deep_trace["mode"] == "points"
     assert str(wide_trace.get("binning", "")).startswith("pyramid-L")
+    # T13: the shipped window is the deterministic padded aligned superset of
+    # the view, so both the window and its exact count repeat every cycle.
+    assert tuple(deep_trace["x_range"]) == fig._benchmark_deep_window[:2]
+    assert tuple(deep_trace["y_range"]) == fig._benchmark_deep_window[2:]
     assert deep_trace["visible"] == fig._benchmark_deep_expected
     drill_seq = deep_trace["drill_seq"]
     row = fig.pick(0, 0, drill_seq)
@@ -1156,6 +1163,10 @@ def _colored_drilldown_cycle(fig: Figure) -> int:
     assert mid_trace["binning"] == "exact"
     assert mid_trace["density"].get("color_agg") == "mean"  # cached-idx mean-color scan
     assert deep_trace["mode"] == "points"
+    # T13: the shipped window is the deterministic padded aligned superset of
+    # the view, so both the window and its exact count repeat every cycle.
+    assert tuple(deep_trace["x_range"]) == fig._benchmark_deep_window[:2]
+    assert tuple(deep_trace["y_range"]) == fig._benchmark_deep_window[2:]
     assert deep_trace["visible"] == fig._benchmark_deep_expected
     assert deep_trace["color"]["mode"] == "continuous"  # drill restores channels
 
