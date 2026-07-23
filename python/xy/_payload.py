@@ -68,7 +68,15 @@ class _PayloadWriter:
         `scale` is the target axis scale: log-family axes pin the offset to
         0.0 (`lod.geometry_offset`) so relative f32 precision survives the
         shader-side transform."""
-        offset = lod.geometry_offset(scale, col.min, col.max)
+        # Direct append payloads need a stable encoding so their previous
+        # bytes remain a prefix of the new column. Log-family axes retain
+        # their required zero origin; linear axes use the column's sticky
+        # shipped offset and re-center only when it leaves the safe span.
+        offset = (
+            lod.geometry_offset(scale, col.min, col.max)
+            if scale in ("log", "symlog")
+            else col.suggest_offset()
+        )
         encoded = lod.encode_f32_values(
             values,
             offset,

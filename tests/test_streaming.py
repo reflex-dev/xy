@@ -315,9 +315,10 @@ def test_incremental_pyramid_keeps_gc_finalizer_armed():
 # --------------------------------------------------------------------------
 
 
-def _column_bytes(spec, blob, ref):
+def _column_bytes(spec, buffers, ref):
     meta = spec["columns"][ref]
     width = 1 if meta.get("dtype") == "u8" else 4
+    blob = bytes(buffers[meta["buf"]]) if spec.get("buffer_layout") == "split" else buffers
     start = meta["byte_offset"]
     return meta, blob[start : start + meta["len"] * width]
 
@@ -325,21 +326,21 @@ def _column_bytes(spec, blob, ref):
 def test_append_keeps_offsets_sticky_and_prefixes_byte_identical():
     fig = Figure().scatter(np.arange(100.0), np.sin(np.arange(100.0)))
     spec0, blob0 = fig.build_payload()
-    prev_spec, prev_blob = spec0, blob0
+    prev_spec, prev_buffers = spec0, blob0
     for i in range(5):
         base = 100.0 + i * 3
         msg, buffers = fig.append(0, base + np.arange(3.0), np.sin(base + np.arange(3.0)))
-        spec, blob = msg["spec"], bytes(buffers[0])
+        spec = msg["spec"]
         for axis in ("x", "y"):
-            old_meta, old_bytes = _column_bytes(prev_spec, prev_blob, prev_spec["traces"][0][axis])
-            new_meta, new_bytes = _column_bytes(spec, blob, spec["traces"][0][axis])
+            old_meta, old_bytes = _column_bytes(prev_spec, prev_buffers, prev_spec["traces"][0][axis])
+            new_meta, new_bytes = _column_bytes(spec, buffers, spec["traces"][0][axis])
             # Sticky offset: the encoding is unchanged even though the x
             # domain grew, so the old column is a byte-prefix of the new one.
             assert new_meta["offset"] == old_meta["offset"], axis
             assert new_meta["scale"] == old_meta["scale"], axis
             assert new_meta["len"] == old_meta["len"] + 3, axis
             assert new_bytes[: len(old_bytes)] == old_bytes, axis
-        prev_spec, prev_blob = spec, blob
+        prev_spec, prev_buffers = spec, buffers
 
 
 def test_append_prefix_stability_covers_stable_domain_channels():
@@ -356,13 +357,13 @@ def test_append_prefix_stability_covers_stable_domain_channels():
     # Pin the domains by seeding the extremes; later appends stay inside.
     spec0, blob0 = fig.build_payload()
     msg, buffers = fig.append(0, [50.0], [50.0], color=[0.5], size=[0.5])
-    spec, blob = msg["spec"], bytes(buffers[0])
+    spec = msg["spec"]
     for channel in ("color", "size"):
         old = spec0["traces"][0][channel]
         new = spec["traces"][0][channel]
         assert new["domain"] == old["domain"], channel
         _, old_bytes = _column_bytes(spec0, blob0, old["buf"])
-        _, new_bytes = _column_bytes(spec, blob, new["buf"])
+        _, new_bytes = _column_bytes(spec, buffers, new["buf"])
         assert new_bytes[: len(old_bytes)] == old_bytes, channel
 
 
@@ -371,13 +372,13 @@ def test_append_expanding_channel_domain_rewrites_channel_but_not_geometry():
     fig = Figure().scatter(x, x, color=np.linspace(0.0, 1.0, 50))
     spec0, blob0 = fig.build_payload()
     msg, buffers = fig.append(0, [50.0], [50.0], color=[100.0])  # domain grows
-    spec, blob = msg["spec"], bytes(buffers[0])
+    spec = msg["spec"]
     old = spec0["traces"][0]["color"]
     new = spec["traces"][0]["color"]
     assert new["domain"] != old["domain"]  # the client rebuilds this trace
     for axis in ("x", "y"):
         old_meta, old_bytes = _column_bytes(spec0, blob0, spec0["traces"][0][axis])
-        new_meta, new_bytes = _column_bytes(spec, blob, spec["traces"][0][axis])
+        new_meta, new_bytes = _column_bytes(spec, buffers, spec["traces"][0][axis])
         assert new_meta["offset"] == old_meta["offset"]
         assert new_bytes[: len(old_bytes)] == old_bytes
 
