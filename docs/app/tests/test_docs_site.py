@@ -918,10 +918,7 @@ def test_styling_demos_pair_light_surfaces_with_readable_text() -> None:
 
 @pytest.mark.parametrize(
     ("relative_path", "demo_name", "expected_live_blocks"),
-    (
-        ("overview/first-chart.md", "first_chart_demo", 1),
-        ("core-concepts/index.md", "composition_model_demo", 2),
-    ),
+    (("core-concepts/index.md", "composition_model_demo", 2),),
 )
 def test_beginner_examples_use_docdemos(
     relative_path: str,
@@ -953,11 +950,6 @@ def test_beginner_examples_use_docdemos(
         msg = "DocDemo executed chart.to_html()"
         raise AssertionError(msg)
 
-    if relative_path == "overview/first-chart.md":
-        assert 'if __name__ == "__main__":' in live_blocks[0].content
-        assert 'chart.to_html("scatter.html")' in live_blocks[0].content
-        monkeypatch.setattr(xy.Chart, "to_html", forbid_export)
-
     monkeypatch.chdir(tmp_path)
     rendered = str(
         render_markdown(
@@ -974,6 +966,56 @@ def test_beginner_examples_use_docdemos(
     assert rendered.count("XYChart") == expected_live_blocks
     assert rendered.index(shell) < rendered.index(preview)
     assert demo_name in rendered
+    assert export_calls == []
+    assert not (tmp_path / "scatter.html").exists()
+
+
+def test_first_chart_shows_clean_code_with_hidden_live_previews(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep the beginner script copy-paste clean while demo-only fences render results."""
+    source_path = DOCS_ROOT / "overview" / "first-chart.md"
+    content = source_path.read_text(encoding="utf-8")
+    python_blocks = [
+        block
+        for block in parse_document(content).blocks
+        if isinstance(block, CodeBlock) and block.language == "python"
+    ]
+    shown = [block for block in python_blocks if "exec" not in block.flags]
+    hidden = [block for block in python_blocks if {"demo-only", "exec"} <= set(block.flags)]
+
+    # No visible DocDemo blocks: everything the reader copies stays plumbing-free.
+    assert not [b for b in python_blocks if {"demo", "exec"} <= set(b.flags)]
+    assert len(hidden) == 2
+    assert all("reflex_xy.chart" in block.content for block in hidden)
+    assert "def first_chart_demo():" in hidden[0].content
+    assert "def million_point_demo():" in hidden[1].content
+
+    script = shown[0].content
+    assert 'chart.to_html("scatter.html")' in script
+    assert "reflex_xy" not in script
+    assert "__main__" not in script
+    assert "def " not in script
+    assert any("2_500_000" in block.content for block in shown)
+
+    export_calls: list[tuple[tuple, dict]] = []
+
+    def forbid_export(*args, **kwargs) -> None:
+        export_calls.append((args, kwargs))
+        msg = "hidden demo executed chart.to_html()"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(xy.Chart, "to_html", forbid_export)
+    monkeypatch.chdir(tmp_path)
+    rendered = str(
+        render_markdown(
+            content,
+            virtual_filepath="tests/docdemo/overview/first-chart.md",
+            filename=source_path.as_posix(),
+        )
+    )
+    assert rendered.count("XYChart") == 2
     assert export_calls == []
     assert not (tmp_path / "scatter.html").exists()
 

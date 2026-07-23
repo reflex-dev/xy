@@ -1,20 +1,29 @@
 ---
-title: What is `xy`?
-description: Understand XY's screen-bounded rendering and CSS-first styling model.
+title: Fast, Interactive Python Charting Library
+description: XY is a fast Python charting library for interactive data visualization. Plot millions of points with pan, zoom, and hover. Style charts with CSS or Tailwind.
 ---
 
 # What is `xy`?
 
-xy is an experimental Python charting library for responsive, interactive 2D
-visualizations. It combines a native Rust compute core, binary column transport,
-and a WebGL2 client with a declarative Python API that works in notebooks,
-applications, and standalone exports. Two ideas shape the library:
+XY is a Python charting library for interactive 2D visualizations that stay
+smooth at millions of points and is completely customizable. Two ideas shape
+the library:
 
-- **Fast, even with lots of data.** XY keeps large charts smooth by showing the
-  detail you can actually see instead of drawing every data point at once.
+- **Fast, even with lots of data.** XY draws the detail you can actually see
+  instead of every row at once, so pan, zoom, and hover stay responsive as
+  your data grows.
 - **Completely customizable.** Style titles, axes, legends, tooltips, and controls
   with CSS or Tailwind, and keep the same look in interactive charts, SVGs, and
   PNGs.
+
+Install it and see for yourself:
+
+```bash
+uv add xy
+```
+
+[Browse the chart gallery](/docs/xy/overview/gallery/) or jump straight to
+[your first chart](/docs/xy/overview/first-chart/).
 
 ~~~python demo-only exec
 from xy_docs.demos.xy_sdf_plots import xy_sdf_plot_grid
@@ -22,12 +31,10 @@ from xy_docs.demos.xy_sdf_plots import xy_sdf_plot_grid
 sdf_plots = xy_sdf_plot_grid
 ~~~
 
-All four interactive charts come from one cached signed-distance probability
-field for lowercase Instrument Sans `xy`. The builder samples one million
-points once, reuses the first 50,000 for the binned scatter view and 250,000 for
-the final direct scatter, and shares the same PDF with the direct heatmap and
-contours. The demo's only extra dependency is Pillow; its exact Euclidean
-distance transform is implemented directly with NumPy. [View the customizable Python source](https://github.com/reflex-dev/xy/blob/main/docs/app/xy_docs/demos/xy_sdf_plots.py).
+All four interactive charts are live — drag to pan, scroll to zoom, and hover
+to inspect exact values. Together they render more than a million points from a
+single probability field across four chart families.
+[View the customizable Python source](https://github.com/reflex-dev/xy/blob/main/docs/app/xy_docs/demos/xy_sdf_plots.py).
 
 ~~~md alert warning
 **Early alpha.** XY is pre-1.0. The declarative composition model is stabilizing, but callback
@@ -50,28 +57,26 @@ before committing to a long-lived integration.
 
 ## Why XY
 
-XY is built for Python teams that want **large-data performance without giving
-up design control**. Compose marks, axes, legends, annotations, tooltips,
-interactions, and controls in Python, then use CSS, Tailwind, themes, and mark
-styles to match your product. The same chart works in notebooks and
-applications and exports to self-contained HTML, native PNG, or SVG.
+Python teams usually face a trade-off: charting libraries that hit an
+interactivity ceiling as data grows, or browser-first tools that give up design
+control. XY is built for the workflows where that trade-off bites. Compose
+marks, axes, legends, and controls in Python; brand them with CSS, Tailwind,
+and theme tokens; and ship the same chart to notebooks, applications, and
+standalone HTML, PNG, or SVG exports.
 
-### Performance is part of the architecture
+Performance is part of the architecture, not an option flag. Native Rust
+kernels aggregate data before display, binary transport keeps numbers out of
+JSON, and the WebGL2 client bounds browser work by what the screen can show,
+while exact source data stays in Python for hover and selection.
 
-- Native Rust kernels reduce and aggregate large datasets before display.
-- Binary column transport avoids expanding numeric data into large JSON
-  payloads.
-- WebGL2, line decimation, and density rendering keep browser work bounded by
-  what the screen can show.
-- Exact source columns remain in Python for hover, selection, and deeper
-  inspection.
-
-In XY's recorded 10-million-point launch benchmark, it completed ahead of
-Matplotlib and Plotly across the tested static PNG, interactive GPU, and
-CPU-fallback output contracts. At one billion points, XY produced a validated
-density PNG and interactive overview within the benchmark limits instead of
-attempting to draw one billion markers.
-
-If you need charts that are fast, fully brandable, interactive, and portable,
-XY is built for that workflow. [Inspect the benchmark evidence](/docs/xy/overview/benchmarks/)
-or [browse the chart gallery](/docs/xy/overview/gallery/).
+The numbers back this up. In the recorded 10-million-point launch benchmark, XY
+produced a static PNG in 0.023 s, while Matplotlib took 2.8 s and Plotly
+9.6 s. XY reached first interactive render 16–20× sooner, peaking at a
+third of Matplotlib's memory and a twentieth of Plotly's.
+The benchmark also tested one billion points. At that size XY switches to a
+density view, a heatmap-like summary of where the points fall, and still
+delivered a working interactive chart in just over a second. The default
+Matplotlib and Plotly approach of drawing every single point did not finish
+within the run's memory and time limits.
+[Inspect the benchmark evidence](/docs/xy/overview/benchmarks/) or
+[browse the chart gallery](/docs/xy/overview/gallery/).

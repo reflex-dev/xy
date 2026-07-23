@@ -13,11 +13,9 @@ If XY is not installed yet, follow [Installation](/docs/xy/overview/installation
 
 ## Script path: export interactive HTML
 
-Build the chart once and choose how to display it. The small
-`first_chart_demo()` function only lets this documentation site show the live
-result; you do not need it in your own script or notebook.
+Save this as `first_chart.py`:
 
-~~~python demo exec
+~~~python
 import xy
 
 chart = xy.scatter_chart(
@@ -27,22 +25,31 @@ chart = xy.scatter_chart(
     title="First chart",
 )
 
-
-# This documentation site uses Reflex to render the chart above.
-def first_chart_demo():
-    import reflex_xy
-
-    return reflex_xy.chart(chart, height="320px")
-
-
-if __name__ == "__main__":
-    chart.to_html("scatter.html")
+chart.to_html("scatter.html")
 ~~~
 
-Run it and open the generated file:
+Run it, then open the `scatter.html` file it writes next to the script:
 
 ~~~bash
 python first_chart.py
+~~~
+
+This is the chart it produces, live:
+
+~~~python demo-only exec
+import reflex_xy
+import xy
+
+first_chart = xy.scatter_chart(
+    xy.scatter([1, 2, 3, 4], [3, 5, 4, 7], color="#6e56cf", size=10),
+    xy.x_axis(label="sample"),
+    xy.y_axis(label="value"),
+    title="First chart",
+)
+
+
+def first_chart_demo():
+    return reflex_xy.chart(first_chart, height="320px")
 ~~~
 
 `scatter.html` is self-contained. Hover, pan, zoom, and the built-in controls
@@ -79,6 +86,51 @@ and troubleshooting.
   methods into one `Chart`.
 - `to_html()`, `to_png()`, `to_svg()`, `show()`, and `widget()` all use that
   same chart; changing output does not require rebuilding it.
+
+## Same code, millions of points
+
+Those four values are a placeholder, not a limit. Hand the same mark a few
+million points and nothing else in the script changes: XY switches the scatter
+to a screen-bounded density view and keeps pan, zoom, and hover smooth.
+
+~~~python
+import numpy as np
+import xy
+
+rng = np.random.default_rng(0)
+x = rng.normal(size=2_500_000)
+y = x * 0.6 + rng.normal(scale=0.8, size=x.size)
+
+chart = xy.scatter_chart(
+    xy.scatter(x, y, size=4),
+    title="2.5 million points",
+)
+
+chart.to_html("big_scatter.html")
+~~~
+
+~~~python demo-only exec
+import numpy as np
+import reflex_xy
+import xy
+
+big_rng = np.random.default_rng(0)
+big_x = big_rng.normal(size=2_500_000)
+big_y = big_x * 0.6 + big_rng.normal(scale=0.8, size=big_x.size)
+
+million_point_chart = xy.scatter_chart(
+    xy.scatter(big_x, big_y, size=4),
+    title="2.5 million points",
+)
+
+
+def million_point_demo():
+    return reflex_xy.chart(million_point_chart, height="320px")
+~~~
+
+Zoom in and the view refines back toward exact points. Read
+[Large data and performance](/docs/xy/core-concepts/large-data-and-performance/)
+for how the density switch works.
 
 ## Choose your next step
 
