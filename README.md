@@ -107,28 +107,20 @@ appropriate level of detail in Rust, and transfers typed binary buffers.
 Decimated and density views are bounded by the visible result.
 
 ```mermaid
-flowchart LR
-    subgraph PY["Python kernel / app process"]
-        API["User APIs"] --> STORE["Per-figure ColumnStore<br/>canonical exact columns"]
-        STORE --> CORE["Native Rust compute<br/>ctypes C ABI; required core"]
-        CORE --> PAYLOAD["Payload builder"]
-    end
-    subgraph UI["Browser / notebook frontend"]
-        RENDER["WebGL2 marks<br/>Canvas axes + DOM chrome"]
-        INPUT["Pan, zoom, hover, selection"]
-        INPUT --> RENDER
-    end
-    subgraph LOD["View-dependent representation"]
-        MODE["direct (threshold-bounded)<br/>decimated / density (screen-bounded)"]
-    end
-    PAYLOAD -- "data-less JSON spec + typed binary buffers<br/>no JSON number arrays" --> RENDER
-    INPUT -- "request refinement when a live host is available" --> MODE
-    MODE -- "refined view payload when needed" --> PAYLOAD
+flowchart TB
+    API["Python API<br/>Build the chart"]
+    STORE["ColumnStore<br/>Keep canonical f64 columns"]
+    CORE["Native Rust compute<br/>Direct · decimated · density"]
+    PAYLOAD["Compact payload<br/>Data-less JSON spec + typed binary buffers"]
+    RENDER["Browser or notebook<br/>WebGL2 marks · Canvas axes · DOM interface"]
+
+    API --> STORE --> CORE --> PAYLOAD --> RENDER
 ```
 
 This is why zooming matters: a dense overview can use aggregation, while a
-narrow view can return to exact points. Canonical f64 data stays in Python so
-hover and selection can still return original rows.
+narrow view can return to exact points. With a live host, pan and zoom can
+request a refined payload. Canonical f64 data stays in Python so hover and
+selection can still return original rows.
 
 For benchmark methodology and measured results, see the
 [benchmark runbook](benchmarks/README.md) and the committed
