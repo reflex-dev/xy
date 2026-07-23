@@ -79,6 +79,15 @@ class Trace:
     drill_history: dict[int, Any] = field(
         default_factory=dict, init=False, repr=False, compare=False
     )
+    # Full-column kernel color source for mean-color density binning (LOD doc
+    # §2), managed by `interaction.trace_bin_colors`: None = never resolved,
+    # 0 = resolved and not applicable (no channel / constant), otherwise the
+    # `resolve_bin_colors` kwargs dict. Resolving quantizes every canonical row
+    # — an O(N) pass — while the result is a pure function of the immutable
+    # channel values and their global domain, so it is computed once and shared
+    # by every grid consumer (pyramid build, exact re-bins, first-paint emit).
+    # A rebuildable derived cache (§27); appends invalidate it.
+    _bin_colors: Any = field(default=None, init=False, repr=False, compare=False)
     # Count-pyramid cache (§5 Tier 3), managed by `interaction.py`: None =
     # never tried, 0 = tried and not applicable, otherwise the native handle.
     # The finalizer frees the native side when the trace is collected.

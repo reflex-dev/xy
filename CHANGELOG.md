@@ -35,6 +35,18 @@ in the README).
   to the internal engine object.
 
 ### Changed
+- **Bin-color resolution is resolved once per trace, never per request
+  (LOD doc §2).** `density_view` used to quantize the *entire* color column
+  into the kernel's LUT-index/RGBA source on every reply — an O(N) NumPy pass
+  with multi-GB temporaries that cost the 100M-point FastAPI drilldown demo
+  1.3–7 s per request, ~10–100× the actual tier work, even for pyramid and
+  points-band replies that never consume it. The resolution is now cached on
+  the trace (`interaction.trace_bin_colors`; a rebuildable §27 derived buffer,
+  itemized as `memory_report()["bin_color_bytes"]`, invalidated by appends)
+  and materialized only by the branches that feed `bin_2d_mean_color`. On the
+  demo host every drilldown request now completes in 0.02–0.45 s with
+  byte-identical replies; `test_adaptive_drilldown_cycle_mean_color` guards
+  the contract in CodSpeed.
 - **No sampled points above the resolution of the graph (#225).** Interactive
   `density_view` replies no longer ship a point-sample overlay: a fixed-size
   sample above the drill budget reads as individual data points at a zoom

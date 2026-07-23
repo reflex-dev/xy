@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
-from . import _native, channels, kernels, lod
+from . import _native, channels, interaction, kernels, lod
 from ._trace import Trace
 from .columns import Column
 from .config import (
@@ -1062,7 +1062,9 @@ class PayloadMixin(_Host):
             else channels.DEFAULT_COLORMAP
         )
         dropped_channels = list(t.per_item_channel_names())
-        bin_colors = channels.resolve_bin_colors(t.color_ch, None, DEFAULT_PALETTE)
+        # Cached full-column resolution (LOD doc §2): the O(N) quantize pass
+        # is shared with the pyramid build and every later grid reply.
+        bin_colors = interaction.trace_bin_colors(t)
         density = {
             "buf": pw.ship_u8(encoded_grid),
             "w": w,
