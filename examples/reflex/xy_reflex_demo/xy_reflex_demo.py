@@ -17,7 +17,7 @@ via `inspect.getsource`.
 5. **Fixed data, two ways.** A ``xy.Chart`` passed straight to
    ``reflex_xy.chart`` (static payload tier) and a ``reflex_xy.inline`` token
    (fixed data served through the kernel).
-6. **The FastAPI drilldown, adapter-native.** The 100M-point live drilldown
+6. **The drilldown, adapter-native.** The 100M-point live drilldown
    scatter from ``examples/fastapi`` — identical data and mark config — as one
    ``reflex_xy.inline`` token with zero transport code, for A/B-ing the two
    hosts. ``XY_LIVE_POINTS`` resizes it (both apps honor the same override).
@@ -118,7 +118,7 @@ def orbits_chart() -> xy.Chart:
 ORBITS_TOKEN = reflex_xy.inline(orbits_chart())
 
 
-# --- the FastAPI live drilldown, adapter-native (§6) --------------------------
+# --- the live drilldown, adapter-native (§6) --------------------------
 
 
 def _drilldown_points() -> int:
@@ -186,8 +186,8 @@ def drilldown_chart(n: int = DRILLDOWN_POINTS) -> xy.Chart:
     )
 
 
-# One shared kernel-backed figure for every viewer — the sharing the FastAPI
-# app builds a process-global store for, expressed as a single inline() token.
+# One shared kernel-backed figure for every viewer — the app builds a
+# process-global store for, expressed as a single inline() token.
 DRILLDOWN_TOKEN = reflex_xy.inline(drilldown_chart())
 
 
@@ -609,7 +609,7 @@ def index() -> rx.Component:
                 code_accordion(sparkline_chart, orbits_chart, fixed_view),
             ),
             section(
-                f"6 · The FastAPI {_point_label(DRILLDOWN_POINTS)} drilldown, adapter-native",
+                f"6 · The {_point_label(DRILLDOWN_POINTS)} drilldown, adapter-native",
                 "The live drilldown scatter from examples/fastapi — same data, "
                 "same mark config — with the adapter replacing that app's custom "
                 "transport (callback endpoint, HTTP comm bridge, density-overview "
