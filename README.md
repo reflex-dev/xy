@@ -99,29 +99,6 @@ plt.show()
 The shim intentionally covers common plotting workflows rather than every
 matplotlib feature. See the [compatibility guide](spec/matplotlib/compat.md).
 
-## Benchmarks
-
-<p align="center">
-  <img src="spec/assets/launch-benchmark-comparison.svg" alt="Grouped horizontal bar-chart comparison of xy, Matplotlib, and Plotly cold-render times at 10 million points; xy has the lowest measured time in all three output modes in this recorded run." width="1200">
-</p>
-
-On the committed [xy 0.1.0 launch baseline](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md),
-xy rendered a 10M-point scatter in 0.0232 seconds as a native PNG and reached
-its interactive GPU view in 0.1797 seconds. The run uses identical seeded data,
-a 900×420 output, and three isolated cold runs on an Apple M5 Pro with 64 GB RAM.
-
-| 900×420 output contract | xy | Matplotlib | Plotly |
-|---|---:|---:|---:|
-| Static CPU PNG | 0.0232 s | 2.7842 s | 9.5834 s |
-| Interactive first render, default GPU | 0.1797 s | 3.0029 s | 3.6434 s |
-| Interactive first render, CPU fallback | 0.9920 s | 3.6735 s | 8.2152 s |
-
-xy automatically uses screen-bounded representations for dense views and
-returns to exact points as users zoom in. See the [benchmark runbook](benchmarks/README.md),
-[environment](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/environment.json),
-and [raw results](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/default-results.json)
-to inspect or reproduce the measurements.
-
 ## How it works
 
 Most chart stacks serialize every value as JSON and ask the browser to draw
