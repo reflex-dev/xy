@@ -99,6 +99,55 @@ plt.show()
 The shim intentionally covers common plotting workflows rather than every
 matplotlib feature. See the [compatibility guide](spec/matplotlib/compat.md).
 
+## Embed xy in a Reflex app
+
+With the `reflex-xy` adapter, any xy chart becomes a regular Reflex component.
+Place it inside cards, grids, tabs, or dashboards with no JavaScript, iframe,
+or separate chart service.
+
+Register the adapter once:
+
+```python
+# rxconfig.py
+import reflex as rx
+import reflex_xy
+
+config = rx.Config(
+    app_name="dashboard",
+    plugins=[reflex_xy.XYPlugin()],
+)
+```
+
+Then add a chart anywhere in the component tree:
+
+```python
+import reflex as rx
+import reflex_xy
+import xy
+
+signups = xy.line_chart(
+    xy.line([1, 2, 3, 4, 5], [120, 180, 165, 240, 310]),
+    title="Weekly signups",
+)
+
+
+def index() -> rx.Component:
+    return rx.card(
+        rx.heading("Growth"),
+        reflex_xy.chart(signups, height="320px"),
+        width="100%",
+    )
+
+
+app = rx.App()
+app.add_page(index)
+```
+
+The chart keeps its built-in hover, pan, and zoom behavior. For charts driven
+by Reflex state, events, or live streams, see the
+[Reflex integration guide](https://reflex.dev/docs/xy/integrations/reflex/)
+and the [runnable example app](examples/reflex/).
+
 ## How it works
 
 Most chart stacks serialize every value as JSON and ask the browser to draw
