@@ -16,7 +16,7 @@ what the screen can show; find guides, API reference, and examples in the
 
 ## Highlights
 
-- **Built for large data.** Decimates long lines and refines dense scatter as you zoom.
+- **Built for large data.** Reduces long lines and dense scatters to what the screen can show, and brings detail back as you zoom.
 - **Declarative interface.** Compose marks and guides, or use the familiar `xy.pyplot`.
 - **Interactive by default.** Pan, zoom, hover, select, and inspect exact source rows.
 - **One chart, many outputs.** Use notebooks or export HTML, raster, and vector formats.
@@ -34,6 +34,10 @@ HTML, images, and vector graphics.
 <p align="center">
   <img src="spec/assets/launch-benchmark-comparison.svg" alt="Cold-render time for a 10-million-point chart in XY, Matplotlib, and Plotly. Lower is better." width="1200">
 </p>
+
+In the recorded 10-million-point baseline, XY produced a static PNG in 0.023 s
+versus 2.8 s for Matplotlib and 9.6 s for Plotly, and reached first interactive
+render 16–20× sooner.
 
 The committed launch baseline uses identical seeded data, a 900×420 output,
 and three isolated cold runs. See the
@@ -206,3 +210,9 @@ Start with the [XY documentation](https://reflex.dev/docs/xy/) for installation,
 the chart gallery, guides, and API reference. The repository also includes
 [copyable API examples](spec/api/api-examples.md),
 [benchmark details](benchmarks/README.md), and the [changelog](CHANGELOG.md).
+
+## Contributing and license
+
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Report security issues through [SECURITY.md](SECURITY.md). XY is licensed under
+[Apache-2.0](LICENSE).
