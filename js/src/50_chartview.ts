@@ -2975,15 +2975,24 @@ export class ChartView {
   // Tag a (re)uploaded per-point channel buffer with its element type. u8
   // uploads of unit-scalar channels (continuous color/size, density_val) bind
   // normalized so the shader keeps seeing [0,1]; categorical codes stay
-  // un-normalized (the shader addresses palette texels with the raw code). A
-  // dtype change re-ids the buffer so any VAO holding the old pointer config
-  // rebuilds instead of silently misreading the bytes.
+  // un-normalized (the shader addresses palette texels with the raw code).
+  // Any pointer-config change — dtype OR normalization — re-ids the buffer so
+  // a VAO holding the old configuration rebuilds instead of silently
+  // misreading the bytes. Normalization can flip with the dtype unchanged: a
+  // reused cBuf crossing categorical (u8 codes, un-normalized) ↔ continuous
+  // (u8 coordinates, normalized) keeps UNSIGNED_BYTE both ways.
   _tagChannelBuf(buf, values, normalized) {
     const gl = this.gl;
     const type = values instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
-    if (buf._fcType !== undefined && buf._fcType !== type) buf._fcId = ++this._bufSeq;
+    const isNormalized = !!normalized && type === gl.UNSIGNED_BYTE;
+    if (
+      buf._fcType !== undefined &&
+      (buf._fcType !== type || buf._fcNormalized !== isNormalized)
+    ) {
+      buf._fcId = ++this._bufSeq;
+    }
     buf._fcType = type;
-    buf._fcNormalized = !!normalized && type === gl.UNSIGNED_BYTE;
+    buf._fcNormalized = isNormalized;
   }
 
   _initPickTarget() {
