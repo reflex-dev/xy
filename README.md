@@ -103,6 +103,20 @@ plt.show()
 The shim intentionally covers common plotting workflows rather than every
 matplotlib feature. See the [compatibility guide](spec/matplotlib/compat.md).
 
+## Styling
+
+Customize marks and chart chrome with Python, CSS, or Tailwind.
+
+```python
+chart = xy.line_chart(
+    xy.line(x, y, color="#7c3aed", width=3),
+    class_name="rounded-xl bg-white",
+    class_names={"tooltip": "rounded-lg bg-zinc-900 text-white"},
+)
+```
+
+See the [styling guide](docs/styling/index.md).
+
 ## Embed XY in a Reflex app
 
 With the `reflex-xy` adapter, any XY chart becomes a regular Reflex component.
