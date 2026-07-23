@@ -512,12 +512,25 @@ def normalize_to_unit(values: npt.NDArray[np.float64], domain: tuple[float, floa
     return kernels.normalize_f32(values, domain, nonfinite="zero")
 
 
+def quantize_unit_u8(values: npt.NDArray[np.float64], domain: tuple[float, float]) -> np.ndarray:
+    """Normalize over `domain` and quantize to u8 (0..255 spanning [0,1]).
+
+    The lossy sibling of :func:`normalize_to_unit`, for wire paths where the
+    value is only ever a GPU LUT/ramp coordinate (a colormap texture has 256
+    texels; a size ramp spans ~16 px) and is never read back into a displayed
+    number — 75% less traffic than f32, same rendered output (§29)."""
+    unit = normalize_to_unit(values, domain)
+    return np.rint(np.clip(unit, 0.0, 1.0) * 255.0).astype(np.uint8)
+
+
 def ship_channels(
     trace: Any,
     sel: Any,
     ship_scalar: Any,
     ship_u8: Any,
     palette: list[str],
+    *,
+    quantize_continuous: bool = False,
 ) -> tuple[Any, Any]:
     """Ship a trace's color and size channels in the standard wire shape
     (design dossier §29/§36c): per-point channels carry a `buf` index into the blob; constant
@@ -527,9 +540,18 @@ def ship_channels(
     Slices *before* normalizing: normalization is element-wise over a
     precomputed global domain, and drill updates call this per zoom step —
     normalizing all N rows to ship a 200k window is O(N) work for nothing.
+
+    `quantize_continuous` ships continuous color/size as u8 LUT coordinates
+    (`dtype: "u8"` marker) instead of unit f32. Live-interaction paths opt in:
+    their hover/pick answers come from the server's canonical columns, so the
+    quantization is invisible. The build path must NOT opt in — it retains the
+    shipped columns CPU-side (`_cpu.color`/`_cpu.size`) and denormalizes them
+    for tooltip readouts, where 8-bit steps would show as wrong digits.
     Returns (color_spec, size_spec)."""
     cc = trace.color_ch or ColorChannel(mode="constant", constant=None)
-    color_spec = ship_color_channel(cc, sel, ship_scalar, ship_u8, palette)
+    color_spec = ship_color_channel(
+        cc, sel, ship_scalar, ship_u8, palette, quantize_continuous=quantize_continuous
+    )
     sc = trace.size_ch or SizeChannel(mode="constant")
     size_spec = sc.spec()
     if sc.mode == "continuous":
@@ -538,12 +560,22 @@ def ship_channels(
         if values is None or domain is None:
             raise ValueError("continuous size channel missing values or domain")
         vals = values if sel is None else values[sel]
-        size_spec["buf"] = ship_scalar(normalize_to_unit(vals, domain))
+        if quantize_continuous:
+            size_spec["buf"] = ship_u8(quantize_unit_u8(vals, domain))
+            size_spec["dtype"] = "u8"
+        else:
+            size_spec["buf"] = ship_scalar(normalize_to_unit(vals, domain))
     return color_spec, size_spec
 
 
 def ship_color_channel(
-    cc: ColorChannel, sel: Any, ship_scalar: Any, ship_u8: Any, palette: list[str]
+    cc: ColorChannel,
+    sel: Any,
+    ship_scalar: Any,
+    ship_u8: Any,
+    palette: list[str],
+    *,
+    quantize_continuous: bool = False,
 ) -> dict[str, Any]:
     """Ship one fill/stroke paint channel in the common wire representation."""
     color_spec = cc.spec()
@@ -563,7 +595,11 @@ def ship_color_channel(
         if values is None or domain is None:
             raise ValueError("continuous color channel missing values or domain")
         vals = values if sel is None else values[sel]
-        color_spec["buf"] = ship_scalar(normalize_to_unit(vals, domain))
+        if quantize_continuous:
+            color_spec["buf"] = ship_u8(quantize_unit_u8(vals, domain))
+            color_spec["dtype"] = "u8"
+        else:
+            color_spec["buf"] = ship_scalar(normalize_to_unit(vals, domain))
     elif cc.mode == "categorical":
         code_values = cc.codes
         categories = cc.categories

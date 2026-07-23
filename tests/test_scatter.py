@@ -597,6 +597,41 @@ def test_categorical_drill_update_ships_u8_codes() -> None:
     assert set(codes.tolist()) == set(range(7))
 
 
+def test_continuous_drill_update_ships_u8_but_build_payload_stays_f32() -> None:
+    """Live drill/sample wire quantizes continuous color+size+density_val to u8
+    (readbacks resolve server-side); the build payload keeps unit f32 because
+    the client retains those columns CPU-side and denormalizes them for
+    tooltip readouts (channels.ship_channels)."""
+    n = SCATTER_DENSITY_THRESHOLD + 10_000
+    rng = np.random.default_rng(7)
+    x = rng.uniform(0.0, 100.0, n)
+    y = rng.uniform(0.0, 100.0, n)
+    c = rng.uniform(0.0, 1.0, n)
+    s = rng.uniform(2.0, 16.0, n)
+    fig = Figure().scatter(x, y, color=c, size=s, density=True)
+
+    update, buffers = fig.density_view(0, 0.0, 5.0, 0.0, 5.0, 640, 400)
+    tr = update["traces"][0]
+    assert tr["mode"] == "points"
+    for spec in (tr["color"], tr["size"], tr["density_val"]):
+        assert spec["dtype"] == "u8"
+        assert len(buffers[spec["buf"]]) == tr["visible"]  # 1 byte/point
+    sbuf = np.frombuffer(buffers[tr["size"]["buf"]], dtype=np.uint8)
+    vis = (x >= 0) & (x <= 5) & (y >= 0) & (y <= 5)
+    expected = (s[vis] - s.min()) / (s.max() - s.min())
+    np.testing.assert_allclose(sbuf / 255.0, expected, atol=0.5 / 255.0 + 1e-6)
+
+    # Build path: same channels, but full-precision unit f32, no dtype marker.
+    small = Figure().scatter(x[:1000], y[:1000], color=c[:1000], size=s[:1000])
+    spec, blob = small.build_payload()
+    entry = spec["traces"][0]
+    for chan in (entry["color"], entry["size"]):
+        assert "dtype" not in chan
+        col = spec["columns"][chan["buf"]]
+        vals = np.frombuffer(blob, dtype=np.float32, count=col["len"], offset=col["byte_offset"])
+        assert vals.min() >= 0.0 and vals.max() <= 1.0
+
+
 def test_small_scatter_stays_direct():
     fig = Figure().scatter(np.arange(1000.0), np.arange(1000.0))
     assert not fig.traces[0].use_density()
@@ -694,9 +729,12 @@ def test_density_view_drills_to_points_when_window_fits():
     xs = np.frombuffer(bufs[tr["x"]["buf"]], dtype=np.float32)
     assert len(xs) == inwin
     assert tr["x"]["offset"] == pytest.approx(5.0)  # §16 window-centered
-    assert tr["color"]["mode"] == "continuous"
-    cbuf = np.frombuffer(bufs[tr["color"]["buf"]], dtype=np.float32)
-    assert len(cbuf) == inwin and cbuf.min() >= 0.0 and cbuf.max() <= 1.0
+    # Continuous channels on the drill wire are u8 LUT coordinates (§29:
+    # live-interaction readbacks resolve server-side, so quantization is
+    # invisible; the ramp/colormap only has ~256 useful levels anyway).
+    assert tr["color"]["mode"] == "continuous" and tr["color"]["dtype"] == "u8"
+    cbuf = np.frombuffer(bufs[tr["color"]["buf"]], dtype=np.uint8)
+    assert len(cbuf) == inwin
     assert fig.traces[0].drill_mode is True
     # pick speaks drilled indices: shipped 0 -> a canonical row in the window
     row = fig.pick(0, 0)
@@ -705,18 +743,18 @@ def test_density_view_drills_to_points_when_window_fits():
     # Color-continuous handoff: per-point local log-density in [0,1], a blend
     # weight = visible/budget, and the colormap the density surface uses —
     # so freshly drilled points wear the density ramp (§5, never a palette jump).
-    dbuf = np.frombuffer(bufs[tr["density_val"]["buf"]], dtype=np.float32)
+    assert tr["density_val"]["dtype"] == "u8"
+    dbuf = np.frombuffer(bufs[tr["density_val"]["buf"]], dtype=np.uint8)
     assert len(dbuf) == inwin
-    assert dbuf.min() >= 0.0 and dbuf.max() <= 1.0
-    assert dbuf.max() == pytest.approx(1.0)  # the hottest cell hits the ramp top
+    assert dbuf.max() == 255  # the hottest cell hits the ramp top
     assert tr["lod_blend"] == pytest.approx(inwin / SCATTER_DENSITY_THRESHOLD)
     assert tr["density_colormap"] == "viridis"  # continuous channel's colormap
     # Channels are normalized over the *global* domain after slicing (staff
-    # review: slice-first must not change values — colors stay view-stable).
-    cbuf2 = np.frombuffer(bufs[tr["color"]["buf"]], dtype=np.float32)
+    # review: slice-first must not change values — colors stay view-stable),
+    # then quantized: every byte within half a step of the exact unit value.
     vis = (x >= 0) & (x <= 10) & (y >= 0) & (y <= 10)
     expected = (c[vis] - c.min()) / (c.max() - c.min())
-    np.testing.assert_allclose(cbuf2, expected.astype(np.float32), rtol=1e-5, atol=1e-6)
+    np.testing.assert_allclose(cbuf / 255.0, expected, atol=0.5 / 255.0 + 1e-6)
 
 
 def test_interaction_windows_reject_nonfinite_bounds():
