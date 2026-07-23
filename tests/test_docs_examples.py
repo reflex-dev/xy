@@ -271,7 +271,7 @@ def test_benchmark_docs_include_copyable_claim_taxonomy() -> None:
     text = " ".join(BENCHMARK_DOC.read_text(encoding="utf-8").split())
     required = [
         "Copyable claim taxonomy",
-        "Use these shapes when turning benchmark rows into README text",
+        "Use these shapes when turning benchmark rows into public prose",
         "Payload/prep comparison",
         "Browser first paint",
         "Large scatter overview",

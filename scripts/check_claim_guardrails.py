@@ -25,8 +25,6 @@ DEFAULT_DOCS = (
     "spec/api/chart-roadmap.md",
     "spec/process/contributing.md",
     "spec/process/production-readiness.md",
-    "examples/reflex/README.md",
-    "examples/fastapi/README.md",
 )
 
 BROAD_SUPERLATIVE_RE = re.compile(

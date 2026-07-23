@@ -188,9 +188,9 @@ environment metadata and benchmark category IDs.
 
 ## Copyable claim taxonomy
 
-Use these shapes when turning benchmark rows into README text, release notes, or
-posts. The goal is to make every public claim reproducible from a row in this
-document or from a verified JSON artifact.
+Use these shapes when turning benchmark rows into public prose, release notes,
+or posts. The goal is to make every public claim reproducible from a row in
+this document or from a verified JSON artifact.
 
 | Claim shape | Safe wording pattern | Required context |
 |---|---|---|
