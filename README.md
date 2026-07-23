@@ -16,17 +16,11 @@ what the screen can show; find guides, API reference, and examples in the
 
 ## Highlights
 
-- **Built for large data.** Long lines are decimated and dense scatters become
-  fixed-size density surfaces, then refine as you zoom.
-- **Python-friendly.** Compose charts from marks, axes, annotations, legends,
-  tooltips, and callbacks—or use the familiar `xy.pyplot` interface.
-- **Interactive by default.** Pan, zoom, hover, select, and inspect exact source
-  rows without shipping the entire dataset as JSON.
-- **One chart, many outputs.** Display in Jupyter, VS Code, and Colab, or
-  export self-contained HTML plus browser-free PNG, JPEG, WebP, SVG, and PDF
-  through one `to_image`/`write_image` API.
-- **Designed for applications.** Layer marks and style both chart chrome and
-  marks with CSS/Tailwind-friendly hooks, gradients, strokes, and curves.
+- **Built for large data.** Decimates long lines and refines dense scatter as you zoom.
+- **Python-friendly.** Compose marks and guides, or use the familiar `xy.pyplot`.
+- **Interactive by default.** Pan, zoom, hover, select, and inspect exact source rows.
+- **One chart, many outputs.** Use notebooks or export HTML, raster, and vector formats.
+- **Built for apps.** Embed responsive charts and style them with CSS or Tailwind.
 
 ## Is xy for me?
 
