@@ -135,6 +135,16 @@ states which representation this view resolved to:
   style}`. `x_range`/`y_range` are the window these points cover; the client
   falls back to the density overview the moment the view leaves it.
 
+  Channel encodings on this (and the sample-overlay) live wire: `x`/`y` are
+  offset-encoded f32 (position precision is load-bearing, dossier §16), but
+  every unit-scalar channel — continuous `color`, continuous `size`,
+  `density_val` — ships as domain-baked **u8 LUT coordinates**
+  (`enc: "u8"`, v9; see §5 for the encode contract), and categorical color
+  ships u8 codes. These payloads are regenerated wholesale per view, so the
+  domain-dependence that raw encoding removes from durable buffers costs
+  nothing here, and their hover/pick readbacks resolve from the kernel's
+  canonical columns — the quantization is invisible everywhere but the wire.
+
 The client enforces `msg.seq` only when it is present, and additionally
 accepts `msg.trace` and `msg.stale` for pending-request bookkeeping — no
 current kernel path emits either field.
@@ -318,6 +328,15 @@ which the client draws through the identity map — both encodings render
 pixel-identically. Kernel-side readouts stay canonical f64; standalone
 hover reads shipped values and denormalizes only unit-encoded ones.
 
+A third encode, `enc: "u8"` (with `dtype: "u8"`, v9), is the quantized unit
+encode: domain-baked u8 LUT coordinates the client binds as a normalized
+attribute, drawn through the same identity map as legacy unit f32. It is
+reserved for **ephemeral live payloads** — drill and sample-overlay updates
+(§3), which are rebuilt per view and never read back client-side — where it
+quarters the channel bytes. Durable buffers (build payload, streaming
+append) must never use it: raw encoding is what keeps their domain changes
+O(1), and standalone hover reads them back as data units.
+
 Stable animation identity is the second intentional u32 use beside selection
 indices. A keyed direct trace carries `keys: {lo, hi}` referring to two u32
 columns that form one stable 64-bit identity per shipped mark. Aggregate and
@@ -365,9 +384,9 @@ The reassembled bytes are identical to the source blob, which is what keeps
 
 Two independent version constants:
 
-- **Renderer/spec protocol.** `PROTOCOL_VERSION = 6` (`python/xy/config.py`)
+- **Renderer/spec protocol.** `PROTOCOL_VERSION = 9` (`python/xy/config.py`)
   rides every first-paint spec as `spec["protocol"]`; the client's
-  `PROTOCOL = 6` (`js/src/00_header.ts`) is checked in the `ChartView`
+  `PROTOCOL = 9` (`js/src/00_header.ts`) is checked in the `ChartView`
   constructor. A mismatch replaces the chart element with "update the xy
   package and restart the kernel" and throws. Requests and replies carry no
   version of their own — the handshake happens once, at first paint, before
@@ -375,10 +394,13 @@ Two independent version constants:
   once per tick; v6 added append reuse (§4/§5: `cid` column identities,
   partial buffer lists, the `refresh` recovery request); v7 moved continuous
   channels to the raw data-unit encode (§5); v8 added the `append_rows`
-  delta frame (§4) — a pre-v7 bundle would clamp raw values as if they were
-  unit coordinates and render wrong colors silently, and a pre-v8 bundle
-  would drop delta frames on the floor mid-stream: both are the failure
-  class the handshake exists to catch.
+  delta frame (§4); v9 moved live drill/sample channels to the quantized u8
+  encode (§3/§5) — a pre-v7 bundle would clamp raw values as if they were
+  unit coordinates and render wrong colors silently, a pre-v8 bundle
+  would drop delta frames on the floor mid-stream, and a pre-v9 bundle
+  would bind u8 LUT coordinates un-normalized and clamp every drilled
+  point to the ramp top: all are the failure class the handshake exists
+  to catch.
 - **Transport frame.** `FRAME_MAGIC` `"XYBF"` with `FRAME_VERSION = 1`
   versions the binary envelope separately, so the transport and the renderer
   can evolve without coupling.

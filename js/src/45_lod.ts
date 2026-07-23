@@ -270,7 +270,7 @@ export function lodApplyDrill(view, g, upd, buffers) {
       : view._asF32(buffers[upd.color.buf]);
     const colorBufferName = d.colorMode === 3 ? "rgbaBuf" : "cBuf";
     if (!d[colorBufferName]) d[colorBufferName] = gl.createBuffer();
-    d[colorBufferName]._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
+    view._tagChannelBuf(d[colorBufferName], colorValues, d.colorMode === 1);
     gl.bindBuffer(gl.ARRAY_BUFFER, d[colorBufferName]);
     gl.bufferData(gl.ARRAY_BUFFER, colorValues, gl.STATIC_DRAW);
     if (d.colorMode !== 3) {
@@ -284,9 +284,13 @@ export function lodApplyDrill(view, g, upd, buffers) {
   d.sizeRange = [2, 18];
   if (upd.size && upd.size.mode === "continuous") {
     d.sizeMode = 1;
+    const sizeValues = upd.size.dtype === "u8"
+      ? view._asU8(buffers[upd.size.buf])
+      : view._asF32(buffers[upd.size.buf]);
     if (!d.sBuf) d.sBuf = gl.createBuffer();
+    view._tagChannelBuf(d.sBuf, sizeValues, true);
     gl.bindBuffer(gl.ARRAY_BUFFER, d.sBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.size.buf]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, sizeValues, gl.STATIC_DRAW);
     d.sizeRange = upd.size.range_px;
   }
   const styleChannel = (name) => upd.channels && upd.channels[name];
@@ -331,9 +335,13 @@ export function lodApplyDrill(view, g, upd, buffers) {
   // colormap, so the texture->marks swap doesn't recolor the chart; deeper
   // zooms ship smaller blends and the native colors ease in.
   if (upd.density_val && upd.density_val.buf !== undefined) {
+    const dvalValues = upd.density_val.dtype === "u8"
+      ? view._asU8(buffers[upd.density_val.buf])
+      : view._asF32(buffers[upd.density_val.buf]);
     if (!d.dBuf) d.dBuf = gl.createBuffer();
+    view._tagChannelBuf(d.dBuf, dvalValues, true);
     gl.bindBuffer(gl.ARRAY_BUFFER, d.dBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.density_val.buf]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, dvalValues, gl.STATIC_DRAW);
     d.dlut = view._lut(upd.density_colormap || "viridis");
     const first = d.lodBlend === undefined;
     d.lodBlend = Math.min(1, upd.lod_blend ?? 0);

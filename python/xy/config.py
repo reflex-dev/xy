@@ -18,7 +18,11 @@ from __future__ import annotations
 # v8: `append_rows` — direct-tier streaming appends ship only the K new rows
 # as an in-place tail write (O(K) wire), falling back to the full `append`
 # whenever the shipped representation is not a pure extension.
-PROTOCOL_VERSION = 8
+# v9: live drill/sample updates ship continuous color/size and density_val as
+# domain-baked u8 LUT coordinates (`enc: "u8"`, `dtype: "u8"`); the client
+# binds them normalized with the identity channel map. Durable buffers keep
+# the v7 raw encode.
+PROTOCOL_VERSION = 9
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the

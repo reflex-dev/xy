@@ -20,7 +20,7 @@
  * title, axis tick labels, legend, tooltip (§7).
  */
 
-export const PROTOCOL = 8;
+export const PROTOCOL = 9;
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
 // python/xy/_framing.py). The chart spec's PROTOCOL

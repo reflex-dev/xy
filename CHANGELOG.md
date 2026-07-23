@@ -142,6 +142,15 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **Live drill/sample channels ship quantized u8 (protocol v9).** Drill and
+  sample-overlay updates now carry continuous color/size and `density_val`
+  as domain-baked u8 LUT coordinates (`enc: "u8"`); the client binds them
+  normalized under the identity channel map. These payloads are rebuilt
+  wholesale per view and their hover/pick readbacks resolve from the
+  kernel's canonical columns, so the quantization is invisible on screen —
+  a 190k-point drill drops from 20 to 11 bytes/point (−45% with base64
+  transports). Durable buffers (build payload, streaming append) keep the
+  v7 raw encode, which is what makes their domain changes O(1).
 - **Streaming appends ship O(K) delta frames (protocol v8).** A direct-tier
   scatter/line append now sends only the K new rows (`append_rows`): the
   client extends its GPU buffers and retained CPU spans in place — no

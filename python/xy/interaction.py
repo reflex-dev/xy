@@ -456,7 +456,9 @@ def _density_sample_update(
         return None
     xs, ys = t.x.values[sample_sel], t.y.values[sample_sel]
     x_ref, y_ref = lod.add_window_xy(writer, xs, ys, lo_x, hi_x, lo_y, hi_y)
-    color_spec, size_spec = fig._ship_channels(t, sample_sel, writer.add_f32, writer.add_u8)
+    color_spec, size_spec = fig._ship_channels(
+        t, sample_sel, writer.add_f32, writer.add_u8, quantize_continuous=True
+    )
     style = dict(t.style)
     try:
         style["opacity"] = min(float(style.get("opacity", 0.8)), 0.55)
@@ -592,6 +594,15 @@ def density_view(
     )
 
 
+def _quantize_dval(dval: np.ndarray) -> np.ndarray:
+    """Quantize per-point local log-density ([0,1] by construction) to u8.
+
+    The value is only a LUT coordinate for the density→points color handoff
+    (§5) — 256 levels exceed what the crossfade can show, at a quarter of the
+    f32 wire bytes (§29)."""
+    return np.rint(np.clip(dval, 0.0, 1.0) * 255.0).astype(np.uint8)
+
+
 def _drill_points(
     fig: "Figure",
     t: Any,
@@ -617,12 +628,16 @@ def _drill_points(
     x_ref, y_ref = lod.add_window_xy(writer, xs, ys, lo_x, hi_x, lo_y, hi_y)
     buffers = writer.buffers
 
-    color_spec, size_spec = fig._ship_channels(t, sel, writer.add_f32, writer.add_u8)
+    color_spec, size_spec = fig._ship_channels(
+        t, sel, writer.add_f32, writer.add_u8, quantize_continuous=True
+    )
 
     # Local log-density per drilled point, binned at the same screen-derived
     # grid shape density would use, so the two representations line up.
     gw, gh = lod.grid_shape(w, h, visible)
-    dval_buf = writer.add_f32(lod.local_log_density(xs, ys, lo_x, hi_x, lo_y, hi_y, gw, gh))
+    dval_buf = writer.add_u8(
+        _quantize_dval(lod.local_log_density(xs, ys, lo_x, hi_x, lo_y, hi_y, gw, gh))
+    )
     drill_seq = lod.enter_drill(t, sel)
     # 1.0 right at the boundary → density-colored points; →0 as zoom deepens.
     lod_blend = float(min(1.0, visible / SCATTER_DENSITY_THRESHOLD))
@@ -647,7 +662,7 @@ def _drill_points(
         "y": y_ref,
         "color": color_spec,
         "size": size_spec,
-        "density_val": {"buf": dval_buf},
+        "density_val": {"buf": dval_buf, "dtype": "u8"},
         "lod_blend": lod_blend,
         "density_colormap": cmap,
         "drill_seq": drill_seq,

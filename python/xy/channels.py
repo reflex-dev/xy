@@ -516,13 +516,49 @@ def _raw_wire_ok(domain: tuple[float, float]) -> bool:
     )
 
 
-def ship_continuous(spec: dict[str, Any], vals: Any, domain: Any, ship_scalar: Any) -> None:
+def quantize_unit_u8(values: Any, domain: tuple[float, float]) -> np.ndarray:
+    """Normalize over `domain` and quantize to u8 (0..255 spanning [0,1]).
+
+    The lossy sibling of :func:`normalize_to_unit`, for wire paths where the
+    value is only ever a GPU LUT/ramp coordinate (a colormap texture has 256
+    texels; a size ramp spans ~16 px) and is never read back into a displayed
+    number — 75% less traffic than f32, same rendered output (§29)."""
+    unit = normalize_to_unit(values, domain)
+    return np.rint(np.clip(unit, 0.0, 1.0) * 255.0).astype(np.uint8)
+
+
+def ship_continuous(
+    spec: dict[str, Any],
+    vals: Any,
+    domain: Any,
+    ship_scalar: Any,
+    ship_u8: Any = None,
+    *,
+    quantize: bool = False,
+) -> None:
     """Continuous channel wire encode (wire-protocol §3): **raw** f32 values
     with `enc: "raw"` — the client maps them through the spec `domain` in the
     vertex shader, so a domain change is a uniform update, never a re-encode —
     falling back to the legacy pre-normalized unit encode when the domain is
     not representable in f32. Non-finite values scrub to the domain floor
-    either way (§19: NaN never reaches a vertex buffer)."""
+    either way (§19: NaN never reaches a vertex buffer).
+
+    `quantize` selects the third encode, `enc: "u8"`: domain-baked u8 LUT
+    coordinates (the client binds them normalized, identity channel map).
+    Live drill/sample updates opt in — those payloads are regenerated
+    wholesale per view (domain-dependence costs nothing) and their hover/pick
+    readbacks resolve from the kernel's canonical columns, so the
+    quantization is invisible. Durable buffers (build payload, streaming
+    append) must NOT opt in: raw encoding is what keeps a domain change O(1)
+    there, and standalone hover reads those buffers back as data units."""
+    if quantize and ship_u8 is not None:
+        lo, hi = float(domain[0]), float(domain[1])
+        span = hi - lo
+        if np.isfinite(span) and span > 0.0:
+            spec["enc"] = "u8"
+            spec["dtype"] = "u8"
+            spec["buf"] = ship_u8(quantize_unit_u8(vals, domain))
+            return
     if _raw_wire_ok(domain):
         spec["enc"] = "raw"
         spec["buf"] = ship_scalar(kernels.sanitize_f32(vals, float(domain[0])))
@@ -536,6 +572,8 @@ def ship_channels(
     ship_scalar: Any,
     ship_u8: Any,
     palette: list[str],
+    *,
+    quantize_continuous: bool = False,
 ) -> tuple[Any, Any]:
     """Ship a trace's color and size channels in the standard wire shape
     (design dossier §29/§36c): per-point channels carry a `buf` index into the blob; constant
@@ -545,9 +583,14 @@ def ship_channels(
     Slices *before* normalizing: normalization is element-wise over a
     precomputed global domain, and drill updates call this per zoom step —
     normalizing all N rows to ship a 200k window is O(N) work for nothing.
+
+    `quantize_continuous` selects the u8 encode for continuous color/size —
+    live-interaction callers only (see ship_continuous for the contract).
     Returns (color_spec, size_spec)."""
     cc = trace.color_ch or ColorChannel(mode="constant", constant=None)
-    color_spec = ship_color_channel(cc, sel, ship_scalar, ship_u8, palette)
+    color_spec = ship_color_channel(
+        cc, sel, ship_scalar, ship_u8, palette, quantize_continuous=quantize_continuous
+    )
     sc = trace.size_ch or SizeChannel(mode="constant")
     size_spec = sc.spec()
     if sc.mode == "continuous":
@@ -556,12 +599,18 @@ def ship_channels(
         if values is None or domain is None:
             raise ValueError("continuous size channel missing values or domain")
         vals = values if sel is None else values[sel]
-        ship_continuous(size_spec, vals, domain, ship_scalar)
+        ship_continuous(size_spec, vals, domain, ship_scalar, ship_u8, quantize=quantize_continuous)
     return color_spec, size_spec
 
 
 def ship_color_channel(
-    cc: ColorChannel, sel: Any, ship_scalar: Any, ship_u8: Any, palette: list[str]
+    cc: ColorChannel,
+    sel: Any,
+    ship_scalar: Any,
+    ship_u8: Any,
+    palette: list[str],
+    *,
+    quantize_continuous: bool = False,
 ) -> dict[str, Any]:
     """Ship one fill/stroke paint channel in the common wire representation."""
     color_spec = cc.spec()
@@ -581,7 +630,9 @@ def ship_color_channel(
         if values is None or domain is None:
             raise ValueError("continuous color channel missing values or domain")
         vals = values if sel is None else values[sel]
-        ship_continuous(color_spec, vals, domain, ship_scalar)
+        ship_continuous(
+            color_spec, vals, domain, ship_scalar, ship_u8, quantize=quantize_continuous
+        )
     elif cc.mode == "categorical":
         code_values = cc.codes
         categories = cc.categories
