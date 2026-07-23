@@ -136,7 +136,9 @@ def test_scatter_density_view_routes_through_shared_lod_primitives(monkeypatch) 
     assert len(calls["request"]) == 3
     assert any(plan.exact is False for plan in calls["plan"])
     assert any(plan.exact is True for plan in calls["plan"])
-    assert len(calls["encode"]) >= 2
+    # One geometry encode: the drill's window-centered x/y pair. Density
+    # replies ship no sample overlay (#225), so nothing else encodes points.
+    assert len(calls["encode"]) == 1
     assert calls["enter"] == [drilled["traces"][0]["visible"]]
     assert True in calls["exit"]
 

@@ -3,7 +3,7 @@ import { buildLutData, colormapStops } from "./10_colormaps";
 import { cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
 import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
-import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
+import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodDropPointCache, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
 
 // ---------------------------------------------------------------------------
@@ -5085,6 +5085,7 @@ export class ChartView {
   _destroyTraceResources(g, texSeen) {
     if (!g) return;
     this._destroyDensitySample(g);
+    lodDropPointCache(this, g); // retired point windows die with the trace (T13)
     this._deleteVaos(g);
     this._deleteVaos(g.drill);
     this._deleteBuffers(g, [
@@ -5094,7 +5095,9 @@ export class ChartView {
       "_transitionPrevXBuf", "_transitionPrevYBuf",
       "_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",
     ]);
-    this._deleteBuffers(g.drill, ["xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "dBuf"]);
+    this._deleteBuffers(g.drill, [
+      "xBuf", "yBuf", "cBuf", "rgbaBuf", "sBuf", "styleBuf", "strokeBuf", "selBuf", "dBuf",
+    ]);
     const textures = [];
     if (g.heatmap) textures.push(g.heatmap.tex);
     for (const d of g.densityCache || []) textures.push(d && d.tex);

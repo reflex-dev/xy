@@ -64,11 +64,38 @@ DRILL_EXIT_FACTOR = 1.15
 # static and re-ship large; a few points per cell keeps drill-out continuous.
 DENSITY_TARGET_POINTS_PER_CELL = 16.0
 
-# Hybrid density overlay (§5): when scatter is aggregated, ship a small,
-# deterministic sample of real points over the density texture. This keeps
-# zoomed-out views from becoming pure heatmaps while staying payload-bounded.
+# Deterministic point sample retained with the FIRST density payload only
+# (§28/#225): the client draws it solely when the view it would describe could
+# be points-tier (estimated in-view count within the drill budget) — a
+# fixed-size sample above that resolution reads as individual data points at a
+# zoom where real points are sub-pixel, misrepresenting the dataset. Its other
+# job is unchanged: it is the standalone (kernel-less) re-bin worker's CPU
+# source. Interactive density_view replies ship no samples at all — the
+# density surface already wears the data's own colors (LOD doc §2), and real
+# points arrive the moment a window fits the budget.
 DENSITY_SAMPLE_TARGET = 8_192
 DENSITY_SAMPLE_SEED = 0
+
+# Padded drill windows (LOD doc T13): a points-tier reply ships the largest
+# ALIGNED window around the view whose exact count still fits the budget, so
+# the client's window cache answers nearby pans/zooms with zero round-trips.
+# Ladder of padded-span targets (× the view span), coarsest first; bounds snap
+# outward to a power-of-two grid over the trace's extent (lod.aligned_window),
+# making consecutive pans resolve to the SAME window.
+DRILL_PAD_TARGETS = (8.0, 4.0, 2.0)
+# Hard per-axis cap on the padded span (× the view span). Must stay well under
+# the client's §16 re-encode bound (1/256 of the window span): the shipped
+# offset encoding centers on the padded window, and a window unboundedly wider
+# than the view would let deep zooms outrun f32 precision before the re-encode
+# request re-arms.
+DRILL_PAD_SPAN_CAP = 64.0
+
+# Recent drilled subsets kept resolvable for picks (LOD doc T13): the client
+# may serve a view from a retired cached point window whose drill_seq is no
+# longer current; translating through the remembered subset keeps hover exact
+# instead of dead. Bounded — anything older resolves to None, never to a
+# wrong row (§16 exact-or-nothing).
+DRILL_HISTORY_KEEP = 8
 
 # CVD-safe default categorical palette (§20/§36 default theme). Eight slots in
 # a fixed order; charts render on unknown host surfaces, so every step sits in

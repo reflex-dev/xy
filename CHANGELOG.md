@@ -35,6 +35,26 @@ in the README).
   to the internal engine object.
 
 ### Changed
+- **No sampled points above the resolution of the graph (#225).** Interactive
+  `density_view` replies no longer ship a point-sample overlay: a fixed-size
+  sample above the drill budget reads as individual data points at a zoom
+  where real points are sub-pixel, misrepresenting the dataset — the
+  mean-color density surface stands alone there. The retained first-payload
+  sample (also the standalone re-bin worker's CPU source) now draws only when
+  the view's estimated in-view count fits the direct point budget, i.e. when
+  individual points are actually resolvable; real points still ship the
+  moment a window fits the budget, so drilldown behavior is unchanged.
+- **Full-point windows are padded, aligned, cached, and never re-requested
+  (LOD doc T13).** A points-tier reply now ships the largest aligned window
+  around the view whose exact count still fits the budget (bounds snapped to
+  a power-of-two grid over the trace's extent, per dimension), so consecutive
+  pans resolve to the same window; the client retires replaced exact windows
+  into a bounded per-trace cache and promotes them back — pan ping-pong and
+  zoom-out/zoom-in render entirely from the GPU with zero round-trips. Picks
+  against a promoted (older) window still resolve exactly through a bounded
+  kernel-side subset history. Identical `density_view` requests (same window,
+  same screen, unchanged data) are suppressed client-side, and a suppressed
+  duplicate's in-flight reply is accepted instead of dying to the seq race.
 - **Density surfaces now wear the data's own colors (LOD doc §2).** A Tier-2
   scatter's aggregated view colors each cell with the alpha-weighted **mean of
   its binned points' resolved colors** (continuous colormap, categorical

@@ -4,6 +4,10 @@ import { parseColor } from "./20_theme";
 
 const LOD_DIRECT_POINT_BUDGET = 200000;
 const LOD_DRILL_EXIT_FACTOR = 1.15;
+// Retired exact point windows kept per trace (T13), beyond the live drill.
+// Each holds ≤ budget points of GPU buffers, so the cap bounds VRAM; the
+// outgrown sweep (T11 rule) frees entries geometry can no longer revive.
+const LOD_POINT_CACHE_WINDOWS = 3;
 // Retained-sample zoom-out fade band (T9): full alpha while the sample's home
 // window still covers ≥ HI of the view area, gone below LO (log-eased between,
 // applied as composited opacity — see lodSampleViewAlpha).
@@ -250,6 +254,28 @@ function lodSampleViewAlpha(view, s) {
   return k > 1 ? 1 - Math.pow(1 - band, 1 / k) : band;
 }
 
+// #225 resolvability gate: a sample overlay draws only when the view it
+// would describe could plausibly be points-tier — the estimated in-view
+// count (the overlay's recorded window count, scaled by the view's share of
+// its window) fits the direct budget. Above that, a fixed-size sample reads
+// as individual data points at a zoom where real points are sub-pixel:
+// sampling above the resolution of the graph misrepresents the dataset, and
+// the aggregate surface — which wears the data's own colors (LOD doc §2) —
+// is the truthful representation. In kernel mode the gate makes the hybrid
+// look transient at most (real points ship the moment a window fits the
+// budget); standalone exports keep the overlay as their only point
+// representation once a zoom resolves it. Overlays without recorded counts
+// (hand-built/legacy specs) keep drawing — the gate needs facts, not guesses.
+function lodOverlayResolvable(view, o) {
+  const meta = o.sample;
+  if (!meta || !Number.isFinite(meta.visible)) return true;
+  const v = view.view;
+  const viewArea = Math.abs((v.x1 - v.x0) * (v.y1 - v.y0));
+  const winArea = lodWindowArea(o.win);
+  const share = winArea > 0 && viewArea > 0 ? Math.min(1, viewArea / winArea) : 1;
+  return meta.visible * share <= LOD_DIRECT_POINT_BUDGET;
+}
+
 // §28 hybrid overlay, window pairing (T9): every sample rides the density
 // window it was computed for, so the points on screen always describe the
 // window being displayed. Selection mirrors lodDensityForView: the smallest
@@ -258,6 +284,8 @@ function lodSampleViewAlpha(view, s) {
 // of a stale drilled cluster). Only when NO cached window covers the view
 // (pan off-cache, zoom-out past home) does the best partial overlay draw,
 // bounded by the T9 coverage fade so it can never read as a false cluster.
+// Every candidate passes the #225 resolvability gate first: above the direct
+// budget the aggregate stands alone.
 export function lodSampleForView(view, g) {
   const cache = g.densityCache || (g.density ? [g.density] : []);
   let contained = null;
@@ -268,6 +296,7 @@ export function lodSampleForView(view, g) {
     const o = d && d.overlay;
     if (!o || !o.n || !o.win || seen.has(o)) continue;
     seen.add(o);
+    if (!lodOverlayResolvable(view, o)) continue;
     if (view._viewInside(o.win)) {
       if (!contained || lodWindowArea(o.win) < lodWindowArea(contained.win)) contained = o;
     } else if (view._viewOverlaps(o.win)) {
@@ -328,13 +357,14 @@ function lodHoldPendingDrill(view, g, d) {
 // different representation and the reply flow owns that transition.
 const LOD_DRILL_REENCODE_SPAN = 1 / 256;
 
-export function lodDrillServesView(g, x0, x1, y0, y1) {
-  const d = g && g.drill;
-  if (!d || !d.exact || !d.win || g._drillDying) return false;
+// Containment + §16 re-encode depth bound, shared by the live drill and the
+// retired point-window cache (T13): an exact window answers any view it
+// contains, until the zoom outgrows the f32 offset encoding.
+function lodWindowServesView(win, x0, x1, y0, y1) {
   const vx0 = Math.min(x0, x1), vx1 = Math.max(x0, x1);
   const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
-  const wx0 = Math.min(d.win.x0, d.win.x1), wx1 = Math.max(d.win.x0, d.win.x1);
-  const wy0 = Math.min(d.win.y0, d.win.y1), wy1 = Math.max(d.win.y0, d.win.y1);
+  const wx0 = Math.min(win.x0, win.x1), wx1 = Math.max(win.x0, win.x1);
+  const wy0 = Math.min(win.y0, win.y1), wy1 = Math.max(win.y0, win.y1);
   // Same edge tolerance as _viewInside: f32 round-trip slop at the window
   // boundary must not force a request right after drilling in.
   const ex = (vx1 - vx0) * 1e-4, ey = (vy1 - vy0) * 1e-4;
@@ -343,6 +373,12 @@ export function lodDrillServesView(g, x0, x1, y0, y1) {
     vx1 - vx0 >= (wx1 - wx0) * LOD_DRILL_REENCODE_SPAN &&
     vy1 - vy0 >= (wy1 - wy0) * LOD_DRILL_REENCODE_SPAN
   );
+}
+
+export function lodDrillServesView(g, x0, x1, y0, y1) {
+  const d = g && g.drill;
+  if (!d || !d.exact || !d.win || g._drillDying) return false;
+  return lodWindowServesView(d.win, x0, x1, y0, y1);
 }
 
 // Geometry-only retirement (T11): an entered-then-exited drill is kept as a
@@ -408,6 +444,116 @@ export function lodRememberDensity(view, g, d) {
   }
 }
 
+// -- point-window cache (T13) -------------------------------------------------
+//
+// Retired exact drills, LRU per trace. "Once we get points, we can render
+// anything inside there without further requests": a view covered by any
+// cached full-point window promotes it back to the live drill with no wire
+// round-trip. The cache pairs with the kernel's padded ALIGNED windows —
+// consecutive pans resolve to the same aligned bounds, so windows crossed
+// once are held, and ping-pong pans/zooms across a boundary re-render from
+// the cache instead of re-shipping ~all the same points.
+
+function lodSameWindow(a, b) {
+  if (!a || !b) return false;
+  const eps = (Math.abs(a.x1 - a.x0) + Math.abs(a.y1 - a.y0)) * 1e-9 + 1e-300;
+  return Math.abs(a.x0 - b.x0) <= eps && Math.abs(a.x1 - b.x1) <= eps &&
+    Math.abs(a.y0 - b.y0) <= eps && Math.abs(a.y1 - b.y1) <= eps;
+}
+
+function lodFreeDrillBuffers(view, d) {
+  const gl = view.gl;
+  view._deleteVaos(d); // each drill object carries its own VAOs
+  for (const b of [d.xBuf, d.yBuf, d.cBuf, d.rgbaBuf, d.sBuf, d.styleBuf,
+    d.strokeBuf, d.selBuf, d.dBuf]) if (b) gl.deleteBuffer(b);
+}
+
+// Reset the trace's drill lifecycle state without touching the (moved or
+// freed) drill object itself — shared by drop, retire, and promote.
+function lodClearDrillState(view, g) {
+  g.drill = null;
+  g._drillFadeStart = null;
+  g._drillExitFadeStart = null;
+  g._drillWasInside = false;
+  g._drillEverInside = false;
+  g._drillShownAlpha = null;
+  g._drillDying = false;
+  g._drillDiedInsideWin = false;
+  g._drillBackdropShown = 1; // next drill enters over a full backdrop (T10)
+  g._drillBackdropTick = 0;
+  view._hoverId = -1; // drilled indices are dead; don't reuse a cached row
+  view._lastRow = null;
+  // The freed drill may have been the only pickable geometry (a density-only
+  // chart): retract the modebar Select trigger with the capability.
+  view._updatePickable();
+}
+
+// Move the live drill into the retired-window cache. Only an exact subset can
+// serve future views (Invariant L2), so anything else frees instead.
+function lodRetireDrill(view, g) {
+  const d = g.drill;
+  if (!d) return;
+  if (!d.exact || !d.win) {
+    lodDropDrill(view, g);
+    return;
+  }
+  if (!g.drillCache) g.drillCache = [];
+  // A re-shipped window replaces its stale cached twin instead of duplicating.
+  for (let i = g.drillCache.length - 1; i >= 0; i--) {
+    if (lodSameWindow(g.drillCache[i].win, d.win)) {
+      lodFreeDrillBuffers(view, g.drillCache.splice(i, 1)[0]);
+    }
+  }
+  g.drillCache.push(d);
+  while (g.drillCache.length > LOD_POINT_CACHE_WINDOWS) {
+    lodFreeDrillBuffers(view, g.drillCache.shift());
+  }
+  lodClearDrillState(view, g);
+}
+
+export function lodDropPointCache(view, g) {
+  for (const d of g.drillCache || []) lodFreeDrillBuffers(view, d);
+  g.drillCache = null;
+}
+
+// A retired cached window that covers the view swaps back in as the live
+// drill — the pan-back / zoom-ping-pong "render anything inside there" path
+// (T13). Alpha-continuous like a revive: the swap hands marks over at the
+// alpha currently on screen, and any active brush mask re-derives locally
+// exactly as a fresh reply would (§34 continuity).
+export function lodPromoteCachedDrill(view, g, x0, x1, y0, y1) {
+  const cache = g.drillCache;
+  if (!cache || !cache.length) return false;
+  let pick = -1;
+  for (let i = 0; i < cache.length; i++) {
+    const e = cache[i];
+    if (!e || !e.exact || !e.win || !lodWindowServesView(e.win, x0, x1, y0, y1)) continue;
+    // Smallest covering window wins (mirrors lodDensityForView): tightest
+    // offset encoding and the most local blend/density metadata.
+    if (pick < 0 || lodWindowArea(e.win) < lodWindowArea(cache[pick].win)) pick = i;
+  }
+  if (pick < 0) return false;
+  const e = cache.splice(pick, 1)[0];
+  const shownAlpha = g.drill ? lodDrillShownAlpha(view, g) : 0;
+  if (g.drill) {
+    if (g._drillDying || !g.drill.exact) lodDropDrill(view, g);
+    else lodRetireDrill(view, g);
+  } else {
+    lodClearDrillState(view, g);
+  }
+  g.drill = e;
+  // Continuity across the swap: the promoted window's marks pick up at the
+  // alpha the retired ones showed (the retired window's points are a subset/
+  // superset over the same region — a restart-from-zero reads as a blink).
+  g._drillShownAlpha = shownAlpha;
+  lodEnterDrillContinuous(view, g);
+  if (view._lastBrush && e._cpuX && e._cpuY) lodRestoreBrushMask(view, e, e._cpuX, e._cpuY);
+  else e.selActive = false;
+  view._updatePickable();
+  view.draw();
+  return true;
+}
+
 // -- drill lifecycle ----------------------------------------------------------
 
 // The kernel decided this view fits the direct budget and shipped real marks
@@ -415,7 +561,26 @@ export function lodRememberDensity(view, g, d) {
 // trace; the tier draw uses it until the kernel switches back.
 export function lodApplyDrill(view, g, upd, buffers) {
   const gl = view.gl;
-  const fresh = !g.drill; // transition INTO drill vs refresh of a live drill
+  const win = {
+    x0: upd.x_range[0], x1: upd.x_range[1],
+    y0: upd.y_range[0], y1: upd.y_range[1],
+  };
+  // A reply for a NEW window retires the old one into the point-window cache
+  // (T13) instead of overwriting its buffers: the old window's points remain
+  // exact for views inside it, so a pan back promotes them with no kernel
+  // round-trip. The handoff is alpha-continuous below — a window-to-window
+  // swap must not restart the entry fade (reads as flashing mid-pan).
+  let handoff = null;
+  if (g.drill && !lodSameWindow(g.drill.win, win)) {
+    handoff = {
+      shownAlpha: lodDrillShownAlpha(view, g),
+      wasInside: g._drillWasInside,
+      everInside: g._drillEverInside,
+    };
+    if (g._drillDying || !g.drill.exact) lodDropDrill(view, g);
+    else lodRetireDrill(view, g);
+  }
+  const fresh = !g.drill && !handoff; // true aggregate→marks transition
   let d = g.drill;
   if (!d) {
     d = g.drill = { trace: g.trace, xBuf: gl.createBuffer(), yBuf: gl.createBuffer() };
@@ -431,9 +596,14 @@ export function lodApplyDrill(view, g, upd, buffers) {
   gl.bufferData(gl.ARRAY_BUFFER, ys, gl.STATIC_DRAW);
   d.xMeta = { offset: upd.x.offset, scale: upd.x.scale };
   d.yMeta = { offset: upd.y.offset, scale: upd.y.scale };
-  d.win = { x0: upd.x_range[0], x1: upd.x_range[1], y0: upd.y_range[0], y1: upd.y_range[1] };
+  d.win = win;
   d.n = Math.min(upd.x.len, upd.y.len);
   d.visible = upd.visible ?? d.n;
+  // Encoded coordinates retained CPU-side (views over the reply frame, no
+  // copy): a promoted cached window re-derives the brush mask from these,
+  // exactly as this fresh reply does below (§34 continuity across T13 swaps).
+  d._cpuX = xs;
+  d._cpuY = ys;
   // The kernel's exactness claim (§28 Invariant L2): reduction "none" means
   // the subset IS every point in the window — the fact that arms T12's
   // zoom-in request elision. Anything else (or a reply that doesn't say)
@@ -562,6 +732,18 @@ export function lodApplyDrill(view, g, upd, buffers) {
     g._drillDiedInsideWin = false;
     return;
   }
+  // Window-to-window swap (the old window retired into the point cache):
+  // marks continue from the alpha the retired window showed — the two windows
+  // agree on every shared point, so a restart-from-zero reads as a blink.
+  if (handoff) {
+    g._drillWasInside = handoff.wasInside;
+    g._drillEverInside = handoff.everInside;
+    g._drillShownAlpha = handoff.shownAlpha;
+    g._drillDying = false;
+    g._drillDiedInsideWin = false;
+    lodEnterDrillContinuous(view, g);
+    return;
+  }
   // A live points reply revives a dying/exiting drill (hysteresis flip or a
   // fast zoom back in): hand the marks back at their CURRENT alpha — neither
   // fighting the exit fade nor snapping to full.
@@ -607,25 +789,8 @@ function lodRestoreBrushMask(view, d, xs, ys) {
 export function lodDropDrill(view, g) {
   const d = g.drill;
   if (!d) return;
-  const gl = view.gl;
-  view._deleteVaos(d); // the drill sibling carries its own VAOs
-  for (const b of [d.xBuf, d.yBuf, d.cBuf, d.rgbaBuf, d.sBuf, d.styleBuf,
-    d.strokeBuf, d.selBuf, d.dBuf]) if (b) gl.deleteBuffer(b);
-  g.drill = null;
-  g._drillFadeStart = null;
-  g._drillExitFadeStart = null;
-  g._drillWasInside = false;
-  g._drillEverInside = false;
-  g._drillShownAlpha = null;
-  g._drillDying = false;
-  g._drillDiedInsideWin = false;
-  g._drillBackdropShown = 1; // next drill enters over a full backdrop (T10)
-  g._drillBackdropTick = 0;
-  view._hoverId = -1; // drilled indices are dead; don't reuse a cached row
-  view._lastRow = null;
-  // The freed drill may have been the only pickable geometry (a density-only
-  // chart): retract the modebar Select trigger with the capability.
-  view._updatePickable();
+  lodFreeDrillBuffers(view, d);
+  lodClearDrillState(view, g);
 }
 
 // A density update arrived while drilled: don't drop the marks instantly
@@ -824,6 +989,18 @@ function lodDrillBackdropScale(view, g, target) {
 // goes pending.
 export function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
   lodStepNorm(view, g);
+  // Retired point windows obey the same geometry-only discipline as the live
+  // drill (T11, via T13): once the view outgrows a cached window past the
+  // drill budget, no nearby view could be served by it, so its GPU buffers
+  // free on this frame — §27's rebuildable-cache rule, no kernel reply needed.
+  if (g.drillCache) {
+    for (let i = g.drillCache.length - 1; i >= 0; i--) {
+      if (lodDrillOutgrown(view, g, g.drillCache[i])) {
+        lodFreeDrillBuffers(view, g.drillCache.splice(i, 1)[0]);
+      }
+    }
+    if (!g.drillCache.length) g.drillCache = null;
+  }
   const d = g.drill;
   // Rapid zoom out→in revive: a dying drill whose window still covers the
   // view is exact for it (the subset IS every point in that window). Cancel
@@ -906,13 +1083,23 @@ export function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
       drawMarks(1 - exitFade);
       view.draw();
     } else {
-      if (g._drillDying) lodDropDrill(view, g); // fade done: free the buffers
-      else if (exitingDrill) g._drillWasInside = false;
+      if (g._drillDying) {
+        // Fade done. A subset that died OUTSIDE its window is still exact for
+        // it — the kernel chose density for a view the window doesn't cover —
+        // so it retires into the point cache (T13) and a zoom back in
+        // promotes it with no round-trip. Dying INSIDE means the kernel chose
+        // density FOR this window's own views (forced density / data change):
+        // its points-tier claim is void, free the buffers.
+        if (d.exact && !g._drillDiedInsideWin) lodRetireDrill(view, g);
+        else lodDropDrill(view, g);
+      } else if (exitingDrill) {
+        g._drillWasInside = false;
+      }
       // Geometry-only retirement (T11): an entered drill whose exit has
       // completed frees its buffers once the view outgrows its window past
       // the drill budget — no kernel reply required, and it must run on the
       // completion frame itself (a settled view schedules no further frames).
-      // A dying drill was just dropped above; a never-entered prefetch is
+      // A dying drill was just handled above; a never-entered prefetch is
       // exempt (its window is simply ahead of the view).
       if (g.drill && g._drillEverInside && lodDrillOutgrown(view, g, d)) {
         lodDropDrill(view, g);

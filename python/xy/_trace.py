@@ -71,6 +71,14 @@ class Trace:
     # subset is dropped instead of translating indices in the wrong space
     # (§16/§17: exact readout beats stale availability).
     drill_seq: int = 0
+    # Recent shipped subsets, {drill_seq: sel}, bounded to DRILL_HISTORY_KEEP
+    # (LOD doc T13): the client may pick against a retired cached point window
+    # whose seq is no longer current — translating through the remembered
+    # subset keeps that hover exact instead of dead. Cleared on data changes
+    # (an old subset's indices would then name different rows — §16).
+    drill_history: dict[int, Any] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
     # Count-pyramid cache (§5 Tier 3), managed by `interaction.py`: None =
     # never tried, 0 = tried and not applicable, otherwise the native handle.
     # The finalizer frees the native side when the trace is collected.

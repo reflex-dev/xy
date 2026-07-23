@@ -104,9 +104,9 @@ an Apple M5 Pro with 64 GB RAM. Times are mean ± sample standard deviation.
 |---:|---:|---:|---:|---|
 | 10k | 0.0085 ± 0.0002 s | 0.1533 ± 0.0079 s | 0.9580 ± 0.0103 s | direct |
 | 100k | 0.0108 ± 0.0004 s | 0.1742 ± 0.0029 s | 0.9752 ± 0.0048 s | direct |
-| 1M | 0.0114 ± 0.0013 s | 0.1688 ± 0.0081 s | 0.9678 ± 0.0039 s | density; density + sample interactive |
-| 10M | 0.0232 ± 0.0023 s | 0.1797 ± 0.0007 s | 0.9920 ± 0.0078 s | density; density + sample interactive |
-| 1B | 1.1452 ± 0.0389 s | 1.2530 ± 0.0018 s | 2.0877 ± 0.0063 s | density; density + sample interactive |
+| 1M | 0.0114 ± 0.0013 s | 0.1688 ± 0.0081 s | 0.9678 ± 0.0039 s | density; exact-point drill-in interactive |
+| 10M | 0.0232 ± 0.0023 s | 0.1797 ± 0.0007 s | 0.9920 ± 0.0078 s | density; exact-point drill-in interactive |
+| 1B | 1.1452 ± 0.0389 s | 1.2530 ± 0.0018 s | 2.0877 ± 0.0063 s | density; exact-point drill-in interactive |
 
 At 10M points, the same recorded run measured:
 

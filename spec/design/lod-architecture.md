@@ -44,7 +44,7 @@ real marks with real channels — never a sample, never an aggregate.
 
 | Kind | Tier 0 | Tier 1 | Tier 2 | zoom-in recovery |
 |---|---|---|---|---|
-| scatter | points | — (unordered decimation lies, §28) | mean-color density grid (§2; count planes + color planes, §4 below) | drill-in ships exact visible points + channels (shipped); deeper zooms inside the exact window are answered locally, no request (T12) |
+| scatter | points | — (unordered decimation lies, §28) | mean-color density grid (§2; count planes + color planes, §4 below) | drill-in ships exact points + channels for a padded ALIGNED window (T13); views inside any shipped window — live or cached — are answered locally, no request (T12/T13) |
 | line/area | polyline | M4 per column (extrema-exact) | — (M4 already screen-bounded) | re-decimate window (shipped) |
 | heatmap | cell rects | — | mip-style tile reduction of the user grid (max/mean recorded) | finer pyramid level, then exact cells |
 | histogram/bar | rects | re-bin at viewport resolution | — (bins are already aggregates) | re-bin visible window (finer bins = more truth, never less) |
@@ -353,22 +353,31 @@ invariants so future kinds don't regress them:
   drive it out of the hold, so the drilled subset stayed painted and the full
   point cloud never returned. (Complements T7, which fixes the same visible
   symptom from the texture-lifetime side.)
-- **T9 — the drawn sample describes the displayed window:** the deterministic
-  point sample shipped with an exact-scan density reply represents *its*
-  window only, so every sample overlay rides the density cache entry it was
-  computed for (`density.overlay`; replies that omit a sample — pyramid and
-  integral-image zoom-out paths, Phase 2 item 5 — simply add no overlay to
-  their entry). Each frame draws the overlay of the best cached window for
-  the current view (`lodSampleForView`, mirroring `lodDensityForView`): the
-  smallest window covering the view wins at full alpha, so a deep zoom-out
-  falls back through the cache to the HOME sample and the full point cloud
-  returns — points on screen always describe the window being displayed.
-  (The pre-pairing client retained one global sample and drew it whenever
-  the view merely overlapped its window: a drilled window's sample lingered
-  over every later zoom-out as an opaque "stuck point blob", pinned by a
-  live-drilldown wire capture — the blob's extent matched the last
-  sample-bearing reply's window exactly while the density surface kept
-  updating under it.) Only a view that NO cached window covers draws a
+- **T9 — the drawn sample describes the displayed window, and only a
+  RESOLVABLE window (#225):** a sample overlay draws only when the view it
+  would describe could plausibly be points-tier — the overlay's recorded
+  window count, scaled by the view's share of its window, fits
+  `LOD_DIRECT_POINT_BUDGET` (`lodOverlayResolvable`). Above that, a
+  fixed-size sample reads as individual data points at a zoom where real
+  points are sub-pixel — sampling above the resolution of the graph
+  misrepresents the dataset (the #225 field capture: zooming out from a
+  drilled 100M-point cloud brought "individual points" back over the
+  aggregate) — and the density surface, which wears the data's own colors
+  (§2), stands alone. Interactive `density_view` replies therefore ship NO
+  sample at all: the only retained overlay is the first-payload one, which
+  doubles as the standalone re-bin worker's CPU source and draws only below
+  the gate (kernel mode ships real points before that, so the hybrid look is
+  transient at most; standalone deep zooms keep it as their only point
+  representation; datasets under the budget keep it everywhere). For the
+  overlays that DO draw, window pairing holds: every sample rides the
+  density cache entry it was computed for (`density.overlay`), and each
+  frame draws the overlay of the best cached window for the current view
+  (`lodSampleForView`, mirroring `lodDensityForView`) — the smallest window
+  covering the view wins at full alpha, so points on screen always describe
+  the window being displayed. (The pre-pairing client retained one global
+  sample and drew it whenever the view merely overlapped its window: a
+  drilled window's sample lingered over every later zoom-out as an opaque
+  "stuck point blob".) Only a view that NO cached window covers draws a
   partial overlay, faded by the window's share of the view area — full alpha
   at ≥ `LOD_SAMPLE_FADE_COVER_HI` (1/4), hidden at
   ≤ `LOD_SAMPLE_FADE_COVER_LO` (1/32), log-eased between
@@ -379,11 +388,12 @@ invariants so future kinds don't regress them:
   near-opaque slab (a "fading" sample that never looked faded). The
   per-point alpha is solved as a = 1−(1−band)^(1/k), with k estimated from
   the drawn count, mean point footprint, and the window's on-screen area;
-  k ≤ 1 degenerates to the band value exactly. Selection and alpha are pure
-  functions of (view, cache): every zoom frame re-derives them, nothing
-  latches. Overlays die with their evicted cache entry (except the home/init
-  overlay, the standalone re-bin worker's CPU-side source), and the
-  "sampled n of N" badge reports the overlay actually drawn.
+  k ≤ 1 degenerates to the band value exactly. Selection, alpha, and the
+  resolvability gate are pure functions of (view, cache): every zoom frame
+  re-derives them, nothing latches. Overlays die with their evicted cache
+  entry (except the home/init overlay, the standalone re-bin worker's
+  CPU-side source), and the "sampled n of N" badge reports the overlay
+  actually drawn.
 - **T10 — the aggregate backdrop is continuous through transitions, and
   retires when the drill settles:** the density texture draws under the
   marks in every TRANSITIONAL drill state — entering, held, dying, exiting —
@@ -440,8 +450,45 @@ invariants so future kinds don't regress them:
   trace, which drops the drill and with it the elision. Non-exact replies
   (anything but `reduction: "none"`, including replies that don't say) never
   arm it.
+- **T13 — full-point windows are padded, aligned, cached, and never
+  re-requested:** T12's elision is only as good as the window it can elide
+  against, so both ends widen it. *Kernel side*, a points-tier reply ships
+  the largest ALIGNED window around the view whose exact count still fits
+  the budget (`interaction._padded_drill_window`): bounds snap outward to a
+  power-of-two grid over the trace's extent, per dimension
+  (`lod.aligned_window`), from a ladder of span targets
+  (`DRILL_PAD_TARGETS`, coarsest first, pyramid-count-gated then
+  exact-verified), floored at the raw view window. Alignment makes
+  consecutive pans resolve to the SAME window — dedupable, cacheable — and
+  neighboring windows tile; the padded span is hard-capped per axis
+  (`DRILL_PAD_SPAN_CAP`, well under the 1/256 re-encode bound) so the §16
+  offset encoding centered on the padded window can always be re-tightened
+  by a deeper zoom's re-encode request. Nonlinear-axis traces skip padding
+  (raw-space alignment mis-sizes log windows near zero) and keep the exact
+  view window. `visible` counts the SHIPPED window; `lod_blend` stays keyed
+  on the VIEW's own count — padding widens what ships, not what the user
+  sees. *Client side*, a points reply for a new window RETIRES the previous
+  exact drill into a bounded per-trace LRU (`g.drillCache`,
+  `LOD_POINT_CACHE_WINDOWS`) instead of overwriting its buffers, and so does
+  a drill that dies outside its window; any later view covered by a cached
+  window promotes it back (`lodPromoteCachedDrill` — alpha-continuous, brush
+  mask re-derived locally) with no wire message, so pan ping-pong and
+  zoom-out/zoom-in sequences render entirely from the GPU. Cached windows
+  obey the live drill's geometry-only memory discipline (T11): outgrown ⇒
+  freed on the frame, no kernel reply required (§27). Because promoted
+  windows carry retired `drill_seq`s, the kernel keeps a bounded subset
+  history (`Trace.drill_history`, `DRILL_HISTORY_KEEP`) so picks against a
+  recent retired window still translate exactly; expired seqs drop the pick
+  (§16 exact-or-nothing), and data changes clear the history. Finally, an
+  identical request never rides the wire twice: a `density_view` whose
+  window and screen size match the trace's last sent request is suppressed —
+  already answered ⇒ nothing to refresh (the reply is deterministic for
+  unchanged data; rebuilds reset the memo), still in flight ⇒ the trace
+  keeps waiting on the ORIGINAL request's seq and that reply is accepted
+  per-trace instead of dying to the global seq race (bounded by the same
+  1200ms window as the T8 hold, so a lost reply can't suppress forever).
 
-Any new tiered kind must state how it satisfies T1–T12 in its chart-kind
+Any new tiered kind must state how it satisfies T1–T13 in its chart-kind
 contract entry before it lands.
 
 ---
@@ -477,14 +524,18 @@ contract entry before it lands.
    row-order independence, rare-category floors, validation,
    dtype-preserving saturation, and subset-monotonicity across levels and
    viewport narrowing.
-5. **Done for exact density views:** hybrid scatter mode renders density plus
-   deterministic sampled exact points, with a visible "sampled n of N" badge.
-   Pyramid-served density views still need tile-aware sample overlays so the
-   same anti-shimmer contract holds without rescanning raw rows. Until they
-   exist, a sample-less reply's window carries no overlay of its own and the
-   T9 window pairing serves the best cached window's sample instead (the
-   home overlay above all, so zoom-outs keep representative points), bounded
-   by the coverage fade when nothing covers the view.
+5. **Revised by #225 (resolvability gate, T9):** interactive density replies
+   no longer ship samples at all — a fixed-size sample above the drill budget
+   reads as individual data points at a zoom where real points are sub-pixel,
+   and the mean-color surface (§2) is the truthful stand-alone
+   representation. The retained first-payload sample remains (the standalone
+   re-bin worker's CPU source) and draws — with its "sampled n of N" badge —
+   only when the estimated in-view count fits the direct budget: kernel mode
+   ships real points before that, so the hybrid look is transient at most;
+   standalone exports surface it once a zoom resolves it; datasets under the
+   budget keep it everywhere. The deterministic-sampling utilities (item 4)
+   stay: the first-payload overlay and any future resolvable-tier subset are
+   built from them.
 
 **Phase 3 — pyramid (build + serve shipped; client cache and bench gate open)**
 6. **Done (count + mean-color planes):** `src/tiles.rs` builds a square count
