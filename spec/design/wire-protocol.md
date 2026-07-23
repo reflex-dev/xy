@@ -137,6 +137,18 @@ states which representation this view resolved to:
   style}`. `x_range`/`y_range` are the window these points cover; the client
   falls back to the density overview the moment the view leaves it.
 
+  Channel encodings on this (and the sampled-overlay) live wire: `x`/`y` are
+  offset-encoded f32 (position precision is load-bearing, dossier §16), but
+  every unit-scalar channel — continuous `color`, continuous `size`,
+  `density_val` — ships as **u8 LUT coordinates** with a `dtype: "u8"`
+  marker (absent means f32; the client accepts both), and categorical color
+  ships u8 codes. The quantization is safe precisely because these values are
+  never read back into displayed numbers on a live path: hover/pick answers
+  come from the kernel's canonical columns (`pick_result` above). The *build*
+  payload keeps continuous channels as unit f32 — the client retains those
+  columns CPU-side and denormalizes them for tooltip readouts, where 8-bit
+  steps would surface as wrong digits (`channels.ship_channels`).
+
 The client enforces `msg.seq` only when it is present, and additionally
 accepts `msg.trace` and `msg.stale` for pending-request bookkeeping — no
 current kernel path emits either field.

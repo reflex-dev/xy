@@ -501,7 +501,9 @@ def _density_sample_update(
         fig._axis_scale(t.x_axis),
         fig._axis_scale(t.y_axis),
     )
-    color_spec, size_spec = fig._ship_channels(t, sample_sel, writer.add_f32, writer.add_u8)
+    color_spec, size_spec = fig._ship_channels(
+        t, sample_sel, writer.add_f32, writer.add_u8, quantize_continuous=True
+    )
     style = dict(t.style)
     try:
         style["opacity"] = min(float(style.get("opacity", 0.8)), 0.55)
@@ -531,6 +533,15 @@ def _density_sample_update(
             t.style_channels, sample_sel, writer.add_f32, writer.add_u8
         )
     return sample
+
+
+def _quantize_dval(dval: np.ndarray) -> np.ndarray:
+    """Quantize per-point local log-density ([0,1] by construction) to u8.
+
+    The value is only a LUT coordinate for the density→points color handoff
+    (§5) — 256 levels exceed what the crossfade can show, at a quarter of the
+    f32 wire bytes (§29)."""
+    return np.rint(np.clip(dval, 0.0, 1.0) * 255.0).astype(np.uint8)
 
 
 def _has_point_channels(t: "Trace") -> bool:
@@ -573,7 +584,9 @@ def _ship_index_points(
     writer = lod.BufferWriter()
     x_ref, y_ref = lod.add_window_xy(writer, xs, ys, lo_x, hi_x, lo_y, hi_y)
     gw, gh = lod.grid_shape(request.width, request.height, visible)
-    dval_buf = writer.add_f32(lod.local_log_density(xs, ys, lo_x, hi_x, lo_y, hi_y, gw, gh))
+    dval_buf = writer.add_u8(
+        _quantize_dval(lod.local_log_density(xs, ys, lo_x, hi_x, lo_y, hi_y, gw, gh))
+    )
     drill_seq = lod.enter_drill(t, np.empty(0, dtype=np.uint32))
     lod_blend = float(min(1.0, visible / SCATTER_DENSITY_THRESHOLD))
     color_spec = (
@@ -593,7 +606,7 @@ def _ship_index_points(
         "y": y_ref,
         "color": color_spec,
         "size": size_spec,
-        "density_val": {"buf": dval_buf},
+        "density_val": {"buf": dval_buf, "dtype": "u8"},
         "lod_blend": lod_blend,
         "density_colormap": channels.DEFAULT_COLORMAP,
         "drill_seq": drill_seq,
@@ -826,7 +839,9 @@ def _drill_points(
     )
     buffers = writer.buffers
 
-    color_spec, size_spec = fig._ship_channels(t, sel, writer.add_f32, writer.add_u8)
+    color_spec, size_spec = fig._ship_channels(
+        t, sel, writer.add_f32, writer.add_u8, quantize_continuous=True
+    )
 
     # Local log-density per drilled point, binned at the same screen-derived
     # grid shape density would use — in the same (scale-coordinate) binning
@@ -834,7 +849,9 @@ def _drill_points(
     gw, gh = lod.grid_shape(w, h, visible)
     dx, (d_x0, d_x1) = fig._binning_coords(t.x_axis, xs, (lo_x, hi_x))
     dy, (d_y0, d_y1) = fig._binning_coords(t.y_axis, ys, (lo_y, hi_y))
-    dval_buf = writer.add_f32(lod.local_log_density(dx, dy, d_x0, d_x1, d_y0, d_y1, gw, gh))
+    dval_buf = writer.add_u8(
+        _quantize_dval(lod.local_log_density(dx, dy, d_x0, d_x1, d_y0, d_y1, gw, gh))
+    )
     drill_seq = lod.enter_drill(t, sel)
     # 1.0 right at the boundary → density-colored points; →0 as zoom deepens.
     lod_blend = float(min(1.0, visible / SCATTER_DENSITY_THRESHOLD))
@@ -859,7 +876,7 @@ def _drill_points(
         "y": y_ref,
         "color": color_spec,
         "size": size_spec,
-        "density_val": {"buf": dval_buf},
+        "density_val": {"buf": dval_buf, "dtype": "u8"},
         "lod_blend": lod_blend,
         "density_colormap": cmap,
         "drill_seq": drill_seq,

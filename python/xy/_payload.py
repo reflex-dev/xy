@@ -877,10 +877,17 @@ class PayloadMixin(_Host):
         self._ship_trace_styles(entry, t, sel_arg, pw)
         return self._transition_entry(entry, t, pw, sel_arg)
 
-    def _ship_channels(self, t: Trace, sel, ship_scalar, ship_u8) -> tuple[Any, Any]:  # noqa: ANN001
+    def _ship_channels(
+        self, t: Trace, sel, ship_scalar, ship_u8, *, quantize_continuous: bool = False
+    ) -> tuple[Any, Any]:  # noqa: ANN001
         """Ship a trace's color/size channels (delegates to channels.py — the
-        same wire shape serves the build path and drill-in view updates)."""
-        return channels.ship_channels(t, sel, ship_scalar, ship_u8, DEFAULT_PALETTE)
+        same wire shape serves the build path and drill-in view updates).
+        `quantize_continuous` is for live-interaction callers only; the build
+        path keeps unit f32 because tooltips denormalize the shipped columns
+        (see channels.ship_channels)."""
+        return channels.ship_channels(
+            t, sel, ship_scalar, ship_u8, DEFAULT_PALETTE, quantize_continuous=quantize_continuous
+        )
 
     @staticmethod
     def _ship_trace_styles(entry: dict[str, Any], t: Trace, sel, pw: "_PayloadWriter") -> None:  # noqa: ANN001

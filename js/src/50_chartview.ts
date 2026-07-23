@@ -2360,7 +2360,7 @@ export class ChartView {
         : this._asF32(buffers[sample.color.buf]);
       const colorBufferName = s.colorMode === 3 ? "rgbaBuf" : "cBuf";
       s[colorBufferName] = gl.createBuffer();
-      s[colorBufferName]._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
+      this._tagChannelBuf(s[colorBufferName], colorValues, s.colorMode === 1);
       gl.bindBuffer(gl.ARRAY_BUFFER, s[colorBufferName]);
       gl.bufferData(gl.ARRAY_BUFFER, colorValues, gl.STATIC_DRAW);
       if (s.colorMode !== 3) {
@@ -2371,9 +2371,13 @@ export class ChartView {
     }
     if (sample.size && sample.size.mode === "continuous") {
       s.sizeMode = 1;
+      const sizeValues = sample.size.dtype === "u8"
+        ? this._asU8(buffers[sample.size.buf])
+        : this._asF32(buffers[sample.size.buf]);
       s.sBuf = gl.createBuffer();
+      this._tagChannelBuf(s.sBuf, sizeValues, true);
       gl.bindBuffer(gl.ARRAY_BUFFER, s.sBuf);
-      gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.size.buf]), gl.STATIC_DRAW);
+      gl.bufferData(gl.ARRAY_BUFFER, sizeValues, gl.STATIC_DRAW);
       s.sizeRange = sample.size.range_px;
     }
     const channel = (name) => sample.channels && sample.channels[name];
@@ -2962,8 +2966,33 @@ export class ChartView {
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.enableVertexAttribArray(slot);
-    gl.vertexAttribPointer(slot, size, buf._fcType || gl.FLOAT, normalized, 0, byteOffset);
+    gl.vertexAttribPointer(
+      slot, size, buf._fcType || gl.FLOAT, normalized || !!buf._fcNormalized, 0, byteOffset,
+    );
     gl.vertexAttribDivisor(slot, divisor);
+  }
+
+  // Tag a (re)uploaded per-point channel buffer with its element type. u8
+  // uploads of unit-scalar channels (continuous color/size, density_val) bind
+  // normalized so the shader keeps seeing [0,1]; categorical codes stay
+  // un-normalized (the shader addresses palette texels with the raw code).
+  // Any pointer-config change — dtype OR normalization — re-ids the buffer so
+  // a VAO holding the old configuration rebuilds instead of silently
+  // misreading the bytes. Normalization can flip with the dtype unchanged: a
+  // reused cBuf crossing categorical (u8 codes, un-normalized) ↔ continuous
+  // (u8 coordinates, normalized) keeps UNSIGNED_BYTE both ways.
+  _tagChannelBuf(buf, values, normalized) {
+    const gl = this.gl;
+    const type = values instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
+    const isNormalized = !!normalized && type === gl.UNSIGNED_BYTE;
+    if (
+      buf._fcType !== undefined &&
+      (buf._fcType !== type || buf._fcNormalized !== isNormalized)
+    ) {
+      buf._fcId = ++this._bufSeq;
+    }
+    buf._fcType = type;
+    buf._fcNormalized = isNormalized;
   }
 
   _initPickTarget() {
