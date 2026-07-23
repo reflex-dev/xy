@@ -102,8 +102,12 @@ pub fn build(
 /// sums together (exact integer sums merged order-independently, so the
 /// result is bitwise identical for any fan-out); count levels are identical
 /// to `build`'s. The scan fans out only when rows outnumber base cells
-/// (points-per-cell gate, capped at 4 workers): each worker's accumulator is
-/// 40 B/cell (~170 MB at the 2048² default), released before returning —
+/// (points-per-cell gate, capped at 4 workers, and shed further so the
+/// workers' 40 B/cell accumulators stay inside a fixed byte budget —
+/// `kernels::MEAN_COLOR_ACCUM_BUDGET_BYTES`): ~170 MB per worker at the
+/// 2048² default keeps the full fan-out, while a no-rescan trace's adaptive
+/// base level (up to 16384²) builds serial rather than multiplying GB-scale
+/// accumulators by the worker count. All are released before returning —
 /// builds are one-time per trace and lazy.
 #[allow(clippy::too_many_arguments)]
 pub fn build_color(

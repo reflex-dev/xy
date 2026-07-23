@@ -561,6 +561,49 @@ def bins_mean_color(cc: Optional[ColorChannel]) -> bool:
     return cc is not None and cc.mode in ("continuous", "categorical", "direct_rgba")
 
 
+# Chunk length for full-column color-source quantization. The math is
+# element-wise, so chunking changes nothing but the transient footprint: a
+# one-shot pipeline materializes several full-length f64 temporaries at once
+# (~20 GB at 1e9 rows — the difference between a colored billion-point build
+# fitting in RAM or not), while chunked passes keep every temporary at chunk
+# size and the only N-sized allocation is the u8 result.
+_QUANTIZE_CHUNK = 1 << 22
+
+
+def _quantized_lut_idx(values: npt.NDArray[np.float64], domain: tuple[float, float]) -> np.ndarray:
+    """Continuous values -> u8 LUT texel indices, chunk-bounded temporaries.
+
+    Per-element math is exactly the historical one-shot chain —
+    `normalize_to_unit` (f32), widen to f64, ×255, `rint`, cast u8 — applied
+    per chunk, so results are bitwise identical while peak memory stays
+    O(chunk) + the N-byte output."""
+    out = np.empty(len(values), dtype=np.uint8)
+    for start in range(0, len(values), _QUANTIZE_CHUNK):
+        end = start + _QUANTIZE_CHUNK
+        unit = normalize_to_unit(values[start:end], domain)
+        out[start:end] = np.rint(np.asarray(unit, dtype=np.float64) * 255.0).astype(np.uint8)
+    return out
+
+
+def _quantized_rgba8(values: npt.NDArray[np.float64]) -> np.ndarray:
+    """Float RGBA rows -> straight-alpha RGBA8, chunk-bounded temporaries."""
+    out = np.empty(values.shape, dtype=np.uint8)
+    for start in range(0, len(values), _QUANTIZE_CHUNK):
+        end = start + _QUANTIZE_CHUNK
+        seg = values[start:end]
+        out[start:end] = np.rint(np.clip(seg, 0.0, 1.0) * 255.0).astype(np.uint8)
+    return out
+
+
+def _folded_codes_u8(codes: np.ndarray, n_palette: int) -> np.ndarray:
+    """Wide categorical codes -> u8 palette rows (mod fold), chunk-bounded."""
+    out = np.empty(len(codes), dtype=np.uint8)
+    for start in range(0, len(codes), _QUANTIZE_CHUNK):
+        end = start + _QUANTIZE_CHUNK
+        out[start:end] = (codes[start:end] % n_palette).astype(np.uint8)
+    return out
+
+
 def resolve_bin_colors(cc: Optional[ColorChannel], sel: Any, palette: list[str]) -> Optional[dict]:
     """Kernel color source for mean-color density binning (LOD doc §2).
 
@@ -579,7 +622,7 @@ def resolve_bin_colors(cc: Optional[ColorChannel], sel: Any, palette: list[str])
         if rgba is None:
             raise ValueError("direct RGBA color channel missing values")
         values = rgba if sel is None else rgba[sel]
-        return {"rgba": np.rint(np.clip(values, 0.0, 1.0) * 255.0).astype(np.uint8)}
+        return {"rgba": _quantized_rgba8(values)}
     if cc.mode == "continuous":
         values = cc.values
         domain = cc.domain
@@ -587,10 +630,9 @@ def resolve_bin_colors(cc: Optional[ColorChannel], sel: Any, palette: list[str])
             raise ValueError("continuous color channel missing values or domain")
         vals = values if sel is None else values[sel]
         # Same normalization the wire ships, quantized to the nearest of the
-        # client's 256 LUT texels.
-        unit = normalize_to_unit(vals, domain)
-        idx = np.rint(np.asarray(unit, dtype=np.float64) * 255.0).astype(np.uint8)
-        return {"idx": idx, "lut": colormap_lut_rgba8(cc.colormap)}
+        # client's 256 LUT texels (chunked: full-column calls keep transient
+        # temporaries chunk-bounded instead of several × N).
+        return {"idx": _quantized_lut_idx(vals, domain), "lut": colormap_lut_rgba8(cc.colormap)}
     code_values = cc.codes
     categories = cc.categories
     if code_values is None or categories is None:
@@ -601,8 +643,10 @@ def resolve_bin_colors(cc: Optional[ColorChannel], sel: Any, palette: list[str])
     # >256 categories ship wide codes; palette colors repeat every
     # len(palette) categories, so folding the codes onto the base palette
     # bins each point with exactly the color it draws with.
-    folded = (codes % len(palette)).astype(np.uint8)
-    return {"idx": folded, "lut": palette_rgba8(palette, len(palette))}
+    return {
+        "idx": _folded_codes_u8(codes, len(palette)),
+        "lut": palette_rgba8(palette, len(palette)),
+    }
 
 
 def ship_channels(

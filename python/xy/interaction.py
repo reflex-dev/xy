@@ -399,23 +399,53 @@ def trace_bin_colors(t: Trace) -> Optional[dict]:
     no mean-color grid (pyramid replies use the prebuilt color planes, drills
     ship sliced channels). A rebuildable derived cache (§27), dropped by
     `append_data` (appended rows' colors and a possibly moved channel domain
-    both change the resolution)."""
+    both change the resolution).
+
+    Huge/out-of-core traces (the §28 no-rescan regime) resolve but do NOT
+    retain: past the one-time colored-pyramid build and first-paint emit,
+    every interactive reply composes the pyramid's prebuilt color planes, so
+    a retained per-row idx (1 GB at 1e9 rows) would be resident cost with no
+    remaining consumer. The rare correctness-net re-bin re-resolves — chunked
+    (`channels._QUANTIZE_CHUNK`), so the recompute is CPU, not a memory
+    spike."""
     cached = t._bin_colors
     if cached is None:
         resolved = channels.resolve_bin_colors(t.color_ch, None, DEFAULT_PALETTE)
-        t._bin_colors = 0 if resolved is None else resolved
+        if not (is_memmapped(t.x.values) or len(t.x) > PYRAMID_NO_RESCAN_ROWS):
+            t._bin_colors = 0 if resolved is None else resolved
         return resolved
     return None if cached == 0 else cached
 
 
 def bin_color_cache_bytes(fig: Any) -> int:
     """Memory-report line (design dossier §27): bytes held by resolved
-    bin-color caches (per-row idx/rgba planes plus their LUTs)."""
+    bin-color caches (per-row idx/rgba planes plus their LUTs).
+
+    Arrays the resolution merely borrows from the channel's own storage
+    (compact u8 categorical codes pass through by reference) are already
+    counted as `channel_bytes` — skip them so `resident_array_bytes` never
+    double-counts one buffer."""
     total = 0
     for t in fig.traces:
         cached = getattr(t, "_bin_colors", None)
-        if cached:
-            total += sum(int(v.nbytes) for v in cached.values() if isinstance(v, np.ndarray))
+        if not cached:
+            continue
+        cc = t.color_ch
+        owned = [
+            arr
+            for arr in (
+                getattr(cc, "codes", None),
+                getattr(cc, "values", None),
+                getattr(cc, "rgba", None),
+            )
+            if arr is not None
+        ]
+        for v in cached.values():
+            if not isinstance(v, np.ndarray):
+                continue
+            if any(np.shares_memory(v, arr) for arr in owned):
+                continue
+            total += int(v.nbytes)
     return total
 
 

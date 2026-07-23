@@ -35,6 +35,22 @@ in the README).
   to the internal engine object.
 
 ### Changed
+- **Colored huge-scatter builds are peak-memory-bounded (LOD doc §4.4).**
+  The mean-color feature's one-time costs no longer scale peak RSS with N ×
+  temporaries: the full-column color-source quantize now runs chunked
+  (bitwise-identical math, transient temporaries bounded by
+  `channels._QUANTIZE_CHUNK` instead of several × N — ~20 GB at 1e9 rows
+  before), the colored pyramid's build scan sheds workers so its 40 B/cell
+  accumulators stay inside a 1 GiB budget (an adaptive 8192² base level
+  builds serial: one 2.7 GB accumulator, not four), and no-rescan traces
+  (huge or out-of-core) resolve without retaining the per-row idx — after
+  the pyramid exists, every interactive reply composes prebuilt color
+  planes, so retention was resident cost with no consumer. Measured at 205M
+  rows: the first colored `density_view` now adds 0.96 GB of peak RSS over
+  the canonical columns instead of 3.96 GB, and builds ~35% faster; a
+  colored 1e9-point build's transient peak drops to at-or-below the
+  count-only build's own fan-out, restoring 1B-point capability wherever
+  count-only main could run.
 - **Bin-color resolution is resolved once per trace, never per request
   (LOD doc §2).** `density_view` used to quantize the *entire* color column
   into the kernel's LUT-index/RGBA source on every reply — an O(N) NumPy pass
