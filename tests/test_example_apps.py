@@ -127,7 +127,16 @@ def test_fastapi_app_serves_live_charts_and_code() -> None:
         },
     )
     assert drill.status_code == 200
-    assert "density_update" in drill.text
+    # The round-trip reply is an XYBF binary frame (no base64), decoded by the
+    # same seam the browser's xy.decodeFrame uses; density grids ride as raw
+    # buffers beside the compact JSON metadata.
+    assert drill.headers["content-type"] == "application/octet-stream"
+    from xy.channel import decode_frame
+
+    frame = decode_frame(drill.content)
+    assert frame.message["type"] == "density_update"
+    assert frame.message["seq"] == 1
+    assert frame.buffers  # the density grid rides raw, not base64 in JSON
 
 
 # --- Reflex app structure (source text, no reflex import) -------------------

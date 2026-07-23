@@ -5,8 +5,10 @@ The pattern this example demonstrates is deliberately small:
 - build one figure (`live_figure`), serve its payload plus the bundled render
   client as a single HTML page;
 - wire `ChartView` to a custom transport — a `comm` object whose `send` POSTs
-  the client's messages to one endpoint and feeds each JSON reply (with its
-  base64 binary buffers) back through `onMessage`;
+  the client's messages to one endpoint and feeds each reply — an `XYBF`
+  binary frame (`spec/design/wire-protocol.md` §7): small JSON metadata plus
+  raw f32/u8 buffers, decoded in the browser with `xy.decodeFrame` — back
+  through `onMessage`, with no base64 on either side;
 - the endpoint dispatches `density_view` / `pick` straight to the figure,
   under one lock.
 
@@ -35,7 +37,7 @@ from typing import Any, Union
 
 import numpy as np
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 import xy
 
@@ -43,6 +45,11 @@ import xy
 # so it works on the internal figure compiled from the public composition API
 # via `Chart.figure()`.
 from xy._figure import Figure
+
+# `encode_frame` builds the XYBF binary transport frame (wire-protocol.md §7)
+# the browser decodes with the bundled `xy.decodeFrame`; it is re-exported from
+# the transport-neutral channel module, the same seam the Reflex adapter uses.
+from xy.channel import encode_frame
 from xy.widget import bundled_js
 
 _DEFAULT_LIVE_POINTS = 100_000_000
@@ -156,22 +163,29 @@ def _b64(buf: bytes) -> str:
     return base64.b64encode(buf).decode("ascii")
 
 
-def _response(message: dict[str, Any], buffers: list[bytes] | None = None) -> JSONResponse:
-    return JSONResponse(
-        {
-            "message": message,
-            "buffers": [_b64(buffer) for buffer in (buffers or [])],
-        }
-    )
+# Round-trip replies travel as XYBF binary frames (wire-protocol.md §7): the
+# reply message is the frame's compact JSON metadata and each numeric buffer
+# rides raw and 8-byte aligned, so the browser decodes one `xy.decodeFrame` and
+# hands the kernel zero-copy views — no base64 to encode here or decode there,
+# and no ~33% inflation on the density grids and point buffers that dominate a
+# drill round-trip. (First paint still embeds its blob as base64 in the page
+# below: inline HTML has no binary channel — wire-protocol.md §6.)
+_FRAME_MEDIA_TYPE = "application/octet-stream"
 
 
-async def drilldown_endpoint(request: Request) -> JSONResponse:
+def _frame_response(message: dict[str, Any], buffers: list[bytes] | None = None) -> Response:
+    return Response(encode_frame(message, buffers or []), media_type=_FRAME_MEDIA_TYPE)
+
+
+async def drilldown_endpoint(request: Request) -> Response:
     """Answer the render client's messages with the engine's own replies.
 
     One lock, one dispatch — no request bookkeeping. `Figure.density_view`
     owns the whole ladder (mean-color pyramid for wide windows, exact re-bins
     near the budget, drill-in to real points, hysteresis, recorded
-    reductions), and the render client discards stale replies by `seq`.
+    reductions), and the render client discards stale replies by `seq`. Each
+    reply ships as an XYBF binary frame (`_frame_response`); malformed requests
+    return a plain JSON error the client rejects on `res.ok` before decoding.
     """
     try:
         content = await request.json()
@@ -194,7 +208,7 @@ async def drilldown_endpoint(request: Request) -> JSONResponse:
                 )
             except (KeyError, ValueError, IndexError):
                 return JSONResponse({"error": "bad density_view request"}, status_code=400)
-            return _response(
+            return _frame_response(
                 {
                     "type": "density_update",
                     "seq": content.get("seq"),
@@ -211,10 +225,10 @@ async def drilldown_endpoint(request: Request) -> JSONResponse:
                 int(content.get("index", -1)),
                 None if dseq is None else int(dseq),
             )
-            return _response({"type": "pick_result", "seq": content.get("seq"), "row": row})
+            return _frame_response({"type": "pick_result", "seq": content.get("seq"), "row": row})
 
         if kind in {"select", "select_clear"}:
-            return _response({"type": "selection", "traces": [], "total": 0})
+            return _frame_response({"type": "selection", "traces": [], "total": 0})
 
     return JSONResponse({"error": f"unsupported message type {kind!r}"}, status_code=400)
 
@@ -244,16 +258,11 @@ html,body{{margin:0;width:100%;height:100%;font-family:system-ui,sans-serif;back
 <script>{js}</script>
 <script>
 const spec = {spec_js};
+// First paint is embedded base64 (one-time, inline HTML has no binary channel);
+// every interactive round-trip below rides the raw XYBF frame instead.
 const initialBytes = Uint8Array.from(atob("{b64}"), c => c.charCodeAt(0));
 const statusEl = document.getElementById("status");
 const callbacks = [];
-
-function b64ToArrayBuffer(b64) {{
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes.buffer;
-}}
 
 // The demo may run behind a proxying sandbox that exposes the API on another
 // origin (PING in /env.json); otherwise the route is same-origin.
@@ -266,11 +275,14 @@ async function endpointUrl() {{
 }}
 const endpoint = endpointUrl();
 
-// The whole custom transport: POST the render client's message, hand the
-// reply and its binary buffers back to the view. Tiering, drill state, the
-// mean-color pyramid, request debouncing, stale-reply drops (by seq), and
-// the cached-texture hold while a reply is in flight all live in the engine
-// and its render client — this page only moves bytes and updates a badge.
+// The whole custom transport: POST the render client's message, decode the
+// XYBF reply frame, and hand its message and raw buffers back to the view.
+// decodeFrame returns the JSON metadata plus zero-copy, 8-byte-aligned
+// Uint8Array views straight over the response body — no base64 decode, and the
+// kernel reads them in place. Tiering, drill state, the mean-color pyramid,
+// request debouncing, stale-reply drops (by seq), and the cached-texture hold
+// while a reply is in flight all live in the engine and its render client —
+// this page only moves bytes and updates a badge.
 async function sendMessage(msg) {{
   try {{
     const res = await fetch(await endpoint, {{
@@ -279,12 +291,12 @@ async function sendMessage(msg) {{
       body: JSON.stringify(msg),
     }});
     if (!res.ok) throw new Error(`HTTP ${{res.status}}`);
-    const payload = await res.json();
-    if (!payload.message) return;
-    const buffers = (payload.buffers || []).map(b64ToArrayBuffer);
-    for (const cb of callbacks) cb(payload.message, buffers);
-    const trace = payload.message.traces && payload.message.traces[0];
-    if (trace && trace.mode && payload.message.seq === view.seq) {{
+    const frame = xy.decodeFrame(await res.arrayBuffer());
+    const message = frame.message;
+    if (!message) return;
+    for (const cb of callbacks) cb(message, frame.buffers);
+    const trace = message.traces && message.traces[0];
+    if (trace && trace.mode && message.seq === view.seq) {{
       const visible = Number(trace.visible || 0).toLocaleString();
       statusEl.textContent = trace.mode === "points" ? `${{visible}} points` : `${{visible}} density`;
     }}
