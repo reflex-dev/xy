@@ -1,5 +1,3 @@
-<h1 align="center">xy</h1>
-
 <p align="center">
   <img src="spec/assets/xy-sdf-grid.png" alt="Four XY charts showing the same xy-shaped probability field as binned scatter, heatmap, contour, and dense-point views." width="1200">
 </p>
