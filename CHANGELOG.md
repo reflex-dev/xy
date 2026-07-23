@@ -66,6 +66,12 @@ in the README).
   gone, and the page JS is a POST transport plus a status badge. Round-trip
   replies ship as `XYBF` binary frames (wire-protocol §7) instead of
   base64-in-JSON.
+- **Zooms inside an exact drill window skip the kernel round-trip (T12).**
+  Once a points reply has shipped its window exactly (`reduction: "none"`),
+  the client answers any contained view from the marks it already holds and
+  sends no `density_view` request, until the view leaves the window, the
+  drill dies, or the zoom is deep enough (1/256 of the window span) to need
+  a §16 re-centered f32 encoding.
 
 ### Added
 - **Export format parity and a unified export API (ENG-10447).**

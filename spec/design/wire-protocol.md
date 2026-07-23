@@ -61,7 +61,13 @@ produces no traces, there is no reply at all (silence, not an empty message).
 **`density_view`** — one request per density-tier trace, each naming its
 `trace` id. `w` defaults to `512`, `h` to `384`; the client sends the rounded
 plot width and height. A trace that is not in density mode yields
-`{"traces": []}`, which is dropped rather than sent.
+`{"traces": []}`, which is dropped rather than sent. Not every view change
+produces a request: a view fully contained in a live drill's window is elided
+client-side when that drill shipped its window exactly (`reduction: "none"` —
+the subset already holds every point of any contained view; LOD doc §5 T12).
+The elision ends, and one request goes out purely to re-center the §16 f32
+offset encoding, once the view span drops below 1/256 of the drilled window's
+span on either axis.
 
 **`pick`** — `trace` and `index` pass through `_integer_id`. `index` is a
 *shipped-vertex* index, translated kernel-side to a canonical row when the
