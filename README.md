@@ -9,7 +9,7 @@
   <a href="https://reflex.dev/docs/xy/" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/docs-reflex.dev-blue" alt="Docs" /></a>
 </p>
 
-xy is an actively evolving, early-alpha Python charting library for large,
+XY is an actively evolving, early-alpha Python charting library for large,
 interactive datasets. Its Rust core and WebGL2 renderer keep work bounded by
 what the screen can show; find guides, API reference, and examples in the
 [documentation](https://reflex.dev/docs/xy/).
@@ -22,9 +22,9 @@ what the screen can show; find guides, API reference, and examples in the
 - **One chart, many outputs.** Use notebooks or export HTML, raster, and vector formats.
 - **Built for apps.** Embed responsive charts and style them with CSS or Tailwind.
 
-## Is xy for me?
+## Is XY for me?
 
-xy is a great fit for teams that want to explore large 2D datasets in Python,
+XY is a great fit for teams that want to explore large 2D datasets in Python,
 share interactive notebook results, or ship self-contained charts on the web.
 Build charts once, then display them in notebooks and apps or export them as
 HTML, images, and vector graphics.
@@ -32,7 +32,7 @@ HTML, images, and vector graphics.
 ## Benchmarks
 
 <p align="center">
-  <img src="spec/assets/launch-benchmark-comparison.svg" alt="Cold-render time for a 10-million-point chart in xy, Matplotlib, and Plotly. Lower is better." width="1200">
+  <img src="spec/assets/launch-benchmark-comparison.svg" alt="Cold-render time for a 10-million-point chart in XY, Matplotlib, and Plotly. Lower is better." width="1200">
 </p>
 
 The committed launch baseline uses identical seeded data, a 900×420 output,
@@ -80,7 +80,7 @@ chart
 
 The same chart can be exported without changing how it is built.
 
-xy currently includes line, scatter, area, histogram, bar and column, heatmap,
+XY currently includes line, scatter, area, histogram, bar and column, heatmap,
 error bar and band, box, violin, ECDF, hexbin, contour, step, stairs, stem,
 triangle mesh, and faceted charts. See the
 [copyable examples](spec/api/api-examples.md) for the complete surface.
@@ -103,9 +103,9 @@ plt.show()
 The shim intentionally covers common plotting workflows rather than every
 matplotlib feature. See the [compatibility guide](spec/matplotlib/compat.md).
 
-## Embed xy in a Reflex app
+## Embed XY in a Reflex app
 
-With the `reflex-xy` adapter, any xy chart becomes a regular Reflex component.
+With the `reflex-xy` adapter, any XY chart becomes a regular Reflex component.
 Place it inside cards, grids, tabs, or dashboards with no JavaScript, iframe,
 or separate chart service.
 
@@ -155,7 +155,7 @@ and the [runnable example app](examples/reflex/).
 ## How it works
 
 Most chart stacks serialize every value as JSON and ask the browser to draw
-every mark. xy instead keeps exact values in a `ColumnStore`, computes an
+every mark. XY instead keeps exact values in a `ColumnStore`, computes an
 appropriate level of detail in Rust, and transfers typed binary buffers.
 Decimated and density views are bounded by the visible result.
 
@@ -190,7 +190,7 @@ For the full design, see the [design dossier](spec/design-dossier.md).
 
 ## Documentation
 
-Start with the [xy documentation](https://reflex.dev/docs/xy/) for installation,
+Start with the [XY documentation](https://reflex.dev/docs/xy/) for installation,
 the chart gallery, guides, and API reference. The repository also includes
 [copyable API examples](spec/api/api-examples.md),
 [benchmark details](benchmarks/README.md), and the [changelog](CHANGELOG.md).
