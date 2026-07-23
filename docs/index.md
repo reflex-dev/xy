@@ -16,14 +16,6 @@ the library:
   with CSS or Tailwind, and keep the same look in interactive charts, SVGs, and
   PNGs.
 
-Install it and see for yourself:
-
-```bash
-uv add xy
-```
-
-[Browse the chart gallery](/docs/xy/overview/gallery/) or jump straight to
-[your first chart](/docs/xy/overview/first-chart/).
 
 ~~~python demo-only exec
 from xy_docs.demos.xy_sdf_plots import xy_sdf_plot_grid
@@ -87,3 +79,13 @@ Matplotlib and Plotly approach of drawing every single point did not finish
 within the run's memory and time limits.
 [Inspect the benchmark evidence](/docs/xy/overview/benchmarks/) or
 [browse the chart gallery](/docs/xy/overview/gallery/).
+
+
+Install it and see for yourself:
+
+```bash
+uv add xy
+```
+
+[Browse the chart gallery](/docs/xy/overview/gallery/) or jump straight to
+[your first chart](/docs/xy/overview/first-chart/).

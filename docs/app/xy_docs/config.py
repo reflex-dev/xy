@@ -15,7 +15,6 @@ DOCS_SECTIONS = (
         "compass",
         (
             ("What is xy?", "/"),
-            ("Gallery", "/overview/gallery/"),
             ("Installation", "/overview/installation/"),
             ("Your First Chart", "/overview/first-chart/"),
             ("Benchmarks", "/overview/benchmarks/"),

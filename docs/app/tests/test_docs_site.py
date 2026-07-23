@@ -594,9 +594,10 @@ def test_what_is_xy_restores_the_sdf_hero_and_ends_with_a_short_pitch() -> None:
     assert "/docs/xy/overview/first-chart/" in content
     assert "/docs/xy/overview/why-xy/" not in content
     assert not (DOCS_ROOT / "overview/why-xy.md").exists()
-    # The pitch-length cap measures prose; embedded demo fences don't count.
-    why_prose = re.sub(r"~~~.*?~~~", "", why_copy, flags=re.DOTALL)
-    assert len(why_prose.split()) < 230
+    # The pitch-length cap measures prose (pitch plus the closing install
+    # call-to-action); embedded demo and shell fences don't count.
+    why_prose = re.sub(r"~~~.*?~~~|```.*?```", "", why_copy, flags=re.DOTALL)
+    assert len(why_prose.split()) < 260
     assert "10-million-point launch benchmark" in why_copy
     assert "Compare by workflow, not by slogan" not in why_copy
 
@@ -1521,7 +1522,7 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
         assert group_title in rendered
     for category, route in (
         ("Learn", "/"),
-        ("Build", "/overview/gallery/"),
+        ("Gallery", "/overview/gallery/"),
         ("API Reference", "/api-reference/"),
     ):
         assert f'aria-label":"Navigate to {category}"' in rendered

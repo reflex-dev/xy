@@ -166,7 +166,7 @@ def xy_docs_sidebar_comp(url: rx.vars.StringVar[str]) -> rx.Component:
             | url.startswith("/advanced/"),
         ),
         docs_sidebar_category(
-            "Build",
+            "Gallery",
             "/overview/gallery/",
             "boxes",
             (url == "/overview/gallery/")
