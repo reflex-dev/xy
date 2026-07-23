@@ -23,7 +23,7 @@ binary columns; Reflex state holds only a token string per chart.
 5. **Fixed data, two ways** — a `xy.Chart` passed straight to `reflex_xy.chart`
    (static payload tier) and a `reflex_xy.inline` token (fixed data served
    through the kernel).
-6. **The FastAPI 100M drilldown, adapter-native** — the live drilldown scatter
+6. **The 100M drilldown, adapter-native** — the live drilldown scatter
    from [`examples/fastapi`](../fastapi) (identical seed-11 data and mark
    config, a density surface that drills into exact points on zoom) as a
    single `reflex_xy.inline` token. The FastAPI app hand-rolls its transport
