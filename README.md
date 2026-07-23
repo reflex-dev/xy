@@ -12,7 +12,7 @@
 xy is an actively evolving, early-alpha Python charting library for large,
 interactive datasets. Its Rust core and WebGL2 renderer keep work bounded by
 what the screen can show; find guides, API reference, and examples in the
-[xy documentation](https://reflex.dev/docs/xy/).
+[documentation](https://reflex.dev/docs/xy/).
 
 ## Highlights
 
