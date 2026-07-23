@@ -118,7 +118,7 @@ def _base_checks(
         ),
         Check(
             "examples",
-            "README/API examples and example-app checks",
+            "canonical API examples and example-app checks",
             (
                 py,
                 "-m",
@@ -146,7 +146,7 @@ def _base_checks(
                 "tests/test_scatter.py::test_to_html_escapes_user_strings",
                 "tests/test_components.py::test_component_to_html_escapes_user_strings_across_public_surface",
                 "tests/test_components.py::test_component_to_html_path_keeps_existing_file_on_atomic_replace_failure",
-                "tests/test_docs_examples.py::test_readme_documents_standalone_html_security_contract",
+                "tests/test_docs_examples.py::test_security_policy_documents_standalone_html_contract",
                 "tests/test_docs_examples.py::test_production_docs_capture_html_export_dom_text_contract",
             ),
             requires_modules=("pytest",),

@@ -59,7 +59,7 @@ CONTRIBUTING_MD = (
     "## Pull Request Checklist\n\n"
     "Run make check-full, make check-sdist, make check-wheel, and "
     "make check-benchmark-report.\n"
-    "Run make check-examples for README snippets, spec/api/api-examples.md, and "
+    "Run make check-examples for spec/api/api-examples.md and "
     "the example apps.\n\n"
     "## Performance Claims\n\n"
     "Claims need benchmark context.\n" + ("contributing padding\n" * 100)

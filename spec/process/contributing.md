@@ -43,7 +43,7 @@ toolchain with `cargo`, `rustc`, and clippy for native-core checks. If clippy is
 missing, run `rustup component add clippy`. If you are only touching docs or
 pure Python shell code, `make check` is the fast non-JS/non-Rust gate.
 
-When README/API prose changes, run the focused docs gate:
+When canonical API prose or examples change, run the focused docs gate:
 
 ```bash
 make check-docs
@@ -96,15 +96,15 @@ regression comparison scripts, or report-schema validation, run:
 make check-benchmark-harness
 ```
 
-When you edit public docs, README text, package metadata, benchmark summaries,
-or anything that could become a public performance claim, run:
+When you edit public docs, package metadata, benchmark summaries, or anything
+that could become a public performance claim, run:
 
 ```bash
 make check-claims
 ```
 
-When you edit README snippets, `spec/api/api-examples.md`, or the Reflex example
-dashboard registry/assets, run:
+When you edit `spec/api/api-examples.md` or the Reflex example dashboard
+registry/assets, run:
 
 ```bash
 make check-examples
@@ -235,7 +235,7 @@ the `<CHROMIUM>` placeholder, name it explicitly, for example
   the patch; run `make check-security` for export/client text-sink changes.
 - Benchmarks label mode truthfully: `direct`, `decimated`, `density`, `sampled`,
   or `adaptive`.
-- README/docs examples still match the current public API.
+- Canonical API examples still match the current public API.
 - New public exports appear in `xy.__all__`, lazy `_EXPORTS`, and tests;
   run `make check-api` after public export or annotation changes.
 - Lazy import boundaries still keep package import light; run

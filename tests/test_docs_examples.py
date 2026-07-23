@@ -11,7 +11,6 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SPEC_DOCS = ROOT / "spec"
 API_EXAMPLES = SPEC_DOCS / "api" / "api-examples.md"
-README = ROOT / "README.md"
 CONTRIBUTING = ROOT / "CONTRIBUTING.md"
 SECURITY = ROOT / "SECURITY.md"
 BENCHMARK_DOC = SPEC_DOCS / "benchmarks" / "results.md"
@@ -135,52 +134,6 @@ def test_api_example_builds_payload(heading: str, source: str) -> None:
             assert isinstance(blob, bytes)
 
 
-@pytest.mark.parametrize(
-    ("heading", "source"), _python_examples(README), ids=lambda value: str(value)
-)
-def test_readme_python_example_runs(
-    heading: str,
-    source: str,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    namespace: dict[str, object] = {"__name__": f"xy_readme_example_{heading}"}
-    uses_pyplot_show = source.rstrip().endswith("plt.show()")
-    if uses_pyplot_show:
-        import xy.pyplot as pyplot
-
-        monkeypatch.setattr(pyplot, "show", lambda *_args, **_kwargs: None)
-
-    exec(compile(_capture_final_expression(source), str(README), "exec"), namespace)
-
-    result = namespace.get("__example_result__")
-    if uses_pyplot_show and result is None:
-        result = namespace.get("fig")
-    assert result is not None, f"{heading} README example should end with an expression"
-    if isinstance(result, str):
-        assert "xy.renderStandalone" in result
-        if "chart.html" in source:
-            assert (tmp_path / "chart.html").read_text(encoding="utf-8") == result
-        return
-    if not hasattr(result, "figure") and not hasattr(result, "build_payload"):
-        # pyplot-shim figures display like notebooks display them.
-        html = result._repr_html_()
-        assert html.startswith('<iframe class="xy-notebook-frame"'), (
-            f"{heading} README example produced no chart"
-        )
-        assert 'sandbox="allow-scripts"' in html
-        assert "&lt;!doctype html&gt;" in html
-        assert "xy.renderStandalone" in html
-        return
-    figure = result.figure() if hasattr(result, "figure") else result
-    assert hasattr(figure, "build_payload"), f"{heading} README example did not produce a chart"
-    spec, blob = figure.build_payload()
-    json.dumps(spec, allow_nan=False)
-    assert spec["traces"], f"{heading} README example produced no traces"
-    assert isinstance(blob, bytes)
-
-
 def test_api_examples_cover_current_2d_surface() -> None:
     headings = {heading for heading, _source in _python_examples()}
     assert {
@@ -221,19 +174,6 @@ def test_api_examples_document_alpha_api_stability_boundary() -> None:
         '`width="100%"`',
         "Standalone `to_html(...)` needs no browser dependency",
         "`to_png(..., engine=Engine.chromium)` uses an installed Chrome, Chromium, Edge, or",
-    ]
-    for marker in required:
-        assert marker in text
-
-
-def test_readme_documents_declarative_callback_serialization_boundary() -> None:
-    text = " ".join(README.read_text(encoding="utf-8").split())
-    required = [
-        "The composition contract we are locking is intentionally narrow and durable",
-        "opaque framework objects passed to `xy.legend(...)` / `xy.tooltip(...)`",
-        "without being serialized into standalone HTML",
-        "Python `on_*` callbacks stay widget-side",
-        "standalone HTML receives only the safe interaction flags",
     ]
     for marker in required:
         assert marker in text
@@ -295,32 +235,6 @@ def test_security_policy_documents_standalone_html_contract() -> None:
         assert marker in text
 
 
-def test_readme_documents_stability_and_backend_contract() -> None:
-    text = " ".join(README.read_text(encoding="utf-8").split())
-    required = [
-        "Stable vs. Experimental",
-        "Stable enough to build on today",
-        "Still experimental and expected to change before 1.0",
-        "| Surface | Current status | Notes |",
-        "Stable alpha",
-        "Composition API",
-        "single public chart-building API",
-        "Stabilizing alpha",
-        "declarative `xy.chart(...children)`",
-        "CSS/Tailwind hooks",
-        "Reflex integration",
-        "Adaptive drilldown internals",
-        "Experimental",
-        "Python 3.11+ package import",
-        "Implemented 2D chart families",
-        "native Rust kernels",
-        "required compute core",
-        "raises a clear error rather than degrading",
-    ]
-    for marker in required:
-        assert marker in text
-
-
 def test_contributing_documents_backend_check() -> None:
     text = " ".join(CONTRIBUTING.read_text(encoding="utf-8").split())
     required = [
@@ -331,58 +245,6 @@ def test_contributing_documents_backend_check() -> None:
         "print(k.BACKEND)",
         "`BACKEND` is always `native`",
         "raises `ImportError` with remediation",
-    ]
-    for marker in required:
-        assert marker in text
-
-
-def test_readme_documents_install_paths() -> None:
-    text = " ".join(README.read_text(encoding="utf-8").split())
-    required = [
-        "uv add xy",
-        "Published wheels contain the Python package, JavaScript client, and native Rust core",
-        "End users do not need Rust, Node, npm, or a CDN",
-    ]
-    for marker in required:
-        assert marker in text
-    assert "Install/backend quick matrix" not in text
-
-
-def test_readme_getting_started_includes_small_business_chart() -> None:
-    text = " ".join(README.read_text(encoding="utf-8").split())
-    required = [
-        "Create a small business chart",
-        "Revenue vs pipeline",
-        "USD thousands",
-        "xy.line(months, revenue",
-        "xy.line(months, pipeline",
-    ]
-    for marker in required:
-        assert marker in text
-
-
-def test_readme_architecture_diagram_covers_major_boundaries() -> None:
-    text = " ".join(README.read_text(encoding="utf-8").split())
-    required = [
-        "```mermaid",
-        "Python kernel / app process",
-        "User APIs",
-        "ColumnStore",
-        "rollback checkpoints",
-        "Compute core",
-        "native Rust C ABI",
-        "(required; no fallback)",
-        "Payload builder",
-        "Browser / notebook frontend",
-        "WebGL2 renderer",
-        "DOM chrome",
-        "Interaction layer",
-        "Adaptive large-data loop",
-        "direct, decimated",
-        "density, adaptive",
-        "spec JSON + typed buffers",
-        "no JSON number arrays",
-        "new screen-bounded payload",
     ]
     for marker in required:
         assert marker in text
@@ -423,35 +285,33 @@ def test_benchmark_docs_include_copyable_claim_taxonomy() -> None:
 
 
 def test_docs_name_benchmark_harness_shortcut() -> None:
-    readme = " ".join(README.read_text(encoding="utf-8").split())
     production = " ".join(PRODUCTION_DOC.read_text(encoding="utf-8").split())
     contributing = " ".join(
         (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8").split()
     )
 
-    for text in (readme, production, contributing):
+    for text in (production, contributing):
         assert "make check-benchmark-harness" in text
-    assert "environment metadata" in readme
+    assert "environment metadata" in contributing
     assert "report-schema validation" in production
     assert "regression comparison scripts" in contributing
 
 
 def test_docs_name_claim_guardrail_shortcut() -> None:
-    readme = " ".join(README.read_text(encoding="utf-8").split())
     production = " ".join(PRODUCTION_DOC.read_text(encoding="utf-8").split())
     contributing = " ".join(
         (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8").split()
     )
 
-    for text in (readme, production, contributing):
+    for text in (production, contributing):
         assert "make check-claims" in text
         assert "make check-docs" in text
     assert "Claim guardrails" in production
     assert (
         "Public docs and package metadata avoid broad, unqualified performance claims" in production
     )
-    assert "README/API docs, example snippets, or public benchmark wording" in production
-    assert "public-facing text" in readme
+    assert "API docs, example snippets, or public benchmark wording" in production
+    assert "public performance claim" in contributing
 
 
 def test_production_docs_include_focused_gate_matrix() -> None:
@@ -459,7 +319,7 @@ def test_production_docs_include_focused_gate_matrix() -> None:
     required = [
         "Changed surface",
         "Focused gate",
-        "README/API prose, examples, public benchmark wording",
+        "API prose, examples, public benchmark wording",
         "`make check-docs`",
         "Public validation, error messages, builder rollback, LOD/drill mutation boundaries, chart/widget caching",
         "`make check-errors`",
@@ -497,7 +357,6 @@ def test_production_docs_name_ci_workflow_gate_shortcut() -> None:
 
 
 def test_docs_name_split_browser_hardening_gates() -> None:
-    readme = " ".join(README.read_text(encoding="utf-8").split())
     production = " ".join(PRODUCTION_DOC.read_text(encoding="utf-8").split())
     contributing = " ".join(
         (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8").split()
@@ -513,7 +372,7 @@ def test_docs_name_split_browser_hardening_gates() -> None:
         "scripts/visual_regression_smoke.py",
         "scripts/interaction_stress_smoke.py",
     ]
-    for text in (readme, production, contributing):
+    for text in (production, contributing):
         assert "make check-browser" in text
         for step_name in step_names:
             assert step_name in text

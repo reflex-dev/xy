@@ -481,7 +481,6 @@ def test_contributor_setup_builds_native_core_and_docs_use_it() -> None:
     contributor_docs = (
         (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8"),
         (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8"),
-        (ROOT / "README.md").read_text(encoding="utf-8"),
         (ROOT / "docs" / "api-reference" / "contributing.md").read_text(encoding="utf-8"),
     )
     for text in contributor_docs:
@@ -608,9 +607,8 @@ def test_makefile_exposes_claim_guardrail_shortcut() -> None:
 def test_contributor_docs_name_full_gate_toolchain_requirements() -> None:
     contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
     production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    for text in (contributing, production, readme):
+    for text in (contributing, production):
         assert "Node 18+" in text
         assert "cargo" in text
         assert "rustc" in text
@@ -620,9 +618,8 @@ def test_contributor_docs_name_full_gate_toolchain_requirements() -> None:
 def test_docs_name_example_verification_shortcut() -> None:
     contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
     production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    for text in (contributing, production, readme):
+    for text in (contributing, production):
         assert "make check-examples" in text
     assert "spec/api/api-examples.md" in contributing
     assert "Reflex example" in contributing
@@ -631,104 +628,93 @@ def test_docs_name_example_verification_shortcut() -> None:
 def test_docs_name_docs_verification_shortcut() -> None:
     contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
     production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
     production_inline = " ".join(production.split())
 
-    for text in (contributing, production, readme):
+    for text in (contributing, production):
         assert "make check-docs" in text
-    assert "README/API prose" in contributing
+    assert "API prose" in contributing
     assert "public benchmark wording" in production_inline
-    assert "README/API prose" in readme
 
 
 def test_docs_name_security_verification_shortcut() -> None:
     contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
     production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    for text in (contributing, production, readme):
+    for text in (contributing, production):
         assert "make check-security" in text
     assert "standalone HTML export" in contributing
     assert "browser client DOM" in production
-    assert "browser client text" in readme
+    assert "browser client text-node insertion" in production
 
 
 def test_docs_name_error_safety_verification_shortcut() -> None:
     contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
     production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    for text in (contributing, production, readme):
+    for text in (contributing, production):
         assert "make check-errors" in text
     assert "builder rollback behavior" in contributing
     assert "LOD/drill mutation boundaries" in contributing
     assert "chart/widget caching" in production
     assert "LOD/drill mutation boundaries" in production
-    assert "public errors" in readme
-    assert "LOD/drill mutation boundaries" in readme
+    assert "public errors" in contributing
 
 
 def test_docs_name_api_surface_verification_shortcut() -> None:
     contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
     production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    readme_inline = " ".join(readme.split())
+    production_inline = " ".join(production.split())
 
-    for text in (contributing, production, readme):
+    for text in (contributing, production):
         assert "make check-api" in text
     assert "public export" in contributing
     assert "lazy import mappings" in production
-    assert "public annotations" in readme_inline
+    assert "public annotations" in production_inline
 
 
 def test_docs_name_import_budget_verification_shortcut() -> None:
     contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
     production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    for text in (contributing, production, readme):
+    for text in (contributing, production):
         assert "make check-import" in text
         assert "lazy import" in text
         assert "dependency boundaries" in text
     assert "xy.__init__" in contributing
-    assert "widget/export boundaries" in readme
+    assert "widget/export boundaries" in contributing
     assert "backend import boundaries" in production
 
 
 def test_docs_name_ci_workflow_verification_shortcut() -> None:
     contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
     production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    for text in (contributing, production, readme):
+    for text in (contributing, production):
         assert "make check-ci" in text
     assert ".github/workflows/ci.yml" in contributing
     assert "trusted publishing" in production
-    assert "benchmark artifact wiring" in readme
+    assert "benchmark artifact wiring" in contributing
 
 
 def test_docs_name_claim_guardrail_shortcut() -> None:
     contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
     production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    for text in (contributing, production, readme):
+    for text in (contributing, production):
         assert "make check-claims" in text
     assert "public performance claim" in contributing
     assert "performance-claim surfaces" in production
-    assert "public-facing text" in readme
 
 
 def test_docs_name_benchmark_harness_shortcut() -> None:
     contributing = (SPEC_DOCS / "process" / "contributing.md").read_text(encoding="utf-8")
     production = (SPEC_DOCS / "process" / "production-readiness.md").read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    for text in (contributing, production, readme):
+    for text in (contributing, production):
         assert "make check-benchmark-harness" in text
     assert "benchmark environment metadata" in contributing
     assert "report-schema validation" in production
-    assert "regression comparison scripts" in readme
+    assert "regression comparison scripts" in contributing
 
 
 def test_node_version_parser_accepts_v_prefixed_versions() -> None:

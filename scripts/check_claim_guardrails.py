@@ -18,7 +18,6 @@ from typing import Optional
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DOCS = (
     "pyproject.toml",
-    "README.md",
     "SECURITY.md",
     "CONTRIBUTING.md",
     "spec/api/api-examples.md",
