@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="spec/assets/xy-sdf-grid.png" alt="Four XY charts showing the same xy-shaped probability field as binned scatter, heatmap, contour, and dense-point views." width="1200">
+  <img src="spec/assets/xy-sdf-binned-scatter.png" alt="XY-shaped probability field shown as a binned scatter chart." width="694">
 </p>
 
 <p align="center">
