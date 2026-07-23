@@ -126,29 +126,27 @@ to inspect or reproduce the measurements.
 
 Most chart stacks serialize every value as JSON and ask the browser to draw
 every mark. xy instead keeps exact values in a `ColumnStore`, computes an
-appropriate level of detail in Rust, and transfers typed buffers that are
-bounded by the visible result.
+appropriate level of detail in Rust, and transfers typed binary buffers.
+Decimated and density views are bounded by the visible result.
 
 ```mermaid
 flowchart LR
     subgraph PY["Python kernel / app process"]
-        API["User APIs"] --> STORE["ColumnStore<br/>exact data + rollback checkpoints"]
-        STORE --> CORE["Compute core<br/>native Rust C ABI<br/>(required; no fallback)"]
+        API["User APIs"] --> STORE["Per-figure ColumnStore<br/>canonical exact columns"]
+        STORE --> CORE["Native Rust compute<br/>ctypes C ABI; required core"]
         CORE --> PAYLOAD["Payload builder"]
     end
     subgraph UI["Browser / notebook frontend"]
-        WEBGL["WebGL2 renderer"]
-        DOM["DOM chrome"]
-        INPUT["Interaction layer"]
-        WEBGL --> INPUT
-        DOM --> INPUT
+        RENDER["WebGL2 marks<br/>Canvas axes + DOM chrome"]
+        INPUT["Pan, zoom, hover, selection"]
+        INPUT --> RENDER
     end
-    subgraph LOD["Adaptive large-data loop"]
-        MODE["direct, decimated,<br/>density, adaptive"]
+    subgraph LOD["View-dependent representation"]
+        MODE["direct (threshold-bounded)<br/>decimated / density (screen-bounded)"]
     end
-    PAYLOAD -- "spec JSON + typed buffers<br/>no JSON number arrays" --> WEBGL
-    INPUT --> MODE
-    MODE -- "new screen-bounded payload" --> PAYLOAD
+    PAYLOAD -- "data-less JSON spec + typed binary buffers<br/>no JSON number arrays" --> RENDER
+    INPUT -- "request refinement when a live host is available" --> MODE
+    MODE -- "refined view payload when needed" --> PAYLOAD
 ```
 
 This is why zooming matters: a dense overview can use aggregation, while a
