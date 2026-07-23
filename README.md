@@ -17,7 +17,7 @@ what the screen can show; find guides, API reference, and examples in the
 ## Highlights
 
 - **Built for large data.** Decimates long lines and refines dense scatter as you zoom.
-- **Python-friendly.** Compose marks and guides, or use the familiar `xy.pyplot`.
+- **Declarative interface.** Compose marks and guides, or use the familiar `xy.pyplot`.
 - **Interactive by default.** Pan, zoom, hover, select, and inspect exact source rows.
 - **One chart, many outputs.** Use notebooks or export HTML, raster, and vector formats.
 - **Built for apps.** Embed responsive charts and style them with CSS or Tailwind.
