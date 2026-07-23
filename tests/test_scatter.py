@@ -292,13 +292,18 @@ def test_continuous_channel_falls_back_when_domain_collapses_in_f32():
 def test_continuous_channel_falls_back_when_f32_inverse_span_overflows():
     # A span representable in f32 whose reciprocal is not (subnormal spans):
     # the client's map uniform would carry Inf and every mapped value would
-    # be Inf/NaN. Must fall back to the unit encode.
+    # be Inf/NaN. Must fall back to the unit encode — and the guard itself
+    # must decide by f64 comparison, not by casting the reciprocal through
+    # f32: that cast warns on overflow, and np.seterr(over="raise") setups
+    # (np.errstate below) would turn the intentional probe into a
+    # FloatingPointError inside build_payload.
     x = np.arange(3.0)
     val = np.array([0.0, 5e-46, 1e-45])
-    lo32, hi32 = np.float32(val[0]), np.float32(val[-1])
-    assert lo32 < hi32 and not np.isfinite(np.float32(1.0 / (float(hi32) - float(lo32))))
-    fig = Figure().scatter(x, x, color=val)
-    spec, blob = fig.build_payload()
+    lo32, hi32 = float(np.float32(val[0])), float(np.float32(val[-1]))
+    assert lo32 < hi32 and 1.0 / (hi32 - lo32) > float(np.finfo(np.float32).max)
+    with np.errstate(over="raise"):
+        fig = Figure().scatter(x, x, color=val)
+        spec, blob = fig.build_payload()
     tr = spec["traces"][0]
     assert "enc" not in tr["color"]
     cbuf = _col(spec, blob, tr["color"]["buf"])

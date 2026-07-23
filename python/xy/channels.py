@@ -514,9 +514,12 @@ def _raw_wire_ok(domain: tuple[float, float]) -> bool:
     # shipped value onto the domain floor; and a tiny-but-representable span
     # (e.g. [0, 1e-45]) sends an infinite reciprocal into the map uniform.
     # Either way the raw encode would render wrong silently — fall back to
-    # the unit encode, which normalizes in f64 before the wire.
+    # the unit encode, which normalizes in f64 before the wire. The reciprocal
+    # bound is compared in f64 (never cast through f32): a demoting cast emits
+    # an overflow warning, which np.seterr(over="raise") setups turn into a
+    # FloatingPointError inside build_payload.
     lo32, hi32 = float(np.float32(lo)), float(np.float32(hi))
-    return lo32 < hi32 and bool(np.isfinite(np.float32(1.0 / (hi32 - lo32))))
+    return lo32 < hi32 and 1.0 / (hi32 - lo32) <= float(np.finfo(np.float32).max)
 
 
 def quantize_unit_u8(values: Any, domain: tuple[float, float]) -> np.ndarray:
