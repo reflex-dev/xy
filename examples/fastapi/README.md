@@ -14,7 +14,11 @@ Two integration surfaces:
 - **Server drilldown tier** — `GET /drilldown` serves a 100M-point scatter
   whose density surface refines into exact points on zoom, using
   `POST /api/xy/drilldown` (a Starlette endpoint in
-  [`live_drilldown.py`](live_drilldown.py)) for the view round-trips.
+  [`live_drilldown.py`](live_drilldown.py)) for the view round-trips. Each
+  reply is an `XYBF` binary frame — compact JSON metadata plus raw f32/u8
+  buffers — decoded in the browser with the bundled `xy.decodeFrame`, so the
+  density grids and point buffers that dominate a drill never pay a base64
+  encode/decode or its ~33% inflation.
 
 ## Run
 
