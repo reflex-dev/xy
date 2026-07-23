@@ -9,12 +9,10 @@
   <a href="https://reflex.dev/docs/xy/" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/docs-reflex.dev-blue" alt="Docs" /></a>
 </p>
 
-xy is a Python charting library for large, interactive datasets. Its Rust core
-and WebGL2 renderer keep work bounded by what the screen can show.
-
-> [!NOTE]
-> xy is early alpha and actively evolving. Find guides, API reference, and
-> examples in the [xy documentation](https://reflex.dev/docs/xy/).
+xy is an actively evolving, early-alpha Python charting library for large,
+interactive datasets. Its Rust core and WebGL2 renderer keep work bounded by
+what the screen can show; find guides, API reference, and examples in the
+[xy documentation](https://reflex.dev/docs/xy/).
 
 ## Highlights
 
