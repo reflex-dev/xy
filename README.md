@@ -1,42 +1,56 @@
-<h1 align="center">xy</h1>
+<p align="center">
+  <img src="spec/assets/xy-sdf-binned-scatter.png" alt="XY-shaped probability field shown as a binned scatter chart." width="694">
+</p>
 
 <p align="center">
   <a href="https://github.com/reflex-dev/xy/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/reflex-dev/xy/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://app.codspeed.io/reflex-dev/xy?utm_source=badge"><img alt="CodSpeed" src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json"></a>
   <a href="pyproject.toml"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab?logo=python&logoColor=white"></a>
-  <a href="https://reflex-staging.dev/docs/xy/" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/docs-reflex--staging.dev-blue" alt="Docs" /></a>
+  <a href="https://reflex.dev/docs/xy/" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/docs-reflex.dev-blue" alt="Docs" /></a>
 </p>
 
-<p align="center">
-  <img src="spec/assets/launch-benchmark-comparison.svg" alt="Grouped horizontal bar-chart comparison of xy, Matplotlib, and Plotly cold-render times at 10 million points; xy has the lowest measured time in all three output modes in this recorded run." width="1200">
-</p>
-
-xy is an experimental Python charting library for large, interactive datasets.
-Its Rust core and WebGL2 renderer keep work bounded by what the screen can show.
-
-> [!IMPORTANT]
-> This repo's docs will not be complete until official release. Current docs can be found [here](https://reflex-staging.dev/docs/xy/).
-
-> [!IMPORTANT]
-> xy is early alpha; APIs may change before 1.0.
+XY is an actively evolving, early-alpha Python charting library for large,
+interactive datasets. Its Rust core and WebGL2 renderer keep work bounded by
+what the screen can show; find guides, API reference, and examples in the
+[documentation](https://reflex.dev/docs/xy/).
 
 ## Highlights
 
-- **Built for large data.** Long lines are decimated and dense scatters become
-  fixed-size density surfaces, then refine as you zoom.
-- **Python-friendly.** Compose charts from marks, axes, annotations, legends,
-  tooltips, and callbacks—or use the familiar `xy.pyplot` interface.
-- **Interactive by default.** Pan, zoom, hover, select, and inspect exact source
-  rows without shipping the entire dataset as JSON.
-- **One chart, many outputs.** Display in Jupyter, VS Code, Colab, and Marimo,
-  or export self-contained HTML plus browser-free PNG, JPEG, WebP, SVG, and
-  PDF through one `to_image`/`write_image` API.
-- **Designed for applications.** Layer marks and style both chart chrome and
-  marks with CSS/Tailwind-friendly hooks, gradients, strokes, and curves.
+- **Built for large data.** Reduces long lines and dense scatters to what the screen can show, and brings detail back as you zoom.
+- **Declarative interface.** Compose marks and guides, or use the familiar `xy.pyplot`.
+- **Interactive by default.** Pan, zoom, hover, select, and inspect exact source rows.
+- **One chart, many outputs.** Use notebooks or export HTML, raster, and vector formats.
+- **Built for apps.** Embed responsive charts and style them with CSS or Tailwind.
+
+## Is XY for me?
+
+XY is a great fit for teams that want to explore large 2D datasets in Python,
+share interactive notebook results, or ship self-contained charts on the web.
+Build charts once, then display them in notebooks and apps or export them as
+HTML, images, and vector graphics.
+
+## Benchmarks
+
+<p align="center">
+  <img src="spec/assets/launch-benchmark-comparison.svg" alt="Cold-render time for a 10-million-point chart in XY, Matplotlib, and Plotly. Lower is better." width="1200">
+</p>
+
+In the recorded 10-million-point baseline, XY produced a static PNG in 0.023 s
+versus 2.8 s for Matplotlib and 9.6 s for Plotly, and reached first interactive
+render 16–20× sooner.
+
+The committed launch baseline uses identical seeded data, a 900×420 output,
+and three isolated cold runs. See the
+[launch report](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md)
+and [benchmark runbook](benchmarks/README.md) for the environment,
+methodology, and raw results.
 
 ## Installation
 
 ```bash
+pip install xy
+
+# or, with uv
 uv add xy
 ```
 
@@ -70,7 +84,7 @@ chart
 
 The same chart can be exported without changing how it is built.
 
-xy currently includes line, scatter, area, histogram, bar and column, heatmap,
+XY currently includes line, scatter, area, histogram, bar and column, heatmap,
 error bar and band, box, violin, ECDF, hexbin, contour, step, stairs, stem,
 triangle mesh, and faceted charts. See the
 [copyable examples](spec/api/api-examples.md) for the complete surface.
@@ -93,151 +107,106 @@ plt.show()
 The shim intentionally covers common plotting workflows rather than every
 matplotlib feature. See the [compatibility guide](spec/matplotlib/compat.md).
 
-## Benchmarks
+## Styling
 
-These results come from the committed
-[xy 0.1.0 launch baseline](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md):
-identical seeded scatter data, a 900×420 output, and three isolated cold runs on
-an Apple M5 Pro with 64 GB RAM. Times are mean ± sample standard deviation.
+Customize marks and chart chrome with Python, CSS, or Tailwind. See the [styling guide](docs/styling/index.md).
 
-| Points | Native static PNG | Interactive, default GPU | Interactive, CPU fallback | xy representation |
-|---:|---:|---:|---:|---|
-| 10k | 0.0085 ± 0.0002 s | 0.1533 ± 0.0079 s | 0.9580 ± 0.0103 s | direct |
-| 100k | 0.0108 ± 0.0004 s | 0.1742 ± 0.0029 s | 0.9752 ± 0.0048 s | direct |
-| 1M | 0.0114 ± 0.0013 s | 0.1688 ± 0.0081 s | 0.9678 ± 0.0039 s | density; density + sample interactive |
-| 10M | 0.0232 ± 0.0023 s | 0.1797 ± 0.0007 s | 0.9920 ± 0.0078 s | density; density + sample interactive |
-| 1B | 1.1452 ± 0.0389 s | 1.2530 ± 0.0018 s | 2.0877 ± 0.0063 s | density; density + sample interactive |
+```python
+chart = xy.line_chart(
+    xy.line(x, y, color="#7c3aed", width=3),
+    class_name="rounded-xl bg-white",
+    class_names={"tooltip": "rounded-lg bg-zinc-900 text-white"},
+)
+```
 
-At 10M points, the same recorded run measured:
+## Embed XY in a Reflex app
 
-| 900×420 output contract | xy | Matplotlib | Plotly |
-|---|---:|---:|---:|
-| Static CPU PNG | 0.0232 s | 2.7842 s | 9.5834 s |
-| Interactive first render, default GPU | 0.1797 s | 3.0029 s | 3.6434 s |
-| Interactive first render, CPU fallback | 0.9920 s | 3.6735 s | 8.2152 s |
+With the `reflex-xy` adapter, any XY chart becomes a regular Reflex component.
+Place it inside cards, grids, tabs, or dashboards with no JavaScript, iframe,
+or separate chart service.
 
-At 1B points, xy produced a density PNG in 1.1452 seconds and an interactive
-density overview in 1.2530 seconds. The exact-point Plotly and Matplotlib paths
-did not complete within the benchmark's 36 GiB process-tree and 180-second
-limits. This does not mean xy draws one billion individual markers: it retains
-the source rows while rendering a screen-bounded density representation.
+Register the adapter once:
 
-See the [benchmark runbook](benchmarks/README.md),
-[environment](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/environment.json),
-and [raw results](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/default-results.json)
-to inspect or reproduce the measurements.
+```python
+# rxconfig.py
+import reflex as rx
+import reflex_xy
+
+config = rx.Config(
+    app_name="dashboard",
+    plugins=[reflex_xy.XYPlugin()],
+)
+```
+
+Then add a chart anywhere in the component tree:
+
+```python
+import reflex as rx
+import reflex_xy
+import xy
+
+signups = xy.line_chart(
+    xy.line([1, 2, 3, 4, 5], [120, 180, 165, 240, 310]),
+    title="Weekly signups",
+)
+
+
+def index() -> rx.Component:
+    return rx.card(
+        rx.heading("Growth"),
+        reflex_xy.chart(signups, height="320px"),
+        width="100%",
+    )
+
+
+app = rx.App()
+app.add_page(index)
+```
+
+The chart keeps its built-in hover, pan, and zoom behavior. For charts driven
+by Reflex state, events, or live streams, see the
+[Reflex integration guide](https://reflex.dev/docs/xy/integrations/reflex/)
+and the [runnable example app](examples/reflex/).
 
 ## How it works
 
 Most chart stacks serialize every value as JSON and ask the browser to draw
-every mark. xy instead keeps exact values in a `ColumnStore`, computes an
-appropriate level of detail in Rust, and transfers typed buffers that are
-bounded by the visible result.
+every mark. XY instead keeps exact values in a `ColumnStore`, computes an
+appropriate level of detail in Rust, and transfers typed binary buffers.
+Decimated and density views are bounded by the visible result.
 
 ```mermaid
-flowchart LR
-    subgraph PY["Python kernel / app process"]
-        API["User APIs"] --> STORE["ColumnStore<br/>exact data + rollback checkpoints"]
-        STORE --> CORE["Compute core<br/>native Rust C ABI<br/>(required; no fallback)"]
-        CORE --> PAYLOAD["Payload builder"]
-    end
-    subgraph UI["Browser / notebook frontend"]
-        WEBGL["WebGL2 renderer"]
-        DOM["DOM chrome"]
-        INPUT["Interaction layer"]
-        WEBGL --> INPUT
-        DOM --> INPUT
-    end
-    subgraph LOD["Adaptive large-data loop"]
-        MODE["direct, decimated,<br/>density, adaptive"]
-    end
-    PAYLOAD -- "spec JSON + typed buffers<br/>no JSON number arrays" --> WEBGL
-    INPUT --> MODE
-    MODE -- "new screen-bounded payload" --> PAYLOAD
+flowchart TB
+    API["Python API<br/>Build the chart"]
+    STORE["ColumnStore<br/>Keep canonical f64 columns"]
+    CORE["Native Rust compute<br/>Direct · decimated · density"]
+    PAYLOAD["Compact payload<br/>Data-less JSON spec + typed binary buffers"]
+    RENDER["Browser or notebook<br/>WebGL2 marks · Canvas axes · DOM interface"]
+
+    API --> STORE --> CORE --> PAYLOAD --> RENDER
 ```
 
 This is why zooming matters: a dense overview can use aggregation, while a
-narrow view can return to exact points. Canonical f64 data stays in Python so
-hover and selection can still return original rows.
+narrow view can return to exact points. With a live host, pan and zoom can
+request a refined payload. Canonical f64 data stays in Python so hover and
+selection can still return original rows.
 
-For benchmark methodology and measured results, see the
-[benchmark runbook](benchmarks/README.md) and the committed
-[launch report](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md).
 For the full design, see the [design dossier](spec/design-dossier.md).
 
-## Stable vs. Experimental
+## What you can build today
 
-Stable enough to build on today:
-
-- Python 3.11+ package import, the declarative composition model, notebook
-  display, and standalone HTML, PNG, and SVG export.
-- Implemented 2D chart families, binary column payloads, and native Rust
-  kernels bundled in published platform wheels.
-
-Still experimental and expected to change before 1.0:
-
-- Reflex integration, callback payload details, chart breadth, and
-  compatibility shims.
-- Adaptive drilldown internals and their performance thresholds.
-
-| Surface | Current status | Notes |
-|---|---|---|
-| Composition API | Stabilizing alpha | The single public chart-building API: declarative `xy.chart(...children)` with CSS/Tailwind hooks. |
-| Standalone HTML export | Stable alpha | Self-contained output with the client and binary data included. |
-| Native Rust backend | Stable alpha; required compute core | Published wheels include it; an unsupported build raises a clear error rather than degrading. |
-| Reflex integration | Experimental | Kept outside the core package dependency graph. |
-| Adaptive drilldown internals | Experimental | Protocols and thresholds may change. |
-
-The composition contract we are locking is intentionally narrow and durable:
-charts contain lightweight marks and chrome; `Chart` owns display and export;
-and `class_name`, `class_names`, and `style` reach stable DOM slots. It returns
-opaque framework objects passed to `xy.legend(...)` / `xy.tooltip(...)` to
-adapters without being serialized into standalone HTML. Python `on_*` callbacks
-stay widget-side; standalone HTML receives only the safe interaction flags
-needed for browser behavior.
+- Declarative 2D charts with marks, axes, annotations, legends, tooltips, and
+  CSS/Tailwind-friendly styling hooks.
+- Interactive notebook and application views with pan, zoom, hover, and
+  selection.
+- Self-contained HTML and browser-free PNG, JPEG, WebP, SVG, and PDF exports
+  from the same chart object.
+- Large-data views that adapt from direct rendering to decimated and density
+  representations as the visible range changes.
 
 ## Documentation
 
-- [Public XY documentation](docs/index.md) ([live site](https://reflex.dev/docs/xy/))
-
-Engineering references:
-
-- [API examples](spec/api/api-examples.md)
-- [Styling](spec/api/styling.md)
-- [Benchmarks](benchmarks/README.md)
-- [Matplotlib compatibility](spec/matplotlib/compat.md)
-- [Architecture and design](spec/design-dossier.md)
-- [Production readiness](spec/process/production-readiness.md)
-- [Security](SECURITY.md)
-- [Changelog](CHANGELOG.md)
-
-## Development
-
-```bash
-make setup  # installs .[dev] and builds the required native core
-make check
-```
-
-Use `make check-docs` for README/API prose, examples, and public benchmark
-wording; `make check-examples` for executable examples; and `make check-claims`
-before moving measured claims into public-facing text. Benchmark changes use
-`make check-benchmark-harness`, which covers environment metadata and
-regression comparison scripts.
-
-The focused gates are `make check-security` for standalone HTML export and
-browser client text handling, `make check-errors` for public errors and
-LOD/drill mutation boundaries, `make check-api` for public exports and public
-annotations, `make check-import` for lazy import and dependency boundaries
-including widget/export boundaries, and `make check-ci` for workflow and
-benchmark artifact wiring.
-
-Browser work uses `make check-browser`, which runs the Browser lifecycle smoke
-(Chromium), Browser visual regression smoke (Chromium), and Browser interaction
-stress smoke (Chromium) gates. The full gate additionally needs Node 18+,
-`cargo`, `rustc`, and clippy (`rustup component add clippy`).
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the contributor workflow.
-
-## License
-
-xy is licensed under the [Apache License 2.0](LICENSE).
+Start with the [XY documentation](https://reflex.dev/docs/xy/) for installation,
+the chart gallery, guides, and API reference. The repository also includes
+[copyable API examples](spec/api/api-examples.md),
+[benchmark details](benchmarks/README.md), and the [changelog](CHANGELOG.md).
