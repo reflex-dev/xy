@@ -105,7 +105,7 @@ matplotlib feature. See the [compatibility guide](spec/matplotlib/compat.md).
 
 ## Styling
 
-Customize marks and chart chrome with Python, CSS, or Tailwind.
+Customize marks and chart chrome with Python, CSS, or Tailwind. See the [styling guide](docs/styling/index.md).
 
 ```python
 chart = xy.line_chart(
@@ -114,8 +114,6 @@ chart = xy.line_chart(
     class_names={"tooltip": "rounded-lg bg-zinc-900 text-white"},
 )
 ```
-
-See the [styling guide](docs/styling/index.md).
 
 ## Embed XY in a Reflex app
 
