@@ -56,7 +56,11 @@ N0 = 20_000  # initial rows per direct trace
 M = 200  # rows appended per tick
 TICKS = 5
 DECIMATED_SHIPPED = 500
-DECIMATED_PX = 2048
+# Just above the ~620 px plot this spec produces (700 wide minus margins), so
+# the at-home skip predicate `decimation_px >= plot.w` is actually load-bearing:
+# a unit error or a dpr-scaled comparison on either side flips it and the
+# viewSendsHome assertion fails. A generous 2048 would mask all of those.
+DECIMATED_PX = 640
 
 
 def find_chromium() -> str:
@@ -104,10 +108,15 @@ def series(n: int):
     return xs, ys, cs, ss
 
 
-def build_payload(n: int, x_off: float, y_off: float):
+def build_payload(n: int, x_off: float, y_off: float, *, stroke_width: bool = False):
     """One full payload for `n` rows per direct trace. Offsets are the
     caller's (sticky across ticks, like `Column.suggest_offset`), so every
-    payload's columns are byte-prefixes of the next one's."""
+    payload's columns are byte-prefixes of the next one's.
+
+    `stroke_width=True` adds a per-point stroke-width channel to the scatter,
+    which is what makes the client build an interleaved `styleBuf` — the one
+    buffer whose rows are baked with the dpr in force when they were written.
+    """
     xs, ys, cs, ss = series(n)
     w = Writer()
     hi_x = float(n)  # home range follows the data
@@ -134,6 +143,11 @@ def build_payload(n: int, x_off: float, y_off: float):
                 "domain": [0.0, 1.0],
                 "buf": w.ship_scalar(ss),
             },
+            **(
+                {"channels": {"stroke_width": {"buf": w.ship_scalar([1.0] * n)}}}
+                if stroke_width
+                else {}
+            ),
         },
         {
             "id": 1,
@@ -193,18 +207,35 @@ def main() -> None:
         spec, blob = build_payload(N0 + k * M, x_off, y_off)
         ticks.append({"spec": spec, "blob": base64.b64encode(blob).decode()})
 
+    # Phase B continues the same monotonically growing stream. Replaying the
+    # phase-A payloads instead would ship *fewer* rows than are already
+    # resident, which fails the `len >= old_len` prefix check and silently
+    # measures rebuild-path coalescing rather than fast-path coalescing.
+    zoom_ticks = []
+    for k in range(TICKS + 1, TICKS + 7):
+        spec, blob = build_payload(N0 + k * M, x_off, y_off)
+        zoom_ticks.append({"spec": spec, "blob": base64.b64encode(blob).decode()})
+
+    # Phase C runs a small separate chart carrying a per-point stroke_width
+    # channel, so the client builds an interleaved styleBuf for it.
+    dpr_ticks = []
+    for k in range(3):
+        spec, blob = build_payload(2_000 + k * M, 1_000.0, 0.0, stroke_width=True)
+        dpr_ticks.append({"spec": spec, "blob": base64.b64encode(blob).decode()})
+
     # Expected steady-state tail bytes per tick: 6 f32 columns × M rows
     # (scatter x/y/color/size + line x/y); the decimated trace is unaffected.
     tail_bytes = 6 * M * 4
     full_bytes = 6 * (N0 + TICKS * M) * 4  # what a rebuild re-uploads at the end
 
     page = f"""<!doctype html><html><head><meta charset=utf-8><title>pending</title></head>
-<body><div id=chart></div><div id=fresh></div>
+<body><div id=chart></div><div id=fresh></div><div id=dpr></div>
 <script>{standalone}</script>
 <script>
 const spec0={json.dumps(spec0)};
 const blob0=Uint8Array.from(atob("{base64.b64encode(blob0).decode()}"),c=>c.charCodeAt(0));
 const ticks={json.dumps(ticks)};
+const zoomTicks={json.dumps(zoom_ticks)};
 const b64=(s)=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
 const gl2=WebGL2RenderingContext.prototype;
 const counters={{data:0,dataBytes:0,sub:0,subBytes:0}};
@@ -268,17 +299,46 @@ const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
   v.view=v._viewFrom({{x0:100,x1:900}}); // strictly inside: hold, not follow
   comm.sent.length=0;
   for(let i=0;i<6;i++){{
-    const t=ticks[i%ticks.length];
+    const t=zoomTicks[i];
     v._onKernelMsg({{type:"append",affected:[0,1],spec:t.spec}},[b64(t.blob)]);
     await wait(60);
   }}
   await wait(1000);
   const viewSendsZoomed=comm.sent.filter(m=>m.type==="view").length;
 
+  // --- phase C: a dpr change between build and append must NOT tail-append ---
+  // styleBuf rows bake stroke_width at the dpr in force when written, and
+  // _resize updates dpr without rebuilding traces. Appending in place across
+  // that change would leave the prefix at the old scale and the appended tail
+  // at the new one — a width step inside a single trace. The fast path must
+  // detect it and fall back to the rebuild, which renormalizes every row.
+  const dprTicks={json.dumps(dpr_ticks)};
+  const vd=xy.renderStandalone(document.getElementById("dpr"),
+    dprTicks[0].spec,b64(dprTicks[0].blob).buffer);
+  vd._sampleRebinDisabled=true;
+  vd._drawNow();
+  const gd0=vd.gpuTraces[0];
+  const hasStyleBuf=gd0.styleBuf?1:0;
+  // Same dpr: the fast path is expected to take it (trace object retained).
+  vd._onKernelMsg({{type:"append",affected:[0],spec:dprTicks[1].spec}},[b64(dprTicks[1].blob)]);
+  const dprSameKeeps=(vd.gpuTraces[0]===gd0)?1:0;
+  const gd1=vd.gpuTraces[0];
+  // Now move the dpr the way browser zoom does, then append again.
+  const dpr0=vd.dpr;
+  Object.defineProperty(window,"devicePixelRatio",{{value:dpr0*2,configurable:true}});
+  vd._resize();
+  const dprMoved=(vd.dpr===dpr0*2)?1:0;
+  vd._onKernelMsg({{type:"append",affected:[0],spec:dprTicks[2].spec}},[b64(dprTicks[2].blob)]);
+  const dprChangeRebuilds=(vd.gpuTraces[0]!==gd1)?1:0;
+  vd._drawNow();
+  Object.defineProperty(window,"devicePixelRatio",{{value:dpr0,configurable:true}});
+  vd.destroy();
+
   document.title="XY_OK "+JSON.stringify({{
     warmData:perTick[0].data,warmBytes:perTick[0].dataBytes,
     steadyData,steadySubBytes:Math.round(steadySub),
     inPlace,lit,mismatch,viewSendsHome,viewSendsZoomed,
+    hasStyleBuf,dprSameKeeps,dprMoved,dprChangeRebuilds,
   }});
 }}catch(e){{document.title="XY_ERROR "+(e.stack||e.message)}}}})();
 </script></body></html>"""
@@ -344,6 +404,24 @@ const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
         raise SystemExit(
             f"zoomed 6-tick burst sent {stats['viewSendsZoomed']} view re-requests; "
             "expected a single coalesced round-trip (maxWait)"
+        )
+    if not stats["hasStyleBuf"]:
+        raise SystemExit(
+            "the dpr probe's trace built no interleaved styleBuf, so it cannot "
+            "test the dpr guard (stroke_width channel wiring changed?)"
+        )
+    if not stats["dprSameKeeps"]:
+        raise SystemExit(
+            "an append at an unchanged dpr rebuilt the trace instead of "
+            "extending it in place; the dpr guard is too strict"
+        )
+    if not stats["dprMoved"]:
+        raise SystemExit("the dpr probe failed to move devicePixelRatio; probe is inert")
+    if not stats["dprChangeRebuilds"]:
+        raise SystemExit(
+            "an append after a dpr change extended GPU buffers in place; the "
+            "appended stroke_width rows are scaled at the new dpr while the "
+            "prefix holds the old one (visible width step inside one trace)"
         )
     print("append stream smoke OK: tail-only uploads + pixel-identical + coalesced refines")
 

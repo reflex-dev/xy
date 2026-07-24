@@ -74,7 +74,7 @@ class _PayloadWriter:
         # shipped offset and re-center only when it leaves the safe span.
         offset = (
             lod.geometry_offset(scale, col.min, col.max)
-            if scale in ("log", "symlog")
+            if lod.pins_offset_to_zero(scale)
             else col.suggest_offset()
         )
         encoded = lod.encode_f32_values(

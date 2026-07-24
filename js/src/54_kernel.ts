@@ -502,6 +502,23 @@ Object.assign(ChartView.prototype, {
     const style = t.style || {};
     if (style.curve === "smooth" || style.step) return false; // expanded vertices
     if (JSON.stringify(oldT.style || {}) !== JSON.stringify(style)) return false;
+    // Only the scatter branch below knows how to extend per-point buffers, so
+    // any other mark carrying one must rebuild. Today a line has none; this
+    // keeps that a checked fact rather than an assumption a future per-point
+    // line channel would silently break.
+    if (
+      t.kind !== "scatter" &&
+      (g.cBuf || g.rgbaBuf || g.sBuf || g.styleBuf || g.strokeBuf || g.radiusBuf)
+    ) {
+      return false;
+    }
+    // stroke_width rows are baked with the dpr in force when they were written
+    // (`_buildInstanceStyleChannels`). `_resize` updates `this.dpr` on browser
+    // zoom or a monitor swap WITHOUT rebuilding traces, so a tail upload after
+    // such a change would scale appended rows differently from the prefix — a
+    // visible outline-width step inside one trace. Rebuild instead, which
+    // renormalizes every row at the current dpr.
+    if (g.styleBuf && g._styleDpr !== this.dpr) return false;
     const oldCols = oldSpec.columns;
     const newCols = this.spec.columns;
 
@@ -708,6 +725,13 @@ Object.assign(ChartView.prototype, {
         gl.bufferData(gl.ARRAY_BUFFER, st ? st.x : src.x, gl.STATIC_DRAW);
         gl.bindBuffer(gl.ARRAY_BUFFER, g.yBuf);
         gl.bufferData(gl.ARRAY_BUFFER, st ? st.y : src.y, gl.STATIC_DRAW);
+        // These reallocate the data store, so the append fast path's capacity
+        // bookkeeping no longer describes it. Unreachable for a direct trace
+        // today (`decimate_view` skips exactly the traces the fast path
+        // accepts), but leaving a stale cap here would mean a tail
+        // bufferSubData past the end of the store if that ever drifts.
+        g.xBuf._fcCapBytes = 0;
+        g.yBuf._fcCapBytes = 0;
         g.xMeta = { ...g.xMeta, offset: upd.x.offset, scale: upd.x.scale };
         g.yMeta = { ...g.yMeta, offset: upd.y.offset, scale: upd.y.scale };
         g._dashX = st ? st.x : src.x;
@@ -715,6 +739,7 @@ Object.assign(ChartView.prototype, {
         if (bArr) {
           gl.bindBuffer(gl.ARRAY_BUFFER, g.baseBuf);
           gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.extra : bArr, gl.STATIC_DRAW);
+          g.baseBuf._fcCapBytes = 0;
           g.baseMeta = { ...g.baseMeta, offset: upd.base.offset, scale: upd.base.scale };
         }
         g.n = st ? st.n : src.n;

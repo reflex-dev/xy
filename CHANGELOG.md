@@ -34,6 +34,14 @@ in the README).
   `memory_report`), and `Chart.figure()` remains as an advanced escape hatch
   to the internal engine object.
 
+### Fixed
+- **Streaming appends no longer draw a stroke-width step after browser zoom.**
+  The tail-only GPU upload path bakes `stroke_width` in device pixels, and a
+  dpr change (browser zoom, monitor swap) updates `dpr` without rebuilding
+  traces — so points appended after the change rendered their outline at a
+  different scale than the points already on screen. Such an append now falls
+  back to the full rebuild, which renormalizes every row.
+
 ### Changed
 - **Colored huge-scatter builds are peak-memory-bounded (LOD doc §4.4).**
   The mean-color feature's one-time costs no longer scale peak RSS with N ×

@@ -871,6 +871,17 @@ def encode_f32_values(
     return EncodedColumn(meta=meta, values=enc)
 
 
+#: Axis scales whose geometry must be encoded around a zero origin. Callers
+#: that choose an offset themselves (the sticky append offset in `_payload`)
+#: must branch on this, not on their own copy of the scale names.
+LOG_FAMILY_SCALES = ("log", "symlog")
+
+
+def pins_offset_to_zero(scale: str | None) -> bool:
+    """Whether `scale` requires the zero origin `geometry_offset` gives it."""
+    return scale in LOG_FAMILY_SCALES
+
+
 def geometry_offset(scale: str | None, lo: float, hi: float) -> float:
     """Precision center for offset-encoded geometry (§4/§16).
 
@@ -882,7 +893,7 @@ def geometry_offset(scale: str | None, lo: float, hi: float) -> float:
     decades). With offset 0 the encode error is a ~2⁻²⁴ *relative* error,
     which the log-family transform maps to a bounded sub-pixel coordinate
     error at every magnitude."""
-    if scale in ("log", "symlog") or not (np.isfinite(lo) and np.isfinite(hi)):
+    if pins_offset_to_zero(scale) or not (np.isfinite(lo) and np.isfinite(hi)):
         return 0.0
     return (lo + hi) / 2.0
 

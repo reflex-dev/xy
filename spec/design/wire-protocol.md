@@ -234,7 +234,11 @@ rebuilt otherwise:
   domain that expanded fails this on purpose: its shipped values are
   normalized over the domain), same style, no transition keys, no
   `curve: "smooth"`/`step` vertex expansion — extends its existing GPU
-  buffers with a tail-only `bufferSubData`. Buffer *objects* are retained
+  buffers with a tail-only `bufferSubData`. The device pixel ratio must also
+  be unchanged since the trace was built: the interleaved style buffer bakes
+  `stroke_width` in device pixels, and `_resize` moves `dpr` on browser zoom
+  *without* rebuilding traces, so appending across that change would leave
+  the prefix at one scale and the tail at another. Buffer *objects* are retained
   (VAO attachments stay valid); data stores grow with doubling capacity,
   mirroring `Column.append` kernel-side, so a steady stream costs O(rows
   appended) GPU upload per tick instead of O(N). The client derives

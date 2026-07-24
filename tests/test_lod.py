@@ -612,3 +612,18 @@ def test_sample_rows_for_target_rejects_bad_options(kwargs, message: str) -> Non
 
     with pytest.raises(ValueError, match=message):
         lod.sample_rows_for_target(np.arange(3, dtype=np.int64), target, **options)
+
+
+def test_pins_offset_to_zero_agrees_with_geometry_offset() -> None:
+    """The sticky-offset path in `_payload.ship` branches on
+    `pins_offset_to_zero` to decide whether it may choose an offset at all.
+    That predicate and `geometry_offset`'s own zero-origin rule must never
+    drift apart: if they did, `ship` would pin a sticky midpoint on an axis
+    whose shader transform requires the zero origin (§4)."""
+    for scale in ("log", "symlog"):
+        assert lod.pins_offset_to_zero(scale)
+        assert lod.geometry_offset(scale, 10.0, 20.0) == 0.0
+
+    for scale in (None, "linear"):
+        assert not lod.pins_offset_to_zero(scale)
+        assert lod.geometry_offset(scale, 10.0, 20.0) == 15.0

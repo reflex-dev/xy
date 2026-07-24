@@ -2200,6 +2200,10 @@ export class ChartView {
       copy(widthName, 2, this.dpr);
       copy("symbol", 3);
       g.styleBuf = this._upload(values);
+      // Width rows are baked at the dpr in force right now. Record it so the
+      // streaming-append fast path can tell whether a later tail upload would
+      // write rows at a different scale than the prefix already holds (§4).
+      g._styleDpr = this.dpr;
     }
     const radius = channel("corner_radius");
     if (radius) {
