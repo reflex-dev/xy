@@ -285,13 +285,13 @@ Set them on `.xy` or any ancestor:
 | `--chart-badge-bg` / `--chart-badge-text` | Reduction badges | `rgba(255,255,255,.82)` / `#0f172a` (light; see below) |
 | `--chart-tick-label-max-width` | Maximum browser width of categorical y-axis tick labels | available space between the transformed label and chart edge |
 | `--chart-modebar-bg` / `--chart-modebar-active` | Modebar / active button | `#fff` / `#edf1f6` light; `#1b1d20` / `#121417` dark |
-| `--chart-modebar-focus` | Modebar keyboard focus ring | `#1b212a` light; `#e2e5e9` dark |
+| `--chart-modebar-focus` | Modebar keyboard focus ring | falls back to `--chart-focus`, then `#1b212a` light; `#e2e5e9` dark |
 | `--chart-selection` / `--chart-selection-fill` | Box/lasso/x-range/y-range select | modebar grey: `rgba(92,101,115,.6)` / `…,.12)` (light; see below) |
 | `--chart-zoom-selection` / `--chart-zoom-selection-fill` | Box-zoom drag rectangle | same modebar grey as selection (see below) |
 | `--chart-crosshair` | Crosshair lines | `rgba(15,23,42,.42)` |
 | `--chart-annotation-text` | Annotation label color | falls back to `--chart-text` |
 | `--chart-cursor` / `--chart-cursor-pan` | Plot cursor (box-zoom / pan) | `crosshair` / `grab` |
-| `--chart-focus` | Keyboard focus ring on the plot canvas | `#aa99ec` |
+| `--chart-focus` | Keyboard focus ring on the plot canvas, and on modebar buttons when `--chart-modebar-focus` is unset | `#aa99ec` |
 
 The modebar, badge, and selection-band defaults are **scheme-aware**: a `.dark`
 class on the chart root or any ancestor flips the internal fallbacks — the

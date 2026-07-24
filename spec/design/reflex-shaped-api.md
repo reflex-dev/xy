@@ -247,6 +247,7 @@ Recommended token surface:
 | `--chart-selection` | Box select fill/stroke |
 | `--chart-modebar-bg` | Modebar and modebar-menu background |
 | `--chart-modebar-active` | Modebar active/hovered button background |
+| `--chart-modebar-focus` | Modebar keyboard focus ring (falls back to `--chart-focus`) |
 
 `--chart-accent` is not an XY token; the renderer never reads it. It is a
 caller-defined convention variable that XY only passes through when a mark
