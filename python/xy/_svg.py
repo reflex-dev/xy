@@ -2652,12 +2652,33 @@ _LEGEND_LINE_KINDS = frozenset({"line", "segments", "step", "stairs", "errorbar"
 _LEGEND_CHAR_WIDTH = 6.2
 
 
-def _legend_text(value: Any, max_width: float) -> str:
+def _legend_font_size(style: dict[str, Any]) -> float:
+    """Resolve the bounded pixel font size used by static legend geometry."""
+    value = str(style.get("fontSize", "")).strip()
+    if value.endswith("px"):
+        try:
+            return max(1.0, float(value[:-2]))
+        except ValueError:
+            pass
+    return 11.0
+
+
+def _legend_em(style: dict[str, Any], key: str, default: float) -> float:
+    value = str(style.get(key, "")).strip()
+    if value.endswith("em"):
+        try:
+            return max(0.0, float(value[:-2]))
+        except ValueError:
+            pass
+    return default
+
+
+def _legend_text(value: Any, max_width: float, char_width: float = _LEGEND_CHAR_WIDTH) -> str:
     """Conservatively ellipsize a static legend string to a pixel budget."""
     text = str(value)
     # The width budget is itself derived from ``len(text) * _LEGEND_CHAR_WIDTH``;
     # compensate for the tiny binary-float underflow at exact-fit boundaries.
-    max_chars = max(0, int((max_width + 1e-9) / _LEGEND_CHAR_WIDTH))
+    max_chars = max(0, int((max_width + 1e-9) / char_width))
     if len(text) <= max_chars:
         return text
     if max_chars <= 3:
@@ -2674,19 +2695,28 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     own labels rather than inheriting the width of the longest label.
     """
     style_opts = options.get("style") or {}
-    pad, handle, gap, column_gap, line_h = 8.0, 22.0, 8.8, 22.0, 16.0
-    if str(style_opts.get("padding", "")).endswith("em"):
-        pad = 11.0 * float(str(style_opts["padding"])[:-2])
-    if str(style_opts.get("rowGap", "")).endswith("em"):
-        line_h = 11.0 * (1.0 + float(str(style_opts["rowGap"])[:-2]))
+    font_size = _legend_font_size(style_opts)
+    char_width = font_size * (_LEGEND_CHAR_WIDTH / 11.0)
+    text_h = font_size * 1.03
+    borderpad = _legend_em(style_opts, "padding", 0.4)
+    labelspacing = _legend_em(style_opts, "rowGap", 0.5)
+    # Matplotlib's legend dimensions are expressed in font-size units:
+    # borderpad is applied on both sides, handlelength=2, handletextpad=.8,
+    # columnspacing=2, and labelspacing=.5 by default.
+    pad = 2.0 * borderpad * font_size
+    handle = 2.0 * font_size
+    gap = 0.8 * font_size
+    column_gap = 2.0 * font_size
+    row_gap = labelspacing * font_size
+    line_h = text_h + row_gap
 
     requested_cols = min(len(named), max(1, int(options.get("ncols", 1))))
     title = options.get("title")
-    title_h = 16.0 if title else 0.0
+    title_h = line_h if title else 0.0
     inset = 6.0
     available_w = max(1.0, float(plot["w"]) - 2 * inset)
     ncols = requested_cols
-    min_column_w = handle + gap + 4 * _LEGEND_CHAR_WIDTH
+    min_column_w = handle + gap + 4 * char_width
     if ncols * min_column_w + (ncols - 1) * column_gap + pad > available_w:
         # A column must at least retain its handle and a visible ellipsis.
         max_fit_cols = max(
@@ -2697,7 +2727,7 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
 
     natural_text_widths = [
         max(
-            len(str(named[index].get("name", ""))) * _LEGEND_CHAR_WIDTH
+            len(str(named[index].get("name", ""))) * char_width
             for index in range(column, len(named), ncols)
         )
         for column in range(ncols)
@@ -2706,7 +2736,7 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
         0.0,
         available_w - pad - ncols * (handle + gap) - (ncols - 1) * column_gap,
     )
-    minimum_text_w = 4 * _LEGEND_CHAR_WIDTH
+    minimum_text_w = 4 * char_width
     text_widths = [min(width, minimum_text_w) for width in natural_text_widths]
     remaining = max(0.0, available_text_w - sum(text_widths))
     needs = [
@@ -2722,7 +2752,10 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     column_widths = [handle + gap + width for width in text_widths]
     box_w = min(available_w, sum(column_widths) + (ncols - 1) * column_gap + pad)
     if title:
-        title_w = len(str(title)) * _LEGEND_CHAR_WIDTH + pad
+        # ``pad`` is the sum of the two side pads. The previous one-sided
+        # calculation expanded the box to the title's glyph width but then
+        # ellipsized against ``box_w - 2 * pad`` (e.g. "Classes" -> "Cl...").
+        title_w = len(str(title)) * char_width + pad
         if title_w > box_w:
             extra = min(available_w - box_w, title_w - box_w)
             column_widths = [width + extra / ncols for width in column_widths]
@@ -2737,11 +2770,18 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     nrows = (len(named) + ncols - 1) // ncols
     available_h = max(1.0, float(plot["h"]) - 2 * inset)
     visible_rows = nrows
-    natural_box_h = nrows * line_h + pad + title_h
+    content_rows = nrows + (1 if title else 0)
+    natural_box_h = content_rows * text_h + max(0, content_rows - 1) * row_gap + pad
     if natural_box_h > available_h:
-        visible_rows = max(0, int((available_h - pad - title_h) // line_h))
+        title_room = text_h + row_gap if title else 0.0
+        available_entries_h = max(0.0, available_h - pad - title_room)
+        visible_rows = max(0, int((available_entries_h + row_gap) // line_h))
     visible_count = min(len(named), visible_rows * ncols)
-    box_h = min(available_h, visible_rows * line_h + pad + title_h)
+    visible_content_rows = visible_rows + (1 if title else 0)
+    box_h = min(
+        available_h,
+        visible_content_rows * text_h + max(0, visible_content_rows - 1) * row_gap + pad,
+    )
 
     loc = options.get("loc") or "upper right"
     anchor = options.get("anchor")
@@ -2754,6 +2794,11 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
         target_y = float(plot["y"]) + (1.0 - ay - vy * ah) * float(plot["h"])
         x = target_x - hx * box_w
         y = target_y - (1.0 - vy) * box_h
+        border_axes_pad = max(0.0, float(options.get("border_pad", 0.0)))
+        x += border_axes_pad if hx == 0.0 else -border_axes_pad if hx == 1.0 else 0.0
+        # SVG/raster coordinates increase downward, so a "lower" legend is
+        # moved upward from its anchor and an "upper" legend moves downward.
+        y += border_axes_pad if vy == 1.0 else -border_axes_pad if vy == 0.0 else 0.0
     else:
         if "left" in loc:
             x = float(plot["x"]) + inset
@@ -2782,9 +2827,12 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
         "handle": handle,
         "gap": gap,
         "column_gap": column_gap,
+        "row_gap": row_gap,
+        "font_size": font_size,
+        "text_h": text_h,
         "line_h": line_h,
         "ncols": ncols,
-        "title": _legend_text(title, max(0.0, box_w - 2 * pad)) if title else None,
+        "title": _legend_text(title, max(0.0, box_w - pad), char_width) if title else None,
         "title_h": title_h,
         "cell_w": max(column_widths),
         "column_widths": column_widths,
@@ -2795,7 +2843,7 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
         "y": y,
         "visible_count": visible_count,
         "names": [
-            _legend_text(t.get("name", ""), text_widths[index % ncols])
+            _legend_text(t.get("name", ""), text_widths[index % ncols], char_width)
             for index, t in enumerate(named[:visible_count])
         ],
     }
@@ -2813,6 +2861,7 @@ def _legend(
     pad, handle, gap = legend["pad"], legend["handle"], legend["gap"]
     line_h, ncols = legend["line_h"], legend["ncols"]
     title, title_h = legend["title"], legend["title_h"]
+    font_size, text_h = legend["font_size"], legend["text_h"]
     column_offsets = legend["column_offsets"]
     box_w, box_h = legend["box_w"], legend["box_h"]
     x, y = legend["x"], legend["y"]
@@ -2838,8 +2887,10 @@ def _legend(
         )
     if title:
         rows.append(
-            f'<text x="{_num(x + pad)}" y="{_num(y + pad / 2 + 11)}" '
-            f'font-weight="600" fill="{escape(text_color)}">{escape(str(title))}</text>'
+            f'<text x="{_num(x + box_w / 2)}" '
+            f'y="{_num(y + pad / 2 + font_size * 0.82)}" text-anchor="middle" '
+            f'font-size="{_num(font_size)}" font-weight="600" '
+            f'fill="{escape(text_color)}">{escape(str(title))}</text>'
         )
     for i, t in enumerate(named[: legend["visible_count"]]):
         style = t.get("style") or {}
@@ -2849,7 +2900,7 @@ def _legend(
         )
         col, row = i % ncols, i // ncols
         rx, ry = x + column_offsets[col], y + pad / 2 + title_h + row * line_h
-        hx0, hx1, cy = rx, rx + handle, ry + 7
+        hx0, hx1, cy = rx, rx + handle, ry + text_h / 2
         kind = t.get("kind")
         if kind == "scatter":
             symbol = style.get("symbol", "circle")
@@ -2886,7 +2937,8 @@ def _legend(
                 f'rx="2" fill="{escape(color)}"/>'
             )
         rows.append(
-            f'<text x="{_num(hx1 + gap)}" y="{_num(ry + 11)}" '
+            f'<text x="{_num(hx1 + gap)}" y="{_num(ry + font_size * 0.82)}" '
+            f'font-size="{_num(font_size)}" '
             f'fill="{escape(text_color)}">{escape(legend["names"][i])}</text>'
         )
     clip = "" if options.get("anchor") else f' clip-path="url(#{clip_id})"'
