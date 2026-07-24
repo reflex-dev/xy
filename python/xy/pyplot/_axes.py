@@ -882,10 +882,6 @@ class Axes(PlotTypeMixin):
         self._insets_materialized = False
         self._absolute_plot_ratio = None
         self._padding = None
-        self._xmargin = 0.0
-        self._ymargin = 0.0
-        self._margin_overrides = set()
-        self._explicit_domains = set()
         self._grid = bool(rcParams["axes.grid"])
         self._grid_axes = {"x": self._grid, "y": self._grid}
         self._grid_color = _MPL_GRID_COLOR
@@ -2547,8 +2543,6 @@ class Axes(PlotTypeMixin):
             "title": self.set_title,
             "xlim": self.set_xlim,
             "ylim": self.set_ylim,
-            "xmargin": self.set_xmargin,
-            "ymargin": self.set_ymargin,
             "xscale": self.set_xscale,
             "yscale": self.set_yscale,
             "xticks": self.set_xticks,
@@ -2890,9 +2884,8 @@ class Axes(PlotTypeMixin):
         """Set the autoscaling padding around the data, as axis fractions.
 
         Call as ``margins(m)``, ``margins(x, y)``, or with ``x=``/``y=``;
-        values must be finite and greater than -0.5. Negative margins clip
-        the data range, matching Matplotlib. ``tight`` is accepted and ignored;
-        explicitly set limits are left alone.
+        values must be finite and non-negative. ``tight`` is accepted and
+        ignored; explicitly set limits are left alone.
         """
         tight = kwargs.pop("tight", None)
         del tight
@@ -2919,26 +2912,6 @@ class Axes(PlotTypeMixin):
             if "y" not in self._explicit_domains:
                 self._axis_props("y").pop("domain", None)
         self._invalidate()
-
-    def set_xmargin(self, m: float) -> None:
-        """Set x autoscale padding as a fraction of the data interval."""
-        self.margins(x=m)
-
-    def set_ymargin(self, m: float) -> None:
-        """Set y autoscale padding as a fraction of the data interval."""
-        self.margins(y=m)
-
-    def get_xmargin(self) -> float:
-        """Return the configured x autoscale margin."""
-        if "x" in self._margin_overrides:
-            return float(self._xmargin)
-        return float(rcParams["axes.xmargin"])
-
-    def get_ymargin(self) -> float:
-        """Return the configured y autoscale margin."""
-        if "y" in self._margin_overrides:
-            return float(self._ymargin)
-        return float(rcParams["axes.ymargin"])
 
     def relim(self, visible_only: bool = False) -> None:
         """Recompute the data limits from the plotted entries.
@@ -4885,19 +4858,9 @@ class Axes(PlotTypeMixin):
                 self._axis["x"]["domain"] = (x0, x1)
                 self._axis["y"]["domain"] = (y0, y1)
             adjusted_aspect = True
-        if (
-            not adjusted_aspect
-            and "x" in self._margin_overrides
-            and "x" not in self._explicit_domains
-            and not self._axis_is_dataless("x")
-        ):
+        if not adjusted_aspect and self._xmargin != 0.0 and "x" not in self._explicit_domains:
             self._axis["x"]["domain"] = self._auto_domain("x")
-        if (
-            not adjusted_aspect
-            and "y" in self._margin_overrides
-            and "y" not in self._explicit_domains
-            and not self._axis_is_dataless("y")
-        ):
+        if not adjusted_aspect and self._ymargin != 0.0 and "y" not in self._explicit_domains:
             self._axis["y"]["domain"] = self._auto_domain("y")
         if chart_padding is None and any(
             entry["kind"] == "@text"
@@ -5406,8 +5369,8 @@ def _convert_timedelta_axis(values: np.ndarray) -> np.ndarray:
 
 def _validate_margin(value: Any, axis: str) -> float:
     margin = float(value)
-    if not np.isfinite(margin) or margin <= -0.5:
-        raise ValueError(f"{axis} margin must be a finite number greater than -0.5")
+    if not np.isfinite(margin) or margin < 0:
+        raise ValueError(f"{axis} margin must be a finite non-negative number")
     return margin
 
 

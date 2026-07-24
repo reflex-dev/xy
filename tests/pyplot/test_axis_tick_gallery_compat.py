@@ -86,30 +86,3 @@ def test_tick_params_side_flags_and_xtick_rotation_mode() -> None:
 
     with pytest.raises(ValueError, match="rotation_mode"):
         ax.tick_params(axis="x", rotation_mode="sideways")
-
-
-def test_set_axis_margins_expand_or_clip_and_validate_matplotlib_bound() -> None:
-    _fig, ax = plt.subplots()
-    ax.plot([0, 2], [0, 2])
-
-    ax.set_xmargin(0.1)
-    ax.set_ymargin(-0.1)
-
-    assert ax.get_xmargin() == 0.1
-    assert ax.get_ymargin() == -0.1
-    assert ax.get_xlim() == pytest.approx((-0.2, 2.2))
-    assert ax.get_ylim() == pytest.approx((0.2, 1.8))
-
-    ax.set_xmargin(0)
-    chart = ax._build_chart(640, 480)
-    x_axis = next(child for child in chart.children if getattr(child, "which", None) == "x")
-    assert x_axis.domain == pytest.approx((0, 2))
-
-    ax.set(xmargin=0.8, ymargin=0.25)
-    assert ax.get_xmargin() == 0.8
-    assert ax.get_ymargin() == 0.25
-
-    with pytest.raises(ValueError, match=r"greater than -0\.5"):
-        ax.set_xmargin(-0.5)
-    with pytest.raises(ValueError, match=r"greater than -0\.5"):
-        ax.set_ymargin(float("inf"))
