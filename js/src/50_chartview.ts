@@ -23,6 +23,13 @@ const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
 const COMPACT_COLORBAR_GAP = 8;
 let XY_A11Y_ID = 0;
+// Legend hover emphasis (interaction spec §9): opacity kept by non-hovered series on
+// the marks canvas, and by non-hovered rows in the legend box itself.
+const LEGEND_DIM_OPACITY = 0.2;
+const LEGEND_DIM_ROW = 0.4;
+// SVG gradient ids resolve document-wide; a module counter keeps every chart
+// instance's legend swatch ramps distinct.
+let legendGradientSeq = 0;
 const XY_SR_ONLY_STYLE =
   "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;" +
   "clip:rect(0,0,0,0);white-space:nowrap;border:0;";
@@ -1717,28 +1724,47 @@ export class ChartView {
 
   _buildLegend(root) {
     const s = this.spec;
+    // A chrome rebuild replaces the row nodes mid-hover, so their pointerleave
+    // never fires; release any active dim state before dropping the old boxes.
+    this._clearLegendHover();
     this._legends = [];
     const items = [];
     if (s.show_legend !== false) {
-      for (const t of s.traces) {
+      // Two identically-encoded unnamed continuous traces must not stack two
+      // identical gradient rows; the row is about the encoding, so later
+      // traces join the first row's hover-target list instead.
+      const continuousRows = new Map();
+      s.traces.forEach((t, ti) => {
         // A density-tier surface encodes count as alpha and wears the mean
         // point color (LOD doc §2), so it gets no colormap gradient swatch —
         // a gradient would claim color == density. A named density trace
         // falls through to the plain marker swatch below, matching the
         // static SVG/raster exporters.
+        const line = ["line", "segments", "step", "stairs", "errorbar"].includes(t.kind);
         if (t.color && t.color.mode === "categorical") {
           t.color.categories.forEach((cat, i) =>
-            items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} }));
+            items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {}, traces: [ti], cat: i }));
         } else if (t.color && t.color.mode === "continuous") {
-          items.push({ swatch: "gradient", cmap: t.color.colormap, name: t.name || "value" });
+          // Label precedence: explicit series name, then the encoding's own
+          // declarative label (the color="column" idiom), then the generic
+          // fallback for hand-built specs.
+          const name = t.name || t.color.label || "value";
+          const key = name + "\u0000" + t.color.colormap;
+          const existing = continuousRows.get(key);
+          if (existing) {
+            existing.traces.push(ti);
+            return;
+          }
+          const item = { swatch: "gradient", cmap: t.color.colormap, name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {}, traces: [ti] };
+          continuousRows.set(key, item);
+          items.push(item);
         } else if (t.name) {
           const c = (t.color && t.color.color) || (t.style && t.style.color);
           // Line-family kinds get a short line sample (honoring the dash), the
           // same handle the raster/SVG exporters draw — not a filled swatch.
-          const line = ["line", "segments", "step", "stairs", "errorbar"].includes(t.kind);
-          items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {} });
+          items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {}, traces: [ti] });
         }
-      }
+      });
       if (items.length) this._legendBox(root, items, s.legend || {});
     }
     // Manually added Legend artists ship explicit items + their own loc, so a
@@ -1756,7 +1782,7 @@ export class ChartView {
   }
 
   _legendBox(root, items, options) {
-    const lg = document.createElement("div");
+    const lg: any = document.createElement("div");
     const loc = options.loc || "upper right";
     const ncols = Math.max(1, Number(options.ncols) || 1);
     const horizontal = ncols > 1;
@@ -1773,6 +1799,7 @@ export class ChartView {
       title.style.gridColumn = `1 / span ${horizontal ? ncols : 1}`;
       lg.appendChild(title);
     }
+    const rows = [];
     for (const it of items) {
       const row = document.createElement("div");
       this._applySlot(row, "legend_item");
@@ -1782,11 +1809,19 @@ export class ChartView {
       sw.style.display = "inline-block";
       sw.style.verticalAlign = "-1px";
       let bg = it.swatch;
-      if (it.swatch === "gradient") {
+      // A continuous encoding paints the swatch with the colormap ramp, but
+      // the swatch keeps the mark's identity: a gradient-filled symbol for
+      // scatters, a gradient-stroked line sample for line-family kinds, and
+      // only the bare ramp chip when the mark has neither.
+      let gradientPaint = null;
+      if (it.swatch === "gradient" && (it.symbol || it.line)) {
+        gradientPaint = (svg) => this._legendGradientPaint(svg, it.cmap);
+      } else if (it.swatch === "gradient") {
         const stops = colormapStops(it.cmap);
         bg = `linear-gradient(90deg,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
         sw.style.background = bg;
-      } else if (it.symbol) {
+      }
+      if (it.symbol) {
         const ns = "http://www.w3.org/2000/svg";
         const svg = document.createElementNS(ns, "svg");
         svg.setAttribute("viewBox", "0 0 18 14");
@@ -1805,7 +1840,7 @@ export class ChartView {
           hexagon: "M9 2L13.3 4.5v5L9 12l-4.3-2.5v-5z",
           star: "M9 2l1.5 3.1 3.5.5-2.5 2.5.6 3.5L9 10l-3.1 1.6.6-3.5L4 5.6l3.5-.5z"
         };
-        const color = safeCssPaint(this.root, bg);
+        const color = gradientPaint ? gradientPaint(svg) : safeCssPaint(this.root, bg);
         if (it.symbol === "circle" || it.symbol === "point" || it.symbol === "pixel") {
           if (it.symbol === "pixel") path.setAttribute("d", "M8.5 6.5h1v1h-1z");
           else path.setAttribute("d", `M9 ${it.symbol === "point" ? 4.75 : 2.5}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 ${it.symbol === "point" ? 4.5 : 9}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 -${it.symbol === "point" ? 4.5 : 9}`);
@@ -1828,7 +1863,7 @@ export class ChartView {
         ln.setAttribute("y1", "6");
         ln.setAttribute("x2", "21");
         ln.setAttribute("y2", "6");
-        ln.setAttribute("stroke", safeCssPaint(this.root, bg));
+        ln.setAttribute("stroke", gradientPaint ? gradientPaint(svg) : safeCssPaint(this.root, bg));
         // ?? not ||: an explicit lw=0 keeps 0 and draws nothing, like the
         // exporters' dict-default and Matplotlib itself.
         ln.setAttribute("stroke-width", String(it.style?.width ?? 1.5));
@@ -1837,17 +1872,96 @@ export class ChartView {
         sw.appendChild(svg);
         sw.style.width = "22px";
         sw.style.height = "12px";
-      } else {
+      } else if (it.swatch !== "gradient") {
         sw.style.background = safeCssPaint(this.root, bg);
       }
       this._applySlot(sw, "legend_swatch");
       row.appendChild(sw);
       row.appendChild(document.createTextNode(it.name));
+      // Hover emphasis (interaction spec §9): rows backed by live traces dim the rest
+      // of the chart while hovered. Manually-added Legend artists carry no
+      // trace linkage, so extra_legends rows stay inert.
+      if (options.highlight !== false && it.traces && it.traces.length) {
+        row.addEventListener("pointerenter", () => this._setLegendHover(it, lg, row));
+        row.addEventListener("pointerleave", () => this._clearLegendHover());
+      }
+      rows.push(row);
       lg.appendChild(row);
     }
+    lg._xyItemRows = rows;
     root.appendChild(lg);
     this._legends.push(lg); // _resize refreshes each box's responsive anchor
     return lg;
+  }
+
+  // Paint an SVG swatch with the item's colormap ramp: registers a
+  // <linearGradient> in the swatch's own defs and returns its paint URL.
+  // IDs are document-global, so a module counter keeps multiple charts on
+  // one page from cross-referencing each other's ramps.
+  _legendGradientPaint(svg, cmap) {
+    const ns = "http://www.w3.org/2000/svg";
+    const id = `xy-legend-grad-${legendGradientSeq++}`;
+    const defs = document.createElementNS(ns, "defs");
+    const grad = document.createElementNS(ns, "linearGradient");
+    grad.setAttribute("id", id);
+    const stops = colormapStops(cmap);
+    stops.forEach((c, i) => {
+      const stop = document.createElementNS(ns, "stop");
+      stop.setAttribute("offset", `${(i / Math.max(1, stops.length - 1)) * 100}%`);
+      stop.setAttribute("stop-color", `rgb(${c[0]},${c[1]},${c[2]})`);
+      grad.appendChild(stop);
+    });
+    defs.appendChild(grad);
+    svg.appendChild(defs);
+    return `url(#${id})`;
+  }
+
+  // Legend hover emphasis: the hovered row's series keeps full opacity while
+  // every other series dims (and, for a categorical row, the trace's other
+  // categories dim through a background-blended palette LUT — the point
+  // shaders ignore LUT alpha, so the fade is baked into the RGB ramp).
+  // Whole density-tier traces dim through _drawDensity's uniform like any
+  // other series, but a categorical row cannot dim sibling categories inside
+  // an aggregated density plane (§28 — recorded in the dossier, not silent).
+  _setLegendHover(item, lg, hoveredRow) {
+    this._legendHover = item;
+    const keep = new Set(item.traces);
+    for (let i = 0; i < (this.gpuTraces || []).length; i++) {
+      const g = this.gpuTraces[i];
+      g._legendDim = keep.has(i) ? 1 : LEGEND_DIM_OPACITY;
+      if (g._legendPrevLut !== undefined) {
+        g.lut = g._legendPrevLut;
+        delete g._legendPrevLut;
+      }
+      const t = g.trace;
+      if (item.cat != null && keep.has(i) && g.tier !== "density" &&
+          t.color && t.color.mode === "categorical" && g.lut) {
+        g._legendPrevLut = g.lut;
+        g.lut = this._paletteLutDimmed(t.color.palette, item.cat);
+      }
+    }
+    for (const row of lg._xyItemRows || []) {
+      row.style.opacity = row === hoveredRow ? "" : String(LEGEND_DIM_ROW);
+    }
+    // Color-pass-only change: geometry and view are untouched, so the pick
+    // snapshot stays valid (§17).
+    this.draw(true);
+  }
+
+  _clearLegendHover() {
+    if (!this._legendHover) return;
+    this._legendHover = null;
+    for (const g of this.gpuTraces || []) {
+      delete g._legendDim;
+      if (g._legendPrevLut !== undefined) {
+        g.lut = g._legendPrevLut;
+        delete g._legendPrevLut;
+      }
+    }
+    for (const lg of this._legends || []) {
+      for (const row of lg._xyItemRows || []) row.style.opacity = "";
+    }
+    this.draw(true);
   }
 
   _positionLegend(lg, loc) {
@@ -2070,6 +2184,36 @@ export class ChartView {
       data[i * 4] = c[0] * 255;
       data[i * 4 + 1] = c[1] * 255;
       data[i * 4 + 2] = c[2] * 255;
+      data[i * 4 + 3] = 255;
+    }
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this._lutCache.set(key, tex);
+    return tex;
+  }
+
+  // Palette LUT with every category except `keepIdx` blended toward the plot
+  // background — the legend-hover dim for categorical traces. RGB-only on
+  // purpose: the point/line shaders read `texture(u_lut, ...).rgb` and force
+  // alpha to 1, so an alpha-based fade would be a silent no-op.
+  _paletteLutDimmed(palette, keepIdx) {
+    const key = "pal:" + palette.join(",") + ":dim" + keepIdx + ":" + (this.theme.bg || "");
+    if (this._lutCache.has(key)) return this._lutCache.get(key);
+    const gl = this.gl;
+    const bg = parseColor(this.root, this.theme.bg || "#ffffff", [1, 1, 1, 1]);
+    const data = new Uint8Array(256 * 4);
+    for (let i = 0; i < 256; i++) {
+      const c = hexColor(palette[i % palette.length]);
+      const keep = i % palette.length === keepIdx % palette.length;
+      const w = keep ? 1 : LEGEND_DIM_OPACITY;
+      data[i * 4] = (c[0] * w + bg[0] * (1 - w)) * 255;
+      data[i * 4 + 1] = (c[1] * w + bg[1] * (1 - w)) * 255;
+      data[i * 4 + 2] = (c[2] * w + bg[2] * (1 - w)) * 255;
       data[i * 4 + 3] = 255;
     }
     const tex = gl.createTexture();
@@ -3199,7 +3343,7 @@ export class ChartView {
   }
 
   _drawPoints(g, xm, ym, opacityScale = 1) {
-    opacityScale *= g._transitionOpacity ?? 1;
+    opacityScale *= (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
     const animationScale = g._transitionScale ?? 1;
     if (this._canDrawSimplePoints(g)) {
       this._drawSimplePoints(g, xm, ym, opacityScale);
@@ -3432,7 +3576,7 @@ export class ChartView {
     // WebGL error that aborts the draw, so treat an invalid texture as "nothing
     // to draw" rather than risk it.
     if (!d || !d.tex || !gl.isTexture(d.tex)) return;
-    opacityScale *= g._transitionOpacity ?? 1;
+    opacityScale *= (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
     const prog = this.densityProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
@@ -3506,7 +3650,7 @@ export class ChartView {
       h.xRange[xrev ? 1 : 0], h.xRange[xrev ? 0 : 1],
       h.yRange[yrev ? 1 : 0], h.yRange[yrev ? 0 : 1],
     );
-    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1) * (g._legendDim ?? 1));
     gl.uniform1i(u("u_truecolor"), h.truecolor ? 1 : 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, h.tex);
@@ -3538,7 +3682,7 @@ export class ChartView {
     gl.uniform1f(u("u_revealSegments"), g.n - 1);
     gl.uniform1f(u("u_width"), (width ?? g.trace.style.width ?? 1.5) * this.dpr);
     const [r, gg, b, a] = color || g.color;
-    const strokeOpacity = this._strokeOpacity(g.trace.style) * (opacity ?? 1) * (g._transitionOpacity ?? 1);
+    const strokeOpacity = this._strokeOpacity(g.trace.style) * (opacity ?? 1) * (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
     gl.uniform4f(u("u_color"), r, gg, b, a * strokeOpacity);
     const dashed = this._lineDash(g);
     this._bindVao(
@@ -3585,7 +3729,7 @@ export class ChartView {
     gl.uniform1f(u("u_animationProgress"), g._transitionScale ?? 1);
     const [r, gg, b, a] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a);
-    gl.uniform1f(u("u_opacity"), this._strokeOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
+    gl.uniform1f(u("u_opacity"), this._strokeOpacity(g.trace.style) * (g._transitionOpacity ?? 1) * (g._legendDim ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     const dashed = this._segmentDash(g, prog);
     if (g.colorMode && g.lut) {
@@ -3707,7 +3851,7 @@ export class ChartView {
     for (const name of ["x0", "x1", "x2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.xAxis);
     for (const name of ["y0", "y1", "y2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.yAxis);
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
-    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._legendDim ?? 1));
     gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], g.color[3]);
     // Straight alpha: MESH_FS folds u_strokeOpacity and the per-item alpha
     // stack in and premultiplies there (uniform and buffer strokes alike).
@@ -3715,7 +3859,7 @@ export class ChartView {
     gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
     gl.uniform1f(u("u_strokeWidth"), g.meshStrokeWidth || 0);
     gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
-    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style));
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style) * (g._legendDim ?? 1));
     if (g.colorMode && g.lut) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -3804,7 +3948,7 @@ export class ChartView {
     gl.uniform1f(u("u_revealProgress"), reveal);
     gl.uniform1f(u("u_revealSegments"), g.n - 1);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.35) * (g._transitionOpacity ?? 1));
+    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.35) * (g._transitionOpacity ?? 1) * (g._legendDim ?? 1));
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     this._setGradientUniforms(prog, g.grad);
     this._bindVao(g, "area", [g.xBuf._fcId, g.yBuf._fcId, g.baseBuf._fcId], () => {
@@ -3840,7 +3984,7 @@ export class ChartView {
     gl.uniform4f(u("u_edgePad"), edgePad[0], edgePad[1], edgePad[2], edgePad[3]);
     const [r, gg, b, a] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a);
-    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1) * (g._legendDim ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     this._setRectStyleUniforms(prog, g);
     const colorOn = !!g.cBuf;
@@ -3914,7 +4058,7 @@ export class ChartView {
     gl.uniform1f(u("u_prevWidth"), g._transitionPrevWidth ?? g.width);
     const [r, gg, b, a] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a);
-    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1));
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1) * (g._legendDim ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     this._setRectStyleUniforms(prog, g);
     const v0On = g.value0Mode === 1 && g.value0Buf;

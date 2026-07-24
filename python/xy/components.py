@@ -237,6 +237,7 @@ class Legend(Component):
     loc: Optional[str] = None
     ncols: int = 1
     title: Optional[str] = None
+    highlight: bool = True
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
     render: Any = None
@@ -2372,6 +2373,7 @@ def legend(
     loc: Optional[str] = None,
     ncols: int = 1,
     title: Optional[str] = None,
+    highlight: bool = True,
     render: Any = None,
     class_name: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
@@ -2384,6 +2386,8 @@ def legend(
         loc: Legend placement within or around the plot.
         ncols: Number of legend columns.
         title: Optional legend title.
+        highlight: Whether hovering a legend entry emphasizes its series by
+            dimming the others (live client only; exports are static).
         render: Opaque renderer supplied by an adapter.
         class_name: DOM class name applied to the legend.
         style: Legend style overrides.
@@ -2394,6 +2398,7 @@ def legend(
         loc=_optional_string(loc, "legend loc"),
         ncols=_optional_positive_int(ncols, "legend ncols") or 1,
         title=_optional_string(title, "legend title"),
+        highlight=_strict_bool(highlight, "legend highlight"),
         class_name=_optional_string(class_name, "legend class_name"),
         style=_style_dict(style, "legend style"),
         render=render,
@@ -3159,6 +3164,16 @@ class Chart(Component):
                 class_name = _optional_string(m.class_name, f"{m.kind} class_name")
                 for trace in new_traces:
                     trace.style["class_name"] = class_name
+            color_label = _continuous_color_label(m)
+            if color_label is not None:
+                for trace in new_traces:
+                    channel = getattr(trace, "color_ch", None)
+                    if (
+                        channel is not None
+                        and channel.mode == "continuous"
+                        and channel.label is None
+                    ):
+                        channel.label = color_label
             _merge_tooltip_aliases(tooltip_aliases, m, new_traces)
             _merge_tooltip_sources(tooltip_sources, m, new_traces)
             colorbar_candidate = _declarative_colorbar_options(m, new_traces)
@@ -3178,6 +3193,10 @@ class Chart(Component):
             fig.legend_options = {"loc": node.loc, "ncols": node.ncols}
             if node.title is not None:
                 fig.legend_options["title"] = node.title
+            if not _strict_bool(node.highlight, "legend highlight"):
+                # Highlight-on-hover defaults on; only the opt-out crosses the
+                # wire so existing specs stay byte-identical.
+                fig.legend_options["highlight"] = False
             if node.style:
                 # Carry the frame/frameon styling into the static-export spec so
                 # the raster/SVG legend can honor frameon=False (transparent bg).
@@ -3786,6 +3805,27 @@ def _apply_mark_transition_metadata(
                     f"has {trace.n_points} logical rows"
                 )
             trace.transition_keys = keys
+
+
+def _continuous_color_label(mark: Mark) -> Optional[str]:
+    """Declarative label for a mark's continuous color channel.
+
+    Only genuine column names (or hexbin's derived metric) qualify — the mark
+    name is not a channel label, and the client already prefers ``t.name``
+    for legend rows. Attached to ``ColorChannel.label`` so unnamed encodings
+    stop rendering as a generic "value" swatch.
+    """
+    if mark.kind in {"scatter", "segments", "triangle_mesh"}:
+        color = mark.props.get("color")
+        if isinstance(color, str) and not _looks_like_css(color):
+            return color
+    elif mark.kind == "hexbin":
+        values = mark.props.get("C")
+        if isinstance(values, str):
+            return values
+        if values is None:
+            return "log(count + 1)" if mark.props.get("bins") == "log" else "count"
+    return None
 
 
 def _colorbar_source_title(mark: Mark) -> Optional[str]:
