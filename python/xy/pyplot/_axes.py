@@ -579,6 +579,12 @@ class Axes(PlotTypeMixin):
 
     # -- lifecycle -----------------------------------------------------------
 
+    def remove(self) -> None:
+        """Remove this axes from its figure."""
+        if self.figure is None or self not in self.figure._axes:
+            raise ValueError("Axes is not attached to a figure")
+        self.figure.delaxes(self)
+
     def _load_rc_chrome(self) -> None:
         """Snapshot the rcParams-derived color cycle, theme, and chrome styles.
 
@@ -2794,18 +2800,23 @@ class Axes(PlotTypeMixin):
         y0, y1 = self.get_ylim()
         return float(x0), float(x1), float(y0), float(y1)
 
-    def set_aspect(self, aspect: str | float, **kwargs: Any) -> None:
+    def set_aspect(
+        self,
+        aspect: str | float,
+        adjustable: Optional[str] = None,
+        anchor: Any = None,
+        share: bool = False,
+        **kwargs: Any,
+    ) -> None:
         """Set the data aspect ratio: ``"equal"``/``1`` or ``"auto"``.
 
         ``adjustable`` is ``"box"`` (resize the axes rectangle) or
         ``"datalim"`` (expand a data limit at draw time); ``anchor`` and
         ``share`` are accepted compat-noops. Anything else raises loudly.
         """
-        adjustable = kwargs.pop("adjustable", None)
         # anchor/share are accepted compatibility hints; the shim has no
         # independent Artist layout graph on which to apply them.
-        kwargs.pop("anchor", None)  # compat-noop: axes anchoring has no separate layout graph
-        kwargs.pop("share", None)  # compat-noop: aspect sharing is resolved by shared axis state
+        del anchor, share  # compat-noop: axes anchoring/sharing has no separate layout graph
         if kwargs:
             raise TypeError(
                 f"set_aspect() got an unexpected keyword argument {next(iter(kwargs))!r}"
@@ -2820,6 +2831,50 @@ class Axes(PlotTypeMixin):
         else:
             self._aspect_bounds = None
             self._invalidate()
+
+    def get_gridspec(self) -> Any:
+        """Return the GridSpec that placed this subplot, or ``None``.
+
+        Uniform grids are stored compactly by the shim.  Materialize their
+        shared GridSpec lazily so gallery idioms can remove cells and replace
+        them with a spanning subplot through ``fig.add_subplot(gs[...])``.
+        """
+        if self._subplot_spec is not None:
+            return self._subplot_spec.gridspec
+        figure = self.figure
+        if figure is None or self not in figure._axes:
+            return None
+        nrows, ncols = figure._nrows, figure._ncols
+        cell_count = nrows * ncols
+        if cell_count <= 0 or len(figure._axes) < cell_count:
+            return None
+        from ._mplfig import _GridSpec, _SubplotSpec
+
+        grid = _GridSpec(
+            figure,
+            nrows,
+            ncols,
+            width_ratios=figure._width_ratios,
+            height_ratios=figure._height_ratios,
+        )
+        for index, axes in enumerate(figure._axes[:cell_count]):
+            row, col = divmod(index, ncols)
+            spec = _SubplotSpec(
+                grid,
+                (row, row + 1),
+                (col, col + 1),
+            )
+            axes._subplot_spec = spec
+            # Once callers can remove arbitrary cells, list position no longer
+            # identifies a subplot's row and column. Freeze every existing
+            # cell to its GridSpec rect before the first removal.
+            axes._figure_rect = grid.cell_rect(spec.rows, spec.cols)
+        return grid
+
+    def get_subplotspec(self) -> Any:
+        """Return this axes' SubplotSpec, materializing a uniform one if needed."""
+        self.get_gridspec()
+        return self._subplot_spec
 
     def margins(self, *args: Any, **kwargs: Any) -> None:
         """Set the autoscaling padding around the data, as axis fractions.
