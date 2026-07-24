@@ -91,6 +91,10 @@ CMAPS = {
     "rdgy": "rdgy",
     "jet": "jet",
     "binary": "binary",
+    "reds": "reds",
+    "bone": "bone",
+    "autumn": "autumn",
+    "bupu": "bupu",
 }
 
 

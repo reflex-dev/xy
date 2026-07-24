@@ -2833,12 +2833,16 @@ class _CmapNamespace:
         return get_cmap(name, lut)
 
     def __getattr__(self, name: str) -> Any:
-        from ._colors import CMAPS
+        from ._colors import resolve_cmap
 
         if name == "ScalarMappable":
             return type("ScalarMappable", (), {"__init__": lambda self, **kwargs: None})
 
-        if name.lower() in CMAPS:
+        try:
+            resolve_cmap(name)
+        except ValueError:
+            pass
+        else:
             return name
         raise AttributeError(f"colormap {name!r} is not supported; see spec/matplotlib/compat.md")
 

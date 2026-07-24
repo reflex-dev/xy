@@ -223,6 +223,19 @@ def test_rdgy_and_jet_resolve_and_render():
     _png()
 
 
+@pytest.mark.parametrize(
+    ("name", "canonical"),
+    [("Reds_r", "reds_r"), ("bone", "bone"), ("autumn", "autumn"), ("BuPu", "bupu")],
+)
+def test_matplotlib_gallery_colormaps_resolve_and_render(name, canonical):
+    assert plt.get_cmap(name).name == canonical
+    assert plt.colormaps[name].name == canonical
+    assert getattr(plt.cm, name) == name
+    fig, ax = plt.subplots()
+    ax.imshow(np.arange(16.0).reshape(4, 4), cmap=name)
+    _png(fig)
+
+
 def test_linear_segmented_colormap_from_list_matches_anchors():
     table = np.array([[0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0]])
     cmap = plt.LinearSegmentedColormap.from_list("g", table, 8)
