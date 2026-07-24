@@ -1623,11 +1623,23 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     # -- chrome text ----------------------------------------------------------
     chrome: list[str] = []
     if spec.get("title"):
+        title_style = ((spec.get("dom") or {}).get("styles") or {}).get("title") or {}
+        title_size = _px_size(title_style.get("font-size"), 14.0)
+        title_weight = title_style.get("font-weight", 600)
+        title_family = title_style.get("font-family")
+        title_font_style = title_style.get("font-style")
+        title_font_attrs = (
+            f' font-family="{escape(str(title_family))}"' if title_family is not None else ""
+        ) + (
+            f' font-style="{escape(str(title_font_style))}"' if title_font_style is not None else ""
+        )
         chrome.append(
             f'<text x="{_num(width / 2)}" '
             f'y="{_num(plot["y"] - plot["top_axis_room"] - (10 if compact else 12))}" '
-            f'text-anchor="middle" font-size="14" font-weight="600" '
-            f'fill="{escape(default_text)}">{escape(str(spec["title"]))}</text>'
+            f'text-anchor="middle" font-size="{_num(title_size)}" '
+            f'font-weight="{escape(str(title_weight))}"{title_font_attrs} '
+            f'fill="{escape(_css(title_style.get("color"), default_text))}">'
+            f"{escape(str(spec['title']))}</text>"
         )
 
     def append_axis_title(axis: dict[str, Any], *, is_x: bool) -> None:
@@ -1638,9 +1650,15 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         x, y = float(geometry["x"]), float(geometry["y"])
         angle = float(geometry["angle"])
         transform = f' transform="rotate({_num(angle)} {_num(x)} {_num(y)})"' if angle else ""
+        family = axis_style.get("label_font_family")
+        font_style = axis_style.get("label_font_style")
+        font_attrs = (f' font-family="{escape(str(family))}"' if family is not None else "") + (
+            f' font-style="{escape(str(font_style))}"' if font_style is not None else ""
+        )
         chrome.append(
             f'<text x="{_num(x)}" y="{_num(y)}" text-anchor="{geometry["anchor"]}" '
-            f'font-size="{_num(float(geometry["font_size"]))}" font-weight="500" '
+            f'font-size="{_num(float(geometry["font_size"]))}" '
+            f'font-weight="{escape(str(axis_style.get("label_font_weight", 500)))}"{font_attrs} '
             f'fill="{escape(_css(axis_style.get("label_color"), default_text))}"{transform}>'
             f"{escape(str(axis['label']))}</text>"
         )

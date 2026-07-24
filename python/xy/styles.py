@@ -42,6 +42,7 @@ _AXIS_COLOR_PROPERTIES = frozenset(
 )
 _AXIS_LENGTH_PROPERTIES = frozenset({"grid_width", "axis_width", "tick_length", "tick_width"})
 _AXIS_SIZE_PROPERTIES = frozenset({"tick_size", "tick_label_size", "label_size"})
+_AXIS_FONT_PROPERTIES = frozenset({"label_font_family", "label_font_style", "label_font_weight"})
 _AXIS_COMPAT_PROPERTIES = frozenset({"grid_dash", "grid_opacity"})
 _AXIS_DASH_STYLES = frozenset({"solid", "dashed", "dotted", "dashdot"})
 _AXIS_DIRECTIONS = frozenset({"in", "out", "inout"})
@@ -329,6 +330,7 @@ def _compile_axis_style(
         _AXIS_COLOR_PROPERTIES
         | _AXIS_LENGTH_PROPERTIES
         | _AXIS_SIZE_PROPERTIES
+        | _AXIS_FONT_PROPERTIES
         | _AXIS_COMPAT_PROPERTIES
         | {"tick_direction", "tick_label_anchor"}
     )
@@ -345,6 +347,14 @@ def _compile_axis_style(
             parsed = _px(raw, f"{label}[{css_prop!r}]")
         elif prop in _AXIS_SIZE_PROPERTIES:
             parsed = _px(raw, f"{label}[{css_prop!r}]", positive=True)
+        elif prop == "label_font_style":
+            if not isinstance(raw, str) or raw not in {"normal", "italic", "oblique"}:
+                raise ValueError(f"{label}[{css_prop!r}] must be 'normal', 'italic', or 'oblique'")
+            parsed = raw
+        elif prop in {"label_font_family", "label_font_weight"}:
+            if not isinstance(raw, (str, int, float)) or isinstance(raw, bool):
+                raise ValueError(f"{label}[{css_prop!r}] must be a CSS font value")
+            parsed = raw
         elif prop == "grid_opacity":
             parsed = _opacity(raw, f"{label}[{css_prop!r}]")
         elif prop == "grid_dash":

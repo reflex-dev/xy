@@ -935,8 +935,6 @@ def render_raster(
                 _parse_color(_css(axis_style.get("tick_color"), default_axis)),
             )
 
-    text_c = _parse_color(default_text)
-
     def rotation_flag(angle: float) -> int:
         normalized = angle % 360.0
         if abs(normalized - 90.0) < 1e-9:
@@ -999,13 +997,22 @@ def render_raster(
         _ticks, tick_labels, step = extra_y_ticks[axis_id]
         emit_tick_labels(axis, tick_labels, step, axis_scale, is_x=False)
     if spec.get("title"):
+        title_style = ((spec.get("dom") or {}).get("styles") or {}).get("title") or {}
+        title_italic, title_bold = _native_font_emphasis(
+            {
+                "font_style": title_style.get("font-style"),
+                "font_weight": title_style.get("font-weight", 600),
+            }
+        )
         cmd.text(
             width / 2,
             plot["y"] - plot["top_axis_room"] - (10 if compact else 12),
             1,
-            14,
-            text_c,
+            _px_size(title_style.get("font-size"), 14.0),
+            _parse_color(_css(title_style.get("color"), default_text)),
             str(spec["title"]),
+            italic=title_italic,
+            bold=title_bold,
         )
 
     def emit_axis_title(axis: dict[str, Any], *, is_x: bool) -> None:
@@ -1014,14 +1021,29 @@ def render_raster(
         axis_style = axis.get("style") or {}
         geometry = _axis_label_geometry(axis, plot, is_x=is_x)
         anchor = {"start": 0, "middle": 1, "end": 2}[geometry["anchor"]]
-        cmd.text(
+        italic, bold = _native_font_emphasis(
+            {
+                "font_style": axis_style.get("label_font_style"),
+                "font_weight": axis_style.get("label_font_weight", 500),
+            }
+        )
+        args = (
             geometry["x"],
             geometry["y"],
-            anchor | rotation_flag(float(geometry["angle"])),
+            anchor,
             geometry["font_size"],
             _parse_color(_css(axis_style.get("label_color"), default_text)),
             str(axis["label"]),
         )
+        if italic or bold:
+            cmd.text(*args, angle=float(geometry["angle"]), italic=italic, bold=bold)
+        else:
+            cmd.text(
+                args[0],
+                args[1],
+                anchor | rotation_flag(float(geometry["angle"])),
+                *args[3:],
+            )
 
     emit_axis_title(xa, is_x=True)
     emit_axis_title(ya, is_x=False)

@@ -4441,7 +4441,22 @@ export class ChartView {
         d.style.boxSizing = "border-box";
       }
       this._applySlot(d, kind === "label" ? "axis_title" : "tick_label");
-      this._applyStyle(d, extraStyle);
+      const axisLabelStyle = kind === "label" ? {
+        "font-family": this._axisStyleValue(axis, "label_font_family"),
+        "font-style": this._axisStyleValue(axis, "label_font_style"),
+        "font-weight": this._axisStyleValue(axis, "label_font_weight"),
+      } : null;
+      if (axisLabelStyle) {
+        for (const key of Object.keys(axisLabelStyle)) {
+          if (axisLabelStyle[key] === undefined) delete axisLabelStyle[key];
+        }
+      }
+      this._applyStyle(
+        d,
+        axisLabelStyle || extraStyle
+          ? { ...(axisLabelStyle || {}), ...(extraStyle || {}) }
+          : null,
+      );
       this.labels.appendChild(d);
       if (kind === "tick" && axis && axis.kind === "category" && yPlacement) {
         // Rotation contributes half the untransformed label height to each

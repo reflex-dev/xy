@@ -2795,6 +2795,25 @@ mod tests {
     }
 
     #[test]
+    fn matplotlib_text_commands_umlauts_have_native_glyphs() {
+        assert!(glyph_index('ö').is_some());
+        assert!(glyph_index('ü').is_some());
+        let mut cmd = vec![OP_TEXT];
+        cmd.extend(f32le(1.0));
+        cmd.extend(f32le(30.0));
+        cmd.push(0); // anchor start
+        cmd.extend(f32le(20.0)); // size
+        cmd.extend([0, 0, 0, 255]);
+        let s = "öü".as_bytes();
+        cmd.extend(u32le(s.len() as u32));
+        cmd.extend_from_slice(s);
+        let mut out = vec![0u8; 40 * 40 * 4];
+        assert!(rasterize_into(&cmd, 40, 40, &mut out));
+        let ink: u32 = out.chunks(4).map(|p| (p[3] > 32) as u32).sum();
+        assert!(ink > 10, "umlaut glyphs produced no ink: {ink}");
+    }
+
+    #[test]
     fn rotated_cw_text_walks_downward() {
         // "II" rotated CW from (20, 5): ink extends down the column below the
         // start point, and none is drawn above it.
