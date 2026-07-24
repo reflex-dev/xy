@@ -3812,8 +3812,8 @@ def _continuous_color_label(mark: Mark) -> Optional[str]:
 
     Only genuine column names (or hexbin's derived metric) qualify — the mark
     name is not a channel label, and the client already prefers ``t.name``
-    for legend rows. Attached to ``ColorChannel.label`` so unnamed encodings
-    stop rendering as a generic "value" swatch.
+    for legend rows. Attached to ``ColorChannel.label``; an encoding with
+    neither a name nor a label renders no legend row at all.
     """
     if mark.kind in {"scatter", "segments", "triangle_mesh"}:
         color = mark.props.get("color")
