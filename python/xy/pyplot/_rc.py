@@ -4,6 +4,7 @@ tune exotic rcParams keep running, and the warning names the compat table."""
 from __future__ import annotations
 
 import contextlib
+import math
 import warnings
 from collections.abc import Iterator
 from typing import Any
@@ -61,6 +62,8 @@ _DEFAULTS: dict[str, Any] = {
     "ytick.labelsize": "medium",
     "xtick.major.size": 3.5,
     "ytick.major.size": 3.5,
+    "xtick.major.pad": 3.5,
+    "ytick.major.pad": 3.5,
     "xtick.major.width": 0.8,
     "ytick.major.width": 0.8,
     "legend.loc": "best",
@@ -127,6 +130,10 @@ class RcParams(dict):
             value = float(value)
             if value <= 0:
                 raise ValueError(f"{key} must be positive")
+        if key in {"xtick.major.pad", "ytick.major.pad"}:
+            value = float(value)
+            if not math.isfinite(value):
+                raise ValueError(f"{key} must be finite")
         if key in {
             "axes.xmargin",
             "axes.ymargin",

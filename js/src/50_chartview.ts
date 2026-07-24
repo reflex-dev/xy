@@ -4304,6 +4304,14 @@ export class ChartView {
     // instead of covering the chrome line drawn behind it (grid lines stay on
     // the chrome canvas, behind the data). Rebuilt with the labels; static
     // between throttled zoom frames since the plot rect doesn't move on zoom.
+    const tickParts = (axis) => {
+      const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
+      const width = Math.max(0.5, this._axisStyleNumber(axis, "tick_width", 1));
+      const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+      if (direction === "in") return { inward: length, outward: 0, width };
+      if (direction === "inout") return { inward: length / 2, outward: length / 2, width };
+      return { inward: 0, outward: length, width };
+    };
     if (updateLabels) {
       const rule = (styleAxis, left, top, w, h, colorKey = "axis_color") => {
         const d = document.createElement("div");
@@ -4339,14 +4347,6 @@ export class ChartView {
         rule(axis, x, p.y, w, p.h);
       }
 
-      const tickParts = (axis) => {
-        const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
-        const width = Math.max(0.5, this._axisStyleNumber(axis, "tick_width", 1));
-        const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
-        if (direction === "in") return { inward: length, outward: 0, width };
-        if (direction === "inout") return { inward: length / 2, outward: length / 2, width };
-        return { inward: 0, outward: length, width };
-      };
       if (!hideX) {
         const tick = tickParts(xAxis);
         const side = xAxis.side || "bottom";
@@ -4480,9 +4480,13 @@ export class ChartView {
       "tick_label_size",
       this._axisStyleNumber(xAxis, "tick_size", 11),
     );
+    const xTickGap = tickParts(xAxis).outward
+      + this._axisStyleNumber(xAxis, "tick_padding", 0);
     for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
       const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
-      const top = xAxis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
+      const top = xAxis.side === "top"
+        ? p.y - xTickGap - Math.max(8, tickLabelSize) * 1.2 - rowOffset
+        : p.y + p.h + xTickGap + rowOffset;
       const placement = this._xTickLabelTransform(xAxis, item.angle);
       label(
         item.text,
@@ -4508,8 +4512,12 @@ export class ChartView {
           "tick_label_size",
           this._axisStyleNumber(axis, "tick_size", 11),
         );
+        const tickGap = tickParts(axis).outward
+          + this._axisStyleNumber(axis, "tick_padding", 0);
         const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
-        const top = axis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
+        const top = axis.side === "top"
+          ? p.y - tickGap - Math.max(8, tickLabelSize) * 1.2 - rowOffset
+          : p.y + p.h + tickGap + rowOffset;
         const placement = this._xTickLabelTransform(axis, item.angle);
         label(
           item.text,
@@ -4538,7 +4546,9 @@ export class ChartView {
     // tick. Unset defaults to the tick-side edge — mpl `ha`: "end" left of
     // the plot, "start" right of it — reproducing the classic layout.
     const yLabelPlacement = (axis, onRight, item) => {
-      const pin = onRight ? p.x + p.w + 8 : p.x - 8;
+      const tickGap = tickParts(axis).outward
+        + this._axisStyleNumber(axis, "tick_padding", 0);
+      const pin = onRight ? p.x + p.w + tickGap : p.x - tickGap;
       const anchor = this._axisTickLabelAnchor(axis) ?? (onRight ? "start" : "end");
       const angle = Number(item.angle || 0);
       const shift = anchor === "end" ? "-100%" : anchor === "start" ? "0%" : "-50%";

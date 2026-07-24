@@ -943,6 +943,10 @@ def render_raster(
         )
         font_size = _axis_tick_font_size(axis)
         side = axis.get("side", "bottom" if is_x else "left")
+        length = max(0.0, float(axis_style.get("tick_length", 0)))
+        direction = str(axis_style.get("tick_direction", "out"))
+        outward = 0.0 if direction == "in" else length / 2 if direction == "inout" else length
+        gap = outward + float(axis_style.get("tick_padding", 0))
         # An explicit tick_label_anchor (axis spec or style) overrides the
         # side-derived default, matching the browser client and SVG export.
         explicit_anchor = _tick_label_anchor(axis, axis_style, "")
@@ -951,10 +955,14 @@ def render_raster(
             if is_x:
                 row_offset = float(item["row"]) * (font_size + 4)
                 x = float(item["pos"])
-                y = py0 - 7 - row_offset if side == "top" else py1 + 15 + row_offset
+                y = (
+                    py0 - gap - 0.2 * font_size - row_offset
+                    if side == "top"
+                    else py1 + gap + 0.8 * font_size + row_offset
+                )
                 anchor = _TEXT_ANCHOR_CODES[explicit_anchor] if explicit_anchor else 1
             else:
-                x = px1 + 8 if side == "right" else px0 - 8
+                x = px1 + gap if side == "right" else px0 - gap
                 y = float(item["pos"]) + 4
                 default_anchor = 0 if side == "right" else 2
                 anchor = _TEXT_ANCHOR_CODES[explicit_anchor] if explicit_anchor else default_anchor

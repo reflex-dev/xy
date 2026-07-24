@@ -172,6 +172,7 @@ def test_axis_style_reaches_svg_and_native_renderers() -> None:
                 "axis_color": "#0000ff",
                 "axis_width": 2,
                 "tick_length": 6,
+                "tick_padding": 5,
                 "tick_width": 2,
                 "tick_color": "#00aa00",
                 "tick_label_color": "#cc5500",
@@ -195,6 +196,7 @@ def test_axis_style_is_normalized_and_rejected_before_render() -> None:
     axis = xy.x_axis(
         style={
             "grid-width": "3px",
+            "tick-padding": "-2px",
             "tick_label_size": "13px",
             "tick-direction": "inout",
             "tick-label-anchor": "right",  # mpl `ha` alias -> canonical "end"
@@ -203,6 +205,7 @@ def test_axis_style_is_normalized_and_rejected_before_render() -> None:
     )
     assert axis.style == {
         "grid_width": 3.0,
+        "tick_padding": -2.0,
         "tick_label_size": 13.0,
         "tick_direction": "inout",
         "tick_label_anchor": "end",

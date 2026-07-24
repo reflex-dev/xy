@@ -40,7 +40,9 @@ _DENSITY_KINDS = frozenset({"heatmap", "hexbin"})
 _AXIS_COLOR_PROPERTIES = frozenset(
     {"grid_color", "axis_color", "tick_color", "tick_label_color", "label_color"}
 )
-_AXIS_LENGTH_PROPERTIES = frozenset({"grid_width", "axis_width", "tick_length", "tick_width"})
+_AXIS_LENGTH_PROPERTIES = frozenset(
+    {"grid_width", "axis_width", "tick_length", "tick_padding", "tick_width"}
+)
 _AXIS_SIZE_PROPERTIES = frozenset({"tick_size", "tick_label_size", "label_size"})
 _AXIS_COMPAT_PROPERTIES = frozenset({"grid_dash", "grid_opacity"})
 _AXIS_DASH_STYLES = frozenset({"solid", "dashed", "dotted", "dashdot"})
@@ -144,6 +146,21 @@ def _px(value: StyleValue, label: str, *, positive: bool = False) -> float:
     if not np.isfinite(number) or number < 0 or (positive and number <= 0):
         qualifier = "positive " if positive else "non-negative "
         raise ValueError(f"{label} must be a {qualifier}finite CSS px length")
+    return number
+
+
+def _signed_px(value: StyleValue, label: str) -> float:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        number = float(value)
+    elif isinstance(value, str):
+        match = _PX_RE.match(value)
+        if match is None:
+            raise ValueError(f"{label} must be a finite CSS px length")
+        number = float(match.group(1))
+    else:  # pragma: no cover - normalize_css_style rejects this first
+        raise ValueError(f"{label} must be a finite CSS px length")
+    if not np.isfinite(number):
+        raise ValueError(f"{label} must be a finite CSS px length")
     return number
 
 
@@ -341,6 +358,8 @@ def _compile_axis_style(
             raise ValueError(f"{label} has unsupported property {css_prop!r}; supports: {expected}")
         if prop in _AXIS_COLOR_PROPERTIES:
             parsed: StyleValue = _paint(raw, f"{label}[{css_prop!r}]")
+        elif prop == "tick_padding":
+            parsed = _signed_px(raw, f"{label}[{css_prop!r}]")
         elif prop in _AXIS_LENGTH_PROPERTIES:
             parsed = _px(raw, f"{label}[{css_prop!r}]")
         elif prop in _AXIS_SIZE_PROPERTIES:
