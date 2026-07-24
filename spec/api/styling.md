@@ -212,7 +212,7 @@ raises before it reaches the client.
 | `colorbar` | Colorbar container |
 | `colorbar_bar` | Colorbar gradient/bands |
 | `colorbar_tick` | Colorbar tick label |
-| `colorbar_title` | Colorbar title |
+| `colorbar_title` | Colorbar label (rotated beside a vertical bar) |
 | `tooltip` | Hover tooltip |
 | `modebar` | Mode/tool bar container |
 | `modebar_button` | One mode/tool button (`.xy-active` when engaged) |
@@ -236,6 +236,29 @@ raises before it reaches the client.
 <!-- Tailwind arbitrary variant, targeting the same attribute -->
 <div class="[&_[data-xy-slot=legend]]:bg-transparent"> … </div>
 ```
+
+### Colorbar label orientation
+
+The `colorbar_title` slot carries the colorbar's label (`title=` on the
+composition API, `Colorbar.set_label(...)` under `xy.pyplot`). Its orientation
+follows the bar, matching Matplotlib:
+
+| Orientation | Placement | Rotation |
+| --- | --- | --- |
+| vertical | centered beside the bar, outboard of the tick labels | 90° counter-clockwise (reads bottom-to-top) |
+| horizontal | centered below the bar, under the tick labels | upright |
+
+All three renderers agree on the vertical label: the browser client rotates it
+with `writing-mode: vertical-rl`, the SVG exporter with `rotate(-90 …)`, and
+the native PNG exporter with the rasterizer's quarter-turn glyph path
+(`_TEXT_ROT_CCW`). The two static exporters share the same baseline
+(`bar_x + bar_width + 38`), which `layout()` keeps inside the canvas via the
+extra right-margin room a labeled vertical colorbar reserves — so a long label
+is never clipped at a canvas edge.
+
+Quarter turns are exact in every renderer, including native PNG; only
+*arbitrary* text angles degrade there (glyphs stay upright), and a colorbar
+label never uses one.
 
 ## Why your styles always win
 

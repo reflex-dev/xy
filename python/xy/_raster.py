@@ -2100,13 +2100,19 @@ def _emit_colorbar(
                 _parse_color(text_color),
                 f"{value:g}",
             )
-        # The native text primitive does not rotate; a compact label above the
-        # bar remains legible and, crucially, stays inside the export canvas.
+        # Matplotlib rotates a vertical colorbar's label 90° CCW and centers it
+        # alongside the bar, outboard of the tick labels. The native glyph
+        # protocol rotates in quarter turns (_TEXT_ROT_CCW), so 90° is exact
+        # here; the upright-glyph limitation applies only to arbitrary angles.
+        # A horizontal label above the bar instead sat at `plot.y - 5`, where
+        # the glyph ascent overflowed the canvas top edge and was clipped. The
+        # baseline matches the SVG exporter's `x + width + 38` so both static
+        # paths agree, inside the room layout() already reserves for a label.
         if options.get("label"):
             cmd.text(
-                x,
-                y - 5,
-                0,
+                x + width + 38,
+                y + height / 2,
+                1 | _TEXT_ROT_CCW,
                 10,
                 _parse_color(text_color),
                 str(options["label"]),

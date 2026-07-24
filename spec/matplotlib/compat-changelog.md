@@ -266,5 +266,24 @@ colorbar domains) fully cleared.
   `subplots(..., toolbar=...)`, which forwards it to `figure` — overrides
   rcParams for one figure.
 
+### Colorbar label orientation — 2026-07-24 (Matplotlib 3.11.1 reference)
+
+- `Colorbar.set_label(...)` / `colorbar(label=...)` now render Matplotlib's
+  label geometry in native PNG: rotated 90° counter-clockwise and centered
+  beside a vertical bar, outboard of its tick labels. The native exporter had
+  instead drawn the label horizontally above the bar at `plot.y - 5`, where the
+  glyph ascent overflowed the canvas top edge and the text was clipped — the
+  placement was chosen on the since-outdated assumption that the native text
+  primitive could not rotate. It rotates in quarter turns
+  (`TEXT_ROTATED`/`TEXT_ROTATED_CW`, already used for rotated axis titles), so
+  90° is exact here; only arbitrary text angles still fall back to upright
+  glyphs. The two static exporters now share one baseline, so SVG and PNG
+  cannot drift. Browser and SVG output are unchanged — both were already
+  correct. This clears the three loud-free but visually wrong PDSH ch. 04.05
+  cells (`hist2d`, `hexbin`, and `imshow` colorbars with labels).
+- Non-pyplot (composition API) colorbars built with `xy.colorbar(title=...)`
+  share the same renderer, so their vertical labels change in PNG export the
+  same way. Horizontal colorbar labels are untouched in every renderer.
+
 Future entries must identify the Matplotlib release/revision, inventory
 additions or removals, and any compatibility-level changes.

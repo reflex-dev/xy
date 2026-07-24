@@ -553,6 +553,80 @@ def test_native_named_axis_collision_and_title_placement_controls(monkeypatch) -
     assert title_anchor == 2 | _raster._TEXT_ROT_CW
 
 
+def test_native_vertical_colorbar_label_is_rotated_beside_the_bar_inside_the_canvas(
+    monkeypatch,
+) -> None:
+    """A vertical colorbar's label must match Matplotlib: rotated 90° CCW,
+    centered alongside the bar and outboard of its ticks, fully on canvas.
+
+    It previously rendered horizontally above the bar at `plot.y - 5`, so the
+    glyph ascent overflowed the canvas top edge and the label was clipped.
+    """
+    from xy import _svg
+
+    chart = xy.heatmap_chart(
+        xy.heatmap([[0.0, 1.0], [2.0, 3.0]], colormap="viridis", domain=(0.0, 3.0)),
+        xy.colorbar(title="counts in bin"),
+        width=560,
+        height=320,
+    )
+    spec, blob = chart.figure().build_payload()
+    width, _height, _compact, plot = _svg.layout(spec)
+    recorded = _record_text(monkeypatch)
+    _raster.render_raster(spec, blob, scale=1)
+
+    label_x, label_y, anchor, size, _text = next(
+        entry for entry in recorded if entry[4] == "counts in bin"
+    )
+    # Rotated bottom-to-top (mpl rotation=90), centered along the reading axis.
+    assert anchor == 1 | _raster._TEXT_ROT_CCW
+    assert label_y == plot["y"] + plot["h"] / 2
+    # Beside the bar, past every tick label — not above the bar.
+    tick_x = max(entry[0] for entry in recorded if entry[4] in {"0", "1", "2", "3"})
+    assert label_x > tick_x
+    assert plot["y"] < label_y < plot["y"] + plot["h"]
+    # Inside the canvas: the rotated glyph box spans [x - ascent, x + descent]
+    # across the baseline (ascent ~0.78em, descent ~0.22em).
+    assert label_x + 0.22 * size < width
+
+
+def test_native_vertical_colorbar_label_leaves_the_canvas_edges_unpainted() -> None:
+    """The clipping symptom itself: no label ink may reach the canvas border."""
+    chart = xy.heatmap_chart(
+        xy.heatmap([[0.0, 1.0], [2.0, 3.0]], colormap="viridis", domain=(0.0, 3.0)),
+        xy.colorbar(title="counts in bin"),
+        width=560,
+        height=320,
+    )
+    pixels = _decode_rgba(chart.to_png())
+    ink = pixels[:, :, :3].astype(int).sum(axis=2) < 200
+    assert not ink[0].any() and not ink[-1].any()
+    assert not ink[:, 0].any() and not ink[:, -1].any()
+
+
+def test_native_horizontal_colorbar_label_stays_upright_below_the_bar(monkeypatch) -> None:
+    """The horizontal orientation reads left-to-right, so it must not rotate."""
+    from xy import _svg
+
+    chart = xy.heatmap_chart(
+        xy.heatmap([[0.0, 1.0], [2.0, 3.0]], colormap="viridis", domain=(0.0, 3.0)),
+        xy.colorbar(title="counts in bin", orientation="horizontal"),
+        width=560,
+        height=320,
+    )
+    spec, blob = chart.figure().build_payload()
+    _width, _height, _compact, plot = _svg.layout(spec)
+    recorded = _record_text(monkeypatch)
+    _raster.render_raster(spec, blob, scale=1)
+
+    label_x, label_y, anchor, _size, _text = next(
+        entry for entry in recorded if entry[4] == "counts in bin"
+    )
+    assert anchor & (_raster._TEXT_ROT_CCW | _raster._TEXT_ROT_CW) == 0
+    assert label_x == plot["x"] + plot["w"] / 2
+    assert label_y > plot["y"] + plot["h"]
+
+
 def test_native_diagonal_tick_angle_keeps_all_labels_when_they_fit(monkeypatch) -> None:
     # The native glyph protocol only rotates in quarter-turns, so a diagonal
     # tick_label_angle falls back to horizontal strategy="hide" — which must

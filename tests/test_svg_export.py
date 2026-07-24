@@ -384,6 +384,59 @@ def test_svg_vertical_colorbar_clears_right_named_axis_chrome() -> None:
     assert float(bar.get("x", "nan")) > plot["x"] + plot["w"] + 40
 
 
+def test_svg_vertical_colorbar_label_is_rotated_beside_the_bar_inside_the_canvas() -> None:
+    """SVG places a vertical colorbar's label like Matplotlib — rotated 90° CCW,
+    centered beside the bar, on canvas — and the native PNG exporter must agree
+    on the baseline so the two static paths cannot drift apart."""
+    from xy import _raster, _svg
+
+    chart = xy.heatmap_chart(
+        xy.heatmap([[0.0, 1.0], [2.0, 3.0]], colormap="viridis", domain=(0.0, 3.0)),
+        xy.colorbar(title="counts in bin"),
+        width=560,
+        height=320,
+    )
+    fig = chart.figure()
+    spec, blob = fig.build_payload()
+    width, _height, _compact, plot = _svg.layout(spec)
+    root = _parse(fig.to_svg())
+
+    label = next(node for node in root.iter() if node.text == "counts in bin")
+    label_x, label_y = float(label.get("x", "nan")), float(label.get("y", "nan"))
+    bar = next(
+        node for node in root.iter() if (node.get("fill") or "").startswith("url(#xy-colorbar-")
+    )
+    bar_x, bar_w = float(bar.get("x", "nan")), float(bar.get("width", "nan"))
+
+    # Rotated a quarter turn counter-clockwise about its own anchor.
+    assert label.get("transform") == f"rotate(-90 {label_x:g} {label_y:g})"
+    assert label.get("text-anchor") == "middle"
+    # Beside the bar and centered on it, never above it.
+    assert label_x > bar_x + bar_w
+    assert label_y == plot["y"] + plot["h"] / 2
+    # Inside the canvas the labeled colorbar reserved room for.
+    assert label_x < width
+
+    # The native PNG exporter shares this baseline.
+    recorded: list[tuple[float, float, int, float, str]] = []
+    original_text = _raster._Cmd.text
+
+    def record_text(self, x, y, anchor, size, color, value):
+        recorded.append((float(x), float(y), int(anchor), float(size), str(value)))
+        return original_text(self, x, y, anchor, size, color, value)
+
+    _raster._Cmd.text = record_text
+    try:
+        _raster.render_raster(spec, blob, scale=1)
+    finally:
+        _raster._Cmd.text = original_text
+    native_x, native_y, anchor, _size, _text = next(
+        entry for entry in recorded if entry[4] == "counts in bin"
+    )
+    assert (native_x, native_y) == (label_x, label_y)
+    assert anchor == 1 | _raster._TEXT_ROT_CCW
+
+
 def test_svg_colorbar_clears_primary_right_axis_and_bottom_axis_chrome() -> None:
     from xy import _svg
 
