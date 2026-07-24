@@ -27,7 +27,6 @@ ENTRIES_JS = (
     "const padding = '" + ("x" * 1000) + "';\n"
     "export default { render, decodeFrame };\n"
 )
-README_MD = "# XY\n" + ("README fixture\n" * 100)
 API_EXAMPLES_MD = (
     "# API Examples\n\n"
     "## Chart Family Quick Reference\n\n"
@@ -59,20 +58,10 @@ CONTRIBUTING_MD = (
     "## Pull Request Checklist\n\n"
     "Run make check-full, make check-sdist, make check-wheel, and "
     "make check-benchmark-report.\n"
-    "Run make check-examples for README snippets, spec/api/api-examples.md, and "
+    "Run make check-examples for spec/api/api-examples.md and "
     "the example apps.\n\n"
     "## Performance Claims\n\n"
     "Claims need benchmark context.\n" + ("contributing padding\n" * 100)
-)
-REFLEX_README_MD = (
-    "# reflex-xy showcase\n\n"
-    "Wired with reflex_xy.XYPlugin() in rxconfig.py; run with reflex run.\n"
-    + ("reflex readme padding\n" * 100)
-)
-FASTAPI_README_MD = (
-    "# xy FastAPI example\n\n"
-    "A FastAPI app that generates charts with chart.to_html() and serves a "
-    "live drilldown via POST /api/xy/drilldown.\n" + ("fastapi readme padding\n" * 100)
 )
 CI_YML = (
     "name: CI\n"
@@ -168,8 +157,6 @@ def _write_sdist(
                 data = STANDALONE_JS.encode("utf-8")
             elif name == "js/src/60_entries.ts":
                 data = ENTRIES_JS.encode("utf-8")
-            elif name == "README.md":
-                data = README_MD.encode("utf-8")
             elif name == "spec/api/api-examples.md":
                 data = API_EXAMPLES_MD.encode("utf-8")
             elif name == "spec/benchmarks/results.md":
@@ -178,10 +165,6 @@ def _write_sdist(
                 data = PRODUCTION_READINESS_MD.encode("utf-8")
             elif name == "spec/process/contributing.md":
                 data = CONTRIBUTING_MD.encode("utf-8")
-            elif name == "examples/reflex/README.md":
-                data = REFLEX_README_MD.encode("utf-8")
-            elif name == "examples/fastapi/README.md":
-                data = FASTAPI_README_MD.encode("utf-8")
             elif name == ".github/workflows/ci.yml":
                 data = CI_YML.encode("utf-8")
             elif name == ".github/workflows/codspeed.yml":
@@ -426,28 +409,6 @@ def test_verify_sdist_rejects_stale_contributing_doc(tmp_path: Path) -> None:
         verify_sdist.verify_sdist(str(sdist))
 
 
-def test_verify_sdist_rejects_stale_reflex_example_readme(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(
-        sdist,
-        replacements={"examples/reflex/README.md": "# Reflex\n" + ("padding\n" * 200)},
-    )
-
-    with pytest.raises(AssertionError, match="examples/reflex/README"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-def test_verify_sdist_rejects_stale_fastapi_example_readme(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(
-        sdist,
-        replacements={"examples/fastapi/README.md": "# FastAPI\n" + ("padding\n" * 200)},
-    )
-
-    with pytest.raises(AssertionError, match="examples/fastapi/README"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
 def test_verify_sdist_rejects_missing_release_workflow(tmp_path: Path) -> None:
     sdist = tmp_path / "xy-0.0.1.tar.gz"
     _write_sdist(sdist, omit={".github/workflows/release.yml"})
@@ -521,7 +482,7 @@ def test_verify_sdist_rejects_generated_artifacts(tmp_path: Path, artifact: str)
 
 def test_verify_sdist_rejects_duplicate_file_member(tmp_path: Path) -> None:
     sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(sdist, extra={"README.md": b"duplicate"})
+    _write_sdist(sdist, extra={"LICENSE": b"duplicate"})
 
     with pytest.raises(AssertionError, match="duplicate file member"):
         verify_sdist.verify_sdist(str(sdist))

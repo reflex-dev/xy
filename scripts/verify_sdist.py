@@ -34,10 +34,8 @@ REQUIRED_FILES = {
     "LICENSE",
     "Makefile",
     "PKG-INFO",
-    "README.md",
     "SECURITY.md",
     "benchmarks/__init__.py",
-    "benchmarks/README.md",
     "benchmarks/_browser.py",
     "benchmarks/_xy_browser.py",
     "benchmarks/baseline.json",
@@ -54,7 +52,6 @@ REQUIRED_FILES = {
     "benchmarks/bench_workflows.py",
     "benchmarks/categories.py",
     "benchmarks/environment.py",
-    "spec/README.md",
     "spec/design-dossier.md",
     "spec/api/api-examples.md",
     "spec/api/chart-roadmap.md",
@@ -97,12 +94,10 @@ REQUIRED_FILES = {
     "python/xy/static/index.js",
     "python/xy/static/standalone.js",
     "python/xy/widget.py",
-    "examples/fastapi/README.md",
     "examples/fastapi/pyproject.toml",
     "examples/fastapi/app.py",
     "examples/fastapi/charts.py",
     "examples/fastapi/live_drilldown.py",
-    "examples/reflex/README.md",
     "examples/reflex/pyproject.toml",
     "examples/reflex/rxconfig.py",
     "examples/reflex/xy_reflex_demo/__init__.py",
@@ -407,18 +402,6 @@ def verify_sdist(path: str) -> None:
             "make check-benchmark-report",
             "Performance Claims",
         },
-    )
-    _require_file_contains(
-        path,
-        root,
-        "examples/reflex/README.md",
-        {"reflex-xy showcase", "reflex run", "reflex_xy.XYPlugin()"},
-    )
-    _require_file_contains(
-        path,
-        root,
-        "examples/fastapi/README.md",
-        {"FastAPI", "chart.to_html()", "/api/xy/drilldown"},
     )
     _require_file_contains(
         path,

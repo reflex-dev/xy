@@ -18,7 +18,6 @@ from typing import Optional
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DOCS = (
     "pyproject.toml",
-    "README.md",
     "SECURITY.md",
     "CONTRIBUTING.md",
     "spec/api/api-examples.md",
@@ -26,8 +25,6 @@ DEFAULT_DOCS = (
     "spec/api/chart-roadmap.md",
     "spec/process/contributing.md",
     "spec/process/production-readiness.md",
-    "examples/reflex/README.md",
-    "examples/fastapi/README.md",
 )
 
 BROAD_SUPERLATIVE_RE = re.compile(
