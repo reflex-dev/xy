@@ -1320,8 +1320,8 @@ def _emit_scatter(
         and (t.get("stroke") is None or t["stroke"].get("mode") == "match_fill")
         and (color_mode in {"continuous", "categorical"} or size_mode == "continuous")
     ):
-        alpha = max(0, min(255, int(round(fill_op * 255))))
-        rgb = _parse_color(_css(ch.get("color"), color))[:3]
+        paint = _parse_color(_css(ch.get("color"), color))
+        alpha = max(0, min(255, int(round(fill_op * paint[3]))))
         cmd.affine_channel_points(
             cols[t["x"]],
             cols[t["y"]],
@@ -1329,7 +1329,7 @@ def _emit_scatter(
             sy,
             ch,
             size_ch,
-            (rgb[0], rgb[1], rgb[2], alpha),
+            (paint[0], paint[1], paint[2], alpha),
             sym,
             sw,
             stroke,
@@ -1349,9 +1349,9 @@ def _emit_scatter(
         and not t.get("channels")
         and (t.get("stroke") is None or t["stroke"].get("mode") == "match_fill")
     ):
-        alpha = max(0, min(255, int(round(fill_op * 255))))
-        rgb = _parse_color(_css(ch.get("color"), color))[:3]
-        fill = (rgb[0], rgb[1], rgb[2], alpha)
+        paint = _parse_color(_css(ch.get("color"), color))
+        alpha = max(0, min(255, int(round(fill_op * paint[3]))))
+        fill = (paint[0], paint[1], paint[2], alpha)
         radius = float(size_ch.get("size", 4.0)) / 2
         cmd.affine_points(cols[t["x"]], cols[t["y"]], sx, sy, radius, fill, sym, sw, stroke)
         return

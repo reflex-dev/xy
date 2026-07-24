@@ -2652,9 +2652,12 @@ class Axes(PlotTypeMixin):
                 indexes = {
                     "segments": (0, 2) if axis == "x" else (1, 3),
                     "triangle_mesh": (0, 2, 4) if axis == "x" else (1, 3, 5),
+                    "stem": (0,) if axis == "x" else (1,),
                 }.get(factory, ())
                 for index in indexes:
                     yield np.asarray(entry["args"][index], dtype=np.float64).reshape(-1), True
+                if factory == "stem" and axis == "y":
+                    yield np.asarray(entry.get("kwargs", {}).get("base", 0.0)).reshape(-1), True
                 if factory == "contour":
                     z = np.asarray(entry["args"][0])
                     coordinates = entry.get("kwargs", {}).get(key)
