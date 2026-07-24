@@ -1294,7 +1294,8 @@ author expects.
   `readTheme()`: `--chart-bg`, `--chart-grid`, `--chart-axis`, `--chart-text`. Chrome
   tokens read by the stylesheet: `--chart-tooltip-bg` / `--chart-tooltip-text`,
   `--chart-legend-bg`, `--chart-badge-bg` / `--chart-badge-text`, `--chart-modebar-bg` /
-  `--chart-modebar-active`, `--chart-selection` / `--chart-selection-fill`,
+  `--chart-modebar-active` / `--chart-modebar-focus`,
+  `--chart-selection` / `--chart-selection-fill`,
   `--chart-zoom-selection` / `--chart-zoom-selection-fill`, `--chart-crosshair`,
   `--chart-annotation-text`, `--chart-cursor` / `--chart-cursor-pan`, `--chart-focus`.
   Unset tokens fall back to a built-in theme (`currentColor` at documented opacities for

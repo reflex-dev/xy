@@ -149,7 +149,7 @@ export const XY_CHROME_CSS = `
 :where(.xy [data-xy-slot="canvas"][data-xy-dragmode="pan"]){cursor:var(--chart-cursor-pan,grab)}
 :where(.xy [data-xy-slot="canvas"][data-xy-dragmode="none"]){cursor:default}
 :where(.xy [data-xy-slot="canvas"]:focus-visible){outline:2px solid var(--chart-focus,#aa99ec);outline-offset:2px}
-:where(.xy) button[data-xy-slot="modebar_button"]:focus-visible{box-shadow:0 0 0 2px var(--chart-modebar-focus,var(--xy-modebar-focus)),0 0 0 3px var(--chart-modebar-bg,var(--xy-modebar-bg));outline:none}
+:where(.xy) button[data-xy-slot="modebar_button"]:focus-visible{box-shadow:0 0 0 2px var(--chart-modebar-focus,var(--chart-focus,var(--xy-modebar-focus))),0 0 0 3px var(--chart-modebar-bg,var(--xy-modebar-bg));outline:none}
 @media (prefers-reduced-motion:reduce){:where(.xy [data-xy-slot="modebar"]),:where(.xy) button[data-xy-slot="modebar_button"],:where(.xy [data-xy-modebar-menu-indicator]){transition-duration:0s!important}:where(.xy [data-xy-modebar-drag-handle]){transform:translate3d(calc(-100% - 5px),-50%,0);transition:opacity 120ms ease}:where(.xy [data-xy-slot="modebar"][data-xy-modebar-drag-peek-side="right"] [data-xy-modebar-drag-handle]){transform:translate3d(calc(100% + 5px),-50%,0)}}
 @media (forced-colors:active){:where(.xy [data-xy-slot="modebar"],.xy [data-xy-slot="tooltip"]){border:1px solid CanvasText}:where(.xy) button[data-xy-slot="modebar_button"].xy-active{outline:2px solid Highlight}:where(.xy [data-xy-slot="canvas"]:focus){outline:2px solid Highlight}}
 }

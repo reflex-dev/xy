@@ -297,13 +297,13 @@ move together across the whole chart.
 | `--chart-badge-bg` / `--chart-badge-text` | Reduction badges | light / dark |
 | `--chart-tick-label-max-width` | Maximum browser width of categorical y-axis tick labels | available edge space |
 | `--chart-modebar-bg` / `--chart-modebar-active` | Toolbar and active button | scheme-aware white/dark surface / `#edf1f6` light, `#121417` dark |
-| `--chart-modebar-focus` | Toolbar keyboard focus ring | `#1b212a` light, `#e2e5e9` dark |
+| `--chart-modebar-focus` | Toolbar keyboard focus ring | `--chart-focus`, else `#1b212a` light, `#e2e5e9` dark |
 | `--chart-selection` / `--chart-selection-fill` | Selection outline/fill | neutral grey matching the toolbar (follows a `.dark` root class) |
 | `--chart-zoom-selection` / `--chart-zoom-selection-fill` | Box-zoom outline/fill | same neutral grey as selection |
 | `--chart-crosshair` | Crosshair lines | translucent dark |
 | `--chart-annotation-text` | Annotation labels | falls back to `--chart-text` |
 | `--chart-cursor` / `--chart-cursor-pan` | Plot cursors | `crosshair` / `grab` |
-| `--chart-focus` | Keyboard focus outline | blue |
+| `--chart-focus` | Keyboard focus ring on the plot canvas, and on toolbar buttons unless `--chart-modebar-focus` is set | `#aa99ec` |
 
 You can define application-specific variables such as `--chart-accent` and use
 them from mark styles. XY validates the `var(...)` shape, then the browser
@@ -517,6 +517,12 @@ These neutral colors are built into every toolbar; an app does not need to map
 them to its own secondary palette. A `--chart-modebar-bg`,
 `--chart-modebar-active`, or `--chart-modebar-focus` value you set through
 `theme()`, chart `style=`, or a host stylesheet still wins in either mode.
+
+The toolbar's focus ring resolves in three steps: `--chart-modebar-focus`
+first, then `--chart-focus`, then the built-in scheme-aware neutral. So an app
+that themes focus once with `--chart-focus` gets one ring color across the plot
+canvas *and* the toolbar, and `--chart-modebar-focus` exists to break that tie
+when the toolbar needs its own.
 
 ## Dark mode in a standalone export
 
