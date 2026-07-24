@@ -1642,16 +1642,20 @@ class Figure(AnnotationsMixin, PayloadMixin):
         *,
         custom_css: Optional[str] = None,
         animation_progress: Optional[float] = None,
+        compress: bool = False,
     ) -> str:
         """Standalone interactive HTML: JS client + spec + base64 buffers in
         one self-contained file (base64 carries a ~33% size tax). `custom_css`
         injects an author stylesheet so `class_names` utility classes
-        (e.g. Tailwind) resolve in the export."""
+        (e.g. Tailwind) resolve in the export. `compress=True` gzips the
+        embedded client and data — self-extracting in the browser via
+        DecompressionStream, roughly halving the file (export.to_html)."""
         return export.to_html(
             self,
             path,
             custom_css=custom_css,
             animation_progress=animation_progress,
+            compress=compress,
         )
 
     def html(
@@ -1660,12 +1664,14 @@ class Figure(AnnotationsMixin, PayloadMixin):
         *,
         custom_css: Optional[str] = None,
         animation_progress: Optional[float] = None,
+        compress: bool = False,
     ) -> str:
         """Alias for ``to_html`` for component-style API symmetry."""
         return self.to_html(
             path,
             custom_css=custom_css,
             animation_progress=animation_progress,
+            compress=compress,
         )
 
     def _repr_html_(self) -> str:
