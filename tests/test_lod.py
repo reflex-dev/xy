@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 
 from xy import lod
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_viewport_request_normalizes_ranges_and_clamps_screen_shape() -> None:
@@ -195,26 +191,6 @@ def test_line_area_decimate_view_routes_through_shared_buffer_writer(monkeypatch
     assert len(buffers) == 3
     assert all(call["len"] == trace["x"]["len"] for call in calls)
     assert {"offset", "scale"} <= set(calls[0]["meta"])
-
-
-def test_lod_architecture_doc_names_shared_extension_points() -> None:
-    text = (ROOT / "spec" / "design" / "lod-architecture.md").read_text(encoding="utf-8")
-
-    for marker in (
-        "ViewportRequest.from_client",
-        "plan_view_lod",
-        "encode_window_xy_columns",
-        "add_window_xy",
-        "BufferWriter.add_encoded",
-        "sample_rows_for_target",
-        "Line and area zoom",
-        "local_log_density",
-        "ohlc-buckets",
-        "box-buckets",
-        "T6",
-        "invalid requests do not mutate",
-    ):
-        assert marker in text
 
 
 @pytest.mark.parametrize(

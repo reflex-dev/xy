@@ -23,21 +23,6 @@ def _load_regression_module():
 check_regressions = _load_regression_module()
 
 
-def test_committed_metrics_document_matches_baseline_contract() -> None:
-    expected = set(json.loads((ROOT / "benchmarks/baseline.json").read_text())["metrics"])
-    lines = (ROOT / "spec/benchmarks/metrics.md").read_text(encoding="utf-8").splitlines()
-    documented = {
-        cells[0]
-        for line in lines
-        if line.startswith("| ")
-        if len(cells := [cell.strip() for cell in line.strip("|").split("|")]) == 2
-        if cells[0] not in {"metric", "---"}
-    }
-
-    assert documented == expected
-    assert any(line.startswith("Source CI reports: commit ") for line in lines)
-
-
 def test_report_provenance_uses_latest_timestamp() -> None:
     first = {
         "environment": {

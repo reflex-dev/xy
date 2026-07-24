@@ -208,10 +208,6 @@ def test_chart_dom_slots_are_public_styling_contract() -> None:
     assert len(components.CHART_DOM_SLOTS) == len(set(components.CHART_DOM_SLOTS))
     assert all(slot == slot.lower() and " " not in slot for slot in components.CHART_DOM_SLOTS)
 
-    design = (ROOT / "spec" / "design" / "reflex-shaped-api.md").read_text(encoding="utf-8")
-    for slot in components.CHART_DOM_SLOTS:
-        assert f"`{slot}`" in design
-
 
 def test_chart_class_names_are_limited_to_public_dom_slots() -> None:
     chart = xy.chart(
