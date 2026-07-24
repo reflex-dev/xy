@@ -3430,17 +3430,6 @@ impl MeanColorCell {
     }
 }
 
-/// Fused count+color accumulation over a full grid: the shared core of
-/// `bin_2d_mean_color` and the pyramid build's base pass
-/// (`tiles::build_color`). Returns the raw accumulator cells so callers keep
-/// exact counts alongside the color means.
-///
-/// Fan-out is gated by the points-per-cell ratio (like `bin_2d`) and capped
-/// at 4: each worker's private accumulator is ~10× a count grid (40 B/cell),
-/// so the cap bounds the transient to ~4 grids while still cutting the
-/// pyramid's 100M-row base scan to a quarter. Integer sums merge
-/// order-independently — bitwise deterministic for any thread count.
-#[allow(clippy::too_many_arguments)]
 /// Byte budget for the mean-color scan's worker accumulators together. Each
 /// worker owns a private `cells × size_of::<MeanColorCell>()` (40 B/cell)
 /// grid; screen-sized grids and the 2048² default base level fit the full
@@ -3462,6 +3451,18 @@ fn mean_color_threads_for(row_threads: usize, cells: usize) -> usize {
     row_threads.min(4).min(by_memory)
 }
 
+/// Fused count+color accumulation over a full grid: the shared core of
+/// `bin_2d_mean_color` and the pyramid build's base pass
+/// (`tiles::build_color`). Returns the raw accumulator cells so callers keep
+/// exact counts alongside the color means.
+///
+/// Fan-out is gated by the points-per-cell ratio (like `bin_2d`), capped at
+/// 4, and shed further to fit `MEAN_COLOR_ACCUM_BUDGET_BYTES`: each worker's
+/// private accumulator is ~10× a count grid (40 B/cell), so the cap bounds
+/// the transient while still cutting the pyramid's 100M-row base scan to a
+/// quarter. Integer sums merge order-independently — bitwise deterministic
+/// for any thread count.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn bin_2d_mean_color_cells(
     x: &[f64],
     y: &[f64],
