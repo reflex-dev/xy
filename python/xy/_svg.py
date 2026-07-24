@@ -1244,6 +1244,20 @@ def _axis_tick_font_size(axis: dict[str, Any]) -> float:
     return max(8.0, float(style.get("tick_label_size", style.get("tick_size", 11))))
 
 
+def _axis_tick_label_offset(axis: dict[str, Any]) -> float:
+    """Distance from the axis spine to the near edge of a tick label.
+
+    Matplotlib's tick padding starts at the outward end of the tick mark, not
+    at the spine.  Keep that geometry shared by browser-equivalent SVG and
+    native raster output.
+    """
+    style = axis.get("style") or {}
+    length = max(0.0, float(style.get("tick_length", 0)))
+    direction = str(style.get("tick_direction", "out"))
+    outward = 0.0 if direction == "in" else length / 2 if direction == "inout" else length
+    return outward + max(0.0, float(style.get("tick_label_pad", 4)))
+
+
 def _axis_tick_label_layout(
     axis: dict[str, Any],
     values: list[float],
@@ -1485,6 +1499,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         )
         font_size = _axis_tick_font_size(axis)
         side = axis.get("side", "bottom" if is_x else "left")
+        label_offset = _axis_tick_label_offset(axis)
         # An explicit tick_label_anchor (axis spec or style) overrides the
         # angle/side-derived default. Anchored labels rotate about the tick
         # point (the rotate() pivot below), so anchor and rotation compose —
@@ -1496,9 +1511,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 row_offset = float(item["row"]) * (font_size + 4)
                 x = float(item["pos"])
                 y = (
-                    plot["y"] - 7 - row_offset
+                    plot["y"] - label_offset - font_size * 0.2 - row_offset
                     if side == "top"
-                    else plot["y"] + plot["h"] + 16 + row_offset
+                    else plot["y"] + plot["h"] + label_offset + font_size * 0.8 + row_offset
                 )
                 if explicit_anchor:
                     anchor = _TEXT_ANCHORS[explicit_anchor]
@@ -1509,8 +1524,12 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 else:
                     anchor = "start"
             else:
-                x = plot["x"] + plot["w"] + 8 if side == "right" else plot["x"] - 8
-                y = float(item["pos"]) + 4
+                x = (
+                    plot["x"] + plot["w"] + label_offset
+                    if side == "right"
+                    else plot["x"] - label_offset
+                )
+                y = float(item["pos"]) + font_size * 0.35
                 if explicit_anchor:
                     anchor = _TEXT_ANCHORS[explicit_anchor]
                 else:
@@ -1977,6 +1996,8 @@ def _annotation_svg(
                 y_text += font_size * 0.35
             elif vertical_align == "top":
                 y_text += font_size * 0.8
+            elif vertical_align == "bottom":
+                y_text -= font_size * 0.2
             tspans = "".join(
                 f'<tspan x="{_num(x_text)}" y="{_num(y_text + index * line_height)}">'
                 f"{escape(line)}</tspan>"

@@ -215,6 +215,7 @@ class Axis(Component):
     type_: Optional[str] = None  # "linear" | "time" | "log" | "symlog"
     constant: Optional[float] = None
     domain: Optional[tuple[float, float]] = None
+    margin: Optional[float] = None
     bounds: Union[tuple[float, float], Literal["data"], None] = None
     reverse: bool = False
     format: Optional[str] = None
@@ -2200,6 +2201,7 @@ def x_axis(
     type_: Optional[str] = None,
     constant: Optional[float] = None,
     domain: Optional[tuple[float, float]] = None,
+    margin: Optional[float] = None,
     bounds: Union[tuple[float, float], Literal["data"], None] = None,
     reverse: bool = False,
     format: Optional[str] = None,
@@ -2224,6 +2226,7 @@ def x_axis(
         type_: Scale type, such as ``linear``, ``time``, ``log``, or ``symlog``.
         constant: Width of the linear region around zero for ``symlog``.
         domain: Explicit minimum and maximum scale values.
+        margin: Fractional padding around an automatic domain.
         bounds: Hard navigation limits, or ``"data"`` to use the data range.
             Pan and zoom are clamped within these limits; ``None`` leaves
             navigation unrestricted.
@@ -2259,6 +2262,7 @@ def x_axis(
         type_=type_,
         constant=_axis_constant(constant, type_, "x_axis constant"),
         domain=_axis_domain(domain, "x_axis domain"),
+        margin=_optional_nonnegative_number(margin, "x_axis margin"),
         bounds=_axis_bounds(bounds, "x_axis bounds"),
         reverse=_strict_bool(reverse, "x_axis reverse"),
         format=_optional_string(format, "x_axis format"),
@@ -2288,6 +2292,7 @@ def y_axis(
     type_: Optional[str] = None,
     constant: Optional[float] = None,
     domain: Optional[tuple[float, float]] = None,
+    margin: Optional[float] = None,
     bounds: Union[tuple[float, float], Literal["data"], None] = None,
     reverse: bool = False,
     format: Optional[str] = None,
@@ -2312,6 +2317,7 @@ def y_axis(
         type_: Scale type, such as ``linear``, ``time``, ``log``, or ``symlog``.
         constant: Width of the linear region around zero for ``symlog``.
         domain: Explicit minimum and maximum scale values.
+        margin: Fractional padding around an automatic domain.
         bounds: Hard navigation limits, or ``"data"`` to use the data range.
             Pan and zoom are clamped within these limits; ``None`` leaves
             navigation unrestricted.
@@ -2347,6 +2353,7 @@ def y_axis(
         type_=type_,
         constant=_axis_constant(constant, type_, "y_axis constant"),
         domain=_axis_domain(domain, "y_axis domain"),
+        margin=_optional_nonnegative_number(margin, "y_axis margin"),
         bounds=_axis_bounds(bounds, "y_axis bounds"),
         reverse=_strict_bool(reverse, "y_axis reverse"),
         format=_optional_string(format, "y_axis format"),
@@ -3028,6 +3035,7 @@ class Chart(Component):
                 type_=axis.type_,
                 constant=axis.constant,
                 domain=axis.domain,
+                margin=axis.margin,
                 bounds=axis.bounds,
                 reverse=axis.reverse,
                 format=axis.format,

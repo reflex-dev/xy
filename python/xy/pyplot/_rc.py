@@ -63,6 +63,8 @@ _DEFAULTS: dict[str, Any] = {
     "ytick.major.size": 3.5,
     "xtick.major.width": 0.8,
     "ytick.major.width": 0.8,
+    "xtick.major.pad": 3.5,
+    "ytick.major.pad": 3.5,
     "legend.loc": "best",
     "legend.fontsize": "medium",
     "legend.facecolor": "inherit",
@@ -137,6 +139,8 @@ class RcParams(dict):
             "ytick.major.size",
             "xtick.major.width",
             "ytick.major.width",
+            "xtick.major.pad",
+            "ytick.major.pad",
         }:
             value = float(value)
             if value < 0:

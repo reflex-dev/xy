@@ -150,8 +150,9 @@ def export_data() -> tuple[np.ndarray, np.ndarray]:
 
 # -- paired build arms --------------------------------------------------------
 #
-# The raw arm mirrors the shim's implicit defaults (explicit x/y axes, the
-# 640x480 canvas) so the pair differs only in which API expressed the chart.
+# The raw arm mirrors the shim's implicit defaults (explicit x/y axes,
+# Matplotlib's 5% line margins, and the 640x480 canvas) so the pair differs
+# only in which API expressed the chart.
 # The pyplot arm includes plt.close("all") because figure-registry bookkeeping
 # is part of the shim's per-figure cost — the exact cost the guardrail bounds.
 
@@ -159,8 +160,8 @@ def export_data() -> tuple[np.ndarray, np.ndarray]:
 def _raw_line_payload(x: np.ndarray, y: np.ndarray) -> int:
     c = xy.chart(
         xy.line(x=x, y=y, color="#1f77b4"),
-        xy.x_axis(),
-        xy.y_axis(),
+        xy.x_axis(margin=0.05),
+        xy.y_axis(margin=0.05),
         width=WIDTH,
         height=HEIGHT,
     )

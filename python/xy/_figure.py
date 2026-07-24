@@ -175,6 +175,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         type_: Optional[str] = None,
         constant: Optional[float] = None,
         domain: Optional[tuple[float, float]] = None,
+        margin: Optional[float] = None,
         bounds: Any = None,
         reverse: bool = False,
         format: Optional[str] = None,
@@ -202,6 +203,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             domain = self._finite_increasing_pair(domain, f"{axis_id} axis domain")
             if type_ == "log" and domain[0] <= 0:
                 raise ValueError(f"{axis_id} log axis domain must be positive")
+        if margin is not None:
+            margin = self._nonnegative_scalar(margin, f"{axis_id} axis margin")
         if isinstance(bounds, str):
             if bounds != "data":
                 raise ValueError(f"{axis_id} axis bounds must be an increasing pair or 'data'")
@@ -235,6 +238,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             "type": type_,
             "constant": constant,
             "domain": domain,
+            "margin": margin,
             "bounds": bounds,
             "reverse": self._bool_param(reverse, f"{axis_id} axis reverse"),
             "format": self._optional_text(format, f"{axis_id} axis format"),
@@ -1040,21 +1044,35 @@ class Figure(AnnotationsMixin, PayloadMixin):
             if not positive_los:
                 raise ValueError(f"{axis_id} log axis requires at least one positive value")
             lo, hi = min(positive_los), max(positive_his)
-        if lo == hi:
+        margin = opts.get("margin")
+        if lo == hi and margin is None:
             pad = abs(lo) * 0.05 or 0.5
             lo, hi = lo - pad, hi + pad
             if scale == "log" and lo <= 0:
                 lo = hi / 10.0
             return (hi, lo) if opts.get("reverse") else (lo, hi)
-        pad = (hi - lo) * 0.03
+        if lo == hi:
+            # Match pyplot's singleton extent: an explicit margin is applied
+            # to a stable unit interval instead of being silently replaced by
+            # the core's legacy 5% nonsingular fallback.
+            hi = lo + 1.0
+        if margin is None:
+            margin = 0.03
+        if scale == "log" and opts.get("margin") is not None:
+            transformed_lo, transformed_hi = np.log10((lo, hi))
+            pad = (transformed_hi - transformed_lo) * margin
+            out_lo = 10.0 ** (transformed_lo - pad)
+            out_hi = 10.0 ** (transformed_hi + pad)
+        else:
+            pad = (hi - lo) * margin
+            out_lo = lo - pad
+            out_hi = hi + pad
         anchor = self._zero_baseline_anchor(axis_id)
-        out_lo = lo - pad
-        out_hi = hi + pad
         if anchor == "lo" and lo == 0.0 and hi > 0.0:
             out_lo = 0.0
         elif anchor == "hi" and hi == 0.0 and lo < 0.0:
             out_hi = 0.0
-        if scale == "log":
+        if scale == "log" and opts.get("margin") is None:
             out_lo = max(out_lo, lo / 10.0, np.nextafter(0.0, 1.0))
         return (out_hi, out_lo) if opts.get("reverse") else (out_lo, out_hi)
 

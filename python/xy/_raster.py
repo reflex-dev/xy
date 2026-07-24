@@ -31,6 +31,7 @@ from ._svg import (
     _axis_scales,
     _axis_tick_font_size,
     _axis_tick_label_layout,
+    _axis_tick_label_offset,
     _axis_tick_label_strategy,
     _colorbar_right_axis_room,
     _colormap_stops,
@@ -943,6 +944,7 @@ def render_raster(
         )
         font_size = _axis_tick_font_size(axis)
         side = axis.get("side", "bottom" if is_x else "left")
+        label_offset = _axis_tick_label_offset(axis)
         # An explicit tick_label_anchor (axis spec or style) overrides the
         # side-derived default, matching the browser client and SVG export.
         explicit_anchor = _tick_label_anchor(axis, axis_style, "")
@@ -951,11 +953,15 @@ def render_raster(
             if is_x:
                 row_offset = float(item["row"]) * (font_size + 4)
                 x = float(item["pos"])
-                y = py0 - 7 - row_offset if side == "top" else py1 + 15 + row_offset
+                y = (
+                    py0 - label_offset - font_size * 0.2 - row_offset
+                    if side == "top"
+                    else py1 + label_offset + font_size * 0.8 + row_offset
+                )
                 anchor = _TEXT_ANCHOR_CODES[explicit_anchor] if explicit_anchor else 1
             else:
-                x = px1 + 8 if side == "right" else px0 - 8
-                y = float(item["pos"]) + 4
+                x = px1 + label_offset if side == "right" else px0 - label_offset
+                y = float(item["pos"]) + font_size * 0.35
                 default_anchor = 0 if side == "right" else 2
                 anchor = _TEXT_ANCHOR_CODES[explicit_anchor] if explicit_anchor else default_anchor
             cmd.text(x, y, anchor | flag, font_size, tick_color, item["text"])
@@ -1203,6 +1209,8 @@ def _emit_annotations(
                 first_y += font_size * 0.35
             elif vertical_align == "top":
                 first_y += font_size * 0.8
+            elif vertical_align == "bottom":
+                first_y -= font_size * 0.2
             for index, line in enumerate(lines):
                 cmd.text(
                     x + float(ann.get("dx", 0.0)),

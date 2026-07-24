@@ -49,8 +49,9 @@ def test_margins_expand_only_automatic_domains() -> None:
 
     assert ax.get_xlim() == (9.0, 21.0)
     assert ax.get_ylim() == (90.0, 150.0)
-    assert _axis_child(ax, "x").domain == (9.0, 21.0)
-    assert _axis_child(ax, "y").domain == (90.0, 150.0)
+    figure = ax._build_chart(640, 480).figure()
+    assert figure.x_range() == (9.0, 21.0)
+    assert figure.y_range() == (90.0, 150.0)
 
     ax.set_xlim(0.0, 1.0)
     ax.margins(x=0.5)
@@ -178,6 +179,7 @@ def test_tick_params_records_supported_style_and_rejects_unknown() -> None:
         "tick_label_color": "#d62728",
         "tick_length": pytest.approx(7.0 * 100.0 / 72.0),
         "tick_width": pytest.approx(2.0 * 100.0 / 72.0),
+        "tick_label_pad": pytest.approx(3.5 * 100.0 / 72.0),
         "tick_direction": "in",
         # Always explicit (10 pt font.size at dpi 100): the render client and
         # static exporters otherwise fall back to their own 11 px default.

@@ -40,7 +40,9 @@ _DENSITY_KINDS = frozenset({"heatmap", "hexbin"})
 _AXIS_COLOR_PROPERTIES = frozenset(
     {"grid_color", "axis_color", "tick_color", "tick_label_color", "label_color"}
 )
-_AXIS_LENGTH_PROPERTIES = frozenset({"grid_width", "axis_width", "tick_length", "tick_width"})
+_AXIS_LENGTH_PROPERTIES = frozenset(
+    {"grid_width", "axis_width", "tick_length", "tick_width", "tick_label_pad"}
+)
 _AXIS_SIZE_PROPERTIES = frozenset({"tick_size", "tick_label_size", "label_size"})
 _AXIS_COMPAT_PROPERTIES = frozenset({"grid_dash", "grid_opacity"})
 _AXIS_DASH_STYLES = frozenset({"solid", "dashed", "dotted", "dashdot"})

@@ -1191,6 +1191,13 @@ class PlotTypeMixin:
         if kwargs.pop("fontproperties", None) is not None:
             raise not_implemented("bar_label(fontproperties=...)", alternative="fontsize=")
         check_unsupported(kwargs, "bar_label()")
+        if label_type == "edge":
+            value_axis = "y" if container.orientation == "vertical" else "x"
+            # Matplotlib's Annotation does not contribute its text bbox to
+            # dataLim. Its default 5% margin therefore leaves a padded 10 pt
+            # bar label on (or fractionally beyond) the top spine. Reserve a
+            # small label-aware default while preserving explicit margins().
+            self._reserve_annotation_margin(value_axis, 0.075)
         result: list[Text] = []
         for index, value in enumerate(values):
             if raw_labels[index] is not None:
@@ -1209,26 +1216,35 @@ class PlotTypeMixin:
                 if container.orientation == "vertical"
                 else (coordinate, centers[index])
             )
-            pixel_padding = float(padding) * (4.0 / 3.0)
+            pixel_padding = float(padding) * self._point_scale()
+            positive = value >= 0
             if container.orientation == "vertical":
                 anchor = "middle"
                 dx = 0.0
-                dy = 4.0 if label_type == "center" else -(4.0 + pixel_padding)
+                dy = pixel_padding * (1.0 if positive else -1.0)
+                # SVG/browser y grows downward, so matplotlib's positive
+                # point offset is an upward (negative) screen-space offset.
+                dy *= -1.0
+                vertical_align = (
+                    "center" if label_type == "center" else ("bottom" if positive else "top")
+                )
             elif label_type == "center":
-                anchor, dx, dy = "middle", 0.0, 4.0
+                anchor, dx, dy = "middle", pixel_padding * (1.0 if positive else -1.0), 0.0
+                vertical_align = "center"
             else:
-                positive = value >= 0
                 anchor = "start" if positive else "end"
-                dx = (4.0 + pixel_padding) * (1.0 if positive else -1.0)
-                dy = 4.0
+                dx = pixel_padding * (1.0 if positive else -1.0)
+                dy = 0.0
+                vertical_align = "center"
             text_kwargs: dict[str, Any] = {
                 "color": resolve_color(color) if color is not None else None,
                 "anchor": anchor,
                 "dx": dx,
                 "dy": dy,
+                "style": {"vertical_align": vertical_align},
             }
             if fontsize is not None:
-                text_kwargs["style"] = {"font_size": float(fontsize)}
+                text_kwargs["style"]["font_size"] = float(fontsize)
             entry = self._add("@text", {"args": (x, y, label), "kwargs": text_kwargs})
             result.append(Text(self, entry))
         return result

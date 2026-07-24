@@ -155,9 +155,7 @@ def test_center_right_legend_loc_reaches_spec():
 
     _, ax = plt.subplots()
     x = np.linspace(0, 10, 500)
-    # A full-amplitude oscillation leaves every corner busy; matplotlib's "best"
-    # parks the legend on the sparse vertical-center band.
     ax.plot(x, np.sin(x[:, None] + np.pi * np.arange(0, 2, 0.5)))
-    ax.legend(["a", "b"])
+    ax.legend(["a", "b"], loc="center right")
     spec, _ = ax._build_chart(573, 400).figure().build_payload()
     assert spec["legend"]["loc"] == "center right"

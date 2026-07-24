@@ -69,11 +69,11 @@ def test_nonlinear_scales_secondary_axes_and_affine_transforms() -> None:
     np.testing.assert_allclose(
         line.get_xdata(), [-(adjusted + 1), -adjusted, 0, adjusted, adjusted + 1]
     )
-    assert ax.get_xlim() == (-10, 10)
+    np.testing.assert_allclose(ax.get_xlim(), (-16.259646938814825, 16.259646938814825))
     secondary = ax.secondary_xaxis("top", functions=(lambda x: x * 100, lambda x: x / 100))
     secondary.set_xlabel("percent")
     axis = ax._build_chart(640, 480).figure().axis_options["xs1"]
-    assert axis["side"] == "top" and axis["tick_labels"][-1] == "1000"
+    assert axis["side"] == "top" and axis["tick_labels"][-1] == "1625.96"
 
     _, transformed = plt.subplots()
     line = transformed.plot([0, 1], [0, 1], transform=Affine2D().translate(2, 3))[0]
