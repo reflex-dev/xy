@@ -2093,11 +2093,29 @@ def _svg_text_box(
             stroke_width = max(0.0, float(parts[0].removesuffix("px")))
         except (IndexError, ValueError):
             stroke_width = 1.0
+    # `boxstyle="round"`/`round4` set border_radius; the browser gets it as CSS
+    # border-radius, so the exporters have to round the same corners or an
+    # exported box is square where the live one is not.
+    radius = _box_corner_radius(style, text_width + pad_x * 2, height)
+    radius_attr = f' rx="{_num(radius)}"' if radius > 0 else ""
     return [
         f'<rect x="{_num(left)}" y="{_num(top)}" '
-        f'width="{_num(text_width + pad_x * 2)}" height="{_num(height)}" '
+        f'width="{_num(text_width + pad_x * 2)}" height="{_num(height)}"{radius_attr} '
         f'fill="{fill}" stroke="{stroke}" stroke-width="{_num(stroke_width)}"/>'
     ]
+
+
+def _box_corner_radius(style: dict[str, Any], width: float, height: float) -> float:
+    """`border_radius` in px, clamped to the box like CSS does.
+
+    Shared by the SVG and native raster text-box emitters so an exported
+    ``boxstyle="round"`` bbox is rounded exactly once, the same way.
+    """
+    try:
+        radius = float(str(style.get("border_radius", 0) or 0).removesuffix("px"))
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(radius, width / 2.0, height / 2.0))
 
 
 def _segment_marks(

@@ -11,6 +11,7 @@ browser did that resolution for the SVG/widget.
 
 from __future__ import annotations
 
+import math
 import struct
 from collections.abc import Callable, Sequence
 from os import PathLike
@@ -32,6 +33,7 @@ from ._svg import (
     _axis_tick_font_size,
     _axis_tick_label_layout,
     _axis_tick_label_strategy,
+    _box_corner_radius,
     _colorbar_right_axis_room,
     _colormap_stops,
     _column,
@@ -646,6 +648,35 @@ class _Cmd:
 
 def _rect_pts(x0: float, y0: float, x1: float, y1: float) -> list[tuple[float, float]]:
     return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+
+
+def _round_rect_pts(
+    x0: float, y0: float, x1: float, y1: float, radius: float, *, steps: int = 4
+) -> list[tuple[float, float]]:
+    """A rounded rectangle as a closed polygon, corners arc-approximated.
+
+    The rasterizer draws polygons, not paths, so a `boxstyle="round"` bbox is
+    flattened here: `steps` segments per quarter turn is enough that a 5–8 px
+    corner reads as round at export scale. Degenerate radii fall back to the
+    square rect so callers never special-case it.
+    """
+    radius = max(0.0, min(radius, (x1 - x0) / 2.0, (y1 - y0) / 2.0))
+    if radius <= 0.0:
+        return _rect_pts(x0, y0, x1, y1)
+    pts: list[tuple[float, float]] = []
+    # (center, start angle) per corner, walking clockwise in screen space
+    # (y down) from the top-left so the winding matches _rect_pts.
+    corners = (
+        ((x0 + radius, y0 + radius), math.pi),
+        ((x1 - radius, y0 + radius), -math.pi / 2.0),
+        ((x1 - radius, y1 - radius), 0.0),
+        ((x0 + radius, y1 - radius), math.pi / 2.0),
+    )
+    for (cx, cy), start in corners:
+        for i in range(steps + 1):
+            angle = start + (math.pi / 2.0) * (i / steps)
+            pts.append((cx + radius * math.cos(angle), cy + radius * math.sin(angle)))
+    return pts
 
 
 def _grad_line(
@@ -1323,7 +1354,12 @@ def _emit_text_box(
     top = first_y - font_size * 0.8 - pad_y
     right = left + text_width + pad_x * 2
     bottom = top + font_size + (len(lines) - 1) * line_height + pad_y * 2
-    points = _rect_pts(left, top, right, bottom)
+    # `boxstyle="round"`/`round4` set border_radius, which the browser applies
+    # as CSS border-radius; round the same corners here or the exported box is
+    # square where the live one is not.
+    points = _round_rect_pts(
+        left, top, right, bottom, _box_corner_radius(style, right - left, bottom - top)
+    )
     if background is not None:
         cmd.fill(points, _parse_color(str(background)))
     if border:

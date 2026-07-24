@@ -4440,6 +4440,21 @@ class Axes(PlotTypeMixin):
                         )
                     )
                 else:
+                    # matplotlib paints Text with rcParams["text.color"]
+                    # (black by default). The engine's own annotation-label
+                    # fallback is a design token that differs per renderer
+                    # (SVG #667085, native rgba(32,32,32,.85), browser
+                    # --chart-annotation-text), so an uncoloured pyplot label
+                    # renders grey in the exporters. Pin matplotlib's default
+                    # here — the same thing the callout branch above already
+                    # does — so all three renderers agree without moving the
+                    # engine's non-pyplot defaults.
+                    text_kw["style"] = {
+                        "label_color": text_kw.get("color")
+                        or resolve_color(rcParams.get("text.color", "black"))
+                        or "black",
+                        **(text_kw.get("style") or {}),
+                    }
                     children.append(xy.text(x, y, *e["args"][2:], **text_kw))
         return children
 
@@ -5009,29 +5024,38 @@ def _bbox_label_style(
     A CSS approximation shared by the browser and static exporters.
     """
     style: dict[str, Any] = {}
-    face = bbox.get("fc", bbox.get("facecolor", "C0"))
     alpha = bbox.get("alpha")
+
+    def with_alpha(resolved: str) -> str:
+        """Composite the patch ``alpha`` into one resolved colour.
+
+        Matplotlib's ``bbox`` ``alpha`` is the *patch* alpha, not a face
+        alpha: the SVG backend emits it as element ``opacity``, which dims
+        the face and the edge together (so ``alpha=0.1`` leaves the default
+        black edge effectively invisible). CSS paints ``background`` and
+        ``border`` separately, so each has to carry the alpha itself.
+        """
+        if alpha is None:
+            return resolved
+        from ._colors import _rgba_floats
+
+        try:
+            r, g, b, a = _rgba_floats(resolved)
+        except ValueError:  # exotic CSS name: keep the colour, lose alpha
+            return resolved
+        return f"rgba({round(r * 255)},{round(g * 255)},{round(b * 255)},{float(alpha) * a:.3g})"
+
+    face = bbox.get("fc", bbox.get("facecolor", "C0"))
     if face is not None and face != "none":
         resolved = resolve_color(face)
         if resolved is not None:
-            if alpha is not None:
-                from ._colors import _rgba_floats
-
-                try:
-                    r, g, b, a = _rgba_floats(resolved)
-                except ValueError:  # exotic CSS name: keep the fill, lose alpha
-                    style["background"] = resolved
-                else:
-                    style["background"] = (
-                        f"rgba({round(r * 255)},{round(g * 255)},{round(b * 255)},"
-                        f"{float(alpha) * a:.3g})"
-                    )
-            else:
-                style["background"] = resolved
+            style["background"] = with_alpha(resolved)
     edge = bbox.get("ec", bbox.get("edgecolor", "black"))
     if edge is not None and edge != "none":
-        line_width = float(bbox.get("lw", bbox.get("linewidth", 1.0)))
-        style["border"] = f"{line_width:g}px solid {resolve_color(edge)}"
+        resolved_edge = resolve_color(edge)
+        if resolved_edge is not None:
+            line_width = float(bbox.get("lw", bbox.get("linewidth", 1.0)))
+            style["border"] = f"{line_width:g}px solid {with_alpha(resolved_edge)}"
     boxstyle = str(bbox.get("boxstyle", "square"))
     name = boxstyle.split(",")[0].strip()
     if "round" in name:
