@@ -1067,6 +1067,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
         """
         axis = self._axis_dim(axis_id)
         for t in self.traces:
+            # Only rectangle families have a sticky zero edge. Segment-based
+            # marks such as stem/errorbar also carry x0/x1/y0/y1 columns, but
+            # Matplotlib pads their baseline like ordinary line data.
+            if t.kind not in {"bar", "histogram"}:
+                continue
             if axis == "x" and t.x_axis != axis_id:
                 continue
             if axis == "y" and t.y_axis != axis_id:
