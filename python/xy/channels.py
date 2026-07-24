@@ -544,6 +544,16 @@ def colormap_lut_rgba8(colormap: str) -> npt.NDArray[np.uint8]:
     return lut
 
 
+def categorical_palette(palette: list[str], n_categories: int) -> list[str]:
+    """The shipped `color.palette`: one color per category, repeating the base
+    palette once its colors run out.
+
+    The repeat rule is a wire contract — the client indexes this list by
+    category code (and folds wide codes modulo it) — so it has exactly one
+    definition, shared by every producer of a categorical color spec."""
+    return [palette[i % len(palette)] for i in range(n_categories)]
+
+
 def palette_rgba8(palette: list[str], n_categories: int) -> npt.NDArray[np.uint8]:
     """Categorical palette colors as straight-alpha RGBA8 LUT rows.
 
@@ -748,7 +758,7 @@ def ship_color_channel(
             color_spec["dtype"] = "u8"
         else:
             color_spec["buf"] = ship_scalar(codes)
-        color_spec["palette"] = [palette[i % len(palette)] for i in range(len(categories))]
+        color_spec["palette"] = categorical_palette(palette, len(categories))
 
     return color_spec
 

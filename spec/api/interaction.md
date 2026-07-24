@@ -413,10 +413,19 @@ Mechanics per entry kind:
   and swaps its palette LUT for a variant whose other entries are blended
   toward `--chart-bg`. RGB-blend, not alpha: the mark shaders read
   `texture(u_lut, …).rgb` and force alpha to 1, so an alpha fade would be a
-  silent no-op. The original LUT is restored on leave. A categorical row
-  cannot dim sibling categories *inside* an aggregated density plane — the
-  plane is one texture (§28: recorded, not silent); the whole trace still
-  dims when some other row is hovered.
+  silent no-op. The original LUT is restored on leave. An aggregated
+  density plane cannot dim sibling categories *exactly* (one texture,
+  §28), but its mean-color cells carry the categories' own drawn colors,
+  so the LUT-dim rule applies at CELL granularity: each occupied cell is
+  classified by nearest palette color, sibling-class cells blend toward
+  the background by the same factor, the hovered category's cells keep
+  their full color, and cell alpha (the physical compositing of the
+  cell's own points, LOD doc §2) is untouched. Mixed boundary cells dim
+  by their nearest class — the recorded (§28) approximation of the exact
+  per-point dim. The retained sample overlay dims its sibling points
+  through the same palette LUT. All of it restores on leave (the dimmed
+  plane is a temporary texture; the original is put back), and the whole
+  trace still dims when some other row is hovered.
 
 Legend entry labels (same build, `_buildLegend`): a continuous row is titled
 by `t.name`, else the encoding's declarative `color.label` (the
@@ -460,13 +469,27 @@ non-bool hidden) are dropped without mutating state.
   translates drawn vertices back to shipped rows so hover readouts and
   kernel picks stay exact; `_visInv` maps the kernel's shipped-space
   selection indices onto the filtered buffers.
-- **Category rows on a density-tier trace**: local aggregates were computed
-  unfiltered and are stale under the predicate (§34) — worse, a cached
-  window that still "covers" the view would elide the kernel request
-  entirely. The client drops its density and point-window caches, filters
-  the retained sample overlays locally (the pre-reply frame stops showing
-  the category immediately), and re-requests through the normal
-  `density_view` path. The kernel bypasses the unfiltered pyramid (the
+- **Category rows on a density-tier trace** (the rows exist because the
+  first-paint density entry ships a slim categorical `color` spec —
+  categories + palette, no per-point buffer; wire-protocol doc): local
+  aggregates were computed unfiltered and are stale under the predicate
+  (§34) — worse, a cached window that still "covers" the view would elide
+  the kernel request entirely, and so would the *standing home aggregate*
+  at an unzoomed view. The client drops its density and point-window
+  caches, filters the retained sample overlays locally (the pre-reply
+  frame stops showing the category immediately), marks the trace
+  **filter-dirty** — request planning skips aggregate-stands elision until
+  a reply stamped with the current hidden set lands an *aggregate*; a
+  stamped points-mode reply (masked drill) is admitted but leaves the flag
+  set, since it bins no grid under the mask and the standing aggregate is
+  still the previous predicate's — and re-requests
+  through the normal `density_view` path. Density textures are keyed by
+  the hidden set they were binned under: the display stands-rule (T13
+  facts-only landing) holds only between same-key textures, so a reply
+  carrying a different key repaints the standing surface — in either
+  direction, mask applied or lifted. The T13 duplicate-request memo carries
+  the same key: a sub-texel twin window under a different hidden set is a
+  new request, never an answered duplicate. The kernel bypasses the unfiltered pyramid (the
   §34 point: static aggregates are wrong under any dynamic predicate),
   re-bins the visible rows (Tier B), tags the reply's `binning` with
   `-masked`, and stamps it with `filter: {hidden_categories}`. The client

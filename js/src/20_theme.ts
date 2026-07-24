@@ -2,6 +2,18 @@
 // Colors & theming (§36: chrome inherits CSS; marks read --chart-* tokens)
 // ---------------------------------------------------------------------------
 
+// A computed-style `rgb()`/`rgba()` string as unit RGBA, or null if the value
+// is not one (`transparent` resolves to rgba(0,0,0,0) and parses fine; a
+// keyword like `none` does not). Every consumer of a computed color goes
+// through here so the two readers below cannot drift.
+function parseRgbFunc(raw) {
+  const m = raw && raw.match(/rgba?\(([^)]+)\)/);
+  if (!m) return null;
+  const parts = m[1].split(/[,/\s]+/).filter(Boolean).map(Number);
+  const [r, g, b, a = 1] = parts;
+  return [r / 255, g / 255, b / 255, a];
+}
+
 function resolveCssColor(host, expr) {
   const probe = document.createElement("span");
   probe.style.display = "none";
@@ -9,11 +21,7 @@ function resolveCssColor(host, expr) {
   host.appendChild(probe);
   const rgb = getComputedStyle(probe).color;
   host.removeChild(probe);
-  const m = rgb.match(/rgba?\(([^)]+)\)/);
-  if (!m) return null;
-  const parts = m[1].split(/[,/\s]+/).filter(Boolean).map(Number);
-  const [r, g, b, a = 1] = parts;
-  return [r / 255, g / 255, b / 255, a];
+  return parseRgbFunc(rgb);
 }
 
 function cssToken(el, name) {
@@ -46,6 +54,23 @@ export function parseColor(host, c, fallback) {
     console.warn(`xy: unresolvable color ${JSON.stringify(expr)}; using fallback`);
   }
   return fallback;
+}
+
+// The color actually painted behind the chart's marks. The canvas is
+// transparent-capable, so when the theme sets no --chart-bg the visual
+// backdrop is the nearest ancestor that paints a background — walk up and
+// take the first non-transparent computed background-color. With nothing
+// painted anywhere, fall back by scheme: near-black under the `.dark`
+// ancestor convention (XY_CHROME_CSS below), else white. Legend dims blend
+// toward this color; blending toward a white fallback on a dark page reads
+// as sibling categories BRIGHTENING into pastels instead of fading.
+export function chartBackdrop(root, themeBg) {
+  if (Array.isArray(themeBg) && themeBg[3] > 0.01) return themeBg;
+  for (let el = root; el; el = el.parentElement) {
+    const c = parseRgbFunc(getComputedStyle(el).backgroundColor);
+    if (c && c[3] > 0.01) return [c[0], c[1], c[2], 1];
+  }
+  return root.closest && root.closest(".dark") ? [0.043, 0.051, 0.063, 1] : [1, 1, 1, 1];
 }
 
 export function readTheme(root) {

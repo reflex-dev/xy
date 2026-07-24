@@ -1095,7 +1095,7 @@ class PayloadMixin(_Host):
         sample = self._density_sample_spec(t, sel, visible, xr, yr, pw, sample_sel=sample_sel)
         if sample is not None:
             density["sample"] = sample
-        return {
+        entry = {
             "id": t.id,
             "kind": "scatter",
             "name": t.name,
@@ -1108,3 +1108,18 @@ class PayloadMixin(_Host):
             "y_axis": t.y_axis,
             "density": density,
         }
+        if categorical and t.color_ch is not None:
+            # Legend chrome needs the encoding even though the per-point codes
+            # aggregate into the mean-color plane: ship the channel spec slim
+            # (categories + palette, no per-point `buf`) so category rows
+            # exist for density-tier traces — the §10 category-toggle path is
+            # unreachable without them, and every client consumer of a color
+            # buffer already guards on `buf`. Continuous channels stay
+            # deliberately unshipped here: a gradient row would claim
+            # color == density.
+            color_spec = t.color_ch.spec()
+            color_spec["palette"] = channels.categorical_palette(
+                DEFAULT_PALETTE, len(t.color_ch.categories or ())
+            )
+            entry["color"] = color_spec
+        return entry

@@ -1159,6 +1159,16 @@ function lodRememberDensityFacts(view, g, upd) {
   }
 }
 
+// Canonical string form of a §34 hidden-category set — the identity every
+// aggregate is keyed by: which predicate it was binned under. Grids are
+// stamped with it, requests carry it, and replies are admitted by it, so the
+// ONE canonicalization lives here (sorted, so a client-side Set and the
+// kernel's `hidden_categories` array always agree). Empty = unmasked, which
+// is what the build-time home grid carries.
+export function lodFilterKey(codes) {
+  return Array.from(codes || []).sort((a: any, b: any) => a - b).join(",");
+}
+
 // Apply a kernel "density"-mode update: new grid texture with eased exposure
 // normalization, previous grid kept for the crossfade, source remembered in
 // the per-trace cache.
@@ -1180,6 +1190,10 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
   // still applies the reply: silence must never blank a frame (T1).
   // Standalone clients keep applying everything — their re-binned grids
   // are the only refinement they have.
+  // Filter identity of this reply (interaction spec §10 / §34): the grid is
+  // only interchangeable with textures binned under the SAME hidden-category
+  // set. The build-time home grid carries no key (= unmasked).
+  const replyFilterKey = lodFilterKey(upd.filter && upd.filter.hidden_categories);
   if (view.comm) {
     const sw = g._stepReqWin;
     const tol = sw ? (Math.abs(sw[1] - sw[0]) + Math.abs(sw[3] - sw[2])) * 1e-6 + 1e-300 : 0;
@@ -1190,7 +1204,11 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
       g._stepReqWin = null;
     } else {
       const covering = lodDensityForView(view, g);
-      if (covering && covering.tex && view._viewInsideRange(covering.xRange, covering.yRange)) {
+      // A covering texture binned under a DIFFERENT hidden-category set is a
+      // stale predicate's aggregate (§34) — it must be repainted, never
+      // stood on, in either direction (mask applied or lifted).
+      if (covering && covering.tex && view._viewInsideRange(covering.xRange, covering.yRange) &&
+          (covering._filterKey || "") === replyFilterKey) {
         lodRememberDensityFacts(view, g, upd);
         return;
       }
@@ -1219,6 +1237,7 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
     grid,
     rgba,
     filter,
+    _filterKey: replyFilterKey,
     tex: view._uploadGrid(
       grid, d.w, d.h, normMax, rgba, filter, view._fillOpacity(g.trace.style),
     ),

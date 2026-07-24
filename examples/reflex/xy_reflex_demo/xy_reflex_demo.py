@@ -21,6 +21,12 @@ via `inspect.getsource`.
    scatter from ``examples/fastapi`` — identical data and mark config — as one
    ``reflex_xy.inline`` token with zero transport code, for A/B-ing the two
    hosts. ``XY_LIVE_POINTS`` resizes it (both apps honor the same override).
+7. **Legend hover-highlight and click-to-toggle.** Left: named series on the
+   direct tier — hovering a legend row dims the others, clicking hides a
+   series entirely client-side (interaction spec §9/§10). Right: a categorical
+   density scatter behind an ``inline()`` token — clicking a category row
+   sends ``legend_toggle`` over the app websocket and the kernel re-bins the
+   surface with that category masked out (§34).
 
 Run from ``examples/reflex``::
 
@@ -116,6 +122,68 @@ def orbits_chart() -> xy.Chart:
 # Registered at import; the content-addressed token resolves on any backend
 # worker.
 ORBITS_TOKEN = reflex_xy.inline(orbits_chart())
+
+
+# --- legend interactivity (§7) ----------------------------------------------
+
+
+def legend_series_chart() -> xy.Chart:
+    """Three named series on the direct tier. Hovering a legend row dims the
+    other series; clicking a row hides its series — a pure client hide (0 wire
+    bytes), so both work even on this static-payload chart. Defaults are on;
+    ``xy.legend(highlight=False)`` / ``xy.legend(toggle=False)`` opt out."""
+    rng = np.random.default_rng(7)
+    marks = [
+        xy.scatter(
+            rng.normal(cx, 0.5, 60_000),
+            rng.normal(cy, 0.5, 60_000),
+            name=name,
+            opacity=0.7,
+        )
+        for name, cx, cy in (
+            ("baseline", -1.5, -0.8),
+            ("candidate", 0.0, 0.9),
+            ("control", 1.6, -0.4),
+        )
+    ]
+    return xy.scatter_chart(
+        *marks,
+        xy.legend(),
+        xy.x_axis(label="x"),
+        xy.y_axis(label="y"),
+        title="named series — hover dims, click hides",
+        width="100%",
+        height=300,
+    )
+
+
+def legend_category_chart() -> xy.Chart:
+    """One categorical density scatter: a legend row per category. Clicking a
+    row sends ``legend_toggle`` over the app websocket; the kernel drops that
+    category before re-binning the density surface (§34 — the reply's binning
+    is tagged ``-masked``) and the retained sample overlay filters instantly
+    while the re-bin is in flight."""
+    rng = np.random.default_rng(21)
+    n = 1_200_000
+    cat = rng.integers(0, 3, n)
+    centers = np.array([[-1.2, -0.6], [0.2, 1.1], [1.5, -0.9]])
+    x = rng.normal(centers[cat, 0], 0.55)
+    y = rng.normal(centers[cat, 1], 0.55)
+    labels = np.array(["sensor A", "sensor B", "sensor C"])[cat]
+    return xy.scatter_chart(
+        xy.scatter(x, y, color=labels, opacity=0.7, density=True),
+        xy.legend(),
+        xy.x_axis(label="x"),
+        xy.y_axis(label="y"),
+        title="categorical density — click a row to mask & re-bin",
+        width="100%",
+        height=300,
+    )
+
+
+# Kernel-served so category toggles reach `legend_toggle` and the masked
+# re-bin path; a static payload would only filter the local sample overlay.
+LEGEND_CATS_TOKEN = reflex_xy.inline(legend_category_chart())
 
 
 # --- the live drilldown, adapter-native (§6) --------------------------
@@ -519,6 +587,17 @@ def drilldown_view() -> rx.Component:
     return reflex_xy.chart(DRILLDOWN_TOKEN, height="430px", id="drilldown")
 
 
+# §7 wiring — legend interactivity ships with the charts; no handlers needed
+def legend_view() -> rx.Component:
+    return rx.grid(
+        reflex_xy.chart(legend_series_chart(), height="300px", id="legend-series"),
+        reflex_xy.chart(LEGEND_CATS_TOKEN, height="300px", id="legend-cats"),
+        columns="2",
+        gap="1rem",
+        width="100%",
+    )
+
+
 def index() -> rx.Component:
     return rx.container(
         rx.vstack(
@@ -617,6 +696,19 @@ def index() -> rx.Component:
                 "resizes both apps for side-by-side comparison.",
                 drilldown_view(),
                 code_accordion(drilldown_chart, drilldown_view),
+            ),
+            section(
+                "7 · Legend: hover to emphasize, click to toggle",
+                "Hover a legend row to dim every other series; click it to "
+                "hide/show what it stands for. Left: named series — a pure "
+                "client-side hide (0 wire bytes). Right: a categorical density "
+                "scatter served by the kernel — a category click sends "
+                "legend_toggle over the app websocket and the surface is "
+                "re-binned with the category masked out (§34). Both default "
+                "on: xy.legend(highlight=False) / xy.legend(toggle=False) "
+                "opt out.",
+                legend_view(),
+                code_accordion(legend_series_chart, legend_category_chart, legend_view),
             ),
             spacing="5",
             width="100%",

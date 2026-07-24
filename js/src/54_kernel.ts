@@ -3,7 +3,7 @@ import { buildLutData } from "./10_colormaps";
 import { parseColor } from "./20_theme";
 import {
   lodAggregateStands, lodAggregateStepWindow, lodApplyDensityUpdate, lodApplyDrill,
-  lodDrillServesView, lodDropDrill, lodPromoteCachedDrill, lodRememberDensity,
+  lodDrillServesView, lodDropDrill, lodFilterKey, lodPromoteCachedDrill, lodRememberDensity,
 } from "./45_lod";
 import { xyCreateRebinWorker } from "./46_worker";
 import { ChartView } from "./50_chartview";
@@ -125,7 +125,10 @@ Object.assign(ChartView.prototype, {
           // A ladder-step request's reply is the one density reply allowed
           // to repaint a covered view (lodApplyDensityUpdate).
           if (plan.step) g._stepReqWin = win;
-          g._lastDensityReq = { win, w: plotW, h: plotH, seq, sentAt: sendNow, answered: false };
+          g._lastDensityReq = {
+            win, w: plotW, h: plotH, seq, sentAt: sendNow, answered: false,
+            filterKey: this._traceFilterKey(g),
+          };
         }
       }
     };
@@ -159,8 +162,20 @@ Object.assign(ChartView.prototype, {
   _densityRequestDup(g, win, plotW, plotH, now) {
     const last = g._lastDensityReq;
     if (!last || !this._densityRequestSame(last, win, plotW, plotH)) return null;
+    // A twin window under a DIFFERENT hidden-category set (§34) is a new
+    // request, not a duplicate — "deterministic for unchanged data" assumes
+    // an unchanged predicate.
+    if ((last.filterKey || "") !== this._traceFilterKey(g)) return null;
     if (last.answered) return last;
     return now - last.sentAt < 1200 ? last : null;
+  },
+
+  // The §34 hidden-category set this trace's next reply will be computed
+  // under, as a canonical string key. Part of request identity (dup memo)
+  // and reply admission (the density_update filter guard).
+  _traceFilterKey(g) {
+    const ti = this.gpuTraces.indexOf(g);
+    return lodFilterKey(this._legendOffCats && this._legendOffCats.get(ti));
   },
 
   // What (if anything) this trace should ask the kernel for at `view`
@@ -173,7 +188,12 @@ Object.assign(ChartView.prototype, {
   _densityRequestPlan(g, view) {
     const [x0, x1] = this._axisRange(g.xAxis, view);
     const [y0, y1] = this._axisRange(g.yAxis, view);
-    if (!lodAggregateStands(this, g, x0, x1, y0, y1)) {
+    // Filter-dirty (interaction spec §10 / §34): every grid on the client was
+    // computed under a previous hidden-category set — including the standing
+    // home aggregate, which would otherwise elide the request entirely. Force
+    // the full-window re-bin; the flag clears when a reply stamped with the
+    // current mask applies.
+    if (g._filterDirty || !lodAggregateStands(this, g, x0, x1, y0, y1)) {
       return {
         win: [Math.min(x0, x1), Math.max(x0, x1), Math.min(y0, y1), Math.max(y0, y1)],
         step: false,
@@ -524,13 +544,16 @@ Object.assign(ChartView.prototype, {
         // under a different hidden-category set than the client's current
         // one would render a stale predicate's aggregate. The toggle that
         // changed the set already scheduled a fresh request.
-        const ti = this.gpuTraces.indexOf(g);
-        const want = Array.from(
-          (this._legendOffCats && this._legendOffCats.get(ti)) || []
-        ).sort((a: any, b: any) => a - b);
-        const got = (upd.filter && upd.filter.hidden_categories) || [];
-        if (want.join(",") !== got.join(",")) continue;
+        if (this._traceFilterKey(g) !== lodFilterKey(upd.filter && upd.filter.hidden_categories)) {
+          continue;
+        }
         if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
+        // The current mask has an aggregate again; request planning may
+        // resume normal aggregate-stands elision. A points drill above must
+        // NOT clear the flag: it lands no grid under the mask, so the only
+        // standing aggregate is still the previous predicate's — planning
+        // keeps forcing the full-window re-bin until a stamped grid arrives.
+        g._filterDirty = false;
         lodApplyDensityUpdate(this, g, upd, buffers);
       }
       // Drill state changes what's pickable; hover needs the FBO ready.

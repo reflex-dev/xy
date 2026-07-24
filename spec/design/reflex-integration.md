@@ -579,7 +579,10 @@ examples/reflex/  (repo root) reflex-xy showcase: figure-var drilldown with
                              and the fastapi live drilldown served adapter-
                              natively from an inline() token (same data and
                              XY_LIVE_POINTS override, zero transport code —
-                             the cross-host A/B for that chart)
+                             the cross-host A/B for that chart), plus legend
+                             hover-highlight and click-to-toggle (named series
+                             client-side; a categorical density inline() token
+                             whose category toggles re-bin kernel-side, §34)
 examples/fastapi/ (repo root) the same charts + a live 100M drilldown served
                              from a plain FastAPI app (no committed HTML)
 tests/reflex_adapter/        69 tests: token/registry/var/bridge/payload-asset

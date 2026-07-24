@@ -209,7 +209,13 @@ a masked reply's `binning` gains a `-masked` suffix and the trace entry
 carries `filter: {hidden_categories: [...]}` — the filter state it was
 computed under (§37 filter_hash-lite) — which the client compares against
 its own current set, dropping stale-predicate replies (interaction spec
-§10).
+§10). So that category rows exist to click at all, a categorical
+density-tier first-paint entry carries a **slim** `color` spec —
+`{mode: "categorical", categories, palette}`, no per-point `buf` (the codes
+aggregated into the mean-color plane) — which legend chrome consumes and
+every buffer consumer ignores (they all guard on `buf`). Continuous density
+entries ship no `color` spec, deliberately: a gradient row on an aggregated
+surface would claim color == density.
 
 The client enforces `msg.seq` only when it is present, and additionally
 accepts `msg.trace` and `msg.stale` for pending-request bookkeeping — no

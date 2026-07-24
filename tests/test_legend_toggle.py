@@ -17,6 +17,8 @@ Browser probes skip (never fail) without Chromium, like the repo's others.
 
 from __future__ import annotations
 
+import base64
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -24,7 +26,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from conftest import run_browser_probe
+from conftest import density_category_chart, probe_document, run_browser_probe
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
@@ -33,11 +35,6 @@ import xy  # noqa: E402
 from xy import channel  # noqa: E402
 from xy._figure import Figure  # noqa: E402
 from xy.export import find_chromium  # noqa: E402
-
-_RENDER_CALLS = (
-    'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);',
-    'xy.renderStandalone(document.getElementById("chart"), spec, buf);',
-)
 
 
 def _density_fig(n: int = 400_000) -> tuple[Figure, np.ndarray]:
@@ -146,6 +143,29 @@ def test_legend_toggle_validation_never_mutates() -> None:
         plain.legend_toggle(0, True, category=0)
 
 
+def test_density_entry_ships_slim_categorical_spec() -> None:
+    # A categorical density trace aggregates its per-point codes into the
+    # mean-color plane, but the legend still needs the encoding to offer
+    # category rows — without them the §10 density-tier category toggle is
+    # unreachable. The spec ships slim: categories + palette, no `buf`.
+    fig, _ = _density_fig()
+    entry = fig.build_payload()[0]["traces"][0]
+    assert entry["tier"] == "density"
+    color = entry["color"]
+    assert color["mode"] == "categorical"
+    assert color["categories"] == ["A", "B", "C"]
+    assert len(color["palette"]) == 3
+    assert "buf" not in color
+
+    # Continuous stays deliberately unshipped: a gradient legend row on an
+    # aggregated surface would claim color == density.
+    cont = Figure()
+    rng = np.random.default_rng(3)
+    xs = rng.normal(size=1000)
+    cont.scatter(xs, rng.normal(size=1000), color=np.abs(xs), density=True)
+    assert "color" not in cont.build_payload()[0]["traces"][0]
+
+
 def test_legend_toggle_option() -> None:
     data = {"x": np.arange(8.0), "y": np.arange(8.0)}
     disabled = xy.scatter_chart(xy.scatter("x", "y", data=data), xy.legend(toggle=False))
@@ -226,6 +246,283 @@ _TOGGLE_PROBE = """
 """
 
 
+_DENSITY_TOGGLE_PROBE = """
+<script>
+(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0)).buffer;
+  try {
+    const view = window.__fcProbeView;
+    if (!view) throw new Error("no probe view captured");
+    view._drawNow();
+    view._raf = null;
+    const sent = [];
+    view.comm = { send: (m) => sent.push(m) };
+    let rows = [];
+    for (let i = 0; i < 200; i++) {
+      rows = [...document.querySelectorAll('[data-xy-slot="legend_item"]')];
+      if (rows.length >= 3) break;
+      await sleep(25);
+    }
+    if (rows.length < 3) throw new Error(`expected 3 category rows, got ${rows.length}`);
+    const byName = (name) => rows.find((row) => row.textContent === name);
+    const click = (row) => row.dispatchEvent(new MouseEvent("click"));
+    const g = view.gpuTraces[0];
+    const gridTotal = () => {
+      const d = g.density;
+      let s = 0;
+      for (let i = 0; i < d.grid.length; i++) s += d.grid[i];
+      return Math.round(s);
+    };
+    const totalBefore = gridTotal();
+
+    // Toggle category B off: the kernel must be notified AND a masked
+    // re-bin must be REQUESTED even though the standing home aggregate
+    // still covers the view (§10: filter-dirty beats aggregate-stands and
+    // the T13 duplicate memo).
+    click(byName("B"));
+    await sleep(50);
+    const maskReq = sent.find((m) => m.type === "density_view");
+
+    // Feed the client the kernel's actual masked reply (precomputed by the
+    // Python kernel below, byte-faithful envelope). It must REPLACE the
+    // standing unfiltered texture, not land facts-only (§34: a covering
+    // texture binned under another hidden set is a stale aggregate).
+    const reply = window.__fcMaskedReply;
+    reply.message.seq = maskReq ? maskReq.seq : -1;
+    view._onKernelMsg(reply.message, reply.buffers.map(b64));
+    const totalMasked = gridTotal();
+    const keyMasked = g.density._filterKey;
+
+    // Untoggle: same window, same screen — but a different hidden set, so
+    // the "answered duplicate" memo must not swallow the restore request.
+    click(byName("B"));
+    await sleep(50);
+    const restoreReq = sent.filter((m) => m.type === "density_view").length;
+    const toggleMsgs = sent.filter((m) => m.type === "legend_toggle");
+
+    document.body.setAttribute(
+      "data-xy-density-toggle",
+      JSON.stringify({
+        totalBefore, toggleMsgs, maskReqSent: !!maskReq,
+        totalMasked, keyMasked, densityViewCount: restoreReq,
+      })
+    );
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-density-toggle-error",
+      String((err && err.stack) || err)
+    );
+  }
+})();
+</script>
+"""
+
+
+def test_browser_density_category_toggle_rebins() -> None:
+    """The §10 density-tier category toggle, end to end against the real
+    client: category rows exist (slim color spec), a toggle forces a masked
+    re-bin request past every T13 elision layer (aggregate-stands, the
+    answered-duplicate memo), the kernel's stamped reply repaints the
+    standing texture (never facts-only across filter keys), and the
+    untoggle re-requests. Each assertion is one of the elisions that
+    silently swallowed the round-trip."""
+    chromium = find_chromium()
+    if not chromium:
+        pytest.skip("no chromium available for the density toggle probe")
+
+    chart, cat, x, y = density_category_chart()
+
+    # The kernel's own masked reply for the home window — the byte-faithful
+    # envelope a live transport would deliver after the toggle's
+    # legend_toggle message.
+    fig = chart.figure()
+    fig.build_payload()
+    assert (
+        channel.handle_message(
+            fig, {"type": "legend_toggle", "trace": 0, "category": 1, "hidden": True}
+        )
+        is None
+    )
+    reply = channel.handle_message(
+        fig,
+        {
+            "type": "density_view",
+            "trace": 0,
+            "seq": 0,
+            "x0": float(x.min()),
+            "x1": float(x.max()),
+            "y0": float(y.min()),
+            "y1": float(y.max()),
+            "w": 512,
+            "h": 384,
+        },
+    )
+    assert reply is not None
+    masked_message, masked_buffers = reply
+    entry = masked_message["traces"][0]
+    assert entry["binning"].endswith("-masked") and entry["filter"] == {"hidden_categories": [1]}
+
+    reply_js = json.dumps(
+        {
+            "message": masked_message,
+            "buffers": [base64.b64encode(bytes(b)).decode() for b in masked_buffers],
+        }
+    )
+
+    document = probe_document(
+        chart,
+        _DENSITY_TOGGLE_PROBE,
+        head=f"<script>window.__fcMaskedReply = {reply_js};</script>",
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        page = Path(td) / "density_toggle.html"
+        payload = run_browser_probe(
+            chromium, document, page, "data-xy-density-toggle", label="density toggle"
+        )
+
+    # Home grid bins every point.
+    assert payload["totalBefore"] == pytest.approx(cat.size, rel=0.01), payload
+    # The toggle synced the kernel...
+    assert [(m["trace"], m["category"], m["hidden"]) for m in payload["toggleMsgs"]] == [
+        (0, 1, True),
+        (0, 1, False),
+    ], payload
+    # ...and REQUESTED the masked re-bin (aggregate-stands + dup-memo bypass).
+    assert payload["maskReqSent"] is True, payload
+    # The stamped reply repainted the standing texture: ~2/3 of the points.
+    assert payload["totalMasked"] == pytest.approx((cat != 1).sum(), rel=0.02), payload
+    assert payload["keyMasked"] == "1", payload
+    # The untoggle re-requested despite the answered same-window memo.
+    assert payload["densityViewCount"] == 2, payload
+
+
+_DRILL_DIRTY_PROBE = """
+<script>
+(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0)).buffer;
+  try {
+    const view = window.__fcProbeView;
+    if (!view) throw new Error("no probe view captured");
+    view._drawNow();
+    view._raf = null;
+    const sent = [];
+    view.comm = { send: (m) => sent.push(m) };
+    let rows = [];
+    for (let i = 0; i < 200; i++) {
+      rows = [...document.querySelectorAll('[data-xy-slot="legend_item"]')];
+      if (rows.length >= 3) break;
+      await sleep(25);
+    }
+    if (rows.length < 3) throw new Error(`expected 3 category rows, got ${rows.length}`);
+    const byName = (name) => rows.find((row) => row.textContent === name);
+    const g = view.gpuTraces[0];
+
+    byName("B").dispatchEvent(new MouseEvent("click"));
+    await sleep(50);
+    const maskReq = sent.find((m) => m.type === "density_view");
+    const dirtyAfterToggle = !!g._filterDirty;
+
+    // Feed the kernel's masked POINTS reply (a window under the drill
+    // budget). Its filter stamp matches the client's mask, so it is
+    // admitted — but it lands no aggregate under that mask: the only
+    // standing grid is still the unmasked home texture.
+    const reply = window.__fcMaskedDrillReply;
+    reply.message.seq = maskReq ? maskReq.seq : -1;
+    view._onKernelMsg(reply.message, reply.buffers.map(b64));
+    const drillApplied = !!g.drill;
+    const dirtyAfterDrill = !!g._filterDirty;
+
+    // The elision the flag exists to defeat (§10): with the unmasked home
+    // aggregate still standing (and filter-blind), request planning must
+    // keep forcing the full-window masked re-bin until a mask-stamped
+    // AGGREGATE lands — otherwise the stale texture draws forever once the
+    // drill retires.
+    const plan = view._densityRequestPlan(g, view.view);
+    const planForcesFullWindow = !!(plan && plan.step === false);
+
+    document.body.setAttribute(
+      "data-xy-drill-dirty",
+      JSON.stringify({ maskReqSent: !!maskReq, dirtyAfterToggle, drillApplied,
+                       dirtyAfterDrill, planForcesFullWindow })
+    );
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-drill-dirty-error",
+      String((err && err.stack) || err)
+    );
+  }
+})();
+</script>
+"""
+
+
+def test_browser_masked_drill_reply_keeps_filter_dirty() -> None:
+    """A masked points-mode reply must NOT clear `_filterDirty`: it lands no
+    aggregate under the mask, so the unmasked home texture is still the only
+    standing grid. If the flag clears, `lodAggregateStands` (filter-blind)
+    re-arms the T13 elision and the stale unmasked surface draws indefinitely
+    once the drill retires, while the legend row reads hidden."""
+    chromium = find_chromium()
+    if not chromium:
+        pytest.skip("no chromium available for the drill filter-dirty probe")
+
+    chart, cat, x, y = density_category_chart()
+
+    fig = chart.figure()
+    fig.build_payload()
+    channel.handle_message(
+        fig, {"type": "legend_toggle", "trace": 0, "category": 1, "hidden": True}
+    )
+    reply = channel.handle_message(
+        fig,
+        {
+            "type": "density_view",
+            "trace": 0,
+            "seq": 0,
+            "x0": -0.02,
+            "x1": 0.02,
+            "y0": -0.02,
+            "y1": 0.02,
+            "w": 512,
+            "h": 384,
+        },
+    )
+    assert reply is not None
+    drill_message, drill_buffers = reply
+    entry = drill_message["traces"][0]
+    assert entry["mode"] == "points"
+    assert entry["filter"] == {"hidden_categories": [1]}
+
+    reply_js = json.dumps(
+        {
+            "message": drill_message,
+            "buffers": [base64.b64encode(bytes(b)).decode() for b in drill_buffers],
+        }
+    )
+
+    document = probe_document(
+        chart,
+        _DRILL_DIRTY_PROBE,
+        head=f"<script>window.__fcMaskedDrillReply = {reply_js};</script>",
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        page = Path(td) / "drill_dirty.html"
+        payload = run_browser_probe(
+            chromium, document, page, "data-xy-drill-dirty", label="drill filter-dirty"
+        )
+
+    assert payload["maskReqSent"] is True, payload
+    assert payload["dirtyAfterToggle"] is True, payload
+    assert payload["drillApplied"] is True, payload
+    # The contract under test: only a mask-stamped aggregate clears the flag.
+    assert payload["dirtyAfterDrill"] is True, payload
+    assert payload["planForcesFullWindow"] is True, payload
+
+
 def test_browser_legend_click_toggles_series() -> None:
     chromium = find_chromium()
     if not chromium:
@@ -241,17 +538,7 @@ def test_browser_legend_click_toggles_series() -> None:
         height=340,
     )
 
-    document = chart.to_html()
-    render_call = next((call for call in _RENDER_CALLS if call in document), None)
-    assert render_call is not None, "to_html render call shape changed; update the probe swap"
-    document = document.replace(
-        render_call,
-        render_call.replace(
-            "xy.renderStandalone(", "window.__fcProbeView = xy.renderStandalone(", 1
-        ),
-        1,
-    )
-    document = document.replace("</body>", _TOGGLE_PROBE + "\n</body>", 1)
+    document = probe_document(chart, _TOGGLE_PROBE)
 
     with tempfile.TemporaryDirectory() as td:
         page = Path(td) / "legend_toggle.html"

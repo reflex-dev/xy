@@ -1,6 +1,6 @@
 import { PROTOCOL, xyByteSpan } from "./00_header";
 import { buildLutData, colormapStops } from "./10_colormaps";
-import { cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
+import { chartBackdrop, cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
 import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
 import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodDropDensityCache, lodDropPointCache, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
@@ -1956,24 +1956,49 @@ export class ChartView {
   // categories dim through a background-blended palette LUT — the point
   // shaders ignore LUT alpha, so the fade is baked into the RGB ramp).
   // Whole density-tier traces dim through _drawDensity's uniform like any
-  // other series, but a categorical row cannot dim sibling categories inside
-  // an aggregated density plane (§28 — recorded in the dossier, not silent).
+  // other series; a categorical row dims siblings inside an aggregated plane
+  // at CELL granularity (_densityRgbaDimmed — §28-recorded approximation).
   _setLegendHover(item, lg, hoveredRow) {
     if (item.off) return; // a hidden series has nothing to emphasize
     this._legendHover = item;
     const keep = new Set(item.traces);
+    // Resolved once for the whole pass: every blend below wants the same
+    // backdrop, and resolving it per trace would re-walk the ancestor chain
+    // (a forced style recalc) and defeat the _lutCache hit.
+    const bg = chartBackdrop(this.root, this.theme.bg);
     for (let i = 0; i < (this.gpuTraces || []).length; i++) {
       const g = this.gpuTraces[i];
       g._legendDim = keep.has(i) ? 1 : LEGEND_DIM_OPACITY;
-      if (g._legendPrevLut !== undefined) {
-        g.lut = g._legendPrevLut;
-        delete g._legendPrevLut;
-      }
+      this._restoreLegendLuts(g);
       const t = g.trace;
-      if (item.cat != null && keep.has(i) && g.tier !== "density" &&
-          t.color && t.color.mode === "categorical" && g.lut) {
-        g._legendPrevLut = g.lut;
-        g.lut = this._paletteLutDimmed(t.color.palette, item.cat);
+      if (item.cat != null && keep.has(i) &&
+          t.color && t.color.mode === "categorical") {
+        if (g.tier === "density") {
+          // The plane cannot dim sibling categories exactly (§28), but its
+          // mean-color cells carry the categories' own drawn colors, so the
+          // LUT-dim rule applies at CELL granularity: classify each cell by
+          // nearest palette color and blend sibling cells toward the
+          // background; the hovered category's cells keep their full color.
+          // Mixed boundary cells dim by their nearest class — the recorded
+          // approximation of the exact per-point dim.
+          const d = g.density;
+          if (d && d.rgba && d.tex) {
+            g._legendHoverPrevTex = d.tex;
+            g._legendHoverTex = this._uploadGrid(
+              d.grid, d.w, d.h, d.normMax ?? d.max,
+              this._densityRgbaDimmed(d.rgba, t.color.palette, item.cat, bg),
+              d.filter, this._fillOpacity(t.style),
+            );
+            d.tex = g._legendHoverTex;
+          }
+          // The retained sample overlays ARE per-point scatters, so they dim
+          // siblings exactly, through the same palette LUT.
+          for (const s of this._densityOverlays(g)) {
+            this._dimLut(s, t.color.palette, item.cat, bg);
+          }
+        } else {
+          this._dimLut(g, t.color.palette, item.cat, bg);
+        }
       }
     }
     for (const pair of lg._xyItemRows || []) {
@@ -1991,15 +2016,101 @@ export class ChartView {
     this._legendHover = null;
     for (const g of this.gpuTraces || []) {
       delete g._legendDim;
-      if (g._legendPrevLut !== undefined) {
-        g.lut = g._legendPrevLut;
-        delete g._legendPrevLut;
-      }
+      this._restoreLegendLuts(g);
     }
     for (const lg of this._legends || []) {
       for (const pair of lg._xyItemRows || []) this._syncLegendRow(pair.row, pair.it);
     }
     this.draw(true);
+  }
+
+  // The per-point scatter entries a density-tier trace keeps alongside its
+  // aggregated plane (the retained deterministic sample and, when a reply
+  // carried one, the density's own overlay). Deduped: the two are often the
+  // same object.
+  _densityOverlays(g) {
+    return new Set([g.sampleOverlay, g.density && g.density.overlay].filter(Boolean));
+  }
+
+  // Swap a scatter-shaped entry's palette LUT for the hover-dimmed variant,
+  // stashing the original for _restoreLegendLuts.
+  _dimLut(s, palette, keepIdx, bg) {
+    if (!s || !s.lut) return;
+    s._legendPrevLut = s.lut;
+    s.lut = this._paletteLutDimmed(palette, keepIdx, bg);
+  }
+
+  // Undo any hover LUT swap on a trace and its density sample overlays,
+  // and put back the plane's original texture if hover dimmed it.
+  _restoreLegendLuts(g) {
+    for (const s of new Set([g, ...this._densityOverlays(g)])) {
+      if (s._legendPrevLut !== undefined) {
+        s.lut = s._legendPrevLut;
+        delete s._legendPrevLut;
+      }
+    }
+    if (g._legendHoverTex) {
+      // A density reply may have replaced g.density mid-hover; only restore
+      // onto the object still wearing the hover texture.
+      if (g.density && g.density.tex === g._legendHoverTex) {
+        g.density.tex = g._legendHoverPrevTex;
+      }
+      this.gl.deleteTexture(g._legendHoverTex);
+      g._legendHoverTex = null;
+      g._legendHoverPrevTex = null;
+    }
+  }
+
+  // Per-cell sibling dim for an aggregated categorical plane: each occupied
+  // cell classified by nearest palette color, non-hovered classes blended
+  // toward the background exactly like `_paletteLutDimmed` blends LUT
+  // entries. Alpha (the physical compositing of the cell's own points, LOD
+  // doc §2) is untouched — the dim is a color statement, not a count one.
+  _densityRgbaDimmed(rgba, palette, keepIdx, bg = chartBackdrop(this.root, this.theme.bg)) {
+    const cls = this._densityCellClasses(rgba, palette);
+    const keep = keepIdx % palette.length;
+    const w = LEGEND_DIM_OPACITY;
+    const out = new Uint8Array(rgba.length);
+    for (let i = 0, c = 0; i < rgba.length; i += 4, c++) {
+      const a = rgba[i + 3];
+      out[i + 3] = a;
+      if (!a) continue;
+      if (cls[c] === keep) {
+        out[i] = rgba[i]; out[i + 1] = rgba[i + 1]; out[i + 2] = rgba[i + 2];
+      } else {
+        out[i] = (rgba[i] / 255 * w + bg[0] * (1 - w)) * 255;
+        out[i + 1] = (rgba[i + 1] / 255 * w + bg[1] * (1 - w)) * 255;
+        out[i + 2] = (rgba[i + 2] / 255 * w + bg[2] * (1 - w)) * 255;
+      }
+    }
+    return out;
+  }
+
+  // Nearest-palette class per occupied cell of a mean-color plane. Depends
+  // only on (rgba, palette) — NOT on which row is hovered — so it is memoized
+  // against the plane's own buffer: scanning a legend's rows reclassifies the
+  // same grid once instead of once per row. Weak-keyed, so the map dies with
+  // the grid it describes (a reply replaces `density.rgba` wholesale).
+  _densityCellClasses(rgba, palette) {
+    if (!this._dimClassCache) this._dimClassCache = new WeakMap();
+    const paletteKey = palette.join(",");
+    const memo = this._dimClassCache.get(rgba);
+    if (memo && memo.paletteKey === paletteKey) return memo.classes;
+    const cols = palette.map((p) => hexColor(p));
+    const classes = new Uint8Array(rgba.length / 4);
+    for (let i = 0, c = 0; i < rgba.length; i += 4, c++) {
+      if (!rgba[i + 3]) continue;
+      const r = rgba[i] / 255, gc = rgba[i + 1] / 255, b = rgba[i + 2] / 255;
+      let best = 0, bestD = Infinity;
+      for (let k = 0; k < cols.length; k++) {
+        const dr = r - cols[k][0], dg = gc - cols[k][1], db = b - cols[k][2];
+        const dist = dr * dr + dg * dg + db * db;
+        if (dist < bestD) { bestD = dist; best = k; }
+      }
+      classes[c] = best;
+    }
+    this._dimClassCache.set(rgba, { paletteKey, classes });
+    return classes;
   }
 
   // Toggled-off rows stay visible but read as inactive; the state is also
@@ -2074,9 +2185,11 @@ export class ChartView {
       lodDropPointCache(this, g);
       this._dropDrill(g);
       lodDropDensityCache(this, g);
-      for (const s of [g.sampleOverlay, g.density && g.density.overlay]) {
-        if (s) this._filterScatterRows(s, hidden);
-      }
+      // The live home grid survives the cache drop (it is what draws until
+      // the reply) but must not elide the request — it was binned under the
+      // previous mask (§34).
+      g._filterDirty = true;
+      for (const s of this._densityOverlays(g)) this._filterScatterRows(s, hidden);
       this._scheduleViewRequest(this.view, { delay: 0 });
     } else {
       this._filterScatterRows(g, hidden);
@@ -2159,6 +2272,9 @@ export class ChartView {
       const cats = this._legendOffCats && this._legendOffCats.get(i);
       if (!cats || !cats.size) continue;
       if (g.tier === "density") {
+        // The rebuilt grid comes from the spec — unfiltered — so the next
+        // view request must re-bin under the mask, not stand on it.
+        g._filterDirty = true;
         if (g.sampleOverlay) this._filterScatterRows(g.sampleOverlay, cats);
       } else {
         this._filterScatterRows(g, cats);
@@ -2404,11 +2520,16 @@ export class ChartView {
   // background — the legend-hover dim for categorical traces. RGB-only on
   // purpose: the point/line shaders read `texture(u_lut, ...).rgb` and force
   // alpha to 1, so an alpha-based fade would be a silent no-op.
-  _paletteLutDimmed(palette, keepIdx) {
-    const key = "pal:" + palette.join(",") + ":dim" + keepIdx + ":" + (this.theme.bg || "");
+  // `bg` is the resolved backdrop (see chartBackdrop); callers that dim
+  // several entries in one pass resolve it once and pass it in. theme.bg is
+  // a resolved [r,g,b,a] (or null for a transparent chart, in which case the
+  // page paints the backdrop) — never a CSS string, so it must not go
+  // through parseColor, which would silently fall back to white and BRIGHTEN
+  // dimmed entries on dark pages.
+  _paletteLutDimmed(palette, keepIdx, bg = chartBackdrop(this.root, this.theme.bg)) {
+    const key = "pal:" + palette.join(",") + ":dim" + keepIdx + ":" + bg.join(",");
     if (this._lutCache.has(key)) return this._lutCache.get(key);
     const gl = this.gl;
-    const bg = parseColor(this.root, this.theme.bg || "#ffffff", [1, 1, 1, 1]);
     const data = new Uint8Array(256 * 4);
     for (let i = 0; i < 256; i++) {
       const c = hexColor(palette[i % palette.length]);
@@ -5472,6 +5593,10 @@ export class ChartView {
     for (const d of g.densityCache || []) textures.push(d && d.tex);
     if (g.density) textures.push(g.density.tex);
     if (g._shownDensity) textures.push(g._shownDensity.tex);
+    // Mid-hover the plane's ORIGINAL texture lives only here (density.tex is
+    // the dimmed one), and the paths that destroy a live trace — append,
+    // spec swap, animation — do not clear legend hover first.
+    textures.push(g._legendHoverTex, g._legendHoverPrevTex);
     for (const tex of textures) {
       if (tex && !texSeen.has(tex)) {
         texSeen.add(tex);
@@ -5481,6 +5606,8 @@ export class ChartView {
     g.drill = null;
     g.density = null;
     g._shownDensity = null;
+    g._legendHoverTex = null;
+    g._legendHoverPrevTex = null;
     g.densityCache = [];
     g.heatmap = null;
     g._cpu = null;

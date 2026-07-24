@@ -10,9 +10,66 @@ import html
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
+
+# The `to_html` render call, whose shape the probe pages splice a view capture
+# into. Exported so probe tests assert against one list instead of each keeping
+# its own copy in sync with the exporter.
+RENDER_CALLS = (
+    'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);',
+    'xy.renderStandalone(document.getElementById("chart"), spec, buf);',
+)
+
+
+def probe_document(chart, probe: str, *, head: str = "") -> str:
+    """A `to_html` page instrumented for a browser probe.
+
+    Captures the live view as ``window.__fcProbeView`` (probe scripts drive it
+    directly) and splices `probe` — plus any `head` markup, e.g. a page
+    background the probe depends on — in before ``</body>``.
+    """
+    document = chart.to_html()
+    render_call = next((call for call in RENDER_CALLS if call in document), None)
+    assert render_call is not None, "to_html render call shape changed; update RENDER_CALLS"
+    document = document.replace(
+        render_call,
+        render_call.replace(
+            "xy.renderStandalone(", "window.__fcProbeView = xy.renderStandalone(", 1
+        ),
+        1,
+    )
+    return document.replace("</body>", head + probe + "\n</body>", 1)
+
+
+def density_category_chart(n: int = 400_000, seed: int = 7):
+    """A clustered 3-category density-tier scatter with a legend.
+
+    The shared fixture behind the density legend probes: big enough to land on
+    the density tier, clustered so each category owns a region of the
+    mean-color plane. Returns ``(chart, cat, x, y)`` — the per-point code
+    array and coordinates, for asserting masked counts and framing requests.
+    """
+    import xy
+
+    rng = np.random.default_rng(seed)
+    cat = rng.integers(0, 3, n)
+    centers = np.array([[-1.2, -0.6], [0.2, 1.1], [1.5, -0.9]])
+    x = rng.normal(centers[cat, 0], 0.4)
+    y = rng.normal(centers[cat, 1], 0.4)
+    labels = np.array(["A", "B", "C"])[cat]
+    chart = xy.scatter_chart(
+        xy.scatter(x, y, color=labels, density=True),
+        xy.legend(),
+        width=520,
+        height=340,
+    )
+    return chart, cat, x, y
 
 
 def _dump_dom(chromium: str, page: Path) -> str | None:
