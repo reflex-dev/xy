@@ -970,10 +970,16 @@ _SYMBOL_BUILDERS = {
         f'<rect x="{_num(cx - r)}" y="{_num(cy - r)}" width="{_num(2 * r)}" height="{_num(2 * r)}"'
     ),
     "diamond": lambda cx, cy, r: (
-        f'<path d="M {_num(cx)} {_num(cy - r)} L {_num(cx + r)} {_num(cy)} L {_num(cx)} {_num(cy + r)} L {_num(cx - r)} {_num(cy)} Z"'
+        f'<path d="M {_num(cx)} {_num(cy - 2**0.5 * r)} '
+        f"L {_num(cx + 2**0.5 * r)} {_num(cy)} "
+        f"L {_num(cx)} {_num(cy + 2**0.5 * r)} "
+        f'L {_num(cx - 2**0.5 * r)} {_num(cy)} Z"'
     ),
     "thin_diamond": lambda cx, cy, r: (
-        f'<path d="M {_num(cx)} {_num(cy - r)} L {_num(cx + 0.6 * r)} {_num(cy)} L {_num(cx)} {_num(cy + r)} L {_num(cx - 0.6 * r)} {_num(cy)} Z"'
+        f'<path d="M {_num(cx)} {_num(cy - 2**0.5 * r)} '
+        f"L {_num(cx + 0.6 * 2**0.5 * r)} {_num(cy)} "
+        f"L {_num(cx)} {_num(cy + 2**0.5 * r)} "
+        f'L {_num(cx - 0.6 * 2**0.5 * r)} {_num(cy)} Z"'
     ),
     "triangle": lambda cx, cy, r: (
         f'<path d="M {_num(cx)} {_num(cy - r)} L {_num(cx + r)} {_num(cy + r)} L {_num(cx - r)} {_num(cy + r)} Z"'
