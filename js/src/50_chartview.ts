@@ -1763,10 +1763,13 @@ export class ChartView {
     const horizontal = ncols > 1;
     lg.style.cssText = "position:absolute;" +
       `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
-      "column-gap:22px;row-gap:2px;overflow:auto;";
+      "column-gap:2em;row-gap:.5em;overflow:auto;";
     lg.dataset.xyLegendLoc = loc;
     if (Array.isArray(options.anchor)) {
       lg.dataset.xyLegendAnchor = JSON.stringify(options.anchor);
+    }
+    if (Number.isFinite(Number(options.border_pad))) {
+      lg.dataset.xyLegendBorderPad = String(Math.max(0, Number(options.border_pad)));
     }
     this._positionLegend(lg, loc, options.anchor);
     this._applySlot(lg, "legend");
@@ -1775,6 +1778,7 @@ export class ChartView {
       const title = document.createElement("div");
       title.textContent = String(options.title);
       title.style.fontWeight = "600";
+      title.style.textAlign = "center";
       title.style.gridColumn = `1 / span ${horizontal ? ncols : 1}`;
       lg.appendChild(title);
     }
@@ -1872,8 +1876,11 @@ export class ChartView {
       const vy = v === "lower" ? 0 : v === "upper" ? 1 : 0.5;
       const aw = anchor.length === 4 ? Number(anchor[2]) : 0;
       const ah = anchor.length === 4 ? Number(anchor[3]) : 0;
-      left = this.plot.x + (Number(anchor[0]) + hx * aw) * this.plot.w;
-      top = this.plot.y + (1 - Number(anchor[1]) - vy * ah) * this.plot.h;
+      const borderPad = Math.max(0, Number(lg.dataset.xyLegendBorderPad) || 0);
+      left = this.plot.x + (Number(anchor[0]) + hx * aw) * this.plot.w +
+        (hx === 0 ? borderPad : hx === 1 ? -borderPad : 0);
+      top = this.plot.y + (1 - Number(anchor[1]) - vy * ah) * this.plot.h +
+        (vy === 1 ? borderPad : vy === 0 ? -borderPad : 0);
       right = null;
       bottom = null;
     }

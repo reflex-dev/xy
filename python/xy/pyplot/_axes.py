@@ -4073,8 +4073,9 @@ class Axes(PlotTypeMixin):
         framealpha = kwargs.pop("framealpha", rcParams["legend.framealpha"])
         fancybox = kwargs.pop("fancybox", False)
         shadow = kwargs.pop("shadow", False)
-        borderpad = kwargs.pop("borderpad", None)
-        labelspacing = kwargs.pop("labelspacing", None)
+        borderpad = kwargs.pop("borderpad", rcParams["legend.borderpad"])
+        labelspacing = kwargs.pop("labelspacing", rcParams["legend.labelspacing"])
+        borderaxespad = kwargs.pop("borderaxespad", rcParams["legend.borderaxespad"])
         # Remaining handle/title geometry is not expressible yet and stays
         # loud; the frame and row-layout options above map directly to CSS and
         # the static exporters.
@@ -4100,11 +4101,10 @@ class Axes(PlotTypeMixin):
         unsupported = set(kwargs)
         if unsupported:
             raise TypeError(f"legend() got unsupported keyword argument {sorted(unsupported)[0]!r}")
+        font_px = _font_size(fontsize, rcParams["font.size"], self._point_scale() * 72.0)
         style: dict[str, Any] = {}
         if fontsize is not None:
-            style["fontSize"] = (
-                f"{_font_size(fontsize, rcParams['font.size'], self._point_scale() * 72.0):g}px"
-            )
+            style["fontSize"] = f"{font_px:g}px"
         if labelcolor is not None:
             style["color"] = resolve_color(labelcolor)
         if frameon is False:
@@ -4128,17 +4128,25 @@ class Axes(PlotTypeMixin):
             style["borderRadius"] = "4px"
         if bool(shadow):
             style["boxShadow"] = "2px 2px 4px rgba(0,0,0,0.3)"
-        if borderpad is not None:
-            padding = float(borderpad)
-            if padding < 0:
-                raise ValueError("legend borderpad must be non-negative")
-            style["padding"] = f"{padding:g}em"
-        if labelspacing is not None:
-            spacing = float(labelspacing)
-            if spacing < 0:
-                raise ValueError("legend labelspacing must be non-negative")
-            style["rowGap"] = f"{spacing:g}em"
-        options: dict[str, Any] = {"loc": loc, "ncols": max(1, int(ncols))}
+        padding = float(borderpad)
+        if padding < 0:
+            raise ValueError("legend borderpad must be non-negative")
+        style["padding"] = f"{padding:g}em"
+        spacing = float(labelspacing)
+        if spacing < 0:
+            raise ValueError("legend labelspacing must be non-negative")
+        style["rowGap"] = f"{spacing:g}em"
+        axes_padding = float(borderaxespad)
+        if axes_padding < 0:
+            raise ValueError("legend borderaxespad must be non-negative")
+        options: dict[str, Any] = {
+            "loc": loc,
+            "ncols": max(1, int(ncols)),
+            # Matplotlib measures borderaxespad in legend-font em. The wire
+            # carries pixels so all three renderers place anchored legends at
+            # the same physical distance from the axes.
+            "border_pad": axes_padding * font_px,
+        }
         if bbox_to_anchor is not None:
             options["anchor"] = bbox_to_anchor
         if title is not None:
@@ -4663,23 +4671,53 @@ class Axes(PlotTypeMixin):
             chart_padding = (
                 [6.0, 8.0 + 26.0, 36.0, 46.0] if compact else [10.0, 14.0 + 26.0, 42.0, 62.0]
             )
-        anchor = self._legend_options.get("anchor") if self._legend else None
-        if anchor:
+        anchored_legends: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+        if self._legend and self._legend_artist is None and self._legend_options.get("anchor"):
+            _, labels = self.get_legend_handles_labels()
+            if labels:
+                anchored_legends.append(
+                    (self._legend_options, [{"name": label} for label in labels])
+                )
+        extra_legend_artists = list(self._extra_legends)
+        if self._legend_artist is not None:
+            extra_legend_artists.append(self._legend_artist)
+        for legend_artist in extra_legend_artists:
+            legend_spec = legend_artist.spec()
+            if legend_spec.get("anchor") and legend_spec.get("items"):
+                anchored_legends.append((legend_spec, list(legend_spec["items"])))
+        if anchored_legends:
+            from .._svg import _legend_layout
+
             compact = width < 520
             if chart_padding is None:
                 chart_padding = [6.0, 8.0, 36.0, 46.0] if compact else [10.0, 14.0, 42.0, 62.0]
             top, right, bottom, left = map(float, chart_padding)
-            loc = str(self._legend_options.get("loc") or "upper right")
-            ax, ay = float(anchor[0]), float(anchor[1])
-            aw, ah = (0.0, 0.0) if len(anchor) == 2 else (float(anchor[2]), float(anchor[3]))
-            if ay >= 1.0 and "lower" in loc:
-                top = max(top, 36.0)
-            if ay + ah <= 0.0 and "upper" in loc:
-                bottom = max(bottom, 36.0)
-            if ax >= 1.0 and "left" in loc:
-                right = max(right, min(220.0, width * 0.34))
-            if ax + aw <= 0.0 and "right" in loc:
-                left = max(left, min(220.0, width * 0.34))
+            for legend_options, legend_items in anchored_legends:
+                anchor = legend_options["anchor"]
+                loc = str(legend_options.get("loc") or "upper right")
+                ax, ay = float(anchor[0]), float(anchor[1])
+                aw, ah = (0.0, 0.0) if len(anchor) == 2 else (float(anchor[2]), float(anchor[3]))
+                # Ask the shared static geometry for the legend's natural
+                # bounded size. A very tall provisional plot prevents entry
+                # truncation from hiding the amount of outside room required.
+                provisional_plot = {
+                    "x": left,
+                    "y": top,
+                    "w": max(40.0, width - left - right),
+                    "h": max(10_000.0, height - top - bottom),
+                }
+                legend_box = _legend_layout(legend_items, provisional_plot, legend_options)
+                border_axes_pad = max(0.0, float(legend_options.get("border_pad", 0.0)))
+                vertical_room = legend_box["box_h"] + border_axes_pad + 6.0
+                horizontal_room = legend_box["box_w"] + border_axes_pad + 6.0
+                if ay >= 1.0 and "lower" in loc:
+                    top = max(top, vertical_room)
+                if ay + ah <= 0.0 and "upper" in loc:
+                    bottom = max(bottom, vertical_room)
+                if ax >= 1.0 and "left" in loc:
+                    right = max(right, min(220.0, horizontal_room))
+                if ax + aw <= 0.0 and "right" in loc:
+                    left = max(left, min(220.0, horizontal_room))
             chart_padding = [top, right, bottom, left]
         # A dataless matplotlib axis views exactly (0, 1) — margins never apply.
         # Pin it so the engine's autorange padding cannot widen the empty view
@@ -4721,6 +4759,10 @@ class Axes(PlotTypeMixin):
                 legend_options["loc"] = self._best_legend_loc(
                     x_props.get("domain"), y_props.get("domain")
                 )
+            # ``border_pad`` is an internal pixel-resolved Matplotlib wire
+            # option; core's public legend component intentionally remains in
+            # its declarative units. It is restored on the built Figure below.
+            legend_options.pop("border_pad", None)
             children.append(xy.legend(**legend_options))
         elif not any(entry.get("kwargs", {}).get("name") for entry in self._entries):
             # Core XY can auto-create a continuous-color "value" legend.
@@ -4749,6 +4791,8 @@ class Axes(PlotTypeMixin):
             styles=self._chrome_styles,
         )
         core_figure = self._chart.figure()
+        if self._legend and self._legend_artist is None and "border_pad" in self._legend_options:
+            core_figure.legend_options["border_pad"] = self._legend_options["border_pad"]
         core_figure.frame_sides = [
             side for side in ("left", "bottom", "top", "right") if side not in self._hidden_spines
         ]
@@ -5267,6 +5311,10 @@ def _plain_text(value: Any) -> str:
     if converted != text:
         return converted
     if "$" not in text and "\\" not in text:
+        return text
+    # Matplotlib treats an odd number of dollar signs as literal text. This is
+    # used by gallery formatters such as ``fmt="$ {x:.2f}"`` for currency.
+    if text.count("$") % 2:
         return text
     # ASCII fallback for TeX outside the unicode subset — approximate, never raw.
     text = text.replace("$", "")

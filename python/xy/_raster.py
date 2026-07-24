@@ -1970,6 +1970,7 @@ def _emit_legend(
     pad, handle, gap = legend["pad"], legend["handle"], legend["gap"]
     line_h, ncols = legend["line_h"], legend["ncols"]
     title, title_h = legend["title"], legend["title_h"]
+    font_size, text_h = legend["font_size"], legend["text_h"]
     column_offsets = legend["column_offsets"]
     box_w, box_h = legend["box_w"], legend["box_h"]
     x, y = legend["x"], legend["y"]
@@ -1988,7 +1989,14 @@ def _emit_legend(
         border = _rgba(style_opts.get("borderColor"), "#cccccc", alpha)
         cmd.stroke(_rect_pts(x, y, x + box_w, y + box_h), 1.0, border)
     if title:
-        cmd.text(x + pad, y + pad / 2 + 11, 0, 11, _parse_color(text_color), str(title))
+        cmd.text(
+            x + box_w / 2,
+            y + pad / 2 + font_size * 0.82,
+            1,
+            font_size,
+            _parse_color(text_color),
+            str(title),
+        )
     for i, t in enumerate(named[: legend["visible_count"]]):
         style = t.get("style") or {}
         color_str = _css(
@@ -1998,7 +2006,7 @@ def _emit_legend(
         c = _parse_color(color_str)
         col, row = i % ncols, i // ncols
         rx, ry = x + column_offsets[col], y + pad / 2 + title_h + row * line_h
-        hx0, hx1, cy = rx, rx + handle, ry + 7
+        hx0, hx1, cy = rx, rx + handle, ry + text_h / 2
         kind = t.get("kind")
         if kind == "scatter":
             sym = _SYMBOLS.get(style.get("symbol", "circle"), 0)
@@ -2022,7 +2030,14 @@ def _emit_legend(
             )
         else:
             cmd.fill(_rect_pts(hx0, cy - 4, hx1, cy + 4), c)
-        cmd.text(hx1 + gap, ry + 11, 0, 11, _parse_color(text_color), legend["names"][i])
+        cmd.text(
+            hx1 + gap,
+            ry + font_size * 0.82,
+            0,
+            font_size,
+            _parse_color(text_color),
+            legend["names"][i],
+        )
 
 
 def _emit_colorbar(

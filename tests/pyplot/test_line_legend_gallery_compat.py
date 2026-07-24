@@ -2,6 +2,7 @@ from io import BytesIO
 from xml.etree import ElementTree
 
 import numpy as np
+import pytest
 
 import xy.pyplot as plt
 from xy._svg import _legend_layout, layout
@@ -63,6 +64,64 @@ def test_multicolumn_legend_sizes_each_column_to_its_own_labels():
     )
     equal_width_box = 5 * max(layout["column_widths"]) + 4 * layout["column_gap"] + layout["pad"]
     assert layout["box_w"] < equal_width_box
+
+
+def test_outside_top_legend_reserves_its_measured_box_and_axes_gap():
+    fig, ax = plt.subplots(figsize=(9.2, 5))
+    labels = [
+        "Strongly disagree",
+        "Disagree",
+        "Neither agree nor disagree",
+        "Agree",
+        "Strongly agree",
+    ]
+    for index, label in enumerate(labels):
+        ax.barh(["Question 1", "Question 2"], [index + 1, index + 2], label=label)
+    ax.legend(
+        ncols=len(labels),
+        bbox_to_anchor=(0, 1),
+        loc="lower left",
+        fontsize="small",
+    )
+
+    spec, _ = ax._build_chart(920, 500).figure().build_payload()
+    _, _, _, plot = layout(spec)
+    legend = _legend_layout(
+        [trace for trace in spec["traces"] if trace.get("name")],
+        plot,
+        spec["legend"],
+    )
+
+    assert spec["padding"][0] >= legend["box_h"] + spec["legend"]["border_pad"] + 6
+    assert legend["y"] >= 6
+    assert plot["y"] - (legend["y"] + legend["box_h"]) == pytest.approx(
+        spec["legend"]["border_pad"]
+    )
+
+
+def test_titled_scatter_legend_box_fits_title_and_every_entry():
+    _, ax = plt.subplots()
+    scatter = ax.scatter(
+        np.arange(4),
+        np.arange(4),
+        c=np.array([1, 2, 3, 4]),
+        s=np.array([10, 40, 90, 160]),
+    )
+    handles, labels = scatter.legend_elements()
+    legend = ax.legend(handles, labels, loc="lower left", title="Classes")
+
+    spec = legend.spec()
+    box = _legend_layout(
+        spec["items"],
+        {"x": 62.0, "y": 10.0, "w": 564.0, "h": 428.0},
+        spec,
+    )
+
+    assert box["title"] == "Classes"
+    assert box["names"] == labels
+    assert box["visible_count"] == len(labels)
+    assert box["box_w"] >= len("Classes") * box["font_size"] * (6.2 / 11.0) + box["pad"]
+    assert box["box_h"] > 100
 
 
 def test_hidden_axis_keeps_explicit_matplotlib_spines_in_static_exports():
@@ -155,6 +214,7 @@ def test_scatter_legend_elements_return_real_legend_artists_and_two_boxes():
     sizes = [item["style"]["size"] for item in spec["extra_legends"][1]["items"]]
     assert sizes == sorted(sizes)
     assert all(label.startswith("$ ") for label in size_labels)
+    assert all(item["name"].startswith("$ ") for item in spec["extra_legends"][1]["items"])
 
 
 def test_round_dash_capstyle_mutation_matches_fixed_round_renderers():
