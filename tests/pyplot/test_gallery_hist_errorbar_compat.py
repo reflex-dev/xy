@@ -83,9 +83,41 @@ def test_errorbar_forwards_marker_size_and_linestyle_to_data_line_only() -> None
 
 def test_errorbar_fmt_none_accepts_marker_keywords_without_data_line() -> None:
     _fig, ax = plt.subplots()
-    container = ax.errorbar(
-        [0, 1], [1, 2], yerr=0.1, fmt="none", marker="o", markersize=8
-    )
+    container = ax.errorbar([0, 1], [1, 2], yerr=0.1, fmt="none", marker="o", markersize=8)
 
     assert container.lines[0] is None
     assert len(ax._entries) == 1
+
+
+def test_errorbar_limit_flags_render_directional_endpoint_markers() -> None:
+    _fig, ax = plt.subplots()
+    ax.errorbar(
+        [1, 2],
+        [3, 4],
+        xerr=[0.2, 0.4],
+        yerr=[0.5, 0.6],
+        lolims=[True, False],
+        uplims=[False, True],
+        xlolims=[False, True],
+        xuplims=[True, False],
+        fmt="none",
+    )
+
+    marker_entries = [entry for entry in ax._entries if entry["kind"] == "scatter"]
+    assert {entry["kwargs"]["symbol"] for entry in marker_entries} == {
+        "triangle",
+        "triangle_down",
+        "triangle_left",
+        "triangle_right",
+    }
+    points = {
+        entry["kwargs"]["symbol"]: (
+            np.asarray(entry["x"]).tolist(),
+            np.asarray(entry["y"]).tolist(),
+        )
+        for entry in marker_entries
+    }
+    assert points["triangle"] == ([1], [3.5])
+    assert points["triangle_down"] == ([2], [3.4])
+    assert points["triangle_right"] == ([2.4], [4])
+    assert points["triangle_left"] == ([0.8], [3])
