@@ -62,6 +62,51 @@ def test_hist_dataset_style_lengths_must_match_dataset_count() -> None:
         ax.hist([[0, 1], [2, 3]], bins=2, linewidth=[1, 2, 3])
 
 
+@pytest.mark.parametrize("histtype", ["step", "stepfilled"])
+def test_hist_step_geometry_contributes_to_autoscale(histtype: str) -> None:
+    _fig, ax = plt.subplots()
+
+    counts, edges, _container = ax.hist(
+        [-3.0, -1.0, -0.5, 0.0, 0.5, 1.0, 3.0],
+        bins=np.arange(-4.0, 4.1, 0.5),
+        histtype=histtype,
+        weights=np.full(7, 1 / 7),
+    )
+
+    assert not ax._axis_is_dataless("x")
+    assert not ax._axis_is_dataless("y")
+    assert ax._entry_extent("x") == pytest.approx((edges[0], edges[-1]))
+    assert ax._entry_extent("y") == pytest.approx((0.0, counts.max()))
+
+    core = ax._build_chart(350, 300).figure()
+    assert core.x_range() == pytest.approx((-4.24, 4.24))
+    assert core.y_range()[1] > counts.max()
+
+
+def test_hist_density_and_probability_weights_match_numpy() -> None:
+    values = np.array([-2.2, -1.8, -0.4, -0.1, 0.2, 0.7, 1.1, 2.4])
+    edges = np.array([-3.0, -1.0, 0.0, 0.5, 1.5, 3.0])
+    _fig, (density_ax, weights_ax) = plt.subplots(1, 2)
+
+    density, returned_edges, _ = density_ax.hist(values, bins=edges, density=True, histtype="step")
+    weighted, _, _ = weights_ax.hist(
+        values,
+        bins=edges,
+        weights=np.full(len(values), 1 / len(values)),
+        histtype="step",
+    )
+
+    expected_density, expected_edges = np.histogram(values, bins=edges, density=True)
+    expected_weighted, _ = np.histogram(
+        values, bins=edges, weights=np.full(len(values), 1 / len(values))
+    )
+    np.testing.assert_allclose(density, expected_density)
+    np.testing.assert_array_equal(returned_edges, expected_edges)
+    np.testing.assert_allclose(weighted, expected_weighted)
+    assert np.sum(density * np.diff(edges)) == pytest.approx(1.0)
+    assert weighted.sum() == pytest.approx(1.0)
+
+
 def test_errorbar_forwards_marker_size_and_linestyle_to_data_line_only() -> None:
     _fig, ax = plt.subplots()
     container = ax.errorbar(

@@ -186,7 +186,11 @@ def _transform_entry_axis(entry: dict[str, Any], axis: str, old: Any, new: Any) 
     indexes = {
         "segments": (0, 2) if axis == "x" else (1, 3),
         "triangle_mesh": (0, 2, 4) if axis == "x" else (1, 3, 5),
+        "area": (0,) if axis == "x" else (1,),
         "step": (0,) if axis == "x" else (1,),
+        # Compact stairs store (values, edges), the reverse of ordinary
+        # Cartesian (x, y) argument order.
+        "stairs": (1,) if axis == "x" else (0,),
         "stem": (0,) if axis == "x" else (1,),
         "errorbar": (0,) if axis == "x" else (1,),
         "hexbin": (0,) if axis == "x" else (1,),
@@ -195,6 +199,8 @@ def _transform_entry_axis(entry: dict[str, Any], axis: str, old: Any, new: Any) 
     for index in indexes:
         args[index] = convert(args[index])
     entry["args"] = tuple(args)
+    if factory == "area" and axis == "y" and "base" in entry.get("kwargs", {}):
+        entry["kwargs"]["base"] = convert(entry["kwargs"]["base"])
 
 
 def _nonlinear_ticks(domain: tuple[float, float], spec: dict[str, Any]) -> np.ndarray:
@@ -2697,9 +2703,17 @@ class Axes(PlotTypeMixin):
                 indexes = {
                     "segments": (0, 2) if axis == "x" else (1, 3),
                     "triangle_mesh": (0, 2, 4) if axis == "x" else (1, 3, 5),
+                    "area": (0,) if axis == "x" else (1,),
+                    # xy.stairs(values, edges) is compact and deliberately
+                    # reverses the ordinary x/y argument order.
+                    "stairs": (1,) if axis == "x" else (0,),
                 }.get(factory, ())
                 for index in indexes:
                     yield np.asarray(entry["args"][index], dtype=np.float64).reshape(-1), True
+                if factory == "area" and axis == "y":
+                    base = entry.get("kwargs", {}).get("base")
+                    if base is not None:
+                        yield np.asarray(base, dtype=np.float64).reshape(-1), True
                 if factory == "contour":
                     z = np.asarray(entry["args"][0])
                     coordinates = entry.get("kwargs", {}).get(key)
