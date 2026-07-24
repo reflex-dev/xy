@@ -285,17 +285,19 @@ Set them on `.xy` or any ancestor:
 | `--chart-badge-bg` / `--chart-badge-text` | Reduction badges | `rgba(255,255,255,.82)` / `#0f172a` (light; see below) |
 | `--chart-tick-label-max-width` | Maximum browser width of categorical y-axis tick labels | available space between the transformed label and chart edge |
 | `--chart-modebar-bg` / `--chart-modebar-active` | Modebar / active button | `rgba(255,255,255,.78)` / `rgba(128,128,128,.2)` (light; see below) |
-| `--chart-selection` / `--chart-selection-fill` | Box-select rectangle | `rgba(90,140,240,.9)` / `…,.15)` |
-| `--chart-zoom-selection` / `--chart-zoom-selection-fill` | Box-zoom drag rectangle | `rgba(120,120,120,.9)` / `…,.12)` |
+| `--chart-selection` / `--chart-selection-fill` | Box/lasso/x-range/y-range select | modebar grey: `rgba(92,101,115,.9)` / `…,.12)` (light; see below) |
+| `--chart-zoom-selection` / `--chart-zoom-selection-fill` | Box-zoom drag rectangle | same modebar grey as selection (see below) |
 | `--chart-crosshair` | Crosshair lines | `rgba(15,23,42,.42)` |
 | `--chart-annotation-text` | Annotation label color | falls back to `--chart-text` |
 | `--chart-cursor` / `--chart-cursor-pan` | Plot cursor (box-zoom / pan) | `crosshair` / `grab` |
 | `--chart-focus` | Keyboard focus ring on the plot canvas and modebar buttons | `#2563eb` |
 
-The modebar and badge defaults are **scheme-aware**: a `.dark` class on the
-chart root or any ancestor flips the internal fallbacks — modebar to
-`rgba(37,42,52,.9)` / `rgba(255,255,255,.16)`, badges to `rgba(30,35,44,.88)`
-bg / `#f8fafc` text. The public `--chart-modebar-*` and `--chart-badge-*`
+The modebar, badge, and selection-band defaults are **scheme-aware**: a `.dark`
+class on the chart root or any ancestor flips the internal fallbacks — modebar
+to `rgba(37,42,52,.9)` / `rgba(255,255,255,.16)`, badges to `rgba(30,35,44,.88)`
+bg / `#f8fafc` text, selection/zoom bands to the dark modebar grey
+`rgba(173,180,191,.9)` stroke / `…,.12)` fill (light scheme:
+`rgba(92,101,115,.9)` / `…,.12)`, the modebar's text greys). The public `--chart-modebar-*` and `--chart-badge-*`
 tokens override both schemes; the modebar's border and shadow and the badge's
 shadow have no public token and are internal `--xy-modebar-*` /
 `--xy-badge-shadow` defaults only. `--chart-focus` is likewise not carried into
