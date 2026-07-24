@@ -24,6 +24,30 @@ from typing import Any, Optional
 import numpy as np
 
 
+def _composite_rgba(destination: np.ndarray, source: np.ndarray) -> None:
+    """Composite a straight-alpha RGBA tile over ``destination`` in place."""
+    source_alpha = source[:, :, 3]
+    opaque = source_alpha == 255
+    destination[opaque] = source[opaque]
+
+    partial = (source_alpha != 0) & ~opaque
+    if not np.any(partial):
+        return
+    src = source[partial].astype(np.float32)
+    dst = destination[partial].astype(np.float32)
+    src_alpha_f = src[:, 3:4] / 255.0
+    dst_alpha_f = dst[:, 3:4] / 255.0
+    out_alpha = src_alpha_f + dst_alpha_f * (1.0 - src_alpha_f)
+    out_rgb = np.divide(
+        src[:, :3] * src_alpha_f + dst[:, :3] * dst_alpha_f * (1.0 - src_alpha_f),
+        out_alpha,
+        out=np.zeros_like(src[:, :3]),
+        where=out_alpha != 0,
+    )
+    destination[partial, :3] = np.rint(out_rgb).astype(np.uint8)
+    destination[partial, 3] = np.rint(out_alpha[:, 0] * 255.0).astype(np.uint8)
+
+
 def compose_html(
     charts: list[Any],
     nrows: int,
@@ -253,11 +277,16 @@ def stitch_png(
             return rendered
         return _png.encode(rendered)
 
+    absolute = positions is not None and canvas_size is not None
     tiles: list[np.ndarray] = []
     for chart in charts:
         fig = chart.figure()
         spec, blob, borrowed = fig._build_raster_payload(px_width=max(256, int(fig.width)))
-        spec["canvas_background"] = facecolor
+        # Absolute panels include their own surrounding chrome and therefore
+        # overlap in the gutters.  Keep only that outer canvas transparent so
+        # a later panel cannot erase an earlier panel's right/bottom spine or
+        # terminal tick label.  The axes patch (--chart-bg) remains opaque.
+        spec["canvas_background"] = "none" if absolute else facecolor
         img = _raster.render_raster(spec, blob, scale, borrowed=borrowed)
         if isinstance(img, bytes):
             raise RuntimeError("pyplot grid rasterizer unexpectedly returned encoded PNG bytes")
@@ -265,7 +294,8 @@ def stitch_png(
     if not tiles:
         raise ValueError("figure has no axes to save")
 
-    if positions is not None and canvas_size is not None:
+    if absolute:
+        assert positions is not None and canvas_size is not None
         background = np.asarray(_raster._parse_color(facecolor), dtype=np.uint8)
         canvas = np.empty((canvas_size[1] * 2, canvas_size[0] * 2, 4), dtype=np.uint8)
         canvas[...] = background
@@ -277,10 +307,12 @@ def stitch_png(
             dest_x1 = min(canvas.shape[1], x + tile.shape[1])
             dest_y1 = min(canvas.shape[0], y + tile.shape[0])
             if dest_x1 > dest_x0 and dest_y1 > dest_y0:
-                canvas[dest_y0:dest_y1, dest_x0:dest_x1] = tile[
+                destination = canvas[dest_y0:dest_y1, dest_x0:dest_x1]
+                source = tile[
                     src_y0 : src_y0 + dest_y1 - dest_y0,
                     src_x0 : src_x0 + dest_x1 - dest_x0,
                 ]
+                _composite_rgba(destination, source)
         return _png.encode(canvas)
 
     col_widths = [

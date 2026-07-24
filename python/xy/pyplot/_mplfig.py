@@ -119,6 +119,10 @@ class Figure:
                 # Spans and custom spacing become explicit figure rectangles.
                 # The spec is kept so subplots_adjust() can re-resolve them.
                 ax = self.add_axes(spec.gridspec.cell_rect(spec.rows, spec.cols))
+                # add_axes() models unrelated free-form panels as a 1×N row.
+                # A GridSpec-backed span still belongs to its original grid;
+                # retain that geometry for tight_layout/subplots_adjust.
+                self._nrows, self._ncols = spec.nrows, spec.ncols
                 ax._subplot_spec = spec
         elif args and args != (1, 1, 1) and args != (111,):
             nrows, ncols, index = _parse_subplot_args(args)
@@ -409,6 +413,64 @@ class Figure:
             "w_pad": w_pad,
             "rect": rect,
         }
+        # The native panels carry their own tick/title chrome, while the
+        # GridSpec rectangles describe plot boxes only.  Reserve enough
+        # figure-edge and inter-panel room for that chrome so adjacent panels
+        # do not overlap.  This is the same job Matplotlib's tight-layout
+        # engine performs from artist extents; the shim uses its deterministic
+        # renderer margins instead of a second text-layout engine.
+        if self._axes and not any(
+            ax._figure_rect is not None and ax._subplot_spec is None for ax in self._axes
+        ):
+            canvas_w, canvas_h = rc_figsize_px(self._figsize, self._dpi)
+            compact = canvas_w / max(1, self._ncols) < 520
+            left_px, right_px = (46.0, 20.0) if compact else (62.0, 26.0)
+            bottom_px = 36.0 if compact else 42.0
+            title_px = 26.0 if compact else 30.0
+            top_px = max(20.0, (6.0 if compact else 10.0) + title_px)
+            has_title = any(ax._title for ax in self._axes)
+            horizontal_gap = 58.0 if compact else 76.0
+            vertical_gap = (68.0 if compact else 82.0) if has_title else (44.0 if compact else 56.0)
+            # Explicit *_pad values are font-size multiples in Matplotlib.
+            point_px = float(rcParams["font.size"]) * float(self._dpi or 100.0) / 72.0
+            base_pad = 1.08 if pad is None else float(pad)
+            if w_pad is not None:
+                horizontal_gap += (float(w_pad) - base_pad) * point_px
+            if h_pad is not None:
+                vertical_gap += (float(h_pad) - base_pad) * point_px
+            if pad is not None:
+                extra = (float(pad) - 1.08) * point_px
+                left_px += extra
+                right_px += extra
+                bottom_px += extra
+                top_px += extra
+
+            frame = (0.0, 0.0, 1.0, 1.0) if rect is None else tuple(map(float, rect))
+            if len(frame) != 4:
+                raise ValueError("tight_layout(rect=...) must be [left, bottom, right, top]")
+            frame_left, frame_bottom, frame_right, frame_top = frame
+            left = frame_left + max(0.0, left_px) / canvas_w
+            right = frame_right - max(0.0, right_px) / canvas_w
+            bottom = frame_bottom + max(0.0, bottom_px) / canvas_h
+            top = frame_top - max(0.0, top_px) / canvas_h
+            inner_w = max(1.0, (right - left) * canvas_w)
+            inner_h = max(1.0, (top - bottom) * canvas_h)
+            cell_w = max(
+                1.0,
+                (inner_w - horizontal_gap * max(0, self._ncols - 1)) / max(1, self._ncols),
+            )
+            cell_h = max(
+                1.0,
+                (inner_h - vertical_gap * max(0, self._nrows - 1)) / max(1, self._nrows),
+            )
+            self.subplots_adjust(
+                left=left,
+                right=right,
+                bottom=bottom,
+                top=top,
+                wspace=horizontal_gap / cell_w,
+                hspace=vertical_gap / cell_h,
+            )
         self._invalidate()
 
     def subplots_adjust(
@@ -730,8 +792,8 @@ class Figure:
                 # figure buffer, matching Matplotlib add_axes semantics —
                 # including the axes title, which matplotlib draws above the
                 # axes without moving its position.
-                compact = plot_w + 54 < 520
-                margin_w, margin_h = (54, 42) if compact else (76, 52)
+                compact = plot_w + 66 < 520
+                margin_w, margin_h = (66, 42) if compact else (88, 52)
                 if ax._title:
                     margin_h += 26 if compact else 30
                 ax._absolute_plot_ratio = plot_w / plot_h
@@ -806,9 +868,9 @@ class Figure:
         """
         positions = []
         for ax, rect in zip(self._axes, rects, strict=True):
-            compact = round(canvas_size[0] * rect[2]) + 54 < 520
+            compact = round(canvas_size[0] * rect[2]) + 66 < 520
             left, bottom = (46, 36) if compact else (62, 42)
-            width, height = (54, 42) if compact else (76, 52)
+            width, height = (66, 42) if compact else (88, 52)
             if ax._title:
                 # The panel was built taller for its title (`_charts`); grow
                 # the placement upward so the plot box stays on the rect.
