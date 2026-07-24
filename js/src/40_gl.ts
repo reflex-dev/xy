@@ -109,7 +109,7 @@ in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange;
-uniform int u_colorMode; uniform float u_dpr; uniform int u_selActive;
+uniform int u_colorMode; uniform int u_symbol; uniform float u_dpr; uniform int u_selActive;
 uniform float u_selectedOpacity; uniform float u_unselectedOpacity;
 uniform float u_transitionProgress; uniform int u_transitionActive;
 out float v_lutCoord; out float v_dim; out float v_dval; out float v_ptSize; out float v_sel;
@@ -120,8 +120,10 @@ void main() {
   float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
   gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode, u_xconstant), xyMap(y, u_ymap, u_ymeta, u_ymode, u_yconstant), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
-  gl_PointSize = sz * u_dpr;
-  v_ptSize = sz * u_dpr;
+  int symbol = a_style.w >= 0.0 ? int(a_style.w + 0.5) : u_symbol;
+  float symbolScale = symbol == 2 || symbol == 14 ? 1.414213562 : 1.0;
+  gl_PointSize = sz * u_dpr * symbolScale;
+  v_ptSize = sz * u_dpr * symbolScale;
   v_sel = a_sel;
   v_rgba = a_rgba;
   v_style = a_style;
@@ -202,8 +204,8 @@ float xyMarkerSdf(vec2 d, int shape) {
   if (shape == 3 || shape == 8 || shape == 9 || shape == 10) {     // Matplotlib triangle path
     vec2 q = d;
     if (shape == 8) q = -d;
-    if (shape == 9) q = vec2(d.y, -d.x);
-    if (shape == 10) q = vec2(-d.y, d.x);
+    if (shape == 9) q = vec2(-d.y, d.x);
+    if (shape == 10) q = vec2(d.y, -d.x);
     return xyTriangleDistance(q, vec2(0.0, -0.5), vec2(-0.5, 0.5), vec2(0.5, 0.5));
   }
   if (shape == 11) {                                                // diagonal x

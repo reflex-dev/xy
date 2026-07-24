@@ -277,6 +277,18 @@ def _limit_error(error: Any, lower_limits: Any, upper_limits: Any, size: int) ->
     return np.vstack((low, high))
 
 
+def _error_sides(error: Any, size: int) -> tuple[np.ndarray, np.ndarray]:
+    """Return broadcast lower and upper error magnitudes."""
+    raw = np.asarray(error, dtype=np.float64)
+    if raw.ndim >= 2 and raw.shape[0] == 2:
+        return (
+            np.broadcast_to(raw[0], (size,)),
+            np.broadcast_to(raw[1], (size,)),
+        )
+    values = np.broadcast_to(raw, (size,))
+    return values, values
+
+
 def _plain_label(value: Any) -> str:
     text = str(value).replace("$", "")
     for source, target in {
@@ -2201,9 +2213,38 @@ class PlotTypeMixin:
 
             lolims, uplims = subset_limit(lolims), subset_limit(uplims)
             xlolims, xuplims = subset_limit(xlolims), subset_limit(xuplims)
-        yerr = _limit_error(yerr, lolims, uplims, len(np.asarray(y)))
-        xerr = _limit_error(xerr, xlolims, xuplims, len(np.asarray(x)))
+        x_values = np.asarray(x)
+        y_values = np.asarray(y)
+        limit_markers: list[tuple[np.ndarray, np.ndarray, str]] = []
+        if yerr is not None:
+            lower, upper = _error_sides(yerr, len(y_values))
+            lower_flags = np.broadcast_to(np.asarray(lolims, dtype=bool), y_values.shape)
+            upper_flags = np.broadcast_to(np.asarray(uplims, dtype=bool), y_values.shape)
+            if lower_flags.any():
+                limit_markers.append(
+                    (x_values[lower_flags], y_values[lower_flags] + upper[lower_flags], "^")
+                )
+            if upper_flags.any():
+                limit_markers.append(
+                    (x_values[upper_flags], y_values[upper_flags] - lower[upper_flags], "v")
+                )
+        if xerr is not None:
+            lower, upper = _error_sides(xerr, len(x_values))
+            lower_flags = np.broadcast_to(np.asarray(xlolims, dtype=bool), x_values.shape)
+            upper_flags = np.broadcast_to(np.asarray(xuplims, dtype=bool), x_values.shape)
+            if lower_flags.any():
+                limit_markers.append(
+                    (x_values[lower_flags] + upper[lower_flags], y_values[lower_flags], ">")
+                )
+            if upper_flags.any():
+                limit_markers.append(
+                    (x_values[upper_flags] - lower[upper_flags], y_values[upper_flags], "<")
+                )
+        yerr = _limit_error(yerr, lolims, uplims, len(y_values))
+        xerr = _limit_error(xerr, xlolims, xuplims, len(x_values))
         base = line_kwargs(kwargs)
+        marker = kwargs.pop("marker", None)
+        markersize = kwargs.pop("markersize", kwargs.pop("ms", None))
         check_unsupported(kwargs, "errorbar()")
         # When ecolor is omitted, the bars inherit the resolved data-series
         # color, exactly as matplotlib does: an explicit color kwarg wins, then
@@ -2223,6 +2264,10 @@ class PlotTypeMixin:
             if line_color is None:
                 line_color = self._next_color()
             color = line_color
+        resolved_capsize = float(rcParams["errorbar.capsize"] if capsize is None else capsize)
+        errorbar_width = float(
+            elinewidth if elinewidth is not None else base.get("width", rcParams["lines.linewidth"])
+        )
         entry = self._add(
             "@mark",
             {
@@ -2233,12 +2278,23 @@ class PlotTypeMixin:
                     "xerr": xerr,
                     "name": base.get("name"),
                     "color": color,
-                    "width": float(elinewidth or base.get("width", 1.2)),
-                    "cap_size": None if capsize is None else float(capsize),
+                    "width": errorbar_width,
+                    "cap_size": resolved_capsize,
                     "opacity": base.get("opacity", 1.0),
                 },
             },
         )
+        marker_area = float(max(float(rcParams["lines.markersize"]), 2.0 * resolved_capsize) ** 2)
+        for marker_x, marker_y, marker_symbol in limit_markers:
+            self.scatter(
+                marker_x,
+                marker_y,
+                s=marker_area,
+                c=color,
+                marker=marker_symbol,
+                edgecolors=color,
+                linewidths=0.0,
+            )
         data_line: Optional[Line2D] = None
         if fmt.lower() != "none":
             line_kwargs_for_plot: dict[str, Any] = {}
@@ -2254,6 +2310,14 @@ class PlotTypeMixin:
                 line_kwargs_for_plot["alpha"] = base["opacity"]
             if "name" in base:
                 line_kwargs_for_plot["label"] = base["name"]
+            if "linestyle" in base:
+                line_kwargs_for_plot["linestyle"] = base["linestyle"]
+            if "dash" in base:
+                line_kwargs_for_plot["dashes"] = base["dash"]
+            if marker is not None:
+                line_kwargs_for_plot["marker"] = marker
+            if markersize is not None:
+                line_kwargs_for_plot["markersize"] = markersize
             data_line = self.plot(x, y, fmt, **line_kwargs_for_plot)[0]
         return ErrorbarContainer(Artist(self, entry), data_line)
 

@@ -1506,6 +1506,8 @@ class Axes(PlotTypeMixin):
         ``(counts, bin_edges, patches)`` as matplotlib does.
         """
         color = kwargs.pop("color", None)
+        facecolor = kwargs.pop("facecolor", None)
+        fill = kwargs.pop("fill", None)
         alpha = kwargs.pop("alpha", None)
         label = kwargs.pop("label", None)
         histtype = kwargs.pop("histtype", "bar")
@@ -1513,6 +1515,7 @@ class Axes(PlotTypeMixin):
         orientation = kwargs.pop("orientation", "vertical")
         stacked = bool(kwargs.pop("stacked", False))
         edgecolor = kwargs.pop("edgecolor", None)
+        linewidth = kwargs.pop("linewidth", kwargs.pop("lw", None))
         if (
             edgecolor is None
             and histtype in ("bar", "barstacked")
@@ -1525,7 +1528,9 @@ class Axes(PlotTypeMixin):
         if histtype not in {"bar", "barstacked", "step", "stepfilled"}:
             raise ValueError(f"unsupported histtype {histtype!r}")
 
-        if isinstance(x, np.ndarray) and x.ndim == 1 and x.dtype.kind in "fiub":
+        if np.isscalar(x):
+            datasets = [np.atleast_1d(np.asarray(x, dtype=np.float64))]
+        elif isinstance(x, np.ndarray) and x.ndim == 1 and x.dtype.kind in "fiub":
             # The common numeric-array call must not round-trip through an
             # object array: boxing every element just to sniff the input shape
             # is an O(n) cost per build (tests/pyplot/test_perf_guardrail.py).
@@ -1573,11 +1578,30 @@ class Axes(PlotTypeMixin):
                 for values in counts
             ]
         stacked = stacked or histtype == "barstacked"
-        colors = (
-            color
-            if isinstance(color, (list, tuple)) and len(datasets) > 1
-            else [color] * len(datasets)
-        )
+
+        def dataset_values(value: Any, name: str, *, color_value: bool = False) -> list[Any]:
+            if value is None:
+                return [None] * len(datasets)
+            if color_value:
+                try:
+                    resolve_color(value)
+                except (TypeError, ValueError):
+                    pass
+                else:
+                    return [value] * len(datasets)
+            if np.isscalar(value):
+                return [value] * len(datasets)
+            values = list(value)
+            if len(values) != len(datasets):
+                raise ValueError(
+                    f"hist {name} sequence must have length {len(datasets)}, got {len(values)}"
+                )
+            return values
+
+        colors = dataset_values(color, "color", color_value=True)
+        facecolors = dataset_values(facecolor, "facecolor", color_value=True)
+        edgecolors = dataset_values(edgecolor, "edgecolor", color_value=True)
+        linewidths = dataset_values(linewidth, "linewidth")
         labels = label if isinstance(label, (list, tuple)) else [label] * len(datasets)
         containers: list[BarContainer] = []
         base = np.zeros(len(edges) - 1, dtype=np.float64)
@@ -1592,10 +1616,30 @@ class Axes(PlotTypeMixin):
         for index, values in enumerate(counts):
             positions = centers if stacked else centers + (index - (len(datasets) - 1) / 2) * width
             current_base = base.copy() if stacked else np.zeros_like(values)
-            resolved_color = (
+            series_color = (
                 resolve_color(colors[index]) if colors[index] is not None else self._next_color()
             )
-            if orientation == "horizontal" and histtype == "stepfilled":
+            resolved_color = (
+                resolve_color(facecolors[index]) if facecolors[index] is not None else series_color
+            )
+            resolved_edge = (
+                resolve_color(edgecolors[index]) if edgecolors[index] is not None else None
+            )
+            resolved_width = (
+                float(linewidths[index])
+                if linewidths[index] is not None
+                else float(rcParams["patch.linewidth"]) * self._point_scale()
+            )
+            filled = histtype == "stepfilled" if fill is None else bool(fill)
+            if not filled and resolved_edge is None:
+                resolved_edge = (
+                    series_color
+                    if histtype == "step"
+                    else resolve_color(rcParams["patch.edgecolor"])
+                )
+            elif filled and histtype == "step" and resolved_edge is None:
+                resolved_edge = series_color
+            if orientation == "horizontal" and histtype.startswith("step") and filled:
                 # The core area primitive fills along y. Horizontal filled
                 # steps are equivalently represented by touching horizontal
                 # bars, preserving the exact bins/counts without rotating a
@@ -1612,7 +1656,8 @@ class Axes(PlotTypeMixin):
                             "color": resolved_color,
                             "opacity": 1.0 if alpha is None else float(alpha),
                             "name": None if labels[index] is None else str(labels[index]),
-                            "stroke": resolve_color(edgecolor) if edgecolor is not None else None,
+                            "stroke": resolved_edge,
+                            "stroke_width": resolved_width,
                         },
                     },
                 )
@@ -1626,19 +1671,21 @@ class Axes(PlotTypeMixin):
                         "factory": "segments",
                         "args": (path_x[:-1], path_y[:-1], path_x[1:], path_y[1:]),
                         "kwargs": {
-                            "color": resolved_color,
-                            "width": 1.2,
+                            "color": resolved_edge or series_color,
+                            "width": resolved_width,
                             "name": None if labels[index] is None else str(labels[index]),
                             "opacity": 1.0 if alpha is None else float(alpha),
                         },
                     },
                 )
-            elif histtype == "stepfilled":
+            elif histtype.startswith("step") and filled:
                 # matplotlib fills the step polygon down to the baseline; the
                 # area mark takes the pre-expanded step vertices verbatim.
                 tops = values + current_base
-                no_edge = edgecolor is None or (
-                    isinstance(edgecolor, str) and edgecolor.lower() == "none"
+                no_edge = resolved_edge in (None, "transparent") or (
+                    isinstance(resolved_edge, str)
+                    and resolved_edge.startswith("rgba(")
+                    and resolved_edge.endswith(",0)")
                 )
                 entry = self._add(
                     "@mark",
@@ -1648,12 +1695,8 @@ class Axes(PlotTypeMixin):
                         "kwargs": {
                             "base": np.repeat(current_base, 2),
                             "color": resolved_color,
-                            "line_color": None if no_edge else resolve_color(edgecolor),
-                            "line_width": (
-                                0.0
-                                if no_edge
-                                else float(rcParams["patch.linewidth"]) * self._point_scale()
-                            ),
+                            "line_color": None if no_edge else resolved_edge,
+                            "line_width": 0.0 if no_edge else resolved_width,
                             "line_opacity": 1.0 if alpha is None else float(alpha),
                             "stroke_perimeter": not no_edge,
                             "name": None if labels[index] is None else str(labels[index]),
@@ -1669,7 +1712,8 @@ class Axes(PlotTypeMixin):
                         "factory": "stairs",
                         "args": (step_values, edges),
                         "kwargs": {
-                            "color": resolved_color,
+                            "color": resolved_edge or series_color,
+                            "width": resolved_width,
                             "name": None if labels[index] is None else str(labels[index]),
                             "opacity": 1.0 if alpha is None else float(alpha),
                         },
@@ -1685,10 +1729,11 @@ class Axes(PlotTypeMixin):
                             "base": current_base,
                             "width": width,
                             "orientation": orientation,
-                            "color": resolved_color,
+                            "color": "transparent" if fill is False else resolved_color,
                             "opacity": 1.0 if alpha is None else float(alpha),
                             "name": None if labels[index] is None else str(labels[index]),
-                            "stroke": resolve_color(edgecolor) if edgecolor is not None else None,
+                            "stroke": resolved_edge,
+                            "stroke_width": resolved_width,
                         },
                     },
                 )

@@ -749,14 +749,14 @@ fn pentagon_sdf(p: (f32, f32), r: f32) -> f32 {
 fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
     match sym {
         1 => px.abs().max(py.abs()) - r, // square
-        2 => (px.abs() + py.abs()) - r,  // diamond
+        2 => (px.abs() + py.abs()) - r * std::f32::consts::SQRT_2, // diamond
         3 | 8 | 9 | 10 => {
             // Matplotlib's normalized triangle: apex at one edge and a
             // full-width base at the opposite edge.
             let d = match sym {
                 8 => (-px, -py), // down
-                9 => (py, -px),  // left
-                10 => (-py, px), // right
+                9 => (-py, px),  // left
+                10 => (py, -px), // right
                 _ => (px, py),
             };
             triangle_sdf(d, (0.0, -r), (-r, r), (r, r))
@@ -774,7 +774,7 @@ fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
             (ax - 0.34 * r).max(ay - r).min((ax - r).max(ay - 0.34 * r))
         }
         13 => px.abs().max(py.abs()) - r,      // snapped pixel
-        14 => (px.abs() / 0.6 + py.abs()) - r, // thin diamond
+        14 => (px.abs() / 0.6 + py.abs()) - r * std::f32::consts::SQRT_2, // thin diamond
         15 => {
             // Unfilled plus: its width comes from markeredgewidth below.
             let (ax, ay) = (px.abs(), py.abs());
@@ -817,6 +817,15 @@ fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
             (q.0 * q.0 + q.1 * q.1).sqrt() * (p.1 * ba.0 - p.0 * ba.1).signum()
         }
         _ => (px * px + py * py).sqrt() - r, // circle
+    }
+}
+
+#[inline]
+fn symbol_extent(r: f32, sym: u8) -> f32 {
+    if matches!(sym, 2 | 14) {
+        r * std::f32::consts::SQRT_2
+    } else {
+        r
     }
 }
 
@@ -865,7 +874,7 @@ fn point_u8_at(
     let stroke_rgb = [stroke[0], stroke[1], stroke[2]];
     let fill_alpha = fill[3] as f32 / 255.0;
     let stroke_alpha = stroke[3] as f32 / 255.0;
-    let ext = r + 1.0;
+    let ext = symbol_extent(r, sym) + 1.0;
     let (bx0, by0, bx1, by1) = cv.bbox(cx - ext, cy - ext, cx + ext, cy + ext);
     if sw <= 0.0 && sym == 0 {
         // Stroke-free circle — the default mark and the overwhelming batch
@@ -1709,7 +1718,7 @@ fn paint_affine_points(cv: &mut Canvas, batch: &AffinePointsBatch, threads: usiz
         xs.push(batch.x.project(i));
         ys.push(batch.y.project(i));
     }
-    let ext = batch.radius + batch.sw + 1.0;
+    let ext = symbol_extent(batch.radius, batch.sym) + batch.sw + 1.0;
     paint_banded(
         cv,
         threads,
@@ -1783,7 +1792,7 @@ fn paint_styled_points(cv: &mut Canvas, batch: &StyledPointsBatch, threads: usiz
         threads,
         batch.n,
         |i| {
-            let ext = batch.rs[i] + batch.sw + 1.0;
+            let ext = symbol_extent(batch.rs[i], batch.sym) + batch.sw + 1.0;
             Some((batch.ys[i] - ext, batch.ys[i] + ext))
         },
         |surface, indices| {
@@ -2119,7 +2128,7 @@ fn rasterize_with_spans(
                             output_scale,
                         },
                     };
-                    let side = 2.0 * (radius + sw + 1.0);
+                    let side = 2.0 * (symbol_extent(radius, sym) + sw + 1.0);
                     let est_px = side * side * n as f32;
                     paint_affine_points(
                         &mut cv,
@@ -2260,7 +2269,7 @@ fn rasterize_with_spans(
                         };
                         fills.push(fill);
                         if radius.is_finite() {
-                            let side = 2.0 * (radius + sw + 1.0);
+                            let side = 2.0 * (symbol_extent(radius, sym) + sw + 1.0);
                             est_px += side * side;
                         }
                     }
@@ -2499,6 +2508,43 @@ fn grad_color(stops: &[(f32, [f32; 4])], t: f32) -> [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn horizontal_triangle_symbols_point_in_the_named_direction() {
+        let moment = |symbol| {
+            let mut total = 0.0;
+            for y in -20..=20 {
+                for x in -20..=20 {
+                    let px = x as f32 / 10.0;
+                    let py = y as f32 / 10.0;
+                    if symbol_sdf(px, py, 2.0, symbol) <= 0.0 {
+                        total += px;
+                    }
+                }
+            }
+            total
+        };
+
+        assert!(
+            moment(9) > 0.0,
+            "triangle_left must put its wide base right of the leftward apex"
+        );
+        assert!(
+            moment(10) < 0.0,
+            "triangle_right must put its wide base left of the rightward apex"
+        );
+    }
+
+    #[test]
+    fn diamond_symbols_match_matplotlib_marker_extents() {
+        let radius = 3.0;
+        let extent = radius * std::f32::consts::SQRT_2;
+
+        assert_eq!(symbol_extent(radius, 2), extent);
+        assert_eq!(symbol_extent(radius, 14), extent);
+        assert!(symbol_sdf(0.0, extent, radius, 2).abs() < 1e-6);
+        assert!(symbol_sdf(0.6 * extent, 0.0, radius, 14).abs() < 1e-6);
+    }
 
     fn px(out: &[u8], w: usize, x: usize, y: usize) -> [u8; 4] {
         let o = (y * w + x) * 4;
