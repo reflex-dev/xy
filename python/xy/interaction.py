@@ -24,10 +24,10 @@ from ._ooc import is_memmapped
 from .config import (
     DECIMATION_THRESHOLD,
     DEFAULT_PALETTE,
-    DENSITY_SAMPLE_SEED,
-    DENSITY_SAMPLE_TARGET,
     DENSITY_TARGET_POINTS_PER_CELL,  # noqa: F401  (historic import path)
     DRILL_EXIT_FACTOR,
+    DRILL_PAD_SPAN_CAP,
+    DRILL_PAD_TARGETS,
     PYRAMID_BASE_DIM,
     PYRAMID_MAX_DIM,
     PYRAMID_MIN_POINTS,
@@ -95,8 +95,16 @@ def pick(
     except ValueError:
         return None
     if dseq is not None and dseq != t.drill_seq:
-        return None
-    shipped_sel = _point_shipped_sel(t)
+        # The client may pick against a RETIRED cached point window (LOD doc
+        # T13) whose subset version is no longer the current drill. Recent
+        # subsets stay resolvable through the bounded history; anything older
+        # (or bumped by exits/data changes) drops the pick rather than reading
+        # the index in the wrong subset space (§16 exact-or-nothing).
+        shipped_sel = lod.drill_history(t, dseq)
+        if shipped_sel is None:
+            return None
+    else:
+        shipped_sel = _point_shipped_sel(t)
     if shipped_sel is not None:
         if idx < 0 or idx >= len(shipped_sel):
             return None
@@ -484,74 +492,89 @@ def _decode_log_u8(buf: bytes, gmax: float) -> np.ndarray:
     return np.expm1((v / 255.0) * np.log1p(gmax))
 
 
-def _density_sample_update(
+# Interactive density replies deliberately ship NO point sample (#225): a
+# fixed-size sample above the drill budget reads as individual data points at
+# a zoom where real points are sub-pixel — misrepresenting the dataset — and
+# the density surface already wears the data's own colors (LOD doc §2). Real
+# points arrive the moment a window fits the budget. The only retained sample
+# is the first-payload one (`_payload._density_sample_spec`), which the client
+# draws solely below the resolvable-count gate and the standalone re-bin
+# worker keeps as its CPU source.
+
+
+def _pyramid_source_shape(
+    t: Any, lo_x: float, hi_x: float, lo_y: float, hi_y: float
+) -> tuple[int, int] | None:
+    """The pyramid's finest-level cell budget under a window, per axis.
+
+    Wire economy (§29 / #225 follow-up): composing a pyramid-served window to
+    full screen resolution upsamples blocky base cells into a grid several
+    times larger than the information it carries — a ~2.7 MB reply whose
+    content is a few hundred KB of source cells. Clamping the composed grid
+    to `(cells under the window at the finest level) + 1` per axis ships the
+    same detail (the client's own texture filtering reproduces the upscale)
+    at a fraction of the bytes.
+    """
+    base = int(getattr(t, "_pyr_base_dim", 0) or PYRAMID_BASE_DIM)
+    ex0, ex1, ey0, ey1 = t.x.min, t.x.max, t.y.min, t.y.max
+    span_x, span_y = ex1 - ex0, ey1 - ey0
+    if not all(np.isfinite(v) for v in (ex0, ex1, ey0, ey1)) or span_x <= 0 or span_y <= 0:
+        return None
+    frac_x = min(1.0, max(0.0, (hi_x - lo_x) / span_x))
+    frac_y = min(1.0, max(0.0, (hi_y - lo_y) / span_y))
+    return max(1, math.ceil(base * frac_x) + 1), max(1, math.ceil(base * frac_y) + 1)
+
+
+def _padded_drill_window(
     fig: "Figure",
     t: Any,
-    sel: np.ndarray,
-    visible: int,
+    pyr: int | None,
     lo_x: float,
     hi_x: float,
     lo_y: float,
     hi_y: float,
-    writer: lod.BufferWriter,
-) -> Optional[dict[str, Any]]:
-    if visible <= 0:
+) -> Optional[tuple[float, float, float, float, np.ndarray]]:
+    """The widest aligned window around the view that still drills (T13).
+
+    The client elides any request whose view an exact shipped window already
+    contains (T12) and caches retired windows, so every extra span this window
+    can afford converts future pans and zooms into zero-round-trip renders.
+    Bounds snap outward to the power-of-two grid over the trace's extent
+    (`lod.aligned_window`), making consecutive pans resolve to the SAME
+    window; the coarsest ladder rung whose exact in-window count fits the
+    budget wins. Returns None (drill the raw view window) when padding buys
+    nothing: nonlinear axes (raw-space alignment mis-sizes log windows near
+    zero), non-finite extents, or every rung over budget.
+    """
+    if fig._axis_scale(t.x_axis) != "linear" or fig._axis_scale(t.y_axis) != "linear":
         return None
-    categories = None
-    if t.color_ch and t.color_ch.mode == "categorical" and t.color_ch.codes is not None:
-        categories = t.color_ch.codes[sel]
-    sample_sel = lod.sample_rows_for_target(
-        sel,
-        DENSITY_SAMPLE_TARGET,
-        categories=categories,
-        seed=DENSITY_SAMPLE_SEED,
-    )
-    if len(sample_sel) == 0:
+    ex0, ex1, ey0, ey1 = t.x.min, t.x.max, t.y.min, t.y.max
+    if not all(np.isfinite(v) for v in (ex0, ex1, ey0, ey1)):
         return None
-    xs, ys = t.x.values[sample_sel], t.y.values[sample_sel]
-    x_ref, y_ref = lod.add_window_xy(
-        writer,
-        xs,
-        ys,
-        lo_x,
-        hi_x,
-        lo_y,
-        hi_y,
-        fig._axis_scale(t.x_axis),
-        fig._axis_scale(t.y_axis),
-    )
-    color_spec, size_spec = fig._ship_channels(
-        t, sample_sel, writer.add_f32, writer.add_u8, quantize_continuous=True
-    )
-    style = dict(t.style)
-    try:
-        style["opacity"] = min(float(style.get("opacity", 0.8)), 0.55)
-    except (TypeError, ValueError):
-        style["opacity"] = 0.55
-    sample = {
-        "mode": "sampled",
-        "n": int(len(sample_sel)),
-        "visible": int(visible),
-        "target": DENSITY_SAMPLE_TARGET,
-        "level": 0,
-        "seed": DENSITY_SAMPLE_SEED,
-        "x": x_ref,
-        "y": y_ref,
-        "x_range": [lo_x, hi_x],
-        "y_range": [lo_y, hi_y],
-        "color": color_spec,
-        "size": size_spec,
-        "style": style,
-    }
-    if t.stroke_ch is not None:
-        sample["stroke"] = channels.ship_color_channel(
-            t.stroke_ch, sample_sel, writer.add_f32, writer.add_u8, DEFAULT_PALETTE
-        )
-    if t.style_channels:
-        sample["channels"] = channels.ship_style_channels(
-            t.style_channels, sample_sel, writer.add_f32, writer.add_u8
-        )
-    return sample
+    span_x, span_y = hi_x - lo_x, hi_y - lo_y
+    budget = SCATTER_DENSITY_THRESHOLD
+    for pad in DRILL_PAD_TARGETS:
+        px0, px1 = lod.aligned_window(lo_x, hi_x, ex0, ex1, pad)
+        py0, py1 = lod.aligned_window(lo_y, hi_y, ey0, ey1, pad)
+        if px0 == lo_x and px1 == hi_x and py0 == lo_y and py1 == hi_y:
+            continue
+        # §16 precision guard: the shipped offset encoding centers on THIS
+        # window, and the client re-requests precision only below 1/256 of the
+        # window span — a window unboundedly wider than the view (tiny view
+        # over a small dataset) would let deep zooms outrun f32 first.
+        if px1 - px0 > span_x * DRILL_PAD_SPAN_CAP or py1 - py0 > span_y * DRILL_PAD_SPAN_CAP:
+            continue
+        if pyr is not None:
+            # Cheap center-in-cell estimate gates the exact O(N) verify scan;
+            # the margin keeps a boundary-straddling estimate from wasting a
+            # scan on a window the exact count then rejects.
+            est = kernels.pyramid_count(pyr, px0, px1, py0, py1)
+            if est is not None and est > budget * 0.85:
+                continue
+        sel = kernels.range_indices(t.x.values, t.y.values, px0, px1, py0, py1)
+        if len(sel) <= budget:
+            return px0, px1, py0, py1, sel
+    return None
 
 
 def _quantize_dval(dval: np.ndarray) -> np.ndarray:
@@ -699,23 +722,30 @@ def density_view(
                 False,
                 aggregate_reduction="pyramid-count",
             )
+            # Wire economy: never compose more grid cells than the finest
+            # level resolves under this window — a full-screen grid of
+            # upsampled base cells is the same picture at several times the
+            # bytes (the client's texture filtering does the upscale).
+            gw, gh = plan.grid_w, plan.grid_h
+            source = _pyramid_source_shape(t, lo_x, hi_x, lo_y, hi_y)
+            if source is not None:
+                gw = max(16, min(gw, source[0]))
+                gh = max(16, min(gh, source[1]))
             # Colored pyramids compose the mean-color plane with the counts
             # (same level, same max_upsample); both refusals (outresolved
             # window, missing planes) fall through to the paths below.
             if getattr(t, "_pyr_colored", False):
                 res_color = kernels.pyramid_compose_color(
-                    pyr, lo_x, hi_x, lo_y, hi_y, plan.grid_w, plan.grid_h, max_upsample
+                    pyr, lo_x, hi_x, lo_y, hi_y, gw, gh, max_upsample
                 )
                 res = (res_color[0], res_color[2]) if res_color is not None else None
                 rgba_grid = res_color[1] if res_color is not None else None
             else:
-                res = kernels.pyramid_compose(
-                    pyr, lo_x, hi_x, lo_y, hi_y, plan.grid_w, plan.grid_h, max_upsample
-                )
+                res = kernels.pyramid_compose(pyr, lo_x, hi_x, lo_y, hi_y, gw, gh, max_upsample)
             if res is not None:
                 grid, level = res
                 visible = plan.visible
-                w, h = plan.grid_w, plan.grid_h
+                w, h = gw, gh
                 binning = f"pyramid-L{level}{'-upsampled' if no_rescan and level == 0 else ''}"
                 lod.exit_drill(t)
     # Tier-3 spatial index: when the pyramid can only serve this window blurry
@@ -790,7 +820,17 @@ def density_view(
         plan = lod.plan_view_lod(request, len(sel), SCATTER_DENSITY_THRESHOLD, t.drill_mode)
         visible = plan.visible
         if plan.exact:
-            return _drill_points(fig, t, sel, visible, lo_x, hi_x, lo_y, hi_y, w, h)
+            # Ship the widest aligned window that still fits the budget (T13)
+            # so the client's point-window cache answers nearby pans/zooms
+            # locally; the raw view window is the floor. `visible` describes
+            # the SHIPPED window; the view's own count keeps driving the
+            # density→points intensity handoff.
+            padded = _padded_drill_window(fig, t, pyr, lo_x, hi_x, lo_y, hi_y)
+            if padded is not None:
+                lo_x, hi_x, lo_y, hi_y, sel = padded
+            return _drill_points(
+                fig, t, sel, len(sel), lo_x, hi_x, lo_y, hi_y, w, h, blend_visible=visible
+            )
 
         lod.exit_drill(t)
         w, h = plan.grid_w, plan.grid_h
@@ -812,11 +852,6 @@ def density_view(
     writer = lod.BufferWriter()
     density_wire, gmax = _encode_log_u8(grid)
     density_buf = writer.add_raw(density_wire)
-    sample = (
-        _density_sample_update(fig, t, sel, visible, lo_x, hi_x, lo_y, hi_y, writer)
-        if binning == "exact"
-        else None
-    )
     density = {
         "buf": density_buf,
         "w": w,
@@ -835,8 +870,6 @@ def density_view(
         density["color_agg"] = "mean"
     if t.color_ch and t.color_ch.mode == "constant" and t.color_ch.constant is not None:
         density["color"] = t.color_ch.constant
-    if sample is not None:
-        density["sample"] = sample
     return (
         {
             "traces": [
@@ -866,6 +899,7 @@ def _drill_points(
     hi_y: float,
     w: int,
     h: int,
+    blend_visible: int | None = None,
 ) -> tuple[dict[str, Any], list[bytes]]:
     """Ship the visible subset of a Tier-2 scatter as real points (§5 drill-in).
 
@@ -873,10 +907,14 @@ def _drill_points(
     ship in the direct-scatter wire shape, normalized over their *global*
     domain so colors/sizes stay stable across views; offsets re-center on the
     window midpoint (§16); each point carries its local log-density plus a
-    `lod_blend` weight (visible/budget) so the density→points handoff stays
-    continuous (§5). The surface wears the mean point color (LOD doc §2), so
-    the handoff is intensity-only: fresh marks enter at their cell's
-    count-alpha and ease to native opacity, with hue continuous throughout."""
+    `lod_blend` weight so the density→points handoff stays continuous (§5).
+    The window may be a padded aligned superset of the requested view (T13),
+    so `visible` counts the SHIPPED window while `blend_visible` — the
+    requested view's own count — drives the handoff weight: the intensity a
+    user sees at the swap belongs to the view, not to padding they can't see.
+    The surface wears the mean point color (LOD doc §2), so the handoff is
+    intensity-only: fresh marks enter at their cell's count-alpha and ease to
+    native opacity, with hue continuous throughout."""
     xs, ys = t.x.values[sel], t.y.values[sel]
     writer = lod.BufferWriter()
     x_ref, y_ref = lod.add_window_xy(
@@ -909,8 +947,11 @@ def _drill_points(
     # 1.0 right at the boundary → points enter at the density surface's
     # local count-alpha; →0 as zoom deepens. The surface wears the mean point
     # color (LOD doc §2), so marks arrive in their native colors and only
-    # intensity eases.
-    lod_blend = float(min(1.0, visible / SCATTER_DENSITY_THRESHOLD))
+    # intensity eases. Keyed on the VIEW's count when the window is padded —
+    # padding widens what ships, not what the user is looking at.
+    lod_blend = float(
+        min(1.0, (visible if blend_visible is None else blend_visible) / SCATTER_DENSITY_THRESHOLD)
+    )
     trace_update = {
         "id": t.id,
         "mode": "points",
@@ -1146,6 +1187,10 @@ def append_data(
         # "not applicable" result; let the next wide view build it.
         t._pyr_handle = None
     lod.exit_drill(t)
+    # Remembered subsets were computed against the pre-append canonical state;
+    # the client rebuilds its GPU traces (and drops its cached point windows)
+    # on the refresh anyway, so stale-seq picks must die rather than translate.
+    lod.clear_drill_history(t)
 
     # Split layout, same as first paint (§29): per-column borrowed views, no
     # join copy. The spec itself names the append — `append.seq` is the apply

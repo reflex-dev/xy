@@ -2,7 +2,8 @@ import { payloadBuffers } from "./00_header";
 import { buildLutData } from "./10_colormaps";
 import { parseColor } from "./20_theme";
 import {
-  lodApplyDensityUpdate, lodApplyDrill, lodDrillServesView, lodDropDrill, lodRememberDensity,
+  lodAggregateStands, lodAggregateStepWindow, lodApplyDensityUpdate, lodApplyDrill,
+  lodDrillServesView, lodDropDrill, lodPromoteCachedDrill, lodRememberDensity,
 } from "./45_lod";
 import { xyCreateRebinWorker } from "./46_worker";
 import { ChartView } from "./50_chartview";
@@ -32,16 +33,28 @@ Object.assign(ChartView.prototype, {
       const now = this._now();
       for (const g of this.gpuTraces) {
         if (g.tier !== "density") continue;
-        // Zoom-in request elision (T12): a view contained in an exact drill's
-        // window is already answered by the marks on the GPU — the smaller
-        // window's points are a subset of the shipped ones — so this trace
+        // Zoom-in request elision (T12/T13): a view contained in an exact
+        // window already on the GPU — the live drill, or a retired cached
+        // point window promoted back — is answered locally, so this trace
         // goes neither pending nor on the wire. The seq bump above stands, so
         // an in-flight reply for an older, wider view dies stale instead of
         // yanking the exact marks out from under the view it can't improve.
-        if (this._drillServesView(g, view)) {
+        const plan = this._drillServesView(g, view) ? null : this._densityRequestPlan(g, view);
+        if (!plan) {
           g._lodPendingView = null;
           g._lodPendingSeq = null;
           g._lodPendingAt = null;
+          continue;
+        }
+        // Duplicate of the request already in flight (identical window and
+        // screen): keep waiting on ITS seq instead of arming a new one that
+        // would kill the incoming reply just to resend the same window —
+        // the "constantly re-requesting the same points" loop (#225 notes).
+        const dup = this._densityRequestDup(g, plan.win, plotW, plotH, now);
+        if (dup) {
+          g._lodPendingView = view;
+          g._lodPendingSeq = dup.seq;
+          g._lodPendingAt = dup.sentAt;
           continue;
         }
         g._lodPendingView = view;
@@ -72,12 +85,16 @@ Object.assign(ChartView.prototype, {
         });
       }
       if (needsDensity) {
+        const sendNow = this._now();
         for (const g of this.gpuTraces) {
           if (g.tier !== "density") continue;
-          // T12 re-check at actual send time: a drill that landed during the
-          // debounce elides the request it made unnecessary; one that died
-          // during it re-arms the request the schedule-time check skipped.
-          if (this._drillServesView(g, view)) {
+          // T12/T13 re-check at actual send time: a drill that landed during
+          // the debounce — or a reply that moved the view back out of the
+          // points band with its step already covered — elides the request
+          // it made unnecessary; a drill that died during it re-arms the
+          // request the schedule-time check skipped.
+          const plan = this._drillServesView(g, view) ? null : this._densityRequestPlan(g, view);
+          if (!plan) {
             if (g._lodPendingSeq === seq) {
               g._lodPendingView = null;
               g._lodPendingSeq = null;
@@ -85,14 +102,30 @@ Object.assign(ChartView.prototype, {
             }
             continue;
           }
-          const [x0, x1] = this._axisRange(g.xAxis, view);
-          const [y0, y1] = this._axisRange(g.yAxis, view);
+          // Identical-request suppression (T13): the same window at the same
+          // screen size is either already answered (nothing to refresh — the
+          // reply is deterministic for unchanged data; a data change rebuilds
+          // this GPU record and clears the memo) or still in flight (its
+          // reply was adopted as this trace's pending marker above).
+          const dup = this._densityRequestDup(g, plan.win, plotW, plotH, sendNow);
+          if (dup) {
+            if (dup.answered && g._lodPendingSeq === seq) {
+              g._lodPendingView = null;
+              g._lodPendingSeq = null;
+              g._lodPendingAt = null;
+            }
+            continue;
+          }
+          const win = plan.win;
           this.comm.send({
             type: "density_view", seq, trace: g.trace.id,
-            x0: Math.min(x0, x1), x1: Math.max(x0, x1),
-            y0: Math.min(y0, y1), y1: Math.max(y0, y1),
+            x0: win[0], x1: win[1], y0: win[2], y1: win[3],
             w: plotW, h: plotH,
           });
+          // A ladder-step request's reply is the one density reply allowed
+          // to repaint a covered view (lodApplyDensityUpdate).
+          if (plan.step) g._stepReqWin = win;
+          g._lastDensityReq = { win, w: plotW, h: plotH, seq, sentAt: sendNow, answered: false };
         }
       }
     };
@@ -102,6 +135,70 @@ Object.assign(ChartView.prototype, {
       this._viewTimer = setTimeout(send, delay);
     }
     return seq;
+  },
+
+  // Same request within half an output texel per edge: gesture-end and
+  // settle produce windows differing by sub-pixel amounts (field HAR: 0.03%
+  // shifts back-to-back), and a grid shifted below half a texel is visually
+  // identical — re-shipping it is pure wire waste.
+  _densityRequestSame(last, win, plotW, plotH) {
+    if (!last || last.w !== plotW || last.h !== plotH) return false;
+    const tx = (win[1] - win[0]) / plotW / 2;
+    const ty = (win[3] - win[2]) / plotH / 2;
+    return Math.abs(last.win[0] - win[0]) <= tx && Math.abs(last.win[1] - win[1]) <= tx &&
+      Math.abs(last.win[2] - win[2]) <= ty && Math.abs(last.win[3] - win[3]) <= ty;
+  },
+
+  // The last density_view actually sent for this GPU record, when a new
+  // request would be its (sub-texel) twin: either already answered (the
+  // reply is deterministic for unchanged data, so there is nothing to
+  // refresh) or still in flight (bounded by the same 1200ms window as the T8
+  // pending hold, so a lost reply can never suppress refresh forever). The
+  // memo lives on the GPU record — a rebuild (append, payload update, context
+  // restore) starts it fresh, so data changes are never suppressed.
+  _densityRequestDup(g, win, plotW, plotH, now) {
+    const last = g._lastDensityReq;
+    if (!last || !this._densityRequestSame(last, win, plotW, plotH)) return null;
+    if (last.answered) return last;
+    return now - last.sentAt < 1200 ? last : null;
+  },
+
+  // What (if anything) this trace should ask the kernel for at `view`
+  // (T13, revised): inside the points band, the RAW VIEW window — the
+  // kernel decides the tier there, and its density replies land as facts
+  // only; while the aggregate stands, the next LADDER STEP window when
+  // every covering texture is coarser than the view's step (a quantized
+  // aligned window, so pans resolve to the same request), else nothing.
+  // Drill/point-cache service is the caller's earlier check.
+  _densityRequestPlan(g, view) {
+    const [x0, x1] = this._axisRange(g.xAxis, view);
+    const [y0, y1] = this._axisRange(g.yAxis, view);
+    if (!lodAggregateStands(this, g, x0, x1, y0, y1)) {
+      return {
+        win: [Math.min(x0, x1), Math.max(x0, x1), Math.min(y0, y1), Math.max(y0, y1)],
+        step: false,
+      };
+    }
+    const win = lodAggregateStepWindow(this, g, x0, x1, y0, y1);
+    return win ? { win, step: true } : null;
+  },
+
+  // A reply whose seq lost the global race can still be current in substance:
+  // duplicate-suppressed requests leave their traces waiting on the ORIGINAL
+  // request's seq (T13 — identical window and screen). Accept it only when
+  // every trace it updates is still waiting on exactly this seq AND that seq
+  // names the trace's last actually-SENT request — a pending marker can
+  // outlive a debounce-cancelled send, and a reply matching such a phantom
+  // request is stale, not suppressed-current (T5).
+  _densityReplyCurrent(msg) {
+    const ids = (msg.traces || []).map((u) => Number(u.id));
+    if (!ids.length && msg.trace !== undefined) ids.push(Number(msg.trace));
+    if (!ids.length) return false;
+    return ids.every((id) => {
+      const g = this.gpuTraces.find((t) => t.trace.id === id && t.tier === "density");
+      return g && g._lodPendingSeq === msg.seq &&
+        g._lastDensityReq && g._lastDensityReq.seq === msg.seq;
+    });
   },
 
   // Standalone (kernel-less) density refinement. Debounced like the kernel
@@ -150,7 +247,10 @@ Object.assign(ChartView.prototype, {
         const hd = g._homeDensity;
         this._applySampleRebinGrid(g, {
           ...hd,
-          tex: this._uploadGrid(hd.grid, hd.w, hd.h, hd.normMax || hd.max || 1, hd.rgba, hd.filter),
+          tex: this._uploadGrid(
+            hd.grid, hd.w, hd.h, hd.normMax || hd.max || 1, hd.rgba, hd.filter,
+            this._fillOpacity(g.trace.style),
+          ),
         }, false);
       }
       return;
@@ -247,7 +347,10 @@ Object.assign(ChartView.prototype, {
       xRange: [msg.x0, msg.x1], yRange: [msg.y0, msg.y1],
       grid,
       rgba,
-      tex: this._uploadGrid(grid, msg.w, msg.h, msg.max || 1, rgba),
+      tex: this._uploadGrid(
+        grid, msg.w, msg.h, msg.max || 1, rgba, "linear",
+        this._fillOpacity(g.trace.style),
+      ),
       lut: g.density.lut,
     }, true);
   },
@@ -385,7 +488,7 @@ Object.assign(ChartView.prototype, {
       }
       this.draw();
     } else if (msg.type === "density_update") {
-      if (msg.seq !== undefined && msg.seq !== this.seq) return;
+      if (msg.seq !== undefined && msg.seq !== this.seq && !this._densityReplyCurrent(msg)) return;
       const densityTraces = msg.traces || [];
       const pendingTraceIds = new Set(densityTraces.map((upd) => Number(upd.id)));
       if (pendingTraceIds.size === 0 && msg.trace !== undefined) {
@@ -394,6 +497,11 @@ Object.assign(ChartView.prototype, {
       const clearAllPending = pendingTraceIds.size === 0 && msg.stale;
       const clearPending = (g) => {
         if (msg.seq !== undefined && g._lodPendingSeq !== msg.seq) return;
+        // The identical-request memo (T13): this window is now answered, so a
+        // later request for the same window and screen sends nothing.
+        if (g._lastDensityReq && g._lastDensityReq.seq === msg.seq) {
+          g._lastDensityReq.answered = true;
+        }
         g._lodPendingView = null;
         g._lodPendingSeq = null;
         g._lodPendingAt = null;
@@ -538,15 +646,18 @@ Object.assign(ChartView.prototype, {
     lodDropDrill(this, g);
   },
 
-  // Can `view` be answered locally from this trace's live drill, with no
-  // kernel round-trip (T12)? True only for an exact (reduction "none"),
-  // non-dying drill whose window contains the view's per-axis ranges, and
-  // only until the zoom outgrows the §16 f32 encode precision.
+  // Can `view` be answered locally with no kernel round-trip? True for an
+  // exact (reduction "none"), non-dying live drill whose window contains the
+  // view's per-axis ranges (T12), and — failing that — for any retired cached
+  // point window that does, which is promoted back to the live drill on the
+  // spot (T13). Both only until the zoom outgrows the §16 f32 encode
+  // precision.
   _drillServesView(g, view) {
-    if (!g.drill) return false;
+    if (!g) return false;
     const [x0, x1] = this._axisRange(g.xAxis, view);
     const [y0, y1] = this._axisRange(g.yAxis, view);
-    return lodDrillServesView(g, x0, x1, y0, y1);
+    if (lodDrillServesView(g, x0, x1, y0, y1)) return true;
+    return lodPromoteCachedDrill(this, g, x0, x1, y0, y1);
   },
 
   // Is the current view fully covered by a drilled window? A tiny epsilon

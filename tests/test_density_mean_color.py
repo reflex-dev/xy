@@ -1,9 +1,10 @@
 """Mean-color density surface (LOD doc §2): the aggregated view wears the
 data's own colors — per-cell alpha-weighted mean of the resolved point
-colors, averaged in linear light — while the binned count drives only the
-alpha channel. These tests pin the kernel against a NumPy oracle (the LOD
-doc's exit criterion), the wire shape across the initial emit / exact
-density_view / pyramid paths, and the static exporters' color law.
+colors, averaged in linear light — composited at the points' own alpha
+(`1 − (1 − ā)^count`, the physical downsample). These tests pin the kernel
+against a NumPy oracle (the LOD doc's exit criterion), the wire shape across
+the initial emit / exact density_view / pyramid paths, and the static
+exporters' color law.
 """
 
 from __future__ import annotations
@@ -254,6 +255,27 @@ def test_svg_export_density_uses_mean_colors():
     assert left.size and right.size
     assert (left[:, :3] == palette[0, :3]).all()
     assert (right[:, :3] == palette[1, :3]).all()
+
+
+def test_physical_density_alpha_law():
+    # LOD doc §2 rule 1: alpha = 1 - (1 - a_pt)^count with a_pt = channel
+    # alpha x style opacity folded inside the exponent; empty/invisible
+    # cells stay 0; a_pt = 1 saturates any occupied cell; no window max
+    # enters anywhere. This is the exporters' twin of the client upload law.
+    from xy._svg import _physical_density_alpha
+
+    counts = np.asarray([0.0, 1.0, 3.0, 50.0, 2.0, 5.0])
+    mean_a = np.asarray([255, 255, 255, 255, 0, 255], dtype=np.uint8)
+    out = _physical_density_alpha(counts, mean_a, 0.72)
+    expect = lambda k: round(255 * (1.0 - (1.0 - 0.72) ** k))  # noqa: E731
+    assert out[0] == 0  # empty
+    assert abs(int(out[1]) - expect(1)) <= 1  # one point IS the point alpha
+    assert abs(int(out[2]) - expect(3)) <= 1
+    assert out[3] >= 254  # saturates like overplotted marks
+    assert out[4] == 0  # all-invisible cell never invents coverage
+    # Style opacity 1 + full channel alpha: any occupied cell is opaque.
+    full = _physical_density_alpha(counts, np.full(6, 255, dtype=np.uint8), 1.0)
+    assert full[0] == 0 and (full[1:4] == 255).all()
 
 
 def test_resolve_bin_colors_modes():

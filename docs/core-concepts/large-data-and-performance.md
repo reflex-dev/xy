@@ -16,8 +16,8 @@ readout and refinement.
 | --- | --- | --- |
 | Direct | Small visible traces | One rendered point or segment per retained row |
 | M4-decimated | Long ordered lines and areas | A bounded sequence preserving per-bucket extrema |
-| Density + sample | Dense scatter overviews | A fixed-resolution count grid plus a deterministic point sample |
-| Refined view | A narrower pan/zoom window | A new viewport-specific aggregate or exact visible points when they fit |
+| Density | Dense scatter overviews | A count grid wearing the data's own mean point colors. It stands across pans and zooms — softening as you go deeper — rather than re-aggregating per viewport; in standalone (kernel-less) charts a deterministic point sample overlays it once the view's estimated count would fit the direct budget |
+| Refined view | A window near or below the direct budget | Exact visible points for a padded aligned window — nearby pans and zooms then render from the cached window with no further requests |
 
 The current defaults begin M4 line decimation above 10,000 rows and automatic
 scatter density above 200,000 points. Density grids default to 512×384 cells,

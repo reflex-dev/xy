@@ -3,7 +3,7 @@ import { buildLutData, colormapStops } from "./10_colormaps";
 import { cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
 import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
-import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
+import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodDropPointCache, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
 
 // ---------------------------------------------------------------------------
@@ -2110,10 +2110,14 @@ export class ChartView {
         w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
         color: d.color ? parseColor(this.root, d.color, [0.3, 0.47, 0.66, 1]) : null,
         xRange: d.x_range, yRange: d.y_range,
+        // The home window's count seeds lodAggregateStands (T13): every
+        // zoom's points-band estimate starts from this until a closer
+        // window's reply recalibrates it.
+        visible: t.visible,
         grid: lodCopyGrid(grid),
         rgba,
         filter,
-        tex: this._uploadGrid(grid, d.w, d.h, d.max, rgba, filter),
+        tex: this._uploadGrid(grid, d.w, d.h, d.max, rgba, filter, this._fillOpacity(t.style)),
         lut: this._lut(d.colormap),
       };
       g.sampleOverlay = this._buildDensitySample(t, d.sample, buffer);
@@ -2860,10 +2864,10 @@ export class ChartView {
     return tex;
   }
 
-  _uploadGrid(f32, w, h, maxVal, rgba = null, filter = "linear") {
+  _uploadGrid(f32, w, h, maxVal, rgba = null, filter = "linear", pointAlpha = 1) {
     const gl = this.gl;
     const tex = gl.createTexture();
-    lodWriteGridTexture(gl, tex, f32, w, h, maxVal, rgba, filter);
+    lodWriteGridTexture(gl, tex, f32, w, h, maxVal, rgba, filter, pointAlpha);
     return tex;
   }
 
@@ -3449,7 +3453,14 @@ export class ChartView {
       this._axisCoord(xAxis, d.xRange[0]), this._axisCoord(xAxis, d.xRange[1]),
       this._axisCoord(yAxis, d.yRange[0]), this._axisCoord(yAxis, d.yRange[1]),
     );
-    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * opacityScale);
+    // Mean-color textures bake the style opacity INSIDE their physical
+    // compositing (LOD doc §2 rule 1 — dense cells saturate past it exactly
+    // like overplotted marks), so the uniform carries only the transition
+    // fades for them; count-only grids keep style opacity here as before.
+    gl.uniform1f(
+      u("u_opacity"),
+      (d.rgba ? 1 : this._fillOpacity(g.trace.style)) * opacityScale,
+    );
     // Mean-color grids carry their colors in the texture (LOD doc §2);
     // count-only grids tint with the constant trace color or, failing that,
     // fall back to the LUT ramp (hand-built/legacy specs).
@@ -5085,6 +5096,7 @@ export class ChartView {
   _destroyTraceResources(g, texSeen) {
     if (!g) return;
     this._destroyDensitySample(g);
+    lodDropPointCache(this, g); // retired point windows die with the trace (T13)
     this._deleteVaos(g);
     this._deleteVaos(g.drill);
     this._deleteBuffers(g, [
@@ -5094,7 +5106,9 @@ export class ChartView {
       "_transitionPrevXBuf", "_transitionPrevYBuf",
       "_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",
     ]);
-    this._deleteBuffers(g.drill, ["xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "dBuf"]);
+    this._deleteBuffers(g.drill, [
+      "xBuf", "yBuf", "cBuf", "rgbaBuf", "sBuf", "styleBuf", "strokeBuf", "selBuf", "dBuf",
+    ]);
     const textures = [];
     if (g.heatmap) textures.push(g.heatmap.tex);
     for (const d of g.densityCache || []) textures.push(d && d.tex);

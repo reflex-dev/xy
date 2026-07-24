@@ -15,6 +15,11 @@ The elision has exactly three re-arm conditions, each asserted here:
 - the drill stops being an exact live subset (dying, or a reply that did not
   claim `reduction: "none"`).
 
+A re-armed request is still subject to the T13 identical-request suppression:
+the same window at the same screen size never goes on the wire twice while
+the first request is in flight — the trace keeps waiting on the original seq,
+whose reply is then accepted instead of dying stale.
+
 This drives the real client in headless Chromium with a captured comm, applies
 a drill for a known window, and inspects exactly which view requests reach the
 wire.
@@ -102,9 +107,28 @@ _PROBE = """
     g._drillDying = false;
 
     // 5) A subset that did not claim reduction "none" never arms the elision.
+    // Distinct bounds from case 4: an identical re-request would be elided by
+    // the T13 duplicate suppression asserted separately below.
     g.drill.exact = false;
     const nonExactRequested = request(
-      cx - sx * 0.02, cx + sx * 0.02, cy - sy * 0.02, cy + sy * 0.02) === 1;
+      cx - sx * 0.025, cx + sx * 0.025, cy - sy * 0.025, cy + sy * 0.025) === 1;
+
+    // 6) Identical-request suppression (T13): re-requesting the SAME window
+    // and screen while the first request is still in flight sends nothing,
+    // and the trace keeps waiting on the ORIGINAL request's seq so that
+    // reply is accepted instead of dying stale — the fix for the
+    // "constantly re-requesting the same points" loop (#225 notes).
+    const densityMsgs = sent.filter((m) => m.type === "density_view");
+    const firstReq = densityMsgs[densityMsgs.length - 1];
+    const dupElided = request(
+      cx - sx * 0.025, cx + sx * 0.025, cy - sy * 0.025, cy + sy * 0.025) === 0;
+    const dupKeptPendingSeq = g._lodPendingSeq === firstReq.seq;
+    // The in-flight reply (old seq) is still accepted for this trace…
+    const acceptedOldSeq = view._densityReplyCurrent({
+      seq: firstReq.seq, traces: [{ id: g.trace.id }] });
+    // …but a reply for a seq nobody is waiting on stays stale (T5).
+    const rejectedUnknownSeq = view._densityReplyCurrent({
+      seq: firstReq.seq + 1000, traces: [{ id: g.trace.id }] });
 
     document.body.setAttribute("data-xy-elide-probe", JSON.stringify({
       hasDensity: !!g,
@@ -117,6 +141,10 @@ _PROBE = """
       deepZoomRequested,
       dyingRequested,
       nonExactRequested,
+      dupElided,
+      dupKeptPendingSeq,
+      acceptedOldSeq,
+      rejectedUnknownSeq,
     }));
   } catch (err) {
     document.body.setAttribute(
@@ -176,3 +204,11 @@ def test_zoom_in_within_exact_drill_sends_no_request(tmp_path: Path) -> None:
     assert result["deepZoomRequested"] is True
     assert result["dyingRequested"] is True
     assert result["nonExactRequested"] is True
+    # Identical-request suppression (T13): the same window+screen sends
+    # nothing while the original request is in flight; the trace keeps
+    # waiting on the original seq, whose reply is accepted — any other
+    # losing seq stays stale (T5).
+    assert result["dupElided"] is True
+    assert result["dupKeptPendingSeq"] is True
+    assert result["acceptedOldSeq"] is True
+    assert result["rejectedUnknownSeq"] is False

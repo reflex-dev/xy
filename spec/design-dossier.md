@@ -416,9 +416,15 @@ re-exports several of them as a historic import path and is not listed for those
 | `MAX_CONTOUR_WORK` | `4_000_000` | Ceiling on contour `cells × levels`; a request over it raises instead of allocating an unbounded segment buffer. | `marks.py`, `_native.py` |
 | `DRILL_EXIT_FACTOR` | `1.15` | Hysteresis multiplier on the drill boundary: a trace already drilled to real points stays drilled until the visible count exceeds `budget × 1.15`. | `lod.py` (`drill_decision`, `plan_view_lod`), `interaction.py`; mirrored as `LOD_DRILL_EXIT_FACTOR` in `js/src/45_lod.ts` |
 | `DENSITY_TARGET_POINTS_PER_CELL` | `16.0` | Target points per cell when sizing an aggregation grid, so a barely-over-budget view does not get a one-point-per-pixel grid that looks like static and re-ships large. | `lod.py` |
-| `DENSITY_SAMPLE_TARGET` | `8_192` | Size of the deterministic real-point sample shipped over an aggregated scatter's density texture (hybrid overlay). | `_payload.py`, `interaction.py` |
-| `DENSITY_SAMPLE_SEED` | `0` | Seed for that sample; a fixed seed makes the overlay identical across re-ships of the same view. | `_payload.py`, `interaction.py` |
-| `LOD_SAMPLE_FADE_COVER_HI` / `LOD_SAMPLE_FADE_COVER_LO` | `1/4` / `1/32` | Fallback bound on the hybrid-overlay sample (T9): overlays ride their density windows and the drawn one is the best cached window covering the view (full alpha), so the band only governs a view NO cached window covers — the best partial draws at full alpha while its window covers ≥ 1/4 of the view area, hidden below 1/32, log-eased between. The band value is a *composited* opacity target (per-point alpha solved against the expected overplot, `1−(1−band)^(1/k)`), so a partial overlay can never overplot into a false cluster. | `js/src/45_lod.js` (`lodSampleViewAlpha`, `lodSampleForView`) |
+| `DENSITY_SAMPLE_TARGET` | `8_192` | Size of the deterministic real-point sample retained with the FIRST density payload only (#225: interactive density replies ship no samples; the client draws the retained overlay solely below the T9 resolvable-count gate, and the standalone re-bin worker keeps it as its CPU source). | `_payload.py` |
+| `DENSITY_SAMPLE_SEED` | `0` | Seed for that sample; a fixed seed makes the overlay identical across re-ships of the same view. | `_payload.py` |
+| `LOD_SAMPLE_FADE_COVER_HI` / `LOD_SAMPLE_FADE_COVER_LO` | `1/4` / `1/32` | Fallback bound on the retained sample overlay (T9): overlays ride their density windows and the drawn one is the best cached window covering the view (full alpha), so the band only governs a view NO cached window covers — the best partial draws at full alpha while its window covers ≥ 1/4 of the view area, hidden below 1/32, log-eased between. The band value is a *composited* opacity target (per-point alpha solved against the expected overplot, `1−(1−band)^(1/k)`), so a partial overlay can never overplot into a false cluster. Every candidate first passes the #225 resolvability gate (estimated in-view count ≤ the direct budget). | `js/src/45_lod.ts` (`lodOverlayResolvable`, `lodSampleViewAlpha`, `lodSampleForView`) |
+| `DRILL_PAD_TARGETS` | `(8, 4, 2)` | Ladder of padded-span targets (× the view span) for points-tier replies: the coarsest ALIGNED window around the view whose exact count fits the budget ships, so the client's point-window cache answers nearby pans/zooms with zero round-trips (LOD doc T13). | `interaction.py` (`_padded_drill_window`), `lod.py` (`aligned_window`) |
+| `DRILL_PAD_SPAN_CAP` | `64.0` | Hard per-axis cap on a padded drill window's span (× the view span), kept well under the client's §16 re-encode bound (1/256 of window span) so deep zooms can always re-tighten the f32 offset encoding. | `interaction.py` |
+| `DRILL_HISTORY_KEEP` | `8` | Recent drilled subsets kept resolvable per trace, so picks against a retired cached point window (T13) still translate exactly; older seqs drop the pick, data changes clear the history. | `lod.py` (`enter_drill`, `drill_history`), `interaction.py` (`pick`) |
+| `LOD_POINT_CACHE_WINDOWS` | `3` | Retired exact point windows kept per trace client-side beyond the live drill; LRU-bounded VRAM, swept by the T11 outgrown rule. | `js/src/45_lod.ts` (`lodRetireDrill`, `lodPromoteCachedDrill`) |
+| `LOD_POINTS_REQUEST_BAND` | `4` | The aggregate tier never refines per view (T13, revised): a raw-view `density_view` goes out only when the estimated in-view count sits within `budget × 4` of points territory — the LOWER of an area-scaled cached-window count and the retained sample counted in-view (`lodSampleViewCount`, distribution-true where area-scaling over-estimates sparse tails). | `js/src/45_lod.ts` (`lodAggregateStands`) |
+| `LOD_AGG_STEP_FACTOR` / `LOD_AGG_STEP_MAX` / `LOD_AGG_STEP_SLACK` | `4` / `2` / `1.5` | The stepped aggregate ladder (T13): while standing, the only density request is the view snapped outward to a power-of-4 block grid over the extent (per axis), at most 2 steps below home, and only when every covering texture is coarser than the step by more than the slack. Quantized windows are pan-stable and dedupable — at most 2 smooth-to-smooth swaps before points, worst-case softness ≈ 4× stretch per axis. | `js/src/45_lod.ts` (`lodAggregateStepWindow`) |
 | `DEFAULT_PALETTE` | 10 CVD-safe hex entries | Per-trace default color cycle and the fallback categorical palette when a channel supplies none (§20/§36). | `marks.py`, `_payload.py`, `_svg.py`, `_raster.py` |
 | `PYRAMID_MIN_POINTS` | `2_000_000` | Trace size at/above which a Tier-3 tile pyramid is built lazily; smaller traces never pay for one. | `interaction.py` |
 | `PYRAMID_BASE_DIM` | `2048` | Edge of the pyramid's base level in cells (`dim²` u32 counts, ~1/3 overhead for the coarser levels); sets resident pyramid bytes. | `interaction.py` |
@@ -466,8 +472,9 @@ F3, still pending (above).
 - **WebGPU primary, WebGL2 fallback.** One `<canvas>`, everything is GPU primitives.
 - **Instanced draws** for markers/bars/lines — one draw call for millions of marks.
 - **Density textures** for aggregated tiers (§5, Tier 2) — mean point color per
-  cell, count as alpha (LOD doc §2); premultiplied RGBA8 upload for
-  channel-bearing traces, tinted R8 count texture for constant-color ones.
+  cell, composited at the points' own alpha (`1−(1−a_pt)^count`, LOD doc §2);
+  premultiplied RGBA8 upload for channel-bearing traces, tinted R8
+  log-count-ramp texture for constant-color ones.
 - **DOM/SVG only for chrome** — axis tick labels, legend, title, tooltip. Little of it,
   and it stays crisp/accessible/selectable.
 - **Retained scene graph**, spec-diff → buffer-diff. Pan/zoom is a view-matrix uniform
@@ -1010,9 +1017,10 @@ means uniform in the axis's scale coordinates, not in raw data. Concretely:
   before `bin_2d`; the wire keeps raw `x_range`/`y_range` endpoints and the
   rule "cells are uniform in scale coordinates" (wire-protocol.md §3). Without
   this, clusters at x=1 and x=1000 share one cell on a symlog axis despite
-  being a third of the screen apart. The drill handoff's per-point
+  being a third of the screen apart. The count-only drill handoff's per-point
   `local_log_density` bins in the same space so its count-alpha matches the
-  grid's (hue already matches — the grid wears the mean point color, LOD doc §2).
+  grid's (mean-color surfaces need no handoff at all — they composite like
+  the points themselves, LOD doc §2 rules 1/5).
 - **The raw-space tile pyramid** (Tier 3) cannot compose a scale-coordinate
   grid, so traces on a nonlinear axis skip pyramid build/compose and always
   take the exact scan (`binning: "exact"`). Cost: the O(visible) rescan the
