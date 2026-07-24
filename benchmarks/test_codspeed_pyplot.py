@@ -158,14 +158,10 @@ def export_data() -> tuple[np.ndarray, np.ndarray]:
 
 
 def _raw_line_payload(x: np.ndarray, y: np.ndarray) -> int:
-    x_min, x_max = float(x.min()), float(x.max())
-    y_min, y_max = float(y.min()), float(y.max())
-    x_padding = (x_max - x_min) * 0.05
-    y_padding = (y_max - y_min) * 0.05
     c = xy.chart(
         xy.line(x=x, y=y, color="#1f77b4"),
-        xy.x_axis(domain=(x_min - x_padding, x_max + x_padding)),
-        xy.y_axis(domain=(y_min - y_padding, y_max + y_padding)),
+        xy.x_axis(margin=0.05),
+        xy.y_axis(margin=0.05),
         width=WIDTH,
         height=HEIGHT,
     )

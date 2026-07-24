@@ -4681,10 +4681,6 @@ class Axes(PlotTypeMixin):
                 self._axis["x"]["domain"] = (x0, x1)
                 self._axis["y"]["domain"] = (y0, y1)
             adjusted_aspect = True
-        if not adjusted_aspect and self._xmargin != 0.0 and "x" not in self._explicit_domains:
-            self._axis["x"]["domain"] = self._auto_domain("x")
-        if not adjusted_aspect and self._ymargin != 0.0 and "y" not in self._explicit_domains:
-            self._axis["y"]["domain"] = self._auto_domain("y")
         if chart_padding is None and any(
             entry["kind"] == "@text"
             and (entry["kwargs"].get("style") or {}).get("coordinate_space") == "axes_fraction"
@@ -4713,6 +4709,10 @@ class Axes(PlotTypeMixin):
         }
         x_props = {k: v for k, v in self._axis["x"].items() if v is not None}
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
+        if not adjusted_aspect and "x" not in self._explicit_domains:
+            x_props["margin"] = self._xmargin
+        if not adjusted_aspect and "y" not in self._explicit_domains:
+            y_props["margin"] = self._ymargin
         if "x" in empty_view:
             x_props["domain"] = (0.0, 1.0)
         if "y" in empty_view:

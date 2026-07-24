@@ -49,8 +49,9 @@ def test_margins_expand_only_automatic_domains() -> None:
 
     assert ax.get_xlim() == (9.0, 21.0)
     assert ax.get_ylim() == (90.0, 150.0)
-    assert _axis_child(ax, "x").domain == (9.0, 21.0)
-    assert _axis_child(ax, "y").domain == (90.0, 150.0)
+    figure = ax._build_chart(640, 480).figure()
+    assert figure.x_range() == (9.0, 21.0)
+    assert figure.y_range() == (90.0, 150.0)
 
     ax.set_xlim(0.0, 1.0)
     ax.margins(x=0.5)

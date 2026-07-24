@@ -17,8 +17,8 @@ def _clean():
 
 def _axis_domain(ax, which: str) -> tuple[float, float]:
     chart = ax._build_chart(640, 480)
-    child = next(child for child in chart.children if getattr(child, "which", None) == which)
-    return tuple(child.domain)
+    figure = chart.figure()
+    return figure.x_range() if which == "x" else figure.y_range()
 
 
 def test_default_rc_margins_apply_to_public_and_rendered_line_limits() -> None:
@@ -29,6 +29,28 @@ def test_default_rc_margins_apply_to_public_and_rendered_line_limits() -> None:
     assert ax.get_ylim() == pytest.approx((0.9, 3.1))
     assert _axis_domain(ax, "x") == pytest.approx((-0.1, 2.1))
     assert _axis_domain(ax, "y") == pytest.approx((0.9, 3.1))
+
+
+def test_default_margin_render_delegates_to_figure_autorange(monkeypatch) -> None:
+    _fig, ax = plt.subplots()
+    ax.plot(np.arange(10_000.0), np.arange(10_000.0))
+
+    def unexpected_scan(_axis: str) -> tuple[float, float]:
+        raise AssertionError("ordinary rendering must not rescan pyplot arrays")
+
+    monkeypatch.setattr(ax, "_auto_domain", unexpected_scan)
+    chart = ax._build_chart(640, 480)
+    axes = {
+        child.which: child
+        for child in chart.children
+        if getattr(child, "which", None) in {"x", "y"}
+    }
+
+    assert axes["x"].domain is None
+    assert axes["y"].domain is None
+    assert axes["x"].margin == pytest.approx(0.05)
+    assert axes["y"].margin == pytest.approx(0.05)
+    assert chart.figure().x_range() == pytest.approx((-499.95, 10_498.95))
 
 
 def test_axes_snapshot_rc_margins_at_creation() -> None:
