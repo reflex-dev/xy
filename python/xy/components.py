@@ -929,6 +929,9 @@ def triangle_mesh(
         opacity: Triangle opacity from zero to one.
         stroke: Optional triangle outline color.
         stroke_width: Triangle outline width in pixels.
+        _joined_fill: Internal export hint; static exports fill a uniform, unstroked mesh as
+            one joined boundary ring instead of per-triangle fills, which avoids antialias
+            seams and repeated alpha along internal diagonals.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
