@@ -4751,6 +4751,16 @@ class Axes(PlotTypeMixin):
         self._apply_tickers("x", x_props, auto_tick_counts["x"])
         self._apply_tickers("y", y_props, auto_tick_counts["y"])
         self._apply_auto_tick_density(x_props, y_props, auto_tick_counts)
+        if self._padding is None and y_props.get("side", "left") != "right":
+            compact = width < 520
+            default_padding = [6.0, 8.0, 36.0, 46.0] if compact else [10.0, 14.0, 42.0, 62.0]
+            required_left = _explicit_y_tick_gutter(y_props, self._entries)
+            effective_padding = (
+                default_padding if chart_padding is None else list(map(float, chart_padding))
+            )
+            if required_left > effective_padding[3]:
+                effective_padding[3] = required_left
+                chart_padding = effective_padding
         children.append(_cached_axis("x", x_props))
         children.append(_cached_axis("y", y_props))
         for index, secondary in enumerate(self._secondary_axes, 1):
@@ -5329,6 +5339,68 @@ def _plain_text(value: Any) -> str:
     for source, target in replacements.items():
         text = text.replace(source, target)
     return text.replace("_{", "").replace("^{", "^").replace("}", "")
+
+
+def _explicit_y_tick_gutter(axis: dict[str, Any], entries: list[dict[str, Any]]) -> float:
+    """Estimate the left gutter for authored/category tick labels.
+
+    The core renderer's 62 px default fits ordinary numeric ticks and a y-axis
+    title, but Matplotlib category labels can be substantially wider.  Pyplot
+    owns those strings before rendering, so reserve their measured-like width
+    once here and send the same explicit padding to browser, SVG, and PNG.
+    """
+    if axis.get("tick_label_strategy") in {"none", "off"}:
+        return 0.0
+    labels = axis.get("tick_labels")
+    if labels is None:
+        labels = axis.get("categories")
+    if labels is None:
+        inferred: list[str] = []
+        for entry in entries:
+            kwargs = entry.get("kwargs") or {}
+            if entry.get("kind") == "bar" and kwargs.get("orientation") == "horizontal":
+                values = entry.get("x")
+            else:
+                values = entry.get("y")
+            if values is None:
+                continue
+            array = np.asarray(values).reshape(-1)
+            if array.dtype.kind not in {"U", "S", "O"}:
+                continue
+            for value in array:
+                if isinstance(value, str) and value not in inferred:
+                    inferred.append(value)
+        labels = inferred
+    if not labels:
+        return 0.0
+    style = axis.get("style") or {}
+    font_size = float(style.get("tick_label_size", style.get("tick_size", 11.0)))
+    max_width = max(_approx_text_width(str(label), font_size) for label in labels)
+    tick_length = max(0.0, float(style.get("tick_length", 0.0)))
+    direction = str(style.get("tick_direction", "out"))
+    outward = 0.0 if direction == "in" else tick_length / 2 if direction == "inout" else tick_length
+    tick_pad = float(style.get("tick_padding", style.get("tick_label_pad", 4.0)))
+    axis_label_room = 0.0
+    if axis.get("label"):
+        label_size = float(style.get("label_size", font_size))
+        axis_label_room = label_size * 1.15 + 8.0
+    # Keep Matplotlib-like outer whitespace beyond the label ink; this is
+    # visible in the default SubplotParams frame and prevents antialiased
+    # leading glyphs from landing on the export boundary.
+    return max_width + outward + tick_pad + axis_label_room + 24.0
+
+
+def _approx_text_width(text: str, font_size: float) -> float:
+    """Conservative sans-serif text width without a renderer round-trip."""
+    units = 0.0
+    for char in text:
+        if char in " ilI.,'`|!:":
+            units += 0.28
+        elif char in "MW@#%&":
+            units += 0.9
+        else:
+            units += 0.56
+    return units * font_size
 
 
 def _masked_float(value: Any) -> np.ndarray:
