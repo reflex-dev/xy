@@ -1001,8 +1001,21 @@ def _auto_cap_size(positions: np.ndarray) -> float:
 
     0.25x the median adjacent spacing of the distinct finite positions along
     the cap's axis; 0.4 when fewer than two are distinct (no spacing exists).
+
+    The positions an error bar carries are usually an ordered independent
+    variable, and `np.unique` sorts unconditionally — an O(N log N) pass over
+    the whole column to answer a question about adjacent gaps. One O(N) diff
+    both proves the column is already non-decreasing and yields those gaps
+    directly; only an out-of-order column pays for the sort. Same distinct
+    values in the same order either way, so the median is identical.
     """
-    distinct = np.unique(positions[np.isfinite(positions)])
+    finite = positions[np.isfinite(positions)]
+    if len(finite) >= 2:
+        gaps = np.diff(finite)
+        if (gaps >= 0.0).all():
+            positive = gaps[gaps != 0.0]
+            return 0.25 * float(np.median(positive)) if len(positive) else 0.4
+    distinct = np.unique(finite)
     if len(distinct) < 2:
         return 0.4
     return 0.25 * float(np.median(np.diff(distinct)))

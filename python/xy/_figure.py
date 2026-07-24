@@ -1075,16 +1075,18 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 continue
             base = t.x0.values if axis == "x" else t.y0.values
             value = t.x1.values if axis == "x" else t.y1.values
+            # Ask the questions as masked predicates rather than compacting
+            # `base`/`value` down to their finite rows first: the compaction
+            # allocates and copies two full columns per axis per build, and
+            # every question here is a single "does any row violate this?".
             finite = np.isfinite(base) & np.isfinite(value)
-            if not np.any(finite):
+            if not finite.any():
                 continue
-            base = base[finite]
-            value = value[finite]
-            if not np.all(base == 0.0):
+            if (finite & (base != 0.0)).any():
                 continue
-            if np.all(value >= 0.0):
+            if not (finite & (value < 0.0)).any():
                 return "lo"
-            if np.all(value <= 0.0):
+            if not (finite & (value > 0.0)).any():
                 return "hi"
         return None
 
