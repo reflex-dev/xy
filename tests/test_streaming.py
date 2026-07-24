@@ -332,7 +332,9 @@ def test_append_keeps_offsets_sticky_and_prefixes_byte_identical():
         msg, buffers = fig.append(0, base + np.arange(3.0), np.sin(base + np.arange(3.0)))
         spec = msg["spec"]
         for axis in ("x", "y"):
-            old_meta, old_bytes = _column_bytes(prev_spec, prev_buffers, prev_spec["traces"][0][axis])
+            old_meta, old_bytes = _column_bytes(
+                prev_spec, prev_buffers, prev_spec["traces"][0][axis]
+            )
             new_meta, new_bytes = _column_bytes(spec, buffers, spec["traces"][0][axis])
             # Sticky offset: the encoding is unchanged even though the x
             # domain grew, so the old column is a byte-prefix of the new one.
