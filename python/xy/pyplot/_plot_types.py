@@ -126,6 +126,14 @@ def _textprops_kwargs(textprops: Any, where: str) -> dict[str, Any]:
     fontsize = source.pop("fontsize", source.pop("size", None))
     ha = source.pop("ha", source.pop("horizontalalignment", None))
     va = source.pop("va", source.pop("verticalalignment", None))
+    weight = source.pop("fontweight", source.pop("weight", None))
+    family = source.pop("fontfamily", source.pop("family", None))
+    fontstyle = source.pop("fontstyle", source.pop("style", None))
+    rotation = source.pop("rotation", None)
+    # Axes.pie_label creates unclipped labels before applying textprops.
+    # Accepting the matching default keeps that implementation detail from
+    # becoming a gallery incompatibility while non-default clipping stays loud.
+    _reject_non_default(where, "clip_on", source.pop("clip_on", None), False)
     check_unsupported(source, where)
     out: dict[str, Any] = {}
     if color is not None:
@@ -134,12 +142,49 @@ def _textprops_kwargs(textprops: Any, where: str) -> dict[str, Any]:
         out["anchor"] = {"left": "start", "center": "middle", "right": "end"}.get(str(ha), "start")
     style: dict[str, Any] = {}
     if fontsize is not None:
-        style["font_size"] = float(fontsize)
+        style["font_size"] = _text_font_size_points(fontsize)
     if va is not None:
         style["vertical_align"] = str(va)
+    if weight is not None:
+        style["font_weight"] = str(weight)
+    if family is not None:
+        style["font_family"] = str(family)
+    if fontstyle is not None:
+        style["font_style"] = _validated_font_style(fontstyle)
+    if rotation is not None:
+        style["rotation"] = 90.0 if rotation == "vertical" else float(rotation)
     if style:
         out["style"] = style
     return out
+
+
+def _text_font_size_points(value: Any) -> float:
+    """Resolve Matplotlib's named font sizes against the current base size."""
+    relative = {
+        "xx-small": 0.6,
+        "x-small": 0.75,
+        "small": 0.85,
+        "medium": 1.0,
+        "large": 1.2,
+        "x-large": 1.45,
+        "xx-large": 1.75,
+    }
+    if isinstance(value, str):
+        try:
+            return float(rcParams["font.size"]) * relative[value]
+        except KeyError as exc:
+            raise ValueError(f"unsupported relative font size {value!r}") from exc
+    result = float(value)
+    if result <= 0:
+        raise ValueError("font size must be positive")
+    return result
+
+
+def _validated_font_style(value: Any) -> str:
+    result = str(value)
+    if result not in {"normal", "italic", "oblique"}:
+        raise ValueError("font style must be 'normal', 'italic', or 'oblique'")
+    return result
 
 
 def _bilinear_grid_sample(
@@ -3551,7 +3596,8 @@ class PlotTypeMixin:
         _reject_non_default("pie", "rotatelabels", rotatelabels, False)
         if hatch is not None:
             raise not_implemented("pie(hatch=...)")
-        values = np.asarray(_from_data(x, data), dtype=np.float64)
+        source_values = np.asarray(_from_data(x, data))
+        values = np.asarray(source_values, dtype=np.float64)
         if values.ndim != 1 or len(values) == 0:
             raise ValueError("pie x must be a non-empty 1-D array")
         offsets = np.zeros(len(values), dtype=np.float64)
@@ -3674,7 +3720,7 @@ class PlotTypeMixin:
         extent = float(radius) * (1.25 + float(np.max(offsets)))
         self.set_xlim(float(center[0]) - extent, float(center[0]) + extent)
         self.set_ylim(float(center[1]) - extent, float(center[1]) + extent)
-        return PieContainer(wedges, values, bool(normalize), texts, autotexts)
+        return PieContainer(wedges, source_values, bool(normalize), texts, autotexts)
 
     def pie_label(
         self,
@@ -3691,11 +3737,13 @@ class PlotTypeMixin:
         ``labels`` may be a sequence or a ``{}``-format string receiving
         ``absval`` and ``frac`` per wedge; ``distance`` places labels as a
         fraction of the radius and ``textprops`` styles them.
-        ``rotate=True`` raises loudly.
+        ``rotate=True`` orients each label away from its wedge center.
         """
-        _reject_non_default("pie_label", "rotate", rotate, False)
         if alignment not in ("auto", "center", "outer"):
             raise ValueError("pie_label alignment must be 'auto', 'center', or 'outer'")
+        resolved_alignment = "outer" if alignment == "auto" and distance > 1 else alignment
+        if resolved_alignment == "auto":
+            resolved_alignment = "center"
         if isinstance(labels, str):
             formatted = [
                 labels.format(absval=value, frac=frac)
@@ -3714,15 +3762,25 @@ class PlotTypeMixin:
             radius = float(entry_data["pie_radius"])
             explode = float(entry_data["pie_explode"])
             radial = (float(distance) + explode) * radius
+            x = center_x + radial * np.cos(mid)
+            y = center_y + radial * np.sin(mid)
+            base_style: dict[str, Any] = {"vertical_align": "center"}
+            anchor = "middle"
+            if resolved_alignment == "outer":
+                anchor = "start" if x > 0 else "end"
+            if rotate:
+                if resolved_alignment == "outer":
+                    base_style["vertical_align"] = "bottom" if y > 0 else "top"
+                base_style["rotation"] = float(np.rad2deg(mid) + (0.0 if x > 0 else 180.0))
+            kwargs = {"anchor": anchor, "style": base_style}
+            kwargs.update({key: value for key, value in text_kwargs.items() if key != "style"})
+            if text_kwargs.get("style"):
+                kwargs["style"] = {**base_style, **text_kwargs["style"]}
             entry = self._add(
                 "@text",
                 {
-                    "args": (
-                        center_x + radial * np.cos(mid),
-                        center_y + radial * np.sin(mid),
-                        str(label),
-                    ),
-                    "kwargs": dict(text_kwargs),
+                    "args": (x, y, str(label)),
+                    "kwargs": kwargs,
                 },
             )
             result.append(Text(self, entry))

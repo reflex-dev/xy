@@ -1203,15 +1203,61 @@ def _emit_annotations(
                 first_y += font_size * 0.35
             elif vertical_align == "top":
                 first_y += font_size * 0.8
+            text_x = x + float(ann.get("dx", 0.0))
+            text_y = first_y + float(ann.get("dy", 0.0))
+            _emit_text_box(cmd, style, lines, text_x, text_y, line_height, font_size, anchor)
             for index, line in enumerate(lines):
                 cmd.text(
-                    x + float(ann.get("dx", 0.0)),
-                    first_y + index * line_height + float(ann.get("dy", 0.0)),
+                    text_x,
+                    text_y + index * line_height,
                     anchor,
                     font_size,
                     color,
                     line,
                 )
+
+
+def _emit_text_box(
+    cmd: _Cmd,
+    style: dict[str, Any],
+    lines: list[str],
+    x: float,
+    first_y: float,
+    line_height: float,
+    font_size: float,
+    anchor: int,
+) -> None:
+    """Draw the bounded CSS approximation used by pyplot ``text(bbox=)``."""
+    background = style.get("background")
+    border = str(style.get("border", ""))
+    if background is None and not border:
+        return
+    pad_parts = str(style.get("padding", "0")).split()
+
+    def px(value: str) -> float:
+        try:
+            return max(0.0, float(value.removesuffix("px")))
+        except ValueError:
+            return 0.0
+
+    pad_y = px(pad_parts[0]) if pad_parts else 0.0
+    pad_x = px(pad_parts[1]) if len(pad_parts) > 1 else pad_y
+    text_width = max((len(line) for line in lines), default=0) * font_size * 0.56
+    left = x - (text_width / 2 if anchor == 1 else text_width if anchor == 2 else 0.0) - pad_x
+    top = first_y - font_size * 0.8 - pad_y
+    right = left + text_width + pad_x * 2
+    bottom = top + font_size + (len(lines) - 1) * line_height + pad_y * 2
+    points = _rect_pts(left, top, right, bottom)
+    if background is not None:
+        cmd.fill(points, _parse_color(str(background)))
+    if border:
+        parts = border.split()
+        try:
+            width = max(0.0, float(parts[0].removesuffix("px")))
+        except (IndexError, ValueError):
+            width = 1.0
+        if width:
+            cmd.stroke(points + [points[0]], width, _parse_color(parts[-1]))
 
 
 def _emit_area(

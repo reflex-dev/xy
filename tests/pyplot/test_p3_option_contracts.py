@@ -259,10 +259,6 @@ _Z = np.arange(16.0).reshape(4, 4)
             lambda ax: ax.tricontour([0, 1, 2], [0, 1, 0], [1.0, 2.0, 3.0], norm=LogNorm()),
             r"tricontour\(norm=LogNorm\)",
         ),
-        (
-            lambda ax: ax.pie_label(ax.pie([1.0, 2.0]), "{frac:.0%}", rotate=True),
-            "rotate",
-        ),
     ],
 )
 def test_p3_options_are_rejected_instead_of_silently_discarded(call, match: str) -> None:

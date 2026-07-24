@@ -976,13 +976,27 @@ class PieContainer:
         import numpy as np
 
         self.wedges = wedges
-        self.values = np.asarray(values, dtype=np.float64)
-        total = float(np.sum(self.values)) if normalize else 1.0
-        self.fracs = self.values / total
+        # Matplotlib keeps the input dtype here.  In particular, integer pie
+        # data must remain integers so pie_label("{absval:d}") is valid.
+        self._values = np.asarray(values).copy()
         self.normalize = bool(normalize)
         self._texts: list[list[Text]] = [texts]
         if autotexts:
             self._texts.append(autotexts)
+
+    @property
+    def values(self) -> Any:
+        result = self._values.copy()
+        result.flags.writeable = False
+        return result
+
+    @property
+    def fracs(self) -> Any:
+        import numpy as np
+
+        result = self._values / np.sum(self._values) if self.normalize else self._values.copy()
+        result.flags.writeable = False
+        return result
 
     @property
     def texts(self) -> list[list["Text"]]:

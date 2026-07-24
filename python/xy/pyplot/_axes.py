@@ -14,7 +14,7 @@ import copy
 
 # Runtime imports, not TYPE_CHECKING: `typing.get_type_hints()` on the public
 # Axes methods must resolve these annotation names (all stdlib or xy-local).
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import suppress
 from datetime import datetime, timedelta
 from itertools import pairwise
@@ -2277,22 +2277,33 @@ class Axes(PlotTypeMixin):
         transform = kwargs.pop("transform", None)
         fontweight = kwargs.pop("fontweight", kwargs.pop("weight", None))
         fontfamily = kwargs.pop("fontfamily", kwargs.pop("family", None))
+        fontstyle = kwargs.pop("fontstyle", kwargs.pop("style", None))
         rotation = kwargs.pop("rotation", None)
+        bbox = kwargs.pop("bbox", None)
         check_unsupported(kwargs, "text()")
         akw = {"color": resolve_color(color)} if color is not None else {}
+        if bbox is not None:
+            if not isinstance(bbox, Mapping):
+                raise TypeError("text() bbox must be a mapping or None")
+            akw["bbox"] = dict(bbox)
         if ha is not None:
             akw["anchor"] = {"left": "start", "center": "middle", "right": "end"}.get(
                 str(ha), "start"
             )
         style: dict[str, Any] = {}
         if fontsize is not None:
-            style["font_size"] = float(fontsize)
+            style["font_size"] = _font_size_points(fontsize, rcParams["font.size"])
         if va is not None:
             style["vertical_align"] = str(va)
         if fontweight is not None:
             style["font_weight"] = str(fontweight)
         if fontfamily is not None:
             style["font_family"] = str(fontfamily)
+        if fontstyle is not None:
+            fontstyle = str(fontstyle)
+            if fontstyle not in {"normal", "italic", "oblique"}:
+                raise ValueError("text() style must be 'normal', 'italic', or 'oblique'")
+            style["font_style"] = fontstyle
         if rotation is not None:
             style["rotation"] = 90.0 if rotation == "vertical" else float(rotation)
         if transform is self.transAxes or transform == "axes fraction":
@@ -4358,6 +4369,7 @@ class Axes(PlotTypeMixin):
                         **_bbox_label_style(
                             kw["bbox"],
                             font_size=float((text_kw.get("style") or {}).get("font_size", 11.0)),
+                            point_scale=self._point_scale(),
                         ),
                         **(text_kw.get("style") or {}),
                     }
@@ -4977,7 +4989,11 @@ def _arrow_visuals(
     return color, width, style
 
 
-def _bbox_label_style(bbox: dict[str, Any], font_size: float = 11.0) -> dict[str, Any]:
+def _bbox_label_style(
+    bbox: dict[str, Any],
+    font_size: float = 11.0,
+    point_scale: float = 1.0,
+) -> dict[str, Any]:
     """matplotlib text ``bbox`` patch → annotation-label box styles.
 
     A CSS approximation drawn by the render client's DOM label; the static
@@ -5011,8 +5027,12 @@ def _bbox_label_style(bbox: dict[str, Any], font_size: float = 11.0) -> dict[str
     name = boxstyle.split(",")[0].strip()
     if "round" in name:
         style["border_radius"] = 8.0 if name == "round4" else 5.0
-    # matplotlib pads the patch pad×fontsize around the text.
-    pad = max(0.0, _parse_style_options(boxstyle).get("pad", 0.3)) * float(font_size)
+    # With an explicit boxstyle, Matplotlib's pad is a fraction of the font
+    # size.  Without one, top-level ``pad`` is in points (default 4 pt).
+    if "boxstyle" in bbox:
+        pad = max(0.0, _parse_style_options(boxstyle).get("pad", 0.3)) * float(font_size)
+    else:
+        pad = max(0.0, float(bbox.get("pad", 4.0))) * float(point_scale)
     style["padding"] = f"{pad:.3g}px {pad * 1.3:.3g}px"
     return style
 

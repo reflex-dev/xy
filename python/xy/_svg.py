@@ -1990,12 +1990,83 @@ def _annotation_svg(
             )
             # A callout's `color` paints its arrow; the label prefers its own.
             label_color = escape(_css(style.get("label_color"), "")) or color
+            labels.extend(
+                _svg_text_box(style, lines, x_text, y_text, line_height, font_size, anchor)
+            )
+            font_attrs = _svg_font_attrs(style)
+            rotation_attr = (
+                f' transform="rotate({_num(-rotation)} {_num(x_text)} {_num(y_text)})"'
+                if rotation
+                else ""
+            )
             labels.append(
-                f'<text text-anchor="{anchor}" font-size="{_num(font_size)}" '
+                f'<text text-anchor="{anchor}" font-size="{_num(font_size)}"{font_attrs}'
+                f"{rotation_attr} "
                 + (f'fill-opacity="{_num(text_opacity)}" ' if text_opacity < 1 else "")
                 + f'fill="{label_color}">{tspans}</text>'
             )
     return marks, labels
+
+
+def _svg_font_attrs(style: dict[str, Any]) -> str:
+    attrs = []
+    for key, attribute in (
+        ("font_family", "font-family"),
+        ("font_weight", "font-weight"),
+        ("font_style", "font-style"),
+    ):
+        if style.get(key) is not None:
+            attrs.append(f' {attribute}="{escape(str(style[key]))}"')
+    return "".join(attrs)
+
+
+def _svg_text_box(
+    style: dict[str, Any],
+    lines: list[str],
+    x: float,
+    first_y: float,
+    line_height: float,
+    font_size: float,
+    anchor: str,
+) -> list[str]:
+    """SVG counterpart of the pyplot text-bbox CSS approximation."""
+    background = style.get("background")
+    border = str(style.get("border", ""))
+    if background is None and not border:
+        return []
+    pad_parts = str(style.get("padding", "0")).split()
+
+    def px(value: str) -> float:
+        try:
+            return max(0.0, float(value.removesuffix("px")))
+        except ValueError:
+            return 0.0
+
+    pad_y = px(pad_parts[0]) if pad_parts else 0.0
+    pad_x = px(pad_parts[1]) if len(pad_parts) > 1 else pad_y
+    text_width = max((len(line) for line in lines), default=0) * font_size * 0.56
+    left = (
+        x
+        - (text_width / 2 if anchor == "middle" else text_width if anchor == "end" else 0.0)
+        - pad_x
+    )
+    top = first_y - font_size * 0.8 - pad_y
+    height = font_size + (len(lines) - 1) * line_height + pad_y * 2
+    fill = "none" if background is None else escape(str(background))
+    stroke = "none"
+    stroke_width = 0.0
+    if border:
+        parts = border.split()
+        stroke = escape(parts[-1])
+        try:
+            stroke_width = max(0.0, float(parts[0].removesuffix("px")))
+        except (IndexError, ValueError):
+            stroke_width = 1.0
+    return [
+        f'<rect x="{_num(left)}" y="{_num(top)}" '
+        f'width="{_num(text_width + pad_x * 2)}" height="{_num(height)}" '
+        f'fill="{fill}" stroke="{stroke}" stroke-width="{_num(stroke_width)}"/>'
+    ]
 
 
 def _segment_marks(
