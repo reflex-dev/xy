@@ -1191,6 +1191,13 @@ class PlotTypeMixin:
         if kwargs.pop("fontproperties", None) is not None:
             raise not_implemented("bar_label(fontproperties=...)", alternative="fontsize=")
         check_unsupported(kwargs, "bar_label()")
+        if label_type == "edge":
+            value_axis = "y" if container.orientation == "vertical" else "x"
+            # Matplotlib's Annotation does not contribute its text bbox to
+            # dataLim. Its default 5% margin therefore leaves a padded 10 pt
+            # bar label on (or fractionally beyond) the top spine. Reserve a
+            # small label-aware default while preserving explicit margins().
+            self._reserve_annotation_margin(value_axis, 0.075)
         result: list[Text] = []
         for index, value in enumerate(values):
             if raw_labels[index] is not None:

@@ -149,12 +149,39 @@ def test_categorical_bar_domain_covers_every_category() -> None:
     assert _axis_domain(ax, "x") == pytest.approx((-0.59, 3.59))
 
 
-def test_default_bar_margin_keeps_edge_labels_inside_the_view() -> None:
+def test_default_bar_margin_reserves_visible_headroom_for_edge_labels() -> None:
     _fig, ax = plt.subplots()
     bars = ax.bar([0.0, 1.0, 2.0], [1.2, 1.8, 1.4], width=0.55)
     labels = ax.bar_label(bars, fmt="%.1f", padding=3)
 
     assert [label.get_text() for label in labels] == ["1.2", "1.8", "1.4"]
-    assert ax.get_ylim() == pytest.approx((0.0, 1.89))
-    assert _axis_domain(ax, "y") == pytest.approx((0.0, 1.89))
+    assert ax.get_ylim() == pytest.approx((0.0, 1.935))
+    assert _axis_domain(ax, "y") == pytest.approx((0.0, 1.935))
     assert max(np.asarray(bars.tops, dtype=float)) < ax.get_ylim()[1]
+
+
+def test_explicit_margin_overrides_bar_label_headroom_default() -> None:
+    _fig, ax = plt.subplots()
+    bars = ax.bar([0.0, 1.0], [1.0, 2.0])
+    ax.margins(y=0.02)
+    ax.bar_label(bars, padding=3)
+
+    assert ax.get_ylim() == pytest.approx((0.0, 2.04))
+    assert _axis_domain(ax, "y") == pytest.approx((0.0, 2.04))
+
+
+def test_horizontal_edge_labels_reserve_value_axis_headroom() -> None:
+    _fig, ax = plt.subplots()
+    bars = ax.barh(["A", "B", "C"], [1.2, 1.8, 1.4])
+    ax.bar_label(bars, padding=3)
+
+    assert ax.get_xlim() == pytest.approx((0.0, 1.935))
+    assert _axis_domain(ax, "x") == pytest.approx((0.0, 1.935))
+
+
+def test_centered_bar_labels_do_not_expand_autoscale_margin() -> None:
+    _fig, ax = plt.subplots()
+    bars = ax.bar([0.0, 1.0], [1.0, 2.0])
+    ax.bar_label(bars, label_type="center")
+
+    assert ax.get_ylim() == pytest.approx((0.0, 2.1))

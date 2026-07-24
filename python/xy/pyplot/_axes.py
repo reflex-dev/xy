@@ -549,6 +549,11 @@ class Axes(PlotTypeMixin):
         self._xmargin = float(rcParams["axes.xmargin"])
         self._ymargin = float(rcParams["axes.ymargin"])
         self._margin_overrides: set[str] = set()
+        # Edge annotations (notably bar_label) need more than the raw 5% data
+        # margin to contain a 10 pt glyph plus point padding.  Keep that
+        # renderer-independent reservation separate so an explicit margins()
+        # call still wins.
+        self._annotation_margins: dict[str, float] = {"x": 0.0, "y": 0.0}
         self._explicit_domains: set[str] = set()
         self._secondary_axes: list[SecondaryAxis] = []
         self._scale_specs: dict[str, dict[str, Any]] = {
@@ -830,6 +835,7 @@ class Axes(PlotTypeMixin):
         self._insets_materialized = False
         self._absolute_plot_ratio = None
         self._padding = None
+        self._annotation_margins = {"x": 0.0, "y": 0.0}
         self._grid = bool(rcParams["axes.grid"])
         self._grid_color = _MPL_GRID_COLOR
         self._grid_axis = "both"
@@ -2784,7 +2790,7 @@ class Axes(PlotTypeMixin):
         else:
             lo, hi = self._entry_extent(axis)
             transformed_lo, transformed_hi = lo, hi
-        margin = self._xmargin if axis == "x" else self._ymargin
+        margin = self._effective_margin(axis)
         if margin == 0.0:
             return lo, hi
         span = transformed_hi - transformed_lo
@@ -2947,6 +2953,17 @@ class Axes(PlotTypeMixin):
             if "y" not in self._explicit_domains:
                 self._axis_props("y").pop("domain", None)
         self._invalidate()
+
+    def _effective_margin(self, axis: str) -> float:
+        configured = self._xmargin if axis == "x" else self._ymargin
+        if axis in self._margin_overrides:
+            return configured
+        return max(configured, self._annotation_margins[axis])
+
+    def _reserve_annotation_margin(self, axis: str, margin: float) -> None:
+        """Reserve autoscale space for an annotation outside a data mark."""
+        target = self._y2_of if axis == "x" and self._y2_of is not None else self
+        target._annotation_margins[axis] = max(target._annotation_margins[axis], float(margin))
 
     def relim(self, visible_only: bool = False) -> None:
         """Recompute the data limits from the plotted entries.
@@ -4721,9 +4738,9 @@ class Axes(PlotTypeMixin):
         x_props = {k: v for k, v in self._axis["x"].items() if v is not None}
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
         if not adjusted_aspect and "x" not in self._explicit_domains:
-            x_props["margin"] = self._xmargin
+            x_props["margin"] = self._effective_margin("x")
         if not adjusted_aspect and "y" not in self._explicit_domains:
-            y_props["margin"] = self._ymargin
+            y_props["margin"] = self._effective_margin("y")
         if "x" in empty_view:
             x_props["domain"] = (0.0, 1.0)
         if "y" in empty_view:
@@ -4744,7 +4761,7 @@ class Axes(PlotTypeMixin):
                 if self._twin._axis_is_dataless("y"):
                     y2_props["domain"] = (0.0, 1.0)
                 else:
-                    y2_props["margin"] = self._twin._ymargin
+                    y2_props["margin"] = self._twin._effective_margin("y")
             self._apply_tickers("y2", y2_props, auto_tick_counts["y"])
             children.append(xy.y_axis(id="y2", side="right", **y2_props))
         if self._legend:
