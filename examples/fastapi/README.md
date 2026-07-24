@@ -38,6 +38,14 @@ on first use:
 XY_LIVE_POINTS=1000000 uv run uvicorn app:app
 ```
 
+Note the drill-to-points behavior is scale-gated by the engine
+(`xy.config.PYRAMID_NO_RESCAN_ROWS`, 200M): above that row count — or for
+disk-backed columns — every zoom is answered from the density pyramid,
+upsampled at its floor, and exact points never ship (the O(N) window rescan
+that drilling requires is forbidden in that regime; LOD doc §28). The badge
+reads `… density · aggregate floor` when a view is in that state, so a 1B-row
+run that "never reaches points" is the recorded contract, not a bug.
+
 ## Layout
 
 | File | Role |
