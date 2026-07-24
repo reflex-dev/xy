@@ -23,6 +23,14 @@ binary columns; Reflex state holds only a token string per chart.
 5. **Fixed data, two ways** — a `xy.Chart` passed straight to `reflex_xy.chart`
    (static payload tier) and a `reflex_xy.inline` token (fixed data served
    through the kernel).
+6. **The 100M drilldown, adapter-native** — the live drilldown scatter
+   from [`examples/fastapi`](../fastapi) (identical seed-11 data and mark
+   config, a density surface that drills into exact points on zoom) as a
+   single `reflex_xy.inline` token. The FastAPI app hand-rolls its transport
+   for this chart (a Starlette endpoint plus an HTTP comm bridge); here the
+   adapter's websocket namespace and the kernel's density tiers do all of it,
+   so behavioral differences between the two apps isolate what that custom
+   code adds.
 
 ## Run
 
@@ -35,6 +43,16 @@ uv run reflex run
 reflex-xy) into a local environment. Open the URL Reflex prints (usually
 <http://localhost:3000>). Zoom into the cloud to drill density into exact
 points; box-select to cross-filter the histogram; press **go live** to stream.
+
+`XY_LIVE_POINTS` sets §6's point count — the same override the FastAPI app
+honors, so both apps build the identical dataset at any size. Unlike the
+FastAPI app (lazy, on first use) the columns are built at import, because
+`inline()` registers at module scope; the default 100M costs a few gigabytes
+of RAM and some startup seconds, so dial it down on small machines:
+
+```bash
+XY_LIVE_POINTS=1000000 uv run reflex run
+```
 
 The adapter is wired in one line — `plugins=[reflex_xy.XYPlugin()]` in
 [`rxconfig.py`](rxconfig.py).

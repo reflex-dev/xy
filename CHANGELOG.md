@@ -34,6 +34,45 @@ in the README).
   `memory_report`), and `Chart.figure()` remains as an advanced escape hatch
   to the internal engine object.
 
+### Changed
+- **Density surfaces now wear the data's own colors (LOD doc §2).** A Tier-2
+  scatter's aggregated view colors each cell with the alpha-weighted **mean of
+  its binned points' resolved colors** (continuous colormap, categorical
+  palette, and direct-RGBA channels alike; averaged in linear light through a
+  deterministic integer pipeline), while the binned **count now drives only
+  the alpha channel** — more points, deeper color; fewer points, lighter.
+  Previously the count itself was colormapped, so a colored scatter's density
+  view matched neither its points nor its legend and every density⇄points
+  zoom transition recolored the chart. The wire ships a per-cell RGBA plane
+  (`density.rgba`, recorded as `color_agg: "mean"`); constant-color traces
+  keep the compact count-only grid and a client-side tint. The count pyramid
+  gained matching mean-color planes (`xy_pyramid_build_color` /
+  `xy_pyramid_compose_color`; colored pyramids refuse in-place appends and
+  rebuild lazily, and their base scan fans out ≤4 workers so a 100M-point
+  build lands in about a quarter of the time), the SVG/PNG exporters and the
+  standalone `to_html` re-bin worker follow the same law, and the drill
+  handoff is now intensity-only — drilled points arrive in their native
+  colors (`density_colormap` left the points wire), and the aggregate
+  backdrop retires once a drill settles inside its window (T10), returning
+  the moment the view leaves it or a refinement goes pending. The color
+  channel is no longer listed in `dropped_channels` at Tier 2, and a
+  continuous-channel density scatter renders its colorbar again. C ABI v40
+  (`xy_bin_2d_mean_color` + pyramid color entry points).
+- **The FastAPI live-drilldown example is a thin transport over the engine.**
+  Every window is served through `Figure.density_view` (mean-color pyramid
+  warmed at startup); the demo's pre-pyramid density machinery — an
+  integral-image overview server-side and ~350 lines of page JS (local
+  re-bins, request parking, per-client staleness maps), all count-only — is
+  gone, and the page JS is a POST transport plus a status badge. Round-trip
+  replies ship as `XYBF` binary frames (wire-protocol §7) instead of
+  base64-in-JSON.
+- **Zooms inside an exact drill window skip the kernel round-trip (T12).**
+  Once a points reply has shipped its window exactly (`reduction: "none"`),
+  the client answers any contained view from the marks it already holds and
+  sends no `density_view` request, until the view leaves the window, the
+  drill dies, or the zoom is deep enough (1/256 of the window span) to need
+  a §16 re-centered f32 encoding.
+
 ### Added
 - **Export format parity and a unified export API (ENG-10447).**
   `to_image(format=...)` and extension-inferred, atomic `write_image(path)`

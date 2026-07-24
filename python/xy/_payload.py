@@ -1051,16 +1051,18 @@ class PayloadMixin(_Host):
             grid, sel = kernels.bin_2d_indices(bx, by, bx0, bx1, by0, by1, w, h)
             visible = int(len(sel))
         encoded_grid, gmax = kernels.density_log_u8(grid)
-        # Honor the user's colormap for the density ramp even though the per-point
-        # color *data* can't survive count-aggregation (needs the §5-F5 algebra).
-        # Constant channels carry it too — colormap= without color data means
-        # exactly this ramp. Categorical has no ramp, so it keeps the default.
+        # The density surface wears the data's own colors (LOD doc §2): count
+        # is the alpha channel, and per-point color channels aggregate to a
+        # per-cell mean shipped as an RGBA plane below. `colormap` stays on
+        # the wire only for the client's count-only LUT fallback (hand-built
+        # specs); no shipped path colormaps counts.
         cmap = (
             t.color_ch.colormap
             if (t.color_ch and t.color_ch.mode in ("constant", "continuous"))
             else channels.DEFAULT_COLORMAP
         )
         dropped_channels = list(t.per_item_channel_names())
+        bin_colors = channels.resolve_bin_colors(t.color_ch, None, DEFAULT_PALETTE)
         density = {
             "buf": pw.ship_u8(encoded_grid),
             "w": w,
@@ -1070,9 +1072,18 @@ class PayloadMixin(_Host):
             "colormap": cmap,
             "x_range": list(xr),
             "y_range": list(yr),
-            "channels_dropped": bool(dropped_channels),  # compatibility boolean
-            "dropped_channels": dropped_channels,  # complete, actionable list (§28)
         }
+        if bin_colors is not None:
+            # Mean point color per cell, straight-alpha RGBA8: the color the
+            # points themselves would downsample to (averaged in linear
+            # light). The channel is aggregated, recorded via `color_agg`,
+            # and therefore leaves the dropped list.
+            rgba_grid = kernels.bin_2d_mean_color(bx, by, bx0, bx1, by0, by1, w, h, **bin_colors)
+            density["rgba"] = pw.ship_u8(rgba_grid.reshape(-1))
+            density["color_agg"] = "mean"
+            dropped_channels.remove("color")
+        density["channels_dropped"] = bool(dropped_channels)  # compatibility boolean
+        density["dropped_channels"] = dropped_channels  # complete, actionable list (§28)
         if t.color_ch and t.color_ch.mode == "constant" and t.color_ch.constant is not None:
             density["color"] = t.color_ch.constant
         if oversized:

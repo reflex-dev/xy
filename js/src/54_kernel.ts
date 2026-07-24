@@ -1,5 +1,9 @@
 import { payloadBuffers } from "./00_header";
-import { lodApplyDensityUpdate, lodApplyDrill, lodDropDrill, lodRememberDensity } from "./45_lod";
+import { buildLutData } from "./10_colormaps";
+import { parseColor } from "./20_theme";
+import {
+  lodApplyDensityUpdate, lodApplyDrill, lodDrillServesView, lodDropDrill, lodRememberDensity,
+} from "./45_lod";
 import { xyCreateRebinWorker } from "./46_worker";
 import { ChartView } from "./50_chartview";
 
@@ -28,6 +32,18 @@ Object.assign(ChartView.prototype, {
       const now = this._now();
       for (const g of this.gpuTraces) {
         if (g.tier !== "density") continue;
+        // Zoom-in request elision (T12): a view contained in an exact drill's
+        // window is already answered by the marks on the GPU — the smaller
+        // window's points are a subset of the shipped ones — so this trace
+        // goes neither pending nor on the wire. The seq bump above stands, so
+        // an in-flight reply for an older, wider view dies stale instead of
+        // yanking the exact marks out from under the view it can't improve.
+        if (this._drillServesView(g, view)) {
+          g._lodPendingView = null;
+          g._lodPendingSeq = null;
+          g._lodPendingAt = null;
+          continue;
+        }
         g._lodPendingView = view;
         g._lodPendingSeq = seq;
         g._lodPendingAt = now;
@@ -58,6 +74,17 @@ Object.assign(ChartView.prototype, {
       if (needsDensity) {
         for (const g of this.gpuTraces) {
           if (g.tier !== "density") continue;
+          // T12 re-check at actual send time: a drill that landed during the
+          // debounce elides the request it made unnecessary; one that died
+          // during it re-arms the request the schedule-time check skipped.
+          if (this._drillServesView(g, view)) {
+            if (g._lodPendingSeq === seq) {
+              g._lodPendingView = null;
+              g._lodPendingSeq = null;
+              g._lodPendingAt = null;
+            }
+            continue;
+          }
           const [x0, x1] = this._axisRange(g.xAxis, view);
           const [y0, y1] = this._axisRange(g.yAxis, view);
           this.comm.send({
@@ -123,7 +150,7 @@ Object.assign(ChartView.prototype, {
         const hd = g._homeDensity;
         this._applySampleRebinGrid(g, {
           ...hd,
-          tex: this._uploadGrid(hd.grid, hd.w, hd.h, hd.normMax || hd.max || 1, hd.filter),
+          tex: this._uploadGrid(hd.grid, hd.w, hd.h, hd.normMax || hd.max || 1, hd.rgba, hd.filter),
         }, false);
       }
       return;
@@ -139,7 +166,9 @@ Object.assign(ChartView.prototype, {
       this._rebinInit = new Set();
     }
     if (!this._rebinInit.has(g.trace.id)) {
-      // Decode the offset-encoded sample once (f64, §16); the worker keeps it.
+      // Decode the offset-encoded sample once (f64, §16); the worker keeps it,
+      // along with the sample's resolved point colors so re-binned grids keep
+      // the mean-color surface (LOD doc §2).
       const cpu = g.sampleOverlay._cpu;
       const n = Math.min(cpu.x.length, cpu.y.length);
       const xs = new Float64Array(n);
@@ -148,9 +177,13 @@ Object.assign(ChartView.prototype, {
         xs[i] = this._decodeValue(cpu.x, cpu.xMeta, i);
         ys[i] = this._decodeValue(cpu.y, cpu.yMeta, i);
       }
+      const rgba = this._sampleBinColors(g, n);
       this._rebinWorker.postMessage(
-        { type: "init", trace: g.trace.id, x: xs.buffer, y: ys.buffer },
-        [xs.buffer, ys.buffer]
+        {
+          type: "init", trace: g.trace.id, x: xs.buffer, y: ys.buffer,
+          rgba: rgba ? rgba.buffer : null,
+        },
+        rgba ? [xs.buffer, ys.buffer, rgba.buffer] : [xs.buffer, ys.buffer]
       );
       this._rebinInit.add(g.trace.id);
     }
@@ -163,17 +196,58 @@ Object.assign(ChartView.prototype, {
     });
   },
 
+  // Straight-alpha RGBA8 per retained-sample point, resolved from the
+  // overlay's shipped channel exactly as the point shader draws it — the
+  // worker's mean-color source (LOD doc §2). Constant-color traces return
+  // null: their count-only grid is tinted by the draw path instead.
+  _sampleBinColors(g, n) {
+    const overlay = g.sampleOverlay;
+    const cpu = overlay && overlay._cpu;
+    const spec = overlay && overlay.trace && overlay.trace.color;
+    if (!cpu || !spec || spec.mode === "constant" || spec.mode === "match_fill") return null;
+    if (spec.mode === "direct_rgba" && cpu.rgba) {
+      return new Uint8Array(cpu.rgba.subarray(0, n * 4));
+    }
+    if (!cpu.color) return null;
+    const out = new Uint8Array(n * 4);
+    if (spec.mode === "continuous") {
+      const lut = buildLutData(spec.colormap);
+      for (let i = 0; i < n; i++) {
+        const at = Math.round(Math.max(0, Math.min(1, cpu.color[i])) * 255) * 4;
+        out[i * 4] = lut[at];
+        out[i * 4 + 1] = lut[at + 1];
+        out[i * 4 + 2] = lut[at + 2];
+        out[i * 4 + 3] = 255;
+      }
+      return out;
+    }
+    if (spec.mode === "categorical" && Array.isArray(spec.palette) && spec.palette.length) {
+      const palette = spec.palette.map((c) => parseColor(this.root, c, [0, 0, 0, 1]));
+      for (let i = 0; i < n; i++) {
+        const p = palette[Math.round(cpu.color[i]) % palette.length];
+        out[i * 4] = Math.round(p[0] * 255);
+        out[i * 4 + 1] = Math.round(p[1] * 255);
+        out[i * 4 + 2] = Math.round(p[2] * 255);
+        out[i * 4 + 3] = Math.round(p[3] * 255);
+      }
+      return out;
+    }
+    return null;
+  },
+
   _onRebinResult(msg) {
     if (this._destroyed || this._glLost || !msg || msg.type !== "grid" || msg.seq !== this.seq) return;
     const g = this.gpuTraces.find((t) => t.trace.id === msg.trace && t.tier === "density");
     if (!g) return;
     const grid = new Float32Array(msg.grid);
+    const rgba = msg.rgba ? new Uint8Array(msg.rgba) : null;
     this._applySampleRebinGrid(g, {
       w: msg.w, h: msg.h, max: msg.max, normMax: msg.max,
       colormap: g.density.colormap,
       xRange: [msg.x0, msg.x1], yRange: [msg.y0, msg.y1],
       grid,
-      tex: this._uploadGrid(grid, msg.w, msg.h, msg.max || 1),
+      rgba,
+      tex: this._uploadGrid(grid, msg.w, msg.h, msg.max || 1, rgba),
       lut: g.density.lut,
     }, true);
   },
@@ -462,6 +536,17 @@ Object.assign(ChartView.prototype, {
 
   _dropDrill(g) {
     lodDropDrill(this, g);
+  },
+
+  // Can `view` be answered locally from this trace's live drill, with no
+  // kernel round-trip (T12)? True only for an exact (reduction "none"),
+  // non-dying drill whose window contains the view's per-axis ranges, and
+  // only until the zoom outgrows the §16 f32 encode precision.
+  _drillServesView(g, view) {
+    if (!g.drill) return false;
+    const [x0, x1] = this._axisRange(g.xAxis, view);
+    const [y0, y1] = this._axisRange(g.yAxis, view);
+    return lodDrillServesView(g, x0, x1, y0, y1);
   },
 
   // Is the current view fully covered by a drilled window? A tiny epsilon

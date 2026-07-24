@@ -25,7 +25,7 @@ clear ImportError when it can't load, with no pure-Python fallback.
 
 | Concern | Today | Verdict |
 |---|---|---|
-| zone maps, encode_f32, m4, bin_2d, min_max, histogram_uniform, normalize_f32, range/validity indices, local_log_density | Rust (ABI v36) | correct — new equal-length x/y columns use a paired zone-map call with bit-identical per-column reductions; full-domain density first paint fuses binning with uniform or counted-u8 overlay sampling while retaining exact standalone outputs; mesh/rectangle validity scans consume only columns not already proven finite by zone metadata |
+| zone maps, encode_f32, m4, bin_2d, bin_2d_mean_color, min_max, histogram_uniform, normalize_f32, range/validity indices, local_log_density | Rust (ABI v40) | correct — new equal-length x/y columns use a paired zone-map call with bit-identical per-column reductions; full-domain density first paint fuses binning with uniform or counted-u8 overlay sampling while retaining exact standalone outputs; mean-color binning (LOD doc §2) is an integer-only pipeline (checked-in sRGB⇄linear-u16 tables, alpha-weighted u64 sums) so grids are bitwise deterministic across thread counts and platforms; mesh/rectangle validity scans consume only columns not already proven finite by zone metadata |
 | fixed-width string/bytes/bool factorization | Rust (ABI v36) | correct — compact palettes use a bounded L1-resident codebook with full-record collision checks and emit exact counts; U1 uses a direct Unicode-scalar table with endian support; ≥512k rows probe a prefix then encode disjoint chunks in parallel, merging late labels by canonical first-row order before any retry; Python sees only unique labels and retains display-label ordering policy |
 | static display-list raster, row-banded polyline/point/segment paint, batched fill+stroke triangle meshes, affine scatter projection plus typed color/size resolution, density/heatmap colormap and sampling | Rust (ABI v36) | correct — commands borrow f32/u8 payload or canonical spans synchronously; compact stratified sampling reuses factorization counts; batched/banded output is byte-identical |
 | signal processing: `xy_rfft`, `xy_welch_spectra`, `xy_spectrogram` | Rust (ABI v36) | correct — O(N) transforms over sample columns; window/segment policy stays in Python |
@@ -101,8 +101,11 @@ src/                                          # 15,423 lines shipped, 8 modules
                         #   rest of SVG scene construction stays in Python.
   simd.rs        (448)  # AVX2 twins of eligible kernels, runtime-dispatched (§3.4).
                         #   The one module besides lib.rs allowed `unsafe`.
-  tiles.rs       (481)  # pyramid build/compose/incremental append. Owns tile memory;
-                        #   handles are opaque u64 ids passed over the ABI (§3.3).
+  tiles.rs      (1050)  # pyramid build/compose/incremental append, plus the
+                        #   mean-color planes for channel-bearing traces
+                        #   (build_color/compose_color, LOD doc §2/§4.1; colored
+                        #   pyramids refuse appends and rebuild lazily). Owns tile
+                        #   memory; handles are opaque u64 ids over the ABI (§3.3).
   stream.rs             # (plan) Rust-owned canonical append buffers.
   stats.rs              # (plan) quantiles/box/violin/factorize.
 ```
@@ -213,18 +216,35 @@ Arrays-in/arrays-out stops working when Rust must own long-lived state
 uint64_t xy_pyramid_build(const double* x, const double* y, size_t len,
                           double x0, double x1, double y0, double y1,
                           uint32_t base_dim);
-/* append: 1 applied; 0 on stale/busy handle, bad args, or a point outside
-   the pyramid's original domain (never partially mutates) */
+/* build with mean-color planes (LOD doc §2). The color source is exactly
+   one of idx (per-point LUT index, with lut as 1..=256 RGBA8 rows) or
+   rgba (per-point straight-alpha RGBA8); the other pointer is NULL */
+uint64_t xy_pyramid_build_color(const double* x, const double* y, size_t len,
+                                const uint8_t* idx, const uint8_t* rgba,
+                                const uint8_t* lut, size_t lut_len,
+                                double x0, double x1, double y0, double y1,
+                                uint32_t base_dim);
+/* append: 1 applied; 0 on stale/busy handle, bad args, a point outside
+   the pyramid's original domain, or a colored pyramid (its colors are
+   unknown to this entry point — caller invalidates and rebuilds lazily).
+   Never partially mutates. */
 int32_t xy_pyramid_append(uint64_t handle, const double* x,
                           const double* y, size_t len);
 /* count over a window: 1 ok, 0 on stale handle/bad args */
 int32_t xy_pyramid_count(uint64_t handle, double lo_x, double hi_x,
                          double lo_y, double hi_y, double* out_count);
 /* compose window into a w×h grid: level used (>=0), -1 stale/bad args,
-   -2 window outresolves the pyramid (caller re-bins exactly and discloses) */
+   -2 window outresolves the pyramid past max_upsample (caller re-bins
+   exactly and discloses) */
 int32_t xy_pyramid_compose(uint64_t handle, double lo_x, double hi_x,
-                           double lo_y, double hi_y,
-                           size_t w, size_t h, float* out);
+                           double lo_y, double hi_y, size_t w, size_t h,
+                           size_t max_upsample, float* out);
+/* compose plus the mean-color plane: counts bit-identical to
+   xy_pyramid_compose; -2 also for a pyramid built without color planes */
+int32_t xy_pyramid_compose_color(uint64_t handle, double lo_x, double hi_x,
+                                 double lo_y, double hi_y, size_t w, size_t h,
+                                 size_t max_upsample,
+                                 float* out, uint8_t* out_rgba);
 /* free: 1 if it existed, 0 for stale/unknown */
 int32_t xy_pyramid_free(uint64_t handle);
 ```
