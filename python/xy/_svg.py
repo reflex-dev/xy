@@ -1960,15 +1960,18 @@ def _annotation_svg(
                         style.get("opacity", 1.0) if kind == "text" else 1.0,
                     )
                 )
+                line_offset = 0
                 for index, line in enumerate(lines):
                     bx = tx + float(ann.get("dx", 0)) + base + index * stack
+                    styled_line = _svg_mathtext_spans(line, style, line_offset)
                     labels.append(
                         f'<text text-anchor="{along}" font-size="{_num(font_size)}" '
                         f'transform="rotate({90 if cw else -90} {_num(bx)} {_num(by)})" '
                         f'x="{_num(bx)}" y="{_num(by)}" '
                         + (f'fill-opacity="{_num(text_opacity)}" ' if text_opacity < 1 else "")
-                        + f'fill="{color}">{escape(line)}</text>'
+                        + f'fill="{color}">{styled_line}</text>'
                     )
+                    line_offset += len(line) + 1
                 continue
             x_text = tx + float(ann.get("dx", 0))
             y_text = ty + float(ann.get("dy", 0)) - (len(lines) - 1) * line_height / 2
@@ -1977,11 +1980,16 @@ def _annotation_svg(
                 y_text += font_size * 0.35
             elif vertical_align == "top":
                 y_text += font_size * 0.8
-            tspans = "".join(
-                f'<tspan x="{_num(x_text)}" y="{_num(y_text + index * line_height)}">'
-                f"{escape(line)}</tspan>"
-                for index, line in enumerate(lines)
-            )
+            line_offset = 0
+            tspan_parts = []
+            for index, line in enumerate(lines):
+                styled_line = _svg_mathtext_spans(line, style, line_offset)
+                tspan_parts.append(
+                    f'<tspan x="{_num(x_text)}" y="{_num(y_text + index * line_height)}">'
+                    f"{styled_line}</tspan>"
+                )
+                line_offset += len(line) + 1
+            tspans = "".join(tspan_parts)
             text_opacity = float(
                 style.get(
                     "label_opacity",
@@ -2020,6 +2028,29 @@ def _svg_font_attrs(style: dict[str, Any]) -> str:
     return "".join(attrs)
 
 
+def _svg_mathtext_spans(line: str, style: dict[str, Any], offset: int) -> str:
+    ranges: list[tuple[int, int]] = []
+    for item in str(style.get("math_italic_ranges", "")).split(","):
+        try:
+            start, end = (int(value) for value in item.split(":", 1))
+        except ValueError:
+            continue
+        start, end = max(0, start - offset), min(len(line), end - offset)
+        if start < end:
+            ranges.append((start, end))
+    if not ranges:
+        return escape(line)
+    out: list[str] = []
+    cursor = 0
+    for start, end in ranges:
+        if cursor < start:
+            out.append(escape(line[cursor:start]))
+        out.append(f'<tspan font-style="italic">{escape(line[start:end])}</tspan>')
+        cursor = end
+    out.append(escape(line[cursor:]))
+    return "".join(out)
+
+
 def _svg_text_box(
     style: dict[str, Any],
     lines: list[str],
@@ -2044,7 +2075,7 @@ def _svg_text_box(
 
     pad_y = px(pad_parts[0]) if pad_parts else 0.0
     pad_x = px(pad_parts[1]) if len(pad_parts) > 1 else pad_y
-    text_width = max((len(line) for line in lines), default=0) * font_size * 0.56
+    text_width = max((len(line) for line in lines), default=0) * font_size * 0.48
     left = (
         x
         - (text_width / 2 if anchor == "middle" else text_width if anchor == "end" else 0.0)

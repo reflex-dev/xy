@@ -32,6 +32,7 @@ const OP_HEATMAP_IMAGE: u8 = 13;
 const OP_AFFINE_POINTS: u8 = 14;
 const OP_AFFINE_CHANNEL_POINTS: u8 = 15;
 const OP_STROKED_TRIANGLES: u8 = 16;
+const OP_STYLED_TEXT: u8 = 17;
 
 const SS: usize = 4; // vertical supersamples per scanline for polygon AA
 
@@ -1188,6 +1189,8 @@ fn glyph_index(ch: char) -> Option<usize> {
 pub const TEXT_ROTATED: u8 = 0x80;
 /// 0x40 requests 90°-CW text (top-down right-margin titles, mpl rotation=270).
 pub const TEXT_ROTATED_CW: u8 = 0x40;
+const TEXT_ITALIC: u8 = 0x01;
+const TEXT_BOLD: u8 = 0x02;
 
 fn text(cv: &mut Canvas, x: f32, y: f32, anchor: u8, size: f32, rgba: [f32; 4], s: &[u8]) {
     let rotated = anchor & TEXT_ROTATED != 0;
@@ -1307,6 +1310,131 @@ fn text(cv: &mut Canvas, x: f32, y: f32, anchor: u8, size: f32, rgba: [f32; 4], 
         } else {
             penx += advance as f32 * scale;
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn styled_text(
+    cv: &mut Canvas,
+    x: f32,
+    y: f32,
+    anchor: u8,
+    size: f32,
+    angle_degrees: f32,
+    flags: u8,
+    italic_ranges: &[(u32, u32)],
+    rgba: [f32; 4],
+    s: &[u8],
+) {
+    let scale = size / font::BASE_PX as f32;
+    let text = String::from_utf8_lossy(s);
+    let advance = text
+        .chars()
+        .filter_map(glyph_index)
+        .map(|index| font::GLYPHS[index].0 as f32)
+        .sum::<f32>()
+        * scale;
+    let mut pen = match anchor {
+        1 => -advance * 0.5,
+        2 => -advance,
+        _ => 0.0,
+    };
+    let theta = angle_degrees.to_radians();
+    let (sin_theta, cos_theta) = theta.sin_cos();
+    let bold_shift = if flags & TEXT_BOLD != 0 {
+        (size * 0.055).clamp(0.55, 1.2)
+    } else {
+        0.0
+    };
+
+    for (char_index, ch) in text.chars().enumerate() {
+        let Some(index) = glyph_index(ch) else {
+            continue;
+        };
+        let italic = flags & TEXT_ITALIC != 0
+            || italic_ranges
+                .iter()
+                .any(|&(start, end)| {
+                    start <= char_index as u32 && (char_index as u32) < end
+                });
+        let italic_shear = if italic { 0.22 } else { 0.0 };
+        let (glyph_advance, gw, gh, left, top, offset, len) = font::GLYPHS[index];
+        if gw > 0 && gh > 0 {
+            let coverage = &font::COVERAGE[offset as usize..(offset + len) as usize];
+            let sample =
+                |sx: usize, sy: usize| coverage[sy * gw as usize + sx] as f32 / 255.0;
+            let bilinear = |u: f32, v: f32| {
+                if u < -0.5 || v < -0.5 || u > gw as f32 - 0.5 || v > gh as f32 - 0.5 {
+                    return 0.0;
+                }
+                let u = u.clamp(0.0, gw as f32 - 1.0);
+                let v = v.clamp(0.0, gh as f32 - 1.0);
+                let (x0, y0) = (u.floor() as usize, v.floor() as usize);
+                let (x1, y1) = ((x0 + 1).min(gw as usize - 1), (y0 + 1).min(gh as usize - 1));
+                let (fx, fy) = (u - x0 as f32, v - y0 as f32);
+                sample(x0, y0) * (1.0 - fx) * (1.0 - fy)
+                    + sample(x1, y0) * fx * (1.0 - fy)
+                    + sample(x0, y1) * (1.0 - fx) * fy
+                    + sample(x1, y1) * fx * fy
+            };
+
+            let u0 = pen + left as f32 * scale;
+            let v0 = top as f32 * scale;
+            let u1 = u0 + gw as f32 * scale + bold_shift;
+            let v1 = v0 + gh as f32 * scale;
+            let transform = |u: f32, v: f32| {
+                let sheared_u = u - italic_shear * v;
+                (
+                    x + sheared_u * cos_theta - v * sin_theta,
+                    y + sheared_u * sin_theta + v * cos_theta,
+                )
+            };
+            let corners = [
+                transform(u0, v0),
+                transform(u1, v0),
+                transform(u1, v1),
+                transform(u0, v1),
+            ];
+            let min_x = corners
+                .iter()
+                .map(|point| point.0)
+                .fold(f32::INFINITY, f32::min);
+            let max_x = corners
+                .iter()
+                .map(|point| point.0)
+                .fold(f32::NEG_INFINITY, f32::max);
+            let min_y = corners
+                .iter()
+                .map(|point| point.1)
+                .fold(f32::INFINITY, f32::min);
+            let max_y = corners
+                .iter()
+                .map(|point| point.1)
+                .fold(f32::NEG_INFINITY, f32::max);
+            let (bx0, by0, bx1, by1) = cv.bbox(min_x, min_y, max_x, max_y);
+            for py in by0..by1 {
+                for px in bx0..bx1 {
+                    let dx = px as f32 + 0.5 - x;
+                    let dy = py as f32 + 0.5 - y;
+                    let sheared_u = dx * cos_theta + dy * sin_theta;
+                    let local_v = -dx * sin_theta + dy * cos_theta;
+                    let local_u = sheared_u + italic_shear * local_v;
+                    let atlas_u = (local_u - u0) / scale - 0.5;
+                    let atlas_v = (local_v - v0) / scale - 0.5;
+                    let mut alpha = bilinear(atlas_u, atlas_v);
+                    if bold_shift > 0.0 {
+                        alpha = alpha.max(bilinear(
+                            (local_u - bold_shift - u0) / scale - 0.5,
+                            atlas_v,
+                        ));
+                    }
+                    if alpha > 0.0 {
+                        cv.blend(px, py, rgba, alpha);
+                    }
+                }
+            }
+        }
+        pen += glyph_advance as f32 * scale;
     }
 }
 
@@ -2029,6 +2157,33 @@ fn rasterize_with_spans(
                     let nb = r.u32()? as usize;
                     let s = r.bytes(nb)?;
                     text(&mut cv, x, y, anchor, size, c, s);
+                }
+                OP_STYLED_TEXT => {
+                    let (x, y) = (r.f32()?, r.f32()?);
+                    let anchor = r.u8()?;
+                    let size = r.f32()?;
+                    let angle = r.f32()?;
+                    let flags = r.u8()?;
+                    let range_count = r.u32()? as usize;
+                    let mut italic_ranges = Vec::with_capacity(range_count);
+                    for _ in 0..range_count {
+                        italic_ranges.push((r.u32()?, r.u32()?));
+                    }
+                    let c = r.rgba()?;
+                    let nb = r.u32()? as usize;
+                    let s = r.bytes(nb)?;
+                    styled_text(
+                        &mut cv,
+                        x,
+                        y,
+                        anchor,
+                        size,
+                        angle,
+                        flags,
+                        &italic_ranges,
+                        c,
+                        s,
+                    );
                 }
                 OP_POINTS => {
                     // Batched marks, struct-of-arrays: one header (symbol +

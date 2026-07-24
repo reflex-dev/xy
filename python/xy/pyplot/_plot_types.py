@@ -3648,14 +3648,21 @@ class PlotTypeMixin:
         wedges: list[Wedge] = []
         for index in range(len(values)):
             selected = sectors == float(index)
+            face = resolve_color(color_values[index])
             mark_kwargs: dict[str, Any] = {
-                "color": resolve_color(color_values[index]),
+                "color": face,
                 "name": None if label_values[index] is None else str(label_values[index]),
                 "opacity": 1.0 if alpha is None else float(alpha),
             }
             if edgecolor is not None:
                 mark_kwargs["stroke"] = resolve_color(edgecolor)
                 mark_kwargs["stroke_width"] = 1.0 if linewidth is None else float(linewidth)
+            else:
+                # A sector is a fan of adjacent triangles. Stroke each fan
+                # triangle with its own face color so anti-aliasing cannot
+                # expose the figure background as radial hairline spokes.
+                mark_kwargs["stroke"] = face
+                mark_kwargs["stroke_width"] = 0.75
             entry = self._add(
                 "@mark",
                 {
@@ -3720,6 +3727,10 @@ class PlotTypeMixin:
         extent = float(radius) * (1.25 + float(np.max(offsets)))
         self.set_xlim(float(center[0]) - extent, float(center[0]) + extent)
         self.set_ylim(float(center[1]) - extent, float(center[1]) + extent)
+        self.set_aspect("equal", adjustable="box")
+        if not frame:
+            self.set_axis_off()
+            self._hidden_spines.update(("left", "bottom", "top", "right"))
         return PieContainer(wedges, source_values, bool(normalize), texts, autotexts)
 
     def pie_label(

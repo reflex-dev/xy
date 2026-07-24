@@ -363,6 +363,8 @@ def _blend_raster_suptitle(
         float(resolved.get("size", 14)),
         _raster._parse_color(str(resolved.get("color", "#262626"))),
         suptitle,
+        bold=str(resolved.get("weight", "normal")).lower()
+        in {"bold", "semibold", "demibold", "heavy", "black"},
     )
     overlay = kernels.rasterize(bytes(cmd.buf), canvas.shape[1], title_h)
     alpha = overlay[:, :, 3:4].astype(np.float64) / 255.0

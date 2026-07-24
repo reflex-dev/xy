@@ -141,6 +141,7 @@ def test_annotate_draws_arrow_at_xytext() -> None:
     assert entry["args"][:2] == (10.0, 4.0)
     arrow = next(e for e in ax._entries if e["kind"] == "@arrow")
     sx0, sy0, ex0, ey0 = arrow["args"]
+    assert arrow["kwargs"]["style"]["head_size"] == 20.0
     # shrink=0.05 pulls both ends 5% toward each other along the segment
     np.testing.assert_allclose((sx0, sy0), (10 + 0.05 * (6.28 - 10), 4 + 0.05 * (1 - 4)))
     np.testing.assert_allclose((ex0, ey0), (6.28 - 0.05 * (6.28 - 10), 1 - 0.05 * (1 - 4)))

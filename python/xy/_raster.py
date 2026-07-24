@@ -74,12 +74,15 @@ from ._svg import (
     _AFFINE_POINTS,
     _AFFINE_CHANNEL_POINTS,
     _STROKED_TRIANGLES,
-) = range(17)
+    _STYLED_TEXT,
+) = range(18)
 # Anchor-byte rotation flags — must match TEXT_ROTATED/TEXT_ROTATED_CW in
 # src/raster.rs. CCW reads bottom-to-top (y-axis titles), CW top-to-bottom
 # (right-margin titles, matplotlib rotation=270).
 _TEXT_ROT_CCW = 0x80
 _TEXT_ROT_CW = 0x40
+_TEXT_ITALIC = 0x01
+_TEXT_BOLD = 0x02
 _SYMBOLS = {
     "circle": 0,
     "square": 1,
@@ -601,9 +604,36 @@ class _Cmd:
         self.buf += stops.tobytes()
 
     def text(
-        self, x: float, y: float, anchor: int, size: float, color: tuple[int, ...], s: str
+        self,
+        x: float,
+        y: float,
+        anchor: int,
+        size: float,
+        color: tuple[int, ...],
+        s: str,
+        *,
+        angle: float = 0.0,
+        italic: bool = False,
+        bold: bool = False,
+        italic_ranges: Sequence[tuple[int, int]] = (),
     ) -> None:
         data = str(s).encode("utf-8")
+        if angle or italic or bold or italic_ranges:
+            self.buf.append(_STYLED_TEXT)
+            self._f(x)
+            self._f(y)
+            self.buf.append(anchor & 0x03)
+            self._f(size)
+            self._raw_f(angle)
+            self.buf.append((_TEXT_ITALIC if italic else 0) | (_TEXT_BOLD if bold else 0))
+            self._u32(len(italic_ranges))
+            for start, end in italic_ranges:
+                self._u32(start)
+                self._u32(end)
+            self._rgba(color)
+            self._u32(len(data))
+            self.buf += data
+            return
         self.buf.append(_TEXT_OP)
         self._f(x)
         self._f(y)
@@ -1077,6 +1107,29 @@ def _annotation_point(
     return float(sx(x)), float(sy(y))
 
 
+def _native_font_emphasis(style: dict[str, Any]) -> tuple[bool, bool]:
+    """Return baked-font italic/bold approximations for an annotation."""
+    italic = str(style.get("font_style", "")).lower() in {"italic", "oblique"}
+    weight = str(style.get("font_weight", "")).lower()
+    try:
+        bold = float(weight) >= 600
+    except ValueError:
+        bold = weight in {"bold", "semibold", "demibold", "heavy", "black"}
+    return italic, bold
+
+
+def _math_italic_ranges(style: dict[str, Any]) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    for item in str(style.get("math_italic_ranges", "")).split(","):
+        try:
+            start, end = (int(value) for value in item.split(":", 1))
+        except ValueError:
+            continue
+        if 0 <= start < end:
+            ranges.append((start, end))
+    return ranges
+
+
 def _emit_annotations(
     cmd: _Cmd,
     annotations: list[dict[str, Any]],
@@ -1171,6 +1224,9 @@ def _emit_annotations(
             )
             color = _rgba(label_color, _TEXT, float(label_opacity))
             rotation = float(style.get("rotation", 0.0)) % 360.0
+            italic, bold = _native_font_emphasis(style)
+            math_ranges = _math_italic_ranges(style)
+            line_offset = 0
             if rotation in (90.0, 270.0):
                 # Vertical text via the rasterizer's rotated glyph paths.
                 # matplotlib aligns the post-rotation box: vertical_align picks
@@ -1188,14 +1244,24 @@ def _emit_annotations(
                     base = {0: ascent, 1: (ascent - descent) / 2, 2: -descent}[anchor]
                 stack = -line_height if cw else line_height  # later lines: glyph-down
                 for index, line in enumerate(lines):
+                    line_ranges = [
+                        (max(0, start - line_offset), min(len(line), end - line_offset))
+                        for start, end in math_ranges
+                        if start < line_offset + len(line) and end > line_offset
+                    ]
                     cmd.text(
                         x + base + index * stack,
                         y,
-                        along | (_TEXT_ROT_CW if cw else _TEXT_ROT_CCW),
+                        along,
                         font_size,
                         color,
                         line,
+                        angle=90.0 if cw else -90.0,
+                        italic=italic,
+                        bold=bold,
+                        italic_ranges=line_ranges,
                     )
+                    line_offset += len(line) + 1
                 continue
             first_y = y - (len(lines) - 1) * line_height / 2
             vertical_align = style.get("vertical_align")
@@ -1207,6 +1273,11 @@ def _emit_annotations(
             text_y = first_y + float(ann.get("dy", 0.0))
             _emit_text_box(cmd, style, lines, text_x, text_y, line_height, font_size, anchor)
             for index, line in enumerate(lines):
+                line_ranges = [
+                    (max(0, start - line_offset), min(len(line), end - line_offset))
+                    for start, end in math_ranges
+                    if start < line_offset + len(line) and end > line_offset
+                ]
                 cmd.text(
                     text_x,
                     text_y + index * line_height,
@@ -1214,7 +1285,12 @@ def _emit_annotations(
                     font_size,
                     color,
                     line,
+                    angle=-rotation,
+                    italic=italic,
+                    bold=bold,
+                    italic_ranges=line_ranges,
                 )
+                line_offset += len(line) + 1
 
 
 def _emit_text_box(
@@ -1242,7 +1318,7 @@ def _emit_text_box(
 
     pad_y = px(pad_parts[0]) if pad_parts else 0.0
     pad_x = px(pad_parts[1]) if len(pad_parts) > 1 else pad_y
-    text_width = max((len(line) for line in lines), default=0) * font_size * 0.56
+    text_width = max((len(line) for line in lines), default=0) * font_size * 0.48
     left = x - (text_width / 2 if anchor == 1 else text_width if anchor == 2 else 0.0) - pad_x
     top = first_y - font_size * 0.8 - pad_y
     right = left + text_width + pad_x * 2

@@ -186,7 +186,7 @@ def test_text_accepts_matplotlib_style_alias_and_bbox_properties() -> None:
     annotation = next(child for child in chart.children if getattr(child, "kind", None) == "text")
     assert annotation.style["font_style"] == "italic"
     assert annotation.style["background"] == "rgba(255,0,0,0.5)"
-    assert annotation.style["padding"] == "13.9px 18.1px"
+    assert annotation.style["padding"] == "13.9px"
     svg = chart.figure().to_svg()
     assert 'fill="rgba(255,0,0,0.5)"' in svg
     assert 'stroke="black"' in svg
@@ -197,6 +197,22 @@ def test_text_accepts_matplotlib_style_alias_and_bbox_properties() -> None:
     assert np.any((rgba[..., 0] > 200) & (rgba[..., 1] < 180) & (rgba[..., 2] < 180))
 
 
+def test_text_preserves_mathtext_italic_span_across_all_exporters() -> None:
+    fig, ax = plt.subplots()
+
+    label = ax.text(2, 6, r"an equation: $E=mc^2$", fontsize=15)
+
+    assert label.get_text() == "an equation: E=mc²"
+    assert label._entry["kwargs"]["style"]["math_italic_ranges"] == "13:14,15:17"
+    svg = ax._build_chart(*fig._panel_px()).figure().to_svg()
+    assert '<tspan font-style="italic">E</tspan>=' in svg
+    assert '<tspan font-style="italic">mc</tspan>²' in svg
+    target = BytesIO()
+    fig.savefig(target, format="png")
+    rgba = np.asarray(plt.imread(BytesIO(target.getvalue())))
+    assert np.any(rgba[..., :3] < 0.5)
+
+
 def test_pie_container_values_are_defensive_and_fracs_stay_numeric() -> None:
     _fig, ax = plt.subplots()
     pie = ax.pie(np.array([2, 3, 5], dtype=np.int16))
@@ -205,3 +221,20 @@ def test_pie_container_values_are_defensive_and_fracs_stay_numeric() -> None:
     assert values.dtype == np.dtype(np.int16)
     assert not values.flags.writeable
     np.testing.assert_allclose(pie.fracs, [0.2, 0.3, 0.5])
+
+
+def test_pie_uses_equal_aspect_hidden_axes_and_seam_covering_face_strokes() -> None:
+    _fig, ax = plt.subplots()
+
+    pie = ax.pie([2, 3, 5], startangle=90)
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+
+    assert ax._aspect_equal is True
+    assert spec["frame_sides"] == []
+    assert spec["x_axis"]["tick_label_strategy"] == "none"
+    assert spec["y_axis"]["tick_label_strategy"] == "none"
+    assert all(wedge._entry["kwargs"]["stroke_width"] == 0.75 for wedge in pie.wedges)
+    assert all(
+        wedge._entry["kwargs"]["stroke"] == wedge._entry["kwargs"]["color"] for wedge in pie.wedges
+    )
+    assert pie.wedges[0]._entry["pie_mid"] == pytest.approx(np.deg2rad(126))
