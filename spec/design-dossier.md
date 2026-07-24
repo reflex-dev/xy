@@ -951,7 +951,7 @@ The five classes of memory, per chart:
 | Class | Lives in | Sized by | Freed when |
 |---|---|---|---|
 | **Canonical columns** | JS ArrayBuffers / mmap (native) / server (Tier 3) — *never* WASM linear memory | data | trace removed (or explicitly demoted, below) |
-| **Derived buffers** (decimations, pyramid tiles, segment indices) | worker-side buffers + LodCache | screen (per entry) × cache budget | LRU-evicted under byte budget; always recomputable |
+| **Derived buffers** (decimations, pyramid tiles, bin-color resolutions, segment indices) | worker-side buffers + LodCache | screen (per entry) × cache budget | LRU-evicted under byte budget; always recomputable |
 | **Staging** (encode/upload scratch) | WASM arena + mapped GPU staging rings | screen, fixed | reused every frame — never grows with data |
 | **GPU buffers/textures** | VRAM | visible working set | evicted under VRAM budget; rebuilt from canonical + derived on demand or device-loss |
 | **Overheads** | everywhere | — | *counted, not ignored*: validity bitmaps (1 bit/val), dictionaries, per-buffer GPU alignment padding (256 B granularity), double-buffering during in-flight uploads |

@@ -3430,16 +3430,38 @@ impl MeanColorCell {
     }
 }
 
+/// Byte budget for the mean-color scan's worker accumulators together. Each
+/// worker owns a private `cells × size_of::<MeanColorCell>()` (40 B/cell)
+/// grid; screen-sized grids and the 2048² default base level fit the full
+/// 4-worker fan-out comfortably, but a no-rescan trace's adaptive base level
+/// (§28; up to 16384² cells) would turn that fan-out into tens of GB of
+/// transient build memory — the difference between a colored billion-point
+/// build fitting in RAM or not. Workers over budget are shed down to a
+/// serial scan: one-time build wall-clock is traded, peak RSS never. (The
+/// merge target grid rides on top of the budget; at every size where memory
+/// binds, the scan is already serial and allocates exactly one grid.)
+const MEAN_COLOR_ACCUM_BUDGET_BYTES: usize = 1 << 30;
+
+/// Pure fan-out choice for the mean-color scan: the row-scan fan-out
+/// (`bin_2d_threads`) capped at 4, then shed to whatever worker count keeps
+/// the private accumulators inside `MEAN_COLOR_ACCUM_BUDGET_BYTES`.
+fn mean_color_threads_for(row_threads: usize, cells: usize) -> usize {
+    let per_grid = cells.saturating_mul(std::mem::size_of::<MeanColorCell>());
+    let by_memory = (MEAN_COLOR_ACCUM_BUDGET_BYTES / per_grid.max(1)).max(1);
+    row_threads.min(4).min(by_memory)
+}
+
 /// Fused count+color accumulation over a full grid: the shared core of
 /// `bin_2d_mean_color` and the pyramid build's base pass
 /// (`tiles::build_color`). Returns the raw accumulator cells so callers keep
 /// exact counts alongside the color means.
 ///
-/// Fan-out is gated by the points-per-cell ratio (like `bin_2d`) and capped
-/// at 4: each worker's private accumulator is ~10× a count grid (40 B/cell),
-/// so the cap bounds the transient to ~4 grids while still cutting the
-/// pyramid's 100M-row base scan to a quarter. Integer sums merge
-/// order-independently — bitwise deterministic for any thread count.
+/// Fan-out is gated by the points-per-cell ratio (like `bin_2d`), capped at
+/// 4, and shed further to fit `MEAN_COLOR_ACCUM_BUDGET_BYTES`: each worker's
+/// private accumulator is ~10× a count grid (40 B/cell), so the cap bounds
+/// the transient while still cutting the pyramid's 100M-row base scan to a
+/// quarter. Integer sums merge order-independently — bitwise deterministic
+/// for any thread count.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn bin_2d_mean_color_cells(
     x: &[f64],
@@ -3454,7 +3476,7 @@ pub(crate) fn bin_2d_mean_color_cells(
 ) -> Vec<MeanColorCell> {
     let n = x.len();
     let cells = w * h;
-    let threads = bin_2d_threads(n, cells).min(4);
+    let threads = mean_color_threads_for(bin_2d_threads(n, cells), cells);
     if threads <= 1 || n < threads {
         let mut grid = vec![MeanColorCell::default(); cells];
         bin_2d_mean_color_accumulate(x, y, colors, 0, x0, x1, y0, y1, w, h, &mut grid);
@@ -6414,6 +6436,19 @@ mod tests {
                 "cell {cell_index} occupancy"
             );
         }
+    }
+
+    #[test]
+    fn mean_color_threads_shed_to_fit_accumulator_budget() {
+        // Screen-sized grids and the 2048² default base level keep the full
+        // 4-worker fan-out; the adaptive no-rescan base levels (§28) shed to
+        // serial so worker accumulators (40 B/cell) never multiply into
+        // tens of GB of transient build memory.
+        assert_eq!(mean_color_threads_for(16, 512 * 384), 4);
+        assert_eq!(mean_color_threads_for(4, 2048 * 2048), 4);
+        assert_eq!(mean_color_threads_for(4, 4096 * 4096), 1);
+        assert_eq!(mean_color_threads_for(4, 16384 * 16384), 1);
+        assert_eq!(mean_color_threads_for(1, 64), 1);
     }
 
     #[test]

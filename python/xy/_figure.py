@@ -1830,8 +1830,12 @@ class Figure(AnnotationsMixin, PayloadMixin):
         n_total = sum(t.n_points for t in self.traces) or 1
         report["transport_bytes_per_point"] = len(blob) / n_total
         report["pyramid_bytes"] = interaction.pyramid_report_bytes(self)
+        report["bin_color_bytes"] = interaction.bin_color_cache_bytes(self)
         report["resident_array_bytes"] = (
-            report["canonical_bytes"] + report["channel_bytes"] + report["pyramid_bytes"]
+            report["canonical_bytes"]
+            + report["channel_bytes"]
+            + report["pyramid_bytes"]
+            + report["bin_color_bytes"]
         )
         report["backend"] = kernels.BACKEND
         return report
