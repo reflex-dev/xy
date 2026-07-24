@@ -776,9 +776,10 @@ def render_raster(
     # "none" silences the whole axis chrome (sparklines); "off" hides only the
     # label text and keeps baselines and the axis title (mpl shared axes).
     frame_sides = spec.get("frame_sides")
+    explicit_frame_sides = frame_sides is not None
     if frame_sides is None:
         frame_sides = [xa.get("side", "bottom"), ya.get("side", "left")]
-    if not hide_y:
+    if not hide_y or explicit_frame_sides:
         if "left" in frame_sides:
             cmd.stroke(
                 [(px0, py0), (px0, py1)],
@@ -791,7 +792,7 @@ def render_raster(
                 float(ystyle.get("axis_width", 1)),
                 _parse_color(_css(ystyle.get("axis_color"), default_axis)),
             )
-    if not hide_x:
+    if not hide_x or explicit_frame_sides:
         if "top" in frame_sides:
             cmd.stroke(
                 [(px0, py0), (px1, py0)],
@@ -1004,7 +1005,10 @@ def render_raster(
     show_main_legend = spec.get("show_legend", True) and bool(named)
     extra_legends = [(extra, extra.get("items") or []) for extra in spec.get("extra_legends") or []]
     legend_present = show_main_legend or any(items for _extra, items in extra_legends)
-    if legend_present:
+    anchored_legend = (show_main_legend and bool((spec.get("legend") or {}).get("anchor"))) or any(
+        items and extra.get("anchor") for extra, items in extra_legends
+    )
+    if legend_present and not anchored_legend:
         # The browser scrolls an oversized legend. Static files cannot, so
         # clip the bounded/truncated equivalent to the plot rectangle.
         cmd.clip(px0, py0, plot["w"], plot["h"])
@@ -1013,7 +1017,7 @@ def render_raster(
     for extra, items in extra_legends:
         if items:
             _emit_legend(cmd, items, plot, extra, default_text)
-    if legend_present:
+    if legend_present and not anchored_legend:
         cmd.clip(0, 0, width, height)
     if spec.get("colorbar"):
         _emit_colorbar(
@@ -1300,6 +1304,14 @@ def _emit_scatter(
 
     fill_op = _fill_opacity(style, 0.8)
     stroke_op = _stroke_opacity(style, 0.8)
+    artist_alpha = style.get("artist_alpha")
+    if artist_alpha is not None:
+        # Matplotlib artist alpha replaces the intrinsic paint alpha. Scalar
+        # alpha does not need a style channel, so retain it in both affine
+        # scatter fast paths instead of silently painting opaque points.
+        scalar_alpha = float(artist_alpha)
+        fill_op *= scalar_alpha
+        stroke_op *= scalar_alpha
     sw = float(style.get("stroke_width", 0.0))
     sym = _SYMBOLS.get(style.get("symbol", "circle"), 0)
     # Transparent is the private wire sentinel for edgecolors="face".  The
@@ -1958,7 +1970,7 @@ def _emit_legend(
     pad, handle, gap = legend["pad"], legend["handle"], legend["gap"]
     line_h, ncols = legend["line_h"], legend["ncols"]
     title, title_h = legend["title"], legend["title_h"]
-    cell_w = legend["cell_w"]
+    column_offsets = legend["column_offsets"]
     box_w, box_h = legend["box_w"], legend["box_h"]
     x, y = legend["x"], legend["y"]
     # frameon=False (background transparent) drops the box entirely (§ mpl parity).
@@ -1973,6 +1985,8 @@ def _emit_legend(
             else (128, 128, 128, round(255 * alpha))
         )
         cmd.fill(_rect_pts(x, y, x + box_w, y + box_h), frame)
+        border = _rgba(style_opts.get("borderColor"), "#cccccc", alpha)
+        cmd.stroke(_rect_pts(x, y, x + box_w, y + box_h), 1.0, border)
     if title:
         cmd.text(x + pad, y + pad / 2 + 11, 0, 11, _parse_color(text_color), str(title))
     for i, t in enumerate(named[: legend["visible_count"]]):
@@ -1983,14 +1997,22 @@ def _emit_legend(
         )
         c = _parse_color(color_str)
         col, row = i % ncols, i // ncols
-        rx, ry = x + col * cell_w, y + pad / 2 + title_h + row * line_h
-        hx0, hx1, cy = rx + pad, rx + pad + handle, ry + 7
+        rx, ry = x + column_offsets[col], y + pad / 2 + title_h + row * line_h
+        hx0, hx1, cy = rx, rx + handle, ry + 7
         kind = t.get("kind")
         if kind == "scatter":
             sym = _SYMBOLS.get(style.get("symbol", "circle"), 0)
             sw = float(style.get("stroke_width", 0.0))
             stroke = _rgba(style.get("stroke"), color_str) if sw > 0 else (0, 0, 0, 0)
-            cmd.point((hx0 + hx1) / 2, cy, 4.0, sym, c, sw, stroke)
+            cmd.point(
+                (hx0 + hx1) / 2,
+                cy,
+                max(0.5, float(style.get("size", 8.0)) / 2.0),
+                sym,
+                c,
+                sw,
+                stroke,
+            )
         elif kind in _LEGEND_LINE_KINDS:
             cmd.stroke(
                 [(hx0, cy), (hx1, cy)],

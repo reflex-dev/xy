@@ -1497,7 +1497,8 @@ export class ChartView {
     this.overlay.width = this.size.w * this.dpr;
     this.overlay.height = this.size.h * this.dpr;
     for (const lg of this._legends || []) {
-      this._positionLegend(lg, lg.dataset.xyLegendLoc || "upper right");
+      const anchor = lg.dataset.xyLegendAnchor ? JSON.parse(lg.dataset.xyLegendAnchor) : null;
+      this._positionLegend(lg, lg.dataset.xyLegendLoc || "upper right", anchor);
     }
     this._positionReductionBadges();
     this._positionColorbar();
@@ -1762,10 +1763,14 @@ export class ChartView {
     const horizontal = ncols > 1;
     lg.style.cssText = "position:absolute;" +
       `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
-      "overflow:auto;";
+      "column-gap:22px;row-gap:2px;overflow:auto;";
     lg.dataset.xyLegendLoc = loc;
-    this._positionLegend(lg, loc);
+    if (Array.isArray(options.anchor)) {
+      lg.dataset.xyLegendAnchor = JSON.stringify(options.anchor);
+    }
+    this._positionLegend(lg, loc, options.anchor);
     this._applySlot(lg, "legend");
+    this._applyStyle(lg, options.style);
     if (options.title) {
       const title = document.createElement("div");
       title.textContent = String(options.title);
@@ -1850,7 +1855,7 @@ export class ChartView {
     return lg;
   }
 
-  _positionLegend(lg, loc) {
+  _positionLegend(lg, loc, anchor = null) {
     if (!lg) return;
     // Responsive anchors flow through private custom properties consumed by a
     // zero-specificity rule. Author classes or component styles can still set
@@ -1858,16 +1863,26 @@ export class ChartView {
     const rightInset = this.size.w - (this.plot.x + this.plot.w);
     const h = loc.includes("left") ? "left" : loc.includes("right") ? "right" : "center";
     const v = loc.includes("upper") ? "upper" : loc.includes("lower") ? "lower" : "center";
-    const left = h === "left" ? this.plot.x + 6 : h === "center" ? this.plot.x + this.plot.w / 2 : null;
-    const right = h === "right" ? rightInset + 6 : null;
-    const top = v === "upper" ? this.plot.y + 6 : v === "center" ? this.plot.y + this.plot.h / 2 : null;
-    const bottom = v === "lower" ? this.size.h - (this.plot.y + this.plot.h) + 6 : null;
+    let left = h === "left" ? this.plot.x + 6 : h === "center" ? this.plot.x + this.plot.w / 2 : null;
+    let right = h === "right" ? rightInset + 6 : null;
+    let top = v === "upper" ? this.plot.y + 6 : v === "center" ? this.plot.y + this.plot.h / 2 : null;
+    let bottom = v === "lower" ? this.size.h - (this.plot.y + this.plot.h) + 6 : null;
+    if (Array.isArray(anchor) && (anchor.length === 2 || anchor.length === 4)) {
+      const hx = h === "left" ? 0 : h === "right" ? 1 : 0.5;
+      const vy = v === "lower" ? 0 : v === "upper" ? 1 : 0.5;
+      const aw = anchor.length === 4 ? Number(anchor[2]) : 0;
+      const ah = anchor.length === 4 ? Number(anchor[3]) : 0;
+      left = this.plot.x + (Number(anchor[0]) + hx * aw) * this.plot.w;
+      top = this.plot.y + (1 - Number(anchor[1]) - vy * ah) * this.plot.h;
+      right = null;
+      bottom = null;
+    }
     lg.style.setProperty("--xy-legend-left", left == null ? "auto" : left + "px");
     lg.style.setProperty("--xy-legend-right", right == null ? "auto" : right + "px");
     lg.style.setProperty("--xy-legend-top", top == null ? "auto" : top + "px");
     lg.style.setProperty("--xy-legend-bottom", bottom == null ? "auto" : bottom + "px");
-    const tx = h === "center" ? "-50%" : "0";
-    const ty = v === "center" ? "-50%" : "0";
+    const tx = h === "center" ? "-50%" : h === "right" && anchor ? "-100%" : "0";
+    const ty = v === "center" ? "-50%" : v === "lower" && anchor ? "-100%" : "0";
     lg.style.setProperty("--xy-legend-transform", `translate(${tx},${ty})`);
   }
 
@@ -4316,12 +4331,13 @@ export class ChartView {
       const frameSides = Array.isArray(s.frame_sides)
         ? s.frame_sides
         : [xAxis.side || "bottom", yAxis.side || "left"];
-      if (!hideY) {
+      const explicitFrameSides = Array.isArray(s.frame_sides);
+      if (!hideY || explicitFrameSides) {
         const yWidth = Math.max(1, this._axisStyleNumber(yAxis, "axis_width", 1));
         if (frameSides.includes("left")) rule(yAxis, p.x, p.y, yWidth, p.h);
         if (frameSides.includes("right")) rule(yAxis, p.x + p.w - yWidth, p.y, yWidth, p.h);
       }
-      if (!hideX) {
+      if (!hideX || explicitFrameSides) {
         const xHeight = Math.max(1, this._axisStyleNumber(xAxis, "axis_width", 1));
         if (frameSides.includes("top")) rule(xAxis, p.x, p.y, p.w, xHeight);
         if (frameSides.includes("bottom")) rule(xAxis, p.x, p.y + p.h - xHeight, p.w, xHeight);

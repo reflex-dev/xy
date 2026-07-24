@@ -67,6 +67,7 @@ _DEFAULTS: dict[str, Any] = {
     "legend.fontsize": "medium",
     "legend.facecolor": "inherit",
     "legend.edgecolor": "#cccccc",
+    "legend.framealpha": 0.8,
     "legend.frameon": True,
     "text.usetex": False,
     "image.cmap": "viridis",

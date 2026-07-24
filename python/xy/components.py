@@ -235,6 +235,7 @@ class Legend(Component):
 
     show: bool = True
     loc: Optional[str] = None
+    anchor: Optional[tuple[float, ...]] = None
     ncols: int = 1
     title: Optional[str] = None
     class_name: Optional[str] = None
@@ -2370,6 +2371,7 @@ def legend(
     *children: Any,
     show: bool = True,
     loc: Optional[str] = None,
+    anchor: Optional[tuple[float, ...]] = None,
     ncols: int = 1,
     title: Optional[str] = None,
     render: Any = None,
@@ -2382,6 +2384,7 @@ def legend(
         *children: Optional opaque replacement content.
         show: Whether to display the legend.
         loc: Legend placement within or around the plot.
+        anchor: Two- or four-value normalized plot-coordinate anchor.
         ncols: Number of legend columns.
         title: Optional legend title.
         render: Opaque renderer supplied by an adapter.
@@ -2389,9 +2392,16 @@ def legend(
         style: Legend style overrides.
     """
     show, render = _chrome_render_args(children, show, render, "legend")
+    if anchor is not None:
+        if isinstance(anchor, (str, bytes)) or len(anchor) not in (2, 4):
+            raise ValueError("legend anchor must contain 2 or 4 finite numbers")
+        anchor = tuple(float(value) for value in anchor)
+        if not all(math.isfinite(value) for value in anchor):
+            raise ValueError("legend anchor must contain 2 or 4 finite numbers")
     return Legend(
         show=_strict_bool(show, "legend show"),
         loc=_optional_string(loc, "legend loc"),
+        anchor=anchor,
         ncols=_optional_positive_int(ncols, "legend ncols") or 1,
         title=_optional_string(title, "legend title"),
         class_name=_optional_string(class_name, "legend class_name"),
@@ -3176,6 +3186,8 @@ class Chart(Component):
             node = legends[-1]
             _apply_chrome_node(fig, "legend", node.class_name, node.style)
             fig.legend_options = {"loc": node.loc, "ncols": node.ncols}
+            if node.anchor is not None:
+                fig.legend_options["anchor"] = list(node.anchor)
             if node.title is not None:
                 fig.legend_options["title"] = node.title
             if node.style:

@@ -528,6 +528,7 @@ class Axes(PlotTypeMixin):
         self._title: Optional[str] = None
         self._legend = False
         self._legend_options: dict[str, Any] = {}
+        self._legend_artist: Optional[Legend] = None
         self._extra_legends: list[Any] = []
         self._colorbar: Optional[dict[str, Any]] = None
         self._colorbar_source: Optional[dict[str, Any]] = None  # entry the colorbar reads
@@ -816,6 +817,7 @@ class Axes(PlotTypeMixin):
         self._title = None
         self._legend = False
         self._legend_options = {}
+        self._legend_artist = None
         self._extra_legends = []
         self._colorbar = None
         self._colorbar_source = None
@@ -887,6 +889,8 @@ class Axes(PlotTypeMixin):
         transform = kwargs.pop("transform", None)
         if transform is not None and not hasattr(transform, "transform"):
             raise TypeError("plot transform must provide transform(xy)")
+        if drawstyle == "steps":
+            drawstyle = "steps-pre"
         if drawstyle not in (None, "default", "steps-pre", "steps-mid", "steps-post"):
             raise ValueError(f"unsupported drawstyle: {drawstyle!r}")
         check_unsupported(kwargs, "plot()")
@@ -1325,6 +1329,9 @@ class Axes(PlotTypeMixin):
         entry = self._add("scatter", {"x": x, "y": y, "kwargs": entry_kwargs})
         if source_color is not None:
             entry["source_array"] = source_color
+        entry["source_sizes"] = np.asarray(
+            rcParams["lines.markersize"] ** 2 if s is None else s, dtype=np.float64
+        ).reshape(-1)
         if "colormap" in entry_kwargs:
             levels = _discrete_levels(cmap)
             if levels is not None:
@@ -1435,7 +1442,6 @@ class Axes(PlotTypeMixin):
                 array.ndim == 1
                 and array.shape in {(3,), (4,)}
                 and np.issubdtype(array.dtype, np.number)
-                and isinstance(value, (tuple, list))
             ):
                 return resolve_color(value)
             return resolve_rgba_array(value, n_bars, label_text)
@@ -3065,7 +3071,8 @@ class Axes(PlotTypeMixin):
 
     def get_legend(self) -> Any:
         """A truthy legend handle when a legend is shown, else None."""
-        return self if (self._y2_of or self)._legend else None
+        host = self._y2_of or self
+        return (host._legend_artist or self) if host._legend else None
 
     def get_legend_handles_labels(self) -> tuple[list[Artist], list[str]]:
         """Handles and labels of the entries that would appear in the legend.
@@ -3362,6 +3369,8 @@ class Axes(PlotTypeMixin):
             host = self._y2_of or self
             artist._attach(host)
             host._extra_legends.append(artist)
+            if artist is host._legend_artist:
+                host._legend_artist = None
             host._invalidate()
             return artist
         if hasattr(artist, "get_array"):
@@ -3980,7 +3989,7 @@ class Axes(PlotTypeMixin):
         self.figure._invalidate()
         return twin
 
-    def legend(self, *args: Any, **kwargs: Any) -> None:
+    def legend(self, *args: Any, **kwargs: Any) -> Any:
         """Show the legend for this axes.
 
         Call forms: ``legend()`` (labeled artists), ``legend(labels)``
@@ -3992,13 +4001,23 @@ class Axes(PlotTypeMixin):
         raise loudly. ``loc="best"`` picks the least occupied corner.
         """
         host = self._y2_of or self
+        returned: Any = self
         if len(args) >= 2:
-            # legend(handles, labels): relabel the artists the caller passed.
-            handles, labels = args[0], args[1]
-            for handle, label in zip(handles, labels, strict=False):
-                entry = getattr(handle, "_entry", None)
-                if entry is not None:
-                    entry.setdefault("kwargs", {})["name"] = _plain_text(label)
+            handles = list(args[0])
+            labels = [_plain_text(label) for label in args[1]]
+            legend_artist = Legend(host, handles, labels, **kwargs)
+            returned = legend_artist
+            entries = [getattr(handle, "_entry", None) for handle in handles]
+            if entries and all(
+                any(entry is candidate for candidate in host._entries) for entry in entries
+            ):
+                for entry, label in zip(entries, labels, strict=False):
+                    entry.setdefault("kwargs", {})["name"] = label
+                host._legend_artist = None
+                host._legend_options = dict(legend_artist._options)
+            else:
+                host._legend_artist = legend_artist
+                host._legend_options = dict(legend_artist._options)
         elif len(args) == 1:
             # legend(labels): assign labels positionally to the plotted artists,
             # skipping marker overlays that share their line's legend slot.
@@ -4006,9 +4025,14 @@ class Axes(PlotTypeMixin):
             eligible = [entry for entry in host._entries if not entry.get("_legend_skip")]
             for entry, label in zip(eligible, labels, strict=False):
                 entry.setdefault("kwargs", {})["name"] = _plain_text(label)
+            host._legend_artist = None
+            host._legend_options = self._compose_legend_options(kwargs)
+        else:
+            host._legend_artist = None
+            host._legend_options = self._compose_legend_options(kwargs)
         host._legend = True
-        host._legend_options = self._compose_legend_options(kwargs)
         host._invalidate()
+        return returned
 
     def _compose_legend_options(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         """Translate legend() keyword styling into the engine's option dict.
@@ -4017,6 +4041,14 @@ class Axes(PlotTypeMixin):
         second, manually added legend honors the same loc/frame/font keywords.
         """
         loc = kwargs.pop("loc", rcParams["legend.loc"])
+        bbox_to_anchor = kwargs.pop("bbox_to_anchor", None)
+        if bbox_to_anchor is not None:
+            bounds = getattr(bbox_to_anchor, "bounds", bbox_to_anchor)
+            if isinstance(bounds, (str, bytes)) or len(bounds) not in (2, 4):
+                raise ValueError("legend bbox_to_anchor must contain 2 or 4 finite numbers")
+            bbox_to_anchor = tuple(float(value) for value in bounds)
+            if not all(np.isfinite(value) for value in bbox_to_anchor):
+                raise ValueError("legend bbox_to_anchor must contain 2 or 4 finite numbers")
         ncols = kwargs.pop("ncols", kwargs.pop("ncol", 1))
         title = kwargs.pop("title", None)
         fontsize = kwargs.pop("fontsize", None)
@@ -4038,7 +4070,7 @@ class Axes(PlotTypeMixin):
         frameon = kwargs.pop("frameon", rcParams["legend.frameon"])
         facecolor = kwargs.pop("facecolor", rcParams["legend.facecolor"])
         edgecolor = kwargs.pop("edgecolor", rcParams["legend.edgecolor"])
-        framealpha = kwargs.pop("framealpha", None)
+        framealpha = kwargs.pop("framealpha", rcParams["legend.framealpha"])
         fancybox = kwargs.pop("fancybox", False)
         shadow = kwargs.pop("shadow", False)
         borderpad = kwargs.pop("borderpad", None)
@@ -4086,6 +4118,7 @@ class Axes(PlotTypeMixin):
             if edgecolor is not None:
                 style["borderColor"] = resolve_color(edgecolor)
                 style["borderStyle"] = "solid"
+                style["borderWidth"] = "1px"
         if framealpha is not None:
             alpha_value = float(framealpha)
             if not 0.0 <= alpha_value <= 1.0:
@@ -4106,6 +4139,8 @@ class Axes(PlotTypeMixin):
                 raise ValueError("legend labelspacing must be non-negative")
             style["rowGap"] = f"{spacing:g}em"
         options: dict[str, Any] = {"loc": loc, "ncols": max(1, int(ncols))}
+        if bbox_to_anchor is not None:
+            options["anchor"] = bbox_to_anchor
         if title is not None:
             options["title"] = _plain_text(title)
         if style:
@@ -4628,6 +4663,24 @@ class Axes(PlotTypeMixin):
             chart_padding = (
                 [6.0, 8.0 + 26.0, 36.0, 46.0] if compact else [10.0, 14.0 + 26.0, 42.0, 62.0]
             )
+        anchor = self._legend_options.get("anchor") if self._legend else None
+        if anchor:
+            compact = width < 520
+            if chart_padding is None:
+                chart_padding = [6.0, 8.0, 36.0, 46.0] if compact else [10.0, 14.0, 42.0, 62.0]
+            top, right, bottom, left = map(float, chart_padding)
+            loc = str(self._legend_options.get("loc") or "upper right")
+            ax, ay = float(anchor[0]), float(anchor[1])
+            aw, ah = (0.0, 0.0) if len(anchor) == 2 else (float(anchor[2]), float(anchor[3]))
+            if ay >= 1.0 and "lower" in loc:
+                top = max(top, 36.0)
+            if ay + ah <= 0.0 and "upper" in loc:
+                bottom = max(bottom, 36.0)
+            if ax >= 1.0 and "left" in loc:
+                right = max(right, min(220.0, width * 0.34))
+            if ax + aw <= 0.0 and "right" in loc:
+                left = max(left, min(220.0, width * 0.34))
+            chart_padding = [top, right, bottom, left]
         # A dataless matplotlib axis views exactly (0, 1) — margins never apply.
         # Pin it so the engine's autorange padding cannot widen the empty view
         # (padding turns the 0.5 midpoint tick into a bare 0/1 pair). Render
@@ -4660,7 +4713,9 @@ class Axes(PlotTypeMixin):
             y2_props = {k: v for k, v in self._axis["y2"].items() if v is not None}
             self._apply_tickers("y2", y2_props, auto_tick_counts["y"])
             children.append(xy.y_axis(id="y2", side="right", **y2_props))
-        if self._legend:
+        if self._legend and self._legend_artist is not None:
+            children.append(xy.legend(show=False))
+        elif self._legend:
             legend_options = dict(self._legend_options)
             if legend_options.get("loc") in (None, "best"):
                 legend_options["loc"] = self._best_legend_loc(
@@ -4705,9 +4760,12 @@ class Axes(PlotTypeMixin):
                 if derived is not None:
                     options["domain"] = [derived[0], derived[1]]
             figure.colorbar_options = options
-        if self._extra_legends:
+        legends = list(self._extra_legends)
+        if self._legend_artist is not None:
+            legends.append(self._legend_artist)
+        if legends:
             extras = []
-            for leg in self._extra_legends:
+            for leg in legends:
                 spec = leg.spec()
                 if spec.get("loc") in (None, "best"):
                     spec["loc"] = self._best_legend_loc(

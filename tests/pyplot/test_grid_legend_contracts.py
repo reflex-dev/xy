@@ -55,6 +55,8 @@ def test_legend_maps_supported_style_and_rejects_unknown_options():
         "background": "white",
         "borderColor": "black",
         "borderStyle": "solid",
+        "borderWidth": "1px",
+        "--xy-legend-frame-alpha": 0.8,
     }
 
     ax.legend(shadow=True, fancybox=True, framealpha=0.8, borderpad=1, labelspacing=0.7)

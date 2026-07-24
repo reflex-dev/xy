@@ -7,12 +7,12 @@ def teardown_function():
     plt.close("all")
 
 
-def test_line_cap_and_gapcolor_mutations_fail_loudly():
+def test_unsupported_line_cap_and_gapcolor_mutations_fail_loudly():
     _, ax = plt.subplots()
     line = ax.plot([0, 1], [0, 1])[0]
 
     with pytest.raises(NotImplementedError):
-        line.set_dash_capstyle("round")
+        line.set_dash_capstyle("butt")
     with pytest.raises(NotImplementedError):
         line.set_solid_capstyle("round")
     with pytest.raises(NotImplementedError):
