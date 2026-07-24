@@ -28,7 +28,7 @@ and a plain CSS attribute selector.
 | `tooltip` | Hover tooltip |
 | `modebar` | Mode/tool bar container |
 | `modebar_button` | One mode/tool button; `.xy-active` when active |
-| `selection` | Active box-select or box-zoom rectangle |
+| `selection` | Box/x-range/y-range select or box-zoom rectangle (persists until cleared for selects) |
 | `crosshair_x` | Vertical crosshair line |
 | `crosshair_y` | Horizontal crosshair line |
 | `badge` | Reduction/density badge container |

@@ -140,6 +140,23 @@ lightness (the points' own alpha compositing).
    re-bin (the count grid and sample selection stay fused as before; plain
    scatters are byte-identical to the pre-color pipeline), +4 B/cell on the
    wire, and the §4 pyramid's color planes at +8 B/cell.
+   The kernel's per-point color *source* (LUT indices or packed RGBA8) is a
+   full-column O(N) quantize over immutable channel values and their global
+   domain, so it is resolved **once per trace** and cached
+   (`interaction.trace_bin_colors`; a rebuildable §27 derived buffer,
+   itemized as `memory_report()["bin_color_bytes"]`, dropped on append and
+   lazily re-resolved by the append's own refresh emit). `density_view`
+   resolves it only in the branches that feed `bin_2d_mean_color` — pyramid
+   replies compose the §4 prebuilt color planes and point drills ship sliced
+   channels, so a per-request or per-tier resolve is a regression (it charged
+   the 100M FastAPI drilldown demo 1–2 s per reply, ~10–100× the tier work;
+   tripwire: `test_adaptive_drilldown_cycle_mean_color`).
+   Huge/out-of-core traces (the §28 no-rescan regime) resolve but do **not**
+   retain: past the one-time pyramid build and first-paint emit their every
+   interactive reply composes prebuilt planes, so a retained per-row idx
+   (1 GB at 1e9 rows) would be resident cost with no remaining consumer.
+   The resolution itself is chunk-bounded (§4.4), so the rare
+   correctness-net re-resolve costs CPU, never a memory spike.
    *Why mean-of-colors and not colormap(mean value):* the mean color is
    representation-agnostic (categories have no mean value), matches the
    drilled points' downsample exactly (the anti-jarring contract, T3), and
@@ -274,6 +291,18 @@ ever extrapolates.
   45 MB color per colored trace, `pyramid_report_bytes`; huge/out-of-core
   traces build adaptively finer bases — Phase-3 item 7 — and the color plane
   scales with them.)
+- **Build-time transients are budgeted, not incidental.** The colored build's
+  fused scan gives each worker a private 40 B/cell accumulator; workers shed
+  (down to a serial scan) whenever their accumulators together would exceed
+  a fixed budget (`kernels::MEAN_COLOR_ACCUM_BUDGET_BYTES`, 1 GiB), so an
+  adaptive 8192² base level costs one 2.7 GB accumulator instead of 4×, and
+  a colored billion-point build peaks at or below the count-only build's own
+  fan-out. The full-column color-source resolution feeding it is chunked
+  (`channels._QUANTIZE_CHUNK`): per-element math identical to the one-shot
+  chain, transient temporaries bounded by the chunk instead of several × N
+  (~20 GB at 1e9 rows before this), the only N-sized allocation the u8 idx
+  itself. Both are recorded regressions-to-avoid: trading them back returns
+  the 1B colored build to OOM territory.
 - 1B points: ~330-660 MB — still kernel-side RAM, but now Tier 3 applies:
   tiles are chunked to disk (Arrow/Parquet row groups per tile, dossier §32),
   LRU-resident under a byte budget, and *only* the ≤ ~12 visible tiles are
@@ -603,7 +632,10 @@ contract entry before it lands.
    LUT indices + a ≤256-entry RGBA8 LUT (continuous quantizes to the
    client's 256 texels; categorical passes codes, wide codes fold modulo the
    palette) or per-point straight RGBA8 (`direct_rgba`) —
-   `channels.resolve_bin_colors` maps every channel mode onto one of the two.
+   `channels.resolve_bin_colors` maps every channel mode onto one of the two,
+   and `interaction.trace_bin_colors` caches the full-column resolution per
+   trace (§2 cost note) so pyramid build, first-paint emit, and every exact
+   re-bin share one O(N) quantize instead of paying it per request.
 2. **Done:** mean-color planes wired through the initial emit
    (`_payload._density_trace_spec`), `density_view` (exact and pyramid
    paths), the static SVG/PNG exporters, and the standalone re-bin worker;

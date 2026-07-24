@@ -294,7 +294,23 @@ async function sendMessage(msg) {{
     const trace = message.traces && message.traces[0];
     if (trace && trace.mode && message.seq === view.seq) {{
       const visible = Number(trace.visible || 0).toLocaleString();
-      statusEl.textContent = trace.mode === "points" ? `${{visible}} points` : `${{visible}} density`;
+      if (trace.mode === "points") {{
+        statusEl.textContent = `${{visible}} points`;
+        statusEl.title = "";
+      }} else {{
+        // Surface the engine's recorded tier decision (§28): past
+        // PYRAMID_NO_RESCAN_ROWS (or for out-of-core columns) every zoom is
+        // served from the pyramid — upsampled at its floor — and exact
+        // points are unavailable BY DESIGN, however deep the window. Without
+        // this note that regime reads as a drilldown that mysteriously
+        // refuses to resolve.
+        const floored = String(trace.binning || "").endsWith("-upsampled");
+        statusEl.textContent = `${{visible}} density${{floored ? " · aggregate floor" : ""}}`;
+        statusEl.title = floored
+          ? "No-rescan regime (source rows exceed the exact-rescan bound): "
+            + "zooms are served from the density pyramid and exact points never ship."
+          : "";
+      }}
     }}
   }} catch (err) {{
     statusEl.textContent = "offline";

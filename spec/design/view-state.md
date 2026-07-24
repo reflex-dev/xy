@@ -63,7 +63,12 @@ Rules:
   PR #117 event payload. Values are `[lo, hi]` f64 pairs.
 - `selection` is one of `{"range": {x0, x1, y0, y1}}`,
   `{"polygon": [[x, y], …]}`, or `null`. The two non-null shapes are exactly
-  the shipped `on_brush` payloads. Row-index selections (§5.1
+  the shipped `on_brush` payloads. A `range` may carry an optional
+  `"mode": "x" | "y"` discriminator marking an x-range / y-range brush (a plain
+  box omits it); it only shapes the persisted overlay — the range brush stays
+  drawn until cleared, spanning the full plot on its free axis with just the two
+  edge borders — and never changes the selected point set, which is fully
+  determined by `{x0, x1, y0, y1}`. Row-index selections (§5.1
   `select(rows=...)`) are deliberately *not* representable here: an arbitrary
   per-trace index set can be arbitrarily large, and snapshots must stay a
   handful of floats. Rows-selections are therefore non-durable (§5.1).

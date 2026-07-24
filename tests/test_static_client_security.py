@@ -68,6 +68,7 @@ _CHROME_TOKENS = (
     "--chart-legend-bg",
     "--chart-modebar-bg",
     "--chart-modebar-active",
+    "--chart-modebar-focus",
     "--chart-selection",
     "--chart-selection-fill",
     "--chart-crosshair",

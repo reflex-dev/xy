@@ -346,3 +346,178 @@ def test_wide_categorical_codes_fold_onto_palette():
     assert out["lut"].shape[0] == len(DEFAULT_PALETTE)
     expected = (codes % len(DEFAULT_PALETTE)).astype(np.uint8)
     assert np.array_equal(out["idx"], expected)
+
+
+# --- resolution cost: once per trace, never per request ----------------------
+# The full-column resolve quantizes every canonical row (O(N) with large NumPy
+# temporaries — 1-2 s/request on the 100M FastAPI drilldown demo before it was
+# cached). These tests pin the contract: at most one resolve per trace, shared
+# by every consumer, refreshed exactly once by an append, and never triggered
+# by a reply that ships no mean-color grid.
+
+
+def _count_resolves(monkeypatch) -> dict[str, int]:
+    calls = {"n": 0}
+    original = channels.resolve_bin_colors
+
+    def counting(cc, sel, palette):
+        calls["n"] += 1
+        return original(cc, sel, palette)
+
+    monkeypatch.setattr(channels, "resolve_bin_colors", counting)
+    return calls
+
+
+def test_density_view_exact_band_resolves_colors_once(monkeypatch):
+    calls = _count_resolves(monkeypatch)
+    n = SCATTER_DENSITY_THRESHOLD * 3
+    rng = np.random.default_rng(11)
+    x = rng.uniform(0.0, 100.0, n)
+    y = rng.uniform(0.0, 100.0, n)
+    fig = Figure().scatter(x, y, color=x.copy(), density=True)
+    first, first_bufs = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, 256, 192)
+    assert calls["n"] == 1
+    again, again_bufs = fig.density_view(0, 0.0, 90.0, 0.0, 90.0, 256, 192)
+    assert calls["n"] == 1  # served from the trace cache, not re-resolved
+    for update, bufs in ((first, first_bufs), (again, again_bufs)):
+        d = update["traces"][0]["density"]
+        assert d["color_agg"] == "mean" and len(bufs[d["rgba"]])  # plane still ships
+
+
+def test_density_view_points_band_never_resolves_colors(monkeypatch):
+    calls = _count_resolves(monkeypatch)
+    n = SCATTER_DENSITY_THRESHOLD * 3
+    rng = np.random.default_rng(12)
+    x = rng.uniform(0.0, 100.0, n)
+    y = rng.uniform(0.0, 100.0, n)
+    fig = Figure().scatter(x, y, color=x.copy(), density=True)
+    upd, _ = fig.density_view(0, 0.0, 20.0, 0.0, 20.0, 256, 192)
+    tr = upd["traces"][0]
+    assert tr["mode"] == "points"
+    assert tr["color"]["mode"] == "continuous"  # channels restored on drill
+    assert calls["n"] == 0  # drills ship sliced channels; no full-column pass
+
+
+def test_pyramid_band_reuses_build_time_resolution(monkeypatch):
+    calls = _count_resolves(monkeypatch)
+    n = PYRAMID_MIN_POINTS + 50_000
+    rng = np.random.default_rng(13)
+    x = rng.uniform(0.0, 10.0, n)
+    y = rng.uniform(0.0, 1.0, n)
+    fig = Figure().scatter(x, y, color=x.copy())
+    upd, _ = fig.density_view(0, 0.0, 10.0, 0.0, 1.0, 128, 96)
+    tr = upd["traces"][0]
+    assert tr["binning"].startswith("pyramid-L")
+    assert tr["density"]["color_agg"] == "mean"
+    assert calls["n"] == 1  # the colored pyramid build resolved (and cached) it
+    fig.density_view(0, 0.5, 9.5, 0.0, 1.0, 128, 96)
+    assert calls["n"] == 1  # composes prebuilt color planes; no re-resolve
+
+
+def test_append_re_resolves_bin_colors_exactly_once(monkeypatch):
+    calls = _count_resolves(monkeypatch)
+    n = SCATTER_DENSITY_THRESHOLD * 3
+    rng = np.random.default_rng(14)
+    x = rng.uniform(0.0, 100.0, n)
+    y = rng.uniform(0.0, 100.0, n)
+    fig = Figure().scatter(x, y, color=x.copy(), density=True)
+    fig.density_view(0, 0.0, 100.0, 0.0, 100.0, 256, 192)
+    assert calls["n"] == 1
+    t = fig.traces[0]
+    assert len(t._bin_colors["idx"]) == n
+    # Appending invalidates the cache; the refresh payload the append emits
+    # re-resolves over the post-append column — once — and later grid replies
+    # reuse that fresh resolution.
+    fig.append(0, [50.0], [50.0], color=[123.0])
+    assert calls["n"] == 2
+    assert len(t._bin_colors["idx"]) == n + 1
+    fig.density_view(0, 0.0, 100.0, 0.0, 100.0, 256, 192)
+    assert calls["n"] == 2
+
+
+def test_chunked_quantization_matches_one_shot_chain(monkeypatch):
+    # The chunked resolve exists purely to bound transient memory (a one-shot
+    # chain materializes several full-length f64 temporaries — ~20 GB at 1e9
+    # rows); per-element math must stay bitwise identical to the historical
+    # pipeline, including non-finite and out-of-domain values and chunk
+    # boundaries.
+    monkeypatch.setattr(channels, "_QUANTIZE_CHUNK", 7)
+    rng = np.random.default_rng(16)
+    vals = rng.uniform(-5.0, 15.0, 1000)
+    vals[::17] = np.nan
+    vals[3::29] = np.inf
+    vals[5::31] = -np.inf
+    domain = (0.0, 10.0)
+    unit = channels.normalize_to_unit(vals, domain)
+    want = np.rint(np.asarray(unit, dtype=np.float64) * 255.0).astype(np.uint8)
+    assert np.array_equal(channels._quantized_lut_idx(vals, domain), want)
+
+    rgba = rng.uniform(-0.2, 1.2, (500, 4))
+    want_rgba = np.rint(np.clip(rgba, 0.0, 1.0) * 255.0).astype(np.uint8)
+    assert np.array_equal(channels._quantized_rgba8(rgba), want_rgba)
+
+    codes = rng.integers(0, 300, 400).astype(np.uint32)
+    n_palette = len(DEFAULT_PALETTE)
+    want_codes = (codes % n_palette).astype(np.uint8)
+    assert np.array_equal(channels._folded_codes_u8(codes, n_palette), want_codes)
+
+
+def test_no_rescan_traces_resolve_without_retention(monkeypatch):
+    # Past the no-rescan threshold every interactive reply composes prebuilt
+    # pyramid planes, so retaining a per-row idx (1 GB at 1e9 rows) would be
+    # resident cost with no consumer: resolve on demand, never store.
+    from xy import interaction
+
+    calls = _count_resolves(monkeypatch)
+    n = SCATTER_DENSITY_THRESHOLD * 3
+    monkeypatch.setattr(interaction, "PYRAMID_NO_RESCAN_ROWS", n - 1)
+    rng = np.random.default_rng(17)
+    x = rng.uniform(0.0, 100.0, n)
+    y = rng.uniform(0.0, 100.0, n)
+    fig = Figure().scatter(x, y, color=x.copy(), density=True)
+    upd, _ = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, 256, 192)
+    tr = upd["traces"][0]
+    assert tr["binning"] == "bin2d-oversized"  # the no-rescan correctness net
+    assert tr["density"].get("color_agg") == "mean"  # the plane still ships
+    assert calls["n"] == 1
+    assert fig.traces[0]._bin_colors is None  # resolved, not retained
+    fig.density_view(0, 0.0, 100.0, 0.0, 100.0, 256, 192)
+    assert calls["n"] == 2  # re-resolved (chunk-bounded), by design
+    assert fig.memory_report()["bin_color_bytes"] == 0
+
+
+def test_categorical_cache_counts_only_owned_arrays():
+    # Compact u8 categorical codes pass through the resolution by reference;
+    # they are already counted as channel_bytes, so the cache line must count
+    # only what the resolution owns (the palette LUT).
+    n = SCATTER_DENSITY_THRESHOLD + 10_000
+    rng = np.random.default_rng(18)
+    x = rng.uniform(0.0, 10.0, n)
+    cats = np.where(x < 5.0, "left", "right")
+    fig = Figure().scatter(x, rng.uniform(0.0, 1.0, n), color=cats, density=True)
+    report = fig.memory_report()
+    assert fig.traces[0]._bin_colors["idx"] is fig.traces[0].color_ch.codes
+    assert report["bin_color_bytes"] == 2 * 4  # the 2-row RGBA8 palette LUT only
+
+
+def test_memory_report_itemizes_bin_color_cache_bytes():
+    n = SCATTER_DENSITY_THRESHOLD * 3
+    rng = np.random.default_rng(15)
+    fig = Figure().scatter(
+        rng.uniform(0.0, 100.0, n),
+        rng.uniform(0.0, 100.0, n),
+        color=np.arange(n, dtype=float),
+        density=True,
+    )
+    report = fig.memory_report()  # build_payload inside resolves + caches
+    # Continuous channel: n u8 LUT indices + the (256, 4) RGBA8 LUT.
+    assert report["bin_color_bytes"] == n + 256 * 4
+    assert (
+        report["resident_array_bytes"]
+        == report["canonical_bytes"]
+        + report["channel_bytes"]
+        + report["pyramid_bytes"]
+        + report["bin_color_bytes"]
+    )
+    plain = Figure().scatter(np.arange(1000.0), np.arange(1000.0))
+    assert plain.memory_report()["bin_color_bytes"] == 0

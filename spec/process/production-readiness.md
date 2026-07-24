@@ -143,8 +143,8 @@ production-facing push:
 
 | Changed surface | Focused gate |
 |---|---|
-| README/API prose, examples, public benchmark wording | `make check-docs` |
-| README snippets, `spec/api/api-examples.md`, Reflex chart registry/assets | `make check-examples` |
+| API prose, examples, public benchmark wording | `make check-docs` |
+| `spec/api/api-examples.md`, Reflex chart registry/assets | `make check-examples` |
 | Public validation, error messages, builder rollback, LOD/drill mutation boundaries, chart/widget caching | `make check-errors` |
 | Public exports, lazy import mappings, component factories, public annotations | `make check-api` |
 | Import-time budget, `xy.__init__`, dependency boundaries, widget/export/backend import boundaries | `make check-import` |
@@ -166,8 +166,7 @@ Use this before pushing production-facing changes:
 make check-full
 ```
 
-Use this after editing README/API docs, example snippets, or public benchmark
-wording:
+Use this after editing API docs, example snippets, or public benchmark wording:
 
 ```bash
 make check-docs
@@ -224,8 +223,8 @@ verify those exact files rather than rebuilding locally:
 make check-artifacts SDIST=/path/to/xy.tar.gz WHEEL=/path/to/xy.whl
 ```
 
-Use this after editing README snippets, `spec/api/api-examples.md`, or the Reflex
-dashboard chart registry/assets:
+Use this after editing `spec/api/api-examples.md` or the Reflex dashboard chart
+registry/assets:
 
 ```bash
 make check-examples
@@ -275,8 +274,8 @@ tests:
 make check-benchmark-harness
 ```
 
-Use this after editing public docs, README text, package metadata, benchmark
-summaries, release notes, or other performance-claim surfaces:
+Use this after editing public docs, package metadata, benchmark summaries,
+release notes, or other performance-claim surfaces:
 
 ```bash
 make check-claims
@@ -371,7 +370,7 @@ Before tagging a release:
   package-only: docs, tests, benchmarks, scripts, and the `examples/` apps
   are sdist-only.
 - Confirm the wheel size budget is still below 15 MB.
-- Confirm README examples and `spec/api/api-examples.md` run against the tagged API.
+- Confirm `spec/api/api-examples.md` runs against the tagged API.
 - Confirm package metadata uses measured, scoped language rather than broad
   "faster/best" positioning.
 - Confirm performance claims mention chart type, mode, backend, data size, and

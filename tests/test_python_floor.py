@@ -23,7 +23,6 @@ def _write_floor_repo(
     *,
     requires_python: str = ">=3.11",
     ruff_target: str = "py311",
-    readme: str = "Install with Python 3.11+.\n",
     production_readiness: str = "The current contract is Python 3.11+ only.\n",
 ) -> None:
     root.joinpath("spec", "process").mkdir(parents=True)
@@ -35,7 +34,6 @@ def _write_floor_repo(
         f'target-version = "{ruff_target}"\n',
         encoding="utf-8",
     )
-    root.joinpath("README.md").write_text(readme, encoding="utf-8")
     root.joinpath("spec", "process", "production-readiness.md").write_text(
         production_readiness,
         encoding="utf-8",
@@ -65,11 +63,11 @@ def test_python_floor_rejects_mismatched_ruff_target(tmp_path: Path) -> None:
 
 
 def test_python_floor_rejects_missing_docs_floor(tmp_path: Path) -> None:
-    _write_floor_repo(tmp_path, readme="Install with Python.\n")
+    _write_floor_repo(tmp_path, production_readiness="The current contract is Python only.\n")
 
     errors = check_python_floor.check_declared_floor(tmp_path)
 
-    assert any("README.md" in error and "Python 3.11+" in error for error in errors)
+    assert any("production-readiness.md" in error and "Python 3.11+" in error for error in errors)
 
 
 def test_python_floor_accepts_annotated_file_with_future_annotations(tmp_path: Path) -> None:

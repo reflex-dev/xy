@@ -818,15 +818,27 @@ export class ChartView {
         const selection = msg.selection;
         // Linked applies update the durable-state mirror but never push
         // history (view-state.md §4) — dispatch: false already skips it.
+        // A linked selection lands in the same overlay state the peer's own
+        // gesture would produce: hydrate the persisted overlay (so _drawNow
+        // re-projects it) and drop the mutually-exclusive other overlay.
         if (selection.clear) {
           this._clearSelection({ broadcast: false, dispatch: false });
         } else if (selection.polygon) {
-          this._stateSelection = { polygon: selection.polygon.map((point) => [...point]) };
+          const polygon = selection.polygon.map((point) => [...point]);
+          this._clearBoxOverlay();
+          this._stateSelection = { polygon: polygon.map((point) => [...point]) };
+          this._lassoPolygon = polygon;
           this._selectLocalPolygon(selection.polygon, { dispatch: false });
         } else if (selection.range) {
           const { x0, x1, y0, y1 } = selection.range;
           if ([x0, x1, y0, y1].every(Number.isFinite)) {
-            this._stateSelection = { range: { x0, x1, y0, y1 } };
+            const mode = selection.range.mode === "x" || selection.range.mode === "y"
+              ? selection.range.mode : "box";
+            this._clearLassoOverlay();
+            this._boxSelection = { mode, x0, x1, y0, y1 };
+            this._stateSelection = {
+              range: mode === "box" ? { x0, x1, y0, y1 } : { x0, x1, y0, y1, mode },
+            };
             this._selectLocal(x0, x1, y0, y1, { dispatch: false });
           }
         }
@@ -1753,9 +1765,12 @@ export class ChartView {
             items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {}, traces: [ti], cat: i }));
         } else if (t.color && t.color.mode === "continuous") {
           // Label precedence: explicit series name, then the encoding's own
-          // declarative label (the color="column" idiom), then the generic
-          // fallback for hand-built specs.
-          const name = t.name || t.color.label || "value";
+          // declarative label (the color="column" idiom). No generic fallback:
+          // an unnamed encoding has nothing truthful to say, so it gets no
+          // row — matching the static exporters, which draw name-bearing
+          // entries only.
+          const name = t.name || t.color.label;
+          if (!name) return;
           const key = name + "\u0000" + t.color.colormap;
           const existing = continuousRows.get(key);
           if (existing) {
@@ -3471,6 +3486,7 @@ export class ChartView {
     this._rafKeepPick = false;
     this._drawChrome();
     this._renderLassoSelection?.();
+    this._renderBoxSelection?.();
   }
 
   // Centralized clock seam for animation state machines. Production uses the

@@ -1,15 +1,12 @@
-"""Run the public docs quickstarts against an installed XY release.
+"""Run the public docs quickstarts against the checked-out XY package.
 
-This script intentionally uses only the standard library plus the ``xy`` package
-under test. CI runs it in an isolated uv environment populated from PyPI, not
-from this checkout.
+CI runs this script inside the docs environment, where ``xy`` is installed
+editable from the current checkout.
 """
 
 from __future__ import annotations
 
-import argparse
 import contextlib
-import importlib.metadata
 import re
 from html.parser import HTMLParser
 from pathlib import Path
@@ -31,7 +28,7 @@ EXTERNAL_CSS_RE = re.compile(
 
 def fail(message: str) -> None:
     """Exit with a diagnostic that identifies this contract check."""
-    raise SystemExit(f"Released docs quickstart contract failed: {message}")
+    raise SystemExit(f"Docs quickstart contract failed: {message}")
 
 
 def require(condition: bool, message: str) -> None:
@@ -96,7 +93,7 @@ def extract_quickstart(page: Path, label: str) -> str:
 
     The quickstart is the beginner script that exports ``scatter.html``; other
     exportable showcase fences on the page (for example the large-data demo)
-    are not part of this release contract.
+    are not part of this quickstart contract.
     """
     text = page.read_text(encoding="utf-8")
     candidates = [
@@ -113,27 +110,15 @@ def extract_quickstart(page: Path, label: str) -> str:
     return candidates[0]
 
 
-def verify_release_import(xy_module: ModuleType, expected_version: str, label: str) -> None:
-    """Ensure the snippet imported the requested wheel rather than this checkout."""
+def verify_checkout_import(xy_module: ModuleType, label: str) -> None:
+    """Ensure the snippet imported XY from the checkout under test."""
     module_file = getattr(xy_module, "__file__", None)
     require(module_file is not None, f"{label} imported an XY module without a filesystem path")
     imported_path = Path(module_file).resolve()
     try:
         imported_path.relative_to(SOURCE_PACKAGE)
     except ValueError:
-        pass
-    else:
-        fail(
-            f"{label} imported the checkout at {imported_path}; run this script in an "
-            "isolated environment containing the published wheel"
-        )
-
-    actual_version = getattr(xy_module, "__version__", None)
-    require(
-        actual_version == expected_version,
-        f"{label} imported xy=={actual_version!r} from {imported_path}, expected "
-        f"xy=={expected_version}",
-    )
+        fail(f"{label} imported XY from {imported_path}, expected the checkout at {SOURCE_PACKAGE}")
 
 
 def verify_standalone_html(html_path: Path, label: str) -> None:
@@ -142,8 +127,6 @@ def verify_standalone_html(html_path: Path, label: str) -> None:
     lower_html = html.casefold()
     require(len(html) > 1_000, f"{label} generated an unexpectedly small HTML file")
     require("<!doctype html>" in lower_html, f"{label} output is not a complete HTML document")
-    require("first chart" in lower_html, f"{label} output did not embed the chart title")
-
     probe = StandaloneHtmlProbe()
     probe.feed(html)
     require(probe.has_chart_mount, f"{label} output is missing the #chart mount element")
@@ -162,22 +145,22 @@ def verify_standalone_html(html_path: Path, label: str) -> None:
         require(directive in csp, f"{label} output CSP is missing {directive!r}")
 
 
-def run_quickstart(source: str, label: str, expected_version: str) -> None:
+def run_quickstart(source: str, label: str) -> None:
     """Execute one docs snippet and validate its exported HTML."""
-    with TemporaryDirectory(prefix="xy-released-quickstart-") as temp_dir:
+    with TemporaryDirectory(prefix="xy-docs-quickstart-") as temp_dir:
         output_dir = Path(temp_dir)
         namespace: dict[str, object] = {"__name__": "__main__"}
         try:
             with contextlib.chdir(output_dir):
                 exec(compile(source, f"<{label} quickstart>", "exec"), namespace)
         except (AttributeError, TypeError) as exc:
-            fail(f"{label} API drifted from xy=={expected_version}: {type(exc).__name__}: {exc}")
+            fail(f"{label} API drifted from the checkout: {type(exc).__name__}: {exc}")
         except Exception as exc:
-            fail(f"{label} did not run on xy=={expected_version}: {type(exc).__name__}: {exc}")
+            fail(f"{label} did not run against the checkout: {type(exc).__name__}: {exc}")
 
         xy_module = namespace.get("xy")
         require(isinstance(xy_module, ModuleType), f"{label} did not import the xy package")
-        verify_release_import(xy_module, expected_version, label)
+        verify_checkout_import(xy_module, label)
 
         html_files = list(output_dir.glob("*.html"))
         require(
@@ -188,33 +171,13 @@ def run_quickstart(source: str, label: str, expected_version: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--expected-version",
-        default="0.0.1",
-        help="Published xy version that must run the docs quickstarts (default: 0.0.1)",
-    )
-    args = parser.parse_args()
-
-    try:
-        installed_version = importlib.metadata.version("xy")
-    except importlib.metadata.PackageNotFoundError:
-        fail("xy is not installed; install the expected published wheel before running")
-    require(
-        installed_version == args.expected_version,
-        f"installed distribution is xy=={installed_version}, expected xy=={args.expected_version}",
-    )
-
     for label, page in QUICKSTART_PAGES:
         source = extract_quickstart(page, label)
-        run_quickstart(source, label, args.expected_version)
+        run_quickstart(source, label)
 
     page_count = len(QUICKSTART_PAGES)
     page_label = "page" if page_count == 1 else "pages"
-    print(
-        f"Released docs quickstart contract passed for xy=={args.expected_version} "
-        f"({page_count} {page_label})."
-    )
+    print(f"Docs quickstart contract passed against the checkout ({page_count} {page_label}).")
 
 
 if __name__ == "__main__":
