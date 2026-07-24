@@ -126,6 +126,7 @@ or a CSS `px` value such as `"3px"`.
 | `grid_dash` | `"solid"`, `"dashed"`, `"dotted"`, or `"dashdot"` |
 | `grid_opacity` | Number from `0` to `1` |
 | `tick_length` | Non-negative pixel length |
+| `tick_padding` | Signed pixel length (negative allowed) — extra distance between an axis tick and its tick label, on top of the tick's outward length. Defaults to `0`. Honored by static SVG/PNG exports. |
 | `tick_size` / `tick_label_size`, `label_size` | Positive pixel font size |
 | `tick_direction` | `"in"`, `"out"`, or `"inout"` |
 | `tick_label_anchor` | `"start"`, `"center"`, or `"end"` (mpl `ha` aliases `"left"`/`"right"`/`"middle"` normalize) — which label edge pins to the tick; rotated labels pivot about the pinned edge. Also a first-class `x_axis`/`y_axis` option. X defaults to `"center"`; y defaults to the tick-side edge (`"end"` left of the plot, `"start"` right of it). Honored by static SVG/PNG exports. |
@@ -147,6 +148,14 @@ xy.x_axis(
     },
 )
 ```
+
+Grid visibility is **per axis**. Every renderer — WebGL canvas, SVG, and native
+PNG — paints an axis's grid lines from that axis's own `grid_color` and
+`grid_width`, so `grid_color: "transparent"` hides exactly that axis's grid and
+leaves the other axis untouched. Enabling one axis's grid never turns the
+opposite axis's grid off; x and y are independent switches, and the matplotlib
+shim's `Axes.grid(axis="x")`/`Axes.grid(axis="y")` and `Axis.grid()` resolve
+onto the same rule.
 
 ### Axis ticks and label formatting
 
