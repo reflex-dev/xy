@@ -192,6 +192,53 @@ but they fail differently, and only the numeric grammar falls back.
   `format` is absent or not a string.
 - **Category axes** ignore `format=` and render the category label.
 
+### Legend placement — `loc` and `anchor`
+
+`xy.legend(loc=...)` places the legend against the plot rectangle by name
+(`"upper right"`, `"lower left"`, `"center"`, …). The box is inset 6 px from the
+named edge and kept inside the plot rectangle — static export clamps it there
+explicitly — so `loc` alone can never paint a legend outside the axes.
+
+`xy.legend(anchor=...)` replaces that bounded, name-only placement with explicit
+geometry, mirroring Matplotlib's `bbox_to_anchor`; the `pyplot` shim maps
+`legend(bbox_to_anchor=...)` — a sequence, or any object exposing `.bounds` —
+onto this same option. It accepts a sequence of **2 or 4 finite numbers**.
+Anything else — a wrong length, a string, a non-finite value — raises
+`ValueError` when the component is created, before the chart or an export
+renders. The values reach the wire as `spec["legend"]["anchor"]`.
+
+Coordinates are **normalized plot-rectangle fractions with y pointing up**, the
+Matplotlib axes-fraction convention: `x = 0` is the plot's left edge and `x = 1`
+its right edge, `y = 0` the **bottom** edge and `y = 1` the **top**. Values
+outside `0…1` are legal and are the point of the option — they are how a legend
+is placed beside or above the axes.
+
+| Form | Meaning |
+| --- | --- |
+| `(x, y)` | A single anchor point. |
+| `(x, y, w, h)` | An anchor *box* whose lower-left corner is `(x, y)`, spanning `w` × `h`. |
+
+`loc` keeps a job under `anchor`: it selects **which point of the legend box** is
+pinned to the anchor, and for the 4-value form which point of the anchor box
+supplies it. Horizontally `"left"` → 0, `"right"` → 1, otherwise 0.5;
+vertically `"lower"` → 0, `"upper"` → 1, otherwise 0.5. So
+`legend(loc="lower left", anchor=(0, 1))` pins the legend's lower-left corner to
+the plot's upper-left corner, seating the legend entirely above the axes.
+
+An anchored legend is **not** clamped into the plot rectangle: the 6 px inset and
+the containment clamp are both skipped and the coordinates are honored literally.
+Reserving room for a legend placed outside the axes is therefore the caller's
+job. The composition API performs no automatic padding reservation — only the
+`pyplot` shim widens its own chart padding when `bbox_to_anchor` pushes the
+legend past an edge.
+
+In the browser the legend is a DOM overlay above the marks canvas, positioned
+through the private `--xy-legend-left` / `--xy-legend-top` custom properties and
+a matching `translate()`, with `--xy-legend-right` / `--xy-legend-bottom` set to
+`auto` under `anchor`. Static SVG and PNG export compute the same geometry; see
+*Static export* below for the clipping consequence, which is a contract change,
+not just a new placement.
+
 ## Slot reference
 
 Every element below is rendered with `data-xy-slot="<slot>"`, so
@@ -613,3 +660,20 @@ PNG. Complete paint references such as `var(--accent)` resolve against custom
 properties in the chart's own `style`, including nested token aliases and
 `var()` fallbacks. SVG renders smooth curves as exact cubic Béziers; the native
 raster flattens them to a fine polyline.
+
+**Legend clipping, and the `anchor` exemption.** The browser hands an oversized
+legend a scrollbar. A static file cannot scroll, so SVG and PNG export instead
+ellipsize the labels and clip the legend to the plot rectangle. A legend with
+`anchor` set (see *Legend placement* above) is **exempt** from that clip. This is
+a deliberate narrowing of an older guarantee: static export used to promise that
+a legend never painted outside the plot rectangle, and an anchored legend gives
+that promise up so it can sit beside or above the axes. Nothing else bounds it —
+an anchored legend that overruns the canvas is cut off by the image edge, so
+reserve padding for it.
+
+The exemption is scoped differently in the two static backends, a known
+divergence: SVG decides **per legend** (each legend group keeps or drops its own
+clip path, so an anchored extra legend does not un-clip the main one), while the
+native rasterizer decides **per frame** (one anchored legend drops the clip for
+every legend painted in that pass, main and extra alike). SVG's per-legend
+scoping is the intended contract.
