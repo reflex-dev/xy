@@ -94,6 +94,7 @@ CMAPS = {
     "reds": "reds",
     "bone": "bone",
     "autumn": "autumn",
+    "winter": "winter",
     "bupu": "bupu",
 }
 

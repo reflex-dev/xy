@@ -48,6 +48,7 @@ COLORMAPS = (
     "reds",
     "bone",
     "autumn",
+    "winter",
     "bupu",
 )
 

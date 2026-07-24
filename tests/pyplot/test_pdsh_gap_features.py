@@ -225,7 +225,13 @@ def test_rdgy_and_jet_resolve_and_render():
 
 @pytest.mark.parametrize(
     ("name", "canonical"),
-    [("Reds_r", "reds_r"), ("bone", "bone"), ("autumn", "autumn"), ("BuPu", "bupu")],
+    [
+        ("Reds_r", "reds_r"),
+        ("bone", "bone"),
+        ("autumn", "autumn"),
+        ("winter", "winter"),
+        ("BuPu", "bupu"),
+    ],
 )
 def test_matplotlib_gallery_colormaps_resolve_and_render(name, canonical):
     assert plt.get_cmap(name).name == canonical
