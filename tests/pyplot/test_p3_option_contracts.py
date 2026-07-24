@@ -218,7 +218,6 @@ _Z = np.arange(16.0).reshape(4, 4)
         (lambda ax: ax.table(cellText=[["a"]], rowLoc="center"), "rowLoc"),
         (lambda ax: ax.table(cellText=[["a"]], colLoc="left"), "colLoc"),
         (lambda ax: ax.table(cellText=[["a"]], loc="top"), "loc"),
-        (lambda ax: ax.stem([0, 1], [1, 2], basefmt="k-"), "basefmt"),
         (
             lambda ax: ax.quiverkey(_quiver(ax), 0.5, 0.5, 1, "k", fontproperties={"size": 9}),
             "fontproperties",

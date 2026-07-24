@@ -1501,9 +1501,7 @@ class PlotTypeMixin:
 
         Call as ``stem(y)`` or ``stem(x, y)``. ``linefmt``/``markerfmt`` are
         ``plot``-style fmt strings for the stems and heads, ``bottom`` moves
-        the baseline, and ``orientation`` may be ``"horizontal"``. Only the
-        default ``basefmt`` (``"C3-"``) is honored — the shim renders no
-        baseline rule.
+        the baseline, and ``orientation`` may be ``"horizontal"``.
         """
         if len(args) == 1:
             y = _from_data(args[0], data)
@@ -1519,42 +1517,55 @@ class PlotTypeMixin:
             color = resolve_color(color_spec) if color_spec else None
             dash_pattern = _dash_segment_pattern("stem", linestyle)
         symbol = "circle"
+        marker_color = None
         if markerfmt:
-            marker_color, _linestyle, marker = parse_fmt(str(markerfmt))
-            color = color or (resolve_color(marker_color) if marker_color else None)
+            marker_color_spec, _linestyle, marker = parse_fmt(str(markerfmt))
+            marker_color = resolve_color(marker_color_spec) if marker_color_spec else None
             from ._translate import MARKER_TO_SYMBOL
 
             symbol = MARKER_TO_SYMBOL.get(marker or "o", "circle")
-        # The shim renders no baseline rule, so only the default basefmt passes.
-        _reject_non_default("stem", "basefmt", basefmt, "C3-")
         chosen = color or self._next_color()
+        if orientation not in ("vertical", "horizontal"):
+            raise ValueError("stem orientation must be 'vertical' or 'horizontal'")
+
+        xv = np.asarray(x, dtype=np.float64)
+        yv = np.asarray(y, dtype=np.float64)
+        if xv.ndim != 1 or yv.ndim != 1 or xv.shape != yv.shape:
+            raise ValueError("stem x and y must be equally sized 1-D arrays")
+        base = np.full_like(xv, float(bottom))
+        if orientation == "vertical":
+            segments = (xv, base, xv, yv)
+            marker_x, marker_y = xv, yv
+            baseline_x = np.asarray([xv.min(), xv.max()]) if xv.size else np.asarray([])
+            baseline_y = np.full(2 if xv.size else 0, float(bottom))
+        else:
+            segments = (base, xv, yv, xv)
+            marker_x, marker_y = yv, xv
+            baseline_x = np.full(2 if xv.size else 0, float(bottom))
+            baseline_y = np.asarray([xv.min(), xv.max()]) if xv.size else np.asarray([])
+        if dash_pattern is not None:
+            segments = _dashed_segments(*segments, dash_pattern)
+
         if orientation == "vertical" and dash_pattern is None:
-            entry = self._add(
+            # Retain the compact native stem primitive (and its public trace
+            # kind), but render markers separately so the returned markerline
+            # can be styled independently like Matplotlib's Line2D.
+            stem_entry = self._add(
                 "@mark",
                 {
                     "factory": "stem",
-                    "args": (x, y),
+                    "args": (xv, yv),
                     "kwargs": {
                         "base": bottom,
+                        "marker": False,
                         "name": str(label) if label is not None else None,
                         "color": chosen,
-                        "symbol": symbol,
+                        "width": 1.2,
                     },
                 },
             )
-        elif orientation in ("vertical", "horizontal"):
-            xv = np.asarray(x, dtype=np.float64)
-            yv = np.asarray(y, dtype=np.float64)
-            base = np.full_like(xv, float(bottom))
-            if orientation == "vertical":
-                segments = (xv, base, xv, yv)
-                marker_x, marker_y = xv, yv
-            else:
-                segments = (base, xv, yv, xv)
-                marker_x, marker_y = yv, xv
-            if dash_pattern is not None:
-                segments = _dashed_segments(*segments, dash_pattern)
-            entry = self._add(
+        else:
+            stem_entry = self._add(
                 "@mark",
                 {
                     "factory": "segments",
@@ -1566,17 +1577,46 @@ class PlotTypeMixin:
                     },
                 },
             )
-            self._add(
-                "scatter",
-                {
-                    "x": marker_x,
-                    "y": marker_y,
-                    "kwargs": {"color": chosen, "symbol": symbol, "size": 5.0},
+        edge_width = float(rcParams["lines.markeredgewidth"]) * self._point_scale()
+        marker_size = float(rcParams["lines.markersize"]) * self._point_scale() + edge_width
+        marker_entry = self._add(
+            "scatter",
+            {
+                "x": marker_x,
+                "y": marker_y,
+                "kwargs": {
+                    "color": marker_color or chosen,
+                    "stroke": marker_color or chosen,
+                    "stroke_width": edge_width,
+                    "symbol": symbol,
+                    "size": marker_size,
                 },
-            )
-        else:
-            raise ValueError("stem orientation must be 'vertical' or 'horizontal'")
-        return StemContainer(Artist(self, entry))
+            },
+        )
+
+        base_color, base_linestyle, _base_marker = parse_fmt(str(basefmt or "C3-"))
+        base_dash = _dash_segment_pattern("stem", base_linestyle)
+        baseline_entry = self._add(
+            "line",
+            {
+                "x": baseline_x,
+                "y": baseline_y,
+                "kwargs": {
+                    "color": resolve_color(base_color or "C3"),
+                    # The axes spine is painted after marks.  Matplotlib's
+                    # baseline remains visible when it coincides with that
+                    # spine, so give the colored rule enough width to remain
+                    # visible on either side of the 1 px frame.
+                    "width": 1.5,
+                    **({"dash": list(base_dash)} if base_dash is not None else {}),
+                },
+            },
+        )
+        return StemContainer(
+            Line2D(self, marker_entry),
+            Artist(self, stem_entry),
+            Line2D(self, baseline_entry),
+        )
 
     def stairs(
         self,

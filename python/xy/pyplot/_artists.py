@@ -835,18 +835,32 @@ class StepPatch(Artist):
 class StemContainer:
     """Small tuple-compatible analogue of matplotlib's StemContainer."""
 
-    def __init__(self, artist: Artist) -> None:
-        self.markerline = artist
-        self.stemlines = artist
-        self.baseline = artist
-        artist._axes._register_container(self)
+    def __init__(
+        self,
+        markerline: Artist,
+        stemlines: Optional[Artist] = None,
+        baseline: Optional[Artist] = None,
+    ) -> None:
+        # Older callers supplied one compact artist for all three handles.
+        # Keep that form working while allowing the pyplot stem adapter to
+        # expose independently mutable marker, stem, and baseline artists.
+        self.markerline = markerline
+        self.stemlines = markerline if stemlines is None else stemlines
+        self.baseline = markerline if baseline is None else baseline
+        markerline._axes._register_container(self)
 
     def __iter__(self) -> Iterator[Any]:
         return iter((self.markerline, self.stemlines, self.baseline))
 
     def remove(self) -> None:
-        self.stemlines.remove()
-        self.stemlines._axes._unregister_container(self)
+        axes = self.markerline._axes
+        seen: set[int] = set()
+        for artist in (self.markerline, self.stemlines, self.baseline):
+            if id(artist) in seen:
+                continue
+            seen.add(id(artist))
+            artist.remove()
+        axes._unregister_container(self)
 
 
 class ErrorbarContainer:
