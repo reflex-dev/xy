@@ -53,6 +53,16 @@ def test_default_margin_render_delegates_to_figure_autorange(monkeypatch) -> Non
     assert chart.figure().x_range() == pytest.approx((-499.95, 10_498.95))
 
 
+def test_singleton_margin_matches_public_and_rendered_limits() -> None:
+    _fig, ax = plt.subplots()
+    ax.plot([5.0], [1.0])
+
+    assert ax.get_xlim() == pytest.approx((4.95, 6.05))
+    assert ax.get_ylim() == pytest.approx((0.95, 2.05))
+    assert _axis_domain(ax, "x") == pytest.approx(ax.get_xlim())
+    assert _axis_domain(ax, "y") == pytest.approx(ax.get_ylim())
+
+
 def test_axes_snapshot_rc_margins_at_creation() -> None:
     with plt.rc_context({"axes.xmargin": 0.1, "axes.ymargin": 0.2}):
         _fig, ax = plt.subplots()

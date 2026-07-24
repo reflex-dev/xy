@@ -1044,13 +1044,18 @@ class Figure(AnnotationsMixin, PayloadMixin):
             if not positive_los:
                 raise ValueError(f"{axis_id} log axis requires at least one positive value")
             lo, hi = min(positive_los), max(positive_his)
-        if lo == hi:
+        margin = opts.get("margin")
+        if lo == hi and margin is None:
             pad = abs(lo) * 0.05 or 0.5
             lo, hi = lo - pad, hi + pad
             if scale == "log" and lo <= 0:
                 lo = hi / 10.0
             return (hi, lo) if opts.get("reverse") else (lo, hi)
-        margin = opts.get("margin")
+        if lo == hi:
+            # Match pyplot's singleton extent: an explicit margin is applied
+            # to a stable unit interval instead of being silently replaced by
+            # the core's legacy 5% nonsingular fallback.
+            hi = lo + 1.0
         if margin is None:
             margin = 0.03
         if scale == "log" and opts.get("margin") is not None:

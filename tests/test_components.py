@@ -1594,6 +1594,17 @@ def test_component_axis_margin_controls_automatic_range():
         xy.y_axis(margin=np.nan)
 
 
+def test_component_axis_margin_controls_singleton_range():
+    chart = xy.chart(
+        xy.line(x=np.array([5.0]), y=np.array([1.0])),
+        xy.x_axis(margin=0.0),
+        xy.y_axis(margin=0.1),
+    )
+
+    assert chart.figure().x_range() == pytest.approx((5.0, 6.0))
+    assert chart.figure().y_range() == pytest.approx((0.9, 2.1))
+
+
 def test_component_axis_label_position_controls_emit_to_payload():
     chart = xy.chart(
         xy.scatter(x=np.arange(3.0), y=np.arange(3.0)),
