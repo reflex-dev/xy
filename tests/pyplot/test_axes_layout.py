@@ -179,6 +179,7 @@ def test_tick_params_records_supported_style_and_rejects_unknown() -> None:
         "tick_label_color": "#d62728",
         "tick_length": pytest.approx(7.0 * 100.0 / 72.0),
         "tick_width": pytest.approx(2.0 * 100.0 / 72.0),
+        "tick_label_pad": pytest.approx(3.5 * 100.0 / 72.0),
         "tick_direction": "in",
         # Always explicit (10 pt font.size at dpi 100): the render client and
         # static exporters otherwise fall back to their own 11 px default.

@@ -196,6 +196,7 @@ def test_axis_style_is_normalized_and_rejected_before_render() -> None:
         style={
             "grid-width": "3px",
             "tick_label_size": "13px",
+            "tick-label-pad": "5px",
             "tick-direction": "inout",
             "tick-label-anchor": "right",  # mpl `ha` alias -> canonical "end"
             "label-color": "rebeccapurple",
@@ -204,6 +205,7 @@ def test_axis_style_is_normalized_and_rejected_before_render() -> None:
     assert axis.style == {
         "grid_width": 3.0,
         "tick_label_size": 13.0,
+        "tick_label_pad": 5.0,
         "tick_direction": "inout",
         "tick_label_anchor": "end",
         "label_color": "rebeccapurple",

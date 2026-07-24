@@ -4480,9 +4480,18 @@ export class ChartView {
       "tick_label_size",
       this._axisStyleNumber(xAxis, "tick_size", 11),
     );
+    const tickLabelOffset = (axis) => {
+      const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
+      const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+      const outward = direction === "in" ? 0 : direction === "inout" ? length / 2 : length;
+      return outward + Math.max(0, this._axisStyleNumber(axis, "tick_label_pad", 4));
+    };
     for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
       const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
-      const top = xAxis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
+      const offset = tickLabelOffset(xAxis);
+      const top = xAxis.side === "top"
+        ? p.y - offset - Math.max(8, tickLabelSize) * 1.2 - rowOffset
+        : p.y + p.h + offset + rowOffset;
       const placement = this._xTickLabelTransform(xAxis, item.angle);
       label(
         item.text,
@@ -4509,7 +4518,10 @@ export class ChartView {
           this._axisStyleNumber(axis, "tick_size", 11),
         );
         const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
-        const top = axis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
+        const offset = tickLabelOffset(axis);
+        const top = axis.side === "top"
+          ? p.y - offset - Math.max(8, tickLabelSize) * 1.2 - rowOffset
+          : p.y + p.h + offset + rowOffset;
         const placement = this._xTickLabelTransform(axis, item.angle);
         label(
           item.text,
@@ -4538,7 +4550,8 @@ export class ChartView {
     // tick. Unset defaults to the tick-side edge — mpl `ha`: "end" left of
     // the plot, "start" right of it — reproducing the classic layout.
     const yLabelPlacement = (axis, onRight, item) => {
-      const pin = onRight ? p.x + p.w + 8 : p.x - 8;
+      const offset = tickLabelOffset(axis);
+      const pin = onRight ? p.x + p.w + offset : p.x - offset;
       const anchor = this._axisTickLabelAnchor(axis) ?? (onRight ? "start" : "end");
       const angle = Number(item.angle || 0);
       const shift = anchor === "end" ? "-100%" : anchor === "start" ? "0%" : "-50%";

@@ -221,6 +221,65 @@ def test_narrow_categorical_tick_labels_are_ellipsized_inside_chart(tmp_path: Pa
     assert result["documentOverflow"] is False, result
 
 
+def test_tick_label_padding_starts_after_outward_tick_and_text_bottom_aligns(
+    tmp_path: Path,
+) -> None:
+    chart = xy.chart(
+        xy.line([0, 1, 2], [0.25, 1.0, 0.5]),
+        xy.text(
+            1,
+            1,
+            "peak",
+            dx=0,
+            dy=-5,
+            anchor="middle",
+            style={"vertical_align": "bottom"},
+        ),
+        xy.x_axis(
+            domain=(0, 2),
+            tick_values=[0, 1, 2],
+            style={"tick_length": 6, "tick_label_pad": 5},
+        ),
+        xy.y_axis(
+            domain=(0, 1),
+            tick_values=[0, 0.5, 1],
+            style={"tick_length": 6, "tick_label_pad": 5},
+        ),
+        width=420,
+        height=300,
+        padding=(28, 24, 48, 52),
+    )
+    script = (
+        _PRELUDE
+        + """
+    const root = view.root.getBoundingClientRect();
+    const xTick = view.root.querySelector(
+      '[data-xy-label-kind="tick"][data-xy-axis="x"]'
+    ).getBoundingClientRect();
+    const yTick = view.root.querySelector(
+      '[data-xy-label-kind="tick"][data-xy-axis="y"]'
+    ).getBoundingClientRect();
+    const annotation = view.root.querySelector(
+      '[data-xy-slot="annotation_label"]'
+    ).getBoundingClientRect();
+    const plotBottom = root.top + view.plot.y + view.plot.h;
+    const plotLeft = root.left + view.plot.x;
+    const annotationAnchor = root.top + view._dataPxY(1) - 5;
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      xGap: xTick.top - (plotBottom + 6),
+      yGap: (plotLeft - 6) - yTick.right,
+      annotationBottomError: annotation.bottom - annotationAnchor,
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "tick and annotation alignment")
+
+    assert result["xGap"] == pytest.approx(5, abs=0.75), result
+    assert result["yGap"] == pytest.approx(5, abs=0.75), result
+    assert result["annotationBottomError"] == pytest.approx(0, abs=0.75), result
+
+
 def test_categorical_tick_bounds_follow_anchor_rotation_and_extra_axis_side(
     tmp_path: Path,
 ) -> None:

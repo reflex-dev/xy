@@ -48,7 +48,8 @@ def test_bar_labels_are_centered_over_vertical_bars() -> None:
         assert label._entry["args"][0] == center
         assert label._entry["kwargs"]["anchor"] == "middle"
         assert label._entry["kwargs"]["dx"] == 0.0
-        assert label._entry["kwargs"]["dy"] == -8.0
+        assert label._entry["kwargs"]["dy"] == pytest.approx(-3.0 * 100.0 / 72.0)
+        assert label._entry["kwargs"]["style"]["vertical_align"] == "bottom"
 
 
 def test_pyplot_legend_location_and_columns_reach_render_spec() -> None:

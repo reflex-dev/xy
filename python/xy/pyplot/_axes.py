@@ -3820,7 +3820,7 @@ class Axes(PlotTypeMixin):
 
         ``axis`` selects ``"x"``/``"y"``/``"both"``. Supported keywords:
         ``labelrotation``/``rotation``, ``colors``, ``color``,
-        ``labelcolor``, ``length``, ``width``, ``direction``
+        ``labelcolor``, ``length``, ``width``, ``pad``, ``direction``
         (``"in"``/``"out"``/``"inout"``), and the ``labelbottom``/
         ``labeltop``/``labelleft``/``labelright`` visibility flags; anything
         else raises loudly.
@@ -3833,6 +3833,7 @@ class Axes(PlotTypeMixin):
         labelcolor = kwargs.pop("labelcolor", colors)
         length = kwargs.pop("length", None)
         width = kwargs.pop("width", None)
+        pad = kwargs.pop("pad", None)
         direction = kwargs.pop("direction", None)
         label_visible = _tick_label_visibility(kwargs)
         if kwargs:
@@ -3852,6 +3853,8 @@ class Axes(PlotTypeMixin):
                 style["tick_length"] = float(length) * self._point_scale()
             if width is not None:
                 style["tick_width"] = float(width) * self._point_scale()
+            if pad is not None:
+                style["tick_label_pad"] = float(pad) * self._point_scale()
             if direction is not None:
                 if direction not in {"in", "out", "inout"}:
                     raise ValueError("tick_params() direction must be 'in', 'out', or 'inout'")
@@ -5134,6 +5137,7 @@ def _rc_axis_style(axis: str, dpi: float = 96.0) -> dict[str, Any]:
     result["axis_width"] = float(rcParams["axes.linewidth"]) * point_scale
     result["tick_length"] = float(rcParams[f"{prefix}.major.size"]) * point_scale
     result["tick_width"] = float(rcParams[f"{prefix}.major.width"]) * point_scale
+    result["tick_label_pad"] = float(rcParams[f"{prefix}.major.pad"]) * point_scale
     if tick_color != "black":
         result["tick_color"] = resolve_color(tick_color)
     if label_color != "inherit" or tick_color != "black":
