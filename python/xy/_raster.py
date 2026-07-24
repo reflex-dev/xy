@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import struct
 from collections.abc import Callable, Sequence
+from itertools import pairwise
 from os import PathLike
 from typing import Any, Optional
 
@@ -2010,18 +2011,23 @@ def _emit_colorbar(
     right_axis_room: float = 0.0,
     text_color: str = _TEXT,
 ) -> None:
-    from ._svg import _linear_ticks, _lut
+    from ._svg import _colorbar_tick_target, _linear_ticks, _lut
 
     orientation = options.get("orientation", "vertical")
+    shrink = float(options.get("shrink", 1.0))
+    anchor = options.get("anchor") or [0.5, 0.5]
     if orientation == "horizontal":
-        x = plot["x"]
+        width = plot["w"] * shrink
+        x = plot["x"] + (plot["w"] - width) * float(anchor[0])
         y = plot["y"] + plot["h"] + (plot["bottom_axis_room"] or 10)
-        width, height = plot["w"], 18
+        height = 18
     else:
         # right_axis_room shifts the whole colorbar clear of right-side named
         # y-axis chrome (layout() reserves room for both additively).
         x = plot["x"] + plot["w"] + right_axis_room + 24
-        y, width, height = plot["y"], 18, plot["h"]
+        height = plot["h"] * shrink
+        y = plot["y"] + (plot["h"] - height) * (1.0 - float(anchor[1]))
+        width = 18
     # A discrete (resampled) colormap paints N solid bands; otherwise a smooth
     # 64-step gradient approximates the continuous ramp.
     levels = options.get("levels")
@@ -2065,8 +2071,19 @@ def _emit_colorbar(
         h_positions = (
             [float(value) for value in ticks if lo <= float(value) <= hi]
             if ticks is not None
-            else (_linear_ticks(lo, hi, 8)[0] or [lo, hi])
+            else (_linear_ticks(lo, hi, _colorbar_tick_target(width))[0] or [lo, hi])
         )
+        if options.get("minor_ticks") and len(h_positions) >= 2:
+            ordered = sorted(set(h_positions))
+            for left, right in pairwise(ordered):
+                for step in range(1, 5):
+                    value = left + (right - left) * step / 5.0
+                    tx = x + width * (value - lo) / span
+                    cmd.stroke(
+                        [(tx, y + height), (tx, y + height + 3)],
+                        1,
+                        _parse_color(text_color),
+                    )
         for value in h_positions:
             cmd.text(
                 x + width * (value - lo) / span,
@@ -2089,8 +2106,19 @@ def _emit_colorbar(
         tick_positions = (
             [float(value) for value in ticks if lo <= float(value) <= hi]
             if ticks is not None
-            else (_linear_ticks(lo, hi, 8)[0] or [lo, hi])
+            else (_linear_ticks(lo, hi, _colorbar_tick_target(height))[0] or [lo, hi])
         )
+        if options.get("minor_ticks") and len(tick_positions) >= 2:
+            ordered = sorted(set(tick_positions))
+            for lower, upper in pairwise(ordered):
+                for step in range(1, 5):
+                    value = lower + (upper - lower) * step / 5.0
+                    ty = y + height * (1 - (value - lo) / span)
+                    cmd.stroke(
+                        [(x + width, ty), (x + width + 3, ty)],
+                        1,
+                        _parse_color(text_color),
+                    )
         for value in tick_positions:
             cmd.text(
                 x + width + 4,

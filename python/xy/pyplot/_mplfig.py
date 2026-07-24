@@ -523,11 +523,35 @@ class Figure:
             cmap_obj = mappable.get_cmap()
             colormap = getattr(cmap_obj, "name", cmap_obj)
         try:
-            numeric = np.asarray(mapped_values, dtype=np.float64)
-            finite = numeric[np.isfinite(numeric)]
+            numeric = np.ma.asarray(mapped_values, dtype=np.float64)
+            finite = np.asarray(numeric.compressed(), dtype=np.float64)
+            finite = finite[np.isfinite(finite)]
         except (TypeError, ValueError):
             finite = np.asarray([], dtype=np.float64)
         explicit_domain = entry.get("domain", props.get("domain"))
+        orientation_arg = kwargs.pop("orientation", None)
+        location = kwargs.pop("location", None)
+        if location is not None:
+            location = str(location).lower()
+            if location not in {"right", "bottom"}:
+                raise not_implemented(
+                    f"colorbar(location={location!r})",
+                    "right or bottom colorbar placement",
+                )
+            located_orientation = "vertical" if location == "right" else "horizontal"
+            if orientation_arg is not None and str(orientation_arg) != located_orientation:
+                raise ValueError("location and orientation select incompatible colorbar sides")
+            orientation_arg = located_orientation
+        orientation = str(orientation_arg or "vertical")
+        if orientation not in {"vertical", "horizontal"}:
+            raise ValueError("colorbar() orientation must be 'vertical' or 'horizontal'")
+        shrink = float(kwargs.pop("shrink", 1.0))
+        if not np.isfinite(shrink) or not 0.0 < shrink <= 1.0:
+            raise ValueError("colorbar() shrink must be finite and in (0, 1]")
+        anchor_arg = kwargs.pop("anchor", (0.5, 0.5))
+        anchor_values = np.asarray(anchor_arg, dtype=np.float64).reshape(-1)
+        if len(anchor_values) != 2 or not np.all(np.isfinite(anchor_values)):
+            raise ValueError("colorbar() anchor must be a finite (x, y) pair")
         options = {
             "colormap": colormap or "viridis",
             "domain": (
@@ -536,8 +560,12 @@ class Figure:
                 else ([float(finite.min()), float(finite.max())] if finite.size else [0.0, 1.0])
             ),
             "label": _plain_text(kwargs.pop("label", "")),
-            "orientation": str(kwargs.pop("orientation", "vertical")),
+            "orientation": orientation,
         }
+        if shrink != 1.0:
+            options["shrink"] = shrink
+        if not np.array_equal(anchor_values, [0.5, 0.5]):
+            options["anchor"] = [float(anchor_values[0]), float(anchor_values[1])]
         # When the mappable's value domain is not knowable at colorbar() time
         # (e.g. hexbin counts are binned inside the mark), defer to the compiled
         # figure's color domain at render time instead of the 0..1 placeholder.
@@ -602,6 +630,14 @@ class Figure:
                     )
                 check_unsupported(kwargs, "Colorbar.set_ticks()")
                 self._options["ticks"] = [float(value) for value in np.asarray(ticks).reshape(-1)]
+                self.ax._invalidate()
+
+            def minorticks_on(self) -> None:
+                self._options["minor_ticks"] = True
+                self.ax._invalidate()
+
+            def minorticks_off(self) -> None:
+                self._options["minor_ticks"] = False
                 self.ax._invalidate()
 
         return _Colorbar(axes, options)

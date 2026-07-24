@@ -113,10 +113,16 @@ def test_default_colorbar_ticks_are_dense_for_small_decimal_domains():
     plt.colorbar(image)
     svg = _svg()
     assert all(f">{value:.2f}<" in svg for value in (0.02, 0.04, 0.06, 0.08, 0.12, 0.14))
-    # The client-side colorbar mirrors the 8-tick target; the embedded bundle
-    # is minified, so assert against the client source instead of the HTML.
+    # A normal-height colorbar retains the dense eight-tick ceiling. Shorter
+    # bars reduce their budget so labels do not collide.
+    from xy._svg import _colorbar_tick_target
+
+    assert _colorbar_tick_target(360) == 8
+    assert _colorbar_tick_target(140) == 3
+    # The client-side colorbar uses the same 48 px spacing budget; the embedded
+    # bundle is minified, so assert against the client source instead of HTML.
     client = ROOT / "js" / "src" / "50_chartview.ts"
-    assert "linearTicks(lo, hi, 8)" in client.read_text(encoding="utf-8")
+    assert "barLength) / 48" in client.read_text(encoding="utf-8")
 
 
 def test_explicit_colorbar_ticks_still_honored():
