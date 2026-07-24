@@ -1590,6 +1590,7 @@ class PlotTypeMixin:
                     "stroke_width": edge_width,
                     "symbol": symbol,
                     "size": marker_size,
+                    "opacity": 1.0,
                 },
             },
         )

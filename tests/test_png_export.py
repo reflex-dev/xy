@@ -729,6 +729,15 @@ def test_affine_static_scatter_full_render_matches_expanded(monkeypatch) -> None
             stroke="#111827",
             stroke_width=0.5,
         ),
+        Figure(width=360, height=220).scatter(
+            x,
+            y,
+            color="transparent",
+            size=9,
+            symbol="diamond",
+            stroke="#666666",
+            stroke_width=1.0,
+        ),
         Figure(width=360, height=220).scatter(x, y, color=color_values, colormap="plasma"),
         Figure(width=360, height=220).scatter(x, y, color=categories),
         Figure(width=360, height=220).scatter(

@@ -46,6 +46,7 @@ def test_stem_marker_face_mutation_does_not_recolor_stems() -> None:
     markerline.set_markerfacecolor("none")
 
     assert markerline._entry["kwargs"]["color"] == "transparent"
+    assert markerline._entry["kwargs"]["opacity"] == 1.0
     assert markerline._entry["kwargs"]["stroke"] == "grey"
     assert stemlines._entry["kwargs"]["color"] == "grey"
 
