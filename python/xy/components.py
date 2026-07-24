@@ -237,10 +237,12 @@ class Legend(Component):
     loc: Optional[str] = None
     ncols: int = 1
     title: Optional[str] = None
-    highlight: bool = True
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
     render: Any = None
+    # New fields append after ``render``: Legend is public and positional
+    # construction over the released field order must keep binding.
+    highlight: bool = True
 
 
 @dataclass
