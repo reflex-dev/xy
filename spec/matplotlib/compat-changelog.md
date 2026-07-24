@@ -266,7 +266,7 @@ colorbar domains) fully cleared.
   `subplots(..., toolbar=...)`, which forwards it to `figure` — overrides
   rcParams for one figure.
 
-### Mesh and distribution autoscale — 2026-07-24 (Matplotlib 3.11.0 reference)
+### Mesh and distribution autoscale — 2026-07-24 (Matplotlib 3.11.1 reference)
 
 - The shim's pre-build autoscale scan (`Axes._iter_entry_arrays`) now
   recognizes the `@mark`/`heatmap`, `ecdf`, and `box` entry shapes, which keep
