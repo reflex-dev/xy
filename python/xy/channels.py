@@ -518,9 +518,16 @@ def quantize_unit_u8(values: npt.NDArray[np.float64], domain: tuple[float, float
     The lossy sibling of :func:`normalize_to_unit`, for wire paths where the
     value is only ever a GPU LUT/ramp coordinate (a colormap texture has 256
     texels; a size ramp spans ~16 px) and is never read back into a displayed
-    number — 75% less traffic than f32, same rendered output (§29)."""
-    unit = normalize_to_unit(values, domain)
-    return np.rint(np.clip(unit, 0.0, 1.0) * 255.0).astype(np.uint8)
+    number — 75% less traffic than f32, same rendered output (§29). Chunked
+    like the other full-column quantizers (LOD doc §4.4): drill slices see one
+    pass, while the spatial-index builder can feed a whole 1e9-row column with
+    chunk-bounded temporaries and identical per-element results."""
+    out = np.empty(len(values), dtype=np.uint8)
+    for start in range(0, len(values), _QUANTIZE_CHUNK):
+        end = start + _QUANTIZE_CHUNK
+        unit = normalize_to_unit(values[start:end], domain)
+        out[start:end] = np.rint(np.clip(unit, 0.0, 1.0) * 255.0).astype(np.uint8)
+    return out
 
 
 def colormap_lut_rgba8(colormap: str) -> npt.NDArray[np.uint8]:

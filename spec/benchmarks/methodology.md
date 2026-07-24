@@ -124,14 +124,18 @@ reported).
    the headline; includes never-blank check (frame sampling: no frame
    without chart pixels).
 5. `drilldown_truth`: CodSpeed native cycles cover density overview → exact
-   points → density zoom-out, twice — a plain trace and a channel-bearing
+   points → density zoom-out, three ways — a plain trace, a channel-bearing
    twin (`test_adaptive_drilldown_cycle_mean_color`, which adds a mid-band
-   exact re-bin leg). The twin exists because per-request cost on a colored
-   trace must exclude full-column channel work: the bin-color resolution is
-   cached per trace (LOD doc §2), and re-resolving it per reply multiplies
-   the row by the column length (the 100M FastAPI demo's 1–2 s/request
-   regression). The 10M+ exact-hover oracle remains the larger
-   browser/widget follow-up.
+   exact re-bin leg), and the no-rescan regime served by the v2 drill index
+   (`test_adaptive_drilldown_cycle_indexed`, LOD doc §4.5). The colored twin
+   exists because per-request cost on a colored trace must exclude
+   full-column channel work: the bin-color resolution is cached per trace
+   (LOD doc §2), and re-resolving it per reply multiplies the row by the
+   column length (the 100M FastAPI demo's 1–2 s/request regression). The
+   indexed row pins drill cost at O(window) past the bound where O(N)
+   scans are forbidden — an index degenerating to full scans multiplies it
+   by the column length the same way. The 10M+ exact-hover oracle remains
+   the larger browser/widget follow-up.
 6. `core_2d_payloads`: CodSpeed tracks native histogram, area, bar, heatmap,
    and composed/layered `xy.chart(...)` payload prep;
    `benchmarks/bench_2d_charts.py` stays the Plotly/Seaborn chart-to-pixels
@@ -234,7 +238,7 @@ it — those live in `benchmark-refresh.yml`, and the workflow says so inline.
 
 The glob collects five modules — `test_codspeed_animation.py`,
 `test_codspeed_kernels.py`, `test_codspeed_pyplot.py`,
-`test_codspeed_selection.py`, and `test_codspeed_transport.py` — for 103 rows
+`test_codspeed_selection.py`, and `test_codspeed_transport.py` — for 104 rows
 total. These are trend-tracked in CodSpeed, not gated: none of them feed
 `scripts/check_regressions.py`, whose three inputs are §7's.
 
@@ -309,7 +313,7 @@ the path measured rather than the identity fast path. Browser input-to-pixel
 latency stays in `bench_interaction.py`; before this module a selection
 regression could only surface as browser wall-clock noise.
 
-**`benchmarks/test_codspeed_kernels.py` — 74 rows** (71 functions; two are
+**`benchmarks/test_codspeed_kernels.py` — 75 rows** (72 functions; two are
 parametrized, over 2 ingest flavors and 3 `bin_2d` thread-cap regimes). This is
 the bulk of the suite and covers the native compute core the rest of the engine
 sits on: decimation tiers, f32 encoding, and zone maps (`spec/design-dossier.md`

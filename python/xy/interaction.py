@@ -597,6 +597,7 @@ def _padded_drill_window(
     hi_x: float,
     lo_y: float,
     hi_y: float,
+    row_finder: Any = None,
 ) -> Optional[tuple[float, float, float, float, np.ndarray]]:
     """The widest aligned window around the view that still drills (T13).
 
@@ -609,12 +610,23 @@ def _padded_drill_window(
     budget wins. Returns None (drill the raw view window) when padding buys
     nothing: nonlinear axes (raw-space alignment mis-sizes log windows near
     zero), non-finite extents, or every rung over budget.
+
+    ``row_finder(px0, px1, py0, py1) -> sel | None`` verifies a rung; the
+    default is the O(N) `range_indices` scan. Index-served drills pass an
+    O(window) finder over the same inclusive-window semantics, so the ladder
+    — and therefore the shipped window — is identical either way; a finder
+    may return None to skip a rung it cannot afford.
     """
     if fig._axis_scale(t.x_axis) != "linear" or fig._axis_scale(t.y_axis) != "linear":
         return None
     ex0, ex1, ey0, ey1 = t.x.min, t.x.max, t.y.min, t.y.max
     if not all(np.isfinite(v) for v in (ex0, ex1, ey0, ey1)):
         return None
+    if row_finder is None:
+
+        def row_finder(px0: float, px1: float, py0: float, py1: float) -> np.ndarray:
+            return kernels.range_indices(t.x.values, t.y.values, px0, px1, py0, py1)
+
     span_x, span_y = hi_x - lo_x, hi_y - lo_y
     budget = SCATTER_DENSITY_THRESHOLD
     for pad in DRILL_PAD_TARGETS:
@@ -629,14 +641,14 @@ def _padded_drill_window(
         if px1 - px0 > span_x * DRILL_PAD_SPAN_CAP or py1 - py0 > span_y * DRILL_PAD_SPAN_CAP:
             continue
         if pyr is not None:
-            # Cheap center-in-cell estimate gates the exact O(N) verify scan;
+            # Cheap center-in-cell estimate gates the exact verify;
             # the margin keeps a boundary-straddling estimate from wasting a
             # scan on a window the exact count then rejects.
             est = kernels.pyramid_count(pyr, px0, px1, py0, py1)
             if est is not None and est > budget * 0.85:
                 continue
-        sel = kernels.range_indices(t.x.values, t.y.values, px0, px1, py0, py1)
-        if len(sel) <= budget:
+        sel = row_finder(px0, px1, py0, py1)
+        if sel is not None and len(sel) <= budget:
             return px0, px1, py0, py1, sel
     return None
 
@@ -720,6 +732,150 @@ def _ship_index_points(
     return {"traces": [trace_update]}, writer.buffers
 
 
+def _index_rows_exact(
+    t: "Trace",
+    candidates: np.ndarray,
+    lo_x: float,
+    hi_x: float,
+    lo_y: float,
+    hi_y: float,
+) -> np.ndarray:
+    """ε-widened candidate rows → the exact inclusive-window subset, ascending.
+
+    Re-tests against the canonical f64 columns, so membership (and therefore
+    the drill reply) is bit-identical to `range_indices` over the same window;
+    the f32 pre-filter can only have ADDED boundary-ulp candidates, never
+    dropped a member."""
+    rows = np.sort(candidates.astype(np.int64, copy=False))
+    xs, ys = t.x.values[rows], t.y.values[rows]
+    exact = (xs >= lo_x) & (xs <= hi_x) & (ys >= lo_y) & (ys <= hi_y)
+    if not bool(exact.all()):
+        rows = rows[exact]
+    return rows.astype(np.uint32 if len(t.x) <= 0xFFFFFFFF else np.uint64)
+
+
+def _index_window_rows(
+    t: "Trace", sidx: Any, lo_x: float, hi_x: float, lo_y: float, hi_y: float
+) -> Optional[np.ndarray]:
+    """`range_indices` membership at O(window) cost, via a v2 index — the
+    row finder behind index-served drills and their T13 padding rungs.
+
+    Returns None when the window is not affordable: its cells exceed the
+    read bound, or the f32 candidate count already exceeds every budget the
+    caller could accept (the exact subset can only shrink, so the refusal is
+    safe — and it keeps the canonical gather bounded by the drill budget,
+    never by the candidate count)."""
+    if sidx.window_count(lo_x, hi_x, lo_y, hi_y) > SPATIAL_EXACT_MAX_POINTS:
+        return None
+    planes = sidx.gather_planes(lo_x, hi_x, lo_y, hi_y)
+    lon, lat = planes["lon"], planes["lat"]
+    inside = (
+        (lon >= np.nextafter(np.float32(lo_x), np.float32(-np.inf)))
+        & (lon <= np.nextafter(np.float32(hi_x), np.float32(np.inf)))
+        & (lat >= np.nextafter(np.float32(lo_y), np.float32(-np.inf)))
+        & (lat <= np.nextafter(np.float32(hi_y), np.float32(np.inf)))
+    )
+    candidates = planes["rows"][inside]
+    if len(candidates) > SCATTER_DENSITY_THRESHOLD * DRILL_EXIT_FACTOR + 1024:
+        return None
+    return _index_rows_exact(t, candidates, lo_x, hi_x, lo_y, hi_y)
+
+
+def _index_color_lut(t: "Trace") -> np.ndarray:
+    """The ≤256-entry RGBA8 LUT pairing a v2 index's u8 color plane, chosen
+    exactly like `channels.resolve_bin_colors` pairs the same u8 source: the
+    colormap's 256 texels for a continuous channel, the palette rows for
+    compact categorical codes. The stored plane is the wire's own
+    quantization, so a cell binned through this LUT wears the byte-identical
+    color its drawn points do."""
+    cc = t.color_ch
+    assert cc is not None
+    if cc.mode == "continuous":
+        return channels.colormap_lut_rgba8(cc.colormap)
+    return channels.palette_rgba8(DEFAULT_PALETTE, len(cc.categories or ()))
+
+
+def ensure_drill_index(fig: "Figure", trace_id: int = 0, directory: str | None = None) -> Any:
+    """Build (once) and attach the Tier-3 drill index for a scatter trace.
+
+    This is what makes drill-to-points work at ANY row count: past the
+    no-rescan bound (`PYRAMID_NO_RESCAN_ROWS`, or memmapped columns) the O(N)
+    window scan is forbidden, and without an index every deep zoom stays on
+    the upsampled pyramid. The v2 index stores f32 positions, canonical row
+    ids, and the wire-quantized u8 color/size planes (continuous channels via
+    `quantize_unit_u8` — the drill wire's own quantization — and compact
+    categorical codes as-is), cell-sorted on disk; build is a chunk-bounded
+    two-pass counting sort (O(N) reads twice, RAM stays flat in N).
+
+    ``directory`` places the plane files; ``None`` uses a fresh temp
+    directory whose files are removed when the trace is collected or the
+    index is invalidated (appends do — the quantized planes bake the
+    channel domains, so new rows require a rebuild). The disk cost is the
+    recorded ~13-17 B/point (§27 derived, rebuildable). Returns the attached
+    ``SpatialIndex``; re-calling is a no-op while one is attached."""
+    import tempfile
+
+    from . import _spatial
+
+    t = _trace(fig, trace_id)
+    if t.kind != "scatter":
+        raise ValueError(f"drill indexes support scatter traces, not {t.kind!r}")
+    existing = getattr(t, "_spatial_index", None)
+    if existing is not None:
+        return existing
+    cc, sc = t.color_ch, t.size_ch
+    color_u8 = size_u8 = None
+    if cc is not None and cc.mode == "continuous" and cc.values is not None and cc.domain:
+        color_u8 = channels.quantize_unit_u8(cc.values, cc.domain)
+    elif (
+        cc is not None
+        and cc.mode == "categorical"
+        and cc.codes is not None
+        and cc.codes.dtype == np.uint8
+    ):
+        color_u8 = np.asarray(cc.codes)
+    if sc is not None and sc.mode == "continuous" and sc.values is not None and sc.domain:
+        size_u8 = channels.quantize_unit_u8(sc.values, sc.domain)
+    owns_dir = directory is None
+    if owns_dir:
+        directory = tempfile.mkdtemp(prefix="xy-spidx-")
+    prefix = f"{directory}/trace{t.id}"
+    sidx = _spatial.build(prefix, t.x.values, t.y.values, color_u8=color_u8, size_u8=size_u8)
+    t._spatial_index = sidx
+    if owns_dir:
+        import shutil
+
+        # §27 lifetime: temp-dir planes die with the trace (or on append
+        # invalidation via _drop_spatial_index) instead of leaking per build.
+        t._spatial_finalizer = weakref.finalize(t, shutil.rmtree, directory, True)
+    return sidx
+
+
+def _drop_spatial_index(t: "Trace") -> None:
+    """Detach (and, for temp-dir builds, delete) the trace's drill index."""
+    fin = getattr(t, "_spatial_finalizer", None)
+    if fin is not None:
+        fin()
+        t._spatial_finalizer = None
+    t._spatial_index = None
+
+
+def spatial_index_mapped_bytes(fig: Any) -> int:
+    """Memory-report line (§27): disk-backed bytes mapped by attached drill
+    indexes — reclaimable page cache, kept distinct from resident classes
+    exactly like `canonical_mapped_bytes`."""
+    total = 0
+    for t in fig.traces:
+        sidx = getattr(t, "_spatial_index", None)
+        if sidx is None:
+            continue
+        for plane in (sidx.lon, sidx.lat, sidx.rows, sidx.color_u8, sidx.size_u8):
+            if plane is not None:
+                total += int(plane.nbytes)
+        total += int(sidx.offsets.nbytes)
+    return total
+
+
 def density_view(
     fig: "Figure", trace_id: int, x0: float, x1: float, y0: float, y1: float, w: int, h: int
 ) -> tuple[dict[str, Any], list[bytes]]:
@@ -775,16 +931,33 @@ def density_view(
     no_rescan = is_memmapped(xv) or len(xv) > PYRAMID_NO_RESCAN_ROWS
     max_upsample = _PYRAMID_UNBOUNDED_UPSAMPLE if no_rescan else 2
     est = None
+    sidx = getattr(t, "_spatial_index", None)
     # Nonlinear axes can't compose from the raw-space pyramid (see above) → no
     # pyramid, exact scan instead.
     pyr = None if nonlinear else _ensure_pyramid(t)
     if pyr is not None:
         est = kernels.pyramid_count(pyr, lo_x, hi_x, lo_y, hi_y)
-        # Serve from the pyramid when the window is clearly aggregate territory,
-        # or unconditionally for no-rescan traces (drilling to exact points is
-        # unavailable there — the exact path is what we are avoiding).
-        if no_rescan or (
-            est is not None and est > SCATTER_DENSITY_THRESHOLD * DRILL_EXIT_FACTOR * 1.5
+        # Can the Tier-3 spatial block DEFINITELY answer this window without
+        # the forbidden O(N) rescan? It needs a v2 (row-carrying) index, an
+        # affordable cell read, and — for a mean-color trace — the stored
+        # color plane, so whichever way the exact in-window count falls
+        # (points or spatial-exact grid) the reply keeps the §2 color story.
+        spatial_serves = (
+            sidx is not None
+            and sidx.rows is not None
+            and (not mean_colors or sidx.color_u8 is not None)
+            and sidx.window_count(lo_x, hi_x, lo_y, hi_y) <= SPATIAL_EXACT_MAX_POINTS
+        )
+        # Serve from the pyramid when the window is clearly aggregate
+        # territory. A no-rescan trace historically took this branch
+        # UNCONDITIONALLY — drilling was unavailable, upsampled blur was the
+        # only honest answer — but with a drill index attached the points
+        # band exists again: anywhere near the budget, fall through to the
+        # spatial block (the same margin the exact-scan path uses), which is
+        # guaranteed to answer (points or exact grid), never the O(N) net.
+        near_band = est is not None and est <= SCATTER_DENSITY_THRESHOLD * DRILL_EXIT_FACTOR * 1.5
+        if (no_rescan and not (spatial_serves and near_band)) or (
+            est is not None and not near_band
         ):
             plan = lod.plan_view_lod(
                 request,
@@ -820,35 +993,80 @@ def density_view(
                 binning = f"pyramid-L{level}{'-upsampled' if no_rescan and level == 0 else ''}"
                 lod.exit_drill(t)
     # Tier-3 spatial index: when the pyramid can only serve this window blurry
-    # (upsampled), re-bin it *exactly* from just its in-window points — as long
-    # as that count is affordable to read. This is what turns a blocky deep zoom
-    # into real detail (streets), and it gets cheaper the deeper you go.
-    # The derived index is position-only (§27): it can neither ship channels
-    # with a points drill nor bin a mean-color plane (LOD doc §2), so a
-    # color-channelled trace skips this tier and keeps its upsampled
-    # colored-pyramid grid — blurry but truthful, recorded via `binning`.
-    sidx = getattr(t, "_spatial_index", None)
+    # (upsampled), answer it *exactly* from just its in-window points — as long
+    # as that count is affordable to read. This is what turns a blocky deep
+    # zoom into real detail (streets), and it gets cheaper the deeper you go.
+    # A v2 index carries canonical row ids, so inside the drill budget it acts
+    # purely as a ROW FINDER: the rows feed the ordinary `_drill_points`, which
+    # gathers canonical f64 positions and channels (§16 precision, real
+    # color/size, working picks) — the reply is identical to the O(N) scan
+    # drill it replaces, at O(window) cost. A v1 (position-only, external)
+    # index keeps the historical carve-outs: constant-styled point ships,
+    # channelled traces stay on the exact grid.
     # `window_count` is a cheap (offsets-only, no point reads) upper bound —
     # whole overlapping cells, which at tight zoom overshoots the true in-window
     # count by orders of magnitude. Use it only to gate the read; once the cells
     # are affordable, gather **once** and decide by the *actual* in-window count.
     if (
         sidx is not None
-        and not mean_colors
         and (grid is None or binning.endswith("-upsampled"))
         and sidx.window_count(lo_x, hi_x, lo_y, hi_y) <= SPATIAL_EXACT_MAX_POINTS
     ):
-        lon, lat = sidx._gather_f32(lo_x, hi_x, lo_y, hi_y)
+        planes = sidx.gather_planes(lo_x, hi_x, lo_y, hi_y)
+        lon, lat = planes["lon"], planes["lat"]
         inside = (lon >= lo_x) & (lon <= hi_x) & (lat >= lo_y) & (lat <= hi_y)
         in_window = int(inside.sum())
-        # Fits the direct budget → ship the real in-window points so they render
-        # *crisp* (individual marks) rather than as a blocky ~16-points-per-cell
-        # grid. Position-only: the derived index stores no channels (§27), so
-        # this drill needs a constant-styled trace; a channelled trace keeps the
-        # exact grid below.
-        if in_window <= SCATTER_DENSITY_THRESHOLD and not _has_point_channels(t):
+        rows_plane = planes.get("rows")
+        if rows_plane is not None:
+            # Candidate rows for the exact drill: the same window widened one
+            # f32 ulp outward. A canonical member whose stored f32 rounded
+            # 1 ulp past a bound is still caught, and the canonical-f64
+            # re-test in `_index_rows_exact` can only REMOVE candidates — so
+            # edge membership matches `range_indices` exactly.
+            cand = (
+                (lon >= np.nextafter(np.float32(lo_x), np.float32(-np.inf)))
+                & (lon <= np.nextafter(np.float32(hi_x), np.float32(np.inf)))
+                & (lat >= np.nextafter(np.float32(lo_y), np.float32(-np.inf)))
+                & (lat <= np.nextafter(np.float32(hi_y), np.float32(np.inf)))
+            )
+            plan = lod.plan_view_lod(request, in_window, SCATTER_DENSITY_THRESHOLD, t.drill_mode)
+            if plan.exact:
+                # Ascending canonical rows → the same drill the scan path
+                # ships, bit for bit, without the O(N) rescan: the ε-widened
+                # candidates re-test against canonical f64, and the T13
+                # padding ladder runs with the index's own O(window) row
+                # finder — same rungs, same gates, same shipped window.
+                sel = _index_rows_exact(t, rows_plane[cand], lo_x, hi_x, lo_y, hi_y)
+                padded = _padded_drill_window(
+                    fig,
+                    t,
+                    pyr,
+                    lo_x,
+                    hi_x,
+                    lo_y,
+                    hi_y,
+                    row_finder=lambda a, b, c, d: _index_window_rows(t, sidx, a, b, c, d),
+                )
+                if padded is not None:
+                    lo_x, hi_x, lo_y, hi_y, sel = padded
+                return _drill_points(
+                    fig,
+                    t,
+                    sel,
+                    len(sel),
+                    lo_x,
+                    hi_x,
+                    lo_y,
+                    hi_y,
+                    w,
+                    h,
+                    blend_visible=plan.visible,
+                )
+        elif in_window <= SCATTER_DENSITY_THRESHOLD and not _has_point_channels(t):
+            # v1 position-only ship: crisp constant-styled marks, no channels,
+            # picks unavailable by construction (§27).
             return _ship_index_points(t, request, lon[inside], lat[inside], lo_x, hi_x, lo_y, hi_y)
-        # Otherwise bin the same gathered points to a grid at **full screen
+        # Over the budget: bin the gathered points to a grid at **full screen
         # resolution** — one cell per pixel, not the ~16-points-per-cell
         # aggregate grid that would then be stretched (and blur). At this zoom we
         # have the exact points, so the raster should be as sharp as the display;
@@ -856,12 +1074,36 @@ def density_view(
         # bleed) since there is no upscaling to smooth. The cell overhang outside
         # the window is dropped by bin_2d's half-open range test. This is the
         # deep-zoom detail (streets) the blurry upsampled pyramid can't give.
-        w, h = _screen_shape(request.width, request.height)
-        grid = kernels.bin_2d_f32(lon, lat, lo_x, hi_x, lo_y, hi_y, w, h)
-        visible = in_window
-        binning = "spatial-exact"
-        density_filter = "nearest"
-        lod.exit_drill(t)
+        # A mean-color trace takes it only when the index stored its color
+        # plane (LOD doc §2 — the surface must keep wearing the data's colors;
+        # without the plane the upsampled colored pyramid stands: blurry but
+        # truthful, never a hue jump to a count ramp).
+        if not mean_colors or planes.get("color_u8") is not None:
+            w, h = _screen_shape(request.width, request.height)
+            grid = kernels.bin_2d_f32(lon, lat, lo_x, hi_x, lo_y, hi_y, w, h)
+            if mean_colors:
+                # Mean point color plane straight from the index's
+                # wire-quantized u8 idx — the deep-zoom grid wears real
+                # colors. The mean-color kernel is f64; widening the gathered
+                # window is bounded by SPATIAL_EXACT_MAX_POINTS (≤ ~1.3 GB at
+                # the extreme, typical windows far below; an f32 twin kernel
+                # is the recorded follow-up).
+                rgba_grid = kernels.bin_2d_mean_color(
+                    lon.astype(np.float64),
+                    lat.astype(np.float64),
+                    lo_x,
+                    hi_x,
+                    lo_y,
+                    hi_y,
+                    w,
+                    h,
+                    idx=np.ascontiguousarray(planes["color_u8"]),
+                    lut=_index_color_lut(t),
+                )
+            visible = in_window
+            binning = "spatial-exact"
+            density_filter = "nearest"
+            lod.exit_drill(t)
     if grid is None and no_rescan:
         # No pyramid (below PYRAMID_MIN_POINTS is impossible here) or compose
         # still declined: bin the window once rather than never rendering. This
@@ -1262,6 +1504,11 @@ def append_data(
     # The cached bin-color resolution covered the pre-append rows over the
     # pre-append domain; drop it for a lazy full re-resolve (LOD doc §2).
     t._bin_colors = None
+    # The drill index baked the pre-append rows AND the pre-append channel
+    # domains into its quantized planes; detach it (temp-dir planes are
+    # deleted). Rebuilding is the owner's explicit call — ensure_drill_index
+    # is an opt-in O(N) disk build, never a silent append side effect.
+    _drop_spatial_index(t)
     lod.exit_drill(t)
     # Remembered subsets were computed against the pre-append canonical state;
     # the client rebuilds its GPU traces (and drops its cached point windows)

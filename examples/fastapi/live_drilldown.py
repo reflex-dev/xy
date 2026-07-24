@@ -152,6 +152,16 @@ def live_figure() -> Figure:
     x0, x1 = fig.x_range()
     y0, y1 = fig.y_range()
     fig.density_view(0, x0, x1, y0, y1, 512, 384)
+    # Past the no-rescan bound the O(N) window scan a drill needs is
+    # forbidden, so without an index every deep zoom would stay on the
+    # upsampled pyramid ("aggregate floor"). The Tier-3 drill index (row ids
+    # + wire-quantized channel planes, ~14 B/point on disk in a temp dir)
+    # restores drill-to-points at ANY count — replies identical to the scan
+    # drill, picks exact. One-time build, chunk-bounded RAM.
+    from xy.config import PYRAMID_NO_RESCAN_ROWS
+
+    if LIVE_SCATTER_POINTS > PYRAMID_NO_RESCAN_ROWS:
+        fig.ensure_drill_index(0)
     return fig
 
 

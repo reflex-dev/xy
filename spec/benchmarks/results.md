@@ -112,7 +112,10 @@ scope, not the kernels module alone. The suite asserts `xy.kernels.BACKEND ==
 - Memory/payload accounting with `test_memory_report_density_medium`.
 - The native adaptive drilldown cycles: `test_adaptive_drilldown_cycle` (a
   warmed large scatter viewport moves from density overview, to exact visible
-  points, and back out to density) and its channel-bearing twin
+  points, and back out to density), `test_adaptive_drilldown_cycle_indexed`
+  (the same cycle in the no-rescan regime, served by the v2 drill index —
+  LOD doc §4.5 — pinning the O(window) row-find that replaces the forbidden
+  O(N) scan), and the channel-bearing twin
   `test_adaptive_drilldown_cycle_mean_color`, which adds a mid-band exact
   re-bin leg and guards the once-per-trace bin-color resolution (LOD doc §2):
   re-resolving the color column per request multiplied per-reply cost by

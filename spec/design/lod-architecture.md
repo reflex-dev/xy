@@ -272,6 +272,17 @@ reply  = compose(tiles) → one grid ≤ (screen px) — done kernel-side today,
   This is today's behavior, now only on the deep-zoom tail where it's cheap.
 - **Drill-in unchanged:** when visible_count ≤ budget, ship exact points.
   The pyramid only changes how *aggregated* views are produced.
+- **Past the no-rescan bound** (`PYRAMID_NO_RESCAN_ROWS`, or memmapped
+  columns) the O(N) paths above are forbidden. Without a drill index the
+  pyramid serves every window — upsampled at its floor, points never ship
+  (the recorded "aggregate floor"). With the §4.5 drill index attached, the
+  points band exists at ANY N: anywhere the pyramid estimate falls near the
+  budget (the same `DRILL_EXIT_FACTOR × 1.5` margin the exact-scan path
+  uses), the view falls through to the index — which answers with real
+  points or an exact grid, never the O(N) net. The fall-through requires the
+  index to be able to answer whole-hog (row ids present, affordable cell
+  read, and the color plane for mean-color traces), so no window can slip
+  between the tiers into a forbidden rescan.
 
 ### 4.3 Truthfulness across levels
 
@@ -344,6 +355,50 @@ ever extrapolates.
   to the instant upsampled pyramid above it. `tests/test_spatial.py` covers cell
   grouping, windowed count/gather, exact-bin parity with a direct `bin_2d`, and
   the points-vs-grid tier decision keyed on the true in-window count.
+
+### 4.5 The drill index (v2): drill-to-points at any N
+
+The §4.4 index generalizes from a position-only external artifact into the
+engine-built **drill index** (`XYSPIDX2`, `interaction.ensure_drill_index` /
+`Figure.ensure_drill_index`), which restores the FULL drill contract past the
+no-rescan bound:
+
+- **Format.** Beside the cell-sorted f32 positions, v2 stores each point's
+  **canonical row id** (u32; u64 past 2³²−1 rows, ascending within every
+  cell) and — when the trace carries them — **wire-quantized u8 channel
+  planes**: continuous color/size exactly as `quantize_unit_u8` ships them,
+  compact categorical color as its u8 codes. `direct_rgba` and >256-category
+  traces store no color plane and keep the upsampled colored pyramid at
+  aggregate depths (recorded follow-up). ~13–17 B/point on disk; a §27
+  derived, rebuildable cache whose temp-dir planes die with the trace and on
+  append (the quantized planes bake the channel domains).
+- **The index is a row FINDER, not a second ship path.** Inside the drill
+  budget it resolves the window's exact canonical rows — candidate cells, an
+  ε-widened (one f32 ulp) pre-filter, then a re-test against canonical f64 —
+  and hands them to the ordinary `_drill_points`: positions and channels
+  gather from the canonical columns (§16 precision), picks and selections
+  translate exactly, and the reply is **byte-identical** to the O(N) scan
+  drill it replaces (pinned by `tests/test_drill_index_any_n.py`). T13
+  padding runs the same aligned ladder through the index's O(window) row
+  finder, so even the shipped padded window matches the scan path's.
+- **Tier wiring.** A no-rescan trace with a drill index stops serving the
+  pyramid unconditionally: near the budget (the exact-scan path's own
+  margin) the view falls through to the index, which answers with points or
+  the mean-color `spatial-exact` grid (the stored u8 plane + the channel's
+  own LUT — same §2 color story as every other tier). The fall-through is
+  taken only when the index can definitely answer, so no window ever lands
+  on the forbidden O(N) net. `binning` records the outcome, as everywhere.
+- **Build.** A two-pass streaming counting sort (chunk-bounded RAM at any N,
+  O(N) sequential reads twice) over RAM or memmap columns; grid side
+  ~`sqrt(N/4096)` (power of two, 64..4096). Build is **explicit** —
+  `ensure_drill_index` is an opt-in O(N) disk write, never an ingest or
+  append side effect.
+- **Cost & follow-ups, recorded:** drill-band canonical gathers are ≤ budget
+  random reads (page-granular on memmapped columns); the mean-color exact
+  grid widens its gathered f32 window for the f64 kernel (bounded by
+  `SPATIAL_EXACT_MAX_POINTS`, ≤ ~1.3 GB at the extreme — an f32 twin kernel
+  is the follow-up); `direct_rgba`/wide-categorical color planes are not yet
+  stored.
 
 ---
 

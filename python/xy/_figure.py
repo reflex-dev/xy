@@ -1409,6 +1409,12 @@ class Figure(AnnotationsMixin, PayloadMixin):
         f32 upload offsets so precision holds at deep zoom."""
         return interaction.decimate_view(self, x0, x1, px_width)
 
+    def ensure_drill_index(self, trace_id: int = 0, directory: Optional[str] = None) -> Any:
+        """Build (once) and attach the Tier-3 drill index for a scatter trace,
+        enabling drill-to-points past the no-rescan bound (any N, disk-bounded;
+        see `interaction.ensure_drill_index`)."""
+        return interaction.ensure_drill_index(self, trace_id, directory)
+
     def append(
         self,
         trace_id: int,
@@ -1831,6 +1837,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         report["transport_bytes_per_point"] = len(blob) / n_total
         report["pyramid_bytes"] = interaction.pyramid_report_bytes(self)
         report["bin_color_bytes"] = interaction.bin_color_cache_bytes(self)
+        # Disk-backed drill-index planes: mapped, reclaimable page cache —
+        # itemized like canonical_mapped_bytes, never counted as resident.
+        report["spatial_index_mapped_bytes"] = interaction.spatial_index_mapped_bytes(self)
         report["resident_array_bytes"] = (
             report["canonical_bytes"]
             + report["channel_bytes"]

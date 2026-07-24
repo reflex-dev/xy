@@ -38,13 +38,16 @@ on first use:
 XY_LIVE_POINTS=1000000 uv run uvicorn app:app
 ```
 
-Note the drill-to-points behavior is scale-gated by the engine
-(`xy.config.PYRAMID_NO_RESCAN_ROWS`, 200M): above that row count — or for
-disk-backed columns — every zoom is answered from the density pyramid,
-upsampled at its floor, and exact points never ship (the O(N) window rescan
-that drilling requires is forbidden in that regime; LOD doc §28). The badge
-reads `… density · aggregate floor` when a view is in that state, so a 1B-row
-run that "never reaches points" is the recorded contract, not a bug.
+Drill-to-points works at any count. Below the engine's no-rescan bound
+(`xy.config.PYRAMID_NO_RESCAN_ROWS`, 200M) each drill finds its rows with an
+O(N) window scan; above it that scan is forbidden (LOD doc §28), so at
+startup the demo builds the Tier-3 **drill index** (`fig.ensure_drill_index`)
+— cell-sorted positions, canonical row ids, and wire-quantized channel
+planes, ~14 B/point in a temp directory — and deep zooms keep resolving into
+exact points (identical replies, exact hover) at O(window) cost. If a view is
+ever served past the pyramid's resolution without an index (for example, an
+out-of-band figure without one), the badge reads `… density · aggregate
+floor`.
 
 ## Layout
 

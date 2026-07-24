@@ -1183,6 +1183,62 @@ def _colored_drilldown_cycle(fig: Figure) -> int:
     )
 
 
+@pytest.fixture()
+def indexed_drilldown_figure(monkeypatch) -> Figure:
+    """The colored drilldown workload in the no-rescan regime WITH a drill
+    index — drill-to-points at any N (LOD doc §4.5).
+
+    The bound is patched below the fixture's row count (function-scoped: the
+    regime applies to exactly this row) and `ensure_drill_index` builds the
+    v2 index in a temp dir, so the measured cycle is the index-served path:
+    pyramid compose wide, O(window) row-find + canonical gather deep. The
+    replies are byte-identical to the scan drill's; this row pins their cost
+    staying O(window) — an O(N) regression (rescans sneaking back, or the
+    index degenerating to full scans) multiplies it by the column length."""
+    from xy import interaction
+
+    monkeypatch.setattr(interaction, "PYRAMID_NO_RESCAN_ROWS", DRILL_N - 1)
+    rng = np.random.default_rng(29)
+    x = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
+    y = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
+    color = np.hypot(x - 50.0, y - 50.0)
+    fig = xy.chart(xy.scatter(x=x, y=y, color=color, colormap="viridis", density=True)).figure()
+    fig.ensure_drill_index(0)
+
+    fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+    _expect_drill_window(fig, x, y)
+    fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+    return fig
+
+
+def _indexed_drilldown_cycle(fig: Figure) -> int:
+    wide, wide_buffers = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+    deep, deep_buffers = fig.density_view(0, 0.0, 10.0, 0.0, 10.0, GRID_W, GRID_H)
+    wide_trace = wide["traces"][0]
+    deep_trace = deep["traces"][0]
+    assert wide_trace["mode"] == "density"
+    assert str(wide_trace.get("binning", "")).startswith("pyramid-L")
+    assert deep_trace["mode"] == "points"  # the no-rescan regime DRILLS
+    assert tuple(deep_trace["x_range"]) == fig._benchmark_deep_window[:2]
+    assert tuple(deep_trace["y_range"]) == fig._benchmark_deep_window[2:]
+    assert deep_trace["visible"] == fig._benchmark_deep_expected
+    assert deep_trace["color"]["mode"] == "continuous"  # channels restored
+    back, back_buffers = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+    assert back["traces"][0]["mode"] == "density"
+    return (
+        int(wide_trace["visible"])
+        + int(deep_trace["visible"])
+        + int(back["traces"][0]["visible"])
+        + sum(len(buffer) for buffer in wide_buffers + deep_buffers + back_buffers)
+    )
+
+
+def test_adaptive_drilldown_cycle_indexed(benchmark, indexed_drilldown_figure):
+    """Drilldown past the no-rescan bound, served by the v2 drill index."""
+    result = benchmark(_indexed_drilldown_cycle, indexed_drilldown_figure)
+    assert result > DRILL_N
+
+
 def test_adaptive_drilldown_cycle_mean_color(benchmark, colored_drilldown_figure):
     """The drilldown cycle on a channel-bearing trace (the FastAPI demo shape).
 

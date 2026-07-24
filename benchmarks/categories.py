@@ -50,7 +50,7 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "name": "Adaptive scatter drilldown",
         "why": "The large-data claim needs a credible path from overview to exact visible points.",
         "metrics": "visible-query latency, tier-switch latency, exact-point recovery, badge accuracy",
-        "harness": "benchmarks/test_codspeed_kernels.py::test_adaptive_drilldown_cycle and ::test_adaptive_drilldown_cycle_mean_color (channel-bearing: per-request cost must exclude full-column color work)",
+        "harness": "benchmarks/test_codspeed_kernels.py::test_adaptive_drilldown_cycle, ::test_adaptive_drilldown_cycle_mean_color (channel-bearing: per-request cost must exclude full-column color work), and ::test_adaptive_drilldown_cycle_indexed (no-rescan regime drilling through the v2 index at O(window))",
         "status": "tracked",
         "goal": "Exact points when visible count is under budget; sampled/density with explicit counts otherwise.",
     },

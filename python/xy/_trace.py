@@ -98,8 +98,13 @@ class Trace:
     _pyr_finalizer: Optional[Any] = field(default=None, init=False, repr=False, compare=False)
     _pyr_base_dim: int = field(default=0, init=False, repr=False, compare=False)
     # Optional Tier-3 spatial index (xy._spatial.SpatialIndex) for O(window)
-    # exact deep-zoom density; attached out-of-band, duck-typed in interaction.
+    # exact deep-zoom answers: attached by `interaction.ensure_drill_index`
+    # (v2: row ids + wire-quantized channel planes make index drills identical
+    # to scan drills) or out-of-band (v1, position-only). The finalizer owns
+    # temp-dir plane files; appends detach the index (quantized planes bake
+    # the pre-append domains).
     _spatial_index: Any = field(default=None, init=False, repr=False, compare=False)
+    _spatial_finalizer: Any = field(default=None, init=False, repr=False, compare=False)
 
     @property
     def n_points(self) -> int:

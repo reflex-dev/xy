@@ -34,6 +34,30 @@ in the README).
   `memory_report`), and `Chart.figure()` remains as an advanced escape hatch
   to the internal engine object.
 
+### Added
+- **Drill-to-points at any row count: the v2 drill index (LOD doc §4.5).**
+  Past the no-rescan bound (`PYRAMID_NO_RESCAN_ROWS`, 200M rows, or
+  memmapped columns) drilling was impossible by design — the O(N) window
+  scan a drill needs is forbidden there, so every deep zoom stayed on the
+  upsampled pyramid. `Figure.ensure_drill_index()` now builds a cell-sorted
+  disk index (in-engine two-pass streaming counting sort, chunk-bounded RAM,
+  ~13–17 B/point in a temp dir) carrying f32 positions, canonical row ids,
+  and the wire's own quantized u8 channel planes. Inside the drill budget it
+  acts purely as a row finder: the rows feed the ordinary drill ship, so
+  replies are **byte-identical** to the scan drill — canonical f64
+  positions (§16), real color/size, exact hover/pick/selection, and the
+  same T13 padded aligned windows via the index's O(window) row finder.
+  Over the budget, affordable windows get the exact `spatial-exact` grid
+  now wearing the mean point color from the stored plane. A no-rescan trace
+  with the index attached probes the points band with the same margin the
+  exact-scan path uses and can never fall onto a forbidden rescan; appends
+  detach the index (its planes bake the channel domains). The FastAPI demo
+  builds it automatically above the bound, so the 100M→1B+ drilldown keeps
+  resolving into points; `test_adaptive_drilldown_cycle_indexed` tracks the
+  cycle in CodSpeed and `tests/test_drill_index_any_n.py` pins reply parity
+  byte for byte. Not yet stored: `direct_rgba`/wide-categorical color
+  planes (those traces keep the colored pyramid at aggregate depths).
+
 ### Changed
 - **Colored huge-scatter builds are peak-memory-bounded (LOD doc §4.4).**
   The mean-color feature's one-time costs no longer scale peak RSS with N ×
