@@ -1004,7 +1004,10 @@ def render_raster(
     show_main_legend = spec.get("show_legend", True) and bool(named)
     extra_legends = [(extra, extra.get("items") or []) for extra in spec.get("extra_legends") or []]
     legend_present = show_main_legend or any(items for _extra, items in extra_legends)
-    if legend_present:
+    anchored_legend = (show_main_legend and bool((spec.get("legend") or {}).get("anchor"))) or any(
+        items and extra.get("anchor") for extra, items in extra_legends
+    )
+    if legend_present and not anchored_legend:
         # The browser scrolls an oversized legend. Static files cannot, so
         # clip the bounded/truncated equivalent to the plot rectangle.
         cmd.clip(px0, py0, plot["w"], plot["h"])
@@ -1013,7 +1016,7 @@ def render_raster(
     for extra, items in extra_legends:
         if items:
             _emit_legend(cmd, items, plot, extra, default_text)
-    if legend_present:
+    if legend_present and not anchored_legend:
         cmd.clip(0, 0, width, height)
     if spec.get("colorbar"):
         _emit_colorbar(
@@ -1990,7 +1993,15 @@ def _emit_legend(
             sym = _SYMBOLS.get(style.get("symbol", "circle"), 0)
             sw = float(style.get("stroke_width", 0.0))
             stroke = _rgba(style.get("stroke"), color_str) if sw > 0 else (0, 0, 0, 0)
-            cmd.point((hx0 + hx1) / 2, cy, 4.0, sym, c, sw, stroke)
+            cmd.point(
+                (hx0 + hx1) / 2,
+                cy,
+                max(0.5, float(style.get("size", 8.0)) / 2.0),
+                sym,
+                c,
+                sw,
+                stroke,
+            )
         elif kind in _LEGEND_LINE_KINDS:
             cmd.stroke(
                 [(hx0, cy), (hx1, cy)],

@@ -2687,6 +2687,11 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
         + gap
         + 2 * pad
     )
+    if title:
+        natural_cell_w = max(
+            natural_cell_w,
+            (len(str(title)) * _LEGEND_CHAR_WIDTH + 2 * pad) / requested_cols,
+        )
     inset = 6.0
     available_w = max(1.0, float(plot["w"]) - 2 * inset)
     ncols = requested_cols
@@ -2709,26 +2714,37 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     box_h = min(available_h, visible_rows * line_h + pad + title_h)
 
     loc = options.get("loc") or "upper right"
-    if "left" in loc:
-        x = float(plot["x"]) + inset
-    elif "right" in loc:
-        x = float(plot["x"]) + float(plot["w"]) - box_w - inset
+    anchor = options.get("anchor")
+    if anchor and len(anchor) in (2, 4):
+        ax, ay = float(anchor[0]), float(anchor[1])
+        aw, ah = (0.0, 0.0) if len(anchor) == 2 else (float(anchor[2]), float(anchor[3]))
+        hx = 0.0 if "left" in loc else 1.0 if "right" in loc else 0.5
+        vy = 0.0 if "lower" in loc else 1.0 if "upper" in loc else 0.5
+        target_x = float(plot["x"]) + (ax + hx * aw) * float(plot["w"])
+        target_y = float(plot["y"]) + (1.0 - ay - vy * ah) * float(plot["h"])
+        x = target_x - hx * box_w
+        y = target_y - (1.0 - vy) * box_h
     else:
-        x = float(plot["x"]) + (float(plot["w"]) - box_w) / 2
-    if "upper" in loc:
-        y = float(plot["y"]) + inset
-    elif "lower" in loc:
-        y = float(plot["y"]) + float(plot["h"]) - box_h - inset
-    else:
-        y = float(plot["y"]) + (float(plot["h"]) - box_h) / 2
-    x = min(
-        max(x, float(plot["x"]) + inset),
-        float(plot["x"]) + float(plot["w"]) - box_w - inset,
-    )
-    y = min(
-        max(y, float(plot["y"]) + inset),
-        float(plot["y"]) + float(plot["h"]) - box_h - inset,
-    )
+        if "left" in loc:
+            x = float(plot["x"]) + inset
+        elif "right" in loc:
+            x = float(plot["x"]) + float(plot["w"]) - box_w - inset
+        else:
+            x = float(plot["x"]) + (float(plot["w"]) - box_w) / 2
+        if "upper" in loc:
+            y = float(plot["y"]) + inset
+        elif "lower" in loc:
+            y = float(plot["y"]) + float(plot["h"]) - box_h - inset
+        else:
+            y = float(plot["y"]) + (float(plot["h"]) - box_h) / 2
+        x = min(
+            max(x, float(plot["x"]) + inset),
+            float(plot["x"]) + float(plot["w"]) - box_w - inset,
+        )
+        y = min(
+            max(y, float(plot["y"]) + inset),
+            float(plot["y"]) + float(plot["h"]) - box_h - inset,
+        )
 
     text_width = max(0.0, cell_w - handle - gap - 2 * pad)
     return {
@@ -2801,6 +2817,7 @@ def _legend(
         if kind == "scatter":
             symbol = style.get("symbol", "circle")
             builder = _SYMBOL_BUILDERS.get(symbol)
+            radius = max(0.5, float(style.get("size", 8.0)) / 2.0)
             stroke_w = float(style.get("stroke_width", 0.0))
             line_symbol = symbol in {"plus_line", "x_line"}
             if line_symbol and stroke_w <= 0:
@@ -2812,12 +2829,13 @@ def _legend(
             cxm = (hx0 + hx1) / 2
             if builder is None:
                 rows.append(
-                    f'<circle cx="{_num(cxm)}" cy="{_num(cy)}" r="4" '
+                    f'<circle cx="{_num(cxm)}" cy="{_num(cy)}" r="{_num(radius)}" '
                     f'fill="{escape(color)}"{stroke_attr}/>'
                 )
             else:
                 rows.append(
-                    builder(float(cxm), float(cy), 4.0) + f' fill="{escape(color)}"{stroke_attr}/>'
+                    builder(float(cxm), float(cy), radius)
+                    + f' fill="{escape(color)}"{stroke_attr}/>'
                 )
         elif kind in _LEGEND_LINE_KINDS:
             rows.append(
@@ -2834,7 +2852,8 @@ def _legend(
             f'<text x="{_num(hx1 + gap)}" y="{_num(ry + 11)}" '
             f'fill="{escape(text_color)}">{escape(legend["names"][i])}</text>'
         )
-    return f'<g clip-path="url(#{clip_id})">{"".join(rows)}</g>'
+    clip = "" if options.get("anchor") else f' clip-path="url(#{clip_id})"'
+    return f"<g{clip}>{''.join(rows)}</g>"
 
 
 def _colorbar(

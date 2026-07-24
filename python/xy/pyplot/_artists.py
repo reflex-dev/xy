@@ -361,13 +361,29 @@ class Line2D(Artist):
         self._touch()
 
     def set_dash_capstyle(self, style: Any) -> None:
-        raise NotImplementedError("xy.pyplot does not support dash cap style mutation")
+        value = str(style)
+        if value != "round":
+            raise NotImplementedError(
+                "xy.pyplot's renderers currently support only round dash cap mutation"
+            )
+        self._entry["kwargs"]["dash_capstyle"] = value
+        self._touch()
+
+    def get_dash_capstyle(self) -> str:
+        return str(self._entry["kwargs"].get("dash_capstyle", "round"))
 
     def set_solid_capstyle(self, style: Any) -> None:
         raise NotImplementedError("xy.pyplot does not support solid cap style mutation")
 
     def set_gapcolor(self, color: Any) -> None:
         raise NotImplementedError("xy.pyplot does not support gapcolor mutation")
+
+
+class _LegendElementHandle:
+    """Synthetic collection handle used only to build explicit legend items."""
+
+    def __init__(self, entry: dict[str, Any]) -> None:
+        self._entry = entry
 
 
 class PathCollection(Artist):
@@ -467,24 +483,82 @@ class PathCollection(Artist):
         self._touch()
 
     def get_sizes(self) -> np.ndarray:
+        if "source_sizes" in self._entry:
+            return np.atleast_1d(np.asarray(self._entry["source_sizes"], dtype=np.float64))
         sizes = np.asarray(self._entry["kwargs"].get("size", 0.0), dtype=np.float64)
         return np.atleast_1d(sizes**2)
 
     def legend_elements(
         self, prop: str = "colors", num: Any = "auto", **kwargs: Any
-    ) -> tuple[list["PathCollection"], list[str]]:
-        import numpy as np
-
-        del kwargs
-        values = self._entry["kwargs"].get("size" if prop == "sizes" else "color")
+    ) -> tuple[list[Any], list[str]]:
+        if prop not in {"colors", "sizes"}:
+            raise ValueError("prop must be 'colors' or 'sizes'")
+        func = kwargs.pop("func", lambda value: value)
+        fmt = kwargs.pop("fmt", None)
+        alpha = kwargs.pop("alpha", self.get_alpha())
+        color_override = kwargs.pop("color", None)
+        values = self.get_sizes() if prop == "sizes" else self.get_array()
         try:
             array = np.asarray(values, dtype=np.float64).reshape(-1)
         except (TypeError, ValueError):
-            array = np.arange(1, dtype=np.float64)
+            array = np.asarray([], dtype=np.float64)
         unique = np.unique(array[np.isfinite(array)])
-        count = 5 if num == "auto" else max(1, int(num))
-        chosen = unique if len(unique) <= count else np.linspace(unique.min(), unique.max(), count)
-        return [self] * len(chosen), [f"{value:g}" for value in chosen]
+        if not unique.size:
+            return [], []
+        transformed = np.asarray(func(unique), dtype=np.float64)
+        if num == "auto" and len(unique) <= 9:
+            chosen = unique
+            label_values = transformed
+        elif not np.isscalar(num):
+            label_values = np.asarray(num, dtype=np.float64).reshape(-1)
+            chosen = np.interp(label_values, transformed, unique)
+        else:
+            from ._ticker import MaxNLocator
+
+            count = 9 if num == "auto" else max(1, int(num))
+            ticks = MaxNLocator(count).tick_values(
+                float(transformed.min()), float(transformed.max())
+            )
+            label_values = ticks[(ticks >= transformed.min()) & (ticks <= transformed.max())]
+            chosen = np.interp(label_values, transformed, unique)
+        base = self._entry.get("kwargs", {})
+        lo, hi = self._entry.get("kwargs", {}).get(
+            "domain", (float(unique.min()), float(unique.max()))
+        )
+        handles = []
+        for value in chosen:
+            handle_kwargs = {
+                "symbol": base.get("symbol", "circle"),
+                "stroke": base.get("stroke"),
+                "stroke_width": base.get("stroke_width", 0.0),
+                "opacity": 1.0 if alpha is None else float(alpha),
+            }
+            if prop == "sizes":
+                from ._translate import marker_size_to_scatter_size
+
+                handle_kwargs["size"] = marker_size_to_scatter_size(
+                    float(value), point_scale=self._axes._point_scale()
+                )
+                handle_kwargs["color"] = resolve_color(
+                    color_override
+                    if color_override is not None
+                    else base.get("color")
+                    if isinstance(base.get("color"), str)
+                    else "#1f77b4"
+                )
+            else:
+                normalized = 0.5 if hi == lo else (float(value) - lo) / (hi - lo)
+                handle_kwargs["color"] = resolve_color(self.cmap(normalized))
+            handles.append(_LegendElementHandle({"kind": "scatter", "kwargs": handle_kwargs}))
+
+        def format_label(value: float) -> str:
+            if callable(fmt):
+                return str(fmt(value))
+            if isinstance(fmt, str):
+                return fmt.format(x=value)
+            return f"{value:g}"
+
+        return handles, [format_label(float(value)) for value in label_values]
 
     @property
     def cmap(self) -> Any:
@@ -1113,7 +1187,7 @@ def _legend_item_from_entry(
         symbol = kw.get("symbol")
         if symbol:
             style["symbol"] = symbol
-        for key in ("stroke", "stroke_width"):
+        for key in ("size", "stroke", "stroke_width"):
             if kw.get(key) is not None:
                 style[key] = kw[key]
     return {"name": str(label), "kind": kind, "style": style}
