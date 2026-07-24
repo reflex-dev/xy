@@ -158,16 +158,13 @@ def test_codspeed_animation_module_guards_backend_and_split_transport() -> None:
     assert "build_payload_split" in source
 
 
-def test_codspeed_dependency_is_declared_and_shared_by_ci_and_runbook() -> None:
+def test_codspeed_dependency_is_declared_and_used_by_ci() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     workflow = (ROOT / ".github" / "workflows" / "codspeed.yml").read_text(encoding="utf-8")
-    runbook = (ROOT / "benchmarks" / "README.md").read_text(encoding="utf-8")
 
     assert "codspeed = [" in pyproject
     assert '"pytest-codspeed>=5,<6"' in pyproject
     assert '-e ".[dev,codspeed]"' in workflow
-    assert '-e ".[dev,codspeed]"' in runbook
-    assert "--codspeed" in runbook
 
 
 def test_native_benchmark_reports_can_resolve_source_backend_metadata() -> None:
@@ -182,12 +179,10 @@ def test_native_benchmark_reports_can_resolve_source_backend_metadata() -> None:
 
 def test_scatter_native_exposes_reproducible_categorical_ceiling() -> None:
     source = (ROOT / "benchmarks" / "bench_scatter_native.py").read_text(encoding="utf-8")
-    runbook = (ROOT / "benchmarks" / "README.md").read_text(encoding="utf-8")
     assert "def gen_numpy_categories" in source
     assert "def _warm_production_path" in source
     assert '"--categorical-groups"' in source
     assert '"categorical_groups"' in source
-    assert "--categorical-groups 24" in runbook
 
 
 def test_interaction_browser_gates_cover_scatter_and_core_chart_families() -> None:

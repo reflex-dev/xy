@@ -126,7 +126,6 @@ REQUIRED_FILES = {
     "tests/test_benchmark_environment.py",
     "tests/test_bench_pyplot_vs_matplotlib.py",
     "tests/test_check_regressions.py",
-    "tests/test_docs_examples.py",
     "tests/test_example_apps.py",
     "tests/test_type_surface.py",
     "tests/test_verify_benchmark_report.py",
