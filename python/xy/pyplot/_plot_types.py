@@ -2264,13 +2264,9 @@ class PlotTypeMixin:
             if line_color is None:
                 line_color = self._next_color()
             color = line_color
-        resolved_capsize = float(
-            rcParams["errorbar.capsize"] if capsize is None else capsize
-        )
+        resolved_capsize = float(rcParams["errorbar.capsize"] if capsize is None else capsize)
         errorbar_width = float(
-            elinewidth
-            if elinewidth is not None
-            else base.get("width", rcParams["lines.linewidth"])
+            elinewidth if elinewidth is not None else base.get("width", rcParams["lines.linewidth"])
         )
         entry = self._add(
             "@mark",
@@ -2288,9 +2284,7 @@ class PlotTypeMixin:
                 },
             },
         )
-        marker_area = float(
-            max(float(rcParams["lines.markersize"]), 2.0 * resolved_capsize) ** 2
-        )
+        marker_area = float(max(float(rcParams["lines.markersize"]), 2.0 * resolved_capsize) ** 2)
         for marker_x, marker_y, marker_symbol in limit_markers:
             self.scatter(
                 marker_x,
