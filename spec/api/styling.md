@@ -539,6 +539,34 @@ them through the annotation's own `color` / `stroke_color` / `stroke_width` /
 `opacity` arguments. Only annotation **labels** are DOM (`annotation_label`)
 and thus fully CSS-styleable.
 
+### Annotation label boxes
+
+A text/label/callout annotation may carry a boxed background through four
+style keys. The render client applies them as ordinary CSS on the label
+element (`border_radius` → `border-radius`, numbers gaining `px`); the SVG and
+native-PNG exporters reimplement the same four keys so an export matches the
+live label.
+
+| Key | Browser | SVG export | Native PNG export |
+| --- | --- | --- | --- |
+| `background` | CSS `background` | `<rect fill>` | `FILL` polygon |
+| `border` | CSS `border` (`"1px solid <color>"`) | `<rect stroke>` + `stroke-width` | `STROKE` polyline |
+| `padding` | CSS `padding` | grows the rect | grows the polygon |
+| `border_radius` | CSS `border-radius` | `<rect rx>` | polygon corners arc-flattened, 4 segments per quarter turn |
+
+Each renderer clamps `border_radius` to half the shorter box side, as CSS
+does, so an oversized radius degrades to a stadium rather than an inverted
+polygon. The exporters size the box from an estimated text width
+(`0.48em` per character), so a box tracks its text approximately, not exactly.
+
+**Label color** resolves as `label_color` → `color` → the renderer's own
+default, and the three defaults are *not* the same value: the browser uses
+`--chart-annotation-text` (falling back to `--chart-text`), the SVG exporter
+`#667085`, and the native rasterizer `rgba(32,32,32,.85)` (which composites to
+`rgb(65,65,65)` on white). A caller that needs one colour across all three must
+say so; `xy.pyplot` does, pinning `label_color` from
+`rcParams["text.color"]` on every text/annotate label.
+
 ## Static export
 
 `fig.to_image(format="png", *, width=, height=, scale=2.0, background=,
