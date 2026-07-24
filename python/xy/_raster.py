@@ -30,6 +30,7 @@ from ._svg import (
     _axis_label_geometry,
     _axis_scales,
     _axis_tick_font_size,
+    _axis_tick_label_baseline_shift,
     _axis_tick_label_layout,
     _axis_tick_label_offset,
     _axis_tick_label_strategy,
@@ -944,7 +945,18 @@ def render_raster(
         )
         font_size = _axis_tick_font_size(axis)
         side = axis.get("side", "bottom" if is_x else "left")
-        label_offset = _axis_tick_label_offset(axis)
+        # Unstyled defaults reproduce the pre-`tick_label_pad` placement exactly.
+        # The bottom gap is 15 here against the SVG exporter's 16: that 1 px has
+        # always separated the two and is not this seam's to change.
+        if is_x:
+            label_offset = (
+                _axis_tick_label_offset(axis, 7.0, 0.2)
+                if side == "top"
+                else _axis_tick_label_offset(axis, 15.0, 0.8)
+            )
+        else:
+            label_offset = _axis_tick_label_offset(axis, 8.0)
+        baseline_shift = _axis_tick_label_baseline_shift(axis)
         # An explicit tick_label_anchor (axis spec or style) overrides the
         # side-derived default, matching the browser client and SVG export.
         explicit_anchor = _tick_label_anchor(axis, axis_style, "")
@@ -954,14 +966,14 @@ def render_raster(
                 row_offset = float(item["row"]) * (font_size + 4)
                 x = float(item["pos"])
                 y = (
-                    py0 - label_offset - font_size * 0.2 - row_offset
+                    py0 - label_offset - row_offset
                     if side == "top"
-                    else py1 + label_offset + font_size * 0.8 + row_offset
+                    else py1 + label_offset + row_offset
                 )
                 anchor = _TEXT_ANCHOR_CODES[explicit_anchor] if explicit_anchor else 1
             else:
                 x = px1 + label_offset if side == "right" else px0 - label_offset
-                y = float(item["pos"]) + font_size * 0.35
+                y = float(item["pos"]) + baseline_shift
                 default_anchor = 0 if side == "right" else 2
                 anchor = _TEXT_ANCHOR_CODES[explicit_anchor] if explicit_anchor else default_anchor
             cmd.text(x, y, anchor | flag, font_size, tick_color, item["text"])

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import builtins
+import re
 
 import pytest
 
 import xy.pyplot as plt
+from xy._svg import layout
 
 
 @pytest.fixture(autouse=True)
@@ -189,6 +191,59 @@ def test_tick_params_records_supported_style_and_rejects_unknown() -> None:
 
     with pytest.raises(TypeError, match="unsupported keyword"):
         ax.tick_params(which="minor")
+
+
+def _tick_label_positions(chart) -> dict[str, tuple[float, float]]:
+    return {
+        match.group(3): (float(match.group(1)), float(match.group(2)))
+        for match in re.finditer(
+            r'<text x="([-\d.]+)" y="([-\d.]+)"[^>]*>([^<]*)</text>', chart.to_svg()
+        )
+    }
+
+
+def test_rc_tick_padding_places_labels_by_the_matplotlib_rule() -> None:
+    """The shim always supplies `{x,y}tick.major.size` and `.pad` from rcParams,
+    so its tick labels follow matplotlib's geometry rule — padding measured from
+    the outward end of the tick mark — instead of core's flat per-side gaps for
+    charts that author no tick styling. The two regimes must stay
+    distinguishable; `tests/test_svg_export.py` pins the core side of the seam.
+    """
+    _fig, ax = plt.subplots()
+    ax.plot([0.0, 1.0, 2.0], [0.0, 1.0, 0.5])
+    ax.set_xticks([0.0, 1.0, 2.0])
+    ax.set_yticks([0.0, 0.5, 1.0])
+
+    chart = ax._build_chart(400, 300)
+    plot = layout(chart.figure().build_payload()[0])[3]
+    labels = _tick_label_positions(chart)
+
+    scale = 100.0 / 72.0  # figure.dpi 100: points -> px
+    # 3.5 pt outward tick + 3.5 pt pad, then 0.8 * the 10 pt label font.
+    x_gap = (3.5 + 3.5 + 0.8 * 10.0) * scale
+    assert x_gap == pytest.approx(20.83, abs=0.01)
+    assert labels["1"][1] == pytest.approx(plot["y"] + plot["h"] + x_gap, abs=0.01)
+    assert x_gap > 16.0  # an unstyled core chart's flat bottom gap
+
+    y_gap = (3.5 + 3.5) * scale
+    assert y_gap == pytest.approx(9.72, abs=0.01)
+    assert labels["0.5"][0] == pytest.approx(plot["x"] - y_gap, abs=0.01)
+    assert y_gap > 8.0  # an unstyled core chart's flat y gap
+
+
+def test_tick_params_pad_moves_the_labels_further_from_the_spine() -> None:
+    """`tick_params(pad=)` overrides the rc pad in the same geometry."""
+    _fig, ax = plt.subplots()
+    ax.plot([0.0, 1.0, 2.0], [0.0, 1.0, 0.5])
+    ax.set_yticks([0.0, 0.5, 1.0])
+    ax.tick_params(axis="y", pad=12)
+
+    chart = ax._build_chart(400, 300)
+    plot = layout(chart.figure().build_payload()[0])[3]
+    labels = _tick_label_positions(chart)
+
+    scale = 100.0 / 72.0
+    assert labels["0.5"][0] == pytest.approx(plot["x"] - (3.5 + 12.0) * scale, abs=0.01)
 
 
 def test_axes_set_rejects_unknown_properties_after_applying_known_setters() -> None:

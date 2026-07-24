@@ -1244,18 +1244,52 @@ def _axis_tick_font_size(axis: dict[str, Any]) -> float:
     return max(8.0, float(style.get("tick_label_size", style.get("tick_size", 11))))
 
 
-def _axis_tick_label_offset(axis: dict[str, Any]) -> float:
-    """Distance from the axis spine to the near edge of a tick label.
+def _axis_tick_geometry_authored(axis: dict[str, Any]) -> bool:
+    """True when the axis authored tick geometry (label pad or mark length).
 
-    Matplotlib's tick padding starts at the outward end of the tick mark, not
-    at the spine.  Keep that geometry shared by browser-equivalent SVG and
-    native raster output.
+    Core's default ``tick_length`` is 0 and it has no default ``tick_label_pad``,
+    so deriving the spine-to-label distance from tick geometry unconditionally
+    would move the tick labels of *every* chart that styles no ticks. Charts
+    that author neither key therefore keep the historical placement, and only
+    authored geometry — an explicit ``tick_length``/``tick_label_pad``, or
+    pyplot's rc-supplied ``{x,y}tick.major.pad`` — opts into matplotlib's rule.
     """
+    style = axis.get("style") or {}
+    return "tick_label_pad" in style or "tick_length" in style
+
+
+def _axis_tick_label_offset(axis: dict[str, Any], unstyled: float, font_room: float = 0.0) -> float:
+    """Distance from the axis spine to a tick label's anchor point, in px.
+
+    Matplotlib measures tick padding from the outward end of the tick mark
+    rather than from the spine, and the anchor then sits ``font_room`` times the
+    tick font size further out (the SVG/raster anchor is the text baseline, so
+    an x label below the plot must clear the ascent). Axes that author no tick
+    geometry keep `unstyled`, the caller's historical gap for that side — see
+    `_axis_tick_geometry_authored`. Those gaps were already asymmetric per side
+    (16/7/8 px for bottom/top/y here), so per-side defaults reproduce the
+    existing contract rather than approximate it.
+    """
+    if not _axis_tick_geometry_authored(axis):
+        return unstyled
     style = axis.get("style") or {}
     length = max(0.0, float(style.get("tick_length", 0)))
     direction = str(style.get("tick_direction", "out"))
     outward = 0.0 if direction == "in" else length / 2 if direction == "inout" else length
-    return outward + max(0.0, float(style.get("tick_label_pad", 4)))
+    pad = outward + max(0.0, float(style.get("tick_label_pad", 4)))
+    return pad + _axis_tick_font_size(axis) * font_room
+
+
+def _axis_tick_label_baseline_shift(axis: dict[str, Any]) -> float:
+    """Baseline nudge that centers a y tick label on its tick, in px.
+
+    Font-proportional once tick geometry is authored (matplotlib centers the
+    label on its cap height); unstyled axes keep the historical flat 4 px so
+    core charts do not shift. See `_axis_tick_geometry_authored`.
+    """
+    if not _axis_tick_geometry_authored(axis):
+        return 4.0
+    return _axis_tick_font_size(axis) * 0.35
 
 
 def _axis_tick_label_layout(
@@ -1499,7 +1533,16 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         )
         font_size = _axis_tick_font_size(axis)
         side = axis.get("side", "bottom" if is_x else "left")
-        label_offset = _axis_tick_label_offset(axis)
+        # Unstyled defaults reproduce the pre-`tick_label_pad` placement exactly.
+        if is_x:
+            label_offset = (
+                _axis_tick_label_offset(axis, 7.0, 0.2)
+                if side == "top"
+                else _axis_tick_label_offset(axis, 16.0, 0.8)
+            )
+        else:
+            label_offset = _axis_tick_label_offset(axis, 8.0)
+        baseline_shift = _axis_tick_label_baseline_shift(axis)
         # An explicit tick_label_anchor (axis spec or style) overrides the
         # angle/side-derived default. Anchored labels rotate about the tick
         # point (the rotate() pivot below), so anchor and rotation compose —
@@ -1511,9 +1554,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 row_offset = float(item["row"]) * (font_size + 4)
                 x = float(item["pos"])
                 y = (
-                    plot["y"] - label_offset - font_size * 0.2 - row_offset
+                    plot["y"] - label_offset - row_offset
                     if side == "top"
-                    else plot["y"] + plot["h"] + label_offset + font_size * 0.8 + row_offset
+                    else plot["y"] + plot["h"] + label_offset + row_offset
                 )
                 if explicit_anchor:
                     anchor = _TEXT_ANCHORS[explicit_anchor]
@@ -1529,7 +1572,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                     if side == "right"
                     else plot["x"] - label_offset
                 )
-                y = float(item["pos"]) + font_size * 0.35
+                y = float(item["pos"]) + baseline_shift
                 if explicit_anchor:
                     anchor = _TEXT_ANCHORS[explicit_anchor]
                 else:

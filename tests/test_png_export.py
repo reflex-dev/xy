@@ -915,3 +915,70 @@ def test_scatter_direct_edges_with_colormap_c_render_in_png() -> None:
         opacity=1.0,
     )
     assert _dark_pixel_count(fig.to_png(width=300, height=200)) > 200
+
+
+def _text_commands(monkeypatch, chart) -> dict[str, tuple[float, float]]:
+    """``{text: (x, y)}`` for every text op the raster display list emits."""
+    emitted: dict[str, tuple[float, float]] = {}
+    original = _raster._Cmd.text
+
+    def record(self, x, y, anchor, size, color, s):
+        emitted[str(s)] = (x, y)
+        return original(self, x, y, anchor, size, color, s)
+
+    monkeypatch.setattr(_raster._Cmd, "text", record)
+    _raster.render_raster(*chart.figure().build_payload(), scale=1)
+    return emitted
+
+
+def _tick_geometry_chart(style=None) -> xy.Chart:
+    """A 3x3 tick grid with a pinned plot rect, so offsets are exact integers."""
+    return xy.chart(
+        xy.line([0.0, 1.0, 2.0], [0.0, 1.0, 0.5]),
+        xy.x_axis(domain=(0.0, 2.0), tick_values=[0.0, 1.0, 2.0], style=style),
+        xy.y_axis(domain=(0.0, 1.0), tick_values=[0.0, 0.5, 1.0], style=style),
+        width=400,
+        height=300,
+        padding=(40, 50, 40, 50),
+    )
+
+
+def test_unstyled_tick_labels_keep_their_historical_raster_placement(monkeypatch) -> None:
+    """The native display list must place unstyled tick labels where it always
+    has.
+
+    `tick_label_pad` derives the spine-to-label gap from tick geometry, but
+    core's default `tick_length` is 0, so deriving it unconditionally silently
+    pulls every unstyled chart's labels toward the spine — see
+    `_axis_tick_label_offset`. The 15 px bottom gap is one pixel tighter than
+    the SVG exporter's 16 and has always been; this seam does not reconcile it.
+    """
+    plot = _raster.layout(_tick_geometry_chart().figure().build_payload()[0])[3]
+    assert (plot["x"], plot["y"], plot["w"], plot["h"]) == (50.0, 40.0, 300.0, 220.0)
+
+    unstyled = _text_commands(monkeypatch, _tick_geometry_chart())
+    # x, bottom: baseline 15 px below the spine, centered on the tick.
+    assert unstyled["0"] == (50.0, 275.0)
+    assert unstyled["1"] == (200.0, 275.0)
+    assert unstyled["2"] == (350.0, 275.0)
+    # y, left: 8 px outside the spine, baseline nudged 4 px below the tick.
+    assert unstyled["0.0"] == (42.0, 264.0)
+    assert unstyled["0.5"] == (42.0, 154.0)
+    assert unstyled["1.0"] == (42.0, 44.0)
+
+    # Flat constants, as before `tick_label_pad`: the tick font must not move them.
+    big_font = _text_commands(monkeypatch, _tick_geometry_chart(style={"tick_size": 20}))
+    assert big_font["0"] == unstyled["0"]
+    assert big_font["1.0"] == unstyled["1.0"]
+
+
+def test_authored_tick_geometry_moves_raster_labels_off_the_spine(monkeypatch) -> None:
+    """Authored geometry takes matplotlib's rule in the raster path too, and
+    lands on the same coordinates the SVG exporter uses."""
+    styled = _text_commands(
+        monkeypatch, _tick_geometry_chart(style={"tick_length": 6, "tick_label_pad": 5})
+    )
+    # 6 px outward tick + 5 px pad = 11 px, then 0.8 * the 11 px font to the baseline.
+    assert styled["0"] == (50.0, 279.8)
+    # y: 11 px outside the spine, baseline centered on 0.35 * the font size.
+    assert styled["0.0"] == (39.0, 263.85)

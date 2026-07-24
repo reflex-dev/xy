@@ -126,6 +126,7 @@ or a CSS `px` value such as `"3px"`.
 | `grid_dash` | `"solid"`, `"dashed"`, `"dotted"`, or `"dashdot"` |
 | `grid_opacity` | Number from `0` to `1` |
 | `tick_length` | Non-negative pixel length |
+| `tick_label_pad` | Non-negative pixel length — gap between the outward end of the tick mark and the near edge of its label (matplotlib `{x,y}tick.major.pad`; `tick_direction` decides how much of `tick_length` counts as outward). Honored by the browser client and by static SVG/PNG exports. |
 | `tick_size` / `tick_label_size`, `label_size` | Positive pixel font size |
 | `tick_direction` | `"in"`, `"out"`, or `"inout"` |
 | `tick_label_anchor` | `"start"`, `"center"`, or `"end"` (mpl `ha` aliases `"left"`/`"right"`/`"middle"` normalize) — which label edge pins to the tick; rotated labels pivot about the pinned edge. Also a first-class `x_axis`/`y_axis` option. X defaults to `"center"`; y defaults to the tick-side edge (`"end"` left of the plot, `"start"` right of it). Honored by static SVG/PNG exports. |
@@ -147,6 +148,25 @@ xy.x_axis(
     },
 )
 ```
+
+Tick-label placement has two regimes, and which one applies is decided by
+whether the axis authored any tick geometry — `tick_length` or
+`tick_label_pad`:
+
+- **Authored.** The label's anchor sits `tick_label_pad` past the outward end of
+  the tick mark, plus the room the glyph box itself needs on that side. This is
+  matplotlib's rule, and it is how the pyplot shim reproduces mpl spacing: it
+  always supplies `{x,y}tick.major.size` and `{x,y}tick.major.pad` from
+  `rcParams` (`_rc_axis_style`), so pyplot charts are always in this regime.
+- **Unauthored.** The chart keeps a fixed per-side gap. Core's default
+  `tick_length` is `0` and there is no default `tick_label_pad`, so deriving the
+  gap from tick geometry would silently pull the labels of every chart that
+  styles no ticks toward the spine. The per-side gaps are a layout contract:
+  charts that author no tick styling render identically before and after
+  `tick_label_pad` existed, in the browser client, SVG export, and native
+  raster alike. `_axis_tick_label_offset` in `python/xy/_svg.py` (shared with
+  `_raster.py`) and `tickLabelOffset` in `js/src/50_chartview.ts` are the two
+  implementations, and each renderer passes its own historical per-side value.
 
 ### Axis ticks and label formatting
 

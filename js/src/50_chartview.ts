@@ -4480,18 +4480,30 @@ export class ChartView {
       "tick_label_size",
       this._axisStyleNumber(xAxis, "tick_size", 11),
     );
-    const tickLabelOffset = (axis) => {
+    // Spine→label distance. mpl measures tick padding from the outward end of
+    // the tick mark, and a `top` label then needs `fontRoom` more to clear its
+    // own line box. That derived geometry only applies once the axis authors
+    // tick geometry: core's default tick_length is 0 and it has no default
+    // tick_label_pad, so deriving it unconditionally would move the labels of
+    // every chart that styles no ticks. Unstyled axes keep `unstyled`, the
+    // per-side gap this client has always used (pyplot supplies mpl's
+    // {x,y}tick.major.pad, so it takes the derived branch). Mirrors
+    // `_axis_tick_label_offset` in `_svg.py`/`_raster.py`.
+    const tickLabelOffset = (axis, unstyled, fontRoom = 0) => {
+      const authored = this._axisStyleValue(axis, "tick_label_pad") !== undefined
+        || this._axisStyleValue(axis, "tick_length") !== undefined;
+      if (!authored) return unstyled;
       const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
       const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
       const outward = direction === "in" ? 0 : direction === "inout" ? length / 2 : length;
-      return outward + Math.max(0, this._axisStyleNumber(axis, "tick_label_pad", 4));
+      const pad = outward + Math.max(0, this._axisStyleNumber(axis, "tick_label_pad", 4));
+      return pad + fontRoom;
     };
     for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
       const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
-      const offset = tickLabelOffset(xAxis);
       const top = xAxis.side === "top"
-        ? p.y - offset - Math.max(8, tickLabelSize) * 1.2 - rowOffset
-        : p.y + p.h + offset + rowOffset;
+        ? p.y - tickLabelOffset(xAxis, 18, Math.max(8, tickLabelSize) * 1.2) - rowOffset
+        : p.y + p.h + tickLabelOffset(xAxis, 6) + rowOffset;
       const placement = this._xTickLabelTransform(xAxis, item.angle);
       label(
         item.text,
@@ -4518,10 +4530,9 @@ export class ChartView {
           this._axisStyleNumber(axis, "tick_size", 11),
         );
         const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
-        const offset = tickLabelOffset(axis);
         const top = axis.side === "top"
-          ? p.y - offset - Math.max(8, tickLabelSize) * 1.2 - rowOffset
-          : p.y + p.h + offset + rowOffset;
+          ? p.y - tickLabelOffset(axis, 18, Math.max(8, tickLabelSize) * 1.2) - rowOffset
+          : p.y + p.h + tickLabelOffset(axis, 6) + rowOffset;
         const placement = this._xTickLabelTransform(axis, item.angle);
         label(
           item.text,
@@ -4550,7 +4561,7 @@ export class ChartView {
     // tick. Unset defaults to the tick-side edge — mpl `ha`: "end" left of
     // the plot, "start" right of it — reproducing the classic layout.
     const yLabelPlacement = (axis, onRight, item) => {
-      const offset = tickLabelOffset(axis);
+      const offset = tickLabelOffset(axis, 8);
       const pin = onRight ? p.x + p.w + offset : p.x - offset;
       const anchor = this._axisTickLabelAnchor(axis) ?? (onRight ? "start" : "end");
       const angle = Number(item.angle || 0);
