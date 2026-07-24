@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
-ABI_VERSION = 40
+ABI_VERSION = 41
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -545,6 +545,18 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_double,
         ctypes.c_void_p,
+    ]
+    lib.xy_polygon_select.restype = ctypes.c_size_t
+    lib.xy_polygon_select.argtypes = [
+        ctypes.c_void_p,  # x
+        ctypes.c_void_p,  # y
+        ctypes.c_size_t,  # len
+        ctypes.c_void_p,  # candidate row ids
+        ctypes.c_size_t,  # candidate count
+        ctypes.c_void_p,  # polygon x
+        ctypes.c_void_p,  # polygon y
+        ctypes.c_size_t,  # polygon vertices
+        ctypes.c_void_p,  # output row IDs
     ]
     lib.xy_sample_mask.restype = ctypes.c_int32
     lib.xy_sample_mask.argtypes = [
@@ -2507,6 +2519,47 @@ def range_indices(
     )
     if written == _USIZE_MAX:
         raise ValueError("invalid range_indices arguments")
+    return out if written == len(out) else out[:written].copy()
+
+
+def polygon_select(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    rows: npt.NDArray[np.uint32],
+    poly_x: npt.NDArray[np.float64],
+    poly_y: npt.NDArray[np.float64],
+) -> npt.NDArray[np.uint32]:
+    """Those of `rows` whose canonical point is inside the lasso polygon.
+
+    Even-odd ray casting, order preserved. Non-finite coordinates are never
+    inside, matching `range_indices`."""
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    poly_x = _as_f64(poly_x, "polygon x")
+    poly_y = _as_f64(poly_y, "polygon y")
+    if len(poly_x) != len(poly_y):
+        raise ValueError("polygon x and y must have equal length")
+    rows = np.ascontiguousarray(rows, dtype=np.uint32)
+    if rows.ndim != 1:
+        raise ValueError("rows must be 1-D")
+    out = np.empty(len(rows), dtype=np.uint32)
+    if len(rows) == 0:
+        return out
+    written = _lib.xy_polygon_select(
+        _ptr_f64(x),
+        _ptr_f64(y),
+        len(x),
+        rows.ctypes.data,
+        len(rows),
+        _ptr_f64(poly_x),
+        _ptr_f64(poly_y),
+        len(poly_x),
+        out.ctypes.data,
+    )
+    if written == _USIZE_MAX:
+        raise ValueError("invalid polygon_select arguments")
     return out if written == len(out) else out[:written].copy()
 
 

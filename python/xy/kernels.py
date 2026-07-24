@@ -62,6 +62,7 @@ normalize_f32 = _impl.normalize_f32
 valid_indices_f64 = _impl.valid_indices_f64
 remap_u8 = _impl.remap_u8
 range_indices = _impl.range_indices
+polygon_select = _impl.polygon_select
 sample_mask = _impl.sample_mask
 sample_range_indices = _impl.sample_range_indices
 stratified_sample_range_u8 = _impl.stratified_sample_range_u8
@@ -121,6 +122,7 @@ __all__ = [
     "marching_triangles",
     "min_max",
     "normalize_f32",
+    "polygon_select",
     "polygon_triangles",
     "pyramid_append",
     "pyramid_build",

@@ -4778,6 +4778,176 @@ pub fn range_indices(
     range_indices_impl(x, y, lo_x, hi_x, lo_y, hi_y, par_threads(x.len()), out)
 }
 
+/// Which of `rows` land inside the lasso polygon, by even-odd ray casting
+/// (§34 selection). Writes the surviving canonical row ids to `out` (capacity
+/// `rows.len()`, order preserved) and returns how many.
+///
+/// The predicate is edge-for-edge the one the Python selection path used: for
+/// each edge from vertex `j` to vertex `i`, the horizontal ray is crossed when
+/// `(y_i > y) != (y_j > y)` and `x < (x_j - x_i) * (y - y_i) / (y_j - y_i) +
+/// x_i`, and membership is the parity of the crossings. `y_j - y_i` cannot be
+/// zero where the endpoints straddle the ray, so the guarded division here
+/// covers exactly the lanes the vectorized form computed unconditionally and
+/// then masked its inf/NaN away. `x_j - x_i` and `y_j - y_i` are hoisted per
+/// edge — exact subtractions, so the arithmetic is unchanged; the division is
+/// NOT turned into a reciprocal multiply, which would not be.
+///
+/// Parity is order-independent, so walking edges inside the point loop rather
+/// than points inside the edge loop gives the same answer while holding the
+/// whole polygon in registers: no per-edge full-length temporaries (a
+/// 64-vertex lasso over 160k candidates moved ~0.5 GB through memory).
+///
+/// A non-finite coordinate fails every comparison and so is never inside,
+/// matching both the vectorized predicate and `range_indices`.
+pub fn polygon_select(
+    x: &[f64],
+    y: &[f64],
+    rows: &[u32],
+    poly_x: &[f64],
+    poly_y: &[f64],
+    out: &mut [u32],
+) -> usize {
+    assert_eq!(x.len(), y.len());
+    assert_eq!(poly_x.len(), poly_y.len());
+    assert!(out.len() >= rows.len());
+    let n = poly_x.len();
+    if n < 3 {
+        return 0;
+    }
+    // (x_i, y_i, y_j, x_j - x_i, y_j - y_i) per edge, hoisted so the inner
+    // loop is a bounds-check-free walk over a couple of KB.
+    let edges: Vec<(f64, f64, f64, f64, f64)> = (0..n)
+        .map(|i| {
+            let j = if i == 0 { n - 1 } else { i - 1 };
+            (
+                poly_x[i],
+                poly_y[i],
+                poly_y[j],
+                poly_x[j] - poly_x[i],
+                poly_y[j] - poly_y[i],
+            )
+        })
+        .collect();
+    let index = PolygonSlabs::build(poly_y, &edges);
+    let mut write = 0;
+    for &r in rows {
+        let (xv, yv) = (x[r as usize], y[r as usize]);
+        let mut inside = false;
+        // An edge can only flip parity for a point inside its own y-extent,
+        // so the slab index hands back a superset of the edges that can
+        // cross this row and the rest are provably no-ops — same crossings,
+        // same parity, but a freehand lasso's hundreds of vertices stop
+        // being scanned in full for every candidate point.
+        for &e in index.candidates(yv) {
+            let (xi, yi, yj, dx, dy) = edges[e as usize];
+            if ((yi > yv) != (yj > yv)) && xv < dx * (yv - yi) / dy + xi {
+                inside = !inside;
+            }
+        }
+        if inside {
+            out[write] = r;
+            write += 1;
+        }
+    }
+    write
+}
+
+/// Edges bucketed by y, so a point tests only those spanning its row.
+struct PolygonSlabs {
+    y0: f64,
+    y1: f64,
+    inv_h: f64,
+    n: usize,
+    /// CSR over slabs into `items`; empty when the index was declined.
+    starts: Vec<u32>,
+    items: Vec<u32>,
+    /// Every edge, in order — the answer when the index was declined.
+    all: Vec<u32>,
+}
+
+impl PolygonSlabs {
+    /// Bucketing is declined for a non-finite polygon (slab bounds stop
+    /// meaning anything) and for a vertex count too small to pay for the
+    /// build. Slab count tracks the vertex count and is capped, bounding the
+    /// index at `vertices x 256` u32s in the pathological case where every
+    /// edge spans the full height.
+    fn build(poly_y: &[f64], edges: &[(f64, f64, f64, f64, f64)]) -> Self {
+        let n_edges = edges.len();
+        let unindexed = || Self {
+            y0: 0.0,
+            y1: 0.0,
+            inv_h: 0.0,
+            n: 0,
+            starts: Vec::new(),
+            items: Vec::new(),
+            all: (0..n_edges as u32).collect(),
+        };
+        if n_edges < 16 || !poly_y.iter().all(|v| v.is_finite()) {
+            return unindexed();
+        }
+        let mut y0 = f64::INFINITY;
+        let mut y1 = f64::NEG_INFINITY;
+        for &v in poly_y {
+            y0 = y0.min(v);
+            y1 = y1.max(v);
+        }
+        let height = y1 - y0;
+        if height <= 0.0 {
+            return unindexed();
+        }
+        let n = n_edges.clamp(16, 256);
+        let inv_h = n as f64 / height;
+        // Half-open [lo, hi) per edge, matching the crossing test's own
+        // convention, so an edge lands in exactly the slabs it can cross.
+        let slab_of = |v: f64| (((v - y0) * inv_h) as usize).min(n - 1);
+        let span = |e: &(f64, f64, f64, f64, f64)| {
+            let (lo, hi) = if e.1 <= e.2 { (e.1, e.2) } else { (e.2, e.1) };
+            (slab_of(lo), slab_of(hi))
+        };
+        let mut counts = vec![0u32; n + 1];
+        for e in edges {
+            let (a, b) = span(e);
+            for c in counts.iter_mut().take(b + 2).skip(a + 1) {
+                *c += 1;
+            }
+        }
+        for s in 0..n {
+            counts[s + 1] += counts[s];
+        }
+        let mut fill = counts.clone();
+        let mut items = vec![0u32; counts[n] as usize];
+        for (i, e) in edges.iter().enumerate() {
+            let (a, b) = span(e);
+            for slot in fill.iter_mut().take(b + 1).skip(a) {
+                items[*slot as usize] = i as u32;
+                *slot += 1;
+            }
+        }
+        Self {
+            y0,
+            y1,
+            inv_h,
+            n,
+            starts: counts,
+            items,
+            all: Vec::new(),
+        }
+    }
+
+    /// Edges that could cross the ray at `yv`. A y outside the polygon's own
+    /// extent (or NaN) crosses nothing.
+    fn candidates(&self, yv: f64) -> &[u32] {
+        if self.n == 0 {
+            return &self.all;
+        }
+        if !(yv >= self.y0 && yv < self.y1) {
+            return &[];
+        }
+        let s = (((yv - self.y0) * self.inv_h) as usize).min(self.n - 1);
+        &self.items[self.starts[s] as usize..self.starts[s + 1] as usize]
+    }
+}
+
 /// Append the global indices (`base + i`) of in-window rows to `out`,
 /// returning the match count. NaN fails every comparison → skipped, matching
 /// the historical behavior. Dispatches to the AVX2 clone when available.
@@ -5079,6 +5249,117 @@ fn min_max_impl(data: &[f64], threads: usize) -> Option<(f64, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The vectorized formulation `polygon_select` replaced, kept as the
+    /// executable definition of the predicate: one pass per edge, crossing
+    /// parity accumulated over every candidate.
+    fn polygon_reference(
+        x: &[f64],
+        y: &[f64],
+        rows: &[u32],
+        poly_x: &[f64],
+        poly_y: &[f64],
+    ) -> Vec<u32> {
+        let n = poly_x.len();
+        let mut inside = vec![false; rows.len()];
+        let mut j = n - 1;
+        for i in 0..n {
+            let (xi, yi) = (poly_x[i], poly_y[i]);
+            let (xj, yj) = (poly_x[j], poly_y[j]);
+            for (k, &r) in rows.iter().enumerate() {
+                let (xv, yv) = (x[r as usize], y[r as usize]);
+                let crosses = (yi > yv) != (yj > yv);
+                let edge_x = (xj - xi) * (yv - yi) / (yj - yi) + xi;
+                inside[k] ^= crosses && xv < edge_x;
+            }
+            j = i;
+        }
+        rows.iter()
+            .zip(&inside)
+            .filter(|(_, &b)| b)
+            .map(|(&r, _)| r)
+            .collect()
+    }
+
+    fn polygon_case(poly_x: &[f64], poly_y: &[f64], x: &[f64], y: &[f64]) {
+        let rows: Vec<u32> = (0..x.len() as u32).collect();
+        let mut out = vec![0u32; rows.len()];
+        let n = polygon_select(x, y, &rows, poly_x, poly_y, &mut out);
+        assert_eq!(
+            &out[..n],
+            &polygon_reference(x, y, &rows, poly_x, poly_y)[..],
+            "polygon with {} vertices",
+            poly_x.len()
+        );
+    }
+
+    /// The y-slab index must only ever restrict the candidate edge set, never
+    /// the answer: indexed (>= 16 vertices) and unindexed paths agree with the
+    /// per-edge reference on convex, concave, self-intersecting, degenerate
+    /// and axis-aligned polygons, and on non-finite data.
+    #[test]
+    fn polygon_select_matches_the_per_edge_reference_indexed_and_not() {
+        let mut x = Vec::new();
+        let mut y = Vec::new();
+        // Deterministic lattice plus points landing exactly on vertices/edges.
+        for i in 0..60 {
+            for j in 0..60 {
+                x.push(i as f64 * 2.0);
+                y.push(j as f64 * 2.0);
+            }
+        }
+        x.extend_from_slice(&[f64::NAN, 0.0, f64::INFINITY, -f64::INFINITY, 50.0]);
+        y.extend_from_slice(&[50.0, f64::NAN, 50.0, 50.0, f64::INFINITY]);
+
+        // Triangle and axis-aligned box: below the index threshold, and the
+        // box's horizontal edges are the zero-height ones.
+        polygon_case(&[10.0, 90.0, 50.0], &[10.0, 20.0, 80.0], &x, &y);
+        polygon_case(&[20.0, 80.0, 80.0, 20.0], &[20.0, 20.0, 80.0, 80.0], &x, &y);
+        // Bowtie: self-intersecting, so even-odd parity is load-bearing.
+        polygon_case(&[10.0, 90.0, 90.0, 10.0], &[10.0, 90.0, 10.0, 90.0], &x, &y);
+        // Collinear and zero-height polygons decline the index.
+        polygon_case(&[0.0, 50.0, 100.0], &[0.0, 50.0, 100.0], &x, &y);
+        polygon_case(&[0.0, 50.0, 100.0], &[30.0, 30.0, 30.0], &x, &y);
+
+        // Indexed paths: circles and a concave star past the 16-vertex gate.
+        for n in [16usize, 17, 64, 257] {
+            let (px, py): (Vec<f64>, Vec<f64>) = (0..n)
+                .map(|k| {
+                    let t = std::f64::consts::TAU * k as f64 / n as f64;
+                    (50.0 + 30.0 * t.cos(), 50.0 + 30.0 * t.sin())
+                })
+                .unzip();
+            polygon_case(&px, &py, &x, &y);
+        }
+        let (px, py): (Vec<f64>, Vec<f64>) = (0..24)
+            .map(|k| {
+                let t = std::f64::consts::TAU * k as f64 / 24.0;
+                let r = if k % 2 == 0 { 40.0 } else { 12.0 };
+                (50.0 + r * t.cos(), 50.0 + r * t.sin())
+            })
+            .unzip();
+        polygon_case(&px, &py, &x, &y);
+
+        // A non-finite vertex declines the index; the scan must still agree.
+        polygon_case(
+            &[10.0, 90.0, 90.0, 10.0, 50.0],
+            &[10.0, 10.0, 90.0, 90.0, f64::NAN],
+            &x,
+            &y,
+        );
+
+        // Fewer than three vertices selects nothing.
+        let rows: Vec<u32> = (0..x.len() as u32).collect();
+        let mut out = vec![0u32; rows.len()];
+        assert_eq!(
+            polygon_select(&x, &y, &rows, &[0.0, 9.0], &[0.0, 9.0], &mut out),
+            0
+        );
+        assert_eq!(
+            polygon_select(&x, &y, &[], &[0.0, 9.0, 5.0], &[0.0, 9.0, 5.0], &mut out),
+            0
+        );
+    }
 
     #[test]
     fn factorize_fixed_preserves_first_seen_codes_and_full_record_identity() {

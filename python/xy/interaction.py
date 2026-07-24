@@ -225,6 +225,14 @@ def select_polygon(
 
     The polygon's bounding box first reuses the zone-pruned range predicate;
     ray casting then runs only on those candidates rather than every row.
+
+    The cast itself is native (`kernels.polygon_select`). Vectorizing it over
+    NumPy meant one pass per polygon EDGE, each materializing full-length
+    crossing and edge-intersection temporaries: a 64-vertex lasso over 160k
+    candidates moved roughly half a gigabyte through memory to answer a
+    question that fits in registers. Crossing parity is order-independent, so
+    the native kernel walks edges inside the point loop and returns the same
+    rows.
     """
     polygon = np.asarray(points, dtype=np.float64)
     if polygon.ndim != 2 or polygon.shape[1:] != (2,) or not 3 <= len(polygon) <= 2048:
@@ -239,25 +247,15 @@ def select_polygon(
         float(polygon[:, 1].max()),
         trace_id,
     )
+    poly_x = np.ascontiguousarray(polygon[:, 0])
+    poly_y = np.ascontiguousarray(polygon[:, 1])
     out: dict[int, np.ndarray] = {}
     for tid, rows in candidates.items():
         if len(rows) == 0:
             out[tid] = rows
             continue
         trace = fig.traces[tid]
-        x = trace.x.values[rows]
-        y = trace.y.values[rows]
-        inside = np.zeros(len(rows), dtype=np.bool_)
-        j = len(polygon) - 1
-        for i in range(len(polygon)):
-            xi, yi = polygon[i]
-            xj, yj = polygon[j]
-            crosses = (yi > y) != (yj > y)
-            with np.errstate(divide="ignore", invalid="ignore"):
-                edge_x = (xj - xi) * (y - yi) / (yj - yi) + xi
-            inside ^= crosses & (x < edge_x)
-            j = i
-        out[tid] = rows[inside]
+        out[tid] = kernels.polygon_select(trace.x.values, trace.y.values, rows, poly_x, poly_y)
     return out
 
 
