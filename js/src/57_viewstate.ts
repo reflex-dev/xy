@@ -87,6 +87,14 @@ Object.assign(ChartView.prototype, {
             || !["x0", "x1", "y0", "y1"].every((k) => Number.isFinite(r[k]))) {
           return "invalid selection range";
         }
+        // Optional band discriminator: box (omitted) vs the x/y-range brushes,
+        // which persist spanning the full plot with only their edge borders.
+        for (const k of Object.keys(r)) {
+          if (!["x0", "x1", "y0", "y1", "mode"].includes(k)) return `unknown key ${k}`;
+        }
+        if (r.mode !== undefined && r.mode !== "x" && r.mode !== "y") {
+          return "invalid selection range mode";
+        }
       } else if (keys[0] === "polygon") {
         const p = sel.polygon;
         if (!Array.isArray(p) || p.length < 3
@@ -143,7 +151,8 @@ Object.assign(ChartView.prototype, {
         this._clearSelection(selOpts);
       } else if (sel.range) {
         const { x0, x1, y0, y1 } = sel.range;
-        this._sendSelect([x0, y0], [x1, y1], selOpts);
+        const mode = sel.range.mode === "x" || sel.range.mode === "y" ? sel.range.mode : "box";
+        this._sendSelect([x0, y0], [x1, y1], { ...selOpts, mode });
       } else if (sel.polygon) {
         this._sendSelectPolygon(sel.polygon.map((point) => [...point]), selOpts);
       }
@@ -227,6 +236,7 @@ Object.assign(ChartView.prototype, {
   // history, reported in state only as the opaque marker.
   _applyRowsSelection(msg, buffers) {
     this._clearLassoOverlay();
+    this._clearBoxOverlay();
     // A rows document replaces the whole selection. The message carries
     // buffers only for the traces it names, so deactivate every existing
     // mask first — otherwise a prior selection keeps highlighting traces
