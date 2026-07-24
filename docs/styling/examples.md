@@ -6,9 +6,10 @@ description: Copy polished chart patterns and explore live palette variations bu
 # Examples
 
 Explore polished chart treatments built for real product interfaces. Each
-responsive preview includes the complete Python needed to recreate it: switch
-to **Code** for the chart itself and **Data** for the hardcoded series, compare
-the patterns, or recolor the live playground.
+responsive preview includes the complete Python needed to recreate it. Switch
+to **Code** for the implementation; examples with more than 10 lines of
+hardcoded inputs add a separate **Data** tab. Compare the patterns, or recolor
+the live playground.
 
 Each preview displays a compact legend above the plot. The copied chart uses
 `xy.legend(show=False)` so it does not render a second legend; replace it with

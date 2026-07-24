@@ -107,10 +107,12 @@ repository root.
   private, or non-callable entries fail docs compilation. Overview and general
   guide pages should omit this key when a focused component or reference page
   already owns the API.
-- Use `python demo exec` fences for code with a live preview, matching the
-  official Reflex docs. Reserve `python demo-only exec` for intentionally
-  hidden duplicate code. Demos must compile into real `reflex_xy.chart`
-  components and static `.xyf` payloads.
+- Use `python demo exec` fences for code with a live preview. All public demos
+  render in shared Preview/Code tabs. Add `# --- chart ---` after a hardcoded
+  data section only when it exceeds 10 nonblank lines so the renderer adds a
+  separate Data tab. Reserve `python demo-only exec` for intentionally hidden
+  duplicate code. Demos must compile into real `reflex_xy.chart` components and
+  static `.xyf` payloads.
 - Preserve `/docs/xy` in internal links, canonical URLs, generated Markdown
   aliases, and sitemap entries.
 - Reuse `reflex-site-shared` for the docs shell, Markdown renderer, styles,
