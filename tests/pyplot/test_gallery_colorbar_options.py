@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from io import BytesIO
 
 import numpy as np
@@ -65,6 +66,23 @@ def test_colorbar_domain_excludes_masked_image_values() -> None:
     fig.colorbar(image, ax=ax)
 
     assert ax._colorbar["domain"] == [-2.0, -1.0]
+
+
+def test_short_gallery_colorbar_renders_only_three_major_tick_labels() -> None:
+    """The shrunken negative panel stays readable like the gallery reference."""
+    size = 37
+    x, y = np.mgrid[:size, :size]
+    values = np.cos(x * 0.2) + np.sin(y * 0.3)
+    negative = np.ma.masked_greater(values, 0.0)
+    fig, ax = plt.subplots(figsize=(13 / 3, 3))
+    image = ax.imshow(negative, cmap="Blues", interpolation="none")
+    fig.colorbar(image, ax=ax, location="right", anchor=(0.0, 0.3), shrink=0.7)
+
+    svg = BytesIO()
+    fig.savefig(svg, format="svg")
+    negative_labels = re.findall(rb"<text[^>]*>(-[^<]+)</text>", svg.getvalue())
+
+    assert negative_labels == [b"-1.5", b"-1", b"-0.5"]
 
 
 @pytest.mark.parametrize(
