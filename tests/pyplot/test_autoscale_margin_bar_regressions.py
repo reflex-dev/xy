@@ -63,6 +63,20 @@ def test_singleton_margin_matches_public_and_rendered_limits() -> None:
     assert _axis_domain(ax, "y") == pytest.approx(ax.get_ylim())
 
 
+def test_twin_y_margin_matches_public_and_rendered_limits() -> None:
+    _fig, ax = plt.subplots()
+    ax.plot([0.0, 1.0], [1.0, 2.0])
+    twin = ax.twinx()
+    twin.plot([0.0, 1.0], [10.0, 20.0])
+    twin.margins(y=0.1)
+
+    rendered = ax._build_chart(640, 480).figure()._range("y2")
+
+    assert ax.get_ylim() == pytest.approx((0.95, 2.05))
+    assert twin.get_ylim() == pytest.approx((9.0, 21.0))
+    assert rendered == pytest.approx(twin.get_ylim())
+
+
 def test_axes_snapshot_rc_margins_at_creation() -> None:
     with plt.rc_context({"axes.xmargin": 0.1, "axes.ymargin": 0.2}):
         _fig, ax = plt.subplots()

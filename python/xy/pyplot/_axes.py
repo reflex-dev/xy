@@ -2641,7 +2641,11 @@ class Axes(PlotTypeMixin):
 
     def _iter_entry_arrays(self, axis: str) -> Iterator[tuple[np.ndarray, bool]]:
         """Yield each (array, needs_finite_filter) an entry contributes to *axis*."""
-        for entry in self._entries:
+        host = self._y2_of or self
+        y_axis = "y2" if self._y2_of is not None else "y"
+        for entry in host._entries:
+            if axis == "y" and entry.get("y_axis", "y") != y_axis:
+                continue
             if entry.get("kind") == "bar":
                 kwargs = entry.get("kwargs", {})
                 orientation = kwargs.get("orientation", "vertical")
@@ -2731,7 +2735,11 @@ class Axes(PlotTypeMixin):
     def _entry_sticky_edges(self, axis: str) -> np.ndarray:
         """Matplotlib-style sticky bar baselines on the value axis."""
         edges: list[np.ndarray] = []
-        for entry in self._entries:
+        host = self._y2_of or self
+        y_axis = "y2" if self._y2_of is not None else "y"
+        for entry in host._entries:
+            if axis == "y" and entry.get("y_axis", "y") != y_axis:
+                continue
             if entry.get("kind") == "bar":
                 kwargs = entry.get("kwargs", {})
                 orientation = kwargs.get("orientation", "vertical")
@@ -4729,6 +4737,11 @@ class Axes(PlotTypeMixin):
             children.append(secondary._component(index))
         if self._twin is not None:
             y2_props = {k: v for k, v in self._axis["y2"].items() if v is not None}
+            if "y" not in self._twin._explicit_domains:
+                if self._twin._axis_is_dataless("y"):
+                    y2_props["domain"] = (0.0, 1.0)
+                else:
+                    y2_props["margin"] = self._twin._ymargin
             self._apply_tickers("y2", y2_props, auto_tick_counts["y"])
             children.append(xy.y_axis(id="y2", side="right", **y2_props))
         if self._legend:
