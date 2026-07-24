@@ -391,7 +391,7 @@ def test_verify_wheel_rejects_unexpected_native_artifact(tmp_path: Path) -> None
     "extra_name",
     [
         "spec/api/api-examples.md",
-        "tests/test_docs_examples.py",
+        "tests/test_view_state.py",
         "benchmarks/bench_vs.py",
         "examples/reflex/xy_reflex_demo/xy_reflex_demo.py",
     ],
