@@ -238,6 +238,7 @@ class Legend(Component):
     ncols: int = 1
     title: Optional[str] = None
     highlight: bool = True
+    toggle: bool = True
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
     render: Any = None
@@ -2374,6 +2375,7 @@ def legend(
     ncols: int = 1,
     title: Optional[str] = None,
     highlight: bool = True,
+    toggle: bool = True,
     render: Any = None,
     class_name: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
@@ -2388,6 +2390,8 @@ def legend(
         title: Optional legend title.
         highlight: Whether hovering a legend entry emphasizes its series by
             dimming the others (live client only; exports are static).
+        toggle: Whether clicking a legend entry hides/shows its series or
+            category (live client only; exports are static).
         render: Opaque renderer supplied by an adapter.
         class_name: DOM class name applied to the legend.
         style: Legend style overrides.
@@ -2399,6 +2403,7 @@ def legend(
         ncols=_optional_positive_int(ncols, "legend ncols") or 1,
         title=_optional_string(title, "legend title"),
         highlight=_strict_bool(highlight, "legend highlight"),
+        toggle=_strict_bool(toggle, "legend toggle"),
         class_name=_optional_string(class_name, "legend class_name"),
         style=_style_dict(style, "legend style"),
         render=render,
@@ -3197,6 +3202,9 @@ class Chart(Component):
                 # Highlight-on-hover defaults on; only the opt-out crosses the
                 # wire so existing specs stay byte-identical.
                 fig.legend_options["highlight"] = False
+            if not _strict_bool(node.toggle, "legend toggle"):
+                # Click-to-toggle likewise defaults on, opt-out only.
+                fig.legend_options["toggle"] = False
             if node.style:
                 # Carry the frame/frameon styling into the static-export spec so
                 # the raster/SVG legend can honor frameon=False (transparent bg).

@@ -73,8 +73,8 @@ def _screen_shape(w: int, h: int) -> tuple[int, int]:
     return lod.screen_shape(w, h)
 
 
-def _hidden_category_array(t: "Trace") -> Optional[np.ndarray]:
-    """The trace's hidden categorical codes as a sorted array, or None.
+def _hidden_predicate(t: "Trace") -> Optional[tuple[np.ndarray, np.ndarray]]:
+    """(sorted hidden codes, live code column) for a masked trace, else None.
 
     None also covers a stale mask left behind after an encoding change —
     a hidden-category set is only meaningful against live categorical codes.
@@ -83,7 +83,7 @@ def _hidden_category_array(t: "Trace") -> Optional[np.ndarray]:
         return None
     if t.color_ch is None or t.color_ch.codes is None:
         return None
-    return np.fromiter(sorted(t.hidden_categories), dtype=np.int64)
+    return np.fromiter(sorted(t.hidden_categories), dtype=np.int64), t.color_ch.codes
 
 
 def _drop_hidden_rows(t: "Trace", indices: np.ndarray) -> np.ndarray:
@@ -92,11 +92,11 @@ def _drop_hidden_rows(t: "Trace", indices: np.ndarray) -> np.ndarray:
     Row-level pre-selection is the filter contract: no bin/sample kernel
     takes a mask, so every aggregation path narrows its rows first.
     """
-    hidden = _hidden_category_array(t)
-    if hidden is None or len(indices) == 0:
+    pred = _hidden_predicate(t)
+    if pred is None or len(indices) == 0:
         return indices
-    codes = t.color_ch.codes[indices]
-    return indices[~np.isin(codes, hidden)]
+    hidden, codes = pred
+    return indices[~np.isin(codes[indices], hidden)]
 
 
 def _legend_visible_rows(t: "Trace") -> Optional[np.ndarray]:
@@ -106,14 +106,15 @@ def _legend_visible_rows(t: "Trace") -> Optional[np.ndarray]:
     pan/zoom step and the O(N) code scan must not repeat while the predicate
     is unchanged. A streaming append changes the length and recomputes.
     """
-    hidden = _hidden_category_array(t)
-    if hidden is None:
+    pred = _hidden_predicate(t)
+    if pred is None:
         return None
-    key = (frozenset(t.hidden_categories), len(t.color_ch.codes))
+    hidden, codes = pred
+    key = (frozenset(t.hidden_categories), len(codes))
     cached = t._legend_vis_cache
     if cached is not None and cached[0] == key:
         return cached[1]
-    rows = np.flatnonzero(~np.isin(t.color_ch.codes, hidden))
+    rows = np.flatnonzero(~np.isin(codes, hidden))
     t._legend_vis_cache = (key, rows)
     return rows
 

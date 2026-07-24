@@ -742,6 +742,24 @@ export function lodDropPointCache(view, g) {
   g.drillCache = null;
 }
 
+// Drop every retired density window (textures + paired overlays) while
+// keeping the LIVE grid: a filter-state change (legend category toggle,
+// interaction spec §10) makes cached aggregates wrong, but the on-screen
+// grid stays as the stale-while-revalidate frame until the masked reply
+// replaces it (§17). The home sample overlay survives — it is the
+// standalone re-bin worker's CPU source and is filtered separately.
+export function lodDropDensityCache(view, g) {
+  for (const old of g.densityCache || []) {
+    if (!old || old === g.density) continue;
+    if (old.tex && old.tex !== (g.density && g.density.tex)) view.gl.deleteTexture(old.tex);
+    if (old.overlay && old.overlay !== g.sampleOverlay) {
+      view._destroySampleOverlay(old.overlay);
+      old.overlay = null;
+    }
+  }
+  g.densityCache = [];
+}
+
 // A retired cached window that covers the view swaps back in as the live
 // drill — the pan-back / zoom-ping-pong "render anything inside there" path
 // (T13). Alpha-continuous like a revive: the swap hands marks over at the
