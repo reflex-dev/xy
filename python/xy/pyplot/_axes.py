@@ -14,7 +14,7 @@ import copy
 
 # Runtime imports, not TYPE_CHECKING: `typing.get_type_hints()` on the public
 # Axes methods must resolve these annotation names (all stdlib or xy-local).
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import suppress
 from datetime import datetime, timedelta
 from itertools import pairwise
@@ -2277,22 +2277,33 @@ class Axes(PlotTypeMixin):
         transform = kwargs.pop("transform", None)
         fontweight = kwargs.pop("fontweight", kwargs.pop("weight", None))
         fontfamily = kwargs.pop("fontfamily", kwargs.pop("family", None))
+        fontstyle = kwargs.pop("fontstyle", kwargs.pop("style", None))
         rotation = kwargs.pop("rotation", None)
+        bbox = kwargs.pop("bbox", None)
         check_unsupported(kwargs, "text()")
         akw = {"color": resolve_color(color)} if color is not None else {}
+        if bbox is not None:
+            if not isinstance(bbox, Mapping):
+                raise TypeError("text() bbox must be a mapping or None")
+            akw["bbox"] = dict(bbox)
         if ha is not None:
             akw["anchor"] = {"left": "start", "center": "middle", "right": "end"}.get(
                 str(ha), "start"
             )
         style: dict[str, Any] = {}
         if fontsize is not None:
-            style["font_size"] = float(fontsize)
+            style["font_size"] = _font_size_points(fontsize, rcParams["font.size"])
         if va is not None:
             style["vertical_align"] = str(va)
         if fontweight is not None:
             style["font_weight"] = str(fontweight)
         if fontfamily is not None:
             style["font_family"] = str(fontfamily)
+        if fontstyle is not None:
+            fontstyle = str(fontstyle)
+            if fontstyle not in {"normal", "italic", "oblique"}:
+                raise ValueError("text() style must be 'normal', 'italic', or 'oblique'")
+            style["font_style"] = fontstyle
         if rotation is not None:
             style["rotation"] = 90.0 if rotation == "vertical" else float(rotation)
         if transform is self.transAxes or transform == "axes fraction":
@@ -2301,7 +2312,15 @@ class Axes(PlotTypeMixin):
             style["coordinate_space"] = "figure_fraction"
         if style:
             akw["style"] = style
-        return Text(self, self._add("@text", {"args": (x, y, _plain_text(s)), "kwargs": akw}))
+        plain_text, math_italic_ranges = _plain_text_with_math_italic_ranges(s)
+        if math_italic_ranges:
+            akw["style"] = {
+                **(akw.get("style") or {}),
+                "math_italic_ranges": ",".join(
+                    f"{start}:{end}" for start, end in math_italic_ranges
+                ),
+            }
+        return Text(self, self._add("@text", {"args": (x, y, plain_text), "kwargs": akw}))
 
     def annotate(self, text: str, xy: tuple, xytext: Optional[tuple] = None, **kwargs: Any) -> Text:
         """Annotate the point ``xy`` with text, optionally offset at ``xytext``.
@@ -4358,6 +4377,7 @@ class Axes(PlotTypeMixin):
                         **_bbox_label_style(
                             kw["bbox"],
                             font_size=float((text_kw.get("style") or {}).get("font_size", 11.0)),
+                            point_scale=self._point_scale(),
                         ),
                         **(text_kw.get("style") or {}),
                     }
@@ -4946,7 +4966,9 @@ def _arrow_visuals(
     )
     style: dict[str, Any] = {}
     if fancy:
-        style["head_size"] = float(arrowprops.get("headwidth", 12.0))
+        # Matplotlib's legacy YAArrow default has a substantially broader head
+        # than the thin ``->`` FancyArrowPatch style.
+        style["head_size"] = float(arrowprops.get("headwidth", 20.0))
     else:
         name = str(arrowstyle).split(",")[0].strip()
         tail, head = _ARROWSTYLE_ENDS.get(name, ("none", "triangle"))
@@ -4977,11 +4999,14 @@ def _arrow_visuals(
     return color, width, style
 
 
-def _bbox_label_style(bbox: dict[str, Any], font_size: float = 11.0) -> dict[str, Any]:
+def _bbox_label_style(
+    bbox: dict[str, Any],
+    font_size: float = 11.0,
+    point_scale: float = 1.0,
+) -> dict[str, Any]:
     """matplotlib text ``bbox`` patch → annotation-label box styles.
 
-    A CSS approximation drawn by the render client's DOM label; the static
-    exporters keep the plain label (recorded in spec/matplotlib/compat.md).
+    A CSS approximation shared by the browser and static exporters.
     """
     style: dict[str, Any] = {}
     face = bbox.get("fc", bbox.get("facecolor", "C0"))
@@ -5011,9 +5036,13 @@ def _bbox_label_style(bbox: dict[str, Any], font_size: float = 11.0) -> dict[str
     name = boxstyle.split(",")[0].strip()
     if "round" in name:
         style["border_radius"] = 8.0 if name == "round4" else 5.0
-    # matplotlib pads the patch pad×fontsize around the text.
-    pad = max(0.0, _parse_style_options(boxstyle).get("pad", 0.3)) * float(font_size)
-    style["padding"] = f"{pad:.3g}px {pad * 1.3:.3g}px"
+    # With an explicit boxstyle, Matplotlib's pad is a fraction of the font
+    # size.  Without one, top-level ``pad`` is in points (default 4 pt).
+    if "boxstyle" in bbox:
+        pad = max(0.0, _parse_style_options(boxstyle).get("pad", 0.3)) * float(font_size)
+    else:
+        pad = max(0.0, float(bbox.get("pad", 4.0))) * float(point_scale)
+    style["padding"] = f"{pad:.3g}px"
     return style
 
 
@@ -5224,6 +5253,43 @@ def _plain_text(value: Any) -> str:
     for source, target in replacements.items():
         text = text.replace(source, target)
     return text.replace("_{", "").replace("^{", "^").replace("}", "")
+
+
+def _plain_text_with_math_italic_ranges(value: Any) -> tuple[str, list[tuple[int, int]]]:
+    """Flatten simple mathtext while retaining its default italic spans."""
+    source = str(value)
+    parts: list[str] = []
+    ranges: list[tuple[int, int]] = []
+    cursor = 0
+    output_length = 0
+    while cursor < len(source):
+        start = source.find("$", cursor)
+        if start < 0:
+            tail = _plain_text(source[cursor:])
+            parts.append(tail)
+            break
+        prefix = _plain_text(source[cursor:start])
+        parts.append(prefix)
+        output_length += len(prefix)
+        end = source.find("$", start + 1)
+        if end < 0:
+            tail = _plain_text(source[start:])
+            parts.append(tail)
+            break
+        math = _plain_text(source[start : end + 1])
+        parts.append(math)
+        range_start: Optional[int] = None
+        for index, character in enumerate(math):
+            if character.isalpha() and range_start is None:
+                range_start = output_length + index
+            elif not character.isalpha() and range_start is not None:
+                ranges.append((range_start, output_length + index))
+                range_start = None
+        if range_start is not None:
+            ranges.append((range_start, output_length + len(math)))
+        output_length += len(math)
+        cursor = end + 1
+    return "".join(parts), ranges
 
 
 def _masked_float(value: Any) -> np.ndarray:
