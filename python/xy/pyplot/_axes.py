@@ -542,8 +542,12 @@ class Axes(PlotTypeMixin):
         self._subplot_spec: Optional[Any] = None
         self._absolute_plot_ratio: Optional[float] = None
         self._padding: Optional[list[float]] = None
-        self._xmargin = 0.0
-        self._ymargin = 0.0
+        # Matplotlib snapshots the rc autoscale margins when an Axes is
+        # created.  Keep those values on the axes so ordinary get_*lim() and
+        # rendering use the advertised 5% defaults without requiring an
+        # explicit margins() call.
+        self._xmargin = float(rcParams["axes.xmargin"])
+        self._ymargin = float(rcParams["axes.ymargin"])
         self._margin_overrides: set[str] = set()
         self._explicit_domains: set[str] = set()
         self._secondary_axes: list[SecondaryAxis] = []
@@ -2638,6 +2642,32 @@ class Axes(PlotTypeMixin):
     def _iter_entry_arrays(self, axis: str) -> Iterator[tuple[np.ndarray, bool]]:
         """Yield each (array, needs_finite_filter) an entry contributes to *axis*."""
         for entry in self._entries:
+            if entry.get("kind") == "bar":
+                kwargs = entry.get("kwargs", {})
+                orientation = kwargs.get("orientation", "vertical")
+                centers = np.asarray(entry.get("x", ())).reshape(-1)
+                try:
+                    centers = np.asarray(unit_converted_values(centers), dtype=np.float64).reshape(
+                        -1
+                    )
+                except (TypeError, ValueError):
+                    # The core maps string categories to their ordinal
+                    # positions.  Autoscaling must use the same positions
+                    # instead of falling back to the dataless (0, 1) view.
+                    centers = np.arange(centers.size, dtype=np.float64)
+                values = np.asarray(entry.get("y", ()), dtype=np.float64).reshape(-1)
+                bases = np.asarray(kwargs.get("base", 0.0), dtype=np.float64)
+                bases = np.broadcast_to(bases, values.shape).reshape(-1)
+                thickness = float(kwargs.get("width", 0.8))
+                if (orientation == "vertical" and axis == "x") or (
+                    orientation == "horizontal" and axis == "y"
+                ):
+                    yield centers - thickness * 0.5, True
+                    yield centers + thickness * 0.5, True
+                else:
+                    yield bases, True
+                    yield bases + values, True
+                continue
             key = "x" if axis == "x" else "y"
             if key in entry:
                 try:
@@ -2698,14 +2728,70 @@ class Axes(PlotTypeMixin):
         lo, hi = float(np.min(finite)), float(np.max(finite))
         return (lo, hi if hi > lo else lo + 1.0)
 
+    def _entry_sticky_edges(self, axis: str) -> np.ndarray:
+        """Matplotlib-style sticky bar baselines on the value axis."""
+        edges: list[np.ndarray] = []
+        for entry in self._entries:
+            if entry.get("kind") == "bar":
+                kwargs = entry.get("kwargs", {})
+                orientation = kwargs.get("orientation", "vertical")
+                value_axis = "y" if orientation == "vertical" else "x"
+                if axis != value_axis:
+                    continue
+                values = np.asarray(entry.get("y", ()), dtype=np.float64).reshape(-1)
+                bases = np.asarray(kwargs.get("base", 0.0), dtype=np.float64)
+                edges.append(np.broadcast_to(bases, values.shape).reshape(-1))
+            elif entry.get("kind") == "@mark" and entry.get("factory") == "contour":
+                z = np.asarray(entry["args"][0])
+                coordinates = entry.get("kwargs", {}).get(axis)
+                if coordinates is None and z.ndim >= 2:
+                    coordinates = np.arange(z.shape[1 if axis == "x" else 0], dtype=float)
+                if coordinates is not None:
+                    values = np.asarray(coordinates, dtype=np.float64).reshape(-1)
+                    finite = values[np.isfinite(values)]
+                    if finite.size:
+                        edges.append(np.asarray([finite.min(), finite.max()]))
+        if not edges:
+            return np.array([], dtype=np.float64)
+        combined = np.concatenate(edges)
+        return combined[np.isfinite(combined)]
+
     def _auto_domain(self, axis: str) -> tuple[float, float]:
-        lo, hi = self._entry_extent(axis)
+        host = self._y2_of or self
+        key = "y2" if axis == "y" and self._y2_of is not None else axis
+        spec = host._scale_specs[key]
+        if self._axis_is_dataless(axis):
+            return (1.0, 10.0) if spec["name"] == "log" else (0.0, 1.0)
+        if spec["name"] == "log":
+            # The core consumes log domains in the original positive data
+            # space, while Matplotlib applies margins after transforming to
+            # log space.  Do that transform locally rather than feeding a
+            # linearly padded (and possibly negative) domain to the core.
+            values = self._entry_values(axis)
+            positive = values[values > 0.0]
+            if positive.size == 0:
+                return (1.0, 10.0)
+            lo, hi = float(positive.min()), float(positive.max())
+            transformed_lo, transformed_hi = np.log10((lo, hi))
+        else:
+            lo, hi = self._entry_extent(axis)
+            transformed_lo, transformed_hi = lo, hi
         margin = self._xmargin if axis == "x" else self._ymargin
         if margin == 0.0:
             return lo, hi
-        span = hi - lo
-        pad = span * margin if span > 0 else abs(lo) * margin or margin
-        return lo - pad, hi + pad
+        span = transformed_hi - transformed_lo
+        pad = span * margin if span > 0 else abs(transformed_lo) * margin or margin
+        lower, upper = transformed_lo - pad, transformed_hi + pad
+        if spec["name"] == "log":
+            lower, upper = 10.0**lower, 10.0**upper
+        sticky = self._entry_sticky_edges(axis)
+        tolerance = np.finfo(np.float64).eps * max(1.0, abs(lo), abs(hi)) * 8
+        if sticky.size:
+            if np.any(np.isclose(sticky, lo, rtol=0.0, atol=tolerance)):
+                lower = lo
+            if np.any(np.isclose(sticky, hi, rtol=0.0, atol=tolerance)):
+                upper = hi
+        return lower, upper
 
     def axis(
         self, arg: str | bool | tuple[float, float, float, float] | None = None, **kwargs: Any
@@ -3157,15 +3243,7 @@ class Axes(PlotTypeMixin):
         # axes.xmargin/axes.ymargin (5% by default).  "Tight" suppresses tick
         # locator expansion; it does not mean raw data extrema.
         for axis in ("x", "y"):
-            margin = (
-                (self._xmargin if axis == "x" else self._ymargin)
-                if axis in self._margin_overrides
-                else float(rcParams[f"axes.{axis}margin"])
-            )
-            lo, hi = self._entry_extent(axis)
-            span = hi - lo
-            pad = span * margin if span > 0 else abs(lo) * margin or margin
-            self._axis_props(axis)["domain"] = (lo - pad, hi + pad)
+            self._axis_props(axis)["domain"] = self._auto_domain(axis)
         self._explicit_domains.update({"x", "y"})
         self._invalidate()
 
@@ -3177,14 +3255,7 @@ class Axes(PlotTypeMixin):
         for axis in ("x", "y"):
             if "domain" in self._axis_props(axis):
                 continue
-            margin = (
-                (self._xmargin if axis == "x" else self._ymargin)
-                if axis in self._margin_overrides
-                else float(rcParams[f"axes.{axis}margin"])
-            )
-            lo, hi = self._entry_extent(axis)
-            pad = (hi - lo) * margin
-            self._axis_props(axis)["domain"] = (lo - pad, hi + pad)
+            self._axis_props(axis)["domain"] = self._auto_domain(axis)
             changed = True
         if changed:
             self._invalidate()
