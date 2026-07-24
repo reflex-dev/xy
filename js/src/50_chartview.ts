@@ -3,7 +3,7 @@ import { buildLutData, colormapStops } from "./10_colormaps";
 import { cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
 import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
-import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodDropPointCache, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
+import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodDropDensityCache, lodDropPointCache, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
 
 // ---------------------------------------------------------------------------
@@ -27,6 +27,8 @@ let XY_A11Y_ID = 0;
 // the marks canvas, and by non-hovered rows in the legend box itself.
 const LEGEND_DIM_OPACITY = 0.2;
 const LEGEND_DIM_ROW = 0.4;
+// Legend click-toggle (interaction spec §10): opacity of a toggled-off row.
+const LEGEND_OFF_ROW = 0.35;
 // SVG gradient ids resolve document-wide; a module counter keeps every chart
 // instance's legend swatch ramps distinct.
 let legendGradientSeq = 0;
@@ -1689,6 +1691,7 @@ export class ChartView {
       : (this.spec.traces || []);
     for (const entry of traces) {
       const t = entry.trace || entry;
+      if (entry._legendHidden) continue; // hidden series badge nothing
       if (t.tier !== "density" || !t.density) continue;
       // Badge what is actually drawn: the overlay _drawDensitySample chose
       // for the current view (T9 pairing). Before the first frame runs, the
@@ -1740,6 +1743,10 @@ export class ChartView {
     // never fires; release any active dim state before dropping the old boxes.
     this._clearLegendHover();
     this._legends = [];
+    // Toggle state survives chrome/GPU rebuilds: it lives on the view keyed
+    // by spec-trace index, and freshly built rows re-adopt it below.
+    this._legendOffTraces = this._legendOffTraces || new Set();
+    this._legendOffCats = this._legendOffCats || new Map();
     const items = [];
     if (s.show_legend !== false) {
       // Two identically-encoded unnamed continuous traces must not stack two
@@ -1780,6 +1787,12 @@ export class ChartView {
           items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {}, traces: [ti] });
         }
       });
+      for (const it of items) {
+        if (!it.traces) continue;
+        it.off = it.cat != null
+          ? !!this._legendOffCats.get(it.traces[0])?.has(it.cat)
+          : it.traces.every((ti) => this._legendOffTraces.has(ti));
+      }
       if (items.length) this._legendBox(root, items, s.legend || {});
     }
     // Manually added Legend artists ship explicit items + their own loc, so a
@@ -1900,7 +1913,14 @@ export class ChartView {
         row.addEventListener("pointerenter", () => this._setLegendHover(it, lg, row));
         row.addEventListener("pointerleave", () => this._clearLegendHover());
       }
-      rows.push(row);
+      // Click-to-toggle (interaction spec §10): hide/show what the row
+      // stands for. Same trace-linkage rule keeps extra_legends rows inert.
+      if (options.toggle !== false && it.traces && it.traces.length) {
+        row.style.cursor = "pointer";
+        row.addEventListener("click", () => this._legendToggle(it, row));
+      }
+      this._syncLegendRow(row, it);
+      rows.push({ row, it });
       lg.appendChild(row);
     }
     lg._xyItemRows = rows;
@@ -1939,6 +1959,7 @@ export class ChartView {
   // other series, but a categorical row cannot dim sibling categories inside
   // an aggregated density plane (§28 — recorded in the dossier, not silent).
   _setLegendHover(item, lg, hoveredRow) {
+    if (item.off) return; // a hidden series has nothing to emphasize
     this._legendHover = item;
     const keep = new Set(item.traces);
     for (let i = 0; i < (this.gpuTraces || []).length; i++) {
@@ -1955,8 +1976,10 @@ export class ChartView {
         g.lut = this._paletteLutDimmed(t.color.palette, item.cat);
       }
     }
-    for (const row of lg._xyItemRows || []) {
-      row.style.opacity = row === hoveredRow ? "" : String(LEGEND_DIM_ROW);
+    for (const pair of lg._xyItemRows || []) {
+      pair.row.style.opacity = pair.it.off
+        ? String(LEGEND_OFF_ROW)
+        : pair.row === hoveredRow ? "" : String(LEGEND_DIM_ROW);
     }
     // Color-pass-only change: geometry and view are untouched, so the pick
     // snapshot stays valid (§17).
@@ -1974,9 +1997,173 @@ export class ChartView {
       }
     }
     for (const lg of this._legends || []) {
-      for (const row of lg._xyItemRows || []) row.style.opacity = "";
+      for (const pair of lg._xyItemRows || []) this._syncLegendRow(pair.row, pair.it);
     }
     this.draw(true);
+  }
+
+  // Toggled-off rows stay visible but read as inactive; the state is also
+  // exposed as a data attribute so author styles can restyle it per slot.
+  _syncLegendRow(row, it) {
+    const off = !!it.off;
+    row.style.opacity = off ? String(LEGEND_OFF_ROW) : "";
+    row.style.filter = off ? "grayscale(1)" : "";
+    if (off) row.dataset.xyLegendOff = "";
+    else delete row.dataset.xyLegendOff;
+  }
+
+  // Legend click-to-toggle (interaction spec §10). Whole-trace rows hide
+  // locally — buffers and density grids are per-trace, so there is nothing
+  // to re-aggregate. Category rows are a §34 filter predicate: direct-tier
+  // traces re-filter from the CPU columns already on the client (0 wire
+  // bytes, §37 filter-toggle row), density tiers drop their now-stale local
+  // aggregates and re-request a kernel re-bin computed under the mask.
+  // Either way the kernel records the state so selections stay truthful.
+  _legendToggle(it, row) {
+    const off = !it.off;
+    it.off = off;
+    this._clearLegendHover();
+    this._syncLegendRow(row, it);
+    this._hideTooltip?.();
+    if (it.cat != null) {
+      const ti = it.traces[0];
+      let set = this._legendOffCats.get(ti);
+      if (!set) this._legendOffCats.set(ti, (set = new Set()));
+      if (off) set.add(it.cat);
+      else set.delete(it.cat);
+      if (this.comm) {
+        this.comm.send({
+          type: "legend_toggle", trace: this.spec.traces[ti].id, category: it.cat, hidden: off,
+        });
+      }
+      this._applyCategoryVisibility(ti);
+    } else {
+      for (const ti of it.traces) {
+        if (off) this._legendOffTraces.add(ti);
+        else this._legendOffTraces.delete(ti);
+        const g = this.gpuTraces && this.gpuTraces[ti];
+        if (g) g._legendHidden = off;
+        if (this.comm) {
+          this.comm.send({ type: "legend_toggle", trace: this.spec.traces[ti].id, hidden: off });
+        }
+      }
+      this._refreshReductionBadges();
+    }
+    this._pickDirty = true;
+    this._updatePickable();
+    this._dispatchChartEvent("legendtoggle", {
+      name: it.name,
+      hidden: off,
+      traces: it.traces.map((ti) => this.spec.traces[ti].id),
+      ...(it.cat != null ? { category: it.cat } : {}),
+    });
+    this.draw();
+  }
+
+  _applyCategoryVisibility(ti) {
+    const g = this.gpuTraces && this.gpuTraces[ti];
+    if (!g) return;
+    const hidden = this._legendOffCats.get(ti);
+    if (g.tier === "density") {
+      // Local aggregates were computed unfiltered — stale under the new
+      // predicate (§34), and a cached window that still "serves" the view
+      // would elide the kernel request that applies the mask. Drop them and
+      // re-request. The retained sample overlays are filtered locally so
+      // the pre-reply frame (and the kernel-less standalone page) stops
+      // drawing the hidden category immediately.
+      lodDropPointCache(this, g);
+      this._dropDrill(g);
+      lodDropDensityCache(this, g);
+      for (const s of [g.sampleOverlay, g.density && g.density.overlay]) {
+        if (s) this._filterScatterRows(s, hidden);
+      }
+      this._scheduleViewRequest(this.view, { delay: 0 });
+    } else {
+      this._filterScatterRows(g, hidden);
+    }
+  }
+
+  // Filter a scatter-shaped gpu entry's vertex buffers down to the rows whose
+  // categorical code is not hidden; an empty/absent set restores the full
+  // buffers. Gathers from the CPU views retained at build; per-point
+  // style/stroke buffers have no retained CPU copy, so they are read back
+  // once (WebGL2 getBufferSubData) and cached for later re-toggles.
+  // `_visMap` translates drawn vertex → shipped row (picks/readouts);
+  // `_visInv` maps shipped selection indices onto the filtered buffers.
+  _filterScatterRows(g, hidden) {
+    const gl = this.gl;
+    const codes = g._cpu && g._cpu.color;
+    if (!gl || !codes || g.colorMode !== 2) return;
+    if (g._fullN === undefined) g._fullN = g.n;
+    const full = g._fullN;
+    const readback = (buf, Type, comps) => {
+      const out = new Type(full * comps);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.getBufferSubData(gl.ARRAY_BUFFER, 0, out);
+      return out;
+    };
+    if (g.styleBuf && !g._cpuStyle) g._cpuStyle = readback(g.styleBuf, Float32Array, 4);
+    if (g.strokeBuf && !g._cpuStroke) g._cpuStroke = readback(g.strokeBuf, Uint8Array, 4);
+    let vis = null;
+    if (hidden && hidden.size) {
+      const idx = new Uint32Array(full);
+      let m = 0;
+      for (let i = 0; i < full; i++) if (!hidden.has(codes[i])) idx[m++] = i;
+      vis = idx.subarray(0, m);
+    }
+    const gather = (src, comps) => {
+      if (!vis) return src.length === full * comps ? src : src.subarray(0, full * comps);
+      const out = new (src.constructor)(vis.length * comps);
+      for (let j = 0; j < vis.length; j++) {
+        const r = vis[j];
+        for (let c = 0; c < comps; c++) out[j * comps + c] = src[r * comps + c];
+      }
+      return out;
+    };
+    const reupload = (buf, data) => {
+      if (!buf || !data) return;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    };
+    reupload(g.xBuf, gather(g._cpu.x, 1));
+    reupload(g.yBuf, gather(g._cpu.y, 1));
+    reupload(g.cBuf, gather(codes, 1));
+    if (g.sBuf && g._cpu.size) reupload(g.sBuf, gather(g._cpu.size, 1));
+    if (g.styleBuf && g._cpuStyle) reupload(g.styleBuf, gather(g._cpuStyle, 4));
+    if (g.strokeBuf && g._cpuStroke) reupload(g.strokeBuf, gather(g._cpuStroke, 4));
+    g.n = vis ? vis.length : full;
+    if (vis) {
+      g._visMap = vis;
+      const inv = new Int32Array(full).fill(-1);
+      for (let j = 0; j < vis.length; j++) inv[vis[j]] = j;
+      g._visInv = inv;
+    } else {
+      delete g._visMap;
+      delete g._visInv;
+    }
+    // A per-vertex selection mask built for the other vertex count would
+    // highlight arbitrary points; the kernel's canonical Selection (already
+    // hidden-aware) re-syncs the visual on the next brush.
+    g.selActive = false;
+    this._pickDirty = true;
+  }
+
+  // Rebuilds (context restore, streaming append) recreate gpuTraces from the
+  // spec, dropping transient per-trace state; toggle state lives on the view
+  // and is re-applied here after every rebuild.
+  _reapplyLegendVisibility() {
+    if (!this._legendOffTraces && !this._legendOffCats) return;
+    for (let i = 0; i < (this.gpuTraces || []).length; i++) {
+      const g = this.gpuTraces[i];
+      if (this._legendOffTraces && this._legendOffTraces.has(i)) g._legendHidden = true;
+      const cats = this._legendOffCats && this._legendOffCats.get(i);
+      if (!cats || !cats.size) continue;
+      if (g.tier === "density") {
+        if (g.sampleOverlay) this._filterScatterRows(g.sampleOverlay, cats);
+      } else {
+        this._filterScatterRows(g, cats);
+      }
+    }
   }
 
   _positionLegend(lg, loc) {
@@ -2138,6 +2325,7 @@ export class ChartView {
     gl.bindVertexArray(null);
 
     this.gpuTraces = this.spec.traces.map((t) => this._buildTrace(buffer, t));
+    this._reapplyLegendVisibility();
     this._updatePickable();
   }
 
@@ -3275,6 +3463,7 @@ export class ChartView {
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     const drawTrace = (g) => {
+      if (g._legendHidden) return; // legend click-toggle (interaction spec §10)
       if (g.tier === "density") {
         // Tier frame (drill/fades/cache) lives in 45_lod.js — chart-agnostic.
         const [gx0, gx1] = this._axisRange(g.xAxis);
@@ -3524,13 +3713,15 @@ export class ChartView {
     const hit = this._hoverTarget;
     if (!hit || !hit.g) return;
     const g = hit.g;
-    if (g.trace.kind !== "scatter" || g.tier === "density") return;
-    if (!Number.isInteger(hit.index) || hit.index < 0 || hit.index >= g.n) return;
+    if (g.trace.kind !== "scatter" || g.tier === "density" || g._legendHidden) return;
+    // Filtered buffers are addressed by the drawn index, not the shipped one.
+    const index = hit.drawIndex ?? hit.index;
+    if (!Number.isInteger(index) || index < 0 || index >= g.n) return;
     const [x0, x1] = this._axisRange(g.xAxis);
     const [y0, y1] = this._axisRange(g.yAxis);
     this._drawHoverPoint(
       g,
-      hit.index,
+      index,
       this._map(g.xMeta, x0, x1, g.xAxis),
       this._map(g.yMeta, y0, y1, g.yAxis)
     );
@@ -4792,7 +4983,8 @@ export class ChartView {
     for (const g of this.gpuTraces) {
       // Density traces pick only while drilled to points (§5); the drill
       // sibling carries the buffers, the host g keeps the range → trace id.
-      const pg = g.tier === "density"
+      // Legend-hidden traces draw nothing, so they must pick nothing.
+      const pg = g._legendHidden ? null : g.tier === "density"
         ? (g.drill && !g._drillDying && this._viewInside(g.drill.win) ? g.drill : null)
         : (markOf(g.trace.kind).pointPick ? g : null);
       if (!pg || !pg.n || base + pg.n > 0x7fffffff) {
@@ -4880,7 +5072,13 @@ export class ChartView {
       (t) => t.pickBase > 0 && id >= t.pickBase && id < t.pickBase + t.pickCount
     );
     if (!g) return null;
-    return { trace: g.trace.id, index: id - g.pickBase, g };
+    const raw = id - g.pickBase;
+    // Category-filtered buffers draw a subset (interaction spec §10):
+    // `index` translates back to the shipped row so CPU readouts and kernel
+    // picks stay exact; `drawIndex` keeps addressing the filtered GPU
+    // buffers (hover marker).
+    const index = g._visMap ? g._visMap[raw] : raw;
+    return { trace: g.trace.id, index, drawIndex: raw, g };
   }
 
   _decodeValue(values, meta, index) {

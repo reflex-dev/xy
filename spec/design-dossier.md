@@ -1222,6 +1222,15 @@ which tier served it — no silent full rescans.
 `link(fig_a, fig_b, on="x")` — the kernel-side core owns filter state so callbacks
 receive Arrow slices, not JSON.
 
+**Shipped slice:** the legend click-toggle predicate (`Trace.hidden` /
+`Trace.hidden_categories`, wire `legend_toggle`). It follows this section's
+rules exactly: the unfiltered pyramid is bypassed while a category mask is
+active (a Tier-B visible-window re-bin serves instead, `binning` tagged
+`-masked`), rows are narrowed before every bin/sample/drill, selections
+exclude hidden rows, and each masked reply carries the `filter` state it was
+computed under (§37's `filter_hash`, in literal form). Contract:
+`spec/api/interaction.md` §10.
+
 ## 35. Milestone amendments (round 3)
 
 - **Phase 0** adds the **wheel matrix + anywidget skeleton** (F1) — distribution is a
@@ -1263,8 +1272,10 @@ transparent-capable so a page background shows through. This covers most of what
 the chart match my site" actually means — typography and chrome. The legend is also
 an interaction surface: hovering a row emphasizes its series by dimming the rest
 (default on, `xy.legend(highlight=False)` opts out; full contract in
-`spec/api/interaction.md` §9). Click-to-toggle stays future work — it is a filter,
-not an emphasis, and belongs to the §34 filtering model.
+`spec/api/interaction.md` §9). Clicking a row toggles the series/category —
+the first shipped §34 predicate: state syncs to the kernel (`legend_toggle`),
+direct tiers re-filter client-side (0 bytes, §37), density tiers re-bin
+kernel-side under the mask (contract in `spec/api/interaction.md` §10).
 
 **(b) Marks — themed via a CSS-custom-property bridge.** The render client reads
 `--chart-*` custom properties off its container and maps them to GPU state, so the

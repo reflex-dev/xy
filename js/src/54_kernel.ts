@@ -444,6 +444,9 @@ Object.assign(ChartView.prototype, {
       this._destroyTraceResources(this.gpuTraces[i], texSeen);
       this.gpuTraces[i] = this._buildTrace(payload, ts);
     }
+    // Rebuilt entries lost their transient legend-toggle fields; re-apply
+    // from the view-held state (interaction spec §10).
+    this._reapplyLegendVisibility();
     this._updatePickable();
     this._scheduleViewRequest(this.view, { delay: 0 });
     this.draw();
@@ -517,6 +520,16 @@ Object.assign(ChartView.prototype, {
         const g = this.gpuTraces.find((t) => t.trace.id === upd.id && t.tier === "density");
         if (!g) continue;
         clearPending(g);
+        // Filter-state guard (interaction spec §10 / §34): a reply computed
+        // under a different hidden-category set than the client's current
+        // one would render a stale predicate's aggregate. The toggle that
+        // changed the set already scheduled a fresh request.
+        const ti = this.gpuTraces.indexOf(g);
+        const want = Array.from(
+          (this._legendOffCats && this._legendOffCats.get(ti)) || []
+        ).sort((a: any, b: any) => a - b);
+        const got = (upd.filter && upd.filter.hidden_categories) || [];
+        if (want.join(",") !== got.join(",")) continue;
         if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
         lodApplyDensityUpdate(this, g, upd, buffers);
       }
@@ -630,7 +643,13 @@ Object.assign(ChartView.prototype, {
       ) continue;
       const idx = this._asU32(buffers[upd.buf]);
       const mask = new Float32Array(pg.n);
-      for (let i = 0; i < idx.length; i++) if (idx[i] < pg.n) mask[idx[i]] = 1;
+      // Category-filtered buffers (interaction spec §10) draw a subset: the
+      // kernel's shipped-space indices land on their filtered positions.
+      const inv = pg._visInv;
+      for (let i = 0; i < idx.length; i++) {
+        const j = inv ? (idx[i] < inv.length ? inv[idx[i]] : -1) : idx[i];
+        if (j >= 0 && j < pg.n) mask[j] = 1;
+      }
       this._applySelMask(pg, mask);
     }
   },

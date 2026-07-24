@@ -201,6 +201,16 @@ states which representation this view resolved to:
   trace name nor a `label` the encoding renders no legend row at all
   (interaction spec §9).
 
+**`legend_toggle`** — `{type, trace, category?, hidden}`, client → kernel,
+fire-and-forget (no reply, no seq). Records the §34 legend-toggle predicate
+on the trace (`hidden` retires the whole trace; `category` excludes one
+categorical code). Re-aggregation rides the next `density_view` request:
+a masked reply's `binning` gains a `-masked` suffix and the trace entry
+carries `filter: {hidden_categories: [...]}` — the filter state it was
+computed under (§37 filter_hash-lite) — which the client compares against
+its own current set, dropping stale-predicate replies (interaction spec
+§10).
+
 The client enforces `msg.seq` only when it is present, and additionally
 accepts `msg.trace` and `msg.stale` for pending-request bookkeeping — no
 current kernel path emits either field.
