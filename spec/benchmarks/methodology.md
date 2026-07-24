@@ -234,7 +234,7 @@ it — those live in `benchmark-refresh.yml`, and the workflow says so inline.
 
 The glob collects five modules — `test_codspeed_animation.py`,
 `test_codspeed_kernels.py`, `test_codspeed_pyplot.py`,
-`test_codspeed_selection.py`, and `test_codspeed_transport.py` — for 103 rows
+`test_codspeed_selection.py`, and `test_codspeed_transport.py` — for 102 rows
 total. These are trend-tracked in CodSpeed, not gated: none of them feed
 `scripts/check_regressions.py`, whose three inputs are §7's.
 
@@ -297,12 +297,12 @@ assertion and lazy-import warmup fixture. Browser `updatePayload` time,
 animation-frame pacing, heap delta, and the previous+next scene bound stay in
 `bench_animation.py`.
 
-**`benchmarks/test_codspeed_selection.py` — 5 rows.** The backend
+**`benchmarks/test_codspeed_selection.py` — 4 rows.** The backend
 interaction/selection handlers the client's gesture messages resolve to
 (design-dossier §17/§34): hover pick with a categorical channel readout;
 zone-pruned box select over a 1% window of a monotone-x 1M scatter; the full
-box-select and lasso gesture units through `channel.handle_message` on a
-uniform 1M scatter — full scan, polygon ray casting, and the wire-mask reply;
+box-select gesture unit through `channel.handle_message` on a uniform 1M
+scatter — full scan plus the wire-mask reply;
 and the cross-filter rows-to-shipped-mask encoding (view-state.md §5.1) over a
 NaN-dropped trace, so the canonical-to-shipped `searchsorted` translation is
 the path measured rather than the identity fast path. Browser input-to-pixel

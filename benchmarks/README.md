@@ -183,9 +183,8 @@ CodSpeed simulation.
 
 `test_codspeed_selection.py` covers the backend handlers the client's gesture
 messages resolve to: hover pick readout with a categorical channel, zone-pruned
-and full-scan box select at 1M points, the lasso gesture unit through
-`channel.handle_message` (polygon ray casting plus the wire-mask reply), and
-the cross-filter rows-to-shipped-mask encoding over a NaN-dropped trace so the
+and full-scan box select at 1M points, and the cross-filter
+rows-to-shipped-mask encoding over a NaN-dropped trace so the
 canonical-to-shipped translation is the path measured. `bench_interaction.py`
 stays authoritative for client input-to-pixel latency; these rows attribute a
 selection regression to the Python/kernel handler that caused it.

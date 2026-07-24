@@ -132,9 +132,8 @@ scope, not the kernels module alone. The suite asserts `xy.kernels.BACKEND ==
   100k stable-key encoding plus a plain-versus-keyed split-payload pair, so
   keyed-transition overhead stays attributed to the key columns.
 - The backend selection handlers (`benchmarks/test_codspeed_selection.py`):
-  hover pick readout, zone-pruned and full-scan box select, the lasso gesture
-  unit through `channel.handle_message`, and the cross-filter
-  rows-to-shipped-mask encoding.
+  hover pick readout, zone-pruned and full-scan box select, and the
+  cross-filter rows-to-shipped-mask encoding.
 
 That keeps CodSpeed focused on native range queries, pyramid composition,
 tier-switch payload generation, payload prep, zoom latency, and memory-report

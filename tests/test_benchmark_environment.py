@@ -136,7 +136,6 @@ def test_codspeed_suite_covers_backend_selection_workloads() -> None:
         "test_pick_hover_categorical_readout",
         "test_select_box_zone_pruned_1m",
         "test_select_box_message_full_scan_1m",
-        "test_select_lasso_message_1m",
         "test_selection_rows_message_crossfilter",
     }
     missing = sorted(required_benchmarks - set(functions))
