@@ -89,6 +89,18 @@ def test_errorbar_fmt_none_accepts_marker_keywords_without_data_line() -> None:
     assert len(ax._entries) == 1
 
 
+def test_errorbar_uses_matplotlib_default_caps_width_and_limit_marker_size() -> None:
+    _fig, ax = plt.subplots()
+    ax.errorbar([1], [3], yerr=[0.5], lolims=True, fmt="none")
+
+    errorbar, marker = ax._entries
+    assert errorbar["kwargs"]["cap_size"] == plt.rcParams["errorbar.capsize"] == 0.0
+    assert errorbar["kwargs"]["width"] == plt.rcParams["lines.linewidth"] == 1.5
+    assert marker["kwargs"]["size"] == pytest.approx(
+        plt.rcParams["lines.markersize"] * plt.rcParams["figure.dpi"] / 72.0
+    )
+
+
 def test_errorbar_limit_flags_render_directional_endpoint_markers() -> None:
     _fig, ax = plt.subplots()
     ax.errorbar(

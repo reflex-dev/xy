@@ -133,7 +133,11 @@ def test_standalone_legend_unwraps_errorbar_container():
         {
             "name": "uncertainty",
             "kind": "line",
-            "style": {"color": "red", "width": pytest.approx(1.6666666667), "opacity": 1.0},
+            "style": {
+                "color": "red",
+                "width": pytest.approx(plt.rcParams["lines.linewidth"] * 100.0 / 72.0),
+                "opacity": 1.0,
+            },
         }
     ]
 

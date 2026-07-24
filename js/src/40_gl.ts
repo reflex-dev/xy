@@ -202,8 +202,8 @@ float xyMarkerSdf(vec2 d, int shape) {
   if (shape == 3 || shape == 8 || shape == 9 || shape == 10) {     // Matplotlib triangle path
     vec2 q = d;
     if (shape == 8) q = -d;
-    if (shape == 9) q = vec2(d.y, -d.x);
-    if (shape == 10) q = vec2(-d.y, d.x);
+    if (shape == 9) q = vec2(-d.y, d.x);
+    if (shape == 10) q = vec2(d.y, -d.x);
     return xyTriangleDistance(q, vec2(0.0, -0.5), vec2(-0.5, 0.5), vec2(0.5, 0.5));
   }
   if (shape == 11) {                                                // diagonal x

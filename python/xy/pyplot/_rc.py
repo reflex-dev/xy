@@ -32,6 +32,7 @@ _DEFAULTS: dict[str, Any] = {
     "lines.linewidth": 1.5,
     "lines.markersize": 6.0,
     "lines.markeredgewidth": 1.0,
+    "errorbar.capsize": 0.0,
     "patch.linewidth": 1.0,
     "patch.edgecolor": "black",
     "patch.force_edgecolor": False,

@@ -755,8 +755,8 @@ fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
             // full-width base at the opposite edge.
             let d = match sym {
                 8 => (-px, -py), // down
-                9 => (py, -px),  // left
-                10 => (-py, px), // right
+                9 => (-py, px),  // left
+                10 => (py, -px), // right
                 _ => (px, py),
             };
             triangle_sdf(d, (0.0, -r), (-r, r), (r, r))
@@ -2499,6 +2499,32 @@ fn grad_color(stops: &[(f32, [f32; 4])], t: f32) -> [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn horizontal_triangle_symbols_point_in_the_named_direction() {
+        let moment = |symbol| {
+            let mut total = 0.0;
+            for y in -20..=20 {
+                for x in -20..=20 {
+                    let px = x as f32 / 10.0;
+                    let py = y as f32 / 10.0;
+                    if symbol_sdf(px, py, 2.0, symbol) <= 0.0 {
+                        total += px;
+                    }
+                }
+            }
+            total
+        };
+
+        assert!(
+            moment(9) > 0.0,
+            "triangle_left must put its wide base right of the leftward apex"
+        );
+        assert!(
+            moment(10) < 0.0,
+            "triangle_right must put its wide base left of the rightward apex"
+        );
+    }
 
     fn px(out: &[u8], w: usize, x: usize, y: usize) -> [u8; 4] {
         let o = (y * w + x) * 4;
