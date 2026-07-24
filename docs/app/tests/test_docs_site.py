@@ -64,6 +64,7 @@ from xy_docs.gallery import (
 )
 from xy_docs.markdown import (
     XyDocsMarkdownTransformer,
+    _split_demo_data,
     page_with_api_reference_toc,
     render_xy_markdown_page,
 )
@@ -413,15 +414,22 @@ def test_chart_examples_are_wide_copyable_demos_without_a_toc() -> None:
 
     rendered_page = str(render_xy_markdown_page(page))
     demo_count = len(demos)
-    # Demos that split their hardcoded data into a Data tab (the `# --- chart ---`
-    # divider) render a third trigger/panel; the rest stay Preview/Code.
-    data_demos = sum("# --- chart ---" in block.content for block in demos)
+    # Only demos whose marked data section exceeds ten nonblank lines render a
+    # third trigger/panel; the rest keep their data in the Code tab.
+    data_demos = sum(_split_demo_data(block.content)[0] is not None for block in demos)
+    assert data_demos == 2
     assert rendered_page.count("XYChart") == demo_count + 6
     assert rendered_page.count('value:"preview"') == demo_count * 2
     assert rendered_page.count('value:"code"') == demo_count * 2
     assert rendered_page.count('value:"data"') == data_demos * 2
     assert rendered_page.count("xy-example-tab cursor-pointer") == demo_count * 2 + data_demos
     assert rendered_page.count("xy-example-tab-list relative") == demo_count
+    assert (
+        rendered_page.count("flex w-full flex-col gap-2 overflow-hidden px-2 pb-2 pt-4")
+        == demo_count
+    )
+    assert rendered_page.count("w-full p-2 [&>div]:!m-0") == demo_count
+    assert rendered_page.count("min-h-[430px] w-full px-1 py-2 sm:px-2 sm:py-7") == data_demos
     assert "xy-chart-examples" in rendered_page
     assert "max-width: 88rem" in rendered_page
     assert "div:has(#toc-navigation)" in rendered_page
@@ -431,6 +439,23 @@ def test_chart_examples_are_wide_copyable_demos_without_a_toc() -> None:
     assert "var(--chart-" not in page.content
     assert "currentColor" not in page.content
     assert '"transparent"' not in page.content
+
+
+def test_demo_data_tabs_require_more_than_ten_nonblank_lines() -> None:
+    """Keep short literals with Code and reserve Data tabs for long datasets."""
+    short_data = "\n".join(f"row_{index} = {index}" for index in range(10))
+    long_data = "\n".join(f"row_{index} = {index}" for index in range(11))
+    chart_code = "chart = xy.line_chart(xy.line([0, 1], [0, 1]))"
+
+    short_tab, short_code = _split_demo_data(f"{short_data}\n\n# --- chart ---\n{chart_code}")
+    long_tab, long_code = _split_demo_data(f"{long_data}\n\n# --- chart ---\n{chart_code}")
+
+    assert short_tab is None
+    assert short_data in short_code
+    assert chart_code in short_code
+    assert "# --- chart ---" not in short_code
+    assert long_tab == long_data
+    assert long_code == chart_code
 
 
 def test_animation_replay_demos_reuse_example_chrome_and_controls() -> None:
@@ -862,8 +887,8 @@ def test_every_core_concepts_python_example_renders_a_live_chart() -> None:
     assert not violations, "\n".join(violations)
 
 
-def test_single_chart_styling_demos_keep_only_the_parent_preview_card() -> None:
-    """Keep one neutral preview surface without a nested chart-owned card."""
+def test_single_chart_demos_use_one_tabbed_parent_card() -> None:
+    """Keep one tabbed preview surface without a nested chart-owned card."""
     gallery = (DOCS_ROOT / "styling/gallery.md").read_text(encoding="utf-8")
     blocks = re.findall(r"~~~(python[^\n]*)\n(.*?)\n~~~", gallery, re.DOTALL)
     trend = next(body for _fence, body in blocks if "trend_mark_atlas_preview" in body)
@@ -885,15 +910,20 @@ import reflex as rx
 def one_chart_preview():
     return rx.box("chart", width="100%")
 ~~~"""
-    rendered = str(
-        XyDocsMarkdownTransformer(
-            virtual_filepath="docs/styling/test.md",
-            filename="docs/styling/test.md",
-        ).transform(parse_document(content))
-    )
-    assert rendered.count("border-secondary-4") == 1
-    assert rendered.count("bg-white") == 1
-    assert rendered.count("dark:bg-black") == 1
+    for virtual_filepath in ("docs/styling/test.md", "docs/charts/test.md"):
+        rendered = str(
+            XyDocsMarkdownTransformer(
+                virtual_filepath=virtual_filepath,
+                filename=virtual_filepath,
+            ).transform(parse_document(content))
+        )
+        assert rendered.count("xy-example-tab-list relative") == 1
+        assert rendered.count("xy-example-tab cursor-pointer") == 2
+        assert rendered.count("relative w-full overflow-hidden rounded-xl") == 1
+        assert "flex w-full flex-col gap-2 overflow-hidden px-2 pb-2 pt-4" in rendered
+        assert "w-full p-2 [&>div]:!m-0" in rendered
+        assert "min-h-[430px] w-full p-2" not in rendered
+        assert "sm:py-7" not in rendered
     assert "bg-secondary-2" not in rendered
 
 
@@ -925,14 +955,14 @@ def test_styling_demos_pair_light_surfaces_with_readable_text() -> None:
     ("relative_path", "demo_name", "expected_live_blocks"),
     (("core-concepts/index.md", "composition_model_demo", 2),),
 )
-def test_beginner_examples_use_docdemos(
+def test_beginner_examples_use_tabbed_demos(
     relative_path: str,
     demo_name: str,
     expected_live_blocks: int,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Keep beginner code and its live result together in a DocDemo."""
+    """Keep beginner code and its live result together in XY's tab model."""
     source_path = DOCS_ROOT / relative_path
     content = source_path.read_text(encoding="utf-8")
     live_blocks = [
@@ -957,22 +987,74 @@ def test_beginner_examples_use_docdemos(
 
     monkeypatch.chdir(tmp_path)
     rendered = str(
-        render_markdown(
-            content,
+        XyDocsMarkdownTransformer(
             virtual_filepath=f"tests/docdemo/{relative_path}",
             filename=source_path.as_posix(),
-        )
+        ).transform(parse_document(content))
     )
 
-    shell = 'className:"py-4 gap-4 flex flex-col w-full"'
-    preview = 'className:"flex flex-col p-6 rounded-xl overflow-x-auto border border-secondary-4 bg-secondary-2 items-center justify-center w-full"'
-    assert rendered.count(shell) == expected_live_blocks
-    assert rendered.count(preview) == expected_live_blocks
+    assert rendered.count("xy-example-tab-list relative") == expected_live_blocks
+    assert rendered.count("xy-example-tab cursor-pointer") == expected_live_blocks * 2
+    assert rendered.count('value:"preview"') == expected_live_blocks * 2
+    assert rendered.count('value:"code"') == expected_live_blocks * 2
+    assert 'value:"data"' not in rendered
     assert rendered.count("XYChart") == expected_live_blocks
-    assert rendered.index(shell) < rendered.index(preview)
     assert demo_name in rendered
     assert export_calls == []
     assert not (tmp_path / "scatter.html").exists()
+
+
+def test_composition_demos_keep_distinct_assets_after_cached_render(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep each demo bound to its own globals when the page module is reused."""
+    source_path = DOCS_ROOT / "core-concepts" / "index.md"
+    content = source_path.read_text(encoding="utf-8")
+    virtual_filepath = "tests/docdemo/core-concepts/cache-regression.md"
+    payload_pattern = re.compile(r'src:"(?:/docs/xy)?/xy/([^"]+\.xyf)"')
+
+    def render() -> str:
+        return str(
+            XyDocsMarkdownTransformer(
+                virtual_filepath=virtual_filepath,
+                filename=source_path.as_posix(),
+            ).transform(parse_document(content))
+        )
+
+    monkeypatch.chdir(tmp_path)
+    first_payloads = payload_pattern.findall(render())
+    second_payloads = payload_pattern.findall(render())
+
+    assert len(first_payloads) == 2
+    assert len(set(first_payloads)) == 2
+    assert second_payloads == first_payloads
+
+
+def test_exact_readout_demo_is_backed_by_live_reflex_state() -> None:
+    """Keep the readout driven by chart events instead of compiled sample values."""
+    source_path = DOCS_ROOT / "core-concepts" / "interactions.md"
+    content = source_path.read_text(encoding="utf-8")
+    live_block = next(
+        block
+        for block in parse_document(content).blocks
+        if isinstance(block, CodeBlock)
+        and block.language == "python"
+        and "def exact_readout_demo" in block.content
+    )
+
+    for marker in (
+        "class ExactReadoutState(rx.State)",
+        "reflex_xy.inline(exact_readout_chart)",
+        "on_point_click=ExactReadoutState.pick_point",
+        "on_select_end=ExactReadoutState.select_points",
+        "ExactReadoutState.picked_row",
+        "ExactReadoutState.selected_x",
+        "ExactReadoutState.selected_y",
+    ):
+        assert marker in live_block.content
+    assert "chart.pick(" not in live_block.content
+    assert "chart.select_range(" not in live_block.content
 
 
 def test_first_chart_shows_clean_code_with_hidden_live_previews(
@@ -1786,7 +1868,8 @@ def test_component_guides_append_frontmatter_driven_api_tables() -> None:
     assert 'id:"api-reference"' in axes_rendered
     assert "Props" in axes_rendered
     assert "Description" in axes_rendered
-    assert "Preview" not in axes_rendered
+    assert "Preview" in axes_rendered[:api_reference_index]
+    assert "Preview" not in axes_rendered[api_reference_index:]
 
 
 def test_chart_gallery_pages_append_factory_api_tables() -> None:
@@ -1829,7 +1912,9 @@ def test_chart_gallery_pages_append_factory_api_tables() -> None:
         "xy.scatter_chart"
     )
     assert "Props" in scatter_rendered
-    assert "Preview" not in scatter_rendered
+    scatter_api_index = scatter_rendered.index(API_REFERENCE_HEADING)
+    assert "Preview" in scatter_rendered[:scatter_api_index]
+    assert "Preview" not in scatter_rendered[scatter_api_index:]
 
     # The FAQ renders below the generated API section on both surfaces.
     scatter_faq_question = "How do I make a scatter plot in Python?"

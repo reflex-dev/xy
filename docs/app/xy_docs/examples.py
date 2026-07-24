@@ -187,11 +187,14 @@ def _example_code_panel(source: str, value: str) -> rx.Component:
     toggle. Strip every one of those backgrounds to transparent and recolor the
     fade to the card so the code reads on the same surface as the Preview tab.
     """
+    panel_layout = (
+        "w-full p-2" if value == "code" else "min-h-[430px] w-full px-1 py-2 sm:px-2 sm:py-7"
+    )
     return rx.tabs.content(
         rx.el.div(
             doccode(source),
             class_name=(
-                "min-h-[430px] w-full px-1 py-2 sm:px-2 sm:py-7 "
+                f"{panel_layout} "
                 "[&>div]:!m-0 [&>div]:!rounded-none [&>div]:!border-0 "
                 "[&_div]:!bg-transparent [&_pre]:!bg-transparent "
                 "[&_.code-block]:!bg-transparent [&_.code-block]:!rounded-none "
@@ -232,7 +235,7 @@ def chart_example_demo(
                     preview,
                     class_name="flex w-full items-center overflow-hidden",
                 ),
-                class_name="flex w-full flex-col gap-2 overflow-hidden",
+                class_name="flex w-full flex-col gap-2 overflow-hidden px-2 pb-2 pt-4",
             ),
             value="preview",
             class_name="w-full outline-none",

@@ -34,12 +34,13 @@ frontmatter to individual Markdown files. The `spec/` tree is
 internal project documentation and is intentionally excluded from the public
 site.
 
-Executable fences marked `python demo exec` show their code and render a live
-Reflex preview beneath it, matching the official Reflex docs. Use
+Executable fences marked `python demo exec` render in shared Preview/Code
+tabs. Add `# --- chart ---` after a hardcoded data section only when that
+section exceeds 10 nonblank lines; it then renders in a separate Data tab. Use
 `python demo-only exec` only when the code is intentionally shown elsewhere.
 Keep examples deterministic, small, and valid without external services.
-Static XY payloads generated during compilation are written below
-`assets/xy/` and must not be committed.
+Static XY payloads generated during compilation are written below `assets/xy/`
+and must not be committed.
 
 ## Checks
 

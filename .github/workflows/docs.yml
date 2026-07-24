@@ -12,7 +12,7 @@ on:
       - "Cargo.toml"
       - "hatch_build.py"
       - "pyproject.toml"
-      - "scripts/verify_released_docs_quickstart.py"
+      - "scripts/verify_docs_quickstart.py"
       - ".pre-commit-config.yaml"
       - ".github/workflows/docs.yml"
   pull_request:
@@ -25,7 +25,7 @@ on:
       - "Cargo.toml"
       - "hatch_build.py"
       - "pyproject.toml"
-      - "scripts/verify_released_docs_quickstart.py"
+      - "scripts/verify_docs_quickstart.py"
       - ".pre-commit-config.yaml"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
@@ -38,27 +38,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  released-quickstart:
-    name: Published quickstart (xy==0.0.1)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      XY_PUBLIC_RELEASE: "0.0.1"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
-        with:
-          python-version: "3.12"
-          enable-cache: true
-      - name: Run public docs quickstarts against the PyPI wheel
-        env:
-          PYTHONNOUSERSITE: "1"
-        run: |
-          uv run --isolated --no-project --python 3.12 \
-            --with "xy==$XY_PUBLIC_RELEASE" \
-            python scripts/verify_released_docs_quickstart.py \
-            --expected-version "$XY_PUBLIC_RELEASE"
-
   quality:
     name: Docs tests and lint
     runs-on: ubuntu-latest
@@ -81,6 +60,8 @@ jobs:
         run: uv sync --project docs/app --frozen --group dev
       - name: Run docs tests
         run: uv run --project docs/app --no-sync pytest docs/app/tests -v
+      - name: Run public docs quickstart against the checkout
+        run: uv run --project docs/app --no-sync python scripts/verify_docs_quickstart.py
       - name: Run docs quality hooks
         run: |
           uv run --project docs/app --no-sync pre-commit run ruff-format --all-files
@@ -89,7 +70,7 @@ jobs:
 
   production:
     name: Production docs (Python ${{ matrix.python-version }})
-    needs: [quality, released-quickstart]
+    needs: [quality]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
