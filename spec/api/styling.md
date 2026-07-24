@@ -274,6 +274,53 @@ shortened. It also consumes one extra `1.03 + labelspacing` row of height,
 which can push the last entry out of a short plot; a plot with room for no
 entry at all renders neither frame nor title.
 
+### Legend placement
+
+`loc` is one of Matplotlib's ten anchored location names — `upper right`,
+`upper left`, `lower left`, `lower right`, `right`, `center left`,
+`center right`, `lower center`, `upper center`, `center` — resolved through one
+table (`_validate.LEGEND_LOCATIONS`) shared by the public `legend()` component
+and the static exporters. `right` and `center right` name the same anchor, as
+they do in Matplotlib's offsetbox. Anything else, **including a literal
+`"best"`**, raises: placement used to be derived by substring-matching `left`/
+`right` and `upper`/`lower` out of whatever string arrived, so a name matching
+neither half silently produced a *centered* legend instead of an error.
+
+`"best"` is a **pyplot-only** concept and is never on the wire. The shim
+resolves it to one of the ten names during figure build, mirroring
+Matplotlib's `Legend._find_best_position`:
+
+- candidates are scored in Matplotlib's location-code order (1..10, with code 5
+  `right` folded onto its identical code-7 anchor), the first empty one wins,
+  and ties go to the earlier candidate — this order *is* the tie-break contract;
+- each candidate is the **measured** legend box from `_legend_layout` above, as
+  a fraction of the plot box, not an estimate from row count and label length;
+- the box is anchored inside the plot box inset by `borderaxespad` on all four
+  sides, as Matplotlib's `offsetbox._get_anchored_bbox` pads its container;
+- badness is a raw count of entry vertices strictly inside the box, summed over
+  series so a long series outweighs a short one, scored against the **displayed**
+  view (an autoranged view is padded by the engine, so the corner a mark reaches
+  on screen is not the corner it reaches in data space).
+
+Known departures from Matplotlib's badness, in descending impact:
+
+- **Plot rect.** The measured box is pixel-accurate against Matplotlib (a
+  one-row box is 25.4 px in both), but xy's plot box is larger than
+  Matplotlib's default axes rect (564×428 against 496×369.6 for a 640×480
+  figure), so the same box is a smaller *fraction* and candidates decided by
+  one or two vertices can fall the other way. This resolves as the two
+  geometries converge; nothing in placement needs changing for it.
+- **Text and patch extents.** Matplotlib 3.11 counts `Text` and `Rectangle`
+  bounding-box *overlaps*; the shim counts an annotation's or bar's anchor
+  point as a single vertex, and skips anchors whose coordinate is a date string.
+- **Segment crossings.** Matplotlib adds 1 per line whose path crosses a
+  candidate box even with no vertex inside it; the shim counts vertices only.
+- **Decimation** (§28). Occupancy is scored from at most 4096 strided vertices
+  per series, weighted back up to the true length so relative badness survives.
+  A lone excursion into an otherwise empty box can be missed on a series far
+  longer than that; Matplotlib counts every vertex and warns that `loc="best"`
+  is slow for exactly this reason.
+
 ## Why your styles always win
 
 The client injects one stylesheet of *visual* defaults (background, color,

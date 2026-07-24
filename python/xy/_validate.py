@@ -41,6 +41,24 @@ _FILL_SPACES = frozenset({"mark", "plot"})
 # across the plot box in screen directions. Angles and corner keywords are
 # rejected — GPU marks get the four axis-aligned directions.
 _GRADIENT_DIRS = {"to top": "up", "to bottom": "down", "to left": "left", "to right": "right"}
+# Matplotlib's ten anchored legend location names (`Legend.codes` 1..10), mapped
+# to the (horizontal, vertical) anchor fractions each one names inside the plot
+# box. Code 5 ("right") and code 7 ("center right") deliberately share an
+# anchor: matplotlib resolves both through offsetbox's 'E' corner. `"best"` is
+# *not* a member — it is a request to choose one of these, and the pyplot shim
+# must resolve it before the wire.
+LEGEND_LOCATIONS: dict[str, tuple[float, float]] = {
+    "upper right": (1.0, 1.0),
+    "upper left": (0.0, 1.0),
+    "lower left": (0.0, 0.0),
+    "lower right": (1.0, 0.0),
+    "right": (1.0, 0.5),
+    "center left": (0.0, 0.5),
+    "center right": (1.0, 0.5),
+    "lower center": (0.5, 0.0),
+    "upper center": (0.5, 1.0),
+    "center": (0.5, 0.5),
+}
 
 
 def finite_scalar(value: Any, label: str) -> float:
@@ -166,6 +184,33 @@ def axis_tick_label_anchor(value: Any, label: str) -> Optional[str]:
             "(or the aliases 'left', 'middle', 'right')"
         )
     return normalized
+
+
+def legend_loc(value: Any, label: str) -> Optional[str]:
+    """One of the ten anchored legend location names (or None for the default).
+
+    Placement used to be derived by substring-matching ``"left"``/``"right"``
+    and ``"upper"``/``"lower"`` out of whatever string reached the renderer, so
+    a name that matched neither half — a typo, or an unresolved ``"best"`` that
+    slipped past the pyplot shim — silently produced a centered legend instead
+    of an error. Resolving against this table makes that state unrepresentable.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str) or value not in LEGEND_LOCATIONS:
+        raise ValueError(f"{label} must be one of {sorted(LEGEND_LOCATIONS)}")
+    return value
+
+
+def legend_loc_anchor(value: Any, label: str = "legend loc") -> tuple[float, float]:
+    """``(horizontal, vertical)`` anchor fractions for a legend location name.
+
+    ``1.0`` is the right/top edge of the container, ``0.0`` the left/bottom.
+    """
+    try:
+        return LEGEND_LOCATIONS[value]
+    except (KeyError, TypeError):
+        raise ValueError(f"{label} must be one of {sorted(LEGEND_LOCATIONS)}") from None
 
 
 def string_mapping(value: dict[str, Any], label: str) -> dict[str, str]:

@@ -2383,7 +2383,10 @@ def legend(
     Args:
         *children: Optional opaque replacement content.
         show: Whether to display the legend.
-        loc: Legend placement within or around the plot.
+        loc: Legend placement within or around the plot: one of Matplotlib's
+            ten anchored location names (``"upper right"``, ``"center"``, ...).
+            ``"best"`` is not accepted here — placement is not computed at this
+            layer, so a caller wanting it must resolve it to a name first.
         anchor: Two- or four-value normalized plot-coordinate anchor.
         ncols: Number of legend columns.
         title: Optional legend title.
@@ -2400,7 +2403,7 @@ def legend(
             raise ValueError("legend anchor must contain 2 or 4 finite numbers")
     return Legend(
         show=_strict_bool(show, "legend show"),
-        loc=_optional_string(loc, "legend loc"),
+        loc=_validate.legend_loc(loc, "legend loc"),
         anchor=anchor,
         ncols=_optional_positive_int(ncols, "legend ncols") or 1,
         title=_optional_string(title, "legend title"),

@@ -25,6 +25,7 @@ import numpy as np
 import xy
 
 from .._typing import ArrayLike, ColorLike, ColorsLike, LimitsLike, Scalar
+from .._validate import legend_loc_anchor as _legend_loc_anchor
 from ._artists import (
     Artist,
     AxesImage,
@@ -60,6 +61,33 @@ _MPL_THEME_TOKENS = {
     "text_color": "#262626",
 }
 _MPL_GRID_COLOR = "#b0b0b0"
+
+# Matplotlib's candidate order for ``loc="best"``: `Legend.codes` 1..10, scored
+# in order, first zero-badness box wins, lower code wins a tie. Code 5
+# ("right") anchors identically to code 7 ("center right") — offsetbox resolves
+# both to its 'E' corner — so the pair is folded onto the single canonical name
+# at code 5's position. The order `min()` observes is unchanged and no redundant
+# box is scored. Do not reorder: this *is* the tie-break contract.
+_BEST_LOC_ORDER = (
+    "upper right",
+    "upper left",
+    "lower left",
+    "lower right",
+    "center right",
+    "center left",
+    "lower center",
+    "upper center",
+    "center",
+)
+# Per-series vertex budget for occupancy scoring (§28: decimation is specified,
+# never silent). Matplotlib counts every vertex and says so in its own
+# `loc="best"` slowness warning; the shim strides instead and weights the count
+# back up, so relative badness survives but a lone excursion into an otherwise
+# empty candidate box can be missed on a series far longer than this.
+_BEST_LOC_SAMPLE = 4096
+# Plot box of the default 640x480 figure, for direct `_best_legend_loc` callers
+# that have no chart geometry to hand.
+_DEFAULT_BEST_PLOT_SIZE = (564.0, 428.0)
 
 # Theme/axis children are immutable declarative specs, so identical ones are
 # shared across charts — the theme's CSS tokens validate through the native
@@ -4466,19 +4494,122 @@ class Axes(PlotTypeMixin):
                     children.append(xy.text(x, y, *e["args"][2:], **text_kw))
         return children
 
+    def _plot_rect_px(
+        self,
+        width: int,
+        height: int,
+        padding: Optional[Sequence[float]] = None,
+        x_side: Optional[str] = None,
+    ) -> tuple[float, float]:
+        """Estimated ``(w, h)`` of the plot box in pixels.
+
+        Both the tick-space heuristic and ``best`` legend placement have to know
+        how large the plot box will be, and both run before the chart exists, so
+        they share this one padding model instead of estimating it twice.
+        """
+        compact = width < 520
+        if padding is None:
+            top, right, bottom, left = (
+                (6.0, 8.0, 36.0, 46.0) if compact else (10.0, 14.0, 42.0, 62.0)
+            )
+        else:
+            top, right, bottom, left = map(float, padding)
+        if self._title:
+            top += 26.0 if compact else 30.0
+        if x_side == "top":
+            top += 26.0 if compact else 32.0
+        return (
+            max(40.0, float(width) - left - right),
+            max(40.0, float(height) - top - bottom),
+        )
+
+    def _displayed_ranges(
+        self,
+        figure: Any,
+        x_props: dict[str, Any],
+        y_props: dict[str, Any],
+    ) -> tuple[Optional[tuple[float, float]], Optional[tuple[float, float]]]:
+        """The x/y view the built figure will actually render.
+
+        ``best`` placement has to score against the *displayed* limits, not the
+        raw data extent: an autoranged view is padded by the engine, so the
+        corner a mark reaches on screen is not the corner it reaches in data
+        space. The built figure already knows both (an explicit domain is
+        returned verbatim), so ask it rather than re-deriving the padding.
+        """
+        try:
+            return tuple(figure.x_range()), tuple(figure.y_range())  # type: ignore[return-value]
+        except (ValueError, TypeError):
+            # A log axis with no positive value cannot report a range; the
+            # declared domains are the best available fallback.
+            return x_props.get("domain"), y_props.get("domain")
+
+    def _legend_footprint(
+        self,
+        legend_options: Optional[dict[str, Any]],
+        items: Optional[list[dict[str, Any]]],
+        plot_size: tuple[float, float],
+    ) -> tuple[float, float, float, float]:
+        """Measured legend box and border inset, as fractions of the plot box.
+
+        Returns ``(box_w, box_h, pad_x, pad_y)``. The box comes from
+        ``_svg._legend_layout`` — the *same* geometry the SVG and raster
+        exporters lay the legend out with, derived from the legend font size and
+        the real label extents — so ``best`` scores the box that actually gets
+        drawn. ``pad_*`` is Matplotlib's ``borderaxespad``, which insets the
+        container every candidate is anchored inside.
+        """
+        from .._svg import _legend_layout
+
+        options = dict(legend_options or {})
+        # Size is independent of placement, and placement is exactly what has
+        # not been decided yet — drop both keys so the layout's own resolver is
+        # never handed the unresolved "best" we are here to replace.
+        options.pop("loc", None)
+        options.pop("anchor", None)
+        if items is None:
+            items = [
+                {"name": str((entry.get("kwargs") or {}).get("name"))}
+                for entry in self._entries
+                if (entry.get("kwargs") or {}).get("name")
+            ]
+        # A legend with no labelled entry still has a frame; measure it as one
+        # empty row rather than dividing by zero inside the layout.
+        measured = _legend_layout(
+            items or [{"name": ""}],
+            {"x": 0.0, "y": 0.0, "w": plot_size[0], "h": plot_size[1]},
+            options,
+        )
+        border_pad = max(0.0, float(options.get("border_pad") or 0.0))
+        return (
+            measured["box_w"] / plot_size[0],
+            measured["box_h"] / plot_size[1],
+            border_pad / plot_size[0],
+            border_pad / plot_size[1],
+        )
+
     def _best_legend_loc(
         self,
         x_domain: Optional[tuple[float, float]] = None,
         y_domain: Optional[tuple[float, float]] = None,
+        *,
+        legend_options: Optional[dict[str, Any]] = None,
+        items: Optional[list[dict[str, Any]]] = None,
+        plot_size: tuple[float, float] = _DEFAULT_BEST_PLOT_SIZE,
     ) -> str:
-        """Choose the least occupied corner using bounded data-space samples.
+        """Choose the least occupied candidate box, as Matplotlib does.
 
-        Matplotlib tests artist extents against several candidate boxes and
-        keeps the first candidate (upper right) on ties. The shim has no Artist
-        layout graph, but its canonical entry arrays are enough to make the
-        same decision: for each corner, count sampled marks that fall inside a
-        legend-box-sized region there — not the whole quadrant, so a curve
-        crossing the middle no longer taints every corner. The domains passed
+        Matplotlib's ``Legend._find_best_position`` walks location codes 1..10
+        in order, scores each anchored box by how many artist vertices it
+        contains, stops at the first box scoring zero, and breaks ties by
+        preferring the lower code. The shim has no Artist layout graph, but its
+        canonical entry arrays plus the *measured* legend geometry are enough to
+        make the same decision.
+
+        The footprint being measured rather than estimated is the whole point:
+        a linear guess from row count and label length ran ~3x too wide and ~2x
+        too tall, which tainted corners the real legend never reaches and threw
+        the choice to a different corner than Matplotlib's. The domains passed
         in are the *displayed* limits (after equal-aspect expansion), which is
         what decides whether the data actually reaches a corner.
         """
@@ -4493,38 +4624,18 @@ class Axes(PlotTypeMixin):
             return "upper right"
         if xhi <= xlo or yhi <= ylo:
             return "upper right"
-        # Fractional footprint of the legend box, grown by row count and the
-        # longest label so a crowded legend guards a larger corner region.
-        labels = [
-            str(entry.get("kwargs", {}).get("name", ""))
-            for entry in self._entries
-            if entry.get("kwargs", {}).get("name")
-        ]
-        rows = max(1, len(labels))
-        max_len = max((len(text) for text in labels), default=4)
-        box_h = min(0.6, 0.10 + 0.07 * rows)
-        box_w = min(0.6, 0.12 + 0.03 * max_len)
-        # Every Matplotlib candidate box, in Matplotlib's own preference order
-        # (corners, then the mid-edges, then dead center) so min() keeps the
-        # first on ties. Each tuple is (name, x_lo, x_hi, y_lo, y_hi) in the
-        # normalized [0, 1] plot box with y pointing up. Including the centered
-        # edges is what lets a full-amplitude oscillation park the legend on the
-        # sparse zero-crossing band, exactly like Matplotlib. ('right' is code 5
-        # in Matplotlib and aliases 'center right'; keeping the single canonical
-        # name here preserves the tie order without a redundant candidate.)
-        cx_lo, cx_hi = 0.5 - box_w / 2.0, 0.5 + box_w / 2.0
-        cy_lo, cy_hi = 0.5 - box_h / 2.0, 0.5 + box_h / 2.0
-        candidates = (
-            ("upper right", 1.0 - box_w, 1.0, 1.0 - box_h, 1.0),
-            ("upper left", 0.0, box_w, 1.0 - box_h, 1.0),
-            ("lower left", 0.0, box_w, 0.0, box_h),
-            ("lower right", 1.0 - box_w, 1.0, 0.0, box_h),
-            ("center right", 1.0 - box_w, 1.0, cy_lo, cy_hi),
-            ("center left", 0.0, box_w, cy_lo, cy_hi),
-            ("lower center", cx_lo, cx_hi, 0.0, box_h),
-            ("upper center", cx_lo, cx_hi, 1.0 - box_h, 1.0),
-            ("center", cx_lo, cx_hi, cy_lo, cy_hi),
-        )
+        box_w, box_h, pad_x, pad_y = self._legend_footprint(legend_options, items, plot_size)
+        # Matplotlib anchors every candidate inside the plot box inset by
+        # borderaxespad on all four sides (offsetbox._get_anchored_bbox), so the
+        # travel available to the box is the inset span minus the box itself.
+        span_x = max(0.0, 1.0 - 2.0 * pad_x - box_w)
+        span_y = max(0.0, 1.0 - 2.0 * pad_y - box_h)
+        candidates = []
+        for name in _BEST_LOC_ORDER:
+            hx, vy = _legend_loc_anchor(name)
+            x_lo = pad_x + hx * span_x
+            y_lo = pad_y + vy * span_y
+            candidates.append((name, x_lo, x_lo + box_w, y_lo, y_lo + box_h))
         scores = {name: 0.0 for name, *_ in candidates}
         entries_used = 0
         x_reverse = bool(self._axis["x"].get("reverse"))
@@ -4545,7 +4656,9 @@ class Axes(PlotTypeMixin):
             except (TypeError, ValueError):
                 continue
             xv, yv = xv.reshape(-1), yv.reshape(-1)
-            if len(xv) > 4096:
+            total = len(xv)
+            sampled = total
+            if total > _BEST_LOC_SAMPLE:
                 # Stride down before the finite scan: occupancy scoring is
                 # already sampled, so the full-array isfinite pass was pure
                 # O(n) per-build cost on large legended series. Sparse finite
@@ -4553,39 +4666,40 @@ class Axes(PlotTypeMixin):
                 # a sample with no finite pair falls back to the full array —
                 # a series the old full-array pass scored still scores instead
                 # of vanishing from placement.
-                strided = np.linspace(0, len(xv) - 1, 4096, dtype=np.intp)
+                strided = np.linspace(0, total - 1, _BEST_LOC_SAMPLE, dtype=np.intp)
                 sampled_x, sampled_y = xv[strided], yv[strided]
                 if (np.isfinite(sampled_x) & np.isfinite(sampled_y)).any():
                     xv, yv = sampled_x, sampled_y
+                    sampled = _BEST_LOC_SAMPLE
             finite = np.flatnonzero(np.isfinite(xv) & np.isfinite(yv))
-            if len(finite) > 512:
-                finite = finite[np.linspace(0, len(finite) - 1, 512, dtype=np.intp)]
             if not len(finite):
                 continue
-            xn = np.clip((xv[finite] - xlo) / (xhi - xlo), 0.0, 1.0)
-            yn = np.clip((yv[finite] - ylo) / (yhi - ylo), 0.0, 1.0)
+            # Unclipped: a point outside the view is outside every candidate
+            # box, exactly as Matplotlib sees it in display space. Clipping used
+            # to pin such points onto the nearest edge and count them there.
+            xn = (xv[finite] - xlo) / (xhi - xlo)
+            yn = (yv[finite] - ylo) / (yhi - ylo)
             if x_reverse:
                 xn = 1.0 - xn
             if y_reverse:
                 yn = 1.0 - yn
-            n = float(len(finite))
+            # Matplotlib's badness is a raw vertex count summed over artists, so
+            # a long series legitimately outweighs a short one. Scale a strided
+            # series back to its true length to preserve that weighting.
+            weight = total / float(sampled)
             entries_used += 1
             for name, xl, xh, yl, yh in candidates:
-                inside = (xn >= xl) & (xn <= xh) & (yn >= yl) & (yn <= yh)
-                scores[name] += float(np.count_nonzero(inside)) / n
+                # Strict, mirroring Bbox.count_contains.
+                inside = (xn > xl) & (xn < xh) & (yn > yl) & (yn < yh)
+                scores[name] += float(np.count_nonzero(inside)) * weight
         if not entries_used:
             return "upper right"
-        # Normalize to a mean occupancy in [0, 1] so the tolerance below is
-        # independent of series count. Matplotlib's integer badness makes
-        # near-equal boxes exact ties broken by candidate order; our continuous
-        # metric would otherwise let a sub-percent sampling difference override
-        # that order (e.g. picking "center left" over "center right" on a
-        # symmetric oscillation). Treat boxes within a small band as tied and
-        # keep the first — which is Matplotlib's preference.
-        for name in scores:
-            scores[name] /= entries_used
+        # Matplotlib compares exact integer badness and prefers the lower code
+        # on a tie; dict order here *is* that code order, so the first minimum
+        # wins. The only slack absorbs the float stride weight above — an
+        # unsampled series scores whole numbers and ties exactly, as it must.
         best = min(scores.values())
-        return next(name for name, score in scores.items() if score <= best + 0.02)
+        return next(name for name, score in scores.items() if score <= best * (1.0 + 1e-9))
 
     def _build_chart(self, width: int, height: int) -> Any:
         if self._y2_of is not None:
@@ -4751,14 +4865,22 @@ class Axes(PlotTypeMixin):
             y2_props = {k: v for k, v in self._axis["y2"].items() if v is not None}
             self._apply_tickers("y2", y2_props, auto_tick_counts["y"])
             children.append(xy.y_axis(id="y2", side="right", **y2_props))
+        # The plot box `best` scores its candidate corners inside. Resolved
+        # padding included, so an outside-anchored legend's reservation (above)
+        # is already accounted for.
+        best_plot_size = self._plot_rect_px(width, height, chart_padding, x_props.get("side"))
+        legend_needs_best = False
         if self._legend and self._legend_artist is not None:
             children.append(xy.legend(show=False))
         elif self._legend:
             legend_options = dict(self._legend_options)
             if legend_options.get("loc") in (None, "best"):
-                legend_options["loc"] = self._best_legend_loc(
-                    x_props.get("domain"), y_props.get("domain")
-                )
+                # Left unresolved here on purpose and filled in below, once the
+                # built figure can report the view it will actually display:
+                # `best` is a question about which corner the marks reach on
+                # screen, and an autoranged view is padded by the engine.
+                legend_needs_best = True
+                legend_options["loc"] = None
             # ``border_pad`` is an internal pixel-resolved Matplotlib wire
             # option; core's public legend component intentionally remains in
             # its declarative units. It is restored on the built Figure below.
@@ -4793,6 +4915,13 @@ class Axes(PlotTypeMixin):
         core_figure = self._chart.figure()
         if self._legend and self._legend_artist is None and "border_pad" in self._legend_options:
             core_figure.legend_options["border_pad"] = self._legend_options["border_pad"]
+        best_ranges = self._displayed_ranges(core_figure, x_props, y_props)
+        if legend_needs_best:
+            core_figure.legend_options["loc"] = self._best_legend_loc(
+                *best_ranges,
+                legend_options=self._legend_options,
+                plot_size=best_plot_size,
+            )
         core_figure.frame_sides = [
             side for side in ("left", "bottom", "top", "right") if side not in self._hidden_spines
         ]
@@ -4813,7 +4942,10 @@ class Axes(PlotTypeMixin):
                 spec = leg.spec()
                 if spec.get("loc") in (None, "best"):
                     spec["loc"] = self._best_legend_loc(
-                        x_props.get("domain"), y_props.get("domain")
+                        *best_ranges,
+                        legend_options=spec,
+                        items=list(spec.get("items") or []) or None,
+                        plot_size=best_plot_size,
                     )
                 extras.append(spec)
             core_figure.extra_legends = extras
@@ -4827,18 +4959,9 @@ class Axes(PlotTypeMixin):
     ) -> dict[str, int]:
         """Matplotlib's ``Axis.get_tick_space()`` per axis: how many tick
         intervals fit the estimated plot rect at the tick-label font size."""
-        compact = width < 520
-        if self._padding is None:
-            left, right = (46.0, 8.0) if compact else (62.0, 14.0)
-            top, bottom = (6.0, 36.0) if compact else (10.0, 42.0)
-        else:
-            top, right, bottom, left = map(float, self._padding)
-        if self._title:
-            top += 26.0 if compact else 30.0
-        if x_props.get("side") == "top":
-            top += 26.0 if compact else 32.0
-        plot_width = max(40.0, float(width) - left - right)
-        plot_height = max(40.0, float(height) - top - bottom)
+        plot_width, plot_height = self._plot_rect_px(
+            width, height, self._padding, x_props.get("side")
+        )
         dpi = float(self.figure._dpi if self.figure._dpi is not None else rcParams["figure.dpi"])
         base = float(rcParams["font.size"])
         x_font = _font_size_points(rcParams["xtick.labelsize"], base)

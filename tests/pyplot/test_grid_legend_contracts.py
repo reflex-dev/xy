@@ -160,14 +160,19 @@ def test_standalone_legend_preserves_rule_annotation_dash():
     assert item["style"]["dash"] == [10.2778, 4.4444]
 
 
-def test_center_right_legend_loc_reaches_spec():
+def test_center_band_legend_loc_reaches_spec():
     import numpy as np
 
     _, ax = plt.subplots()
     x = np.linspace(0, 10, 500)
     # A full-amplitude oscillation leaves every corner busy; matplotlib's "best"
-    # parks the legend on the sparse vertical-center band.
+    # parks the legend on the sparse vertical-center band. Matplotlib 3.11.1
+    # scores this exact figure center left 20 against center right 36 — a
+    # decisive win for the left band, not a tie. This asserted "center right"
+    # while the shim compared *mean fractional* occupancy under a 0.02 tie band,
+    # which flattened the 20-vs-36 gap into a tie and handed it to the
+    # earlier-ordered candidate.
     ax.plot(x, np.sin(x[:, None] + np.pi * np.arange(0, 2, 0.5)))
     ax.legend(["a", "b"])
     spec, _ = ax._build_chart(573, 400).figure().build_payload()
-    assert spec["legend"]["loc"] == "center right"
+    assert spec["legend"]["loc"] == "center left"

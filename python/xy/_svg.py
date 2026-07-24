@@ -30,6 +30,7 @@ import numpy as np
 
 from . import _native, _paint, _png
 from ._arrowgeom import arrow_shapes as _arrow_shapes
+from ._validate import legend_loc_anchor as _legend_loc_anchor
 from .config import DEFAULT_PALETTE
 
 
@@ -2784,12 +2785,15 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     )
 
     loc = options.get("loc") or "upper right"
+    # Resolve through the canonical table rather than by substring-matching
+    # "left"/"right" and "upper"/"lower" out of `loc`: an unresolved string such
+    # as a literal "best" matches neither half, and used to fall through to the
+    # centered branch and silently misplace the legend instead of erroring.
+    hx, vy = _legend_loc_anchor(loc)
     anchor = options.get("anchor")
     if anchor and len(anchor) in (2, 4):
         ax, ay = float(anchor[0]), float(anchor[1])
         aw, ah = (0.0, 0.0) if len(anchor) == 2 else (float(anchor[2]), float(anchor[3]))
-        hx = 0.0 if "left" in loc else 1.0 if "right" in loc else 0.5
-        vy = 0.0 if "lower" in loc else 1.0 if "upper" in loc else 0.5
         target_x = float(plot["x"]) + (ax + hx * aw) * float(plot["w"])
         target_y = float(plot["y"]) + (1.0 - ay - vy * ah) * float(plot["h"])
         x = target_x - hx * box_w
@@ -2800,18 +2804,12 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
         # moved upward from its anchor and an "upper" legend moves downward.
         y += border_axes_pad if vy == 1.0 else -border_axes_pad if vy == 0.0 else 0.0
     else:
-        if "left" in loc:
-            x = float(plot["x"]) + inset
-        elif "right" in loc:
-            x = float(plot["x"]) + float(plot["w"]) - box_w - inset
-        else:
-            x = float(plot["x"]) + (float(plot["w"]) - box_w) / 2
-        if "upper" in loc:
-            y = float(plot["y"]) + inset
-        elif "lower" in loc:
-            y = float(plot["y"]) + float(plot["h"]) - box_h - inset
-        else:
-            y = float(plot["y"]) + (float(plot["h"]) - box_h) / 2
+        # `hx`/`vy` slide the box across the inset plot box: hx=0 is flush left,
+        # hx=1 flush right, hx=.5 centered (and identically for vy, which points
+        # up while SVG y points down). Algebraically identical to the previous
+        # per-branch arithmetic for all ten valid location names.
+        x = float(plot["x"]) + inset + hx * (float(plot["w"]) - 2 * inset - box_w)
+        y = float(plot["y"]) + inset + (1.0 - vy) * (float(plot["h"]) - 2 * inset - box_h)
         x = min(
             max(x, float(plot["x"]) + inset),
             float(plot["x"]) + float(plot["w"]) - box_w - inset,
