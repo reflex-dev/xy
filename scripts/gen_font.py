@@ -22,9 +22,11 @@ from PIL import Image, ImageFont
 # Printable ASCII. Axis labels/titles/legends mostly stay within this set.
 FIRST, LAST = 0x20, 0x7E
 # Extra codepoints for the pyplot shim's TeX-subset → unicode conversion
-# (greek, super/subscripts, math operators) plus typography mpl emits (−, µ).
+# (greek, super/subscripts, math operators), typography mpl emits (−, µ), and
+# the precomposed umlauts used by Matplotlib's canonical text_commands example.
 EXTRA = sorted(
     set(
+        "öü"
         "αβγδεζηθικλμνξοπρστυφχψω"
         "ΓΔΘΛΞΠΣΥΦΨΩ"
         "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ"
@@ -33,6 +35,9 @@ EXTRA = sorted(
     )
 )
 PX = 16  # render size; runtime scales this coverage bitmap to the requested size.
+# Keep the two historical atlas advances stable across Matplotlib's bundled
+# DejaVu Sans revisions; changing them would move unrelated existing labels.
+STABLE_ADVANCES = {"?": 8, "K": 10}
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "src" / "font.rs"
 
@@ -54,7 +59,7 @@ def main() -> None:
     for code in codepoints:
         ch = chr(code)
         # Advance width (horizontal pen movement).
-        advance = round(face.getlength(ch))
+        advance = STABLE_ADVANCES.get(ch, round(face.getlength(ch)))
         box = face.getbbox(ch)  # (left, top, right, bottom) in the ascent-origin frame
         if box is None or box[2] <= box[0] or box[3] <= box[1]:
             glyphs.append((advance, 0, 0, 0, 0, b""))

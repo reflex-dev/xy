@@ -127,13 +127,14 @@ argminmax, tsdownsample-class speed) with the lean build as default.
 ### 2.1 Native text is a bounded subset, and misses are silent
 
 Declining FreeType bought the single-cdylib property (§3.1) and paid for it in
-Unicode coverage. `font.rs` bakes exactly 205 glyphs: ASCII 32–126 (95) plus
-the 110 codepoints enumerated in `font::EXTRA_CODEPOINTS` — lowercase Greek
+Unicode coverage. `font.rs` bakes exactly 207 glyphs: ASCII 32–126 (95) plus
+the 112 codepoints enumerated in `font::EXTRA_CODEPOINTS` — lowercase Greek
 (α–ω) and the eleven uppercase Greek letters that differ from Latin forms
 (Γ Δ Θ Λ Ξ Π Σ Υ Φ Ψ Ω), math operators (`∂ ∇ ∈ − ∓ √ ∝ ∞ ∫ ≈ ≠ ≤ ≥`), the
 left and right arrows only, super/subscript digits and a handful of subscript
-letters, typographic quotes, en/em dashes, and a few symbols (`° ± × · µ ²³¹ …`).
-Nothing else exists: no accented Latin at all, no Cyrillic, no CJK, no Arabic,
+letters, typographic quotes, en/em dashes, the `ö`/`ü` glyphs used by
+Matplotlib's canonical text example, and a few symbols (`° ± × · µ ²³¹ …`).
+Nothing else exists: no other accented Latin, no Cyrillic, no CJK, no Arabic,
 no emoji.
 
 The failure mode is worse than the coverage gap. `glyph_index`
@@ -141,8 +142,8 @@ The failure mode is worse than the coverage gap. `glyph_index`
 loop's `let … else { continue; }` (`src/raster.rs:1236-1238`) drops that
 character **before** the advance is applied — so the glyph is deleted, not
 substituted, and the following glyphs close up over the hole. There is no tofu
-box, no fallback glyph, no warning, and no error. `"Müller"` rasterizes as
-`"Mller"`; a fully non-Latin label rasterizes as nothing. The anchoring pass
+box, no fallback glyph, no warning, and no error. `"café"` rasterizes as
+`"caf"`; a fully non-Latin label rasterizes as nothing. The anchoring pass
 sums advances through the same `glyph_index` filter (`src/raster.rs:1200-1204`),
 so a centered or right-anchored label is positioned on its *shortened* width —
 the loss is self-consistent and therefore invisible in the output.

@@ -73,11 +73,49 @@ _COMMANDS = {
     "in": "∈",
     "percent": "%",
     "%": "%",
-    ",": " ",
-    ";": " ",
-    " ": " ",
+    # TeX ignores ordinary spaces in math mode.  Explicit spacing commands
+    # survive through a sentinel until that whitespace has been removed.
+    ",": "\x01",
+    ";": "\x01",
+    " ": "\x01",
     "!": "",
+    # Matplotlib's named functions are upright roman glyph runs, not unknown
+    # TeX commands and not italic variables.
+    "arccos": "arccos",
+    "arcsin": "arcsin",
+    "arctan": "arctan",
+    "arg": "arg",
+    "cos": "cos",
+    "cosh": "cosh",
+    "cot": "cot",
+    "csc": "csc",
+    "deg": "deg",
+    "det": "det",
+    "dim": "dim",
+    "exp": "exp",
+    "gcd": "gcd",
+    "hom": "hom",
+    "ker": "ker",
+    "lg": "lg",
+    "lim": "lim",
+    "liminf": "liminf",
+    "limsup": "limsup",
+    "ln": "ln",
+    "log": "log",
+    "max": "max",
+    "min": "min",
+    "sec": "sec",
+    "sin": "sin",
+    "sinh": "sinh",
+    "sup": "sup",
+    "tan": "tan",
 }
+
+_UPRIGHT_WORDS = frozenset(
+    value
+    for name, value in _COMMANDS.items()
+    if name.isalpha() and value.isascii() and value.isalpha()
+)
 
 # Wrappers whose braces disappear and whose contents pass through.
 _WRAPPERS = ("mathdefault", "mathrm", "mathit", "mathbf", "text", "textrm", "operatorname")
@@ -130,7 +168,10 @@ def _convert_math(body: str) -> str | None:
     out = _COMMAND.sub(command, out)
     if "\x00" in out or "\\" in out:
         return None
-    return out.replace("{", "").replace("}", "")
+    # Unescaped spaces are insignificant in math mode.  Match Matplotlib's
+    # Unicode minus while retaining deliberate ``\,``/``\;``/``\ `` gaps.
+    out = re.sub(r"\s+", "", out)
+    return out.replace("-", "−").replace("\x01", " ").replace("{", "").replace("}", "")
 
 
 def mathtext_to_unicode(text: str) -> str:
@@ -148,3 +189,40 @@ def mathtext_to_unicode(text: str) -> str:
         last = match.end()
     pieces.append(text[last:])
     return "".join(pieces)
+
+
+def mathtext_italic_ranges(text: str) -> tuple[str, list[tuple[int, int]]]:
+    r"""Flatten mathtext and return output ranges that use math italics.
+
+    Matplotlib defaults variables (including Greek letters) to italics while
+    named functions such as ``\cos`` and ``\exp`` remain upright.  The
+    renderer-facing range list preserves that distinction without exposing a
+    full TeX layout engine.
+    """
+    converted = mathtext_to_unicode(text)
+    if converted == text or "$" not in text:
+        return converted, []
+
+    ranges: list[tuple[int, int]] = []
+    output_cursor = 0
+    source_cursor = 0
+    for match in _MATH_SPAN.finditer(text):
+        prefix = text[source_cursor : match.start()]
+        output_cursor += len(prefix)
+        body = _convert_math(match.group(1))
+        if body is None:  # guarded by ``converted == text`` above
+            return converted, []
+        token_start: int | None = None
+        for index, character in enumerate(body + "\0"):
+            if character.isalpha():
+                if token_start is None:
+                    token_start = index
+                continue
+            if token_start is not None:
+                token = body[token_start:index]
+                if token not in _UPRIGHT_WORDS:
+                    ranges.append((output_cursor + token_start, output_cursor + index))
+                token_start = None
+        output_cursor += len(body)
+        source_cursor = match.end()
+    return converted, ranges

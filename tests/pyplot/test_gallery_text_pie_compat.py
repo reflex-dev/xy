@@ -213,6 +213,59 @@ def test_text_preserves_mathtext_italic_span_across_all_exporters() -> None:
     assert np.any(rgba[..., :3] < 0.5)
 
 
+def test_text_fontdict_styles_title_labels_and_named_math_functions() -> None:
+    fig, ax = plt.subplots(figsize=(6.4, 4.8), dpi=100)
+    font = {"family": "serif", "color": "darkred", "weight": "normal", "size": 16}
+
+    ax.set_title("Damped exponential decay", fontdict=font)
+    equation = ax.text(2, 0.65, r"$\cos(2 \pi t) \exp(-t)$", fontdict=font)
+    ax.set_xlabel("time (s)", fontdict=font)
+    ax.set_ylabel("voltage (mV)", fontdict=font)
+
+    assert equation.get_text() == "cos(2πt)exp(\N{MINUS SIGN}t)"
+    assert equation._entry["kwargs"]["style"]["math_italic_ranges"] == "5:7,13:14"
+    spec, _ = ax._build_chart(*fig._panel_px()).figure().build_payload()
+    assert spec["dom"]["styles"]["title"] == {
+        "font-size": "22.2222px",
+        "color": "darkred",
+        "font-weight": "normal",
+        "font-family": "serif",
+    }
+    for axis in ("x_axis", "y_axis"):
+        style = spec[axis]["style"]
+        assert style["label_size"] == pytest.approx(22.2222, rel=1e-4)
+        assert style["label_color"] == "darkred"
+        assert style["label_font_weight"] == "normal"
+        assert style["label_font_family"] == "serif"
+    svg = ax._build_chart(*fig._panel_px()).figure().to_svg()
+    assert 'font-family="serif"' in svg
+    assert 'font-weight="normal"' in svg
+    assert 'fill="darkred"' in svg
+    assert ">cos(" in svg
+    assert "\\cos" not in svg and "\\exp" not in svg
+
+
+def test_text_commands_umlauts_render_in_native_png_and_survive_svg() -> None:
+    phrase = "Unicode: Institut für Festkörperphysik"
+    deleted = "Unicode: Institut fr Festkrperphysik"
+
+    def render(text: str) -> np.ndarray:
+        fig, ax = plt.subplots()
+        ax.set_xlim(0, 10)
+        ax.set_ylim(0, 10)
+        ax.text(3, 2, text)
+        return np.asarray(plt.imread(BytesIO(fig._to_png())))
+
+    with_umlauts = render(phrase)
+    plt.close("all")
+    without_umlauts = render(deleted)
+    assert not np.array_equal(with_umlauts, without_umlauts)
+
+    fig, ax = plt.subplots()
+    ax.text(3, 2, phrase)
+    assert phrase in ax._build_chart(*fig._panel_px()).figure().to_svg()
+
+
 def test_pie_container_values_are_defensive_and_fracs_stay_numeric() -> None:
     _fig, ax = plt.subplots()
     pie = ax.pie(np.array([2, 3, 5], dtype=np.int16))

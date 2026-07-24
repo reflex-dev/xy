@@ -38,7 +38,7 @@ from ._artists import (
 )
 from ._colors import PROP_CYCLE, resolve_cmap, resolve_color, resolve_rgba_array, scalar_float
 from ._fmt import parse_fmt
-from ._mathtext import mathtext_to_unicode
+from ._mathtext import mathtext_italic_ranges, mathtext_to_unicode
 from ._plot_types import PlotTypeMixin
 from ._rc import RcParams, rcParams
 from ._ticker import AutoLocator, Locator, NullLocator, ScalarFormatter, as_formatter
@@ -526,6 +526,7 @@ class Axes(PlotTypeMixin):
         self._containers: list[Any] = []
         self._axis: dict[str, dict[str, Any]] = {"x": {}, "y": {}, "y2": {}}
         self._title: Optional[str] = None
+        self._title_style: dict[str, Any] = {}
         self._legend = False
         self._legend_options: dict[str, Any] = {}
         self._extra_legends: list[Any] = []
@@ -814,6 +815,7 @@ class Axes(PlotTypeMixin):
         self._tickers = {}
         self._hidden_spines = set()
         self._title = None
+        self._title_style = {}
         self._legend = False
         self._legend_options = {}
         self._extra_legends = []
@@ -2462,7 +2464,7 @@ class Axes(PlotTypeMixin):
         """
         props = self._axis_props("x")
         props["label"] = _plain_text(label)
-        _apply_axis_label_kwargs(props, kwargs, "set_xlabel()")
+        _apply_axis_label_kwargs(props, kwargs, "set_xlabel()", point_scale=self._point_scale())
         self._invalidate()
 
     def set_ylabel(self, label: str, **kwargs: Any) -> None:
@@ -2472,7 +2474,7 @@ class Axes(PlotTypeMixin):
         """
         props = self._axis_props("y")
         props["label"] = _plain_text(label)
-        _apply_axis_label_kwargs(props, kwargs, "set_ylabel()")
+        _apply_axis_label_kwargs(props, kwargs, "set_ylabel()", point_scale=self._point_scale())
         self._invalidate()
 
     def set_title(self, title: str, **kwargs: Any) -> None:
@@ -2482,8 +2484,11 @@ class Axes(PlotTypeMixin):
         are accepted as compatibility inputs; anything else raises loudly.
         Basic mathtext (``$...$``) is rendered.
         """
-        _consume_text_kwargs(kwargs, "set_title()")
         host = self._y2_of or self
+        host._title_style = _title_css_style(
+            _pop_text_style_kwargs(kwargs, "set_title()"),
+            point_scale=self._point_scale(),
+        )
         host._title = _plain_text(title)
         host._invalidate()
 
@@ -4705,13 +4710,19 @@ class Axes(PlotTypeMixin):
                 tokens = dict(theme_tokens)
                 tokens["grid_color"] = self._grid_color if self._grid else "transparent"
                 children.append(xy.theme(style=self._theme_style, **tokens))
+        chrome_styles = self._chrome_styles
+        if self._title_style:
+            chrome_styles = {
+                **chrome_styles,
+                "title": {**chrome_styles.get("title", {}), **self._title_style},
+            }
         self._chart = xy.chart(
             *children,
             title=self._title,
             width=width,
             height=height,
             padding=chart_padding,
-            styles=self._chrome_styles,
+            styles=chrome_styles,
         )
         core_figure = self._chart.figure()
         core_figure.frame_sides = [
@@ -5155,10 +5166,27 @@ def _validate_margin(value: Any, axis: str) -> float:
     return margin
 
 
-def _apply_axis_label_kwargs(props: dict[str, Any], kwargs: dict[str, Any], context: str) -> None:
+def _apply_axis_label_kwargs(
+    props: dict[str, Any],
+    kwargs: dict[str, Any],
+    context: str,
+    *,
+    point_scale: float,
+) -> None:
     labelpad = kwargs.pop("labelpad", None)
     loc = kwargs.pop("loc", None)
-    _consume_text_kwargs(kwargs, context)
+    text_style = _pop_text_style_kwargs(kwargs, context)
+    axis_style = props.setdefault("style", {})
+    for source, target in (
+        ("color", "label_color"),
+        ("font_size", "label_size"),
+        ("font_family", "label_font_family"),
+        ("font_weight", "label_font_weight"),
+        ("font_style", "label_font_style"),
+    ):
+        if source in text_style:
+            value = text_style[source]
+            axis_style[target] = float(value) * point_scale if source == "font_size" else value
     if labelpad is not None:
         props["label_offset"] = float(labelpad)
     if loc is not None:
@@ -5174,21 +5202,28 @@ def _apply_axis_label_kwargs(props: dict[str, Any], kwargs: dict[str, Any], cont
         props["label_position"] = positions[loc]
 
 
-def _consume_text_kwargs(kwargs: dict[str, Any], context: str) -> None:
-    # Accepted for Matplotlib-flavoured scripts.  The native engine currently
-    # inherits font styling from the chart theme, so these kwargs are validated
-    # and retained as compatibility inputs rather than silently acting on data.
+def _pop_text_style_kwargs(kwargs: dict[str, Any], context: str) -> dict[str, Any]:
+    """Consume Matplotlib text kwargs and return renderer-backed font style."""
+    fontdict = kwargs.pop("fontdict", None)
+    if fontdict is not None:
+        if not isinstance(fontdict, Mapping):
+            raise TypeError(f"{context} fontdict must be a mapping or None")
+        kwargs = {**fontdict, **kwargs}
+
+    def pop_alias(primary: str, *aliases: str) -> Any:
+        value = kwargs.pop(primary, None)
+        for alias in aliases:
+            alias_value = kwargs.pop(alias, None)
+            if value is None:
+                value = alias_value
+        return value
+
+    size = pop_alias("fontsize", "size")
+    weight = pop_alias("fontweight", "weight")
+    family = pop_alias("fontfamily", "family")
+    font_style = pop_alias("fontstyle", "style")
+    color = kwargs.pop("color", None)
     for key in (
-        "fontsize",
-        "size",
-        "fontdict",
-        "fontweight",
-        "weight",
-        "fontstyle",
-        "style",
-        "fontfamily",
-        "family",
-        "color",
         "horizontalalignment",
         "ha",
         "verticalalignment",
@@ -5202,6 +5237,38 @@ def _consume_text_kwargs(kwargs: dict[str, Any], context: str) -> None:
         kwargs.pop(key, None)
     if kwargs:
         raise TypeError(f"{context} got unsupported keyword argument {next(iter(kwargs))!r}")
+
+    style: dict[str, Any] = {}
+    if size is not None:
+        style["font_size"] = _font_size_points(size, rcParams["font.size"])
+    if weight is not None:
+        style["font_weight"] = str(weight)
+    if family is not None:
+        style["font_family"] = str(family)
+    if font_style is not None:
+        font_style = str(font_style)
+        if font_style not in {"normal", "italic", "oblique"}:
+            raise ValueError(f"{context} style must be 'normal', 'italic', or 'oblique'")
+        style["font_style"] = font_style
+    if color is not None:
+        style["color"] = resolve_color(color)
+    return style
+
+
+def _title_css_style(style: dict[str, Any], *, point_scale: float) -> dict[str, Any]:
+    """Translate renderer text style keys to the chart title's CSS slot."""
+    result: dict[str, Any] = {}
+    for source, target in (
+        ("color", "color"),
+        ("font_family", "font-family"),
+        ("font_weight", "font-weight"),
+        ("font_style", "font-style"),
+    ):
+        if source in style:
+            result[target] = style[source]
+    if "font_size" in style:
+        result["font-size"] = f"{float(style['font_size']) * point_scale:g}px"
+    return result
 
 
 def _tick_label_visibility(kwargs: dict[str, Any]) -> Optional[bool]:
@@ -5257,39 +5324,10 @@ def _plain_text(value: Any) -> str:
 
 def _plain_text_with_math_italic_ranges(value: Any) -> tuple[str, list[tuple[int, int]]]:
     """Flatten simple mathtext while retaining its default italic spans."""
-    source = str(value)
-    parts: list[str] = []
-    ranges: list[tuple[int, int]] = []
-    cursor = 0
-    output_length = 0
-    while cursor < len(source):
-        start = source.find("$", cursor)
-        if start < 0:
-            tail = _plain_text(source[cursor:])
-            parts.append(tail)
-            break
-        prefix = _plain_text(source[cursor:start])
-        parts.append(prefix)
-        output_length += len(prefix)
-        end = source.find("$", start + 1)
-        if end < 0:
-            tail = _plain_text(source[start:])
-            parts.append(tail)
-            break
-        math = _plain_text(source[start : end + 1])
-        parts.append(math)
-        range_start: Optional[int] = None
-        for index, character in enumerate(math):
-            if character.isalpha() and range_start is None:
-                range_start = output_length + index
-            elif not character.isalpha() and range_start is not None:
-                ranges.append((range_start, output_length + index))
-                range_start = None
-        if range_start is not None:
-            ranges.append((range_start, output_length + len(math)))
-        output_length += len(math)
-        cursor = end + 1
-    return "".join(parts), ranges
+    converted, ranges = mathtext_italic_ranges(str(value))
+    if converted != str(value):
+        return converted, ranges
+    return _plain_text(value), []
 
 
 def _masked_float(value: Any) -> np.ndarray:
