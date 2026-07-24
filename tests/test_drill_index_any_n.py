@@ -84,6 +84,36 @@ def test_builder_layout_planes_and_nan_rows(tmp_path, cloud):
             assert np.all(np.diff(idx.rows[lo:hi].astype(np.int64)) > 0)
 
 
+def test_banded_build_is_byte_identical_to_direct(tmp_path, cloud):
+    # Large builds spill to per-band buckets so all I/O stays sequential;
+    # the layout contract is that banding changes WHEN bytes are written,
+    # never WHICH bytes: every plane file matches the direct scatter's.
+    x, y, color, size = cloud
+    c8 = channels.quantize_unit_u8(color, (0.0, 4.0))
+    s8 = channels.quantize_unit_u8(size, (2.0, 16.0))
+    direct = _spatial.build(str(tmp_path / "direct"), x, y, color_u8=c8, size_u8=s8, g=64)
+    banded = _spatial.build(
+        str(tmp_path / "banded"),
+        x,
+        y,
+        color_u8=c8,
+        size_u8=s8,
+        g=64,
+        band_budget=1 << 16,  # ~90 bands at this N
+    )
+    assert banded.n == direct.n
+    assert np.array_equal(banded.offsets, direct.offsets)
+    from pathlib import Path
+
+    for ext in (".lon.f32", ".lat.f32", ".rows.u32", ".color.u8", ".size.u8"):
+        assert (
+            Path(str(tmp_path / "direct") + ext).read_bytes()
+            == Path(str(tmp_path / "banded") + ext).read_bytes()
+        ), ext
+    # No bucket files linger.
+    assert not [p for p in os.listdir(tmp_path) if ".band" in p]
+
+
 def test_builder_empty_and_v1_reader_still_load(tmp_path):
     empty = _spatial.build(str(tmp_path / "e"), np.empty(0), np.empty(0), g=4)
     assert empty.n == 0 and empty.window_count(0, 1, 0, 1) == 0

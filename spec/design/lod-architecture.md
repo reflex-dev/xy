@@ -398,13 +398,16 @@ no-rescan bound:
   grid widens its gathered f32 window for the f64 kernel (bounded by
   `SPATIAL_EXACT_MAX_POINTS`, ≤ ~1.3 GB at the extreme — an f32 twin kernel
   is the follow-up); `direct_rgba`/wide-categorical color planes are not yet
-  stored. Measured at 600M memmapped rows on a 15 GB host: the build added
-  +0.11 GB peak RSS (the chunk-bounded contract holds) but took 767 s —
-  pass 2's scatter writes are RANDOM across the output planes, so wall
-  clock is page-cache-bound when planes + source columns exceed RAM; a
-  banded (grid-row-partitioned) scatter that writes sequentially is the
-  recorded follow-up. First drills into cold regions pay seconds of
-  page-ins (the ≤ budget random canonical reads above) and are instant
+  stored. Measured at 600M memmapped rows on a 15 GB host: the build adds
+  ≤ +0.9 GB peak RSS (the chunk-bounded contract holds) and takes 355 s.
+  Builds whose final planes exceed `_BAND_BUDGET` (256 MB) spill to
+  per-band bucket files and finalize band by band, so every read and write
+  is sequential — the direct scatter's RANDOM writes page-thrashed the
+  same build to 767 s the moment planes + source columns exceeded RAM
+  (banding is byte-identical to the direct layout, pinned by test, and
+  costs one transient extra copy of the planes plus a u32 cell per row,
+  deleted as bands complete). First drills into cold regions pay seconds
+  of page-ins (the ≤ budget random canonical reads above) and are instant
   once warm; deep zooms that previously served `pyramid-L0-upsampled`
   blur now ship `spatial-exact` grids and then real points
   (600M: `mode=points, visible=19,125`, pick exact through the memmap).

@@ -55,14 +55,17 @@ in the README).
   builds it automatically above the bound, so the 100M→1B+ drilldown keeps
   resolving into points; `test_adaptive_drilldown_cycle_indexed` tracks the
   cycle in CodSpeed and `tests/test_drill_index_any_n.py` pins reply parity
-  byte for byte. Measured at 600M memmapped rows on a 15 GB host: the
-  build adds +0.11 GB peak RSS (767 s wall — page-cache-bound when planes
-  plus source exceed RAM; a sequential banded scatter is the recorded
-  follow-up), deep zooms that previously stayed on upsampled-pyramid blur
-  now ship `spatial-exact` grids and then real points with exact picks
-  through the memmap, and warm interactive replies stay instant. Not yet
-  stored: `direct_rgba`/wide-categorical color planes (those traces keep
-  the colored pyramid at aggregate depths).
+  byte for byte. Large builds spill to per-band bucket files and finalize
+  band by band so every read and write stays sequential (byte-identical to
+  the direct scatter, pinned by test; one transient extra copy of the
+  planes on disk, deleted as bands complete) — the direct scatter's random
+  writes page-thrashed a 600M memmapped build to 767 s on a 15 GB host,
+  the banded build measures 355 s with ≤ +0.9 GB peak RSS. Deep zooms that
+  previously stayed on upsampled-pyramid blur now ship `spatial-exact`
+  grids and then real points with exact picks through the memmap, and warm
+  interactive replies stay instant. Not yet stored:
+  `direct_rgba`/wide-categorical color planes (those traces keep the
+  colored pyramid at aggregate depths).
 
 ### Changed
 - **Colored huge-scatter builds are peak-memory-bounded (LOD doc §4.4).**

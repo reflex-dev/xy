@@ -58,6 +58,13 @@ _FLAG_SIZE_U8 = 1 << 3
 # of N; the outputs are written straight into the mapped plane files.
 _BUILD_CHUNK = 1 << 22
 
+# Final-plane bytes a build may scatter into directly. Beyond it, the random
+# writes' working set no longer fits page cache next to the source columns
+# and the build page-thrashes (measured: 12+ minutes for a 600M build's
+# ~22 GB of I/O); the banded spill keeps every read and write sequential,
+# and one band's planes stay comfortably cache-resident while it sorts.
+_BAND_BUDGET = 1 << 28
+
 
 @dataclass
 class SpatialIndex:
@@ -220,17 +227,23 @@ def build(
     size_u8: Optional[np.ndarray] = None,
     g: Optional[int] = None,
     chunk: int = _BUILD_CHUNK,
+    band_budget: int = _BAND_BUDGET,
 ) -> SpatialIndex:
     """Build an ``XYSPIDX2`` index from canonical columns (RAM or memmap).
 
     Two streaming passes of a counting sort, each reading the inputs in
     ``chunk``-row slices: pass 1 histograms cell occupancy into the offsets
-    table; pass 2 scatters every finite row's planes into its cell's span,
+    table; pass 2 places every finite row's planes into its cell's span,
     chunk order preserved within cells — so cells hold ascending canonical row
-    ids by construction. Non-finite rows are skipped exactly like the binning
-    kernels (§19: NaN never reaches a vertex buffer). ``color_u8``/``size_u8``
-    must already be wire-quantized (the caller owns channel semantics; this
-    module stores bytes), aligned with ``x``/``y``.
+    ids by construction. Small builds scatter directly; builds whose final
+    planes exceed ``band_budget`` bytes spill to per-band bucket files and
+    finalize band by band so every read and write stays sequential (identical
+    output bytes either way; the transient buckets cost roughly one extra
+    copy of the planes plus a u32 cell id per row, deleted as bands
+    complete). Non-finite rows are skipped exactly like the binning kernels
+    (§19: NaN never reaches a vertex buffer). ``color_u8``/``size_u8`` must
+    already be wire-quantized (the caller owns channel semantics; this module
+    stores bytes), aligned with ``x``/``y``.
     """
     n_rows = len(x)
     if len(y) != n_rows:
@@ -304,33 +317,145 @@ def build(
         else None
     )
 
-    # Pass 2: stable scatter. Chunks arrive in row order and the within-chunk
-    # sort is stable, so each cell's span fills in ascending canonical order.
-    cursor = offsets[:-1].astype(np.int64)
-    for s in range(0, n_rows, chunk):
-        xs = np.asarray(x[s : s + chunk], dtype=np.float64)
-        ys = np.asarray(y[s : s + chunk], dtype=np.float64)
-        finite = np.isfinite(xs) & np.isfinite(ys)
-        local = np.flatnonzero(finite)
-        if not len(local):
-            continue
-        xs, ys = xs[local], ys[local]
-        cells = cells_of(xs, ys)
-        order = np.argsort(cells, kind="stable")
-        cs = cells[order]
-        uniq, first, per_cell = np.unique(cs, return_index=True, return_counts=True)
-        within = np.arange(len(cs), dtype=np.int64) - np.repeat(first, per_cell)
-        pos = cursor[cs] + within
-        cursor[uniq] += per_cell
-        lon_mm[pos] = xs[order].astype(np.float32)
-        lat_mm[pos] = ys[order].astype(np.float32)
-        rows_mm[pos] = (s + local[order]).astype(rows_dtype)
-        if color_mm is not None and color_u8 is not None:
-            plane = np.asarray(color_u8[s : s + chunk])[local]
-            color_mm[pos] = plane[order]
-        if size_mm is not None and size_u8 is not None:
-            plane = np.asarray(size_u8[s : s + chunk])[local]
-            size_mm[pos] = plane[order]
+    # Pass 2: stable scatter, BANDED for large builds. A direct scatter
+    # writes each chunk to cell positions spread across the whole output —
+    # random writes whose working set is every plane at once, which
+    # page-thrashes as soon as planes + source columns exceed RAM (measured:
+    # a 600M build spent 12+ minutes on ~22 GB of I/O). When the final
+    # planes exceed `band_budget`, the grid's rows split into contiguous
+    # bands sized to fit it, chunks SPILL to per-band bucket files
+    # (sequential appends), and each band then loads, stable-sorts by cell,
+    # and writes its contiguous slice of every plane — sequential I/O end to
+    # end, identical bytes to the direct scatter (chunk append order + the
+    # stable in-band sort reproduce ascending canonical order per cell).
+    # Bucket files cost one extra transient copy of the planes (+ a u32 cell
+    # per row) and are deleted band by band.
+    per_row_bytes = 4 + 4 + np.dtype(rows_dtype).itemsize
+    per_row_bytes += 1 if color_u8 is not None else 0
+    per_row_bytes += 1 if size_u8 is not None else 0
+    row_starts = offsets[::g].astype(np.int64)  # cumulative rows at each grid-row boundary
+    n_bands = max(1, -(-(n * per_row_bytes) // band_budget)) if n else 1
+    if n_bands > 1:
+        # Split grid rows into bands of ≈ equal ROW COUNT (not equal iy):
+        # a dense stripe otherwise blows one band past the budget.
+        targets = np.linspace(0, n, n_bands + 1)[1:-1]
+        cut_iy = np.unique(np.searchsorted(row_starts, targets, side="left"))
+        band_iy = np.concatenate(([0], cut_iy, [g]))
+        band_iy = np.unique(band_iy)
+    else:
+        band_iy = np.array([0, g])
+    band_of_iy = np.repeat(np.arange(len(band_iy) - 1), np.diff(band_iy))
+
+    if len(band_iy) - 1 == 1:
+        # Fits the budget: the direct scatter's working set is cache-resident.
+        cursor = offsets[:-1].astype(np.int64)
+        for s in range(0, n_rows, chunk):
+            xs = np.asarray(x[s : s + chunk], dtype=np.float64)
+            ys = np.asarray(y[s : s + chunk], dtype=np.float64)
+            finite = np.isfinite(xs) & np.isfinite(ys)
+            local = np.flatnonzero(finite)
+            if not len(local):
+                continue
+            xs, ys = xs[local], ys[local]
+            cells = cells_of(xs, ys)
+            order = np.argsort(cells, kind="stable")
+            cs = cells[order]
+            uniq, first, per_cell = np.unique(cs, return_index=True, return_counts=True)
+            within = np.arange(len(cs), dtype=np.int64) - np.repeat(first, per_cell)
+            pos = cursor[cs] + within
+            cursor[uniq] += per_cell
+            lon_mm[pos] = xs[order].astype(np.float32)
+            lat_mm[pos] = ys[order].astype(np.float32)
+            rows_mm[pos] = (s + local[order]).astype(rows_dtype)
+            if color_mm is not None and color_u8 is not None:
+                plane = np.asarray(color_u8[s : s + chunk])[local]
+                color_mm[pos] = plane[order]
+            if size_mm is not None and size_u8 is not None:
+                plane = np.asarray(size_u8[s : s + chunk])[local]
+                size_mm[pos] = plane[order]
+    else:
+        n_b = len(band_iy) - 1
+        plane_exts = ["cell.u32", "lon.f32", "lat.f32", "rows"]
+        if color_u8 is not None:
+            plane_exts.append("color.u8")
+        if size_u8 is not None:
+            plane_exts.append("size.u8")
+
+        def bucket_path(b: int, ext: str) -> str:
+            return f"{prefix}.band{b:04d}.{ext}"
+
+        try:
+            # Pass 2a: spill each chunk's rows to their bands, in chunk order
+            # (sequential appends only). The cell id rides the bucket so pass
+            # 2b never re-derives it from the f32-rounded positions.
+            with contextlib.ExitStack() as stack:
+                bucket_files = [
+                    {
+                        ext: stack.enter_context(open(bucket_path(b, ext), "wb"))
+                        for ext in plane_exts
+                    }
+                    for b in range(n_b)
+                ]
+                for s in range(0, n_rows, chunk):
+                    xs = np.asarray(x[s : s + chunk], dtype=np.float64)
+                    ys = np.asarray(y[s : s + chunk], dtype=np.float64)
+                    finite = np.isfinite(xs) & np.isfinite(ys)
+                    local = np.flatnonzero(finite)
+                    if not len(local):
+                        continue
+                    xs, ys = xs[local], ys[local]
+                    cells = cells_of(xs, ys)
+                    bands = band_of_iy[cells // g]
+                    rows_ids = (s + local).astype(rows_dtype)
+                    cplane = (
+                        np.asarray(color_u8[s : s + chunk])[local] if color_u8 is not None else None
+                    )
+                    splane = (
+                        np.asarray(size_u8[s : s + chunk])[local] if size_u8 is not None else None
+                    )
+                    for b in np.unique(bands):
+                        m = bands == b
+                        files = bucket_files[b]
+                        cells[m].astype(np.uint32).tofile(files["cell.u32"])
+                        xs[m].astype(np.float32).tofile(files["lon.f32"])
+                        ys[m].astype(np.float32).tofile(files["lat.f32"])
+                        rows_ids[m].tofile(files["rows"])
+                        if cplane is not None:
+                            cplane[m].tofile(files["color.u8"])
+                        if splane is not None:
+                            splane[m].tofile(files["size.u8"])
+            # Pass 2b: one band at a time — load (sequential), stable-sort by
+            # cell, write the band's contiguous slice of every plane
+            # (sequential), delete its buckets.
+            for b in range(n_b):
+                cells_b = np.fromfile(bucket_path(b, "cell.u32"), dtype=np.uint32)
+                if len(cells_b):
+                    lo = int(row_starts[band_iy[b]])
+                    hi = lo + len(cells_b)
+                    # A band holds exactly its grid rows' points; a mismatch
+                    # means a spill bug and must fail loudly, not corrupt.
+                    assert hi == int(row_starts[band_iy[b + 1]])
+                    order = np.argsort(cells_b, kind="stable")
+                    lon_b = np.fromfile(bucket_path(b, "lon.f32"), dtype=np.float32)
+                    lat_b = np.fromfile(bucket_path(b, "lat.f32"), dtype=np.float32)
+                    rows_b = np.fromfile(bucket_path(b, "rows"), dtype=rows_dtype)
+                    lon_mm[lo:hi] = lon_b[order]
+                    lat_mm[lo:hi] = lat_b[order]
+                    rows_mm[lo:hi] = rows_b[order]
+                    if color_mm is not None:
+                        cb = np.fromfile(bucket_path(b, "color.u8"), dtype=np.uint8)
+                        color_mm[lo:hi] = cb[order]
+                    if size_mm is not None:
+                        sb = np.fromfile(bucket_path(b, "size.u8"), dtype=np.uint8)
+                        size_mm[lo:hi] = sb[order]
+                for ext in plane_exts:
+                    with contextlib.suppress(FileNotFoundError):
+                        os.remove(bucket_path(b, ext))
+        finally:
+            for b in range(n_b):
+                for ext in plane_exts:
+                    with contextlib.suppress(FileNotFoundError):
+                        os.remove(bucket_path(b, ext))
 
     for mm in (lon_mm, lat_mm, rows_mm, color_mm, size_mm):
         if mm is not None:
