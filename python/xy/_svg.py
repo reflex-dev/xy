@@ -28,7 +28,7 @@ from xml.sax.saxutils import escape
 
 import numpy as np
 
-from . import _native, _paint, _png
+from . import _fontmetrics, _native, _paint, _png
 from ._arrowgeom import arrow_shapes as _arrow_shapes
 from .config import DEFAULT_PALETTE
 
@@ -1121,6 +1121,117 @@ def _colorbar_right_axis_room(
     return 0.0
 
 
+# Canvas inset the browser's rotated y-title line box is centered on
+# (`left:10px` / `plot-right+40px` in ChartView), and the smallest gap left
+# between the canvas edge and the outermost axis ink when no title claims that
+# inset. Antialiased leading glyphs must not land on the export boundary.
+_Y_TITLE_INSET = 10.0
+_AXIS_TEXT_EDGE_PAD = 4.0
+# Floor on the y title's leading ink, for a title whose line box is taller than
+# twice the inset. Deliberately below `_AXIS_TEXT_EDGE_PAD`: at ordinary sizes
+# the inset itself governs, and matching ChartView's placement matters more than
+# a rounder outer margin (a 13.89 px title inks from x=1.75 in both renderers).
+_Y_TITLE_MIN_INK = 1.0
+# Gap between the y title's ink and the nearest tick label's ink, as a fraction
+# of the title's font size. Matplotlib leaves 5.6 px at its 13.89 px (10 pt at
+# 100 dpi) default — measured with `Text.get_window_extent` on 3.11.1.
+_Y_TITLE_TICK_GAP = 0.4
+
+
+def _text_cell(font_size: float) -> tuple[float, float]:
+    """(ascent, descent) in px of the core's DejaVu face at `font_size`."""
+    return (
+        font_size * _fontmetrics.ASCENT / _fontmetrics.BASE_PX,
+        font_size * _fontmetrics.DESCENT / _fontmetrics.BASE_PX,
+    )
+
+
+def _y_title_baseline(axis: dict[str, Any], plot_right: float) -> Optional[float]:
+    """Baseline x of a quarter-turned y-axis title, or None when it has none.
+
+    ChartView positions the title as a rotated DOM line box *centered* on a
+    fixed canvas inset; a static exporter emits a baseline. The two differ by
+    half a line box, which is why the SVG/PNG title used to sit one full ascent
+    further toward the canvas edge than the browser draws it — the same
+    box-to-baseline correction the x-axis title already makes with
+    `font_size * 0.82`. Titles at any other angle keep the raw inset.
+    """
+    if not axis.get("label"):
+        return None
+    raw_position = axis.get("label_position")
+    position = raw_position if isinstance(raw_position, str) else "center"
+    if position.replace("-", "_").startswith("inside_"):
+        return None  # drawn over the plot; it needs no gutter
+    style = axis.get("style") or {}
+    font_size = float(style.get("label_size", 12))
+    side = axis.get("side", "left")
+    angle = float(axis.get("label_angle", 90.0 if side == "right" else -90.0))
+    ascent, descent = _text_cell(font_size)
+    # Ink is [x - ascent, x + descent] at -90° and [x - descent, x + ascent] at
+    # +90°, so centering the cell on the inset shifts the baseline by half the
+    # ascent/descent asymmetry, away from the plot in both cases.
+    shift = (ascent - descent) / 2 if abs(abs(angle) - 90.0) < 0.5 else 0.0
+    offset = float(axis.get("label_offset", 0.0))
+    if side == "right":
+        return plot_right + 40.0 - shift + offset
+    # Clamp so an oversized title cannot be pushed off the canvas by the inset.
+    return max(_Y_TITLE_MIN_INK + ascent, _Y_TITLE_INSET + shift) - offset
+
+
+def _y_tick_label_room(axis: dict[str, Any], plot_h: float) -> tuple[float, float]:
+    """(offset from the spine, widest tick-label extent) for a y axis, in px.
+
+    Measured from the advance widths of the strings that will actually be drawn,
+    using the same DejaVu metrics the Rust rasterizer blits (`src/font.rs`) —
+    which is also Matplotlib's default face, so an advance measured here is the
+    advance Matplotlib lays out.
+    """
+    if _axis_tick_label_strategy(axis) in {"none", "off"}:
+        return 0.0, 0.0
+    font_size = _axis_tick_font_size(axis)
+    ascent, descent = _text_cell(font_size)
+    raw_angle = axis.get("tick_label_angle")
+    angle = abs(float(raw_angle or 0.0)) * math.pi / 180.0
+    _values, labels, step = axis_ticks(axis, plot_h, False)
+    room = 0.0
+    for value in labels:
+        advance = _fontmetrics.advance(str(_tick_text(axis, value, step)), font_size)
+        # A rotated label trades width for height about its pinned edge.
+        room = max(room, advance * math.cos(angle) + (ascent + descent) * math.sin(angle))
+    return _axis_tick_label_offset(axis), room
+
+
+def _y_axis_left_room(spec: dict[str, Any], plot_h: float) -> float:
+    """Left gutter the y-axis text needs, measured rather than assumed.
+
+    `layout()`'s fixed 46/62 px default fits ordinary numeric ticks under a
+    12 px title. Matplotlib's rcParam fonts (13.89 px at 100 dpi), long category
+    names, and authored tick labels all exceed it, and the shortfall lands as a
+    title drawn on top of the tick labels — or off the canvas — instead of as a
+    wider gutter.
+
+    Right-side y axes deliberately keep the flat 42/54 px reservation above:
+    ChartView pins a right title plot-relative (`plot-right+40`) rather than to
+    a canvas inset, so widening only the static exporters' right gutter would
+    move their title away from the browser's. That asymmetry is recorded in
+    `spec/api/styling.md`, not silently fixed here.
+    """
+    room = 0.0
+    for axis_id, axis in _axes_by_id(spec).items():
+        if not axis_id.startswith("y") or axis.get("side", "left") == "right":
+            continue
+        tick_offset, tick_room = _y_tick_label_room(axis, plot_h)
+        baseline = _y_title_baseline(axis, 0.0)
+        if baseline is None:
+            room = max(room, _AXIS_TEXT_EDGE_PAD + tick_offset + tick_room)
+            continue
+        label_size = float((axis.get("style") or {}).get("label_size", 12))
+        _ascent, descent = _text_cell(label_size)
+        gap = _Y_TITLE_TICK_GAP * label_size if tick_room else 0.0
+        room = max(room, baseline + descent + gap + tick_offset + tick_room)
+    return room
+
+
 def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
     """Concrete pixel dimensions + plot rect from a spec — shared by the SVG and
     native-PNG exporters so their chrome/plot geometry stays identical."""
@@ -1176,6 +1287,14 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         # secondary-y tick labels/title. Multiple right axes intentionally
         # overlay in both renderers until offset axes become part of the API.
         right += 42 if compact else 54
+    # Measured y-axis text room, applied last. The vertical extent is already
+    # final (only top/bottom feed it), so the tick density the reservation
+    # measures is the density that will be drawn. This raises a *floor*: an
+    # authored `padding` and the 46/62 default both stand whenever they already
+    # fit, exactly as the colorbar/right-axis room above is additive rather
+    # than authoritative. Reserving less than the ink is not an option — a
+    # static export has no ellipsis to fall back on the way the DOM does.
+    left = max(left, _y_axis_left_room(spec, max(40, height - top - bottom)))
     plot = {
         "x": left,
         "y": top,
@@ -1412,10 +1531,21 @@ def _axis_label_geometry(
         text_anchor = "start" if anchor == "start" else "end" if anchor == "end" else "middle"
         angle = float(axis.get("label_angle", 0.0))
     else:
-        outside_x = plot["x"] + plot["w"] + 40 if side == "right" else 10
-        inside_x = plot["x"] + plot["w"] - 12 if side == "right" else plot["x"] + 12
-        x = inside_x if inside else outside_x
-        x += (-offset if inside else offset) if side == "right" else (offset if inside else -offset)
+        if inside:
+            inside_x = plot["x"] + plot["w"] - 12 if side == "right" else plot["x"] + 12
+            x = inside_x + (-offset if side == "right" else offset)
+        else:
+            # The rotated title's *line box* is centered on ChartView's inset
+            # (`left:10px` / `plot-right+40px`); a static exporter emits a
+            # baseline. `_y_title_baseline` applies that half-line-box
+            # correction and the axis's own `label_offset`, and is the same
+            # function `layout()` reserves the gutter from.
+            baseline = _y_title_baseline(axis, plot["x"] + plot["w"])
+            x = (
+                baseline
+                if baseline is not None
+                else (plot["x"] + plot["w"] + 40 + offset if side == "right" else 10 - offset)
+            )
         y = plot["y"] + plot["h"] * (1.0 - anchor_fraction)
         text_anchor = "middle"
         angle = float(axis.get("label_angle", 90.0 if side == "right" else -90.0))

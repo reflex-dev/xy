@@ -22,6 +22,21 @@ from ._transforms import CoordinateTransform
 from ._translate import check_unsupported, not_implemented
 
 
+def _measured_left_gutter(ax: Axes, width: int, height: int) -> float:
+    """The left gutter `_svg.layout()` will reserve for `ax`'s y-axis text.
+
+    Probes the real spec because the reservation is measured from the tick
+    labels the resolved range produces, which only exist after the payload is
+    built. The probe costs one extra payload build on the notebook display path;
+    the browser needs the number *before* the chart it renders is built, and a
+    second implementation of the measurement is the thing this must not become.
+    """
+    from .. import _svg
+
+    spec, _buffers = ax._build_chart(width, height).figure().build_payload_split()
+    return float(_svg.layout(spec)[3]["x"])
+
+
 def _png_with_metadata(data: bytes, metadata: dict[Any, Any]) -> bytes:
     """Insert standards-compliant PNG text chunks before IEND."""
     from xy import _png
@@ -1023,6 +1038,23 @@ class Figure:
                     )
                     tight_width = max(120, min(tight_width, round(aspect_width)))
                 ax._padding = notebook_padding
+                # Matplotlib's inline bbox is derived from the ink, so the y
+                # title can never land on the tick labels there — but pinning a
+                # padding also pins the browser's gutter, and 41 px does not
+                # hold this shim's 13.89 px tick labels under a rotated title.
+                # Ask the shared static-layout path what the axis text measures
+                # (`_svg.layout` is the single authority for that reservation,
+                # so browser, SVG, and PNG stay on one number) and, when the pin
+                # is short, widen the *canvas* by the shortfall so the plot box
+                # keeps Matplotlib's 0.775 fraction instead of losing width.
+                measured_left = _measured_left_gutter(ax, tight_width, tight_height)
+                if measured_left > notebook_padding[3]:
+                    tight_width = max(
+                        120, tight_width + int(round(measured_left - notebook_padding[3]))
+                    )
+                    notebook_padding[3] = measured_left
+                    ax._chart = None
+                    ax._padding = notebook_padding
                 doc = ax._build_chart(tight_width, tight_height).to_html()
             finally:
                 ax._chart = old_chart
