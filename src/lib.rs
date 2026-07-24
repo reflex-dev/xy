@@ -44,7 +44,9 @@ fn finite_ordered(lo: f64, hi: f64) -> bool {
 /// point's error sentinel instead; output buffers may then be partially
 /// written, exactly like the existing invalid-argument paths, and callers
 /// already treat the sentinel as "output undefined". `AssertUnwindSafe` is
-/// sound because nothing observes the closure's captures after a panic.
+/// sound because nothing observes the closure's captures after a panic. This
+/// backstop only operates when the target supports panic unwinding; on
+/// panic-abort targets such as wasm32, an internal panic aborts the instance.
 fn ffi_guard<R>(sentinel: R, body: impl FnOnce() -> R) -> R {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)).unwrap_or(sentinel)
 }
@@ -3062,6 +3064,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(panic = "unwind")]
     fn ffi_guard_maps_panic_to_sentinel() {
         // A panic anywhere behind the C ABI must become the entry point's
         // error sentinel, never an unwind across `extern "C"` (which would
