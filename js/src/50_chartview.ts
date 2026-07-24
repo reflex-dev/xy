@@ -1770,6 +1770,7 @@ export class ChartView {
     }
     this._positionLegend(lg, loc, options.anchor);
     this._applySlot(lg, "legend");
+    this._applyStyle(lg, options.style);
     if (options.title) {
       const title = document.createElement("div");
       title.textContent = String(options.title);

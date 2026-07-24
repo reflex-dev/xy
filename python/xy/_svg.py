@@ -2795,9 +2795,11 @@ def _legend(
         else:
             background = _css(background_value, "#808080")
             fill_attrs = f'fill="{escape(background)}" fill-opacity="{_num(alpha)}"'
+        border = _css(style_opts.get("borderColor"), "#cccccc")
         rows.append(
             f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(box_w)}" height="{_num(box_h)}" '
-            f'rx="{radius}" {fill_attrs}/>'
+            f'rx="{radius}" {fill_attrs} stroke="{escape(border)}" '
+            f'stroke-opacity="{_num(alpha)}" stroke-width="1"/>'
         )
     if title:
         rows.append(

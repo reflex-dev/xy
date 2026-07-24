@@ -1442,7 +1442,6 @@ class Axes(PlotTypeMixin):
                 array.ndim == 1
                 and array.shape in {(3,), (4,)}
                 and np.issubdtype(array.dtype, np.number)
-                and isinstance(value, (tuple, list))
             ):
                 return resolve_color(value)
             return resolve_rgba_array(value, n_bars, label_text)
@@ -4071,7 +4070,7 @@ class Axes(PlotTypeMixin):
         frameon = kwargs.pop("frameon", rcParams["legend.frameon"])
         facecolor = kwargs.pop("facecolor", rcParams["legend.facecolor"])
         edgecolor = kwargs.pop("edgecolor", rcParams["legend.edgecolor"])
-        framealpha = kwargs.pop("framealpha", None)
+        framealpha = kwargs.pop("framealpha", rcParams["legend.framealpha"])
         fancybox = kwargs.pop("fancybox", False)
         shadow = kwargs.pop("shadow", False)
         borderpad = kwargs.pop("borderpad", None)

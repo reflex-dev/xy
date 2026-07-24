@@ -1303,6 +1303,14 @@ def _emit_scatter(
 
     fill_op = _fill_opacity(style, 0.8)
     stroke_op = _stroke_opacity(style, 0.8)
+    artist_alpha = style.get("artist_alpha")
+    if artist_alpha is not None:
+        # Matplotlib artist alpha replaces the intrinsic paint alpha. Scalar
+        # alpha does not need a style channel, so retain it in both affine
+        # scatter fast paths instead of silently painting opaque points.
+        scalar_alpha = float(artist_alpha)
+        fill_op *= scalar_alpha
+        stroke_op *= scalar_alpha
     sw = float(style.get("stroke_width", 0.0))
     sym = _SYMBOLS.get(style.get("symbol", "circle"), 0)
     # Transparent is the private wire sentinel for edgecolors="face".  The
@@ -1976,6 +1984,8 @@ def _emit_legend(
             else (128, 128, 128, round(255 * alpha))
         )
         cmd.fill(_rect_pts(x, y, x + box_w, y + box_h), frame)
+        border = _rgba(style_opts.get("borderColor"), "#cccccc", alpha)
+        cmd.stroke(_rect_pts(x, y, x + box_w, y + box_h), 1.0, border)
     if title:
         cmd.text(x + pad, y + pad / 2 + 11, 0, 11, _parse_color(text_color), str(title))
     for i, t in enumerate(named[: legend["visible_count"]]):

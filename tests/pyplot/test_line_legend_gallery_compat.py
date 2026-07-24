@@ -1,3 +1,5 @@
+from io import BytesIO
+
 import numpy as np
 
 import xy.pyplot as plt
@@ -27,6 +29,8 @@ def test_legend_bbox_to_anchor_reaches_payload_and_static_layout():
 
     spec, _ = ax._build_chart(640, 480).figure().build_payload()
     assert spec["legend"]["anchor"] == [0.0, 1.0]
+    assert spec["legend"]["style"]["--xy-legend-frame-alpha"] == 0.8
+    assert spec["legend"]["style"]["borderColor"] == "#cccccc"
 
     plot = {"x": 10.0, "y": 20.0, "w": 100.0, "h": 80.0}
     layout = _legend_layout(
@@ -36,6 +40,30 @@ def test_legend_bbox_to_anchor_reaches_payload_and_static_layout():
     )
     assert layout["x"] == 10.0
     assert layout["y"] + layout["box_h"] == 20.0
+
+
+def test_bar_numpy_rgba_row_is_one_color_for_trace_and_legend():
+    _, ax = plt.subplots()
+    rgba = np.array([0.9, 0.2, 0.1, 1.0])
+    ax.barh(["a", "b"], [1, 2], label="answers", color=rgba)
+
+    entry = ax._entries[-1]
+    assert entry["kwargs"]["color"] == "rgba(230,51,26,1)"
+
+
+def test_scalar_scatter_alpha_survives_native_affine_fast_path():
+    fig, ax = plt.subplots(figsize=(2, 2))
+    ax.scatter([0.5], [0.5], s=2500, c="red", alpha=0.25, edgecolors="none")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+
+    output = BytesIO()
+    fig.savefig(output, format="png", dpi=100)
+    output.seek(0)
+    pixels = plt.imread(output).astype(np.float64) / 255.0
+    red_pixels = pixels[(pixels[..., 0] > 0.95) & (pixels[..., 1] < 0.9) & (pixels[..., 2] < 0.9)]
+    assert red_pixels.size
+    assert float(red_pixels[..., 1].min()) > 0.6
 
 
 def test_scatter_legend_elements_return_real_legend_artists_and_two_boxes():

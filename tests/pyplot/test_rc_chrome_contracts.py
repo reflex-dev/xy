@@ -71,6 +71,7 @@ def test_legend_rc_defaults_reach_legend_component() -> None:
         "background": "yellow",
         "borderColor": "blue",
         "borderStyle": "solid",
+        "--xy-legend-frame-alpha": 0.8,
     }
 
 
