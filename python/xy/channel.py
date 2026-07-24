@@ -243,6 +243,23 @@ def handle_message(
         if update["traces"]:
             return {"type": "density_update", "seq": seq, **update}, out
         return None
+    if kind == "legend_toggle":
+        # Legend visibility toggle (§34 predicate; interaction spec §10).
+        # Fire-and-forget state sync: no reply — the client hides locally and,
+        # for masked density tiers, re-requests through the normal
+        # density_view path, which now honors the recorded predicate.
+        try:
+            hidden = content["hidden"]
+            if not isinstance(hidden, bool):
+                return None
+            fig.legend_toggle(
+                content["trace"],
+                hidden,
+                content.get("category"),
+            )
+        except (KeyError, TypeError, ValueError, IndexError):
+            return None
+        return None
     if kind == "pick":
         # Hover/click drill: exact f64 row from canonical (§16/§17). The
         # client's drill_seq rejects picks that raced a subset swap.

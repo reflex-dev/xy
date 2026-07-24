@@ -56,6 +56,16 @@ class Trace:
     # Tri-state density override: None = auto (threshold), True/False = forced.
     # (A bool here silently ignored density=False — staff-review finding.)
     force_density: Optional[bool] = None
+    # Legend-toggle state (§34 filter predicates, interaction spec §10).
+    # `hidden` retires the whole trace from selections/decimation/density
+    # replies; `hidden_categories` holds excluded categorical codes and makes
+    # every re-bin/sample narrow its rows first — the pyramid fast path holds
+    # UNFILTERED aggregates and must be bypassed while this is non-empty.
+    hidden: bool = False
+    hidden_categories: set[int] = field(default_factory=set, compare=False)
+    # ((hidden set, column length) -> visible canonical rows), maintained by
+    # interaction._legend_visible_rows so per-view re-bins don't rescan codes.
+    _legend_vis_cache: Optional[Any] = field(default=None, init=False, repr=False, compare=False)
     # Shipped-row → canonical-row mapping, set by build_payload when the shipped
     # copy drops NaN rows (§19), and by the drill-in view path when a Tier-2
     # trace ships its visible subset. The client's GPU pick and selection masks

@@ -1409,6 +1409,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
         f32 upload offsets so precision holds at deep zoom."""
         return interaction.decimate_view(self, x0, x1, px_width)
 
+    def legend_toggle(self, trace_id: int, hidden: bool, category: Optional[int] = None) -> None:
+        """Record a legend visibility toggle: whole trace, or one categorical
+        code. Selections, decimation, and density re-bins honor it (§34)."""
+        interaction.legend_toggle(self, trace_id, hidden, category)
+
     def append(
         self,
         trace_id: int,
