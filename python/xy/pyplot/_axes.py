@@ -1620,9 +1620,7 @@ class Axes(PlotTypeMixin):
                 resolve_color(colors[index]) if colors[index] is not None else self._next_color()
             )
             resolved_color = (
-                resolve_color(facecolors[index])
-                if facecolors[index] is not None
-                else series_color
+                resolve_color(facecolors[index]) if facecolors[index] is not None else series_color
             )
             resolved_edge = (
                 resolve_color(edgecolors[index]) if edgecolors[index] is not None else None
