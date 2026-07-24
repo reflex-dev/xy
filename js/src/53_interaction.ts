@@ -846,13 +846,17 @@ Object.assign(ChartView.prototype, {
     const mode = opts.mode === "x" || opts.mode === "y" ? opts.mode : "box";
     this._boxSelection = { mode, x0, x1, y0, y1 };
     this._renderBoxSelection();
-    this._stateSelection = { range: mode === "box" ? { ...range } : { ...range, mode } };
+    // The range document carries the band mode only for x/y brushes (a plain
+    // box keeps the bare {x0,x1,y0,y1}); the same document feeds durable state
+    // and the link-group broadcast so peers re-project the identical overlay.
+    const rangeDoc = mode === "box" ? { ...range } : { ...range, mode };
+    this._stateSelection = { range: rangeDoc };
     // Data-space brush geometry survives drill swaps (§34): a re-drill ships a
     // new subset whose mask indices are unknown until the kernel replies, but
     // the brush itself stays authoritative — 45_lod re-derives a provisional
     // mask from it so the highlight never blinks out on pan/zoom.
     this._lastBrush = { mode: "box", x0, x1, y0, y1 };
-    this._broadcastLinkedSelection({ range });
+    this._broadcastLinkedSelection({ range: rangeDoc });
     this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
     if (this.comm) {
       this.comm.send({ type: "select", x0, x1, y0, y1 });

@@ -302,8 +302,11 @@ x/y-range selections **persist** after the drag — like the lasso, they stay
 drawn (re-projected through pan/zoom) until the selection is cleared. The
 x-range band drops its top/bottom border and the y-range band its left/right
 border, so each range brush reads as the pair of edges bounding its axis. The
-public `--chart-modebar-*` and `--chart-badge-*`
-tokens override both schemes; the modebar's border and shadow and the badge's
+public `--chart-modebar-*`, `--chart-badge-*`, `--chart-selection` /
+`--chart-selection-fill`, and `--chart-zoom-selection` /
+`--chart-zoom-selection-fill` tokens override both schemes (the CSS resolves
+each public token ahead of the internal `--xy-selection*` fallback); the
+modebar's border and shadow and the badge's
 shadow have no public token and are internal `--xy-modebar-*` /
 `--xy-badge-shadow` defaults only. `--chart-focus` is likewise not carried into
 client-side PNG/SVG export, which snapshots the other `--chart-*` tokens.

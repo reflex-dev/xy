@@ -809,15 +809,27 @@ export class ChartView {
         const selection = msg.selection;
         // Linked applies update the durable-state mirror but never push
         // history (view-state.md §4) — dispatch: false already skips it.
+        // A linked selection lands in the same overlay state the peer's own
+        // gesture would produce: hydrate the persisted overlay (so _drawNow
+        // re-projects it) and drop the mutually-exclusive other overlay.
         if (selection.clear) {
           this._clearSelection({ broadcast: false, dispatch: false });
         } else if (selection.polygon) {
-          this._stateSelection = { polygon: selection.polygon.map((point) => [...point]) };
+          const polygon = selection.polygon.map((point) => [...point]);
+          this._clearBoxOverlay();
+          this._stateSelection = { polygon: polygon.map((point) => [...point]) };
+          this._lassoPolygon = polygon;
           this._selectLocalPolygon(selection.polygon, { dispatch: false });
         } else if (selection.range) {
           const { x0, x1, y0, y1 } = selection.range;
           if ([x0, x1, y0, y1].every(Number.isFinite)) {
-            this._stateSelection = { range: { x0, x1, y0, y1 } };
+            const mode = selection.range.mode === "x" || selection.range.mode === "y"
+              ? selection.range.mode : "box";
+            this._clearLassoOverlay();
+            this._boxSelection = { mode, x0, x1, y0, y1 };
+            this._stateSelection = {
+              range: mode === "box" ? { x0, x1, y0, y1 } : { x0, x1, y0, y1, mode },
+            };
             this._selectLocal(x0, x1, y0, y1, { dispatch: false });
           }
         }

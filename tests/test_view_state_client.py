@@ -609,6 +609,88 @@ def test_rectangular_selection_persists_with_range_borders(tmp_path: Path) -> No
     assert result == {key: True for key in result}
 
 
+def _linked_chart_html() -> str:
+    chart = xy.scatter_chart(
+        xy.scatter([0.0, 1.0, 2.0, 3.0, 4.0], [0.0, 1.0, 4.0, 9.0, 16.0]),
+        width=480,
+        height=360,
+    )
+    fig = chart.figure()
+    fig.set_interaction(link_group="probe-group", link_select=True)
+    html = fig.to_html()
+    assert _RENDER_CALL in html
+    return html
+
+
+# A selection arriving from a link-group peer must hydrate the SAME persisted
+# overlay state a local gesture would, so _drawNow re-projects it — box/x/y
+# range bands and lasso alike, with the other overlay cleared (Greptile P1 on
+# the box-persistence PR: linked range selections left _boxSelection unset).
+_LINKED_SELECTION_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    const w = (v) => parseFloat(v) || 0;
+    const cs = () => getComputedStyle(view.selRect);
+    // Drive the real BroadcastChannel handler synchronously with the exact
+    // message shape _broadcastLinkedSelection sends (source != our own).
+    const link = (selection) => {
+      view._linkChannel.onmessage({ data: { source: "peer", selection } });
+      view._drawNow();
+    };
+    const hasChannel = !!view._linkChannel;
+
+    // Linked x-range -> persisted box overlay on this peer: select-x band,
+    // no top/bottom border, mode round-tripped into durable state.
+    link({ range: { x0: 0.5, x1: 2.5, y0: -1, y1: 5, mode: "x" } });
+    const xb = cs();
+    const linkedXRange = view.selRect.style.display === "block"
+      && view.selRect.dataset.xyBand === "select-x"
+      && w(xb.borderTopWidth) === 0 && w(xb.borderBottomWidth) === 0
+      && w(xb.borderLeftWidth) > 0 && w(xb.borderRightWidth) > 0
+      && view._boxSelection && view._boxSelection.mode === "x"
+      && view.root.xy.state().selection.range.mode === "x";
+
+    // Linked polygon -> lasso shown, rectangular overlay cleared.
+    link({ polygon: [[0, 0], [2, 0], [2, 4], [0, 4]] });
+    const linkedPolygon = view.selLasso.style.display === "block"
+      && !!view.selLassoPath.getAttribute("d")
+      && view._boxSelection === null
+      && view.selRect.style.display === "none";
+
+    // Linked plain box -> box band, no mode, lasso overlay cleared.
+    link({ range: { x0: -1, x1: 1, y0: -1, y1: 1 } });
+    const linkedBox = view.selRect.style.display === "block"
+      && view.selRect.dataset.xyBand === "select"
+      && view._lassoPolygon === null
+      && view.root.xy.state().selection.range.mode === undefined;
+
+    // Linked clear -> both overlays and durable selection gone.
+    link({ clear: true });
+    const linkedClear = view._boxSelection === null && view._lassoPolygon === null
+      && view.selRect.style.display === "none" && view.selLasso.style.display === "none"
+      && view.root.xy.state().selection === null;
+
+    document.body.setAttribute("data-xy-linked-selection-probe", JSON.stringify({
+      hasChannel, linkedXRange, linkedPolygon, linkedBox, linkedClear,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-linked-selection-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_linked_selection_hydrates_persisted_overlay(tmp_path: Path) -> None:
+    result = _run(
+        tmp_path,
+        _linked_chart_html().replace(_RENDER_CALL, _LINKED_SELECTION_PROBE),
+        "data-xy-linked-selection-probe",
+        label="linked selection overlay probe",
+    )
+    assert result == {key: True for key in result}
+
+
 _ROWS_PROBE = """
   const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
   try {
