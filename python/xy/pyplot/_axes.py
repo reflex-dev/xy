@@ -292,6 +292,28 @@ class _AxisProxy:
         host, key = self._ticker_slot()
         host._tickers[(key, "minor_formatter")] = as_formatter(formatter, "set_minor_formatter()")
 
+    def grid(self, visible: bool | None = None, which: str = "major", **kwargs: Any) -> None:
+        """Configure grid lines for only this axis.
+
+        This is Matplotlib's ``Axis.grid`` surface: unlike ``Axes.grid`` it
+        has no ``axis=`` argument because the proxy already identifies the
+        target dimension.
+        """
+        which = str(which).lower()
+        if which not in {"major", "minor", "both"}:
+            raise ValueError("grid() which must be 'major', 'minor', or 'both'")
+        if which == "minor":
+            supported = {"color", "c", "linestyle", "ls", "linewidth", "lw", "alpha"}
+            unsupported = set(kwargs) - supported
+            if unsupported:
+                raise TypeError(
+                    f"grid() got unsupported keyword argument {sorted(unsupported)[0]!r}"
+                )
+            # Minor tick marks are outside the native axis contract.
+            self.axes._invalidate()
+            return
+        self.axes.grid(visible, which=which, axis=self.axis, **kwargs)
+
     def tick_bottom(self) -> None:
         pass  # exact no-op: the engine only draws bottom x ticks
 
@@ -425,8 +447,20 @@ class _TickLabel:
         self._axes._invalidate()
 
     def set_rotation(self, angle: float) -> None:
-        self._axes._axis_props(self._axis)["tick_label_angle"] = float(angle)
+        angle = float(angle)
+        self._axes._axis_props(self._axis)["tick_label_angle"] = angle
+        self._axes._apply_tick_rotation_mode(self._axis, angle)
         self._axes._invalidate()
+
+    def get_rotation(self) -> float:
+        return float(self._axes._axis_props(self._axis).get("tick_label_angle", 0.0))
+
+    def set_rotation_mode(self, mode: str | None) -> None:
+        self._axes._set_tick_rotation_mode(self._axis, mode)
+        self._axes._invalidate()
+
+    def get_rotation_mode(self) -> str:
+        return self._axes._tick_rotation_modes.get(self._axis) or "default"
 
 
 class _SharedAxesGroup:
@@ -554,8 +588,19 @@ class Axes(PlotTypeMixin):
         }
         self._auto_scale_axis_ticks: set[str] = set()
         self._tickers: dict[tuple[str, str], Any] = {}
+        self._tick_rotation_modes: dict[str, str | None] = {"x": None, "y": None}
+        self._tick_sides: dict[str, dict[str, bool]] = {
+            "x": {"bottom": True, "top": False},
+            "y": {"left": y2_of is None, "right": y2_of is not None},
+        }
+        self._tick_label_sides: dict[str, dict[str, bool]] = {
+            "x": {"labelbottom": True, "labeltop": False},
+            "y": {"labelleft": y2_of is None, "labelright": y2_of is not None},
+        }
+        self._tick_lengths: dict[str, float] = {}
         self._hidden_spines: set[str] = set()
         self._grid = bool(rcParams["axes.grid"])
+        self._grid_axes = {"x": self._grid, "y": self._grid}
         self._grid_color = _MPL_GRID_COLOR
         self._grid_axis = "both"
         self._grid_style: dict[str, Any] = {}
@@ -576,6 +621,7 @@ class Axes(PlotTypeMixin):
             style = _rc_axis_style(axis, dpi)
             if style:
                 self._axis[axis]["style"] = style
+                self._tick_lengths[axis] = float(style["tick_length"])
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -812,6 +858,16 @@ class Axes(PlotTypeMixin):
         }
         self._auto_scale_axis_ticks = set()
         self._tickers = {}
+        self._tick_rotation_modes = {"x": None, "y": None}
+        self._tick_sides = {
+            "x": {"bottom": True, "top": False},
+            "y": {"left": self._y2_of is None, "right": self._y2_of is not None},
+        }
+        self._tick_label_sides = {
+            "x": {"labelbottom": True, "labeltop": False},
+            "y": {"labelleft": self._y2_of is None, "labelright": self._y2_of is not None},
+        }
+        self._tick_lengths = {}
         self._hidden_spines = set()
         self._title = None
         self._legend = False
@@ -826,7 +882,12 @@ class Axes(PlotTypeMixin):
         self._insets_materialized = False
         self._absolute_plot_ratio = None
         self._padding = None
+        self._xmargin = 0.0
+        self._ymargin = 0.0
+        self._margin_overrides = set()
+        self._explicit_domains = set()
         self._grid = bool(rcParams["axes.grid"])
+        self._grid_axes = {"x": self._grid, "y": self._grid}
         self._grid_color = _MPL_GRID_COLOR
         self._grid_axis = "both"
         self._grid_style = {}
@@ -837,10 +898,12 @@ class Axes(PlotTypeMixin):
         self.xaxis = _AxisProxy(self, "x")
         self.yaxis = _AxisProxy(self, "y")
         self.spines = _SpineProxy(self)
+        dpi = float(self.figure._dpi if self.figure._dpi is not None else rcParams["figure.dpi"])
         for axis in ("x", "y"):
-            style = _rc_axis_style(axis)
+            style = _rc_axis_style(axis, dpi)
             if style:
                 self._axis[axis]["style"] = style
+                self._tick_lengths[axis] = float(style["tick_length"])
         self._invalidate()
 
     cla = clear
@@ -2484,6 +2547,8 @@ class Axes(PlotTypeMixin):
             "title": self.set_title,
             "xlim": self.set_xlim,
             "ylim": self.set_ylim,
+            "xmargin": self.set_xmargin,
+            "ymargin": self.set_ymargin,
             "xscale": self.set_xscale,
             "yscale": self.set_yscale,
             "xticks": self.set_xticks,
@@ -2825,8 +2890,9 @@ class Axes(PlotTypeMixin):
         """Set the autoscaling padding around the data, as axis fractions.
 
         Call as ``margins(m)``, ``margins(x, y)``, or with ``x=``/``y=``;
-        values must be finite and non-negative. ``tight`` is accepted and
-        ignored; explicitly set limits are left alone.
+        values must be finite and greater than -0.5. Negative margins clip
+        the data range, matching Matplotlib. ``tight`` is accepted and ignored;
+        explicitly set limits are left alone.
         """
         tight = kwargs.pop("tight", None)
         del tight
@@ -2853,6 +2919,26 @@ class Axes(PlotTypeMixin):
             if "y" not in self._explicit_domains:
                 self._axis_props("y").pop("domain", None)
         self._invalidate()
+
+    def set_xmargin(self, m: float) -> None:
+        """Set x autoscale padding as a fraction of the data interval."""
+        self.margins(x=m)
+
+    def set_ymargin(self, m: float) -> None:
+        """Set y autoscale padding as a fraction of the data interval."""
+        self.margins(y=m)
+
+    def get_xmargin(self) -> float:
+        """Return the configured x autoscale margin."""
+        if "x" in self._margin_overrides:
+            return float(self._xmargin)
+        return float(rcParams["axes.xmargin"])
+
+    def get_ymargin(self) -> float:
+        """Return the configured y autoscale margin."""
+        if "y" in self._margin_overrides:
+            return float(self._ymargin)
+        return float(rcParams["axes.ymargin"])
 
     def relim(self, visible_only: bool = False) -> None:
         """Recompute the data limits from the plotted entries.
@@ -3736,6 +3822,73 @@ class Axes(PlotTypeMixin):
         props["reverse"] = not props.get("reverse", False)
         self._invalidate()
 
+    def _set_tick_rotation_mode(self, axis: str, mode: str | None) -> None:
+        if mode is None or mode == "default":
+            normalized = None
+        elif mode in {"anchor", "xtick", "ytick"}:
+            normalized = mode
+        else:
+            raise ValueError(
+                f"{mode!r} is not a valid value for rotation_mode; "
+                "supported values are 'anchor', 'default', 'xtick', and 'ytick'"
+            )
+        self._tick_rotation_modes[axis] = normalized
+        angle = float(self._axis_props(axis).get("tick_label_angle", 0.0))
+        self._apply_tick_rotation_mode(axis, angle)
+
+    def _apply_tick_rotation_mode(self, axis: str, angle: float) -> None:
+        """Translate Matplotlib's special tick rotation pivot when expressible."""
+        props = self._axis_props(axis)
+        mode = self._tick_rotation_modes.get(axis)
+        if mode == "anchor":
+            props["tick_label_anchor"] = "center"
+            return
+        if mode != "xtick" or axis != "x":
+            props.pop("tick_label_anchor", None)
+            return
+        # Matplotlib Text._ha_for_angle: bottom labels have verticalalignment
+        # "top", while top labels use "bottom". Convert its left/right result
+        # to XY's start/end anchor vocabulary.
+        value = float(angle) % 360.0
+        anchor_at_bottom = props.get("side", "bottom") == "top"
+        if (
+            value <= 10
+            or 85 <= value <= 95
+            or value >= 350
+            or 170 <= value <= 190
+            or 265 <= value <= 275
+        ):
+            anchor = "center"
+        elif 10 < value < 85 or 190 < value < 265:
+            anchor = "start" if anchor_at_bottom else "end"
+        else:
+            anchor = "end" if anchor_at_bottom else "start"
+        props["tick_label_anchor"] = anchor
+
+    def _apply_tick_side_visibility(
+        self, axis: str, side_updates: dict[str, bool], length: float | None
+    ) -> None:
+        sides = self._tick_sides[axis]
+        sides.update({key: value for key, value in side_updates.items() if key in sides})
+        props = self._axis_props(axis)
+        style = props.setdefault("style", {})
+        if length is not None:
+            self._tick_lengths[axis] = float(length) * self._point_scale()
+        if any(sides.values()):
+            style["tick_length"] = self._tick_lengths[axis]
+            visible_sides = [side for side, shown in sides.items() if shown]
+            if len(visible_sides) == 1:
+                props["side"] = visible_sides[0]
+        else:
+            # The native axis has one tick side, so zero length is its exact
+            # representation of Matplotlib's tick1On=False/tick2On=False.
+            style["tick_length"] = 0.0
+
+    def _apply_tick_label_side_visibility(self, axis: str, side_updates: dict[str, bool]) -> None:
+        sides = self._tick_label_sides[axis]
+        sides.update({key: value for key, value in side_updates.items() if key in sides})
+        self._axis_props(axis)["tick_label_strategy"] = None if any(sides.values()) else "off"
+
     def tick_params(self, axis: str = "both", **kwargs: Any) -> None:
         """Change tick, tick-label, and axis-color appearance.
 
@@ -3743,19 +3896,31 @@ class Axes(PlotTypeMixin):
         ``labelrotation``/``rotation``, ``colors``, ``color``,
         ``labelcolor``, ``length``, ``width``, ``direction``
         (``"in"``/``"out"``/``"inout"``), and the ``labelbottom``/
-        ``labeltop``/``labelleft``/``labelright`` visibility flags; anything
-        else raises loudly.
+        ``labeltop``/``labelleft``/``labelright`` and ``bottom``/``top``/
+        ``left``/``right`` visibility flags. ``rotation_mode`` and
+        ``labelrotation_mode`` support Matplotlib 3.11's special tick-label
+        anchors; anything else raises loudly.
         """
         if axis not in {"both", "x", "y"}:
             raise ValueError("tick_params() axis must be 'both', 'x', or 'y'")
         rotation = kwargs.pop("labelrotation", kwargs.pop("rotation", None))
+        rotation_mode = kwargs.pop("labelrotation_mode", kwargs.pop("rotation_mode", None))
         colors = kwargs.pop("colors", None)
         color = kwargs.pop("color", colors)
         labelcolor = kwargs.pop("labelcolor", colors)
         length = kwargs.pop("length", None)
         width = kwargs.pop("width", None)
         direction = kwargs.pop("direction", None)
-        label_visible = _tick_label_visibility(kwargs)
+        side_updates = {
+            key: bool(kwargs.pop(key))
+            for key in ("bottom", "top", "left", "right")
+            if key in kwargs
+        }
+        label_side_updates = {
+            key: bool(kwargs.pop(key))
+            for key in ("labelbottom", "labeltop", "labelleft", "labelright")
+            if key in kwargs
+        }
         if kwargs:
             raise TypeError(
                 f"tick_params() got unsupported keyword argument {next(iter(kwargs))!r}"
@@ -3764,21 +3929,25 @@ class Axes(PlotTypeMixin):
             props = self._axis_props(ax)
             if rotation is not None:
                 props["tick_label_angle"] = float(rotation)
+            if rotation_mode is not None:
+                self._set_tick_rotation_mode(ax, rotation_mode)
+            elif rotation is not None:
+                self._apply_tick_rotation_mode(ax, float(rotation))
             style = props.setdefault("style", {})
             if color is not None:
                 style["tick_color"] = resolve_color(color)
             if labelcolor is not None:
                 style["tick_label_color"] = resolve_color(labelcolor)
-            if length is not None:
-                style["tick_length"] = float(length) * self._point_scale()
+            if length is not None or side_updates:
+                self._apply_tick_side_visibility(ax, side_updates, length)
             if width is not None:
                 style["tick_width"] = float(width) * self._point_scale()
             if direction is not None:
                 if direction not in {"in", "out", "inout"}:
                     raise ValueError("tick_params() direction must be 'in', 'out', or 'inout'")
                 style["tick_direction"] = direction
-            if label_visible is not None:
-                props["tick_label_strategy"] = None if label_visible else "off"
+            if label_side_updates:
+                self._apply_tick_label_side_visibility(ax, label_side_updates)
         self._invalidate()
 
     def set_xticks(
@@ -3860,6 +4029,104 @@ class Axes(PlotTypeMixin):
         if rotation is not None:
             props["tick_label_angle"] = float(rotation)
         self._invalidate()
+
+    def _set_ticklabels(
+        self,
+        axis: str,
+        labels: Sequence[str],
+        *,
+        minor: bool,
+        fontdict: dict[str, Any] | None,
+        kwargs: dict[str, Any],
+    ) -> list[_TickLabel]:
+        if minor:
+            # Minor ticks are outside the native axis contract.
+            return []
+        if fontdict is not None and not isinstance(fontdict, dict):
+            raise TypeError("fontdict must be a dict or None")
+        options = {} if fontdict is None else dict(fontdict)
+        options.update(kwargs)
+        texts = [_plain_text(value) for value in labels]
+        props = self._axis_props(axis)
+        current_ticks = self._computed_ticks(axis, False)
+        fixed_ticks = props.get("tick_values")
+        if fixed_ticks is not None and texts and len(texts) != len(fixed_ticks):
+            raise ValueError(
+                f"The number of FixedLocator locations ({len(fixed_ticks)}) does not match "
+                f"the number of labels ({len(texts)})."
+            )
+        if not texts:
+            # FixedFormatter([]) yields one empty Text per current tick. The
+            # native equivalent hides labels while preserving tick positions.
+            props.pop("tick_labels", None)
+            props["tick_label_strategy"] = "off"
+            handles = [_TickLabel(self, axis, "") for _ in current_ticks]
+        else:
+            rendered = list(texts[: len(current_ticks)])
+            rendered.extend("" for _ in range(len(current_ticks) - len(rendered)))
+            setter = self.set_xticks if axis == "x" else self.set_yticks
+            setter(current_ticks, rendered)
+            props["tick_label_strategy"] = None
+            handles = [_TickLabel(self, axis, text) for text in rendered]
+
+        color = options.pop("color", options.pop("c", None))
+        size = options.pop("fontsize", options.pop("size", None))
+        rotation = options.pop("rotation", None)
+        rotation_mode = options.pop("labelrotation_mode", options.pop("rotation_mode", None))
+        alignment = options.pop("horizontalalignment", options.pop("ha", None))
+        # These Text properties have no independent axis-wide native chrome
+        # representation, but accepting them preserves Matplotlib's static
+        # gallery call surface.
+        _consume_text_kwargs(options, f"set_{axis}ticklabels()")
+        style = props.setdefault("style", {})
+        if color is not None:
+            style["tick_label_color"] = resolve_color(color)
+        if size is not None:
+            dpi = float(
+                self.figure._dpi if self.figure._dpi is not None else rcParams["figure.dpi"]
+            )
+            style["tick_label_size"] = _font_size(size, rcParams["font.size"], dpi)
+        if rotation is not None:
+            props["tick_label_angle"] = float(rotation)
+        if rotation_mode is not None:
+            self._set_tick_rotation_mode(axis, rotation_mode)
+        elif rotation is not None:
+            self._apply_tick_rotation_mode(axis, float(rotation))
+        if alignment is not None:
+            anchors = {
+                "left": "start",
+                "center": "center",
+                "right": "end",
+                "start": "start",
+                "end": "end",
+            }
+            if alignment not in anchors:
+                raise ValueError("horizontalalignment must be 'left', 'center', or 'right'")
+            props["tick_label_anchor"] = anchors[alignment]
+        self._invalidate()
+        return handles
+
+    def set_xticklabels(
+        self,
+        labels: Sequence[str],
+        *,
+        minor: bool = False,
+        fontdict: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[_TickLabel]:
+        """Set x tick labels without changing the current tick locations."""
+        return self._set_ticklabels("x", labels, minor=minor, fontdict=fontdict, kwargs=kwargs)
+
+    def set_yticklabels(
+        self,
+        labels: Sequence[str],
+        *,
+        minor: bool = False,
+        fontdict: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[_TickLabel]:
+        """Set y tick labels without changing the current tick locations."""
+        return self._set_ticklabels("y", labels, minor=minor, fontdict=fontdict, kwargs=kwargs)
 
     def get_xticks(self, *, minor: bool = False) -> np.ndarray:
         """The x tick positions in data space.
@@ -4115,14 +4382,14 @@ class Axes(PlotTypeMixin):
     def grid(self, visible: bool | None = True, **kwargs: Any) -> None:
         """Toggle and style the grid.
 
-        ``visible=None`` toggles the current state; ``which`` must be
-        ``"major"``/``"both"`` (minor grids are unsupported) and ``axis``
-        restricts to ``"x"`` or ``"y"``. ``color``/``c``,
+        ``visible=None`` toggles the current state; ``which`` accepts
+        ``"major"``/``"both"`` and ``axis`` restricts to ``"x"`` or ``"y"``.
+        ``color``/``c``,
         ``linestyle``/``ls``, ``linewidth``/``lw``, and ``alpha`` style the
         lines; anything else raises loudly.
         """
         host = self._y2_of or self
-        which = kwargs.pop("which", "major")
+        which = str(kwargs.pop("which", "major")).lower()
         axis = kwargs.pop("axis", "both")
         if which not in {"major", "both"}:
             raise ValueError("grid() only supports major grid lines")
@@ -4134,8 +4401,15 @@ class Axes(PlotTypeMixin):
         alpha = kwargs.pop("alpha", None)
         if kwargs:
             raise TypeError(f"grid() got unsupported keyword argument {next(iter(kwargs))!r}")
-        host._grid = bool(visible) if visible is not None else not host._grid
-        host._grid_axis = axis
+        has_style = any(value is not None for value in (color, linestyle, linewidth, alpha))
+        if has_style and visible is None:
+            visible = True
+        selected = ("x", "y") if axis == "both" else (axis,)
+        for item in selected:
+            host._grid_axes[item] = not host._grid_axes[item] if visible is None else bool(visible)
+        host._grid = any(host._grid_axes.values())
+        visible_axes = [item for item, enabled in host._grid_axes.items() if enabled]
+        host._grid_axis = "both" if len(visible_axes) != 1 else visible_axes[0]
         style = host._grid_style = {}
         if color is not None and (resolved_grid := resolve_color(color)) is not None:
             host._grid_color = resolved_grid
@@ -4147,17 +4421,18 @@ class Axes(PlotTypeMixin):
                 style["grid_dash"] = dash
         if alpha is not None:
             style["grid_opacity"] = float(alpha)
-        grid_color = host._grid_color if host._grid else "transparent"
         for item in ("x", "y"):
             props = host._axis_props(item)
             axis_style = props.setdefault("style", {})
-            for stale in ("grid_width", "grid_dash", "grid_opacity"):
-                axis_style.pop(stale, None)
-            if axis in {"both", item}:
-                axis_style["grid_color"] = grid_color
+            if item in selected:
+                for stale in ("grid_width", "grid_dash", "grid_opacity"):
+                    axis_style.pop(stale, None)
+                axis_style["grid_color"] = (
+                    host._grid_color if host._grid_axes[item] else "transparent"
+                )
                 axis_style.update(style)
             else:
-                axis_style["grid_color"] = "transparent"
+                axis_style.setdefault("grid_color", "transparent")
         host._invalidate()
 
     def _axis_props(self, axis: str) -> dict[str, Any]:
@@ -4610,9 +4885,19 @@ class Axes(PlotTypeMixin):
                 self._axis["x"]["domain"] = (x0, x1)
                 self._axis["y"]["domain"] = (y0, y1)
             adjusted_aspect = True
-        if not adjusted_aspect and self._xmargin != 0.0 and "x" not in self._explicit_domains:
+        if (
+            not adjusted_aspect
+            and "x" in self._margin_overrides
+            and "x" not in self._explicit_domains
+            and not self._axis_is_dataless("x")
+        ):
             self._axis["x"]["domain"] = self._auto_domain("x")
-        if not adjusted_aspect and self._ymargin != 0.0 and "y" not in self._explicit_domains:
+        if (
+            not adjusted_aspect
+            and "y" in self._margin_overrides
+            and "y" not in self._explicit_domains
+            and not self._axis_is_dataless("y")
+        ):
             self._axis["y"]["domain"] = self._auto_domain("y")
         if chart_padding is None and any(
             entry["kind"] == "@text"
@@ -5121,8 +5406,8 @@ def _convert_timedelta_axis(values: np.ndarray) -> np.ndarray:
 
 def _validate_margin(value: Any, axis: str) -> float:
     margin = float(value)
-    if not np.isfinite(margin) or margin < 0:
-        raise ValueError(f"{axis} margin must be a finite non-negative number")
+    if not np.isfinite(margin) or margin <= -0.5:
+        raise ValueError(f"{axis} margin must be a finite number greater than -0.5")
     return margin
 
 
@@ -5173,16 +5458,6 @@ def _consume_text_kwargs(kwargs: dict[str, Any], context: str) -> None:
         kwargs.pop(key, None)
     if kwargs:
         raise TypeError(f"{context} got unsupported keyword argument {next(iter(kwargs))!r}")
-
-
-def _tick_label_visibility(kwargs: dict[str, Any]) -> Optional[bool]:
-    values = []
-    for key in ("labelbottom", "labeltop", "labelleft", "labelright"):
-        if key in kwargs:
-            values.append(bool(kwargs.pop(key)))
-    if not values:
-        return None
-    return any(values)
 
 
 def _marker_symbol(marker: Any) -> str:
