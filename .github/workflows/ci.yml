@@ -167,6 +167,10 @@ jobs:
         # full Figure.to_png path runs here rather than skipping.
         run: |
           export XY_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")"
+          # Chromium is installed here, so a probe that cannot launch it is a
+          # defect: fail rather than skip, so the browser layer cannot pass by
+          # absence. (A crash or non-zero exit already fails unconditionally.)
+          export XY_REQUIRE_BROWSER=1
           .venv/bin/pytest -q
 
       # End-to-end: a real Figure (line decimation + scatter) through to_html's
