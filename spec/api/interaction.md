@@ -421,8 +421,10 @@ Mechanics per entry kind:
 Legend entry labels (same build, `_buildLegend`): a continuous row is titled
 by `t.name`, else the encoding's declarative `color.label` (the
 `color="column"` idiom, attached by `Chart.figure()` to
-`ColorChannel.label`), else the literal `value` for hand-built specs. Static
-SVG/raster exports draw name-bearing entries only and have no hover state;
+`ColorChannel.label`). There is no generic fallback: a trace with neither a
+name nor a label contributes no legend row, and a chart whose traces are all
+unnamed renders no legend box — the same rule the static SVG/raster exports
+follow (name-bearing entries only). Exports additionally have no hover state;
 this section is live-client behavior.
 
 Click-to-toggle (hiding a series) is **not** part of this contract — it

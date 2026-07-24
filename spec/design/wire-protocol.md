@@ -197,8 +197,9 @@ states which representation this view resolved to:
   continuous color spec may additionally carry `label` — the declarative
   column name behind the encoding (`ColorChannel.label`, attached by
   `Chart.figure()` when `color=` was a column-name string) — which legend
-  chrome uses to title gradient rows for unnamed traces instead of the
-  generic `value` (interaction spec §9).
+  chrome uses to title gradient rows for unnamed traces; with neither a
+  trace name nor a `label` the encoding renders no legend row at all
+  (interaction spec §9).
 
 The client enforces `msg.seq` only when it is present, and additionally
 accepts `msg.trace` and `msg.stale` for pending-request bookkeeping — no

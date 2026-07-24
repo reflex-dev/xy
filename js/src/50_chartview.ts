@@ -1746,9 +1746,12 @@ export class ChartView {
             items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {}, traces: [ti], cat: i }));
         } else if (t.color && t.color.mode === "continuous") {
           // Label precedence: explicit series name, then the encoding's own
-          // declarative label (the color="column" idiom), then the generic
-          // fallback for hand-built specs.
-          const name = t.name || t.color.label || "value";
+          // declarative label (the color="column" idiom). No generic fallback:
+          // an unnamed encoding has nothing truthful to say, so it gets no
+          // row — matching the static exporters, which draw name-bearing
+          // entries only.
+          const name = t.name || t.color.label;
+          if (!name) return;
           const key = name + "\u0000" + t.color.colormap;
           const existing = continuousRows.get(key);
           if (existing) {

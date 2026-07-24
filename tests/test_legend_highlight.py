@@ -1,8 +1,9 @@
 """Legend entry labels and hover-highlight emphasis.
 
 Python side: a continuous color encoding built from a column name carries that
-name onto the wire (`color.label`), so unnamed traces stop rendering a generic
-"value" legend row; `xy.legend(highlight=...)` gates the hover behavior.
+name onto the wire (`color.label`); `xy.legend(highlight=...)` gates the hover
+behavior. There is no generic fallback label — a trace with neither a name nor
+a label renders no legend row (matching the static exporters).
 
 Browser side: hovering a legend row dims every other series on the marks
 canvas (`_legendDim`), swaps a categorical trace's palette LUT so sibling
@@ -173,6 +174,10 @@ def test_browser_legend_hover_dims_other_series() -> None:
             data=data,
             color=np.array(["A", "B", "A", "B", "A", "B", "A", "B"]),
         ),
+        # Trace 4: unnamed continuous from a raw array — no name, no label,
+        # so it must contribute NO legend row (no generic fallback), while
+        # still dimming like any other series when a row is hovered.
+        xy.scatter("x", "y", data=data, color=data["temperature"] * 2.0),
         xy.legend(),
         width=520,
         height=340,
@@ -197,8 +202,8 @@ def test_browser_legend_hover_dims_other_series() -> None:
             label="legend highlight",
         )
 
-    # The unnamed continuous traces surface their column name once, not two
-    # generic "value" rows; categorical categories keep one row each.
+    # The unnamed labeled traces surface their column name once; the raw-array
+    # trace (no name, no label) gets NO row; categories keep one row each.
     assert payload["rowNames"] == ["alpha", "temperature", "A", "B"], payload
     # The continuous swatch keeps the scatter's marker identity: a symbol
     # path filled with the colormap ramp, not a bare gradient chip.
@@ -206,14 +211,15 @@ def test_browser_legend_hover_dims_other_series() -> None:
     assert payload["gradientSymbolFill"].startswith("url(#"), payload
 
     dim = 0.2
-    assert payload["hoverAlphaDims"] == [1, dim, dim, dim], payload
+    # The row-less trace 4 still dims with everything else on any hover.
+    assert payload["hoverAlphaDims"] == [1, dim, dim, dim, dim], payload
     # The hovered row keeps full opacity; the other rows fade.
     assert payload["rowOpacities"][0] == "", payload
     assert all(opacity == "0.4" for opacity in payload["rowOpacities"][1:]), payload
     # The deduped gradient row backs BOTH continuous traces.
-    assert payload["hoverTemperatureDims"] == [dim, 1, 1, dim], payload
+    assert payload["hoverTemperatureDims"] == [dim, 1, 1, dim, dim], payload
     # A category row emphasizes its trace and swaps in the dimmed palette LUT.
-    assert payload["hoverCategoryDims"] == [dim, dim, dim, 1], payload
+    assert payload["hoverCategoryDims"] == [dim, dim, dim, 1, dim], payload
     assert payload["lutSwapped"] is True, payload
     assert payload["lutRestored"] is True, payload
-    assert payload["afterLeaveDims"] == [None, None, None, None], payload
+    assert payload["afterLeaveDims"] == [None, None, None, None, None], payload
