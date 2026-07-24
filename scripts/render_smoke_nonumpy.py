@@ -971,14 +971,17 @@ try{{
        throws(() => new xy.ChartView(mk(), JSON.parse(JSON.stringify(spec)), splitBufs, null)))
         ? 1 : 0;
     const splitbuf = (splitPix && splitLoud) ? 1 : 0;
-    // Streaming append (rust-engine §5): the affected trace rebuilds from the
-    // fresh payload and the view follows the data — refit when at home, hold
-    // when zoomed into history, slide when pinned to the live right edge.
-    const mkStream=(n,yTop)=>{{
+    // Streaming append (rust-engine §5): an affected trace with unchanged
+    // encoding grows its GPU buffers in place (tail-only upload, wire-protocol
+    // §4); a re-encoded payload rebuilds it. The view follows the data —
+    // refit when at home, hold when zoomed into history, slide when pinned
+    // to the live right edge.
+    const mkStream=(n,yTop,xOff=0)=>{{
       const sbuf=new ArrayBuffer(n*8);
       const scols=[]; let so=0;
-      const scol=(vals)=>{{new Float32Array(sbuf,so*4,vals.length).set(vals);
-        scols.push({{byte_offset:so*4,len:vals.length,offset:0,scale:1,kind:"float"}});
+      const scol=(vals,off=0)=>{{
+        new Float32Array(sbuf,so*4,vals.length).set(off?vals.map(v=>v-off):vals);
+        scols.push({{byte_offset:so*4,len:vals.length,offset:off,scale:1,kind:"float"}});
         so+=vals.length; return scols.length-1;}};
       const xs=[],ys=[];for(let i=0;i<n;i++){{xs.push(i);ys.push(i%5);}}
       ys[n-1]=yTop;
@@ -986,7 +989,7 @@ try{{
         x_axis:{{kind:"linear",label:"",range:[0,n-1]}},
         y_axis:{{kind:"linear",label:"",range:[0,yTop]}},
         traces:[{{id:0,kind:"scatter",name:"s",tier:"direct",n_points:n,n_marks:n,
-          style:{{opacity:0.9}},x:scol(xs),y:scol(ys),
+          style:{{opacity:0.9}},x:scol(xs,xOff),y:scol(ys),
           color:{{mode:"constant",color:"#3b82f6"}},size:{{mode:"constant",size:6}}}}],
         columns:scols,backend:"none"}},buf:sbuf}};
     }};
@@ -996,7 +999,8 @@ try{{
     const g0S=vS.gpuTraces[0], n0S=g0S.n;
     vS._onKernelMsg({{type:"append",affected:[0],spec:sp1.spec}},[sp1.buf]);
     const gS=vS.gpuTraces[0];
-    const okGrow=(n0S===40&&gS.n===64&&gS!==g0S)?1:0;
+    // Unchanged encoding: the trace object is retained and grown in place.
+    const okGrow=(n0S===40&&gS.n===64&&gS===g0S&&gS._cpu.x.length===64)?1:0;
     const okHome=(Math.abs(vS.view.x1-63)<1e-9&&Math.abs(vS.view.y1-9)<1e-9)?1:0;
     vS._drawNow();
     vS.view={{x0:5,x1:15,y0:0,y1:9}};
@@ -1009,9 +1013,13 @@ try{{
     const okPin=(Math.abs(vS.view.x1-99)<1e-9&&Math.abs(vS.view.x1-vS.view.x0-10)<1e-9)?1:0;
     const okPayload=(vS._payload&&vS._payload.byteLength===sp3.buf.byteLength
       &&vS.spec.traces[0].n_points===100)?1:0;
+    // A re-encoded payload (new x offset → prefix bytes changed) rebuilds.
+    const sp4=mkStream(120,9,5);
+    vS._onKernelMsg({{type:"append",affected:[0],spec:sp4.spec}},[sp4.buf]);
+    const okRebuild=(vS.gpuTraces[0]!==gS&&vS.gpuTraces[0].n===120)?1:0;
     vS._drawNow();
     vS.destroy();holderS.remove();
-    const stream=(okGrow&&okHome&&okHoldS&&okPin&&okPayload)?1:0;
+    const stream=(okGrow&&okHome&&okHoldS&&okPin&&okPayload&&okRebuild)?1:0;
     // Mark styling (spec/api/styling.md#styling-the-marks): gradient fills,
     // rounded corners, and stroke borders on BOTH rect-family programs
     // (histogram uses RECT, compact bar uses BAR), plus curve:"smooth"
@@ -1567,7 +1575,7 @@ try{{
         )
     if stream != 1:
         raise SystemExit(
-            "streaming append failed (trace rebuild or follow policy: refit/hold/slide)"
+            "streaming append failed (in-place growth/rebuild or follow policy: refit/hold/slide)"
         )
     if thrash != 1:
         raise SystemExit(

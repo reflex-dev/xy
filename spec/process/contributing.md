@@ -153,11 +153,12 @@ For browser render smoke checks, pass a local Chrome/Chromium executable:
 make check-browser CHROMIUM=/path/to/chrome
 ```
 
-This runs six split browser checks, which CI runs as separate steps:
+This runs seven split browser checks, which CI runs as separate steps:
 
 | Check | CI step name |
 | --- | --- |
 | `render_smoke_nonumpy` | `Headless render smoke (stdlib + Chromium)` |
+| `append_stream_smoke` | `Streaming append smoke (stdlib + Chromium)` |
 | `smoke_render` | `Real-Figure render smoke (numpy + Chromium)` |
 | `reflex_lifecycle_smoke` | `Browser lifecycle smoke (Chromium)` |
 | `visual_regression_smoke` | `Browser visual regression smoke (Chromium)` |

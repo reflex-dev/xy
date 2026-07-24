@@ -305,11 +305,17 @@ trace's pyramid for lazy rebuild, exits any drill, and returns an `append`
 message carrying a complete fresh payload in the split layout — screen-bounded
 by construction (§29), so the wire never needs deltas, and shipped exactly
 once per tick (wire-protocol §4: the widget host rides the spec/buffers trait
-update; the socket host pushes a `msg`). The client rebuilds only the traces
-named in `affected`, applies the follow policy (refit when at home, slide
-when pinned to the live right edge, hold when inspecting history), and
-refines tiered traces to its current window through the normal
-stale-while-revalidate request path (§17).
+update; the socket host pushes a `msg`). Encode offsets stay sticky across
+appends (`Column.suggest_offset` retains the last shipped offset while every
+value remains within one span of it), making consecutive payloads retain
+byte-identical prefixes. The client updates only the traces named in
+`affected`: a direct scatter/line with unchanged encoding extends existing
+GPU buffers with tail-only `bufferSubData` uploads into capacity-doubling data
+stores; anything else rebuilds. It applies the follow policy (refit when at
+home, slide when pinned to the live right edge, hold when inspecting history),
+then refines tiered traces through the normal stale-while-revalidate path
+(§17), coalesced to at most one round-trip per 300 ms burst; at home,
+re-decimation is skipped when recorded `decimation_px` covers the plot.
 
 **Still future (`stream.rs`):** Rust-owned chunked append buffers with
 zone maps computed on seal, and — the important one — appends marking

@@ -206,7 +206,12 @@ The two requirements live primarily in the **data pipeline (§4–§6)**. The re
   for large-magnitude/small-delta domains (time, finance, geo). Deep zoom re-centers
   the offset when the visible range's relative span approaches f32 resolution
   (~1 part in 10⁷) — see §16. Most charts don't need 15 significant digits to fill
-  800 pixels, but the digits they do need must be the *right* ones.
+  800 pixels, but the digits they do need must be the *right* ones. Full-payload
+  offsets are additionally *sticky under streaming appends*: once shipped, a
+  column keeps its offset while every value stays within one span of it (at most
+  one f32 mantissa bit worse than a fresh midpoint; a right-growing stream never
+  exceeds that), so consecutive append payloads keep byte-identical prefixes and
+  the client can upload only the appended tail (wire-protocol §4).
 - **Dictionary-encode categoricals** (Arrow gives this for free): store small int
   codes + one dictionary, not repeated strings.
 - **GPU residency = the CPU copy can be dropped — but WASM makes "dropped" subtle.**

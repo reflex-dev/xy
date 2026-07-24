@@ -71,6 +71,7 @@ npm ci                                # once per checkout: vite + tsc toolchain
 node js/build.mjs                     # typecheck + regenerate minified static/ after JS edits
 python3 scripts/abi_smoke.py          # C-ABI seam, stdlib only (no PyPI needed)
 python3 scripts/render_smoke_nonumpy.py  # WebGL2 render path in headless Chromium
+python3 scripts/append_stream_smoke.py   # streaming-append tail uploads + coalesced refines
 uv venv && uv pip install -e ".[dev]"
 uv pip install -e "python/reflex-xy[dev]"  # enables tests/reflex_adapter (installs reflex)
 uv run pytest                         # native core required (no fallback)
@@ -90,8 +91,9 @@ uv run ruff check .
 uv run ruff format --check .
 ```
 
-The two `*_smoke*` scripts need neither numpy nor PyPI — they verify the
-Python↔Rust ABI and the render client directly, and run first in CI.
+`abi_smoke`, `render_smoke_nonumpy`, and `append_stream_smoke` need neither
+numpy nor PyPI — they verify the Python↔Rust ABI and the render client
+directly, and run first in CI.
 
 Never credit Claude in git history: no Claude author or committer identity,
 no `Co-Authored-By: Claude` trailers, no AI attribution in commit messages,

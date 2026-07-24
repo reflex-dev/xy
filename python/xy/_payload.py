@@ -68,7 +68,15 @@ class _PayloadWriter:
         `scale` is the target axis scale: log-family axes pin the offset to
         0.0 (`lod.geometry_offset`) so relative f32 precision survives the
         shader-side transform."""
-        offset = lod.geometry_offset(scale, col.min, col.max)
+        # Direct append payloads need a stable encoding so their previous
+        # bytes remain a prefix of the new column. Log-family axes retain
+        # their required zero origin; linear axes use the column's sticky
+        # shipped offset and re-center only when it leaves the safe span.
+        offset = (
+            lod.geometry_offset(scale, col.min, col.max)
+            if scale in ("log", "symlog")
+            else col.suggest_offset()
+        )
         encoded = lod.encode_f32_values(
             values,
             offset,
@@ -459,6 +467,11 @@ class PayloadMixin(_Host):
                 sel = np.flatnonzero(finite) if sel is None else sel[finite]
                 xv, yv = xv[finite], yv[finite]
         entry = self._base_entry(t, pw, xv, yv, tier, self._default_styled(t))
+        if tier == "decimated":
+            # Record the px width this M4 pass was computed for (§28): the
+            # client uses it to skip an at-home re-request that would only
+            # recompute the same windows after a streaming append.
+            entry["decimation_px"] = int(px_width)
         # Attach direct keys in the same finite/log-filtered row order.
         if t.transition_keys is not None:
             self._transition_entry(entry, t, pw, sel)
@@ -476,6 +489,8 @@ class PayloadMixin(_Host):
         if len(sel) != len(xv):
             xv, yv, bv = xv[sel], yv[sel], bv[sel]
         entry = self._base_entry(t, pw, xv, yv, tier, self._default_styled(t))
+        if tier == "decimated":
+            entry["decimation_px"] = int(px_width)
         if t.transition_keys is not None:
             self._transition_entry(entry, t, pw, sel)
         entry["base"] = pw.ship(bv, t.base, scale=self._axis_scale(t.y_axis))
