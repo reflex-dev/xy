@@ -76,7 +76,7 @@ class ColorChannel:
     colormap: str = DEFAULT_COLORMAP
     # Declarative source of the continuous values (the `color="temperature"`
     # column-name idiom). Legend/colorbar chrome uses it when the trace itself
-    # is unnamed, so an encoding never has to fall back to a generic "value".
+    # is unnamed; with neither name nor label the encoding gets no legend row.
     label: Optional[str] = None
     # categorical: integer code per point + the category labels + palette.
     codes: Optional[npt.NDArray[np.uint8] | npt.NDArray[np.uint32]] = None
