@@ -2204,6 +2204,8 @@ class PlotTypeMixin:
         yerr = _limit_error(yerr, lolims, uplims, len(np.asarray(y)))
         xerr = _limit_error(xerr, xlolims, xuplims, len(np.asarray(x)))
         base = line_kwargs(kwargs)
+        marker = kwargs.pop("marker", None)
+        markersize = kwargs.pop("markersize", kwargs.pop("ms", None))
         check_unsupported(kwargs, "errorbar()")
         # When ecolor is omitted, the bars inherit the resolved data-series
         # color, exactly as matplotlib does: an explicit color kwarg wins, then
@@ -2254,6 +2256,14 @@ class PlotTypeMixin:
                 line_kwargs_for_plot["alpha"] = base["opacity"]
             if "name" in base:
                 line_kwargs_for_plot["label"] = base["name"]
+            if "linestyle" in base:
+                line_kwargs_for_plot["linestyle"] = base["linestyle"]
+            if "dash" in base:
+                line_kwargs_for_plot["dashes"] = base["dash"]
+            if marker is not None:
+                line_kwargs_for_plot["marker"] = marker
+            if markersize is not None:
+                line_kwargs_for_plot["markersize"] = markersize
             data_line = self.plot(x, y, fmt, **line_kwargs_for_plot)[0]
         return ErrorbarContainer(Artist(self, entry), data_line)
 
