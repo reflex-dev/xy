@@ -479,6 +479,7 @@ part of the contract, not incidental:
 | Log axis with an explicit `margin` | The pad is applied in log10 space (`10 ** (log10(lo) - span * margin)`), so it is multiplicative and symmetric on screen. The `lo / 10` floor does not apply: an authored margin is the authority on the low edge. |
 | Singleton data range (`lo == hi`) with an explicit `margin` | The extent becomes `[lo, lo + 1]` and the margin pads that unit interval — matching mpl's singleton handling. Without a margin the legacy fallback still applies: `±5%` of `abs(lo)`, or `±0.5` at zero. |
 | Zero-baseline marks (bars, areas) | Unchanged: the padded edge still snaps back to `0` when the data range touches it, so a bar chart's baseline does not float off the spine. |
+| Both ends sticky (mesh, image, ECDF cumulative axis) | The axis takes the data range verbatim, as matplotlib's sticky edges do for `imshow`/`pcolormesh`/`hist2d`/`specgram` and for an ECDF's 0/1 axis. The engine has no sticky concept beyond the zero-baseline anchor above, so the pyplot shim resolves this case itself and ships a materialized `domain` in place of `margin` (`Axes._fully_sticky_domain`) — the two never combine. A *one-sided* sticky edge is the zero baseline and stays with `margin`, anchored by the engine. |
 
 `margin` is resolved in Python, in f64, by `Figure._range` — only the resulting
 domain crosses the wire, so it is not a renderer-side concept and needs no

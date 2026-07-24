@@ -197,6 +197,101 @@ def _transform_entry_axis(entry: dict[str, Any], axis: str, old: Any, new: Any) 
     entry["args"] = tuple(args)
 
 
+def _heatmap_span(entry: dict[str, Any], axis: str) -> Optional[np.ndarray]:
+    """The outer cell edges a ``@mark``/``heatmap`` entry occupies on *axis*.
+
+    ``hist2d``/``pcolormesh``/``specgram`` register their cell **centers**
+    inside ``kwargs``, so the autoscale scan's generic top-level ``entry[key]``
+    probe never sees them.  Mirror `Figure._heatmap_axis_positions` plus
+    `Figure._cell_edges` exactly rather than re-deriving the geometry: absent
+    centers default to ``arange(n)``, and the drawn span reaches half a cell
+    beyond the first and last center, which is what recovers the original
+    ``hist2d`` bin edges from its centers.
+    """
+    from xy._figure import Figure
+
+    args = entry.get("args", ())
+    if not args:
+        return None
+    z = np.asarray(args[0])
+    if z.ndim < 2:
+        return None
+    # Both (rows, cols) and RGB(A) (rows, cols, bands) grids index the same way.
+    count = z.shape[1 if axis == "x" else 0]
+    centers = entry.get("kwargs", {}).get(axis)
+    if centers is None:
+        positions = np.arange(count, dtype=np.float64)
+    else:
+        try:
+            positions = np.asarray(unit_converted_values(centers), dtype=np.float64).reshape(-1)
+        except (TypeError, ValueError):
+            # String/object centers become first-seen ordinals in the core.
+            positions = np.arange(np.asarray(centers).size, dtype=np.float64)
+    if positions.size != count or not np.all(np.isfinite(positions)):
+        return None
+    try:
+        edges = Figure._cell_edges(positions, f"heatmap {axis}")
+    except ValueError:
+        # A build with these centers will raise for the same reason; leave the
+        # decision to the core instead of guessing a span here.
+        return None
+    return np.asarray([edges[0], edges[-1]], dtype=np.float64)
+
+
+def _box_spans(entry: dict[str, Any], axis: str) -> Iterator[np.ndarray]:
+    """The spans a ``@mark``/``box`` entry occupies on *axis*.
+
+    Mirrors `marks.box`: the category axis spans each position +/- half the box
+    width, and the value axis spans the Tukey whiskers plus, when outliers are
+    drawn, the flier points beyond them.
+    """
+    from xy.marks import _distribution_stats
+
+    args = entry.get("args", ())
+    if not args:
+        return
+    kwargs = entry.get("kwargs", {})
+    orientation = kwargs.get("orientation", "vertical")
+    values = args[0]
+    if (
+        isinstance(values, (list, tuple))
+        and len(values)
+        and all(not isinstance(item, str) and np.ndim(item) == 1 for item in values)
+    ):
+        groups = [np.asarray(item, dtype=np.float64) for item in values]
+    else:
+        array = np.asarray(values, dtype=np.float64)
+        groups = (
+            [array[:, index] for index in range(array.shape[1])]
+            if array.ndim == 2
+            else [array.reshape(-1)]
+        )
+    positions = kwargs.get("x")
+    ordinals = np.arange(len(groups), dtype=np.float64)
+    if positions is None:
+        # marks.box defaults absent positions to arange(len(groups)).
+        centers = ordinals
+    else:
+        try:
+            centers = np.asarray(unit_converted_values(positions), dtype=np.float64).reshape(-1)
+        except (TypeError, ValueError):
+            # String categories become their first-seen ordinal positions.
+            centers = ordinals
+    if centers.size != len(groups) or not np.all(np.isfinite(centers)):
+        centers = ordinals
+    category_axis = "x" if orientation == "vertical" else "y"
+    if axis == category_axis:
+        half = float(kwargs.get("width", 0.6)) / 2.0
+        yield centers - half
+        yield centers + half
+        return
+    stats = [_distribution_stats(group) for group in groups]
+    spans = [np.asarray([stat[3], stat[4]], dtype=np.float64) for stat in stats]
+    if kwargs.get("show_outliers", True):
+        spans.extend(np.asarray(stat[5], dtype=np.float64) for stat in stats)
+    yield from spans
+
+
 def _nonlinear_ticks(domain: tuple[float, float], spec: dict[str, Any]) -> np.ndarray:
     lo, hi = map(float, _scale_values(np.asarray(domain), spec, inverse=True))
     if spec["name"] == "logit":
@@ -2702,6 +2797,21 @@ class Axes(PlotTypeMixin):
                         coordinates = np.arange(z.shape[1 if axis == "x" else 0], dtype=float)
                     if coordinates is not None:
                         yield np.asarray(coordinates, dtype=np.float64).reshape(-1), True
+                elif factory == "heatmap":
+                    # NB: distinct from the `kind == "heatmap"` branch below,
+                    # which is imshow's explicit-extent entry shape.
+                    span = _heatmap_span(entry, key)
+                    if span is not None:
+                        yield span, False
+                elif factory == "ecdf":
+                    if axis == "x":
+                        yield np.asarray(entry["args"][0], dtype=np.float64).reshape(-1), True
+                    else:
+                        # marks.ecdf steps from 0 to cumulative mass 1.
+                        yield np.asarray([0.0, 1.0], dtype=np.float64), False
+                elif factory == "box":
+                    for span in _box_spans(entry, axis):
+                        yield span, True
             elif entry.get("kind") == "heatmap" and entry.get("extent") is not None:
                 bounds = entry["extent"]
                 yield np.asarray(bounds[:2] if axis == "x" else bounds[2:], dtype=float), False
@@ -2765,10 +2875,47 @@ class Axes(PlotTypeMixin):
                     finite = values[np.isfinite(values)]
                     if finite.size:
                         edges.append(np.asarray([finite.min(), finite.max()]))
+            elif entry.get("kind") == "@mark" and entry.get("factory") == "heatmap":
+                # Matplotlib gives pcolormesh/hist2d/specgram sticky edges: the
+                # view hugs the outer cell edge with no margin at all.
+                span = _heatmap_span(entry, axis)
+                if span is not None:
+                    edges.append(span)
+            elif entry.get("kind") == "@mark" and entry.get("factory") == "ecdf":
+                if axis == "y":
+                    # An ECDF is sticky at both 0 and full cumulative mass.
+                    edges.append(np.asarray([0.0, 1.0], dtype=np.float64))
+            elif entry.get("kind") == "heatmap" and entry.get("extent") is not None:
+                # imshow's explicit extent is likewise sticky on both axes.
+                bounds = entry["extent"]
+                edges.append(np.asarray(bounds[:2] if axis == "x" else bounds[2:], dtype=float))
         if not edges:
             return np.array([], dtype=np.float64)
         combined = np.concatenate(edges)
         return combined[np.isfinite(combined)]
+
+    def _fully_sticky_domain(self, axis: str) -> Optional[tuple[float, float]]:
+        """The raw extent when sticky edges pin *both* ends of *axis*.
+
+        Image- and mesh-like marks (imshow/pcolormesh/hist2d/specgram) hug
+        their outer cell edge in Matplotlib, and an ECDF hugs 0 and 1.  The
+        core only knows the rectangle zero-baseline anchor, so it would pad
+        such an axis by the ordinary margin.  `_build_chart` materializes this
+        domain instead of a margin so the renderer cannot widen the view.
+
+        Deliberately requires *both* ends: a one-sided sticky edge is the bar
+        and histogram baseline, which the core already anchors itself.
+        """
+        if self._axis_is_dataless(axis):
+            return None
+        sticky = self._entry_sticky_edges(axis)
+        if not sticky.size:
+            return None
+        lo, hi = self._entry_extent(axis)
+        tolerance = np.finfo(np.float64).eps * max(1.0, abs(lo), abs(hi)) * 8
+        pinned_lo = np.any(np.isclose(sticky, lo, rtol=0.0, atol=tolerance))
+        pinned_hi = np.any(np.isclose(sticky, hi, rtol=0.0, atol=tolerance))
+        return (lo, hi) if pinned_lo and pinned_hi else None
 
     def _auto_domain(self, axis: str) -> tuple[float, float]:
         host = self._y2_of or self
@@ -4737,10 +4884,19 @@ class Axes(PlotTypeMixin):
         }
         x_props = {k: v for k, v in self._axis["x"].items() if v is not None}
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
-        if not adjusted_aspect and "x" not in self._explicit_domains:
-            x_props["margin"] = self._effective_margin("x")
-        if not adjusted_aspect and "y" not in self._explicit_domains:
-            y_props["margin"] = self._effective_margin("y")
+        for axis, props in (("x", x_props), ("y", y_props)):
+            if adjusted_aspect or axis in self._explicit_domains:
+                continue
+            # Mesh and image spans are sticky on both ends: materialize the
+            # domain so the renderer's generic margin padding cannot widen an
+            # axis Matplotlib pins flush to the outer cell edge. `margin` and
+            # `domain` never combine (spec/design/pan-and-zoom-configuration.md
+            # §9), so send exactly one of them.
+            pinned = None if props.get("domain") is not None else self._fully_sticky_domain(axis)
+            if pinned is not None:
+                props["domain"] = pinned
+            else:
+                props["margin"] = self._effective_margin(axis)
         if "x" in empty_view:
             x_props["domain"] = (0.0, 1.0)
         if "y" in empty_view:

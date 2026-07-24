@@ -266,5 +266,28 @@ colorbar domains) fully cleared.
   `subplots(..., toolbar=...)`, which forwards it to `figure` — overrides
   rcParams for one figure.
 
+### Mesh and distribution autoscale — 2026-07-24 (Matplotlib 3.11.0 reference)
+
+- The shim's pre-build autoscale scan (`Axes._iter_entry_arrays`) now
+  recognizes the `@mark`/`heatmap`, `ecdf`, and `box` entry shapes, which keep
+  their coordinates inside `kwargs` rather than as top-level `x`/`y`. Those
+  axes previously scanned as *dataless* and were pinned to the empty `(0, 1)`
+  view, clipping the geometry: a 30×30 `hist2d` showed roughly 3×1 of its bins.
+  Affects `hist2d` (uniform bins), `pcolormesh` on a uniform grid, `specgram`,
+  `ecdf`, and `boxplot`. `hexbin`, `contour`/`contourf`, `imshow`,
+  non-uniform `hist2d`/`pcolormesh`, `tripcolor`, `violinplot`, `errorbar`, and
+  `step` already scanned correctly and are unchanged.
+- Sticky edges are now derived for mesh, image, and ECDF entries, so
+  `hist2d`/`pcolormesh`/`specgram`/`imshow` view limits are exactly the outer
+  cell edges and an ECDF's cumulative axis is exactly `0..1` — matching
+  Matplotlib, which gives these artists sticky edges and therefore no margin.
+  An axis with sticky edges on *both* ends ships a materialized `domain`
+  instead of a `margin`; one-sided rectangle baselines are unchanged and stay
+  anchored by the engine.
+- `boxplot` autoscales its value axis over the Tukey whiskers plus the flier
+  points when `showfliers` is on, matching Matplotlib on both settings. Known
+  remaining deviation, unchanged by this entry: with `positions` omitted the
+  boxes sit on 0-based ordinals rather than Matplotlib's 1-based positions.
+
 Future entries must identify the Matplotlib release/revision, inventory
 additions or removals, and any compatibility-level changes.
