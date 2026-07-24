@@ -57,6 +57,16 @@ def test_bottom_location_selects_horizontal_orientation() -> None:
     assert ax._colorbar["shrink"] == pytest.approx(0.5)
 
 
+def test_colorbar_domain_excludes_masked_image_values() -> None:
+    fig, ax = plt.subplots()
+    values = np.ma.masked_greater(np.asarray([[-2.0, -1.0], [1.0, 2.0]]), 0.0)
+    image = ax.imshow(values, cmap="Blues")
+
+    fig.colorbar(image, ax=ax)
+
+    assert ax._colorbar["domain"] == [-2.0, -1.0]
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [

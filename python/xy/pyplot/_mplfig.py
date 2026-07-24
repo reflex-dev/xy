@@ -523,8 +523,9 @@ class Figure:
             cmap_obj = mappable.get_cmap()
             colormap = getattr(cmap_obj, "name", cmap_obj)
         try:
-            numeric = np.asarray(mapped_values, dtype=np.float64)
-            finite = numeric[np.isfinite(numeric)]
+            numeric = np.ma.asarray(mapped_values, dtype=np.float64)
+            finite = np.asarray(numeric.compressed(), dtype=np.float64)
+            finite = finite[np.isfinite(finite)]
         except (TypeError, ValueError):
             finite = np.asarray([], dtype=np.float64)
         explicit_domain = entry.get("domain", props.get("domain"))
