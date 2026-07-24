@@ -12,8 +12,9 @@ import numpy as np
 import pytest
 
 import xy
+from xy import channels
 from xy._figure import Figure
-from xy._svg import COLORMAP_STOPS, _axis_tick_label_layout, _Scale
+from xy._svg import COLORMAP_STOPS, _axis_tick_label_layout, _colormap_stops, _Scale
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -684,6 +685,84 @@ def test_colormap_stops_stay_in_sync_with_js_client() -> None:
             assert f"[{r}, {g}, {b}]" in body, (
                 f"{name} stop ({r},{g},{b}) missing in 10_colormaps.ts"
             )
+    assert set(COLORMAP_STOPS) == set(channels.COLORMAPS), (
+        "renderer and public colormap registries diverged"
+    )
+
+
+def test_matplotlib_gallery_colormap_stops_and_reversal() -> None:
+    expected = {
+        "reds": [
+            (255, 245, 240),
+            (254, 229, 216),
+            (253, 202, 181),
+            (252, 171, 143),
+            (252, 138, 106),
+            (251, 105, 74),
+            (241, 68, 50),
+            (217, 37, 35),
+            (188, 20, 26),
+            (152, 12, 19),
+            (103, 0, 13),
+        ],
+        "bone": [
+            (0, 0, 0),
+            (22, 22, 30),
+            (45, 45, 62),
+            (66, 66, 93),
+            (89, 92, 121),
+            (112, 123, 144),
+            (134, 154, 166),
+            (157, 185, 188),
+            (185, 210, 210),
+            (221, 233, 233),
+            (255, 255, 255),
+        ],
+        "autumn": [
+            (255, 0, 0),
+            (255, 25, 0),
+            (255, 51, 0),
+            (255, 76, 0),
+            (255, 102, 0),
+            (255, 128, 0),
+            (255, 153, 0),
+            (255, 179, 0),
+            (255, 204, 0),
+            (255, 230, 0),
+            (255, 255, 0),
+        ],
+        "winter": [
+            (0, 0, 255),
+            (0, 25, 242),
+            (0, 51, 230),
+            (0, 76, 217),
+            (0, 102, 204),
+            (0, 128, 191),
+            (0, 153, 178),
+            (0, 179, 166),
+            (0, 204, 153),
+            (0, 230, 140),
+            (0, 255, 128),
+        ],
+        "bupu": [
+            (247, 252, 253),
+            (229, 239, 246),
+            (204, 221, 236),
+            (178, 202, 225),
+            (154, 180, 214),
+            (140, 149, 198),
+            (140, 116, 181),
+            (138, 81, 165),
+            (133, 45, 144),
+            (118, 12, 113),
+            (77, 0, 75),
+        ],
+    }
+    for name, stops in expected.items():
+        assert COLORMAP_STOPS[name] == stops
+        assert channels.is_colormap(name)
+        assert channels.is_colormap(f"{name}_r")
+        assert _colormap_stops(f"{name}_r") == list(reversed(stops))
 
 
 def test_scalar_stroke_color_survives_vectorized_style_path() -> None:

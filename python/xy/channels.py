@@ -45,6 +45,11 @@ COLORMAPS = (
     "rdbu",
     "jet",
     "binary",
+    "reds",
+    "bone",
+    "autumn",
+    "winter",
+    "bupu",
 )
 
 
