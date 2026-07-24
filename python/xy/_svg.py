@@ -1485,6 +1485,10 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         )
         font_size = _axis_tick_font_size(axis)
         side = axis.get("side", "bottom" if is_x else "left")
+        length = max(0.0, float(axis_style.get("tick_length", 0)))
+        direction = str(axis_style.get("tick_direction", "out"))
+        outward = 0.0 if direction == "in" else length / 2 if direction == "inout" else length
+        gap = outward + float(axis_style.get("tick_padding", 0))
         # An explicit tick_label_anchor (axis spec or style) overrides the
         # angle/side-derived default. Anchored labels rotate about the tick
         # point (the rotate() pivot below), so anchor and rotation compose —
@@ -1496,9 +1500,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 row_offset = float(item["row"]) * (font_size + 4)
                 x = float(item["pos"])
                 y = (
-                    plot["y"] - 7 - row_offset
+                    plot["y"] - gap - 0.2 * font_size - row_offset
                     if side == "top"
-                    else plot["y"] + plot["h"] + 16 + row_offset
+                    else plot["y"] + plot["h"] + gap + 0.8 * font_size + row_offset
                 )
                 if explicit_anchor:
                     anchor = _TEXT_ANCHORS[explicit_anchor]
@@ -1509,7 +1513,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 else:
                     anchor = "start"
             else:
-                x = plot["x"] + plot["w"] + 8 if side == "right" else plot["x"] - 8
+                x = plot["x"] + plot["w"] + gap if side == "right" else plot["x"] - gap
                 y = float(item["pos"]) + 4
                 if explicit_anchor:
                     anchor = _TEXT_ANCHORS[explicit_anchor]

@@ -697,6 +697,8 @@ def test_client_axis_tick_labels_have_collision_layout() -> None:
         "tick_label_angle",
         "tick_label_anchor",
         "tick_label_min_gap",
+        '"tick_padding"',
+        "tickParts(xAxis).outward",
     )
 
     for path, text in CLIENT_FILES:

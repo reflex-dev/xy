@@ -83,6 +83,7 @@ def test_rc_fonts_and_axis_strokes_scale_with_figure_dpi() -> None:
     assert built.chrome_styles["tick_label"]["font-size"] == "20px"
     assert built.axis_options["x"]["style"]["axis_width"] == pytest.approx(1.6)
     assert built.axis_options["x"]["style"]["tick_length"] == pytest.approx(7.0)
+    assert built.axis_options["x"]["style"]["tick_padding"] == pytest.approx(7.0)
 
 
 def test_spine_controls_and_invalid_cycle_boundaries() -> None:

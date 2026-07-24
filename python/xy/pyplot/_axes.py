@@ -3882,6 +3882,7 @@ class Axes(PlotTypeMixin):
         color = kwargs.pop("color", colors)
         labelcolor = kwargs.pop("labelcolor", colors)
         length = kwargs.pop("length", None)
+        pad = kwargs.pop("pad", None)
         width = kwargs.pop("width", None)
         direction = kwargs.pop("direction", None)
         side_updates = {
@@ -3913,6 +3914,8 @@ class Axes(PlotTypeMixin):
                 style["tick_label_color"] = resolve_color(labelcolor)
             if length is not None or side_updates:
                 self._apply_tick_side_visibility(ax, side_updates, length)
+            if pad is not None:
+                style["tick_padding"] = float(pad) * self._point_scale()
             if width is not None:
                 style["tick_width"] = float(width) * self._point_scale()
             if direction is not None:
@@ -5297,6 +5300,7 @@ def _rc_axis_style(axis: str, dpi: float = 96.0) -> dict[str, Any]:
     result: dict[str, Any] = {}
     result["axis_width"] = float(rcParams["axes.linewidth"]) * point_scale
     result["tick_length"] = float(rcParams[f"{prefix}.major.size"]) * point_scale
+    result["tick_padding"] = float(rcParams[f"{prefix}.major.pad"]) * point_scale
     result["tick_width"] = float(rcParams[f"{prefix}.major.width"]) * point_scale
     if tick_color != "black":
         result["tick_color"] = resolve_color(tick_color)

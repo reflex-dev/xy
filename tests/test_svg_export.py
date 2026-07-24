@@ -103,6 +103,29 @@ def test_svg_honors_tick_label_anchor() -> None:
     assert 'text-anchor="end"' in default_svg
 
 
+def test_svg_tick_padding_starts_after_the_outward_tick() -> None:
+    from xy import _svg
+
+    chart = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[0.0, 1.0]),
+        xy.x_axis(
+            tick_values=(0.5,),
+            tick_labels=("middle",),
+            style={"tick_length": 6, "tick_padding": 5, "tick_label_size": 10},
+        ),
+        width=300,
+        height=200,
+    )
+    spec, _blob = chart.figure().build_payload()
+    _width, _height, _compact, plot = _svg.layout(spec)
+    root = _parse(chart.figure().to_svg())
+    label = next(node for node in root.iter() if node.text == "middle")
+
+    # SVG text y is its baseline. The label's top begins after the 6 px
+    # outward tick plus the independent 5 px Matplotlib-style pad.
+    assert float(label.get("y", "nan")) == pytest.approx(plot["y"] + plot["h"] + 6 + 5 + 8)
+
+
 def test_svg_tick_label_anchor_collision_parity() -> None:
     """Anchor-aware collision model matches JS _tickLabelsCollide.
 

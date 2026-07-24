@@ -164,6 +164,7 @@ def test_tick_params_records_supported_style_and_rejects_unknown() -> None:
         labelrotation=45,
         colors="tab:red",
         length=7,
+        pad=6,
         width=2,
         direction="in",
         labelbottom=False,
@@ -177,6 +178,7 @@ def test_tick_params_records_supported_style_and_rejects_unknown() -> None:
         "tick_color": "#d62728",
         "tick_label_color": "#d62728",
         "tick_length": pytest.approx(7.0 * 100.0 / 72.0),
+        "tick_padding": pytest.approx(6.0 * 100.0 / 72.0),
         "tick_width": pytest.approx(2.0 * 100.0 / 72.0),
         "tick_direction": "in",
         # Always explicit (10 pt font.size at dpi 100): the render client and
