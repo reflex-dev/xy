@@ -192,6 +192,70 @@ but they fail differently, and only the numeric grammar falls back.
   `format` is absent or not a string.
 - **Category axes** ignore `format=` and render the category label.
 
+### Colorbar placement and ticks
+
+The built-in colorbar's geometry rides the first-paint spec's `colorbar` object
+(`spec["colorbar"]`, written by `python/xy/_payload.py` from
+`Figure.colorbar_options`) and is honored identically by the browser client
+(`js/src/50_chartview.ts`), SVG (`python/xy/_svg.py`), and native PNG
+(`python/xy/_raster.py`).
+
+| Colorbar option | Value | Default |
+| --- | --- | --- |
+| `orientation` | `"vertical"` (right of the plot) or `"horizontal"` (below it) | `"vertical"` |
+| `shrink` | Fraction of the plot's length the bar spans along its long axis, in `(0, 1]` | `1` — full plot length |
+| `anchor` | `[x, y]` placement of a shrunken bar within the leftover room | `[0.5, 0.5]` — centered |
+| `minor_ticks` | Draw unlabeled minor ticks between the major ticks | absent — off |
+
+- **`shrink`** scales only the long axis: a horizontal bar's width becomes
+  `plot.w * shrink`, a vertical bar's height `plot.h * shrink`. Bar thickness
+  and the chrome room the layout reserves are unchanged, so shrinking a colorbar
+  never reflows the plot. The browser client additionally clamps the value into
+  `[0.01, 1]` (absent, zero, or non-finite reads as `1`) and floors a vertical
+  bar at 24 px; the static renderers use the authored value as given, because
+  the authoring surface below validates it.
+- **`anchor`** is a fraction of the *leftover* room, not of the plot, and only
+  the component along the bar's long axis is read: a vertical bar uses
+  `anchor[1]`, a horizontal bar `anchor[0]`. `anchor[0]` runs left → right
+  (`0` flush left, `1` flush right). `anchor[1]` runs **bottom → top** (`0`
+  flush with the plot's bottom edge, `1` with its top) — Matplotlib's bottom-up
+  axes-fraction convention, not the renderers' top-down pixel space. At
+  `shrink = 1` there is no leftover room, so `anchor` has no effect. The
+  cross-axis position stays layout-owned: a vertical bar always clears
+  right-side y-axis chrome, a horizontal one always sits below the bottom axis.
+- **`minor_ticks`** splits each interval between consecutive *rendered* major
+  ticks into fifths and draws four unlabeled 3 px ticks per interval on the
+  bar's tick side (right of a vertical bar, below a horizontal one). The
+  subdivision follows whichever major positions the colorbar actually drew —
+  explicit `ticks` included — and needs at least two of them, so a colorbar
+  showing a single major tick draws no minor ticks. Minor ticks carry
+  `data-xy-colorbar-minor="true"` in both the DOM and the SVG and deliberately
+  carry **no slot**: they are not `class_names`/`styles` targets and inherit the
+  surrounding text color (`currentColor` in the browser).
+
+`plt.colorbar()` / `fig.colorbar()` is the only authoring surface for `shrink`,
+`anchor`, and `minor_ticks` today; the declarative `xy.colorbar()` component
+still exposes `title`, `orientation`, and `ticks` only. The shim also accepts
+Matplotlib's `location=` as a synonym for the side — `"right"` selects
+`orientation: "vertical"`, `"bottom"` selects `"horizontal"` — and `location`
+never reaches the spec as a field of its own. Invalid values raise instead of
+being silently reinterpreted: `location="left"`/`"top"` is a
+`NotImplementedError` (unsupported placement), a `location`/`orientation` pair
+naming different sides is a `ValueError`, and so are a `shrink` outside
+`(0, 1]` and an `anchor` that is not a finite `(x, y)` pair.
+`Colorbar.minorticks_on()` / `minorticks_off()` toggle `minor_ticks` on the live
+handle. `shrink` and `anchor` are omitted from the spec entirely when they hold
+their defaults, so the wire shape of a default colorbar is unchanged.
+
+An **inferred** colorbar domain — the one the shim derives when no explicit
+`domain` was authored — is computed over **unmasked, finite** samples only:
+`np.ma`-masked entries are compressed out before the min/max, so a masked
+image's colorbar spans the values it actually paints rather than the fill values
+hidden underneath the mask. When masking (or non-finiteness) leaves no sample at
+all, the domain falls through to the existing autoscale path and resolves from
+the compiled figure's color domain at render time instead of a `0..1`
+placeholder.
+
 ## Slot reference
 
 Every element below is rendered with `data-xy-slot="<slot>"`, so
