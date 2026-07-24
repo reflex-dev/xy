@@ -680,3 +680,30 @@ transition — an all-anchored or all-bounded figure produces the same command
 stream it always did. The browser needs no equivalent rule: every legend box is
 its own scroll container sized by `--xy-legend-max-width`/`-height`, so the
 constraint is already per element there.
+
+**The frame is sized to measured glyph advances.** A static legend column is as
+wide as its widest label actually sets, not as wide as its character count
+suggests. The advances are the bundled DejaVu Sans ones the native rasterizer
+already blits, mirrored Python-side into `python/xy/_fontmetrics.py` and
+generated beside `src/font.rs` by `scripts/gen_font.py`, so the two cannot
+drift. A flat per-character average cannot bound a proportional face — `m` is
+over three times the width of `l`, so `"gamma"` sets 42.6 px at the 11 px legend
+font against a 31.0 px estimate — and sizing a frame from the estimate drew the
+border *inside* its own labels. Labels and the title are both ellipsized against
+the same measured budget, so whatever survives truncation also fits. This is
+what the browser does natively: each legend column is `max-content`. A codepoint
+the atlas lacks reserves the nominal average advance rather than the
+rasterizer's zero, because SVG resolves it against the viewer's fonts and does
+paint it; over-reserving only widens the frame, which can never spill a label.
+
+Border pad aside, the guarantee is one-directional: the frame contains its
+entries. It is a bound, not a matplotlib-identical measurement — the faces
+differ, so expect small numeric differences against matplotlib's own
+`borderpad` inset, not a different sign.
+
+**The frame is a closed rectangle.** All four sides paint, matching
+matplotlib's legend frame (a `FancyBboxPatch`). SVG emits a `<rect>` and the
+browser a CSS `border`, both inherently four-sided; the native rasterizer
+strokes the four corner points as a *closed* polyline, since stroking them open
+paints top/right/bottom and silently drops the left edge. Fill and stroke both
+carry `framealpha`, and `frameon=False` drops the box entirely.

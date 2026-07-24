@@ -1994,7 +1994,10 @@ def _emit_legend(
         )
         cmd.fill(_rect_pts(x, y, x + box_w, y + box_h), frame)
         border = _rgba(style_opts.get("borderColor"), "#cccccc", alpha)
-        cmd.stroke(_rect_pts(x, y, x + box_w, y + box_h), 1.0, border)
+        # closed=True: _rect_pts is four corners, so an open polyline strokes
+        # top/right/bottom and silently drops the left edge. Matplotlib's frame
+        # is a FancyBboxPatch — all four sides — and so is SVG's <rect>.
+        cmd.stroke(_rect_pts(x, y, x + box_w, y + box_h), 1.0, border, closed=True)
     if title:
         cmd.text(x + pad, y + pad / 2 + 11, 0, 11, _parse_color(text_color), str(title))
     for i, t in enumerate(named[: legend["visible_count"]]):

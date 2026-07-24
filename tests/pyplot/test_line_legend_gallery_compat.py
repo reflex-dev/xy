@@ -4,12 +4,36 @@ from xml.etree import ElementTree
 import numpy as np
 
 import xy.pyplot as plt
-from xy._svg import _legend_layout, layout
+from xy import _raster
+from xy._svg import _LEGEND_CHAR_WIDTH, _legend_layout, _legend_text_width, layout
 from xy.pyplot import Legend
 
 
 def teardown_function():
     plt.close("all")
+
+
+def _legend_frame_and_labels(svg_root, names):
+    """The emitted legend frame rect and label texts, from real SVG geometry.
+
+    The legend frame is the only rect carrying both a fill and a stroke opacity
+    in a line chart, so it is identified without consulting the layout that is
+    under test.
+    """
+    frames = [
+        element
+        for element in svg_root.iter()
+        if element.tag.endswith("rect")
+        and "fill-opacity" in element.attrib
+        and "stroke-opacity" in element.attrib
+    ]
+    assert len(frames) == 1, [frame.attrib for frame in frames]
+    labels = [
+        element
+        for element in svg_root.iter()
+        if element.tag.endswith("text") and (element.text or "") in names
+    ]
+    return frames[0], labels
 
 
 def test_plot_drawstyle_steps_aliases_steps_pre():
@@ -165,3 +189,145 @@ def test_round_dash_capstyle_mutation_matches_fixed_round_renderers():
 
     assert line.get_dash_capstyle() == "round"
     assert line._entry["kwargs"]["dash_capstyle"] == "round"
+
+
+def test_legend_frame_is_wide_enough_for_its_measured_labels():
+    """The frame must contain its own labels, wide glyphs included.
+
+    Regression: columns were sized as ``len(label) * _LEGEND_CHAR_WIDTH``, a
+    flat per-character average. "gamma" sets 42.6 px at 11 px against a 31.0 px
+    estimate, so the 1 px frame landed ~7.6 px inside the label's right edge and
+    "alpha"/"gamma" visibly crossed the border. Matplotlib insets the widest
+    label from its frame by ``borderpad``; the sign is what matters here.
+    """
+    names = ("alpha", "beta", "gamma")
+    fig, ax = plt.subplots(figsize=(6.4, 4.8))
+    for name in names:
+        ax.plot([0, 1], [0, 1], label=name)
+    ax.legend(
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1.0),
+        frameon=True,
+        edgecolor="black",
+        title="series",
+    )
+
+    output = BytesIO()
+    fig.savefig(output, format="svg")
+    frame, labels = _legend_frame_and_labels(ElementTree.fromstring(output.getvalue()), names)
+
+    assert {label.text for label in labels} == set(names)
+    frame_right = float(frame.attrib["x"]) + float(frame.attrib["width"])
+    for label in labels:
+        label_right = float(label.attrib["x"]) + _legend_text_width(label.text)
+        assert label_right <= frame_right, (
+            f"{label.text!r} runs to {label_right:.3f}, past the frame's {frame_right:.3f}"
+        )
+    # The label is inset, not merely touching, as matplotlib's borderpad is.
+    widest = max(float(label.attrib["x"]) + _legend_text_width(label.text) for label in labels)
+    assert frame_right - widest > 0.0
+
+
+def test_legend_column_width_measures_glyphs_not_character_count():
+    """A flat per-character average cannot bound a proportional face."""
+    # "m" is far wider than the average and "l" far narrower, yet a character
+    # count scores these two identically -- which is exactly the bug.
+    assert _legend_text_width("mmmmm") > 5 * _LEGEND_CHAR_WIDTH
+    assert _legend_text_width("lllll") < 5 * _LEGEND_CHAR_WIDTH
+    assert _legend_text_width("gamma") > _legend_text_width("alpha")
+
+    plot = {"x": 0.0, "y": 0.0, "w": 560.0, "h": 400.0}
+    result = _legend_layout([{"name": "gamma"}], plot, {"loc": "upper right"})
+    # The column is sized to the measured label, so the frame encloses text
+    # drawn at handle + gap with the border pad still to spare on the right.
+    text_x = result["column_offsets"][0] + result["handle"] + result["gap"]
+    assert text_x + _legend_text_width("gamma") <= result["box_w"]
+
+
+def test_ellipsized_legend_label_fits_the_column_it_was_sized_for():
+    """Truncation is measured too, so a shortened label cannot overrun either."""
+    plot = {"x": 0.0, "y": 0.0, "w": 150.0, "h": 400.0}
+    names = ["Wmmmmmmmmmmmmmmmmmmmm", "iiiiiiiiiiiiiiiiiiii"]
+    result = _legend_layout([{"name": name} for name in names], plot, {"loc": "upper right"})
+
+    assert any(name.endswith("...") for name in result["names"])
+    text_x = result["column_offsets"][0] + result["handle"] + result["gap"]
+    for rendered in result["names"]:
+        assert text_x + _legend_text_width(rendered) <= result["box_w"]
+
+
+def test_titled_legend_frame_contains_its_title():
+    """A title is ellipsized against measured width, so it stays in the frame.
+
+    Regression: the title budget subtracted two border pads from a box that had
+    only been grown by one, so "Classes" over short entries lost two more
+    characters than it needed to -- "Cl..." where the merge-base rendered
+    "Cla...". Measuring the title's real extent more than restores it.
+    """
+    plot = {"x": 0.0, "y": 0.0, "w": 560.0, "h": 400.0}
+    short = _legend_layout(
+        [{"name": name} for name in ("1", "2", "3", "4")],
+        plot,
+        {"loc": "lower left", "title": "Classes"},
+    )
+    # Whatever survives truncation fits between the two border pads, since the
+    # title is drawn at x + pad.
+    assert _legend_text_width(short["title"]) <= short["box_w"] - short["pad"]
+    # Strictly longer than the "Cl..." this branch produced before the fix, and
+    # than the "Cla..." the merge-base produced.
+    assert short["title"].startswith("Clas")
+
+    # Given entries wide enough to carry it, the title is not truncated at all.
+    wide = _legend_layout(
+        [{"name": name} for name in ("alpha", "beta", "gamma")],
+        plot,
+        {"loc": "lower left", "title": "Classes"},
+    )
+    assert wide["title"] == "Classes"
+
+
+def test_raster_legend_frame_strokes_all_four_sides(monkeypatch):
+    """The frame is a closed rectangle, like matplotlib's FancyBboxPatch.
+
+    Regression: ``_rect_pts`` is four corners, so stroking it as an open
+    polyline painted top/right/bottom and silently dropped the left edge.
+    """
+    recorded: list[tuple[list[tuple[float, float]], bool]] = []
+    original_stroke = _raster._Cmd.stroke
+
+    def record_stroke(self, pts, width, color, closed=False, dash=None):
+        recorded.append(([tuple(map(float, point)) for point in pts], bool(closed)))
+        return original_stroke(self, pts, width, color, closed=closed, dash=dash)
+
+    monkeypatch.setattr(_raster._Cmd, "stroke", record_stroke)
+
+    _, ax = plt.subplots(figsize=(4.2, 3.0))
+    for name in ("alpha", "beta", "gamma"):
+        ax.plot([0, 1], [0, 1], label=name)
+    ax.legend(loc="upper right", frameon=True, edgecolor="black")
+    spec, blob = ax._build_chart(420, 300).figure().build_payload()
+    _width, _height, _compact, plot = layout(spec)
+    legend = _legend_layout(
+        [{"name": name} for name in ("alpha", "beta", "gamma")], plot, spec["legend"]
+    )
+    _raster.render_raster(spec, blob, scale=1)
+
+    corners = [
+        (legend["x"], legend["y"]),
+        (legend["x"] + legend["box_w"], legend["y"]),
+        (legend["x"] + legend["box_w"], legend["y"] + legend["box_h"]),
+        (legend["x"], legend["y"] + legend["box_h"]),
+    ]
+    matches = [
+        closed
+        for pts, closed in recorded
+        if len(pts) == 4
+        and all(
+            abs(pts[index][axis] - corners[index][axis]) < 1e-6
+            for index in range(4)
+            for axis in (0, 1)
+        )
+    ]
+    assert matches, [pts for pts, _ in recorded if len(pts) == 4]
+    # Four corners stroked open would leave the closing left edge unpainted.
+    assert all(matches), "legend frame stroked as an open polyline (left edge missing)"

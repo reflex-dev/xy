@@ -28,7 +28,7 @@ from xml.sax.saxutils import escape
 
 import numpy as np
 
-from . import _native, _paint, _png
+from . import _fontmetrics, _native, _paint, _png
 from ._arrowgeom import arrow_shapes as _arrow_shapes
 from .config import DEFAULT_PALETTE
 
@@ -2650,19 +2650,70 @@ _LEGEND_LINE_KINDS = frozenset({"line", "segments", "step", "stairs", "errorbar"
 
 
 _LEGEND_CHAR_WIDTH = 6.2
+#: Font size the legend emitters set labels at, and the size at which
+#: ``_LEGEND_CHAR_WIDTH`` is the nominal *average* advance.
+_LEGEND_FONT_PX = 11.0
+#: Exact-fit comparisons are made against a measured float sum, so absorb the
+#: binary-float underflow at the boundary rather than ellipsizing a label that
+#: fits to the last subpixel.
+_LEGEND_FIT_EPS = 1e-9
 
 
-def _legend_text(value: Any, max_width: float) -> str:
-    """Conservatively ellipsize a static legend string to a pixel budget."""
+def _legend_text_width(value: Any, char_width: float = _LEGEND_CHAR_WIDTH) -> float:
+    """Measured advance width, in pixels, of a static legend string.
+
+    Legend columns used to be sized as ``len(text) * _LEGEND_CHAR_WIDTH``. A
+    flat average cannot bound a proportional face — DejaVu's ``m`` is over
+    three times the width of its ``l`` — so ``"gamma"`` really sets 42.6 px at
+    11 px against a 31.0 px estimate, and a frame sized from the estimate was
+    narrower than its own labels. Advances come from the same face the native
+    rasterizer blits (``_fontmetrics``, generated beside ``src/font.rs`` by
+    ``scripts/gen_font.py``), which is what makes a frame sized from this
+    actually contain the text the SVG and raster emitters draw. It is also what
+    the browser does natively, sizing each legend column to ``max-content``.
+
+    ``char_width`` carries the nominal average advance, so scaling the legend
+    font scales the measurement with it.
+
+    A codepoint the atlas lacks reserves the nominal ``char_width`` instead of
+    the rasterizer's zero advance: SVG resolves it against the viewer's own
+    fonts and does paint it, and over-reserving only widens the frame, which
+    can never spill a label.
+    """
+    scale = char_width * (_LEGEND_FONT_PX / _LEGEND_CHAR_WIDTH) / _fontmetrics.BASE_PX
+    total = 0.0
+    for ch in str(value):
+        code = ord(ch)
+        if _fontmetrics.FIRST <= code <= _fontmetrics.LAST:
+            total += _fontmetrics.ASCII_ADVANCES[code - _fontmetrics.FIRST] * scale
+        else:
+            advance = _fontmetrics.EXTRA_ADVANCES.get(code)
+            total += char_width if advance is None else advance * scale
+    return total
+
+
+def _legend_text(value: Any, max_width: float, char_width: float = _LEGEND_CHAR_WIDTH) -> str:
+    """Conservatively ellipsize a static legend string to a pixel budget.
+
+    The budget is measured, not counted, so the returned string's own advance
+    width is ``<= max_width`` and therefore fits the column it was sized for.
+    """
     text = str(value)
-    # The width budget is itself derived from ``len(text) * _LEGEND_CHAR_WIDTH``;
-    # compensate for the tiny binary-float underflow at exact-fit boundaries.
-    max_chars = max(0, int((max_width + 1e-9) / _LEGEND_CHAR_WIDTH))
-    if len(text) <= max_chars:
+    if _legend_text_width(text, char_width) <= max_width + _LEGEND_FIT_EPS:
         return text
-    if max_chars <= 3:
-        return "." * max_chars
-    return text[: max_chars - 3] + "..."
+    # Longest prefix that still leaves room for the ellipsis.
+    keep = 0
+    for index in range(1, len(text)):
+        if _legend_text_width(f"{text[:index]}...", char_width) > max_width + _LEGEND_FIT_EPS:
+            break
+        keep = index
+    if keep:
+        return f"{text[:keep]}..."
+    # Too narrow for even one glyph plus an ellipsis: emit the dots that fit.
+    for count in (3, 2, 1):
+        if _legend_text_width("." * count, char_width) <= max_width + _LEGEND_FIT_EPS:
+            return "." * count
+    return ""
 
 
 def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, Any]:
@@ -2697,7 +2748,7 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
 
     natural_text_widths = [
         max(
-            len(str(named[index].get("name", ""))) * _LEGEND_CHAR_WIDTH
+            _legend_text_width(named[index].get("name", ""))
             for index in range(column, len(named), ncols)
         )
         for column in range(ncols)
