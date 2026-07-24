@@ -469,6 +469,21 @@ antialiased SDF in the point shader, so shapes stay crisp at any size and the
 border is a true ring (a stroke width with no color borders in the mark color).
 Symbols compose with the color/size channels.
 
+Glyph geometry follows Matplotlib's marker paths, size convention included.
+`diamond` is the `square` glyph rotated 45°, so its half-diagonal is √2× the
+glyph radius — the rotated square keeps `square`'s side length at the same
+`size` rather than shrinking to fit the unrotated footprint, and `thin_diamond`
+is that same diamond squashed to 0.6 width. `triangle_left` and
+`triangle_right` rotate the shared triangle path so the apex points along the
+named direction and the wide base sits opposite it. Each backend reaches that
+geometry by its own route and lands on the same size convention: the WebGL
+client scales the point sprite by √2 and leaves the unit-space SDF untouched,
+the native rasterizer scales both the SDF threshold and the bounding-box extent
+it paints into, and SVG emits the widened outline directly — so one `size`
+value is one on-screen glyph across WebGL, PNG, and SVG. Charts that already
+used these four symbols render at a corrected size or orientation for an
+unchanged `size`; the set of available symbols does not change.
+
 Interaction state belongs to the host framework. In Reflex, use Reflex state,
 event handlers, conditions, and ordinary CSS classes/styles; XY only emits the
 events and renders the resulting props. The component API deliberately does not
