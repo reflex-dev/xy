@@ -561,9 +561,11 @@ class Figure:
             ),
             "label": _plain_text(kwargs.pop("label", "")),
             "orientation": orientation,
-            "shrink": shrink,
-            "anchor": [float(anchor_values[0]), float(anchor_values[1])],
         }
+        if shrink != 1.0:
+            options["shrink"] = shrink
+        if not np.array_equal(anchor_values, [0.5, 0.5]):
+            options["anchor"] = [float(anchor_values[0]), float(anchor_values[1])]
         # When the mappable's value domain is not knowable at colorbar() time
         # (e.g. hexbin counts are binned inside the mark), defer to the compiled
         # figure's color domain at render time instead of the 0..1 placeholder.
