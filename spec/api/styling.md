@@ -237,6 +237,43 @@ raises before it reaches the client.
 <div class="[&_[data-xy-slot=legend]]:bg-transparent"> … </div>
 ```
 
+### Legend geometry
+
+Legend metrics are **font-relative**, never fixed pixels. Every length below is
+a multiple of the legend font size — 11 px unless a `font-size` in `px` is set
+on the `legend` slot (pyplot: `legend(fontsize=)`) — so a legend keeps its
+proportions instead of cramping as its type grows. The factors are Matplotlib's
+`legend` defaults, which is why a pyplot legend measures like a Matplotlib one
+without a shim-only code path.
+
+| Metric | Factor | At 11 px | Notes |
+| --- | --- | --- | --- |
+| Border pad, per side | `0.4` | 4.4 px | mpl `borderpad`; an `em` `padding` on the slot overrides it |
+| Handle length | `2` | 22 px | mpl `handlelength` — the line sample, marker cell, or patch width |
+| Handle-to-label pad | `0.8` | 8.8 px | mpl `handletextpad` |
+| Column spacing | `2` | 22 px | mpl `columnspacing`, between `ncols` columns |
+| Row spacing | `0.5` | 5.5 px | mpl `labelspacing`; an `em` `rowGap` on the slot overrides it |
+| Label row height | `1.03` | 11.33 px | one row advances `1.03 + labelspacing` = 16.83 px |
+| Glyph advance | `0.564` | 6.2 px | conservative width estimate for column sizing and ellipsis |
+
+This governs **every static legend**, not only pyplot's: the SVG exporter and
+the native rasterizer share one `_legend_layout` (`python/xy/_svg.py`), so a
+composed `scatter_chart`/`line_chart` legend and a pyplot one are laid out by
+the same code with the same defaults. The browser carries the three spacing
+factors as CSS (`padding` in `em`, `column-gap: 2em`, `row-gap: .5em`) and
+leaves handle and label metrics to the cascade, because a DOM legend measures
+itself and can scroll where a static file cannot.
+
+Columns size to their own labels rather than inheriting the widest label in the
+legend, and each retains at least a handle plus four glyphs; a plot too narrow
+for the requested `ncols` loses columns first and only then ellipsizes labels.
+A **legend title participates in both measurements**: it widens the box when
+its glyph advance plus both border pads exceeds the entry columns, and it is
+ellipsized against that same full inner width, so a title that fits is never
+shortened. It also consumes one extra `1.03 + labelspacing` row of height,
+which can push the last entry out of a short plot; a plot with room for no
+entry at all renders neither frame nor title.
+
 ## Why your styles always win
 
 The client injects one stylesheet of *visual* defaults (background, color,
