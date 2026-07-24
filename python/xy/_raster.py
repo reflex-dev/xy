@@ -776,9 +776,10 @@ def render_raster(
     # "none" silences the whole axis chrome (sparklines); "off" hides only the
     # label text and keeps baselines and the axis title (mpl shared axes).
     frame_sides = spec.get("frame_sides")
+    explicit_frame_sides = frame_sides is not None
     if frame_sides is None:
         frame_sides = [xa.get("side", "bottom"), ya.get("side", "left")]
-    if not hide_y:
+    if not hide_y or explicit_frame_sides:
         if "left" in frame_sides:
             cmd.stroke(
                 [(px0, py0), (px0, py1)],
@@ -791,7 +792,7 @@ def render_raster(
                 float(ystyle.get("axis_width", 1)),
                 _parse_color(_css(ystyle.get("axis_color"), default_axis)),
             )
-    if not hide_x:
+    if not hide_x or explicit_frame_sides:
         if "top" in frame_sides:
             cmd.stroke(
                 [(px0, py0), (px1, py0)],
@@ -1969,7 +1970,7 @@ def _emit_legend(
     pad, handle, gap = legend["pad"], legend["handle"], legend["gap"]
     line_h, ncols = legend["line_h"], legend["ncols"]
     title, title_h = legend["title"], legend["title_h"]
-    cell_w = legend["cell_w"]
+    column_offsets = legend["column_offsets"]
     box_w, box_h = legend["box_w"], legend["box_h"]
     x, y = legend["x"], legend["y"]
     # frameon=False (background transparent) drops the box entirely (§ mpl parity).
@@ -1996,8 +1997,8 @@ def _emit_legend(
         )
         c = _parse_color(color_str)
         col, row = i % ncols, i // ncols
-        rx, ry = x + col * cell_w, y + pad / 2 + title_h + row * line_h
-        hx0, hx1, cy = rx + pad, rx + pad + handle, ry + 7
+        rx, ry = x + column_offsets[col], y + pad / 2 + title_h + row * line_h
+        hx0, hx1, cy = rx, rx + handle, ry + 7
         kind = t.get("kind")
         if kind == "scatter":
             sym = _SYMBOLS.get(style.get("symbol", "circle"), 0)

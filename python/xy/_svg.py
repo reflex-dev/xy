@@ -1677,9 +1677,10 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     # baselines above the marks, matching the client's overlay rules
     baselines = ""
     frame_sides = spec.get("frame_sides")
+    explicit_frame_sides = frame_sides is not None
     if frame_sides is None:
         frame_sides = [xa.get("side", "bottom"), ya.get("side", "left")]
-    if not hide_y:
+    if not hide_y or explicit_frame_sides:
         for side, x in (("left", plot["x"]), ("right", plot["x"] + plot["w"])):
             if side in frame_sides:
                 baselines += (
@@ -1688,7 +1689,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                     f'stroke="{escape(_css(ystyle.get("axis_color"), default_axis))}" '
                     f'stroke-width="{_num(float(ystyle.get("axis_width", 1)))}"/>'
                 )
-    if not hide_x:
+    if not hide_x or explicit_frame_sides:
         for side, y in (("top", plot["y"]), ("bottom", plot["y"] + plot["h"])):
             if side in frame_sides:
                 baselines += (
@@ -2654,7 +2655,7 @@ _LEGEND_CHAR_WIDTH = 6.2
 def _legend_text(value: Any, max_width: float) -> str:
     """Conservatively ellipsize a static legend string to a pixel budget."""
     text = str(value)
-    # ``cell_w`` is itself derived from ``len(text) * _LEGEND_CHAR_WIDTH``;
+    # The width budget is itself derived from ``len(text) * _LEGEND_CHAR_WIDTH``;
     # compensate for the tiny binary-float underflow at exact-fit boundaries.
     max_chars = max(0, int((max_width + 1e-9) / _LEGEND_CHAR_WIDTH))
     if len(text) <= max_chars:
@@ -2669,10 +2670,11 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
 
     Static files cannot offer the browser legend's scrollbar, so an oversized
     legend is kept inside the plot and its labels are visibly ellipsized. A
-    legend that already fits keeps its historical geometry byte-for-byte.
+    Columns follow Matplotlib's handle/text/column spacing and size to their
+    own labels rather than inheriting the width of the longest label.
     """
     style_opts = options.get("style") or {}
-    pad, handle, gap, line_h = 8.0, 20.0, 5.0, 16.0
+    pad, handle, gap, column_gap, line_h = 8.0, 22.0, 8.8, 22.0, 16.0
     if str(style_opts.get("padding", "")).endswith("em"):
         pad = 11.0 * float(str(style_opts["padding"])[:-2])
     if str(style_opts.get("rowGap", "")).endswith("em"):
@@ -2681,28 +2683,56 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     requested_cols = min(len(named), max(1, int(options.get("ncols", 1))))
     title = options.get("title")
     title_h = 16.0 if title else 0.0
-    natural_cell_w = (
-        max(len(str(t.get("name", ""))) for t in named) * _LEGEND_CHAR_WIDTH
-        + handle
-        + gap
-        + 2 * pad
-    )
-    if title:
-        natural_cell_w = max(
-            natural_cell_w,
-            (len(str(title)) * _LEGEND_CHAR_WIDTH + 2 * pad) / requested_cols,
-        )
     inset = 6.0
     available_w = max(1.0, float(plot["w"]) - 2 * inset)
     ncols = requested_cols
-    if ncols * natural_cell_w + pad > available_w:
-        # A cell must at least retain its handle and a visible ellipsis. Reduce
-        # an impossible column count before shortening the individual labels.
-        min_cell_w = handle + gap + 2 * pad + 4 * _LEGEND_CHAR_WIDTH
-        max_fit_cols = max(1, int(max(0.0, available_w - pad) // min_cell_w))
+    min_column_w = handle + gap + 4 * _LEGEND_CHAR_WIDTH
+    if ncols * min_column_w + (ncols - 1) * column_gap + pad > available_w:
+        # A column must at least retain its handle and a visible ellipsis.
+        max_fit_cols = max(
+            1,
+            int(max(0.0, available_w - pad + column_gap) // (min_column_w + column_gap)),
+        )
         ncols = min(ncols, max_fit_cols)
-    cell_w = min(natural_cell_w, max(1.0, (available_w - pad) / ncols))
-    box_w = min(available_w, ncols * cell_w + pad)
+
+    natural_text_widths = [
+        max(
+            len(str(named[index].get("name", ""))) * _LEGEND_CHAR_WIDTH
+            for index in range(column, len(named), ncols)
+        )
+        for column in range(ncols)
+    ]
+    available_text_w = max(
+        0.0,
+        available_w - pad - ncols * (handle + gap) - (ncols - 1) * column_gap,
+    )
+    minimum_text_w = 4 * _LEGEND_CHAR_WIDTH
+    text_widths = [min(width, minimum_text_w) for width in natural_text_widths]
+    remaining = max(0.0, available_text_w - sum(text_widths))
+    needs = [
+        max(0.0, width - current)
+        for width, current in zip(natural_text_widths, text_widths, strict=True)
+    ]
+    needed = sum(needs)
+    if needed:
+        scale = min(1.0, remaining / needed)
+        text_widths = [
+            current + need * scale for current, need in zip(text_widths, needs, strict=True)
+        ]
+    column_widths = [handle + gap + width for width in text_widths]
+    box_w = min(available_w, sum(column_widths) + (ncols - 1) * column_gap + pad)
+    if title:
+        title_w = len(str(title)) * _LEGEND_CHAR_WIDTH + pad
+        if title_w > box_w:
+            extra = min(available_w - box_w, title_w - box_w)
+            column_widths = [width + extra / ncols for width in column_widths]
+            text_widths = [width + extra / ncols for width in text_widths]
+            box_w += extra
+    column_offsets = []
+    cursor = pad / 2
+    for width in column_widths:
+        column_offsets.append(cursor)
+        cursor += width + column_gap
 
     nrows = (len(named) + ncols - 1) // ncols
     available_h = max(1.0, float(plot["h"]) - 2 * inset)
@@ -2746,23 +2776,28 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
             float(plot["y"]) + float(plot["h"]) - box_h - inset,
         )
 
-    text_width = max(0.0, cell_w - handle - gap - 2 * pad)
     return {
         "style": style_opts,
         "pad": pad,
         "handle": handle,
         "gap": gap,
+        "column_gap": column_gap,
         "line_h": line_h,
         "ncols": ncols,
         "title": _legend_text(title, max(0.0, box_w - 2 * pad)) if title else None,
         "title_h": title_h,
-        "cell_w": cell_w,
+        "cell_w": max(column_widths),
+        "column_widths": column_widths,
+        "column_offsets": column_offsets,
         "box_w": box_w,
         "box_h": box_h,
         "x": x,
         "y": y,
         "visible_count": visible_count,
-        "names": [_legend_text(t.get("name", ""), text_width) for t in named[:visible_count]],
+        "names": [
+            _legend_text(t.get("name", ""), text_widths[index % ncols])
+            for index, t in enumerate(named[:visible_count])
+        ],
     }
 
 
@@ -2778,7 +2813,7 @@ def _legend(
     pad, handle, gap = legend["pad"], legend["handle"], legend["gap"]
     line_h, ncols = legend["line_h"], legend["ncols"]
     title, title_h = legend["title"], legend["title_h"]
-    cell_w = legend["cell_w"]
+    column_offsets = legend["column_offsets"]
     box_w, box_h = legend["box_w"], legend["box_h"]
     x, y = legend["x"], legend["y"]
     if style_opts.get("background") != "transparent":
@@ -2813,8 +2848,8 @@ def _legend(
             DEFAULT_PALETTE[i % len(DEFAULT_PALETTE)],
         )
         col, row = i % ncols, i // ncols
-        rx, ry = x + col * cell_w, y + pad / 2 + title_h + row * line_h
-        hx0, hx1, cy = rx + pad, rx + pad + handle, ry + 7
+        rx, ry = x + column_offsets[col], y + pad / 2 + title_h + row * line_h
+        hx0, hx1, cy = rx, rx + handle, ry + 7
         kind = t.get("kind")
         if kind == "scatter":
             symbol = style.get("symbol", "circle")

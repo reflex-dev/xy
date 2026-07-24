@@ -55,6 +55,7 @@ def test_legend_maps_supported_style_and_rejects_unknown_options():
         "background": "white",
         "borderColor": "black",
         "borderStyle": "solid",
+        "borderWidth": "1px",
         "--xy-legend-frame-alpha": 0.8,
     }
 

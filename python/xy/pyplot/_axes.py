@@ -4118,6 +4118,7 @@ class Axes(PlotTypeMixin):
             if edgecolor is not None:
                 style["borderColor"] = resolve_color(edgecolor)
                 style["borderStyle"] = "solid"
+                style["borderWidth"] = "1px"
         if framealpha is not None:
             alpha_value = float(framealpha)
             if not 0.0 <= alpha_value <= 1.0:

@@ -1,9 +1,10 @@
 from io import BytesIO
+from xml.etree import ElementTree
 
 import numpy as np
 
 import xy.pyplot as plt
-from xy._svg import _legend_layout
+from xy._svg import _legend_layout, layout
 from xy.pyplot import Legend
 
 
@@ -31,6 +32,7 @@ def test_legend_bbox_to_anchor_reaches_payload_and_static_layout():
     assert spec["legend"]["anchor"] == [0.0, 1.0]
     assert spec["legend"]["style"]["--xy-legend-frame-alpha"] == 0.8
     assert spec["legend"]["style"]["borderColor"] == "#cccccc"
+    assert spec["legend"]["style"]["borderWidth"] == "1px"
 
     plot = {"x": 10.0, "y": 20.0, "w": 100.0, "h": 80.0}
     layout = _legend_layout(
@@ -40,6 +42,61 @@ def test_legend_bbox_to_anchor_reaches_payload_and_static_layout():
     )
     assert layout["x"] == 10.0
     assert layout["y"] + layout["box_h"] == 20.0
+
+
+def test_multicolumn_legend_sizes_each_column_to_its_own_labels():
+    named = [
+        {"name": "Strongly disagree"},
+        {"name": "Disagree"},
+        {"name": "Neither agree nor disagree"},
+        {"name": "Agree"},
+        {"name": "Strongly agree"},
+    ]
+    plot = {"x": 0.0, "y": 0.0, "w": 900.0, "h": 200.0}
+
+    layout = _legend_layout(named, plot, {"ncols": 5, "loc": "upper center"})
+
+    assert layout["names"] == [entry["name"] for entry in named]
+    assert len(set(layout["column_widths"])) > 1
+    assert layout["column_offsets"][1] == (
+        layout["column_offsets"][0] + layout["column_widths"][0] + layout["column_gap"]
+    )
+    equal_width_box = 5 * max(layout["column_widths"]) + 4 * layout["column_gap"] + layout["pad"]
+    assert layout["box_w"] < equal_width_box
+
+
+def test_hidden_axis_keeps_explicit_matplotlib_spines_in_static_exports():
+    fig, ax = plt.subplots(figsize=(3, 2))
+    ax.xaxis.set_visible(False)
+    spec, _ = ax._build_chart(300, 200).figure().build_payload()
+    assert spec["frame_sides"] == ["left", "bottom", "top", "right"]
+    _, _, _, plot = layout(spec)
+
+    output = BytesIO()
+    fig.savefig(output, format="svg")
+    root = ElementTree.fromstring(output.getvalue())
+    lines = [element for element in root.iter() if element.tag.endswith("line")]
+    full_width_rules = {
+        round(float(line.attrib["y1"]), 6)
+        for line in lines
+        if abs(float(line.attrib["x1"]) - plot["x"]) < 1e-6
+        and abs(float(line.attrib["x2"]) - (plot["x"] + plot["w"])) < 1e-6
+        and abs(float(line.attrib["y1"]) - float(line.attrib["y2"])) < 1e-6
+    }
+    assert round(plot["y"], 6) in full_width_rules
+    assert round(plot["y"] + plot["h"], 6) in full_width_rules
+
+    output = BytesIO()
+    fig.savefig(output, format="png", dpi=100)
+    output.seek(0)
+    pixels = plt.imread(output)
+    scale_x = pixels.shape[1] / 300
+    scale_y = pixels.shape[0] / 200
+    x = round((plot["x"] + plot["w"] / 2) * scale_x)
+    for edge in (plot["y"], plot["y"] + plot["h"]):
+        y = round(edge * scale_y)
+        sample = pixels[max(0, y - 2) : min(pixels.shape[0], y + 3), x, :3]
+        assert float(sample.min()) < 0.5
 
 
 def test_bar_numpy_rgba_row_is_one_color_for_trace_and_legend():

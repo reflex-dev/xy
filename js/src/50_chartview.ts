@@ -1763,7 +1763,7 @@ export class ChartView {
     const horizontal = ncols > 1;
     lg.style.cssText = "position:absolute;" +
       `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
-      "overflow:auto;";
+      "column-gap:22px;row-gap:2px;overflow:auto;";
     lg.dataset.xyLegendLoc = loc;
     if (Array.isArray(options.anchor)) {
       lg.dataset.xyLegendAnchor = JSON.stringify(options.anchor);
@@ -4331,12 +4331,13 @@ export class ChartView {
       const frameSides = Array.isArray(s.frame_sides)
         ? s.frame_sides
         : [xAxis.side || "bottom", yAxis.side || "left"];
-      if (!hideY) {
+      const explicitFrameSides = Array.isArray(s.frame_sides);
+      if (!hideY || explicitFrameSides) {
         const yWidth = Math.max(1, this._axisStyleNumber(yAxis, "axis_width", 1));
         if (frameSides.includes("left")) rule(yAxis, p.x, p.y, yWidth, p.h);
         if (frameSides.includes("right")) rule(yAxis, p.x + p.w - yWidth, p.y, yWidth, p.h);
       }
-      if (!hideX) {
+      if (!hideX || explicitFrameSides) {
         const xHeight = Math.max(1, this._axisStyleNumber(xAxis, "axis_width", 1));
         if (frameSides.includes("top")) rule(xAxis, p.x, p.y, p.w, xHeight);
         if (frameSides.includes("bottom")) rule(xAxis, p.x, p.y + p.h - xHeight, p.w, xHeight);
