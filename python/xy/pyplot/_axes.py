@@ -4609,6 +4609,13 @@ class Axes(PlotTypeMixin):
         if self._twin is not None:
             children.extend(self._twin._chart_children())
         chart_padding = None if self._padding is None else list(self._padding)
+        if chart_padding is None and self._absolute_plot_ratio is not None:
+            # Absolute subplot panels overlap in their surrounding chrome.
+            # Reserve the full half-width of a terminal x tick label on the
+            # right so it is neither clipped by this tile nor erased by the
+            # next one during composition.
+            compact = width < 520
+            chart_padding = [6.0, 20.0, 36.0, 46.0] if compact else [10.0, 26.0, 42.0, 62.0]
         adjusted_aspect = False
         aspect_domains: Optional[tuple[tuple[float, float], tuple[float, float]]] = None
         if self._aspect_equal and self._aspect_bounds is not None:
