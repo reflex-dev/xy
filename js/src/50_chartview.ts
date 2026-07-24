@@ -1906,7 +1906,10 @@ export class ChartView {
     const domain = cb.domain || [0, 1];
     const lo = Number(domain[0]), hi = Number(domain[1]);
     const span = hi - lo || 1;
-    const tickResult = linearTicks(lo, hi, 8);
+    const shrink = Math.max(0.01, Math.min(1, Number(cb.shrink) || 1));
+    const barLength = (horizontal ? this.plot.w : this.plot.h) * shrink;
+    const tickTarget = Math.max(2, Math.min(8, Math.floor(Math.max(0, barLength) / 48) + 1));
+    const tickResult = linearTicks(lo, hi, tickTarget);
     const hasExplicitTicks = Array.isArray(cb.ticks);
     const tickValues = hasExplicitTicks ? cb.ticks : tickResult.ticks;
     const tickStep = tickResult.step;

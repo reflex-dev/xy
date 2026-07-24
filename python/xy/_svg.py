@@ -2886,7 +2886,14 @@ def _colorbar(
     tick_positions = (
         [float(value) for value in ticks if lo <= float(value) <= hi]
         if ticks is not None
-        else (_linear_ticks(lo, hi, 8)[0] or [lo, hi])
+        else (
+            _linear_ticks(
+                lo,
+                hi,
+                _colorbar_tick_target(width if orientation == "horizontal" else height),
+            )[0]
+            or [lo, hi]
+        )
     )
     tick_nodes = (
         "".join(
@@ -2956,6 +2963,11 @@ def _colorbar(
         f"{_colorbar_body(options, x, y, width, height, orientation, gradient_id)}"
         f"{extend_nodes}{minor_nodes}{tick_nodes}{label_node}"
     )
+
+
+def _colorbar_tick_target(length: float) -> int:
+    """Major-tick budget for the rendered colorbar length in CSS pixels."""
+    return max(2, min(8, int(max(0.0, float(length)) // 48.0) + 1))
 
 
 def _colorbar_body(

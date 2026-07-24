@@ -2011,7 +2011,7 @@ def _emit_colorbar(
     right_axis_room: float = 0.0,
     text_color: str = _TEXT,
 ) -> None:
-    from ._svg import _linear_ticks, _lut
+    from ._svg import _colorbar_tick_target, _linear_ticks, _lut
 
     orientation = options.get("orientation", "vertical")
     shrink = float(options.get("shrink", 1.0))
@@ -2071,7 +2071,7 @@ def _emit_colorbar(
         h_positions = (
             [float(value) for value in ticks if lo <= float(value) <= hi]
             if ticks is not None
-            else (_linear_ticks(lo, hi, 8)[0] or [lo, hi])
+            else (_linear_ticks(lo, hi, _colorbar_tick_target(width))[0] or [lo, hi])
         )
         if options.get("minor_ticks") and len(h_positions) >= 2:
             ordered = sorted(set(h_positions))
@@ -2106,7 +2106,7 @@ def _emit_colorbar(
         tick_positions = (
             [float(value) for value in ticks if lo <= float(value) <= hi]
             if ticks is not None
-            else (_linear_ticks(lo, hi, 8)[0] or [lo, hi])
+            else (_linear_ticks(lo, hi, _colorbar_tick_target(height))[0] or [lo, hi])
         )
         if options.get("minor_ticks") and len(tick_positions) >= 2:
             ordered = sorted(set(tick_positions))
