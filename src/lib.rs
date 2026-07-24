@@ -2825,10 +2825,17 @@ pub unsafe extern "C" fn xy_polygon_select(
     if n_rows == 0 {
         return 0;
     }
+    // Fewer than three vertices encloses nothing. Answer before building any
+    // slice: `from_raw_parts` requires a non-null, aligned pointer even at
+    // length zero, so a caller passing null for an empty polygon must not
+    // reach the constructions below.
+    if n_poly < 3 {
+        return 0;
+    }
     if x.is_null() || y.is_null() || rows.is_null() || out.is_null() {
         return usize::MAX;
     }
-    if n_poly != 0 && (poly_x.is_null() || poly_y.is_null()) {
+    if poly_x.is_null() || poly_y.is_null() {
         return usize::MAX;
     }
     let x = std::slice::from_raw_parts(x, len);

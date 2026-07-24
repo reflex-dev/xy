@@ -4852,6 +4852,11 @@ pub fn polygon_select(
     write
 }
 
+/// Ceiling on `PolygonSlabs` CSR entries (4 MB of u32 at the worst case), so
+/// neither the allocation nor the u32 cursors depend on caller-supplied
+/// vertex counts.
+const POLYGON_INDEX_RECORD_BUDGET: usize = 1 << 20;
+
 /// Edges bucketed by y, so a point tests only those spanning its row.
 struct PolygonSlabs {
     y0: f64,
@@ -4867,10 +4872,10 @@ struct PolygonSlabs {
 
 impl PolygonSlabs {
     /// Bucketing is declined for a non-finite polygon (slab bounds stop
-    /// meaning anything) and for a vertex count too small to pay for the
-    /// build. Slab count tracks the vertex count and is capped, bounding the
-    /// index at `vertices x 256` u32s in the pathological case where every
-    /// edge spans the full height.
+    /// meaning anything), for a vertex count too small to pay for the build
+    /// (< 16), and for one so large that `POLYGON_INDEX_RECORD_BUDGET` leaves
+    /// fewer than 8 slabs to sort into. Slab count otherwise tracks the vertex
+    /// count, capped at 256.
     fn build(poly_y: &[f64], edges: &[(f64, f64, f64, f64, f64)]) -> Self {
         let n_edges = edges.len();
         let unindexed = || Self {
@@ -4895,7 +4900,20 @@ impl PolygonSlabs {
         if height <= 0.0 {
             return unindexed();
         }
-        let n = n_edges.clamp(16, 256);
+        // An edge is filed once per slab its y-extent spans, so the index
+        // holds at most `edges x slabs` entries. Capping that product bounds
+        // both the allocation and the u32 cursors, and shedding slabs rather
+        // than refusing outright keeps a huge polygon indexed — the fallback
+        // scan is O(edges) for every point, which is exactly what hurts most
+        // at high vertex counts. `select_polygon` caps callers at 2048
+        // vertices, well inside the full 256 slabs; this guards the kernel's
+        // own contract, which has no such ceiling.
+        let n = n_edges
+            .clamp(16, 256)
+            .min((POLYGON_INDEX_RECORD_BUDGET / n_edges).max(1));
+        if n < 8 {
+            return unindexed();
+        }
         let inv_h = n as f64 / height;
         // Half-open [lo, hi) per edge, matching the crossing test's own
         // convention, so an edge lands in exactly the slabs it can cross.
@@ -5359,6 +5377,47 @@ mod tests {
             polygon_select(&x, &y, &[], &[0.0, 9.0, 5.0], &[0.0, 9.0, 5.0], &mut out),
             0
         );
+    }
+
+    /// `polygon_select` is a public export with no polygon-size ceiling of its
+    /// own — `Figure.select_polygon` caps callers at 2048 vertices, the kernel
+    /// does not — so the slab index must bound its own CSR rather than trust
+    /// the vertex count it is handed.
+    #[test]
+    fn polygon_slab_index_stays_inside_its_record_budget() {
+        for n in [16usize, 2048, 65_536, 200_000] {
+            // Worst case for the CSR: every edge spans the full height, so
+            // each is filed into every slab.
+            let poly_x: Vec<f64> = (0..n).map(|i| i as f64).collect();
+            let poly_y: Vec<f64> = (0..n)
+                .map(|i| if i % 2 == 0 { 0.0 } else { 100.0 })
+                .collect();
+            let edges: Vec<(f64, f64, f64, f64, f64)> = (0..n)
+                .map(|i| {
+                    let j = if i == 0 { n - 1 } else { i - 1 };
+                    (
+                        poly_x[i],
+                        poly_y[i],
+                        poly_y[j],
+                        poly_x[j] - poly_x[i],
+                        poly_y[j] - poly_y[i],
+                    )
+                })
+                .collect();
+            let index = PolygonSlabs::build(&poly_y, &edges);
+            assert!(
+                index.items.len() <= POLYGON_INDEX_RECORD_BUDGET,
+                "{n} vertices produced {} CSR entries",
+                index.items.len()
+            );
+            // Either the index was declined outright or it kept enough slabs
+            // to be worth consulting.
+            assert!(
+                index.n == 0 || index.n >= 8,
+                "{n} vertices -> {} slabs",
+                index.n
+            );
+        }
     }
 
     #[test]

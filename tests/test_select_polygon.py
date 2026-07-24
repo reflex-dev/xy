@@ -58,6 +58,8 @@ POLYGONS = {
     "ring_16": _ring(16),
     "ring_64": _ring(64),
     "ring_257": _ring(257),
+    # The API ceiling `Figure.select_polygon` enforces.
+    "ring_2048": _ring(2048),
     "star_concave": _star(),
     "covers_everything": _ring(32, r=500.0),
     "encloses_nothing": _ring(32, r=1e-6),
