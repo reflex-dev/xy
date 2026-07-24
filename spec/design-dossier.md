@@ -1260,7 +1260,11 @@ hover readouts are real HTML/SVG in the DOM (§7). Fonts, color, spacing, border
 focus states: plain CSS, full inheritance and media queries, no bridge needed. The
 container (size, border, background, layout) is ordinary too, and the canvas is
 transparent-capable so a page background shows through. This covers most of what "make
-the chart match my site" actually means — typography and chrome.
+the chart match my site" actually means — typography and chrome. The legend is also
+an interaction surface: hovering a row emphasizes its series by dimming the rest
+(default on, `xy.legend(highlight=False)` opts out; full contract in
+`spec/api/interaction.md` §9). Click-to-toggle stays future work — it is a filter,
+not an emphasis, and belongs to the §34 filtering model.
 
 **(b) Marks — themed via a CSS-custom-property bridge.** The render client reads
 `--chart-*` custom properties off its container and maps them to GPU state, so the

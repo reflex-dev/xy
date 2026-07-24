@@ -383,3 +383,50 @@ round-trip on hover; keyboard point traversal and the live-region readout;
 lasso vertex editing on an existing lasso; selection overlay rendering;
 modebar presence (subject only to the fit check); and view clamping to axis
 bounds. Everything in the §2 and §2.1 tables is configurable; nothing else is.
+
+## 9. Legend hover emphasis
+
+Hovering a legend row emphasizes the series it stands for: every other
+series drops to 20% of its computed opacity (`LEGEND_DIM_OPACITY`,
+`50_chartview.ts`), the other rows in the same legend box fade to 40%
+(`LEGEND_DIM_ROW`), and both restore on pointer-leave. Purely client-side —
+no kernel message, no view change — and the redraw runs with `keepPick`
+because only the color pass changes (dossier §17).
+
+Gating: `xy.legend(highlight=False)`. This is legend chrome, not an
+`interaction_config` switch: it rides `legend.highlight` in the spec's legend
+options, is **on by default**, and only the opt-out (`false`) crosses the
+wire. Hard-disabled rows: entries of `extra_legends` (manual Legend artists
+carry no trace linkage) are always inert.
+
+Mechanics per entry kind:
+
+- **Named / constant-color rows** emphasize their one backing trace via a
+  per-trace `_legendDim` factor folded into every mark family's opacity
+  uniform (points, simple points, lines, segments, areas, rects, bars,
+  meshes, heatmaps — and whole density-tier traces through `_drawDensity`'s
+  uniform).
+- **Continuous (gradient) rows** may back *several* traces: identical
+  unnamed encodings (same label, same colormap) collapse into one row, and
+  hovering it emphasizes all of them.
+- **Categorical rows** emphasize one category: the trace keeps full opacity
+  and swaps its palette LUT for a variant whose other entries are blended
+  toward `--chart-bg`. RGB-blend, not alpha: the mark shaders read
+  `texture(u_lut, …).rgb` and force alpha to 1, so an alpha fade would be a
+  silent no-op. The original LUT is restored on leave. A categorical row
+  cannot dim sibling categories *inside* an aggregated density plane — the
+  plane is one texture (§28: recorded, not silent); the whole trace still
+  dims when some other row is hovered.
+
+Legend entry labels (same build, `_buildLegend`): a continuous row is titled
+by `t.name`, else the encoding's declarative `color.label` (the
+`color="column"` idiom, attached by `Chart.figure()` to
+`ColorChannel.label`). There is no generic fallback: a trace with neither a
+name nor a label contributes no legend row, and a chart whose traces are all
+unnamed renders no legend box — the same rule the static SVG/raster exports
+follow (name-bearing entries only). Exports additionally have no hover state;
+this section is live-client behavior.
+
+Click-to-toggle (hiding a series) is **not** part of this contract — it
+invalidates precomputed density tiers and needs a kernel round-trip; see
+dossier §34 for the filtering model it belongs to.
