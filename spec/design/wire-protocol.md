@@ -193,7 +193,12 @@ states which representation this view resolved to:
   come from the kernel's canonical columns (`pick_result` above). The *build*
   payload keeps continuous channels as unit f32 — the client retains those
   columns CPU-side and denormalizes them for tooltip readouts, where 8-bit
-  steps would surface as wrong digits (`channels.ship_channels`).
+  steps would surface as wrong digits (`channels.ship_channels`). A
+  continuous color spec may additionally carry `label` — the declarative
+  column name behind the encoding (`ColorChannel.label`, attached by
+  `Chart.figure()` when `color=` was a column-name string) — which legend
+  chrome uses to title gradient rows for unnamed traces instead of the
+  generic `value` (interaction spec §9).
 
 The client enforces `msg.seq` only when it is present, and additionally
 accepts `msg.trace` and `msg.stale` for pending-request bookkeeping — no

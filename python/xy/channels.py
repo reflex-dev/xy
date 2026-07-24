@@ -74,6 +74,10 @@ class ColorChannel:
     values: Optional[npt.NDArray[np.float64]] = None
     domain: Optional[tuple[float, float]] = None
     colormap: str = DEFAULT_COLORMAP
+    # Declarative source of the continuous values (the `color="temperature"`
+    # column-name idiom). Legend/colorbar chrome uses it when the trace itself
+    # is unnamed, so an encoding never has to fall back to a generic "value".
+    label: Optional[str] = None
     # categorical: integer code per point + the category labels + palette.
     codes: Optional[npt.NDArray[np.uint8] | npt.NDArray[np.uint32]] = None
     categories: Optional[list[str]] = None
@@ -96,11 +100,14 @@ class ColorChannel:
         if self.mode == "constant":
             return {"mode": "constant", "color": self.constant}
         if self.mode == "continuous":
-            return {
+            spec: dict[str, Any] = {
                 "mode": "continuous",
                 "colormap": self.colormap,
                 "domain": list(self.domain) if self.domain else None,
             }
+            if self.label is not None:
+                spec["label"] = self.label
+            return spec
         if self.mode == "direct_rgba":
             return {"mode": "direct_rgba", "components": 4, "dtype": "u8"}
         if self.mode == "match_fill":
