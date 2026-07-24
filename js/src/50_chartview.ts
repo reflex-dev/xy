@@ -1769,7 +1769,10 @@ export class ChartView {
     if (options.title) {
       const title = document.createElement("div");
       title.textContent = String(options.title);
-      title.style.fontWeight = "600";
+      // Matplotlib renders a legend title at normal weight, and the native
+      // raster exporter never emphasized it, so 400 is what both the SVG
+      // exporter and this path emit.
+      title.style.fontWeight = "400";
       title.style.gridColumn = `1 / span ${horizontal ? ncols : 1}`;
       lg.appendChild(title);
     }
@@ -4173,7 +4176,7 @@ export class ChartView {
     const hasAngle = axis && Number.isFinite(Number(axis.label_angle));
     if (!hasPosition && !hasOffset && !hasAngle) return { css: fallbackCss, style: null };
     if (rawPosition && typeof rawPosition === "object" && !Array.isArray(rawPosition)) {
-      return { css: "font-weight:500;white-space:nowrap;", style: rawPosition };
+      return { css: "font-weight:400;white-space:nowrap;", style: rawPosition };
     }
 
     const p = this.plot;
@@ -4196,7 +4199,7 @@ export class ChartView {
         css:
           `left:${x}px;top:${y}px;` +
           `transform:translateX(${translateX}%) rotate(${angle}deg);` +
-          "transform-origin:center;font-weight:500;white-space:nowrap;",
+          "transform-origin:center;font-weight:400;white-space:nowrap;",
         style: null,
       };
     }
@@ -4211,7 +4214,7 @@ export class ChartView {
       css:
         `left:${x}px;top:${y}px;` +
         `transform:translate(-50%,-50%) rotate(${angle}deg);` +
-        "transform-origin:center;font-weight:500;white-space:nowrap;",
+        "transform-origin:center;font-weight:400;white-space:nowrap;",
       style: null,
     };
   }
@@ -4536,7 +4539,7 @@ export class ChartView {
       if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
         const top = axis.side === "top" ? p.y - 34 : p.y + p.h + 24;
         const fallbackCss =
-          `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`;
+          `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:400;`;
         const placement = this._axisLabelCss(axis, "x", fallbackCss);
         label(axis.label, placement.css, axis, "label", placement.style);
       }
@@ -4586,22 +4589,22 @@ export class ChartView {
       }
       if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
         const fallbackCss = axis.side === "left"
-          ? `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`
-          : `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`;
+          ? `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:400;`
+          : `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:400;`;
         const placement = this._axisLabelCss(axis, "y", fallbackCss);
         label(axis.label, placement.css, axis, "label", placement.style);
       }
     }
     if (s.x_axis.label && !hideX) {
       const top = xAxis.side === "top" ? p.y - 34 : p.y + p.h + 24;
-      const fallbackCss = `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`;
+      const fallbackCss = `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:400;`;
       const placement = this._axisLabelCss(xAxis, "x", fallbackCss);
       label(s.x_axis.label, placement.css, xAxis, "label", placement.style);
     }
     if (s.y_axis.label && !hideY) {
       const fallbackCss = yAxis.side === "right"
-        ? `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`
-        : `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`;
+        ? `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:400;`
+        : `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:400;`;
       const placement = this._axisLabelCss(yAxis, "y", fallbackCss);
       label(s.y_axis.label, placement.css, yAxis, "label", placement.style);
     }

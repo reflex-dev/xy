@@ -661,7 +661,10 @@ streamplot
 ### Known-inconsistent, still open
 
 - Exporter chrome beyond backgrounds (fonts, tick/legend styling) stays fixed
-  in single-chart PNG/SVG regardless of rcParams.
+  in single-chart PNG/SVG regardless of rcParams — except `axes.titleweight`
+  and `axes.labelweight`, which reach the browser, single-chart SVG, and
+  single-chart native PNG paths and are covered by
+  `tests/pyplot/test_rc_chrome_contracts.py`.
 - `ax.set_facecolor()` mutates the per-Axes plot background after creation,
   but `set_facecolor(None)` is a silent no-op rather than a reset to the rc
   default; restoring it requires passing `rcParams["axes.facecolor"]` back

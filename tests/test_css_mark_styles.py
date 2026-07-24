@@ -187,7 +187,9 @@ def test_axis_style_reaches_svg_and_native_renderers() -> None:
     assert 'stroke="#0000ff" stroke-width="2"' in svg
     assert 'stroke="#00aa00" stroke-width="2"' in svg
     assert 'fill="#cc5500" font-size="13" text-anchor="middle"' in svg
-    assert 'font-size="15" font-weight="500" fill="#aa00aa"' in svg
+    # 400 is the matplotlib-parity axis-label default; this style sets no
+    # `label_font_weight`, so the default is what lands in the SVG.
+    assert 'font-size="15" font-weight="400" fill="#aa00aa"' in svg
     assert _raster.render_raster(*fig.build_payload(), scale=1).shape[-1] == 4
 
 

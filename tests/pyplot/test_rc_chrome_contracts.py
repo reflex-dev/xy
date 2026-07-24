@@ -96,3 +96,50 @@ def test_spine_controls_and_invalid_cycle_boundaries() -> None:
     ax.spines[["top", "right"]].set_visible(False)
     spec, _ = ax._build_chart(640, 480).figure().build_payload()
     assert spec["frame_sides"] == ["bottom"]
+
+
+def test_title_and_label_weight_rc_defaults_match_matplotlib() -> None:
+    # Matplotlib 3.11: axes.titleweight and axes.labelweight are both "normal".
+    assert plt.rcParams["axes.titleweight"] == "normal"
+    assert plt.rcParams["axes.labelweight"] == "normal"
+
+    _fig, ax = plt.subplots()
+    ax.set_title("title")
+    ax.set_xlabel("x")
+    built = ax._build_chart(640, 480).figure()
+
+    # "normal" is every renderer's own default, so it needs nothing on the
+    # wire — the browser, SVG, and raster paths all land on 400 unaided.
+    assert "font-weight" not in built.chrome_styles["title"]
+    assert "font-weight" not in built.chrome_styles["axis_title"]
+    assert "label_font_weight" not in built.axis_options["x"]["style"]
+
+
+def test_title_and_label_weight_rc_overrides_reach_every_renderer() -> None:
+    with plt.rc_context({"axes.titleweight": "bold", "axes.labelweight": 700}):
+        _fig, ax = plt.subplots()
+        ax.set_title("title")
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        built = ax._build_chart(640, 480).figure()
+        svg = built.to_svg()
+
+    # browser: the chrome slot styles the render client applies
+    assert built.chrome_styles["title"]["font-weight"] == "bold"
+    assert built.chrome_styles["axis_title"]["font-weight"] == "700"
+    # SVG + native raster read the weight off the axis style, not the chrome
+    # slots, so axes.labelweight has to be published in both places.
+    assert built.axis_options["x"]["style"]["label_font_weight"] == "700"
+    assert built.axis_options["y"]["style"]["label_font_weight"] == "700"
+    assert 'font-weight="bold"' in svg
+    assert 'font-weight="700"' in svg
+
+
+def test_explicit_set_title_weight_still_beats_the_rc_default() -> None:
+    _fig, ax = plt.subplots()
+    ax.set_title("title", fontweight="bold")
+    ax.set_xlabel("x", fontweight="light")
+    built = ax._build_chart(640, 480).figure()
+
+    assert built.chrome_styles["title"]["font-weight"] == "bold"
+    assert built.axis_options["x"]["style"]["label_font_weight"] == "light"

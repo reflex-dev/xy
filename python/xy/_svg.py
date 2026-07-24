@@ -1625,7 +1625,11 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     if spec.get("title"):
         title_style = ((spec.get("dom") or {}).get("styles") or {}).get("title") or {}
         title_size = _px_size(title_style.get("font-size"), 14.0)
-        title_weight = title_style.get("font-weight", 600)
+        # Matplotlib's `axes.titleweight`/`axes.labelweight` both default to
+        # "normal", so chrome text stays at 400 unless a style or rcParam asks
+        # for more. Keep this in step with the `title`/`axis_title` slot rules
+        # in js/src/20_theme.ts and the raster defaults in _raster.py.
+        title_weight = title_style.get("font-weight", 400)
         title_family = title_style.get("font-family")
         title_font_style = title_style.get("font-style")
         title_font_attrs = (
@@ -1658,7 +1662,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         chrome.append(
             f'<text x="{_num(x)}" y="{_num(y)}" text-anchor="{geometry["anchor"]}" '
             f'font-size="{_num(float(geometry["font_size"]))}" '
-            f'font-weight="{escape(str(axis_style.get("label_font_weight", 500)))}"{font_attrs} '
+            f'font-weight="{escape(str(axis_style.get("label_font_weight", 400)))}"{font_attrs} '
             f'fill="{escape(_css(axis_style.get("label_color"), default_text))}"{transform}>'
             f"{escape(str(axis['label']))}</text>"
         )
@@ -2906,7 +2910,7 @@ def _legend(
     if title:
         rows.append(
             f'<text x="{_num(x + pad)}" y="{_num(y + pad / 2 + 11)}" '
-            f'font-weight="600" fill="{escape(text_color)}">{escape(str(title))}</text>'
+            f'font-weight="400" fill="{escape(text_color)}">{escape(str(title))}</text>'
         )
     for i, t in enumerate(named[: legend["visible_count"]]):
         style = t.get("style") or {}

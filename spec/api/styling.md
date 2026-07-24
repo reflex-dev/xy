@@ -127,6 +127,7 @@ or a CSS `px` value such as `"3px"`.
 | `grid_opacity` | Number from `0` to `1` |
 | `tick_length` | Non-negative pixel length |
 | `tick_size` / `tick_label_size`, `label_size` | Positive pixel font size |
+| `label_font_weight`, `label_font_family`, `label_font_style` | Axis-label font overrides, passed through to the browser, SVG, and native PNG paths. `label_font_weight` defaults to `400` — see [Chrome text weight](#chrome-text-weight). |
 | `tick_direction` | `"in"`, `"out"`, or `"inout"` |
 | `tick_label_anchor` | `"start"`, `"center"`, or `"end"` (mpl `ha` aliases `"left"`/`"right"`/`"middle"` normalize) — which label edge pins to the tick; rotated labels pivot about the pinned edge. Also a first-class `x_axis`/`y_axis` option. X defaults to `"center"`; y defaults to the tick-side edge (`"end"` left of the plot, `"start"` right of it). Honored by static SVG/PNG exports. |
 
@@ -236,6 +237,51 @@ raises before it reaches the client.
 <!-- Tailwind arbitrary variant, targeting the same attribute -->
 <div class="[&_[data-xy-slot=legend]]:bg-transparent"> … </div>
 ```
+
+### Chrome text weight
+
+**Every chrome text element defaults to `font-weight: 400`** — chart title, axis
+titles, tick labels, legend entries, legend titles, colorbar titles, and text/
+label/callout annotations alike. This is Matplotlib's default and it is
+deliberate: `axes.titleweight`, `axes.labelweight`, and `font.weight` are all
+`normal` in Matplotlib 3.11, and its legend titles and colorbar labels are
+normal too, so a chart exported from `xy.pyplot` carries the same text weight as
+the same script run under Matplotlib.
+
+The default is a **cross-renderer contract**, not a per-renderer choice. All
+three renderers must agree:
+
+| Renderer | Where the default lives |
+| --- | --- |
+| Browser render client | `font-weight:400` on the text slot rules in `js/src/20_theme.ts`, plus the inline axis-label/legend-title weights in `js/src/50_chartview.ts` (inline styles beat the slot stylesheet, so both have to say 400) |
+| SVG export | `python/xy/_svg.py` — the `font-weight` attribute on the title, axis-title, and legend-title `<text>` elements |
+| Native PNG export | `python/xy/_raster.py` — `_native_font_emphasis` maps a weight `>= 600` onto the baked atlas's bold face, so 400 emits a plain, unemphasized text record |
+
+A renderer that drifts heavier is a bug; `tests/test_text_weight_defaults.py`
+asserts the emitted weight per element in the SVG output and in the native
+raster command stream, and holds a source-level guard on the TypeScript
+defaults (the client bundles are a generated, git-ignored artifact, so a
+bundle-reading test could not run from a fresh checkout).
+
+Heavier text is always opt-in, never a default:
+
+```python
+xy.chart(..., styles={"title": {"font_weight": 600}})        # per-slot
+xy.x_axis(label="time", style={"label_font_weight": "bold"})  # per-axis
+```
+
+Under the pyplot shim, Matplotlib's own knobs work too —
+`rcParams["axes.titleweight"]`, `rcParams["axes.labelweight"]`, and the explicit
+`ax.set_title(..., fontweight=)` / `ax.set_xlabel(..., fontweight=)` arguments.
+Because `normal` is already every renderer's default, the shim only puts a
+weight on the wire when it differs from `normal`.
+
+The native PNG exporter's font atlas is bounded and carries one regular and one
+bold face, so it approximates: any weight `>= 600` (or a name in
+`bold`/`semibold`/`demibold`/`heavy`/`black`) renders with the bold face, and
+everything lighter renders regular. Intermediate weights are therefore not
+distinguishable in native PNG output, while the browser and SVG paths pass the
+requested weight through verbatim.
 
 ## Why your styles always win
 

@@ -1001,7 +1001,10 @@ def render_raster(
         title_italic, title_bold = _native_font_emphasis(
             {
                 "font_style": title_style.get("font-style"),
-                "font_weight": title_style.get("font-weight", 600),
+                # 400 = Matplotlib's `axes.titleweight: normal`; the baked
+                # atlas only has a bold face, so anything >= 600 rounds up to
+                # it. Mirrors the SVG/browser title default.
+                "font_weight": title_style.get("font-weight", 400),
             }
         )
         cmd.text(
@@ -1024,7 +1027,7 @@ def render_raster(
         italic, bold = _native_font_emphasis(
             {
                 "font_style": axis_style.get("label_font_style"),
-                "font_weight": axis_style.get("label_font_weight", 500),
+                "font_weight": axis_style.get("label_font_weight", 400),
             }
         )
         args = (

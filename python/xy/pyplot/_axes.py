@@ -102,12 +102,14 @@ def _rc_chrome_snapshot(dpi: float) -> dict[str, Any]:
                     f"{_font_size(rcParams['axes.titlesize'], rcParams['font.size'], dpi):g}px"
                 ),
                 "color": theme_tokens["text_color"],
+                **_rc_font_weight(rcParams["axes.titleweight"]),
             },
             "axis_title": {
                 "font-size": (
                     f"{_font_size(rcParams['axes.labelsize'], rcParams['font.size'], dpi):g}px"
                 ),
                 "color": resolve_color(rcParams["axes.labelcolor"]),
+                **_rc_font_weight(rcParams["axes.labelweight"]),
             },
             "tick_label": {
                 "font-size": (
@@ -5081,6 +5083,19 @@ def _font_size(value: Any, base: Any, dpi: float = 96.0) -> float:
     return _font_size_points(value, base) * float(dpi) / 72.0
 
 
+def _rc_font_weight(value: Any, key: str = "font-weight") -> dict[str, Any]:
+    """Carry a weight rcParam only when it asks for something other than normal.
+
+    Matplotlib's ``axes.titleweight``/``axes.labelweight`` default to
+    ``"normal"``, which is also every xy renderer's own default, so the
+    default case needs nothing on the wire — the same rule the neighbouring
+    ``axes.labelcolor`` check uses. An explicit weight (``"bold"``, ``"light"``,
+    a numeric string) travels through to the browser, SVG, and raster paths.
+    """
+    weight = str(value)
+    return {} if weight == "normal" else {key: weight}
+
+
 def _rc_axis_style(axis: str, dpi: float = 96.0) -> dict[str, Any]:
     prefix = "xtick" if axis == "x" else "ytick"
     point_scale = float(dpi) / 72.0
@@ -5105,6 +5120,10 @@ def _rc_axis_style(axis: str, dpi: float = 96.0) -> dict[str, Any]:
     if rcParams["axes.labelcolor"] != "black":
         result["label_color"] = resolve_color(rcParams["axes.labelcolor"])
     result["label_size"] = _font_size(rcParams["axes.labelsize"], rcParams["font.size"], dpi)
+    # The browser reads the weight off `chrome_styles["axis_title"]`; the SVG
+    # and native raster exporters read it off the axis style, so `axes.labelweight`
+    # has to be published in both places to reach all three renderers.
+    result.update(_rc_font_weight(rcParams["axes.labelweight"], "label_font_weight"))
     return result
 
 
