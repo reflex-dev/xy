@@ -1922,6 +1922,25 @@ export class ChartView {
       this._applySlot(tick, "colorbar_tick");
       box.appendChild(tick);
     }
+    if (cb.minor_ticks) {
+      const orderedTicks = [...tickValues]
+        .map(Number)
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b);
+      for (let index = 0; index + 1 < orderedTicks.length; index++) {
+        const left = orderedTicks[index], right = orderedTicks[index + 1];
+        for (let step = 1; step < 5; step++) {
+          const value = left + (right - left) * step / 5;
+          const fraction = (value - lo) / span;
+          const tick = document.createElement("i");
+          tick.dataset.xyColorbarMinor = "true";
+          tick.style.cssText = horizontal
+            ? `position:absolute;left:${100 * fraction}%;top:${COLORBAR_THICKNESS}px;height:3px;border-left:1px solid currentColor;`
+            : `position:absolute;left:${COLORBAR_THICKNESS}px;top:${100 * (1 - fraction)}%;width:3px;border-top:1px solid currentColor;`;
+          box.appendChild(tick);
+        }
+      }
+    }
     if (cb.label) {
       const label = document.createElement("span");
       label.textContent = String(cb.label);
@@ -1940,19 +1959,24 @@ export class ChartView {
 
   _positionColorbar() {
     if (!this._colorbar) return;
+    const cb = this.spec.colorbar || {};
     const horizontal = this._colorbarHorizontal;
     const compactVertical = !horizontal && this._compactVerticalColorbar;
     const gap = compactVertical ? COMPACT_COLORBAR_GAP : COLORBAR_GAP;
+    const shrink = Math.max(0.01, Math.min(1, Number(cb.shrink) || 1));
+    const anchor = Array.isArray(cb.anchor) ? cb.anchor : [0.5, 0.5];
+    const barWidth = this.plot.w * shrink;
+    const barHeight = this.plot.h * shrink;
     this._colorbar.style.left = (horizontal
-      ? this.plot.x
+      ? this.plot.x + (this.plot.w - barWidth) * Number(anchor[0] ?? 0.5)
       : this.plot.x + this.plot.w + this._rightAxisRoom + gap) + "px";
     this._colorbar.style.top = (horizontal
       ? this.plot.y + this.plot.h + (this._bottomAxisRoom || 8)
-      : this.plot.y) + "px";
+      : this.plot.y + (this.plot.h - barHeight) * (1 - Number(anchor[1] ?? 0.5))) + "px";
     this._colorbar.style.width = (horizontal
-      ? this.plot.w
+      ? barWidth
       : compactVertical ? COLORBAR_THICKNESS : 66) + "px";
-    this._colorbar.style.height = (horizontal ? 50 : Math.max(24, this.plot.h)) + "px";
+    this._colorbar.style.height = (horizontal ? 50 : Math.max(24, barHeight)) + "px";
     this._colorbar.dataset.xyCompact = compactVertical ? "true" : "false";
     for (const node of this._colorbar.querySelectorAll(
       '[data-xy-slot="colorbar_tick"], [data-xy-slot="colorbar_title"]'

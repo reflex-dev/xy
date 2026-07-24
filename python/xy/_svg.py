@@ -22,6 +22,7 @@ import math
 import re
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
+from itertools import pairwise
 from os import PathLike
 from typing import Any, Optional
 from xml.sax.saxutils import escape
@@ -2849,17 +2850,22 @@ def _colorbar(
         for index, (r, g, b) in enumerate(stops)
     )
     orientation = options.get("orientation", "vertical")
+    shrink = float(options.get("shrink", 1.0))
+    anchor = options.get("anchor") or [0.5, 0.5]
     domain = options.get("domain", [0.0, 1.0])
     if orientation == "horizontal":
-        x = plot["x"]
+        width = plot["w"] * shrink
+        x = plot["x"] + (plot["w"] - width) * float(anchor[0])
         y = plot["y"] + plot["h"] + (plot["bottom_axis_room"] or 10)
-        width, height = plot["w"], 18
+        height = 18
         gradient_attrs = 'x1="0" y1="0" x2="100%" y2="0"'
     else:
         # right_axis_room shifts the whole colorbar clear of right-side named
         # y-axis chrome (layout() reserves room for both additively).
         x = plot["x"] + plot["w"] + right_axis_room + 24
-        y, width, height = plot["y"], 18, plot["h"]
+        height = plot["h"] * shrink
+        y = plot["y"] + (plot["h"] - height) * (1.0 - float(anchor[1]))
+        width = 18
         gradient_attrs = 'x1="0" y1="100%" x2="0" y2="0"'
     label = str(options.get("label") or "")
     label_node = (
@@ -2897,6 +2903,32 @@ def _colorbar(
             for value in tick_positions
         )
     )
+    minor_nodes = ""
+    if options.get("minor_ticks") and len(tick_positions) >= 2:
+        ordered = sorted(set(tick_positions))
+        minor_positions = [
+            left + (right - left) * step / 5.0
+            for left, right in pairwise(ordered)
+            for step in range(1, 5)
+        ]
+        if orientation != "horizontal":
+            minor_nodes = "".join(
+                f'<line data-xy-colorbar-minor="true" x1="{_num(x + width)}" '
+                f'x2="{_num(x + width + 3)}" '
+                f'y1="{_num(y + height * (1 - (value - lo) / span))}" '
+                f'y2="{_num(y + height * (1 - (value - lo) / span))}" '
+                f'stroke="{escape(text_color)}"/>'
+                for value in minor_positions
+            )
+        else:
+            minor_nodes = "".join(
+                f'<line data-xy-colorbar-minor="true" '
+                f'x1="{_num(x + width * (value - lo) / span)}" '
+                f'x2="{_num(x + width * (value - lo) / span)}" '
+                f'y1="{_num(y + height)}" y2="{_num(y + height + 3)}" '
+                f'stroke="{escape(text_color)}"/>'
+                for value in minor_positions
+            )
     extend = options.get("extend")
     extend_nodes = ""
     if extend in ("max", "both"):
@@ -2922,7 +2954,7 @@ def _colorbar(
         f'<defs><linearGradient id="{gradient_id}" {gradient_attrs}>'
         f"{stop_nodes}</linearGradient></defs>"
         f"{_colorbar_body(options, x, y, width, height, orientation, gradient_id)}"
-        f"{extend_nodes}{tick_nodes}{label_node}"
+        f"{extend_nodes}{minor_nodes}{tick_nodes}{label_node}"
     )
 
 
