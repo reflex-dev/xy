@@ -438,13 +438,21 @@ pub fn compose(
         let none = u32::MAX;
         let xw = axis_weights(cx0, cx1, p.x0, cell_x, lo_x, sx, w);
         let yw = axis_weights(cy0, cy1, p.y0, cell_y, lo_y, sy, h);
-        let (xstarts, xtaps) = transpose_to_taps(&xw, w);
+        let (xcounts, xtaps) = transpose_to_taps(&xw, w);
         let mut xrow = vec![0.0f32; w];
         for (cy, &(by, wpy, nby, wny)) in (cy0..cy1).zip(yw.iter()) {
             let row = &lvl[cy * dim + cx0..cy * dim + cx1];
-            for (j, o) in xrow.iter_mut().enumerate() {
+            // Bins own consecutive runs of `xtaps`, so walk it with a cursor:
+            // splitting off `n` taps per bin costs one compare, where indexing
+            // a CSR prefix re-derives both ends and range-checks the slice on
+            // every one of the w bins. `min` can never clamp (the counts sum to
+            // `xtaps.len()`); it is there to keep the split panic-free.
+            let mut rest = &xtaps[..];
+            for (o, &n) in xrow.iter_mut().zip(xcounts.iter()) {
+                let (taps, tail) = rest.split_at((n as usize).min(rest.len()));
+                rest = tail;
                 let mut acc = 0.0f32;
-                for &(c, wt) in &xtaps[xstarts[j] as usize..xstarts[j + 1] as usize] {
+                for &(c, wt) in taps {
                     acc += row[c as usize] as f32 * wt;
                 }
                 *o = acc;
@@ -526,30 +534,33 @@ fn axis_weights(
     v
 }
 
-/// Transpose per-cell push weights from `axis_weights` into per-bin pull taps
-/// (CSR: `starts[j]..starts[j+1]` indexes `taps`, each tap = `(cell offset
-/// within the window, weight)`). Pure reindexing — every (bin, cell, weight)
-/// triple is carried over verbatim, so pull and push are the same linear map;
-/// taps for a bin stay in increasing cell order, keeping f32 summation order
-/// (and thus the aligned bit-exactness) identical to pushing cells in order.
+/// Transpose per-cell push weights from `axis_weights` into per-bin pull taps:
+/// bin `j` owns the next `counts[j]` entries of `taps` (each tap = `(cell
+/// offset within the window, weight)`), so the resample walks `taps` with a
+/// cursor instead of indexing a prefix array. Pure reindexing — every (bin,
+/// cell, weight) triple is carried over verbatim, so pull and push are the same
+/// linear map; taps for a bin stay in increasing cell order, keeping f32
+/// summation order (and thus the aligned bit-exactness) identical to pushing
+/// cells in order.
 fn transpose_to_taps(
     weights: &[(u32, f32, u32, f32)],
     n_out: usize,
 ) -> (Vec<u32>, Vec<(u32, f32)>) {
     let none = u32::MAX;
-    let mut counts = vec![0u32; n_out + 1];
+    let mut counts = vec![0u32; n_out];
     for &(b, _, nb, _) in weights {
-        counts[b as usize + 1] += 1;
+        counts[b as usize] += 1;
         if nb != none {
-            counts[nb as usize + 1] += 1;
+            counts[nb as usize] += 1;
         }
     }
-    for j in 0..n_out {
-        counts[j + 1] += counts[j];
+    let mut fill = Vec::with_capacity(n_out);
+    let mut total = 0u32;
+    for &c in counts.iter() {
+        fill.push(total);
+        total += c;
     }
-    let starts = counts;
-    let mut fill = starts.clone();
-    let mut taps = vec![(0u32, 0.0f32); starts[n_out] as usize];
+    let mut taps = vec![(0u32, 0.0f32); total as usize];
     for (c, &(b, wp, nb, wn)) in weights.iter().enumerate() {
         let slot = &mut fill[b as usize];
         taps[*slot as usize] = (c as u32, wp);
@@ -560,7 +571,7 @@ fn transpose_to_taps(
             *slot += 1;
         }
     }
-    (starts, taps)
+    (counts, taps)
 }
 
 /// `compose` plus the mean-color plane: fills the identical f32 count grid
