@@ -31,6 +31,10 @@ Object.assign(ChartView.prototype, {
     this.selLasso.appendChild(this.selLassoHandles);
     this.root.appendChild(this.selLasso);
     this._lassoPolygon = null;
+    // Box / x-range / y-range selections persist like the lasso: the data-space
+    // rectangle ({mode,x0,x1,y0,y1}) survives pan/zoom and re-projects onto
+    // selRect every draw until the selection is cleared (§34).
+    this._boxSelection = null;
     let lassoHandleDrag = null;
     let lassoHandleClick = null;
 
@@ -194,12 +198,18 @@ Object.assign(ChartView.prototype, {
         const previousLasso = mode.startsWith("select") && this._lassoPolygon
           ? this._lassoPolygon.map((point) => [...point])
           : null;
+        // A prior box/x/y selection is restored the same way as a prior lasso
+        // when the new gesture turns out to be a no-op click or is cancelled.
+        const previousBox = mode.startsWith("select") && this._boxSelection
+          ? { ...this._boxSelection }
+          : null;
         const firstLassoPoint = mode === "select-lasso" ? lassoPointAt(e.clientX, e.clientY) : null;
         const d0 = firstLassoPoint ? firstLassoPoint.data : dataAt(e.clientX, e.clientY);
         band = {
           mode, sx: e.clientX, sy: e.clientY, d0,
           points: firstLassoPoint ? [firstLassoPoint] : null,
           previousLasso,
+          previousBox,
           replacingLasso: false,
         };
         try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
@@ -289,19 +299,25 @@ Object.assign(ChartView.prototype, {
             }
           } else {
             let d0 = band.d0;
+            let mode = "box";
             if (band.mode === "select-x") {
               d0 = [band.d0[0], this.view.y0];
               d1[1] = this.view.y1;
+              mode = "x";
             } else if (band.mode === "select-y") {
               d0 = [this.view.x0, band.d0[1]];
               d1[0] = this.view.x1;
+              mode = "y";
             }
-            this._sendSelect(d0, d1);
+            this._sendSelect(d0, d1, { mode });
           }
           this._ignoreNextClick = true;
         } else if (band.previousLasso) {
           this._lassoPolygon = band.previousLasso;
           this._renderLassoSelection();
+        } else if (band.previousBox) {
+          this._boxSelection = band.previousBox;
+          this._renderBoxSelection();
         }
         band = null;
         return;
@@ -324,6 +340,9 @@ Object.assign(ChartView.prototype, {
       if (band?.previousLasso) {
         this._lassoPolygon = band.previousLasso;
         this._renderLassoSelection();
+      } else if (band?.previousBox) {
+        this._boxSelection = band.previousBox;
+        this._renderBoxSelection();
       }
       band = null;
       drag = null;
@@ -622,13 +641,60 @@ Object.assign(ChartView.prototype, {
     // utility (or `styles[selection]`) would lose to the inline style, breaking
     // the "your styles always win" contract for this one slot. Only the mode
     // discriminator and structural position/size stay inline (matches §36).
-    this.selRect.dataset.xyBand = band.mode === "zoom" ? "zoom" : "select";
+    this.selRect.dataset.xyBand = band.mode === "zoom" ? "zoom"
+      : band.mode === "select-x" ? "select-x"
+      : band.mode === "select-y" ? "select-y" : "select";
     this.selRect.style.display = "block";
     this.selRect.style.left = cx + "px";
     this.selRect.style.top = cy + "px";
     this.selRect.style.width = Math.max(0, bx2 - cx) + "px";
     this.selRect.style.height = Math.max(0, by2 - cy) + "px";
     void rect;
+  },
+
+  // Re-project the persisted box/x-range/y-range selection (data space) onto
+  // selRect, the mirror of _renderLassoSelection for rectangular brushes. The
+  // range modes span the full plot on their free axis and carry only the two
+  // edge borders (select-x: left/right, select-y: top/bottom) via data-xy-band.
+  _renderBoxSelection() {
+    const sel = this._boxSelection;
+    if (!this.selRect || !sel) return;
+    const xAxis = this._axis("x"), yAxis = this._axis("y");
+    const [x0, x1] = this._axisRange("x");
+    const [y0, y1] = this._axisRange("y");
+    const cx0 = this._axisCoord(xAxis, x0), cx1 = this._axisCoord(xAxis, x1);
+    const cy0 = this._axisCoord(yAxis, y0), cy1 = this._axisCoord(yAxis, y1);
+    if (![cx0, cx1, cy0, cy1].every(Number.isFinite) || cx0 === cx1 || cy0 === cy1) return;
+    const px = this.plot.x, py = this.plot.y, pr = px + this.plot.w, pb = py + this.plot.h;
+    const projX = (value) => px + ((this._axisCoord(xAxis, value) - cx0) / (cx1 - cx0)) * this.plot.w;
+    const projY = (value) => py + ((cy1 - this._axisCoord(yAxis, value)) / (cy1 - cy0)) * this.plot.h;
+    let left, right, top, bottom;
+    if (sel.mode === "x") {
+      left = projX(sel.x0); right = projX(sel.x1); top = py; bottom = pb;
+    } else if (sel.mode === "y") {
+      // projY maps larger data-y to a smaller pixel (top); order after clamp.
+      top = projY(sel.y1); bottom = projY(sel.y0); left = px; right = pr;
+    } else {
+      left = projX(sel.x0); right = projX(sel.x1);
+      top = projY(sel.y1); bottom = projY(sel.y0);
+    }
+    if (![left, right, top, bottom].every(Number.isFinite)) return;
+    const l = Math.max(px, Math.min(pr, Math.min(left, right)));
+    const r = Math.max(px, Math.min(pr, Math.max(left, right)));
+    const t = Math.max(py, Math.min(pb, Math.min(top, bottom)));
+    const b = Math.max(py, Math.min(pb, Math.max(top, bottom)));
+    this.selRect.dataset.xyBand = sel.mode === "x" ? "select-x"
+      : sel.mode === "y" ? "select-y" : "select";
+    this.selRect.style.display = "block";
+    this.selRect.style.left = l + "px";
+    this.selRect.style.top = t + "px";
+    this.selRect.style.width = Math.max(0, r - l) + "px";
+    this.selRect.style.height = Math.max(0, b - t) + "px";
+  },
+
+  _clearBoxOverlay() {
+    this._boxSelection = null;
+    if (this.selRect) this.selRect.style.display = "none";
   },
 
   _simplifyLassoPoints(points, tolerance = 6, maxPoints = 16) {
@@ -774,7 +840,13 @@ Object.assign(ChartView.prototype, {
       interactionId: opts.interactionId,
       history: opts.history,
     });
-    this._stateSelection = { range: { ...range } };
+    // The mode discriminator (box | x | y) keeps the persisted overlay shaped
+    // like the gesture that made it; it round-trips through durable state only
+    // for the range brushes (a plain box keeps the bare {x0,x1,y0,y1} shape).
+    const mode = opts.mode === "x" || opts.mode === "y" ? opts.mode : "box";
+    this._boxSelection = { mode, x0, x1, y0, y1 };
+    this._renderBoxSelection();
+    this._stateSelection = { range: mode === "box" ? { ...range } : { ...range, mode } };
     // Data-space brush geometry survives drill swaps (§34): a re-drill ships a
     // new subset whose mask indices are unknown until the kernel replies, but
     // the brush itself stays authoritative — 45_lod re-derives a provisional
@@ -793,6 +865,7 @@ Object.assign(ChartView.prototype, {
     if (!Array.isArray(points) || points.length < 3) return;
     const polygon = points.map((point) => [point[0], point[1]]);
     if (!polygon.every((point) => point.every(Number.isFinite))) return;
+    this._clearBoxOverlay(); // a lasso replaces any rectangular selection
     this._historyRecord({
       source: opts.source,
       interactionId: opts.interactionId,
@@ -900,6 +973,7 @@ Object.assign(ChartView.prototype, {
 
   _clearSelection(opts: any = {}) {
     this._clearLassoOverlay();
+    this._clearBoxOverlay();
     // Clearing a durable selection is itself a durable-state change; linked
     // applies (dispatch: false) and no-op clears push nothing.
     if (opts.dispatch !== false && this._stateSelection !== null

@@ -515,6 +515,100 @@ def test_selection_modes_double_click_clear_selection(tmp_path: Path) -> None:
     assert result == {key: True for key in result}
 
 
+# Box / x-range / y-range brushes persist like the lasso (view-state.md §2): the
+# overlay stays drawn and re-projects through the real draw path, the range
+# brushes drop their cross-axis borders, and the mode discriminator round-trips
+# through durable state.
+_SELECTION_PERSIST_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    const cs = () => getComputedStyle(view.selRect);
+    const w = (v) => parseFloat(v) || 0;
+
+    // Box select stays visible with a full border and no mode in state.
+    view._sendSelect([0.5, 1.0], [3.0, 12.0], { mode: "box", history: false });
+    const b = cs();
+    const boxVisible = view.selRect.style.display === "block"
+      && view._boxSelection && view._boxSelection.mode === "box"
+      && view.selRect.dataset.xyBand === "select";
+    const boxAllBorders = w(b.borderTopWidth) > 0 && w(b.borderBottomWidth) > 0
+      && w(b.borderLeftWidth) > 0 && w(b.borderRightWidth) > 0;
+    const boxStateNoMode = view.root.xy.state().selection.range.mode === undefined;
+
+    // Re-projects through a view change via the real _drawNow path.
+    const leftBefore = view.selRect.style.left;
+    view._setView({ ranges: { x: [0, 2] } },
+      { animate: false, source: "test", phase: "end", history: false });
+    view._drawNow();
+    const boxPersistsThroughZoom = view.selRect.style.display === "block"
+      && view.selRect.style.left !== leftBefore;
+
+    // x-range: no top/bottom border, spans full plot height, mode round-trips.
+    view._sendSelect([0.5, view.view.y0], [2.5, view.view.y1], { mode: "x", history: false });
+    const xb = cs();
+    const xRangeBand = view.selRect.dataset.xyBand === "select-x";
+    const xNoHorizBorder = w(xb.borderTopWidth) === 0 && w(xb.borderBottomWidth) === 0
+      && w(xb.borderLeftWidth) > 0 && w(xb.borderRightWidth) > 0;
+    const xSpansHeight = Math.abs(w(view.selRect.style.top) - view.plot.y) < 1.5
+      && Math.abs(w(view.selRect.style.height) - view.plot.h) < 1.5;
+    const xModeInState = view.root.xy.state().selection.range.mode === "x";
+
+    // y-range: no left/right border, spans full plot width.
+    view._sendSelect([view.view.x0, 1.0], [view.view.x1, 9.0], { mode: "y", history: false });
+    const yb = cs();
+    const yRangeBand = view.selRect.dataset.xyBand === "select-y";
+    const yNoVertBorder = w(yb.borderLeftWidth) === 0 && w(yb.borderRightWidth) === 0
+      && w(yb.borderTopWidth) > 0 && w(yb.borderBottomWidth) > 0;
+    const ySpansWidth = Math.abs(w(view.selRect.style.left) - view.plot.x) < 1.5
+      && Math.abs(w(view.selRect.style.width) - view.plot.w) < 1.5;
+    const yModeInState = view.root.xy.state().selection.range.mode === "y";
+
+    // A lasso replaces the rectangular overlay (mutual exclusion).
+    view._sendSelectPolygon([[0, 0], [2, 0], [2, 4], [0, 4]], { history: false });
+    const boxClearedByLasso = view._boxSelection === null
+      && view.selRect.style.display === "none"
+      && view.selLasso.style.display === "block";
+
+    // applyState round-trips an x-range brush back to select-x and clears lasso.
+    view.root.xy.applyState({ v: 1,
+      selection: { range: { x0: 0.5, x1: 2.5, y0: -1, y1: 5, mode: "x" } } });
+    view._drawNow();
+    const xModeRestored = view.selRect.dataset.xyBand === "select-x"
+      && view._boxSelection && view._boxSelection.mode === "x"
+      && view.selLasso.style.display === "none";
+    // A bad mode value is rejected by validation.
+    const badModeRejected = view.root.xy.applyState({ v: 1,
+      selection: { range: { x0: 0, x1: 1, y0: 0, y1: 1, mode: "diagonal" } } }) === false;
+
+    // Clearing hides the overlay.
+    view.root.xy.applyState({ v: 1, selection: null });
+    const clearedHidesOverlay = view._boxSelection === null
+      && view.selRect.style.display === "none";
+
+    document.body.setAttribute("data-xy-selection-persist-probe", JSON.stringify({
+      boxVisible, boxAllBorders, boxStateNoMode, boxPersistsThroughZoom,
+      xRangeBand, xNoHorizBorder, xSpansHeight, xModeInState,
+      yRangeBand, yNoVertBorder, ySpansWidth, yModeInState,
+      boxClearedByLasso, xModeRestored, badModeRejected, clearedHidesOverlay,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-selection-persist-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_rectangular_selection_persists_with_range_borders(tmp_path: Path) -> None:
+    result = _run(
+        tmp_path,
+        _chart_html().replace(_RENDER_CALL, _SELECTION_PERSIST_PROBE),
+        "data-xy-selection-persist-probe",
+        label="rectangular selection persistence probe",
+    )
+    assert result == {key: True for key in result}
+
+
 _ROWS_PROBE = """
   const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
   try {
