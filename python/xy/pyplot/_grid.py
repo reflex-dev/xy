@@ -281,6 +281,14 @@ def stitch_png(
                     src_y0 : src_y0 + dest_y1 - dest_y0,
                     src_x0 : src_x0 + dest_x1 - dest_x0,
                 ]
+        if suptitle:
+            _blend_raster_suptitle(
+                canvas,
+                suptitle,
+                suptitle_style,
+                scale=scale,
+                title_h=min(48, canvas.shape[0]),
+            )
         return _png.encode(canvas)
 
     col_widths = [
@@ -305,23 +313,13 @@ def stitch_png(
         x = sum(col_widths[:c])
         canvas[y : y + tile.shape[0], x : x + tile.shape[1]] = tile
     if suptitle:
-        from xy import kernels
-
-        cmd = _raster._Cmd(scale)
-        style = suptitle_style or {}
-        cmd.text(
-            canvas.shape[1] * float(style.get("x", 0.5)) / scale,
-            17,
-            1,
-            float(style.get("size", 14)),
-            _raster._parse_color(str(style.get("color", "#262626"))),
+        _blend_raster_suptitle(
+            canvas,
             suptitle,
+            suptitle_style,
+            scale=scale,
+            title_h=title_h,
         )
-        overlay = kernels.rasterize(bytes(cmd.buf), canvas.shape[1], title_h)
-        alpha = overlay[:, :, 3:4].astype(np.float64) / 255.0
-        canvas[:title_h, :, :3] = np.round(
-            overlay[:, :, :3] * alpha + canvas[:title_h, :, :3] * (1.0 - alpha)
-        ).astype(np.uint8)
     if colorbar:
         from xy._svg import _lut
 
@@ -343,3 +341,31 @@ def stitch_png(
             y1 = min(canvas.shape[0], int(ys.max()) + pad_pixels + 1)
             canvas = canvas[y0:y1, x0:x1]
     return _png.encode(canvas)
+
+
+def _blend_raster_suptitle(
+    canvas: np.ndarray,
+    suptitle: str,
+    style: Optional[dict[str, Any]],
+    *,
+    scale: float,
+    title_h: int,
+) -> None:
+    """Draw a figure suptitle onto either grid or absolute-position PNGs."""
+    from xy import _raster, kernels
+
+    resolved = style or {}
+    cmd = _raster._Cmd(scale)
+    cmd.text(
+        canvas.shape[1] * float(resolved.get("x", 0.5)) / scale,
+        17,
+        1,
+        float(resolved.get("size", 14)),
+        _raster._parse_color(str(resolved.get("color", "#262626"))),
+        suptitle,
+    )
+    overlay = kernels.rasterize(bytes(cmd.buf), canvas.shape[1], title_h)
+    alpha = overlay[:, :, 3:4].astype(np.float64) / 255.0
+    canvas[:title_h, :, :3] = np.round(
+        overlay[:, :, :3] * alpha + canvas[:title_h, :, :3] * (1.0 - alpha)
+    ).astype(np.uint8)

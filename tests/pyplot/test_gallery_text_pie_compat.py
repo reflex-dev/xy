@@ -39,6 +39,17 @@ def test_pie_label_does_not_integer_cast_float_input() -> None:
         ax.pie_label(pie, "{absval:d}")
 
 
+def test_positioned_png_keeps_figure_suptitle() -> None:
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1])
+    fig.suptitle("visible figure title")
+    fig.subplots_adjust(top=0.85)
+
+    pixels = np.asarray(plt.imread(BytesIO(fig._to_png())))
+
+    assert np.any(pixels[:48, :, :3] < 200)
+
+
 @pytest.mark.parametrize(
     ("distance", "rotate", "expected"),
     [
