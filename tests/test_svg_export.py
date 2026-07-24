@@ -13,7 +13,7 @@ import pytest
 
 import xy
 from xy._figure import Figure
-from xy._svg import COLORMAP_STOPS, _axis_tick_label_layout, _Scale
+from xy._svg import COLORMAP_STOPS, _axis_tick_label_layout, _Scale, render_svg
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -731,3 +731,38 @@ def test_segment_constant_translucent_color_applies_alpha_once() -> None:
         entry for entry in re.findall(r"<line[^>]*/>", opaque) if 'stroke="red"' in entry
     ]
     assert opaque_lines, "opaque constant color should pass through verbatim"
+
+
+def test_svg_scopes_the_legend_clip_exemption_per_legend() -> None:
+    """An anchored legend escapes the plot-rect clip that bounds static
+    legends; a non-anchored sibling in the same figure must still be clipped
+    (the native raster exporter mirrors this)."""
+    spec, blob = Figure().line([0.0, 1.0], [0.0, 1.0], name="a").build_payload()
+    spec["show_legend"] = False
+    spec["extra_legends"] = [
+        {
+            "title": "anchored",
+            "loc": "lower left",
+            "anchor": [0.0, 1.0],
+            "items": [{"name": "outside", "kind": "line", "style": {}}],
+        },
+        {
+            "title": "bounded",
+            "loc": "upper right",
+            "items": [{"name": "inside", "kind": "line", "style": {}}],
+        },
+    ]
+
+    svg = render_svg(spec, blob)
+    groups = {
+        title: match
+        for title, match in (
+            (title, match)
+            for match in re.findall(r"<g(?: [^>]*)?>(?:(?!<g).)*?</g>", svg, re.S)
+            for title in ("anchored", "bounded")
+            if f">{title}</text>" in match
+        )
+    }
+    assert set(groups) == {"anchored", "bounded"}, "both legend boxes should render"
+    assert "clip-path=" not in groups["anchored"].split(">", 1)[0]
+    assert "clip-path=" in groups["bounded"].split(">", 1)[0]

@@ -915,3 +915,98 @@ def test_scatter_direct_edges_with_colormap_c_render_in_png() -> None:
         opacity=1.0,
     )
     assert _dark_pixel_count(fig.to_png(width=300, height=200)) > 200
+
+
+def mixed_anchor_legend_spec() -> tuple[dict, bytes]:
+    """A figure carrying one anchored and one bounded legend box."""
+    spec, blob = Figure().line([0.0, 1.0], [0.0, 1.0], name="a").build_payload()
+    spec["show_legend"] = False
+    spec["extra_legends"] = [
+        {
+            "title": "anchored",
+            "loc": "lower left",
+            "anchor": [0.0, 1.0],
+            "items": [{"name": "outside", "kind": "line", "style": {}}],
+        },
+        {
+            "title": "bounded",
+            "loc": "upper right",
+            "items": [{"name": "inside", "kind": "line", "style": {}}],
+        },
+    ]
+    return spec, blob
+
+
+def test_raster_scopes_the_legend_clip_exemption_per_legend(monkeypatch) -> None:
+    """An anchored legend is exempt from the plot-rect clip that bounds static
+    legends, but the exemption is that legend's alone (parity with `_svg.py`):
+    one anchored box must not lift the clip off its non-anchored siblings."""
+    spec, blob = mixed_anchor_legend_spec()
+    _width, _height, _compact, plot = _raster.layout(spec)
+    plot_rect = (plot["x"], plot["y"], plot["w"], plot["h"])
+
+    events: list[tuple[str, object]] = []
+    original_clip = _raster._Cmd.clip
+    original_legend = _raster._emit_legend
+
+    def record_clip(self, x, y, w, h):
+        events.append(("clip", (float(x), float(y), float(w), float(h))))
+        return original_clip(self, x, y, w, h)
+
+    def record_legend(cmd, named, legend_plot, options, text_color=_raster._TEXT):
+        events.append(("legend", options.get("title")))
+        return original_legend(cmd, named, legend_plot, options, text_color)
+
+    monkeypatch.setattr(_raster._Cmd, "clip", record_clip)
+    monkeypatch.setattr(_raster, "_emit_legend", record_legend)
+    _raster.render_raster(spec, blob, scale=1)
+
+    # The clip is stateful in the command stream, so the rectangle in force for
+    # a legend is the last clip recorded before that legend's emission.
+    in_force: dict[str, tuple[float, ...]] = {}
+    current: tuple[float, ...] | None = None
+    for kind, value in events:
+        if kind == "clip":
+            assert isinstance(value, tuple)
+            current = value
+        else:
+            assert isinstance(value, str)
+            assert current is not None, "legend emitted before any clip was set"
+            in_force[value] = current
+
+    assert set(in_force) == {"anchored", "bounded"}
+    assert in_force["bounded"] == plot_rect
+    assert in_force["anchored"] != plot_rect  # the full-frame chrome clip
+
+
+def test_raster_uniform_anchor_legends_keep_their_whole_frame_clip_decision(
+    monkeypatch,
+) -> None:
+    """The per-legend scoping must not change the all-anchored or the
+    none-anchored figure: one keeps no plot-rect clip, the other keeps one."""
+    original_clip = _raster._Cmd.clip
+
+    def plot_clips(anchors: list[list[float] | None]) -> int:
+        spec, blob = mixed_anchor_legend_spec()
+        for extra, anchor in zip(spec["extra_legends"], anchors, strict=True):
+            if anchor is None:
+                extra.pop("anchor", None)
+            else:
+                extra["anchor"] = anchor
+        _width, _height, _compact, plot = _raster.layout(spec)
+        rect = (plot["x"], plot["y"], plot["w"], plot["h"])
+        seen: list[tuple[float, ...]] = []
+
+        def record_clip(self, x, y, w, h):
+            seen.append((float(x), float(y), float(w), float(h)))
+            return original_clip(self, x, y, w, h)
+
+        monkeypatch.setattr(_raster._Cmd, "clip", record_clip)
+        _raster.render_raster(spec, blob, scale=1)
+        monkeypatch.undo()
+        # The marks pass clips to the plot rect too; the legend pass is the
+        # only source of a second one.
+        return seen.count(rect) - 1
+
+    assert plot_clips([[0.0, 1.0], [0.0, 1.0]]) == 0
+    assert plot_clips([None, None]) == 1

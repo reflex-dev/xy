@@ -671,9 +671,12 @@ that promise up so it can sit beside or above the axes. Nothing else bounds it â
 an anchored legend that overruns the canvas is cut off by the image edge, so
 reserve padding for it.
 
-The exemption is scoped differently in the two static backends, a known
-divergence: SVG decides **per legend** (each legend group keeps or drops its own
-clip path, so an anchored extra legend does not un-clip the main one), while the
-native rasterizer decides **per frame** (one anchored legend drops the clip for
-every legend painted in that pass, main and extra alike). SVG's per-legend
-scoping is the intended contract.
+The exemption is scoped **per legend** in both static backends: each legend box
+keeps or drops the clip on its own `anchor`, so an anchored extra legend does not
+un-clip the main one (or a non-anchored sibling extra). SVG gives each legend
+group its own `clip-path`; the native rasterizer's clip is a stateful command, so
+it switches the clip rectangle around each legend and only emits a command on a
+transition â€” an all-anchored or all-bounded figure produces the same command
+stream it always did. The browser needs no equivalent rule: every legend box is
+its own scroll container sized by `--xy-legend-max-width`/`-height`, so the
+constraint is already per element there.

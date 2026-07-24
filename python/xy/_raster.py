@@ -1004,20 +1004,28 @@ def render_raster(
     named = [t for t in spec["traces"] if t.get("name")]
     show_main_legend = spec.get("show_legend", True) and bool(named)
     extra_legends = [(extra, extra.get("items") or []) for extra in spec.get("extra_legends") or []]
-    legend_present = show_main_legend or any(items for _extra, items in extra_legends)
-    anchored_legend = (show_main_legend and bool((spec.get("legend") or {}).get("anchor"))) or any(
-        items and extra.get("anchor") for extra, items in extra_legends
-    )
-    if legend_present and not anchored_legend:
-        # The browser scrolls an oversized legend. Static files cannot, so
-        # clip the bounded/truncated equivalent to the plot rectangle.
-        cmd.clip(px0, py0, plot["w"], plot["h"])
+    legends: list[tuple[list[dict[str, Any]], dict[str, Any]]] = []
     if show_main_legend:
-        _emit_legend(cmd, named, plot, spec.get("legend") or {}, default_text)
-    for extra, items in extra_legends:
-        if items:
-            _emit_legend(cmd, items, plot, extra, default_text)
-    if legend_present and not anchored_legend:
+        legends.append((named, spec.get("legend") or {}))
+    legends.extend((items, extra) for extra, items in extra_legends if items)
+    # The browser scrolls an oversized legend. Static files cannot, so clip the
+    # bounded/truncated equivalent to the plot rectangle. The exemption for an
+    # anchored legend (which is placed relative to, and may sit outside, the
+    # axes) is scoped per legend exactly as in `_svg.py`: one anchored legend
+    # must not lift the clip off its non-anchored siblings. The clip is a
+    # stateful raster command, so only emit it on a transition — an
+    # all-anchored or all-unanchored figure yields the same stream as before.
+    clipped_to_plot = False
+    for items, options in legends:
+        want_clip = not options.get("anchor")
+        if want_clip != clipped_to_plot:
+            if want_clip:
+                cmd.clip(px0, py0, plot["w"], plot["h"])
+            else:
+                cmd.clip(0, 0, width, height)
+            clipped_to_plot = want_clip
+        _emit_legend(cmd, items, plot, options, default_text)
+    if clipped_to_plot:
         cmd.clip(0, 0, width, height)
     if spec.get("colorbar"):
         _emit_colorbar(
