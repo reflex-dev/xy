@@ -1434,6 +1434,14 @@ class Axes(PlotTypeMixin):
                 raise ValueError("bar align='edge' requires numeric positions") from None
         check_unsupported(kwargs, "bar()/barh()")
         n_bars = int(np.asarray(vals).size)
+        patch_labels: Optional[list[str]] = None
+        if label is not None and not isinstance(label, str) and np.iterable(label):
+            patch_labels = [_plain_text(value) for value in label]
+            if len(patch_labels) != n_bars:
+                raise ValueError(
+                    f"number of labels ({len(patch_labels)}) "
+                    f"does not match number of bars ({n_bars})."
+                )
 
         def paint(value: Any, label_text: str, default: Optional[str] = None) -> Any:
             if value is None:
@@ -1454,7 +1462,13 @@ class Axes(PlotTypeMixin):
             "color": paint(color, "bar color", self._next_color()),
             "width": float(thickness),
             "opacity": 1.0,
-            "name": str(label) if label is not None else None,
+            # A sequence labels the individual Rectangle patches in
+            # Matplotlib, not the BarContainer.  Keep the batched data trace
+            # unnamed; _chart_children emits empty, named bar proxies for the
+            # visible legend entries without splitting the bar geometry.
+            "name": (
+                None if patch_labels is not None else str(label) if label is not None else None
+            ),
             "orientation": orientation,
         }
         if alpha is not None:
@@ -1476,7 +1490,15 @@ class Axes(PlotTypeMixin):
                 if not np.isscalar(linewidth)
                 else scalar_float(linewidth)
             )
-        entry = self._add("bar", {"x": cats, "y": vals, "kwargs": entry_kwargs})
+        entry = self._add(
+            "bar",
+            {
+                "x": cats,
+                "y": vals,
+                "kwargs": entry_kwargs,
+                **({"patch_labels": patch_labels} if patch_labels is not None else {}),
+            },
+        )
         container = BarContainer(self, entry)
         if xerr is not None or yerr is not None:
             positions = np.asarray(cats)
@@ -2647,23 +2669,49 @@ class Axes(PlotTypeMixin):
 
     def _iter_entry_arrays(self, axis: str) -> Iterator[tuple[np.ndarray, bool]]:
         """Yield each (array, needs_finite_filter) an entry contributes to *axis*."""
+        from xy.channels import category_label
+
         host = self._y2_of or self
         y_axis = "y2" if self._y2_of is not None else "y"
+        category_positions: dict[str, float] = {}
+
+        def numeric_or_categorical(values: Any) -> np.ndarray:
+            """Mirror the core's first-seen categorical coordinate mapping.
+
+            Pyplot materializes its own auto view before the core Figure is
+            built.  String coordinates therefore cannot simply be skipped:
+            doing so pins categorical line/scatter axes to the dataless
+            ``(0, 1)`` view and clips every category after the second.
+            """
+            array = np.asarray(values).reshape(-1)
+            try:
+                return np.asarray(unit_converted_values(array), dtype=np.float64).reshape(-1)
+            except (TypeError, ValueError):
+                if array.dtype.kind not in {"U", "S", "O", "b"}:
+                    raise
+            labels = (
+                array.tolist()
+                if array.dtype.kind == "U"
+                else [category_label(value) for value in array.astype(object)]
+            )
+            positions = np.empty(len(labels), dtype=np.float64)
+            for index, label in enumerate(labels):
+                text = str(label)
+                positions[index] = category_positions.setdefault(
+                    text, float(len(category_positions))
+                )
+            return positions
+
         for entry in host._entries:
             if axis == "y" and entry.get("y_axis", "y") != y_axis:
                 continue
             if entry.get("kind") == "bar":
                 kwargs = entry.get("kwargs", {})
                 orientation = kwargs.get("orientation", "vertical")
-                centers = np.asarray(entry.get("x", ())).reshape(-1)
                 try:
-                    centers = np.asarray(unit_converted_values(centers), dtype=np.float64).reshape(
-                        -1
-                    )
+                    centers = numeric_or_categorical(entry.get("x", ()))
                 except (TypeError, ValueError):
-                    # The core maps string categories to their ordinal
-                    # positions.  Autoscaling must use the same positions
-                    # instead of falling back to the dataless (0, 1) view.
+                    centers = np.asarray(entry.get("x", ())).reshape(-1)
                     centers = np.arange(centers.size, dtype=np.float64)
                 values = np.asarray(entry.get("y", ()), dtype=np.float64).reshape(-1)
                 bases = np.asarray(kwargs.get("base", 0.0), dtype=np.float64)
@@ -2681,9 +2729,7 @@ class Axes(PlotTypeMixin):
             key = "x" if axis == "x" else "y"
             if key in entry:
                 try:
-                    array = np.asarray(unit_converted_values(entry[key]), dtype=np.float64).reshape(
-                        -1
-                    )
+                    array = numeric_or_categorical(entry[key])
                 except (TypeError, ValueError):
                     continue
                 yield array, True
@@ -3187,6 +3233,23 @@ class Axes(PlotTypeMixin):
         handles: list[Artist] = []
         labels: list[str] = []
         for entry in (self._y2_of or self)._entries:
+            patch_labels = entry.get("patch_labels")
+            if patch_labels is not None:
+                container = next(
+                    (
+                        item
+                        for item in (self._y2_of or self)._containers
+                        if isinstance(item, BarContainer) and item._entry is entry
+                    ),
+                    None,
+                )
+                for index, label in enumerate(patch_labels):
+                    if label and not str(label).startswith("_"):
+                        handles.append(
+                            container[index] if container is not None else Artist(self, entry)
+                        )
+                        labels.append(str(label))
+                continue
             label = entry.get("kwargs", {}).get("name")
             if label and not str(label).startswith("_"):
                 handles.append(Artist(self, entry))
@@ -4389,6 +4452,31 @@ class Axes(PlotTypeMixin):
                 children.append(xy.scatter(x=e["x"], y=e["y"], **kw, **axis_kw))
             elif kind == "bar":
                 children.append(xy.bar(x=e["x"], y=e["y"], **kw, **axis_kw))
+                patch_labels = e.get("patch_labels")
+                if patch_labels is not None:
+                    colors = resolve_rgba_array(
+                        kw.get("color", "transparent"),
+                        len(patch_labels),
+                        "bar legend color",
+                    )
+                    orientation = kw.get("orientation", "vertical")
+                    for index, label in enumerate(patch_labels):
+                        if not label or str(label).startswith("_"):
+                            continue
+                        # Named zero-mark proxies give the core legend one
+                        # correctly colored swatch per labeled patch while the
+                        # actual bars remain a single vectorized trace.
+                        children.append(
+                            xy.bar(
+                                x=np.empty(0, dtype=np.float64),
+                                y=np.empty(0, dtype=np.float64),
+                                name=str(label),
+                                color=resolve_color(colors[index]),
+                                opacity=1.0,
+                                orientation=orientation,
+                                **axis_kw,
+                            )
+                        )
             elif kind == "area":
                 children.append(xy.area(x=e["x"], y=e["y"], **kw, **axis_kw))
             elif kind == "histogram":
