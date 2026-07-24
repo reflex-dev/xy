@@ -37,9 +37,11 @@ from ._svg import (
     _column,
     _corner_radii,
     _css,
+    _density_column,
     _heatmap_rgba_grid,
     _legend_layout,
     _lut,
+    _physical_density_alpha,
     _px_size,
     _resolve_static_css_vars,
     _Scale,
@@ -1890,6 +1892,24 @@ def _emit_grid(
     elif g.get("enc") == "log-u8":
         w, h = int(g["w"]), int(g["h"])
         meta = cols[g["buf"]]
+        xr, yr = g["x_range"], g["y_range"]
+        dx, dy, dw, dh = _scene.grid_dest_rect(xr, yr, sx, sy)
+        if g.get("rgba") is not None:
+            # Mean point color per cell (LOD doc §2): rgb from the shipped
+            # plane; displayed alpha is the PHYSICAL compositing of the
+            # cell's points (`_svg._physical_density_alpha` — the same law
+            # as _svg._density_image and the client's texture upload).
+            # Precomposed here and emitted as a plain image op; the
+            # count→LUT density op cannot express per-cell color.
+            rgba_meta = cols[g["rgba"]]
+            mean = np.frombuffer(
+                blob, dtype=np.uint8, count=rgba_meta["len"], offset=rgba_meta["byte_offset"]
+            ).reshape(h, w, 4)
+            counts = _density_column(blob, meta, g).reshape(h, w)
+            alpha = _physical_density_alpha(counts, mean[..., 3], _fill_opacity(style, 0.85))
+            rgba = np.ascontiguousarray(np.dstack([mean[..., :3], alpha])[::-1])
+            cmd.image(dx, dy, dw, dh, w, h, rgba.tobytes(), nearest=False)
+            return
         paint_alpha = 1.0
         if g.get("color") is not None:
             red, green, blue, alpha = _parse_color(g["color"])
@@ -1897,8 +1917,6 @@ def _emit_grid(
             paint_alpha = alpha / 255.0
         else:
             stops = np.asarray(_colormap_stops(g.get("colormap", "viridis")), dtype=np.uint8)
-        xr, yr = g["x_range"], g["y_range"]
-        dx, dy, dw, dh = _scene.grid_dest_rect(xr, yr, sx, sy)
         cmd.density_image(
             dx,
             dy,

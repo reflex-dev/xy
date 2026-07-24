@@ -617,7 +617,11 @@ def test_continuous_drill_update_ships_u8_but_build_payload_stays_f32() -> None:
         assert spec["dtype"] == "u8"
         assert len(buffers[spec["buf"]]) == tr["visible"]  # 1 byte/point
     sbuf = np.frombuffer(buffers[tr["size"]["buf"]], dtype=np.uint8)
-    vis = (x >= 0) & (x <= 5) & (y >= 0) & (y <= 5)
+    # The reply ships a padded aligned window around the view (LOD doc T13);
+    # the subset is every point of the SHIPPED window, in canonical row order.
+    (wx0, wx1), (wy0, wy1) = tr["x_range"], tr["y_range"]
+    assert wx0 <= 0.0 and wx1 >= 5.0 and wy0 <= 0.0 and wy1 >= 5.0
+    vis = (x >= wx0) & (x <= wx1) & (y >= wy0) & (y <= wy1)
     expected = (s[vis] - s.min()) / (s.max() - s.min())
     np.testing.assert_allclose(sbuf / 255.0, expected, atol=0.5 / 255.0 + 1e-6)
 
@@ -679,14 +683,12 @@ def test_density_view_rebins():
     inwin = np.sum((x >= 10) & (x < 90) & (y >= 20) & (y < 80))
     assert inwin > SCATTER_DENSITY_THRESHOLD  # really over budget
     assert grid.sum() == pytest.approx(inwin, rel=0.05)
-    sample = d["sample"]
-    assert sample["mode"] == "sampled"
-    assert sample["visible"] == update["traces"][0]["visible"] == inwin
-    assert 0 < sample["n"] <= int(DENSITY_SAMPLE_TARGET * 1.2)
-    xs = np.frombuffer(buffers[sample["x"]["buf"]], dtype=np.float32)
-    ys = np.frombuffer(buffers[sample["y"]["buf"]], dtype=np.float32)
-    assert len(xs) == sample["n"]
-    assert len(ys) == sample["n"]
+    # Interactive density replies ship NO point sample (#225): above the drill
+    # budget a fixed-size sample reads as individual data points at a zoom
+    # where real points are sub-pixel. The only retained sample is the
+    # first-payload one, drawn below the resolvable-count gate client-side.
+    assert "sample" not in d
+    assert update["traces"][0]["visible"] == inwin
 
 
 def test_density_view_coarsens_sparse_screen_grid():
@@ -723,12 +725,21 @@ def test_density_view_drills_to_points_when_window_fits():
     assert tr["mode"] == "points"
     assert tr["tier"] == "direct"
     assert tr["reduction"] == "none"
-    inwin = int(np.sum((x >= 0) & (x <= 10) & (y >= 0) & (y <= 10)))
-    assert 0 < inwin <= SCATTER_DENSITY_THRESHOLD
+    view_inwin = int(np.sum((x >= 0) & (x <= 10) & (y >= 0) & (y <= 10)))
+    assert 0 < view_inwin <= SCATTER_DENSITY_THRESHOLD
+    # The shipped window is a padded ALIGNED superset of the view (LOD doc
+    # T13) so nearby pans/zooms render from the client's point-window cache;
+    # the subset is every point of that window, still within the budget.
+    (wx0, wx1), (wy0, wy1) = tr["x_range"], tr["y_range"]
+    assert wx0 <= 0.0 and wx1 >= 10.0 and wy0 <= 0.0 and wy1 >= 10.0
+    vis = (x >= wx0) & (x <= wx1) & (y >= wy0) & (y <= wy1)
+    inwin = int(vis.sum())
+    assert view_inwin <= inwin <= SCATTER_DENSITY_THRESHOLD
     assert tr["visible"] == inwin and tr["x"]["len"] == inwin
     xs = np.frombuffer(bufs[tr["x"]["buf"]], dtype=np.float32)
     assert len(xs) == inwin
-    assert tr["x"]["offset"] == pytest.approx(5.0)  # §16 window-centered
+    # §16 window-centered offset — the SHIPPED window's midpoint.
+    assert tr["x"]["offset"] == pytest.approx((wx0 + wx1) / 2.0)
     # Continuous channels on the drill wire are u8 LUT coordinates (§29:
     # live-interaction readbacks resolve server-side, so quantization is
     # invisible; the ramp/colormap only has ~256 useful levels anyway).
@@ -738,21 +749,23 @@ def test_density_view_drills_to_points_when_window_fits():
     assert fig.traces[0].drill_mode is True
     # pick speaks drilled indices: shipped 0 -> a canonical row in the window
     row = fig.pick(0, 0)
-    assert row is not None and 0.0 <= row["x"] <= 10.0
+    assert row is not None and wx0 <= row["x"] <= wx1
     assert "color_value" in row
-    # Color-continuous handoff: per-point local log-density in [0,1], a blend
-    # weight = visible/budget, and the colormap the density surface uses —
-    # so freshly drilled points wear the density ramp (§5, never a palette jump).
+    # Intensity handoff (§5): per-point local log-density (u8, like every
+    # unit-scalar live channel) and a blend weight keyed on the VIEW's own
+    # count — padding widens what ships, not what the user is looking at.
+    # Freshly drilled points enter at their cell's count-alpha and ease to
+    # native opacity; the surface wears the mean point color (LOD doc §2), so
+    # no density_colormap rides the points wire.
     assert tr["density_val"]["dtype"] == "u8"
     dbuf = np.frombuffer(bufs[tr["density_val"]["buf"]], dtype=np.uint8)
     assert len(dbuf) == inwin
-    assert dbuf.max() == 255  # the hottest cell hits the ramp top
-    assert tr["lod_blend"] == pytest.approx(inwin / SCATTER_DENSITY_THRESHOLD)
-    assert tr["density_colormap"] == "viridis"  # continuous channel's colormap
+    assert dbuf.max() == 255  # the hottest cell reaches full handoff alpha
+    assert tr["lod_blend"] == pytest.approx(view_inwin / SCATTER_DENSITY_THRESHOLD)
+    assert "density_colormap" not in tr
     # Channels are normalized over the *global* domain after slicing (staff
     # review: slice-first must not change values — colors stay view-stable),
     # then quantized: every byte within half a step of the exact unit value.
-    vis = (x >= 0) & (x <= 10) & (y >= 0) & (y <= 10)
     expected = (c[vis] - c.min()) / (c.max() - c.min())
     np.testing.assert_allclose(cbuf / 255.0, expected, atol=0.5 / 255.0 + 1e-6)
 
@@ -821,9 +834,11 @@ def test_density_view_clamps_huge_frontend_screen_shape(monkeypatch):
 
 
 def test_drill_seq_guards_stale_picks():
-    # A pick that raced a drill update must return None — never a row read
-    # through the wrong index space (§16: exact or nothing).
-    # n chosen so the full window (n visible) clears the 1.15x hysteresis exit.
+    # A pick against another subset version must translate through THAT
+    # subset when it is still remembered (LOD doc T13: the client can serve a
+    # view from a retired cached point window) and return None once it is not
+    # — never a row read through the wrong index space (§16: exact or
+    # nothing). n chosen so the full window clears the 1.15x hysteresis exit.
     n = SCATTER_DENSITY_THRESHOLD + 50_000
     rng = np.random.default_rng(11)
     x = rng.uniform(0, 100, n)
@@ -831,22 +846,48 @@ def test_drill_seq_guards_stale_picks():
     fig = Figure().scatter(x, y, density=True)
     upd1, _ = fig.density_view(0, 0.0, 10.0, 0.0, 10.0, 512, 384)
     seq1 = upd1["traces"][0]["drill_seq"]
+    sel1 = fig.traces[0].shipped_sel.copy()
     assert seq1 == 1
-    assert fig.pick(0, 0, drill_seq=seq1) is not None  # matching subset: exact row
+    row1 = fig.pick(0, 0, drill_seq=seq1)  # matching subset: exact row
+    assert row1 is not None and row1["index"] == int(sel1[0])
     assert fig.pick(0, 0) is not None  # legacy caller without seq still works
     assert fig.pick(0, 0, drill_seq=True) is None  # bool must not alias seq 1
 
     upd2, _ = fig.density_view(0, 20.0, 30.0, 20.0, 30.0, 512, 384)
     seq2 = upd2["traces"][0]["drill_seq"]
     assert seq2 == seq1 + 1
-    assert fig.pick(0, 0, drill_seq=seq1) is None  # stale subset: dropped
+    # The previous subset stays remembered (bounded history): a pick against
+    # it translates through THAT subset — the exact row it named, not the new
+    # subset's row 0 — because the client may still be drawing that window.
+    row_old = fig.pick(0, 0, drill_seq=seq1)
+    assert row_old is not None and row_old["index"] == int(sel1[0])
     assert fig.pick(0, 0, drill_seq=seq2) is not None
+    # An index past the remembered subset's length is dropped, and a seq the
+    # history never held (bumped by exits, or simply unknown) is dropped too.
+    assert fig.pick(0, len(sel1), drill_seq=seq1) is None
+    assert fig.pick(0, 0, drill_seq=seq2 + 50) is None
 
-    # Drill-out bumps the version too: a drilled-index pick arriving after the
-    # subset died must not be read as a *canonical* index.
+    # Drill-out keeps remembered subsets alive for retired client windows,
+    # but the exit-bumped seq itself never shipped a subset: a pick against
+    # it must not be read as a *canonical* index.
     upd3, _ = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, 512, 384)
     assert upd3["traces"][0]["mode"] == "density"
-    assert fig.pick(0, 0, drill_seq=seq2) is None
+    exit_seq = fig.traces[0].drill_seq
+    assert exit_seq == seq2 + 1
+    assert fig.pick(0, 0, drill_seq=exit_seq) is None
+    row_after_exit = fig.pick(0, 0, drill_seq=seq2)
+    (wx0, wx1) = upd2["traces"][0]["x_range"]  # seq2 shipped its PADDED window
+    assert row_after_exit is not None and wx0 <= row_after_exit["x"] <= wx1
+
+    # The history is bounded: churning past DRILL_HISTORY_KEEP subsets expires
+    # the oldest, whose picks then drop instead of translating.
+    from xy.config import DRILL_HISTORY_KEEP
+
+    for i in range(DRILL_HISTORY_KEEP + 1):
+        lo = 5.0 * (i % 8)
+        upd_i, _ = fig.density_view(0, lo, lo + 6.0, lo, lo + 6.0, 512, 384)
+        assert upd_i["traces"][0]["mode"] == "points"
+    assert fig.pick(0, 0, drill_seq=seq1) is None
     # out-of-range trace ids are rejected, not wrapped pythonically
     assert fig.pick(-1, 0) is None
     assert fig.pick(99, 0) is None
@@ -865,8 +906,9 @@ def test_drill_lod_blend_shrinks_as_zoom_deepens():
     assert upd_wide["traces"][0]["mode"] == "points"
     assert upd_deep["traces"][0]["mode"] == "points"
     assert upd_deep["traces"][0]["lod_blend"] < upd_wide["traces"][0]["lod_blend"]
-    # constant-color scatter still gets the default density ramp for the handoff
-    assert upd_deep["traces"][0]["density_colormap"] == ch.DEFAULT_COLORMAP
+    # the handoff is intensity-only (hue is continuous by construction, LOD
+    # doc §2), so no colormap rides the points wire
+    assert "density_colormap" not in upd_deep["traces"][0]
 
 
 def test_density_view_returns_to_density_on_zoom_out():
@@ -905,17 +947,42 @@ def test_drill_hysteresis_holds_points_mode_near_boundary():
     assert upd2["traces"][0]["mode"] == "density"  # cold entry aggregates
 
 
-def test_huge_scatter_with_channels_warns_and_drops():
+def test_huge_scatter_with_color_channel_warns_and_aggregates_mean_color():
     from xy._figure import DIRECT_SOFT_CEILING
 
     n = DIRECT_SOFT_CEILING + 1
     x = np.zeros(n)
     color = np.arange(n, dtype=np.float64)
-    with pytest.warns(RuntimeWarning, match="dropped"):
+    # Color survives aggregation as the surface's per-cell mean point color
+    # (LOD doc §2), and the warning says so.
+    with pytest.warns(RuntimeWarning, match="mean point color"):
         fig = Figure().scatter(x, x, color=color)
     spec, _ = fig.build_payload()
-    assert spec["traces"][0]["tier"] == "density"
-    assert spec["traces"][0]["density"]["channels_dropped"] is True
+    tr = spec["traces"][0]
+    assert tr["tier"] == "density"
+    assert tr["density"]["channels_dropped"] is False
+    assert tr["density"]["dropped_channels"] == []
+    assert tr["density"]["color_agg"] == "mean"
+    assert "rgba" in tr["density"]
+
+
+def test_huge_scatter_with_size_channel_warns_and_drops():
+    from xy._figure import DIRECT_SOFT_CEILING
+
+    n = DIRECT_SOFT_CEILING + 1
+    x = np.zeros(n)
+    size = np.ones(n, dtype=np.float64)
+    size[0] = 2.0
+    # Size has no honest per-cell aggregate (LOD doc §2 rule 4): dropped,
+    # recorded in `dropped_channels`, and warned about.
+    with pytest.warns(RuntimeWarning, match="dropped channels: size"):
+        fig = Figure().scatter(x, x, size=size)
+    spec, _ = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["tier"] == "density"
+    assert tr["density"]["channels_dropped"] is True
+    assert tr["density"]["dropped_channels"] == ["size"]
+    assert "rgba" not in tr["density"]
 
 
 # -- pick / hover drill ------------------------------------------------------

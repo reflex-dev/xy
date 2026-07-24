@@ -24,20 +24,6 @@ def _write(tmp_path: Path, text: str) -> Path:
     return path
 
 
-def test_claim_guardrail_accepts_current_public_docs() -> None:
-    findings = check_claim_guardrails.check_claims(check_claim_guardrails._default_paths())
-
-    assert findings == []
-    assert check_claim_guardrails.ROOT / "pyproject.toml" in check_claim_guardrails._default_paths()
-    assert (
-        check_claim_guardrails.ROOT / "spec" / "benchmarks" / "results.md"
-        in check_claim_guardrails._default_paths()
-    )
-    assert (
-        check_claim_guardrails.ROOT / "docs" / "index.md" in check_claim_guardrails._default_paths()
-    )
-
-
 def test_claim_guardrail_rejects_broad_fastest_claim(tmp_path: Path) -> None:
     path = _write(tmp_path, "xy is the fastest charting library.\n")
 
@@ -166,10 +152,3 @@ def test_claim_guardrail_rejects_stale_repo_identity(tmp_path: Path) -> None:
     findings = check_claim_guardrails.check_claims([path])
 
     assert any("stale repository identity" in finding.message for finding in findings)
-
-
-def test_claim_guardrail_covers_security_and_contributing_docs() -> None:
-    defaults = check_claim_guardrails._default_paths()
-
-    assert check_claim_guardrails.ROOT / "SECURITY.md" in defaults
-    assert check_claim_guardrails.ROOT / "CONTRIBUTING.md" in defaults

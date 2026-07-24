@@ -444,8 +444,12 @@ Keep pushing these in low-conflict increments:
 - Keep the two example apps focused: `examples/reflex` on the reflex-xy
   integration surfaces (figure vars, events, state-driven and streaming
   updates, `on_view_change`), and `examples/fastapi` on the framework-neutral
-  gallery plus the live 100M drilldown. Neither commits static chart HTML, and
-  both surface their own source via `inspect.getsource`.
+  gallery plus the live 100M drilldown. The one deliberate overlap is that
+  drilldown chart itself: `examples/reflex` §6 serves the identical dataset
+  adapter-natively (an `inline()` token, no transport code) so cross-host
+  behavior can be A/B'd against fastapi's hand-rolled transport; both honor
+  `XY_LIVE_POINTS`. Neither commits static chart HTML, and both surface their
+  own source via `inspect.getsource`.
 - Add first-class docs for the supported-platform matrix and the clear-error
   behavior when the native core is unavailable.
 - Move advisory type checking to a hard gate once the checker and codebase agree

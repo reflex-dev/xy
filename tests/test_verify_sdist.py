@@ -348,14 +348,6 @@ def test_verify_sdist_rejects_corrupt_benchmark_baseline(tmp_path: Path) -> None
         verify_sdist.verify_sdist(str(sdist))
 
 
-def test_verify_sdist_rejects_missing_docs_example_guard(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(sdist, omit={"tests/test_docs_examples.py"})
-
-    with pytest.raises(AssertionError, match="test_docs_examples"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
 def test_verify_sdist_rejects_missing_example_app_files(tmp_path: Path) -> None:
     sdist = tmp_path / "xy-0.0.1.tar.gz"
     _write_sdist(

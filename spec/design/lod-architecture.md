@@ -28,7 +28,7 @@ pixel-area or overdraw term exists in `python/xy/` or `js/src/` today.
 |---|---|---|---|---|
 | 0 | Direct | every visible mark, exact | O(visible) verts | shipped (all kinds) |
 | 1 | Shape-preserving reduction | per-pixel-column aggregate that IS the mark's meaning (M4 for lines; OHLC-bucket for candles when finance returns; max-bin for bars) | O(px) verts | shipped (line) |
-| 2 | Density / aggregate surface | colormapped count (+channel) texture | O(screen) texels | shipped (scatter) |
+| 2 | Density / aggregate surface | mean-point-color texture composited at the points' own alpha (§2) | O(screen) texels | shipped (scatter) |
 | 3 | Out-of-core tiles | Tier-2 pyramid where not all tiles are resident | O(visible tiles) | **this doc** |
 
 **Invariant L1 (recorded reduction):** every update carries `tier`, `mode`,
@@ -44,7 +44,7 @@ real marks with real channels — never a sample, never an aggregate.
 
 | Kind | Tier 0 | Tier 1 | Tier 2 | zoom-in recovery |
 |---|---|---|---|---|
-| scatter | points | — (unordered decimation lies, §28) | density grid (+ channel aggregates, §4 below) | drill-in ships exact visible points + channels (shipped) |
+| scatter | points | — (unordered decimation lies, §28) | mean-color density grid (§2; count planes + color planes, §4 below) | drill-in ships exact points + channels for a padded ALIGNED window (T13); views inside any shipped window — live or cached — are answered locally, no request (T12/T13) |
 | line/area | polyline | M4 per column (extrema-exact) | — (M4 already screen-bounded) | re-decimate window (shipped) |
 | heatmap | cell rects | — | mip-style tile reduction of the user grid (max/mean recorded) | finer pyramid level, then exact cells |
 | histogram/bar | rects | re-bin at viewport resolution | — (bins are already aggregates) | re-bin visible window (finer bins = more truth, never less) |
@@ -93,38 +93,89 @@ metadata, or encoded-buffer assembly.
 ## 2. Zoomed-out truthfulness with channels (the "no visual lying" rules)
 
 Aggregating positions is easy; aggregating **color/size/category** without
-lying is the hard part (§5-F5). Rules, per channel mode:
+lying is the hard part (§5-F5). The governing principle, shipped: **the
+density surface wears the data's own colors, and it composites like the
+data's own points.** A cell is what the eye would see if every one of its
+points were drawn sub-pixel — the physically downsampled image — so the
+aggregate view and the point view are two magnifications of the same
+picture, not two different charts: same hue (the mean point color), same
+lightness (the points' own alpha compositing).
 
-1. **Count is always channel 0.** The density surface's luminance/alpha
-   encodes count (log tone-mapped, shipped). Any additional channel rides on
-   top of count, never instead of it — otherwise sparse-but-extreme cells
-   look as important as dense ones.
-2. **Continuous channel → per-cell MEAN, displayed only with count ≥ floor.**
-   Ship a second grid `sum(channel)`; client computes mean = sum/count in the
-   shader. Cells under a count floor (default 1) render count-only — a mean
-   of one point is exact, a mean of zero is a lie.
-   *Rejected:* per-cell max (overweights outliers silently). Max is offered as
-   an explicit `agg="max"` the user must opt into, and the legend then says
-   "max per cell" (recorded, §28).
-3. **Categorical channel → per-cell MAJORITY + purity.** Ship two grids:
-   `argmax(category)` (palette index) and `purity = max_count/count`.
-   The shader desaturates toward the count ramp as purity → 1/k, so a
-   50/50 cell doesn't masquerade as solidly category A. This is the honest
-   version of datashader's `count_cat` composite.
-   Categories >256 already warn at ingest (LUT width); majority-of-256 is
-   fine because the palette itself caps there.
+1. **A mean-color cell's displayed alpha is the PHYSICAL compositing of its
+   own points:** `1 − (1 − a_pt)^k` for k points whose drawn per-point
+   alpha is `a_pt = mean channel alpha × trace style opacity` — exactly
+   what k overplotted marks composite to, saturating after a few points
+   just as real marks do. Style opacity folds INSIDE the exponent (dense
+   cells saturate past it exactly like real overplot), so the draw path
+   applies only transition fades on top of these textures — never the
+   style opacity again. No window normalization touches the alpha, so
+   lightness cannot swing between windows or across the texture↔points
+   boundary (the previous law — a per-window log-count tone curve driving
+   opacity — did both: a field capture of the 100M drilldown showed the
+   surface visibly lighter/darker than the very points it aggregated). The
+   count grid still ships (`buf` + `max`, log-u8): it marks occupancy, is
+   the compositing exponent, and remains the ONLY structure — and the alpha
+   ramp — for count-only surfaces (constant-color traces, hand-built/legacy
+   specs), which keep the log tone curve and its eased normalization (T4).
+   The recorded cost of physical alpha: density beyond a few points per
+   cell no longer reads in the surface (real overplotted points saturate
+   identically — the aggregate is exactly as saturated as the truth it
+   downsamples; drill-in is where per-point structure returns).
+2. **Per-point colors → per-cell alpha-weighted MEAN of the *resolved*
+   colors, averaged in linear light.** One law for every channel mode —
+   continuous (colormapped value), categorical (palette color), and
+   `direct_rgba` alike: each point contributes the exact sRGB color it draws
+   with, weighted by its straight alpha, summed in linear light (integer
+   pipeline: checked-in sRGB⇄linear-u16 tables, u64 sums — bitwise
+   deterministic across thread counts and platforms), then quantized back to
+   sRGB. Ships as a `w*h*4` straight-alpha RGBA8 plane (`rgba`, mean color +
+   mean point alpha) with `color_agg: "mean"` recorded; displayed alpha
+   follows rule 1 (physical compositing of ā over the cell count). A cell
+   of one point shows that point's exact color at that point's own alpha;
+   an all-invisible (alpha-0) cell never invents one.
+   Constant-color traces ship no plane — the mean of a constant IS the
+   constant, so the wire keeps the 1-byte count grid plus `color` and the
+   client tints (bit-equivalent, 4× cheaper). Cost, recorded: a
+   channel-bearing trace pays one extra O(visible) color pass per exact
+   re-bin (the count grid and sample selection stay fused as before; plain
+   scatters are byte-identical to the pre-color pipeline), +4 B/cell on the
+   wire, and the §4 pyramid's color planes at +8 B/cell.
+   *Why mean-of-colors and not colormap(mean value):* the mean color is
+   representation-agnostic (categories have no mean value), matches the
+   drilled points' downsample exactly (the anti-jarring contract, T3), and
+   never claims a data value that isn't there — a mixed red/blue cell reads
+   as the purple *blend* the points themselves produce, not as a fictitious
+   mid-scale value. The cost, recorded: a mixed cell's color can sit off the
+   palette/colormap gamut; the sample overlay and drill-in disambiguate.
+   *Rejected:* per-cell max (overweights outliers silently); majority+purity
+   (hid minority categories entirely and desaturated toward a count ramp
+   that no longer exists). Linear-light averaging is deliberate — sRGB-space
+   byte averaging darkens mixes (red+blue → 128-purple instead of the
+   physically correct 188-purple).
+3. **Categorical channels beyond the palette fold first.** Codes wider than
+   the 256-entry LUT bin with `code % len(palette)` — exactly the repeat
+   rule the point shader applies — so every point bins with the color it
+   draws with, at any cardinality.
 4. **Size channel → drop at Tier 2, always say so.** Size has no honest
-   per-cell aggregate that isn't just another continuous channel; we already
-   ship `channels_dropped: true`. Keep that; render the legend badge from it.
-5. **The drill handoff already solves re-entry:** freshly drilled points wear
-   the density ramp by local log-density (`lod_blend`), easing to native
-   channels as the window shrinks — the same rules make the *outbound*
-   transition honest because both endpoints display the same statistics.
+   per-cell aggregate that isn't just another continuous channel; we ship
+   `channels_dropped: true` + `dropped_channels` naming it. Color is *not*
+   listed there when it aggregates — `color_agg: "mean"` records the
+   transform instead (aggregated ≠ dropped).
+5. **Mean-color surfaces need no drill handoff at all:** hue is continuous
+   by construction (both sides show the points' colors) and, under rule
+   1's physical alpha, so is lightness — the texture composites exactly
+   like the marks replacing it. Drilled points therefore enter and exit at
+   NATIVE opacity; the entry/exit alpha fades (T2) alone carry the swap,
+   and the client ignores `density_val`/`lod_blend` on such traces (the
+   wire still carries them — count-only surfaces keep the intensity
+   handoff: marks enter at the cell's count-alpha through the same tone
+   curve as their texture and ease to native as `lod_blend` → 0, and
+   exiting marks re-target it to melt into the ramp).
 
 **Invariant L4 (badge):** any active reduction that drops or transforms a
-channel renders a visible "aggregated: mean/majority/…" badge sourced from
-the spec, not from client guesswork. (Client work item; spec already carries
-the facts.)
+channel renders a visible "aggregated: mean/…" badge sourced from the spec
+(`color_agg`, `dropped_channels`), not from client guesswork. (Client work
+item; spec already carries the facts.)
 
 ---
 
@@ -166,16 +217,24 @@ pyramid replaces per-view scans with per-view *tile composition*.
 
 - **Data-space tiles**, power-of-two levels, 256×256 cells/tile.
   Level 0 covers the full x/y extent with 1 tile; level l has 4^l tiles.
-- Each tile stores channel-aggregate grids per §2: `count`, and per channel
-  `sum` (continuous) or `argmax+purity` (categorical) — f32 planes.
+- Each tile stores the channel aggregates per §2: `count` (u32), and for
+  channel-bearing traces a mean-color plane — per cell `[r, g, b, a]` as
+  linear-light u16 means plus mean straight alpha (u16 scale). Means, not
+  sums: 8 B/cell instead of 24+, at the cost of one re-rounding per level
+  (≤ 0.5 lsb of u16 per level — recorded, invisible).
 - **Build:** one pass over rows bins into the finest level L
   (L ≈ ceil(log4(N / target_points_per_cell / 256²))); levels L-1..0 are 4→1
-  reductions (`count` sums; `sum` sums; majority re-argmaxes from summed
-  per-category counts — which requires keeping per-category counts at build
-  time for the top-k categories, k ≤ 8, "other" bucketed; recorded).
+  reductions (`count`: exact u64 sums saturating to u32; color: exact
+  weighted means, weight = child count × child mean alpha — the same
+  alpha-weighted average the flat kernel computes over raw points).
   Total cost ≈ 1.33 × one full pass; total size ≈ 1.33 × finest level.
 - **Rust owns this** (`tiles.rs`, see rust-engine doc): build_pyramid(),
   tile fetch by (level, tx, ty), append-aware rebuild of dirty tiles.
+  Colored pyramids refuse native appends — the batch's colors are unknown to
+  the count-only append path and an append can move a continuous channel's
+  domain, silently re-coloring every already-binned point — so the caller
+  invalidates and the next density view rebuilds lazily (recorded; count-only
+  pyramids keep O(rows·levels) increments).
 
 ### 4.2 Serving a viewport
 
@@ -199,16 +258,22 @@ reply  = compose(tiles) → one grid ≤ (screen px) — done kernel-side today,
 
 ### 4.3 Truthfulness across levels
 
-Reductions are exact (sums of sums; majority from kept per-category counts),
-so any pyramid level shows the same statistics the raw pass would — modulo
-the "other" bucket for tail categories, which the spec records
-(`categories_bucketed: k`). Level choice is recorded per update
-(`pyramid_level`). No level ever extrapolates.
+Count reductions are exact (sums of sums), so any pyramid level shows the
+same counts the raw pass would. Color reductions are exact weighted means of
+the stored child means, re-quantized to u16 once per level (≤ 0.5 lsb of
+linear-u16 per level; over the 11 levels of the default base that stays
+under one displayable sRGB step — recorded here, invisible in practice).
+Level choice is recorded per update (`binning: "pyramid-L<l>"`). No level
+ever extrapolates.
 
 ### 4.4 Memory & residency
 
 - Finest level for 100M points at 16 pts/cell ≈ 6.25M cells ≈ 25 MB (count
-  f32) + 25 MB/channel. ×1.33 pyramid ≈ 33-66 MB kernel-side. Fine.
+  u32) + 50 MB mean-color plane ([u16; 4]/cell). ×1.33 pyramid ≈ 33-100 MB
+  kernel-side. Fine. (Shipped shape: 2048² default base ⇒ 22 MB counts +
+  45 MB color per colored trace, `pyramid_report_bytes`; huge/out-of-core
+  traces build adaptively finer bases — Phase-3 item 7 — and the color plane
+  scales with them.)
 - 1B points: ~330-660 MB — still kernel-side RAM, but now Tier 3 applies:
   tiles are chunked to disk (Arrow/Parquet row groups per tile, dossier §32),
   LRU-resident under a byte budget, and *only* the ≤ ~12 visible tiles are
@@ -264,17 +329,24 @@ invariants so future kinds don't regress them:
   the aggregate→marks transition only — restarting per refresh reads as
   flashing; exit fade with the "dying" state so buffers outlive the fade).
 - **T3 — color-continuous:** the two sides of a transition display the same
-  statistic at the boundary (lod_blend density-ramp handoff). The kernel's
-  blend weight (`visible/budget`) is only ≈1 when the swap happens at the
-  budget boundary — a fast zoom skips levels and lands marks with a
-  mostly-native weight, a visible recolor at the swap (live-drilldown field
-  capture). The BOUNDARY is therefore the transition itself, client-side:
-  fresh marks arrive with the shown blend seeded at 1 (wearing the
-  aggregate's colormap) and ease to the kernel's native weight, and
-  dying/exiting marks re-target blend 1 so they melt into the texture as
-  they fade (`lodApplyDrill`, `lodBeginDrillExitContinuous`; revives restore
-  the native weight via `lodEnterDrillContinuous`).
-- **T4 — normalization is eased, never stepped** (exposure-style normMax).
+  statistic at the boundary. On a mean-color surface BOTH channels are
+  continuous by construction — hue because the surface wears the mean point
+  color (§2 rule 2), lightness because it composites like the points
+  themselves (§2 rule 1) — so marks swap at native opacity with no
+  intensity handoff at all (§2 rule 5). Count-only surfaces keep the
+  lod_blend count-alpha ramp: the kernel's blend weight (`visible/budget`)
+  is only ≈1 when the swap happens at the budget boundary — a fast zoom
+  skips levels and lands marks with a mostly-native weight, a visible
+  intensity pop at the swap (live-drilldown field capture) — so the
+  BOUNDARY is the transition itself, client-side: fresh marks arrive with
+  the shown blend seeded at 1 (entering at the aggregate's local
+  count-alpha) and ease to the kernel's native weight, and dying/exiting
+  marks re-target blend 1 so they melt into the texture as they fade
+  (`lodApplyDrill`, `lodBeginDrillExitContinuous`; revives restore the
+  native weight via `lodEnterDrillContinuous`).
+- **T4 — normalization is eased, never stepped** (exposure-style normMax) —
+  count-only surfaces; a mean-color texture's physical alpha is
+  max-independent, so it has no normalization to ease.
 - **T5 — stale replies die:** seq on view updates, drill_seq on subsets,
   pending-view hold for prefetched drills.
 - **T6 — invalid requests do not mutate:** malformed viewport/screen requests
@@ -303,22 +375,34 @@ invariants so future kinds don't regress them:
   drive it out of the hold, so the drilled subset stayed painted and the full
   point cloud never returned. (Complements T7, which fixes the same visible
   symptom from the texture-lifetime side.)
-- **T9 — the drawn sample describes the displayed window:** the deterministic
-  point sample shipped with an exact-scan density reply represents *its*
-  window only, so every sample overlay rides the density cache entry it was
-  computed for (`density.overlay`; replies that omit a sample — pyramid and
-  integral-image zoom-out paths, Phase 2 item 5 — simply add no overlay to
-  their entry). Each frame draws the overlay of the best cached window for
-  the current view (`lodSampleForView`, mirroring `lodDensityForView`): the
-  smallest window covering the view wins at full alpha, so a deep zoom-out
-  falls back through the cache to the HOME sample and the full point cloud
-  returns — points on screen always describe the window being displayed.
-  (The pre-pairing client retained one global sample and drew it whenever
-  the view merely overlapped its window: a drilled window's sample lingered
-  over every later zoom-out as an opaque "stuck point blob", pinned by a
-  live-drilldown wire capture — the blob's extent matched the last
-  sample-bearing reply's window exactly while the density surface kept
-  updating under it.) Only a view that NO cached window covers draws a
+- **T9 — the drawn sample describes the displayed window, and only a
+  RESOLVABLE window (#225):** a sample overlay draws only when the view it
+  would describe could plausibly be points-tier — the overlay's recorded
+  window count, scaled by the view's share of its window, fits
+  `LOD_DIRECT_POINT_BUDGET` (`lodOverlayResolvable`). Above that, a
+  fixed-size sample reads as individual data points at a zoom where real
+  points are sub-pixel — sampling above the resolution of the graph
+  misrepresents the dataset (the #225 field capture: zooming out from a
+  drilled 100M-point cloud brought "individual points" back over the
+  aggregate) — and the density surface, which wears the data's own colors
+  (§2), stands alone. Interactive `density_view` replies therefore ship NO
+  sample at all: the only retained overlay is the first-payload one, which
+  doubles as the standalone re-bin worker's CPU source. A KERNEL-ATTACHED
+  client never draws it at any zoom (field follow-up): wherever a view is
+  resolvable the kernel ships REAL points, and a handful of retained sample
+  rows at full alpha there reads as data that isn't. The overlay is the
+  standalone (kernel-less) client's fallback — drawn only below the
+  resolvability gate, where it is the only point representation that build
+  will ever have. For the
+  overlays that DO draw, window pairing holds: every sample rides the
+  density cache entry it was computed for (`density.overlay`), and each
+  frame draws the overlay of the best cached window for the current view
+  (`lodSampleForView`, mirroring `lodDensityForView`) — the smallest window
+  covering the view wins at full alpha, so points on screen always describe
+  the window being displayed. (The pre-pairing client retained one global
+  sample and drew it whenever the view merely overlapped its window: a
+  drilled window's sample lingered over every later zoom-out as an opaque
+  "stuck point blob".) Only a view that NO cached window covers draws a
   partial overlay, faded by the window's share of the view area — full alpha
   at ≥ `LOD_SAMPLE_FADE_COVER_HI` (1/4), hidden at
   ≤ `LOD_SAMPLE_FADE_COVER_LO` (1/32), log-eased between
@@ -329,24 +413,31 @@ invariants so future kinds don't regress them:
   near-opaque slab (a "fading" sample that never looked faded). The
   per-point alpha is solved as a = 1−(1−band)^(1/k), with k estimated from
   the drawn count, mean point footprint, and the window's on-screen area;
-  k ≤ 1 degenerates to the band value exactly. Selection and alpha are pure
-  functions of (view, cache): every zoom frame re-derives them, nothing
-  latches. Overlays die with their evicted cache entry (except the home/init
-  overlay, the standalone re-bin worker's CPU-side source), and the
-  "sampled n of N" badge reports the overlay actually drawn.
-- **T10 — the aggregate backdrop is continuous:** the density texture draws
-  under the marks in EVERY drill state — entering, settled inside, held,
-  exiting — never only until the entry fade completes. The background of a
-  drilled frame and a density frame is the same texture, so every drill
-  transition is a marks-layer fade over a stable context, not a full-frame
-  swap. (Previously marks "owned the frame" once their entry fade finished:
-  the backdrop flipped to the blank chart background, and interleaved
-  density/points replies during a continuous zoom flashed
-  green-texture ⇄ points-on-blank — the live-drilldown flicker. It also
-  kept the aggregate context visible while drilled, which is the §28 hybrid
-  intent.) `lodDrawDensityTier` routes every branch's backdrop through
-  `lodDrawDensityWithFade`, so cached-window crossfades stay continuous
-  while drilled too.
+  k ≤ 1 degenerates to the band value exactly. Selection, alpha, and the
+  resolvability gate are pure functions of (view, cache): every zoom frame
+  re-derives them, nothing latches. Overlays die with their evicted cache
+  entry (except the home/init overlay, the standalone re-bin worker's
+  CPU-side source), and the "sampled n of N" badge reports the overlay
+  actually drawn.
+- **T10 — the aggregate backdrop is continuous through transitions, and
+  retires when the drill settles:** the density texture draws under the
+  marks in every TRANSITIONAL drill state — entering, held, dying, exiting —
+  so every representation change is a marks-layer fade over a stable
+  context, never a full-frame swap or a blank. (Previously marks "owned the
+  frame" once their entry fade finished: the backdrop flipped to the blank
+  chart background, and interleaved density/points replies during a
+  continuous zoom flashed green-texture ⇄ points-on-blank — the
+  live-drilldown flicker.) Once a drill is SETTLED inside its window —
+  entry fade landed, no exit/hold/death in flight — the backdrop eases out
+  (`lodDrillBackdropScale`): the marks are exact for that window, so the
+  aggregate adds no information the marks don't already carry, and leaving
+  it painted washes exact points with mean color that reads as data
+  (field-reported against the mean-color surface). It eases back FAST the
+  moment the view leaves the window, a refinement goes pending, or the
+  drill dies — so zoom-outs still never blank (T1) and per-reply refreshes
+  inside a settled drill never re-flash it. `lodDrawDensityTier` routes
+  every branch's backdrop through `lodDrawDensityWithFade`, so
+  cached-window crossfades stay continuous while drilled too.
 - **T11 — an exited drill is a bounded revive cache:** a drill whose entry
   completed and whose exit fade has finished is retained so a rapid zoom
   back into its window hands the exact marks back with no kernel round-trip
@@ -361,22 +452,171 @@ invariants so future kinds don't regress them:
   window, and the view being far from it is their normal transient state.
   A dying drill (kernel chose density) still frees via the exit fade as in
   T2, independent of geometry.
+- **T12 — a zoom inside an exact drill elides the request:** once a points
+  reply has shipped its window EXACTLY (`reduction: "none"` — Invariant L2's
+  subset IS every point in the window), any requested view contained in that
+  window is already answered by the marks on the GPU: the smaller window's
+  points are a subset of the shipped ones, so `_scheduleViewRequest` sends no
+  `density_view` for that trace and clears its pending markers
+  (`lodDrillServesView` in `js/src/45_lod.ts`, re-checked at debounced send
+  time so a drill landing or dying mid-debounce flips the decision). The seq
+  still bumps, so an in-flight reply for an older, wider view dies stale
+  instead of yanking exact marks out from under a view it cannot improve.
+  Two things re-arm the request: leaving the window (any edge, same epsilon
+  as `_viewInside`), and depth — the shipped geometry is f32, offset-encoded
+  around the window midpoint (dossier §16), so once the view span drops below
+  `LOD_DRILL_REENCODE_SPAN` (1/256) of the window span on either axis one
+  request goes out purely to re-center the encoding (at 2⁻⁸ of the window the
+  ~2⁻²⁴ encode quantum is still ≲0.1 px on a 4k-wide plot; the reply's
+  re-centered window then re-arms the elision around itself). A dying drill
+  never elides — the kernel chose a different representation and the reply
+  flow owns that transition. Data changes cannot serve stale marks through
+  the elision: streaming append and full payload updates rebuild the GPU
+  trace, which drops the drill and with it the elision. Non-exact replies
+  (anything but `reduction: "none"`, including replies that don't say) never
+  arm it.
+- **T13 — full-point windows are padded, aligned, cached, and never
+  re-requested:** T12's elision is only as good as the window it can elide
+  against, so both ends widen it. *Kernel side*, a points-tier reply ships
+  the largest ALIGNED window around the view whose exact count still fits
+  the budget (`interaction._padded_drill_window`): bounds snap outward to a
+  power-of-two grid over the trace's extent, per dimension
+  (`lod.aligned_window`), from a ladder of span targets
+  (`DRILL_PAD_TARGETS`, coarsest first, pyramid-count-gated then
+  exact-verified), floored at the raw view window. Alignment makes
+  consecutive pans resolve to the SAME window — dedupable, cacheable — and
+  neighboring windows tile; the padded span is hard-capped per axis
+  (`DRILL_PAD_SPAN_CAP`, well under the 1/256 re-encode bound) so the §16
+  offset encoding centered on the padded window can always be re-tightened
+  by a deeper zoom's re-encode request. Nonlinear-axis traces skip padding
+  (raw-space alignment mis-sizes log windows near zero) and keep the exact
+  view window. `visible` counts the SHIPPED window; `lod_blend` stays keyed
+  on the VIEW's own count — padding widens what ships, not what the user
+  sees. *Client side*, a points reply for a new window RETIRES the previous
+  exact drill into a bounded per-trace LRU (`g.drillCache`,
+  `LOD_POINT_CACHE_WINDOWS`) instead of overwriting its buffers, and so does
+  a drill that dies outside its window; any later view covered by a cached
+  window promotes it back (`lodPromoteCachedDrill` — alpha-continuous, brush
+  mask re-derived locally) with no wire message, so pan ping-pong and
+  zoom-out/zoom-in sequences render entirely from the GPU. Cached windows
+  obey the live drill's geometry-only memory discipline (T11): outgrown ⇒
+  freed on the frame, no kernel reply required (§27). Because promoted
+  windows carry retired `drill_seq`s, the kernel keeps a bounded subset
+  history (`Trace.drill_history`, `DRILL_HISTORY_KEEP`) so picks against a
+  recent retired window still translate exactly; expired seqs drop the pick
+  (§16 exact-or-nothing), and data changes clear the history. Finally, an
+  identical request never rides the wire twice: a `density_view` within half
+  an output texel per edge of the trace's last sent request (gesture-end and
+  settle emit sub-pixel twins; a grid shifted below half a texel is the same
+  picture) is suppressed — already answered ⇒ nothing to refresh (the reply
+  is deterministic for unchanged data; rebuilds reset the memo), still in
+  flight ⇒ the trace keeps waiting on the ORIGINAL request's seq and that
+  reply is accepted per-trace instead of dying to the global seq race
+  (bounded by the same 1200ms window as the T8 hold, so a lost reply can't
+  suppress forever).
 
-Any new tiered kind must state how it satisfies T1–T11 in its chart-kind
+  The AGGREGATE tier's own traffic is governed by a stronger rule, adopted
+  from field feedback on the 100M drilldown (a HAR showed ~2.7 MB
+  full-screen grids re-shipped on every pan/zoom step at 200–450% zoom for
+  what was the same aggregate with marginally different blur): **the
+  aggregate never refines.** Whatever density texture already covers the
+  view stands — however blurry — until the view could plausibly resolve
+  into REAL points; only then is a round-trip worth anything, and the
+  kernel answers it with exact points once the window's count fits the
+  budget. Blur at intermediate zooms is an accepted, recorded cost.
+  - **The points-band gate** (`lodAggregateStands`): a `density_view` goes
+    out only when the estimated in-view count sits within
+    `LOD_DIRECT_POINT_BUDGET × LOD_POINTS_REQUEST_BAND`. Two independent
+    estimators, LOWER wins (an over-estimate must never hold a view in blur
+    when either signal says points could be close): the smallest cached
+    density window CONTAINING the view (recorded `visible`, exact for its
+    window, area-scaled — seeded by the home texture's first-payload
+    count), and the retained deterministic sample counted in-view and
+    re-weighted by `visible/n` (`lodSampleViewCount`) — a fixed-rate
+    thinning of the whole trace, so it follows the data's ACTUAL
+    distribution where area-scaling assumes uniformity and over-estimates
+    sparse tails by orders of magnitude (~65 expected sample rows right at
+    the band ⇒ ±12% noise; kernel-attached clients never DRAW the sample,
+    T9 — estimating from it CPU-side is what it is retained for). A trace
+    with no recorded counts anywhere always requests. A fresh grid for an
+    already-cached window supersedes its unpinned twin
+    (`lodRememberDensity` dedupe), so the gate always reads current facts.
+    *Display side — the stepped ladder:* the aggregate sharpens in
+    QUANTIZED steps, never per view. While standing, the one density
+    request allowed is the next LADDER STEP window
+    (`lodAggregateStepWindow`): the view snapped outward to a
+    power-of-`LOD_AGG_STEP_FACTOR` block grid over the data extent, per
+    axis, at most `LOD_AGG_STEP_MAX` steps below home, requested only when
+    every covering texture is coarser than the step
+    (`LOD_AGG_STEP_SLACK`). Quantization makes step windows pan-stable and
+    dedupable — every view in a region resolves to the SAME window, pans
+    inside a step repaint nothing, revisits hit the cache — so a zoom sees
+    at most `LOD_AGG_STEP_MAX` smooth-to-smooth swaps before points, and
+    worst-case softness is bounded (≈ `LOD_AGG_STEP_FACTOR`× stretch per
+    axis) instead of unbounded home-stretch. Per-view refinement was the
+    recorded failure mode twice over: multi-MB re-ships per pan/zoom step
+    (the HAR), and fresh textures per view reading as jumping. A step
+    reply is the ONE density reply that may repaint a covered view
+    (matched against the marked request window, `g._stepReqWin`); every
+    other covered reply — the band probes above all — lands as a
+    facts-only cache entry (window + exact count,
+    `lodRememberDensityFacts`) that recalibrates this gate: the band's
+    exact grids have a hard speckled character (sparse cells at the
+    points' own §2 alpha), and repainting the smooth surface with one per
+    probe read as jumping between zoom levels (field capture). A reply for
+    an UNCOVERED view still applies — silence must never blank a frame
+    (T1) — and standalone clients apply everything (their re-binned grids
+    are the only refinement they have). Recorded trade-off: inside the
+    points band the raw-view probe takes the single request slot, so a
+    view can briefly outrun its ladder step until points land.
+  - **Source-clamped grids:** the transition-band replies that do go out
+    stay cheap — a pyramid-served reply never composes more cells than the
+    finest level resolves under the window
+    (`interaction._pyramid_source_shape`, `ceil(base·frac)+1` per axis); a
+    full-screen grid of upsampled base cells is the same picture at several
+    times the bytes, and the client's texture filtering reproduces the
+    upscale. Exact/spatial grids (true full-detail bins) keep screen
+    resolution.
+  - **One texture per frame (recorded reversal):** a fine-over-broad detail
+    layer — drawing the smallest cached texture overlapping the view on top
+    of the broad backdrop during pans — was tried and REVERTED: density
+    textures alpha-composite, so the overlap double-counts opacity, and
+    each window's texture is baked against its own eased normMax, so the
+    seam is also a brightness step (field capture: a stale darker
+    rectangle). Doing it right requires the backdrop scissored out of the
+    detail region plus a shared normalization across cached textures;
+    under the never-refines rule the case barely arises, so the tier draws
+    one texture per frame.
+
+Any new tiered kind must state how it satisfies T1–T13 in its chart-kind
 contract entry before it lands.
 
 ---
 
 ## 6. Implementation plan
 
-**Phase 1 — channel-truthful density (kernel+client, ~1 wk)**
-1. `bin_2d_channels` kernel: count + sum(channel) [+ top-k category counts]
-   in one pass (native Rust core).
-2. Wire mean/majority+purity grids through `density_view` and the initial
-   emit; extend DENSITY_FS to blend channel color over the count ramp with
-   the purity desaturation; count-floor uniform.
-3. Legend/badge rendering from spec facts; smoke probes: mean-cell color
-   correctness, purity desaturation, badge presence.
+**Phase 1 — channel-truthful density (kernel+client)**
+1. **Done:** `bin_2d_mean_color` kernel — per-cell count + alpha-weighted
+   linear-light color sums in one pass, straight-alpha RGBA8 mean-color grid
+   out (native Rust core; integer tables + integer sums, deterministic for
+   any thread count and across platforms). Color source is either per-point
+   LUT indices + a ≤256-entry RGBA8 LUT (continuous quantizes to the
+   client's 256 texels; categorical passes codes, wide codes fold modulo the
+   palette) or per-point straight RGBA8 (`direct_rgba`) —
+   `channels.resolve_bin_colors` maps every channel mode onto one of the two.
+2. **Done:** mean-color planes wired through the initial emit
+   (`_payload._density_trace_spec`), `density_view` (exact and pyramid
+   paths), the static SVG/PNG exporters, and the standalone re-bin worker;
+   DENSITY_FS gained the `u_meanColor` branch (premultiplied RGBA8 texture,
+   the §2 rule-1 physical alpha baked at upload so bilinear filtering
+   weights color by coverage); mean-color drills swap at native opacity
+   with no intensity handoff (§2 rule 5; count-only drills keep it).
+   The colorbar for a continuous channel now stays on density traces — the
+   surface really shows the channel's colors.
+3. Legend/badge rendering from spec facts (`color_agg`, `dropped_channels`)
+   remains a client work item; smoke probes for mean-cell color correctness
+   ship (`render_smoke_nonumpy.py` `meancolor`, `abi_smoke.py` mean-color
+   checks, `tests/test_density_mean_color.py` NumPy oracle).
 
 **Phase 2 — deterministic sampling utilities**
 4. **Done:** `lod.sample_keep_mask(row_ids, level)` SplitMix64 sampler +
@@ -385,26 +625,38 @@ contract entry before it lands.
    row-order independence, rare-category floors, validation,
    dtype-preserving saturation, and subset-monotonicity across levels and
    viewport narrowing.
-5. **Done for exact density views:** hybrid scatter mode renders density plus
-   deterministic sampled exact points, with a visible "sampled n of N" badge.
-   Pyramid-served density views still need tile-aware sample overlays so the
-   same anti-shimmer contract holds without rescanning raw rows. Until they
-   exist, a sample-less reply's window carries no overlay of its own and the
-   T9 window pairing serves the best cached window's sample instead (the
-   home overlay above all, so zoom-outs keep representative points), bounded
-   by the coverage fade when nothing covers the view.
+5. **Revised by #225 (resolvability gate, T9):** interactive density replies
+   no longer ship samples at all — a fixed-size sample above the drill budget
+   reads as individual data points at a zoom where real points are sub-pixel,
+   and the mean-color surface (§2) is the truthful stand-alone
+   representation. The retained first-payload sample remains (the standalone
+   re-bin worker's CPU source) and draws — with its "sampled n of N" badge —
+   only when the estimated in-view count fits the direct budget: kernel mode
+   ships real points before that, so the hybrid look is transient at most;
+   standalone exports surface it once a zoom resolves it; datasets under the
+   budget keep it everywhere. The deterministic-sampling utilities (item 4)
+   stay: the first-payload overlay and any future resolvable-tier subset are
+   built from them.
 
 **Phase 3 — pyramid (build + serve shipped; client cache and bench gate open)**
-6. **Done (count plane only):** `src/tiles.rs` builds a square count pyramid
-   over the trace's full data bounds — finest level is `PYRAMID_BASE_DIM`²
-   (2048², `python/xy/config.py`), each coarser level an exact 4→1 u64 sum
-   saturating to u32, so every level conserves total count. C ABI is
-   `xy_pyramid_build` / `xy_pyramid_append` / `xy_pyramid_count` /
-   `xy_pyramid_compose` / `xy_pyramid_free` (no per-tile fetch entry point;
-   composition happens kernel-side). Handles are slab indices behind a mutex,
-   cached per trace and built lazily by `interaction._ensure_pyramid` on the
-   first density view at ≥ `PYRAMID_MIN_POINTS` (2,000,000), released by a
-   weakref finalizer. Channel planes (§2, §4.1) are not built yet.
+6. **Done (count + mean-color planes):** `src/tiles.rs` builds a square count
+   pyramid over the trace's full data bounds — finest level is
+   `PYRAMID_BASE_DIM`² (2048², `python/xy/config.py`), each coarser level an
+   exact 4→1 u64 sum saturating to u32, so every level conserves total count.
+   Channel-bearing traces build the §4.1 mean-color planes alongside
+   (`xy_pyramid_build_color`, one fused scan — fan-out gated by the
+   points-per-cell ratio and capped at 4 workers, ~170 MB transient
+   accumulator each; +8 B/cell stored, ~45 MB/colored trace at the default
+   base, reported by `pyramid_report_bytes`) and serve them with
+   `xy_pyramid_compose_color`,
+   whose count grid is bit-identical to `xy_pyramid_compose`. C ABI is
+   `xy_pyramid_build` / `xy_pyramid_build_color` / `xy_pyramid_append` /
+   `xy_pyramid_count` / `xy_pyramid_compose` / `xy_pyramid_compose_color` /
+   `xy_pyramid_free` (no per-tile fetch entry point; composition happens
+   kernel-side). Handles are slab indices behind a mutex, cached per trace
+   and built lazily by `interaction._ensure_pyramid` on the first density
+   view at ≥ `PYRAMID_MIN_POINTS` (2,000,000), released by a weakref
+   finalizer; colored pyramids refuse appends and rebuild lazily (§4.1).
 7. **Done:** `density_view` estimates the window with `pyramid_count` and
    serves it with `pyramid_compose` when that estimate sits safely above the
    drill threshold; `compose` picks the coarsest level that still meets the
@@ -434,6 +686,11 @@ contract entry before it lands.
    nearest-neighbour filtering (`binning: "spatial-exact"`, `filter: "nearest"`)
    — no interpolation blur. Gated by an offsets-only `window_count` upper bound
    (`SPATIAL_EXACT_MAX_POINTS`); wider windows keep the instant upsampled pyramid.
+   Color-channelled traces skip this tier entirely: the index is position-only
+   (§27), so it can neither ship channels with a points drill nor bin the §2
+   mean-color plane — the upsampled *colored* pyramid grid stays (blurry but
+   truthful) rather than flipping to a count-only surface (recorded, dossier
+   §28 table).
 8. Client: tile-keyed cache replaces window-keyed `densityCache` (same
    eviction, same crossfades). Still pending — `js/src/45_lod.ts` keys the
    cache by density window, and no client code reads the served level.

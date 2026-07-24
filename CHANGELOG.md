@@ -34,6 +34,108 @@ in the README).
   `memory_report`), and `Chart.figure()` remains as an advanced escape hatch
   to the internal engine object.
 
+### Changed
+- **No sampled points above the resolution of the graph (#225).** Interactive
+  `density_view` replies no longer ship a point-sample overlay: a fixed-size
+  sample above the drill budget reads as individual data points at a zoom
+  where real points are sub-pixel, misrepresenting the dataset — the
+  mean-color density surface stands alone there. The retained first-payload
+  sample (also the standalone re-bin worker's CPU source) now draws only when
+  the view's estimated in-view count fits the direct point budget, i.e. when
+  individual points are actually resolvable; real points still ship the
+  moment a window fits the budget, so drilldown behavior is unchanged.
+- **Mean-color density surfaces composite like the points they aggregate
+  (LOD doc §2).** A channel-bearing cell's displayed alpha is now the
+  physical compositing of its own points — `1 − (1 − ā)^count` for mean
+  point alpha ā — instead of a per-window log-count tone curve. Lightness
+  no longer swings between windows or across the texture↔points boundary
+  (the aggregate is exactly as saturated as overplotted real marks), the
+  texture upload is normalization-free (no exposure re-uploads), and
+  mean-color drills swap at native opacity with no intensity handoff.
+  Count-only (constant-color) surfaces keep the log ramp — count is their
+  only structure. Same law in the client, the SVG/PNG exporters, and the
+  standalone re-bin worker.
+- **The aggregate tier no longer refines; density requests only probe the
+  points band (LOD doc T13).** Whatever density texture already covers the
+  view stands — however blurry — until the estimated in-view count comes
+  within `LOD_POINTS_REQUEST_BAND ×` the direct budget; only then does a
+  `density_view` go out, and the kernel answers with exact points once the
+  count fits. The estimate takes the lower of an area-scaled cached-window
+  count and the retained first-payload sample counted in-view — the sample
+  follows the data's actual distribution, so sparse regions reach their
+  points without being stranded in blur by uniform-density assumptions.
+  Display-side, the aggregate sharpens in QUANTIZED ladder steps between
+  home and points (`LOD_AGG_STEP_FACTOR`/`LOD_AGG_STEP_MAX`: the view
+  snapped outward to a power-of-4 block grid over the extent, at most two
+  steps) — pan-stable, dedupable windows, so a zoom sees at most two
+  smooth-to-smooth texture swaps and worst-case softness is bounded at
+  ~4× stretch per axis. A step reply is the only density reply that may
+  repaint a covered view; mid-band probe replies (the band's exact grids
+  have a speckled character that read as zoom-level jumping against the
+  smooth standing surface) land as facts-only cache entries for the gate.
+  Replies for uncovered views still apply, and standalone clients keep
+  applying everything. A 100M-scatter field capture had shipped a ~2.7 MB full-screen
+  grid on every pan/zoom step (including sub-pixel window twins, now deduped
+  within half an output texel) for what was the same aggregate with
+  marginally different blur; intermediate-zoom blur is the accepted,
+  recorded cost. Transition-band replies that do go out are clamped to the
+  pyramid's source resolution — never more cells than the finest level
+  resolves under the window. Kernel-attached clients also no longer draw the
+  retained first-payload sample at any zoom (resolvable views get real
+  points, not retained sample rows); it remains the standalone client's
+  fallback, gated by resolvability. A tried fine-over-broad texture layering
+  was reverted (recorded): density textures alpha-composite, so overlaps
+  double-count opacity, and per-window normalization makes the seam a
+  brightness step.
+- **Full-point windows are padded, aligned, cached, and never re-requested
+  (LOD doc T13).** A points-tier reply now ships the largest aligned window
+  around the view whose exact count still fits the budget (bounds snapped to
+  a power-of-two grid over the trace's extent, per dimension), so consecutive
+  pans resolve to the same window; the client retires replaced exact windows
+  into a bounded per-trace cache and promotes them back — pan ping-pong and
+  zoom-out/zoom-in render entirely from the GPU with zero round-trips. Picks
+  against a promoted (older) window still resolve exactly through a bounded
+  kernel-side subset history. Identical `density_view` requests (same window,
+  same screen, unchanged data) are suppressed client-side, and a suppressed
+  duplicate's in-flight reply is accepted instead of dying to the seq race.
+- **Density surfaces now wear the data's own colors (LOD doc §2).** A Tier-2
+  scatter's aggregated view colors each cell with the alpha-weighted **mean of
+  its binned points' resolved colors** (continuous colormap, categorical
+  palette, and direct-RGBA channels alike; averaged in linear light through a
+  deterministic integer pipeline), while the binned **count now drives only
+  the alpha channel** — more points, deeper color; fewer points, lighter.
+  Previously the count itself was colormapped, so a colored scatter's density
+  view matched neither its points nor its legend and every density⇄points
+  zoom transition recolored the chart. The wire ships a per-cell RGBA plane
+  (`density.rgba`, recorded as `color_agg: "mean"`); constant-color traces
+  keep the compact count-only grid and a client-side tint. The count pyramid
+  gained matching mean-color planes (`xy_pyramid_build_color` /
+  `xy_pyramid_compose_color`; colored pyramids refuse in-place appends and
+  rebuild lazily, and their base scan fans out ≤4 workers so a 100M-point
+  build lands in about a quarter of the time), the SVG/PNG exporters and the
+  standalone `to_html` re-bin worker follow the same law, and the drill
+  handoff is now intensity-only — drilled points arrive in their native
+  colors (`density_colormap` left the points wire), and the aggregate
+  backdrop retires once a drill settles inside its window (T10), returning
+  the moment the view leaves it or a refinement goes pending. The color
+  channel is no longer listed in `dropped_channels` at Tier 2, and a
+  continuous-channel density scatter renders its colorbar again. C ABI v40
+  (`xy_bin_2d_mean_color` + pyramid color entry points).
+- **The FastAPI live-drilldown example is a thin transport over the engine.**
+  Every window is served through `Figure.density_view` (mean-color pyramid
+  warmed at startup); the demo's pre-pyramid density machinery — an
+  integral-image overview server-side and ~350 lines of page JS (local
+  re-bins, request parking, per-client staleness maps), all count-only — is
+  gone, and the page JS is a POST transport plus a status badge. Round-trip
+  replies ship as `XYBF` binary frames (wire-protocol §7) instead of
+  base64-in-JSON.
+- **Zooms inside an exact drill window skip the kernel round-trip (T12).**
+  Once a points reply has shipped its window exactly (`reduction: "none"`),
+  the client answers any contained view from the marks it already holds and
+  sends no `density_view` request, until the view leaves the window, the
+  drill dies, or the zoom is deep enough (1/256 of the window span) to need
+  a §16 re-centered f32 encoding.
+
 ### Added
 - **Export format parity and a unified export API (ENG-10447).**
   `to_image(format=...)` and extension-inferred, atomic `write_image(path)`

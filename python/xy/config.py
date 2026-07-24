@@ -23,13 +23,17 @@ DECIMATION_THRESHOLD = 10_000
 
 # Scatter above this many points switches to Tier-2 density aggregation (§5):
 # instead of shipping/drawing every point (fill-rate + the ~1 GB single-alloc
-# cliff, §5 F3), the kernel bins the viewport into a density grid and the client
-# colormaps it. Screen-bounded transport and VRAM regardless of point count.
+# cliff, §5 F3), the kernel bins the viewport into a density grid the client
+# draws with the trace's own colors, composited at the points' own alpha
+# (LOD doc §2; count-only surfaces keep the log count ramp). Screen-bounded
+# transport and VRAM regardless of point count.
 SCATTER_DENSITY_THRESHOLD = 200_000
 
 # Absolute direct-draw ceiling; above this, density is forced even if the user
-# asked for per-point channels (they can't survive count-aggregation without the
-# §5-F5 aggregation algebra — we warn and drop them, never silently mislead).
+# asked for per-point channels. The color channel survives as the surface's
+# per-cell mean point color (LOD doc §2); the rest (size, stroke, styles) have
+# no honest per-cell aggregate yet (§5 F5) — we warn and drop them, never
+# silently mislead.
 DIRECT_SOFT_CEILING = 2_000_000
 
 # Stable-key matching retains a browser-side identity table for only bounded
@@ -61,11 +65,40 @@ DRILL_EXIT_FACTOR = 1.15
 # static and re-ship large; a few points per cell keeps drill-out continuous.
 DENSITY_TARGET_POINTS_PER_CELL = 16.0
 
-# Hybrid density overlay (§5): when scatter is aggregated, ship a small,
-# deterministic sample of real points over the density texture. This keeps
-# zoomed-out views from becoming pure heatmaps while staying payload-bounded.
+# Deterministic point sample retained with the FIRST density payload only
+# (§28/#225): interactive density_view replies ship no samples at all — the
+# density surface already wears the data's own colors (LOD doc §2), and real
+# points arrive the moment a window fits the budget. Kernel-attached clients
+# never DRAW the retained sample either (a fixed-size sample reads as
+# individual data points at zooms where real points are sub-pixel or one
+# request away); they use it CPU-side as the distribution-true estimator for
+# the points-band request gate (LOD doc T13, `lodSampleViewCount`). The
+# standalone (kernel-less) client keeps it as its re-bin worker's CPU source
+# and draws it below the resolvable-count gate, where it is the only point
+# representation that build will ever have.
 DENSITY_SAMPLE_TARGET = 8_192
 DENSITY_SAMPLE_SEED = 0
+
+# Padded drill windows (LOD doc T13): a points-tier reply ships the largest
+# ALIGNED window around the view whose exact count still fits the budget, so
+# the client's window cache answers nearby pans/zooms with zero round-trips.
+# Ladder of padded-span targets (× the view span), coarsest first; bounds snap
+# outward to a power-of-two grid over the trace's extent (lod.aligned_window),
+# making consecutive pans resolve to the SAME window.
+DRILL_PAD_TARGETS = (8.0, 4.0, 2.0)
+# Hard per-axis cap on the padded span (× the view span). Must stay well under
+# the client's §16 re-encode bound (1/256 of the window span): the shipped
+# offset encoding centers on the padded window, and a window unboundedly wider
+# than the view would let deep zooms outrun f32 precision before the re-encode
+# request re-arms.
+DRILL_PAD_SPAN_CAP = 64.0
+
+# Recent drilled subsets kept resolvable for picks (LOD doc T13): the client
+# may serve a view from a retired cached point window whose drill_seq is no
+# longer current; translating through the remembered subset keeps hover exact
+# instead of dead. Bounded — anything older resolves to None, never to a
+# wrong row (§16 exact-or-nothing).
+DRILL_HISTORY_KEEP = 8
 
 # CVD-safe default categorical palette (§20/§36 default theme). Eight slots in
 # a fixed order; charts render on unknown host surfaces, so every step sits in

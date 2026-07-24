@@ -61,13 +61,34 @@ produces no traces, there is no reply at all (silence, not an empty message).
 **`density_view`** — one request per density-tier trace, each naming its
 `trace` id. `w` defaults to `512`, `h` to `384`; the client sends the rounded
 plot width and height. A trace that is not in density mode yields
-`{"traces": []}`, which is dropped rather than sent.
+`{"traces": []}`, which is dropped rather than sent. Not every view change
+produces a request: a view fully contained in an exact shipped window — the
+live drill's, or a retired cached point window the client promotes back — is
+elided client-side (`reduction: "none"` means the subset already holds every
+point of any contained view; LOD doc §5 T12/T13). The elision ends, and one
+request goes out purely to re-center the §16 f32 offset encoding, once the
+view span drops below 1/256 of the drilled window's span on either axis.
+A request within half an output texel per edge of the trace's last sent
+request (same screen size) is also suppressed (T13): if that request was
+already answered there is nothing to refresh (replies are deterministic for
+unchanged data; data changes rebuild the GPU trace and reset the memo), and
+if it is still in flight the trace keeps waiting on the original request's
+`seq`, whose reply is then accepted per-trace instead of dying to the global
+seq race. More fundamentally, the aggregate tier never refines (LOD doc T13,
+revised): a `density_view` goes out only when the estimated in-view count —
+the smallest cached window containing the view, area-scaled, seeded by the
+first payload's recorded count — sits within the points band
+(`LOD_DIRECT_POINT_BUDGET × LOD_POINTS_REQUEST_BAND`). Outside that band the
+covering texture stands, however blurry; traces with no recorded counts
+always request.
 
 **`pick`** — `trace` and `index` pass through `_integer_id`. `index` is a
 *shipped-vertex* index, translated kernel-side to a canonical row when the
 shipped copy dropped non-finite rows. `drill_seq`, when present, is the drill
-subset version the client picked against; a mismatch resolves to `row: null`
-rather than to a row in a dead index space.
+subset version the client picked against; a non-current seq translates
+through the kernel's bounded subset history when it is still remembered (the
+client may be drawing a retired cached point window, LOD doc T13) and
+resolves to `row: null` otherwise — never to a row in a dead index space.
 
 **`click`** — same fields and same `fig.pick` resolution as `pick`, minus
 `seq`; it fires `on_click` and returns nothing.
@@ -121,28 +142,53 @@ message unless `msg.seq === this.seq`.
 states which representation this view resolved to:
 
 - `mode: "density"` — `{id, mode, tier, visible, reduction, binning, density}`.
-  `density` is `{buf, w, h, max, enc: "log-u8", x_range, y_range}` plus
-  optional `color` (a constant-channel color) and `sample` (the retained
-  point-sample overlay). `binning` is `"exact"` or `"pyramid-L<level>"`.
-  `x_range`/`y_range` are raw data endpoints, but the grid's cells are
-  **uniform in the axis's scale coordinates** (identical to raw on a linear
-  axis): on a log/symlog axis the kernel bins transformed values so every
-  cell covers the same strip of screen, and renderers interpolate cell edges
-  between the *transformed* endpoints (dossier §28). The raw-space tile
-  pyramid cannot compose such a grid, so nonlinear-axis traces always report
-  `binning: "exact"`.
+  `density` is `{buf, w, h, max, enc: "log-u8", x_range, y_range}` plus, for
+  channel-bearing traces, `rgba` (a `w*h*4` straight-alpha RGBA8 plane: each
+  occupied cell's alpha-weighted **mean point color**, averaged in linear
+  light, plus the cell's mean point alpha) with `color_agg: "mean"` recording
+  the aggregation (LOD doc §2); constant-color traces ship `color` (the
+  constant) instead and no color plane — the mean of a constant IS the
+  constant, so the client tints the count texture. Count always rides `buf`
+  as log-u8 and drives only the drawn **alpha**; renderers must never
+  colormap counts when either color source is present. Interactive replies
+  ship **no `sample`** (#225): the only retained point-sample overlay is the
+  first-payload one, and the client draws it solely below the T9
+  resolvable-count gate (a client still accepts a legacy reply-borne `sample`
+  and gates it the same way). `binning` is `"exact"` or
+  `"pyramid-L<level>"`. Pyramid-served grids are **clamped to source
+  resolution** — never more cells per axis than the finest level resolves
+  under the window (a full-screen grid of upsampled cells is the same
+  picture at several times the bytes; the client's texture filtering does
+  the upscale). Exact and spatial grids are true full-detail bins at screen
+  resolution. `visible` — the window's point count — is the fact the
+  client's points-band gate scales to decide whether any later view is
+  worth a request at all (LOD doc T13). `x_range`/`y_range` are raw data endpoints, but the
+  grid's cells are **uniform in the axis's scale coordinates** (identical to
+  raw on a linear axis): on a log/symlog axis the kernel bins transformed
+  values so every cell covers the same strip of screen, and renderers
+  interpolate cell edges between the *transformed* endpoints (dossier §28).
+  The raw-space tile pyramid cannot compose such a grid, so nonlinear-axis
+  traces always report `binning: "exact"`.
 - `mode: "points"` — the deep-zoom drill:
   `{id, mode, tier: "direct", visible, reduction: "none", x_range, y_range,
-  x, y, color, size, density_val, lod_blend, density_colormap, drill_seq,
-  style}`. `x_range`/`y_range` are the window these points cover; the client
-  falls back to the density overview the moment the view leaves it.
+  x, y, color, size, density_val, lod_blend, drill_seq, style}`.
+  `x_range`/`y_range` are the window these points cover — usually a padded
+  ALIGNED superset of the requested view (LOD doc T13; the raw view window on
+  nonlinear axes or when no padding fits the budget) — and the client falls
+  back to the density overview the moment the view leaves it. `visible`
+  counts the points of the SHIPPED window; `lod_blend` stays keyed on the
+  requested view's own count. `density_val` (per-point local log-density) and
+  `lod_blend` drive the intensity-only handoff: hue is continuous by
+  construction because the aggregate surface wears the mean point color, so
+  no `density_colormap` field rides this message (clients ignore one if
+  present).
 
   Channel encodings on this (and the sampled-overlay) live wire: `x`/`y` are
   offset-encoded f32 (position precision is load-bearing, dossier §16), but
-  every unit-scalar channel — continuous `color`, continuous `size`,
-  `density_val` — ships as **u8 LUT coordinates** with a `dtype: "u8"`
-  marker (absent means f32; the client accepts both), and categorical color
-  ships u8 codes. The quantization is safe precisely because these values are
+  every unit-scalar channel — continuous `color` and `size` (LUT/ramp
+  coordinates), `density_val` (the handoff weight) — ships quantized to
+  **u8** with a `dtype: "u8"` marker (absent means f32; the client accepts
+  both), and categorical color ships u8 codes. The quantization is safe precisely because these values are
   never read back into displayed numbers on a live path: hover/pick answers
   come from the kernel's canonical columns (`pick_result` above). The *build*
   payload keeps continuous channels as unit f32 — the client retains those

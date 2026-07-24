@@ -2570,6 +2570,30 @@ def _grid_image(
     )
 
 
+def _physical_density_alpha(counts: Any, mean_alpha_u8: Any, style_opacity: float) -> Any:
+    """Displayed alpha of a mean-color density cell (LOD doc §2 rule 1).
+
+    The physical compositing of the cell's own points — ``1 − (1 − a_pt)^k``
+    for k points whose drawn per-point alpha is ``a_pt = channel alpha ×
+    style opacity`` — so the surface and real marks agree on lightness at
+    every zoom. Style opacity folds INSIDE the exponent: dense cells
+    saturate past it exactly like overplotted marks do. The same law as the
+    client's texture upload (``lodWriteGridTexture``); shared by the SVG and
+    native-raster exporters. Returns u8; empty or all-invisible cells are 0.
+    """
+    counts = np.asarray(counts, dtype=np.float64)
+    a8 = np.asarray(mean_alpha_u8)
+    a_pt = np.clip((a8.astype(np.float64) / 255.0) * float(style_opacity), 0.0, 1.0)
+    coverage = np.zeros(a_pt.shape, dtype=np.float64)
+    saturated = a_pt >= 1.0
+    partial = ~saturated & (a_pt > 0.0)
+    coverage[partial] = -np.expm1(counts[partial] * np.log1p(-a_pt[partial]))
+    coverage[saturated] = 1.0
+    alpha = (np.clip(coverage, 0.0, 1.0) * 255.0).astype(np.uint8)
+    alpha[(counts <= 0) | (a8 == 0)] = 0
+    return alpha
+
+
 def _density_image(
     d: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict, svg: _Svg
 ) -> str:
@@ -2577,7 +2601,22 @@ def _density_image(
     grid = _density_column(blob, cols[d["buf"]], d).reshape(h, w)
     gmax = float(d.get("max") or 1.0) or 1.0
     tnorm = np.clip(grid / gmax, 0.0, 1.0)
-    paint_alpha = 1.0
+    if d.get("rgba") is not None:
+        # Mean point color per cell (LOD doc §2): rgb from the shipped plane;
+        # displayed alpha is the PHYSICAL compositing of the cell's points —
+        # 1 − (1 − a_pt)^count for drawn per-point alpha a_pt = channel alpha
+        # × style opacity (folded INSIDE the exponent: dense cells saturate
+        # past the style opacity exactly like overplotted marks). Same law as
+        # the client's texture upload.
+        meta = cols[d["rgba"]]
+        mean = np.frombuffer(
+            blob, dtype=np.uint8, count=meta["len"], offset=meta["byte_offset"]
+        ).reshape(h, w, 4)
+        rgb = mean[..., :3]
+        alpha = _physical_density_alpha(grid, mean[..., 3], _fill_opacity(style, 0.85))
+        rgba = np.dstack([rgb, alpha])[::-1].tobytes()  # flip: PNG rows are top-first
+        return _grid_image(w, h, rgba, d["x_range"], d["y_range"], sx, sy)
+    paint_alpha: float = 1.0
     if d.get("color") is not None:
         red, green, blue, alpha8 = _paint_rgba8(d["color"])
         rgb = np.empty((h, w, 3), dtype=np.uint8)

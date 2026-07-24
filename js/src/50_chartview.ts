@@ -3,7 +3,7 @@ import { buildLutData, colormapStops } from "./10_colormaps";
 import { cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
 import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
-import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
+import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodDropPointCache, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
 
 // ---------------------------------------------------------------------------
@@ -1721,9 +1721,12 @@ export class ChartView {
     const items = [];
     if (s.show_legend !== false) {
       for (const t of s.traces) {
-        if (t.tier === "density") {
-          items.push({ swatch: "gradient", cmap: t.density.colormap, name: t.name || "density" });
-        } else if (t.color && t.color.mode === "categorical") {
+        // A density-tier surface encodes count as alpha and wears the mean
+        // point color (LOD doc §2), so it gets no colormap gradient swatch —
+        // a gradient would claim color == density. A named density trace
+        // falls through to the plain marker swatch below, matching the
+        // static SVG/raster exporters.
+        if (t.color && t.color.mode === "categorical") {
           t.color.categories.forEach((cat, i) =>
             items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} }));
         } else if (t.color && t.color.mode === "continuous") {
@@ -2095,14 +2098,26 @@ export class ChartView {
       const meta = this.spec.columns[d.buf];
       const raw = this._columnView(buffer, meta);
       const grid = d.enc === "log-u8" ? lodDecodeLogU8(raw, d.max) : raw;
+      // Mean point color plane (LOD doc §2), copied because exposure
+      // re-encodes outlive the payload buffer; absent for constant-color
+      // traces, which tint the count texture instead.
+      const rgba = d.rgba !== undefined
+        ? new Uint8Array(this._columnView(buffer, this.spec.columns[d.rgba]))
+        : null;
       g.densityNormMax = d.max;
       const filter = d.filter || "linear";
       g.density = {
         w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
         color: d.color ? parseColor(this.root, d.color, [0.3, 0.47, 0.66, 1]) : null,
         xRange: d.x_range, yRange: d.y_range,
-        grid: lodCopyGrid(grid), filter,
-        tex: this._uploadGrid(grid, d.w, d.h, d.max, filter),
+        // The home window's count seeds lodAggregateStands (T13): every
+        // zoom's points-band estimate starts from this until a closer
+        // window's reply recalibrates it.
+        visible: t.visible,
+        grid: lodCopyGrid(grid),
+        rgba,
+        filter,
+        tex: this._uploadGrid(grid, d.w, d.h, d.max, rgba, filter, this._fillOpacity(t.style)),
         lut: this._lut(d.colormap),
       };
       g.sampleOverlay = this._buildDensitySample(t, d.sample, buffer);
@@ -2849,10 +2864,10 @@ export class ChartView {
     return tex;
   }
 
-  _uploadGrid(f32, w, h, maxVal, filter) {
+  _uploadGrid(f32, w, h, maxVal, rgba = null, filter = "linear", pointAlpha = 1) {
     const gl = this.gl;
     const tex = gl.createTexture();
-    lodWriteGridTexture(gl, tex, f32, w, h, maxVal, filter);
+    lodWriteGridTexture(gl, tex, f32, w, h, maxVal, rgba, filter, pointAlpha);
     return tex;
   }
 
@@ -3245,10 +3260,12 @@ export class ChartView {
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
       gl.uniform1i(u("u_lut"), 0);
     }
-    // Drill handoff (§5): blend from the density ramp toward native colors.
-    // The shown weight eases toward the kernel's target so successive drill
-    // updates recolor smoothly instead of stepping. Time-based decay (τ=90ms)
-    // — a per-frame factor would converge 2.4× faster on a 144Hz display.
+    // Drill handoff (§5): blend from the aggregate's local count-alpha toward
+    // native opacity (hue already matches — the texture wears the mean point
+    // color, LOD doc §2). The shown weight eases toward the kernel's target
+    // so successive drill updates re-weight smoothly instead of stepping.
+    // Time-based decay (τ=90ms) — a per-frame factor would converge 2.4×
+    // faster on a 144Hz display.
     const blendTarget = g.lodBlend ?? 0;
     let blend = g.lodBlendShown ?? blendTarget;
     if (Math.abs(blend - blendTarget) > 0.005 && !this._prefersReducedMotion()) {
@@ -3263,12 +3280,7 @@ export class ChartView {
       g._blendTick = 0;
     }
     gl.uniform1f(u("u_dblend"), blend);
-    const blendOn = blend > 0.001 && g.dBuf && g.dlut;
-    if (blendOn) {
-      gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, g.dlut);
-    }
-    gl.uniform1i(u("u_dlut"), 1); // sampler must always point at a valid unit
+    const blendOn = blend > 0.001 && g.dBuf;
 
     this._bindVao(
       g,
@@ -3441,7 +3453,18 @@ export class ChartView {
       this._axisCoord(xAxis, d.xRange[0]), this._axisCoord(xAxis, d.xRange[1]),
       this._axisCoord(yAxis, d.yRange[0]), this._axisCoord(yAxis, d.yRange[1]),
     );
-    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * opacityScale);
+    // Mean-color textures bake the style opacity INSIDE their physical
+    // compositing (LOD doc §2 rule 1 — dense cells saturate past it exactly
+    // like overplotted marks), so the uniform carries only the transition
+    // fades for them; count-only grids keep style opacity here as before.
+    gl.uniform1f(
+      u("u_opacity"),
+      (d.rgba ? 1 : this._fillOpacity(g.trace.style)) * opacityScale,
+    );
+    // Mean-color grids carry their colors in the texture (LOD doc §2);
+    // count-only grids tint with the constant trace color or, failing that,
+    // fall back to the LUT ramp (hand-built/legacy specs).
+    gl.uniform1i(u("u_meanColor"), d.rgba ? 1 : 0);
     const constant = d.color;
     gl.uniform1i(u("u_constantColor"), constant ? 1 : 0);
     gl.uniform4f(u("u_color"), ...(constant || [1, 1, 1, 1]));
@@ -5073,6 +5096,7 @@ export class ChartView {
   _destroyTraceResources(g, texSeen) {
     if (!g) return;
     this._destroyDensitySample(g);
+    lodDropPointCache(this, g); // retired point windows die with the trace (T13)
     this._deleteVaos(g);
     this._deleteVaos(g.drill);
     this._deleteBuffers(g, [
@@ -5082,7 +5106,9 @@ export class ChartView {
       "_transitionPrevXBuf", "_transitionPrevYBuf",
       "_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",
     ]);
-    this._deleteBuffers(g.drill, ["xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "dBuf"]);
+    this._deleteBuffers(g.drill, [
+      "xBuf", "yBuf", "cBuf", "rgbaBuf", "sBuf", "styleBuf", "strokeBuf", "selBuf", "dBuf",
+    ]);
     const textures = [];
     if (g.heatmap) textures.push(g.heatmap.tex);
     for (const d of g.densityCache || []) textures.push(d && d.tex);

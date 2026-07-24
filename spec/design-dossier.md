@@ -48,8 +48,10 @@ Every claim in this dossier is **mode-scoped and testable** — no universal num
 **Outstanding work (F4–F12), the honest to-do list:**
 - **F4** — per-trace f32 offsets (a single viewport origin can't serve traces at wildly
   different coordinate magnitudes). *Augments §4/§16.*
-- **F5** — aggregation algebra for color-by-category / mean / non-count reductions
-  (Tier-2 currently assumes a scalar density). *Augments §5.*
+- **F5** — aggregation algebra for per-point color: **shipped as mean point color**
+  (Tier-2 surfaces wear the per-cell alpha-weighted mean of the resolved point
+  colors, count drives only the alpha — LOD doc §2). Non-color reductions
+  (mean/max of arbitrary value channels as *data*, size) remain unmodeled. *Augments §5.*
 - **F6** — per-*view* colormap normalization domain (else zoom flickers brightness).
   *Augments §5.*
 - **F7** — streaming into the pyramid: `+=`/`-=` across levels; min/max tiles need
@@ -282,7 +284,10 @@ the visible x-range on zoom. Turns 100M points into ~a few thousand drawn vertic
 with no visible difference.
 
 **Tier 2 — multiresolution aggregation (datashader-style, but tiled):** for massive
-scatter and heatmaps, don't draw points — draw a colormapped **density texture**.
+scatter and heatmaps, don't draw points — draw a **density texture** that wears the
+data's own colors: per cell, the alpha-weighted mean of the resolved point colors,
+with the log-tone-mapped count as the alpha channel (LOD doc §2). Constant-color
+traces reduce to a count texture tinted with the constant.
 
 The naive version ("bin all points into a screen-sized texture") is *not* "O(points)
 once": the bin grid depends on the viewport, so every pan/zoom would re-bin the whole
@@ -317,8 +322,11 @@ served upsampled from the finest level — an O(N) rescan of a 100 GB+ mmap is n
 interactive, and past 2³²−1 rows the per-row index kernels would overflow u32 anyway.
 Those traces also get a finer finest level (adaptive `~sqrt(N/target)`, capped
 `PYRAMID_MAX_DIM` = 16384²) so the upsampled floor stays as sharp as memory allows.
-Level and mode are recorded per update (`binning: "pyramid-L<l>[-upsampled]"`). Only the
-`count` plane exists; the per-channel `sum` / `argmax+purity` planes above are not built.
+Level and mode are recorded per update (`binning: "pyramid-L<l>[-upsampled]"`).
+Channel-bearing traces build mean-color planes alongside the counts
+(`xy_pyramid_build_color` / `_compose_color`, LOD doc §2/§4.1 — same level, same
+`max_upsample`, both compose regimes; colored pyramids refuse `_append` and rebuild
+lazily), so pyramid-served views wear the data's own colors at any zoom.
 
 *Windowed-exact tier for out-of-core scatter (`python/xy/_spatial.py`):* the pyramid's
 upsampled floor is blocky at metro/city zoom (its finest cell is kilometres wide over a
@@ -342,6 +350,11 @@ tier keyed on the *actual* in-window count:
   and uploaded **nearest-neighbour** — no coarser grid stretched over the viewport, so no
   upscale blur and no pixelation. The upsampled pyramid keeps `linear` (smooth aggregate);
   the choice rides the wire as `density.filter`.
+- The whole windowed-exact tier is gated to traces **without a color channel**: the
+  position-only index cannot bin the LOD doc §2 mean-color plane, and a count-only
+  surface the shader colormaps is exactly what §2 retired. A color-channelled trace
+  keeps its upsampled *colored* pyramid grid instead — blurry beats mis-colored (§28,
+  recorded per update by the `binning` value).
 
 The sorted columns are a derived **f32** cache (§27: canonical stays f64, every derived
 buffer is rebuildable). *Pending:* tiling proper (per-tile build, fetch, and pan-time reuse), so
@@ -397,15 +410,21 @@ re-exports several of them as a historic import path and is not listed for those
 | `PROTOCOL_VERSION` | `3` | Wire-spec version stamped on every payload; the client refuses a mismatch loudly (§33). | `_payload.py` |
 | `DECIMATION_THRESHOLD` | `10_000` | Line/area traces with more points than this ship M4-decimated (Tier 1); at or below, raw columns go over the wire. Also gates re-decimation on the interaction path. | `_payload.py`, `interaction.py` |
 | `SCATTER_DENSITY_THRESHOLD` | `200_000` | Tier-0 → Tier-2 count budget for a scatter with **no** per-point channel (`Trace.use_density()`), and the visible-count budget for view-LOD planning and drill decisions. | `_trace.py`, `interaction.py`; mirrored client-side as `LOD_DIRECT_POINT_BUDGET` in `js/src/45_lod.ts` |
-| `DIRECT_SOFT_CEILING` | `2_000_000` | Tier-0 → Tier-2 count budget for a scatter that **does** carry a per-point color or size channel; above it density is forced and the channels are warned about, never silently dropped (§5 F5). | `_trace.py`, `marks.py` |
+| `DIRECT_SOFT_CEILING` | `2_000_000` | Tier-0 → Tier-2 count budget for a scatter that **does** carry a per-point color or size channel; above it density is forced and warned about — the color channel aggregates to the surface's per-cell mean point color (LOD doc §2), every other per-item channel is dropped and named, never silently (§5 F5). | `_trace.py`, `marks.py` |
 | `DENSITY_GRID` | `(512, 384)` | Default density-grid cell dimensions for the initial spec, before the client requests a viewport-matched size via `density_view`. | `_payload.py` |
 | `MAX_SCREEN_DIM` | `4096` | Upper clamp on any browser-supplied pixel dimension, so untrusted widget/comm input cannot inflate decimation buckets or density grids. | `lod.py`, `_native.py` |
 | `MAX_CONTOUR_WORK` | `4_000_000` | Ceiling on contour `cells × levels`; a request over it raises instead of allocating an unbounded segment buffer. | `marks.py`, `_native.py` |
 | `DRILL_EXIT_FACTOR` | `1.15` | Hysteresis multiplier on the drill boundary: a trace already drilled to real points stays drilled until the visible count exceeds `budget × 1.15`. | `lod.py` (`drill_decision`, `plan_view_lod`), `interaction.py`; mirrored as `LOD_DRILL_EXIT_FACTOR` in `js/src/45_lod.ts` |
 | `DENSITY_TARGET_POINTS_PER_CELL` | `16.0` | Target points per cell when sizing an aggregation grid, so a barely-over-budget view does not get a one-point-per-pixel grid that looks like static and re-ships large. | `lod.py` |
-| `DENSITY_SAMPLE_TARGET` | `8_192` | Size of the deterministic real-point sample shipped over an aggregated scatter's density texture (hybrid overlay). | `_payload.py`, `interaction.py` |
-| `DENSITY_SAMPLE_SEED` | `0` | Seed for that sample; a fixed seed makes the overlay identical across re-ships of the same view. | `_payload.py`, `interaction.py` |
-| `LOD_SAMPLE_FADE_COVER_HI` / `LOD_SAMPLE_FADE_COVER_LO` | `1/4` / `1/32` | Fallback bound on the hybrid-overlay sample (T9): overlays ride their density windows and the drawn one is the best cached window covering the view (full alpha), so the band only governs a view NO cached window covers — the best partial draws at full alpha while its window covers ≥ 1/4 of the view area, hidden below 1/32, log-eased between. The band value is a *composited* opacity target (per-point alpha solved against the expected overplot, `1−(1−band)^(1/k)`), so a partial overlay can never overplot into a false cluster. | `js/src/45_lod.js` (`lodSampleViewAlpha`, `lodSampleForView`) |
+| `DENSITY_SAMPLE_TARGET` | `8_192` | Size of the deterministic real-point sample retained with the FIRST density payload only (#225: interactive density replies ship no samples; the client draws the retained overlay solely below the T9 resolvable-count gate, and the standalone re-bin worker keeps it as its CPU source). | `_payload.py` |
+| `DENSITY_SAMPLE_SEED` | `0` | Seed for that sample; a fixed seed makes the overlay identical across re-ships of the same view. | `_payload.py` |
+| `LOD_SAMPLE_FADE_COVER_HI` / `LOD_SAMPLE_FADE_COVER_LO` | `1/4` / `1/32` | Fallback bound on the retained sample overlay (T9): overlays ride their density windows and the drawn one is the best cached window covering the view (full alpha), so the band only governs a view NO cached window covers — the best partial draws at full alpha while its window covers ≥ 1/4 of the view area, hidden below 1/32, log-eased between. The band value is a *composited* opacity target (per-point alpha solved against the expected overplot, `1−(1−band)^(1/k)`), so a partial overlay can never overplot into a false cluster. Every candidate first passes the #225 resolvability gate (estimated in-view count ≤ the direct budget). | `js/src/45_lod.ts` (`lodOverlayResolvable`, `lodSampleViewAlpha`, `lodSampleForView`) |
+| `DRILL_PAD_TARGETS` | `(8, 4, 2)` | Ladder of padded-span targets (× the view span) for points-tier replies: the coarsest ALIGNED window around the view whose exact count fits the budget ships, so the client's point-window cache answers nearby pans/zooms with zero round-trips (LOD doc T13). | `interaction.py` (`_padded_drill_window`), `lod.py` (`aligned_window`) |
+| `DRILL_PAD_SPAN_CAP` | `64.0` | Hard per-axis cap on a padded drill window's span (× the view span), kept well under the client's §16 re-encode bound (1/256 of window span) so deep zooms can always re-tighten the f32 offset encoding. | `interaction.py` |
+| `DRILL_HISTORY_KEEP` | `8` | Recent drilled subsets kept resolvable per trace, so picks against a retired cached point window (T13) still translate exactly; older seqs drop the pick, data changes clear the history. | `lod.py` (`enter_drill`, `drill_history`), `interaction.py` (`pick`) |
+| `LOD_POINT_CACHE_WINDOWS` | `3` | Retired exact point windows kept per trace client-side beyond the live drill; LRU-bounded VRAM, swept by the T11 outgrown rule. | `js/src/45_lod.ts` (`lodRetireDrill`, `lodPromoteCachedDrill`) |
+| `LOD_POINTS_REQUEST_BAND` | `4` | The aggregate tier never refines per view (T13, revised): a raw-view `density_view` goes out only when the estimated in-view count sits within `budget × 4` of points territory — the LOWER of an area-scaled cached-window count and the retained sample counted in-view (`lodSampleViewCount`, distribution-true where area-scaling over-estimates sparse tails). | `js/src/45_lod.ts` (`lodAggregateStands`) |
+| `LOD_AGG_STEP_FACTOR` / `LOD_AGG_STEP_MAX` / `LOD_AGG_STEP_SLACK` | `4` / `2` / `1.5` | The stepped aggregate ladder (T13): while standing, the only density request is the view snapped outward to a power-of-4 block grid over the extent (per axis), at most 2 steps below home, and only when every covering texture is coarser than the step by more than the slack. Quantized windows are pan-stable and dedupable — at most 2 smooth-to-smooth swaps before points, worst-case softness ≈ 4× stretch per axis. | `js/src/45_lod.ts` (`lodAggregateStepWindow`) |
 | `DEFAULT_PALETTE` | 10 CVD-safe hex entries | Per-trace default color cycle and the fallback categorical palette when a channel supplies none (§20/§36). | `marks.py`, `_payload.py`, `_svg.py`, `_raster.py` |
 | `PYRAMID_MIN_POINTS` | `2_000_000` | Trace size at/above which a Tier-3 tile pyramid is built lazily; smaller traces never pay for one. | `interaction.py` |
 | `PYRAMID_BASE_DIM` | `2048` | Edge of the pyramid's base level in cells (`dim²` u32 counts, ~1/3 overhead for the coarser levels); sets resident pyramid bytes. | `interaction.py` |
@@ -452,7 +471,10 @@ F3, still pending (above).
 
 - **WebGPU primary, WebGL2 fallback.** One `<canvas>`, everything is GPU primitives.
 - **Instanced draws** for markers/bars/lines — one draw call for millions of marks.
-- **Density textures** for aggregated tiers (§5, Tier 2).
+- **Density textures** for aggregated tiers (§5, Tier 2) — mean point color per
+  cell, composited at the points' own alpha (`1−(1−a_pt)^count`, LOD doc §2);
+  premultiplied RGBA8 upload for channel-bearing traces, tinted R8
+  log-count-ramp texture for constant-color ones.
 - **DOM/SVG only for chrome** — axis tick labels, legend, title, tooltip. Little of it,
   and it stays crisp/accessible/selectable.
 - **Retained scene graph**, spec-diff → buffer-diff. Pan/zoom is a view-matrix uniform
@@ -662,6 +684,15 @@ detail inside a decade of millisecond timestamps).
   zoom depth spans a sliver of a decade (invisible on any log-family display)
   and is the same class of limit matplotlib accepts; recorded here per §28's
   no-silent-decisions rule.
+- **Zooming inside an exact scatter drill is request-free until re-centering is
+  due.** A view contained in a drill window that shipped exactly (`reduction:
+  "none"`) needs no new data — the shipped subset already holds every point of
+  it — so the client elides the `density_view` round-trip entirely (LOD doc §5,
+  T12). It re-requests only once the view span falls below 1/256 of the drilled
+  window's span on either axis, an f32-safe margin (at 2⁻⁸ of the window the
+  ~2⁻²⁴ encode quantum is still ≲0.1 px on a 4k-wide plot); that request exists
+  to re-center the offset encoding per this section, and the re-centered reply
+  re-arms the elision around its own window.
 - **Time is i64 end-to-end** (Arrow timestamp columns), with calendar-aware tick
   generation (months are not 30×86400s). Plotly gets this right; matching it is
   table stakes and it must not be routed through any float path.
@@ -966,7 +997,7 @@ recomputes on zoom.*
 | Trace kind | Canonical requirement | Tier ladder | Hover/select | On zoom |
 |---|---|---|---|---|
 | **Line / area / time series** | x sorted (or engine sorts once at ingest, stated) | direct → min-max per-px-column decimation → zone-map-pruned chunk streaming | exact point (binary search on x in canonical) at every tier | recompute decimation for visible x-range only; zone maps prune chunks |
-| **Scatter** | none for Tiers 0–1; spatial bucketing pass at ingest for Tiers 2–3 | direct instanced → *no Tier 1 (decimating unordered points misleads)* → density pyramid → out-of-core tiles | Tier 0: GPU pick, exact row. Tiers 2–3: bin summary + async drill to top-k rows | pan = tile reuse; zoom = adjacent pyramid level; below pyramid floor = re-bin visible via tile index |
+| **Scatter** | none for Tiers 0–1; spatial bucketing pass at ingest for Tiers 2–3 | direct instanced → *no Tier 1 (decimating unordered points misleads)* → density pyramid → out-of-core tiles | Tier 0: GPU pick, exact row. Tiers 2–3: bin summary + async drill to top-k rows | pan = tile reuse; zoom = adjacent pyramid level; below pyramid floor = re-bin visible via tile index; inside an exact drill window = nothing recomputes and no request is sent — the client already holds every point (§16, LOD doc T12) |
 | **Heatmap / image** | gridded input | direct texture → mip pyramid (same machinery, degenerate case) | cell value (exact, from canonical grid) | mip level selection; nothing recomputes |
 | **Bar / histogram** | histogram: raw column; bar: categories | bars are visually bounded (≤ ~10⁴ on screen) → direct; histogram re-bins from canonical on range change (cheap: 1-D, visible range only, zone-map-pruned) | exact bar/bin | 1-D re-bin, worker, stale-while-revalidate |
 | **Streaming (any kind)** | ring capacity declared up front | ring buffer + incremental decimation (Tier-1 buckets updated, not rebuilt); pyramid tiles updated incrementally for touched cells | same as base kind, within retained window | append is O(appended); eviction from ring updates affected buckets only |
@@ -986,8 +1017,10 @@ means uniform in the axis's scale coordinates, not in raw data. Concretely:
   before `bin_2d`; the wire keeps raw `x_range`/`y_range` endpoints and the
   rule "cells are uniform in scale coordinates" (wire-protocol.md §3). Without
   this, clusters at x=1 and x=1000 share one cell on a symlog axis despite
-  being a third of the screen apart. The drill handoff's per-point
-  `local_log_density` bins in the same space so its colors match the grid's.
+  being a third of the screen apart. The count-only drill handoff's per-point
+  `local_log_density` bins in the same space so its count-alpha matches the
+  grid's (mean-color surfaces need no handoff at all — they composite like
+  the points themselves, LOD doc §2 rules 1/5).
 - **The raw-space tile pyramid** (Tier 3) cannot compose a scale-coordinate
   grid, so traces on a nonlinear axis skip pyramid build/compose and always
   take the exact scan (`binning: "exact"`). Cost: the O(visible) rescan the
@@ -1693,7 +1726,7 @@ haven't measured.
 | F2 | No filtering / selection / linked-brushing model; a static pyramid is stale under any filter | **Critical** | confirmed |
 | F3 | GPU ceilings mis-modeled — fill-rate & the 1 GB single-allocation cap bound Tier 0, not point count | **Major** | confirmed |
 | F4 | A single viewport offset can't serve multiple traces at different coordinate magnitudes | **Major** | plausible |
-| F5 | Tier-2 assumes a scalar density — color-by-category / mean / non-count aggregation unmodeled | **Major** | confirmed |
+| F5 | Tier-2 assumed a scalar density — **resolved for color** (mean-point-color surfaces, LOD doc §2); non-color value aggregations (mean/min/max-as-data, size) remain unmodeled | **Major → residual Moderate** | confirmed, largely addressed |
 | F6 | Colormap normalization domain across pyramid levels is unspecified → brightness flicker on zoom | **Major** | plausible |
 | F7 | Streaming into the pyramid is under-reconciled with multi-level structure + eviction | Moderate | confirmed |
 | F8 | "One core, logically identical" collides with the per-backend implementation matrix | Moderate | confirmed |
@@ -1776,14 +1809,23 @@ viewport origin; a single origin leaves the far trace with catastrophic f32 erro
 the shared view transform stays f64 on CPU and composes with each trace's offset at
 upload. Modest bookkeeping, but the doc doesn't have it and multi-trace is the norm.
 
-### F5 — Tier-2 assumes a scalar density; categorical/aggregation algebra is missing. [Major]
-**Failure scenario.** `scatter(x, y, color=category)` with 12 categories over 50M points.
-One density texture can't carry per-category counts; you need N per-category planes
-(imMens's ∏-bins problem) or a per-bin categorical mode/argmax. `color=mean(value)` needs
-2-channel (sum,count) accumulation; std needs more. The doc's Tier-2 is single-scalar.
-**Fix.** Specify the **aggregation algebra** — count / sum / mean(2-ch) / min / max /
-**categorical-by (N capped planes + "other")** — mirroring datashader's `ds.by`/`ds.mean`,
-with its memory cost (N× the tile, feeding F9) and a category cap that logs truncation.
+### F5 — Tier-2 assumed a scalar density; the color algebra now ships. [Major → residual Moderate]
+**Original failure scenario.** `scatter(x, y, color=category)` with 12 categories over
+50M points: one count texture couldn't carry the colors, so the surface wore a count
+colormap that matched neither the points nor the legend — a jarring recolor at every
+density⇄points transition.
+**Shipped fix (LOD doc §2).** The Tier-2 surface carries the **per-cell alpha-weighted
+mean of the resolved point colors** (one law for continuous, categorical, and
+direct-RGBA channels; linear-light integer pipeline, deterministic), with the
+log-tone-mapped count as the alpha channel. The pyramid grew matching mean-color
+planes (`build_color`/`compose_color`); the drill handoff became intensity-only
+because hue is continuous by construction. `color_agg: "mean"` records the transform.
+**Residual gap.** Aggregating *values as data* — per-cell mean/min/max of a channel
+readable from hover/legend, per-category count planes for filtered queries
+(imMens's ∏-bins), std, etc. — is still unmodeled; size channels still drop. Those
+need the fuller algebra (count / sum / mean(2-ch) / min / max / categorical-by with
+capped planes) mirroring datashader's `ds.by`/`ds.mean`, with its memory cost
+(N× the tile, feeding F9) and a category cap that logs truncation.
 
 ### F6 — Colormap normalization across pyramid levels is unspecified → zoom flicker. [Major]
 **Failure scenario.** Color maps bin-count→hue. Coarse tiles have higher counts than fine

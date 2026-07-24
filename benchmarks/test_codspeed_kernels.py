@@ -231,13 +231,26 @@ def drilldown_figure() -> Figure:
     x = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
     y = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
     fig = xy.chart(xy.scatter(x=x, y=y, density=True)).figure()
-    fig._benchmark_deep_expected = int(np.count_nonzero((x < 10.0) & (y < 10.0)))
 
     # Warm the lazily-built pyramid so CodSpeed tracks interactive viewport
     # refresh cost, not one-time index construction.
     fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
-    fig.density_view(0, 0.0, 10.0, 0.0, 10.0, GRID_W, GRID_H)
+    deep, _ = fig.density_view(0, 0.0, 10.0, 0.0, 10.0, GRID_W, GRID_H)
     fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+
+    # The drill ships the widest ALIGNED window around the view that still
+    # fits the budget (LOD doc T13), so the count oracle is the SHIPPED
+    # window's, taken from the warm-up reply — alignment is deterministic,
+    # every benchmark iteration resolves to the same window.
+    trace = deep["traces"][0]
+    assert trace["mode"] == "points"
+    (wx0, wx1), (wy0, wy1) = trace["x_range"], trace["y_range"]
+    assert wx0 <= 0.0 and wx1 >= 10.0 and wy0 <= 0.0 and wy1 >= 10.0
+    fig._benchmark_deep_window = (wx0, wx1, wy0, wy1)
+    fig._benchmark_deep_expected = int(
+        np.count_nonzero((x >= wx0) & (x <= wx1) & (y >= wy0) & (y <= wy1))
+    )
+    assert fig._benchmark_deep_expected == trace["visible"]
     return fig
 
 
@@ -1068,6 +1081,10 @@ def _adaptive_drilldown_cycle(fig: Figure) -> int:
     assert wide_trace["mode"] == "density"
     assert deep_trace["mode"] == "points"
     assert str(wide_trace.get("binning", "")).startswith("pyramid-L")
+    # T13: the shipped window is the deterministic padded aligned superset of
+    # the view, so both the window and its exact count repeat every cycle.
+    assert tuple(deep_trace["x_range"]) == fig._benchmark_deep_window[:2]
+    assert tuple(deep_trace["y_range"]) == fig._benchmark_deep_window[2:]
     assert deep_trace["visible"] == fig._benchmark_deep_expected
     drill_seq = deep_trace["drill_seq"]
     row = fig.pick(0, 0, drill_seq)

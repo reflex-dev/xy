@@ -27,7 +27,12 @@ from typing import Any, cast
 import numpy as np
 
 from . import kernels
-from .config import DENSITY_TARGET_POINTS_PER_CELL, DRILL_EXIT_FACTOR, MAX_SCREEN_DIM
+from .config import (
+    DENSITY_TARGET_POINTS_PER_CELL,
+    DRILL_EXIT_FACTOR,
+    DRILL_HISTORY_KEEP,
+    MAX_SCREEN_DIM,
+)
 
 _SPLITMIX_INCREMENT = np.uint64(0x9E3779B97F4A7C15)
 _SPLITMIX_MUL_1 = np.uint64(0xBF58476D1CE4E5B9)
@@ -720,17 +725,76 @@ def enter_drill(trace: Any, sel: np.ndarray) -> int:
     trace.drill_mode = True
     trace.shipped_sel = sel
     trace.drill_seq += 1
+    # Remember recent subsets (T13): the client can serve a view from a
+    # RETIRED cached point window whose drill_seq is no longer current, and a
+    # pick against it should still translate exactly. Bounded FIFO — an
+    # expired seq resolves to None (a dropped pick), never to a wrong row.
+    history = trace.drill_history
+    history[trace.drill_seq] = sel
+    while len(history) > DRILL_HISTORY_KEEP:
+        del history[next(iter(history))]
     return trace.drill_seq
 
 
 def exit_drill(trace: Any) -> None:
     """Back to the aggregate: no per-point marks, no pick mapping. Bumps the
     version when leaving an actual drill so a drilled-index pick arriving late
-    is rejected instead of being read as a *canonical* index."""
+    is rejected instead of being read as a *canonical* index. Remembered
+    subsets survive the exit — client-side cached point windows outlive the
+    kernel's current-tier choice (T13) — until a data change clears them."""
     if trace.drill_mode:
         trace.drill_seq += 1
     trace.drill_mode = False
     trace.shipped_sel = None
+
+
+def drill_history(trace: Any, seq: int) -> np.ndarray | None:
+    """The shipped subset a recent `drill_seq` named, or None when expired.
+
+    None must stay None at the call site (drop the pick): translating through
+    the wrong subset would read an arbitrary canonical row (§16)."""
+    return trace.drill_history.get(seq)
+
+
+def clear_drill_history(trace: Any) -> None:
+    """Forget remembered subsets after a data change: the retained indices
+    were computed against the previous canonical state, and a client window
+    built on them is rebuilt anyway (append/update rebuilds GPU traces)."""
+    trace.drill_history.clear()
+
+
+def aligned_window(
+    lo: float, hi: float, extent_lo: float, extent_hi: float, pad: float
+) -> tuple[float, float]:
+    """Snap a 1-D window outward to the power-of-two grid over its extent.
+
+    The grid level is a pure function of the extent and the window's span
+    bucket: one block spans ``extent / 2**level``, the coarsest level with a
+    block no wider than ``pad × span``, and the window's bounds snap outward
+    to block edges. Every request whose span falls in the same power-of-two
+    bucket therefore resolves to the SAME aligned bounds regardless of pan
+    position — full-point buffers aligned by dimension, so client caches can
+    key, dedupe, and reuse them (LOD doc T13). The result always CONTAINS the
+    input window (client request elision needs containment, and a view panned
+    past the data extent must stay contained even though nothing lives there);
+    the snapped span stays within ``(1 + 2·pad) × span`` of the input window.
+    """
+    span = hi - lo
+    extent = extent_hi - extent_lo
+    if not (
+        np.isfinite(span) and np.isfinite(extent) and span > 0.0 and extent > 0.0 and pad >= 1.0
+    ):
+        return lo, hi
+    if pad * span >= extent:
+        return min(extent_lo, lo), max(extent_hi, hi)
+    level = max(0, math.ceil(math.log2(extent / (pad * span))))
+    block = extent / (1 << level)
+    b0 = math.floor((lo - extent_lo) / block)
+    b1 = math.ceil((hi - extent_lo) / block)
+    # The min/max guards absorb the one-ulp case where a bound lands exactly
+    # on a grid line and float rounding would nudge the snapped edge inside
+    # the window — containment is the contract, alignment the optimization.
+    return (min(lo, extent_lo + b0 * block), max(hi, extent_lo + b1 * block))
 
 
 class BufferWriter:

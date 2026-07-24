@@ -1453,14 +1453,29 @@ def scatter(
             force_density=density,
         )
 
-        dropped_channels = trace.per_item_channel_names()
+        # The color channel survives aggregation as the density surface's
+        # per-cell mean point color (LOD doc §2); every other per-item
+        # channel is dropped at Tier 2 — allowed, never silent (§28).
+        color_aggregates = channels.bins_mean_color(trace.color_ch)
+        dropped_channels = tuple(
+            name
+            for name in trace.per_item_channel_names()
+            if not (color_aggregates and name == "color")
+        )
+        mean_color_note = (
+            " The color channel is kept as the surface's per-cell mean point color"
+            " (composited at the points' own alpha)."
+            if color_aggregates
+            else ""
+        )
         if density is None and dropped_channels and n > DIRECT_SOFT_CEILING:
             warnings.warn(
                 f"scatter has {n:,} points with per-point styles — above the "
                 f"direct ceiling ({DIRECT_SOFT_CEILING:,}). Falling back to a "
                 f"density surface; dropped channels: {', '.join(dropped_channels)} "
                 "(aggregating arbitrary instance styles needs the §5-F5 aggregation algebra, not yet "
-                "implemented). Pass density=False to keep direct draw at your risk.",
+                f"implemented).{mean_color_note} "
+                "Pass density=False to keep direct draw at your risk.",
                 RuntimeWarning,
                 stacklevel=2,
             )
@@ -1469,7 +1484,7 @@ def scatter(
             warnings.warn(
                 f"scatter has {n:,} points above the soft ceiling "
                 f"({DIRECT_SOFT_CEILING:,}); using a density surface for the "
-                "initial render.",
+                f"initial render.{mean_color_note}",
                 RuntimeWarning,
                 stacklevel=2,
             )

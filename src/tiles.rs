@@ -28,11 +28,24 @@ use crate::kernels;
 pub struct Pyramid {
     /// levels[0] = finest (dim²), levels[k] has dim >> k per side; last is 1².
     levels: Vec<Vec<u32>>,
+    /// Mean-color planes for channel-bearing traces (LOD doc §2): per cell
+    /// `[r, g, b, a]` — the alpha-weighted mean point color in linear-light
+    /// u16 plus the mean straight alpha scaled to 0..=65535. Cells store
+    /// means rather than sums to stay at 8 B/cell; each 4→1 reduction
+    /// re-rounds once, a ≤ 0.5-lsb-of-u16 error per level (recorded in the
+    /// LOD doc, §28). `None` for count-only pyramids.
+    color_levels: Option<Vec<Vec<[u16; 4]>>>,
     dims: Vec<usize>,
     x0: f64,
     x1: f64,
     y0: f64,
     y1: f64,
+}
+
+impl Pyramid {
+    pub fn has_color(&self) -> bool {
+        self.color_levels.is_some()
+    }
 }
 
 /// The production default upsample bound (callers pass their own via the ABI;
@@ -74,6 +87,79 @@ pub fn build(
     }
     Some(Pyramid {
         levels,
+        color_levels: None,
+        dims,
+        x0,
+        x1,
+        y0,
+        y1,
+    })
+}
+
+/// Build a pyramid that also carries mean-color planes, for channel-bearing
+/// traces whose density surface wears the mean point color (LOD doc §2).
+/// One fused scan accumulates counts and alpha-weighted linear-light color
+/// sums together (exact integer sums merged order-independently, so the
+/// result is bitwise identical for any fan-out); count levels are identical
+/// to `build`'s. The scan fans out only when rows outnumber base cells
+/// (points-per-cell gate, capped at 4 workers): each worker's accumulator is
+/// 40 B/cell (~170 MB at the 2048² default), released before returning —
+/// builds are one-time per trace and lazy.
+#[allow(clippy::too_many_arguments)]
+pub fn build_color(
+    x: &[f64],
+    y: &[f64],
+    colors: &kernels::BinColorSource<'_>,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    base_dim: usize,
+) -> Option<Pyramid> {
+    if x.len() != y.len() || base_dim < 2 || !base_dim.is_power_of_two() {
+        return None;
+    }
+    if !(x0.is_finite() && x1.is_finite() && y0.is_finite() && y1.is_finite() && x1 > x0 && y1 > y0)
+    {
+        return None;
+    }
+    match colors {
+        kernels::BinColorSource::Indexed { idx, lut } => {
+            if idx.len() != x.len() || lut.is_empty() || lut.len() > 256 {
+                return None;
+            }
+        }
+        kernels::BinColorSource::Rgba(rgba) => {
+            if rgba.len() != x.len() * 4 {
+                return None;
+            }
+        }
+    }
+    let base = kernels::bin_2d_mean_color_cells(x, y, colors, x0, x1, y0, y1, base_dim, base_dim);
+    let mut counts = Vec::with_capacity(base.len());
+    let mut color = Vec::with_capacity(base.len());
+    for cell in &base {
+        counts.push(cell.count);
+        color.push(cell.mean_u16x4());
+    }
+    drop(base);
+    let mut levels = vec![counts];
+    let mut color_levels = vec![color];
+    let mut dims = vec![base_dim];
+    let mut dim = base_dim;
+    while dim > 1 {
+        let prev = levels.last().expect("at least one level");
+        let prev_color = color_levels.last().expect("at least one color level");
+        let lvl = reduce_level(prev, dim);
+        let clvl = reduce_color_level(prev, prev_color, dim);
+        dim /= 2;
+        levels.push(lvl);
+        color_levels.push(clvl);
+        dims.push(dim);
+    }
+    Some(Pyramid {
+        levels,
+        color_levels: Some(color_levels),
         dims,
         x0,
         x1,
@@ -90,6 +176,13 @@ pub fn build(
 /// Non-finite pairs are ignored exactly like [`kernels::bin_2d_counts`].
 pub fn append(p: &mut Pyramid, x: &[f64], y: &[f64]) -> bool {
     if x.len() != y.len() {
+        return false;
+    }
+    // A colored pyramid cannot be incremented without the batch's colors —
+    // and an append can also move a continuous channel's domain, silently
+    // re-coloring every already-binned point. Refuse; the caller invalidates
+    // and the next density view rebuilds lazily (LOD doc §4.1).
+    if p.color_levels.is_some() {
         return false;
     }
     for (&xv, &yv) in x.iter().zip(y) {
@@ -141,6 +234,50 @@ fn reduce_level(prev: &[u32], dim: usize) -> Vec<u32> {
     lvl
 }
 
+/// 4→1 reduction of one color level. Each parent is the exact weighted mean
+/// of its children — weight = child count × child mean alpha, the same
+/// alpha-weighted average `bin_2d_mean_color` computes over raw points — then
+/// re-rounded once to u16 (the ≤ 0.5-lsb-per-level error recorded on the
+/// struct). u128 keeps the count×alpha×mean products exact even at saturated
+/// child counts.
+fn reduce_color_level(prev_counts: &[u32], prev_color: &[[u16; 4]], dim: usize) -> Vec<[u16; 4]> {
+    let next = dim / 2;
+    let mut lvl = vec![[0u16; 4]; next * next];
+    for cy in 0..next {
+        for cx in 0..next {
+            let mut count: u64 = 0;
+            let mut weight: u128 = 0;
+            let mut sums = [0u128; 3];
+            for (sy, sx) in [
+                (2 * cy, 2 * cx),
+                (2 * cy, 2 * cx + 1),
+                (2 * cy + 1, 2 * cx),
+                (2 * cy + 1, 2 * cx + 1),
+            ] {
+                let c = u64::from(prev_counts[sy * dim + sx]);
+                if c == 0 {
+                    continue;
+                }
+                let [r, g, b, a] = prev_color[sy * dim + sx];
+                let w = u128::from(c) * u128::from(a);
+                count += c;
+                weight += w;
+                sums[0] += w * u128::from(r);
+                sums[1] += w * u128::from(g);
+                sums[2] += w * u128::from(b);
+            }
+            if count == 0 || weight == 0 {
+                continue;
+            }
+            let mean = |s: u128| ((s + weight / 2) / weight).min(u128::from(u16::MAX)) as u16;
+            let alpha =
+                ((weight + u128::from(count) / 2) / u128::from(count)).min(u128::from(u16::MAX));
+            lvl[cy * next + cx] = [mean(sums[0]), mean(sums[1]), mean(sums[2]), alpha as u16];
+        }
+    }
+    lvl
+}
+
 /// Cell-index range [lo, hi) of a level whose cell CENTERS fall inside the
 /// window along one axis.
 fn center_range(lo: f64, hi: f64, full_lo: f64, full_hi: f64, dim: usize) -> (usize, usize) {
@@ -171,6 +308,45 @@ pub fn count(p: &Pyramid, lo_x: f64, hi_x: f64, lo_y: f64, hi_y: f64) -> f64 {
     total as f64
 }
 
+/// Pick the coarsest level that still meets the render resolution without
+/// upsampling (fewest cells to walk, no blur). Only when even level 0
+/// cannot meet it, tolerate up to `max_upsample` before refusing — beyond
+/// that the exact path must run. Callers over huge/out-of-core columns pass
+/// a large `max_upsample` so the finest level is served (progressively
+/// blurry) rather than triggering an O(N) rescan of the whole column (§28).
+/// Shared by `compose` and `compose_color`, so the two grids of a colored
+/// pyramid always come from the same level.
+#[allow(clippy::too_many_arguments)]
+fn choose_level(
+    p: &Pyramid,
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    w: usize,
+    h: usize,
+    max_upsample: usize,
+) -> Option<usize> {
+    for level in (0..p.levels.len()).rev() {
+        let dim = p.dims[level];
+        let (cx0, cx1) = center_range(lo_x, hi_x, p.x0, p.x1, dim);
+        let (cy0, cy1) = center_range(lo_y, hi_y, p.y0, p.y1, dim);
+        if cx1 - cx0 >= w && cy1 - cy0 >= h {
+            return Some(level);
+        }
+    }
+    let dim = p.dims[0];
+    let (cx0, cx1) = center_range(lo_x, hi_x, p.x0, p.x1, dim);
+    let (cy0, cy1) = center_range(lo_y, hi_y, p.y0, p.y1, dim);
+    // Saturating multiply so a huge `max_upsample` can't overflow usize.
+    if (cx1 - cx0).saturating_mul(max_upsample) >= w
+        && (cy1 - cy0).saturating_mul(max_upsample) >= h
+    {
+        return Some(0);
+    }
+    None
+}
+
 /// Fill `out` (w×h, row-major, row 0 = bottom, same contract as bin_2d) for
 /// the window from the coarsest adequate level. Returns the level used, or
 /// None when even level 0 cannot meet the resolution (window too small).
@@ -192,34 +368,7 @@ pub fn compose(
     if !(hi_x > lo_x && hi_y > lo_y) {
         return None;
     }
-    // Pick the coarsest level that still meets the render resolution without
-    // upsampling (fewest cells to walk, no blur). Only when even level 0
-    // cannot meet it, tolerate up to `max_upsample` before refusing — beyond
-    // that the exact path must run. Callers over huge/out-of-core columns pass
-    // a large `max_upsample` so the finest level is served (progressively
-    // blurry) rather than triggering an O(N) rescan of the whole column (§28).
-    let mut chosen: Option<usize> = None;
-    for level in (0..p.levels.len()).rev() {
-        let dim = p.dims[level];
-        let (cx0, cx1) = center_range(lo_x, hi_x, p.x0, p.x1, dim);
-        let (cy0, cy1) = center_range(lo_y, hi_y, p.y0, p.y1, dim);
-        if cx1 - cx0 >= w && cy1 - cy0 >= h {
-            chosen = Some(level);
-            break;
-        }
-    }
-    if chosen.is_none() {
-        let dim = p.dims[0];
-        let (cx0, cx1) = center_range(lo_x, hi_x, p.x0, p.x1, dim);
-        let (cy0, cy1) = center_range(lo_y, hi_y, p.y0, p.y1, dim);
-        // Saturating multiply so a huge `max_upsample` can't overflow usize.
-        if (cx1 - cx0).saturating_mul(max_upsample) >= w
-            && (cy1 - cy0).saturating_mul(max_upsample) >= h
-        {
-            chosen = Some(0);
-        }
-    }
-    let level = chosen?;
+    let level = choose_level(p, lo_x, hi_x, lo_y, hi_y, w, h, max_upsample)?;
     let dim = p.dims[level];
     let lvl = &p.levels[level];
     for c in out.iter_mut() {
@@ -410,6 +559,150 @@ fn transpose_to_taps(
     (starts, taps)
 }
 
+/// `compose` plus the mean-color plane: fills the identical f32 count grid
+/// (delegates to `compose`, so counts are bit-identical to the count-only
+/// entry point by construction) and a `w*h*4` straight-alpha RGBA8 grid whose
+/// cells carry the weighted mean of the composed source cells' mean colors —
+/// weight = overlap fraction × count × mean alpha, the same alpha-weighted
+/// average `bin_2d_mean_color` computes over raw points. Both of `compose`'s
+/// regimes apply: downsampling area-weights each source cell across the
+/// output bins it overlaps (the color plane splits by the same
+/// `axis_weights` as the counts, matching the #153 area-weighted compose),
+/// and upsampling pulls the source cell under each output pixel. The color
+/// pass keeps the one-pass 2D splat rather than `compose`'s separable
+/// resample: its five planes accumulate in f64 keyed on count > 0 cells, and
+/// this path only runs for color-channelled traces. f64 accumulation in a
+/// fixed traversal order keeps the result deterministic. Returns `None` for
+/// windows the pyramid cannot serve and for pyramids built without color
+/// planes; the caller re-bins exactly either way.
+#[allow(clippy::too_many_arguments)]
+pub fn compose_color(
+    p: &Pyramid,
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    w: usize,
+    h: usize,
+    max_upsample: usize,
+    out: &mut [f32],
+    out_rgba: &mut [u8],
+) -> Option<usize> {
+    let color_levels = p.color_levels.as_ref()?;
+    if out_rgba.len() != w.checked_mul(h)?.checked_mul(4)? {
+        return None;
+    }
+    let level = compose(p, lo_x, hi_x, lo_y, hi_y, w, h, max_upsample, out)?;
+    out_rgba.fill(0);
+    let dim = p.dims[level];
+    let lvl = &p.levels[level];
+    let clvl = &color_levels[level];
+    let cell_x = (p.x1 - p.x0) / dim as f64;
+    let cell_y = (p.y1 - p.y0) / dim as f64;
+    let sx = w as f64 / (hi_x - lo_x);
+    let sy = h as f64 / (hi_y - lo_y);
+    let (cx0, cx1) = center_range(lo_x, hi_x, p.x0, p.x1, dim);
+    let (cy0, cy1) = center_range(lo_y, hi_y, p.y0, p.y1, dim);
+    let upsampling = (cx1 - cx0) < w || (cy1 - cy0) < h;
+    if upsampling {
+        // Pull, exactly like `compose`: each output pixel wears the mean
+        // color of the single source cell under it.
+        let inv_cell_x = 1.0 / cell_x;
+        let inv_cell_y = 1.0 / cell_y;
+        for (oy, quad_row) in out_rgba.chunks_exact_mut(w * 4).enumerate() {
+            let ydata = lo_y + (oy as f64 + 0.5) / sy;
+            let cy = ((ydata - p.y0) * inv_cell_y) as isize;
+            if cy < 0 || cy as usize >= dim {
+                continue;
+            }
+            let base = cy as usize * dim;
+            for (ox, quad) in quad_row.chunks_exact_mut(4).enumerate() {
+                let xdata = lo_x + (ox as f64 + 0.5) / sx;
+                let cx = ((xdata - p.x0) * inv_cell_x) as isize;
+                if cx < 0 || cx as usize >= dim {
+                    continue;
+                }
+                let cell = base + cx as usize;
+                if lvl[cell] == 0 {
+                    continue;
+                }
+                let [r, g, b, alpha] = clvl[cell];
+                quad[0] = kernels::linear_u16_to_srgb_u8(r);
+                quad[1] = kernels::linear_u16_to_srgb_u8(g);
+                quad[2] = kernels::linear_u16_to_srgb_u8(b);
+                quad[3] = ((u32::from(alpha) + 128) / 257).min(255) as u8;
+            }
+        }
+        return Some(level);
+    }
+    if cx0 >= cx1 || cy0 >= cy1 {
+        return Some(level);
+    }
+    // Downsample / 1:1 — the same area-weighted splits as the count pass
+    // (`axis_weights`), accumulating per output bin: `weight_sum` carries
+    // fraction × count × mean-alpha (the color weights), `count_sum` carries
+    // fraction × count (the mean-alpha denominator).
+    let none = u32::MAX;
+    let xw = axis_weights(cx0, cx1, p.x0, cell_x, lo_x, sx, w);
+    let yw = axis_weights(cy0, cy1, p.y0, cell_y, lo_y, sy, h);
+    let mut count_sum = vec![0.0f64; w * h];
+    let mut weight_sum = vec![0.0f64; w * h];
+    let mut red = vec![0.0f64; w * h];
+    let mut green = vec![0.0f64; w * h];
+    let mut blue = vec![0.0f64; w * h];
+    for (cy, &(by, wpy, nby, wny)) in (cy0..cy1).zip(yw.iter()) {
+        let row = &lvl[cy * dim + cx0..cy * dim + cx1];
+        let crow = &clvl[cy * dim + cx0..cy * dim + cx1];
+        let by = by as usize;
+        for ((&c, &[r, g, b, alpha]), &(bx, wpx, nbx, wnx)) in
+            row.iter().zip(crow.iter()).zip(xw.iter())
+        {
+            if c == 0 {
+                continue;
+            }
+            let cf = f64::from(c);
+            let af = f64::from(alpha);
+            let (rf, gf, bf) = (f64::from(r), f64::from(g), f64::from(b));
+            let bx = bx as usize;
+            let mut splat = |bin: usize, frac: f64| {
+                let effective = frac * cf;
+                let weight = effective * af;
+                count_sum[bin] += effective;
+                weight_sum[bin] += weight;
+                red[bin] += weight * rf;
+                green[bin] += weight * gf;
+                blue[bin] += weight * bf;
+            };
+            splat(by * w + bx, f64::from(wpx) * f64::from(wpy));
+            if nbx != none {
+                splat(by * w + nbx as usize, f64::from(wnx) * f64::from(wpy));
+            }
+            if nby != none {
+                let nby = nby as usize;
+                splat(nby * w + bx, f64::from(wpx) * f64::from(wny));
+                if nbx != none {
+                    splat(nby * w + nbx as usize, f64::from(wnx) * f64::from(wny));
+                }
+            }
+        }
+    }
+    for (bin, quad) in out_rgba.chunks_exact_mut(4).enumerate() {
+        let weight = weight_sum[bin];
+        if !(count_sum[bin] > 0.0 && weight > 0.0) {
+            continue;
+        }
+        let mean = |s: f64| (s / weight).round().clamp(0.0, 65535.0) as u16;
+        // Stored alphas are u16-scaled (×257); the weighted mean over source
+        // cells comes back on the same scale, so /257 restores the byte.
+        let alpha_u16 = (weight / count_sum[bin]).round().clamp(0.0, 65535.0);
+        quad[0] = kernels::linear_u16_to_srgb_u8(mean(red[bin]));
+        quad[1] = kernels::linear_u16_to_srgb_u8(mean(green[bin]));
+        quad[2] = kernels::linear_u16_to_srgb_u8(mean(blue[bin]));
+        quad[3] = ((alpha_u16 as u32 + 128) / 257).min(255) as u8;
+    }
+    Some(level)
+}
+
 // -- handle registry (engine doc §3.3) ---------------------------------------
 
 // Pyramids are stored as `Arc` so lookups can clone the handle out and drop
@@ -514,6 +807,114 @@ mod tests {
         assert_eq!(
             incremental.levels, before,
             "rejected append must not partially mutate"
+        );
+    }
+
+    /// Deterministic two-color source: points left of x=50 wear LUT entry 0,
+    /// the rest entry 1.
+    fn split_idx(x: &[f64]) -> Vec<u8> {
+        x.iter().map(|&v| u8::from(v >= 50.0)).collect()
+    }
+
+    const RED_BLUE: [[u8; 4]; 2] = [[255, 0, 0, 255], [0, 0, 255, 255]];
+
+    #[test]
+    fn colored_build_keeps_count_levels_and_rejects_append() {
+        let (x, y) = cross(5000);
+        let idx = split_idx(&x);
+        let colors = kernels::BinColorSource::Indexed {
+            idx: &idx,
+            lut: &RED_BLUE,
+        };
+        let plain = build(&x, &y, 0.0, 100.0, 0.0, 100.0, 64).unwrap();
+        let mut colored = build_color(&x, &y, &colors, 0.0, 100.0, 0.0, 100.0, 64).unwrap();
+        assert_eq!(
+            plain.levels, colored.levels,
+            "color planes must not perturb the count pyramid"
+        );
+        assert!(colored.has_color() && !plain.has_color());
+        let before = colored.levels.clone();
+        assert!(
+            !append(&mut colored, &[50.0], &[50.0]),
+            "colored pyramids refuse increments (colors unknown, domain may shift)"
+        );
+        assert_eq!(colored.levels, before);
+    }
+
+    #[test]
+    fn compose_color_counts_match_compose_and_colors_match_kernel() {
+        let (x, y) = cross(6000);
+        let idx = split_idx(&x);
+        let colors = kernels::BinColorSource::Indexed {
+            idx: &idx,
+            lut: &RED_BLUE,
+        };
+        let dim = 64;
+        let p = build_color(&x, &y, &colors, 0.0, 100.0, 0.0, 100.0, dim).unwrap();
+        let mut counts = vec![0.0f32; dim * dim];
+        let mut rgba = vec![0u8; dim * dim * 4];
+        let level =
+            compose_color(&p, 0.0, 100.0, 0.0, 100.0, dim, dim, MAX_UPSAMPLE, &mut counts, &mut rgba)
+                .unwrap();
+        assert_eq!(level, 0);
+        let mut plain = vec![0.0f32; dim * dim];
+        assert_eq!(
+            compose(&p, 0.0, 100.0, 0.0, 100.0, dim, dim, MAX_UPSAMPLE, &mut plain),
+            Some(0)
+        );
+        assert_eq!(counts, plain, "count grid is bit-identical to compose");
+        let mut direct = vec![0u8; dim * dim * 4];
+        kernels::bin_2d_mean_color(&x, &y, &colors, 0.0, 100.0, 0.0, 100.0, dim, dim, &mut direct);
+        assert_eq!(
+            rgba, direct,
+            "full-window level-0 compose reproduces the direct mean-color grid"
+        );
+    }
+
+    #[test]
+    fn compose_color_zoomed_out_levels_stay_pure_per_side() {
+        // All-red left half, all-blue right half: any pyramid level keeps
+        // each side's cells exactly pure, and mean alpha stays opaque.
+        let (x, y) = cross(8000);
+        let idx = split_idx(&x);
+        let colors = kernels::BinColorSource::Indexed {
+            idx: &idx,
+            lut: &RED_BLUE,
+        };
+        let p = build_color(&x, &y, &colors, 0.0, 100.0, 0.0, 100.0, 64).unwrap();
+        let (w, h) = (8, 8);
+        let mut counts = vec![0.0f32; w * h];
+        let mut rgba = vec![0u8; w * h * 4];
+        let level =
+            compose_color(&p, 0.0, 100.0, 0.0, 100.0, w, h, MAX_UPSAMPLE, &mut counts, &mut rgba)
+                .unwrap();
+        assert!(level > 0, "an 8x8 render must come from a coarser level");
+        for cy in 0..h {
+            for cx in 0..w {
+                let quad = &rgba[(cy * w + cx) * 4..(cy * w + cx) * 4 + 4];
+                if counts[cy * w + cx] <= 0.0 {
+                    assert_eq!(quad, [0, 0, 0, 0]);
+                    continue;
+                }
+                let expect = if cx < w / 2 { RED_BLUE[0] } else { RED_BLUE[1] };
+                assert_eq!(
+                    quad, expect,
+                    "pure-side cell at ({cx},{cy}) must keep its exact color"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compose_color_without_planes_or_bad_shapes_refuses() {
+        let (x, y) = cross(4000);
+        let p = build(&x, &y, 0.0, 100.0, 0.0, 100.0, 64).unwrap();
+        let mut counts = vec![0.0f32; 16];
+        let mut rgba = vec![0u8; 64];
+        assert_eq!(
+            compose_color(&p, 0.0, 100.0, 0.0, 100.0, 4, 4, MAX_UPSAMPLE, &mut counts, &mut rgba),
+            None,
+            "count-only pyramids refuse color composition"
         );
     }
 
