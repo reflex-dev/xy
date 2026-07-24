@@ -60,6 +60,10 @@ _MPL_THEME_TOKENS = {
     "text_color": "#262626",
 }
 _MPL_GRID_COLOR = "#b0b0b0"
+# The 1x1 axes rectangle implied by the rcParams figure.subplot.* defaults
+# (left .125, bottom .11, right .9, top .88). `_mplfig` owns the general
+# gridspec resolution; this is the last-resort answer for a detached axes.
+_DEFAULT_AXES_RECT = (0.125, 0.11, 0.775, 0.77)
 
 # Theme/axis children are immutable declarative specs, so identical ones are
 # shared across charts — the theme's CSS tokens validate through the native
@@ -541,6 +545,11 @@ class Axes(PlotTypeMixin):
         # subplots_adjust() re-resolves the rect instead of keeping it frozen.
         self._subplot_spec: Optional[Any] = None
         self._absolute_plot_ratio: Optional[float] = None
+        # The plot rectangle the exporter demands, in chart pixels
+        # (left, top, width, height).  Set by the grid compositor for a panel,
+        # whose chart is the panel and not the whole figure; otherwise the
+        # chart *is* the figure and the rectangle comes from get_position().
+        self._plot_box_px: Optional[tuple[float, float, float, float]] = None
         self._padding: Optional[list[float]] = None
         self._xmargin = 0.0
         self._ymargin = 0.0
@@ -825,6 +834,7 @@ class Axes(PlotTypeMixin):
         self._insets = []
         self._insets_materialized = False
         self._absolute_plot_ratio = None
+        self._plot_box_px = None
         self._padding = None
         self._grid = bool(rcParams["axes.grid"])
         self._grid_color = _MPL_GRID_COLOR
@@ -2590,9 +2600,21 @@ class Axes(PlotTypeMixin):
         return (hi, lo) if self._axis_props("y").get("reverse") else (lo, hi)
 
     def get_position(self, original: bool = False) -> Bbox:
-        """The axes rectangle in figure fractions, as a `Bbox`."""
+        """The axes rectangle in figure fractions, as a `Bbox`.
+
+        Grid-aware: a subplot without an explicit rect reports its gridspec
+        cell under the figure's SubplotParams, so the panels of an ``n x m``
+        grid report ``n * m`` distinct boxes exactly as matplotlib does. The
+        `_figure_rect`-only answer collapsed every panel onto the 1x1 default.
+        """
         del original  # compat-noop: shim axes have no active/original position split
-        return Bbox.from_bounds(*(self._figure_rect or (0.125, 0.11, 0.775, 0.77)))
+        if self._figure_rect is not None:
+            return Bbox.from_bounds(*self._figure_rect)
+        if self.figure is not None:
+            rect = self.figure._axes_rect(self)
+            if rect is not None:
+                return Bbox.from_bounds(*rect)
+        return Bbox.from_bounds(*_DEFAULT_AXES_RECT)
 
     def set_position(self, position: Bbox | tuple[float, float, float, float]) -> None:
         """Place the axes at a figure-fraction rectangle.
@@ -4544,6 +4566,73 @@ class Axes(PlotTypeMixin):
         best = min(scores.values())
         return next(name for name, score in scores.items() if score <= best + 0.02)
 
+    def _outside_padding(self, compact: bool) -> tuple[float, float, float]:
+        """The top/right/bottom gutters the renderers reserve *outside* the
+        chart's ``padding``.
+
+        `_svg.layout()` and the browser's ``ChartView._layout()`` both add the
+        title band, a top-side x axis, the colorbar strip, and the shared
+        right-side gutter for a secondary y axis on top of whatever padding the
+        spec carries. This is the shim's single mirror of that rule:
+        `_frame_padding()` subtracts it so an explicit padding still lands the
+        plot rect where Matplotlib puts the axes, the grid compositor adds it to
+        the panel it allocates so that subtraction always fits, and the
+        equal-aspect solve measures the real plot rect with it.
+        """
+        top = 0.0
+        if self._title:
+            top += 26.0 if compact else 30.0
+        if self._axis["x"].get("side") == "top":
+            top += 26.0 if compact else 32.0
+        right = 0.0
+        bottom = 0.0
+        if self._colorbar is not None:
+            if self._colorbar.get("orientation") == "horizontal":
+                bottom += 38.0 + (16.0 if self._colorbar.get("label") else 0.0)
+            else:
+                right += 86.0 + (18.0 if self._colorbar.get("label") else 0.0)
+        if self._twin is not None or any(
+            secondary._axis == "y" and secondary._side == "right"
+            for secondary in self._secondary_axes
+        ):
+            right += 42.0 if compact else 54.0
+        return top, right, bottom
+
+    def _frame_padding(self, width: int, height: int) -> Optional[list[float]]:
+        """Explicit ``padding`` that renders the axes frame where Matplotlib
+        draws it — the rectangle `get_position()` reports.
+
+        Without this the renderers fell back to label-aware default margins
+        (62/14/10/42 px at ordinary export sizes), which have nothing to do with
+        the ``figure.subplot.*`` frame: a default 640x480 figure drew its frame
+        at x 0.0969..0.9781 (13.8 % too wide) with its top edge at y 0.0208
+        instead of 0.1208.  Returns None when the wanted rectangle cannot be
+        expressed as non-negative padding, leaving the defaults in charge.
+        """
+        if self._colorbar is not None:
+            # Matplotlib's colorbar() steals its strip from the parent axes
+            # rectangle, while the renderers reserve it outside the padding.
+            # Reconciling the two is colorbar-placement work, not framing work.
+            return None
+        if self._plot_box_px is not None:
+            left, top, plot_width, plot_height = self._plot_box_px
+        else:
+            x0, y0, rect_width, rect_height = self.get_position().bounds
+            left = x0 * width
+            top = (1.0 - y0 - rect_height) * height
+            plot_width = rect_width * width
+            plot_height = rect_height * height
+        extra_top, extra_right, extra_bottom = self._outside_padding(width < 520)
+        padding = [
+            top - extra_top,
+            width - left - plot_width - extra_right,
+            height - top - plot_height - extra_bottom,
+            left,
+        ]
+        if any(value < 0.0 for value in padding):
+            return None
+        return padding
+
     def _build_chart(self, width: int, height: int) -> Any:
         if self._y2_of is not None:
             return self._y2_of._build_chart(width, height)
@@ -4553,7 +4642,9 @@ class Axes(PlotTypeMixin):
         children = self._chart_children()
         if self._twin is not None:
             children.extend(self._twin._chart_children())
-        chart_padding = None if self._padding is None else list(self._padding)
+        chart_padding = (
+            self._frame_padding(width, height) if self._padding is None else list(self._padding)
+        )
         adjusted_aspect = False
         aspect_domains: Optional[tuple[tuple[float, float], tuple[float, float]]] = None
         if self._aspect_equal and self._aspect_bounds is not None:
@@ -4567,14 +4658,13 @@ class Axes(PlotTypeMixin):
                 )
             else:
                 top, right, bottom, left = map(float, chart_padding)
-            layout_top = top + ((26.0 if compact else 30.0) if self._title else 0.0)
-            layout_right = right
-            layout_bottom = bottom
-            if self._colorbar is not None:
-                if self._colorbar.get("orientation") == "horizontal":
-                    layout_bottom += 38.0 + (16.0 if self._colorbar.get("label") else 0.0)
-                else:
-                    layout_right += 86.0 + (18.0 if self._colorbar.get("label") else 0.0)
+            # Solve over the rect the renderers will actually draw, gutters and
+            # all — a top-side x axis (matshow) otherwise made the equal-unit
+            # solve believe the plot box was 26 px taller than it is.
+            extra_top, extra_right, extra_bottom = self._outside_padding(compact)
+            layout_top = top + extra_top
+            layout_right = right + extra_right
+            layout_bottom = bottom + extra_bottom
             plot_width = max(40.0, width - left - layout_right)
             plot_height = max(40.0, height - layout_top - layout_bottom)
             data_ratio = abs(x1 - x0) / max(abs(y1 - y0), np.finfo(float).eps)

@@ -15,11 +15,32 @@ from typing import Any, Literal, Optional, overload
 import numpy as np
 
 from ._artists import Text
-from ._axes import Axes, _plain_text
+from ._axes import _DEFAULT_AXES_RECT, Axes, _plain_text
 from ._colors import resolve_color
 from ._rc import rc_figsize_px, rcParams
 from ._transforms import CoordinateTransform
 from ._translate import check_unsupported, not_implemented
+
+
+def _panel_chrome(ax: Axes, plot_w: int) -> tuple[float, float, float, float]:
+    """``(left, top, right, bottom)`` px of chrome around a free-form panel.
+
+    One definition for the whole absolute-placement path: `_charts` sizes the
+    panel with it, `_panel_positions` places the panel with it, and
+    `Axes._frame_padding` pins the plot rect inside the panel with it. When
+    those three disagree the plot box drifts off its gridspec cell.
+
+    The chrome includes the gutters the renderers reserve outside the padding —
+    the axes title, a top-side x axis (`matshow`), the secondary-y band — so the
+    panel is always large enough to hold them without moving the plot rect. The
+    title is the case matplotlib makes obvious: it draws above the axes without
+    changing its position.
+    """
+    compact = plot_w + 54 < 520
+    left, top = (46.0, 6.0) if compact else (62.0, 10.0)
+    right, bottom = (8.0, 36.0) if compact else (14.0, 42.0)
+    extra_top, extra_right, extra_bottom = ax._outside_padding(compact)
+    return left, top + extra_top, right + extra_right, bottom + extra_bottom
 
 
 def _png_with_metadata(data: bytes, metadata: dict[Any, Any]) -> bytes:
@@ -673,18 +694,35 @@ class Figure:
         """
         if not self._axes:
             return None
-        rects = [ax._figure_rect for ax in self._axes]
-        if any(rect is not None for rect in rects):
-            default = (
-                _GridSpec(self, 1, 1, **self._subplot_adjust).cell_rect((0, 1), (0, 1))
-                if self._subplot_adjust
-                else (0.125, 0.11, 0.775, 0.77)
-            )
-            return [rect if rect is not None else default for rect in rects]
-        if not self._subplot_adjust and len(self._axes) <= 1:
+        if (
+            all(ax._figure_rect is None for ax in self._axes)
+            and not self._subplot_adjust
+            and len(self._axes) <= 1
+        ):
             return None
-        # A uniform grid (adjusted or default SubplotParams): every panel
+        return [self._axes_rect(ax) or _DEFAULT_AXES_RECT for ax in self._axes]
+
+    def _axes_rect(self, ax: Axes) -> Optional[tuple[float, float, float, float]]:
+        """One axes' matplotlib rectangle (figure fractions), or None if foreign.
+
+        The single resolver behind both `_effective_rects` (what the exporters
+        place) and `Axes.get_position` (what scripts read), so the reported box
+        and the rendered box cannot drift apart.
+        """
+        if ax._figure_rect is not None:
+            return ax._figure_rect
+        if ax not in self._axes:
+            return None
+        if any(other._figure_rect is not None for other in self._axes):
+            # Free-form figure (add_axes/insets): matplotlib leaves a rect-less
+            # axes at the SubplotParams frame instead of dragging it onto the
+            # panel grid, which `add_axes` has already redefined as 1 x n.
+            if not self._subplot_adjust:
+                return _DEFAULT_AXES_RECT
+            return _GridSpec(self, 1, 1, **self._subplot_adjust).cell_rect((0, 1), (0, 1))
+        # A uniform grid (adjusted or default SubplotParams): the panel
         # resolves to its gridspec cell rectangle under the frame and spacing.
+        row, col = divmod(self._axes.index(ax), self._ncols)
         grid = _GridSpec(
             self,
             self._nrows,
@@ -693,13 +731,7 @@ class Figure:
             height_ratios=self._height_ratios,
             **self._subplot_adjust,
         )
-        return [
-            grid.cell_rect(
-                (index // self._ncols, index // self._ncols + 1),
-                (index % self._ncols, index % self._ncols + 1),
-            )
-            for index in range(len(self._axes))
-        ]
+        return grid.cell_rect((row, row + 1), (col, col + 1))
 
     def _grid_cell_sizes(self) -> tuple[list[int], list[int]]:
         """Per-column widths and per-row heights of the CSS-grid panel layout.
@@ -730,12 +762,15 @@ class Figure:
                 # figure buffer, matching Matplotlib add_axes semantics —
                 # including the axes title, which matplotlib draws above the
                 # axes without moving its position.
-                compact = plot_w + 54 < 520
-                margin_w, margin_h = (54, 42) if compact else (76, 52)
-                if ax._title:
-                    margin_h += 26 if compact else 30
+                left, top, right, bottom = _panel_chrome(ax, plot_w)
                 ax._absolute_plot_ratio = plot_w / plot_h
-                charts.append(ax._build_chart(plot_w + margin_w, plot_h + margin_h))
+                # Pin the plot rect inside the panel: the exporters place the
+                # panel assuming its plot box sits at exactly this inset, so
+                # the renderers must not pick their own label-aware margins.
+                ax._plot_box_px = (left, top, plot_w, plot_h)
+                charts.append(
+                    ax._build_chart(round(plot_w + left + right), round(plot_h + top + bottom))
+                )
         else:
             widths, heights = self._grid_cell_sizes()
             charts = [
@@ -806,19 +841,16 @@ class Figure:
         """
         positions = []
         for ax, rect in zip(self._axes, rects, strict=True):
-            compact = round(canvas_size[0] * rect[2]) + 54 < 520
-            left, bottom = (46, 36) if compact else (62, 42)
-            width, height = (54, 42) if compact else (76, 52)
-            if ax._title:
-                # The panel was built taller for its title (`_charts`); grow
-                # the placement upward so the plot box stays on the rect.
-                height += 26 if compact else 30
+            # The same chrome `_charts` built the panel with — including the
+            # axes title, which grows the panel upward so the plot box stays
+            # on the rect.
+            left, top, right, bottom = _panel_chrome(ax, max(1, round(canvas_size[0] * rect[2])))
             positions.append(
                 (
                     rect[0] - left / canvas_size[0],
                     rect[1] - bottom / canvas_size[1],
-                    rect[2] + width / canvas_size[0],
-                    rect[3] + height / canvas_size[1],
+                    rect[2] + (left + right) / canvas_size[0],
+                    rect[3] + (top + bottom) / canvas_size[1],
                 )
             )
         return positions

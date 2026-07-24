@@ -148,6 +148,31 @@ xy.x_axis(
 )
 ```
 
+### Plot rectangle and chrome reservations
+
+`xy.chart(..., padding=[top, right, bottom, left])` sets the gutters around the
+plot rectangle in pixels. Omitted, the renderers pick label-aware defaults —
+`10/14/42/62` px, or `6/8/36/46` px on a compact chart (width under 520 px) —
+which give an ordinary chart room for its tick labels; `padding=[0, 0, 0, 0]`
+plus hidden axes gives an edge-to-edge sparkline.
+
+Some chrome is reserved **outside** `padding` rather than inside it, so
+supplying padding does not have to anticipate it:
+
+| Reservation | Amount (compact / normal) |
+| --- | --- |
+| Chart title band | `+26` / `+30` px on top |
+| A top-side x axis | `+26` / `+32` px on top |
+| Right-side y axis gutter (secondary/named `y`) | `+42` / `+54` px on the right |
+| Vertical colorbar | `+86` px on the right (`+18` more with a label) |
+| Horizontal colorbar | `+38` px on the bottom (`+16` more with a label) |
+
+`xy._svg.layout()` is the single resolver for this in the Python exporters, and
+the browser client's `ChartView._layout()` mirrors it exactly — the two must
+stay in step, because a caller that pins a plot rectangle (as `xy.pyplot` does
+to honor Matplotlib's `figure.subplot.*` frame) computes its padding by
+subtracting these reservations.
+
 ### Axis ticks and label formatting
 
 Tick placement is computed in f64 on the CPU (§16), never through f32, and is

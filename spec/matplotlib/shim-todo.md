@@ -175,6 +175,12 @@ The shim can be called complete for ordinary 2-D scripts when:
 - [x] Implement `Axes.set_position()` and preserve the requested figure rect. Evidence:
       `set_position([left, bottom, width, height])` updates `get_position().bounds` and
       `_figure_rect`.
+- [x] Make `Axes.get_position()` grid-aware and render the axes frame on the
+      rectangle it reports. Evidence: `tests/pyplot/test_frame_geometry.py`
+      pins reported-vs-rendered agreement for single axes and for every panel of
+      2x2/1x3/5x5/8x8 grids (including `subplots_adjust` frames and width
+      ratios), and checks a dense grid composites all 64 panels instead of only
+      its last column.
 - [x] Implement `Axes.set_anchor()` or reject unsupported anchor modes. Evidence:
       Matplotlib compass anchors are stored and unsupported modes raise `ValueError`.
 - [x] Finish `axis("equal")`, `axis("scaled")`, `axis("tight")`, and related

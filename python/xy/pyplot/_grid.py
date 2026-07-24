@@ -10,8 +10,12 @@ snapshots and releases over-budget panels instead; pointer entry revives
 them.
 
 PNG: each panel renders through the engine's native rasterizer to an RGBA
-array; NumPy pastes them onto one canvas and the engine's PNG encoder writes
-the file. This module and `_mplfig.savefig` are the only places the shim
+array; NumPy composites them onto one canvas and the engine's PNG encoder
+writes the file. Absolutely placed panels are rendered on a transparent canvas
+and alpha-composited, because a panel is wider than its gridspec cell — its
+tick labels and title live outside the plot rect — and an opaque paste made
+each column erase the one to its left. This module and `_mplfig.savefig` are
+the only places the shim
 reaches past the public API (via `Chart.figure()` + the `_raster`/`_png`
 modules); everything else goes through `xy`' public surface.
 """
@@ -22,6 +26,60 @@ import html as _html
 from typing import Any, Optional
 
 import numpy as np
+
+
+def _composite(destination: np.ndarray, source: np.ndarray) -> None:
+    """Source-over `source` onto `destination` in place (straight RGBA8).
+
+    Matplotlib draws every axes onto one canvas, so a panel's chrome may hang
+    over a neighbour's without erasing it. Alpha compositing is the equivalent
+    for panel-per-render composition; an opaque paste is not.
+    """
+    alpha = source[:, :, 3:4].astype(np.float32) / 255.0
+    destination[:, :, :3] = np.round(
+        source[:, :, :3] * alpha + destination[:, :, :3] * (1.0 - alpha)
+    ).astype(np.uint8)
+    destination[:, :, 3] = np.round(
+        255.0 * (alpha[:, :, 0] + destination[:, :, 3] / 255.0 * (1.0 - alpha[:, :, 0]))
+    ).astype(np.uint8)
+
+
+def _compose_canvas(
+    tiles: list[np.ndarray],
+    positions: list[tuple[float, float, float, float]],
+    canvas_size: tuple[int, int],
+    facecolor: str,
+    scale: float,
+) -> np.ndarray:
+    """Alpha-composite absolutely placed panel tiles onto one RGBA figure canvas.
+
+    `positions` are whole-panel [left, bottom, width, height] figure fractions,
+    bottom-origin like matplotlib; document order stacks later axes above
+    earlier ones, as matplotlib draws.
+    """
+    from xy import _raster
+
+    background = np.asarray(_raster._parse_color(facecolor), dtype=np.uint8)
+    canvas = np.empty(
+        (round(canvas_size[1] * scale), round(canvas_size[0] * scale), 4), dtype=np.uint8
+    )
+    canvas[...] = background
+    for tile, (left, bottom, _width, height) in zip(tiles, positions, strict=True):
+        x = round(left * canvas.shape[1])
+        y = round((1.0 - bottom - height) * canvas.shape[0])
+        dest_x0, dest_y0 = max(0, x), max(0, y)
+        src_x0, src_y0 = max(0, -x), max(0, -y)
+        dest_x1 = min(canvas.shape[1], x + tile.shape[1])
+        dest_y1 = min(canvas.shape[0], y + tile.shape[0])
+        if dest_x1 > dest_x0 and dest_y1 > dest_y0:
+            _composite(
+                canvas[dest_y0:dest_y1, dest_x0:dest_x1],
+                tile[
+                    src_y0 : src_y0 + dest_y1 - dest_y0,
+                    src_x0 : src_x0 + dest_x1 - dest_x0,
+                ],
+            )
+    return canvas
 
 
 def compose_html(
@@ -259,11 +317,17 @@ def stitch_png(
             return rendered
         return _png.encode(rendered)
 
+    absolute = positions is not None and canvas_size is not None
     tiles: list[np.ndarray] = []
     for chart in charts:
         fig = chart.figure()
         spec, blob, borrowed = fig._build_raster_payload(px_width=max(256, int(fig.width)))
-        spec["canvas_background"] = facecolor
+        # Absolutely placed panels are wider and taller than their gridspec
+        # cell — tick labels and titles live outside the plot rect — so they
+        # must arrive transparent outside their own ink and be composited.  An
+        # opaque figure-colored tile let every panel erase its left neighbour,
+        # which is why a dense subplot grid rendered only its last column.
+        spec["canvas_background"] = "none" if absolute else facecolor
         img = _raster.render_raster(spec, blob, scale, borrowed=borrowed)
         if isinstance(img, bytes):
             raise RuntimeError("pyplot grid rasterizer unexpectedly returned encoded PNG bytes")
@@ -272,25 +336,7 @@ def stitch_png(
         raise ValueError("figure has no axes to save")
 
     if positions is not None and canvas_size is not None:
-        background = np.asarray(_raster._parse_color(facecolor), dtype=np.uint8)
-        canvas = np.empty(
-            (round(canvas_size[1] * scale), round(canvas_size[0] * scale), 4),
-            dtype=np.uint8,
-        )
-        canvas[...] = background
-        for tile, (left, bottom, _width, height) in zip(tiles, positions, strict=True):
-            x = round(left * canvas.shape[1])
-            y = round((1.0 - bottom - height) * canvas.shape[0])
-            dest_x0, dest_y0 = max(0, x), max(0, y)
-            src_x0, src_y0 = max(0, -x), max(0, -y)
-            dest_x1 = min(canvas.shape[1], x + tile.shape[1])
-            dest_y1 = min(canvas.shape[0], y + tile.shape[0])
-            if dest_x1 > dest_x0 and dest_y1 > dest_y0:
-                canvas[dest_y0:dest_y1, dest_x0:dest_x1] = tile[
-                    src_y0 : src_y0 + dest_y1 - dest_y0,
-                    src_x0 : src_x0 + dest_x1 - dest_x0,
-                ]
-        return _png.encode(canvas)
+        return _png.encode(_compose_canvas(tiles, positions, canvas_size, facecolor, scale))
 
     col_widths = [
         max(tiles[index].shape[1] for index in range(col, len(tiles), ncols))

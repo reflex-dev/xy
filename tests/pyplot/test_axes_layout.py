@@ -31,8 +31,12 @@ def test_get_position_is_dependency_free_and_set_position_preserves_bounds(monke
     monkeypatch.setattr(builtins, "__import__", no_matplotlib)
 
     default = ax.get_position()
-    assert default.bounds == (0.125, 0.11, 0.775, 0.77)
-    assert (default.x0, default.y0, default.x1, default.y1) == (0.125, 0.11, 0.9, 0.88)
+    # Resolved through the gridspec now that get_position() is grid-aware, so
+    # the bottom edge carries matplotlib's own 0.88 - 0.77 rounding.
+    assert default.bounds == pytest.approx((0.125, 0.11, 0.775, 0.77))
+    assert (default.x0, default.y0, default.x1, default.y1) == pytest.approx(
+        (0.125, 0.11, 0.9, 0.88)
+    )
 
     ax.set_position([0.2, 0.3, 0.4, 0.5])
 
@@ -73,7 +77,10 @@ def test_axis_tight_sets_data_domains_and_equal_expands_to_panel_ratio() -> None
     assert x_axis.domain == pytest.approx((-0.1, 2.1))
     # axis("equal") uses adjustable='datalim': preserve the ordinary panel
     # rectangle and expand y until x/y data units have the same pixel scale.
-    assert y_axis.domain == pytest.approx((-0.3347517730, 1.3347517730))
+    # The expansion now solves over the *matplotlib* axes rectangle
+    # (0.775 x 0.77 of 640x480), so these are Matplotlib 3.11's own limits for
+    # this figure rather than the ones implied by the old label-aware margins.
+    assert y_axis.domain == pytest.approx((-0.31967741935483873, 1.3196774193548388))
     assert ax.get_position().bounds == pytest.approx((0.125, 0.11, 0.775, 0.77))
 
 
