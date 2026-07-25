@@ -187,6 +187,17 @@ but they fail differently, and only the numeric grammar falls back.
   One deliberate difference: group separators are the `,`/`.` pair rather than
   the viewer's locale, because a static export has no viewer and must stay
   reproducible.
+  The colorbar applies the same grammar via `xy.colorbar(format=...)`, with
+  Python's `:g` — the historical colorbar default — as the fallback. The gutter
+  reserved for a vertical colorbar and the offset of its rotated title are both
+  measured from the widest **formatted** label (`_svg.colorbar_right_room` /
+  `colorbar_label_offset`, mirrored by `colorbarRightRoomFor` /
+  `colorbarLabelOffsetFor`), never below the historical 86 px, so a wide
+  currency label cannot collide with the title. The y-axis gutter grows the
+  same way (`_svg._left_axis_room`): sized for about six characters, it widens
+  by the overflow so a formatted label cannot run under the rotated axis title.
+  Charts whose labels already fit keep their exact previous geometry, and an
+  explicit `padding=` is left alone.
 - **Time axes** accept a strftime subset of exactly `%Y %m %d %H %M %S %b %B`.
   All fields are **UTC**; `%b`/`%B` are English month names. A time spec
   **never** falls back: `fmtTimeSpec` (`js/src/30_ticks.ts:180-200`)

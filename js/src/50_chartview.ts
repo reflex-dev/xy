@@ -1,7 +1,7 @@
 import { PROTOCOL, xyByteSpan } from "./00_header";
 import { buildLutData, colormapStops } from "./10_colormaps";
 import { chartBackdrop, cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
-import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
+import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtNumberSpec, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
 import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
 import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodDropDensityCache, lodDropPointCache, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
@@ -335,6 +335,42 @@ function xyInitiallyVisible(el) {
   );
 }
 
+// Gutter a vertical colorbar needs, widened for its actual tick labels.
+// The historical 86 assumed ~6 characters of automatic label; a `format` that
+// adds a currency symbol and separators makes them wider, and the title would
+// otherwise collide. Mirrors `_svg.colorbar_right_room` exactly.
+const COLORBAR_CHROME_W = 46;
+const COLORBAR_MIN_ROOM = 86;
+const COLORBAR_TICK_FONT = 10;
+
+export function colorbarTickLabelWidth(colorbar) {
+  const domain = (colorbar && colorbar.domain) || [0, 1];
+  const lo = Number(domain[0]), hi = Number(domain[1]);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return 0;
+  const explicit = Array.isArray(colorbar.ticks);
+  const result = linearTicks(lo, hi, 8);
+  const values = explicit
+    ? colorbar.ticks.map(Number).filter((v) => Number.isFinite(v) && v >= Math.min(lo, hi) && v <= Math.max(lo, hi))
+    : (result.ticks.length ? result.ticks : [lo, hi]);
+  let widest = 0;
+  for (const value of values) {
+    const text = fmtNumberSpec(value, colorbar.format)
+      ?? (explicit ? fmtGeneral(value) : fmtLinear(value, result.step));
+    widest = Math.max(widest, String(text).length);
+  }
+  return widest * COLORBAR_TICK_FONT * 0.62;
+}
+
+export function colorbarRightRoomFor(colorbar) {
+  return Math.max(COLORBAR_MIN_ROOM, COLORBAR_CHROME_W + colorbarTickLabelWidth(colorbar) + 8);
+}
+
+// Distance from the bar to the rotated title, tracking the tick labels for
+// the same reason the gutter does. Mirrors `_svg.colorbar_label_offset`.
+export function colorbarLabelOffsetFor(colorbar) {
+  return Math.max(38, 4 + colorbarTickLabelWidth(colorbar) + 10);
+}
+
 export class ChartView {
   constructor(el, spec, buffer, comm) {
     if (spec.protocol !== PROTOCOL) {
@@ -507,7 +543,7 @@ export class ChartView {
     const colorbarRightRoom = verticalColorbar
       ? (this._compactVerticalColorbar
         ? COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + 8
-        : 86 + (colorbar.label ? 18 : 0))
+        : colorbarRightRoomFor(colorbar) + (colorbar.label ? 18 : 0))
       : 0;
     const colorbarBottomRoom = horizontalColorbar ? 38 + (colorbar.label ? 16 : 0) : 0;
     const baseRight = pad ? (responsivePad ? Math.min(pad[1], 8) : pad[1]) : compact ? 8 : MARGIN.r;
@@ -2346,7 +2382,11 @@ export class ChartView {
       const value = Number(raw);
       if (!Number.isFinite(value) || value < Math.min(lo, hi) || value > Math.max(lo, hi)) continue;
       const tick = document.createElement("span");
-      tick.textContent = hasExplicitTicks ? fmtGeneral(value) : fmtLinear(value, tickStep);
+      // `format` wins when it parses; otherwise the historical automatic
+      // label stands, so an unrecognized spec degrades the same way an
+      // axis format does (30_ticks.fmtAxis) instead of blanking the tick.
+      tick.textContent = fmtNumberSpec(value, cb.format)
+        ?? (hasExplicitTicks ? fmtGeneral(value) : fmtLinear(value, tickStep));
       const fraction = (value - lo) / span;
       tick.style.cssText = horizontal
         ? `position:absolute;left:${100 * fraction}%;top:${COLORBAR_THICKNESS + 2}px;transform:translateX(-50%);white-space:nowrap;`
@@ -2359,7 +2399,7 @@ export class ChartView {
       label.textContent = String(cb.label);
       label.style.cssText = horizontal
         ? `position:absolute;left:50%;top:${COLORBAR_THICKNESS + 18}px;transform:translateX(-50%);white-space:nowrap;`
-        : `position:absolute;left:${COLORBAR_THICKNESS + 40}px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`;
+        : `position:absolute;left:${COLORBAR_THICKNESS + colorbarLabelOffsetFor(cb) + 2}px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`;
       this._applySlot(label, "colorbar_title");
       box.appendChild(label);
     }

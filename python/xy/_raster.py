@@ -33,6 +33,7 @@ from ._svg import (
     _axis_tick_label_layout,
     _axis_tick_label_strategy,
     _colorbar_right_axis_room,
+    _colorbar_tick_text,
     _colormap_stops,
     _column,
     _corner_radii,
@@ -2074,7 +2075,7 @@ def _emit_colorbar(
                 1,
                 10,
                 _parse_color(text_color),
-                f"{value:g}",
+                _colorbar_tick_text(value, options.get("format")),
             )
         if options.get("label"):
             cmd.text(
@@ -2098,7 +2099,7 @@ def _emit_colorbar(
                 0,
                 10,
                 _parse_color(text_color),
-                f"{value:g}",
+                _colorbar_tick_text(value, options.get("format")),
             )
         # The native text primitive does not rotate; a compact label above the
         # bar remains legible and, crucially, stays inside the export canvas.

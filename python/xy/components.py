@@ -267,6 +267,7 @@ class Colorbar(Component):
     title: Optional[str] = None
     orientation: str = "vertical"
     ticks: Optional[list[float]] = None
+    format: Optional[str] = None
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
     render: Any = None
@@ -2453,6 +2454,7 @@ def colorbar(
     title: Optional[str] = None,
     orientation: str = "vertical",
     ticks: Optional[list[float]] = None,
+    format: Optional[str] = None,
     class_name: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Colorbar:
@@ -2466,18 +2468,22 @@ def colorbar(
             mark name when one is available.
         orientation: ``vertical`` or ``horizontal`` placement.
         ticks: Optional finite numeric tick positions.
+        format: Tick-label format string, in the same grammar the axes use
+            (``"$,.0f"``, ``".1%"``). Unrecognized specs fall back to the
+            automatic label rather than raising, matching ``x_axis(format=)``.
         class_name: DOM class name applied to the colorbar.
         style: Colorbar style overrides.
     """
     show, render = _chrome_render_args(children, show, render, "colorbar")
-    show, title, orientation, ticks, class_name, style = _validated_colorbar_fields(
-        show, title, orientation, ticks, class_name, style
+    show, title, orientation, ticks, format, class_name, style = _validated_colorbar_fields(
+        show, title, orientation, ticks, format, class_name, style
     )
     return Colorbar(
         show=show,
         title=title,
         orientation=orientation,
         ticks=ticks,
+        format=format,
         class_name=class_name,
         style=style,
         render=render,
@@ -2489,6 +2495,7 @@ def _validated_colorbar_fields(
     title: Any,
     orientation: Any,
     ticks: Any,
+    format: Any,
     class_name: Any,
     style: Any,
 ) -> tuple[
@@ -2496,6 +2503,7 @@ def _validated_colorbar_fields(
     Optional[str],
     str,
     Optional[list[float]],
+    Optional[str],
     Optional[str],
     dict[str, StyleValue],
 ]:
@@ -2510,6 +2518,7 @@ def _validated_colorbar_fields(
         _optional_string(title, "colorbar title"),
         _colorbar_orientation(orientation),
         _colorbar_ticks(ticks),
+        _optional_string(format, "colorbar format"),
         _optional_string(class_name, "colorbar class_name"),
         _style_dict(style, "colorbar style"),
     )
@@ -3255,6 +3264,7 @@ class Chart(Component):
                 node_title,
                 node_orientation,
                 node_ticks,
+                node_format,
                 node_class_name,
                 node_style,
             ) = _validated_colorbar_fields(
@@ -3262,6 +3272,7 @@ class Chart(Component):
                 node.title,
                 node.orientation,
                 node.ticks,
+                node.format,
                 node.class_name,
                 node.style,
             )
@@ -3280,6 +3291,8 @@ class Chart(Component):
                         options["label"] = node_title
                     if node_ticks is not None:
                         options["ticks"] = node_ticks
+                    if node_format is not None:
+                        options["format"] = node_format
                     fig.colorbar_options = options
         fig._validate_interaction()
         self._figure = fig
