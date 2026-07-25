@@ -49,7 +49,7 @@ Chart a hundred million points as a density surface:
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="spec/assets/xy-density-100m-dark.gif">
-    <img src="spec/assets/xy-density-100m-light.gif" alt="A hundred-million-point spiral rendered as a density surface, then zoomed until the surface resolves into individual points." width="860">
+    <img src="spec/assets/xy-density-100m-light.gif" alt="A hundred-million-point spiral rendered as a density surface, then zoomed until the surface resolves into individual points." width="780">
   </picture>
 </p>
 
