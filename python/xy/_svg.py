@@ -1173,6 +1173,52 @@ def _axis_scales(
     return x_scales, y_scales, sx, sy, extra_x_axes, extra_y_axes
 
 
+# Bar offset (24) + bar width (18) + tick gap (4) = the fixed chrome left of
+# a vertical colorbar's tick labels; the rest of the gutter is label room.
+_COLORBAR_CHROME_W = 46.0
+_COLORBAR_MIN_ROOM = 86.0
+_COLORBAR_TICK_FONT = 10.0
+
+
+def colorbar_tick_label_width(colorbar: dict[str, Any]) -> float:
+    """Widest rendered tick label of a vertical colorbar, in px."""
+    domain = colorbar.get("domain") or [0.0, 1.0]
+    try:
+        lo, hi = float(domain[0]), float(domain[1])
+    except (TypeError, ValueError, IndexError):
+        return 0.0
+    ticks = colorbar.get("ticks")
+    values = (
+        [float(v) for v in ticks if lo <= float(v) <= hi]
+        if ticks is not None
+        else (_linear_ticks(lo, hi, 8)[0] or [lo, hi])
+    )
+    widest = max((len(_colorbar_tick_text(v, colorbar.get("format"))) for v in values), default=0)
+    return widest * _COLORBAR_TICK_FONT * 0.62
+
+
+def colorbar_label_offset(colorbar: dict[str, Any]) -> float:
+    """Distance from a vertical colorbar's bar to its rotated title.
+
+    Tracks the tick-label width for the same reason the gutter does: a
+    formatted label is wider than the automatic one, and a fixed 38 px put
+    the title on top of it.
+    """
+    return max(38.0, 4.0 + colorbar_tick_label_width(colorbar) + 10.0)
+
+
+def colorbar_right_room(colorbar: dict[str, Any]) -> float:
+    """Gutter a vertical colorbar needs, widened for its actual tick labels.
+
+    The historical 86 px assumed ~6 characters of automatic label. A
+    `format` that adds a currency symbol and group separators makes labels
+    materially wider, so measure them instead of letting the title collide.
+    Never narrower than 86, so unformatted charts keep their layout exactly.
+    The client applies the identical rule (`50_chartview.ts`).
+    """
+    return max(_COLORBAR_MIN_ROOM, _COLORBAR_CHROME_W + colorbar_tick_label_width(colorbar) + 8.0)
+
+
 def _colorbar_right_axis_room(
     y_axis: dict[str, Any],
     extra_y_axes: list[tuple[str, dict[str, Any], _Scale]],
@@ -1190,6 +1236,43 @@ def _colorbar_right_axis_room(
     ):
         return 42.0 if compact else 54.0
     return 0.0
+
+
+# The default left gutter is sized for roughly this many base-size characters
+# of y tick label — `800000` at 11 px, the width an automatic label reaches
+# before it starts running under the rotated axis title. Labels are measured
+# against this budget and the gutter grows by the OVERFLOW only, so every
+# chart whose labels already fit keeps its historical geometry to the pixel.
+_Y_LABEL_BUDGET_CHARS = 6.0
+# The size those six characters are measured at.
+_Y_BASE_FONT_SIZE = 11.0
+_Y_CHAR_ASPECT = 0.62
+# One wide label must not be able to collapse the plot rect.
+_Y_EXTRA_ROOM_CAP = 120.0
+
+
+def _left_axis_room(axes: dict[str, dict[str, Any]], plot_h: float, default_left: float) -> float:
+    """Left gutter for the widest left-side y tick label, never below `default_left`.
+
+    `y_axis(format="$,.0f")` turns `800000` into `$800,000` and
+    `theme(font_size=)` scales every label; both used to run under the axis
+    title because the gutter was a constant.
+    """
+    budget = _Y_LABEL_BUDGET_CHARS * _Y_BASE_FONT_SIZE
+    extra = 0.0
+    for axis_id, axis in axes.items():
+        if not axis_id.startswith("y") or axis.get("side", "left") != "left":
+            continue
+        if _axis_tick_label_strategy(axis) == "none":
+            continue
+        try:
+            _ticks, labeled, step = axis_ticks(axis, max(1.0, plot_h), False)
+        except (KeyError, TypeError, ValueError):
+            continue
+        font_size = _axis_tick_font_size(axis)
+        widest = max((len(_tick_text(axis, value, step)) for value in labeled), default=0)
+        extra = max(extra, (widest * font_size - budget) * _Y_CHAR_ASPECT)
+    return default_left + min(max(0.0, extra), _Y_EXTRA_ROOM_CAP)
 
 
 def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
@@ -1236,7 +1319,7 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
     if colorbar.get("orientation") == "horizontal":
         bottom += 38 + (16 if colorbar.get("label") else 0)
     elif colorbar:
-        right += 86 + (18 if colorbar.get("label") else 0)
+        right += colorbar_right_room(colorbar) + (18 if colorbar.get("label") else 0)
     if any(
         axis_id.startswith("y")
         and axis.get("side", "right") == "right"
@@ -1247,6 +1330,12 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         # secondary-y tick labels/title. Multiple right axes intentionally
         # overlay in both renderers until offset axes become part of the API.
         right += 42 if compact else 54
+    if not (isinstance(pad, list) and len(pad) == 4):
+        # Explicit `padding=` is the author's decision and is left alone.
+        # Otherwise the left gutter grows to fit labels wider than the default
+        # reserve assumes — `y_axis(format="$,.0f")` turns `800000` into
+        # `$800,000`, which used to run under the rotated axis title.
+        left = _left_axis_room(axes, height - top - bottom, left)
     plot = {
         "x": left,
         "y": top,
@@ -2932,6 +3021,16 @@ def _legend(
     return f'<g clip-path="url(#{clip_id})">{"".join(rows)}</g>'
 
 
+def _colorbar_tick_text(value: float, format: Any) -> str:
+    """A colorbar tick label: the shared format grammar, else Python's `:g`.
+
+    `:g` is the historical default and stays the fallback so an unrecognized
+    spec degrades to the label the chart drew before, exactly as the axes do.
+    """
+    formatted = _fmt_number_spec(float(value), format)
+    return formatted if formatted is not None else f"{value:g}"
+
+
 def _colorbar(
     options: dict, plot: dict, right_axis_room: float = 0.0, text_color: str = _TEXT
 ) -> str:
@@ -2957,9 +3056,10 @@ def _colorbar(
         y, width, height = plot["y"], 18, plot["h"]
         gradient_attrs = 'x1="0" y1="100%" x2="0" y2="0"'
     label = str(options.get("label") or "")
+    label_x = x + width + colorbar_label_offset(options)
     label_node = (
-        f'<text x="{_num(x + width + 38)}" y="{_num(y + height / 2)}" '
-        f'text-anchor="middle" transform="rotate(-90 {_num(x + width + 38)} '
+        f'<text x="{_num(label_x)}" y="{_num(y + height / 2)}" '
+        f'text-anchor="middle" transform="rotate(-90 {_num(label_x)} '
         f'{_num(y + height / 2)})" fill="{escape(text_color)}">{escape(label)}</text>'
         if label and orientation != "horizontal"
         else (
@@ -2971,6 +3071,7 @@ def _colorbar(
     )
     lo, hi = float(domain[0]), float(domain[1])
     span = (hi - lo) or 1.0
+    tick_format = options.get("format")
     ticks = options.get("ticks")
     tick_positions = (
         [float(value) for value in ticks if lo <= float(value) <= hi]
@@ -2981,14 +3082,14 @@ def _colorbar(
         "".join(
             f'<text x="{_num(x + width + 4)}" '
             f'y="{_num(y + height * (1 - (value - lo) / span) + 4)}" '
-            f'fill="{escape(text_color)}">{value:g}</text>'
+            f'fill="{escape(text_color)}">{escape(_colorbar_tick_text(value, tick_format))}</text>'
             for value in tick_positions
         )
         if orientation != "horizontal"
         else "".join(
             f'<text x="{_num(x + width * (value - lo) / span)}" '
             f'y="{_num(y + height + 12)}" text-anchor="middle" '
-            f'fill="{escape(text_color)}">{value:g}</text>'
+            f'fill="{escape(text_color)}">{escape(_colorbar_tick_text(value, tick_format))}</text>'
             for value in tick_positions
         )
     )

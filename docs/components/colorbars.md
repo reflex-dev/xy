@@ -229,6 +229,22 @@ Pass them to the component: `xy.colorbar(title="Temperature (°C)", ticks=[-3, 0
 `ticks=` supplies explicit finite tick positions; both work in either
 orientation.
 
+### How do I format colorbar tick labels as currency or percentages?
+
+`xy.colorbar(format="$,.0f")` — the same format grammar the axes and tooltips
+use, so `$,.0f` gives `$14,741`, `.1%` gives `18.5%`, and a literal prefix or
+suffix is copied through. An unrecognized spec falls back to the automatic
+label rather than raising. The colorbar's reserved width and title position
+both follow the widest formatted label, so long currency labels do not collide
+with the title.
+
+~~~python
+chart = xy.scatter_chart(
+    xy.scatter(x, y, color=spend, colormap="viridis"),
+    xy.colorbar(title="spend", format="$,.0f"),
+)
+~~~
+
 ### Can I make the colorbar horizontal instead of vertical?
 
 Yes — `xy.colorbar(orientation="horizontal")`. The `orientation=` option

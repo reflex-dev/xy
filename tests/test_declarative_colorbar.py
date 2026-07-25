@@ -240,6 +240,7 @@ def test_colorbar_uses_semantic_positional_fields_and_custom_render() -> None:
         "Temperature",
         "horizontal",
         [0.0, 1.0],
+        ".1f",
         "scale-class",
         {"color": "red"},
         renderer,
@@ -248,6 +249,9 @@ def test_colorbar_uses_semantic_positional_fields_and_custom_render() -> None:
     assert node.title == "Temperature"
     assert node.orientation == "horizontal"
     assert node.ticks == [0.0, 1.0]
+    # `format` sits between the tick fields and the DOM fields, matching
+    # Tooltip's field order.
+    assert node.format == ".1f"
     assert node.class_name == "scale-class"
     assert node.style == {"color": "red"}
     assert node.render is renderer
