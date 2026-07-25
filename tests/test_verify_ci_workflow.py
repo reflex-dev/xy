@@ -748,7 +748,7 @@ def test_release_workflow_rejects_ungated_pypi_publish_step(tmp_path: Path) -> N
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
-    assert any("has no if: condition of its own" in error for error in errors)
+    assert any("is not gated by the dry-run predicate" in error for error in errors)
 
 
 def test_release_workflow_rejects_non_retryable_pypi_publish(tmp_path: Path) -> None:
@@ -784,3 +784,112 @@ def test_ci_workflow_rejects_shallow_checkout(tmp_path: Path) -> None:
     errors = verify_ci_workflow.validate_ci_workflow(path)
 
     assert any("fetch-depth: 0" in error for error in errors)
+
+
+def test_reflex_xy_release_workflow_accepts_current_gates() -> None:
+    assert verify_ci_workflow.validate_reflex_xy_release_workflow() == []
+
+
+def test_reflex_xy_release_workflow_rejects_ungated_pypi_publish(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release-reflex-xy.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release-reflex-xy.yml"
+    gate = (
+        "        if: github.event_name != 'workflow_dispatch' "
+        "|| github.event.inputs.dry_run != 'true'\n"
+    )
+    assert gate in workflow
+    path.write_text(workflow.replace(gate, ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_reflex_xy_release_workflow(path)
+
+    assert any("is not gated by the dry-run predicate" in error for error in errors)
+
+
+def test_reflex_xy_release_workflow_rejects_missing_dist_verifier(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release-reflex-xy.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release-reflex-xy.yml"
+    stripped = "\n".join(
+        line for line in workflow.splitlines() if "scripts/verify_reflex_xy_dist.py" not in line
+    )
+    path.write_text(stripped + "\n", encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_reflex_xy_release_workflow(path)
+
+    assert any(
+        "reflex-xy release build job" in error and "verify_reflex_xy_dist" in error
+        for error in errors
+    )
+
+
+def test_reflex_xy_release_workflow_rejects_core_tag_trigger(tmp_path: Path) -> None:
+    # The adapter workflow firing on bare `v*` tags would publish reflex-xy on
+    # every xy core release; the namespaces must stay disjoint.
+    workflow = Path(".github/workflows/release-reflex-xy.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release-reflex-xy.yml"
+    path.write_text(
+        workflow.replace('    tags: ["reflex-xy-v*"]\n', '    tags: ["v*"]\n'),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_reflex_xy_release_workflow(path)
+
+    assert any("must not trigger on bare `v*` tags" in error for error in errors)
+
+
+def test_reflex_xy_release_workflow_rejects_shallow_checkout(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release-reflex-xy.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release-reflex-xy.yml"
+    path.write_text(workflow.replace("          fetch-depth: 0\n", ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_reflex_xy_release_workflow(path)
+
+    assert any("fetch-depth: 0" in error and "0.0.0" in error for error in errors)
+
+
+def test_release_workflow_rejects_adapter_tag_namespace(tmp_path: Path) -> None:
+    # And the inverse guard: release.yml reaching into `reflex-xy-v*` would
+    # run the full cross-compile matrix (and publish xy) on adapter tags.
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace('    tags: ["v*"]\n', '    tags: ["v*", "reflex-xy-v*"]\n'),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("must not touch the reflex-xy tag namespace" in error for error in errors)
+
+
+def test_release_workflow_rejects_always_conditioned_pypi_publish(tmp_path: Path) -> None:
+    # `if: always()` is *a* condition but gates nothing: a mere has-an-if
+    # check would accept it and let a manual dispatch publish unconditionally.
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    gate = (
+        "        if: github.event_name != 'workflow_dispatch' "
+        "|| github.event.inputs.dry_run != 'true'\n"
+    )
+    assert gate in workflow
+    path.write_text(workflow.replace(gate, "        if: always()\n"), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("is not gated by the dry-run predicate" in error for error in errors)
+
+
+def test_reflex_xy_release_workflow_rejects_always_conditioned_pypi_publish(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release-reflex-xy.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release-reflex-xy.yml"
+    gate = (
+        "        if: github.event_name != 'workflow_dispatch' "
+        "|| github.event.inputs.dry_run != 'true'\n"
+    )
+    assert gate in workflow
+    path.write_text(workflow.replace(gate, "        if: always()\n"), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_reflex_xy_release_workflow(path)
+
+    assert any("is not gated by the dry-run predicate" in error for error in errors)

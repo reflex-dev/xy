@@ -5,8 +5,6 @@
 interactivity, and streaming updates — with chart data riding the app's
 **existing websocket**, not a sidecar API.
 
-Status: **prototype** implementing `spec/design/reflex-integration.md`.
-
 ## How it works
 
 - **Control plane (Reflex-native).** The only chart state is a token string,
@@ -111,15 +109,6 @@ def index():
     )
 ```
 
-Selection JSON is capped and reports `total_count` plus `truncated`; call
-`reflex_xy.resolve_selection(event)` in the handler when all canonical rows
-are required. Hover and view changes are latest-wins throttled (view changes
-stream live during a gesture and always end on a `final`-phase event), and
-view/selection state survives dependent republishes without feedback events.
-The complete envelopes, limits, clear/shared-handler/viewport examples, and
-static-versus-live availability are documented in
-`docs/engineering/design/reflex-integration.md`.
-
 ## Fixed-data charts
 
 For a chart that doesn't depend on state, skip the state var entirely —
@@ -151,15 +140,3 @@ def index() -> rx.Component:
 the same one — no state, no coordination. The escalation path is:
 direct Chart (static) → `inline()` (fixed data, live kernel) →
 `@reflex_xy.figure` (per-session, state-driven).
-
-## Demo
-
-The repository's [`examples/reflex/`](../../examples/reflex) is a runnable
-showcase of every linking method: a drillable figure var with hover / click /
-box-select events, a histogram driven by a slider and cross-filtered by the
-selection, a streaming line, a detail chart recomputed from `on_view_change`,
-and the two fixed-data tiers (a direct `xy.Chart` and an `inline()` token).
-Each section shows its own source, read live with `inspect.getsource`.
-
-For serving the same charts without Reflex, [`examples/fastapi/`](../../examples/fastapi)
-renders standalone HTML and a live 100M-point drilldown from a plain FastAPI app.

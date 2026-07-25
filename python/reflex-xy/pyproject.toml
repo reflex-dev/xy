@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "uv-dynamic-versioning>=0.11"]
 build-backend = "hatchling.build"
 
 [project]
 name = "reflex-xy"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Reflex integration for xy: WebGL charts over the app's own websocket"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,6 +28,31 @@ dev = [
 
 [project.urls]
 Repository = "https://github.com/reflex-dev/xy"
+Changelog = "https://github.com/reflex-dev/xy/blob/main/python/reflex-xy/CHANGELOG.md"
+
+# Same tag-derived versioning policy as the xy core (see the root
+# pyproject.toml for the full rationale), in a tag namespace of its own:
+# the adapter releases from `reflex-xy-vX.Y.Z` tags, cut by
+# .github/workflows/release-reflex-xy.yml. `pattern-prefix` inserts
+# `reflex-xy-` after the default pattern's `^` anchor, which keeps the two
+# release lines disjoint in both directions — this derivation only sees
+# `reflex-xy-v*` tags, while the core's bare-`v` pattern (and the docs-deploy
+# CalVer tags) can never match them.
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+pattern-prefix = "reflex-xy-"
+# Builds off a tagged commit get the bare version; anything else gets
+# `<next>.devN+<commit>`, unpublishable to PyPI on purpose — only a tag can
+# produce an uploadable version.
+bump = true
+# Only reached by a source tree with neither git metadata nor PKG-INFO; such
+# a build still succeeds, at an obviously unreal version rather than a
+# plausible-but-wrong one (unpacked sdists resolve from their own PKG-INFO).
+fallback-version = "0.0.0"
 
 [tool.hatch.build.targets.wheel]
 packages = ["reflex_xy"]

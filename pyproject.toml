@@ -102,6 +102,10 @@ include = [
     ".github/workflows/ci.yml",
     ".github/workflows/codspeed.yml",
     ".github/workflows/release.yml",
+    # The adapter's release workflow rides along (repo infra, like release.yml)
+    # even though the adapter *package* stays out of this sdist: the shipped
+    # test suite validates all four workflows via scripts/verify_ci_workflow.py.
+    ".github/workflows/release-reflex-xy.yml",
     # The xy package only — python/reflex-xy is its own distributable
     # (own pyproject, depends on reflex) and must not ride in this sdist;
     # scripts/verify_sdist.py enforces both the no-reflex-dependency rule

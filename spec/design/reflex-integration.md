@@ -600,6 +600,19 @@ root beside `register()`/`release()`.
 components/vars but not yet App/state-manager access; revisit when a smaller
 supported surface exists.
 
+**Versioning & releases.** The adapter is its own distributable and versions
+independently of the core: its distribution version is derived from
+`reflex-xy-vX.Y.Z` git tags (uv-dynamic-versioning with
+`pattern-prefix = "reflex-xy-"`), while the core keeps bare `vX.Y.Z` — the
+pattern anchoring makes each derivation blind to the other's tags. Releases
+publish via the dedicated `.github/workflows/release-reflex-xy.yml` workflow
+(pure wheel + sdist, `scripts/verify_reflex_xy_dist.py`, trusted publishing),
+gated on a dated entry in the adapter's own `python/reflex-xy/CHANGELOG.md`
+(`scripts/check_release_version.py --package reflex-xy`); the pipeline is
+deliberately separate from release.yml's cross-compile matrix because the
+adapter has no binary artifacts. Full checklist:
+`spec/process/production-readiness.md` § "reflex-xy releases".
+
 ## 8. Superseded: the HTTP-routes draft
 
 The previous revision of this document specified `GET /_xy/{token}/payload`,

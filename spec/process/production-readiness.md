@@ -91,6 +91,7 @@ These must pass before publishing or making a broad performance claim.
 | sdist | Source archive contains required source/bundles, benchmark regression harness/baseline, release docs/tests/scripts, the example apps' source, `PKG-INFO` version/dependencies matching the archive's own `xy-<version>` root, no duplicate members, and no generated junk | `python scripts/verify_sdist.py dist/*.tar.gz` |
 | Native wheel | Platform wheel contains package-only files, exactly one native library, `METADATA` version/dependencies matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
 | Fallback wheel | No-toolchain wheel contains package-only files, `METADATA` version/dependencies matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
+| reflex-xy dist | The adapter's single pure `py3-none-any` wheel + sdist carry the `reflex_xy` package with its `XYChart.jsx` asset, no compiled library, **no render-client copy** (the client links out of the installed xy wheel), coherent name/version/floor/dependency metadata, and — on a tag build — a version exactly equal to the `reflex-xy-vX.Y.Z` tag | `python scripts/verify_reflex_xy_dist.py python/reflex-xy/dist/* [--tag reflex-xy-vX.Y.Z]` |
 | Wheel size | Platform wheel remains small enough for notebook installs | CI budget: 15 MB |
 | Benchmark artifact | JSON benchmark reports carry schema, environment, categories, row status, and finite non-negative metrics; native reports must declare the native backend | `python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs`; repeat for line, install, core-2D, pyplot-vs-matplotlib, native, interaction, dashboard, and workflow artifacts |
 
@@ -337,6 +338,25 @@ consequences worth knowing:
   clone fetches no tags and would *silently* build at the `0.0.0` fallback;
   `make check-ci` enforces this.
 
+Pre-releases are tagged the same way with a canonical PEP 440 suffix —
+`vX.Y.ZaN` / `bN` / `rcN` (e.g. `v1.0.0rc1`) — and publish through the same
+pipeline; pip ignores them unless a pre-release is requested explicitly. Only
+the canonical spelling passes the release gate: `-alpha1`-style tags would be
+normalized by the version derivation and could never match their own built
+artifacts. A pre-release needs its own dated changelog entry, exactly like a
+final release.
+
+Two release lines share the repo, in disjoint tag namespaces. Everything above
+and below in this checklist is the **xy core** (`vX.Y.Z` tags,
+`release.yml`, the full wheel matrix). The **reflex-xy adapter** releases
+independently from `reflex-xy-vX.Y.Z` tags via
+`.github/workflows/release-reflex-xy.yml` — see "reflex-xy releases" at the end
+of this section. The namespaces are disjoint by construction:
+uv-dynamic-versioning's default pattern anchors on `^v`, so it can never match
+a `reflex-xy-*` tag, and the adapter's `pattern-prefix = "reflex-xy-"` config
+can never match a bare `v*` tag (`make check-ci` also refuses a workflow that
+triggers across namespaces).
+
 Before tagging a release:
 
 - Add a dated `## [X.Y.Z] — YYYY-MM-DD` heading to `CHANGELOG.md` for the
@@ -390,6 +410,42 @@ Before tagging a release:
   "faster/best" positioning.
 - Confirm performance claims mention chart type, mode, backend, data size, and
   browser TTFR status.
+
+### reflex-xy releases
+
+The adapter is a pure-Python distribution — no native core, no JS build, no
+platform matrix — so it deliberately does **not** ride release.yml: one small
+workflow (`release-reflex-xy.yml`, two jobs) is easier to keep correct than a
+second build shape wedged into the cross-compile matrix. Cutting an adapter
+release is `git tag reflex-xy-vX.Y.Z && git push --tags` after dating the
+version's entry in `python/reflex-xy/CHANGELOG.md` (the adapter has its own
+changelog; the gate is `scripts/check_release_version.py --package reflex-xy`).
+Pre-releases follow the core's rule: a canonical suffix on the tag
+(`reflex-xy-v0.0.1a1`, likewise `bN`/`rcN`) and a dated entry for that exact
+pre-release version.
+
+The workflow builds `python/reflex-xy` with `uv build`, verifies the pair with
+`scripts/verify_reflex_xy_dist.py --tag <tag>` (pure wheel, JSX asset present,
+no render-client copy, version exactly equal to the tag), smokes a real
+install + `import reflex_xy`, and publishes both artifacts to PyPI via trusted
+publishing (environment `pypi`, OIDC, `skip-existing` for retryability). A
+manual `workflow_dispatch` defaults to `dry_run=true` and never publishes.
+
+Before the first adapter release (and after any change to its pipeline):
+
+- Configure the PyPI trusted publisher for the `reflex-xy` project:
+  repository `reflex-dev/xy`, workflow `release-reflex-xy.yml`,
+  environment `pypi` — it is a separate PyPI project from `xy` and does not
+  inherit the core's publisher.
+- Run the workflow manually (`dry_run=true`) and confirm both artifacts build
+  and verify; the dev version it builds is unpublishable by design.
+- Run `make check-ci` — it validates this workflow's gates (unshallow
+  checkouts, dist verification, changelog gate, trusted publishing, dry-run
+  default, and tag-namespace separation) alongside the other workflows.
+- Adapter releases pin nothing about the core: `reflex-xy` depends on `xy`
+  (and `reflex>=0.9.6`) as ordinary PyPI ranges, and its wheel must never
+  carry a copy of the render client — the client links out of the installed
+  xy package at app compile so it can never drift from the kernel.
 
 ## Claim Guardrails
 
