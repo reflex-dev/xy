@@ -1,0 +1,72 @@
+name: CodSpeed
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "spec/**"
+  # `workflow_dispatch` allows CodSpeed to trigger backtest
+  # performance analysis in order to generate initial data.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # for OpenID Connect authentication with CodSpeed
+
+concurrency:
+  group: codspeed-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmarks:
+    name: Run benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      # The editable install below builds the render client from source via the
+      # hatch hook (generated, not committed; §33). Pin Node so that build uses
+      # a vite-compatible version rather than the runner's system Node.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      # native kernels (BACKEND == "native"); without it, importing the compute
+      # layer errors rather than running.
+      - name: Build native core
+        run: cargo build --release
+
+      - name: Install package + benchmark deps
+        env:
+          XY_REQUIRE_CARGO: "1"
+        run: |
+          uv venv .venv
+          uv pip install -p .venv/bin/python -e ".[dev,codspeed]"
+
+      - name: Verify native benchmark backend
+        run: |
+          .venv/bin/python - <<'PY'
+          import xy.kernels as k
+          assert k.BACKEND == "native", f"CodSpeed requires native backend, got {k.BACKEND!r}"
+          PY
+
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@4bee4eada46987d4607fc208971a36367352b83d # v4
+        with:
+          mode: simulation
+          token: ${{ secrets.CODSPEED_TOKEN }}
+          # Run every CodSpeed-native pytest module. Keep browser/install and
+          # cross-library process benchmarks in benchmark-refresh.yml: they
+          # require wall-clock/browser measurements and are not meaningful in
+          # CodSpeed simulation mode.
+          # The explicit native path is kept for scripts/verify_ci_workflow.py.
+          # Required invocation: benchmarks/test_codspeed_kernels.py --codspeed
+          # The codspeed extra installs pytest-codspeed for this pytest run.
+          run: .venv/bin/python -m pytest benchmarks/test_codspeed_*.py --codspeed

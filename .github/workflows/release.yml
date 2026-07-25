@@ -1,0 +1,333 @@
+name: Release
+
+# Publish prebuilt wheels + sdist to PyPI on a version tag. This is what makes
+# `pip install xy` a no-toolchain install: each platform wheel carries
+# the compiled Rust core, so end users never see Rust or Node.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: >-
+          Dry run: build and verify every wheel/sdist/wasm artifact across the
+          full release matrix without publishing to PyPI. Use this to validate
+          the cross-compile matrix (musllinux, win-arm64, wasm, ...) before a
+          real version-tag release. Defaults to true so a manual dispatch
+          never accidentally publishes.
+        type: boolean
+        default: true
+
+jobs:
+  # One wheel per platform (the C-ABI core is CPython-version-independent, so
+  # each entry produces a single py3-none-<platform> wheel). Coverage matches
+  # what the native core can target: Linux glibc + musl across x86-64/aarch64/
+  # armv7, macOS x86-64/arm64, and Windows x86/x64/arm64. Linux targets are
+  # cross-compiled with cargo-zigbuild (musl support + a low manylinux_2_17
+  # glibc floor without QEMU); the hook then packs the prebuilt core and stamps
+  # the platform tag (XY_CARGO_TARGET / XY_WHEEL_PLATFORM).
+  wheels:
+    name: Wheel ${{ matrix.plat }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux glibc (manylinux_2_17 floor) — cross-compiled with zig.
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, zigtarget: x86_64-unknown-linux-gnu.2.17, plat: manylinux_2_17_x86_64, zig: true, native: true }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, zigtarget: aarch64-unknown-linux-gnu.2.17, plat: manylinux_2_17_aarch64, zig: true, native: false }
+          - { os: ubuntu-latest, target: armv7-unknown-linux-gnueabihf, zigtarget: armv7-unknown-linux-gnueabihf.2.17, plat: manylinux_2_17_armv7l, zig: true, native: false }
+          # Linux musl / Alpine. crt-static is musl's default, and rustc
+          # silently *drops* cdylib output under it (a warning, not an error)
+          # since a fully-static binary can't also be a shared library —
+          # -C target-feature=-crt-static switches to dynamic linking against
+          # musl libc so a real cdylib gets produced.
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, zigtarget: x86_64-unknown-linux-musl, plat: musllinux_1_2_x86_64, zig: true, native: false, rustflags: "-C target-feature=-crt-static" }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, zigtarget: aarch64-unknown-linux-musl, plat: musllinux_1_2_aarch64, zig: true, native: false, rustflags: "-C target-feature=-crt-static" }
+          - { os: ubuntu-latest, target: armv7-unknown-linux-musleabihf, zigtarget: armv7-unknown-linux-musleabihf, plat: musllinux_1_2_armv7l, zig: true, native: false, rustflags: "-C target-feature=-crt-static" }
+          # macOS. Both build on the arm64 runner (macos-14): Apple Silicon
+          # runners are plentiful, while the last Intel runner (macos-13) is
+          # deprecated and frequently unschedulable. The Apple toolchain
+          # cross-links x86_64 Mach-O natively, so the Intel wheel is a cross
+          # build (native: false -> content-verified, not import-smoked, since
+          # an x86_64 lib can't be imported on the arm64 runner).
+          - { os: macos-14, target: x86_64-apple-darwin, plat: macosx_10_12_x86_64, zig: false, native: false, deployment: "10.12" }
+          - { os: macos-14, target: aarch64-apple-darwin, plat: macosx_11_0_arm64, zig: false, native: true, deployment: "11.0" }
+          # Windows x64 (native), x86 and arm64 (cross-compiled).
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, plat: win_amd64, zig: false, native: true }
+          - { os: windows-latest, target: i686-pc-windows-msvc, plat: win32, zig: false, native: false }
+          - { os: windows-latest, target: aarch64-pc-windows-msvc, plat: win_arm64, zig: false, native: false }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install JS build toolchain
+        run: npm ci
+      - name: Cross-compile the native core (zig)
+        if: matrix.zig
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: |
+          uv tool install cargo-zigbuild
+          uv tool run cargo-zigbuild build --release --target ${{ matrix.zigtarget }}
+      - name: Compile the native core
+        if: ${{ !matrix.zig }}
+        env:
+          # macOS min-version floor for the produced Mach-O; empty (Windows
+          # entries have no deployment key) is ignored by the MSVC toolchain.
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment }}
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Build the platform wheel
+        shell: bash
+        env:
+          # The core is prebuilt above; the hook packs it and stamps the
+          # platform tag, and builds the render client (node) into the wheel.
+          # The client is required by default; REQUIRE_CARGO also forbids the
+          # core from silently going missing.
+          XY_REQUIRE_CARGO: "1"
+          XY_SKIP_CARGO: "1"
+          XY_CARGO_TARGET: ${{ matrix.target }}
+          XY_WHEEL_PLATFORM: ${{ matrix.plat }}
+        run: uv build --wheel
+      - name: Verify wheel contents
+        shell: bash
+        run: |
+          whl=$(ls dist/*.whl)
+          python scripts/verify_wheel.py "$whl" --expect-native
+      - name: Install-size budget (<= 15 MB)
+        shell: bash
+        run: |
+          whl=$(ls dist/*.whl)
+          size=$(wc -c < "$whl" | tr -d ' ')
+          echo "wheel size: $size bytes ($whl)"
+          test "$size" -le 15728640
+      - name: Verify the wheel installs and loads the native core
+        # Only host-arch wheels can be imported on the runner; cross-compiled
+        # arches (aarch64/armv7/win-arm64/win32) are content-verified instead.
+        if: matrix.native
+        shell: bash
+        run: |
+          uv venv smoke
+          uv pip install -p smoke dist/*.whl numpy anywidget
+          ./smoke/bin/python -c "import xy.kernels as k; assert k.BACKEND=='native', k.BACKEND; print('native', k.__file__)" \
+            || ./smoke/Scripts/python.exe -c "import xy.kernels as k; assert k.BACKEND=='native', k.BACKEND; print('native')"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-${{ matrix.plat }}
+          path: dist/*.whl
+
+  # Pyodide / Emscripten WASM wheel for in-browser CPython. Pyodide's platform
+  # ABI is compiler-sensitive, so keep Rust, Emscripten, the wheel tag, and the
+  # runtime probe pinned as one tested set (see spec/process/production-readiness.md).
+  wasm:
+    name: Wheel Pyodide (runtime verified)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: 1.97.0
+          targets: wasm32-unknown-emscripten
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
+        with:
+          # Pyodide 0.29.x / pyodide_2025_0 ABI compiler version.
+          version: "4.0.9"
+      - name: Install JS build toolchain
+        run: npm ci
+      - name: Cross-compile the native core (emscripten)
+        env:
+          # Unwinding imports a __cpp_exception WebAssembly tag that Pyodide's
+          # main module does not provide. Abort keeps the C ABI side module
+          # exception-free and was runtime-verified against Pyodide 0.29.4.
+          RUSTFLAGS: "-C panic=abort"
+        run: cargo build --release --target wasm32-unknown-emscripten
+      - name: Build the Pyodide wheel
+        shell: bash
+        env:
+          XY_REQUIRE_CARGO: "1"
+          XY_SKIP_CARGO: "1"
+          XY_CARGO_TARGET: wasm32-unknown-emscripten
+          XY_WHEEL_PLATFORM: pyodide_2025_0_wasm32
+        run: uv build --wheel
+      - name: Verify wheel contents
+        shell: bash
+        run: |
+          whl=$(ls dist/*.whl)
+          python scripts/verify_wheel.py "$whl" --expect-native
+      # "Builds" is not "loads": install the exact wheel in a real Pyodide
+      # runtime and call both the C ABI version function and a native kernel.
+      - name: Pyodide runtime load probe
+        run: |
+          npm i --no-save pyodide@0.29.4
+          whl=$(ls dist/*.whl)
+          python scripts/pyodide_load_smoke.py "$whl"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          # Keep this outside the dist-* namespace: PyPI rejects Pyodide's
+          # pyodide_* platform tags, so this wheel is retained as a workflow
+          # artifact but must not enter the PyPI upload directory.
+          name: pyodide-wheel
+          path: dist/*.whl
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      # The build hook builds the render client (node) into the sdist, so
+      # `pip install <sdist>` needs no Node. It builds the Rust core on the
+      # user's machine if they have a toolchain; without one the compute layer
+      # raises a clear ImportError on first use (hatch_build.py). Wheels are the
+      # normal path.
+      - name: Install JS build toolchain
+        run: npm ci
+      - name: Build sdist
+        # The client is required by default, so a published sdist always carries
+        # the prebuilt render client (the build fails otherwise).
+        run: uv build --sdist
+      - name: Verify sdist contents
+        shell: bash
+        run: |
+          sdist=$(ls dist/*.tar.gz)
+          python scripts/verify_sdist.py "$sdist"
+      - name: Verify sdist without Rust errors clearly on import
+        shell: bash
+        env:
+          XY_SKIP_CARGO: "1"
+        run: |
+          uv venv smoke
+          uv pip install -p smoke dist/*.tar.gz numpy anywidget
+          ./smoke/bin/python - <<'PY'
+          # No native core and no fallback: the compute layer must raise a
+          # clear, actionable error (§33: no-wheel behavior is defined).
+          import xy
+
+          assert xy.__version__
+          try:
+              import xy.kernels  # noqa: F401
+          except ImportError as err:
+              msg = str(err)
+              assert "native Rust core" in msg, msg
+              assert "rustup.rs" in msg, msg
+              print("sdist without Rust errors clearly on import")
+          else:
+              raise SystemExit("expected ImportError without the native core")
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-sdist
+          path: dist/*.tar.gz
+
+  publish:
+    name: Publish to PyPI
+    # Publishing still requires the runtime-verified Pyodide job to pass, but
+    # only native wheels and the sdist use dist-* artifact names. PyPI does not
+    # accept Pyodide platform tags, so its wheel remains a separate artifact.
+    needs: [wheels, sdist, wasm]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # PyPI trusted publishing (OIDC) — no API token stored
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The artifact verifiers check everything inside the wheels/sdist, but
+      # only this gate stops a mismatched tag from publishing whatever version
+      # sits in pyproject.toml: the tag must equal v<project.version> and
+      # CHANGELOG.md must carry a dated entry for it.
+      - name: Release version gate (tag == pyproject == CHANGELOG)
+        if: github.event_name == 'push'
+        run: python3 scripts/check_release_version.py
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          pattern: dist-*
+          merge-multiple: true
+      - name: List artifacts
+        run: ls -la dist/
+      # A manual workflow_dispatch defaults to dry_run=true: every wheel/sdist/
+      # wasm artifact is built and verified above, but nothing is uploaded to
+      # PyPI. Use this to validate the full cross-compile matrix before a real
+      # version-tag release. A tag push always publishes for real.
+      - name: Dry run summary (no PyPI publish)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true'
+        run: |
+          echo "::notice::Dry run — built and verified $(ls dist/*.whl dist/*.tar.gz 2>/dev/null | wc -l | tr -d ' ') artifacts across the full release matrix. Skipping PyPI publish."
+          echo "Re-run this workflow with dry_run=false, or push a v* tag, to publish for real."
+      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
+        with:
+          packages-dir: dist/
+          # A failed upload can leave a partial release on immutable PyPI.
+          # Retrying the same tag should skip files that were already accepted.
+          skip-existing: true
+
+  publish-pyodide:
+    name: Publish Pyodide wheel
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
+    needs: [wheels, sdist, wasm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pyodide-wheel
+          path: dist-pyodide
+      # PyPI rejects Pyodide platform tags. Publish the runtime-verified wheel
+      # as a release asset instead; micropip supports installing binary WASM
+      # wheels directly from HTTPS URLs.
+      - name: Upload Pyodide wheel to GitHub Release
+        id: publish
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          tag="v${version}"
+          if [[ "$EVENT_NAME" == "push" && "$REF_NAME" != "$tag" ]]; then
+            echo "tag $REF_NAME does not match project version $tag" >&2
+            exit 1
+          fi
+          python3 scripts/check_release_version.py --tag "$tag"
+          wheel=$(find dist-pyodide -maxdepth 1 -name '*.whl' -print -quit)
+          test -n "$wheel"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$wheel" --clobber
+          else
+            gh release create "$tag" "$wheel" --verify-tag --generate-notes --title "$tag"
+          fi
+          url="https://github.com/${GH_REPO}/releases/download/${tag}/$(basename "$wheel")"
+          echo "wheel_url=$url" >> "$GITHUB_OUTPUT"
+          echo "Pyodide wheel: $url"
+      - name: Verify published Pyodide wheel from its HTTPS URL
+        env:
+          WHEEL_URL: ${{ steps.publish.outputs.wheel_url }}
+        run: |
+          npm i --no-save pyodide@0.29.4
+          python3 scripts/pyodide_load_smoke.py "$WHEEL_URL"

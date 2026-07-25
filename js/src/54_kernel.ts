@@ -1,0 +1,995 @@
+import { payloadBuffers } from "./00_header";
+import { buildLutData } from "./10_colormaps";
+import { parseColor } from "./20_theme";
+import {
+  lodAggregateStands, lodAggregateStepWindow, lodApplyDensityUpdate, lodApplyDrill,
+  lodDrillServesView, lodDropDrill, lodFilterKey, lodPromoteCachedDrill, lodRememberDensity,
+} from "./45_lod";
+import { xyCreateRebinWorker } from "./46_worker";
+import { ChartView } from "./50_chartview";
+
+// Streaming-append refine cadence (§17 stale-while-revalidate): the append
+// payload itself already repainted the new data, so the follow-up kernel
+// round-trip that re-decimates/re-bins the *current* window only sharpens
+// it. One tick settles after the ordinary interaction debounce; a continuous
+// stream coalesces to at most one round-trip per MAX_WAIT instead of one per
+// tick (10 Hz -> ~3/s).
+const APPEND_REFINE_DELAY_MS = 120;
+const APPEND_REFINE_MAX_WAIT_MS = 300;
+
+// ChartView <-> kernel comm: debounced density view-requests, streaming
+// appends, the inbound message handler, and the deep-zoom drill lifecycle
+// (§16). Split out of 50_chartview.js; augments the prototype so `this.*`
+// is unchanged.
+
+Object.assign(ChartView.prototype, {
+  _scheduleViewRequest(viewOverride = this.view, opts: any = {}) {
+    if (this._destroyed || this._glLost) return;
+    if (!this.comm) {
+      // Kernel-less (standalone HTML): density traces refine via the bundled
+      // re-bin worker instead of a kernel round-trip.
+      this._scheduleSampleRebin(viewOverride, opts);
+      return;
+    }
+    // opts.decimated === false: the caller knows the shipped decimation
+    // already covers this exact view (streaming append at home, §28's
+    // recorded decimation_px), so only density traces re-request.
+    const needsDecimated =
+      opts.decimated !== false && this.spec.traces.some((t) => t.tier === "decimated");
+    const needsDensity = this.gpuTraces.some((g) => g.tier === "density");
+    if (!needsDecimated && !needsDensity) return;
+    const seq = opts.seq ?? ++this.seq;
+    const view = this._copyView(viewOverride);
+    const plotW = Math.round(this.plot.w);
+    const plotH = Math.round(this.plot.h);
+    if (needsDensity) {
+      const now = this._now();
+      for (const g of this.gpuTraces) {
+        if (g.tier !== "density") continue;
+        // Zoom-in request elision (T12/T13): a view contained in an exact
+        // window already on the GPU — the live drill, or a retired cached
+        // point window promoted back — is answered locally, so this trace
+        // goes neither pending nor on the wire. The seq bump above stands, so
+        // an in-flight reply for an older, wider view dies stale instead of
+        // yanking the exact marks out from under the view it can't improve.
+        const plan = this._drillServesView(g, view) ? null : this._densityRequestPlan(g, view);
+        if (!plan) {
+          g._lodPendingView = null;
+          g._lodPendingSeq = null;
+          g._lodPendingAt = null;
+          continue;
+        }
+        // Duplicate of the request already in flight (identical window and
+        // screen): keep waiting on ITS seq instead of arming a new one that
+        // would kill the incoming reply just to resend the same window —
+        // the "constantly re-requesting the same points" loop (#225 notes).
+        const dup = this._densityRequestDup(g, plan.win, plotW, plotH, now);
+        if (dup) {
+          g._lodPendingView = view;
+          g._lodPendingSeq = dup.seq;
+          g._lodPendingAt = dup.sentAt;
+          continue;
+        }
+        g._lodPendingView = view;
+        g._lodPendingSeq = seq;
+        g._lodPendingAt = now;
+      }
+    }
+    let delay = opts.delay ?? 120;
+    if (opts.maxWait !== undefined && opts.maxWait !== null) {
+      const now = this._now();
+      if (this._viewRequestBurstStart === undefined || this._viewRequestBurstStart === null) {
+        this._viewRequestBurstStart = now;
+      }
+      const remaining = opts.maxWait - (now - this._viewRequestBurstStart);
+      delay = remaining <= 0 ? 0 : Math.min(delay, remaining);
+    } else {
+      this._viewRequestBurstStart = null;
+    }
+    clearTimeout(this._viewTimer);
+    const send = () => {
+      if (this._destroyed) return;
+      this._viewRequestBurstStart = null;
+      if (seq !== this.seq) return;
+      if (needsDecimated) {
+        this.comm.send({
+          type: "view", seq,
+          x0: Math.min(view.x0, view.x1), x1: Math.max(view.x0, view.x1), px: plotW,
+        });
+      }
+      if (needsDensity) {
+        const sendNow = this._now();
+        for (const g of this.gpuTraces) {
+          if (g.tier !== "density") continue;
+          // T12/T13 re-check at actual send time: a drill that landed during
+          // the debounce — or a reply that moved the view back out of the
+          // points band with its step already covered — elides the request
+          // it made unnecessary; a drill that died during it re-arms the
+          // request the schedule-time check skipped.
+          const plan = this._drillServesView(g, view) ? null : this._densityRequestPlan(g, view);
+          if (!plan) {
+            if (g._lodPendingSeq === seq) {
+              g._lodPendingView = null;
+              g._lodPendingSeq = null;
+              g._lodPendingAt = null;
+            }
+            continue;
+          }
+          // Identical-request suppression (T13): the same window at the same
+          // screen size is either already answered (nothing to refresh — the
+          // reply is deterministic for unchanged data; a data change rebuilds
+          // this GPU record and clears the memo) or still in flight (its
+          // reply was adopted as this trace's pending marker above).
+          const dup = this._densityRequestDup(g, plan.win, plotW, plotH, sendNow);
+          if (dup) {
+            if (dup.answered && g._lodPendingSeq === seq) {
+              g._lodPendingView = null;
+              g._lodPendingSeq = null;
+              g._lodPendingAt = null;
+            }
+            continue;
+          }
+          const win = plan.win;
+          this.comm.send({
+            type: "density_view", seq, trace: g.trace.id,
+            x0: win[0], x1: win[1], y0: win[2], y1: win[3],
+            w: plotW, h: plotH,
+          });
+          // A ladder-step request's reply is the one density reply allowed
+          // to repaint a covered view (lodApplyDensityUpdate).
+          if (plan.step) g._stepReqWin = win;
+          g._lastDensityReq = {
+            win, w: plotW, h: plotH, seq, sentAt: sendNow, answered: false,
+            filterKey: this._traceFilterKey(g),
+          };
+        }
+      }
+    };
+    if (delay <= 0) {
+      send();
+    } else {
+      this._viewTimer = setTimeout(send, delay);
+    }
+    return seq;
+  },
+
+  // Same request within half an output texel per edge: gesture-end and
+  // settle produce windows differing by sub-pixel amounts (field HAR: 0.03%
+  // shifts back-to-back), and a grid shifted below half a texel is visually
+  // identical — re-shipping it is pure wire waste.
+  _densityRequestSame(last, win, plotW, plotH) {
+    if (!last || last.w !== plotW || last.h !== plotH) return false;
+    const tx = (win[1] - win[0]) / plotW / 2;
+    const ty = (win[3] - win[2]) / plotH / 2;
+    return Math.abs(last.win[0] - win[0]) <= tx && Math.abs(last.win[1] - win[1]) <= tx &&
+      Math.abs(last.win[2] - win[2]) <= ty && Math.abs(last.win[3] - win[3]) <= ty;
+  },
+
+  // The last density_view actually sent for this GPU record, when a new
+  // request would be its (sub-texel) twin: either already answered (the
+  // reply is deterministic for unchanged data, so there is nothing to
+  // refresh) or still in flight (bounded by the same 1200ms window as the T8
+  // pending hold, so a lost reply can never suppress refresh forever). The
+  // memo lives on the GPU record — a rebuild (append, payload update, context
+  // restore) starts it fresh, so data changes are never suppressed.
+  _densityRequestDup(g, win, plotW, plotH, now) {
+    const last = g._lastDensityReq;
+    if (!last || !this._densityRequestSame(last, win, plotW, plotH)) return null;
+    // A twin window under a DIFFERENT hidden-category set (§34) is a new
+    // request, not a duplicate — "deterministic for unchanged data" assumes
+    // an unchanged predicate.
+    if ((last.filterKey || "") !== this._traceFilterKey(g)) return null;
+    if (last.answered) return last;
+    return now - last.sentAt < 1200 ? last : null;
+  },
+
+  // The §34 hidden-category set this trace's next reply will be computed
+  // under, as a canonical string key. Part of request identity (dup memo)
+  // and reply admission (the density_update filter guard).
+  _traceFilterKey(g) {
+    const ti = this.gpuTraces.indexOf(g);
+    return lodFilterKey(this._legendOffCats && this._legendOffCats.get(ti));
+  },
+
+  // What (if anything) this trace should ask the kernel for at `view`
+  // (T13, revised): inside the points band, the RAW VIEW window — the
+  // kernel decides the tier there, and its density replies land as facts
+  // only; while the aggregate stands, the next LADDER STEP window when
+  // every covering texture is coarser than the view's step (a quantized
+  // aligned window, so pans resolve to the same request), else nothing.
+  // Drill/point-cache service is the caller's earlier check.
+  _densityRequestPlan(g, view) {
+    const [x0, x1] = this._axisRange(g.xAxis, view);
+    const [y0, y1] = this._axisRange(g.yAxis, view);
+    // Filter-dirty (interaction spec §10 / §34): every grid on the client was
+    // computed under a previous hidden-category set — including the standing
+    // home aggregate, which would otherwise elide the request entirely. Force
+    // the full-window re-bin; the flag clears when a reply stamped with the
+    // current mask applies.
+    if (g._filterDirty || !lodAggregateStands(this, g, x0, x1, y0, y1)) {
+      return {
+        win: [Math.min(x0, x1), Math.max(x0, x1), Math.min(y0, y1), Math.max(y0, y1)],
+        step: false,
+      };
+    }
+    const win = lodAggregateStepWindow(this, g, x0, x1, y0, y1);
+    return win ? { win, step: true } : null;
+  },
+
+  // A reply whose seq lost the global race can still be current in substance:
+  // duplicate-suppressed requests leave their traces waiting on the ORIGINAL
+  // request's seq (T13 — identical window and screen). Accept it only when
+  // every trace it updates is still waiting on exactly this seq AND that seq
+  // names the trace's last actually-SENT request — a pending marker can
+  // outlive a debounce-cancelled send, and a reply matching such a phantom
+  // request is stale, not suppressed-current (T5).
+  _densityReplyCurrent(msg) {
+    const ids = (msg.traces || []).map((u) => Number(u.id));
+    if (!ids.length && msg.trace !== undefined) ids.push(Number(msg.trace));
+    if (!ids.length) return false;
+    return ids.every((id) => {
+      const g = this.gpuTraces.find((t) => t.trace.id === id && t.tier === "density");
+      return g && g._lodPendingSeq === msg.seq &&
+        g._lastDensityReq && g._lastDensityReq.seq === msg.seq;
+    });
+  },
+
+  // Standalone (kernel-less) density refinement. Debounced like the kernel
+  // request path, then the retained §28 sample re-bins in the bundled worker —
+  // off the main thread — and applies like a density_update.
+  _scheduleSampleRebin(viewOverride = this.view, opts: any = {}) {
+    if (this._destroyed || this._glLost || this._sampleRebinDisabled) return;
+    const targets = (this.gpuTraces || []).filter(
+      (g) => g.tier === "density" && g.sampleOverlay && g.sampleOverlay._cpu
+    );
+    if (!targets.length) return;
+    const seq = opts.seq ?? ++this.seq;
+    const view = this._copyView(viewOverride);
+    clearTimeout(this._rebinTimer);
+    this._rebinTimer = setTimeout(() => {
+      if (this._destroyed || seq !== this.seq) return;
+      for (const g of targets) this._requestSampleRebin(g, view, seq);
+    }, opts.delay ?? 120);
+  },
+
+  _requestSampleRebin(g, view, seq) {
+    if (!g._homeDensity) g._homeDensity = g.density;
+    // The full overview grid — binned kernel-side from every source point at
+    // export — has enough resolution for any view that is not zoomed in
+    // *tighter* than the home extent. Re-binning the retained §28 sample only
+    // adds resolution once the user zooms in; doing it on a mere pan (or a
+    // zoom-out) would swap the full-data grid for a noisier sample-derived
+    // grid that normalizes against a different, much smaller maximum, so the
+    // density visibly jumps between the overview and the sample on the
+    // slightest drag. Gate on view *span*, not position: keep (and restore)
+    // the overview for pans and zoom-outs; only a real zoom-in re-bins. Spans
+    // are read per axis (§9.2) so multi-axis views compare like for like.
+    const [vx0, vx1] = this._axisRange(g.xAxis, view);
+    const [vy0, vy1] = this._axisRange(g.yAxis, view);
+    const [hx0, hx1] = this._axisRange(g.xAxis, this.view0);
+    const [hy0, hy1] = this._axisRange(g.yAxis, this.view0);
+    const homeSpanX = Math.max(Math.abs(hx1 - hx0), 1e-300);
+    const homeSpanY = Math.max(Math.abs(hy1 - hy0), 1e-300);
+    const viewSpanX = Math.abs(vx1 - vx0);
+    const viewSpanY = Math.abs(vy1 - vy0);
+    // 1e-6 slack absorbs float drift so a pan at home zoom never trips a re-bin.
+    const notZoomedIn =
+      viewSpanX >= homeSpanX * (1 - 1e-6) && viewSpanY >= homeSpanY * (1 - 1e-6);
+    if (notZoomedIn) {
+      if (g.density !== g._homeDensity) {
+        const hd = g._homeDensity;
+        this._applySampleRebinGrid(g, {
+          ...hd,
+          tex: this._uploadGrid(
+            hd.grid, hd.w, hd.h, hd.normMax || hd.max || 1, hd.rgba, hd.filter,
+            this._fillOpacity(g.trace.style),
+          ),
+        }, false);
+      }
+      return;
+    }
+    if (this._sampleRebinDisabled) return;
+    if (!this._rebinWorker) {
+      this._rebinWorker = xyCreateRebinWorker();
+      if (!this._rebinWorker) {
+        this._sampleRebinDisabled = true; // no worker: stretched overview stays
+        return;
+      }
+      this._rebinWorker.onmessage = (e) => this._onRebinResult(e.data);
+      this._rebinInit = new Set();
+    }
+    if (!this._rebinInit.has(g.trace.id)) {
+      // Decode the offset-encoded sample once (f64, §16); the worker keeps it,
+      // along with the sample's resolved point colors so re-binned grids keep
+      // the mean-color surface (LOD doc §2).
+      const cpu = g.sampleOverlay._cpu;
+      const n = Math.min(cpu.x.length, cpu.y.length);
+      const xs = new Float64Array(n);
+      const ys = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        xs[i] = this._decodeValue(cpu.x, cpu.xMeta, i);
+        ys[i] = this._decodeValue(cpu.y, cpu.yMeta, i);
+      }
+      const rgba = this._sampleBinColors(g, n);
+      this._rebinWorker.postMessage(
+        {
+          type: "init", trace: g.trace.id, x: xs.buffer, y: ys.buffer,
+          rgba: rgba ? rgba.buffer : null,
+        },
+        rgba ? [xs.buffer, ys.buffer, rgba.buffer] : [xs.buffer, ys.buffer]
+      );
+      this._rebinInit.add(g.trace.id);
+    }
+    this._rebinWorker.postMessage({
+      type: "rebin", trace: g.trace.id, seq,
+      x0: Math.min(vx0, vx1), x1: Math.max(vx0, vx1),
+      y0: Math.min(vy0, vy1), y1: Math.max(vy0, vy1),
+      w: Math.max(16, Math.min(2048, Math.round(this.plot.w))),
+      h: Math.max(16, Math.min(2048, Math.round(this.plot.h))),
+    });
+  },
+
+  // Straight-alpha RGBA8 per retained-sample point, resolved from the
+  // overlay's shipped channel exactly as the point shader draws it — the
+  // worker's mean-color source (LOD doc §2). Constant-color traces return
+  // null: their count-only grid is tinted by the draw path instead.
+  _sampleBinColors(g, n) {
+    const overlay = g.sampleOverlay;
+    const cpu = overlay && overlay._cpu;
+    const spec = overlay && overlay.trace && overlay.trace.color;
+    if (!cpu || !spec || spec.mode === "constant" || spec.mode === "match_fill") return null;
+    if (spec.mode === "direct_rgba" && cpu.rgba) {
+      return new Uint8Array(cpu.rgba.subarray(0, n * 4));
+    }
+    if (!cpu.color) return null;
+    const out = new Uint8Array(n * 4);
+    if (spec.mode === "continuous") {
+      const lut = buildLutData(spec.colormap);
+      for (let i = 0; i < n; i++) {
+        const at = Math.round(Math.max(0, Math.min(1, cpu.color[i])) * 255) * 4;
+        out[i * 4] = lut[at];
+        out[i * 4 + 1] = lut[at + 1];
+        out[i * 4 + 2] = lut[at + 2];
+        out[i * 4 + 3] = 255;
+      }
+      return out;
+    }
+    if (spec.mode === "categorical" && Array.isArray(spec.palette) && spec.palette.length) {
+      const palette = spec.palette.map((c) => parseColor(this.root, c, [0, 0, 0, 1]));
+      for (let i = 0; i < n; i++) {
+        const p = palette[Math.round(cpu.color[i]) % palette.length];
+        out[i * 4] = Math.round(p[0] * 255);
+        out[i * 4 + 1] = Math.round(p[1] * 255);
+        out[i * 4 + 2] = Math.round(p[2] * 255);
+        out[i * 4 + 3] = Math.round(p[3] * 255);
+      }
+      return out;
+    }
+    return null;
+  },
+
+  _onRebinResult(msg) {
+    if (this._destroyed || this._glLost || !msg || msg.type !== "grid" || msg.seq !== this.seq) return;
+    const g = this.gpuTraces.find((t) => t.trace.id === msg.trace && t.tier === "density");
+    if (!g) return;
+    const grid = new Float32Array(msg.grid);
+    const rgba = msg.rgba ? new Uint8Array(msg.rgba) : null;
+    this._applySampleRebinGrid(g, {
+      w: msg.w, h: msg.h, max: msg.max, normMax: msg.max,
+      colormap: g.density.colormap,
+      xRange: [msg.x0, msg.x1], yRange: [msg.y0, msg.y1],
+      grid,
+      rgba,
+      tex: this._uploadGrid(
+        grid, msg.w, msg.h, msg.max || 1, rgba, "linear",
+        this._fillOpacity(g.trace.style),
+      ),
+      lut: g.density.lut,
+    }, true);
+  },
+
+  // Swap the density grid/texture only — unlike lodApplyDensityUpdate this
+  // leaves the retained sample overlay alone (it is the re-bin source and the
+  // deep-zoom point overlay). Texture lifetime stays with the LOD cache.
+  _applySampleRebinGrid(g, density, rebinned) {
+    g.prevDensity = g.density;
+    g._densityFadeStart = this._now();
+    g.densityNormMax = density.normMax || density.max;
+    g.density = density;
+    g._sampleRebinned = !!rebinned; // badge: recorded reduction, never silent (§28)
+    lodRememberDensity(this, g, g.density);
+    this._refreshReductionBadges();
+    this.draw();
+  },
+
+  // Streaming append (rust-engine §5). The kernel ships a complete fresh
+  // payload — screen-bounded by construction (§29), so this is O(pixels) no
+  // matter how much data has accumulated — and names the traces whose data
+  // changed. An affected direct scatter/line whose encoding is unchanged
+  // updates GPU buffers in place with a tail-only upload; everything else
+  // rebuilds. Payloads may use split or legacy packed layout.
+  _applyAppend(msg, buffers) {
+    const spec = msg.spec;
+    if (!spec || !spec.traces) return;
+    const raw = spec.buffer_layout === "split" ? buffers : buffers && buffers[0];
+    if (raw == null) return;
+    const payload = payloadBuffers(spec, raw);
+    const prevSpec = this.spec;
+    // Follow policy, decided against the OLD home view before it moves:
+    // - at home (never zoomed, or axes reset): the chart follows its data —
+    //   refit both axes to the new domain, the live-dashboard default.
+    // - zoomed with the right edge pinned to the old live edge: slide the
+    //   window forward at constant width (tail-follow).
+    // - zoomed anywhere else: the user is inspecting history; don't move them.
+    const spanEps = (lo, hi) => Math.max(Math.abs(hi - lo), 1e-300) * 1e-9;
+    const ex = spanEps(this.view0.x0, this.view0.x1);
+    const ey = spanEps(this.view0.y0, this.view0.y1);
+    const atHome =
+      Math.abs(this.view.x0 - this.view0.x0) <= ex && Math.abs(this.view.x1 - this.view0.x1) <= ex &&
+      Math.abs(this.view.y0 - this.view0.y0) <= ey && Math.abs(this.view.y1 - this.view0.y1) <= ey;
+    const pinnedRight = !atHome && Math.abs(this.view.x1 - this.view0.x1) <= ex;
+    const nextHome = {
+      x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
+      y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
+    };
+    let nextView = { ...this.view };
+    if (atHome) {
+      nextView = { ...nextHome };
+    } else if (pinnedRight) {
+      const w = this.view.x1 - this.view.x0;
+      nextView = { ...this.view, x1: nextHome.x1, x0: nextHome.x1 - w };
+    }
+    const animated = !!spec.animation || spec.traces.some((trace) => !!trace.animation);
+    if (animated && !this._glLost && this.gl && this.updatePayload(spec, payload)) {
+      // updatePayload owns previous/next GPU lifetime and matching. Preserve
+      // append's follow policy instead of always animating to the new home
+      // domain (history inspection must remain stationary).
+      if (this._transitionView) this._transitionView.to = { ...nextView };
+      else this.view = { ...nextView };
+      this._scheduleAppendRefine(nextView, atHome);
+      return;
+    }
+    // Swap spec + retained payload together so GL context restore (§27)
+    // rebuilds the streamed state, not the initial one.
+    this.spec = spec;
+    this.axes = this._normalizeAxes(spec);
+    this._payload = payload;
+    this.view0 = this._copyView({
+      ranges: Object.fromEntries(Object.entries(this.axes).map(([id, axis]: any) => [id, [...axis.range]])),
+    });
+    if (atHome) {
+      this.view = this._copyView(this.view0);
+    } else if (pinnedRight) {
+      const w = this.view.x1 - this.view.x0;
+      this.view = this._viewFrom({ x1: this.view0.x1, x0: this.view0.x1 - w });
+    }
+    // Append payloads are canonical state, so retain them even while the
+    // context is lost. The restore path rebuilds every affected GPU object
+    // from this latest payload; attempting partial uploads to a dead context
+    // would only create handles that must immediately be discarded.
+    if (this._glLost || !this.gl) return;
+    const texSeen = new Set();
+    for (const id of msg.affected || []) {
+      const i = this.gpuTraces.findIndex((g) => g.trace.id === id);
+      const ts = spec.traces.find((t) => t.id === id);
+      if (i < 0 || !ts) continue;
+      const prevTs = prevSpec && prevSpec.traces
+        ? prevSpec.traces.find((t) => t.id === id)
+        : null;
+      if (this._appendTraceInPlace(this.gpuTraces[i], prevTs, prevSpec, ts, payload)) continue;
+      this._destroyTraceResources(this.gpuTraces[i], texSeen);
+      this.gpuTraces[i] = this._buildTrace(payload, ts);
+    }
+    // Rebuilt entries lost their transient legend-toggle fields; re-apply
+    // from the view-held state (interaction spec §10).
+    this._reapplyLegendVisibility();
+    this._updatePickable();
+    this._scheduleAppendRefine(this.view, atHome);
+    this.draw();
+  },
+
+  // Post-append window refinement, coalesced (see APPEND_REFINE_* above).
+  // Parked at home, the append payload itself was M4-decimated over exactly
+  // this view at a recorded px width (§28 `decimation_px`); when that width
+  // covers the plot, a "view" round-trip would recompute the same windows,
+  // so only density traces re-request.
+  _scheduleAppendRefine(view, atHome) {
+    const plotPx = Math.round(this.plot.w);
+    const decimatedCovered =
+      atHome &&
+      this.spec.traces.every(
+        (t) => t.tier !== "decimated" || (t.decimation_px || 0) >= plotPx,
+      );
+    this._scheduleViewRequest(view, {
+      delay: APPEND_REFINE_DELAY_MS,
+      maxWait: APPEND_REFINE_MAX_WAIT_MS,
+      decimated: !decimatedCovered,
+    });
+  },
+
+  // In-place streaming update for a direct scatter/line: when the fresh
+  // payload's encoding matches what this view already uploaded (same
+  // offsets/scales/domains — guaranteed prefix-identical bytes, because an
+  // append never rewrites canonical rows), extend the existing GPU buffers
+  // with a tail-only bufferSubData instead of destroy + bufferData. Buffer
+  // *objects* are retained (VAO attachments stay valid); their data stores
+  // grow with doubling capacity, mirroring `Column.append` kernel-side.
+  // Returns false when any precondition fails — the caller falls back to the
+  // full rebuild, which is always correct.
+  _appendTraceInPlace(g, oldT, oldSpec, t, payload) {
+    const gl = this.gl;
+    if (!g || !oldT || !oldSpec || !gl) return false;
+    if (g.tier !== "direct" || oldT.tier !== "direct" || t.tier !== "direct") return false;
+    if (t.kind !== oldT.kind || (t.kind !== "scatter" && t.kind !== "line")) return false;
+    if (t.keys || oldT.keys) return false; // key-matched transitions rebuild
+    const style = t.style || {};
+    if (style.curve === "smooth" || style.step) return false; // expanded vertices
+    if (JSON.stringify(oldT.style || {}) !== JSON.stringify(style)) return false;
+    // Only the scatter branch below knows how to extend per-point buffers, so
+    // any other mark carrying one must rebuild. Today a line has none; this
+    // keeps that a checked fact rather than an assumption a future per-point
+    // line channel would silently break.
+    if (
+      t.kind !== "scatter" &&
+      (g.cBuf || g.rgbaBuf || g.sBuf || g.styleBuf || g.strokeBuf || g.radiusBuf)
+    ) {
+      return false;
+    }
+    // stroke_width rows are baked with the dpr in force when they were written
+    // (`_buildInstanceStyleChannels`). `_resize` updates `this.dpr` on browser
+    // zoom or a monitor swap WITHOUT rebuilding traces, so a tail upload after
+    // such a change would scale appended rows differently from the prefix — a
+    // visible outline-width step inside one trace. Rebuild instead, which
+    // renormalizes every row at the current dpr.
+    if (g.styleBuf && g._styleDpr !== this.dpr) return false;
+    const oldCols = oldSpec.columns;
+    const newCols = this.spec.columns;
+
+    // A new column extends an old one when dtype and offset/scale encoding
+    // match and it only grew — the shipped prefix is then byte-identical.
+    const grown = (a, b) => {
+      const om = Number.isInteger(a) ? oldCols[a] : null;
+      const nm = Number.isInteger(b) ? newCols[b] : null;
+      if (!om || !nm) return null;
+      if ((om.dtype || "f32") !== (nm.dtype || "f32")) return null;
+      if ((om.offset ?? null) !== (nm.offset ?? null)) return null;
+      if ((om.scale ?? null) !== (nm.scale ?? null)) return null;
+      if (!(nm.len >= om.len)) return null;
+      return { old: om.len, next: nm.len, meta: nm };
+    };
+    // Channel spec equality modulo per-build fields (buffer index, count):
+    // a continuous channel whose domain expanded fails this on purpose — its
+    // shipped values are normalized over the domain, so the prefix changed.
+    const shapeEqual = (a, b) => {
+      const strip = (s) => {
+        if (!s || typeof s !== "object") return s ?? null;
+        const { buf, n, ...rest } = s;
+        return rest;
+      };
+      return JSON.stringify(strip(a)) === JSON.stringify(strip(b));
+    };
+
+    const x = grown(oldT.x, t.x);
+    const y = grown(oldT.y, t.y);
+    if (!x || !y) return false;
+    const oldN = Math.min(x.old, y.old);
+    const newN = Math.min(x.next, y.next);
+    if (newN < oldN) return false;
+    // Tie the fast path to this view's actual GPU state, not just the spec
+    // history: a view restored from another payload rebuilds instead.
+    if (!g._cpu || !g._cpu.x || g._cpu.x.length !== x.old || g._cpu.y.length !== y.old) {
+      return false;
+    }
+    if (!g.xMeta || g.xMeta.offset !== x.meta.offset || g.xMeta.scale !== x.meta.scale) return false;
+    if (!g.yMeta || g.yMeta.offset !== y.meta.offset || g.yMeta.scale !== y.meta.scale) return false;
+
+    // Collect every per-point buffer update, then validate all before
+    // mutating any (a half-updated trace must be impossible).
+    const jobs = [];
+    const column = (idx) => this._columnView(payload, newCols[idx]);
+    const addColumnJob = (buf, growth, colIdx) => {
+      if (!buf || !growth) return false;
+      const view = column(colIdx);
+      jobs.push({ buf, full: view, oldElems: growth.old });
+      return true;
+    };
+    if (!addColumnJob(g.xBuf, x, t.x) || !addColumnJob(g.yBuf, y, t.y)) return false;
+
+    let cpuColor = null;
+    let cpuSize = null;
+    if (t.kind === "scatter") {
+      if (!shapeEqual(oldT.color, t.color) || !shapeEqual(oldT.size, t.size)) return false;
+      if (!shapeEqual(oldT.stroke, t.stroke)) return false;
+      if (t.color && Number.isInteger(t.color.buf)) {
+        const c = grown(oldT.color.buf, t.color.buf);
+        const target = t.color.mode === "direct_rgba" ? g.rgbaBuf : g.cBuf;
+        if (!c || !addColumnJob(target, c, t.color.buf)) return false;
+        cpuColor = t.color.mode === "direct_rgba" ? { rgba: column(t.color.buf) } : { color: column(t.color.buf) };
+      } else if (t.color && t.color.mode !== "constant" && t.color.mode !== "match_fill") {
+        return false;
+      }
+      if (t.size && Number.isInteger(t.size.buf)) {
+        const s = grown(oldT.size.buf, t.size.buf);
+        if (!s || !addColumnJob(g.sBuf, s, t.size.buf)) return false;
+        cpuSize = column(t.size.buf);
+      }
+      if (t.stroke && Number.isInteger(t.stroke.buf)) {
+        const s = grown(oldT.stroke.buf, t.stroke.buf);
+        if (!s || !addColumnJob(g.strokeBuf, s, t.stroke.buf)) return false;
+      }
+      const oldNames = Object.keys(oldT.channels || {}).sort();
+      const newNames = Object.keys(t.channels || {}).sort();
+      if (JSON.stringify(oldNames) !== JSON.stringify(newNames)) return false;
+      const INTERLEAVED = ["opacity", "artist_alpha", "stroke_width", "symbol"];
+      for (const name of newNames) {
+        // corner_radius (and any future channel) feeds its own derived
+        // buffer this path doesn't extend — rebuild.
+        if (!INTERLEAVED.includes(name)) return false;
+        if (!shapeEqual(oldT.channels[name], t.channels[name])) return false;
+        if (!grown(oldT.channels[name].buf, t.channels[name].buf)) return false;
+      }
+      if (newNames.length) {
+        if (!g.styleBuf) return false;
+        // The interleaved style buffer is derived per row; materialize rows
+        // [from, newN) on demand (full range when the store reallocates).
+        const dpr = this.dpr;
+        const artistScalar = Number(style.artist_alpha);
+        const makeStyle = (fromElem) => {
+          const from = fromElem / 4;
+          const values = new Float32Array((newN - from) * 4);
+          for (let i = 0; i < newN - from; i++) {
+            values[i * 4] = 1;
+            values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
+            values[i * 4 + 2] = -1;
+            values[i * 4 + 3] = -1;
+          }
+          const copy = (name, component, scale = 1) => {
+            const cspec = t.channels && t.channels[name];
+            if (!cspec) return;
+            const source = column(cspec.buf);
+            const k = cspec.components || 1;
+            for (let i = 0; i < newN - from; i++) {
+              values[i * 4 + component] = source[(from + i) * k] * scale;
+            }
+          };
+          copy("opacity", 0);
+          copy("artist_alpha", 1);
+          copy("stroke_width", 2, dpr);
+          copy("symbol", 3);
+          return values;
+        };
+        jobs.push({ buf: g.styleBuf, fullElems: newN * 4, oldElems: oldN * 4, make: makeStyle });
+      } else if (g.styleBuf) {
+        // styleBuf exists only for a scalar artist_alpha; its rows are
+        // constant, so extend it like a derived buffer with no channels.
+        const artistScalar = Number(style.artist_alpha);
+        if (!Number.isFinite(artistScalar)) return false;
+        const makeStyle = (fromElem) => {
+          const from = fromElem / 4;
+          const values = new Float32Array((newN - from) * 4);
+          for (let i = 0; i < newN - from; i++) {
+            values[i * 4] = 1;
+            values[i * 4 + 1] = artistScalar;
+            values[i * 4 + 2] = -1;
+            values[i * 4 + 3] = -1;
+          }
+          return values;
+        };
+        jobs.push({ buf: g.styleBuf, fullElems: newN * 4, oldElems: oldN * 4, make: makeStyle });
+      }
+      if (g.radiusBuf) return false; // corner_radius derived buffer: rebuild
+    }
+
+    // All checks passed: apply every upload. Tail-only bufferSubData while
+    // the store has room; on overflow, reallocate the same buffer object
+    // with doubled capacity and re-upload the full column once (amortized
+    // O(rows appended), like the kernel's growth buffer).
+    for (const job of jobs) {
+      const buf = job.buf;
+      const bpe = job.full ? job.full.BYTES_PER_ELEMENT : 4;
+      const fullElems = job.full ? job.full.length : job.fullElems;
+      const bytes = fullElems * bpe;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      if (bytes > (buf._fcCapBytes || 0)) {
+        const cap = Math.max(bytes * 2, 4096);
+        gl.bufferData(gl.ARRAY_BUFFER, cap, gl.DYNAMIC_DRAW);
+        buf._fcCapBytes = cap;
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, job.full || job.make(0));
+      } else if (fullElems > job.oldElems) {
+        gl.bufferSubData(
+          gl.ARRAY_BUFFER,
+          job.oldElems * bpe,
+          job.full ? job.full.subarray(job.oldElems) : job.make(job.oldElems),
+        );
+      }
+    }
+
+    const newX = column(t.x);
+    const newY = column(t.y);
+    g.trace = t;
+    g.n = newN;
+    g.xMeta = { ...newCols[t.x] };
+    g.yMeta = { ...newCols[t.y] };
+    g._cpu = { x: newX, y: newY, xMeta: g.xMeta, yMeta: g.yMeta, ...(cpuColor || {}) };
+    if (cpuSize) g._cpu.size = cpuSize;
+    if (t.kind === "line") {
+      g._dashX = newX;
+      g._dashY = newY;
+    }
+    // Selection masks are sized to the shipped vertex count; the rebuild
+    // path drops them on append, so the fast path matches that behavior.
+    g.selActive = false;
+    return true;
+  },
+
+  _onKernelMsg(msg, buffers) {
+    if (this._destroyed) return;
+    if (!msg) return;
+    if (this._glLost && msg.type !== "append" && msg.type !== "pick_result") return;
+    if (msg.type === "tier_update") {
+      if (msg.seq !== this.seq) return;
+      for (const upd of msg.traces) {
+        const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
+        if (!g) continue;
+        const gl = this.gl;
+        const xArr = this._asF32(buffers[upd.x.buf]);
+        const yArr = this._asF32(buffers[upd.y.buf]);
+        const bArr = upd.base && g.baseBuf ? this._asF32(buffers[upd.base.buf]) : null;
+        let n = Math.min(upd.x.len, upd.y.len);
+        if (bArr) n = Math.min(n, upd.base.len);
+        // curve:"smooth" traces re-smooth every refined window, so the curve
+        // survives zoom-driven re-decimation instead of snapping to segments.
+        // style.step traces likewise re-expand so the step corners survive
+        // tier swaps instead of collapsing to a plain polyline.
+        const sm = this._smoothArrays(g.trace, xArr, yArr, bArr, n);
+        const src = sm || { x: xArr, y: yArr, n };
+        const st = this._stepArrays(g.trace, src.x, src.y, src.n);
+        gl.bindBuffer(gl.ARRAY_BUFFER, g.xBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, st ? st.x : src.x, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, g.yBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, st ? st.y : src.y, gl.STATIC_DRAW);
+        // These reallocate the data store, so the append fast path's capacity
+        // bookkeeping no longer describes it. Unreachable for a direct trace
+        // today (`decimate_view` skips exactly the traces the fast path
+        // accepts), but leaving a stale cap here would mean a tail
+        // bufferSubData past the end of the store if that ever drifts.
+        g.xBuf._fcCapBytes = 0;
+        g.yBuf._fcCapBytes = 0;
+        g.xMeta = { ...g.xMeta, offset: upd.x.offset, scale: upd.x.scale };
+        g.yMeta = { ...g.yMeta, offset: upd.y.offset, scale: upd.y.scale };
+        g._dashX = st ? st.x : src.x;
+        g._dashY = st ? st.y : src.y;
+        if (bArr) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, g.baseBuf);
+          gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.extra : bArr, gl.STATIC_DRAW);
+          g.baseBuf._fcCapBytes = 0;
+          g.baseMeta = { ...g.baseMeta, offset: upd.base.offset, scale: upd.base.scale };
+        }
+        g.n = st ? st.n : src.n;
+      }
+      this.draw();
+    } else if (msg.type === "density_update") {
+      if (msg.seq !== undefined && msg.seq !== this.seq && !this._densityReplyCurrent(msg)) return;
+      const densityTraces = msg.traces || [];
+      const pendingTraceIds = new Set(densityTraces.map((upd) => Number(upd.id)));
+      if (pendingTraceIds.size === 0 && msg.trace !== undefined) {
+        pendingTraceIds.add(Number(msg.trace));
+      }
+      const clearAllPending = pendingTraceIds.size === 0 && msg.stale;
+      const clearPending = (g) => {
+        if (msg.seq !== undefined && g._lodPendingSeq !== msg.seq) return;
+        // The identical-request memo (T13): this window is now answered, so a
+        // later request for the same window and screen sends nothing.
+        if (g._lastDensityReq && g._lastDensityReq.seq === msg.seq) {
+          g._lastDensityReq.answered = true;
+        }
+        g._lodPendingView = null;
+        g._lodPendingSeq = null;
+        g._lodPendingAt = null;
+      };
+      if (pendingTraceIds.size || clearAllPending) {
+        for (const g of this.gpuTraces) {
+          if (g.tier !== "density") continue;
+          if (!clearAllPending && !pendingTraceIds.has(g.trace.id)) continue;
+          clearPending(g);
+        }
+      }
+      for (const upd of densityTraces) {
+        const g = this.gpuTraces.find((t) => t.trace.id === upd.id && t.tier === "density");
+        if (!g) continue;
+        clearPending(g);
+        // Filter-state guard (interaction spec §10 / §34): a reply computed
+        // under a different hidden-category set than the client's current
+        // one would render a stale predicate's aggregate. The toggle that
+        // changed the set already scheduled a fresh request.
+        if (this._traceFilterKey(g) !== lodFilterKey(upd.filter && upd.filter.hidden_categories)) {
+          continue;
+        }
+        if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
+        // The current mask has an aggregate again; request planning may
+        // resume normal aggregate-stands elision. A points drill above must
+        // NOT clear the flag: it lands no grid under the mask, so the only
+        // standing aggregate is still the previous predicate's — planning
+        // keeps forcing the full-window re-bin until a stamped grid arrives.
+        g._filterDirty = false;
+        lodApplyDensityUpdate(this, g, upd, buffers);
+      }
+      // Drill state changes what's pickable; hover needs the FBO ready.
+      this._updatePickable();
+      this.draw();
+    } else if (msg.type === "append") {
+      this._applyAppend(msg, buffers);
+    } else if (msg.type === "pick_result") {
+      if (msg.seq !== undefined && msg.seq !== this._pickSeq) return;
+      if (!msg.row) { this._hideTooltip(); return; }
+      // The kernel returns exact values for the picked trace only. Rehydrate
+      // tooltip fields sourced from sibling traces before replacing the local
+      // approximate row, otherwise a rich layered tooltip visibly collapses.
+      // _localRow already resolved those fields for this same hover; reuse
+      // them (fields the kernel row lacks are exactly the sibling-sourced
+      // ones) so _applySharedTooltipFields finds nothing missing and skips
+      // its O(n) sibling scans. It stays as the mismatch fallback.
+      const local = this._lastRow;
+      if (local && local.trace === msg.row.trace && local.index === msg.row.index) {
+        for (const [key, value] of Object.entries(local)) {
+          if (msg.row[key] === undefined) msg.row[key] = value;
+        }
+      }
+      this._applySharedTooltipFields(msg.row);
+      this._lastRow = msg.row;
+      // Replace the approximate f32 anchor with the exact f64 point (§16).
+      if (this._tooltipAnchor
+          && Number.isFinite(msg.row.x) && Number.isFinite(msg.row.y)) {
+        this._tooltipAnchor.x = msg.row.x;
+        this._tooltipAnchor.y = msg.row.y;
+      }
+      const xy = this._lastHoverXY;
+      // Exact values replace the visible approximate tooltip. A keyboard
+      // readout already announced its position and approximate values, so do
+      // not clobber that prefix or produce a second announcement per keypress.
+      if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY, {
+        announce: !this._a11yKeyboardReadout,
+      });
+      if (this._interactionFlag("hover")) {
+        const detail = {
+          row: msg.row,
+          trace: msg.row.trace,
+          index: msg.row.index,
+          exact: true,
+          view: this._eventView("hover"),
+        };
+        // §7.1 payload on the exact re-dispatch too, when the cursor is
+        // still known (the two-stage upgrade keeps `exact: true`).
+        if (xy) {
+          Object.assign(detail, this._hoverPayload(
+            msg.row, this._hoverTarget, xy.clientX, xy.clientY, true,
+          ));
+        }
+        this._dispatchChartEvent("hover", detail);
+      }
+    } else if (msg.type === "selection") {
+      // Enriched replies echo the brush geometry (channel.py include_rows):
+      // adopt it so a view that never saw the drag (republish restore) can
+      // still re-derive masks across later drill swaps (§34).
+      if (msg.bounds) this._lastBrush = { mode: "box", ...msg.bounds };
+      else if (msg.polygon) this._lastBrush = { mode: "poly", points: msg.polygon };
+      if (!msg.traces || !msg.traces.length) this._lastBrush = null;
+      this._applySelectionBuffers(msg, buffers);
+      this._selectionCount = msg.total || 0;
+      this.draw();
+      if (this._interactionFlag("select", true)) {
+        this._dispatchChartEvent("select", {
+          total: this._selectionCount,
+          view: this._eventView("select"),
+        });
+      }
+    } else if (msg.type === "state_patch") {
+      // Programmatic write (view-state.md §8): the same §3 mutation path a
+      // gesture takes, tagged source "api" so bridges can filter their echo.
+      this._applyStatePatch(msg.state, {
+        source: "api",
+        animate: msg.animate === true,
+        history: msg.history !== false,
+      });
+    } else if (msg.type === "view_nav") {
+      if (msg.op === "reset") this._navReset(msg.axes);
+    } else if (msg.type === "selection_rows") {
+      this._applyRowsSelection(msg, buffers);
+    }
+  },
+
+  // Shared mask application for kernel "selection" replies and pushed
+  // "selection_rows" messages — both carry the same per-trace index buffers.
+  _applySelectionBuffers(msg, buffers) {
+    if (!msg.traces || !msg.traces.length) {
+      for (const g of this.gpuTraces) {
+        g.selActive = false;
+        if (g.drill) g.drill.selActive = false;
+      }
+      return;
+    }
+    for (const upd of msg.traces) {
+      const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
+      if (!g) continue;
+      // Aggregate density has no per-point marks, but a drilled view does —
+      // the kernel's indices are in the drilled subset's space (§17).
+      const pg = g.tier === "density" ? g.drill : g;
+      if (!pg || !pg.n) continue;
+      // A mask built against another subset version would highlight
+      // arbitrary points — drop it; the kernel's canonical Selection is
+      // still correct and a fresh drag re-syncs the visual.
+      if (
+        g.tier === "density" && upd.drill_seq !== undefined &&
+        pg.seq !== undefined && upd.drill_seq !== pg.seq
+      ) continue;
+      const idx = this._asU32(buffers[upd.buf]);
+      const mask = new Float32Array(pg.n);
+      // Category-filtered buffers (interaction spec §10) draw a subset: the
+      // kernel's shipped-space indices land on their filtered positions.
+      const inv = pg._visInv;
+      for (let i = 0; i < idx.length; i++) {
+        const j = inv ? (idx[i] < inv.length ? inv[idx[i]] : -1) : idx[i];
+        if (j >= 0 && j < pg.n) mask[j] = 1;
+      }
+      this._applySelMask(pg, mask);
+    }
+  },
+
+  // Drill lifecycle, exit fades, and the density-source cache live in
+  // 45_lod.js (chart-agnostic). These delegates keep the ChartView API
+  // stable for tests and callers.
+  _applyDrill(g, upd, buffers) {
+    lodApplyDrill(this, g, upd, buffers);
+  },
+
+  _dropDrill(g) {
+    lodDropDrill(this, g);
+  },
+
+  // Can `view` be answered locally with no kernel round-trip? True for an
+  // exact (reduction "none"), non-dying live drill whose window contains the
+  // view's per-axis ranges (T12), and — failing that — for any retired cached
+  // point window that does, which is promoted back to the live drill on the
+  // spot (T13). Both only until the zoom outgrows the §16 f32 encode
+  // precision.
+  _drillServesView(g, view) {
+    if (!g) return false;
+    const [x0, x1] = this._axisRange(g.xAxis, view);
+    const [y0, y1] = this._axisRange(g.yAxis, view);
+    if (lodDrillServesView(g, x0, x1, y0, y1)) return true;
+    return lodPromoteCachedDrill(this, g, x0, x1, y0, y1);
+  },
+
+  // Is the current view fully covered by a drilled window? A tiny epsilon
+  // absorbs f32 round-trip slop so we don't flip to the overview at the exact
+  // window edge right after drilling in.
+  _viewInside(win) {
+    if (!win) return false;
+    const { x0, x1, y0, y1 } = this.view;
+    const ex = Math.abs(x1 - x0) * 1e-4, ey = Math.abs(y1 - y0) * 1e-4;
+    const vx0 = Math.min(x0, x1), vx1 = Math.max(x0, x1);
+    const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
+    const wx0 = Math.min(win.x0, win.x1), wx1 = Math.max(win.x0, win.x1);
+    const wy0 = Math.min(win.y0, win.y1), wy1 = Math.max(win.y0, win.y1);
+    return vx0 >= wx0 - ex && vx1 <= wx1 + ex && vy0 >= wy0 - ey && vy1 <= wy1 + ey;
+  },
+
+  // Does the current view overlap `win` at all (as opposed to sit fully inside
+  // it)? Used to keep the retained density sample on screen through pans and
+  // zoom-outs — the points are positioned in data space and the GPU clips the
+  // off-screen ones, so overlap is the right test, not containment.
+  _viewOverlaps(win) {
+    if (!win) return false;
+    const { x0, x1, y0, y1 } = this.view;
+    const vx0 = Math.min(x0, x1), vx1 = Math.max(x0, x1);
+    const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
+    const wx0 = Math.min(win.x0, win.x1), wx1 = Math.max(win.x0, win.x1);
+    const wy0 = Math.min(win.y0, win.y1), wy1 = Math.max(win.y0, win.y1);
+    return vx0 <= wx1 && vx1 >= wx0 && vy0 <= wy1 && vy1 >= wy0;
+  },
+
+  _viewInsideRange(xRange, yRange) {
+    if (!xRange || !yRange) return false;
+    return this._viewInside({ x0: xRange[0], x1: xRange[1], y0: yRange[0], y1: yRange[1] });
+  },
+});

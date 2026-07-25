@@ -1,0 +1,83 @@
+name: Benchmark refresh
+
+# Regenerate the cross-library benchmark tables (README "10M-point native
+# benchmark" and "Core 2D benchmark") from a real, consistent Ubuntu run —
+# the source those "pending CI refresh" rows are waiting on. Manual only: it
+# installs plotting libraries and runs 10M-point comparisons, so it is far too
+# heavy for every push. Download the uploaded benchmark JSON and update the
+# README/docs tables from it (numbers must be measured, never invented — §2).
+on:
+  workflow_dispatch:
+    inputs:
+      sizes:
+        description: Scatter sizes for the cross-library comparison.
+        type: string
+        default: "1e3,1e4,1e5,1e6,1e7"
+      budget:
+        description: Per-config wall-clock budget (seconds) before a library is marked over-budget.
+        type: string
+        default: "45"
+
+jobs:
+  cross-library:
+    name: Cross-library benchmark (Ubuntu, native)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Build native core
+        run: cargo build --release
+      - name: Install package + comparison deps
+        # Install the full adapter set. In particular, a density-mode XY
+        # row must publish beside Datashader/HoloViews rather than only raw-marker
+        # competitors; unavailable rows remain explicit in the report.
+        run: |
+          uv venv
+          uv pip install --constraint benchmarks/requirements-ci.lock -e ".[dev]"
+          uv pip install --constraint benchmarks/requirements-ci.lock \
+            matplotlib seaborn plotly kaleido bokeh altair datashader \
+            hvplot plotly-resampler psutil
+      - name: Verify native backend is active
+        run: uv run python -c "import xy.kernels as k; assert k.BACKEND == 'native', k.BACKEND; print('native')"
+      # The 10M scatter table (the one with the actual "pending" Seaborn rows)
+      # needs no browser, so it runs first and independently — a Chromium/TTFR
+      # problem downstream must not skip it.
+      - name: Cross-library scatter comparison (10M table)
+        run: |
+          uv run python benchmarks/bench_vs.py \
+            --sizes "${{ inputs.sizes }}" --budget "${{ inputs.budget }}" \
+            --json scatter-vs.json --out scatter-vs.md
+          uv run python scripts/verify_benchmark_report.py scatter-vs.json --kind scatter-vs
+      - name: Install Chromium (Playwright)
+        # Playwright's Chromium, matching ci.yml — Ubuntu's apt/snap chromium is
+        # unreliable headless. Playwright ships as an npm package here, not a
+        # Python one, so resolve the binary via node.
+        if: always()
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Core-2D comparison with headless-Chrome TTFR (core-2d table)
+        if: always()
+        run: |
+          chromium="$(node -e "console.log(require('playwright').chromium.executablePath())")"
+          PYTHONPATH=python uv run python benchmarks/bench_2d_charts.py \
+            --profile standard --ttfr --chromium "$chromium" \
+            --json core-2d.json --out core-2d.md
+          uv run python scripts/verify_benchmark_report.py core-2d.json --kind core-2d
+      - name: Upload refreshed benchmark reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: benchmark-refresh
+          if-no-files-found: warn
+          path: |
+            scatter-vs.json
+            scatter-vs.md
+            core-2d.json
+            core-2d.md

@@ -1,0 +1,20 @@
+# Direct dependencies for the cross-library CI benchmark. Keep these exact so
+# timing changes reflect code changes rather than a competitor release. Refresh
+# the transitive lock intentionally with:
+#
+#   uv pip compile --python-version 3.12 \
+#     --python-platform x86_64-unknown-linux-gnu \
+#     benchmarks/requirements-ci.in -o benchmarks/requirements-ci.lock
+
+numpy==2.4.6
+anywidget==0.11.0
+matplotlib==3.11.1
+seaborn==0.13.2
+plotly==6.9.0
+kaleido==1.3.0
+bokeh==3.9.1
+altair==6.2.2
+datashader==0.19.1
+hvplot==0.12.2
+plotly-resampler==0.11.0
+psutil==7.2.2

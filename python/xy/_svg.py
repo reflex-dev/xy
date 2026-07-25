@@ -1,0 +1,3095 @@
+"""Static SVG export — a pure-Python renderer over the same wire payload the
+browser client consumes.
+
+The decimation tiers make static export *screen-bounded*: `build_payload`
+hands this module ≤4 line points per pixel column (M4) or a fixed density
+grid, so a 100M-point figure exports as a few-hundred-KB, resolution-
+independent SVG in milliseconds — no browser, no extra dependencies.
+
+Layout, tick math, colormaps, and mark styling mirror the JS client
+(`30_ticks.ts`, `10_colormaps.ts`, `50_chartview.ts`); tests assert the
+ported tables stay in sync with the JS parts. Known static-export
+approximations, documented in spec/api/styling.md: area mark-space gradients use
+the area's bounding box (SVG has no per-column gradient); complete chart color
+tokens resolve statically, while nested browser-only expressions remain
+browser-dependent in SVG and use the native PNG fallback.
+"""
+
+from __future__ import annotations
+
+import base64
+import math
+import re
+import warnings
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
+from os import PathLike
+from typing import Any, Optional
+from xml.sax.saxutils import escape
+
+import numpy as np
+
+from . import _native, _paint, _png
+from ._arrowgeom import arrow_shapes as _arrow_shapes
+from .config import DEFAULT_PALETTE
+
+
+def _fill_opacity(style: dict[str, Any], default: float = 1.0) -> float:
+    """CSS whole-mark opacity multiplied by the fill-only channel."""
+    return float(style.get("opacity", default)) * float(style.get("fill_opacity", 1.0))
+
+
+def _stroke_opacity(style: dict[str, Any], default: float = 1.0) -> float:
+    """CSS whole-mark opacity multiplied by the stroke-only channel."""
+    return float(style.get("opacity", default)) * float(style.get("stroke_opacity", 1.0))
+
+
+# Mirrors js/src/10_colormaps.ts COLORMAP_STOPS (§36) — test-guarded.
+COLORMAP_STOPS: dict[str, list[tuple[int, int, int]]] = {
+    "binary": [(255, 255, 255), (0, 0, 0)],
+    "gray": [
+        (0, 0, 0),
+        (25, 25, 25),
+        (51, 51, 51),
+        (76, 76, 76),
+        (102, 102, 102),
+        (128, 128, 128),
+        (153, 153, 153),
+        (179, 179, 179),
+        (204, 204, 204),
+        (230, 230, 230),
+        (255, 255, 255),
+    ],
+    "viridis": [
+        (68, 1, 84),
+        (72, 36, 117),
+        (65, 68, 135),
+        (53, 95, 141),
+        (42, 120, 142),
+        (33, 145, 140),
+        (34, 168, 132),
+        (68, 191, 112),
+        (122, 209, 81),
+        (189, 223, 38),
+        (253, 231, 37),
+    ],
+    "plasma": [
+        (13, 8, 135),
+        (65, 4, 157),
+        (106, 0, 168),
+        (143, 13, 164),
+        (177, 42, 144),
+        (204, 71, 120),
+        (225, 100, 98),
+        (242, 132, 75),
+        (252, 166, 54),
+        (252, 206, 37),
+        (240, 249, 33),
+    ],
+    "inferno": [
+        (0, 0, 4),
+        (22, 11, 57),
+        (66, 10, 104),
+        (106, 23, 110),
+        (147, 38, 103),
+        (188, 55, 84),
+        (221, 81, 58),
+        (243, 120, 25),
+        (252, 165, 10),
+        (246, 215, 70),
+        (252, 255, 164),
+    ],
+    "magma": [
+        (0, 0, 4),
+        (20, 14, 54),
+        (59, 15, 112),
+        (100, 26, 128),
+        (140, 41, 129),
+        (183, 55, 121),
+        (222, 73, 104),
+        (247, 112, 92),
+        (254, 159, 109),
+        (254, 207, 146),
+        (252, 253, 191),
+    ],
+    "cividis": [
+        (0, 34, 78),
+        (8, 51, 112),
+        (53, 69, 108),
+        (79, 87, 108),
+        (102, 105, 112),
+        (125, 124, 120),
+        (148, 142, 119),
+        (174, 163, 113),
+        (200, 184, 102),
+        (229, 207, 82),
+        (254, 232, 56),
+    ],
+    "coolwarm": [
+        (59, 76, 192),
+        (89, 119, 227),
+        (123, 159, 249),
+        (158, 190, 255),
+        (192, 212, 245),
+        (221, 220, 220),
+        (242, 203, 183),
+        (247, 172, 142),
+        (238, 132, 104),
+        (214, 82, 68),
+        (180, 4, 38),
+    ],
+    "turbo": [
+        (48, 18, 59),
+        (69, 89, 203),
+        (62, 155, 254),
+        (25, 213, 205),
+        (70, 248, 132),
+        (164, 252, 60),
+        (225, 221, 55),
+        (254, 164, 49),
+        (240, 91, 18),
+        (195, 37, 3),
+        (122, 4, 3),
+    ],
+    "rainbow": [
+        (128, 0, 255),
+        (78, 77, 252),
+        (25, 150, 243),
+        (24, 205, 228),
+        (77, 243, 206),
+        (128, 255, 180),
+        (178, 243, 150),
+        (230, 205, 115),
+        (255, 150, 79),
+        (255, 77, 39),
+        (255, 0, 0),
+    ],
+    "jet": [
+        (0, 0, 128),
+        (0, 0, 241),
+        (0, 76, 255),
+        (0, 176, 255),
+        (41, 255, 206),
+        (125, 255, 122),
+        (206, 255, 41),
+        (255, 196, 0),
+        (255, 104, 0),
+        (241, 8, 0),
+        (128, 0, 0),
+    ],
+    "rdgy": [
+        (103, 0, 31),
+        (177, 24, 43),
+        (214, 96, 77),
+        (243, 164, 129),
+        (253, 219, 199),
+        (254, 254, 254),
+        (224, 224, 224),
+        (185, 185, 185),
+        (135, 135, 135),
+        (76, 76, 76),
+        (26, 26, 26),
+    ],
+    "rdbu": [
+        (103, 0, 31),
+        (177, 24, 43),
+        (214, 96, 77),
+        (243, 164, 129),
+        (253, 219, 199),
+        (246, 247, 247),
+        (209, 229, 240),
+        (144, 196, 221),
+        (67, 147, 195),
+        (32, 101, 171),
+        (5, 48, 97),
+    ],
+    "blues": [
+        (247, 251, 255),
+        (227, 238, 249),
+        (208, 225, 242),
+        (183, 212, 234),
+        (148, 196, 223),
+        (106, 174, 214),
+        (74, 152, 201),
+        (46, 126, 188),
+        (23, 100, 171),
+        (8, 74, 145),
+        (8, 48, 107),
+    ],
+    "purples": [
+        (252, 251, 253),
+        (242, 240, 247),
+        (226, 226, 239),
+        (206, 207, 229),
+        (182, 182, 216),
+        (158, 154, 200),
+        (134, 131, 189),
+        (114, 98, 172),
+        (97, 64, 155),
+        (79, 31, 139),
+        (63, 0, 125),
+    ],
+    "pubu": [
+        (255, 247, 251),
+        (240, 234, 244),
+        (219, 218, 235),
+        (192, 201, 226),
+        (156, 185, 217),
+        (115, 169, 207),
+        (66, 149, 195),
+        (24, 124, 182),
+        (5, 103, 162),
+        (4, 83, 130),
+        (2, 56, 88),
+    ],
+    "piyg": [
+        (142, 1, 82),
+        (196, 26, 124),
+        (222, 119, 174),
+        (241, 181, 217),
+        (253, 224, 239),
+        (247, 247, 246),
+        (230, 245, 208),
+        (183, 224, 133),
+        (127, 188, 65),
+        (76, 145, 33),
+        (39, 100, 25),
+    ],
+    "prgn": [
+        (64, 0, 75),
+        (117, 41, 130),
+        (153, 112, 171),
+        (193, 164, 206),
+        (231, 212, 232),
+        (246, 247, 246),
+        (217, 240, 211),
+        (165, 218, 159),
+        (90, 174, 97),
+        (26, 119, 54),
+        (0, 68, 27),
+    ],
+    "rdylgn": [
+        (165, 0, 38),
+        (214, 47, 39),
+        (244, 109, 67),
+        (253, 173, 96),
+        (254, 224, 139),
+        (254, 255, 190),
+        (217, 239, 139),
+        (165, 216, 106),
+        (102, 189, 99),
+        (25, 151, 80),
+        (0, 104, 55),
+    ],
+    "spectral": [
+        (158, 1, 66),
+        (212, 61, 79),
+        (244, 109, 67),
+        (253, 173, 96),
+        (254, 224, 139),
+        (255, 255, 190),
+        (230, 245, 152),
+        (170, 220, 164),
+        (102, 194, 165),
+        (51, 135, 188),
+        (94, 79, 162),
+    ],
+}
+
+# Light-theme chrome colors (the client derives these from currentColor).
+_TEXT = "rgba(32,32,32,0.85)"
+_GRID = "rgba(32,32,32,0.14)"
+_AXIS = "rgba(32,32,32,0.55)"
+_FONT = "system-ui, -apple-system, 'Segoe UI', sans-serif"
+_MS = {"s": 1e3, "m": 6e4, "h": 36e5, "d": 864e5}
+_STATIC_COLOR_FALLBACK = (0.3, 0.47, 0.66, 1.0)
+_AXIS_GRID_DASHES = {
+    "solid": None,
+    "dashed": [6.0, 4.0],
+    "dotted": [1.0, 3.0],
+    "dashdot": [6.0, 3.0, 1.0, 3.0],
+}
+
+
+# ---------------------------------------------------------------------------
+# Tick math — ports of 30_ticks.ts (f64 throughout, §16)
+# ---------------------------------------------------------------------------
+
+
+def _nice_step(rough: float) -> float:
+    rough = abs(rough)
+    if not np.isfinite(rough) or rough <= 0:
+        return 1.0
+    mag = 10.0 ** np.floor(np.log10(rough))
+    for m in (1, 2, 2.5, 5, 10):
+        if rough <= m * mag * (1 + 1e-12):
+            return m * mag
+    return 10 * mag
+
+
+def _linear_ticks(lo: float, hi: float, target: int = 6) -> tuple[list[float], float]:
+    a, b = min(lo, hi), max(lo, hi)
+    if not (np.isfinite(a) and np.isfinite(b)):
+        return [], 1.0
+    if a == b:
+        return [a], 1.0
+    step = _nice_step((b - a) / target)
+    v = np.ceil(a / step) * step
+    out: list[float] = []
+    while v <= b + step * 1e-9 and len(out) < 200:
+        out.append(0.0 if abs(v) < step * 1e-9 else v)
+        v += step
+    return out, step
+
+
+def _log_ticks(lo: float, hi: float, target: int = 6) -> tuple[list[float], list[float], float]:
+    """Returns (ticks, labeled_ticks, step)."""
+    a, b = min(lo, hi), max(lo, hi)
+    if a <= 0 or b <= 0 or not (np.isfinite(a) and np.isfinite(b)):
+        return [], [], 1.0
+    e0 = int(np.floor(np.log10(a)))
+    e1 = int(np.ceil(np.log10(b)))
+    mults = (1, 2, 5) if max(1, e1 - e0) <= max(2, target) else (1,)
+    label_every = max(1, int(np.ceil((e1 - e0 + 1) / max(1, target))))
+    out: list[float] = []
+    labels: list[float] = []
+    for e in range(e0, e1 + 1):
+        base = 10.0**e
+        for m in mults:
+            v = m * base
+            if a * (1 - 1e-12) <= v <= b * (1 + 1e-12):
+                out.append(v)
+                if m == 1 and (e - e0) % label_every == 0:
+                    labels.append(v)
+            if len(out) >= 200:
+                break
+    return out, (labels or out), 1.0
+
+
+def _category_ticks(lo: float, hi: float, n_categories: int, target: int = 6) -> list[int]:
+    start = max(0, int(np.ceil(min(lo, hi))))
+    stop = min(n_categories - 1, int(np.floor(max(lo, hi))))
+    if stop < start:
+        return []
+    step = max(1, int(np.ceil((stop - start + 1) / max(1, target))))
+    return list(range(start, stop + 1, step))
+
+
+_TIME_STEPS = [
+    1,
+    2,
+    5,
+    10,
+    20,
+    50,
+    100,
+    200,
+    500,
+    _MS["s"],
+    2 * _MS["s"],
+    5 * _MS["s"],
+    10 * _MS["s"],
+    15 * _MS["s"],
+    30 * _MS["s"],
+    _MS["m"],
+    2 * _MS["m"],
+    5 * _MS["m"],
+    10 * _MS["m"],
+    15 * _MS["m"],
+    30 * _MS["m"],
+    _MS["h"],
+    2 * _MS["h"],
+    3 * _MS["h"],
+    6 * _MS["h"],
+    12 * _MS["h"],
+    _MS["d"],
+    2 * _MS["d"],
+    7 * _MS["d"],
+    14 * _MS["d"],
+]
+
+
+def _time_ticks(lo: float, hi: float, target: int = 6) -> tuple[list[float], float]:
+    a, b = min(lo, hi), max(lo, hi)
+    if not (np.isfinite(a) and np.isfinite(b)):
+        return [], _MS["d"]
+    rough = (b - a) / target
+    if rough > 14 * _MS["d"]:
+        return _calendar_ticks(a, b, rough)
+    step = next((s for s in _TIME_STEPS if s >= rough), _TIME_STEPS[-1])
+    v = np.ceil(a / step) * step
+    out: list[float] = []
+    while v <= b and len(out) < 200:
+        out.append(v)
+        v += step
+    return out, step
+
+
+def _calendar_ticks(lo: float, hi: float, rough: float) -> tuple[list[float], float]:
+    month_steps = (1, 2, 3, 6, 12, 24, 60, 120)
+    months_rough = rough / (30 * _MS["d"])
+    step_m = next((s for s in month_steps if s >= months_rough), month_steps[-1])
+    d = datetime.fromtimestamp(lo / 1e3, tz=UTC)
+    y = d.year
+    m = int(np.ceil((d.month - 1) / step_m) * step_m)
+    out: list[float] = []
+    while len(out) <= 1000:
+        t = datetime(y + m // 12, m % 12 + 1, 1, tzinfo=UTC).timestamp() * 1e3
+        if t > hi:
+            break
+        if t >= lo:
+            out.append(t)
+        m += step_m
+    return out, step_m * 30 * _MS["d"]
+
+
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _fmt_time(ms: float, step: float) -> str:
+    d = datetime.fromtimestamp(ms / 1e3, tz=UTC)
+    if step >= 28 * _MS["d"]:
+        return str(d.year) if d.month == 1 else f"{_MONTHS[d.month - 1]} {d.year}"
+    if step >= _MS["d"]:
+        return f"{_MONTHS[d.month - 1]} {d.day:02d}"
+    if step >= _MS["m"]:
+        return f"{d.hour:02d}:{d.minute:02d}"
+    if step >= _MS["s"]:
+        return f"{d.hour:02d}:{d.minute:02d}:{d.second:02d}"
+    return f"{d.minute:02d}:{d.second:02d}.{d.microsecond // 1000:03d}"
+
+
+def _fmt_linear(v: float, step: float) -> str:
+    av = abs(v)
+    if av >= 1e6 or (av != 0 and av < 1e-4):
+        return f"{v:.1e}".replace("e+0", "e").replace("e-0", "e-").replace("e+", "e")
+    dec = max(0, int(np.ceil(-np.log10(abs(step))))) if step else 0
+    # A non-nice step (pi/2, 0.3333…) needs enough decimals to keep adjacent
+    # ticks distinct; widen until the step itself round-trips at that precision.
+    while dec < 8 and abs(round(step, dec) - step) > abs(step) / 1000.0:
+        dec += 1
+    # ScalarFormatter uses one precision for the whole tick set. Retaining
+    # those zeros (0.00 beside ±0.25) makes magnitude and spacing legible and
+    # matches Matplotlib's default formatter.
+    return f"{v:.{min(dec, 8)}f}"
+
+
+# The numeric format grammar, mirroring `fmtNumberSpec` in js/src/30_ticks.ts
+# (spec/api/styling.md): `<prefix>(,).N[f|%]<suffix>`. Affixes may not contain
+# `,`, `.` or `%`, and the bare `.N` core (no `f`/`%`) accepts none.
+_NUMBER_SPEC = re.compile(r"^([^,.%]*)(,)?\.([0-9]+)(f?)(%?)([^,.%]*)$")
+
+# The strftime subset the client implements, likewise from 30_ticks.ts.
+_TIME_SPEC_TOKEN = re.compile(r"%[YmdHMSbB]")
+_MONTHS_LONG = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
+
+
+def _fmt_number_spec(v: float, spec: Any) -> Optional[str]:
+    """Apply the client's numeric format grammar, or None to fall back.
+
+    Group separators are the `,`/`.` pair rather than the viewer's locale: the
+    browser reads `toLocaleString(undefined, ...)`, but a static export has no
+    viewer and must be reproducible, so the same figure exports byte-identical
+    on every machine."""
+    if not isinstance(spec, str) or not math.isfinite(v):
+        return None
+    match = _NUMBER_SPEC.match(spec)
+    if match is None:
+        return None
+    prefix, group, digits_text, f, pct, suffix = match.groups()
+    if not f and not pct and (prefix or suffix):
+        return None
+    digits = int(digits_text)
+    percent = pct == "%"
+    value = v * 100 if percent else v
+    text = f"{value:,.{digits}f}" if group else f"{value:.{digits}f}"
+    return f"{prefix}{text}{'%' if percent else ''}{suffix}"
+
+
+def _fmt_time_spec(ms: float, spec: Any) -> Optional[str]:
+    """Apply the client's strftime subset (`%Y %m %d %H %M %S %b %B`), UTC and
+    English months. Like the client, an unknown `%` token is copied through
+    verbatim rather than falling back."""
+    if not isinstance(spec, str) or not math.isfinite(ms):
+        return None
+    d = datetime.fromtimestamp(ms / 1e3, tz=UTC)
+    replacements = {
+        "%Y": str(d.year),
+        "%m": f"{d.month:02d}",
+        "%d": f"{d.day:02d}",
+        "%H": f"{d.hour:02d}",
+        "%M": f"{d.minute:02d}",
+        "%S": f"{d.second:02d}",
+        "%b": _MONTHS[d.month - 1],
+        "%B": _MONTHS_LONG[d.month - 1],
+    }
+    return _TIME_SPEC_TOKEN.sub(lambda m: replacements[m.group(0)], spec)
+
+
+def _fmt_axis(axis: dict[str, Any], v: float, step: float) -> str:
+    kind = axis.get("kind")
+    if kind == "category":
+        cats = axis.get("categories") or []
+        i = round(v)
+        return str(cats[i]) if 0 <= i < len(cats) else ""
+    spec = axis.get("format")
+    if kind == "time":
+        return _fmt_time_spec(v, spec) or _fmt_time(v, step)
+    formatted = _fmt_number_spec(v, spec)
+    # A log decade under 1 must not collapse to "0" under a coarse spec.
+    if axis.get("scale") == "log" and 0 < v < 1 and formatted == "0":
+        return _fmt_linear(v, step)
+    return formatted if formatted is not None else _fmt_linear(v, step)
+
+
+def _tick_text(axis: dict[str, Any], value: float, step: float) -> str:
+    values = axis.get("tick_values")
+    labels = axis.get("tick_labels")
+    if values is not None and labels is not None:
+        for index, candidate in enumerate(values):
+            if float(candidate) == value and index < len(labels):
+                return str(labels[index])
+    return _fmt_axis(axis, value, step)
+
+
+# ---------------------------------------------------------------------------
+# Payload decode + scales
+# ---------------------------------------------------------------------------
+
+
+def _column(blob: bytes, meta: dict[str, Any]) -> np.ndarray:
+    dtype = np.uint8 if meta.get("dtype") == "u8" else np.float32
+    raw = np.frombuffer(blob, dtype=dtype, count=meta["len"], offset=meta["byte_offset"])
+    return raw.astype(np.float64) / (meta.get("scale") or 1.0) + meta.get("offset", 0.0)
+
+
+def _density_column(blob: bytes, meta: dict[str, Any], density: dict[str, Any]) -> np.ndarray:
+    """Decode either legacy f32 counts or the compact log-u8 density wire."""
+    if density.get("enc") != "log-u8":
+        return _column(blob, meta)
+    values = np.frombuffer(
+        blob, dtype=np.uint8, count=meta["len"], offset=meta["byte_offset"]
+    ).astype(np.float64)
+    maximum = float(density.get("max") or 0.0)
+    if maximum <= 0.0:
+        return np.zeros(len(values), dtype=np.float64)
+    return np.expm1((values / 255.0) * np.log1p(maximum))
+
+
+class _Scale:
+    """value -> px for one axis (linear / time-in-ms / log / category)."""
+
+    def __init__(self, axis: dict[str, Any], px0: float, px1: float) -> None:
+        self.kind = axis.get("kind", "linear")
+        lo, hi = axis["range"]
+        # ``kind`` describes the data domain (linear/time/category), while the
+        # public axis option is serialized separately as ``scale``. Accept the
+        # historical kind form too for old payloads.
+        self.log = axis.get("scale") == "log" or self.kind == "log"
+        self.symlog = axis.get("scale") == "symlog"
+        self.constant = float(axis.get("constant", 1.0))
+        if self.log:
+            lo, hi = np.log10(max(lo, 1e-300)), np.log10(max(hi, 1e-300))
+        elif self.symlog:
+            lo, hi = self._symlog(lo), self._symlog(hi)
+        self.lo, self.hi = float(lo), float(hi)
+        self.px0, self.px1 = px0, px1
+
+    def coord(self, v: Any) -> Any:
+        if self.log:
+            return np.log10(np.maximum(v, 1e-300))
+        return self._symlog(v) if self.symlog else v
+
+    def _symlog(self, v: Any) -> Any:
+        value = np.asarray(v)
+        return np.sign(value) * np.log1p(np.abs(value) / self.constant)
+
+    def __call__(self, v: Any) -> Any:
+        c = self.coord(v)
+        span = (self.hi - self.lo) or 1.0
+        return self.px0 + (c - self.lo) / span * (self.px1 - self.px0)
+
+    def value(self, c: Any) -> Any:
+        """Inverse of `coord`: scale coordinate back to a data value."""
+        if self.log:
+            return np.power(10.0, c)
+        if self.symlog:
+            c = np.asarray(c)
+            return np.sign(c) * self.constant * np.expm1(np.abs(c))
+        return c
+
+    @property
+    def affine(self) -> bool:
+        return not (self.log or self.symlog)
+
+
+def _colormap_stops(colormap: str) -> list[tuple[int, int, int]]:
+    reversed_map = colormap.endswith("_r")
+    base = colormap[:-2] if reversed_map else colormap
+    stops = COLORMAP_STOPS.get(base) or COLORMAP_STOPS["viridis"]
+    return list(reversed(stops)) if reversed_map else stops
+
+
+def _lut(colormap: str, t: np.ndarray) -> np.ndarray:
+    """Vectorized colormap sample: t in [0,1] -> (n,3) uint8, matching the
+    client's 256-texel LUT interpolation."""
+    stops = np.array(_colormap_stops(colormap), dtype=np.float64)
+    pos = np.clip(t, 0.0, 1.0) * (len(stops) - 1)
+    lo = np.floor(pos).astype(np.uint8)
+    hi = np.minimum(lo + 1, len(stops) - 1)
+    fraction = pos - lo
+    out = np.empty((len(pos), 3), dtype=np.uint8)
+    # Channel-wise interpolation is numerically identical to the broadcasted
+    # `(n, 3)` expression but avoids three multi-megabyte float temporaries.
+    for channel in range(3):
+        start = stops[lo, channel]
+        out[:, channel] = np.round(start + (stops[hi, channel] - start) * fraction).astype(np.uint8)
+    return out
+
+
+def _paint_rgba8(css: Any) -> tuple[int, int, int, int]:
+    """Resolve a validated CSS paint for static density images."""
+    from . import kernels
+
+    _status, rgba = kernels.css_check(kernels.CSS_COLOR, str(css))
+    if rgba is None:
+        rgba = _STATIC_COLOR_FALLBACK
+    red, green, blue, alpha = rgba
+    return (
+        int(round(red * 255)),
+        int(round(green * 255)),
+        int(round(blue * 255)),
+        int(round(alpha * 255)),
+    )
+
+
+def _css(c: Any, fallback: str) -> str:
+    """Resolve static colors after chart-level tokens have been expanded."""
+    s = str(c or "").strip()
+    if not s or s.lower() == "currentcolor" or s.lower().startswith("var("):
+        return fallback
+    return s
+
+
+_TEXT_ANCHORS = {"start": "start", "center": "middle", "end": "end"}
+
+
+def _tick_label_anchor(axis: dict[str, Any], style: dict[str, Any], default: str) -> str:
+    """Canonical tick-label anchor (``start``/``center``/``end``) from the
+    axis spec or its style — validators normalize the mpl aliases upstream —
+    with ``default`` (the classic layout) when unset."""
+    raw = axis.get("tick_label_anchor") or style.get("tick_label_anchor")
+    return raw if raw in ("start", "center", "end") else default
+
+
+def _px_size(value: Any, default: float) -> float:
+    """Tolerant CSS px length — `15` or `"15px"` — matching the browser, where
+    annotation styles land as CSS declarations; `default` on anything else."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip().removesuffix("px"))
+        except ValueError:
+            return default
+    return default
+
+
+def apply_export_background(spec: dict[str, Any], background: Optional[str]) -> None:
+    """Apply the unified export API's `background=` override to a payload spec.
+
+    An explicit export background replaces the ENTIRE painted backdrop — the
+    canvas underlay, the theme figure patch (`theme(background=)`), and the
+    plot-rect fill (`--chart-bg`) — so the requested color (or transparency)
+    is what actually shows regardless of chart theme, instead of being buried
+    under the theme paints. The plot token becomes "transparent" rather than
+    the override color so translucent backgrounds composite exactly once.
+    Shared by the raster exporter and (via SVG) the PDF exporter."""
+    if background is None:
+        return
+    spec["canvas_background"] = background
+    dom = spec.setdefault("dom", {})
+    if isinstance(dom, dict):
+        style = dom.setdefault("style", {})
+        if isinstance(style, dict):
+            style.pop("background", None)
+            style["--chart-bg"] = "transparent"
+
+
+def _solid_paint(css: Any) -> Optional[str]:
+    """A parseable solid CSS color string, or None when unset/unpaintable
+    (var(), gradients) — for background rects that must be omitted rather
+    than fallback-painted. Fully transparent colors (alpha 0, e.g. the
+    export background override's plot token) are pure no-op fills and are
+    omitted as well."""
+    from . import kernels
+
+    s = _css(css, "")
+    if not s:
+        return None
+    _status, rgba = kernels.css_check(kernels.CSS_COLOR, s)
+    if rgba is None or rgba[3] == 0:
+        return None
+    return s
+
+
+_CSS_VAR_RE = re.compile(
+    r"^var\(\s*(--[A-Za-z_][A-Za-z0-9_-]*)\s*(?:,\s*(.+))?\)$",
+    re.DOTALL | re.IGNORECASE,
+)
+_STATIC_PAINT_KEYS = frozenset(
+    {
+        "axis_color",
+        "background",
+        "canvas_background",
+        "color",
+        "fill",
+        "grid_color",
+        "label_color",
+        "line_color",
+        "stroke",
+        "stroke_color",
+        "tick_color",
+    }
+)
+
+
+def _resolve_css_var(value: Any, variables: dict[str, Any], seen: tuple[str, ...] = ()) -> Any:
+    """Resolve a complete ``var(--token[, fallback])`` static paint value."""
+    if not isinstance(value, str):
+        return value
+    match = _CSS_VAR_RE.fullmatch(value.strip())
+    if match is None:
+        return value
+    name, fallback = match.groups()
+    if name in seen:
+        return fallback.strip() if fallback is not None else value
+    replacement = variables.get(name, fallback)
+    if replacement is None:
+        return value
+    if isinstance(replacement, str):
+        replacement = replacement.strip()
+    return _resolve_css_var(replacement, variables, (*seen, name))
+
+
+def _resolve_static_css_vars(spec: dict[str, Any]) -> dict[str, Any]:
+    """Resolve chart-level color tokens with a copy-on-write spec traversal.
+
+    This deliberately handles complete color-token references only. Browser
+    expressions containing variables, such as ``color-mix(...)``, retain the
+    documented native fallback instead of approximating the browser CSS engine.
+    """
+    dom_style = (spec.get("dom") or {}).get("style") or {}
+    variables = {key: value for key, value in dom_style.items() if key.startswith("--")}
+
+    def resolve_stops(value: Any) -> Any:
+        if not isinstance(value, list):
+            return value
+        changed = False
+        out: list[Any] = []
+        for stop in value:
+            if isinstance(stop, (list, tuple)) and len(stop) >= 2:
+                paint = _resolve_css_var(stop[1], variables)
+                if paint != stop[1]:
+                    changed = True
+                    copied = list(stop)
+                    copied[1] = paint
+                    out.append(copied if isinstance(stop, list) else tuple(copied))
+                    continue
+            out.append(stop)
+        return out if changed else value
+
+    def rewrite(value: Any) -> Any:
+        if isinstance(value, dict):
+            changed = False
+            out: dict[Any, Any] = {}
+            for key, item in value.items():
+                if key == "stops":
+                    resolved = resolve_stops(item)
+                elif isinstance(item, str) and (
+                    key in _STATIC_PAINT_KEYS
+                    or (isinstance(key, str) and (key.startswith("--") or key.endswith("_color")))
+                ):
+                    resolved = _resolve_css_var(item, variables)
+                else:
+                    resolved = rewrite(item)
+                changed = changed or resolved is not item
+                out[key] = resolved
+            return out if changed else value
+        if isinstance(value, list):
+            out = [rewrite(item) for item in value]
+            return (
+                out if any(new is not old for new, old in zip(out, value, strict=True)) else value
+            )
+        return value
+
+    return rewrite(spec)
+
+
+def _num(v: float) -> str:
+    return f"{v:.2f}".rstrip("0").rstrip(".")
+
+
+def _axis_grid_attrs(style: dict[str, Any]) -> str:
+    opacity = float(style.get("grid_opacity", 1.0))
+    dash = _AXIS_GRID_DASHES.get(str(style.get("grid_dash", "solid")))
+    return (f' stroke-opacity="{_num(opacity)}"' if opacity < 1 else "") + (
+        f' stroke-dasharray="{",".join(_num(value) for value in dash)}"' if dash else ""
+    )
+
+
+# Embedded heatmap/density rasters use the shared truecolor PNG encoder.
+_png_rgba = _png.png_truecolor
+
+
+def _monotone_tangents(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Fritsch–Carlson tangents — the same construction as xySmoothResample."""
+    n = len(x)
+    dx = np.diff(x)
+    dy = np.diff(y)
+    d = np.where(dx > 0, dy / np.where(dx > 0, dx, 1), 0.0)
+    m = np.empty(n)
+    m[0], m[-1] = d[0], d[-1]
+    m[1:-1] = np.where(d[:-1] * d[1:] <= 0, 0.0, (d[:-1] + d[1:]) * 0.5)
+    for i in range(n - 1):
+        if d[i] == 0:
+            m[i] = m[i + 1] = 0.0
+            continue
+        a, b = m[i] / d[i], m[i + 1] / d[i]
+        s = a * a + b * b
+        if s > 9:
+            t = 3 / np.sqrt(s)
+            m[i] = t * a * d[i]
+            m[i + 1] = t * b * d[i]
+    return m
+
+
+class _Svg:
+    """One export pass: collects defs + body elements, then assembles."""
+
+    def __init__(self, id_prefix: str = "") -> None:
+        self.defs: list[str] = []
+        self.body: list[str] = []
+        self._uid = 0
+        # Composed documents (facet grids) nest several exports into one SVG;
+        # the prefix keeps ids unique so url(#...) refs stay panel-local.
+        self._id_prefix = id_prefix
+
+    def uid(self, prefix: str) -> str:
+        self._uid += 1
+        return f"{self._id_prefix}{prefix}{self._uid}"
+
+    def gradient(self, fill: dict[str, Any], mark_color: str, plot: Optional[dict] = None) -> str:
+        """Register a <linearGradient> for a validated fill spec; returns url(#id).
+
+        Mark space maps to each element's bounding box (exact for bars/rects;
+        the area approximation is documented). Plot space maps to the plot rect.
+        """
+        gid = self.uid("g")
+        direction = fill.get("dir", "down")
+        # Gradient line start/end per CSS: "down" starts at the top.
+        ends = {
+            "down": (0, 0, 0, 1),
+            "up": (0, 1, 0, 0),
+            "right": (0, 0, 1, 0),
+            "left": (1, 0, 0, 0),
+        }[direction if direction in ("down", "up", "left", "right") else "down"]
+        if fill.get("space") == "plot" and plot:
+            x0 = plot["x"] + ends[0] * plot["w"]
+            y0 = plot["y"] + ends[1] * plot["h"]
+            x1 = plot["x"] + ends[2] * plot["w"]
+            y1 = plot["y"] + ends[3] * plot["h"]
+            units = f'gradientUnits="userSpaceOnUse" x1="{_num(x0)}" y1="{_num(y0)}" x2="{_num(x1)}" y2="{_num(y1)}"'
+        else:
+            units = f'x1="{ends[0]}" y1="{ends[1]}" x2="{ends[2]}" y2="{ends[3]}"'
+        raw_stops = fill.get("stops", [])
+        resolved = [_css(c, mark_color) for _t, c in raw_stops]
+        stops_out: list[str] = []
+        for index, ((t, raw_color), color) in enumerate(zip(raw_stops, resolved, strict=True)):
+            offset = _num(t * 100)
+            if str(raw_color).strip().lower() != "transparent":
+                escaped = escape(color, {chr(34): "&quot;"})
+                stops_out.append(f'<stop offset="{offset}%" stop-color="{escaped}"/>')
+                continue
+
+            # SVG interpolates stop RGB independently from stop opacity. A
+            # literal `transparent` stop is transparent black, which makes a
+            # colored fade pass through a muddy gray fringe. Give the zero-
+            # opacity stop the adjacent visible hue instead, matching the
+            # browser renderer's premultiplied-alpha interpolation. When a
+            # transparent stop sits between two different colors, duplicate
+            # it at the same offset; the invisible color switch preserves the
+            # hue on both segments.
+            previous = next(
+                (
+                    resolved[i]
+                    for i in range(index - 1, -1, -1)
+                    if str(raw_stops[i][1]).strip().lower() != "transparent"
+                ),
+                None,
+            )
+            following = next(
+                (
+                    resolved[i]
+                    for i in range(index + 1, len(raw_stops))
+                    if str(raw_stops[i][1]).strip().lower() != "transparent"
+                ),
+                None,
+            )
+            transparent_colors = [previous or following or mark_color]
+            if previous and following and previous != following:
+                transparent_colors.append(following)
+            for transparent_color in transparent_colors:
+                escaped = escape(transparent_color, {chr(34): "&quot;"})
+                stops_out.append(
+                    f'<stop offset="{offset}%" stop-color="{escaped}" stop-opacity="0"/>'
+                )
+        stops = "".join(stops_out)
+        self.defs.append(f'<linearGradient id="{gid}" {units}>{stops}</linearGradient>')
+        return f"url(#{gid})"
+
+
+def _rounded_rect_path(
+    x: float, y: float, w: float, h: float, r_tip: float, r_base: float, tip_top: bool
+) -> str:
+    """Rect path with independent tip/base corner radii (vertical mark space)."""
+    rt = min(r_tip, w / 2, h / 2)
+    rb = min(r_base, w / 2, h / 2)
+    top_r, bot_r = (rt, rb) if tip_top else (rb, rt)
+    p = [f"M {_num(x)} {_num(y + top_r)}"]
+    p.append(f"A {_num(top_r)} {_num(top_r)} 0 0 1 {_num(x + top_r)} {_num(y)}" if top_r else "")
+    p.append(f"L {_num(x + w - top_r)} {_num(y)}")
+    p.append(
+        f"A {_num(top_r)} {_num(top_r)} 0 0 1 {_num(x + w)} {_num(y + top_r)}" if top_r else ""
+    )
+    p.append(f"L {_num(x + w)} {_num(y + h - bot_r)}")
+    p.append(
+        f"A {_num(bot_r)} {_num(bot_r)} 0 0 1 {_num(x + w - bot_r)} {_num(y + h)}" if bot_r else ""
+    )
+    p.append(f"L {_num(x + bot_r)} {_num(y + h)}")
+    p.append(
+        f"A {_num(bot_r)} {_num(bot_r)} 0 0 1 {_num(x)} {_num(y + h - bot_r)}" if bot_r else ""
+    )
+    p.append("Z")
+    return " ".join(s for s in p if s)
+
+
+def _poly_path(px: np.ndarray, py: np.ndarray) -> str:
+    return _native.svg_poly_path(px, py)
+
+
+def _curve_path(xv: np.ndarray, yv: np.ndarray, sx: _Scale, sy: _Scale, smooth: bool) -> str:
+    """Pixel-space path for a polyline; smooth -> exact cubic Béziers of the
+    monotone-cubic Hermite (affine axes), else polyline. The Bézier control
+    points of a Hermite segment are P0 + h/3·(1, m0) and P1 - h/3·(1, m1),
+    and affine axis maps carry control points exactly."""
+    px, py = sx(xv), sy(yv)
+    if not smooth or len(xv) < 3 or not (sx.affine and sy.affine):
+        return _poly_path(px, py)
+    m = _monotone_tangents(xv, yv)
+    parts = [f"M {_num(px[0])} {_num(py[0])}"]
+    for i in range(len(xv) - 1):
+        h = xv[i + 1] - xv[i]
+        if h <= 0:
+            parts.append(f"L {_num(px[i + 1])} {_num(py[i + 1])}")
+            continue
+        c1x, c1y = sx(xv[i] + h / 3), sy(yv[i] + m[i] * h / 3)
+        c2x, c2y = sx(xv[i + 1] - h / 3), sy(yv[i + 1] - m[i + 1] * h / 3)
+        parts.append(
+            f"C {_num(c1x)} {_num(c1y)} {_num(c2x)} {_num(c2y)} {_num(px[i + 1])} {_num(py[i + 1])}"
+        )
+    return " ".join(parts)
+
+
+def _step_arrays(xv: np.ndarray, yv: np.ndarray, where: str) -> tuple[np.ndarray, np.ndarray]:
+    if len(xv) < 2:
+        return xv, yv
+    xs = [float(xv[0])]
+    ys = [float(yv[0])]
+    for i in range(1, len(xv)):
+        if where == "pre":
+            xs.extend((xv[i - 1], xv[i]))
+            ys.extend((yv[i], yv[i]))
+        elif where == "mid":
+            mid = (xv[i - 1] + xv[i]) * 0.5
+            xs.extend((mid, mid, xv[i]))
+            ys.extend((yv[i - 1], yv[i], yv[i]))
+        else:
+            xs.extend((xv[i], xv[i]))
+            ys.extend((yv[i - 1], yv[i]))
+    return np.asarray(xs), np.asarray(ys)
+
+
+_SYMBOL_BUILDERS = {
+    "pixel": lambda cx, cy, r: (
+        f'<rect x="{_num(cx - r)}" y="{_num(cy - r)}" width="{_num(2 * r)}" height="{_num(2 * r)}"'
+    ),
+    "square": lambda cx, cy, r: (
+        f'<rect x="{_num(cx - r)}" y="{_num(cy - r)}" width="{_num(2 * r)}" height="{_num(2 * r)}"'
+    ),
+    "diamond": lambda cx, cy, r: (
+        f'<path d="M {_num(cx)} {_num(cy - r)} L {_num(cx + r)} {_num(cy)} L {_num(cx)} {_num(cy + r)} L {_num(cx - r)} {_num(cy)} Z"'
+    ),
+    "thin_diamond": lambda cx, cy, r: (
+        f'<path d="M {_num(cx)} {_num(cy - r)} L {_num(cx + 0.6 * r)} {_num(cy)} L {_num(cx)} {_num(cy + r)} L {_num(cx - 0.6 * r)} {_num(cy)} Z"'
+    ),
+    "triangle": lambda cx, cy, r: (
+        f'<path d="M {_num(cx)} {_num(cy - r)} L {_num(cx + r)} {_num(cy + r)} L {_num(cx - r)} {_num(cy + r)} Z"'
+    ),
+    "triangle_down": lambda cx, cy, r: (
+        f'<path d="M {_num(cx)} {_num(cy + r)} L {_num(cx + r)} {_num(cy - r)} L {_num(cx - r)} {_num(cy - r)} Z"'
+    ),
+    "triangle_left": lambda cx, cy, r: (
+        f'<path d="M {_num(cx - r)} {_num(cy)} L {_num(cx + r)} {_num(cy - r)} L {_num(cx + r)} {_num(cy + r)} Z"'
+    ),
+    "triangle_right": lambda cx, cy, r: (
+        f'<path d="M {_num(cx + r)} {_num(cy)} L {_num(cx - r)} {_num(cy - r)} L {_num(cx - r)} {_num(cy + r)} Z"'
+    ),
+    "cross": lambda cx, cy, r: (
+        f'<path d="M {_num(cx - 0.34 * r)} {_num(cy - r)} H {_num(cx + 0.34 * r)} V {_num(cy - 0.34 * r)} '
+        f"H {_num(cx + r)} V {_num(cy + 0.34 * r)} H {_num(cx + 0.34 * r)} V {_num(cy + r)} "
+        f"H {_num(cx - 0.34 * r)} V {_num(cy + 0.34 * r)} H {_num(cx - r)} V {_num(cy - 0.34 * r)} "
+        f'H {_num(cx - 0.34 * r)} Z"'
+    ),
+    "x": lambda cx, cy, r: (
+        f'<path d="M {_num(cx - 0.72 * r)} {_num(cy - r)} L {_num(cx)} {_num(cy - 0.28 * r)} '
+        f"L {_num(cx + 0.72 * r)} {_num(cy - r)} L {_num(cx + r)} {_num(cy - 0.72 * r)} "
+        f"L {_num(cx + 0.28 * r)} {_num(cy)} L {_num(cx + r)} {_num(cy + 0.72 * r)} "
+        f"L {_num(cx + 0.72 * r)} {_num(cy + r)} L {_num(cx)} {_num(cy + 0.28 * r)} "
+        f"L {_num(cx - 0.72 * r)} {_num(cy + r)} L {_num(cx - r)} {_num(cy + 0.72 * r)} "
+        f'L {_num(cx - 0.28 * r)} {_num(cy)} L {_num(cx - r)} {_num(cy - 0.72 * r)} Z"'
+    ),
+    "plus_line": lambda cx, cy, r: (
+        f'<path d="M {_num(cx - r)} {_num(cy)} H {_num(cx + r)} M {_num(cx)} {_num(cy - r)} V {_num(cy + r)}" fill="none"'
+    ),
+    "x_line": lambda cx, cy, r: (
+        f'<path d="M {_num(cx - 0.707 * r)} {_num(cy - 0.707 * r)} L {_num(cx + 0.707 * r)} {_num(cy + 0.707 * r)} '
+        f'M {_num(cx + 0.707 * r)} {_num(cy - 0.707 * r)} L {_num(cx - 0.707 * r)} {_num(cy + 0.707 * r)}" fill="none"'
+    ),
+    "pentagon": lambda cx, cy, r: _regular_polygon_path(cx, cy, r, 5, -90.0),
+    "hexagon": lambda cx, cy, r: _regular_polygon_path(cx, cy, r, 6, -90.0),
+    "star": lambda cx, cy, r: _star_path(cx, cy, r, 5, 0.45, -90.0),
+}
+
+
+def _regular_polygon_path(cx: float, cy: float, r: float, n: int, start_deg: float) -> str:
+    pts = []
+    for i in range(n):
+        theta = np.radians(start_deg + i * 360.0 / n)
+        pts.append((cx + r * np.cos(theta), cy + r * np.sin(theta)))
+    d = "M " + " L ".join(f"{_num(px)} {_num(py)}" for px, py in pts)
+    return f'<path d="{d} Z"'
+
+
+def _star_path(cx: float, cy: float, r: float, points: int, inner: float, start_deg: float) -> str:
+    pts = []
+    for i in range(points * 2):
+        radius = r if i % 2 == 0 else r * inner
+        theta = np.radians(start_deg + i * 180.0 / points)
+        pts.append((cx + radius * np.cos(theta), cy + radius * np.sin(theta)))
+    d = "M " + " L ".join(f"{_num(px)} {_num(py)}" for px, py in pts)
+    return f'<path d="{d} Z"'
+
+
+def _dash_attr(style: dict[str, Any]) -> str:
+    dash = style.get("dash")
+    if not dash:
+        return ""
+    if isinstance(dash, str):
+        dash = dash.split(",")
+    return f' stroke-dasharray="{",".join(_num(float(v)) for v in dash)}"'
+
+
+# ---------------------------------------------------------------------------
+# Renderer
+# ---------------------------------------------------------------------------
+
+
+def _axes_by_id(spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return every configured axis keyed by its wire id.
+
+    Older payloads only carried the primary ``x_axis``/``y_axis`` fields;
+    current payloads additionally carry an ``axes`` mapping for named axes.
+    Static exporters accept both shapes and let the primary compatibility
+    fields win, matching the browser client's normalization.
+    """
+    axes = dict(spec.get("axes") or {})
+    axes["x"] = spec["x_axis"]
+    axes["y"] = spec["y_axis"]
+    return axes
+
+
+def _axis_scales(
+    spec: dict[str, Any], plot: dict[str, float]
+) -> tuple[
+    dict[str, _Scale],
+    dict[str, _Scale],
+    _Scale,
+    _Scale,
+    list[tuple[str, dict[str, Any], _Scale]],
+    list[tuple[str, dict[str, Any], _Scale]],
+]:
+    """Pixel scales for every configured axis plus the named-axis lists —
+    shared by the SVG and native exporters so their geometry stays identical.
+
+    Returns ``(x_scales, y_scales, sx, sy, extra_x_axes, extra_y_axes)``.
+    """
+    axes = _axes_by_id(spec)
+    x_scales = {
+        axis_id: _Scale(axis, plot["x"], plot["x"] + plot["w"])
+        for axis_id, axis in axes.items()
+        if axis_id.startswith("x")
+    }
+    y_scales = {
+        axis_id: _Scale(axis, plot["y"] + plot["h"], plot["y"])
+        for axis_id, axis in axes.items()
+        if axis_id.startswith("y")
+    }
+    sx = x_scales["x"]
+    sy = y_scales["y"]  # y grows downward in raster space
+    extra_x_axes = [
+        (axis_id, axis, x_scales[axis_id])
+        for axis_id, axis in axes.items()
+        if axis_id != "x" and axis_id.startswith("x")
+    ]
+    extra_y_axes = [
+        (axis_id, axis, y_scales[axis_id])
+        for axis_id, axis in axes.items()
+        if axis_id != "y" and axis_id.startswith("y")
+    ]
+    return x_scales, y_scales, sx, sy, extra_x_axes, extra_y_axes
+
+
+def _colorbar_right_axis_room(
+    y_axis: dict[str, Any],
+    extra_y_axes: list[tuple[str, dict[str, Any], _Scale]],
+    compact: bool,
+) -> float:
+    """Gutter layout() reserves for visible right-side named y axes.
+
+    The vertical colorbar shifts right by this amount so its bar/ticks/label
+    clear the axis tick labels (plot-right+8) and rotated axis title
+    (plot-right+40); the JS client applies the identical rule."""
+    axes = [y_axis, *(axis for _axis_id, axis, _axis_scale in extra_y_axes)]
+    if any(
+        axis.get("side", "left") == "right" and _axis_tick_label_strategy(axis) != "none"
+        for axis in axes
+    ):
+        return 42.0 if compact else 54.0
+    return 0.0
+
+
+def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
+    """Concrete pixel dimensions + plot rect from a spec — shared by the SVG and
+    native-PNG exporters so their chrome/plot geometry stays identical."""
+    width = spec.get("width")
+    height = spec.get("height")
+    # Fluid ("100%") figures need concrete export dimensions.
+    width = 900 if not isinstance(width, (int, float)) else int(width)
+    height = 420 if not isinstance(height, (int, float)) else int(height)
+
+    compact = width < 520
+    pad = spec.get("padding")
+    if isinstance(pad, list) and len(pad) == 4:
+        top, right, bottom, left = (float(v) for v in pad)
+    else:
+        left = 46 if compact else 62
+        right = 8 if compact else 14
+        top = 6 if compact else 10
+        bottom = 36 if compact else 42
+    if spec.get("title"):
+        top += 26 if compact else 30
+    axes = _axes_by_id(spec)
+    bottom_axis_room = 0.0
+    if any(
+        axis_id.startswith("x")
+        and axis.get("side", "bottom") == "bottom"
+        and _axis_tick_label_strategy(axis) != "none"
+        for axis_id, axis in axes.items()
+    ):
+        bottom_axis_room = 36 if compact else 42
+    top_axis_room = 0.0
+    if any(
+        axis_id.startswith("x")
+        and axis.get("side", "bottom") == "top"
+        and _axis_tick_label_strategy(axis) != "none"
+        for axis_id, axis in axes.items()
+    ):
+        # One shared top gutter mirrors ChartView. Multiple named x axes on
+        # the same edge intentionally overlap until per-axis offsets exist.
+        top_axis_room = 26 if compact else 32
+        top += top_axis_room
+    colorbar = spec.get("colorbar") or {}
+    if colorbar.get("orientation") == "horizontal":
+        bottom += 38 + (16 if colorbar.get("label") else 0)
+    elif colorbar:
+        right += 86 + (18 if colorbar.get("label") else 0)
+    if any(
+        axis_id.startswith("y")
+        and axis.get("side", "right") == "right"
+        and _axis_tick_label_strategy(axis) != "none"
+        for axis_id, axis in axes.items()
+    ):
+        # Match ChartView._layout(): one shared right-side gutter contains the
+        # secondary-y tick labels/title. Multiple right axes intentionally
+        # overlay in both renderers until offset axes become part of the API.
+        right += 42 if compact else 54
+    plot = {
+        "x": left,
+        "y": top,
+        "w": max(40, width - left - right),
+        "h": max(40, height - top - bottom),
+        # Emitters place the figure title above this gutter; recording it here
+        # keeps layout() the single source of the top-axis reservation.
+        "top_axis_room": top_axis_room,
+        "bottom_axis_room": bottom_axis_room,
+    }
+    return width, height, compact, plot
+
+
+def axis_ticks(
+    axis: dict[str, Any], length_px: float, is_x: bool
+) -> tuple[list[float], list[float], float]:
+    """(ticks, labeled ticks, step) for an axis at a given pixel length — shared
+    tick density so SVG and PNG label the same values."""
+    if axis.get("tick_values") is not None:
+        lo, hi = axis["range"]
+        low, high = min(lo, hi), max(lo, hi)
+        ticks = [float(v) for v in axis["tick_values"] if low <= float(v) <= high]
+        step = abs(ticks[1] - ticks[0]) if len(ticks) > 1 else 1.0
+        return ticks, ticks, step
+    requested = axis.get("tick_count")
+    if isinstance(requested, (int, float)) and not isinstance(requested, bool) and requested > 0:
+        target = max(1, min(200, int(requested)))
+    else:
+        target = max(3, int(length_px / 80)) if is_x else max(3, int(length_px / 45))
+    kind = axis.get("kind")
+    lo, hi = axis["range"]
+    if axis.get("scale") == "log" or kind == "log":
+        return _log_ticks(lo, hi, target)
+    if axis.get("scale") == "symlog":
+        constant = float(axis.get("constant", 1.0))
+
+        def transform(value: float) -> float:
+            return float(np.sign(value) * np.log1p(abs(value) / constant))
+
+        def inverse(value: float) -> float:
+            return float(np.sign(value) * constant * np.expm1(abs(value)))
+
+        coords, step = _linear_ticks(float(transform(lo)), float(transform(hi)), target)
+        ticks = [float(inverse(v)) for v in coords]
+        if min(lo, hi) <= 0 <= max(lo, hi) and not any(abs(v) < 1e-12 for v in ticks):
+            ticks.append(0.0)
+            ticks.sort(reverse=lo > hi)
+        return ticks, ticks, abs(float(inverse(step)))
+    if kind == "category":
+        t = [float(v) for v in _category_ticks(lo, hi, len(axis.get("categories") or []), target)]
+        return t, t, 1.0
+    if kind == "time":
+        t, step = _time_ticks(lo, hi, target)
+        return t, t, step
+    t, step = _linear_ticks(lo, hi, target)
+    return t, t, step
+
+
+def _axis_tick_label_strategy(axis: dict[str, Any]) -> str:
+    value = str(axis.get("tick_label_strategy") or "auto").replace("-", "_")
+    return value if value in {"auto", "hide", "rotate", "stagger", "none", "off"} else "auto"
+
+
+def _axis_tick_font_size(axis: dict[str, Any]) -> float:
+    style = axis.get("style") or {}
+    return max(8.0, float(style.get("tick_label_size", style.get("tick_size", 11))))
+
+
+def _axis_tick_label_layout(
+    axis: dict[str, Any],
+    values: list[float],
+    step: float,
+    scale: _Scale,
+    is_x: bool,
+) -> list[dict[str, Any]]:
+    """Port ChartView._layoutTickLabels for deterministic static chrome."""
+    strategy = _axis_tick_label_strategy(axis)
+    if strategy in {"none", "off"}:
+        return []
+
+    font_size = _axis_tick_font_size(axis)
+    min_gap = float(axis.get("tick_label_min_gap", 8 if is_x else 4))
+    raw_angle = axis.get("tick_label_angle")
+    explicit_angle = float(raw_angle) if raw_angle is not None else None
+    base_angle = explicit_angle or 0.0
+    # y collision keeps the centered extent model: every label on an axis
+    # shares one anchor+angle, so an anchored y layout shifts all boxes by
+    # the same offset and pairwise gaps are unchanged.  Mirror JS exactly.
+    axis_style = axis.get("style") or {}
+    anchor = _tick_label_anchor(axis, axis_style, "center") if is_x else "center"
+    labels = [
+        {
+            "value": value,
+            "pos": float(scale(value)),
+            "text": _tick_text(axis, value, step),
+            "angle": base_angle,
+            "row": 0,
+        }
+        for value in values
+    ]
+    if len(labels) <= 1:
+        return labels
+
+    def extent(label: dict[str, Any]) -> float:
+        width = max(font_size * 0.7, len(str(label["text"])) * font_size * 0.62)
+        height = font_size * 1.2
+        angle = abs(float(label.get("angle", 0.0))) * math.pi / 180.0
+        if is_x:
+            return abs(math.cos(angle)) * width + abs(math.sin(angle)) * height
+        return abs(math.sin(angle)) * width + abs(math.cos(angle)) * height
+
+    def collide(items: list[dict[str, Any]]) -> bool:
+        rows: dict[int, list[dict[str, Any]]] = {}
+        for item in items:
+            rows.setdefault(int(item.get("row", 0)), []).append(item)
+        for row in rows.values():
+            sorted_row = sorted(row, key=lambda candidate: float(candidate["pos"]))
+            if is_x and anchor != "center":
+                # Edge-anchored labels all run the same direction from their
+                # tick.  Rotated ones are parallel lines: they clear each other
+                # when the perpendicular gap between adjacent anchors exceeds
+                # the line height, regardless of horizontal bounding-box overlap.
+                # Mirror JS _tickLabelsCollide exactly.
+                for i in range(1, len(sorted_row)):
+                    prev = sorted_row[i - 1]
+                    curr = sorted_row[i]
+                    spacing = float(curr["pos"]) - float(prev["pos"])
+                    angle = abs(float(curr.get("angle", 0.0))) * math.pi / 180.0
+                    if angle:
+                        if spacing * math.sin(angle) < font_size * 1.2 + min_gap:
+                            return True
+                    else:
+                        lead = curr if anchor == "end" else prev
+                        w = max(font_size * 0.7, len(str(lead["text"])) * font_size * 0.62)
+                        if spacing < w + min_gap:
+                            return True
+            else:
+                last_end = -math.inf
+                for item in sorted_row:
+                    half = extent(item) / 2.0
+                    start = float(item["pos"]) - half
+                    if start < last_end + min_gap:
+                        return True
+                    last_end = float(item["pos"]) + half
+        return False
+
+    if strategy == "auto":
+        if not collide(labels):
+            return labels
+        if is_x and axis.get("kind") == "category" and len(labels) <= 16:
+            strategy = "rotate"
+        elif is_x and len(labels) <= 24:
+            strategy = "stagger"
+        else:
+            strategy = "hide"
+
+    if strategy == "rotate" and is_x:
+        angle = (
+            explicit_angle
+            if explicit_angle is not None
+            else (35.0 if axis.get("side") == "top" else -35.0)
+        )
+        labels = [{**label, "angle": angle, "row": 0} for label in labels]
+    elif strategy == "stagger" and is_x:
+        labels = [{**label, "row": index % 2} for index, label in enumerate(labels)]
+
+    # "hide" is a collision-handling strategy: the stride loop engages only
+    # when the full label set actually overlaps, so relayouts that force
+    # strategy="hide" (native diagonal-angle fallback) keep fitting labels.
+    if collide(labels):
+        for stride in range(2, len(labels) + 1):
+            reduced = labels[::stride]
+            if not collide(reduced):
+                return reduced
+        return labels[:1]
+    return labels
+
+
+def _axis_label_geometry(
+    axis: dict[str, Any],
+    plot: dict[str, float],
+    *,
+    is_x: bool,
+) -> dict[str, Any]:
+    """Resolve named axis-title placement shared by SVG and native output.
+
+    Named positions, offsets, and angles mirror ChartView. Structured CSS
+    dictionaries remain a browser-only escape hatch because native exporters
+    do not have a CSS layout engine.
+    """
+    style = axis.get("style") or {}
+    font_size = float(style.get("label_size", 12))
+    raw_position = axis.get("label_position")
+    position = raw_position if isinstance(raw_position, str) else "center"
+    position = position.replace("-", "_")
+    inside = position.startswith("inside_")
+    anchor = position.removeprefix("inside_") if inside else position
+    anchor_fraction = 0.0 if anchor == "start" else 1.0 if anchor == "end" else 0.5
+    offset = float(axis.get("label_offset", 0.0))
+    side = axis.get("side", "bottom" if is_x else "left")
+
+    if is_x:
+        x = plot["x"] + plot["w"] * anchor_fraction
+        outside_top = plot["y"] - 34
+        outside_bottom = plot["y"] + plot["h"] + 24
+        inside_top = plot["y"] + 12
+        inside_bottom = plot["y"] + plot["h"] - 12
+        y = (
+            (inside_top if side == "top" else inside_bottom)
+            if inside
+            else (outside_top if side == "top" else outside_bottom)
+        )
+        y += (
+            (-offset if not inside else offset)
+            if side == "top"
+            else (offset if not inside else -offset)
+        )
+        # DOM labels use top positioning; static text commands use a baseline.
+        y += font_size * 0.82
+        text_anchor = "start" if anchor == "start" else "end" if anchor == "end" else "middle"
+        angle = float(axis.get("label_angle", 0.0))
+    else:
+        outside_x = plot["x"] + plot["w"] + 40 if side == "right" else 10
+        inside_x = plot["x"] + plot["w"] - 12 if side == "right" else plot["x"] + 12
+        x = inside_x if inside else outside_x
+        x += (-offset if inside else offset) if side == "right" else (offset if inside else -offset)
+        y = plot["y"] + plot["h"] * (1.0 - anchor_fraction)
+        text_anchor = "middle"
+        angle = float(axis.get("label_angle", 90.0 if side == "right" else -90.0))
+
+    return {
+        "x": x,
+        "y": y,
+        "anchor": text_anchor,
+        "angle": angle,
+        "font_size": font_size,
+    }
+
+
+def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str:
+    spec = _resolve_static_css_vars(spec)
+    width, height, compact, plot = layout(spec)
+    xa, ya = spec["x_axis"], spec["y_axis"]
+    x_scales, y_scales, sx, sy, extra_x_axes, extra_y_axes = _axis_scales(spec, plot)
+    svg = _Svg(id_prefix)
+    cols = spec["columns"]
+    # One plot-rect clipPath serves the marks group and every legend.
+    clip_id = svg.uid("clip")
+    svg.defs.append(
+        f'<clipPath id="{clip_id}"><rect x="{_num(plot["x"])}" y="{_num(plot["y"])}" '
+        f'width="{_num(plot["w"])}" height="{_num(plot["h"])}"/></clipPath>'
+    )
+
+    def ticks_for(axis: dict[str, Any], length_px: float) -> tuple[list[float], list[float], float]:
+        return axis_ticks(axis, length_px, axis is xa)
+
+    # -- grid + tick labels + baselines ------------------------------------
+    xt, xlab, xstep = ticks_for(xa, plot["w"])
+    yt, ylab, ystep = ticks_for(ya, plot["h"])
+    dom_style = (spec.get("dom") or {}).get("style") or {}
+    xstyle, ystyle = xa.get("style") or {}, ya.get("style") or {}
+    default_grid = _css(dom_style.get("--chart-grid"), _GRID)
+    default_axis = _css(dom_style.get("--chart-axis"), _AXIS)
+    default_text = _css(dom_style.get("--chart-text"), _TEXT)
+    grid: list[str] = []
+    labels: list[str] = []
+    # "none" silences the whole axis chrome (sparklines); "off" hides only the
+    # label text and keeps grid, baselines and the axis title (mpl shared axes).
+    hide_x = xa.get("tick_label_strategy") == "none"
+    hide_y = ya.get("tick_label_strategy") == "none"
+    for v in xt:
+        if hide_x:
+            break
+        px = float(sx(v))
+        grid.append(
+            f'<line x1="{_num(px)}" y1="{_num(plot["y"])}" x2="{_num(px)}" '
+            f'y2="{_num(plot["y"] + plot["h"])}" '
+            f'stroke="{escape(_css(xstyle.get("grid_color"), default_grid))}" '
+            f'stroke-width="{_num(float(xstyle.get("grid_width", 1)))}"'
+            f"{_axis_grid_attrs(xstyle)}/>"
+        )
+    for v in yt:
+        if hide_y:
+            break
+        py = float(sy(v))
+        grid.append(
+            f'<line x1="{_num(plot["x"])}" y1="{_num(py)}" x2="{_num(plot["x"] + plot["w"])}" '
+            f'y2="{_num(py)}" stroke="{escape(_css(ystyle.get("grid_color"), default_grid))}" '
+            f'stroke-width="{_num(float(ystyle.get("grid_width", 1)))}"'
+            f"{_axis_grid_attrs(ystyle)}/>"
+        )
+
+    def append_tick_labels(
+        axis: dict[str, Any],
+        values: list[float],
+        step: float,
+        axis_scale: _Scale,
+        *,
+        is_x: bool,
+    ) -> None:
+        axis_style = axis.get("style") or {}
+        color = escape(
+            _css(
+                axis_style.get("tick_label_color", axis_style.get("tick_color")),
+                default_text,
+            )
+        )
+        font_size = _axis_tick_font_size(axis)
+        side = axis.get("side", "bottom" if is_x else "left")
+        # An explicit tick_label_anchor (axis spec or style) overrides the
+        # angle/side-derived default. Anchored labels rotate about the tick
+        # point (the rotate() pivot below), so anchor and rotation compose —
+        # matching the browser client.
+        explicit_anchor = _tick_label_anchor(axis, axis_style, "")
+        for item in _axis_tick_label_layout(axis, values, step, axis_scale, is_x):
+            angle = float(item["angle"])
+            if is_x:
+                row_offset = float(item["row"]) * (font_size + 4)
+                x = float(item["pos"])
+                y = (
+                    plot["y"] - 7 - row_offset
+                    if side == "top"
+                    else plot["y"] + plot["h"] + 16 + row_offset
+                )
+                if explicit_anchor:
+                    anchor = _TEXT_ANCHORS[explicit_anchor]
+                elif angle == 0:
+                    anchor = "middle"
+                elif (side == "bottom" and angle < 0) or (side == "top" and angle > 0):
+                    anchor = "end"
+                else:
+                    anchor = "start"
+            else:
+                x = plot["x"] + plot["w"] + 8 if side == "right" else plot["x"] - 8
+                y = float(item["pos"]) + 4
+                if explicit_anchor:
+                    anchor = _TEXT_ANCHORS[explicit_anchor]
+                else:
+                    anchor = "start" if side == "right" else "end"
+            transform = f' transform="rotate({_num(angle)} {_num(x)} {_num(y)})"' if angle else ""
+            labels.append(
+                f'<text x="{_num(x)}" y="{_num(y)}" fill="{color}" '
+                f'font-size="{_num(font_size)}" text-anchor="{anchor}"{transform}>'
+                f"{escape(str(item['text']))}</text>"
+            )
+
+    append_tick_labels(xa, xlab, xstep, sx, is_x=True)
+    append_tick_labels(ya, ylab, ystep, sy, is_x=False)
+    extra_x_ticks: dict[str, tuple[list[float], list[float], float]] = {}
+    for axis_id, axis, axis_scale in extra_x_axes:
+        ticks, tick_labels, step = axis_ticks(axis, plot["w"], True)
+        extra_x_ticks[axis_id] = (ticks, tick_labels, step)
+        append_tick_labels(axis, tick_labels, step, axis_scale, is_x=True)
+    extra_y_ticks: dict[str, tuple[list[float], list[float], float]] = {}
+    for axis_id, axis, axis_scale in extra_y_axes:
+        ticks, tick_labels, step = axis_ticks(axis, plot["h"], False)
+        extra_y_ticks[axis_id] = (ticks, tick_labels, step)
+        append_tick_labels(axis, tick_labels, step, axis_scale, is_x=False)
+
+    # -- marks --------------------------------------------------------------
+    marks: list[str] = []
+    palette_cycle = 0
+
+    def line_attrs(style: dict[str, Any], color: str) -> str:
+        w = float(style.get("width", 1.5))
+        op = _stroke_opacity(style)
+        return (
+            f'stroke="{escape(color)}" stroke-width="{_num(w)}" fill="none" '
+            f'stroke-linejoin="round" stroke-linecap="round"'
+            + (f' stroke-opacity="{_num(op)}"' if op < 1 else "")
+            + _dash_attr(style)
+        )
+
+    for t in spec["traces"]:
+        style = t.get("style") or {}
+        kind = t["kind"]
+        tier = t.get("tier")
+        color = _css(style.get("color"), DEFAULT_PALETTE[palette_cycle % len(DEFAULT_PALETTE)])
+        palette_cycle += 1
+        trace_sx = x_scales.get(t.get("x_axis", "x"), sx)
+        trace_sy = y_scales.get(t.get("y_axis", "y"), sy)
+
+        if tier == "density" and t.get("density"):
+            marks.append(_density_image(t["density"], blob, cols, trace_sx, trace_sy, style, svg))
+            continue
+
+        if kind == "line":
+            xv = _column(blob, cols[t["x"]])
+            yv = _column(blob, cols[t["y"]])
+            if style.get("step"):
+                xv, yv = _step_arrays(xv, yv, style["step"])
+            d = _curve_path(xv, yv, trace_sx, trace_sy, style.get("curve") == "smooth")
+            marks.append(f'<path d="{d}" {line_attrs(style, color)}/>')
+
+        elif kind in ("area", "error_band"):
+            xv = _column(blob, cols[t["x"]])
+            yv = _column(blob, cols[t["y"]])
+            bv = _column(blob, cols[t["base"]])
+            smooth = style.get("curve") == "smooth"
+            top_path = _curve_path(xv, yv, trace_sx, trace_sy, smooth)
+            base_path = _curve_path(xv[::-1], bv[::-1], trace_sx, trace_sy, smooth)
+            fill_spec = style.get("fill")
+            fill = (
+                svg.gradient(fill_spec, color, plot)
+                if isinstance(fill_spec, dict)
+                else escape(color)
+            )
+            op = _fill_opacity(style, 0.35)
+            joined = f"{top_path} L {base_path[2:]} Z"  # strip the M of the return path
+            marks.append(f'<path d="{joined}" fill="{fill}" fill-opacity="{_num(op)}"/>')
+            lw = float(style.get("line_width", 1.2))
+            if lw > 0:
+                lop = _stroke_opacity(style, 0.35) * float(style.get("line_opacity", 1.0))
+                line_color = style.get("line_color") or color
+                outline_path = joined if style.get("stroke_perimeter") else top_path
+                marks.append(
+                    f'<path d="{outline_path}" stroke="{escape(line_color)}" stroke-width="{_num(lw)}" '
+                    f'fill="none" stroke-linejoin="round"'
+                    + (f' stroke-opacity="{_num(lop)}"' if lop < 1 else "")
+                    + _dash_attr(style)
+                    + "/>"
+                )
+
+        elif kind == "scatter":
+            marks.append(_scatter_marks(t, blob, cols, trace_sx, trace_sy, style, color))
+
+        elif kind == "hexbin":
+            marks.append(_hexbin_marks(t, blob, cols, trace_sx, trace_sy, style, color))
+
+        elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour", "segments"}:
+            marks.append(_segment_marks(t, blob, cols, trace_sx, trace_sy, style, color))
+
+        elif kind in ("bar", "column") and t.get("bar"):
+            marks.append(_bar_marks(t, blob, cols, trace_sx, trace_sy, style, color, svg, plot))
+
+        elif kind == "heatmap" and t.get("heatmap"):
+            marks.append(_heatmap_image(t["heatmap"], blob, cols, trace_sx, trace_sy, style))
+
+        elif kind == "triangle_mesh":
+            marks.append(_triangle_mesh_marks(t, blob, cols, trace_sx, trace_sy, style, color))
+
+        elif all(k in t for k in ("x0", "x1", "y0", "y1")):  # histogram / rect family
+            marks.append(_rect_marks(t, blob, cols, trace_sx, trace_sy, style, color, svg, plot))
+
+    # -- chrome text ----------------------------------------------------------
+    chrome: list[str] = []
+    if spec.get("title"):
+        chrome.append(
+            f'<text x="{_num(width / 2)}" '
+            f'y="{_num(plot["y"] - plot["top_axis_room"] - (10 if compact else 12))}" '
+            f'text-anchor="middle" font-size="14" font-weight="600" '
+            f'fill="{escape(default_text)}">{escape(str(spec["title"]))}</text>'
+        )
+
+    def append_axis_title(axis: dict[str, Any], *, is_x: bool) -> None:
+        if not axis.get("label") or _axis_tick_label_strategy(axis) == "none":
+            return
+        axis_style = axis.get("style") or {}
+        geometry = _axis_label_geometry(axis, plot, is_x=is_x)
+        x, y = float(geometry["x"]), float(geometry["y"])
+        angle = float(geometry["angle"])
+        transform = f' transform="rotate({_num(angle)} {_num(x)} {_num(y)})"' if angle else ""
+        chrome.append(
+            f'<text x="{_num(x)}" y="{_num(y)}" text-anchor="{geometry["anchor"]}" '
+            f'font-size="{_num(float(geometry["font_size"]))}" font-weight="500" '
+            f'fill="{escape(_css(axis_style.get("label_color"), default_text))}"{transform}>'
+            f"{escape(str(axis['label']))}</text>"
+        )
+
+    append_axis_title(xa, is_x=True)
+    append_axis_title(ya, is_x=False)
+    for _axis_id, axis, _axis_scale in extra_x_axes:
+        append_axis_title(axis, is_x=True)
+    for _axis_id, axis, _axis_scale in extra_y_axes:
+        append_axis_title(axis, is_x=False)
+    named = [t for t in spec["traces"] if t.get("name")]
+    if spec.get("show_legend", True) and named:
+        chrome.append(_legend(named, plot, spec.get("legend") or {}, clip_id, default_text))
+    for extra in spec.get("extra_legends") or []:
+        items = extra.get("items") or []
+        if items:
+            chrome.append(_legend(items, plot, extra, clip_id, default_text))
+    if spec.get("colorbar"):
+        chrome.append(
+            _colorbar(
+                spec["colorbar"],
+                plot,
+                _colorbar_right_axis_room(ya, extra_y_axes, compact),
+                default_text,
+            )
+        )
+
+    annotation_marks, annotation_labels = _annotation_svg(
+        spec.get("annotations") or [], sx, sy, plot, width, height
+    )
+    marks.extend(annotation_marks)
+    labels.extend(annotation_labels)
+
+    # baselines above the marks, matching the client's overlay rules
+    baselines = ""
+    frame_sides = spec.get("frame_sides")
+    if frame_sides is None:
+        frame_sides = [xa.get("side", "bottom"), ya.get("side", "left")]
+    if not hide_y:
+        for side, x in (("left", plot["x"]), ("right", plot["x"] + plot["w"])):
+            if side in frame_sides:
+                baselines += (
+                    f'<line x1="{_num(x)}" y1="{_num(plot["y"])}" x2="{_num(x)}" '
+                    f'y2="{_num(plot["y"] + plot["h"])}" '
+                    f'stroke="{escape(_css(ystyle.get("axis_color"), default_axis))}" '
+                    f'stroke-width="{_num(float(ystyle.get("axis_width", 1)))}"/>'
+                )
+    if not hide_x:
+        for side, y in (("top", plot["y"]), ("bottom", plot["y"] + plot["h"])):
+            if side in frame_sides:
+                baselines += (
+                    f'<line x1="{_num(plot["x"])}" y1="{_num(y)}" '
+                    f'x2="{_num(plot["x"] + plot["w"])}" y2="{_num(y)}" '
+                    f'stroke="{escape(_css(xstyle.get("axis_color"), default_axis))}" '
+                    f'stroke-width="{_num(float(xstyle.get("axis_width", 1)))}"/>'
+                )
+    for _axis_id, axis, _axis_scale in extra_x_axes:
+        if _axis_tick_label_strategy(axis) == "none":
+            continue
+        axis_style = axis.get("style") or {}
+        edge = plot["y"] if axis.get("side", "bottom") == "top" else plot["y"] + plot["h"]
+        baselines += (
+            f'<line x1="{_num(plot["x"])}" y1="{_num(edge)}" '
+            f'x2="{_num(plot["x"] + plot["w"])}" y2="{_num(edge)}" '
+            f'stroke="{escape(_css(axis_style.get("axis_color"), default_axis))}" '
+            f'stroke-width="{_num(float(axis_style.get("axis_width", 1)))}"/>'
+        )
+    for _axis_id, axis, _axis_scale in extra_y_axes:
+        if _axis_tick_label_strategy(axis) == "none":
+            continue
+        axis_style = axis.get("style") or {}
+        edge = plot["x"] + plot["w"] if axis.get("side", "right") == "right" else plot["x"]
+        baselines += (
+            f'<line x1="{_num(edge)}" y1="{_num(plot["y"])}" x2="{_num(edge)}" '
+            f'y2="{_num(plot["y"] + plot["h"])}" '
+            f'stroke="{escape(_css(axis_style.get("axis_color"), default_axis))}" '
+            f'stroke-width="{_num(float(axis_style.get("axis_width", 1)))}"/>'
+        )
+
+    def tick_span(style: dict[str, Any]) -> tuple[float, float, float]:
+        length = max(0.0, float(style.get("tick_length", 0)))
+        direction = str(style.get("tick_direction", "out"))
+        if direction == "in":
+            return length, 0.0, float(style.get("tick_width", 1))
+        if direction == "inout":
+            return length / 2, length / 2, float(style.get("tick_width", 1))
+        return 0.0, length, float(style.get("tick_width", 1))
+
+    if not hide_x:
+        inward, outward, tick_width = tick_span(xstyle)
+        side = xa.get("side", "bottom")
+        edge = plot["y"] if side == "top" else plot["y"] + plot["h"]
+        for value in xt:
+            x = float(sx(value))
+            y1, y2 = (
+                (edge - outward, edge + inward)
+                if side == "top"
+                else (edge - inward, edge + outward)
+            )
+            baselines += (
+                f'<line x1="{_num(x)}" y1="{_num(y1)}" x2="{_num(x)}" y2="{_num(y2)}" '
+                f'stroke="{escape(_css(xstyle.get("tick_color"), default_axis))}" '
+                f'stroke-width="{_num(tick_width)}"/>'
+            )
+    if not hide_y:
+        inward, outward, tick_width = tick_span(ystyle)
+        side = ya.get("side", "left")
+        edge = plot["x"] + plot["w"] if side == "right" else plot["x"]
+        for value in yt:
+            y = float(sy(value))
+            x1, x2 = (
+                (edge - inward, edge + outward)
+                if side == "right"
+                else (edge - outward, edge + inward)
+            )
+            baselines += (
+                f'<line x1="{_num(x1)}" y1="{_num(y)}" x2="{_num(x2)}" y2="{_num(y)}" '
+                f'stroke="{escape(_css(ystyle.get("tick_color"), default_axis))}" '
+                f'stroke-width="{_num(tick_width)}"/>'
+            )
+    for axis_id, axis, axis_scale in extra_x_axes:
+        if _axis_tick_label_strategy(axis) == "none":
+            continue
+        axis_style = axis.get("style") or {}
+        inward, outward, tick_width = tick_span(axis_style)
+        side = axis.get("side", "bottom")
+        edge = plot["y"] if side == "top" else plot["y"] + plot["h"]
+        for value in extra_x_ticks[axis_id][0]:
+            x = float(axis_scale(value))
+            y1, y2 = (
+                (edge - outward, edge + inward)
+                if side == "top"
+                else (edge - inward, edge + outward)
+            )
+            baselines += (
+                f'<line x1="{_num(x)}" y1="{_num(y1)}" x2="{_num(x)}" y2="{_num(y2)}" '
+                f'stroke="{escape(_css(axis_style.get("tick_color"), default_axis))}" '
+                f'stroke-width="{_num(tick_width)}"/>'
+            )
+    for axis_id, axis, axis_scale in extra_y_axes:
+        if _axis_tick_label_strategy(axis) == "none":
+            continue
+        axis_style = axis.get("style") or {}
+        inward, outward, tick_width = tick_span(axis_style)
+        side = axis.get("side", "right")
+        edge = plot["x"] + plot["w"] if side == "right" else plot["x"]
+        for value in extra_y_ticks[axis_id][0]:
+            y = float(axis_scale(value))
+            x1, x2 = (
+                (edge - inward, edge + outward)
+                if side == "right"
+                else (edge - outward, edge + inward)
+            )
+            baselines += (
+                f'<line x1="{_num(x1)}" y1="{_num(y)}" x2="{_num(x2)}" y2="{_num(y)}" '
+                f'stroke="{escape(_css(axis_style.get("tick_color"), default_axis))}" '
+                f'stroke-width="{_num(tick_width)}"/>'
+            )
+
+    defs = f"<defs>{''.join(svg.defs)}</defs>" if svg.defs else ""
+    # Figure patch + plot-rect backgrounds, mirroring the browser: the root
+    # element's CSS `background` (theme(background=)) behind everything, then
+    # the --chart-bg token over the plot rect only. Solid colors only —
+    # gradients stay browser-only, and an unset token stays transparent.
+    backgrounds = ""
+    # Export-time canvas override (unified export API `background=`): one
+    # backdrop rect behind the figure patch. "transparent"/"none" mean "no
+    # backdrop", which is already SVG's default — nothing to paint.
+    canvas_paint = spec.get("canvas_background")
+    if canvas_paint and canvas_paint not in ("transparent", "none"):
+        backgrounds += f'<rect width="{width}" height="{height}" fill="{escape(canvas_paint)}"/>'
+    figure_background = _solid_paint(dom_style.get("background"))
+    if figure_background is not None:
+        backgrounds += (
+            f'<rect width="{width}" height="{height}" fill="{escape(figure_background)}"/>'
+        )
+    plot_paint = _solid_paint(dom_style.get("--chart-bg"))
+    if plot_paint is not None:
+        backgrounds += (
+            f'<rect x="{_num(plot["x"])}" y="{_num(plot["y"])}" width="{_num(plot["w"])}" '
+            f'height="{_num(plot["h"])}" fill="{escape(plot_paint)}"/>'
+        )
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}" font-family="{_FONT}" font-size="11">'
+        f"{defs}"
+        f"{backgrounds}"
+        f"<g>{''.join(grid)}</g>"
+        f'<g clip-path="url(#{clip_id})">{"".join(marks)}</g>'
+        f"{baselines}"
+        f'<g fill="{escape(default_text)}">{"".join(labels)}</g>'
+        f"{''.join(chrome)}"
+        f"</svg>"
+    )
+
+
+def _annotation_svg(
+    annotations: Sequence[dict[str, Any]],
+    sx: Callable[[float], float],
+    sy: Callable[[float], float],
+    plot: dict[str, float],
+    width: float,
+    height: float,
+) -> tuple[list[str], list[str]]:
+    marks: list[str] = []
+    labels: list[str] = []
+    px0, py0 = plot["x"], plot["y"]
+    for ann in annotations:
+        style = ann.get("style") or {}
+        color = escape(_css(style.get("color"), "#667085"))
+        opacity = float(style.get("opacity", 1.0))
+        start = max(0.0, min(1.0, float(style.get("span_start", 0.0))))
+        end = max(start, min(1.0, float(style.get("span_end", 1.0))))
+        kind = ann.get("kind")
+        if kind == "rule":
+            if ann.get("axis") == "x":
+                pos = float(sx(float(ann["value"])))
+                coords = (pos, py0 + (1 - end) * plot["h"], pos, py0 + (1 - start) * plot["h"])
+            else:
+                pos = float(sy(float(ann["value"])))
+                coords = (px0 + start * plot["w"], pos, px0 + end * plot["w"], pos)
+            marks.append(
+                f'<line x1="{_num(coords[0])}" y1="{_num(coords[1])}" '
+                f'x2="{_num(coords[2])}" y2="{_num(coords[3])}" stroke="{color}" '
+                f'stroke-width="{_num(float(style.get("width", 1.5)))}" stroke-opacity="{_num(opacity)}"'
+                f"{_dash_attr(style)}/>"
+            )
+        elif kind == "band":
+            a, b = float(ann["start"]), float(ann["end"])
+            if ann.get("axis") == "x":
+                x0, x1 = sorted((float(sx(a)), float(sx(b))))
+                y0, y1 = py0 + (1 - end) * plot["h"], py0 + (1 - start) * plot["h"]
+            else:
+                y0, y1 = sorted((float(sy(a)), float(sy(b))))
+                x0, x1 = px0 + start * plot["w"], px0 + end * plot["w"]
+            marks.append(
+                f'<rect x="{_num(x0)}" y="{_num(y0)}" width="{_num(x1 - x0)}" '
+                f'height="{_num(y1 - y0)}" fill="{color}" fill-opacity="{_num(float(style.get("opacity", 0.14)))}"/>'
+            )
+        elif kind in ("arrow", "callout"):
+            if kind == "arrow":
+                x0, y0 = float(sx(float(ann["x0"]))), float(sy(float(ann["y0"])))
+                x1, y1 = float(sx(float(ann["x1"]))), float(sy(float(ann["y1"])))
+            else:  # pointer from the offset label back to the data point
+                x1, y1 = float(sx(float(ann["x"]))), float(sy(float(ann["y"])))
+                x0, y0 = x1 + float(ann.get("dx", 0.0)), y1 + float(ann.get("dy", 0.0))
+            if all(np.isfinite(v) for v in (x0, y0, x1, y1)):
+                shapes = _arrow_shapes(x0, y0, x1, y1, style)
+                stroke_width = _num(max(0.5, float(style.get("width", 1.5))))
+                if shapes["taper"] is not None:
+                    taper = " ".join(f"{_num(px)},{_num(py)}" for px, py in shapes["taper"])
+                    marks.append(
+                        f'<polygon points="{taper}" fill="{color}" fill-opacity="{_num(opacity)}"/>'
+                    )
+                else:
+                    shaft = " ".join(f"{_num(px)},{_num(py)}" for px, py in shapes["shaft"])
+                    marks.append(
+                        f'<polyline points="{shaft}" fill="none" '
+                        f'stroke="{color}" stroke-width="{stroke_width}" '
+                        f'stroke-opacity="{_num(opacity)}"{_dash_attr(style)}/>'
+                    )
+                for decoration in (shapes["head"], shapes["tail"]):
+                    if decoration is None:
+                        continue
+                    points = " ".join(f"{_num(px)},{_num(py)}" for px, py in decoration["points"])
+                    if decoration["kind"] == "fill":
+                        marks.append(
+                            f'<polygon points="{points}" fill="{color}" '
+                            f'fill-opacity="{_num(opacity)}"/>'
+                        )
+                    else:
+                        marks.append(
+                            f'<polyline points="{points}" fill="none" stroke="{color}" '
+                            f'stroke-width="{stroke_width}" stroke-opacity="{_num(opacity)}"/>'
+                        )
+        if kind in ("text", "callout") and ann.get("text"):
+            x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
+            space = style.get("coordinate_space")
+            if space == "axes_fraction":
+                tx, ty = px0 + x * plot["w"], py0 + (1 - y) * plot["h"]
+            elif space == "figure_fraction":
+                tx, ty = x * width, (1 - y) * height
+            elif space == "yaxis_transform":
+                tx, ty = px0 + x * plot["w"], float(sy(y))
+            elif space == "xaxis_transform":
+                tx, ty = float(sx(x)), py0 + (1 - y) * plot["h"]
+            else:
+                tx, ty = float(sx(x)), float(sy(y))
+            anchor = {"start": "start", "middle": "middle", "end": "end"}.get(
+                ann.get("anchor"), "start"
+            )
+            font_size = _px_size(style.get("font_size"), 11.0)
+            lines = str(ann["text"]).splitlines() or [""]
+            line_height = font_size * 1.2
+            rotation = float(style.get("rotation", 0.0)) % 360.0
+            if rotation in (90.0, 270.0):
+                # Vertical text, mirroring the native rasterizer's geometry:
+                # vertical_align anchors along the reading axis, the horizontal
+                # anchor shifts the baseline across the post-rotation box.
+                cw = rotation == 270.0
+                va = str(style.get("vertical_align", ""))
+                along = {
+                    "center": "middle",
+                    "top": "start" if cw else "end",
+                    "bottom": "end" if cw else "start",
+                }.get(va, "start")
+                ascent, descent = font_size * 0.78, font_size * 0.22
+                if cw:
+                    base = {"middle": (descent - ascent) / 2, "end": -ascent}.get(anchor, descent)
+                else:
+                    base = {"middle": (ascent - descent) / 2, "end": -descent}.get(anchor, ascent)
+                stack = -line_height if cw else line_height  # later lines: glyph-down
+                by = ty + float(ann.get("dy", 0))
+                text_opacity = float(
+                    style.get(
+                        "label_opacity",
+                        style.get("opacity", 1.0) if kind == "text" else 1.0,
+                    )
+                )
+                for index, line in enumerate(lines):
+                    bx = tx + float(ann.get("dx", 0)) + base + index * stack
+                    labels.append(
+                        f'<text text-anchor="{along}" font-size="{_num(font_size)}" '
+                        f'transform="rotate({90 if cw else -90} {_num(bx)} {_num(by)})" '
+                        f'x="{_num(bx)}" y="{_num(by)}" '
+                        + (f'fill-opacity="{_num(text_opacity)}" ' if text_opacity < 1 else "")
+                        + f'fill="{color}">{escape(line)}</text>'
+                    )
+                continue
+            x_text = tx + float(ann.get("dx", 0))
+            y_text = ty + float(ann.get("dy", 0)) - (len(lines) - 1) * line_height / 2
+            vertical_align = style.get("vertical_align")
+            if vertical_align in ("center", "middle"):
+                y_text += font_size * 0.35
+            elif vertical_align == "top":
+                y_text += font_size * 0.8
+            tspans = "".join(
+                f'<tspan x="{_num(x_text)}" y="{_num(y_text + index * line_height)}">'
+                f"{escape(line)}</tspan>"
+                for index, line in enumerate(lines)
+            )
+            text_opacity = float(
+                style.get(
+                    "label_opacity",
+                    style.get("opacity", 1.0) if kind == "text" else 1.0,
+                )
+            )
+            # A callout's `color` paints its arrow; the label prefers its own.
+            label_color = escape(_css(style.get("label_color"), "")) or color
+            labels.append(
+                f'<text text-anchor="{anchor}" font-size="{_num(font_size)}" '
+                + (f'fill-opacity="{_num(text_opacity)}" ' if text_opacity < 1 else "")
+                + f'fill="{label_color}">{tspans}</text>'
+            )
+    return marks, labels
+
+
+def _segment_marks(
+    t: dict[str, Any], blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict, color: str
+) -> str:
+    x0 = _column(blob, cols[t["x0"]])
+    x1 = _column(blob, cols[t["x1"]])
+    y0 = _column(blob, cols[t["y0"]])
+    y1 = _column(blob, cols[t["y1"]])
+    n = len(x0)
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    intrinsic = _trace_paint_rgba(t, "color", n, color, read)
+    colors = _paint.effective_rgba(intrinsic, t, read, component="stroke", default_opacity=1.0)
+    widths = _paint.style_values(t, "width", n, read, float(style.get("width", 1.2)))
+    paint = t.get("color") or {}
+    plain_css = _css(paint.get("color"), color)
+    # Only an opaque constant color may pass through verbatim: a translucent
+    # CSS constant already contributes its alpha to stroke-opacity through
+    # effective_rgba, so repeating it inside stroke= would apply it twice.
+    constant_paint = paint.get("mode") in {None, "constant"} and _paint_rgba8(plain_css)[3] == 255
+    css_paint = escape(plain_css)
+    return "".join(
+        f'<line x1="{_num(float(sx(x0[i])))}" y1="{_num(float(sy(y0[i])))}" '
+        f'x2="{_num(float(sx(x1[i])))}" y2="{_num(float(sy(y1[i])))}" '
+        f'stroke="{css_paint if constant_paint else f"rgb({round(colors[i, 0] * 255)},{round(colors[i, 1] * 255)},{round(colors[i, 2] * 255)})"}" '
+        f'stroke-opacity="{_num(float(colors[i, 3]))}" '
+        f'stroke-width="{_num(float(widths[i]))}" fill="none" stroke-linecap="round"'
+        f"{_dash_attr(style)}/>"
+        for i in range(len(x0))
+    )
+
+
+def _scatter_marks(
+    t: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict, fallback: str
+) -> str:
+    xv = _column(blob, cols[t["x"]])
+    yv = _column(blob, cols[t["y"]])
+    px, py = sx(xv), sy(yv)
+    n = len(xv)
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    face_intrinsic = _trace_paint_rgba(t, "color", n, fallback, read)
+    scalar_artist = style.get("artist_alpha")
+    grouped_alpha = scalar_artist is not None and not (t.get("channels") or {}).get("artist_alpha")
+    effective_trace = t
+    if grouped_alpha:
+        face_intrinsic[:, 3] = 1.0
+        effective_trace = dict(t)
+        effective_style = dict(style)
+        effective_style.pop("artist_alpha", None)
+        effective_style["opacity"] = 1.0
+        effective_style["fill_opacity"] = 1.0
+        effective_style["stroke_opacity"] = 1.0
+        effective_trace["style"] = effective_style
+    face_rgba = _paint.effective_rgba(
+        face_intrinsic, effective_trace, read, component="fill", default_opacity=0.8
+    )
+    face_channel = t.get("color") or {}
+    face_css = _css(face_channel.get("color"), fallback)
+    face_css_constant = (
+        face_channel.get("mode") in {None, "constant"} and _paint_rgba8(face_css)[3] == 255
+    )
+
+    size_ch = t.get("size") or {}
+    if size_ch.get("mode") == "continuous":
+        sv = _column(blob, cols[size_ch["buf"]])
+        r0, r1 = size_ch.get("range_px", [2, 18])
+        radii = (r0 + (r1 - r0) * np.clip(sv, 0, 1)) / 2
+    else:
+        radii = np.full(n, float(size_ch.get("size", 4.0)) / 2)
+
+    stroke_widths = _paint.style_values(t, "stroke_width", n, read, 0.0)
+    symbols = _symbol_names(t, n, read, str(style.get("symbol", "circle")))
+    if (t.get("stroke") or {}).get("mode") == "match_fill":
+        stroke_source = face_intrinsic.copy()
+        stroke_css = face_css
+        stroke_css_constant = face_css_constant
+    elif t.get("stroke") is not None:
+        stroke_source = _trace_paint_rgba(t, "stroke", n, fallback, read)
+        stroke_css = _css((t.get("stroke") or {}).get("color"), style.get("stroke") or face_css)
+        stroke_css_constant = (t.get("stroke") or {}).get("mode") in {
+            None,
+            "constant",
+        } and _paint_rgba8(stroke_css)[3] == 255
+    elif style.get("stroke") is not None:
+        stroke_css = _css(style.get("stroke"), face_css)
+        stroke_source = np.tile(
+            np.asarray(_paint_rgba8(stroke_css), dtype=np.float64) / 255.0, (n, 1)
+        )
+        stroke_css_constant = _paint_rgba8(stroke_css)[3] == 255
+    else:
+        stroke_source = face_intrinsic.copy()
+        stroke_css = face_css
+        stroke_css_constant = face_css_constant
+    stroke_rgba = _paint.effective_rgba(
+        stroke_source, effective_trace, read, component="stroke", default_opacity=0.8
+    )
+    if grouped_alpha:
+        fill_group = float(scalar_artist) * _fill_opacity(style, 1.0)
+        stroke_group = float(scalar_artist) * _stroke_opacity(style, 1.0)
+        out = [f'<g fill-opacity="{_num(fill_group)}" stroke-opacity="{_num(stroke_group)}">']
+    else:
+        out = ["<g>"]
+    for i in range(n):
+        fill = face_rgba[i]
+        fill_value = (
+            escape(face_css)
+            if face_css_constant
+            else f"rgb({round(fill[0] * 255)},{round(fill[1] * 255)},{round(fill[2] * 255)})"
+        )
+        fill_attr = f' fill="{fill_value}"' + (
+            f' fill-opacity="{_num(float(fill[3]))}"' if float(fill[3]) < 1.0 else ""
+        )
+        symbol = symbols[i]
+        builder = _SYMBOL_BUILDERS.get(symbol)
+        line_symbol = symbol in {"plus_line", "x_line"}
+        stroke_w = float(stroke_widths[i])
+        if line_symbol and stroke_w <= 0:
+            stroke_w = 1.0
+        stroke_color = stroke_rgba[i]
+        stroke_value = (
+            escape(stroke_css)
+            if stroke_css_constant
+            else f"rgb({round(stroke_color[0] * 255)},{round(stroke_color[1] * 255)},{round(stroke_color[2] * 255)})"
+        )
+        stroke_attr = (
+            f' stroke="{stroke_value}"'
+            + (
+                f' stroke-opacity="{_num(float(stroke_color[3]))}"'
+                if float(stroke_color[3]) < 1.0
+                else ""
+            )
+            + f' stroke-width="{_num(stroke_w)}"'
+            if stroke_w > 0 or line_symbol
+            else ""
+        )
+        # `size` includes the edge; SVG strokes are centered on the path.
+        marker_radius = max(0.0, float(radii[i]) - stroke_w / 2)
+        if builder is None:
+            out.append(
+                f'<circle cx="{_num(px[i])}" cy="{_num(py[i])}" r="{_num(marker_radius)}"'
+                f"{fill_attr}{stroke_attr}/>"
+            )
+        else:
+            out.append(
+                builder(float(px[i]), float(py[i]), marker_radius) + f"{fill_attr}{stroke_attr}/>"
+            )
+    out.append("</g>")
+    return "".join(out)
+
+
+_SYMBOL_NAMES = (
+    "circle",
+    "square",
+    "diamond",
+    "triangle",
+    "cross",
+    "hexagon",
+    "pentagon",
+    "star",
+    "triangle_down",
+    "triangle_left",
+    "triangle_right",
+    "x",
+    "point",
+    "pixel",
+    "thin_diamond",
+    "plus_line",
+    "x_line",
+)
+
+
+def _symbol_names(
+    trace: dict[str, Any], n: int, read: _paint.ColumnReader, fallback: str
+) -> list[str]:
+    channel = (trace.get("channels") or {}).get("symbol")
+    if channel is None:
+        return [fallback] * n
+    codes = np.asarray(read(int(channel["buf"])), dtype=np.uint8)[:n]
+    return [
+        _SYMBOL_NAMES[int(code)] if int(code) < len(_SYMBOL_NAMES) else fallback for code in codes
+    ]
+
+
+def _trace_paint_rgba(
+    trace: dict[str, Any],
+    key: str,
+    n: int,
+    fallback: str,
+    read: _paint.ColumnReader,
+) -> np.ndarray:
+    """Resolve one payload paint channel to intrinsic float RGBA."""
+    channel = trace.get(key) or {}
+    direct = _paint.direct_rgba(channel, n, read)
+    if direct is not None:
+        return direct
+    rgba = np.empty((n, 4), dtype=np.float64)
+    rgba[:, 3] = 1.0
+    mode = channel.get("mode")
+    if mode == "continuous":
+        rgba[:, :3] = _lut(channel.get("colormap", "viridis"), read(channel["buf"])[:n]) / 255.0
+    elif mode == "categorical":
+        codes = np.asarray(read(channel["buf"]), dtype=np.int64)[:n]
+        palette = channel.get("palette") or DEFAULT_PALETTE
+        table = np.asarray([_paint_rgba8(value) for value in palette], dtype=np.float64) / 255.0
+        rgba[:] = table[codes % len(table)]
+    else:
+        rgba[:] = (
+            np.asarray(_paint_rgba8(_css(channel.get("color"), fallback)), dtype=np.float64) / 255.0
+        )
+    return rgba
+
+
+# The hexagon ring around a hexbin cell center, as fractions of the cell
+# pitch (style hex_dx/hex_dy). Shared by the SVG and raster exporters; the JS
+# client mirrors it in _buildHexbinMark (js/src/50_chartview.ts) — keep them
+# in sync.
+HEX_RING = (
+    (0.0, -1.0 / 3.0),
+    (0.5, -1.0 / 6.0),
+    (0.5, 1.0 / 6.0),
+    (0.0, 1.0 / 3.0),
+    (-0.5, 1.0 / 6.0),
+    (-0.5, -1.0 / 6.0),
+)
+
+
+def hexbin_ring(style: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Data-space hexagon vertex offsets (6) for a hexbin trace's cell pitch."""
+    ring = np.asarray(HEX_RING, dtype=np.float64)
+    return ring[:, 0] * float(style.get("hex_dx", 0.0)), ring[:, 1] * float(
+        style.get("hex_dy", 0.0)
+    )
+
+
+def _mesh_fills(t: dict, blob: bytes, cols: list, n: int, fallback: str) -> list[str]:
+    """Per-mark CSS fill colors from a trace's color channel (n marks)."""
+    color_ch = t.get("color") or {}
+    mode = color_ch.get("mode")
+    if mode == "continuous":
+        values = _column(blob, cols[color_ch["buf"]])[:n]
+        rgb = _lut(color_ch.get("colormap", "viridis"), values)
+        return [f"rgb({r},{g},{b})" for r, g, b in rgb]
+    if mode == "categorical":
+        codes = _column(blob, cols[color_ch["buf"]])[:n].astype(int)
+        palette = color_ch.get("palette") or DEFAULT_PALETTE
+        return [palette[code % len(palette)] for code in codes]
+    return [_css(color_ch.get("color"), fallback)] * n
+
+
+def _hexbin_marks(
+    t: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict, fallback: str
+) -> str:
+    """One hexagon polygon per cell, expanded locally from shipped centers."""
+    cx = _column(blob, cols[t["x"]])
+    cy = _column(blob, cols[t["y"]])
+    n = min(len(cx), len(cy))
+    fills = _mesh_fills(t, blob, cols, n, fallback)
+    ring_x, ring_y = hexbin_ring(style)
+    xs = np.asarray(sx(cx[:n, None] + ring_x[None, :]), dtype=np.float64)
+    ys = np.asarray(sy(cy[:n, None] + ring_y[None, :]), dtype=np.float64)
+    fill_op = _fill_opacity(style)
+    group_attr = f' fill-opacity="{_num(fill_op)}"' if fill_op < 1 else ""
+    out = [f"<g{group_attr}>"]
+    for i in range(n):
+        points = " ".join(
+            f"{_num(float(x))},{_num(float(y))}" for x, y in zip(xs[i], ys[i], strict=True)
+        )
+        out.append(f'<polygon points="{points}" fill="{escape(fills[i])}"/>')
+    out.append("</g>")
+    return "".join(out)
+
+
+def _triangle_mesh_marks(
+    t: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict, fallback: str
+) -> str:
+    vertices = [_column(blob, cols[t[name]]) for name in ("x0", "y0", "x1", "y1", "x2", "y2")]
+    n = min(len(values) for values in vertices)
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    face = _trace_paint_rgba(t, "color", n, fallback, read)
+    fills = _paint.effective_rgba(face, t, read, component="fill", default_opacity=1.0)
+    if t.get("stroke") is not None:
+        stroke_face = _trace_paint_rgba(t, "stroke", n, fallback, read)
+    elif style.get("stroke") is not None:
+        stroke_face = np.tile(
+            np.asarray(_paint_rgba8(_css(style.get("stroke"), fallback)), dtype=np.float64) / 255.0,
+            (n, 1),
+        )
+    else:
+        stroke_face = face
+    strokes = _paint.effective_rgba(stroke_face, t, read, component="stroke", default_opacity=1.0)
+    stroke_widths = _paint.style_values(
+        t, "stroke_width", n, read, float(style.get("stroke_width", 0.0))
+    )
+    x0, y0, x1, y1, x2, y2 = vertices
+    out = ["<g>"]
+    for i in range(n):
+        points = " ".join(
+            f"{_num(float(sx(x)))},{_num(float(sy(y)))}"
+            for x, y in ((x0[i], y0[i]), (x1[i], y1[i]), (x2[i], y2[i]))
+        )
+        fill = fills[i]
+        attrs = (
+            f' fill="rgb({round(fill[0] * 255)},{round(fill[1] * 255)},'
+            f'{round(fill[2] * 255)})" fill-opacity="{_num(float(fill[3]))}"'
+        )
+        if stroke_widths[i] > 0:
+            stroke = strokes[i]
+            attrs += (
+                f' stroke="rgb({round(stroke[0] * 255)},{round(stroke[1] * 255)},'
+                f'{round(stroke[2] * 255)})" stroke-opacity="{_num(float(stroke[3]))}" '
+                f'stroke-width="{_num(float(stroke_widths[i]))}"'
+            )
+        out.append(f'<polygon points="{points}"{attrs}/>')
+    out.append("</g>")
+    return "".join(out)
+
+
+def _bar_fill(style: dict, color: str, svg: _Svg, plot: dict) -> tuple[str, str]:
+    fill_spec = style.get("fill")
+    fill = svg.gradient(fill_spec, color, plot) if isinstance(fill_spec, dict) else escape(color)
+    fill_op = _fill_opacity(style, 0.85)
+    stroke_op = _stroke_opacity(style, 0.85)
+    stroke_w = float(style.get("stroke_width", 0.0))
+    stroke = _css(style.get("stroke"), color) if stroke_w else None
+    extra = f' fill-opacity="{_num(fill_op)}"' if fill_op < 1 else ""
+    if stroke:
+        extra += f' stroke="{escape(stroke)}" stroke-width="{_num(stroke_w)}"'
+        if stroke_op < 1:
+            extra += f' stroke-opacity="{_num(stroke_op)}"'
+    return fill, extra
+
+
+def _corner_radii(style: dict) -> tuple[float, float]:
+    cr = style.get("corner_radius", 0)
+    if isinstance(cr, (list, tuple)):
+        return float(cr[0]), float(cr[1])
+    return float(cr or 0), float(cr or 0)
+
+
+def _rect_svg_styles(
+    trace: dict[str, Any],
+    n: int,
+    fallback: str,
+    read: _paint.ColumnReader,
+    style: dict[str, Any],
+    svg: _Svg,
+    plot: dict[str, Any],
+) -> tuple[list[str], list[str], np.ndarray]:
+    """Resolve per-rectangle SVG fill/stroke attributes and radii."""
+    radius_channel = _paint.style_matrix(trace, "corner_radius", n, read)
+    if radius_channel is None:
+        tip, base = _corner_radii(style)
+        radii = np.tile(np.asarray([[tip, base]], dtype=np.float64), (n, 1))
+    elif radius_channel.shape[1] == 1:
+        radii = np.repeat(radius_channel, 2, axis=1)
+    else:
+        radii = radius_channel
+    if isinstance(style.get("fill"), dict):
+        fill, extra = _bar_fill(style, fallback, svg, plot)
+        return [fill] * n, [extra] * n, radii
+
+    face = _trace_paint_rgba(trace, "color", n, fallback, read)
+    fills_rgba = _paint.effective_rgba(face, trace, read, component="fill", default_opacity=0.85)
+    if trace.get("stroke") is not None:
+        stroke_face = _trace_paint_rgba(trace, "stroke", n, fallback, read)
+    elif style.get("stroke") is not None:
+        stroke_face = np.tile(
+            np.asarray(_paint_rgba8(_css(style.get("stroke"), fallback)), dtype=np.float64) / 255.0,
+            (n, 1),
+        )
+    else:
+        stroke_face = face
+    strokes = _paint.effective_rgba(
+        stroke_face, trace, read, component="stroke", default_opacity=0.85
+    )
+    widths = _paint.style_values(
+        trace, "stroke_width", n, read, float(style.get("stroke_width", 0.0))
+    )
+    fills: list[str] = []
+    extras: list[str] = []
+    for fill, stroke, width in zip(fills_rgba, strokes, widths, strict=True):
+        fills.append(f"rgb({round(fill[0] * 255)},{round(fill[1] * 255)},{round(fill[2] * 255)})")
+        extra = f' fill-opacity="{_num(float(fill[3]))}"'
+        if width > 0:
+            extra += (
+                f' stroke="rgb({round(stroke[0] * 255)},{round(stroke[1] * 255)},'
+                f'{round(stroke[2] * 255)})" stroke-opacity="{_num(float(stroke[3]))}" '
+                f'stroke-width="{_num(float(width))}"'
+            )
+        extras.append(extra)
+    return fills, extras, radii
+
+
+def _bar_marks(
+    t: dict,
+    blob: bytes,
+    cols: list,
+    sx: _Scale,
+    sy: _Scale,
+    style: dict,
+    color: str,
+    svg: _Svg,
+    plot: dict,
+) -> str:
+    b = t["bar"]
+    pos = _column(blob, cols[b["pos"]])
+    v1 = _column(blob, cols[b["value1"]])
+    v0 = (
+        _column(blob, cols[b["value0"]])
+        if "value0" in b
+        else np.full(len(pos), float(b.get("value0_const", 0.0)))
+    )
+    horizontal = b.get("orientation") == "horizontal"
+    half = float(b["width"]) / 2
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    fills, extras, radii = _rect_svg_styles(t, len(pos), color, read, style, svg, plot)
+    out = []
+    for i in range(len(pos)):
+        if horizontal:
+            x0, x1 = float(sx(min(v0[i], v1[i]))), float(sx(max(v0[i], v1[i])))
+            y0, y1 = float(sy(pos[i] + half)), float(sy(pos[i] - half))
+        else:
+            x0, x1 = float(sx(pos[i] - half)), float(sx(pos[i] + half))
+            y0, y1 = float(sy(max(v0[i], v1[i]))), float(sy(min(v0[i], v1[i])))
+        w, h = abs(x1 - x0), abs(y1 - y0)
+        x, y = min(x0, x1), min(y0, y1)
+        r_tip, r_base = radii[i]
+        if r_tip or r_base:
+            tip_top = not horizontal and v1[i] >= v0[i]
+            d = _rounded_rect_path(x, y, w, h, r_tip, r_base, tip_top or horizontal)
+            out.append(f'<path d="{d}" fill="{fills[i]}"{extras[i]}/>')
+        else:
+            out.append(
+                f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(w)}" height="{_num(h)}" '
+                f'fill="{fills[i]}"{extras[i]}/>'
+            )
+    return "".join(out)
+
+
+def _rect_marks(
+    t: dict,
+    blob: bytes,
+    cols: list,
+    sx: _Scale,
+    sy: _Scale,
+    style: dict,
+    color: str,
+    svg: _Svg,
+    plot: dict,
+) -> str:
+    x0v = _column(blob, cols[t["x0"]])
+    x1v = _column(blob, cols[t["x1"]])
+    y0v = _column(blob, cols[t["y0"]])
+    y1v = _column(blob, cols[t["y1"]])
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    fills, extras, radii = _rect_svg_styles(t, len(x0v), color, read, style, svg, plot)
+    out = []
+    for i in range(len(x0v)):
+        xa_, xb = float(sx(x0v[i])), float(sx(x1v[i]))
+        ya_, yb = float(sy(y0v[i])), float(sy(y1v[i]))
+        x, y = min(xa_, xb), min(ya_, yb)
+        w, h = abs(xb - xa_), abs(yb - ya_)
+        r_tip, r_base = radii[i]
+        if r_tip or r_base:
+            d = _rounded_rect_path(x, y, w, h, r_tip, r_base, y1v[i] >= y0v[i])
+            out.append(f'<path d="{d}" fill="{fills[i]}"{extras[i]}/>')
+        else:
+            out.append(
+                f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(w)}" height="{_num(h)}" '
+                f'fill="{fills[i]}"{extras[i]}/>'
+            )
+    return "".join(out)
+
+
+def warp_axis_indices(scale: _Scale, lo: float, hi: float, n_src: int) -> Optional[np.ndarray]:
+    """Source-cell index per output cell for a *data-uniform* grid shown on a
+    nonlinear axis, or None when no warp is needed (affine axis).
+
+    A data-uniform grid (heatmap) stretched linearly between its transformed
+    endpoints places every internal cell edge wrong on a log/symlog axis; the
+    fix is to resample it into a grid that is uniform in scale coordinates
+    (== uniform on screen), nearest-neighbor so cells stay crisp. Output
+    resolution is at least the source's and at most the pixel span (capped),
+    so no cell is lost and no image explodes. Shared by the SVG and native
+    raster exporters. Density grids are already uniform in scale coordinates
+    (§28) and must NOT be warped."""
+    if scale.affine:
+        return None
+    c0, c1 = float(scale.coord(lo)), float(scale.coord(hi))
+    if not (np.isfinite(c0) and np.isfinite(c1)) or c0 == c1:
+        return None
+    px_span = abs(float(scale(hi)) - float(scale(lo)))
+    n_out = int(np.clip(round(px_span), n_src, 4096))
+    centers = c0 + (np.arange(n_out, dtype=np.float64) + 0.5) * ((c1 - c0) / n_out)
+    values = np.asarray(scale.value(centers), dtype=np.float64)
+    idx = np.floor((values - lo) / (hi - lo) * n_src).astype(np.int64)
+    return np.clip(idx, 0, n_src - 1)
+
+
+def warp_grid_rgba(
+    rgba: np.ndarray, x_range: list, y_range: list, sx: _Scale, sy: _Scale
+) -> np.ndarray:
+    """Resample a data-uniform (h, w, 4) grid so it is uniform in scale
+    coordinates; identity on affine axes. Row 0 stays the y_range bottom."""
+    h, w = rgba.shape[:2]
+    cols = warp_axis_indices(sx, float(x_range[0]), float(x_range[1]), w)
+    rows = warp_axis_indices(sy, float(y_range[0]), float(y_range[1]), h)
+    if cols is not None:
+        rgba = rgba[:, cols]
+    if rows is not None:
+        rgba = rgba[rows, :]
+    return rgba
+
+
+def _heatmap_rgba_grid(
+    hm: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    style: dict[str, Any],
+    borrowed: tuple[np.ndarray, ...] = (),
+) -> np.ndarray:
+    """Decode a heatmap as an `(h, w, 4)` uint8 grid, row 0 at the bottom."""
+    w, h = int(hm["w"]), int(hm["h"])
+    if "rgba_bufs" in hm:
+        channels = [_column(blob, cols[index]) for index in hm["rgba_bufs"]]
+        rgba = np.clip(np.column_stack(channels) * 255.0, 0, 255).astype(np.uint8)
+        rgba[:, 3] = (rgba[:, 3].astype(np.float64) * _fill_opacity(style)).astype(np.uint8)
+        return rgba.reshape(h, w, 4)
+
+    meta = cols[hm["buf"]]
+    if hm.get("enc") == "canonical-f64":
+        values = np.asarray(borrowed[int(meta["span"]) - 1], dtype=np.float64)[: int(meta["len"])]
+        d0, d1 = (float(value) for value in hm["domain"])
+        values = (values - d0) / ((d1 - d0) or 1.0)
+    else:
+        values = _column(blob, meta)
+    raw = values.reshape(h, w)
+    finite = np.isfinite(raw)
+    t = np.clip(np.where(finite, raw, 0.0), 0.0, 1.0)
+    rgb = _lut(hm.get("colormap", "viridis"), t.reshape(-1)).reshape(h, w, 3)
+    alpha = np.full((h, w), int(255 * _fill_opacity(style, 0.95)), dtype=np.uint8)
+    alpha[~finite] = 0
+    return np.dstack([rgb, alpha])
+
+
+def _grid_image(
+    w: int, h: int, rgba: bytes, x_range: list, y_range: list, sx: _Scale, sy: _Scale
+) -> str:
+    px0, px1 = float(sx(x_range[0])), float(sx(x_range[1]))
+    py0, py1 = float(sy(y_range[1])), float(sy(y_range[0]))  # grid row 0 = y_range bottom
+    b64 = base64.b64encode(_png_rgba(w, h, rgba)).decode("ascii")
+    return (
+        f'<image x="{_num(min(px0, px1))}" y="{_num(min(py0, py1))}" '
+        f'width="{_num(abs(px1 - px0))}" height="{_num(abs(py1 - py0))}" '
+        f'preserveAspectRatio="none" style="image-rendering:pixelated" '
+        f'href="data:image/png;base64,{b64}"/>'
+    )
+
+
+def _physical_density_alpha(counts: Any, mean_alpha_u8: Any, style_opacity: float) -> Any:
+    """Displayed alpha of a mean-color density cell (LOD doc §2 rule 1).
+
+    The physical compositing of the cell's own points — ``1 − (1 − a_pt)^k``
+    for k points whose drawn per-point alpha is ``a_pt = channel alpha ×
+    style opacity`` — so the surface and real marks agree on lightness at
+    every zoom. Style opacity folds INSIDE the exponent: dense cells
+    saturate past it exactly like overplotted marks do. The same law as the
+    client's texture upload (``lodWriteGridTexture``); shared by the SVG and
+    native-raster exporters. Returns u8; empty or all-invisible cells are 0.
+    """
+    counts = np.asarray(counts, dtype=np.float64)
+    a8 = np.asarray(mean_alpha_u8)
+    a_pt = np.clip((a8.astype(np.float64) / 255.0) * float(style_opacity), 0.0, 1.0)
+    coverage = np.zeros(a_pt.shape, dtype=np.float64)
+    saturated = a_pt >= 1.0
+    partial = ~saturated & (a_pt > 0.0)
+    coverage[partial] = -np.expm1(counts[partial] * np.log1p(-a_pt[partial]))
+    coverage[saturated] = 1.0
+    alpha = (np.clip(coverage, 0.0, 1.0) * 255.0).astype(np.uint8)
+    alpha[(counts <= 0) | (a8 == 0)] = 0
+    return alpha
+
+
+def _density_image(
+    d: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict, svg: _Svg
+) -> str:
+    w, h = int(d["w"]), int(d["h"])
+    grid = _density_column(blob, cols[d["buf"]], d).reshape(h, w)
+    gmax = float(d.get("max") or 1.0) or 1.0
+    tnorm = np.clip(grid / gmax, 0.0, 1.0)
+    if d.get("rgba") is not None:
+        # Mean point color per cell (LOD doc §2): rgb from the shipped plane;
+        # displayed alpha is the PHYSICAL compositing of the cell's points —
+        # 1 − (1 − a_pt)^count for drawn per-point alpha a_pt = channel alpha
+        # × style opacity (folded INSIDE the exponent: dense cells saturate
+        # past the style opacity exactly like overplotted marks). Same law as
+        # the client's texture upload.
+        meta = cols[d["rgba"]]
+        mean = np.frombuffer(
+            blob, dtype=np.uint8, count=meta["len"], offset=meta["byte_offset"]
+        ).reshape(h, w, 4)
+        rgb = mean[..., :3]
+        alpha = _physical_density_alpha(grid, mean[..., 3], _fill_opacity(style, 0.85))
+        rgba = np.dstack([rgb, alpha])[::-1].tobytes()  # flip: PNG rows are top-first
+        return _grid_image(w, h, rgba, d["x_range"], d["y_range"], sx, sy)
+    paint_alpha: float = 1.0
+    if d.get("color") is not None:
+        red, green, blue, alpha8 = _paint_rgba8(d["color"])
+        rgb = np.empty((h, w, 3), dtype=np.uint8)
+        rgb[:] = (red, green, blue)
+        paint_alpha = alpha8 / 255.0
+    else:
+        rgb = _lut(d.get("colormap", "viridis"), tnorm.reshape(-1)).reshape(h, w, 3)
+    alpha = (np.clip(tnorm * 1.35, 0, 1) * 255 * _fill_opacity(style, 0.85) * paint_alpha).astype(
+        np.uint8
+    )
+    alpha[tnorm <= 0] = 0
+    rgba = np.dstack([rgb, alpha])[::-1].tobytes()  # flip: PNG rows are top-first
+    return _grid_image(w, h, rgba, d["x_range"], d["y_range"], sx, sy)
+
+
+def _heatmap_image(hm: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict) -> str:
+    grid_rgba = _heatmap_rgba_grid(hm, blob, cols, style)
+    # Heatmap cells are uniform in *data* space; on a nonlinear axis the image
+    # must be resampled so internal cell edges land at their transformed
+    # positions, not on a linear stretch between the endpoints.
+    grid_rgba = warp_grid_rgba(grid_rgba, hm["x_range"], hm["y_range"], sx, sy)
+    out_h, out_w = grid_rgba.shape[:2]
+    rgba = grid_rgba[::-1].tobytes()
+    return _grid_image(out_w, out_h, rgba, hm["x_range"], hm["y_range"], sx, sy)
+
+
+# Trace kinds whose legend entry is a short line sample rather than a marker
+# glyph or filled patch (mirrors _raster._LEGEND_LINE_KINDS).
+_LEGEND_LINE_KINDS = frozenset({"line", "segments", "step", "stairs", "errorbar"})
+
+
+_LEGEND_CHAR_WIDTH = 6.2
+
+
+def _legend_text(value: Any, max_width: float) -> str:
+    """Conservatively ellipsize a static legend string to a pixel budget."""
+    text = str(value)
+    # ``cell_w`` is itself derived from ``len(text) * _LEGEND_CHAR_WIDTH``;
+    # compensate for the tiny binary-float underflow at exact-fit boundaries.
+    max_chars = max(0, int((max_width + 1e-9) / _LEGEND_CHAR_WIDTH))
+    if len(text) <= max_chars:
+        return text
+    if max_chars <= 3:
+        return "." * max_chars
+    return text[: max_chars - 3] + "..."
+
+
+def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, Any]:
+    """Shared bounded legend geometry for SVG and native raster exports.
+
+    Static files cannot offer the browser legend's scrollbar, so an oversized
+    legend is kept inside the plot and its labels are visibly ellipsized. A
+    legend that already fits keeps its historical geometry byte-for-byte.
+    """
+    style_opts = options.get("style") or {}
+    pad, handle, gap, line_h = 8.0, 20.0, 5.0, 16.0
+    if str(style_opts.get("padding", "")).endswith("em"):
+        pad = 11.0 * float(str(style_opts["padding"])[:-2])
+    if str(style_opts.get("rowGap", "")).endswith("em"):
+        line_h = 11.0 * (1.0 + float(str(style_opts["rowGap"])[:-2]))
+
+    requested_cols = min(len(named), max(1, int(options.get("ncols", 1))))
+    title = options.get("title")
+    title_h = 16.0 if title else 0.0
+    natural_cell_w = (
+        max(len(str(t.get("name", ""))) for t in named) * _LEGEND_CHAR_WIDTH
+        + handle
+        + gap
+        + 2 * pad
+    )
+    inset = 6.0
+    available_w = max(1.0, float(plot["w"]) - 2 * inset)
+    ncols = requested_cols
+    # A cell must at least retain its handle and a visible ellipsis, so the
+    # plot width bounds how many columns can ever be drawn.
+    min_cell_w = handle + gap + 2 * pad + 4 * _LEGEND_CHAR_WIDTH
+    max_fit_cols = max(1, int(max(0.0, available_w - pad) // min_cell_w))
+    if ncols * natural_cell_w + pad > available_w:
+        # Reduce an impossible column count before shortening the labels.
+        ncols = min(ncols, max_fit_cols)
+    cell_w = min(natural_cell_w, max(1.0, (available_w - pad) / ncols))
+    box_w = min(available_w, ncols * cell_w + pad)
+
+    available_h = max(1.0, float(plot["h"]) - 2 * inset)
+    max_rows = max(0, int((available_h - pad - title_h) // line_h))
+
+    # The browser legend scrolls (overflow:auto); a static export cannot, so
+    # entries that do not fit are lost. Spend width before losing any: widen
+    # past `requested_cols` up to whatever the plot rect actually affords, so a
+    # tall series list reflows into columns instead of being cut (§28 — a drop
+    # is allowed but never silent, see the warning below).
+    if max_rows and ncols * max_rows < len(named):
+        needed_cols = (len(named) + max_rows - 1) // max_rows
+        ncols = min(max(ncols, needed_cols), max_fit_cols)
+        cell_w = min(natural_cell_w, max(1.0, (available_w - pad) / ncols))
+        box_w = min(available_w, ncols * cell_w + pad)
+
+    nrows = (len(named) + ncols - 1) // ncols
+    visible_rows = nrows
+    natural_box_h = nrows * line_h + pad + title_h
+    if natural_box_h > available_h:
+        visible_rows = max_rows
+    visible_count = min(len(named), visible_rows * ncols)
+    box_h = min(available_h, visible_rows * line_h + pad + title_h)
+    if visible_count < len(named):
+        warnings.warn(
+            f"legend shows {visible_count} of {len(named)} entries in static "
+            f"export: the plot rect fits {max_rows or 0} row(s) by {ncols} "
+            "column(s) and a static legend cannot scroll the way the browser "
+            "one does. Raise the chart height, pass a larger legend(ncols=...), "
+            "or name fewer series to keep every entry.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+
+    loc = options.get("loc") or "upper right"
+    if "left" in loc:
+        x = float(plot["x"]) + inset
+    elif "right" in loc:
+        x = float(plot["x"]) + float(plot["w"]) - box_w - inset
+    else:
+        x = float(plot["x"]) + (float(plot["w"]) - box_w) / 2
+    if "upper" in loc:
+        y = float(plot["y"]) + inset
+    elif "lower" in loc:
+        y = float(plot["y"]) + float(plot["h"]) - box_h - inset
+    else:
+        y = float(plot["y"]) + (float(plot["h"]) - box_h) / 2
+    x = min(
+        max(x, float(plot["x"]) + inset),
+        float(plot["x"]) + float(plot["w"]) - box_w - inset,
+    )
+    y = min(
+        max(y, float(plot["y"]) + inset),
+        float(plot["y"]) + float(plot["h"]) - box_h - inset,
+    )
+
+    text_width = max(0.0, cell_w - handle - gap - 2 * pad)
+    return {
+        "style": style_opts,
+        "pad": pad,
+        "handle": handle,
+        "gap": gap,
+        "line_h": line_h,
+        "ncols": ncols,
+        "title": _legend_text(title, max(0.0, box_w - 2 * pad)) if title else None,
+        "title_h": title_h,
+        "cell_w": cell_w,
+        "box_w": box_w,
+        "box_h": box_h,
+        "x": x,
+        "y": y,
+        "visible_count": visible_count,
+        "names": [_legend_text(t.get("name", ""), text_width) for t in named[:visible_count]],
+    }
+
+
+def _legend(
+    named: list[dict], plot: dict, options: dict, clip_id: str, text_color: str = _TEXT
+) -> str:
+    legend = _legend_layout(named, plot, options)
+    if not legend["visible_count"]:
+        # A plot too short for even one entry: no floating frame/title either.
+        return ""
+    rows = []
+    style_opts = legend["style"]
+    pad, handle, gap = legend["pad"], legend["handle"], legend["gap"]
+    line_h, ncols = legend["line_h"], legend["ncols"]
+    title, title_h = legend["title"], legend["title_h"]
+    cell_w = legend["cell_w"]
+    box_w, box_h = legend["box_w"], legend["box_h"]
+    x, y = legend["x"], legend["y"]
+    if style_opts.get("background") != "transparent":
+        if style_opts.get("boxShadow"):
+            rows.append(
+                f'<rect x="{_num(x + 2)}" y="{_num(y + 2)}" width="{_num(box_w)}" '
+                f'height="{_num(box_h)}" rx="4" fill="black" fill-opacity="0.22"/>'
+            )
+        alpha = float(style_opts.get("--xy-legend-frame-alpha", 0.08))
+        radius = "4" if style_opts.get("borderRadius") else "0"
+        background_value = style_opts.get("background")
+        if background_value is None and alpha == 0.08:
+            fill_attrs = 'fill="rgba(128,128,128,0.08)"'
+        else:
+            background = _css(background_value, "#808080")
+            fill_attrs = f'fill="{escape(background)}" fill-opacity="{_num(alpha)}"'
+        rows.append(
+            f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(box_w)}" height="{_num(box_h)}" '
+            f'rx="{radius}" {fill_attrs}/>'
+        )
+    if title:
+        rows.append(
+            f'<text x="{_num(x + pad)}" y="{_num(y + pad / 2 + 11)}" '
+            f'font-weight="600" fill="{escape(text_color)}">{escape(str(title))}</text>'
+        )
+    for i, t in enumerate(named[: legend["visible_count"]]):
+        style = t.get("style") or {}
+        color = _css(
+            style.get("color") or (t.get("color") or {}).get("color"),
+            DEFAULT_PALETTE[i % len(DEFAULT_PALETTE)],
+        )
+        col, row = i % ncols, i // ncols
+        rx, ry = x + col * cell_w, y + pad / 2 + title_h + row * line_h
+        hx0, hx1, cy = rx + pad, rx + pad + handle, ry + 7
+        kind = t.get("kind")
+        if kind == "scatter":
+            symbol = style.get("symbol", "circle")
+            builder = _SYMBOL_BUILDERS.get(symbol)
+            stroke_w = float(style.get("stroke_width", 0.0))
+            line_symbol = symbol in {"plus_line", "x_line"}
+            if line_symbol and stroke_w <= 0:
+                stroke_w = 1.0
+            stroke = _css(style.get("stroke"), color) if stroke_w or line_symbol else None
+            stroke_attr = (
+                f' stroke="{escape(stroke)}" stroke-width="{_num(stroke_w)}"' if stroke else ""
+            )
+            cxm = (hx0 + hx1) / 2
+            if builder is None:
+                rows.append(
+                    f'<circle cx="{_num(cxm)}" cy="{_num(cy)}" r="4" '
+                    f'fill="{escape(color)}"{stroke_attr}/>'
+                )
+            else:
+                rows.append(
+                    builder(float(cxm), float(cy), 4.0) + f' fill="{escape(color)}"{stroke_attr}/>'
+                )
+        elif kind in _LEGEND_LINE_KINDS:
+            rows.append(
+                f'<line x1="{_num(hx0)}" y1="{_num(cy)}" x2="{_num(hx1)}" y2="{_num(cy)}" '
+                f'stroke="{escape(color)}" stroke-width="{_num(float(style.get("width", 1.5)))}"'
+                f"{_dash_attr(style)}/>"
+            )
+        else:
+            rows.append(
+                f'<rect x="{_num(hx0)}" y="{_num(cy - 4)}" width="{handle}" height="8" '
+                f'rx="2" fill="{escape(color)}"/>'
+            )
+        rows.append(
+            f'<text x="{_num(hx1 + gap)}" y="{_num(ry + 11)}" '
+            f'fill="{escape(text_color)}">{escape(legend["names"][i])}</text>'
+        )
+    return f'<g clip-path="url(#{clip_id})">{"".join(rows)}</g>'
+
+
+def _colorbar(
+    options: dict, plot: dict, right_axis_room: float = 0.0, text_color: str = _TEXT
+) -> str:
+    cmap = str(options.get("colormap", "viridis"))
+    gradient_id = f"xy-colorbar-{sum(map(ord, cmap))}"
+    stops = _colormap_stops(cmap)
+    stop_nodes = "".join(
+        f'<stop offset="{100 * index / max(1, len(stops) - 1):.2f}%" '
+        f'stop-color="rgb({r},{g},{b})"/>'
+        for index, (r, g, b) in enumerate(stops)
+    )
+    orientation = options.get("orientation", "vertical")
+    domain = options.get("domain", [0.0, 1.0])
+    if orientation == "horizontal":
+        x = plot["x"]
+        y = plot["y"] + plot["h"] + (plot["bottom_axis_room"] or 10)
+        width, height = plot["w"], 18
+        gradient_attrs = 'x1="0" y1="0" x2="100%" y2="0"'
+    else:
+        # right_axis_room shifts the whole colorbar clear of right-side named
+        # y-axis chrome (layout() reserves room for both additively).
+        x = plot["x"] + plot["w"] + right_axis_room + 24
+        y, width, height = plot["y"], 18, plot["h"]
+        gradient_attrs = 'x1="0" y1="100%" x2="0" y2="0"'
+    label = str(options.get("label") or "")
+    label_node = (
+        f'<text x="{_num(x + width + 38)}" y="{_num(y + height / 2)}" '
+        f'text-anchor="middle" transform="rotate(-90 {_num(x + width + 38)} '
+        f'{_num(y + height / 2)})" fill="{escape(text_color)}">{escape(label)}</text>'
+        if label and orientation != "horizontal"
+        else (
+            f'<text x="{_num(x + width / 2)}" y="{_num(y + height + 22)}" '
+            f'text-anchor="middle" fill="{escape(text_color)}">{escape(label)}</text>'
+            if label
+            else ""
+        )
+    )
+    lo, hi = float(domain[0]), float(domain[1])
+    span = (hi - lo) or 1.0
+    ticks = options.get("ticks")
+    tick_positions = (
+        [float(value) for value in ticks if lo <= float(value) <= hi]
+        if ticks is not None
+        else (_linear_ticks(lo, hi, 8)[0] or [lo, hi])
+    )
+    tick_nodes = (
+        "".join(
+            f'<text x="{_num(x + width + 4)}" '
+            f'y="{_num(y + height * (1 - (value - lo) / span) + 4)}" '
+            f'fill="{escape(text_color)}">{value:g}</text>'
+            for value in tick_positions
+        )
+        if orientation != "horizontal"
+        else "".join(
+            f'<text x="{_num(x + width * (value - lo) / span)}" '
+            f'y="{_num(y + height + 12)}" text-anchor="middle" '
+            f'fill="{escape(text_color)}">{value:g}</text>'
+            for value in tick_positions
+        )
+    )
+    extend = options.get("extend")
+    extend_nodes = ""
+    if extend in ("max", "both"):
+        r, g, b = stops[-1]
+        points = (
+            f"{_num(x)},{_num(y)} {_num(x + width)},{_num(y)} {_num(x + width / 2)},{_num(y - 9)}"
+            if orientation != "horizontal"
+            else f"{_num(x + width)},{_num(y)} {_num(x + width)},{_num(y + height)} "
+            f"{_num(x + width + 9)},{_num(y + height / 2)}"
+        )
+        extend_nodes += f'<polygon points="{points}" fill="rgb({r},{g},{b})"/>'
+    if extend in ("min", "both"):
+        r, g, b = stops[0]
+        points = (
+            f"{_num(x)},{_num(y + height)} {_num(x + width)},{_num(y + height)} "
+            f"{_num(x + width / 2)},{_num(y + height + 9)}"
+            if orientation != "horizontal"
+            else f"{_num(x)},{_num(y)} {_num(x)},{_num(y + height)} "
+            f"{_num(x - 9)},{_num(y + height / 2)}"
+        )
+        extend_nodes += f'<polygon points="{points}" fill="rgb({r},{g},{b})"/>'
+    return (
+        f'<defs><linearGradient id="{gradient_id}" {gradient_attrs}>'
+        f"{stop_nodes}</linearGradient></defs>"
+        f"{_colorbar_body(options, x, y, width, height, orientation, gradient_id)}"
+        f"{extend_nodes}{tick_nodes}{label_node}"
+    )
+
+
+def _colorbar_body(
+    options: dict,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    orientation: str,
+    gradient_id: str,
+) -> str:
+    """Colorbar bar fill: a smooth gradient, or N solid bands for a discrete
+    (resampled) colormap so it reads like Matplotlib's segmented colorbar."""
+    levels = options.get("levels")
+    if not levels or int(levels) < 1:
+        return (
+            f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(width)}" '
+            f'height="{_num(height)}" fill="url(#{gradient_id})"/>'
+        )
+    n = int(levels)
+    cmap = str(options.get("colormap", "viridis"))
+    positions = (np.arange(n, dtype=np.float64) + 0.5) / n
+    colors = _lut(cmap, positions)
+    rects = []
+    for index, (r, g, b) in enumerate(colors):
+        if orientation == "horizontal":
+            bx0 = x + width * index / n
+            rects.append(
+                f'<rect x="{_num(bx0)}" y="{_num(y)}" width="{_num(width / n + 0.5)}" '
+                f'height="{_num(height)}" fill="rgb({int(r)},{int(g)},{int(b)})"/>'
+            )
+        else:
+            by0 = y + height * (n - 1 - index) / n
+            rects.append(
+                f'<rect x="{_num(x)}" y="{_num(by0)}" width="{_num(width)}" '
+                f'height="{_num(height / n + 0.5)}" fill="rgb({int(r)},{int(g)},{int(b)})"/>'
+            )
+    return "".join(rects)
+
+
+def to_svg(
+    fig: Any,
+    path: Optional[str | PathLike[str]] = None,
+    *,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    id_prefix: str = "",
+    background: Optional[str] = None,
+) -> str:
+    """Render `fig` to a standalone SVG string (optionally saved to `path`).
+
+    `width`/`height` override the figure's pixel size (useful for fluid "100%"
+    figures). Decimation runs at the export width, so output stays
+    screen-bounded no matter the source size. `id_prefix` namespaces generated
+    element ids for composers that inline several exports in one document.
+    `background` overrides the figure canvas color ("transparent" omits the
+    opaque backdrop, matching the raster exporters' alpha behavior)."""
+    eff_w = (
+        int(width)
+        if width is not None
+        else (fig.width if isinstance(fig.width, (int, float)) else 900)
+    )
+    spec, blob = fig.build_payload(px_width=max(256, int(eff_w)))
+    if width is not None:
+        spec["width"] = int(width)
+    if height is not None:
+        spec["height"] = int(height)
+    apply_export_background(spec, background)
+    out = render_svg(spec, blob, id_prefix=id_prefix)
+    if path is not None:
+        from .export import _atomic_write_text
+
+        _atomic_write_text(path, out)
+    return out

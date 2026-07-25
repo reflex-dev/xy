@@ -1,0 +1,24 @@
+{
+  "source": {
+    "repository": "https://github.com/reflex-dev/xy",
+    "xy_version": "0.1.0",
+    "xy_commit": "7228f99fd1bdefdb8026d146b5f6d32d685f8e30"
+  },
+  "runtime": {
+    "python": "3.14.5",
+    "rustc": "1.96.1 (31fca3adb 2026-06-26)",
+    "cargo": "1.96.1 (356927216 2026-06-26)",
+    "node": "26.0.0",
+    "chrome": "150.0.7871.115"
+  },
+  "hardware": {
+    "machine": "Apple M5 Pro",
+    "cpu_cores": 18,
+    "gpu_cores": 20,
+    "memory_gib": 64,
+    "architecture": "arm64"
+  },
+  "operating_system": "macOS 26.5.2",
+  "uv_project": "pyproject.toml",
+  "uv_lock": "uv.lock"
+}

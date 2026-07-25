@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "levels": {
+    "exact geometry": "Data-space geometry and material returned values are intended to match.",
+    "equivalent semantics": "The same user intent and data result are preserved with an xy-owned return type.",
+    "visual approximation": "The chart family is rendered, but artist styling or renderer details may differ."
+  },
+  "families": {
+    "Basic": {"level": "equivalent semantics"},
+    "Spans": {"level": "exact geometry"},
+    "Spectral": {"level": "equivalent semantics"},
+    "Statistics": {"level": "equivalent semantics"},
+    "Binned": {"level": "exact geometry"},
+    "Contours": {"level": "visual approximation"},
+    "2D arrays": {"level": "equivalent semantics"},
+    "Unstructured triangles": {"level": "equivalent semantics"},
+    "Text and annotations": {"level": "visual approximation"},
+    "Vector fields": {"level": "visual approximation"}
+  },
+  "material_keyword_guards": [
+    {"method": "plot", "keyword": "linewidth", "values": [1.0, 4.0]},
+    {"method": "scatter", "keyword": "s", "values": [9.0, 100.0]},
+    {"method": "bar", "keyword": "width", "values": [0.4, 0.8]},
+    {"method": "hist", "keyword": "density", "values": [false, true]},
+    {"method": "imshow", "keyword": "origin", "values": ["upper", "lower"]}
+  ]
+}

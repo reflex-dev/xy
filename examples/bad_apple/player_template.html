@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bad Apple — rendered with xy</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --accent: #4f7cff;
+    --bg: #0a0c11;
+    --panel: rgba(255,255,255,.04);
+    --panel-brd: rgba(255,255,255,.08);
+    --text: #eef1f7;
+    --muted: #8b93a6;
+    --fit-vh: 133.333vh; /* viewport-height cap for the fullscreen picture (aspect) */
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; min-height: 100%;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .chip:focus-visible, .play:focus-visible, .btn:focus-visible { outline-color: #fff; }
+
+  /* Accent-tinted glow + vignette behind everything, fades between looks. */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: -2; pointer-events: none;
+    background:
+      radial-gradient(1000px 520px at 50% -12%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 60%),
+      radial-gradient(1200px 820px at 50% 118%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 55%),
+      radial-gradient(150% 120% at 50% 38%, transparent 52%, rgba(0,0,0,.55));
+    transition: background .5s ease;
+  }
+  /* Fine film grain for a premium, non-flat surface. */
+  body::after {
+    content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .04;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .wrap { max-width: 800px; margin: 0 auto; padding: clamp(24px, 5vw, 40px) 20px 56px; }
+
+  .brand { display: inline-flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .brand .logo {
+    font-weight: 800; font-size: 12px; letter-spacing: .06em; color: #0a0c11;
+    background: linear-gradient(135deg, #ffffff, #c7d0ee); padding: 4px 9px; border-radius: 7px;
+  }
+  .brand .kicker { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .18em; }
+  header h1 {
+    font-size: clamp(24px, 6vw, 34px); line-height: 1.05; margin: 0 0 10px; font-weight: 780; letter-spacing: -.025em;
+    background: linear-gradient(180deg, #ffffff, #aab2c6);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 2px 26px color-mix(in srgb, var(--accent) 30%, transparent));
+    transition: filter .5s ease;
+  }
+  header p { margin: 0; font-size: 13.5px; line-height: 1.6; color: var(--muted); max-width: 62ch; }
+  header code {
+    color: #d7ddea; background: rgba(255,255,255,.07); padding: 1.5px 6px; border-radius: 5px;
+    font-size: 12px; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  /* Look picker chips (radiogroup) */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 24px 0 16px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    border: 1px solid var(--panel-brd); background: var(--panel); color: #c3c9d6;
+    padding: 7px 14px 7px 8px; border-radius: 999px; font-size: 12.5px; font-weight: 550;
+    letter-spacing: .01em; cursor: pointer; transition: all .16s ease;
+  }
+  .chip .sw {
+    width: 22px; height: 10px; border-radius: 3px; flex: none;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.3);
+  }
+  .chip:hover { border-color: rgba(255,255,255,.32); color: #fff; transform: translateY(-1px); }
+  .chip[aria-checked="true"] {
+    background: var(--accent); border-color: var(--accent); color: #07090d; font-weight: 680;
+    box-shadow: 0 8px 24px -8px var(--accent);
+  }
+  .chip[aria-checked="true"] .sw { box-shadow: inset 0 0 0 1px rgba(0,0,0,.4), 0 0 0 1.5px rgba(255,255,255,.5); }
+
+  .stage {
+    background: #fff; border-radius: 18px; overflow: hidden; position: relative;
+    width: max-content; max-width: 100%; margin: 0 auto; cursor: pointer;
+    box-shadow: 0 34px 80px -30px rgba(0,0,0,.9),
+                0 0 70px -22px color-mix(in srgb, var(--accent) 60%, transparent),
+                0 0 0 1px color-mix(in srgb, var(--accent) 28%, rgba(255,255,255,.08));
+    transition: box-shadow .5s ease;
+  }
+  /* Inner bezel so the picture reads as a framed screen. */
+  .stage::after {
+    content: ""; position: absolute; inset: 0; border-radius: 18px; pointer-events: none;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.1);
+  }
+  /* The chart is a passive picture — no pan/zoom/hover; clicks toggle playback. */
+  #chart { line-height: 0; width: 100%; pointer-events: none; }
+  #chart canvas { display: block; width: 100% !important; height: auto !important; }
+
+  /* Center play affordance over the picture when paused. */
+  .bigplay {
+    position: absolute; inset: 0; margin: auto; width: 78px; height: 78px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; color: #fff; z-index: 2; pointer-events: none;
+    background: rgba(9,11,16,.5); border: 1px solid rgba(255,255,255,.28); backdrop-filter: blur(3px);
+    opacity: 0; transform: scale(.9); transition: opacity .18s ease, transform .18s ease;
+  }
+  .stage.paused .bigplay { opacity: 1; transform: scale(1); }
+
+  /* Loading state while the mask inflates. */
+  .loading {
+    position: absolute; inset: 0; z-index: 3; pointer-events: none;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+    background: rgba(8,9,13,.66); color: #c7ccd8; font-size: 12.5px; letter-spacing: .02em;
+  }
+  .loading.hidden { display: none; }
+  .spinner {
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,.16); border-top-color: var(--accent); animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Fullscreen: fit the picture to the viewport, preserving aspect. */
+  .stage:fullscreen { width: 100vw; height: 100vh; max-width: none; border-radius: 0; display: grid; place-items: center; }
+  .stage:fullscreen::after { display: none; }
+  .stage:fullscreen #chart { width: min(100vw, var(--fit-vh)); }
+
+  .controls {
+    display: flex; flex-direction: column; gap: 12px; margin-top: 18px;
+    padding: 14px 16px; border-radius: 16px; border: 1px solid transparent;
+    background:
+      linear-gradient(#0f1218, #0d1015) padding-box,
+      linear-gradient(120deg, color-mix(in srgb, var(--accent) 40%, rgba(255,255,255,.14)), rgba(255,255,255,.03)) border-box;
+    box-shadow: 0 12px 34px -18px rgba(0,0,0,.8);
+  }
+  .timeline { display: flex; align-items: center; gap: 14px; }
+  .buttons { display: flex; align-items: center; gap: 10px; }
+  .buttons .spacer { flex: 1; }
+
+  .play {
+    width: 46px; height: 46px; border-radius: 50%; border: none; cursor: pointer; flex: none;
+    background: var(--accent); color: #07090d; font-size: 15px; display: grid; place-items: center;
+    box-shadow: 0 8px 22px -8px var(--accent); transition: transform .12s ease, filter .12s ease;
+  }
+  .play:hover { transform: scale(1.06); filter: brightness(1.08); }
+  .play:active { transform: scale(.95); }
+  .btn {
+    width: 40px; height: 40px; border-radius: 11px; flex: none; cursor: pointer;
+    border: 1px solid var(--panel-brd); background: var(--panel); color: #ccd2de;
+    display: grid; place-items: center; font-size: 15px; transition: all .14s ease;
+  }
+  .btn:hover { color: #fff; background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.26); }
+  .vol { display: flex; align-items: center; gap: 8px; }
+  .play svg, .btn svg { width: 18px; height: 18px; display: block; pointer-events: none; }
+  .bigplay svg { width: 30px; height: 30px; display: block; }
+  .meta svg { width: 12px; height: 12px; vertical-align: -2px; opacity: .8; }
+
+  input[type=range] {
+    -webkit-appearance: none; appearance: none; flex: 1; height: 22px; background: transparent; cursor: pointer;
+  }
+  .volrange { flex: 0 0 78px; }
+  input[type=range]::-webkit-slider-runnable-track {
+    height: 6px; border-radius: 999px;
+    background: linear-gradient(to right, var(--accent) var(--seek-pct,0%), rgba(255,255,255,.14) var(--seek-pct,0%));
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; width: 15px; height: 15px; margin-top: -4.5px;
+    border-radius: 50%; background: #fff; border: 3px solid var(--accent);
+    box-shadow: 0 1px 5px rgba(0,0,0,.5);
+  }
+  input[type=range]::-moz-range-track { height: 6px; border-radius: 999px; background: rgba(255,255,255,.14); }
+  input[type=range]::-moz-range-progress { height: 6px; border-radius: 999px; background: var(--accent); }
+  input[type=range]::-moz-range-thumb {
+    width: 15px; height: 15px; border: 3px solid var(--accent); border-radius: 50%; background: #fff;
+  }
+
+  .readout {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums;
+    font-size: 13px; letter-spacing: .02em; color: var(--muted);
+    min-width: 100px; text-align: right; white-space: nowrap;
+  }
+  .readout b { color: var(--text); font-weight: 600; }
+
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .meta span {
+    font-size: 11px; color: var(--muted); background: var(--panel);
+    border: 1px solid var(--panel-brd); padding: 5px 10px; border-radius: 8px;
+  }
+  .meta b { color: #d7dce6; font-weight: 600; }
+  #err { color: #ff8f8f; font-size: 13px; margin-top: 14px; white-space: pre-wrap; }
+  #err:empty { display: none; }
+
+  /* Keyboard-shortcuts dialog */
+  dialog.help {
+    border: 1px solid var(--panel-brd); background: #0e1117; color: var(--text);
+    border-radius: 16px; padding: 0; max-width: 430px; width: calc(100% - 40px);
+    box-shadow: 0 40px 90px -24px #000;
+  }
+  dialog.help::backdrop { background: rgba(4,6,10,.62); backdrop-filter: blur(3px); }
+  .help-body { padding: 22px 24px; }
+  .help-body h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
+  .help-body dl { display: grid; grid-template-columns: max-content 1fr; gap: 10px 18px; margin: 0; font-size: 13px; align-items: center; }
+  .help-body dd { margin: 0; color: var(--muted); }
+  kbd {
+    font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: #e6e9f0;
+    background: rgba(255,255,255,.08); border: 1px solid var(--panel-brd); border-bottom-width: 2px;
+    border-radius: 6px; padding: 2px 7px; margin: 0 1px;
+  }
+  .help-close {
+    margin-top: 20px; width: 100%; padding: 10px; border-radius: 10px; border: none; cursor: pointer;
+    background: var(--accent); color: #07090d; font-weight: 680; font-size: 13px;
+  }
+
+  @media (max-width: 560px) {
+    .readout { min-width: auto; }
+    .brand .kicker { display: none; }
+  }
+  @media (pointer: coarse) {
+    .btn { width: 44px; height: 44px; }
+    input[type=range]::-webkit-slider-thumb { width: 20px; height: 20px; margin-top: -7px; }
+    input[type=range]::-moz-range-thumb { width: 20px; height: 20px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition-duration: .001ms !important; animation-duration: .001ms !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><span class="logo">xy</span><span class="kicker">live render demo</span></div>
+    <h1>Bad Apple!!</h1>
+    <p>
+      Every frame is a live xy chart — one fresh payload per frame through the
+      streaming-append path (<code>ChartView._applyAppend</code>), the same WebGL2
+      code a live dashboard uses. Frames ship as a gzipped 1-bit mask, rebuilt
+      into xy buffers in the browser. Pick a look:
+    </p>
+  </header>
+
+  <div class="chips" id="chips" role="radiogroup" aria-label="Visual style"></div>
+
+  <div class="stage" id="stage">
+    <div id="chart"></div>
+    <div class="bigplay" id="bigplay" aria-hidden="true"></div>
+    <div class="loading" id="loading"><div class="spinner"></div><span>Decoding frames…</span></div>
+  </div>
+
+  <audio id="audio" preload="auto"></audio>
+
+  <div class="controls">
+    <div class="timeline">
+      <input type="range" id="seek" min="0" value="0" step="1" aria-label="Seek"
+             aria-valuemin="0" aria-valuenow="0">
+      <div class="readout" id="readout">0:00 / 0:00</div>
+    </div>
+    <div class="buttons">
+      <button class="play" id="play" aria-label="Play" aria-keyshortcuts="Space"></button>
+      <div class="vol" id="volgroup">
+        <button class="btn" id="mute" aria-label="Mute" aria-pressed="false" aria-keyshortcuts="M"></button>
+        <input type="range" id="volume" class="volrange" min="0" max="100" value="100" aria-label="Volume">
+      </div>
+      <div class="spacer"></div>
+      <button class="btn" id="help" aria-label="Keyboard shortcuts" aria-haspopup="dialog" aria-keyshortcuts="?"></button>
+      <button class="btn" id="fs" aria-label="Fullscreen" aria-keyshortcuts="F"></button>
+    </div>
+  </div>
+
+  <div class="meta" id="statline"></div>
+  <div id="err" role="alert"></div>
+  <p id="status" class="sr-only" role="status" aria-live="polite"></p>
+</div>
+
+<dialog class="help" id="helpDialog" aria-label="Keyboard shortcuts">
+  <div class="help-body">
+    <h2>Keyboard shortcuts</h2>
+    <dl>
+      <dt><kbd>Space</kbd> / <kbd>K</kbd></dt><dd>Play / pause</dd>
+      <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Seek ∓5&nbsp;s</dd>
+      <dt><kbd>J</kbd> <kbd>L</kbd></dt><dd>Seek ∓10&nbsp;s</dd>
+      <dt><kbd>,</kbd> <kbd>.</kbd></dt><dd>Step one frame</dd>
+      <dt><kbd>0</kbd> – <kbd>9</kbd></dt><dd>Jump to 0–90%</dd>
+      <dt><kbd>Home</kbd> / <kbd>End</kbd></dt><dd>Start / end</dd>
+      <dt><kbd>↑</kbd> <kbd>↓</kbd> / <kbd>M</kbd></dt><dd>Volume / mute</dd>
+      <dt><kbd>F</kbd></dt><dd>Fullscreen</dd>
+      <dt><kbd>?</kbd></dt><dd>This help</dd>
+    </dl>
+    <button class="help-close" id="helpClose" type="button">Close</button>
+  </div>
+</dialog>
+
+<!-- xy render client (standalone build) -->
+<script>__XY_CLIENT_JS__</script>
+
+<script>
+const SPEC = __SPEC_JSON__;
+const META = __META_JSON__;
+const PAYLOAD_B64 = "__PAYLOAD_B64__";
+const AUDIO_B64 = "__AUDIO_B64__";
+const TRACE_ID = SPEC.traces[0].id;
+
+const errEl = document.getElementById("err");
+function fail(msg) { errEl.textContent = msg; throw new Error(msg); }
+
+// Base64 -> bytes -> gunzip (DecompressionStream is in every modern browser).
+async function loadPayload(b64) {
+  const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  if (typeof DecompressionStream === "undefined") {
+    fail("This browser lacks DecompressionStream; use a recent Chrome/Firefox/Safari.");
+  }
+  const stream = new Blob([bin]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+(async function main() {
+  const { width: W, height: H, n_frames: N, bytes_per_frame: BPF, fps: FPS } = META;
+  // Cap the stage at the chart's native width but let it shrink on small
+  // screens; the canvas fills the stage (CSS), so there's never a side gap.
+  const stage = document.getElementById("stage");
+  stage.style.width = `min(${META.canvas_w}px, 100%)`;
+  const mask = await loadPayload(PAYLOAD_B64);
+
+  const CELL = SPEC.traces[0].size.size; // px edge of one grid cell
+
+  const XR = [-0.5, W - 0.5], YR = [-0.5, H - 0.5]; // full-grid data ranges
+
+  // Every look is rendered from the SAME 1-bit mask. Point looks (`scatter`)
+  // vary the per-point color scalar (through a colormap), the marker symbol and
+  // the background; `scalar` picks what drives the colormap and `flow` cycles it
+  // over time. Heatmap looks (`heatmap`) blur the mask into a smooth field and
+  // hand the engine a real heatmap trace — the actual chart type, swapped in
+  // live via the same append path.
+  // `swatch` is a CSS gradient previewing each look's palette on its chip.
+  const SW = {
+    turbo:   "linear-gradient(90deg,#30123b,#4669e3,#3ee5c1,#a4fc3c,#fea949,#7a0403)",
+    inferno: "linear-gradient(90deg,#000004,#420a68,#932667,#dd513a,#fca50a,#fcffa4)",
+    jet:     "linear-gradient(90deg,#00007f,#0000ff,#00ffff,#00ff00,#ffff00,#ff0000,#7f0000)",
+    viridis: "linear-gradient(90deg,#440154,#414487,#2a788e,#22a884,#7ad151,#fde725)",
+    rainbow: "linear-gradient(90deg,#8000ff,#1996f3,#4df3ce,#b2f396,#ff964f,#ff0000)",
+  };
+  const LOOKS = {
+    solid:   { label: "Solid ink",  accent: "#5b8cff", swatch: "linear-gradient(90deg,#0a0a0a,#0a0a0a)",
+               symbol: "square", size: CELL, bg: "#ffffff", color: { mode: "constant", color: "#0a0a0a" } },
+    neon:    { label: "Neon",       accent: "#22d3ee", swatch: SW.turbo, symbol: "circle", size: CELL, bg: "#07070d",
+               color: { mode: "continuous", colormap: "turbo" },   scalar: "radial", flow: 0.05 },
+    heatmap: { label: "Heatmap",    accent: "#f9a825", swatch: SW.inferno, type: "heatmap", colormap: "inferno", bg: "#000006" },
+    thermal: { label: "Thermal",    accent: "#ff5a4d", swatch: SW.jet,     type: "heatmap", colormap: "jet",     bg: "#00003a" },
+    ember:   { label: "Ember",      accent: "#e0559b", swatch: SW.inferno, symbol: "circle", size: CELL, bg: "#0b0402",
+               color: { mode: "continuous", colormap: "inferno" }, scalar: "vy" },
+    aurora:  { label: "Aurora",     accent: "#5ec962", swatch: SW.viridis, symbol: "circle", size: CELL, bg: "#03060b",
+               color: { mode: "continuous", colormap: "viridis" }, scalar: "vy",     flow: 0.02 },
+    outline: { label: "Outline",    accent: "#7c5cff", swatch: SW.rainbow, symbol: "square", size: CELL, bg: "#05060a", edgeOnly: true,
+               color: { mode: "continuous", colormap: "rainbow" }, scalar: "radial", flow: 0.08 },
+    dots:    { label: "Dot matrix", accent: "#39d98a", swatch: "linear-gradient(90deg,#39d98a,#39d98a)",
+               symbol: "circle", size: CELL * 0.72, bg: "#08090c", color: { mode: "constant", color: "#39d98a" } },
+  };
+  let currentLook = "neon";
+  const lookHash = location.hash.match(/look=(\w+)/);
+  if (lookHash && LOOKS[lookHash[1]]) currentLook = lookHash[1];
+  else if (typeof window.__LOOK === "string" && LOOKS[window.__LOOK]) currentLook = window.__LOOK;
+
+  const bitAt = (base, r, c) =>
+    r < 0 || r >= H || c < 0 || c >= W ? 0 : (mask[base + ((r * W + c) >> 3)] >> (7 - ((r * W + c) & 7))) & 1;
+
+  // Build the scatter payload buffers for frame `f`: ink cell (row, col) -> a
+  // point at (col, H-1-row). x, then y, then (colormap looks) a [0,1] scalar.
+  function frameBuffers(f, look) {
+    const base = f * BPF;
+    const xs = [], ys = [], cv = look.color.mode === "continuous" ? [] : null;
+    const flow = look.flow ? (f / FPS) * look.flow : 0;
+    const cx = (W - 1) / 2, cy = (H - 1) / 2, rmax = Math.hypot(1, 1);
+    for (let row = 0; row < H; row++) {
+      const yv = H - 1 - row; // image rows run top-down; chart y runs up
+      const rbase = row * W;
+      for (let col = 0; col < W; col++) {
+        const i = rbase + col;
+        if (!((mask[base + (i >> 3)] >> (7 - (i & 7))) & 1)) continue;
+        // Outline: keep only ink cells touching a gap (or the border).
+        if (look.edgeOnly &&
+            bitAt(base, row - 1, col) && bitAt(base, row + 1, col) &&
+            bitAt(base, row, col - 1) && bitAt(base, row, col + 1)) continue;
+        xs.push(col); ys.push(yv);
+        if (cv) {
+          let s;
+          if (look.scalar === "vy") s = yv / (H - 1);
+          else if (look.scalar === "vx") s = col / (W - 1);
+          else { const dx = (col - cx) / cx, dy = (row - cy) / cy; s = Math.min(1, Math.hypot(dx, dy) / rmax); }
+          s += flow; s -= Math.floor(s); // wrap the colormap coordinate
+          cv.push(s);
+        }
+      }
+    }
+    const n = xs.length;
+    const hasColor = !!cv;
+    const blob = new Uint8Array(n * (hasColor ? 12 : 8));
+    const fx = new Float32Array(blob.buffer, 0, n);
+    const fy = new Float32Array(blob.buffer, n * 4, n);
+    for (let k = 0; k < n; k++) {
+      fx[k] = (xs[k] - META.x_offset) * META.x_scale;
+      fy[k] = (ys[k] - META.y_offset) * META.y_scale;
+    }
+    if (hasColor) {
+      const fc = new Float32Array(blob.buffer, n * 8, n);
+      for (let k = 0; k < n; k++) fc[k] = cv[k];
+    }
+    return { blob, n, hasColor };
+  }
+
+  function scatterSpec(n, look, hasColor) {
+    const t = SPEC.traces[0];
+    t.kind = "scatter"; delete t.heatmap;
+    t.x = 0; t.y = 1;
+    SPEC.columns[0] = { byte_offset: 0, len: n, offset: META.x_offset, scale: META.x_scale, kind: "float" };
+    SPEC.columns[1] = { byte_offset: n * 4, len: n, offset: META.y_offset, scale: META.y_scale, kind: "float" };
+    if (hasColor) {
+      SPEC.columns[2] = { byte_offset: n * 8, len: n }; // raw [0,1] scalar
+      t.color = { mode: "continuous", colormap: look.color.colormap, domain: [0, 1], buf: 2 };
+    } else {
+      SPEC.columns.length = 2;
+      t.color = { mode: "constant", color: look.color.color };
+    }
+    t.size = { mode: "constant", size: look.size };
+    t.style = { opacity: 1.0, symbol: look.symbol };
+    t.n_marks = n; t.n_points = n;
+    return SPEC;
+  }
+
+  // --- heatmap look: blur the 1-bit mask into a smooth field, upscale, ship as
+  // a real heatmap grid. Upscaling is what makes the (NEAREST-sampled) texture
+  // read as a smooth thermal image rather than 6px blocks.
+  const HM_UP = 3, HM_R = 2, HM_PASSES = 2;
+  const _occ = new Float32Array(W * H), _b1 = new Float32Array(W * H), _b2 = new Float32Array(W * H);
+  function boxBlur(src, w, h, r, passes) {
+    _b1.set(src);
+    let a = _b1, b = _b2;
+    for (let p = 0; p < passes; p++) {
+      for (let y = 0; y < h; y++) {           // horizontal a -> b
+        const row = y * w;
+        for (let x = 0; x < w; x++) {
+          let sum = 0, cnt = 0;
+          for (let k = -r; k <= r; k++) { const xx = x + k; if (xx >= 0 && xx < w) { sum += a[row + xx]; cnt++; } }
+          b[row + x] = sum / cnt;
+        }
+      }
+      for (let y = 0; y < h; y++) {           // vertical b -> a
+        for (let x = 0; x < w; x++) {
+          let sum = 0, cnt = 0;
+          for (let k = -r; k <= r; k++) { const yy = y + k; if (yy >= 0 && yy < h) { sum += b[yy * w + x]; cnt++; } }
+          a[y * w + x] = sum / cnt;
+        }
+      }
+    }
+    return a; // result back in _b1
+  }
+  function heatmapGrid(f) {
+    const base = f * BPF;
+    for (let i = 0; i < W * H; i++) _occ[i] = (mask[base + (i >> 3)] >> (7 - (i & 7))) & 1;
+    const field = boxBlur(_occ, W, H, HM_R, HM_PASSES);
+    const gw = W * HM_UP, gh = H * HM_UP;
+    const grid = new Float32Array(gw * gh);
+    for (let gy = 0; gy < gh; gy++) {
+      const sy = (1 - gy / (gh - 1)) * (H - 1); // grid row 0 = bottom of the image
+      const y0 = Math.floor(sy), fy = sy - y0, y1 = Math.min(H - 1, y0 + 1);
+      for (let gx = 0; gx < gw; gx++) {
+        const sx = (gx / (gw - 1)) * (W - 1);
+        const x0 = Math.floor(sx), fx = sx - x0, x1 = Math.min(W - 1, x0 + 1);
+        const top = field[y0 * W + x0] + (field[y0 * W + x1] - field[y0 * W + x0]) * fx;
+        const bot = field[y1 * W + x0] + (field[y1 * W + x1] - field[y1 * W + x0]) * fx;
+        grid[gy * gw + gx] = top + (bot - top) * fy;
+      }
+    }
+    return { grid, gw, gh };
+  }
+  function heatmapSpec(gw, gh, look) {
+    const t = SPEC.traces[0];
+    t.kind = "heatmap";
+    delete t.x; delete t.y; delete t.size;
+    SPEC.columns.length = 0;
+    SPEC.columns[0] = { byte_offset: 0, len: gw * gh };
+    const box = { buf: 0, w: gw, h: gh, x_range: XR, y_range: YR, colormap: look.colormap, domain: [0, 1] };
+    t.heatmap = box;
+    t.color = { mode: "continuous", colormap: look.colormap, domain: [0, 1] };
+    t.style = { x_range: XR, y_range: YR, colormap: look.colormap, domain: [0, 1] };
+    t.n_marks = gw * gh; t.n_points = gw * gh;
+    return SPEC;
+  }
+
+  // Build (blob, spec) for frame `f` in the current look.
+  function frameFor(f) {
+    const look = LOOKS[currentLook];
+    if (look.type === "heatmap") {
+      const { grid, gw, gh } = heatmapGrid(f);
+      return { blob: new Uint8Array(grid.buffer), spec: heatmapSpec(gw, gh, look) };
+    }
+    const b = frameBuffers(f, look);
+    return { blob: b.blob, spec: scatterSpec(b.n, look, b.hasColor) };
+  }
+
+  const root = document.documentElement;
+  // Theme the whole UI (accent, glow, plot backdrop) to the current look.
+  // Chip checked-state is handled by selectLook (radiogroup semantics).
+  function applyLook() {
+    const l = LOOKS[currentLook];
+    root.style.setProperty("--accent", l.accent);
+    stage.style.background = l.bg;
+  }
+  applyLook();
+
+  // First paint through the real standalone entry point.
+  const firstFrame = frameFor(0);
+  const view = xy.renderStandalone(document.getElementById("chart"), firstFrame.spec, firstFrame.blob);
+
+  function renderFrame(f) {
+    const { blob, spec } = frameFor(f);
+    view._applyAppend({ spec, affected: [TRACE_ID] }, [blob]);
+  }
+
+  // --- transport / playback ---
+  const seek = document.getElementById("seek");
+  const readout = document.getElementById("readout");
+  const playBtn = document.getElementById("play");
+  const audio = document.getElementById("audio");
+  const statusEl = document.getElementById("status");
+  const loadingEl = document.getElementById("loading");
+  const chipsEl = document.getElementById("chips");
+  seek.max = String(N - 1);
+  seek.setAttribute("aria-valuemax", String(N - 1));
+  root.style.setProperty("--fit-vh", `${(META.canvas_w / META.canvas_h) * 100}vh`);
+
+  const announce = (m) => { statusEl.textContent = m; };
+  const fmt = (s) => {
+    s = Math.max(0, s);
+    return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  };
+
+  // Inline SVG icons (dependency-free, inherit the themed `currentColor`).
+  const svg = (inner) =>
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ` +
+    `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${inner}</svg>`;
+  const ICONS = {
+    // Triangle whose centroid sits exactly at the viewBox center (12,12), so it
+    // is optically centered without any nudge; rounded via a matching stroke.
+    play: svg('<path d="M9 6.5L18 12L9 17.5Z" fill="currentColor" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/>'),
+    pause: svg('<rect x="6.5" y="5" width="3.6" height="14" rx="1.4" fill="currentColor" stroke="none"/><rect x="13.9" y="5" width="3.6" height="14" rx="1.4" fill="currentColor" stroke="none"/>'),
+    volHigh: svg('<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5H4Z" fill="currentColor" stroke="none"/><path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18 6.5a8 8 0 0 1 0 11"/>'),
+    volLow: svg('<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5H4Z" fill="currentColor" stroke="none"/><path d="M15.5 9a4 4 0 0 1 0 6"/>'),
+    volMute: svg('<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5H4Z" fill="currentColor" stroke="none"/><path d="M16.5 9.5l5 5M21.5 9.5l-5 5"/>'),
+    fullscreen: svg('<path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15"/>'),
+    exitFullscreen: svg('<path d="M9 4.5V8a1 1 0 0 1-1 1H4.5M20 9h-3.5a1 1 0 0 1-1-1V4.5M15 19.5V16a1 1 0 0 1 1-1h3.5M4 15h3.5a1 1 0 0 1 1 1v3.5"/>'),
+    help: svg('<circle cx="12" cy="12" r="9"/><path d="M9.4 9.2a2.8 2.8 0 0 1 5.3 1c0 1.9-2.7 2.4-2.7 4"/><path d="M12 17h.01"/>'),
+    sound: svg('<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5H4Z" fill="currentColor" stroke="none"/><path d="M15.5 9a4 4 0 0 1 0 6"/>'),
+  };
+  document.getElementById("bigplay").innerHTML = ICONS.play;
+
+  // When a soundtrack is embedded it becomes the master clock: the animation
+  // frame is read from audio.currentTime so picture and sound never drift.
+  const volgroup = document.getElementById("volgroup");
+  let hasAudio = AUDIO_B64.length > 0;
+  if (hasAudio) {
+    audio.src = "data:audio/mpeg;base64," + AUDIO_B64;
+    audio.loop = true;
+    audio.addEventListener("loadedmetadata", () => { if (pos > 0) audio.currentTime = pos / FPS; });
+    // If the audio can't decode, fall back to a time-based clock, hide volume.
+    audio.addEventListener("error", () => { hasAudio = false; volgroup.style.display = "none"; });
+  } else {
+    volgroup.style.display = "none";
+  }
+  const duration = () => (hasAudio && isFinite(audio.duration) ? audio.duration : N / FPS);
+
+  // Reduced-motion users and (sound-blocked) autoplay both start paused.
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let playing = !hasAudio && !reduceMotion;
+  let pos = 0, shown = -1, last = 0;
+
+  // Deep-link / probe a specific frame (`#f=1200`, window.__START_FRAME).
+  const fHash = location.hash.match(/f=(\d+)/);
+  if (fHash) { pos = Math.min(N - 1, +fHash[1]); playing = false; }
+  else if (typeof window.__START_FRAME === "number") { pos = Math.min(N - 1, window.__START_FRAME); }
+  if (window.__PAUSE === true) playing = false;
+
+  function ui(idx) {
+    seek.value = String(idx);
+    seek.style.setProperty("--seek-pct", `${N > 1 ? (idx / (N - 1)) * 100 : 0}%`);
+    seek.setAttribute("aria-valuenow", String(idx));
+    seek.setAttribute("aria-valuetext", `${fmt(idx / FPS)} of ${fmt(duration())}`);
+    readout.innerHTML = `<b>${fmt(idx / FPS)}</b> / ${fmt(duration())}`;
+  }
+  function show(idx) {
+    if (idx === shown) return;
+    shown = idx;
+    renderFrame(idx);
+    ui(idx);
+  }
+
+  // Play/pause — with audio the media element is the source of truth.
+  function reflectPlay() {
+    if (hasAudio) playing = !audio.paused;
+    playBtn.innerHTML = playing ? ICONS.pause : ICONS.play;
+    playBtn.setAttribute("aria-label", playing ? "Pause" : "Play");
+    stage.classList.toggle("paused", !playing);
+  }
+  async function play() {
+    if (hasAudio) { try { await audio.play(); } catch (e) { /* needs a user gesture */ } }
+    else playing = true;
+    reflectPlay();
+  }
+  function pause() { if (hasAudio) audio.pause(); else playing = false; reflectPlay(); }
+  function togglePlay() { const wasPlaying = playing; (wasPlaying ? pause : play)(); announce(wasPlaying ? "Paused" : "Playing"); }
+  if (hasAudio) { audio.addEventListener("play", reflectPlay); audio.addEventListener("pause", reflectPlay); }
+
+  // Seeking helpers (all clamp to range; audio stays the master clock).
+  function seekTo(frame) {
+    pos = Math.max(0, Math.min(N - 1, frame));
+    if (hasAudio) audio.currentTime = pos / FPS;
+    show(Math.floor(pos));
+  }
+  const seekBy = (secs) => seekTo(pos + secs * FPS);
+  const stepFrame = (d) => { pause(); seekTo(Math.round(pos) + d); };
+  seek.addEventListener("input", () => {
+    pos = Number(seek.value);
+    if (hasAudio) audio.currentTime = pos / FPS;
+    show(Math.floor(pos));
+  });
+
+  // Volume / mute.
+  const volume = document.getElementById("volume");
+  const muteBtn = document.getElementById("mute");
+  let setVol = () => {};
+  function reflectVol() {
+    const v = audio.muted ? 0 : audio.volume;
+    volume.value = String(Math.round(v * 100));
+    volume.style.setProperty("--seek-pct", `${v * 100}%`);
+    muteBtn.innerHTML = v === 0 ? ICONS.volMute : v < 0.5 ? ICONS.volLow : ICONS.volHigh;
+    muteBtn.setAttribute("aria-label", audio.muted || v === 0 ? "Unmute" : "Mute");
+    muteBtn.setAttribute("aria-pressed", String(audio.muted));
+  }
+  if (hasAudio) {
+    setVol = (v) => { audio.muted = false; audio.volume = Math.max(0, Math.min(1, v)); reflectVol(); };
+    volume.addEventListener("input", () => setVol(Number(volume.value) / 100));
+    muteBtn.addEventListener("click", () => { audio.muted = !audio.muted; reflectVol(); announce(audio.muted ? "Muted" : "Unmuted"); });
+    reflectVol();
+  }
+
+  // Fullscreen (pure-CSS fit; only a class toggle needed).
+  const fsBtn = document.getElementById("fs");
+  const fsSupported = !!(stage.requestFullscreen || stage.webkitRequestFullscreen);
+  if (!fsSupported) fsBtn.style.display = "none";
+  fsBtn.innerHTML = ICONS.fullscreen;
+  function toggleFs() {
+    if (document.fullscreenElement) (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+    else (stage.requestFullscreen || stage.webkitRequestFullscreen)?.call(stage);
+  }
+  document.addEventListener("fullscreenchange", () => {
+    const on = !!document.fullscreenElement;
+    fsBtn.innerHTML = on ? ICONS.exitFullscreen : ICONS.fullscreen;
+    fsBtn.setAttribute("aria-label", on ? "Exit fullscreen" : "Fullscreen");
+  });
+  fsBtn.addEventListener("click", toggleFs);
+
+  // Help dialog.
+  const helpDialog = document.getElementById("helpDialog");
+  const helpBtn = document.getElementById("help");
+  helpBtn.innerHTML = ICONS.help;
+  const toggleHelp = () => { if (helpDialog.open) helpDialog.close(); else helpDialog.showModal(); };
+  helpBtn.addEventListener("click", toggleHelp);
+  document.getElementById("helpClose").addEventListener("click", () => helpDialog.close());
+
+  // Primary controls + click-the-picture-to-toggle.
+  playBtn.addEventListener("click", togglePlay);
+  stage.addEventListener("click", (e) => { if (!e.target.closest("button")) togglePlay(); });
+
+  // Look picker as an accessible radiogroup with roving focus + arrow keys.
+  const lookKeys = Object.keys(LOOKS);
+  function selectLook(key, focus) {
+    currentLook = key;
+    applyLook();
+    for (const c of chipsEl.children) {
+      const on = c.dataset.look === key;
+      c.setAttribute("aria-checked", String(on));
+      c.tabIndex = on ? 0 : -1;
+      if (on && focus) c.focus();
+    }
+    shown = -1; show(Math.floor(pos));
+    announce(`${LOOKS[key].label} look`);
+  }
+  for (const [key, l] of Object.entries(LOOKS)) {
+    const b = document.createElement("button");
+    b.className = "chip"; b.type = "button"; b.dataset.look = key;
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", String(key === currentLook));
+    b.tabIndex = key === currentLook ? 0 : -1;
+    const sw = document.createElement("i");
+    sw.className = "sw"; sw.style.background = l.swatch;
+    b.append(sw, l.label);
+    b.addEventListener("click", () => selectLook(key, false));
+    chipsEl.appendChild(b);
+  }
+  chipsEl.addEventListener("keydown", (e) => {
+    const i = lookKeys.indexOf(currentLook);
+    let j = -1;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") j = (i + 1) % lookKeys.length;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") j = (i - 1 + lookKeys.length) % lookKeys.length;
+    else if (e.key === "Home") j = 0;
+    else if (e.key === "End") j = lookKeys.length - 1;
+    if (j >= 0) { e.preventDefault(); selectLook(lookKeys[j], true); }
+  });
+
+  // Global keyboard shortcuts.
+  document.addEventListener("keydown", (e) => {
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+    // Let focused buttons handle Space/Enter, and let the chip group own arrows.
+    if ((e.key === " " || e.key === "Enter") && e.target.tagName === "BUTTON") return;
+    if (e.target.closest("#chips") &&
+        ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) return;
+    if (helpDialog.open) return; // dialog handles its own Esc/Tab
+    switch (e.key) {
+      case " ": case "k": case "K": e.preventDefault(); togglePlay(); break;
+      case "ArrowLeft": e.preventDefault(); seekBy(-5); break;
+      case "ArrowRight": e.preventDefault(); seekBy(5); break;
+      case "j": case "J": e.preventDefault(); seekBy(-10); break;
+      case "l": case "L": e.preventDefault(); seekBy(10); break;
+      case ",": stepFrame(-1); break;
+      case ".": stepFrame(1); break;
+      case "Home": e.preventDefault(); seekTo(0); break;
+      case "End": e.preventDefault(); seekTo(N - 1); break;
+      case "ArrowUp": if (hasAudio) { e.preventDefault(); setVol(audio.volume + 0.1); } break;
+      case "ArrowDown": if (hasAudio) { e.preventDefault(); setVol(audio.volume - 0.1); } break;
+      case "m": case "M": if (hasAudio) muteBtn.click(); break;
+      case "f": case "F": if (fsSupported) toggleFs(); break;
+      case "?": case "/": e.preventDefault(); toggleHelp(); break;
+      default: if (e.key >= "0" && e.key <= "9") { e.preventDefault(); seekTo(Math.round((+e.key / 10) * (N - 1))); }
+    }
+  });
+
+  document.getElementById("statline").innerHTML =
+    `<span><b>${W}×${H}</b> grid</span>` +
+    `<span><b>${N.toLocaleString()}</b> frames</span>` +
+    `<span><b>${FPS}</b> fps</span>` +
+    `<span>peak <b>${META.max_ink.toLocaleString()}</b> pts/frame</span>` +
+    (hasAudio ? `<span>${ICONS.sound} sound-synced</span>` : "") +
+    `<span>gzipped 1-bit mask → xy buffers in-browser</span>`;
+
+  // Playback loop.
+  function loop(now) {
+    if (last === 0) last = now;
+    const dt = now - last; last = now;
+    if (hasAudio) { if (playing) pos = audio.currentTime * FPS; }
+    else if (playing) { pos += (dt / 1000) * FPS; if (pos >= N) pos -= N; }
+    show(Math.min(N - 1, Math.floor(pos)));
+    requestAnimationFrame(loop);
+  }
+
+  reflectPlay();
+  show(Math.floor(pos));
+  loadingEl.classList.add("hidden");
+  requestAnimationFrame(loop);
+})().catch((e) => {
+  const el = document.getElementById("err");
+  if (el) el.textContent = "Failed to start: " + String((e && e.message) || e);
+  const l = document.getElementById("loading");
+  if (l) l.classList.add("hidden");
+});
+</script>
+</body>
+</html>

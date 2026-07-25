@@ -1,0 +1,174 @@
+"""Engine tuning constants, shared across modules (figure, interaction, export).
+
+Every threshold here is a *tier decision* from the design dossier — moving a
+trace between direct draw, decimation, and aggregation — and each decision is
+recorded in the shipped spec, never silent (§28).
+"""
+
+from __future__ import annotations
+
+import warnings
+
+# Wire protocol version: the client refuses a mismatched spec loudly (§33).
+# v5: streaming append ships split-layout buffers and, on the widget host,
+# rides the spec/buffers trait update (`spec.append.seq`) with no custom send.
+# v6: symlog axis scale (`scale: "symlog"` + `constant`) and scale-coordinate
+# density grids — an older cached client would render both silently wrong.
+PROTOCOL_VERSION = 6
+
+# Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
+# column stays kernel-side for re-decimation on zoom (§28: recompute for the
+# visible x-range only).
+DECIMATION_THRESHOLD = 10_000
+
+# Scatter above this many points switches to Tier-2 density aggregation (§5):
+# instead of shipping/drawing every point (fill-rate + the ~1 GB single-alloc
+# cliff, §5 F3), the kernel bins the viewport into a density grid the client
+# draws with the trace's own colors, composited at the points' own alpha
+# (LOD doc §2; count-only surfaces keep the log count ramp). Screen-bounded
+# transport and VRAM regardless of point count.
+SCATTER_DENSITY_THRESHOLD = 200_000
+
+# Absolute direct-draw ceiling; above this, density is forced even if the user
+# asked for per-point channels. The color channel survives as the surface's
+# per-cell mean point color (LOD doc §2); the rest (size, stroke, styles) have
+# no honest per-cell aggregate yet (§5 F5) — we warn and drop them, never
+# silently mislead.
+DIRECT_SOFT_CEILING = 2_000_000
+
+# Stable-key matching retains a browser-side identity table for only bounded
+# direct traces. Larger/density traces fall back explicitly to index/snap
+# rather than allocating an unbounded JS Map alongside canonical data.
+MAX_ANIMATION_MATCH_ROWS = 200_000
+
+# Default density grid resolution (cells). Screen-bounded (§5); the client
+# requests a viewport-matched size on zoom via density_view.
+DENSITY_GRID = (512, 384)
+
+# Absolute cap for any browser-supplied screen dimension. Frontends normally
+# send plot CSS pixels, but widget/comm messages are still untrusted input; this
+# prevents a bad `px` from turning into huge decimation buckets or density grids.
+MAX_SCREEN_DIM = 4096
+
+# Contour extraction is native and output-bounded, but its work still scales
+# with grid cells × levels. Keep one request from allocating an unbounded
+# segment buffer before the browser can apply any screen-size limit.
+MAX_CONTOUR_WORK = 4_000_000
+
+# Hysteresis on the drill boundary (§5 "tier transitions hysteresis-guarded"):
+# once drilled to points, stay until the visible count clearly exceeds the
+# budget again, so a view hovering at the threshold doesn't thrash modes.
+DRILL_EXIT_FACTOR = 1.15
+
+# Aggregation grids aim for this many points per cell when the visible count
+# is barely over the direct budget — one-point-per-pixel grids look like
+# static and re-ship large; a few points per cell keeps drill-out continuous.
+DENSITY_TARGET_POINTS_PER_CELL = 16.0
+
+# Deterministic point sample retained with the FIRST density payload only
+# (§28/#225): interactive density_view replies ship no samples at all — the
+# density surface already wears the data's own colors (LOD doc §2), and real
+# points arrive the moment a window fits the budget. Kernel-attached clients
+# never DRAW the retained sample either (a fixed-size sample reads as
+# individual data points at zooms where real points are sub-pixel or one
+# request away); they use it CPU-side as the distribution-true estimator for
+# the points-band request gate (LOD doc T13, `lodSampleViewCount`). The
+# standalone (kernel-less) client keeps it as its re-bin worker's CPU source
+# and draws it below the resolvable-count gate, where it is the only point
+# representation that build will ever have.
+DENSITY_SAMPLE_TARGET = 8_192
+DENSITY_SAMPLE_SEED = 0
+
+# Padded drill windows (LOD doc T13): a points-tier reply ships the largest
+# ALIGNED window around the view whose exact count still fits the budget, so
+# the client's window cache answers nearby pans/zooms with zero round-trips.
+# Ladder of padded-span targets (× the view span), coarsest first; bounds snap
+# outward to a power-of-two grid over the trace's extent (lod.aligned_window),
+# making consecutive pans resolve to the SAME window.
+DRILL_PAD_TARGETS = (8.0, 4.0, 2.0)
+# Hard per-axis cap on the padded span (× the view span). Must stay well under
+# the client's §16 re-encode bound (1/256 of the window span): the shipped
+# offset encoding centers on the padded window, and a window unboundedly wider
+# than the view would let deep zooms outrun f32 precision before the re-encode
+# request re-arms.
+DRILL_PAD_SPAN_CAP = 64.0
+
+# Recent drilled subsets kept resolvable for picks (LOD doc T13): the client
+# may serve a view from a retired cached point window whose drill_seq is no
+# longer current; translating through the remembered subset keeps hover exact
+# instead of dead. Bounded — anything older resolves to None, never to a
+# wrong row (§16 exact-or-nothing).
+DRILL_HISTORY_KEEP = 8
+
+# CVD-safe default categorical palette (§20/§36 default theme). Eight slots in
+# a fixed order; charts render on unknown host surfaces, so every step sits in
+# the OKLCH lightness band both light and dark modes share (L 0.48–0.67) and is
+# validated against both reference surfaces (#fcfcfb / #1a1a19) with
+# .claude/skills/xy-dataviz/scripts/validate_palette.py: chroma ≥ 0.10, worst
+# adjacent-pair CVD ΔE 8.5 (Machado–Oliveira–Fernandes protan/deutan, ≥8
+# target), worst adjacent normal-vision ΔE 19.1 (≥15 floor), all slots ≥3:1 on
+# both surfaces. The ORDER is the CVD-safety mechanism — adjacency drives the
+# ΔE gate — so never re-order or extend without re-running the validator.
+# (Replaced Tableau10, whose adjacent red/green collapsed to ΔE 1.2 under
+# deuteranopia and whose slots 1/5/7/9/10 sat below the chroma floor.)
+DEFAULT_PALETTE = [
+    "#3987e5",  # blue
+    "#008300",  # green
+    "#d55181",  # magenta
+    "#c48300",  # amber
+    "#199e70",  # aqua
+    "#d95926",  # orange
+    "#9085e9",  # violet
+    "#e66767",  # red
+]
+
+_PALETTE_WRAP_MESSAGE = (
+    f"more than {len(DEFAULT_PALETTE)} series use default colors; the default "
+    f"palette repeats every {len(DEFAULT_PALETTE)} (series 9 wears series 1's "
+    "color). Pass explicit color= per series, or group series, to keep "
+    "identities distinct."
+)
+
+
+def default_palette_color(index: int, *, stacklevel: int = 3) -> str:
+    """Default color for the `index`-th series (0-based): the palette, cycled.
+
+    The palette is deliberately eight slots — the adjacency order above is the
+    CVD-safety mechanism, so it cannot grow a ninth hue without re-clearing the
+    validator — which means assignment wraps modulo eight. The wrap is allowed
+    but never silent (§28): the first wrapped assignment warns.
+    """
+    if index >= len(DEFAULT_PALETTE):
+        warnings.warn(_PALETTE_WRAP_MESSAGE, RuntimeWarning, stacklevel=stacklevel)
+    return DEFAULT_PALETTE[index % len(DEFAULT_PALETTE)]
+
+
+# Tile pyramid (§5 Tier 3): built lazily per density trace at/above this size;
+# base level is PYRAMID_BASE_DIM² u32 counts (~4·dim² bytes + 1/3 overhead).
+PYRAMID_MIN_POINTS = 2_000_000
+PYRAMID_BASE_DIM = 2048
+# Above this row count (or for any disk-backed/out-of-core column), a density
+# window that outresolves the pyramid is served upsampled from the finest level
+# rather than triggering an exact O(N) re-bin: a full rescan is cheap in RAM but
+# a multi-second scan for a 100 GB+ mmap'd column. Below it, the exact re-bin
+# (sharp, drillable) still runs. Recorded per update as `pyramid-L0-upsampled`.
+PYRAMID_NO_RESCAN_ROWS = 200_000_000
+# No-rescan traces get a finer finest level so the upsampled deep-zoom floor
+# stays sharp (the whole extent / dim per cell). Sized ~sqrt(N/target) and
+# capped here (16384² u32 ≈ 1 GB + 1/3 pyramid overhead). Normal traces keep
+# PYRAMID_BASE_DIM, so their memory is unchanged.
+PYRAMID_MAX_DIM = 16384
+# When a trace carries a spatial index (`_spatial.SpatialIndex`), a zoomed-in
+# window the pyramid can only serve blurry is re-binned *exactly* from just its
+# in-window points — but only when that count is affordable to read/bin at
+# interactive latency. Binning the on-disk f32 columns directly (kernels
+# .bin_2d_f32, no f64 widening) makes an ~80M-point NorCal-scale window ≈ 0.9 s
+# and a 50M metro window ≈ 165 ms, so the exact/sharp tier engages all the way
+# out to a multi-degree region. Above the cap the instant upsampled pyramid
+# stands — but note a *sparse* large window (desert, ocean margin) has few
+# points and still engages the exact tier, so blockiness only ever appears where
+# the window is simultaneously huge *and* dense, i.e. saturated at world zoom
+# where a smooth aggregate gradient is already the maximum meaningful detail.
+# The cap trades transient RAM (gather is ~8·N bytes: 80M ≈ 0.65 GB, freed after
+# the view) and worst-case latency against how far out crisp detail reaches.
+SPATIAL_EXACT_MAX_POINTS = 80_000_000

@@ -1,0 +1,100 @@
+# Build the current main commit and deploy it to the internal chart's dev
+# environment. LAST_DOCS_DEPLOY_SHA makes manual retries idempotent.
+
+name: Deploy XY Docs to Dev
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-xy-docs-dev
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      source_sha: ${{ steps.tag.outputs.source_sha }}
+      image_tag: ${{ steps.tag.outputs.image_tag }}
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+      - name: Resolve commit SHA
+        id: tag
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          if [[ ! "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "::error::source SHA is not a 40-character hex commit"
+            exit 1
+          fi
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "image_tag=sha-${SOURCE_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Compare against LAST_DOCS_DEPLOY_SHA
+        id: check
+        env:
+          LAST_SHA: ${{ vars.LAST_DOCS_DEPLOY_SHA }}
+          CURRENT_SHA: ${{ steps.tag.outputs.source_sha }}
+        run: |
+          if [[ "$LAST_SHA" == "$CURRENT_SHA" ]]; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Commit $CURRENT_SHA was already deployed"
+          else
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build Dev Images
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_build-docs-images.yml
+    with:
+      image_tag: ${{ needs.prepare.outputs.image_tag }}
+      source_ref: ${{ needs.prepare.outputs.source_sha }}
+    secrets: inherit
+
+  helm-pr:
+    name: Update Dev Helm Values
+    needs: [prepare, build]
+    if: needs.prepare.outputs.should_build == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_helm-docs-pr.yml
+    with:
+      image_tag: ${{ needs.prepare.outputs.image_tag }}
+      environment: dev
+      source_ref: ${{ needs.prepare.outputs.source_sha }}
+      auto_merge: true
+    secrets: inherit
+
+  update-last-sha:
+    name: Update LAST_DOCS_DEPLOY_SHA
+    needs: [prepare, helm-pr]
+    if: needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.HELM_BOT_APP_ID }}
+          private-key: ${{ secrets.HELM_BOT_PRIVATE_KEY }}
+
+      - name: Set repository variable
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          NEW_SHA: ${{ needs.prepare.outputs.source_sha }}
+          REPO: ${{ github.repository }}
+        run: gh variable set LAST_DOCS_DEPLOY_SHA --body "$NEW_SHA" --repo "$REPO"

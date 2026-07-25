@@ -1,0 +1,4 @@
+*
+!frontend.zip
+!dockerfiles/
+!dockerfiles/caddy.Dockerfile

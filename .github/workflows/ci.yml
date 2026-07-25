@@ -1,0 +1,756 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+  pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "spec/**"
+  workflow_dispatch:
+
+# Multiple sessions push to two branches in bursts; without this the runner
+# pool drowns in runs for superseded commits and fresh tips queue for ~30 min.
+# Only the newest run per ref carries signal — cancel the rest.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  matplotlib_reference:
+    name: Matplotlib 3.11 reference compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      # The editable install below builds the render client from source via the
+      # hatch hook (generated, not committed; §33) — the pyplot corpus exports
+      # HTML, which inlines the client bundle. Pin Node so the build uses a
+      # vite-compatible version rather than the runner's system Node.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install xy and released reference wheel
+        run: |
+          uv venv .venv
+          uv pip install -p .venv/bin/python -e ".[dev]"
+          uv pip install -p .venv/bin/python "matplotlib==3.11.0"
+      - name: Verify released reference and reviewed snapshot
+        run: |
+          .venv/bin/python -c "import matplotlib; assert matplotlib.__version__ == '3.11.0'"
+          .venv/bin/python scripts/sync_matplotlib_compat.py --check
+      - name: Run optional-interoperability and dual-engine corpus tests
+        env:
+          MPLBACKEND: Agg
+        run: |
+          .venv/bin/pytest -q tests/pyplot/test_launch_compat.py
+          .venv/bin/pytest -q tests/pyplot/test_reference_corpus.py
+          .venv/bin/pytest -q tests/pyplot/test_reference_semantics.py
+
+  test:
+    name: Test (Rust + Python + JS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Install JS build toolchain
+        run: npm ci
+
+      - name: Rust unit tests
+        run: cargo test
+
+      - name: Rust lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build native core
+        run: cargo build --release
+
+      - name: Build JS client
+        run: node js/build.mjs
+
+      - name: JS parses (ESM + IIFE)
+        run: |
+          node -e "import('./python/xy/static/index.js').then(m => { if (!m.default.render) throw new Error('no render export'); })"
+          node --check python/xy/static/standalone.js
+
+      - name: Python 3.11 floor syntax check
+        run: python3 scripts/check_python_floor.py
+
+      - name: Workflow gate wiring
+        run: python3 scripts/verify_ci_workflow.py
+
+      # Dependency-free gates — verify the two seams cargo can't (the C ABI and
+      # the WebGL2 render path) and run even if PyPI is unreachable.
+      - name: Native ABI smoke (stdlib only)
+        run: python3 scripts/abi_smoke.py
+
+      # Playwright's Chromium, not the apt/snap one: Ubuntu's chromium-browser is
+      # a confined snap that can't read the temp HTML under /tmp and whose GPU
+      # process crashes headless — it fails the render probe for environment
+      # reasons, not code. Playwright ships an unconfined build.
+      - name: Install Chromium (Playwright)
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Headless render smoke (stdlib + Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          echo "using $CHROME"
+          python3 scripts/render_smoke_nonumpy.py "$CHROME"
+
+      - name: Streaming append smoke (stdlib + Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          python3 scripts/append_stream_smoke.py "$CHROME"
+
+      - name: Static PNG export smoke (stdlib + Chromium)
+        run: XY_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")" python3 scripts/png_export_smoke.py
+
+      - name: Native benchmark (stdlib only — executed numbers, no PyPI needed)
+        run: python3 scripts/bench_native.py --sizes 1e5,1e6
+
+      - name: Install package + dev deps
+        run: |
+          uv venv .venv
+          uv pip install -p .venv/bin/python -e ".[dev]"
+
+      - name: Regression gate (deterministic payloads = hard fail; timing = advisory)
+        run: |
+          .venv/bin/python benchmarks/bench_scatter_native.py \
+            --sizes 1e5,1e6,1e7 --production --json scatter.json
+          python3 scripts/bench_native.py --sizes 1e6,1e7 --json kernel.json
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python benchmarks/bench_transport.py --n 1e6 --reps 15 \
+            --browser-reps 12 --chromium "$CHROME" --require-browser --json transport.json
+          python3 scripts/verify_benchmark_report.py scatter.json --kind scatter-native
+          python3 scripts/verify_benchmark_report.py kernel.json --kind kernel-native
+          python3 scripts/verify_benchmark_report.py transport.json --kind transport-loopback
+          python3 scripts/check_regressions.py --scatter scatter.json --kernel kernel.json \
+            --transport transport.json --emit-md spec/benchmarks/metrics.md
+
+      - name: Upload regression benchmark report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: regression-benchmark-report
+          if-no-files-found: warn
+          path: |
+            spec/benchmarks/metrics.md
+            scatter.json
+            kernel.json
+            transport.json
+
+      - name: Public API coherence
+        run: .venv/bin/python scripts/check_public_api.py
+
+      - name: Claim guardrails
+        run: .venv/bin/python scripts/check_claim_guardrails.py
+
+      - name: Lint (ruff)
+        run: |
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
+
+      # ty is pre-1.0 (0.0.x) and advisory here: it type-checks the shippable
+      # library and reports findings, but doesn't gate the build — pytest, ruff,
+      # and cargo are the hard gates. Test/benchmark code intentionally
+      # subscripts known-non-None Optionals, which ty can't narrow.
+      - name: Typecheck (ty, advisory)
+        run: .venv/bin/ty check python || echo "::warning::ty reported type findings (advisory)"
+
+      - name: Python tests (native core)
+        # Point PNG-export tests at the Playwright Chromium (not on PATH) so the
+        # full Figure.to_png path runs here rather than skipping.
+        run: |
+          export XY_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")"
+          # Chromium is installed here, so a probe that cannot launch it is a
+          # defect: fail rather than skip, so the browser layer cannot pass by
+          # absence. (A crash or non-zero exit already fails unconditionally.)
+          export XY_REQUIRE_BROWSER=1
+          .venv/bin/pytest -q
+
+      # End-to-end: a real Figure (line decimation + scatter) through to_html's
+      # exact payload path, rendered in Chromium, pixels read back. Complements
+      # the stdlib smoke, which hand-builds payloads. (Was dead code — audit
+      # finding: the only real-Figure→browser gate, never executed.)
+      - name: Real-Figure render smoke (numpy + Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python scripts/smoke_render.py "$CHROME"
+
+      - name: Browser lifecycle smoke (Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python scripts/reflex_lifecycle_smoke.py "$CHROME"
+
+      - name: Browser visual regression smoke (Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python scripts/visual_regression_smoke.py "$CHROME"
+
+      - name: Step tier-update smoke (Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python scripts/step_tier_smoke.py "$CHROME"
+
+      - name: Browser interaction stress smoke (Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python scripts/interaction_stress_smoke.py "$CHROME"
+
+      - name: Browser dashboard reliability smoke (Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python benchmarks/bench_dashboard.py \
+            --chart-counts 10,20,50 --chromium "$CHROME" --json dashboard-smoke.json
+          .venv/bin/python scripts/verify_benchmark_report.py \
+            dashboard-smoke.json --kind dashboard-browser
+
+      - name: Benchmark smoke (1e5/1e6 — §12 harness runs every phase)
+        run: .venv/bin/python scripts/bench.py --sizes 1e5,1e6
+
+  browser_conformance:
+    name: Accessibility + cross-browser conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+      - name: Install Playwright browser engines
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium firefox webkit
+      - name: Build render client
+        run: node js/build.mjs
+      - name: Run accessibility and cross-browser conformance
+        # Headless Firefox on GitHub's Linux runners exposes no WebGL2. Use the
+        # virtual display installed by Playwright so every engine still runs
+        # the real WebGL rendering and perceptual assertions.
+        env:
+          MOZ_WEBRENDER: "1"
+          XY_CONFORMANCE_HEADFUL: "1"
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node scripts/browser_conformance.mjs
+
+  python_floor:
+    name: Python 3.11 floor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Verify syntax/annotation floor
+        run: python scripts/check_python_floor.py
+
+      - name: Build native core
+        run: cargo build --release
+
+      # The render client is a generated artifact (§33): build it so the full
+      # test suite (which reads python/xy/static/*.js) has it on disk.
+      - name: Build render client
+        run: |
+          npm ci
+          node js/build.mjs
+
+      - name: Install package for Python 3.11
+        run: |
+          python -VV
+          # Absolute path: newer uv resolves a bare name as a directory, not
+          # the interpreter setup-python put on PATH.
+          uv venv .venv --python "$(command -v python)"
+          uv pip install -p .venv/bin/python -e . "pytest>=8,<9"
+
+      - name: Public API coherence
+        run: .venv/bin/python scripts/check_public_api.py
+
+      - name: Python 3.11 tests (native core)
+        run: .venv/bin/python -m pytest -q
+
+  # Cross-library scatter benchmark incl. time-to-first-render (spec/benchmarks/results.md).
+  # Each isolated group uses the same deterministic input sizes and runs in
+  # parallel. The report job below merges the partial results.
+  benchmark_vs:
+    name: Cross-library benchmark (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: native-and-webgl
+            libraries: xy,plotly_gl,bokeh_webgl,datashader
+            packages: plotly kaleido bokeh datashader psutil
+            max_n: 10000000
+            xy: true
+            browser: true
+            build_js: true
+          # These adapters each run a timed render plus a separate tracemalloc
+          # render. Keep them isolated so their expensive ceiling probes run in
+          # parallel instead of serializing the slowest benchmark job.
+          - name: matplotlib
+            libraries: matplotlib
+            packages: numpy matplotlib psutil
+            max_n: 10000000
+            xy: false
+            browser: false
+            build_js: false
+          - name: seaborn
+            libraries: seaborn
+            packages: numpy seaborn psutil
+            max_n: 10000000
+            xy: false
+            browser: false
+            build_js: false
+          - name: plotly-svg
+            libraries: plotly_svg
+            packages: numpy plotly kaleido psutil
+            max_n: 10000000
+            xy: false
+            browser: true
+            build_js: false
+          - name: bokeh-canvas
+            libraries: bokeh_canvas
+            packages: numpy bokeh psutil
+            max_n: 10000000
+            xy: false
+            browser: true
+            build_js: false
+          - name: html-adapters
+            libraries: altair,hvplot_bokeh
+            packages: numpy altair hvplot psutil
+            # HTML serialization becomes pathological at multi-million-point
+            # sizes. Keep this group aligned with the existing TTFR cap; the
+            # skipped rows remain explicit in the merged report.
+            max_n: 100000
+            xy: false
+            browser: true
+            build_js: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        if: matrix.xy
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: matrix.browser || matrix.build_js
+        with:
+          node-version: "22"
+      - name: Install JS build toolchain
+        if: matrix.build_js
+        run: npm ci
+      - name: Build native core
+        if: matrix.xy
+        run: cargo build --release
+      - name: Build JS client
+        if: matrix.build_js
+        run: node js/build.mjs
+      - name: Create benchmark environment
+        run: uv venv .venv
+      - name: Install xy
+        if: matrix.xy
+        env:
+          XY_REQUIRE_CARGO: "1"
+        run: |
+          uv pip install -p .venv/bin/python \
+            --constraint benchmarks/requirements-ci.lock -e .
+      - name: Install selected competitors
+        run: |
+          uv pip install -p .venv/bin/python \
+            --constraint benchmarks/requirements-ci.lock ${{ matrix.packages }}
+      - name: Verify native benchmark backend
+        if: matrix.xy
+        run: |
+          .venv/bin/python - <<'PY'
+          import xy.kernels as k
+          assert k.BACKEND == "native", f"benchmark job requires native backend, got {k.BACKEND!r}"
+          PY
+      - name: Install Chromium (Playwright)
+        if: matrix.browser
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run cross-library benchmark group
+        run: |
+          CHROMIUM_ARGS=()
+          if [[ "${{ matrix.browser }}" == "true" ]]; then
+            CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+            CHROMIUM_ARGS=(--chromium "$CHROME")
+          fi
+          .venv/bin/python scripts/bench_vs.py \
+            --libraries "${{ matrix.libraries }}" \
+            --max-n "${{ matrix.max_n }}" \
+            --sizes 1e3,1e4,1e5,1e6,3e6,1e7 --budget 45 \
+            --ttfr --ttfr-max-n 1e5 "${CHROMIUM_ARGS[@]}" \
+            --out scatter-${{ matrix.name }}.md --json scatter-${{ matrix.name }}.json
+      - name: Upload cross-library benchmark part
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: benchmark-vs-${{ matrix.name }}
+          if-no-files-found: warn
+          path: |
+            scatter-${{ matrix.name }}.md
+            scatter-${{ matrix.name }}.json
+
+  # Other benchmark suites run concurrently with the cross-library matrix.
+  benchmark_methodology:
+    name: Benchmark methodology suites
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install JS build toolchain
+        run: npm ci
+      - name: Build core + JS client
+        run: |
+          node js/build.mjs
+          cargo build --release
+      - name: Install xy + competitors
+        env:
+          XY_REQUIRE_CARGO: "1"
+        run: |
+          uv venv .venv
+          uv pip install -p .venv/bin/python \
+            --constraint benchmarks/requirements-ci.lock -e .
+          uv pip install -p .venv/bin/python \
+            --constraint benchmarks/requirements-ci.lock \
+            matplotlib seaborn plotly kaleido bokeh altair datashader hvplot \
+            plotly-resampler psutil
+      - name: Verify native benchmark backend
+        run: |
+          .venv/bin/python - <<'PY'
+          import xy.kernels as k
+          assert k.BACKEND == "native", f"benchmark job requires native backend, got {k.BACKEND!r}"
+          PY
+      # Playwright Chromium for the time-to-first-render (browser paint) pass.
+      - name: Install Chromium (Playwright)
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Line decimation vs plotly-resampler (methodology line_10M)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python benchmarks/bench_line.py --sizes 1e5,1e6,1e7 \
+            --ttfr --ttfr-max-n 1e5 --chromium "$CHROME" --json line.json \
+            | tee -a docs/benchmark_ci.md
+      - name: Install footprint & cold import (methodology §1)
+        run: .venv/bin/python benchmarks/bench_install.py --json install.json | tee -a docs/benchmark_ci.md
+      - name: Fresh-environment footprint (xy vs Plotly)
+        run: |
+          .venv/bin/python benchmarks/bench_install.py --packages xy,plotly \
+            --repeat 3 --fresh-venv --json install-fresh.json | tee -a docs/benchmark_ci.md
+      - name: Ingestion, streaming, and export workflows
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python benchmarks/bench_workflows.py --profile standard --reps 5 \
+            --chromium "$CHROME" --json workflows.json | tee -a docs/benchmark_ci.md
+      - name: Browser interaction latency (methodology interaction_smoothness)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python benchmarks/bench_interaction.py \
+            --sizes 1e4,2.5e5 --reps 24 --chromium "$CHROME" --retries 2 \
+            --json interaction.json | tee -a docs/benchmark_ci.md
+      - name: Many-chart dashboard startup (methodology dashboard_20)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python benchmarks/bench_dashboard.py \
+            --chart-counts 10,20,50 --chromium "$CHROME" \
+            --json dashboard.json | tee -a docs/benchmark_ci.md
+      - name: Verify benchmark JSON artifacts
+        run: |
+          .venv/bin/python scripts/verify_benchmark_report.py line.json --kind line-decimation
+          .venv/bin/python scripts/verify_benchmark_report.py install.json --kind install-footprint
+          .venv/bin/python scripts/verify_benchmark_report.py install-fresh.json --kind install-footprint
+          .venv/bin/python scripts/verify_benchmark_report.py workflows.json --kind workflow-native
+          .venv/bin/python scripts/verify_benchmark_report.py interaction.json --kind interaction-browser
+          .venv/bin/python scripts/verify_benchmark_report.py dashboard.json --kind dashboard-browser
+      - name: Show report
+        run: cat docs/benchmark_ci.md
+      - name: Upload benchmark methodology
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: benchmark-methodology
+          if-no-files-found: warn
+          path: |
+            docs/benchmark_ci.md
+            line.json
+            install.json
+            install-fresh.json
+            workflows.json
+            interaction.json
+            dashboard.json
+
+  benchmark:
+    name: Merge and verify benchmark reports
+    runs-on: ubuntu-latest
+    needs: [benchmark_vs, benchmark_methodology]
+    if: always()
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download cross-library benchmark parts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: benchmark-vs-*
+          path: benchmark-vs-parts
+      - name: Download methodology benchmark artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: benchmark-methodology
+          path: benchmark-methodology
+      - name: Merge cross-library benchmark parts
+        run: |
+          python scripts/merge_benchmark_reports.py \
+            --parts benchmark-vs-parts/*/*.json \
+            --expected-libraries xy,matplotlib,seaborn,plotly_gl,plotly_svg,bokeh_canvas,bokeh_webgl,altair,datashader,hvplot_bokeh \
+            --out benchmark.json --out-md scatter-vs.md
+      - name: Assemble benchmark report
+        run: |
+          cat scatter-vs.md benchmark-methodology/docs/benchmark_ci.md > docs/benchmark_ci.md
+      - name: Verify benchmark JSON artifacts
+        run: |
+          python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs
+          python scripts/verify_benchmark_report.py benchmark-methodology/line.json --kind line-decimation
+          python scripts/verify_benchmark_report.py benchmark-methodology/install.json --kind install-footprint
+          python scripts/verify_benchmark_report.py benchmark-methodology/install-fresh.json --kind install-footprint
+          python scripts/verify_benchmark_report.py benchmark-methodology/workflows.json --kind workflow-native
+          python scripts/verify_benchmark_report.py benchmark-methodology/interaction.json --kind interaction-browser
+          python scripts/verify_benchmark_report.py benchmark-methodology/dashboard.json --kind dashboard-browser
+      - name: Show report
+        run: cat docs/benchmark_ci.md
+      - name: Upload benchmark report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: benchmark-report
+          if-no-files-found: warn
+          path: |
+            docs/benchmark_ci.md
+            benchmark.json
+            benchmark-methodology/line.json
+            benchmark-methodology/install.json
+            benchmark-methodology/install-fresh.json
+            benchmark-methodology/workflows.json
+            benchmark-methodology/interaction.json
+            benchmark-methodology/dashboard.json
+
+  sdist:
+    name: Source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Install JS build toolchain
+        run: npm ci
+
+      - name: Build sdist
+        # The hatch build hook builds the render client (node) and the artifacts
+        # config carries it into the sdist. The client is required by default, so
+        # a client-less sdist fails the build here rather than shipping broken.
+        run: uv build --sdist
+
+      - name: Verify sdist contents
+        shell: bash
+        run: |
+          sdist=$(ls dist/*.tar.gz)
+          python scripts/verify_sdist.py "$sdist"
+
+      - name: Verify sdist without Rust errors clearly on import
+        shell: bash
+        env:
+          XY_SKIP_CARGO: "1"
+        run: |
+          uv venv smoke
+          uv pip install -p smoke dist/*.tar.gz numpy anywidget
+          ./smoke/bin/python - <<'PY'
+          # No native core and no fallback: importing the compute layer must
+          # raise a clear, actionable error (§33: no-wheel behavior is defined
+          # as a loud failure, not a silent degrade).
+          import xy
+
+          assert xy.__version__
+          try:
+              import xy.kernels  # noqa: F401
+          except ImportError as err:
+              msg = str(err)
+              assert "native Rust core" in msg, msg
+              assert "rustup.rs" in msg, msg
+              print("sdist without Rust errors clearly on import")
+          else:
+              raise SystemExit("expected ImportError without the native core")
+          PY
+
+  # Linux and Windows wheel smoke matrix (§33). macOS wheels are built only by
+  # release.yml so pull requests do not consume macOS runners; release coverage
+  # still includes both Intel and Apple Silicon macOS wheels.
+  wheels:
+    name: Wheel ${{ matrix.os }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Install JS build toolchain
+        run: npm ci
+
+      - name: Build wheel
+        # The hatch build hook builds both artifacts. The render client is
+        # required by default; REQUIRE_CARGO additionally forbids the native core
+        # from silently falling back to a pure-Python wheel here.
+        env:
+          XY_REQUIRE_CARGO: "1"
+        run: uv build --wheel
+
+      # A raw linux_x86_64 tag is not installable off this machine and PyPI
+      # rejects it; auditwheel relabels to manylinux (our cdylib needs only
+      # libc/libm, so there's nothing external to bundle). The glibc floor is
+      # the runner's; a manylinux-container build (cibuildwheel) would lower it.
+      - name: Repair Linux wheel to manylinux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update && sudo apt-get install -y patchelf
+          uv tool install auditwheel
+          uv tool run auditwheel repair dist/*.whl -w wheelhouse
+          rm dist/*.whl && mv wheelhouse/*.whl dist/
+          ls -la dist/
+
+      - name: Verify wheel contents
+        shell: bash
+        run: |
+          whl=$(ls dist/*.whl)
+          python scripts/verify_wheel.py "$whl" --expect-native
+
+      - name: Install-size budget (≤ 15 MB, §33)
+        shell: bash
+        run: |
+          # wc -c is portable (macOS/BSD du has no -b); trim BSD's leading spaces.
+          whl=$(ls dist/*.whl)
+          size=$(wc -c < "$whl" | tr -d ' ')
+          echo "wheel size: $size bytes ($whl)"
+          test "$size" -le 15728640
+
+      - name: Smoke-install and import
+        shell: bash
+        run: |
+          uv venv smoke
+          uv pip install -p smoke dist/*.whl numpy anywidget
+          ./smoke/bin/python -c "import xy, xy.kernels as k; assert k.BACKEND == 'native', k.BACKEND; print('native core loaded')" \
+            || ./smoke/Scripts/python.exe -c "import xy, xy.kernels as k; assert k.BACKEND == 'native', k.BACKEND; print('native core loaded')"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wheel-${{ matrix.os }}
+          path: dist/*.whl
+
+  # Proves the no-wheel contract (§33): a source build with NO Rust toolchain
+  # produces a pure-Python wheel that imports the package fine but raises a
+  # clear, actionable error the moment compute is needed — never a silent
+  # fallback and never an opaque crash.
+  install_without_rust:
+    name: Install without Rust (clear error)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      # The render client is independent of the native core (§33): this job
+      # drops Rust but keeps Node so the coreless wheel still carries the client.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install JS build toolchain
+        run: npm ci
+      # GitHub runners preinstall Rust (which would defeat this job's purpose
+      # by happily compiling the core!) — strip every cargo from PATH so the
+      # build genuinely exercises the no-toolchain path.
+      - name: Remove preinstalled Rust
+        run: |
+          while p=$(command -v cargo 2>/dev/null); do
+            echo "removing $p"; sudo rm -f "$p"
+          done
+          if command -v cargo; then echo "cargo still present"; exit 1; fi
+          echo "cargo is gone"
+      - name: Build wheel with no toolchain
+        # No Rust (pure-Python wheel), but the render client is required by
+        # default and must still ship — this job exercises exactly that split
+        # (verify_wheel.py --expect-pure below asserts the client is present).
+        run: uv build --wheel
+      - name: Wheel is pure-Python (py3-none-any)
+        shell: bash
+        run: ls dist/ && ls dist/*-py3-none-any.whl
+      - name: Verify pure (no-native) wheel contents
+        shell: bash
+        run: |
+          whl=$(ls dist/*.whl)
+          python scripts/verify_wheel.py "$whl" --expect-pure
+      - name: Install and verify it errors clearly on compute
+        shell: bash
+        run: |
+          uv venv smoke
+          uv pip install -p smoke dist/*.whl numpy anywidget
+          ./smoke/bin/python - <<'PY'
+          import xy  # lazy top-level import still succeeds
+
+          assert xy.__version__
+          try:
+              import xy.kernels  # noqa: F401
+          except ImportError as err:
+              msg = str(err)
+              assert "native Rust core" in msg, msg
+              assert "rustup.rs" in msg, msg
+              print("no-Rust install errors clearly on import; OK")
+          else:
+              raise SystemExit("expected ImportError without the native core")
+          PY

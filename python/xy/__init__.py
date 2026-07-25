@@ -1,0 +1,316 @@
+"""xy — an experimental Python charting engine.
+
+Cost scales with pixels on screen, not points in the dataset: native Rust core
+in the Python process, offset-encoded f32 binary transport, M4 decimation, GPU
+density aggregation, and a WebGL2 render client. See spec/design-dossier.md.
+
+One declarative API over one engine — Reflex-flavored composition with
+`on_*` event props:
+
+      import xy
+      xy.scatter_chart(
+          xy.scatter(x="gdp", y="life", color="continent", size="pop", data=df),
+          xy.x_axis(label="GDP"), xy.y_axis(label="life expectancy"),
+          xy.legend(),
+          on_select=lambda sel: print(len(sel), "points"),
+      )
+
+Import does no heavy work (§33 import-time budget). Public symbols below are
+exported lazily so `import xy` does not import NumPy or dlopen the
+native core; those initialize when a chart-building API is first imported/used.
+"""
+
+from __future__ import annotations
+
+from importlib import import_module as _import_module
+from typing import TYPE_CHECKING
+from typing import Any as _Any
+
+__version__ = "0.0.1"
+
+_EXPORTS = {
+    "Annotation": ".components",
+    "Animation": ".components",
+    "Axis": ".components",
+    "CHART_DOM_SLOTS": ".dom",
+    "Chart": ".components",
+    "Colorbar": ".components",
+    "Column": ".columns",
+    "ColumnStore": ".columns",
+    "Component": ".components",
+    "Engine": ".export",
+    "ExportConfig": ".components",
+    "FacetChart": ".components",
+    "Interaction": ".components",
+    "Legend": ".components",
+    "Mark": ".components",
+    "Modebar": ".components",
+    "Selection": "._figure",
+    "Spring": ".components",
+    "Theme": ".components",
+    "Tooltip": ".components",
+    "ZoneMaps": ".columns",
+    "area": ".components",
+    "animation": ".components",
+    "area_chart": ".components",
+    "arrow": ".components",
+    "bar": ".components",
+    "bar_chart": ".components",
+    "box": ".components",
+    "box_chart": ".components",
+    "callout": ".components",
+    "chart": ".components",
+    "column": ".components",
+    "column_chart": ".components",
+    "colorbar": ".components",
+    "contour": ".components",
+    "contour_chart": ".components",
+    "ecdf": ".components",
+    "ecdf_chart": ".components",
+    "facet_chart": ".components",
+    "error_band": ".components",
+    "error_band_chart": ".components",
+    "errorbar": ".components",
+    "errorbar_chart": ".components",
+    "export_config": ".components",
+    "hexbin": ".components",
+    "hexbin_chart": ".components",
+    "heatmap": ".components",
+    "heatmap_chart": ".components",
+    "hline": ".components",
+    "hist": ".components",
+    "histogram": ".components",
+    "histogram_chart": ".components",
+    "interaction_config": ".components",
+    "label": ".components",
+    "legend": ".components",
+    "line": ".components",
+    "line_chart": ".components",
+    "marker": ".components",
+    "modebar": ".components",
+    "scatter": ".components",
+    "scatter_chart": ".components",
+    "segments": ".components",
+    "segments_chart": ".components",
+    "step": ".components",
+    "step_chart": ".components",
+    "stairs": ".components",
+    "stairs_chart": ".components",
+    "stem": ".components",
+    "stem_chart": ".components",
+    "spring": ".components",
+    "threshold": ".components",
+    "threshold_zone": ".components",
+    "triangle_mesh": ".components",
+    "triangle_mesh_chart": ".components",
+    "theme": ".components",
+    "tooltip": ".components",
+    "text": ".components",
+    "vline": ".components",
+    "x_band": ".components",
+    "write_images": ".export",
+    "x_axis": ".components",
+    "y_band": ".components",
+    "y_axis": ".components",
+    "violin": ".components",
+    "violin_chart": ".components",
+}
+
+__all__ = [
+    "CHART_DOM_SLOTS",
+    "Animation",
+    "Annotation",
+    "Axis",
+    "Chart",
+    "Colorbar",
+    "Column",
+    "ColumnStore",
+    "Component",
+    "Engine",
+    "ExportConfig",
+    "FacetChart",
+    "Interaction",
+    "Legend",
+    "Mark",
+    "Modebar",
+    "Selection",
+    "Spring",
+    "Theme",
+    "Tooltip",
+    "ZoneMaps",
+    "__version__",
+    "animation",
+    "area",
+    "area_chart",
+    "arrow",
+    "bar",
+    "bar_chart",
+    "box",
+    "box_chart",
+    "callout",
+    "chart",
+    "colorbar",
+    "column",
+    "column_chart",
+    "contour",
+    "contour_chart",
+    "ecdf",
+    "ecdf_chart",
+    "error_band",
+    "error_band_chart",
+    "errorbar",
+    "errorbar_chart",
+    "export_config",
+    "facet_chart",
+    "heatmap",
+    "heatmap_chart",
+    "hexbin",
+    "hexbin_chart",
+    "hist",
+    "histogram",
+    "histogram_chart",
+    "hline",
+    "interaction_config",
+    "label",
+    "legend",
+    "line",
+    "line_chart",
+    "marker",
+    "modebar",
+    "scatter",
+    "scatter_chart",
+    "segments",
+    "segments_chart",
+    "spring",
+    "stairs",
+    "stairs_chart",
+    "stem",
+    "stem_chart",
+    "step",
+    "step_chart",
+    "text",
+    "theme",
+    "threshold",
+    "threshold_zone",
+    "tooltip",
+    "triangle_mesh",
+    "triangle_mesh_chart",
+    "violin",
+    "violin_chart",
+    "vline",
+    "write_images",
+    "x_axis",
+    "x_band",
+    "y_axis",
+    "y_band",
+]
+
+
+def _load_export(name: str) -> _Any:
+    module_name = _EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(_import_module(module_name, __name__), name)
+    globals()[name] = value
+    return value
+
+
+def __getattr__(name: str) -> _Any:
+    return _load_export(name)
+
+
+def __dir__() -> list[str]:
+    # `__all__` alone, not the module globals: the import machinery leaves
+    # helpers behind (`annotations` from the __future__ import, `Any`,
+    # `TYPE_CHECKING`, `import_module`), and `xy.annotations` in particular
+    # collides with the annotations components. `scripts/check_public_api.py`
+    # asserts nothing public leaks past this.
+    return sorted(__all__)
+
+
+if TYPE_CHECKING:
+    from ._figure import Selection
+    from .columns import Column, ColumnStore, ZoneMaps
+    from .components import (
+        Annotation,
+        Axis,
+        Chart,
+        Colorbar,
+        Component,
+        FacetChart,
+        Interaction,
+        Legend,
+        Mark,
+        Modebar,
+        Theme,
+        Tooltip,
+        area,
+        area_chart,
+        arrow,
+        bar,
+        bar_chart,
+        box,
+        box_chart,
+        callout,
+        chart,
+        colorbar,
+        column,
+        column_chart,
+        contour,
+        contour_chart,
+        ecdf,
+        ecdf_chart,
+        error_band,
+        error_band_chart,
+        errorbar,
+        errorbar_chart,
+        export_config,
+        facet_chart,
+        heatmap,
+        heatmap_chart,
+        hexbin,
+        hexbin_chart,
+        hist,
+        histogram,
+        histogram_chart,
+        hline,
+        interaction_config,
+        label,
+        legend,
+        line,
+        line_chart,
+        marker,
+        modebar,
+        scatter,
+        scatter_chart,
+        stairs,
+        stairs_chart,
+        stem,
+        stem_chart,
+        step,
+        step_chart,
+        text,
+        theme,
+        threshold,
+        threshold_zone,
+        tooltip,
+        violin,
+        violin_chart,
+        vline,
+        x_axis,
+        x_band,
+        y_axis,
+        y_band,
+    )
+    from .dom import CHART_DOM_SLOTS
+    from .export import Engine, write_images
+
+
+# Import machinery, not API. `annotations` in particular is the compile-time
+# `from __future__` directive, whose runtime binding would otherwise resolve as
+# `xy.annotations` and shadow the annotation components (`xy.hline`,
+# `xy.callout`, …) documented under that word. `Any`/`TYPE_CHECKING` are only
+# needed while this module executes: annotations are strings under the future
+# import, and the `if TYPE_CHECKING:` block above has already run.
+# `scripts/check_public_api.py` asserts no public name outlives this.
+del annotations, TYPE_CHECKING

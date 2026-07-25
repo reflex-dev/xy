@@ -1,0 +1,16 @@
+[project]
+name = "xy-reflex-example"
+version = "0"
+requires-python = ">=3.11"
+dependencies = [
+    "xy",
+    "reflex-xy",
+    "numpy>=1.24",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+xy = { path = "../..", editable = true }
+reflex-xy = { path = "../../python/reflex-xy", editable = true }

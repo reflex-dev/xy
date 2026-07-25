@@ -1,0 +1,30 @@
+[package]
+name = "osmpbf-nodes"
+version = "0.1.0"
+edition = "2021"
+description = "Fast, multithreaded extraction of node coordinates from OpenStreetMap .osm.pbf into raw f64 columns."
+license = "Apache-2.0"
+repository = "https://github.com/reflex-dev/osmpbf-nodes"
+keywords = ["openstreetmap", "osm", "pbf", "geo", "parser"]
+categories = ["parser-implementations", "science::geo"]
+
+[lib]
+name = "osmpbf_nodes"
+
+[[bin]]
+name = "osm-nodes"
+path = "src/main.rs"
+
+[[bin]]
+name = "osm-sort"
+path = "src/sort_main.rs"
+
+# zlib-ng backend: ~2-4x faster inflate than the pure-Rust miniz_oxide default,
+# which dominates PBF decode. Same flate2 API. (Falls back to `flate2 = "1"`
+# with default features if zlib-ng is unavailable on a target.)
+[dependencies]
+flate2 = { version = "1", default-features = false, features = ["zlib-ng"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

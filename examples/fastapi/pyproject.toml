@@ -1,0 +1,16 @@
+[project]
+name = "xy-fastapi-example"
+version = "0"
+requires-python = ">=3.11"
+dependencies = [
+    "xy",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "numpy>=1.24",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+xy = { path = "../..", editable = true }

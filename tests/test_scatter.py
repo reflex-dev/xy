@@ -1,0 +1,1227 @@
+"""Full scatter: color/size channels (§36c), Tier-2 density aggregation (§5),
+hover pick with exact f64 readout (§16/§17)."""
+
+from __future__ import annotations
+
+import json
+
+import numpy as np
+import pytest
+
+from xy import channels as ch
+from xy import interaction
+from xy._figure import DENSITY_GRID, SCATTER_DENSITY_THRESHOLD, Figure
+from xy.columns import ZONE_CHUNK
+from xy.config import DENSITY_SAMPLE_TARGET, MAX_SCREEN_DIM
+from xy.interaction import _decode_log_u8
+
+
+def _col(spec, blob, ref, dtype=None):
+    m = spec["columns"][ref]
+    if dtype is None:
+        dtype = np.uint8 if m.get("dtype") == "u8" else np.float32
+    return np.frombuffer(blob, dtype=dtype, count=m["len"], offset=m["byte_offset"])
+
+
+def _decoded_col(spec, blob, ref):
+    meta = spec["columns"][ref]
+    values = _col(spec, blob, ref).astype(np.float64)
+    return values / meta.get("scale", 1.0) + meta.get("offset", 0.0)
+
+
+def _density_col(spec, blob, density):
+    raw = _col(spec, blob, density["buf"], dtype=np.uint8)
+    return _decode_log_u8(raw.tobytes(), density["max"])
+
+
+# -- channel resolution ------------------------------------------------------
+
+
+def test_color_constant():
+    c = ch.resolve_color("#ff0000", 10, colormap="magma_r", default_constant="#000")
+    assert c.mode == "constant" and c.constant == "#ff0000"
+    assert c.colormap == "magma_r"
+    c2 = ch.resolve_color(None, 10, colormap="plasma", default_constant="#123456")
+    assert c2.mode == "constant" and c2.constant == "#123456"
+    assert c2.colormap == "plasma"
+
+
+def test_color_continuous():
+    vals = np.linspace(0, 100, 50)
+    c = ch.resolve_color(vals, 50, colormap="magma", default_constant="#000")
+    assert c.mode == "continuous"
+    assert c.domain == (0.0, 100.0)
+    assert c.colormap == "magma"
+
+
+def test_color_categorical():
+    cats = np.array(["b", "a", "b", "c", "a"])
+    c = ch.resolve_color(cats, 5, default_constant="#000")
+    assert c.mode == "categorical"
+    assert c.categories == ["a", "b", "c"]  # sorted unique
+    assert c.codes is not None and c.codes.dtype == np.uint8
+    # codes index the sorted categories
+    np.testing.assert_array_equal(c.codes, [1, 0, 1, 2, 0])
+
+
+def test_color_categorical_handles_missing_and_mixed_objects():
+    cats = np.array(["b", None, "a", np.nan, 1], dtype=object)
+    c = ch.resolve_color(cats, 5, default_constant="#000")
+    assert c.mode == "categorical"
+    assert c.categories == ["(missing)", "1", "a", "b"]
+    assert c.codes is not None and c.codes.dtype == np.uint8
+    np.testing.assert_array_equal(c.codes, [3, 0, 2, 0, 1])
+
+
+@pytest.mark.parametrize(
+    ("values", "categories", "codes"),
+    [
+        (np.array(["β", "a", "β", "", "é"]), ["", "a", "é", "β"], [3, 1, 3, 0, 2]),
+        (
+            np.array([b"\xff", b"a", b"\xfe", b"\xff"], dtype="S1"),
+            ["a", "�"],
+            [1, 0, 1, 1],
+        ),
+        (np.array([True, False, True]), ["False", "True"], [1, 0, 1]),
+        (np.array([], dtype="U4"), [], []),
+    ],
+)
+def test_fixed_width_categories_match_canonical_display_labels(values, categories, codes):
+    channel = ch.resolve_color(values, len(values), default_constant="#000")
+    assert channel.mode == "categorical"
+    assert channel.categories == categories
+    np.testing.assert_array_equal(channel.codes, codes)
+    assert channel.counts is not None and channel.counts.dtype == np.uint64
+    np.testing.assert_array_equal(
+        channel.counts,
+        np.bincount(np.asarray(codes, dtype=np.uint8), minlength=len(categories)),
+    )
+
+
+def test_non_native_unicode_categories_use_fixed_record_factorization() -> None:
+    values = np.array(["z", "猫", "z", "a"], dtype=">U2")
+    channel = ch.resolve_color(values, len(values), default_constant="#000")
+    assert channel.categories == ["a", "z", "猫"]
+    np.testing.assert_array_equal(channel.codes, [1, 2, 1, 0])
+
+
+def test_non_native_unicode_u1_categories_use_direct_codepoint_factorization() -> None:
+    native = np.array(["z", "猫", "z", "a"], dtype="U1")
+    values = native.astype(native.dtype.newbyteorder("S"))
+    channel = ch.resolve_color(values, len(values), default_constant="#000")
+    assert channel.categories == ["a", "z", "猫"]
+    np.testing.assert_array_equal(channel.codes, [1, 2, 1, 0])
+    np.testing.assert_array_equal(channel.counts, [1, 2, 1])
+
+
+def test_categorical_code_width_changes_without_wrapping_at_palette_boundary() -> None:
+    labels_256 = np.asarray([f"category-{i:03d}" for i in range(256)])
+    channel_256 = ch.resolve_color(labels_256, len(labels_256), default_constant="#000")
+    assert channel_256.codes is not None and channel_256.codes.dtype == np.uint8
+    assert int(channel_256.codes.max()) == 255
+
+    labels_257 = np.asarray([f"category-{i:03d}" for i in range(257)])
+    with pytest.warns(RuntimeWarning, match="categories"):
+        channel_257 = ch.resolve_color(labels_257, len(labels_257), default_constant="#000")
+    assert channel_257.codes is not None and channel_257.codes.dtype == np.uint32
+    assert int(channel_257.codes.max()) == 256
+
+
+def test_high_cardinality_fixed_labels_avoid_redundant_native_hash(monkeypatch) -> None:
+    labels = np.asarray([f"category-{i:04d}" for i in range(600)])
+
+    def unexpected_native(_values):
+        raise AssertionError("high-cardinality probe should retain the direct label path")
+
+    monkeypatch.setattr(ch.kernels, "factorize_fixed", unexpected_native)
+    with pytest.warns(RuntimeWarning, match="categories"):
+        channel = ch.resolve_color(labels, len(labels), default_constant="#000")
+    assert channel.codes is not None and channel.codes.dtype == np.uint32
+    assert len(channel.categories or []) == len(labels)
+
+
+def test_numeric_object_color_with_missing_is_continuous():
+    vals = np.array([1, None, 2.5, np.nan], dtype=object)
+    c = ch.resolve_color(vals, 4, default_constant="#000")
+    assert c.mode == "continuous"
+    assert c.domain == (1.0, 2.5)
+    np.testing.assert_allclose(c.values, [1.0, np.nan, 2.5, np.nan])
+
+
+def test_numeric_string_object_color_stays_categorical():
+    vals = np.array(["1", "2", None], dtype=object)
+    c = ch.resolve_color(vals, 3, default_constant="#000")
+    assert c.mode == "categorical"
+    assert c.categories == ["(missing)", "1", "2"]
+
+
+def test_color_bad_length():
+    with pytest.raises(ValueError, match="length 10"):
+        ch.resolve_color(np.arange(5.0), 10, default_constant="#000")
+
+
+def test_color_unknown_colormap():
+    with pytest.raises(ValueError, match="colormap"):
+        ch.resolve_color(np.arange(10.0), 10, colormap="nope", default_constant="#000")
+    with pytest.raises(ValueError, match="colormap"):
+        ch.resolve_color(None, 10, colormap="nope", default_constant="#000")
+    with pytest.raises(ValueError, match="colormap"):
+        ch.resolve_color("#ff0000", 10, colormap="nope", default_constant="#000")
+
+
+def test_size_modes():
+    assert ch.resolve_size(6.0, 10).mode == "constant"
+    assert ch.resolve_size(6.0, 10).constant == 6.0
+    s = ch.resolve_size(np.arange(10.0), 10, range_px=(1.0, 9.0))
+    assert s.mode == "continuous"
+    assert s.range_px == (1.0, 9.0)
+    assert s.domain == (0.0, 9.0)
+
+
+def test_zoom_responsive_style_is_serialized_and_defaults_are_fixed():
+    fixed, _ = Figure().scatter([0.0], [1.0], size=3, opacity=0.2).build_payload()
+    assert fixed["traces"][0]["style"] == {"opacity": 0.2}
+
+    responsive, _ = (
+        Figure()
+        .scatter(
+            [0.0],
+            [1.0],
+            size=1.3,
+            opacity=0.2,
+            zoom_size_factor=4,
+            zoom_opacity=0.85,
+            zoom_emphasis=16,
+        )
+        .build_payload()
+    )
+    assert responsive["traces"][0]["style"] == {
+        "opacity": 0.2,
+        "zoom_size_factor": 4.0,
+        "zoom_opacity": 0.85,
+        "zoom_emphasis": 16.0,
+    }
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"zoom_size_factor": 0}, "zoom_size_factor"),
+        ({"zoom_size_factor": float("inf")}, "zoom_size_factor"),
+        ({"zoom_opacity": 1.1}, "zoom_opacity"),
+        ({"zoom_emphasis": 1}, "zoom_emphasis"),
+    ],
+)
+def test_zoom_responsive_style_validation(kwargs, message):
+    with pytest.raises((TypeError, ValueError), match=message):
+        Figure().scatter([0.0], [1.0], **kwargs)
+
+
+def test_object_numeric_size_with_missing_is_continuous():
+    vals = np.array([1, None, 3.0], dtype=object)
+    s = ch.resolve_size(vals, 3, range_px=(2.0, 12.0))
+    assert s.mode == "continuous"
+    assert s.domain == (1.0, 3.0)
+    np.testing.assert_allclose(s.values, [1.0, np.nan, 3.0])
+
+
+def test_complex_or_non_numeric_channels_rejected():
+    with pytest.raises(ValueError, match="real numeric"):
+        ch.resolve_color(np.array([1 + 2j, 3 + 4j]), 2, default_constant="#000")
+    with pytest.raises(ValueError, match="real numeric"):
+        ch.resolve_size(np.array([1 + 2j, 3 + 4j]), 2)
+    with pytest.raises(ValueError, match="real numeric"):
+        ch.resolve_size(np.array(["1", "2"], dtype=object), 2)
+    with pytest.raises(ValueError, match="boolean"):
+        ch.resolve_size(np.array([True, False]), 2)
+    with pytest.raises(ValueError, match="real numeric"):
+        ch.resolve_size(np.array([True, None], dtype=object), 2)
+    with pytest.raises(ValueError, match="size"):
+        ch.resolve_size(True, 1)
+
+
+@pytest.mark.parametrize(
+    "range_px",
+    [
+        (1.0,),
+        (1.0, 2.0, 3.0),
+        (-1.0, 2.0),
+        (4.0, 2.0),
+        (np.nan, 2.0),
+        (1.0, np.inf),
+    ],
+)
+def test_size_range_validation(range_px):
+    with pytest.raises(ValueError, match="size_range"):
+        ch.resolve_size(np.arange(3.0), 3, range_px=range_px)
+
+
+def test_normalize_to_unit():
+    out = ch.normalize_to_unit(np.array([0.0, 5.0, 10.0, np.nan]), (0.0, 10.0))
+    np.testing.assert_allclose(out[:3], [0.0, 0.5, 1.0])
+    assert out[3] == 0.0  # NaN → domain low → 0 (never poisons a vertex, §19)
+
+
+# -- payload: channels shipped as ≤4 B/pt scalars ----------------------------
+
+
+def test_continuous_color_shipped_normalized():
+    n = 1000
+    x = np.arange(n, dtype=np.float64)
+    val = np.linspace(-50, 50, n)
+    fig = Figure().scatter(x, x, color=val, colormap="viridis")
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["color"]["mode"] == "continuous"
+    assert tr["color"]["colormap"] == "viridis"
+    cbuf = _col(spec, blob, tr["color"]["buf"])
+    assert cbuf.min() >= 0.0 and cbuf.max() <= 1.0
+    assert np.isclose(cbuf[0], 0.0) and np.isclose(cbuf[-1], 1.0)
+    # one f32 per point — the ≤4 B/pt channel budget (§2)
+    assert len(cbuf) == n
+
+
+def test_categorical_color_palette():
+    n = 30
+    cats = np.array(["red", "green", "blue"] * 10)
+    fig = Figure().scatter(np.arange(n, dtype=float), np.arange(n, dtype=float), color=cats)
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["color"]["mode"] == "categorical"
+    assert tr["color"]["categories"] == ["blue", "green", "red"]
+    assert len(tr["color"]["palette"]) == 3
+    assert tr["color"]["dtype"] == "u8"
+    assert spec["columns"][tr["color"]["buf"]]["dtype"] == "u8"
+    codes = _col(spec, blob, tr["color"]["buf"])
+    assert codes.dtype == np.uint8
+    assert set(np.round(codes).astype(int)) == {0, 1, 2}
+
+
+def test_categorical_color_payload_handles_missing_and_mixed_objects():
+    color = np.array(["a", None, "b", np.nan, 1], dtype=object)
+    fig = Figure().scatter(np.arange(5.0), np.arange(5.0), color=color)
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["color"]["categories"] == ["(missing)", "1", "a", "b"]
+    codes = _col(spec, blob, tr["color"]["buf"])
+    np.testing.assert_array_equal(codes.astype(int), [2, 0, 3, 0, 1])
+
+
+def test_numeric_object_color_payload_is_continuous():
+    color = np.array([1.0, None, 3.0, np.nan], dtype=object)
+    fig = Figure().scatter(np.arange(4.0), np.arange(4.0), color=color)
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["color"]["mode"] == "continuous"
+    assert tr["color"]["domain"] == [1.0, 3.0]
+    cbuf = _col(spec, blob, tr["color"]["buf"])
+    np.testing.assert_allclose(cbuf, [0.0, 0.0, 1.0, 0.0])
+
+
+def test_numeric_object_size_payload_is_continuous():
+    size = np.array([1.0, None, 3.0, np.nan], dtype=object)
+    fig = Figure().scatter(np.arange(4.0), np.arange(4.0), size=size, size_range=(2.0, 20.0))
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["size"]["mode"] == "continuous"
+    assert tr["size"]["range_px"] == [2.0, 20.0]
+    assert tr["size"]["domain"] == [1.0, 3.0]
+    sbuf = _col(spec, blob, tr["size"]["buf"])
+    np.testing.assert_allclose(sbuf, [0.0, 0.0, 1.0, 0.0])
+
+
+def test_variable_size_shipped():
+    n = 500
+    x = np.arange(n, dtype=np.float64)
+    sz = np.abs(np.sin(x * 0.1))
+    fig = Figure().scatter(x, x, size=sz, size_range=(2.0, 20.0))
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["size"]["mode"] == "continuous"
+    assert tr["size"]["range_px"] == [2.0, 20.0]
+    assert tr["size"]["domain"] == [float(sz.min()), float(sz.max())]
+    sbuf = _col(spec, blob, tr["size"]["buf"])
+    assert sbuf.min() >= 0.0 and sbuf.max() <= 1.0
+
+
+def test_constant_numeric_color_and_size_channels_ship_midpoint_values():
+    fig = Figure().scatter(
+        np.arange(4.0),
+        np.arange(4.0),
+        color=np.full(4, 7.0),
+        size=np.full(4, 5.0),
+    )
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    cbuf = _col(spec, blob, tr["color"]["buf"])
+    sbuf = _col(spec, blob, tr["size"]["buf"])
+    np.testing.assert_allclose(cbuf, np.full(4, 0.5, dtype=np.float32))
+    np.testing.assert_allclose(sbuf, np.full(4, 0.5, dtype=np.float32))
+    lo, hi = tr["color"]["domain"]
+    assert lo < 7.0 < hi
+
+
+def test_numpy_scalar_size_range_is_json_serializable():
+    fig = Figure().scatter(
+        np.arange(4.0),
+        np.arange(4.0),
+        size=np.arange(4.0),
+        size_range=(np.float32(1.5), np.float64(12.0)),
+    )
+    spec, _blob = fig.build_payload()
+    assert spec["traces"][0]["size"]["range_px"] == [1.5, 12.0]
+    json.dumps(spec)
+
+
+def test_constant_color_and_size_no_channel_buffers():
+    fig = Figure().scatter(np.arange(100.0), np.arange(100.0), color="#abcdef", size=7.0)
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["color"] == {"mode": "constant", "color": "#abcdef"}
+    assert tr["size"] == {"mode": "constant", "size": 7.0}
+    # only x and y shipped
+    assert len(spec["columns"]) == 2
+
+
+def test_channels_follow_nan_drop():
+    # When NaN rows are dropped from the shipped copy, channels must match length.
+    n = 100
+    x = np.arange(n, dtype=np.float64)
+    y = x.copy()
+    y[[5, 50]] = np.nan
+    color = np.linspace(0, 1, n)
+    fig = Figure().scatter(x, y, color=color)
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    xbuf = _col(spec, blob, tr["x"])
+    cbuf = _col(spec, blob, tr["color"]["buf"])
+    assert len(xbuf) == len(cbuf) == n - 2  # aligned after drop
+
+
+# -- Tier-2 density ----------------------------------------------------------
+
+
+def test_large_scatter_uses_density():
+    n = SCATTER_DENSITY_THRESHOLD + 1
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=n)
+    y = rng.normal(size=n)
+    fig = Figure().scatter(x, y)
+    assert fig.traces[0].use_density()
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["tier"] == "density"
+    w, h = DENSITY_GRID
+    assert tr["density"]["enc"] == "log-u8"
+    grid = _density_col(spec, blob, tr["density"])
+    assert len(grid) == w * h
+    # Exact conservation rides the explicit visible count; the texture is the
+    # same log-u8 quantization used by live view updates.
+    xr, yr = tr["density"]["x_range"], tr["density"]["y_range"]
+    inrange = np.sum((x >= xr[0]) & (x < xr[1]) & (y >= yr[0]) & (y < yr[1]))
+    assert tr["visible"] == inrange
+    assert tr["density"]["max"] == pytest.approx(grid.max())
+
+
+def test_density_payload_includes_deterministic_sample_overlay():
+    n = SCATTER_DENSITY_THRESHOLD + 50_000
+    rng = np.random.default_rng(30)
+    x = rng.normal(size=n)
+    y = rng.normal(size=n)
+
+    fig = Figure().scatter(x, y, density=True)
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    sample = tr["density"]["sample"]
+
+    assert sample["mode"] == "sampled"
+    assert sample["visible"] == tr["visible"]
+    assert 0 < sample["n"] <= int(DENSITY_SAMPLE_TARGET * 1.2)
+    assert sample["target"] == DENSITY_SAMPLE_TARGET
+    assert sample["style"]["opacity"] <= 0.55
+    assert spec["columns"][sample["x"]["col"]]["len"] == sample["n"]
+    assert spec["columns"][sample["y"]["col"]]["len"] == sample["n"]
+
+    xs = _decoded_col(spec, blob, sample["x"]["col"])
+    ys = _decoded_col(spec, blob, sample["y"]["col"])
+    assert xs.min() >= sample["x_range"][0]
+    assert xs.max() <= sample["x_range"][1]
+    assert ys.min() >= sample["y_range"][0]
+    assert ys.max() <= sample["y_range"][1]
+
+    spec2, blob2 = Figure().scatter(x, y, density=True).build_payload()
+    sample2 = spec2["traces"][0]["density"]["sample"]
+    np.testing.assert_array_equal(
+        _col(spec, blob, sample["x"]["col"]), _col(spec2, blob2, sample2["x"]["col"])
+    )
+    np.testing.assert_array_equal(
+        _col(spec, blob, sample["y"]["col"]), _col(spec2, blob2, sample2["y"]["col"])
+    )
+
+
+def test_full_view_density_fusion_is_payload_byte_exact(monkeypatch):
+    from xy import kernels, lod
+
+    n = SCATTER_DENSITY_THRESHOLD + 12_345
+    rng = np.random.default_rng(2031)
+    x = rng.normal(size=n)
+    y = 0.6 * x + rng.normal(size=n)
+    optimized = Figure().scatter(x, y, density=True).build_payload()
+
+    def separate(xv, yv, x0, x1, y0, y1, width, height, target, **kwargs):
+        return (
+            kernels.bin_2d(xv, yv, x0, x1, y0, y1, width, height),
+            lod.sample_row_range_for_target(len(xv), target, **kwargs),
+        )
+
+    monkeypatch.setattr(lod, "bin_2d_sample_row_range_for_target", separate)
+    reference = Figure().scatter(x, y, density=True).build_payload()
+    assert optimized == reference
+
+
+def test_full_view_categorical_density_fusion_is_payload_byte_exact(monkeypatch):
+    from xy import kernels, lod
+
+    n = SCATTER_DENSITY_THRESHOLD + 12_345
+    rng = np.random.default_rng(2032)
+    x = rng.normal(size=n)
+    y = 0.6 * x + rng.normal(size=n)
+    labels = np.asarray(list("abcdefgh"))[(np.arange(n, dtype=np.uint32) % 8)]
+    optimized = Figure().scatter(x, y, color=labels, density=True).build_payload()
+
+    def separate(xv, yv, groups, n_groups, x0, x1, y0, y1, width, height, target, **kwargs):
+        return (
+            kernels.bin_2d(xv, yv, x0, x1, y0, y1, width, height),
+            lod.stratified_sample_row_range_for_target(groups, n_groups, target, **kwargs),
+        )
+
+    monkeypatch.setattr(lod, "bin_2d_stratified_sample_row_range_for_target", separate)
+    reference = Figure().scatter(x, y, color=labels, density=True).build_payload()
+    assert optimized == reference
+
+
+def test_full_domain_density_avoids_materialized_visible_indices(monkeypatch):
+    n = SCATTER_DENSITY_THRESHOLD + 1
+    x = np.linspace(-1.0, 1.0, n)
+    y = np.sin(x)
+
+    def unexpected_fused_scan(*_args, **_kwargs):
+        raise AssertionError("clean full-domain density should use implicit identity rows")
+
+    monkeypatch.setattr("xy._payload.kernels.bin_2d_indices", unexpected_fused_scan)
+    spec, _blob = Figure().scatter(x, y, density=True).build_payload()
+
+    trace = spec["traces"][0]
+    assert trace["visible"] == n
+    assert 0 < trace["density"]["sample"]["n"] <= int(DENSITY_SAMPLE_TARGET * 1.2)
+
+
+def test_full_domain_categorical_density_uses_implicit_stratified_rows(monkeypatch):
+    n = SCATTER_DENSITY_THRESHOLD + 50_000
+    x = np.linspace(-1.0, 1.0, n)
+    y = np.sin(x)
+    color = np.full(n, "common", dtype="U6")
+    color[17] = "rare"
+    color[n // 3] = "tail"
+
+    def unexpected_source_sized_path(*_args, **_kwargs):
+        raise AssertionError("full-domain compact categories should use implicit rows")
+
+    monkeypatch.setattr("xy._payload.kernels.bin_2d_indices", unexpected_source_sized_path)
+    monkeypatch.setattr("xy._payload.lod.sample_rows_for_target", unexpected_source_sized_path)
+    spec, blob = Figure().scatter(x, y, color=color, density=True).build_payload()
+
+    trace = spec["traces"][0]
+    sample = trace["density"]["sample"]
+    color_spec = sample["color"]
+    sampled_codes = _col(spec, blob, color_spec["buf"])
+    assert trace["visible"] == n
+    assert color_spec["dtype"] == "u8"
+    assert int(color_spec["categories"].index("rare")) in set(sampled_codes.astype(int))
+
+
+def test_implicit_categorical_density_payload_is_byte_identical_to_general_path():
+    n = SCATTER_DENSITY_THRESHOLD + 10_000
+    x = np.linspace(-2.0, 2.0, n)
+    y = np.cos(x * 17.0)
+    color = np.array(list("abcdefghijklmnopqrstuvwx"))[np.arange(n) % 24]
+    fig = Figure().scatter(x, y, color=color, density=True)
+    channel = fig.traces[0].color_ch
+    assert channel is not None and channel.codes is not None
+    compact_codes = channel.codes
+
+    compact_spec, compact_blob = fig.build_payload()
+    # Wider codes intentionally select the established source-sized path. The
+    # wire remains u8 because the palette still fits, making full payload
+    # equality a strict semantic oracle for the new implicit sampler.
+    channel.codes = compact_codes.astype(np.uint32)
+    general_spec, general_blob = fig.build_payload()
+
+    assert compact_spec == general_spec
+    assert compact_blob == general_blob
+
+
+def test_density_sample_overlay_preserves_rare_categories():
+    n = SCATTER_DENSITY_THRESHOLD + 50_000
+    rng = np.random.default_rng(31)
+    x = rng.normal(size=n)
+    y = rng.normal(size=n)
+    color = np.full(n, "common", dtype=object)
+    color[17] = "rare"
+    color[n // 3] = "tail"
+
+    spec, blob = Figure().scatter(x, y, color=color, density=True).build_payload()
+    sample = spec["traces"][0]["density"]["sample"]
+    color_spec = sample["color"]
+    codes = _col(spec, blob, color_spec["buf"])
+
+    assert color_spec["mode"] == "categorical"
+    assert color_spec["dtype"] == "u8" and codes.dtype == np.uint8
+    assert "rare" in color_spec["categories"]
+    assert int(color_spec["categories"].index("rare")) in set(codes.astype(int))
+
+
+def test_categorical_drill_update_ships_u8_codes() -> None:
+    n = SCATTER_DENSITY_THRESHOLD + 10_000
+    x = np.linspace(0.0, 100.0, n)
+    color = np.asarray([f"group-{i % 7}" for i in range(n)])
+    fig = Figure().scatter(x, x, color=color, density=True)
+
+    update, buffers = fig.density_view(0, 0.0, 5.0, 0.0, 5.0, 640, 400)
+    trace = update["traces"][0]
+    color_spec = trace["color"]
+    assert trace["mode"] == "points"
+    assert color_spec["mode"] == "categorical" and color_spec["dtype"] == "u8"
+    codes = np.frombuffer(buffers[color_spec["buf"]], dtype=np.uint8)
+    assert len(codes) == trace["visible"]
+    assert set(codes.tolist()) == set(range(7))
+
+
+def test_continuous_drill_update_ships_u8_but_build_payload_stays_f32() -> None:
+    """Live drill/sample wire quantizes continuous color+size+density_val to u8
+    (readbacks resolve server-side); the build payload keeps unit f32 because
+    the client retains those columns CPU-side and denormalizes them for
+    tooltip readouts (channels.ship_channels)."""
+    n = SCATTER_DENSITY_THRESHOLD + 10_000
+    rng = np.random.default_rng(7)
+    x = rng.uniform(0.0, 100.0, n)
+    y = rng.uniform(0.0, 100.0, n)
+    c = rng.uniform(0.0, 1.0, n)
+    s = rng.uniform(2.0, 16.0, n)
+    fig = Figure().scatter(x, y, color=c, size=s, density=True)
+
+    update, buffers = fig.density_view(0, 0.0, 5.0, 0.0, 5.0, 640, 400)
+    tr = update["traces"][0]
+    assert tr["mode"] == "points"
+    for spec in (tr["color"], tr["size"], tr["density_val"]):
+        assert spec["dtype"] == "u8"
+        assert len(buffers[spec["buf"]]) == tr["visible"]  # 1 byte/point
+    sbuf = np.frombuffer(buffers[tr["size"]["buf"]], dtype=np.uint8)
+    # The reply ships a padded aligned window around the view (LOD doc T13);
+    # the subset is every point of the SHIPPED window, in canonical row order.
+    (wx0, wx1), (wy0, wy1) = tr["x_range"], tr["y_range"]
+    assert wx0 <= 0.0 and wx1 >= 5.0 and wy0 <= 0.0 and wy1 >= 5.0
+    vis = (x >= wx0) & (x <= wx1) & (y >= wy0) & (y <= wy1)
+    expected = (s[vis] - s.min()) / (s.max() - s.min())
+    np.testing.assert_allclose(sbuf / 255.0, expected, atol=0.5 / 255.0 + 1e-6)
+
+    # Build path: same channels, but full-precision unit f32, no dtype marker.
+    small = Figure().scatter(x[:1000], y[:1000], color=c[:1000], size=s[:1000])
+    spec, blob = small.build_payload()
+    entry = spec["traces"][0]
+    for chan in (entry["color"], entry["size"]):
+        assert "dtype" not in chan
+        col = spec["columns"][chan["buf"]]
+        vals = np.frombuffer(blob, dtype=np.float32, count=col["len"], offset=col["byte_offset"])
+        assert vals.min() >= 0.0 and vals.max() <= 1.0
+
+
+def test_small_scatter_stays_direct():
+    fig = Figure().scatter(np.arange(1000.0), np.arange(1000.0))
+    assert not fig.traces[0].use_density()
+    spec, _ = fig.build_payload()
+    assert spec["traces"][0]["tier"] == "direct"
+
+
+def test_force_density():
+    fig = Figure().scatter(np.arange(100.0), np.arange(100.0), density=True)
+    assert fig.traces[0].use_density()
+    spec, _ = fig.build_payload()
+    assert spec["traces"][0]["tier"] == "density"
+
+
+def test_density_without_color_data_honors_colormap():
+    fig = Figure().scatter(np.arange(100.0), np.arange(100.0), density=True, colormap="magma_r")
+    spec, _ = fig.build_payload()
+    assert spec["traces"][0]["density"]["colormap"] == "magma_r"
+
+
+def test_density_view_rebins():
+    # Window must hold more than the drill budget or the adaptive tier ships
+    # points instead (§5: tier follows the visible count) — see drill tests.
+    n = 450_000
+    rng = np.random.default_rng(1)
+    x = rng.uniform(0, 100, n)
+    y = rng.uniform(0, 100, n)
+    fig = Figure().scatter(x, y)
+    update, buffers = fig.density_view(0, 10.0, 90.0, 20.0, 80.0, 64, 48)
+    assert len(update["traces"]) == 1
+    assert update["traces"][0]["mode"] == "density"
+    assert update["traces"][0]["tier"] == "density"
+    assert update["traces"][0]["reduction"] == "count"
+    d = update["traces"][0]["density"]
+    assert d["w"] == 64 and d["h"] == 48
+    # Quantized wire (§29): density updates ship log-encoded u8, one byte per
+    # cell, with `max` restoring the scale on decode.
+    assert d["enc"] == "log-u8"
+    assert len(buffers[0]) == 64 * 48
+    grid = _decode_log_u8(buffers[0], d["max"])
+    assert len(grid) == 64 * 48
+    assert grid.max() == pytest.approx(d["max"])  # grid max survives exactly
+    # only points inside the requested window are counted; the 8-bit log
+    # round-trip is lossy per cell (sub-percent), so the total gets a band
+    inwin = np.sum((x >= 10) & (x < 90) & (y >= 20) & (y < 80))
+    assert inwin > SCATTER_DENSITY_THRESHOLD  # really over budget
+    assert grid.sum() == pytest.approx(inwin, rel=0.05)
+    # Interactive density replies ship NO point sample (#225): above the drill
+    # budget a fixed-size sample reads as individual data points at a zoom
+    # where real points are sub-pixel. The only retained sample is the
+    # first-payload one, drawn below the resolvable-count gate client-side.
+    assert "sample" not in d
+    assert update["traces"][0]["visible"] == inwin
+
+
+def test_density_view_coarsens_sparse_screen_grid():
+    # A viewport just over the direct-point budget should not request a
+    # near-empty one-cell-per-pixel density texture; coarser bins make drill-out
+    # look continuous and reduce update size.
+    n = SCATTER_DENSITY_THRESHOLD + 90_000
+    rng = np.random.default_rng(12)
+    x = rng.uniform(0, 100, n)
+    y = rng.uniform(0, 100, n)
+    fig = Figure().scatter(x, y, density=True)
+    update, buffers = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, 1200, 800)
+    tr = update["traces"][0]
+    assert tr["mode"] == "density"
+    d = tr["density"]
+    assert d["w"] < 1200 and d["h"] < 800
+    assert d["w"] * d["h"] < 1200 * 800
+    grid = _decode_log_u8(buffers[0], d["max"])
+    assert grid.sum() == pytest.approx(n, rel=0.05)  # 8-bit log wire (§29)
+
+
+def test_density_view_drills_to_points_when_window_fits():
+    # §5: the tier is a function of the *visible* count. Zooming a Tier-2
+    # scatter into a window under the budget ships real points with the
+    # color channel restored, in the direct-scatter wire shape.
+    n = SCATTER_DENSITY_THRESHOLD + 50_000
+    rng = np.random.default_rng(2)
+    x = rng.uniform(0, 100, n)
+    y = rng.uniform(0, 100, n)
+    c = rng.uniform(0, 1, n)
+    fig = Figure().scatter(x, y, color=c, density=True)
+    upd, bufs = fig.density_view(0, 0.0, 10.0, 0.0, 10.0, 512, 384)
+    tr = upd["traces"][0]
+    assert tr["mode"] == "points"
+    assert tr["tier"] == "direct"
+    assert tr["reduction"] == "none"
+    view_inwin = int(np.sum((x >= 0) & (x <= 10) & (y >= 0) & (y <= 10)))
+    assert 0 < view_inwin <= SCATTER_DENSITY_THRESHOLD
+    # The shipped window is a padded ALIGNED superset of the view (LOD doc
+    # T13) so nearby pans/zooms render from the client's point-window cache;
+    # the subset is every point of that window, still within the budget.
+    (wx0, wx1), (wy0, wy1) = tr["x_range"], tr["y_range"]
+    assert wx0 <= 0.0 and wx1 >= 10.0 and wy0 <= 0.0 and wy1 >= 10.0
+    vis = (x >= wx0) & (x <= wx1) & (y >= wy0) & (y <= wy1)
+    inwin = int(vis.sum())
+    assert view_inwin <= inwin <= SCATTER_DENSITY_THRESHOLD
+    assert tr["visible"] == inwin and tr["x"]["len"] == inwin
+    xs = np.frombuffer(bufs[tr["x"]["buf"]], dtype=np.float32)
+    assert len(xs) == inwin
+    # §16 window-centered offset — the SHIPPED window's midpoint.
+    assert tr["x"]["offset"] == pytest.approx((wx0 + wx1) / 2.0)
+    # Continuous channels on the drill wire are u8 LUT coordinates (§29:
+    # live-interaction readbacks resolve server-side, so quantization is
+    # invisible; the ramp/colormap only has ~256 useful levels anyway).
+    assert tr["color"]["mode"] == "continuous" and tr["color"]["dtype"] == "u8"
+    cbuf = np.frombuffer(bufs[tr["color"]["buf"]], dtype=np.uint8)
+    assert len(cbuf) == inwin
+    assert fig.traces[0].drill_mode is True
+    # pick speaks drilled indices: shipped 0 -> a canonical row in the window
+    row = fig.pick(0, 0)
+    assert row is not None and wx0 <= row["x"] <= wx1
+    assert "color_value" in row
+    # Intensity handoff (§5): per-point local log-density (u8, like every
+    # unit-scalar live channel) and a blend weight keyed on the VIEW's own
+    # count — padding widens what ships, not what the user is looking at.
+    # Freshly drilled points enter at their cell's count-alpha and ease to
+    # native opacity; the surface wears the mean point color (LOD doc §2), so
+    # no density_colormap rides the points wire.
+    assert tr["density_val"]["dtype"] == "u8"
+    dbuf = np.frombuffer(bufs[tr["density_val"]["buf"]], dtype=np.uint8)
+    assert len(dbuf) == inwin
+    assert dbuf.max() == 255  # the hottest cell reaches full handoff alpha
+    assert tr["lod_blend"] == pytest.approx(view_inwin / SCATTER_DENSITY_THRESHOLD)
+    assert "density_colormap" not in tr
+    # Channels are normalized over the *global* domain after slicing (staff
+    # review: slice-first must not change values — colors stay view-stable),
+    # then quantized: every byte within half a step of the exact unit value.
+    expected = (c[vis] - c.min()) / (c.max() - c.min())
+    np.testing.assert_allclose(cbuf / 255.0, expected, atol=0.5 / 255.0 + 1e-6)
+
+
+def test_interaction_windows_reject_nonfinite_bounds():
+    fig = Figure().scatter(np.arange(10.0), np.arange(10.0))
+    with pytest.raises(ValueError, match="view window"):
+        fig.select_range(np.nan, 1.0, 0.0, 1.0)
+    with pytest.raises(ValueError, match="view window"):
+        fig.select_range(True, 1.0, 0.0, 1.0)
+
+
+def test_density_view_rejects_bad_inputs_without_mutating_drill_state():
+    n = SCATTER_DENSITY_THRESHOLD + 50_000
+    rng = np.random.default_rng(22)
+    x = rng.uniform(0, 100, n)
+    y = rng.uniform(0, 100, n)
+    fig = Figure().scatter(x, y, density=True)
+    fig.density_view(0, 0.0, 1.0, 0.0, 1.0, 64, 48)
+    t = fig.traces[0]
+    assert t.drill_mode is True
+    seq = t.drill_seq
+    shipped = t.shipped_sel.copy()
+
+    with pytest.raises(ValueError, match="trace_id"):
+        fig.density_view(-1, 0.0, 1.0, 0.0, 1.0, 64, 48)
+    with pytest.raises(ValueError, match="view window"):
+        fig.density_view(0, 0.0, np.inf, 0.0, 1.0, 64, 48)
+    with pytest.raises(ValueError, match="view window"):
+        fig.density_view(0, "left", 1.0, 0.0, 1.0, 64, 48)
+    with pytest.raises(ValueError, match="view window"):
+        fig.density_view(0, True, 1.0, 0.0, 1.0, 64, 48)
+    with pytest.raises(ValueError, match="screen dimensions"):
+        fig.density_view(0, 0.0, 1.0, 0.0, 1.0, np.nan, 48)
+    with pytest.raises(ValueError, match="screen dimensions"):
+        fig.density_view(0, 0.0, 1.0, 0.0, 1.0, "wide", 48)
+    with pytest.raises(ValueError, match="screen dimensions"):
+        fig.density_view(0, 0.0, 1.0, 0.0, 1.0, True, 48)
+
+    assert t.drill_mode is True
+    assert t.drill_seq == seq
+    np.testing.assert_array_equal(t.shipped_sel, shipped)
+
+
+def test_density_view_clamps_huge_frontend_screen_shape(monkeypatch):
+    from xy import interaction
+
+    n = SCATTER_DENSITY_THRESHOLD + 1
+    x = np.linspace(0.0, 100.0, n)
+    fig = Figure().scatter(x, x, density=True)
+    seen_shapes = []
+
+    def fake_bin_2d(_x, _y, _lo_x, _hi_x, _lo_y, _hi_y, w, h):
+        seen_shapes.append((w, h))
+        return np.zeros(1, dtype=np.float64)
+
+    monkeypatch.setattr(interaction.kernels, "bin_2d", fake_bin_2d)
+    update, buffers = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, 10**12, 10**12)
+    shape = seen_shapes[0]
+    density = update["traces"][0]["density"]
+    assert 16 <= shape[0] <= MAX_SCREEN_DIM
+    assert 16 <= shape[1] <= MAX_SCREEN_DIM
+    assert density["w"] == shape[0]
+    assert density["h"] == shape[1]
+    assert len(buffers[0]) == 1  # log-u8 wire: one byte per grid cell (§29)
+
+
+def test_drill_seq_guards_stale_picks():
+    # A pick against another subset version must translate through THAT
+    # subset when it is still remembered (LOD doc T13: the client can serve a
+    # view from a retired cached point window) and return None once it is not
+    # — never a row read through the wrong index space (§16: exact or
+    # nothing). n chosen so the full window clears the 1.15x hysteresis exit.
+    n = SCATTER_DENSITY_THRESHOLD + 50_000
+    rng = np.random.default_rng(11)
+    x = rng.uniform(0, 100, n)
+    y = rng.uniform(0, 100, n)
+    fig = Figure().scatter(x, y, density=True)
+    upd1, _ = fig.density_view(0, 0.0, 10.0, 0.0, 10.0, 512, 384)
+    seq1 = upd1["traces"][0]["drill_seq"]
+    sel1 = fig.traces[0].shipped_sel.copy()
+    assert seq1 == 1
+    row1 = fig.pick(0, 0, drill_seq=seq1)  # matching subset: exact row
+    assert row1 is not None and row1["index"] == int(sel1[0])
+    assert fig.pick(0, 0) is not None  # legacy caller without seq still works
+    assert fig.pick(0, 0, drill_seq=True) is None  # bool must not alias seq 1
+
+    upd2, _ = fig.density_view(0, 20.0, 30.0, 20.0, 30.0, 512, 384)
+    seq2 = upd2["traces"][0]["drill_seq"]
+    assert seq2 == seq1 + 1
+    # The previous subset stays remembered (bounded history): a pick against
+    # it translates through THAT subset — the exact row it named, not the new
+    # subset's row 0 — because the client may still be drawing that window.
+    row_old = fig.pick(0, 0, drill_seq=seq1)
+    assert row_old is not None and row_old["index"] == int(sel1[0])
+    assert fig.pick(0, 0, drill_seq=seq2) is not None
+    # An index past the remembered subset's length is dropped, and a seq the
+    # history never held (bumped by exits, or simply unknown) is dropped too.
+    assert fig.pick(0, len(sel1), drill_seq=seq1) is None
+    assert fig.pick(0, 0, drill_seq=seq2 + 50) is None
+
+    # Drill-out keeps remembered subsets alive for retired client windows,
+    # but the exit-bumped seq itself never shipped a subset: a pick against
+    # it must not be read as a *canonical* index.
+    upd3, _ = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, 512, 384)
+    assert upd3["traces"][0]["mode"] == "density"
+    exit_seq = fig.traces[0].drill_seq
+    assert exit_seq == seq2 + 1
+    assert fig.pick(0, 0, drill_seq=exit_seq) is None
+    row_after_exit = fig.pick(0, 0, drill_seq=seq2)
+    (wx0, wx1) = upd2["traces"][0]["x_range"]  # seq2 shipped its PADDED window
+    assert row_after_exit is not None and wx0 <= row_after_exit["x"] <= wx1
+
+    # The history is bounded: churning past DRILL_HISTORY_KEEP subsets expires
+    # the oldest, whose picks then drop instead of translating.
+    from xy.config import DRILL_HISTORY_KEEP
+
+    for i in range(DRILL_HISTORY_KEEP + 1):
+        lo = 5.0 * (i % 8)
+        upd_i, _ = fig.density_view(0, lo, lo + 6.0, lo, lo + 6.0, 512, 384)
+        assert upd_i["traces"][0]["mode"] == "points"
+    assert fig.pick(0, 0, drill_seq=seq1) is None
+    # out-of-range trace ids are rejected, not wrapped pythonically
+    assert fig.pick(-1, 0) is None
+    assert fig.pick(99, 0) is None
+
+
+def test_drill_lod_blend_shrinks_as_zoom_deepens():
+    # The density-ramp blend eases out with the visible count, so colors morph
+    # gradually toward native channel colors instead of stepping at the boundary.
+    n = SCATTER_DENSITY_THRESHOLD + 50_000
+    rng = np.random.default_rng(7)
+    x = rng.uniform(0, 100, n)
+    y = rng.uniform(0, 100, n)
+    fig = Figure().scatter(x, y, density=True)
+    upd_wide, _ = fig.density_view(0, 0.0, 60.0, 0.0, 60.0, 512, 384)
+    upd_deep, _ = fig.density_view(0, 0.0, 5.0, 0.0, 5.0, 512, 384)
+    assert upd_wide["traces"][0]["mode"] == "points"
+    assert upd_deep["traces"][0]["mode"] == "points"
+    assert upd_deep["traces"][0]["lod_blend"] < upd_wide["traces"][0]["lod_blend"]
+    # the handoff is intensity-only (hue is continuous by construction, LOD
+    # doc §2), so no colormap rides the points wire
+    assert "density_colormap" not in upd_deep["traces"][0]
+
+
+def test_density_view_returns_to_density_on_zoom_out():
+    n = 450_000
+    rng = np.random.default_rng(3)
+    x = rng.uniform(0, 100, n)
+    y = rng.uniform(0, 100, n)
+    fig = Figure().scatter(x, y)
+    fig.density_view(0, 0.0, 1.0, 0.0, 1.0, 64, 48)  # drill in
+    assert fig.traces[0].drill_mode is True
+    upd, _ = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, 64, 48)  # zoom out
+    assert upd["traces"][0]["mode"] == "density"
+    assert fig.traces[0].drill_mode is False
+    assert fig.traces[0].shipped_sel is None
+
+
+def test_drill_hysteresis_holds_points_mode_near_boundary():
+    # §5 "tier transitions hysteresis-guarded": once drilled, a window just
+    # over the threshold stays in points mode; entered cold, it aggregates.
+    n = 450_000
+    rng = np.random.default_rng(4)
+    x = rng.uniform(0, 100, n)
+    y = rng.uniform(0, 100, n)
+    side = 69.9  # ~0.489 of the area -> ~220k points: inside the 1.15x guard
+    inwin = int(np.sum((x >= 0) & (x <= side) & (y >= 0) & (y <= side)))
+    assert SCATTER_DENSITY_THRESHOLD < inwin < 1.15 * SCATTER_DENSITY_THRESHOLD
+
+    fig = Figure().scatter(x, y)
+    fig.density_view(0, 0.0, 10.0, 0.0, 10.0, 64, 48)  # enter points mode
+    assert fig.traces[0].drill_mode is True
+    upd, _ = fig.density_view(0, 0.0, side, 0.0, side, 64, 48)
+    assert upd["traces"][0]["mode"] == "points"  # held by hysteresis
+
+    fig2 = Figure().scatter(x, y)
+    upd2, _ = fig2.density_view(0, 0.0, side, 0.0, side, 64, 48)
+    assert upd2["traces"][0]["mode"] == "density"  # cold entry aggregates
+
+
+def test_huge_scatter_with_color_channel_warns_and_aggregates_mean_color():
+    from xy._figure import DIRECT_SOFT_CEILING
+
+    n = DIRECT_SOFT_CEILING + 1
+    x = np.zeros(n)
+    color = np.arange(n, dtype=np.float64)
+    # Color survives aggregation as the surface's per-cell mean point color
+    # (LOD doc §2), and the warning says so.
+    with pytest.warns(RuntimeWarning, match="mean point color"):
+        fig = Figure().scatter(x, x, color=color)
+    spec, _ = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["tier"] == "density"
+    assert tr["density"]["channels_dropped"] is False
+    assert tr["density"]["dropped_channels"] == []
+    assert tr["density"]["color_agg"] == "mean"
+    assert "rgba" in tr["density"]
+
+
+def test_huge_scatter_with_size_channel_warns_and_drops():
+    from xy._figure import DIRECT_SOFT_CEILING
+
+    n = DIRECT_SOFT_CEILING + 1
+    x = np.zeros(n)
+    size = np.ones(n, dtype=np.float64)
+    size[0] = 2.0
+    # Size has no honest per-cell aggregate (LOD doc §2 rule 4): dropped,
+    # recorded in `dropped_channels`, and warned about.
+    with pytest.warns(RuntimeWarning, match="dropped channels: size"):
+        fig = Figure().scatter(x, x, size=size)
+    spec, _ = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["tier"] == "density"
+    assert tr["density"]["channels_dropped"] is True
+    assert tr["density"]["dropped_channels"] == ["size"]
+    assert "rgba" not in tr["density"]
+
+
+# -- pick / hover drill ------------------------------------------------------
+
+
+def test_pick_returns_exact_row():
+    x = np.array([10.0, 20.0, 30.0])
+    y = np.array([1.5, 2.5, 3.5])
+    color = np.array([100.0, 200.0, 300.0])
+    size = np.array([1.0, 2.0, 3.0])
+    fig = Figure().scatter(x, y, color=color, size=size)
+    row = fig.pick(0, 1)
+    assert row["x"] == 20.0
+    assert row["y"] == 2.5
+    assert row["color_value"] == 200.0
+    assert row["size_value"] == 2.0
+
+
+def test_pick_categorical():
+    cats = np.array(["cat", "dog", "cat"])
+    fig = Figure().scatter(np.arange(3.0), np.arange(3.0), color=cats)
+    row = fig.pick(0, 1)
+    assert row["color_category"] == "dog"
+
+
+def test_pick_time_axis_exact():
+    # Exact ms timestamp from f64 canonical, not through f32 (§16).
+    t = np.array(["2024-06-01T00:00:00", "2024-06-01T00:00:01"], dtype="datetime64[s]")
+    fig = Figure().scatter(t, np.array([1.0, 2.0]))
+    row = fig.pick(0, 1)
+    assert row["x_kind"] == "time_ms"
+    assert row["x"] == float(
+        np.datetime64("2024-06-01T00:00:01").astype("datetime64[ms]").astype(np.int64)
+    )
+
+
+def test_pick_out_of_range():
+    fig = Figure().scatter(np.arange(3.0), np.arange(3.0))
+    assert fig.pick(0, 99) is None
+    assert fig.pick(0, -1) is None
+    assert fig.pick(-1, 0) is None
+    assert fig.pick(0.0, 0) is None
+    assert fig.pick(True, 0) is None
+    assert fig.pick(0, 1.0) is None
+    assert fig.pick(0, True) is None
+
+
+def test_pick_heatmap_cell_returns_grid_readout():
+    z = np.arange(12, dtype=float).reshape(3, 4)
+    fig = Figure().heatmap(z)
+    idx = 1 * 4 + 2
+
+    row = fig.pick(0, idx)
+
+    assert row is not None
+    assert row["trace"] == 0
+    assert row["index"] == idx
+    assert row["row"] == 1
+    assert row["col"] == 2
+    assert row["color_value"] == z[1, 2]
+    # Kernel fields override client fields, which may contain categorical labels.
+    assert "x" not in row and "y" not in row
+
+
+def test_pick_heatmap_out_of_range_returns_none():
+    z = np.arange(12, dtype=float).reshape(3, 4)
+    fig = Figure().heatmap(z)
+
+    assert fig.pick(0, 12) is None
+    assert fig.pick(0, -1) is None
+    assert fig.pick(0, 10**6) is None
+
+
+def test_pick_heatmap_nan_cell_omits_value():
+    z = np.arange(12, dtype=float).reshape(3, 4)
+    z[1, 2] = np.nan
+    fig = Figure().heatmap(z)
+
+    row = fig.pick(0, 1 * 4 + 2)
+
+    assert row is not None
+    assert "color_value" not in row
+
+
+# -- shipped↔canonical translation (staff-review regressions) ----------------
+
+
+def test_pick_translates_shipped_index_after_nan_drop():
+    # Rows 1 and 3 are dropped at ship time; the client's shipped index 1 is
+    # canonical row 2. Without translation, pick reported the wrong row.
+    x = np.array([0.0, np.nan, 2.0, 3.0, 4.0])
+    y = np.array([10.0, 11.0, 12.0, np.nan, 14.0])
+    fig = Figure().scatter(x, y)
+    spec, _ = fig.build_payload()
+    assert spec["traces"][0]["tier"] == "direct"
+    row = fig.pick(0, 1)  # shipped index 1 == canonical row 2
+    assert row["x"] == 2.0 and row["y"] == 12.0
+    row_last = fig.pick(0, 2)  # shipped index 2 == canonical row 4
+    assert row_last["x"] == 4.0 and row_last["y"] == 14.0
+    assert fig.pick(0, 3) is None  # only 3 shipped vertices
+
+
+def test_pick_translates_nan_drop_before_payload_build():
+    x = np.array([0.0, np.nan, 2.0, 3.0, 4.0])
+    y = np.array([10.0, 11.0, 12.0, np.nan, 14.0])
+    fig = Figure().scatter(x, y)
+    row = fig.pick(0, 1)  # shipped index 1 == canonical row 2
+    assert row is not None
+    assert row["index"] == 2
+    assert row["x"] == 2.0 and row["y"] == 12.0
+    assert fig.pick(0, 3) is None
+
+
+def test_selection_translates_to_shipped_positions():
+    x = np.array([0.0, np.nan, 2.0, 3.0, 4.0])
+    y = np.array([10.0, 11.0, 12.0, 13.0, 14.0])
+    fig = Figure().scatter(x, y)
+    fig.build_payload()  # establishes shipped_sel = [0, 2, 3, 4]
+    canonical = fig.select_range(1.5, 3.5, 0.0, 100.0)[0]  # rows 2, 3
+    np.testing.assert_array_equal(canonical, [2, 3])
+    shipped = fig.to_shipped_indices(0, canonical)
+    np.testing.assert_array_equal(shipped, [1, 2])  # positions in shipped buffer
+
+
+def test_selection_prunes_non_overlapping_zone_chunks(monkeypatch):
+    x = np.concatenate([np.zeros(ZONE_CHUNK), np.full(ZONE_CHUNK, 100.0)])
+    y = np.concatenate([np.zeros(ZONE_CHUNK), np.full(ZONE_CHUNK, 100.0)])
+    fig = Figure().scatter(x, y)
+    seen = []
+    expanded = []
+    original = interaction.kernels.range_indices
+    original_expand = interaction._expand_zone_chunks
+
+    def wrapped(xv, yv, *args):
+        seen.append(len(xv))
+        return original(xv, yv, *args)
+
+    def wrapped_expand(col, chunks):
+        expanded.append(len(chunks))
+        return original_expand(col, chunks)
+
+    monkeypatch.setattr(interaction.kernels, "range_indices", wrapped)
+    monkeypatch.setattr(interaction, "_expand_zone_chunks", wrapped_expand)
+    selected = fig.select_range(-1.0, 1.0, -1.0, 1.0)[0]
+    np.testing.assert_array_equal(selected, np.arange(ZONE_CHUNK, dtype=np.uint32))
+    assert seen == [ZONE_CHUNK]
+    assert expanded == [1]
+
+
+def test_to_shipped_indices_translates_nan_drop_before_payload_build():
+    x = np.array([0.0, np.nan, 2.0, 3.0, 4.0])
+    y = np.array([10.0, 11.0, 12.0, 13.0, 14.0])
+    fig = Figure().scatter(x, y)
+    canonical = fig.select_range(1.5, 3.5, 0.0, 100.0)[0]
+    np.testing.assert_array_equal(canonical, [2, 3])
+    np.testing.assert_array_equal(fig.to_shipped_indices(0, canonical), [1, 2])
+
+
+def test_density_pick_before_payload_build_has_no_point_space():
+    n = SCATTER_DENSITY_THRESHOLD + 1
+    x = np.arange(n, dtype=np.float64)
+    fig = Figure().scatter(x, x, density=True)
+    assert fig.pick(0, 0) is None
+    np.testing.assert_array_equal(fig.to_shipped_indices(0, np.array([0], dtype=np.uint32)), [])
+
+
+def test_selection_helpers_reject_invalid_trace_ids():
+    fig = Figure().scatter(np.arange(5.0), np.arange(5.0))
+    fig.build_payload()
+    idx = np.array([1, 2], dtype=np.uint32)
+
+    with pytest.raises(ValueError, match="trace_id"):
+        fig.to_shipped_indices(-1, idx)
+    with pytest.raises(ValueError, match="trace_id"):
+        fig.to_shipped_indices(1.0, idx)
+    with pytest.raises(ValueError, match="trace_id"):
+        fig.select_range(0.0, 4.0, 0.0, 4.0, trace_id=-1)
+    with pytest.raises(ValueError, match="trace_id"):
+        fig.select_range(0.0, 4.0, 0.0, 4.0, trace_id=True)
+
+
+def test_to_shipped_indices_identity_without_drop():
+    fig = Figure().scatter(np.arange(10.0), np.arange(10.0))
+    fig.build_payload()
+    idx = np.array([3, 7], dtype=np.uint32)
+    np.testing.assert_array_equal(fig.to_shipped_indices(0, idx), idx)
+
+
+def test_density_false_is_honored():
+    # density=False must force direct draw (it was silently ignored before).
+    n = SCATTER_DENSITY_THRESHOLD + 1
+    x = np.zeros(n)
+    fig = Figure().scatter(x, x, density=False)
+    assert not fig.traces[0].use_density()
+    spec, _ = fig.build_payload()
+    assert spec["traces"][0]["tier"] == "direct"
+
+
+def test_density_false_above_ceiling_warns():
+    from xy._figure import DIRECT_SOFT_CEILING
+
+    n = DIRECT_SOFT_CEILING + 1
+    x = np.zeros(n)
+    with pytest.warns(RuntimeWarning, match="direct draw above the ceiling"):
+        Figure().scatter(x, x, density=False)
+
+
+def test_to_html_escapes_user_strings():
+    # User text crosses into both <title> and an inline JSON literal. Escape the
+    # full HTML-sensitive set, not only the obvious lowercase </script> case.
+    evil = "</ScRiPt><!--<img src=x onerror=alert(1)>&"
+    fig = Figure(title=evil, x_label=evil, y_label=evil).bar([evil, "safe"], [1.0, 2.0], name=evil)
+    html = fig.to_html()
+    body = html.split("<body>", 1)[1]
+    assert "</script><img" not in body  # broken-out tag never appears verbatim
+    spec_literal = body.rsplit("const spec = ", 1)[1].split(";\n  const buf", 1)[0]
+    assert "<" not in spec_literal
+    assert ">" not in spec_literal
+    assert "&" not in spec_literal
+    assert "\\u003c/ScRiPt\\u003e" in spec_literal
+    assert "\\u0026" in spec_literal
+    head = html.split("<body>", 1)[0]
+    assert "&lt;/ScRiPt&gt;" in head  # <title> is entity-escaped
+
+
+def test_line_with_nan_x_sorts_and_excludes():
+    # NaN in x must not defeat the sorted-x check (any(diff<0) is NaN-blind);
+    # after the fix the trace sorts, NaNs land last, and m4 excludes them.
+    n = 20_000
+    x = np.arange(n, dtype=np.float64)
+    x[[100, 5000]] = np.nan
+    y = np.sin(np.arange(n) * 0.01)
+    fig = Figure().line(x, y)
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    xbuf = np.frombuffer(
+        blob,
+        dtype=np.float32,
+        count=spec["columns"][tr["x"]]["len"],
+        offset=spec["columns"][tr["x"]]["byte_offset"],
+    )
+    assert not np.isnan(xbuf).any()  # §19: NaN never reaches a vertex buffer

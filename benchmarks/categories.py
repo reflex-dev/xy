@@ -1,0 +1,158 @@
+"""Shared benchmark category metadata.
+
+Keep `id` values stable: CI artifacts and downstream dashboards can key off
+them even as the prose names or goals evolve.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+
+BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
+    {
+        "id": "small_data_startup",
+        "name": "Small-data startup",
+        "why": "Everyday charts should feel instant; a performance library cannot only win at 10M rows.",
+        "metrics": "TTFR, JS/payload size, Python overhead",
+        "harness": "benchmarks/bench_vs.py --ttfr at 1k-100k; benchmarks/test_codspeed_kernels.py::test_first_payload_scatter_small",
+        "status": "tracked",
+        "goal": "Beat Plotly/Bokeh/Altair on first interactive paint for common charts.",
+    },
+    {
+        "id": "install_footprint_import_budget",
+        "name": "Install footprint and import budget",
+        "why": "Notebook, CI, and serverless users feel package weight and cold import time before the first chart exists.",
+        "metrics": "cold import time, installed distribution bytes, file count",
+        "harness": "benchmarks/bench_install.py",
+        "status": "tracked",
+        "goal": "Keep xy lightweight at import and smaller to install than broad plotting stacks.",
+    },
+    {
+        "id": "medium_direct_scatter",
+        "name": "Medium direct scatter",
+        "why": "Proves exact marker rendering, hover, color, and size channels before aggregation kicks in.",
+        "metrics": "FPS, TTFR, memory, bytes/point, hover latency",
+        "harness": "benchmarks/bench_vs.py at 100k-200k; benchmarks/bench_interaction.py; benchmarks/test_codspeed_kernels.py::test_first_payload_scatter_medium",
+        "status": "tracked",
+        "goal": "Smooth exact WebGL scatter with bounded bytes/point and no JSON-number payload cliff.",
+    },
+    {
+        "id": "huge_scatter_overview",
+        "name": "Huge scatter overview",
+        "why": "Proves screen-bounded rendering for datasets larger than the browser should draw point-for-point.",
+        "metrics": "ingest/bin time, density payload size, peak memory, TTFR",
+        "harness": "benchmarks/bench_scatter_native.py, benchmarks/bench_vs.py, benchmarks/test_codspeed_kernels.py::test_first_payload_density_large, example app assets",
+        "status": "tracked",
+        "goal": "Keep resident/render payload flat in N while showing truthful density summaries.",
+    },
+    {
+        "id": "adaptive_scatter_drilldown",
+        "name": "Adaptive scatter drilldown",
+        "why": "The large-data claim needs a credible path from overview to exact visible points.",
+        "metrics": "visible-query latency, tier-switch latency, exact-point recovery, badge accuracy",
+        "harness": "benchmarks/test_codspeed_kernels.py::test_adaptive_drilldown_cycle and ::test_adaptive_drilldown_cycle_mean_color (channel-bearing: per-request cost must exclude full-column color work)",
+        "status": "tracked",
+        "goal": "Exact points when visible count is under budget; sampled/density with explicit counts otherwise.",
+    },
+    {
+        "id": "huge_line_time_series",
+        "name": "Huge line/time series",
+        "why": "Common observability and finance workload; Plotly-resampler sets the bar here.",
+        "metrics": "decimation time, zoom re-decimation latency, TTFR, extrema preservation",
+        "harness": "benchmarks/bench.py, benchmarks/bench_native.py, benchmarks/bench_interaction.py, benchmarks/test_codspeed_kernels.py::test_decimate_view",
+        "status": "tracked",
+        "goal": "Screen-bounded line payloads with extrema-preserving decimation and fast zoom refresh.",
+    },
+    {
+        "id": "many_chart_dashboards",
+        "name": "Many-chart dashboards",
+        "why": "Plotly-class apps often fail from total page weight and many live canvases, not one chart.",
+        "metrics": "payload prep, navigation readiness, JS heap, redraw submission, scroll visibility, context loss/restore, stable chart-count ceiling",
+        "harness": "benchmarks/bench_dashboard.py",
+        "status": "tracked",
+        "goal": "Measure the 10-50 chart scaling curve and expose LRU context eviction without discarding partial-row metrics.",
+    },
+    {
+        "id": "interaction_smoothness",
+        "name": "Interaction smoothness",
+        "why": "Users judge performance by pan/zoom/hover, not just export time.",
+        "metrics": "pan/zoom FPS, wheel latency, hover latency, tooltip stability, selection latency, frame color delta",
+        "harness": "benchmarks/bench_interaction.py; benchmarks/bench_transport.py",
+        "status": "tracked",
+        "goal": "Stay responsive during interaction, avoid blank/flickering frames, then refine view after interaction settles.",
+    },
+    {
+        "id": "payload_export_size",
+        "name": "Payload/export size",
+        "why": "Notebooks, static HTML, docs, and dashboards pay for every byte shipped.",
+        "metrics": "standalone HTML bytes, binary payload bytes, bundle bytes",
+        "harness": "benchmarks/bench_vs.py, benchmarks/bench_scatter_native.py, benchmarks/bench_transport.py, benchmarks/test_codspeed_transport.py, benchmarks/test_codspeed_kernels.py::test_first_payload_density_large, benchmarks/test_codspeed_kernels.py::test_memory_report_density_medium, example app asset sizes",
+        "status": "tracked",
+        "goal": "Keep data payloads binary and screen-bounded where possible; warn when exact export would be huge.",
+    },
+    {
+        "id": "core_2d_chart_breadth",
+        "name": "Core 2D chart breadth",
+        "why": "The library needs to stay fast beyond the scatter wedge: bars, histograms, areas, and heatmaps are everyday chart workloads.",
+        "metrics": "payload-prep time, payload bytes, standalone HTML bytes, TTFR",
+        "harness": "benchmarks/bench_2d_charts.py vs Plotly/Seaborn; benchmarks/bench_pyplot_vs_matplotlib.py; benchmarks/bench_interaction.py; CodSpeed core_2d rows",
+        "status": "tracked",
+        "goal": "Beat Plotly on user-visible first paint for common 2D charts while tracking Seaborn raster baselines where applicable.",
+    },
+    {
+        "id": "input_ingestion",
+        "name": "Input ingestion",
+        "why": "Real applications provide float32, strided, datetime, list, pandas, and Arrow inputs rather than only ideal contiguous float64 arrays.",
+        "metrics": "ingest latency, copies, peak Python memory",
+        "harness": "benchmarks/bench_workflows.py ingestion rows",
+        "status": "tracked",
+        "goal": "Keep zero-copy inputs cheap and make unavoidable conversions visible.",
+    },
+    {
+        "id": "streaming_updates",
+        "name": "Streaming updates",
+        "why": "Monitoring and notebook workflows append data repeatedly; stable domains should not trigger full-index rebuilds.",
+        "metrics": "append latency, refresh bytes, incremental pyramid update latency, domain-growth rebuild latency",
+        "harness": "benchmarks/bench_workflows.py streaming rows; benchmarks/bench_transport.py append diagnostics",
+        "status": "tracked",
+        "goal": "Keep stable-domain appends proportional to the batch and expose unavoidable domain-growth rebuilds.",
+    },
+    {
+        "id": "log_autorange",
+        "name": "Log autorange",
+        "why": "Large positive/negative and non-finite series are common in monitoring and scientific charts, and log axes must avoid full-data rescans.",
+        "metrics": "range latency, positive-domain correctness, peak Python memory",
+        "harness": "benchmarks/bench_workflows.py log autorange row; tests/test_figure.py",
+        "status": "tracked",
+        "goal": "Compute correct positive log domains from zone statistics with cost proportional to chunks, not points.",
+    },
+    {
+        "id": "static_export",
+        "name": "Static export",
+        "why": "HTML, SVG, and PNG export are common notebook, documentation, and reporting paths with different bottlenecks.",
+        "metrics": "export latency, output bytes, peak Python memory",
+        "harness": "benchmarks/bench_workflows.py export rows; benchmarks/bench_pyplot_vs_matplotlib.py matched PNG rows",
+        "status": "tracked",
+        "goal": "Track each export target independently without mixing payload preparation and browser startup.",
+    },
+)
+
+CATEGORY_BY_ID = {category["id"]: category for category in BENCHMARK_CATEGORIES}
+
+
+def categories_for(ids: Iterable[str]) -> list[dict[str, str]]:
+    return [CATEGORY_BY_ID[category_id] for category_id in ids]
+
+
+def markdown_category_table(
+    categories: Iterable[dict[str, str]] = BENCHMARK_CATEGORIES,
+) -> list[str]:
+    lines = [
+        "| id | category | status | primary metrics | current/planned harness | goal |",
+        "|---|---|---|---|---|---|",
+    ]
+    for category in categories:
+        lines.append(
+            "| {id} | {name} | {status} | {metrics} | {harness} | {goal} |".format(**category)
+        )
+    return lines
