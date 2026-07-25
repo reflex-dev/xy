@@ -895,6 +895,8 @@ def test_flag_colormap_matches_matplotlib_lut_and_gray_aliases() -> None:
     assert channels.is_colormap("flag")
     assert channels.is_colormap("flag_r")
     assert _colormap_stops("flag_r") == list(reversed(flag))
+    assert resolve_cmap("flag") == "flag"
+    assert resolve_cmap("flag_r") == "flag_r"
 
     assert resolve_cmap("gray") == "gray"
     assert resolve_cmap("grey") == "gray"
