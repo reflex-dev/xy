@@ -387,6 +387,14 @@ browser-only adaptation.
 | Native PNG | Full validated static surface | Chart-local tokens and `var()` fallbacks | Supported static chrome fields; no general slot-class cascade | No | One resolved state |
 | Chromium PNG | Full | Full | Full serialized component and slot styling | Only CSS included with `custom_css` | Evaluated at capture time, then frozen |
 
+The palette, colormaps, and `format=` on axes, colorbars, and tooltips are
+part of the chart itself rather than the cascade, so they render identically in
+every column above. So do the legend for a categorical `color=` channel and the
+`text=` label on a reference line or band — both used to appear only in the
+browser. The one split is `theme(font_family=)`, which the native
+PNG/JPEG/WebP path cannot honor — see
+[Custom fonts and export limitations](#custom-fonts-and-export-limitations).
+
 “Supported static chrome fields” means options the SVG/native renderer owns,
 such as axes and the built-in legend. It does not mean arbitrary DOM CSS or
 Tailwind classes are evaluated without a browser. Browser-only color
