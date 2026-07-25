@@ -404,7 +404,36 @@ For exporter selection, engine arguments, and complete code examples, see
 
 ## Custom fonts and export limitations
 
-Browser charts inherit fonts from the chart root. Load the font in the host
+`xy.theme(font_family=..., font_size=...)` sets the typeface and base text size
+for the whole chart. Every text element scales from `font_size`, so tick
+labels, axis titles, the legend, and the chart title keep their proportions:
+
+~~~python
+chart = xy.line_chart(
+    xy.line(months, revenue, name="revenue"),
+    xy.y_axis(label="revenue", format="$,.0f"),
+    xy.legend(),
+    xy.theme(font_family="Georgia, 'Times New Roman', serif", font_size=15),
+    title="Quarterly revenue",
+)
+~~~
+
+Where each half applies:
+
+| Output | `font_family` | `font_size` |
+| --- | --- | --- |
+| Browser (notebook, Reflex, standalone HTML) | yes | yes |
+| SVG, PDF | yes | yes |
+| PNG, JPEG, WebP (native engine) | no — baked bitmap face | yes |
+| PNG via `engine=Engine.chromium` | yes | yes |
+
+The native raster exporter draws text with XY's own bitmap font and runs no
+browser cascade, so it cannot switch typefaces. Use
+`chart.to_image(..., engine=xy.Engine.chromium)` when a raster export must
+match the browser's text exactly, or export SVG or PDF, which carry the family
+through as a real font attribute.
+
+Browser charts also inherit fonts from the chart root. Load the font in the host
 application first, then set `font_family` through chart `style=` or apply a
 class that defines `font-family`. The live example uses a system serif so it
 does not depend on a network font; replace that stack with the family your host
