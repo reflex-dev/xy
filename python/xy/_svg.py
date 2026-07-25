@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import math
 import re
+import warnings
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from os import PathLike
@@ -2690,23 +2691,47 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     inset = 6.0
     available_w = max(1.0, float(plot["w"]) - 2 * inset)
     ncols = requested_cols
+    # A cell must at least retain its handle and a visible ellipsis, so the
+    # plot width bounds how many columns can ever be drawn.
+    min_cell_w = handle + gap + 2 * pad + 4 * _LEGEND_CHAR_WIDTH
+    max_fit_cols = max(1, int(max(0.0, available_w - pad) // min_cell_w))
     if ncols * natural_cell_w + pad > available_w:
-        # A cell must at least retain its handle and a visible ellipsis. Reduce
-        # an impossible column count before shortening the individual labels.
-        min_cell_w = handle + gap + 2 * pad + 4 * _LEGEND_CHAR_WIDTH
-        max_fit_cols = max(1, int(max(0.0, available_w - pad) // min_cell_w))
+        # Reduce an impossible column count before shortening the labels.
         ncols = min(ncols, max_fit_cols)
     cell_w = min(natural_cell_w, max(1.0, (available_w - pad) / ncols))
     box_w = min(available_w, ncols * cell_w + pad)
 
-    nrows = (len(named) + ncols - 1) // ncols
     available_h = max(1.0, float(plot["h"]) - 2 * inset)
+    max_rows = max(0, int((available_h - pad - title_h) // line_h))
+
+    # The browser legend scrolls (overflow:auto); a static export cannot, so
+    # entries that do not fit are lost. Spend width before losing any: widen
+    # past `requested_cols` up to whatever the plot rect actually affords, so a
+    # tall series list reflows into columns instead of being cut (§28 — a drop
+    # is allowed but never silent, see the warning below).
+    if max_rows and ncols * max_rows < len(named):
+        needed_cols = (len(named) + max_rows - 1) // max_rows
+        ncols = min(max(ncols, needed_cols), max_fit_cols)
+        cell_w = min(natural_cell_w, max(1.0, (available_w - pad) / ncols))
+        box_w = min(available_w, ncols * cell_w + pad)
+
+    nrows = (len(named) + ncols - 1) // ncols
     visible_rows = nrows
     natural_box_h = nrows * line_h + pad + title_h
     if natural_box_h > available_h:
-        visible_rows = max(0, int((available_h - pad - title_h) // line_h))
+        visible_rows = max_rows
     visible_count = min(len(named), visible_rows * ncols)
     box_h = min(available_h, visible_rows * line_h + pad + title_h)
+    if visible_count < len(named):
+        warnings.warn(
+            f"legend shows {visible_count} of {len(named)} entries in static "
+            f"export: the plot rect fits {max_rows or 0} row(s) by {ncols} "
+            "column(s) and a static legend cannot scroll the way the browser "
+            "one does. Raise the chart height, pass a larger legend(ncols=...), "
+            "or name fewer series to keep every entry.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
 
     loc = options.get("loc") or "upper right"
     if "left" in loc:

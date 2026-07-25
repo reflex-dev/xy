@@ -171,6 +171,13 @@ configuration.
 Set `ncols=` on the legend, e.g. `xy.legend(ncols=2, title="Series")`, which
 lays the entries out in two columns under an optional legend title.
 
+`ncols=` is a minimum for static output. The browser legend scrolls when it
+outgrows the plot, but SVG and PNG cannot, so those exporters add columns
+beyond `ncols=` when that is what it takes to draw every entry. If the plot
+rect is too small even at full width, the export keeps as many entries as fit
+and warns with the row and column count it managed — raise the chart height or
+`ncols=` to clear it.
+
 ### How do I hide the legend or keep a series out of it?
 
 Use `xy.legend(show=False)` to suppress the legend entirely. Only marks with a
