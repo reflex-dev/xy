@@ -392,10 +392,13 @@ class _Cmd:
             if encoded_color_mode == 1:
                 entries = _colormap_stops(color_channel.get("colormap", "viridis"))
             else:
-                entries = [
-                    _parse_color(entry)[:3]
-                    for entry in color_channel.get("palette") or DEFAULT_PALETTE
-                ]
+                # Per-index fallback for browser-only entries (shared with the
+                # SVG writer and the density plane), so distinct categories do
+                # not collapse onto one static fallback color.
+                from . import channels as _channels
+
+                palette = color_channel.get("palette") or DEFAULT_PALETTE
+                entries = _channels.palette_rows_rgba8(palette, len(palette))[:, :3].tolist()
             self._u32(len(entries))
             self.buf += np.ascontiguousarray(entries, dtype=np.uint8).reshape(-1).tobytes()
 
@@ -737,9 +740,10 @@ def render_raster(
             dash=_AXIS_GRID_DASHES.get(str(ystyle.get("grid_dash", "solid"))),
         )
 
+    spec_palette: Sequence[str] = spec.get("palette") or DEFAULT_PALETTE
     for palette_i, t in enumerate(spec["traces"]):
         style = t.get("style") or {}
-        color = _css(style.get("color"), DEFAULT_PALETTE[palette_i % len(DEFAULT_PALETTE)])
+        color = _css(style.get("color"), spec_palette[palette_i % len(spec_palette)])
         kind = t["kind"]
         trace_sx = x_scales.get(t.get("x_axis", "x"), sx)
         trace_sy = y_scales.get(t.get("y_axis", "y"), sy)
@@ -1009,10 +1013,10 @@ def render_raster(
         # clip the bounded/truncated equivalent to the plot rectangle.
         cmd.clip(px0, py0, plot["w"], plot["h"])
     if show_main_legend:
-        _emit_legend(cmd, named, plot, spec.get("legend") or {}, default_text)
+        _emit_legend(cmd, named, plot, spec.get("legend") or {}, default_text, spec_palette)
     for extra, items in extra_legends:
         if items:
-            _emit_legend(cmd, items, plot, extra, default_text)
+            _emit_legend(cmd, items, plot, extra, default_text, spec_palette)
     if legend_present:
         cmd.clip(0, 0, width, height)
     if spec.get("colorbar"):
@@ -1949,6 +1953,7 @@ def _emit_legend(
     plot: dict[str, float],
     options: dict[str, Any],
     text_color: str = _TEXT,
+    palette: Sequence[str] = DEFAULT_PALETTE,
 ) -> None:
     legend = _legend_layout(named, plot, options)
     if not legend["visible_count"]:
@@ -1979,7 +1984,7 @@ def _emit_legend(
         style = t.get("style") or {}
         color_str = _css(
             style.get("color") or (t.get("color") or {}).get("color"),
-            DEFAULT_PALETTE[i % len(DEFAULT_PALETTE)],
+            palette[i % len(palette)],
         )
         c = _parse_color(color_str)
         col, row = i % ncols, i // ncols

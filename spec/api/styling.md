@@ -148,6 +148,103 @@ xy.x_axis(
 )
 ```
 
+#### Axis visibility switches
+
+Hiding axis chrome is the single most common styling edit and it is pure
+subtraction, so it is a switch, not seven transparent colors. `x_axis` and
+`y_axis` take `show`, `line`, `ticks`, `grid`, and `text`; each compiles to the
+style properties below, which means they need no renderer support and compose
+with everything that already reads `style`.
+
+| Switch | Compiles to |
+| --- | --- |
+| `line=False` | `axis_width: 0`, `axis_color: "#00000000"` |
+| `ticks=False` | `tick_length: 0`, `tick_width: 0` (geometry, never `tick_color`: every renderer resolves the tick-*label* color as `tick_label_color` falling back to `tick_color`, so blanking the paint would erase the labels too) |
+| `grid=False` | `grid_opacity: 0` |
+| `text=False` | `tick_label_color: "#00000000"`, `label_color: "#00000000"` |
+| `show=False` | all four |
+
+`show` is the default for the other four, and each overrides it in **both**
+directions: `y_axis(show=False, grid=True)` is a grid with no other chrome.
+An explicit `style=` property always outranks a switch, so a switch is a
+default and never a lock. `text` (axis text visibility) is deliberately not
+named `labels`, which would read as a sibling of `tick_labels` (the label
+*strings*). Unset switches emit no style at all, so specs that do not use them
+stay byte-identical.
+
+```python
+xy.x_axis(show=False)                       # no axis chrome drawn
+xy.y_axis(show=False, grid=True)            # horizontal guides only
+xy.x_axis(line=False, ticks=False, style={"grid_color": "#1e293b"})
+```
+
+The switches control what is *painted*, not the layout: the plot rect is
+unchanged, because the gutters are reserved by `padding`. An edge-to-edge
+sparkline is `show=False` **plus** `padding=0`.
+
+### Series palette and custom colormaps
+
+The two color decisions that used to be unreachable from a host's design tokens
+are `theme(palette=...)` and `colormap=`.
+
+`xy.theme(palette=[...])` sets the chart's **categorical cycle**: the colors
+unnamed series take in order, and the colors a categorical `color=` channel
+assigns to its categories. It must land before any mark applies — a trace bakes
+its color at build — and rides the spec as `palette`, the indexed fallback the
+SVG and native renderers use for a trace with no style color. (The browser
+client never reads the chart-level key; it works from each channel's own
+resolved `palette`.) A palette entry is an ordinary paint color, so
+Entries obey the **same rule as colormap stops**, for the same reason: a
+palette is an indexed lookup consumed by four things with no DOM between them
+(the density plane, the SVG writer, the native rasterizer, and the client's own
+worker re-bin), so `var()`/`oklch()`/`color-mix()` are refused with that reason.
+The failure they would cause is worse than for a single mark — several such
+entries resolve to one fallback, collapsing distinct categories into one
+indistinguishable color. A single `color=`/`stroke`/`fill` is unaffected: one
+mark, one paint, existing fallback behavior. A palette shorter than the
+series/category count repeats, with a warning.
+
+Entries are **normalized to hex on the wire**, not merely validated. The
+browser client's only cascade-free decode is `hexColor`; a `tomato` entry
+shipped verbatim would fall through to a `getComputedStyle` probe, which
+returns `""` while the chart root is still detached (notebook webviews attach
+asynchronously) — black, and permanently so, because a cached palette LUT is
+rebuilt only on GL context loss. Resolving once in Python means all four
+consumers read the same bytes with no cascade involved.
+
+`channels.palette_rows_rgba8` is the one place a palette is turned into LUT
+rows — shared by the density plane and both static exporters, so they cannot
+drift. It substitutes the built-in palette **at the same index** (never one
+shared fallback) and warns; with the validator above, that path is unreachable
+from the public API and exists for hand-authored specs.
+
+`colormap=` accepts, in addition to the twenty built-in names:
+
+| Form | Example |
+| --- | --- |
+| A sequence of CSS colors | `["#0b1220", "#2563eb", "#22d3ee", "#fde68a"]` |
+| `(position, color)` pairs | `[(0.0, "#000"), (0.25, "#fff"), (1.0, "#000")]` |
+| A CSS gradient | `"linear-gradient(#0b1220, #2563eb 30%, #fde68a)"` |
+
+The gradient form shares `mark_fill`'s CSS stop-position grammar and therefore
+its 2–8 stop bound; the sequence forms take up to 256. A direction keyword
+(`to top`) is refused rather than ignored — a colormap maps values to colors and
+has no spatial axis, so reverse the stop order instead.
+
+Every form normalizes to **evenly spaced 8-bit RGB stops** — the shape the
+built-in tables already use — so the WebGL client, the SVG writer, and the
+native rasterizer share one LUT interpolation path. Uniform input ships its own
+stops; positioned input resamples at the LUT's 256 texels, which makes the round
+trip exact rather than approximate. Resolution is idempotent, so a mark that
+validates its own `colormap=` can pass the canonical form straight on.
+
+Unlike a palette entry, a colormap stop must resolve to fixed channels in
+Python (hex, `rgb()`, `hsl()`, named colors). `var()`, `oklch()`, and
+`color-mix()` raise **with that reason**: they resolve only in a browser, and a
+colormap that painted one ramp on screen and a fallback in `to_png()` would be
+exactly the silent divergence §28 forbids. `_r` reversal stays a built-in-name
+affordance; reverse a custom ramp by reversing the sequence.
+
 ### Axis ticks and label formatting
 
 Tick placement is computed in f64 on the CPU (§16), never through f32, and is

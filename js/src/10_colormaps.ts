@@ -26,11 +26,22 @@ const COLORMAP_STOPS = {
   spectral: [[158, 1, 66], [212, 61, 79], [244, 109, 67], [253, 173, 96], [254, 224, 139], [255, 255, 190], [230, 245, 152], [170, 220, 164], [102, 194, 165], [51, 135, 188], [94, 79, 162]],
 };
 
+// A colormap on the wire is a built-in name, or explicit evenly spaced RGB
+// stops — the exact shape of the tables above. Python resolves every custom
+// ramp (CSS colors, `linear-gradient(...)`, positioned stops) to that form
+// once, so this client, the SVG writer, and the native rasterizer all build
+// the same LUT from one interpolation path.
 export function colormapStops(name) {
+  if (Array.isArray(name)) return name;
   const reversed = typeof name === "string" && name.endsWith("_r");
   const base = reversed ? name.slice(0, -2) : name;
   const stops = COLORMAP_STOPS[base] || COLORMAP_STOPS.viridis;
   return reversed ? [...stops].reverse() : stops;
+}
+
+// Cache/DOM-id key for a colormap: a name, or a stable digest of the stops.
+export function colormapKey(name) {
+  return Array.isArray(name) ? "custom:" + name.join(",") : String(name);
 }
 
 export function buildLutData(name) {

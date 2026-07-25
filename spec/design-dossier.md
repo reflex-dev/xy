@@ -430,7 +430,7 @@ re-exports several of them as a historic import path and is not listed for those
 | `LOD_POINT_CACHE_WINDOWS` | `3` | Retired exact point windows kept per trace client-side beyond the live drill; LRU-bounded VRAM, swept by the T11 outgrown rule. | `js/src/45_lod.ts` (`lodRetireDrill`, `lodPromoteCachedDrill`) |
 | `LOD_POINTS_REQUEST_BAND` | `4` | The aggregate tier never refines per view (T13, revised): a raw-view `density_view` goes out only when the estimated in-view count sits within `budget × 4` of points territory — the LOWER of an area-scaled cached-window count and the retained sample counted in-view (`lodSampleViewCount`, distribution-true where area-scaling over-estimates sparse tails). | `js/src/45_lod.ts` (`lodAggregateStands`) |
 | `LOD_AGG_STEP_FACTOR` / `LOD_AGG_STEP_MAX` / `LOD_AGG_STEP_SLACK` | `4` / `2` / `1.5` | The stepped aggregate ladder (T13): while standing, the only density request is the view snapped outward to a power-of-4 block grid over the extent (per axis), at most 2 steps below home, and only when every covering texture is coarser than the step by more than the slack. Quantized windows are pan-stable and dedupable — at most 2 smooth-to-smooth swaps before points, worst-case softness ≈ 4× stretch per axis. | `js/src/45_lod.ts` (`lodAggregateStepWindow`) |
-| `DEFAULT_PALETTE` | 10 CVD-safe hex entries | Per-trace default color cycle and the fallback categorical palette when a channel supplies none (§20/§36). | `marks.py`, `_payload.py`, `_svg.py`, `_raster.py` |
+| `DEFAULT_PALETTE` | 8 CVD-safe hex entries | Per-trace default color cycle and the fallback categorical palette, used when the chart sets no `theme(palette=...)` (§20/§36). Its ORDER is the CVD-safety mechanism — never re-order or extend without re-running the validator. | `_figure.py`, `channels.py`, `_svg.py`, `_raster.py` |
 | `PYRAMID_MIN_POINTS` | `2_000_000` | Trace size at/above which a Tier-3 tile pyramid is built lazily; smaller traces never pay for one. | `interaction.py` |
 | `PYRAMID_BASE_DIM` | `2048` | Edge of the pyramid's base level in cells (`dim²` u32 counts, ~1/3 overhead for the coarser levels); sets resident pyramid bytes. | `interaction.py` |
 
@@ -1330,12 +1330,29 @@ author expects.
   `--chart-annotation-text`, `--chart-cursor` / `--chart-cursor-pan`, `--chart-focus`.
   Unset tokens fall back to a built-in theme (`currentColor` at documented opacities for
   grid/axis/label). The public reference is `docs/styling/themes-and-tokens.md`.
-- *Pending:* a **series-palette token** (`--chart-series-N`, indexed rather than a
-  space-separated list so entries cascade and override individually, cycling with a
-  lightness rotation past the highest defined index) and a **colormap token**
-  (`--chart-colormap`, named ramp or stops → LUT texture). Neither is wired: series
-  colors and colormaps come from the spec / `theme()` only. The categorical and
-  sequential defaults are the accessible, CVD-safe palettes from §20, not arbitrary.
+- **Author-supplied ramps and cycles (spec-side, wired).** `theme(palette=[...])` sets
+  the chart's **categorical cycle** — the colors unnamed series take in order *and* the
+  colors a categorical `color=` channel assigns to its categories. It lives on `Figure`
+  before any mark applies (a trace bakes its color at build), rides the spec as
+  `palette`, and is carried on each `ColorChannel` so ship / re-bin / legend / export all
+  read one source. Entries take any CSS color the paint props take, `var()` included.
+  `colormap=` likewise accepts a **custom ramp**: a sequence of 2–256 CSS colors,
+  optionally `(position, color)` pairs, or a CSS `linear-gradient(...)`.
+  `channels.resolve_colormap` normalizes every form to *evenly spaced 8-bit RGB stops* —
+  the same shape `10_colormaps.ts` stores the built-ins in — so the WebGL client, the SVG
+  writer, and the native rasterizer keep exactly one LUT interpolation path; positioned
+  stops resample at the LUT's own 256 texels, so the round trip is exact rather than
+  approximate. Ramp stops must resolve to fixed channels in Python (hex/`rgb()`/`hsl()`/
+  named); `var()`/`oklch()`/`color-mix()` are refused *with the reason*, because a
+  browser-only color cannot build the same LUT for a headless export (§28: never a silent
+  fallback). The client caches LUTs by value, not array identity — a custom ramp arrives
+  as a fresh array each spec, and identity keying would leak a GL texture per frame.
+- *Pending:* the **CSS-token** route to the same two things — a series-palette token
+  (`--chart-series-N`, indexed rather than a space-separated list so entries cascade and
+  override individually, cycling with a lightness rotation past the highest defined
+  index) and a colormap token (`--chart-colormap`). Neither is wired: series colors and
+  colormaps come from the spec / `theme()` only. The categorical and sequential defaults
+  are the accessible, CVD-safe palettes from §20, not arbitrary.
 - **Live re-resolution.** The client watches `matchMedia('(prefers-color-scheme: dark)')`
   and a `MutationObserver` on the container's `class`/`data-theme`/`style`, re-resolving
   tokens on any change. Because of the retained scene graph (§7), **a theme change is

@@ -12,8 +12,9 @@ matching the §2 "typical scatter ≤ 24 B/pt" budget with headroom.
 from __future__ import annotations
 
 import numbers
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, TypeAlias
 
 import numpy as np
 import numpy.typing as npt
@@ -48,9 +49,70 @@ COLORMAPS = (
 )
 
 
-def is_colormap(name: str) -> bool:
-    """Return whether *name* is a supported colormap, including ``_r`` variants."""
-    return name in COLORMAPS or (name.endswith("_r") and name[:-2] in COLORMAPS)
+def is_colormap(name: Any) -> bool:
+    """Return whether *name* is a built-in colormap, including ``_r`` variants."""
+    return isinstance(name, str) and (
+        name in COLORMAPS or (name.endswith("_r") and name[:-2] in COLORMAPS)
+    )
+
+
+# A resolved colormap on the wire: a built-in name, or explicit evenly spaced
+# 8-bit RGB stops (the same shape `10_colormaps.ts` stores built-ins in, so
+# client, SVG, and rasterizer all keep exactly one LUT interpolation path).
+ColormapLike: TypeAlias = "str | Sequence[Any]"
+Colormap: TypeAlias = "str | list[list[int]]"
+
+
+def _is_resolved_stops(value: Any) -> bool:
+    """Whether *value* is already the canonical wire form: a sequence of
+    3-integer RGB stops in 0-255. Unambiguous — an authored stop is a CSS color
+    string or a `(position, color)` pair, never three bare numbers.
+
+    The bounds are part of the test, not a separate check: an out-of-range or
+    over-long list is NOT the canonical form, so it falls through to
+    `_validate.colormap_stops` and gets that function's error instead of
+    riding the fast path unvalidated. The 256 cap is load-bearing —
+    `_svg._lut` indexes stops by `floor(t * (n - 1))`, and the shipped LUT is
+    256 texels wide."""
+    if isinstance(value, str) or not isinstance(value, (list, tuple)):
+        return False
+    if not 2 <= len(value) <= 256:
+        return False
+    return all(
+        isinstance(stop, (list, tuple))
+        and len(stop) == 3
+        and all(
+            isinstance(c, (int, np.integer)) and not isinstance(c, bool) and 0 <= int(c) <= 255
+            for c in stop
+        )
+        for stop in value
+    )
+
+
+def resolve_colormap(value: ColormapLike, label: str = "colormap") -> Colormap:
+    """Canonicalize a ``colormap=`` argument.
+
+    A built-in name passes through unchanged. Anything else is a **custom
+    ramp** — a CSS ``linear-gradient(...)`` string, or a sequence of 2–256 CSS
+    colors, optionally as ``(position, color)`` pairs — and resolves to
+    explicit stops here, once, so every renderer builds the same LUT."""
+    if isinstance(value, str) and is_colormap(value):
+        return value
+    if _is_resolved_stops(value):
+        # Idempotent: a mark that validates its own `colormap=` hands the
+        # canonical form straight on to `resolve_color`.
+        return [[int(c) for c in stop] for stop in value]  # type: ignore[union-attr]
+    if isinstance(value, str) and not value.strip().lower().startswith("linear-gradient("):
+        raise ValueError(
+            f"unknown colormap {value!r}; expected one of {COLORMAPS}, a "
+            "'linear-gradient(...)' string, or a sequence of CSS colors"
+        )
+    if value is None or isinstance(value, (int, float, bool)):
+        raise ValueError(
+            f"{label} must be a built-in name, a 'linear-gradient(...)' string, or a "
+            f"sequence of CSS colors, got {value!r}"
+        )
+    return _validate.colormap_stops(value, label)
 
 
 DEFAULT_COLORMAP = "viridis"
@@ -73,7 +135,8 @@ class ColorChannel:
     # for the axis/legend readout (exact, f64 — never through f32, §16).
     values: Optional[npt.NDArray[np.float64]] = None
     domain: Optional[tuple[float, float]] = None
-    colormap: str = DEFAULT_COLORMAP
+    # Built-in name, or explicit evenly spaced RGB stops (`resolve_colormap`).
+    colormap: Colormap = DEFAULT_COLORMAP
     # Declarative source of the continuous values (the `color="temperature"`
     # column-name idiom). Legend/colorbar chrome uses it when the trace itself
     # is unnamed; with neither name nor label the encoding gets no legend row.
@@ -81,6 +144,11 @@ class ColorChannel:
     # categorical: integer code per point + the category labels + palette.
     codes: Optional[npt.NDArray[np.uint8] | npt.NDArray[np.uint32]] = None
     categories: Optional[list[str]] = None
+    # The categorical color cycle this channel was resolved against — the
+    # chart's `xy.theme(palette=...)`, else config.DEFAULT_PALETTE. Kept on the
+    # channel so every consumer (ship, re-bin, legend, export) reads one source
+    # instead of reaching for the module default.
+    palette: Optional[list[str]] = None
     # Exact dense-code counts, fused into native compact factorization. They
     # let full-domain stratified sampling skip a source-sized recount.
     counts: Optional[npt.NDArray[np.uint64]] = None
@@ -93,6 +161,12 @@ class ColorChannel:
     _buffer: Optional[npt.NDArray[np.float64]] = field(
         default=None, init=False, repr=False, compare=False
     )
+
+    @property
+    def colors(self) -> list[str]:
+        """The categorical cycle this channel paints with — its own palette
+        when the chart set one, else the built-in CVD-safe default."""
+        return self.palette or list(config.DEFAULT_PALETTE)
 
     def spec(self) -> dict[str, Any]:
         """The channel's resolved settings as a plain dict, exactly as
@@ -387,9 +461,10 @@ def resolve_color(
     color: Any,
     n: int,
     *,
-    colormap: str = DEFAULT_COLORMAP,
+    colormap: ColormapLike = DEFAULT_COLORMAP,
     default_constant: str,
     domain: Optional[tuple[float, float]] = None,
+    palette: Optional[list[str]] = None,
 ) -> ColorChannel:
     """Interpret the `color=` argument.
 
@@ -398,10 +473,12 @@ def resolve_color(
     - a length-n array of strings/categories → categorical (factorized + palette).
 
     `domain` pins the continuous normalization window (matplotlib's
-    vmin/vmax); values outside clip to the colormap ends.
+    vmin/vmax); values outside clip to the colormap ends. `palette` is the
+    categorical color cycle (the chart's `xy.theme(palette=...)`, else the
+    built-in CVD-safe default).
     """
-    if not is_colormap(colormap):
-        raise ValueError(f"unknown colormap {colormap!r}; known: {COLORMAPS}")
+    colormap = resolve_colormap(colormap)
+    palette = list(palette) if palette else list(config.DEFAULT_PALETTE)
     if domain is not None:
         lo, hi = float(domain[0]), float(domain[1])
         if not (np.isfinite(lo) and np.isfinite(hi)) or hi <= lo:
@@ -452,18 +529,19 @@ def resolve_color(
                 RuntimeWarning,
                 stacklevel=3,
             )
-        elif len(cats) > len(config.DEFAULT_PALETTE):
+        elif len(cats) > len(palette):
             import warnings
 
             # The default palette is deliberately eight slots (its adjacency
             # order is the CVD-safety gate; see config.DEFAULT_PALETTE), so
-            # category colors repeat modulo eight. Allowed, never silent (§28).
+            # category colors repeat modulo its length — as does any shorter
+            # `xy.theme(palette=...)`. Allowed, never silent (§28).
             warnings.warn(
-                f"categorical color has {len(cats)} categories but the default "
-                f"palette has {len(config.DEFAULT_PALETTE)} colors; colors repeat "
-                f"every {len(config.DEFAULT_PALETTE)} categories (category 9 "
-                "wears category 1's color). Consider grouping rare categories "
-                "or a continuous encoding.",
+                f"categorical color has {len(cats)} categories but the palette "
+                f"has {len(palette)} colors; colors repeat every {len(palette)} "
+                f"categories (category {len(palette) + 1} wears category 1's "
+                "color). Pass a longer palette, group rare categories, or use a "
+                "continuous encoding.",
                 RuntimeWarning,
                 stacklevel=3,
             )
@@ -472,6 +550,7 @@ def resolve_color(
             codes=codes,
             categories=cats,
             counts=counts,
+            palette=palette,
         )
 
     vals = _as_real_array(arr, "color array")
@@ -530,7 +609,7 @@ def quantize_unit_u8(values: npt.NDArray[np.float64], domain: tuple[float, float
     return np.rint(np.clip(unit, 0.0, 1.0) * 255.0).astype(np.uint8)
 
 
-def colormap_lut_rgba8(colormap: str) -> npt.NDArray[np.uint8]:
+def colormap_lut_rgba8(colormap: Colormap) -> npt.NDArray[np.uint8]:
     """The client's 256-texel colormap LUT as (256, 4) straight-alpha RGBA8.
 
     Built from the same stop tables the SVG exporter mirrors from
@@ -559,14 +638,52 @@ def palette_rgba8(palette: list[str], n_categories: int) -> npt.NDArray[np.uint8
 
     One row per category up to 256; beyond that callers fold codes modulo the
     base palette instead (`resolve_bin_colors`), which is the same repeat rule
-    `ship_color_channel` applies."""
-    rows = min(n_categories, MAX_CATEGORIES)
+    `ship_color_channel` applies.
+
+    This runs kernel-side, with no DOM: a `theme(palette=...)` entry that only a
+    browser can resolve (`var()`, `oklch()`) has no fixed channels here. Those
+    entries are legal — the browser paints them correctly on the direct tier —
+    so the aggregate plane substitutes the built-in palette's color at the same
+    index and *says so* (§28), rather than filling the cell black and letting a
+    density surface disagree with the points it aggregates."""
+    return palette_rows_rgba8(palette, min(n_categories, MAX_CATEGORIES))
+
+
+def palette_rows_rgba8(palette: Sequence[str], rows: int) -> npt.NDArray[np.uint8]:
+    """`rows` straight-alpha RGBA8 rows for an indexed categorical palette.
+
+    The one place a palette is resolved without a DOM — shared by the density
+    mean-color plane, the SVG writer, and the native rasterizer, so the three
+    cannot drift. A `theme(palette=...)` entry only a browser can resolve
+    (`var()`, `oklch()`) has no fixed channels here; it falls back to the
+    built-in palette's color **at the same index**, never to one shared
+    fallback, because a shared fallback collapses distinct categories into a
+    single indistinguishable color. The substitution warns (§28)."""
     lut = np.empty((max(rows, 1), 4), dtype=np.uint8)
+    unresolved: list[str] = []
     for i in range(lut.shape[0]):
-        status, rgba = kernels.css_check(kernels.CSS_COLOR, str(palette[i % len(palette)]))
+        entry = str(palette[i % len(palette)])
+        status, rgba = kernels.css_check(kernels.CSS_COLOR, entry)
         if status != 1 or rgba is None:
-            rgba = (0.0, 0.0, 0.0, 1.0)
+            unresolved.append(entry)
+            substitute = config.DEFAULT_PALETTE[i % len(config.DEFAULT_PALETTE)]
+            _status, rgba = kernels.css_check(kernels.CSS_COLOR, substitute)
+            # The built-in palette is literal hex by construction, so the
+            # substitute always parses; assert it rather than carry an
+            # unreachable None through the arithmetic below.
+            assert rgba is not None, "built-in palette entry failed to parse"
         lut[i] = [round(c * 255) for c in rgba]
+    if unresolved:
+        import warnings
+
+        warnings.warn(
+            f"palette entries {sorted(set(unresolved))} resolve only in a browser, so "
+            "the aggregated density surface and static exports cannot paint them; "
+            "those categories fall back to the built-in palette there. Pass literal "
+            "colors (hex/rgb()/hsl()/named) for identical color across renderers.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
     return lut
 
 
@@ -621,7 +738,7 @@ def _folded_codes_u8(codes: np.ndarray, n_palette: int) -> np.ndarray:
     return out
 
 
-def resolve_bin_colors(cc: Optional[ColorChannel], sel: Any, palette: list[str]) -> Optional[dict]:
+def resolve_bin_colors(cc: Optional[ColorChannel], sel: Any) -> Optional[dict]:
     """Kernel color source for mean-color density binning (LOD doc §2).
 
     Returns `kernels.bin_2d_mean_color`-style kwargs — ``{"idx", "lut"}`` for
@@ -655,6 +772,7 @@ def resolve_bin_colors(cc: Optional[ColorChannel], sel: Any, palette: list[str])
     if code_values is None or categories is None:
         raise ValueError("categorical color channel missing codes or categories")
     codes = code_values if sel is None else code_values[sel]
+    palette = cc.colors
     if codes.dtype == np.uint8:
         return {"idx": codes, "lut": palette_rgba8(palette, len(categories))}
     # >256 categories ship wide codes; palette colors repeat every
@@ -671,7 +789,6 @@ def ship_channels(
     sel: Any,
     ship_scalar: Any,
     ship_u8: Any,
-    palette: list[str],
     *,
     quantize_continuous: bool = False,
 ) -> tuple[Any, Any]:
@@ -693,7 +810,7 @@ def ship_channels(
     Returns (color_spec, size_spec)."""
     cc = trace.color_ch or ColorChannel(mode="constant", constant=None)
     color_spec = ship_color_channel(
-        cc, sel, ship_scalar, ship_u8, palette, quantize_continuous=quantize_continuous
+        cc, sel, ship_scalar, ship_u8, quantize_continuous=quantize_continuous
     )
     sc = trace.size_ch or SizeChannel(mode="constant")
     size_spec = sc.spec()
@@ -716,7 +833,6 @@ def ship_color_channel(
     sel: Any,
     ship_scalar: Any,
     ship_u8: Any,
-    palette: list[str],
     *,
     quantize_continuous: bool = False,
 ) -> dict[str, Any]:
@@ -758,7 +874,7 @@ def ship_color_channel(
             color_spec["dtype"] = "u8"
         else:
             color_spec["buf"] = ship_scalar(codes)
-        color_spec["palette"] = categorical_palette(palette, len(categories))
+        color_spec["palette"] = categorical_palette(cc.colors, len(categories))
 
     return color_spec
 

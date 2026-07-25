@@ -300,9 +300,11 @@ class ExportConfig(Component):
 
 @dataclass
 class Theme(Component):
-    """Chart-wide style tokens (plot background, grid/axis/text colors)."""
+    """Chart-wide style tokens (plot background, grid/axis/text colors) and
+    the categorical color cycle."""
 
     style: dict[str, StyleValue] = field(default_factory=dict)
+    palette: Optional[list[str]] = None
 
 
 @dataclass
@@ -510,7 +512,7 @@ def scatter(
     color: Union[str, ColorLike, ArrayLike, None] = None,
     size: Union[str, Scalar, ArrayLike, None] = 4.0,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     color_domain: Optional[tuple[float, float]] = None,
     size_range: tuple[float, float] = (2.0, 18.0),
     opacity: Any = 0.8,
@@ -538,7 +540,9 @@ def scatter(
         color: Constant color, values, or a column name.
         size: Constant marker size, values, or a column name.
         name: Series label used by legends and tooltips.
-        colormap: Colormap used for continuous color values.
+        colormap: Color ramp for continuous values — a built-in name, a CSS
+            ``linear-gradient(...)``, or a sequence of CSS colors (optionally
+            ``(position, color)`` pairs).
         color_domain: Explicit minimum and maximum for continuous colors.
         size_range: Minimum and maximum rendered marker sizes.
         opacity: Marker opacity from zero to one.
@@ -854,7 +858,7 @@ def segments(
     data: TableLike = None,
     name: Optional[str] = None,
     color: Union[str, ColorLike, ArrayLike, None] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     width: Any = 1.2,
     opacity: Any = 1.0,
@@ -873,7 +877,9 @@ def segments(
         data: Table used to resolve column-name inputs.
         name: Series label used by legends and tooltips.
         color: Constant color, values, or a column name.
-        colormap: Colormap used for continuous color values.
+        colormap: Color ramp for continuous values — a built-in name, a CSS
+            ``linear-gradient(...)``, or a sequence of CSS colors (optionally
+            ``(position, color)`` pairs).
         domain: Explicit minimum and maximum for continuous colors.
         width: Segment width in pixels.
         opacity: Segment opacity from zero to one.
@@ -914,7 +920,7 @@ def triangle_mesh(
     *,
     data: TableLike = None,
     color: Union[str, ColorLike, ArrayLike, None] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     name: Optional[str] = None,
     opacity: Any = 1.0,
@@ -936,7 +942,9 @@ def triangle_mesh(
         y2: Third-vertex y coordinates or a column name.
         data: Table used to resolve column-name inputs.
         color: Constant color, values, or a column name.
-        colormap: Colormap used for continuous color values.
+        colormap: Color ramp for continuous values — a built-in name, a CSS
+            ``linear-gradient(...)``, or a sequence of CSS colors (optionally
+            ``(position, color)`` pairs).
         domain: Explicit minimum and maximum for continuous colors.
         name: Series label used by legends and tooltips.
         opacity: Triangle opacity from zero to one.
@@ -1314,7 +1322,7 @@ def hexbin(
     reduce_C_function: Callable[[np.ndarray], Scalar] = np.mean,
     mincnt: Optional[int] = None,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     opacity: float = 0.9,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
@@ -1373,7 +1381,7 @@ def contour(
     levels: Union[int, ArrayLike] = 10,
     filled: bool = False,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     color: Optional[str] = None,
     width: float = 1.1,
     opacity: float = 0.9,
@@ -1708,7 +1716,7 @@ def heatmap(
     y: Union[str, ArrayLike, None] = None,
     data: TableLike = None,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     opacity: float = 0.95,
     style: Optional[dict[str, StyleValue]] = None,
@@ -2194,6 +2202,65 @@ def callout(
     )
 
 
+# Hiding axis chrome used to mean writing seven transparent-color and
+# zero-width style properties by hand, per axis, on every chart. These
+# shorthands compile to exactly those properties, so they compose with an
+# explicit `style=` (which always wins) and need no renderer support.
+_AXIS_LINE_OFF = {"axis_width": 0, "axis_color": "#00000000"}
+# Geometry, not paint: every renderer resolves the tick-LABEL color as
+# `tick_label_color` falling back to `tick_color`, so blanking `tick_color`
+# here would erase the labels too — the opposite of what `ticks=False` means.
+# Zero length and zero width draw no tick mark in all three renderers and
+# leave the label's inherited color alone.
+_AXIS_TICKS_OFF = {"tick_length": 0, "tick_width": 0}
+_AXIS_GRID_OFF = {"grid_opacity": 0}
+_AXIS_TEXT_OFF = {"tick_label_color": "#00000000", "label_color": "#00000000"}
+
+
+def _axis_visibility_style(
+    show: Any,
+    line: Any,
+    ticks: Any,
+    grid: Any,
+    text: Any,
+    style: Any,
+    label: str,
+) -> dict[str, StyleValue]:
+    """Merge the axis visibility shorthands under an explicit `style=`.
+
+    `show=False` turns the whole axis off; the four narrower switches override
+    it in both directions, so `show=False, grid=True` keeps only the grid.
+    An explicit `style=` property always wins over a shorthand — the shorthand
+    is a default, not a lock."""
+    parts: dict[str, StyleValue] = {}
+    resolved = {
+        "line": line,
+        "ticks": ticks,
+        "grid": grid,
+        "text": text,
+    }
+    for name, value in resolved.items():
+        if value is not None:
+            resolved[name] = _strict_bool(value, f"{label} {name}")
+    if show is not None:
+        visible = _strict_bool(show, f"{label} show")
+        for name, value in resolved.items():
+            if value is None:
+                resolved[name] = visible
+    for name, off in (
+        ("line", _AXIS_LINE_OFF),
+        ("ticks", _AXIS_TICKS_OFF),
+        ("grid", _AXIS_GRID_OFF),
+        ("text", _AXIS_TEXT_OFF),
+    ):
+        if resolved[name] is False:
+            parts.update(off)
+    if not parts:
+        return styles.compile_axis_style(style, label + " style")
+    parts.update(styles.compile_axis_style(style, label + " style"))
+    return parts
+
+
 def x_axis(
     *,
     id: str = "x",
@@ -2215,6 +2282,11 @@ def x_axis(
     tick_label_anchor: Optional[str] = None,
     tick_label_min_gap: Optional[float] = None,
     side: Optional[str] = None,
+    show: Optional[bool] = None,
+    line: Optional[bool] = None,
+    ticks: Optional[bool] = None,
+    grid: Optional[bool] = None,
+    text: Optional[bool] = None,
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Axis:
     """Configure an x axis.
@@ -2246,7 +2318,18 @@ def x_axis(
             bottom axis instead of seesawing around its midpoint.
         tick_label_min_gap: Minimum gap between tick labels in pixels.
         side: Side of the plot where the axis is drawn.
-        style: Axis style overrides.
+        show: Draw this axis at all. ``False`` hides its baseline, tick marks,
+            tick labels, title, and grid lines in one switch; the four
+            narrower switches below override it either way, so
+            ``show=False, grid=True`` leaves only the grid.
+        line: Draw the axis baseline.
+        ticks: Draw the tick marks.
+        grid: Draw this axis's grid lines (the y axis owns the horizontal
+            guides, the x axis the vertical ones).
+        text: Draw this axis's text — its tick labels and its title. (Unlike
+            ``tick_labels``, which supplies the label *strings*.)
+        style: Axis style overrides. An explicit property here always wins
+            over the switches above.
     """
     _validate_axis_type(type_)
     values = None if tick_values is None else [float(v) for v in tick_values]
@@ -2278,7 +2361,7 @@ def x_axis(
             tick_label_min_gap, "x_axis tick_label_min_gap"
         ),
         side=_axis_side(side, "x"),
-        style=styles.compile_axis_style(style, "x_axis style"),
+        style=_axis_visibility_style(show, line, ticks, grid, text, style, "x_axis"),
     )
 
 
@@ -2303,6 +2386,11 @@ def y_axis(
     tick_label_anchor: Optional[str] = None,
     tick_label_min_gap: Optional[float] = None,
     side: Optional[str] = None,
+    show: Optional[bool] = None,
+    line: Optional[bool] = None,
+    ticks: Optional[bool] = None,
+    grid: Optional[bool] = None,
+    text: Optional[bool] = None,
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Axis:
     """Configure a y axis.
@@ -2334,7 +2422,18 @@ def y_axis(
             the label rotates about the pinned edge.
         tick_label_min_gap: Minimum gap between tick labels in pixels.
         side: Side of the plot where the axis is drawn.
-        style: Axis style overrides.
+        show: Draw this axis at all. ``False`` hides its baseline, tick marks,
+            tick labels, title, and grid lines in one switch; the four
+            narrower switches below override it either way, so
+            ``show=False, grid=True`` leaves only the grid.
+        line: Draw the axis baseline.
+        ticks: Draw the tick marks.
+        grid: Draw this axis's grid lines (the y axis owns the horizontal
+            guides, the x axis the vertical ones).
+        text: Draw this axis's text — its tick labels and its title. (Unlike
+            ``tick_labels``, which supplies the label *strings*.)
+        style: Axis style overrides. An explicit property here always wins
+            over the switches above.
     """
     _validate_axis_type(type_)
     values = None if tick_values is None else [float(v) for v in tick_values]
@@ -2366,7 +2465,7 @@ def y_axis(
             tick_label_min_gap, "y_axis tick_label_min_gap"
         ),
         side=_axis_side(side, "y"),
-        style=styles.compile_axis_style(style, "y_axis style"),
+        style=_axis_visibility_style(show, line, ticks, grid, text, style, "y_axis"),
     )
 
 
@@ -2648,6 +2747,7 @@ def theme(
     crosshair_color: Optional[StyleValue] = None,
     selection_color: Optional[StyleValue] = None,
     selection_fill: Optional[StyleValue] = None,
+    palette: Optional[Sequence[str]] = None,
     **tokens: StyleValue,
 ) -> Theme:
     """Configure chart theme tokens.
@@ -2666,6 +2766,14 @@ def theme(
         crosshair_color: Hover crosshair color.
         selection_color: Selection-outline color.
         selection_fill: Selection-region fill color.
+        palette: Categorical color cycle for this chart — the colors unnamed
+            series take in order, and the colors a categorical ``color=``
+            channel assigns to its categories. Defaults to XY's CVD-safe
+            eight-slot palette; a shorter list repeats (with a warning).
+            Entries must be colors XY can resolve without a browser (hex,
+            ``rgb()``, ``hsl()``, named), like colormap stops: a palette is
+            indexed, and browser-only entries would collapse several categories
+            onto one fallback color in exports and density surfaces.
         **tokens: Additional supported theme tokens.
     """
     merged = _style_dict(style, "theme style")
@@ -2686,7 +2794,7 @@ def theme(
     )
     if tokens:
         merged.update(_theme_tokens(tokens, "theme tokens"))
-    return Theme(style=merged)
+    return Theme(style=merged, palette=_palette_list(palette, "theme palette"))
 
 
 def interaction_config(
@@ -3064,6 +3172,13 @@ class Chart(Component):
         fig.style = {}
         for theme_node in themes:
             fig.style.update(theme_node.style)
+            # Marks bake their color when they are applied, so the palette has
+            # to be in place first — it is, every mark is applied below.
+            # Re-validated: `Theme` is a public dataclass as well as `theme()`'s
+            # return type, so direct construction must not put an unvalidated
+            # palette on the figure (same reason `ExportConfig` re-validates).
+            if theme_node.palette is not None:
+                fig.palette = _palette_list(theme_node.palette, "theme palette")
         fig.style.update(self.style)
         chart_animation = animations[-1] if animations else None
         if chart_animation is not None:
@@ -3893,7 +4008,11 @@ def _declarative_colorbar_options(mark: Mark, traces: list[Any]) -> Optional[dic
             continue
         options = {
             "domain": [float(domain[0]), float(domain[1])],
-            "colormap": str(colormap),
+            # A built-in name or resolved stops (channels.resolve_colormap) —
+            # pass the channel's value through, never a str() of it, or a
+            # custom ramp reaches the colorbar as an unparseable name and
+            # silently falls back to viridis.
+            "colormap": colormap if isinstance(colormap, str) else [list(s) for s in colormap],
         }
 
     if options is None:
@@ -3960,6 +4079,39 @@ def _slot_styles_dict(value: Any, label: str) -> dict[str, dict[str, StyleValue]
     return {
         slot: _style_dict(slot_style, f"{label}[{slot!r}]") for slot, slot_style in value.items()
     }
+
+
+def _palette_list(value: Any, label: str) -> Optional[list[str]]:
+    """A categorical color cycle: one or more CSS colors XY can resolve itself.
+
+    Same rule as colormap stops, for the same reason. A palette is *indexed* —
+    XY has to hand a concrete color to four consumers that have no DOM between
+    them: the aggregated density plane, the SVG writer, the native rasterizer,
+    and the client's own worker re-bin. A browser-only entry (`var()`,
+    `oklch()`, `color-mix()`) has no channels in any of those, and the failure
+    is worse than for a single mark: several such entries collapse onto one
+    fallback, so distinct categories become one indistinguishable color. Refuse
+    it here, naming the reason, rather than let four renderers disagree (§28).
+
+    A single `color=`/`stroke`/`fill` still takes any CSS color — one mark, one
+    paint, and the existing static-export fallback behavior is unchanged.
+
+    Entries are normalized to hex, not merely checked: the browser client's
+    only cascade-free path is `hexColor`, so shipping `tomato` verbatim would
+    send it back to a `getComputedStyle` probe that returns "" on a root not yet
+    in the document — black, and permanently so, since nothing rebuilds a cached
+    palette LUT. Resolved here once, every renderer reads the same bytes."""
+    if value is None:
+        return None
+    if isinstance(value, str) or not hasattr(value, "__iter__"):
+        raise ValueError(f"{label} must be a sequence of CSS colors")
+    colors = [
+        _validate.resolved_hex_paint(color, f"{label}[{index}]", "palette entries")
+        for index, color in enumerate(value)
+    ]
+    if not colors:
+        raise ValueError(f"{label} must have at least one color")
+    return colors
 
 
 _THEME_TOKEN_ALIASES = {

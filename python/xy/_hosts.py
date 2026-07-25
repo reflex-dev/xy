@@ -37,6 +37,9 @@ class FigureHost(Protocol):
     colorbar_options: Optional[dict[str, Any]]
     show_modebar: bool
     show_tooltip: bool
+    palette: Optional[list[str]]
+
+    def palette_color(self, index: int, *, stacklevel: int = 3) -> str: ...
 
     # -- shared validators (static on `Figure`, aliases of `_validate`) --
     @staticmethod

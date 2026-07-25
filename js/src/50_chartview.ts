@@ -1,5 +1,5 @@
 import { PROTOCOL, xyByteSpan } from "./00_header";
-import { buildLutData, colormapStops } from "./10_colormaps";
+import { buildLutData, colormapKey, colormapStops } from "./10_colormaps";
 import { chartBackdrop, cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
 import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
@@ -1771,7 +1771,7 @@ export class ChartView {
           // entries only.
           const name = t.name || t.color.label;
           if (!name) return;
-          const key = name + "\u0000" + t.color.colormap;
+          const key = name + "\u0000" + colormapKey(t.color.colormap);
           const existing = continuousRows.get(key);
           if (existing) {
             existing.traces.push(ti);
@@ -2096,7 +2096,7 @@ export class ChartView {
     const paletteKey = palette.join(",");
     const memo = this._dimClassCache.get(rgba);
     if (memo && memo.paletteKey === paletteKey) return memo.classes;
-    const cols = palette.map((p) => hexColor(p));
+    const cols = this._paletteRgb(palette);
     const classes = new Uint8Array(rgba.length / 4);
     for (let i = 0, c = 0; i < rgba.length; i += 4, c++) {
       if (!rgba[i + 3]) continue;
@@ -2478,7 +2478,11 @@ export class ChartView {
   get heatmapProg() { return this._prog("heatmap", GRID_VS, HEATMAP_FS); }
 
   _lut(name) {
-    if (this._lutCache.has(name)) return this._lutCache.get(name);
+    // Keyed by value, not identity: a custom colormap arrives as a fresh
+    // stops array on every spec, so caching on the array itself would leak a
+    // GL texture per frame.
+    const key = colormapKey(name);
+    if (this._lutCache.has(key)) return this._lutCache.get(key);
     const gl = this.gl;
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -2487,8 +2491,18 @@ export class ChartView {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    this._lutCache.set(name, tex);
+    this._lutCache.set(key, tex);
     return tex;
+  }
+
+  // One resolved [r,g,b,a] per palette entry. Every palette Python ships is
+  // already hex (components._palette_list normalizes it), so this decodes
+  // without touching the DOM — which matters: `resolveCssColor`'s probe
+  // returns "" while the root is still detached (notebook webviews attach
+  // asynchronously), and a palette LUT cached from that state is never
+  // rebuilt. The DOM fallback stays for hand-authored specs only.
+  _paletteRgb(palette) {
+    return palette.map((c) => hexColor(c) || parseColor(this.root, c, [0, 0, 0, 1]));
   }
 
   _paletteLut(palette) {
@@ -2498,8 +2512,12 @@ export class ChartView {
     if (this._lutCache.has(key)) return this._lutCache.get(key);
     const gl = this.gl;
     const data = new Uint8Array(256 * 4);
+    // Resolve once per palette entry, not once per texel: a chart palette
+    // (xy.theme(palette=...)) may hold any CSS color, and parseColor's probe
+    // is a forced style recalc. Cache-miss only, so the cost is bounded.
+    const rgb = this._paletteRgb(palette);
     for (let i = 0; i < 256; i++) {
-      const c = hexColor(palette[i % palette.length]);
+      const c = rgb[i % rgb.length];
       data[i * 4] = c[0] * 255;
       data[i * 4 + 1] = c[1] * 255;
       data[i * 4 + 2] = c[2] * 255;
@@ -2531,8 +2549,9 @@ export class ChartView {
     if (this._lutCache.has(key)) return this._lutCache.get(key);
     const gl = this.gl;
     const data = new Uint8Array(256 * 4);
+    const rgb = this._paletteRgb(palette);
     for (let i = 0; i < 256; i++) {
-      const c = hexColor(palette[i % palette.length]);
+      const c = rgb[i % palette.length];
       const keep = i % palette.length === keepIdx % palette.length;
       const w = keep ? 1 : LEGEND_DIM_OPACITY;
       data[i * 4] = (c[0] * w + bg[0] * (1 - w)) * 255;

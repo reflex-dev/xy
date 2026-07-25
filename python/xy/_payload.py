@@ -15,13 +15,11 @@ from ._trace import Trace
 from .columns import Column
 from .config import (
     DECIMATION_THRESHOLD,
-    DEFAULT_PALETTE,
     DENSITY_GRID,
     DENSITY_SAMPLE_SEED,
     DENSITY_SAMPLE_TARGET,
     MAX_ANIMATION_MATCH_ROWS,
     PROTOCOL_VERSION,
-    default_palette_color,
 )
 
 if TYPE_CHECKING:
@@ -289,6 +287,15 @@ class PayloadMixin(_Host):
                 "ranges": {axis_id: list(axis["range"]) for axis_id, axis in axis_specs.items()}
             },
         }
+        if self.palette is not None:
+            # Chart-level categorical cycle (`xy.theme(palette=...)`). Every
+            # trace already bakes its own color and every categorical channel
+            # ships its own resolved `palette`, so this is only the indexed
+            # fallback the STATIC exporters use for a trace that carries no
+            # style color. The browser client never reads it — it works from
+            # `trace.color.palette` — which is why omitting it (no chart
+            # palette set) leaves existing specs byte-identical.
+            spec["palette"] = list(self.palette)
         if self.legend_options:
             spec["legend"] = self.legend_options
         extra_legends = getattr(self, "extra_legends", None)
@@ -431,13 +438,14 @@ class PayloadMixin(_Host):
             return values, (float(bounds[0]), float(bounds[1]))
         return self._axis_coord(axis_id, values), (c0, c1)
 
-    @staticmethod
-    def _default_styled(t: Trace) -> dict[str, Any]:
+    def _default_styled(self, t: Trace) -> dict[str, Any]:
         """Trace style dict with the per-trace palette default when no color
-        was given — the one place this rule lives (was copy-pasted per kind)."""
+        was given — the one place this rule lives (was copy-pasted per kind).
+        Cycles the figure's palette (`xy.theme(palette=...)`), which defaults
+        to config.DEFAULT_PALETTE."""
         style = dict(t.style)
         if style.get("color") is None:
-            style["color"] = default_palette_color(t.id)
+            style["color"] = self.palette_color(t.id)
         return style
 
     def _m4_decimate(
@@ -915,7 +923,7 @@ class PayloadMixin(_Host):
         path keeps unit f32 because tooltips denormalize the shipped columns
         (see channels.ship_channels)."""
         return channels.ship_channels(
-            t, sel, ship_scalar, ship_u8, DEFAULT_PALETTE, quantize_continuous=quantize_continuous
+            t, sel, ship_scalar, ship_u8, quantize_continuous=quantize_continuous
         )
 
     @staticmethod
@@ -923,7 +931,7 @@ class PayloadMixin(_Host):
         """Attach outline paint and direct instance attributes to a trace spec."""
         if t.stroke_ch is not None:
             entry["stroke"] = channels.ship_color_channel(
-                t.stroke_ch, sel, pw.ship_scalar, pw.ship_u8, DEFAULT_PALETTE
+                t.stroke_ch, sel, pw.ship_scalar, pw.ship_u8
             )
         if t.style_channels:
             entry["channels"] = channels.ship_style_channels(
@@ -1156,7 +1164,7 @@ class PayloadMixin(_Host):
             # color == density.
             color_spec = t.color_ch.spec()
             color_spec["palette"] = channels.categorical_palette(
-                DEFAULT_PALETTE, len(t.color_ch.categories or ())
+                t.color_ch.colors, len(t.color_ch.categories or ())
             )
             entry["color"] = color_spec
         return entry

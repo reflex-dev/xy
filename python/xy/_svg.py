@@ -18,6 +18,7 @@ browser-dependent in SVG and use the native PNG fallback.
 from __future__ import annotations
 
 import base64
+import hashlib
 import math
 import re
 from collections.abc import Callable, Sequence
@@ -588,19 +589,38 @@ class _Scale:
         return not (self.log or self.symlog)
 
 
-def _colormap_stops(colormap: str) -> list[tuple[int, int, int]]:
+def _colormap_key(colormap: Any) -> str:
+    """A stable, document-unique id fragment for a colormap — a built-in name,
+    or the digest of a custom ramp's stops (two colorbars in one document must
+    not share a `<linearGradient>` id unless they are the same ramp)."""
+    if isinstance(colormap, str):
+        return colormap
+    return "custom-" + hashlib.sha256(repr(_colormap_stops(colormap)).encode()).hexdigest()[:12]
+
+
+def _colormap_stops(colormap: Any) -> list[tuple[int, int, int]]:
+    """Evenly spaced RGB stops for a shipped colormap.
+
+    Mirrors `colormapStops` in js/src/10_colormaps.ts: a string names a
+    built-in table (`_r` reverses it), while a sequence is an already-resolved
+    custom ramp (`channels.resolve_colormap`) and is used verbatim."""
+    if not isinstance(colormap, str):
+        return [(int(r), int(g), int(b)) for r, g, b in colormap]
     reversed_map = colormap.endswith("_r")
     base = colormap[:-2] if reversed_map else colormap
     stops = COLORMAP_STOPS.get(base) or COLORMAP_STOPS["viridis"]
     return list(reversed(stops)) if reversed_map else stops
 
 
-def _lut(colormap: str, t: np.ndarray) -> np.ndarray:
+def _lut(colormap: Any, t: np.ndarray) -> np.ndarray:
     """Vectorized colormap sample: t in [0,1] -> (n,3) uint8, matching the
     client's 256-texel LUT interpolation."""
     stops = np.array(_colormap_stops(colormap), dtype=np.float64)
     pos = np.clip(t, 0.0, 1.0) * (len(stops) - 1)
-    lo = np.floor(pos).astype(np.uint8)
+    # int32, not uint8: a resampled custom ramp ships 256 stops, whose top
+    # index is exactly 255 -- one more stop would wrap to 0 and paint the
+    # ramp's dark end at its bright end.
+    lo = np.floor(pos).astype(np.int32)
     hi = np.minimum(lo + 1, len(stops) - 1)
     fraction = pos - lo
     out = np.empty((len(pos), 3), dtype=np.uint8)
@@ -1560,6 +1580,10 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
 
     # -- marks --------------------------------------------------------------
     marks: list[str] = []
+    # The chart's categorical cycle (`xy.theme(palette=...)`), else the
+    # built-in default. Traces normally carry a baked style color; this is the
+    # fallback for specs that do not.
+    spec_palette: Sequence[str] = spec.get("palette") or DEFAULT_PALETTE
     palette_cycle = 0
 
     def line_attrs(style: dict[str, Any], color: str) -> str:
@@ -1576,7 +1600,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         style = t.get("style") or {}
         kind = t["kind"]
         tier = t.get("tier")
-        color = _css(style.get("color"), DEFAULT_PALETTE[palette_cycle % len(DEFAULT_PALETTE)])
+        color = _css(style.get("color"), spec_palette[palette_cycle % len(spec_palette)])
         palette_cycle += 1
         trace_sx = x_scales.get(t.get("x_axis", "x"), sx)
         trace_sy = y_scales.get(t.get("y_axis", "y"), sy)
@@ -1676,11 +1700,13 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         append_axis_title(axis, is_x=False)
     named = [t for t in spec["traces"] if t.get("name")]
     if spec.get("show_legend", True) and named:
-        chrome.append(_legend(named, plot, spec.get("legend") or {}, clip_id, default_text))
+        chrome.append(
+            _legend(named, plot, spec.get("legend") or {}, clip_id, default_text, spec_palette)
+        )
     for extra in spec.get("extra_legends") or []:
         items = extra.get("items") or []
         if items:
-            chrome.append(_legend(items, plot, extra, clip_id, default_text))
+            chrome.append(_legend(items, plot, extra, clip_id, default_text, spec_palette))
     if spec.get("colorbar"):
         chrome.append(
             _colorbar(
@@ -2228,7 +2254,12 @@ def _trace_paint_rgba(
     elif mode == "categorical":
         codes = np.asarray(read(channel["buf"]), dtype=np.int64)[:n]
         palette = channel.get("palette") or DEFAULT_PALETTE
-        table = np.asarray([_paint_rgba8(value) for value in palette], dtype=np.float64) / 255.0
+        # Per-index resolution (channels.palette_rows_rgba8), not _paint_rgba8
+        # per entry: browser-only entries must degrade to DISTINCT built-in
+        # colors, or every var() category exports as the same fallback blue.
+        from . import channels as _channels
+
+        table = _channels.palette_rows_rgba8(palette, len(palette)).astype(np.float64) / 255.0
         rgba[:] = table[codes % len(table)]
     else:
         rgba[:] = (
@@ -2774,7 +2805,12 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
 
 
 def _legend(
-    named: list[dict], plot: dict, options: dict, clip_id: str, text_color: str = _TEXT
+    named: list[dict],
+    plot: dict,
+    options: dict,
+    clip_id: str,
+    text_color: str = _TEXT,
+    palette: Sequence[str] = DEFAULT_PALETTE,
 ) -> str:
     legend = _legend_layout(named, plot, options)
     if not legend["visible_count"]:
@@ -2815,7 +2851,7 @@ def _legend(
         style = t.get("style") or {}
         color = _css(
             style.get("color") or (t.get("color") or {}).get("color"),
-            DEFAULT_PALETTE[i % len(DEFAULT_PALETTE)],
+            palette[i % len(palette)],
         )
         col, row = i % ncols, i // ncols
         rx, ry = x + col * cell_w, y + pad / 2 + title_h + row * line_h
@@ -2863,8 +2899,8 @@ def _legend(
 def _colorbar(
     options: dict, plot: dict, right_axis_room: float = 0.0, text_color: str = _TEXT
 ) -> str:
-    cmap = str(options.get("colormap", "viridis"))
-    gradient_id = f"xy-colorbar-{sum(map(ord, cmap))}"
+    cmap = options.get("colormap", "viridis")
+    gradient_id = f"xy-colorbar-{_colormap_key(cmap)}"
     stops = _colormap_stops(cmap)
     stop_nodes = "".join(
         f'<stop offset="{100 * index / max(1, len(stops) - 1):.2f}%" '
@@ -2967,7 +3003,7 @@ def _colorbar_body(
             f'height="{_num(height)}" fill="url(#{gradient_id})"/>'
         )
     n = int(levels)
-    cmap = str(options.get("colormap", "viridis"))
+    cmap = options.get("colormap", "viridis")
     positions = (np.arange(n, dtype=np.float64) + 0.5) / n
     colors = _lut(cmap, positions)
     rects = []

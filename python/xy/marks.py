@@ -24,7 +24,6 @@ from .config import (
     DEFAULT_PALETTE,
     DIRECT_SOFT_CEILING,
     MAX_CONTOUR_WORK,
-    default_palette_color,
 )
 
 if TYPE_CHECKING:
@@ -319,7 +318,7 @@ def segments(
     *,
     name: Optional[str] = None,
     color: Union[str, ArrayLike, None] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     width: Any = 1.2,
     opacity: Any = 1.0,
@@ -333,9 +332,9 @@ def segments(
     arrays = [self._as_1d_float(values, "segments color geometry") for values in (x0, y0, x1, y1)]
     if len({len(values) for values in arrays}) != 1:
         raise ValueError("segments coordinate columns must have equal length")
-    default = default_palette_color(len(self.traces))
+    default = self.palette_color(len(self.traces))
     color_ch = channels.resolve_color(
-        color, len(arrays[0]), colormap=colormap, default_constant=default
+        color, len(arrays[0]), colormap=colormap, default_constant=default, palette=self.palette
     )
     if domain is not None:
         if color_ch.mode != "continuous":
@@ -369,7 +368,7 @@ def triangle_mesh(
     y2: ArrayLike,
     *,
     color: Union[str, ArrayLike, None] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     name: Optional[str] = None,
     opacity: Any = 1.0,
@@ -425,8 +424,10 @@ def triangle_mesh(
         and ("stroke_width" not in style_channels)
     ):
         stroke_width_value = 1.0
-    default_color = default_palette_color(len(self.traces))
-    color_ch = channels.resolve_color(color, n, colormap=colormap, default_constant=default_color)
+    default_color = self.palette_color(len(self.traces))
+    color_ch = channels.resolve_color(
+        color, n, colormap=colormap, default_constant=default_color, palette=self.palette
+    )
     if domain is not None:
         if color_ch.mode != "continuous":
             raise ValueError("triangle_mesh domain requires a continuous numeric color array")
@@ -1053,7 +1054,7 @@ def errorbar(
     name = self._optional_text(name, "errorbar name")
     color = self._optional_css_color(color, "errorbar color")
     if color is None:
-        color = default_palette_color(len(self.traces))
+        color = self.palette_color(len(self.traces))
     width = self._positive_scalar(width, "errorbar width")
     if cap_size is not None:
         cap_size = self._nonnegative_scalar(cap_size, "errorbar cap_size")
@@ -1291,7 +1292,7 @@ def stem(
     name = self._optional_text(name, "stem name")
     color = self._optional_css_color(color, "stem color")
     if color is None:
-        color = default_palette_color(len(self.traces))
+        color = self.palette_color(len(self.traces))
     width = self._positive_scalar(width, "stem width")
     opacity = self._opacity(opacity, "stem opacity")
     marker_size = self._nonnegative_scalar(marker_size, "stem marker_size")
@@ -1343,7 +1344,7 @@ def scatter(
     zoom_size_factor: float = 1.0,
     zoom_opacity: Optional[float] = None,
     zoom_emphasis: float = 16.0,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     color_domain: Optional[tuple[float, float]] = None,
     size_range: tuple[float, float] = (2.0, 18.0),
     density: Optional[bool] = None,
@@ -1429,9 +1430,14 @@ def scatter(
             and (stroke_width_value or "stroke_width" in style_channels)
         ):
             stroke_ch = channels.ColorChannel(mode="match_fill")
-        default_color = default_palette_color(len(self.traces))
+        default_color = self.palette_color(len(self.traces))
         color_ch = channels.resolve_color(
-            color, n, colormap=colormap, default_constant=default_color, domain=color_domain
+            color,
+            n,
+            colormap=colormap,
+            default_constant=default_color,
+            domain=color_domain,
+            palette=self.palette,
         )
         size_ch = channels.resolve_size(size, n, range_px=size_range)
 
@@ -1712,7 +1718,7 @@ def box(
     name = self._optional_text(name, "box name")
     color = self._optional_css_color(color, "box color")
     if color is None:
-        color = default_palette_color(len(self.traces))
+        color = self.palette_color(len(self.traces))
     width = self._positive_scalar(width, "box width")
     opacity = self._opacity(opacity, "box opacity")
     show_outliers = self._bool_param(show_outliers, "box show_outliers")
@@ -1946,7 +1952,7 @@ def hexbin(
     reduce_C_function: Callable[[np.ndarray], Scalar] = np.mean,
     mincnt: Optional[int] = None,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     opacity: float = 0.9,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
@@ -1977,8 +1983,7 @@ def hexbin(
         raise ValueError("hexbin bins must be 'count' or 'log'")
     name = self._optional_text(name, "hexbin name")
     opacity = self._opacity(opacity, "hexbin opacity")
-    if not channels.is_colormap(colormap):
-        raise ValueError(f"unknown colormap {colormap!r}; known: {channels.COLORMAPS}")
+    colormap = channels.resolve_colormap(colormap)
     # Canonicalize WITHOUT ingesting: only occupied bin centers ship, so the
     # raw points must not stay resident in the figure's column store.
     x_all, _x_kind, _x_copies = columns._canonicalize(x)
@@ -2069,7 +2074,7 @@ def hexbin(
                 y=self.store.ingest(centers_y),
                 name=name,
                 style={
-                    "color": default_palette_color(len(self.traces)),
+                    "color": self.palette_color(len(self.traces)),
                     "opacity": opacity,
                     "hex_dx": dx,
                     "hex_dy": dy,
@@ -2137,7 +2142,7 @@ def contour(
     levels: Union[int, ArrayLike] = 10,
     filled: bool = False,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     color: Optional[str] = None,
     width: float = 1.1,
     opacity: float = 0.9,
@@ -2185,8 +2190,7 @@ def contour(
         raise ValueError(
             f"contour grid x levels exceeds the bounded work budget ({MAX_CONTOUR_WORK:,})"
         )
-    if not channels.is_colormap(colormap):
-        raise ValueError(f"unknown colormap {colormap!r}; known: {channels.COLORMAPS}")
+    colormap = channels.resolve_colormap(colormap)
     name = self._optional_text(name, "contour name")
     color = self._optional_css_color(color, "contour color")
     width = self._positive_scalar(width, "contour width")
@@ -2387,7 +2391,7 @@ def heatmap(
     x: Optional[ArrayLike] = None,
     y: Optional[ArrayLike] = None,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     opacity: float = 0.95,
     style: styles.StyleMapping | None = None,
@@ -2424,8 +2428,8 @@ def heatmap(
     x_edges = self._cell_edges(xpos, "heatmap x")
     y_edges = self._cell_edges(ypos, "heatmap y")
     z_flat = zv.reshape(-1)
-    if not truecolor and not channels.is_colormap(colormap):
-        raise ValueError(f"unknown colormap {colormap!r}; known: {channels.COLORMAPS}")
+    if not truecolor:
+        colormap = channels.resolve_colormap(colormap)
     explicit_domain = (
         None
         if truecolor or domain is None
