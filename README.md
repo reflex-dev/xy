@@ -47,7 +47,10 @@ uv add xy
 Chart a hundred million points as a density surface:
 
 <p align="center">
-  <img src="spec/assets/xy-density-100m.gif" alt="A hundred-million-point spiral rendered as a density surface, zoomed and panned; each view is re-aggregated by the engine." width="900">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="spec/assets/xy-density-100m-dark.gif">
+    <img src="spec/assets/xy-density-100m-light.gif" alt="A hundred-million-point spiral rendered as a density surface, then zoomed until the surface resolves into individual points." width="860">
+  </picture>
 </p>
 
 ```python
@@ -66,16 +69,19 @@ chart = xy.scatter_chart(
         r * np.cos(theta),
         r * np.sin(theta),
         color=np.exp(-r / 2.2),
-        colormap="magma",
+        colormap="magma_r",
         density=True,
-        opacity=0.3,
+        opacity=0.85,
+        # Grow and solidify markers once a view drills through to real rows.
+        size=2.5,
+        zoom_size_factor=2.6,
+        zoom_opacity=0.95,
     ),
     xy.theme(
-        background="#0d1117", plot_background="#0d1117", grid_color="#21262d",
-        axis_color="#30363d", text_color="#e6edf3",
+        background="#ffffff", plot_background="#ffffff", grid_color="#e6e6e1",
+        axis_color="#c3c2b7", text_color="#0b0b0b",
     ),
     title="100 million points",
-    class_name="dark",
 )
 # chart.to_html("chart.html")
 # chart.to_png("chart.png")
@@ -86,12 +92,14 @@ chart
 Past a threshold a scatter becomes a density surface: counts drive alpha and
 the colour channel aggregates to a per-cell mean, so a hundred million points
 compose in 0.2 s and reach the browser as a 1.03 MB payload whose size is set
-by the screen, not by `n`. The same chart exports unchanged.
+by the screen, not by `n`. Zoom far enough into a sparse region and the ladder
+runs out the other end &mdash; the surface is replaced by the real rows, 189,319
+of them at the depth shown above. The same chart exports unchanged. The dark
+recording is this chart with `colormap="magma"` on a dark theme.
 
-The recording above is the [live drilldown example](examples/fastapi/), where
-every zoom re-queries the engine and gets a freshly aggregated surface. A
-self-contained `to_html` export has no host to ask, so it re-bins its retained
-sample instead and says so in the corner.
+That recording is the [live drilldown example](examples/fastapi/), where every
+view re-queries the engine. A self-contained `to_html` export has no host to
+ask, so it re-bins its retained sample instead and says so in the corner.
 
 XY also covers line, area, histogram, bar and column, heatmap, error bar and
 band, box, violin, ECDF, hexbin, contour, step, stairs, stem, triangle mesh, and
