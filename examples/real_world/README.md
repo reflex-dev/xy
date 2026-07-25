@@ -49,18 +49,18 @@ midpoint
 
 ### 5. LIGO — GW150914 detector strain
 
-![LIGO Hanford strain around GW150914 rendered as an XY decimated line chart.](assets/05-ligo-gw150914-strain.png)
+![GWOSC's reconstructed Hanford waveform for GW150914 rendered as a signal-lab line chart showing inspiral, peak strain, and ringdown.](assets/05-ligo-gw150914-strain.png)
 
-**Theme:** Signal-lab oscilloscope · M4 line decimation of seconds from the
-event versus detector strain
+**Theme:** Signal-lab oscilloscope · a 16.8M-sample M4 overview, a bandpassed
+detector detail, and the official GWOSC waveform reconstruction
 
 ### 6. NYC TLC — yellow-taxi pickup density
 
-![NYC yellow-taxi pickup coordinates rendered as an XY hexbin-density chart.](assets/06-nyc-taxi-density.png)
+![Locally projected NYC yellow-taxi pickup coordinates rendered as a night-map hexbin-density chart with Midtown and airport callouts.](assets/06-nyc-taxi-density.png)
 
-**Theme:** Night cartography · hexbin density of pickup longitude versus
-latitude. The notebook also renders the same rows as automatic scatter density
-and 24 hourly facets.
+**Theme:** Night cartography · locally projected hexbin density using
+`ln(1 + pickups / hex)`. The notebook also renders the same rows as automatic
+scatter density and 24 hourly facets.
 
 ## Setup
 

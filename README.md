@@ -231,7 +231,7 @@ controls, and setup.
 | **Pan-UKBB · biobank editorial** | **Dukascopy · trading terminal** |
 | [![Pan-UKBB standing-height associations across all autosomes.](examples/real_world/assets/03-pan-ukbb-manhattan.png)](examples/real_world/03_pan_ukbb_manhattan.ipynb) | [![Dukascopy EUR/USD midpoint quotes.](examples/real_world/assets/04-dukascopy-fx-ticks.png)](examples/real_world/04_dukascopy_fx_ticks.ipynb) |
 | **LIGO · signal-lab oscilloscope** | **NYC TLC · night cartography** |
-| [![LIGO Hanford strain around GW150914.](examples/real_world/assets/05-ligo-gw150914-strain.png)](examples/real_world/05_ligo_gw150914_strain.ipynb) | [![NYC yellow-taxi pickup hexbin density.](examples/real_world/assets/06-nyc-taxi-density.png)](examples/real_world/06_nyc_taxi_density.ipynb) |
+| [![GWOSC reconstructed Hanford waveform for GW150914.](examples/real_world/assets/05-ligo-gw150914-strain.png)](examples/real_world/05_ligo_gw150914_strain.ipynb) | [![Locally projected NYC yellow-taxi pickup hexbin density.](examples/real_world/assets/06-nyc-taxi-density.png)](examples/real_world/06_nyc_taxi_density.ipynb) |
 
 ## Documentation
 
