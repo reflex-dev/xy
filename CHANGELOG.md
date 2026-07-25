@@ -6,7 +6,7 @@ adheres to [Semantic Versioning](https://semver.org/) once `1.0.0` ships;
 pre-1.0, minor versions may contain breaking changes (see the stability table
 in the README).
 
-## v0.0.2 - 2026-07-24
+## 0.0.2 - 2026-07-24
 
 ### Changed
 - The distribution version is derived from git tags (uv-dynamic-versioning)
