@@ -534,7 +534,7 @@ export class ChartView {
     // Explicit padding is a floor, not permission to clip. Long numeric or
     // categorical ticks and an outside y title reserve the room their actual
     // strings need before the plot rectangle is fixed.
-    const marginLeft = Math.max(authoredLeft, this._yAxisLeftRoom(plotHeight));
+    const measuredLeft = Math.max(authoredLeft, this._yAxisLeftRoom(plotHeight));
     const rightAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("y") &&
       axis.side === "right" && this._axisTickLabelStrategy(axis) !== "none");
@@ -542,6 +542,12 @@ export class ChartView {
     // the Python SVG/raster exporters apply the identical 42/54 rule.
     this._rightAxisRoom = rightAxes.length ? (compact ? 42 : 54) : 0;
     const right = marginRight + this._rightAxisRoom;
+    // Measurement can consume spare canvas room, but it must not move the
+    // y-axis anchor past the viewport on a chart whose authored padding has
+    // already reached the 40 px plot floor. In that compact case the tick
+    // labels retain their full text in `title`/ARIA and ellipsize in bounds.
+    const measuredLeftCap = Math.max(authoredLeft, this.size.w - right - 40);
+    const marginLeft = Math.min(measuredLeft, measuredLeftCap);
     this.plot = {
       x: marginLeft,
       y: top,
