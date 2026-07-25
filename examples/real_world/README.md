@@ -23,38 +23,44 @@ its working rows from the linked public source into the git-ignored cache.
 
 ![Gaia DR3 stellar color versus absolute magnitude rendered as an XY scatter-density chart.](assets/01-gaia-hr-diagram.png)
 
-**Label:** Scatter density · stellar color versus absolute magnitude
+**Theme:** Cosmic observatory · scatter density of stellar color versus
+absolute magnitude
 
 ### 2. gnomAD v4.1 — allele frequency across the genome
 
 ![gnomAD allele frequency by chromosome rendered as an XY scatter-density chart with a logarithmic axis.](assets/02-gnomad-allele-frequency.png)
 
-**Label:** Scatter density · genomic position versus allele frequency
+**Theme:** Clinical genomic atlas · scatter density of genomic position versus
+allele frequency
 
 ### 3. Pan-UKBB — standing-height Manhattan plot
 
 ![Pan-UKBB standing-height associations across all autosomes rendered as an XY Manhattan plot.](assets/03-pan-ukbb-manhattan.png)
 
-**Label:** Scatter density · genomic position versus −log10 p-value
+**Theme:** Warm biobank editorial · scatter density of genomic position versus
+−log10 p-value
 
 ### 4. Dukascopy — EUR/USD tick history
 
 ![Dukascopy EUR/USD midpoint quotes rendered as an XY decimated line chart.](assets/04-dukascopy-fx-ticks.png)
 
-**Label:** M4 line decimation · UTC time versus EUR/USD midpoint
+**Theme:** Trading terminal · M4 line decimation of UTC time versus EUR/USD
+midpoint
 
 ### 5. LIGO — GW150914 detector strain
 
 ![LIGO Hanford strain around GW150914 rendered as an XY decimated line chart.](assets/05-ligo-gw150914-strain.png)
 
-**Label:** M4 line decimation · seconds from the event versus detector strain
+**Theme:** Signal-lab oscilloscope · M4 line decimation of seconds from the
+event versus detector strain
 
 ### 6. NYC TLC — yellow-taxi pickup density
 
 ![NYC yellow-taxi pickup coordinates rendered as an XY hexbin-density chart.](assets/06-nyc-taxi-density.png)
 
-**Label:** Hexbin density · pickup longitude versus latitude. The notebook
-also renders the same rows as automatic scatter density and 24 hourly facets.
+**Theme:** Night cartography · hexbin density of pickup longitude versus
+latitude. The notebook also renders the same rows as automatic scatter density
+and 24 hourly facets.
 
 ## Setup
 
