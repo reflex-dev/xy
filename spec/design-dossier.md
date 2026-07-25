@@ -421,7 +421,7 @@ re-exports several of them as a historic import path and is not listed for those
 | `MAX_CONTOUR_WORK` | `4_000_000` | Ceiling on contour `cells × levels`; a request over it raises instead of allocating an unbounded segment buffer. | `marks.py`, `_native.py` |
 | `DRILL_EXIT_FACTOR` | `1.15` | Hysteresis multiplier on the drill boundary: a trace already drilled to real points stays drilled until the visible count exceeds `budget × 1.15`. | `lod.py` (`drill_decision`, `plan_view_lod`), `interaction.py`; mirrored as `LOD_DRILL_EXIT_FACTOR` in `js/src/45_lod.ts` |
 | `DENSITY_TARGET_POINTS_PER_CELL` | `16.0` | Target points per cell when sizing an aggregation grid, so a barely-over-budget view does not get a one-point-per-pixel grid that looks like static and re-ships large. | `lod.py` |
-| `DENSITY_SAMPLE_TARGET` | `8_192` | Size of the deterministic real-point sample retained with the FIRST density payload only (#225: interactive density replies ship no samples; the client draws the retained overlay solely below the T9 resolvable-count gate, and the standalone re-bin worker keeps it as its CPU source). | `_payload.py` |
+| `DENSITY_SAMPLE_TARGET` | `8_192` | Size of the deterministic real-point sample retained with the FIRST density payload only (#225: interactive density replies ship no samples; the client draws the retained overlay solely below the T9 resolvable-count gate, and the standalone re-bin worker keeps it as its CPU source). Native **raster** exports skip it entirely (`_PayloadWriter(point_overlay=False)`): `_raster._emit_grid` draws density from the grid alone, so sampling it was O(N) work no pixel consumed — output is byte-identical either way (spec/api/export.md). | `_payload.py` |
 | `DENSITY_SAMPLE_SEED` | `0` | Seed for that sample; a fixed seed makes the overlay identical across re-ships of the same view. | `_payload.py` |
 | `LOD_SAMPLE_FADE_COVER_HI` / `LOD_SAMPLE_FADE_COVER_LO` | `1/4` / `1/32` | Fallback bound on the retained sample overlay (T9): overlays ride their density windows and the drawn one is the best cached window covering the view (full alpha), so the band only governs a view NO cached window covers — the best partial draws at full alpha while its window covers ≥ 1/4 of the view area, hidden below 1/32, log-eased between. The band value is a *composited* opacity target (per-point alpha solved against the expected overplot, `1−(1−band)^(1/k)`), so a partial overlay can never overplot into a false cluster. Every candidate first passes the #225 resolvability gate (estimated in-view count ≤ the direct budget). | `js/src/45_lod.ts` (`lodOverlayResolvable`, `lodSampleViewAlpha`, `lodSampleForView`) |
 | `DRILL_PAD_TARGETS` | `(8, 4, 2)` | Ladder of padded-span targets (× the view span) for points-tier replies: the coarsest ALIGNED window around the view whose exact count fits the budget ships, so the client's point-window cache answers nearby pans/zooms with zero round-trips (LOD doc T13). | `interaction.py` (`_padded_drill_window`), `lod.py` (`aligned_window`) |
@@ -1178,6 +1178,16 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
   (native core + JS client + assets), CI-enforced like every other number.
 - **Import-time budget**: `import xy` does no heavy work (< 200 ms); NumPy and
   the native core initialize lazily when a chart-building API is first imported/used.
+- **Stdlib-import budget on the export path**: the lazily-imported export modules
+  must not drag in the network or mail stacks. `xml.sax.saxutils` does exactly
+  that — importing it pulls `urllib.request` → `http.client` → `ssl`, `socket`
+  and all of `email`, 35+ modules, measured at ~7.5 ms of a cold static export,
+  more than binning ten million points costs. `_svg.escape` is therefore a
+  vendored copy of `saxutils.escape` (three `str.replace` calls), kept honest by
+  a differential fuzz test against the stdlib plus a fresh-subprocess assertion
+  that a static export leaves `urllib.request`/`ssl`/`email` unimported
+  (`tests/test_svg_escape.py`). Prefer vendoring a leaf function over importing a
+  package whose transitive tree dwarfs it.
 
 ## 34. Filtering, selection & linked views — the pyramid alone cannot answer them (F2)
 

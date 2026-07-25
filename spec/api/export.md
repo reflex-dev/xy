@@ -70,6 +70,17 @@ raster-only option that was passed non-default.
 the image has ≤256 distinct RGBA colors. `optimize=True` selects this
 size-oriented path; `optimize=False` (default) takes the fused Rust encode.
 
+The raster exporters build their payload through the private
+`Figure._build_raster_payload`, which sets `point_overlay=False`: a density
+trace ships its grid without the retained real-point sample
+(`DENSITY_SAMPLE_TARGET`). This is not a rendering choice — `_raster._emit_grid`
+draws density traces from the grid alone and never reads `density["sample"]`, so
+the overlay was an O(N) sampling pass and two gathers whose result no pixel
+consumed. Raster output is byte-identical with and without it. The public
+`build_payload`/`build_payload_split` still ship the overlay: the browser client
+(`js/src/50_chartview.ts`) and the SVG renderer's payload path both go through
+them, and the client *does* draw it (T9).
+
 `_pdf.py` accepts only the SVG that `_svg.py` emits and raises
 `ValueError("unsupported SVG feature: ...")` on anything else, so generator
 drift fails loudly rather than rendering wrong. Text stays text (base-14

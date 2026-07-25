@@ -24,13 +24,36 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from os import PathLike
 from typing import Any, Optional
-from xml.sax.saxutils import escape
 
 import numpy as np
 
 from . import _native, _paint, _png
 from ._arrowgeom import arrow_shapes as _arrow_shapes
 from .config import DEFAULT_PALETTE
+
+
+def escape(data: str, entities: dict[str, str] | None = None) -> str:
+    """Escape ``&``, ``<`` and ``>`` in a string of data.
+
+    Byte-for-byte equivalent to :func:`xml.sax.saxutils.escape`, vendored so a
+    static export does not import it. That one function costs ~7.5 ms of cold
+    start: ``xml.sax.saxutils`` pulls in ``urllib.request``, which pulls in
+    ``http.client``, ``ssl``, ``socket`` and the whole ``email`` package — 35+
+    modules for three ``str.replace`` calls. Nothing else in xy needs them, and
+    a cold ``to_png`` at 10M points spent more time on that import than on
+    binning ten million points.
+
+    ``tests/test_svg_escape.py`` differentially fuzzes this against the stdlib
+    so it cannot drift.
+    """
+    # must do ampersand first
+    data = data.replace("&", "&amp;")
+    data = data.replace(">", "&gt;")
+    data = data.replace("<", "&lt;")
+    if entities:
+        for key, value in entities.items():
+            data = data.replace(key, value)
+    return data
 
 
 def _fill_opacity(style: dict[str, Any], default: float = 1.0) -> float:

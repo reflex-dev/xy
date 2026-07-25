@@ -48,7 +48,13 @@ class _PayloadWriter:
     means calling these, not re-implementing the encoding.
     """
 
-    def __init__(self, *, split: bool = False, borrow_heatmaps: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        split: bool = False,
+        borrow_heatmaps: bool = False,
+        point_overlay: bool = True,
+    ) -> None:
         # split=True: every column ships as its own wire buffer — spec entries
         # carry `buf` (the wire-buffer index) with byte_offset 0, and
         # `buffers()` returns per-column views with no join copy. Packed mode
@@ -60,6 +66,14 @@ class _PayloadWriter:
         self._split = split
         self.borrow_heatmaps = borrow_heatmaps
         self.borrowed: list[np.ndarray] = []
+        # point_overlay=False: skip the density tier's sampled point overlay.
+        # Only the *raster* exporters set this. They draw density traces
+        # through `_emit_grid`, which never reads `density["sample"]`, so on
+        # that path the overlay is an O(N) SplitMix scan plus two gathers whose
+        # result no pixel consumes. The browser client *does* draw it
+        # (`50_chartview.ts`), so `build_payload`/`build_payload_split` must
+        # keep shipping it.
+        self.point_overlay = point_overlay
 
     def ship(self, values: np.ndarray, col: "Column", *, scale: str | None = None) -> int:
         """Offset-encoded geometry column: `(v - offset) * scale` as f32
@@ -217,7 +231,7 @@ class PayloadMixin(_Host):
         self, px_width: Optional[int] = None
     ) -> tuple[dict[str, Any], bytes, tuple[np.ndarray, ...]]:
         """Private static-export payload with borrowed canonical heatmap spans."""
-        pw = _PayloadWriter(borrow_heatmaps=True)
+        pw = _PayloadWriter(borrow_heatmaps=True, point_overlay=False)
         spec = self._payload_spec(pw, self._resolve_px_width(px_width))
         return spec, pw.blob(), tuple(pw.borrowed)
 
@@ -1015,6 +1029,13 @@ class PayloadMixin(_Host):
             sel = np.empty(0, dtype=np.uint32)
             sample_sel = None
             grid = kernels.bin_2d(t.x.values, t.y.values, xr[0], xr[1], yr[0], yr[1], w, h)
+        elif full_identity and not pw.point_overlay:
+            # Raster export: no overlay is drawn, so take the plain grid kernel
+            # instead of the fused grid+sample variants below. `bin_2d` is the
+            # grid half of every one of them, so the counts are identical.
+            visible = int(t.n_points)
+            sel = np.empty(0, dtype=np.uint32)
+            grid = kernels.bin_2d(bx, by, bx0, bx1, by0, by1, w, h)
         elif full_identity:
             visible = int(t.n_points)
             sel = np.empty(0, dtype=np.uint32)
@@ -1107,9 +1128,10 @@ class PayloadMixin(_Host):
             # §28: exact grid, but the deterministic point overlay is dropped
             # because row ids exceed u32. Recorded so the client/legend can say so.
             density["overlay_omitted"] = "rows_exceed_u32"
-        sample = self._density_sample_spec(t, sel, visible, xr, yr, pw, sample_sel=sample_sel)
-        if sample is not None:
-            density["sample"] = sample
+        if pw.point_overlay:
+            sample = self._density_sample_spec(t, sel, visible, xr, yr, pw, sample_sel=sample_sel)
+            if sample is not None:
+                density["sample"] = sample
         entry = {
             "id": t.id,
             "kind": "scatter",
