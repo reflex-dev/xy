@@ -8,9 +8,8 @@ import numpy as np
 import pytest
 
 import xy
-from xy import _svg, channels
+from xy import channels
 from xy.config import DEFAULT_PALETTE
-
 
 # ---------------------------------------------------------------------------
 # Custom colormaps

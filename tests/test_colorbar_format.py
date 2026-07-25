@@ -100,7 +100,8 @@ def test_explicit_padding_is_never_second_guessed() -> None:
 
 def test_the_gutter_is_capped_so_one_label_cannot_eat_the_plot() -> None:
     axes = {"y": {"id": "y", "range": [0.0, 1.0], "format": "$,.8f" + "x" * 40, "label": "y"}}
-    assert _svg._left_axis_room(axes, 300.0, 62.0) <= 62.0 + _svg._Y_EXTRA_ROOM_CAP
+    room = _svg._left_axis_room(axes, 300.0, 62.0, _svg._BASE_FONT_SIZE)
+    assert room <= 62.0 + _svg._Y_EXTRA_ROOM_CAP
 
 
 def test_a_hidden_axis_contributes_no_gutter() -> None:
