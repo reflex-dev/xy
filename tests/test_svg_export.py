@@ -731,3 +731,79 @@ def test_segment_constant_translucent_color_applies_alpha_once() -> None:
         entry for entry in re.findall(r"<line[^>]*/>", opaque) if 'stroke="red"' in entry
     ]
     assert opaque_lines, "opaque constant color should pass through verbatim"
+
+
+def test_static_axis_format_matches_the_client_grammar() -> None:
+    """`format=` must render the same in a native export as in the browser.
+
+    The two implementations are separate — `fmtNumberSpec`/`fmtTimeSpec` in
+    js/src/30_ticks.ts for the live chart, `_fmt_number_spec`/`_fmt_time_spec`
+    in python/xy/_svg.py for SVG/PNG/JPEG/WebP/PDF — so pin the grammar itself,
+    not just a few outputs. A change to one side without the other fails here.
+    """
+    from pathlib import Path
+
+    from xy import _svg
+
+    client = (Path(__file__).resolve().parents[1] / "js" / "src" / "30_ticks.ts").read_text(
+        encoding="utf-8"
+    )
+    assert _svg._NUMBER_SPEC.pattern in client, (
+        "the numeric grammar diverged from fmtNumberSpec in js/src/30_ticks.ts"
+    )
+    assert _svg._TIME_SPEC_TOKEN.pattern in client, (
+        "the strftime subset diverged from fmtTimeSpec in js/src/30_ticks.ts"
+    )
+
+    # Behavior, mirroring the worked examples in spec/api/styling.md.
+    assert _svg._fmt_number_spec(0.4, ".0%") == "40%"
+    assert _svg._fmt_number_spec(0.4, ".1%") == "40.0%"
+    assert _svg._fmt_number_spec(14741.0, "$,.0f") == "$14,741"
+    assert _svg._fmt_number_spec(14741.0, "$,.0fK") == "$14,741K"
+    assert _svg._fmt_number_spec(-14741.0, "$,.0f") == "$-14,741"
+    assert _svg._fmt_number_spec(1.5, ".2f") == "1.50"
+    # Affixes need an explicit `f`/`%` core, so the historical `.N` form is
+    # unchanged; anything outside the grammar falls back to automatic labels.
+    assert _svg._fmt_number_spec(1.5, "$.2") is None
+    assert _svg._fmt_number_spec(1.5, ".2e") is None
+    assert _svg._fmt_number_spec(float("nan"), ".2f") is None
+    # A Python-style spec is not rejected: `{:` and `}` are legal affixes under
+    # the shared grammar, so it renders as one. Asserted to keep both sides
+    # agreeing on the quirk rather than only on the happy path.
+    assert _svg._fmt_number_spec(1.5, "{:,.2f}") == "{:1.50}"
+
+    ms = 1704067200000.0  # 2024-01-01T00:00:00Z
+    assert _svg._fmt_time_spec(ms, "%Y/%m/%d") == "2024/01/01"
+    assert _svg._fmt_time_spec(ms, "%b %Y") == "Jan 2024"
+    assert _svg._fmt_time_spec(ms, "%B %d, %Y") == "January 01, 2024"
+    assert _svg._fmt_time_spec(ms, "%H:%M:%S") == "00:00:00"
+    # An unknown token is copied through verbatim, as the client does.
+    assert _svg._fmt_time_spec(ms, "%y") == "%y"
+
+
+def test_static_export_renders_axis_format() -> None:
+    """End to end: a formatted axis reaches the SVG text nodes, and an
+    unsupported spec degrades to the automatic labels rather than raising."""
+    import re
+
+    import xy
+
+    def tick_text(chart: object) -> set[str]:
+        return set(re.findall(r">([^<>]+)</text>", chart.to_svg()))  # type: ignore[attr-defined]
+
+    pct = xy.line_chart(
+        xy.line([1, 2, 3], [0.1, 0.2, 0.3]), xy.y_axis(format=".0%"), width=600, height=400
+    )
+    assert {"10%", "20%", "30%"} <= tick_text(pct)
+
+    money = xy.line_chart(
+        xy.line([1, 2, 3], [1000, 2000, 3000]), xy.y_axis(format="$,.0f"), width=600, height=400
+    )
+    assert {"$1,000", "$2,000", "$3,000"} <= tick_text(money)
+
+    plain = xy.line_chart(xy.line([1, 2, 3], [0.1, 0.2, 0.3]), width=600, height=400)
+    assert tick_text(
+        xy.line_chart(
+            xy.line([1, 2, 3], [0.1, 0.2, 0.3]), xy.y_axis(format=".2e"), width=600, height=400
+        )
+    ) == tick_text(plain)
