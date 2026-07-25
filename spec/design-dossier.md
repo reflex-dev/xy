@@ -1335,7 +1335,17 @@ author expects.
   colors a categorical `color=` channel assigns to its categories. It lives on `Figure`
   before any mark applies (a trace bakes its color at build), rides the spec as
   `palette`, and is carried on each `ColorChannel` so ship / re-bin / legend / export all
-  read one source. Entries take any CSS color the paint props take, `var()` included.
+  read one source. Entries obey the same literal-color rule as ramp stops below, plus a
+  sharper reason of their own: a palette is an *indexed* lookup, so several browser-only
+  entries would land on one fallback and merge distinct categories into a single
+  indistinguishable color. They are **normalized to hex on the wire**, not merely
+  validated — the client's only cascade-free decode is `hexColor`, and anything else hits
+  a `getComputedStyle` probe that returns `""` on a root not yet in the document
+  (notebook webviews attach asynchronously), yielding black permanently, since a cached
+  palette LUT is rebuilt only on GL context loss. `channels.palette_rows_rgba8` is the one
+  place a palette becomes LUT rows — shared by the density plane and both static
+  exporters — and it substitutes the built-in color *at the same index*, never one shared
+  fallback, and warns (§28).
   `colormap=` likewise accepts a **custom ramp**: a sequence of 2–256 CSS colors,
   optionally `(position, color)` pairs, or a CSS `linear-gradient(...)`.
   `channels.resolve_colormap` normalizes every form to *evenly spaced 8-bit RGB stops* —

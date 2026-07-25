@@ -193,11 +193,11 @@ assigns to its categories. It must land before any mark applies — a trace bake
 its color at build — and rides the spec as `palette`, the indexed fallback the
 SVG and native renderers use for a trace with no style color. (The browser
 client never reads the chart-level key; it works from each channel's own
-resolved `palette`.) A palette entry is an ordinary paint color, so
-Entries obey the **same rule as colormap stops**, for the same reason: a
-palette is an indexed lookup consumed by four things with no DOM between them
-(the density plane, the SVG writer, the native rasterizer, and the client's own
-worker re-bin), so `var()`/`oklch()`/`color-mix()` are refused with that reason.
+resolved `palette`.) Entries obey the **same rule as colormap stops**, for the
+same reason: a palette is an indexed lookup consumed by four things with no DOM
+between them (the density plane, the SVG writer, the native rasterizer, and the
+client's own worker re-bin), so `var()`/`oklch()`/`color-mix()` are refused with
+that reason.
 The failure they would cause is worse than for a single mark — several such
 entries resolve to one fallback, collapsing distinct categories into one
 indistinguishable color. A single `color=`/`stroke`/`fill` is unaffected: one
