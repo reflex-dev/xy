@@ -19,6 +19,20 @@
       "file": "annotation-basic.png",
       "dimensions": [2304, 670],
       "sha256": "4a9974b506a41ce36f1b94b1c536fa1460b4acfc097105921b62bad8eab9687f"
+    },
+    {
+      "source": "lines_bars_and_markers/horizontal_barchart_distribution.py",
+      "figure": 0,
+      "file": "horizontal-barchart-legend.png",
+      "dimensions": [2760, 545],
+      "sha256": "47b0108806b747d32eb54a41b5c6c665af10e40b0b83bd00e14e0e75326249f6",
+      "rendered_code_commit": "e4bc640c0f04a5aca55cb54eb14f0674fae3af9e",
+      "panels": [
+        "Matplotlib 3.11.0 reference",
+        "Stack A legend behavior before e4bc640",
+        "Stack A legend behavior at e4bc640"
+      ],
+      "before_render_note": "The before panel comes from the exact final-stack gallery run; Stack B does not modify the shared legend layout inherited from Stack A."
     }
   ]
 }
