@@ -62,16 +62,12 @@ import xy
 
 rng = random.Random(7)
 n = 1_000_000
-
-
-def walk() -> list[float]:
-    """One million accumulated Gaussian steps."""
-    return list(itertools.accumulate(rng.gauss(0.0, 1.0) for _ in range(n)))
-
+signal = list(itertools.accumulate(rng.gauss(0, 1) for _ in range(n)))
+control = list(itertools.accumulate(rng.gauss(0, 1) for _ in range(n)))
 
 chart = xy.line_chart(
-    xy.line(range(n), walk(), name="signal", color="#2a78d6", width=1.6),
-    xy.line(range(n), walk(), name="control", color="#eb6834", width=1.6),
+    xy.line(range(n), signal, name="signal", color="#2a78d6", width=1.6),
+    xy.line(range(n), control, name="control", color="#eb6834", width=1.6),
     xy.x_axis(label="sample"),
     xy.y_axis(label="value"),
     xy.legend(),
