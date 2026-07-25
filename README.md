@@ -218,20 +218,17 @@ For the full design, see the [design dossier](spec/design-dossier.md).
 - Large-data views that adapt from direct rendering to decimated and density
   representations as the visible range changes.
 
-## Real-world notebook gallery
+## Examples
 
 Each notebook fetches working rows from its linked public source; raw datasets
 are not stored in this repository. See the
 [example guide](examples/real_world/README.md) for source links, workload
 controls, and setup.
 
-| Gaia DR3 · cosmic observatory | gnomAD v4.1 · genomic atlas |
-| --- | --- |
-| [![Gaia DR3 stellar color versus absolute magnitude.](examples/real_world/assets/01-gaia-hr-diagram.png)](examples/real_world/01_gaia_hr_diagram.ipynb) | [![gnomAD allele frequency across all autosomes.](examples/real_world/assets/02-gnomad-allele-frequency.png)](examples/real_world/02_gnomad_allele_frequency.ipynb) |
-| **Pan-UKBB · biobank editorial** | **Dukascopy · trading terminal** |
-| [![Pan-UKBB standing-height associations across all autosomes.](examples/real_world/assets/03-pan-ukbb-manhattan.png)](examples/real_world/03_pan_ukbb_manhattan.ipynb) | [![Dukascopy EUR/USD midpoint quotes.](examples/real_world/assets/04-dukascopy-fx-ticks.png)](examples/real_world/04_dukascopy_fx_ticks.ipynb) |
-| **LIGO · signal-lab oscilloscope** | **NYC TLC · night cartography** |
-| [![GWOSC reconstructed Hanford waveform for GW150914.](examples/real_world/assets/05-ligo-gw150914-strain.png)](examples/real_world/05_ligo_gw150914_strain.ipynb) | [![Locally projected NYC yellow-taxi pickup hexbin density.](examples/real_world/assets/06-nyc-taxi-density.png)](examples/real_world/06_nyc_taxi_density.ipynb) |
+|  |  |  |
+| :---: | :---: | :---: |
+| **Gaia DR3 · cosmic observatory**<br><br>![Gaia DR3 stellar color versus absolute magnitude.](examples/real_world/assets/01-gaia-hr-diagram.png)<br><br>[Open notebook](examples/real_world/01_gaia_hr_diagram.ipynb) | **gnomAD v4.1 · genomic atlas**<br><br>![gnomAD allele frequency across all autosomes.](examples/real_world/assets/02-gnomad-allele-frequency.png)<br><br>[Open notebook](examples/real_world/02_gnomad_allele_frequency.ipynb) | **Pan-UKBB · biobank editorial**<br><br>![Pan-UKBB standing-height associations across all autosomes.](examples/real_world/assets/03-pan-ukbb-manhattan.png)<br><br>[Open notebook](examples/real_world/03_pan_ukbb_manhattan.ipynb) |
+| **Dukascopy · trading terminal**<br><br>![Dukascopy EUR/USD midpoint quotes.](examples/real_world/assets/04-dukascopy-fx-ticks.png)<br><br>[Open notebook](examples/real_world/04_dukascopy_fx_ticks.ipynb) | **LIGO · signal-lab oscilloscope**<br><br>![GWOSC reconstructed Hanford waveform for GW150914.](examples/real_world/assets/05-ligo-gw150914-strain.png)<br><br>[Open notebook](examples/real_world/05_ligo_gw150914_strain.ipynb) | **NYC TLC · night cartography**<br><br>![Locally projected NYC yellow-taxi pickup hexbin density.](examples/real_world/assets/06-nyc-taxi-density.png)<br><br>[Open notebook](examples/real_world/06_nyc_taxi_density.ipynb) |
 
 ## Documentation
 
