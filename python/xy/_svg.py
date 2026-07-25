@@ -3296,12 +3296,15 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     )
 
     loc = options.get("loc") or "upper right"
+    loc_tokens = set(re.split(r"[\s_-]+", loc))
+    loc_is_upper = "upper" in loc or "top" in loc_tokens
+    loc_is_lower = "lower" in loc or "bottom" in loc_tokens
     anchor = options.get("anchor")
     if anchor and len(anchor) in (2, 4):
         ax, ay = float(anchor[0]), float(anchor[1])
         aw, ah = (0.0, 0.0) if len(anchor) == 2 else (float(anchor[2]), float(anchor[3]))
         hx = 0.0 if "left" in loc else 1.0 if "right" in loc else 0.5
-        vy = 0.0 if "lower" in loc else 1.0 if "upper" in loc else 0.5
+        vy = 0.0 if loc_is_lower else 1.0 if loc_is_upper else 0.5
         target_x = float(plot["x"]) + (ax + hx * aw) * float(plot["w"])
         target_y = float(plot["y"]) + (1.0 - ay - vy * ah) * float(plot["h"])
         x = target_x - hx * box_w
@@ -3318,9 +3321,9 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
             x = float(plot["x"]) + float(plot["w"]) - box_w - inset
         else:
             x = float(plot["x"]) + (float(plot["w"]) - box_w) / 2
-        if "upper" in loc:
+        if loc_is_upper:
             y = float(plot["y"]) + inset
-        elif "lower" in loc:
+        elif loc_is_lower:
             y = float(plot["y"]) + float(plot["h"]) - box_h - inset
         else:
             y = float(plot["y"]) + (float(plot["h"]) - box_h) / 2

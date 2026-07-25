@@ -2387,7 +2387,12 @@ export class ChartView {
     // real left/right/top/bottom/transform declarations and win normally.
     const rightInset = this.size.w - (this.plot.x + this.plot.w);
     const h = loc.includes("left") ? "left" : loc.includes("right") ? "right" : "center";
-    const v = loc.includes("upper") ? "upper" : loc.includes("lower") ? "lower" : "center";
+    const locTokens = loc.split(/[\s_-]+/);
+    const v = loc.includes("upper") || locTokens.includes("top")
+      ? "upper"
+      : loc.includes("lower") || locTokens.includes("bottom")
+        ? "lower"
+        : "center";
     let left = h === "left" ? this.plot.x + 6 : h === "center" ? this.plot.x + this.plot.w / 2 : null;
     let right = h === "right" ? rightInset + 6 : null;
     let top = v === "upper" ? this.plot.y + 6 : v === "center" ? this.plot.y + this.plot.h / 2 : null;

@@ -388,6 +388,29 @@ def test_pyplot_legend_loc_rejects_misspelled_locations():
     assert xy.legend(loc="top left").loc == "top left"
 
 
+@pytest.mark.parametrize(
+    ("alias", "canonical"),
+    [
+        ("top", "upper"),
+        ("top left", "upper left"),
+        ("top-center", "upper-center"),
+        ("bottom", "lower"),
+        ("bottom right", "lower right"),
+        ("bottom_center", "lower_center"),
+    ],
+)
+def test_core_legend_vertical_aliases_match_static_layout(alias, canonical):
+    """Core aliases keep their public spelling but share SVG anchor geometry."""
+    items = [{"name": "abc"}]
+    plot = {"x": 40.0, "y": 20.0, "w": 400.0, "h": 300.0}
+    for anchor in (None, (0.2, 0.3), (0.2, 0.3, 0.4, 0.5)):
+        options = {"loc": alias, "anchor": anchor}
+        canonical_options = {"loc": canonical, "anchor": anchor}
+        actual = _legend_layout(items, plot, options)
+        expected = _legend_layout(items, plot, canonical_options)
+        assert (actual["x"], actual["y"]) == pytest.approx((expected["x"], expected["y"]))
+
+
 def test_every_matplotlib_loc_places_the_box_at_its_anchor():
     items = [{"name": "abc"}]
     plot = {"x": 40.0, "y": 20.0, "w": 400.0, "h": 300.0}
