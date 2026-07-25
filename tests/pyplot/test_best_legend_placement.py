@@ -362,15 +362,16 @@ def test_sparse_scatter_offset_outside_path_budget_disqualifies_the_corner():
     assert resolved_loc(ax) == "upper left"
 
 
-def test_datetime_paths_participate_in_best_placement():
-    """Datetime vertices use the same converted millisecond space as drawing."""
+def test_datetime_text_and_annotations_participate_in_best_placement():
+    """Each string-datetime text artist disqualifies one top corner."""
     _, ax = plt.subplots()
     dates = np.asarray(["2026-01-01", "2026-01-02"], dtype="datetime64[D]")
-    ax.plot(dates, [0.0, 1.0], label="dated")
-    ax.text("2026-1-1", 0.4, "start")
-    ax.annotate("finish", xy=("2026-1-2", 1.0))
+    ax.plot(dates, [0.5, 0.5], label="dated")
+    ax.set_ylim(0, 1)
+    ax.text("2026-1-2", 0.95, "text")
+    ax.annotate("annotation", xy=("2026-1-1", 0.95))
     ax.legend(loc="best")
-    assert resolved_loc(ax) == "upper left"
+    assert resolved_loc(ax) == "lower left"
 
 
 def test_best_is_resolved_before_the_wire():

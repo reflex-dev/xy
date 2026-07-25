@@ -469,7 +469,9 @@ def test_violinplot_flat_quantiles_are_one_single_violin_group() -> None:
         showextrema=False,
     )
 
-    assert len(result["cquantiles"]._entry["args"][0]) == 3
+    quantile_segments = result["cquantiles"]._entry["args"]
+    assert len(quantile_segments[0]) == 3
+    np.testing.assert_allclose(quantile_segments[1], [1.75, 2.5, 3.25])
 
 
 def test_plot_masked_integer_coordinates_use_nan_gaps() -> None:
