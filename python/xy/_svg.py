@@ -54,7 +54,9 @@ def _flag_stops() -> list[tuple[int, int, int]]:
             0.75 * np.sin((x * 31.5 - 0.25) * np.pi) + 0.5,
         )
     )
-    rgb = np.rint(np.clip(channels, 0.0, 1.0) * 255.0).astype(np.uint8)
+    # Match Matplotlib's ``bytes=True`` conversion, which truncates rather than
+    # rounds each clipped channel after scaling it to the uint8 range.
+    rgb = (np.clip(channels, 0.0, 1.0) * 255.0).astype(np.uint8)
     return [tuple(int(channel) for channel in row) for row in rgb]
 
 

@@ -4,7 +4,11 @@ against the JS client tables it mirrors."""
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import re
+import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -859,13 +863,35 @@ def test_flag_colormap_matches_matplotlib_lut_and_gray_aliases() -> None:
 
     flag = COLORMAP_STOPS["flag"]
     assert len(flag) == 256
-    assert {index: flag[index] for index in (0, 4, 8, 12, 255)} == {
-        0: (255, 0, 0),
-        4: (255, 255, 255),
-        8: (0, 9, 255),
-        12: (0, 0, 0),
-        255: (0, 0, 0),
-    }
+
+    # Full Matplotlib 3.11 ``colormaps["flag"](linspace(...), bytes=True)``
+    # parity. The digest guards every channel of all 256 entries, including
+    # the truncation behavior that sparse samples previously missed.
+    flag_bytes = np.asarray(flag, dtype=np.uint8).tobytes()
+    assert hashlib.sha256(flag_bytes).hexdigest() == (
+        "c84ac1f0b2edd3a53ed05fc90dcf6a41e78c2cf52adf1b2288b2d03777505443"
+    )
+
+    js_path = ROOT / "js" / "src" / "10_colormaps.ts"
+    encoded_source = base64.b64encode(js_path.read_bytes()).decode("ascii")
+    completed = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "--eval",
+            (
+                f'const module = await import("data:text/javascript;base64,{encoded_source}");'
+                'console.log(JSON.stringify(module.colormapStops("flag")));'
+            ),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    assert json.loads(completed.stdout) == [list(rgb) for rgb in flag]
+
     assert channels.is_colormap("flag")
     assert channels.is_colormap("flag_r")
     assert _colormap_stops("flag_r") == list(reversed(flag))

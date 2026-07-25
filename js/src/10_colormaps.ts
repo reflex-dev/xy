@@ -12,9 +12,9 @@ function flagStops() {
   return Array.from({ length: 256 }, (_, index) => {
     const x = index / 255;
     return [
-      Math.round(255 * clip(0.75 * Math.sin((x * 31.5 + 0.25) * Math.PI) + 0.5)),
-      Math.round(255 * clip(Math.sin(x * 31.5 * Math.PI))),
-      Math.round(255 * clip(0.75 * Math.sin((x * 31.5 - 0.25) * Math.PI) + 0.5)),
+      Math.trunc(255 * clip(0.75 * Math.sin((x * 31.5 + 0.25) * Math.PI) + 0.5)),
+      Math.trunc(255 * clip(Math.sin(x * 31.5 * Math.PI))),
+      Math.trunc(255 * clip(0.75 * Math.sin((x * 31.5 - 0.25) * Math.PI) + 0.5)),
     ];
   });
 }
