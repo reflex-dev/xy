@@ -106,7 +106,7 @@ _BEST_LOC_ORDER = (
 # `loc="best"` slowness warning; the shim strides instead and weights the count
 # back up, so relative badness survives but a lone excursion into an otherwise
 # empty candidate box can be missed on a series far longer than this.
-_BEST_LOC_SAMPLE = 4096
+_BEST_LOC_SAMPLE = 512
 # Plot box of the default 640x480 figure, for direct `_best_legend_loc` callers
 # that have no chart geometry to hand.
 _DEFAULT_BEST_PLOT_SIZE = (564.0, 428.0)
@@ -3490,7 +3490,43 @@ class Axes(PlotTypeMixin):
         combined = np.concatenate(edges)
         return combined[np.isfinite(combined)]
 
-    def _fully_sticky_domain(self, axis: str) -> Optional[tuple[float, float]]:
+    def _has_fully_sticky_candidate(self, axis: str) -> bool:
+        """Whether an entry can pin both ends of *axis*.
+
+        Ordinary bar baselines are deliberately absent: they are one-sided,
+        and the core already anchors them.  Keeping this probe structural and
+        allocation-free avoids rescanning every bar coordinate during each
+        default chart build merely to rediscover that fact.
+        """
+        host = self._y2_of or self
+        y_axis = "y2" if self._y2_of is not None else "y"
+        for entry in host._entries:
+            if axis == "y" and entry.get("y_axis", "y") != y_axis:
+                continue
+            if entry.get("_mpl_sticky_edges", {}).get(axis) is not None:
+                return True
+            if entry.get("kind") == "heatmap" and entry.get("extent") is not None:
+                return True
+            if entry.get("kind") != "@mark":
+                continue
+            factory = entry.get("factory")
+            if factory in {"contour", "heatmap"}:
+                return True
+            if factory == "ecdf" and axis == "y":
+                return True
+            if factory == "box":
+                orientation = entry.get("kwargs", {}).get("orientation", "vertical")
+                category_axis = "x" if orientation == "vertical" else "y"
+                if axis == category_axis:
+                    return True
+        return False
+
+    def _fully_sticky_domain(
+        self,
+        axis: str,
+        *,
+        dataless: Optional[bool] = None,
+    ) -> Optional[tuple[float, float]]:
         """The raw extent when sticky edges pin *both* ends of *axis*.
 
         Image- and mesh-like marks (imshow/pcolormesh/hist2d/specgram) hug
@@ -3502,10 +3538,12 @@ class Axes(PlotTypeMixin):
         Deliberately requires *both* ends: a one-sided sticky edge is the bar
         and histogram baseline, which the core already anchors itself.
         """
-        if self._axis_is_dataless(axis):
+        if not self._has_fully_sticky_candidate(axis):
             return None
         sticky = self._entry_sticky_edges(axis)
         if not sticky.size:
+            return None
+        if dataless is True or (dataless is None and self._axis_is_dataless(axis)):
             return None
         lo, hi = self._entry_extent(axis)
         tolerance = np.finfo(np.float64).eps * max(1.0, abs(lo), abs(hi)) * 8
@@ -5743,7 +5781,10 @@ class Axes(PlotTypeMixin):
             return x_props.get("domain"), y_props.get("domain")
 
     @staticmethod
-    def _displayed_plot_size(figure: Any) -> tuple[float, float]:
+    def _displayed_plot_size(
+        figure: Any,
+        displayed_ranges: tuple[Optional[tuple[float, float]], Optional[tuple[float, float]]],
+    ) -> tuple[float, float]:
         """The plot rectangle the static/browser layout model will display.
 
         Legend placement runs after the core figure exists, so estimating this
@@ -5755,7 +5796,26 @@ class Axes(PlotTypeMixin):
         """
         from .._svg import layout
 
-        spec, _ = figure.build_payload()
+        known_ranges = {"x": displayed_ranges[0], "y": displayed_ranges[1]}
+        axis_specs = {
+            axis_id: figure._axis_spec(
+                axis_id,
+                known_ranges.get(axis_id) or figure._range(axis_id),
+            )
+            for axis_id in figure.axis_options
+        }
+        spec = {
+            "width": figure.width,
+            "height": figure.height,
+            "title": figure.title,
+            "x_axis": axis_specs["x"],
+            "y_axis": axis_specs["y"],
+            "axes": axis_specs,
+        }
+        if figure.padding is not None:
+            spec["padding"] = list(figure.padding)
+        if figure.colorbar_options:
+            spec["colorbar"] = figure.colorbar_options
         *_, plot = layout(spec)
         return float(plot["w"]), float(plot["h"])
 
@@ -6011,19 +6071,43 @@ class Axes(PlotTypeMixin):
             # series back to its true length to preserve that weighting.
             weight = total / float(sampled)
             entries_used += 1
-            path_hits = (
-                [False] * len(candidates)
-                if kind == "scatter"
-                else _path_intersects_boxes(
+            inside_counts = [
+                int(np.count_nonzero((xn > xl) & (xn < xh) & (yn > yl) & (yn < yh)))
+                for _, xl, xh, yl, yh in candidates
+            ]
+            path_hits = [False] * len(candidates)
+            if kind != "scatter":
+                # A contained vertex proves the path intersects the box. Run
+                # the exact segment test only for edge-only crossings, which
+                # keeps dense oscillating lines from solving the same question
+                # twice for most candidates.
+                unresolved = [index for index, count in enumerate(inside_counts) if not count]
+                unresolved_hits = _path_intersects_boxes(
                     path_xn,
                     path_yn,
-                    ((xl, xh, yl, yh) for _, xl, xh, yl, yh in candidates),
+                    (
+                        (
+                            candidates[index][1],
+                            candidates[index][2],
+                            candidates[index][3],
+                            candidates[index][4],
+                        )
+                        for index in unresolved
+                    ),
                 )
-            )
-            for (name, xl, xh, yl, yh), path_hit in zip(candidates, path_hits, strict=True):
+                for index, hit in zip(unresolved, unresolved_hits, strict=True):
+                    path_hits[index] = hit
+                for index, count in enumerate(inside_counts):
+                    if count:
+                        path_hits[index] = True
+            for (name, *_), inside_count, path_hit in zip(
+                candidates,
+                inside_counts,
+                path_hits,
+                strict=True,
+            ):
                 # Strict, mirroring Bbox.count_contains.
-                inside = (xn > xl) & (xn < xh) & (yn > yl) & (yn < yh)
-                scores[name] += float(np.count_nonzero(inside)) * weight
+                scores[name] += float(inside_count) * weight
                 # ``Line2D``, Patch paths, and PolyCollection paths contribute
                 # one additional badness point when a segment crosses the
                 # legend even if neither endpoint is contained. Scatter is a
@@ -6254,14 +6338,14 @@ class Axes(PlotTypeMixin):
         # Pin it so the engine's autorange padding cannot widen the empty view
         # (padding turns the 0.5 midpoint tick into a bare 0/1 pair). Render
         # snapshot only: data plotted after a render must autoscale as usual.
-        empty_view = {
-            axis
+        axis_dataless = {
+            axis: self._axis_is_dataless(axis)
             for axis in ("x", "y")
             if not adjusted_aspect
             and axis not in self._explicit_domains
             and self._axis[axis].get("domain") is None
-            and self._axis_is_dataless(axis)
         }
+        empty_view = {axis for axis, dataless in axis_dataless.items() if dataless}
         x_props = {k: v for k, v in self._axis["x"].items() if v is not None}
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
         for axis, props in (("x", x_props), ("y", y_props)):
@@ -6272,7 +6356,11 @@ class Axes(PlotTypeMixin):
             # axis Matplotlib pins flush to the outer cell edge. `margin` and
             # `domain` never combine (spec/design/pan-and-zoom-configuration.md
             # §9), so send exactly one of them.
-            pinned = None if props.get("domain") is not None else self._fully_sticky_domain(axis)
+            pinned = (
+                None
+                if props.get("domain") is not None
+                else self._fully_sticky_domain(axis, dataless=axis_dataless.get(axis))
+            )
             if pinned is not None:
                 props["domain"] = pinned
             else:
@@ -6363,10 +6451,13 @@ class Axes(PlotTypeMixin):
             core_figure.legend_options["border_pad"] = self._legend_options["border_pad"]
         if self._legend_items is not None:
             core_figure.legend_options["items"] = list(self._legend_items)
-        best_ranges = self._displayed_ranges(core_figure, x_props, y_props)
+        best_ranges: Optional[
+            tuple[Optional[tuple[float, float]], Optional[tuple[float, float]]]
+        ] = None
         best_plot_size: Optional[tuple[float, float]] = None
         if legend_needs_best:
-            best_plot_size = self._displayed_plot_size(core_figure)
+            best_ranges = self._displayed_ranges(core_figure, x_props, y_props)
+            best_plot_size = self._displayed_plot_size(core_figure, best_ranges)
             core_figure.legend_options["loc"] = self._best_legend_loc(
                 *best_ranges,
                 legend_options=self._legend_options,
@@ -6389,8 +6480,10 @@ class Axes(PlotTypeMixin):
         if self._legend_artist is not None:
             legends.append(self._legend_artist)
         if legends:
+            if best_ranges is None:
+                best_ranges = self._displayed_ranges(core_figure, x_props, y_props)
             if best_plot_size is None:
-                best_plot_size = self._displayed_plot_size(core_figure)
+                best_plot_size = self._displayed_plot_size(core_figure, best_ranges)
             extras = []
             for leg in legends:
                 spec = leg.spec()

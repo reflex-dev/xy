@@ -204,7 +204,7 @@ def test_residual_divergence_is_attributable_to_the_plot_rect(monkeypatch):
         type(plt.subplots()[1]),
         "_displayed_plot_size",
         staticmethod(
-            lambda figure: (
+            lambda figure, _ranges: (
                 figure.width * 0.775,
                 figure.height * 0.77,
             )

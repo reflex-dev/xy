@@ -2715,44 +2715,61 @@ where
             let v10 = z[row * cols + col + 1];
             let v11 = z[(row + 1) * cols + col + 1];
             let v01 = z[(row + 1) * cols + col];
-            let finite = [
-                v00.is_finite(),
-                v10.is_finite(),
-                v11.is_finite(),
-                v01.is_finite(),
-            ];
-            let finite_count = finite.iter().filter(|&&value| value).count();
-            if finite_count < 4 && (!corner_mask || finite_count != 3) {
-                continue;
-            }
-            let values = [v00, v10, v11, v01];
-            let local_min = values
-                .iter()
-                .copied()
-                .filter(|value| value.is_finite())
-                .fold(f64::INFINITY, f64::min);
-            let local_max = values
-                .iter()
-                .copied()
-                .filter(|value| value.is_finite())
-                .fold(f64::NEG_INFINITY, f64::max);
+            let all_finite =
+                v00.is_finite() && v10.is_finite() && v11.is_finite() && v01.is_finite();
+            let (local_min, local_max, triangle_edges): (
+                f64,
+                f64,
+                Option<&[(usize, usize); 3]>,
+            ) = if all_finite {
+                (
+                    v00.min(v10).min(v11).min(v01),
+                    v00.max(v10).max(v11).max(v01),
+                    None,
+                )
+            } else {
+                if !corner_mask {
+                    continue;
+                }
+                let finite = [
+                    v00.is_finite(),
+                    v10.is_finite(),
+                    v11.is_finite(),
+                    v01.is_finite(),
+                ];
+                if finite.iter().filter(|&&value| value).count() != 3 {
+                    continue;
+                }
+                let values = [v00, v10, v11, v01];
+                let local_min = values
+                    .iter()
+                    .copied()
+                    .filter(|value| value.is_finite())
+                    .fold(f64::INFINITY, f64::min);
+                let local_max = values
+                    .iter()
+                    .copied()
+                    .filter(|value| value.is_finite())
+                    .fold(f64::NEG_INFINITY, f64::max);
+                let edges = match finite.iter().position(|value| !value).unwrap() {
+                    0 => &[(1, 2), (2, 3), (3, 1)],
+                    1 => &[(0, 2), (2, 3), (3, 0)],
+                    2 => &[(0, 1), (1, 3), (3, 0)],
+                    3 => &[(0, 1), (1, 2), (2, 0)],
+                    _ => unreachable!(),
+                };
+                (
+                    local_min,
+                    local_max,
+                    Some(edges),
+                )
+            };
             let corners = [
                 (x_coords[col], y_coords[row], v00),
                 (x_coords[col + 1], y_coords[row], v10),
                 (x_coords[col + 1], y_coords[row + 1], v11),
                 (x_coords[col], y_coords[row + 1], v01),
             ];
-            let triangle_edges: Option<&[(usize, usize); 3]> = if finite_count == 3 {
-                Some(match finite.iter().position(|value| !value).unwrap() {
-                    0 => &[(1, 2), (2, 3), (3, 1)],
-                    1 => &[(0, 2), (2, 3), (3, 0)],
-                    2 => &[(0, 1), (1, 3), (3, 0)],
-                    3 => &[(0, 1), (1, 2), (2, 0)],
-                    _ => unreachable!(),
-                })
-            } else {
-                None
-            };
             let mut process_level = |level: f64| {
                 if let Some(edges) = triangle_edges {
                     let mut intersections = [(0.0, 0.0); 2];
