@@ -45,22 +45,6 @@ share interactive notebook results, or ship self-contained charts on the web.
 Build charts once, then display them in notebooks and apps or export them as
 HTML, images, and vector graphics.
 
-## Benchmarks
-
-<p align="center">
-  <img src="spec/assets/launch-benchmark-comparison.svg" alt="Cold-render time for a 10-million-point chart in XY, Matplotlib, and Plotly. Lower is better." width="1200">
-</p>
-
-In the recorded 10-million-point baseline, XY produced a static PNG in 0.023 s
-versus 2.8 s for Matplotlib and 9.6 s for Plotly, and reached first interactive
-render 16–20× sooner.
-
-The committed launch baseline uses identical seeded data, a 900×420 output,
-and three isolated cold runs. See the
-[launch report](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md)
-and [benchmark runbook](benchmarks/README.md) for the environment,
-methodology, and raw results.
-
 ## Installation
 
 ```bash
@@ -68,23 +52,6 @@ pip install xy
 
 # or, with uv
 uv add xy
-```
-
-Published wheels contain the Python package, JavaScript client, and native Rust
-core. End users do not need Rust, Node, npm, or a CDN.
-
-In Pyodide 314:
-
-First load `micropip` in the Pyodide JavaScript runtime:
-
-```javascript
-await pyodide.loadPackage("micropip");
-```
-
-```python
-import micropip
-
-await micropip.install("xy")
 ```
 
 ## Getting started
@@ -158,6 +125,22 @@ plt.show()
 
 The shim intentionally covers common plotting workflows rather than every
 matplotlib feature. See the [compatibility guide](spec/matplotlib/compat.md).
+
+## Benchmarks
+
+<p align="center">
+  <img src="spec/assets/launch-benchmark-comparison.svg" alt="Cold-render time for a 10-million-point chart in XY, Matplotlib, and Plotly. Lower is better." width="1200">
+</p>
+
+In the recorded 10-million-point baseline, XY produced a static PNG in 0.023 s
+versus 2.8 s for Matplotlib and 9.6 s for Plotly, and reached first interactive
+render 16–20× sooner.
+
+The committed launch baseline uses identical seeded data, a 900×420 output,
+and three isolated cold runs. See the
+[launch report](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md)
+and [benchmark runbook](benchmarks/README.md) for the environment,
+methodology, and raw results.
 
 ## Styling
 
