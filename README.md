@@ -44,35 +44,38 @@ uv add xy
 
 ## Getting started
 
-Chart two million random-walk points, generated with nothing but the standard
-library:
+Chart a hundred million points as a density surface:
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="spec/assets/xy-pan-zoom-2m-dark.gif">
-    <img src="spec/assets/xy-pan-zoom-2m-light.gif" alt="The chart from the example below being panned, zoomed, and hovered." width="900">
-  </picture>
+  <img src="spec/assets/xy-density-100m.gif" alt="A hundred-million-point spiral rendered as a density surface, zoomed and panned; each view is re-aggregated by the engine." width="900">
 </p>
 
 ```python
-import itertools
-import random
+import numpy as np
 
 import xy
 
-rng = random.Random(7)
-n = 1_000_000
-signal = list(itertools.accumulate(rng.gauss(0, 1) for _ in range(n)))
-control = list(itertools.accumulate(rng.gauss(0, 1) for _ in range(n)))
+rng = np.random.default_rng(7)
+n = 100_000_000
 
-chart = xy.line_chart(
-    xy.line(range(n), signal, name="signal", color="#2a78d6", width=1.6),
-    xy.line(range(n), control, name="control", color="#eb6834", width=1.6),
-    xy.x_axis(label="sample"),
-    xy.y_axis(label="value"),
-    xy.legend(),
-    xy.theme(grid_color="#e6e6e1", axis_color="#c3c2b7"),
-    title="Two million-point random walks",
+r = 6.0 * rng.beta(1.2, 3.0, n)
+theta = 2.9 * np.log1p(r) + rng.integers(0, 4, n) * (np.pi / 2) + rng.normal(0, 0.045 + 0.016 * r, n)
+
+chart = xy.scatter_chart(
+    xy.scatter(
+        r * np.cos(theta),
+        r * np.sin(theta),
+        color=np.exp(-r / 2.2),
+        colormap="magma",
+        density=True,
+        opacity=0.3,
+    ),
+    xy.theme(
+        background="#0d1117", plot_background="#0d1117", grid_color="#21262d",
+        axis_color="#30363d", text_color="#e6edf3",
+    ),
+    title="100 million points",
+    class_name="dark",
 )
 # chart.to_html("chart.html")
 # chart.to_png("chart.png")
@@ -80,12 +83,17 @@ chart = xy.line_chart(
 chart
 ```
 
-Drag to pan, scroll to zoom, hover to read back an exact source row. The
-overview is decimated and detail returns as you zoom, so both lines reach the
-browser as one 54 KB payload rather than two million JSON numbers. The same
-chart exports unchanged.
+Past a threshold a scatter becomes a density surface: counts drive alpha and
+the colour channel aggregates to a per-cell mean, so a hundred million points
+compose in 0.2 s and reach the browser as a 1.03 MB payload whose size is set
+by the screen, not by `n`. The same chart exports unchanged.
 
-XY also covers scatter, area, histogram, bar and column, heatmap, error bar and
+The recording above is the [live drilldown example](examples/fastapi/), where
+every zoom re-queries the engine and gets a freshly aggregated surface. A
+self-contained `to_html` export has no host to ask, so it re-bins its retained
+sample instead and says so in the corner.
+
+XY also covers line, area, histogram, bar and column, heatmap, error bar and
 band, box, violin, ECDF, hexbin, contour, step, stairs, stem, triangle mesh, and
 faceted charts &mdash; see the
 [copyable examples](spec/api/api-examples.md).
