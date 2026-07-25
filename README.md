@@ -59,6 +59,12 @@ core. End users do not need Rust, Node, npm, or a CDN.
 
 In Pyodide 314:
 
+First load `micropip` in the Pyodide JavaScript runtime:
+
+```javascript
+await pyodide.loadPackage("micropip");
+```
+
 ```python
 import micropip
 
