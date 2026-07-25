@@ -272,24 +272,19 @@ the chart gallery, guides, and API reference. The repository also includes
 
 ## Roadmap
 
-XY is 2D-first: the goal is Plotly-class chart breadth on top of the binary
-transport and screen-bounded rendering, before any 3D work. These are the
-chart families queued next.
+XY is 2D-first: Plotly-class chart breadth on top of the binary transport and
+screen-bounded rendering, before any 3D work. Queued next, no dates implied:
 
-| Chart family | Includes | Where it stands |
-|---|---|---|
-| Categorical distributions | strip, swarm, beeswarm, boxen, rug | Planned — the next statistical block, on top of the shipped box/violin/ECDF primitives |
-| Regression diagnostics | trendline, regression line, residual, QQ, PP | Planned — mostly composed line/scatter helpers plus stats kernels |
-| Scatter matrix and joint plots | SPLOM, pair grid, corner plot, marginal histogram/rug | Planned — reuses the scatter kernels across many panels |
-| Pie / donut | pie, donut, nested donut | Available in `xy.pyplot` today; being promoted to a core `xy.pie_chart(xy.pie(...))` surface |
-| Candlestick / OHLC | candlestick, OHLC bars, volume pane, range selector | Prototyped on a closed exploration branch; needs a fresh landing rebased onto current primitives |
-| Finance overlays | SMA, VWAP, Bollinger bands, RSI, MACD, depth chart, Heikin-Ashi, Renko | Prototyped as layers alongside candlestick; depth/order-book and the Renko family still open |
-| Waterfall and funnel | waterfall/bridge, funnel, funnel area | Planned — categorical bars plus a running baseline and labels |
-| Treemap and sunburst | treemap, sunburst, icicle | Planned — hierarchy layout and label placement are the work |
-| Radar / polar and gauge | radar, polar area, radial bar, gauge, bullet, KPI indicator | Planned — needs polar axes before the marks |
-| Slope, bump, dumbbell | slopegraph, bump chart, connected dot plot | Planned — composition of line, point, and labels |
+- **Categorical distributions** &mdash; strip, swarm, beeswarm, boxen, rug
+- **Regression diagnostics** &mdash; trendline, residual, QQ, PP
+- **Scatter matrix and joint plots** &mdash; SPLOM, pair grid, marginal histograms
+- **Pie / donut** &mdash; in `xy.pyplot` today, promoting to `xy.pie_chart(xy.pie(...))`
+- **Candlestick / OHLC and finance overlays** &mdash; SMA, VWAP, Bollinger, RSI, MACD; prototyped, awaiting a fresh landing
+- **Waterfall and funnel**
+- **Treemap, sunburst, and icicle**
+- **Radar / polar and gauge** &mdash; needs polar axes first
+- **Slope, bump, and dumbbell**
 
-Nothing here implies a date; it is the coverage backlog we pull from as the
-primitives land. The full ranked list, the popularity signals behind it, and
-the cross-cutting LOD and styling tracks are in the
-[chart roadmap](spec/api/chart-roadmap.md).
+The full ranked backlog is in the [chart roadmap](spec/api/chart-roadmap.md).
+Want a chart or feature that isn't listed?
+[Open an issue](https://github.com/reflex-dev/xy/issues/new).
