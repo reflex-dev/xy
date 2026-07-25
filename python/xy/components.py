@@ -4052,10 +4052,57 @@ _THEME_TOKEN_ALIASES = {
 }
 
 
+# Theme keys some renderer actually consumes. A `--*` custom property is
+# always allowed (the author defines its meaning and reads it back with
+# `var()`); a bare key has to be one of these or nothing will ever read it.
+_KNOWN_THEME_TOKENS = frozenset(
+    set(_THEME_TOKEN_ALIASES)
+    | set(_THEME_TOKEN_ALIASES.values())
+    | {
+        "background",
+        "color",
+        "font-family",
+        "font_family",
+        "font-size",
+        "font_size",
+        "font-weight",
+        "font_weight",
+        "font-style",
+        "font_style",
+    }
+)
+
+
+def _warn_unknown_theme_tokens(keys: list[str], label: str) -> None:
+    """Name theme tokens nothing will read (§28: allowed, but never silent).
+
+    A misspelled token — `text_colour`, `gridcolor` — validates as an unknown
+    CSS declaration and is then dropped by every renderer, so the chart comes
+    out unthemed with no diagnostic. Warn rather than raise: the browser
+    cascade can give meaning to a declaration the exporters do not know, so a
+    hard error would break charts that render correctly today.
+    """
+    unknown = [key for key in keys if not key.startswith("--") and key not in _KNOWN_THEME_TOKENS]
+    if not unknown:
+        return
+    import warnings
+
+    known = ", ".join(sorted(_THEME_TOKEN_ALIASES))
+    warnings.warn(
+        f"{label} got token(s) {unknown} that no XY renderer reads, so they will "
+        f"have no effect. Named tokens: {known}. Any `--custom-property` is also "
+        "accepted and readable back with var().",
+        RuntimeWarning,
+        stacklevel=4,
+    )
+
+
 def _theme_tokens(values: dict[str, Any], label: str) -> dict[str, StyleValue]:
     raw = {key: value for key, value in values.items() if value is not None}
     mapped = {_THEME_TOKEN_ALIASES.get(key, key): value for key, value in raw.items()}
-    return _style_dict(mapped, label)
+    compiled = _style_dict(mapped, label)
+    _warn_unknown_theme_tokens(list(compiled), label)
+    return compiled
 
 
 def _chrome_render_args(
