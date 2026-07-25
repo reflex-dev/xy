@@ -49,7 +49,15 @@ COLORMAPS = (
 
 
 def is_colormap(name: str) -> bool:
-    """Return whether *name* is a supported colormap, including ``_r`` variants."""
+    """Return whether *name* is a supported colormap, including ``_r`` variants.
+
+    Non-strings answer False rather than raising: a caller passing a stop list
+    (``colormap=["#fff", "#f00"]``, the natural guess for a custom ramp) must
+    reach the ValueError that names the supported colormaps, not an
+    AttributeError from inside this helper.
+    """
+    if not isinstance(name, str):
+        return False
     return name in COLORMAPS or (name.endswith("_r") and name[:-2] in COLORMAPS)
 
 
@@ -401,6 +409,12 @@ def resolve_color(
     vmin/vmax); values outside clip to the colormap ends.
     """
     if not is_colormap(colormap):
+        if not isinstance(colormap, str):
+            raise ValueError(
+                f"colormap must be one of the built-in names, got {type(colormap).__name__}. "
+                "A custom stop list is not supported; pass an (n, 3) or (n, 4) float array "
+                f"as color= for arbitrary per-point color. Known: {COLORMAPS}"
+            )
         raise ValueError(f"unknown colormap {colormap!r}; known: {COLORMAPS}")
     if domain is not None:
         lo, hi = float(domain[0]), float(domain[1])

@@ -164,6 +164,27 @@ def validate_public_api(pkg: ModuleType) -> list[str]:
     dir_missing = sorted(public_set - dir_names)
     if dir_missing:
         errors.append(f"dir(xy) is missing public names: {dir_missing}")
+    dir_extra = sorted(dir_names - public_set)
+    if dir_extra:
+        errors.append(f"dir(xy) exposes names outside __all__: {dir_extra}")
+
+    # Import machinery must not survive as public API. `from __future__ import
+    # annotations` in particular leaves an `annotations` binding that resolves
+    # as `xy.annotations` and shadows the annotation components.
+    #
+    # Submodules are exempt: importing `xy.pyplot` (or any submodule, in any
+    # test) binds it as an attribute of the package, so their presence here
+    # depends on import order and is not an API statement.
+    leaked = sorted(
+        name
+        for name, value in vars(pkg).items()
+        if not name.startswith("_")
+        and name not in public_set
+        and name not in exports
+        and not isinstance(value, ModuleType)
+    )
+    if leaked:
+        errors.append(f"module globals leak non-public names (delete them after use): {leaked}")
 
     for name, module_name in sorted(exports.items()):
         if not isinstance(name, str) or not isinstance(module_name, str):
