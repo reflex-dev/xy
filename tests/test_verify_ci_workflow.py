@@ -604,16 +604,29 @@ def test_release_workflow_rejects_unpinned_pyodide_runtime_contract(
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     path = tmp_path / "release.yml"
     path.write_text(
-        workflow.replace('          RUSTFLAGS: "-C panic=abort"\n', "")
-        .replace('          version: "4.0.9"\n', "")
-        .replace("          npm i --no-save pyodide@0.29.4\n", ""),
+        workflow.replace('            RUSTFLAGS="-C panic=abort"\n', "")
+        .replace("          CIBW_BUILD: cp314-pyodide_wasm32\n", "")
+        .replace('          CIBW_PYODIDE_VERSION: "314.0.0"\n', "")
+        .replace(
+            "          CIBW_BEFORE_BUILD_PYODIDE: >-\n"
+            "            cargo build --release --target wasm32-unknown-emscripten\n",
+            "",
+        )
+        .replace(
+            "        uses: pypa/cibuildwheel@294735312765b09d24a2fbec22660ce817587d55 # v4.1.0\n",
+            "",
+        )
+        .replace("          npm i --no-save pyodide@314.0.0\n", ""),
         encoding="utf-8",
     )
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
     assert any(
-        "release wasm job" in error and "panic=abort" in error and "pyodide@0.29.4" in error
+        "release wasm job" in error
+        and "panic=abort" in error
+        and "cibuildwheel" in error
+        and "pyodide@314.0.0" in error
         for error in errors
     )
 
@@ -635,30 +648,21 @@ def test_release_workflow_rejects_nonblocking_pyodide_probe(tmp_path: Path) -> N
     assert any("wasm job must block publishing" in error for error in errors)
 
 
-def test_release_workflow_rejects_pyodide_artifact_in_pypi_batch(tmp_path: Path) -> None:
+def test_release_workflow_rejects_pyemscripten_artifact_outside_pypi_batch(
+    tmp_path: Path,
+) -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     path = tmp_path / "release.yml"
     path.write_text(
-        workflow.replace("          name: pyodide-wheel\n", "          name: dist-pyodide\n"),
+        workflow.replace(
+            "          name: dist-pyemscripten\n", "          name: pyemscripten-wheel\n"
+        ),
         encoding="utf-8",
     )
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
-    assert any("release wasm job" in error and "pyodide-wheel" in error for error in errors)
-
-
-def test_release_workflow_rejects_missing_pyodide_release_publisher(tmp_path: Path) -> None:
-    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-    path = tmp_path / "release.yml"
-    path.write_text(
-        workflow.replace("  publish-pyodide:\n", "  publish-pyodide-removed:\n"),
-        encoding="utf-8",
-    )
-
-    errors = verify_ci_workflow.validate_release_workflow(path)
-
-    assert any("missing required release job 'publish-pyodide'" in error for error in errors)
+    assert any("release wasm job" in error and "dist-pyemscripten" in error for error in errors)
 
 
 def test_release_workflow_rejects_missing_sdist_norust_smoke(tmp_path: Path) -> None:

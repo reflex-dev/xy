@@ -33,7 +33,7 @@ REQUIRED_CI_JOBS = {
     "install_without_rust",
 }
 REQUIRED_CODSPEED_JOBS = {"benchmarks"}
-REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "publish-pyodide", "wasm"}
+REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "wasm"}
 
 
 def _job_blocks(text: str) -> dict[str, str]:
@@ -713,18 +713,23 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         jobs,
         "wasm",
         "release",
-        "runtime-verified Pyodide/Emscripten WASM wheel",
+        "runtime-verified, PyPI-published PyEmscripten WASM wheel",
         "toolchain: 1.97.0",
         "wasm32-unknown-emscripten",
-        "setup-emsdk",
-        'version: "4.0.9"',
-        'RUSTFLAGS: "-C panic=abort"',
-        "pyodide_2025_0_wasm32",
-        "pyodide@0.29.4",
+        'RUSTFLAGS="-C panic=abort"',
+        "pypa/cibuildwheel@294735312765b09d24a2fbec22660ce817587d55",
+        "CIBW_PLATFORM: pyodide",
+        "CIBW_BUILD: cp314-pyodide_wasm32",
+        'CIBW_PYODIDE_VERSION: "314.0.0"',
+        "CIBW_BEFORE_BUILD_PYODIDE",
+        "CIBW_ENVIRONMENT_PYODIDE",
+        "pyemscripten_2026_0_wasm32",
+        "pyodide@314.0.0",
         "scripts/pyodide_load_smoke.py",
         "scripts/verify_wheel.py",
         "--expect-native",
-        "name: pyodide-wheel",
+        "wheelhouse/*.whl",
+        "name: dist-pyemscripten",
     )
     wasm_job = jobs.get("wasm", "")
     if "continue-on-error:" in wasm_job:
@@ -776,30 +781,6 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "type: boolean",
         "default: true",
     )
-    _require_job_contains(
-        errors,
-        jobs,
-        "publish-pyodide",
-        "release",
-        "GitHub Release publication of the runtime-verified Pyodide wheel",
-        "needs: [wheels, sdist, wasm]",
-        "contents: write",
-        "actions/setup-node@",
-        'node-version: "22"',
-        "actions/download-artifact@",
-        "name: pyodide-wheel",
-        "dry_run",
-        "scripts/check_release_version.py",
-        "GH_TOKEN",
-        "gh release upload",
-        "--clobber",
-        "gh release create",
-        "--verify-tag",
-        "steps.publish.outputs.wheel_url",
-        "pyodide@0.29.4",
-        "scripts/pyodide_load_smoke.py",
-    )
-
     publish = jobs.get("publish", "")
     if "password:" in publish or "api-token" in publish:
         errors.append("release publish job should use trusted publishing, not a PyPI token")

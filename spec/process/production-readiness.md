@@ -361,16 +361,16 @@ Before tagging a release:
   arm64).
 - Confirm the Pyodide/Emscripten wheel passes its runtime load gate, not only
   its structural wheel check. The tested toolchain is Rust 1.97.0 with
-  `panic=abort`, Emscripten 4.0.9, the `pyodide_2025_0` wheel ABI, and Pyodide
-  0.29.4. The abort strategy is required: the previous unwind build imported a
-  `__cpp_exception` WebAssembly tag that Pyodide's main module did not provide.
-  `scripts/pyodide_load_smoke.py` installs the built artifact with micropip,
-  loads the C ABI through `ctypes`, verifies `xy_abi_version`, and calls the
-  native `min_max` kernel. PyPI does not accept Pyodide platform tags, so the
-  release workflow publishes this wheel as a GitHub Release asset and repeats
-  the same runtime smoke against its public HTTPS URL. The wasm job is
-  release-blocking so an ABI or toolchain drift cannot silently ship a
-  build-only, unloadable artifact.
+  `panic=abort`, Emscripten 5.0.3, cibuildwheel 4.1.0, the PEP 783
+  `pyemscripten_2026_0` wheel ABI, and Pyodide 314.0.0. The abort strategy keeps
+  Rust panics from unwinding across the Python/`ctypes` C ABI boundary.
+  `scripts/pyodide_load_smoke.py` installs the exact built artifact with
+  micropip, loads the C ABI through `ctypes`, verifies `xy_abi_version`, and
+  calls the native `min_max` kernel. PEP 783 platform tags are accepted by
+  PyPI, so the runtime-verified wheel joins the same trusted-publishing batch
+  as the native wheels and sdist; Pyodide 314 users can install it with
+  `await micropip.install("xy")`. The wasm job is release-blocking so an ABI or
+  toolchain drift cannot silently ship a build-only, unloadable artifact.
 - Confirm the no-Rust install job passed (it must build, install, and then
   raise a clear ImportError on first compute — never a silent fallback).
 - Confirm the sdist verifier passed and the source archive contains the expected

@@ -21,8 +21,8 @@ pyodide_load_smoke = _load_smoke_module()
 
 def test_remote_wheel_url_is_installed_directly(monkeypatch, tmp_path: Path) -> None:
     url = (
-        "https://github.com/reflex-dev/xy/releases/download/v0.0.1/"
-        "xy-0.0.1-py3-none-pyodide_2025_0_wasm32.whl"
+        "https://files.pythonhosted.org/packages/example/"
+        "xy-0.0.3-py3-none-pyemscripten_2026_0_wasm32.whl"
     )
     observed: dict[str, object] = {}
 

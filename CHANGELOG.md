@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/) once `1.0.0` ships;
 pre-1.0, minor versions may contain breaking changes (see the stability table
 in the README).
 
+## Unreleased
+
+### Changed
+- The runtime-verified WebAssembly wheel now targets the standardized PEP 783
+  `pyemscripten_2026_0_wasm32` platform with Pyodide 314, Emscripten 5.0.3,
+  and cibuildwheel 4.1.0. It is published directly to PyPI through the existing
+  trusted-publishing release job, so browser users can install `xy` by package
+  name with `micropip` instead of downloading a GitHub Release asset URL.
+
+### Fixed
+- Emscripten cross-builds always package the Rust side module as
+  `libxy_core.so`, the filename Pyodide's dynamic loader expects, even when
+  cibuildwheel runs on a macOS host.
+
 ## [0.0.2] - 2026-07-24
 
 ### Changed
