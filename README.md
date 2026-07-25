@@ -44,7 +44,17 @@ uv add xy
 
 ## Getting started
 
-Chart a hundred million points as a density surface:
+A chart is a container plus the marks inside it. Any sequence works — plain
+Python lists need no NumPy:
+
+```python
+import xy
+
+chart = xy.line_chart(xy.line([1, 2, 3, 4, 5], [120, 180, 165, 240, 310]))
+chart  # notebooks render it; elsewhere: chart.to_html("chart.html")
+```
+
+The same API scales. Chart a hundred million points as a density surface:
 
 <p align="center">
   <picture>
@@ -89,17 +99,11 @@ chart = xy.scatter_chart(
 chart
 ```
 
-Past a threshold a scatter becomes a density surface: counts drive alpha and
-the colour channel aggregates to a per-cell mean, so a hundred million points
-compose in 0.2 s and reach the browser as a 1.03 MB payload whose size is set
-by the screen, not by `n`. Zoom far enough into a sparse region and the ladder
-runs out the other end &mdash; the surface is replaced by the real rows, 189,319
-of them at the depth shown above. The same chart exports unchanged. The dark
-recording is this chart with `colormap="magma"` on a dark theme.
-
-That recording is the [live drilldown example](examples/fastapi/), where every
-view re-queries the engine. A self-contained `to_html` export has no host to
-ask, so it re-bins its retained sample instead and says so in the corner.
+Past a threshold the scatter becomes a density surface &mdash; 100M points compose
+in 0.2 s into a 1.03 MB payload sized by the screen, not by `n` &mdash; and zooming
+into a sparse region drills back to the real rows, 189,319 at the depth shown.
+That is the [live drilldown example](examples/fastapi/); a self-contained
+`to_html` export re-bins its retained sample instead and says so in the corner.
 
 XY also covers line, area, histogram, bar and column, heatmap, error bar and
 band, box, violin, ECDF, hexbin, contour, step, stairs, stem, triangle mesh, and
@@ -157,6 +161,15 @@ chart = xy.line_chart(
 With the `reflex-xy` adapter, any XY chart becomes a regular Reflex component.
 Place it inside cards, grids, tabs, or dashboards with no JavaScript, iframe,
 or separate chart service.
+
+The adapter ships as its own package, and pulls in `xy` and `reflex`:
+
+```bash
+pip install reflex-xy
+
+# or, with uv
+uv add reflex-xy
+```
 
 Register the adapter once:
 
@@ -256,3 +269,27 @@ Start with the [XY documentation](https://reflex.dev/docs/xy/) for installation,
 the chart gallery, guides, and API reference. The repository also includes
 [copyable API examples](spec/api/api-examples.md),
 [benchmark details](benchmarks/README.md), and the [changelog](CHANGELOG.md).
+
+## Roadmap
+
+XY is 2D-first: the goal is Plotly-class chart breadth on top of the binary
+transport and screen-bounded rendering, before any 3D work. These are the
+chart families queued next.
+
+| Chart family | Includes | Where it stands |
+|---|---|---|
+| Categorical distributions | strip, swarm, beeswarm, boxen, rug | Planned — the next statistical block, on top of the shipped box/violin/ECDF primitives |
+| Regression diagnostics | trendline, regression line, residual, QQ, PP | Planned — mostly composed line/scatter helpers plus stats kernels |
+| Scatter matrix and joint plots | SPLOM, pair grid, corner plot, marginal histogram/rug | Planned — reuses the scatter kernels across many panels |
+| Pie / donut | pie, donut, nested donut | Available in `xy.pyplot` today; being promoted to a core `xy.pie_chart(xy.pie(...))` surface |
+| Candlestick / OHLC | candlestick, OHLC bars, volume pane, range selector | Prototyped on a closed exploration branch; needs a fresh landing rebased onto current primitives |
+| Finance overlays | SMA, VWAP, Bollinger bands, RSI, MACD, depth chart, Heikin-Ashi, Renko | Prototyped as layers alongside candlestick; depth/order-book and the Renko family still open |
+| Waterfall and funnel | waterfall/bridge, funnel, funnel area | Planned — categorical bars plus a running baseline and labels |
+| Treemap and sunburst | treemap, sunburst, icicle | Planned — hierarchy layout and label placement are the work |
+| Radar / polar and gauge | radar, polar area, radial bar, gauge, bullet, KPI indicator | Planned — needs polar axes before the marks |
+| Slope, bump, dumbbell | slopegraph, bump chart, connected dot plot | Planned — composition of line, point, and labels |
+
+Nothing here implies a date; it is the coverage backlog we pull from as the
+primitives land. The full ranked list, the popularity signals behind it, and
+the cross-cutting LOD and styling tracks are in the
+[chart roadmap](spec/api/chart-roadmap.md).
