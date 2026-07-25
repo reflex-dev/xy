@@ -600,6 +600,17 @@ super/subscripts, typographic quotes and dashes). A codepoint outside that set
 tick label, legend entry, or annotation containing one renders shortened rather
 than raising. Use `engine=xy.Engine.chromium` for full Unicode text.
 
+### Legend fit in static export
+
+The browser legend scrolls (`overflow:auto`), so every entry stays reachable
+however small the plot. SVG and the native rasterizer have no scroll, so they
+resolve the same overflow by **spending width first**: `legend(ncols=)` is a
+floor, and both exporters widen past it — up to whatever the plot rect affords
+at the minimum cell width — so a long series list reflows into columns instead
+of being cut. Only when the rect cannot hold every entry at full width does
+the export drop the remainder, and that drop warns with the row × column count
+it achieved (§28 — allowed, never silent). The browser is unaffected.
+
 The atlas bounds the native **raster** formats (PNG, JPEG, WebP) only. The
 other two native formats carry their own text contracts: SVG emits real
 `<text>` elements in a `system-ui` stack and so resolves against the viewer's
