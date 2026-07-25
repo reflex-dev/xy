@@ -474,15 +474,85 @@ def _fmt_linear(v: float, step: float) -> str:
     return f"{v:.{min(dec, 8)}f}"
 
 
+# The numeric format grammar, mirroring `fmtNumberSpec` in js/src/30_ticks.ts
+# (spec/api/styling.md): `<prefix>(,).N[f|%]<suffix>`. Affixes may not contain
+# `,`, `.` or `%`, and the bare `.N` core (no `f`/`%`) accepts none.
+_NUMBER_SPEC = re.compile(r"^([^,.%]*)(,)?\.([0-9]+)(f?)(%?)([^,.%]*)$")
+
+# The strftime subset the client implements, likewise from 30_ticks.ts.
+_TIME_SPEC_TOKEN = re.compile(r"%[YmdHMSbB]")
+_MONTHS_LONG = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
+
+
+def _fmt_number_spec(v: float, spec: Any) -> Optional[str]:
+    """Apply the client's numeric format grammar, or None to fall back.
+
+    Group separators are the `,`/`.` pair rather than the viewer's locale: the
+    browser reads `toLocaleString(undefined, ...)`, but a static export has no
+    viewer and must be reproducible, so the same figure exports byte-identical
+    on every machine."""
+    if not isinstance(spec, str) or not math.isfinite(v):
+        return None
+    match = _NUMBER_SPEC.match(spec)
+    if match is None:
+        return None
+    prefix, group, digits_text, f, pct, suffix = match.groups()
+    if not f and not pct and (prefix or suffix):
+        return None
+    digits = int(digits_text)
+    percent = pct == "%"
+    value = v * 100 if percent else v
+    text = f"{value:,.{digits}f}" if group else f"{value:.{digits}f}"
+    return f"{prefix}{text}{'%' if percent else ''}{suffix}"
+
+
+def _fmt_time_spec(ms: float, spec: Any) -> Optional[str]:
+    """Apply the client's strftime subset (`%Y %m %d %H %M %S %b %B`), UTC and
+    English months. Like the client, an unknown `%` token is copied through
+    verbatim rather than falling back."""
+    if not isinstance(spec, str) or not math.isfinite(ms):
+        return None
+    d = datetime.fromtimestamp(ms / 1e3, tz=UTC)
+    replacements = {
+        "%Y": str(d.year),
+        "%m": f"{d.month:02d}",
+        "%d": f"{d.day:02d}",
+        "%H": f"{d.hour:02d}",
+        "%M": f"{d.minute:02d}",
+        "%S": f"{d.second:02d}",
+        "%b": _MONTHS[d.month - 1],
+        "%B": _MONTHS_LONG[d.month - 1],
+    }
+    return _TIME_SPEC_TOKEN.sub(lambda m: replacements[m.group(0)], spec)
+
+
 def _fmt_axis(axis: dict[str, Any], v: float, step: float) -> str:
     kind = axis.get("kind")
     if kind == "category":
         cats = axis.get("categories") or []
         i = round(v)
         return str(cats[i]) if 0 <= i < len(cats) else ""
+    spec = axis.get("format")
     if kind == "time":
-        return _fmt_time(v, step)
-    return _fmt_linear(v, step)
+        return _fmt_time_spec(v, spec) or _fmt_time(v, step)
+    formatted = _fmt_number_spec(v, spec)
+    # A log decade under 1 must not collapse to "0" under a coarse spec.
+    if axis.get("scale") == "log" and 0 < v < 1 and formatted == "0":
+        return _fmt_linear(v, step)
+    return formatted if formatted is not None else _fmt_linear(v, step)
 
 
 def _tick_text(axis: dict[str, Any], value: float, step: float) -> str:

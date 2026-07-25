@@ -180,8 +180,13 @@ but they fail differently, and only the numeric grammar falls back.
   branch (`js/src/30_ticks.ts`), so the axis silently reverts to the automatic
   formatter. On a log axis, a value in `(0, 1)` that the spec would render as
   `"0"` falls back the same way. The same grammar formats tooltip fields
-  (`xy.tooltip(format=...)`, `js/src/52_tooltip.ts`). Static SVG/PNG exports
-  do not yet consult `format` — automatic labels only (known gap).
+  (`xy.tooltip(format=...)`, `js/src/52_tooltip.ts`). The native exporters
+  apply the identical grammar through `_fmt_number_spec` in `python/xy/_svg.py`
+  (shared by SVG, PNG/JPEG/WebP and PDF), so a formatted axis reads the same in
+  every target; `tests/test_svg_export.py` pins the two grammars together.
+  One deliberate difference: group separators are the `,`/`.` pair rather than
+  the viewer's locale, because a static export has no viewer and must stay
+  reproducible.
 - **Time axes** accept a strftime subset of exactly `%Y %m %d %H %M %S %b %B`.
   All fields are **UTC**; `%b`/`%B` are English month names. A time spec
   **never** falls back: `fmtTimeSpec` (`js/src/30_ticks.ts:180-200`)
@@ -189,7 +194,8 @@ but they fail differently, and only the numeric grammar falls back.
   verbatim, so it always returns a string and the `|| fmtTime(...)` branch at
   `:204` is unreachable. An unrecognized `%` token such as `%y` therefore
   renders literally as `%y`. The automatic time formatter is reached only when
-  `format` is absent or not a string.
+  `format` is absent or not a string. `_fmt_time_spec` in `python/xy/_svg.py`
+  mirrors this for the native exporters, including the verbatim copy-through.
 - **Category axes** ignore `format=` and render the category label.
 
 ## Slot reference
