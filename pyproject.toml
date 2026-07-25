@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "uv-dynamic-versioning>=0.11"]
 build-backend = "hatchling.build"
 
 [project]
 name = "xy"
-version = "0.0.1"
+dynamic = ["version"]
 description = "Experimental Python charting engine with a native Rust core, binary columnar transport, and a GPU render client"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -50,6 +50,29 @@ bench = [
 codspeed = [
     "pytest-codspeed>=5,<6",
 ]
+
+# The distribution version is derived from git tags, never written down here:
+# `git tag vX.Y.Z && git push --tags` is the whole release action, so a tag can
+# no longer disagree with a checked-in number (they did drift — pyproject sat at
+# 0.0.1 while v0.0.2 was live). Dunamai's default tag pattern requires the `v`
+# prefix, which is exactly what keeps the docs-deploy CalVer tags (2026.WW.N,
+# disjoint from library versions by design) from being read as library releases.
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+# Builds off a tagged commit get the bare version; anything else gets
+# `<next>.devN+<commit>`, which is legible locally and unpublishable to PyPI on
+# purpose — only a tag can produce an uploadable version.
+bump = true
+# Only reached by a source tree with neither git metadata nor PKG-INFO (a
+# `git archive` tarball, say): such a build still succeeds, at an obviously
+# unreal version rather than a plausible-but-wrong one. It does *not* cover
+# unpacked sdists — those resolve from their own PKG-INFO, so `pip install
+# xy-X.Y.Z.tar.gz` keeps the published version without needing a repo.
+fallback-version = "0.0.0"
 
 [tool.hatch.build]
 # The render-client bundles are a generated artifact — built by hatch_build.py

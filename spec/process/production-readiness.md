@@ -88,9 +88,9 @@ These must pass before publishing or making a broad performance claim.
 | Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
 | Step tier update | A decimated `step` chart keeps its risers after a synthetic kernel `tier_update` replaces the vertex buffers | `python scripts/step_tier_smoke.py <chromium>` |
 | Dashboard reliability | 10/20/50-chart dashboards stay nonblank under the render client's context governor | `python benchmarks/bench_dashboard.py --chart-counts 10,20,50 --chromium <chromium> --json dashboard-smoke.json` then `python scripts/verify_benchmark_report.py dashboard-smoke.json --kind dashboard-browser` |
-| sdist | Source archive contains required source/bundles, benchmark regression harness/baseline, release docs/tests/scripts, the example apps' source, `PKG-INFO` version/dependencies matching `pyproject.toml`, no duplicate members, and no generated junk | `python scripts/verify_sdist.py dist/*.tar.gz` |
-| Native wheel | Platform wheel contains package-only files, exactly one native library, `METADATA` version/dependencies matching `pyproject.toml`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
-| Fallback wheel | No-toolchain wheel contains package-only files, `METADATA` version/dependencies matching `pyproject.toml`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
+| sdist | Source archive contains required source/bundles, benchmark regression harness/baseline, release docs/tests/scripts, the example apps' source, `PKG-INFO` version/dependencies matching the archive's own `xy-<version>` root, no duplicate members, and no generated junk | `python scripts/verify_sdist.py dist/*.tar.gz` |
+| Native wheel | Platform wheel contains package-only files, exactly one native library, `METADATA` version/dependencies matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
+| Fallback wheel | No-toolchain wheel contains package-only files, `METADATA` version/dependencies matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
 | Wheel size | Platform wheel remains small enough for notebook installs | CI budget: 15 MB |
 | Benchmark artifact | JSON benchmark reports carry schema, environment, categories, row status, and finite non-negative metrics; native reports must declare the native backend | `python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs`; repeat for line, install, core-2D, pyplot-vs-matplotlib, native, interaction, dashboard, and workflow artifacts |
 
@@ -325,8 +325,23 @@ Node, Chrome, `ruff`, `ty`, or `pytest` produce direct install/skip guidance.
 
 ## Release Checklist
 
+The tag *is* the version. `pyproject.toml` declares `dynamic = ["version"]` and
+uv-dynamic-versioning derives the distribution version from the latest `v*` git
+tag, so cutting a release is `git tag vX.Y.Z && git push --tags` — there is no
+number to bump in a file, and no file that can drift from the tag. Two
+consequences worth knowing:
+
+- Builds between tags are versioned `<next>.devN+<commit>`, which PyPI rejects
+  by design: only a tag can produce an uploadable version.
+- Every checkout that builds must be unshallow (`fetch-depth: 0`). A depth-1
+  clone fetches no tags and would *silently* build at the `0.0.0` fallback;
+  `make check-ci` enforces this.
+
 Before tagging a release:
 
+- Add a dated `## [X.Y.Z] — YYYY-MM-DD` heading to `CHANGELOG.md` for the
+  version being tagged. This is the one thing the tag cannot vouch for, and the
+  release gate blocks the publish without it.
 - Refresh benchmark reports or explicitly document why the previous report still
   applies.
 - Run `make check-full` locally or confirm the equivalent

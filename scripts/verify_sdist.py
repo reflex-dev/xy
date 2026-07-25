@@ -16,12 +16,9 @@ import json
 import re
 import sys
 import tarfile
-import tomllib
 from email.parser import Parser
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import Optional
-
-ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_FILES = {
     ".github/workflows/ci.yml",
@@ -216,9 +213,13 @@ def _require_pkg_info(path: str, root: str) -> None:
     missing: list[str] = []
     if metadata.get("Name", "").strip() != "xy":
         missing.append("Name: xy")
-    project_version = _project_version()
-    if metadata.get("Version", "").strip() != project_version:
-        missing.append(f"Version: {project_version}")
+    # pyproject no longer carries a version to compare against — it is derived
+    # from the git tag at build time — so what stays checkable is the sdist's
+    # internal consistency: the `xy-<version>` root directory and the PKG-INFO
+    # that a wheel build reads back out of it must name the same version.
+    expected_version = root.split("-", 1)[1]
+    if metadata.get("Version", "").strip() != expected_version:
+        missing.append(f"Version: {expected_version}")
     if metadata.get("Requires-Python", "").strip() != ">=3.11":
         missing.append("Requires-Python: >=3.11")
     requirements = metadata.get_all("Requires-Dist") or []
@@ -235,17 +236,6 @@ def _require_pkg_info(path: str, root: str) -> None:
         missing.append(f"no Reflex runtime dependency ({reflex_requirements})")
     if missing:
         raise AssertionError(f"missing or invalid PKG-INFO lines: {missing}")
-
-
-def _project_version(pyproject_path: Path = ROOT / "pyproject.toml") -> str:
-    try:
-        data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise AssertionError(f"cannot read project version from {pyproject_path}: {exc}") from exc
-    version = str((data.get("project") or {}).get("version") or "").strip()
-    if not version:
-        raise AssertionError(f"{pyproject_path} is missing project.version")
-    return version
 
 
 def _require_file_contains(path: str, root: str, member: str, needles: set[str]) -> None:

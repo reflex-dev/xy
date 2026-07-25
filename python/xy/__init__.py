@@ -25,8 +25,6 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
-__version__ = "0.0.1"
-
 _EXPORTS = {
     "Annotation": ".components",
     "Animation": ".components",
@@ -214,7 +212,34 @@ def _load_export(name: str) -> Any:
     return value
 
 
+def _load_version() -> str:
+    """Resolve the installed distribution's version.
+
+    The version is not written down in the source tree at all — it is derived
+    from the `v*` git tag at build time (pyproject's uv-dynamic-versioning
+    config) and baked into the wheel's METADATA, so package metadata is the
+    only place that can answer this at runtime.
+
+    Resolved lazily, like every other export: `importlib.metadata` costs tens
+    of milliseconds against a 200 ms `import xy` budget (§33), which is a poor
+    trade for a string most callers never read. A source tree that was never
+    installed has no metadata to read, and reports the same unreal `0.0.0` the
+    build-time fallback uses.
+    """
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _distribution_version
+
+    try:
+        return _distribution_version("xy")
+    except PackageNotFoundError:
+        return "0.0.0"
+
+
 def __getattr__(name: str) -> Any:
+    if name == "__version__":
+        value = _load_version()
+        globals()["__version__"] = value
+        return value
     return _load_export(name)
 
 

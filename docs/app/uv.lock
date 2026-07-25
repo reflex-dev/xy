@@ -1690,7 +1690,6 @@ wheels = [
 
 [[package]]
 name = "xy"
-version = "0.0.1"
 source = { editable = "../../" }
 dependencies = [
     { name = "anywidget" },

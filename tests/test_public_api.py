@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.metadata
 import importlib.util
 import json
 import subprocess
@@ -340,47 +341,46 @@ def test_public_api_checker_rejects_stale_component_module_all() -> None:
     assert any("missing_value" in error and "undefined name" in error for error in errors)
 
 
-def test_public_api_checker_accepts_matching_project_version(tmp_path: Path) -> None:
-    fake = ModuleType("xy")
-    fake.__version__ = "1.2.3"
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
+# The version reference is installed distribution metadata, not pyproject (which
+# no longer records one). These drive the check against a distribution that is
+# certainly installed wherever the suite runs — pytest itself — so they assert
+# the comparison rather than whatever version `xy` happens to be built at.
+REFERENCE_DISTRIBUTION = "pytest"
 
-    errors = check_public_api.validate_version_consistency(fake, pyproject)
+
+def test_public_api_checker_accepts_version_matching_installed_metadata() -> None:
+    fake = ModuleType("xy")
+    fake.__version__ = importlib.metadata.version(REFERENCE_DISTRIBUTION)
+
+    errors = check_public_api.validate_version_consistency(fake, REFERENCE_DISTRIBUTION)
 
     assert errors == []
 
 
-def test_public_api_checker_rejects_version_mismatch(tmp_path: Path) -> None:
+def test_public_api_checker_rejects_version_mismatch() -> None:
     fake = ModuleType("xy")
-    fake.__version__ = "1.2.3"
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text('[project]\nversion = "1.2.4"\n', encoding="utf-8")
+    fake.__version__ = "1.2.3-definitely-not-the-installed-version"
 
-    errors = check_public_api.validate_version_consistency(fake, pyproject)
+    errors = check_public_api.validate_version_consistency(fake, REFERENCE_DISTRIBUTION)
 
-    assert any("__version__" in error and "project.version" in error for error in errors)
+    assert any("__version__" in error and "metadata" in error for error in errors)
 
 
-def test_public_api_checker_rejects_missing_public_version(tmp_path: Path) -> None:
+def test_public_api_checker_rejects_missing_public_version() -> None:
     fake = ModuleType("xy")
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
 
-    errors = check_public_api.validate_version_consistency(fake, pyproject)
+    errors = check_public_api.validate_version_consistency(fake, REFERENCE_DISTRIBUTION)
 
     assert any("__version__" in error and "non-empty string" in error for error in errors)
 
 
-def test_public_api_checker_rejects_unreadable_project_version(tmp_path: Path) -> None:
+def test_public_api_checker_rejects_uninstalled_distribution() -> None:
     fake = ModuleType("xy")
     fake.__version__ = "1.2.3"
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text("[project\n", encoding="utf-8")
 
-    errors = check_public_api.validate_version_consistency(fake, pyproject)
+    errors = check_public_api.validate_version_consistency(fake, "xy-not-a-real-distribution")
 
-    assert any("cannot read project version" in error for error in errors)
+    assert any("is not installed" in error for error in errors)
 
 
 def test_public_api_checker_accepts_empty_pep561_marker(tmp_path: Path) -> None:

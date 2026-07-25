@@ -18,55 +18,63 @@ def _load_module():
 check_release_version = _load_module()
 
 
-def _files(tmp_path: Path, version: str, changelog_heading: str) -> tuple[Path, Path]:
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text(f'[project]\nname = "xy"\nversion = "{version}"\n')
+def _changelog(tmp_path: Path, changelog_heading: str) -> Path:
     changelog = tmp_path / "CHANGELOG.md"
     changelog.write_text(f"# Changelog\n\n{changelog_heading}\n\n- Something.\n")
-    return pyproject, changelog
+    return changelog
 
 
-def test_gate_passes_when_tag_version_and_changelog_agree(tmp_path: Path) -> None:
-    pyproject, changelog = _files(tmp_path, "0.2.0", "## [0.2.0] — 2026-07-09")
+def test_gate_passes_when_tag_and_changelog_agree(tmp_path: Path) -> None:
+    changelog = _changelog(tmp_path, "## [0.2.0] — 2026-07-09")
 
-    assert check_release_version.check_release("v0.2.0", pyproject, changelog) == []
+    assert check_release_version.check_release("v0.2.0", changelog) == []
 
 
 def test_gate_accepts_plain_hyphen_date_separator(tmp_path: Path) -> None:
-    pyproject, changelog = _files(tmp_path, "0.2.0", "## [0.2.0] - 2026-07-09")
+    changelog = _changelog(tmp_path, "## [0.2.0] - 2026-07-09")
 
-    assert check_release_version.check_release("v0.2.0", pyproject, changelog) == []
-
-
-def test_gate_rejects_tag_version_mismatch(tmp_path: Path) -> None:
-    pyproject, changelog = _files(tmp_path, "0.1.0", "## [0.1.0] — 2026-07-09")
-
-    errors = check_release_version.check_release("v0.2.0", pyproject, changelog)
-
-    assert any("does not match pyproject version" in e for e in errors)
+    assert check_release_version.check_release("v0.2.0", changelog) == []
 
 
 def test_gate_rejects_undated_changelog_entry(tmp_path: Path) -> None:
-    pyproject, changelog = _files(tmp_path, "0.1.0", "## [0.1.0] — unreleased development line")
+    changelog = _changelog(tmp_path, "## [0.1.0] — unreleased development line")
 
-    errors = check_release_version.check_release("v0.1.0", pyproject, changelog)
+    errors = check_release_version.check_release("v0.1.0", changelog)
 
     assert any("no dated" in e for e in errors)
 
 
 def test_gate_rejects_missing_changelog_entry(tmp_path: Path) -> None:
-    pyproject, changelog = _files(tmp_path, "0.3.0", "## [0.2.0] — 2026-07-09")
+    changelog = _changelog(tmp_path, "## [0.2.0] — 2026-07-09")
 
-    errors = check_release_version.check_release("v0.3.0", pyproject, changelog)
+    errors = check_release_version.check_release("v0.3.0", changelog)
 
     assert any("no dated" in e for e in errors)
 
 
+def test_gate_rejects_a_tag_that_is_not_a_release_tag(tmp_path: Path) -> None:
+    # The docs site deploys on CalVer tags (2026.WW.N) that the version
+    # derivation deliberately ignores; one must never publish a release.
+    changelog = _changelog(tmp_path, "## [2026.30.1] — 2026-07-24")
+
+    errors = check_release_version.check_release("2026.30.1", changelog)
+
+    assert any("is not a release tag" in e for e in errors)
+
+
+def test_gate_rejects_a_derived_development_version_tag(tmp_path: Path) -> None:
+    changelog = _changelog(tmp_path, "## [0.0.3.dev4] — 2026-07-24")
+
+    errors = check_release_version.check_release("v0.0.3.dev4+g63c0697", changelog)
+
+    assert any("is not a release tag" in e for e in errors)
+
+
 def test_main_requires_a_tag(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("GITHUB_REF_NAME", raising=False)
-    pyproject, changelog = _files(tmp_path, "0.1.0", "## [0.1.0] — 2026-07-09")
+    changelog = _changelog(tmp_path, "## [0.1.0] — 2026-07-09")
 
-    rc = check_release_version.main(["--pyproject", str(pyproject), "--changelog", str(changelog)])
+    rc = check_release_version.main(["--changelog", str(changelog)])
 
     assert rc == 1
 

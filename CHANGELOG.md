@@ -8,6 +8,23 @@ in the README).
 
 ## [Unreleased]
 
+### Changed
+- The distribution version is derived from git tags (uv-dynamic-versioning)
+  rather than written in `pyproject.toml`. Tagging `vX.Y.Z` is now the whole
+  release action; the two numbers can no longer drift, as they had (pyproject
+  sat at `0.0.1` while `v0.0.2` was live). Builds between tags are versioned
+  `<next>.devN+<commit>`, which PyPI rejects by design — only a tag produces an
+  uploadable version. The docs-deploy CalVer tags (`2026.WW.N`) are excluded by
+  the `v` prefix the derivation matches on.
+- `xy.__version__` now reports the installed distribution's version instead of a
+  hardcoded string, resolved lazily on first access so `import xy` keeps its
+  import-time budget. An uninstalled source tree reports `0.0.0`.
+- The release gate (`scripts/check_release_version.py`) checks the tag against
+  `CHANGELOG.md` only; the tag-vs-pyproject leg is gone with the drift it
+  existed to catch. Building a release now requires an unshallow checkout —
+  `make check-ci` fails any workflow whose `actions/checkout` omits
+  `fetch-depth: 0`, since a tagless clone would silently build `0.0.0`.
+
 ### Migration notes
 - Mark `style={...}` now uses paint-specific CSS: `stroke` for line-like marks
   and `fill` for filled marks. The legacy `color=` argument remains supported,

@@ -15,14 +15,15 @@ import csv
 import hashlib
 import re
 import sys
-import tomllib
 import zipfile
 from dataclasses import dataclass
 from email.parser import Parser
 from pathlib import Path
 from typing import Optional
 
-ROOT = Path(__file__).resolve().parents[1]
+# Mirrors verify_sdist's root-directory shape: a release version (`0.0.2`) plus
+# whatever PEP 440 suffix a between-tags build appends (`0.0.3.dev4+g63c0697`).
+VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[A-Za-z0-9_.+!]*)?$")
 
 REQUIRED_FILES = {
     "xy/__init__.py",
@@ -62,6 +63,15 @@ def _dist_info_name(names: set[str], filename: str) -> str:
     if len(matches) != 1:
         raise AssertionError(f"expected exactly one {filename}, found {matches}")
     return matches[0]
+
+
+def _require_dist_info_version(names: set[str], expected_version: str) -> None:
+    """The `.dist-info` directory must be named for the same version as the file."""
+    directory = _dist_info_name(names, "METADATA").split("/", 1)[0]
+    if directory != f"xy-{expected_version}.dist-info":
+        raise AssertionError(
+            f"wheel has {directory!r} but its filename says version {expected_version!r}"
+        )
 
 
 def _require_unique_archive_members(infos: list[zipfile.ZipInfo]) -> None:
@@ -150,15 +160,14 @@ def _is_reflex_dependency(requirement: str) -> bool:
     return name == "reflex" or name.startswith("reflex-")
 
 
-def _require_metadata(names: set[str], data: bytes) -> None:
+def _require_metadata(names: set[str], data: bytes, expected_version: str) -> None:
     text = data.decode("utf-8")
     metadata = Parser().parsestr(text)
     missing: list[str] = []
     if metadata.get("Name", "").strip() != "xy":
         missing.append("Name: xy")
-    project_version = _project_version()
-    if metadata.get("Version", "").strip() != project_version:
-        missing.append(f"Version: {project_version}")
+    if metadata.get("Version", "").strip() != expected_version:
+        missing.append(f"Version: {expected_version}")
     if metadata.get("Requires-Python", "").strip() != ">=3.11":
         missing.append("Requires-Python: >=3.11")
     requirements = metadata.get_all("Requires-Dist") or []
@@ -178,14 +187,19 @@ def _require_metadata(names: set[str], data: bytes) -> None:
     _dist_info_name(names, "METADATA")
 
 
-def _project_version(pyproject_path: Path = ROOT / "pyproject.toml") -> str:
-    try:
-        data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise AssertionError(f"cannot read project version from {pyproject_path}: {exc}") from exc
-    version = str((data.get("project") or {}).get("version") or "").strip()
-    if not version:
-        raise AssertionError(f"{pyproject_path} is missing project.version")
+def _filename_version(path: Path) -> str:
+    """The version the wheel *claims* to be, taken from its own filename.
+
+    pyproject no longer carries a version to compare against — it is derived
+    from the git tag at build time — so the invariant this can still enforce is
+    internal consistency: the filename installers key off and the METADATA pip
+    records must agree. A build that resolved the version twice and differently
+    (say, a tagless CI checkout mid-way through) shows up as exactly that
+    disagreement.
+    """
+    version = path.name[:-4].split("-")[1]
+    if not VERSION_RE.match(version):
+        raise AssertionError(f"wheel filename has an unexpected version segment: {path.name}")
     return version
 
 
@@ -280,7 +294,9 @@ def verify_wheel(path: Path, *, expect_native: Optional[bool]) -> None:
         _require_only_shippable_roots(names)
         wheel = _parse_wheel(names, zf.read(_dist_info_name(names, "WHEEL")))
         _require_filename_tag(path, wheel.tags)
-        _require_metadata(names, zf.read(_dist_info_name(names, "METADATA")))
+        expected_version = _filename_version(path)
+        _require_dist_info_version(names, expected_version)
+        _require_metadata(names, zf.read(_dist_info_name(names, "METADATA")), expected_version)
         _require_record(zf, names)
 
     missing = sorted(REQUIRED_FILES - names)

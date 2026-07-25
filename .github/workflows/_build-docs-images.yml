@@ -58,6 +58,9 @@ jobs:
         with:
           ref: ${{ inputs.source_ref }}
           persist-credentials: false
+          # Full history and tags: the distribution version is derived
+          # from the latest `v*` tag, and a shallow clone has none.
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
@@ -72,6 +75,14 @@ jobs:
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: 1.97.0
+
+      # `.dockerignore` excludes `.git`, so the backend image build cannot
+      # derive the version the way every other build does. Resolve it here,
+      # where the tags exist, and hand it to the image explicitly — otherwise
+      # the docs backend installs `xy` at the `0.0.0` fallback.
+      - name: Resolve the xy version
+        id: xy_version
+        run: echo "version=$(uvx uv-dynamic-versioning)" >> "$GITHUB_OUTPUT"
 
       - name: Install JS build toolchain
         run: npm ci
@@ -132,11 +143,13 @@ jobs:
           DEPOT_PROJECT: ${{ env.DEPOT_PROJECT }}
           IMAGE_TAG: ${{ inputs.image_tag }}
           BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
+          XY_VERSION: ${{ steps.xy_version.outputs.version }}
         run: |
           depot build \
             --project "$DEPOT_PROJECT" \
             --file docs/app/dockerfiles/backend.Dockerfile \
             --tag "${BACKEND_IMAGE}:${IMAGE_TAG}" \
+            --build-arg "XY_VERSION=${XY_VERSION}" \
             --push \
             --platform linux/amd64,linux/arm64 \
             --provenance=false \

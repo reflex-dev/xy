@@ -169,6 +169,42 @@ def _require_workflow_contains(
         errors.append(f"{workflow_label} workflow missing {description}: {missing}")
 
 
+def _require_unshallow_checkouts(errors: list[str], text: str, workflow_label: str) -> None:
+    """Every checkout must fetch full history, tags included.
+
+    The distribution version is derived from the latest `v*` tag
+    (uv-dynamic-versioning in pyproject), and `actions/checkout` defaults to a
+    depth-1 clone carrying no tags at all. Under that default the version
+    resolves to the `0.0.0` fallback *silently* — a build succeeds and ships the
+    wrong number rather than failing. So a shallow checkout here is a publishing
+    bug, not a performance tweak, and it is invisible until someone reads a
+    PyPI page. Cheap to require, expensive to notice late.
+    """
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if "uses: actions/checkout@" not in line:
+            continue
+        indent = len(line) - len(line.lstrip())
+        step: list[str] = []
+        for following in lines[index + 1 :]:
+            stripped = following.strip()
+            if not stripped:
+                continue
+            following_indent = len(following) - len(following.lstrip())
+            if following_indent < indent or (
+                following_indent == indent and stripped.startswith("-")
+            ):
+                break
+            step.append(stripped)
+        if "fetch-depth: 0" not in step:
+            errors.append(
+                f"{workflow_label} workflow has an actions/checkout step (line {index + 1}) "
+                "without `fetch-depth: 0` — the distribution version is derived from git "
+                "tags, which a shallow checkout does not fetch, so the build would quietly "
+                "fall back to 0.0.0"
+            )
+
+
 def _require_docs_spec_pr_paths_ignored(errors: list[str], text: str, workflow_label: str) -> None:
     """Require PR-only docs/spec changes to skip an expensive workflow."""
     lines = text.splitlines()
@@ -219,6 +255,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     jobs = _job_blocks(text)
     errors: list[str] = []
     _require_docs_spec_pr_paths_ignored(errors, text, "CI")
+    _require_unshallow_checkouts(errors, text, "CI")
     missing_jobs = sorted(REQUIRED_CI_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"CI workflow missing required jobs: {missing_jobs}")
@@ -582,6 +619,7 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
     jobs = _job_blocks(text)
     errors: list[str] = []
     _require_docs_spec_pr_paths_ignored(errors, text, "CodSpeed")
+    _require_unshallow_checkouts(errors, text, "CodSpeed")
     missing_jobs = sorted(REQUIRED_CODSPEED_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"CodSpeed workflow missing required jobs: {missing_jobs}")
@@ -627,6 +665,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
 
     jobs = _job_blocks(text)
     errors: list[str] = []
+    _require_unshallow_checkouts(errors, text, "release")
     missing_jobs = sorted(REQUIRED_RELEASE_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"release workflow missing required jobs: {missing_jobs}")

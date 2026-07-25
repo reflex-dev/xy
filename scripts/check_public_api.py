@@ -20,7 +20,6 @@ import os
 import subprocess
 import sys
 import textwrap
-import tomllib
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Optional
@@ -285,23 +284,34 @@ def validate_declarative_api_contract(
     return errors
 
 
-def validate_version_consistency(
-    pkg: ModuleType, pyproject_path: Path = ROOT / "pyproject.toml"
-) -> list[str]:
-    """Ensure import-time ``__version__`` matches package metadata."""
-    try:
-        data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        return [f"cannot read project version from {pyproject_path}: {exc}"]
+def validate_version_consistency(pkg: ModuleType, distribution: str = "xy") -> list[str]:
+    """Ensure import-time ``__version__`` matches installed package metadata.
 
-    project_version = str((data.get("project") or {}).get("version") or "").strip()
+    pyproject holds no version to compare against — it is derived from the git
+    tag at build time — so installed metadata is the reference. The check that
+    remains is worth keeping: `xy.__version__` is resolved lazily through
+    ``__getattr__``, and this is what catches it resolving to something other
+    than the version pip actually installed (a stale editable install shadowing
+    a wheel, say), rather than merely to *some* non-empty string.
+    """
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as distribution_version
+
+    try:
+        installed_version = distribution_version(distribution)
+    except PackageNotFoundError:
+        return [
+            f"distribution {distribution!r} is not installed, so xy.__version__ "
+            "cannot be checked — run this against an installed package"
+        ]
+
     public_version = getattr(pkg, "__version__", None)
     if not isinstance(public_version, str) or not public_version.strip():
         return [f"xy.__version__ must be a non-empty string, got {public_version!r}"]
-    if project_version != public_version:
+    if installed_version != public_version:
         return [
-            "xy.__version__ must match pyproject.toml project.version: "
-            f"{public_version!r} != {project_version!r}"
+            f"xy.__version__ must match the installed {distribution} distribution "
+            f"metadata: {public_version!r} != {installed_version!r}"
         ]
     return []
 

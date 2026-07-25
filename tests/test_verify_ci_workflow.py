@@ -738,3 +738,28 @@ def test_release_workflow_rejects_non_retryable_pypi_publish(tmp_path: Path) -> 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
     assert any("release publish job" in error and "skip-existing" in error for error in errors)
+
+
+def test_release_workflow_rejects_shallow_checkout(tmp_path: Path) -> None:
+    """A depth-1 checkout fetches no tags, and the version is derived from them.
+
+    That failure is silent — the build succeeds at the 0.0.0 fallback and
+    publishes it — so the checker has to catch it instead of the release.
+    """
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(workflow.replace("          fetch-depth: 0\n", ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("fetch-depth: 0" in error and "0.0.0" in error for error in errors)
+
+
+def test_ci_workflow_rejects_shallow_checkout(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace("          fetch-depth: 0\n", ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("fetch-depth: 0" in error for error in errors)
