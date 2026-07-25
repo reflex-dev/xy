@@ -714,6 +714,8 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "wasm",
         "release",
         "runtime-verified, PyPI-published PyEmscripten WASM wheel",
+        "permissions:",
+        "contents: read",
         "toolchain: 1.97.0",
         "wasm32-unknown-emscripten",
         'RUSTFLAGS="-C panic=abort"',

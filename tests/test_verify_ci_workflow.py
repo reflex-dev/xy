@@ -648,6 +648,23 @@ def test_release_workflow_rejects_nonblocking_pyodide_probe(tmp_path: Path) -> N
     assert any("wasm job must block publishing" in error for error in errors)
 
 
+def test_release_workflow_rejects_broad_wasm_permissions(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            "    permissions:\n      contents: read\n    steps:\n",
+            "    steps:\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("release wasm job" in error and "contents: read" in error for error in errors)
+
+
 def test_release_workflow_rejects_pyemscripten_artifact_outside_pypi_batch(
     tmp_path: Path,
 ) -> None:
