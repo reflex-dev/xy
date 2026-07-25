@@ -14,7 +14,7 @@ Pre-releases work the same way with a canonical PEP 440 suffix on the tag
 (`reflex-xy-v0.0.1a1` → version `0.0.1a1`, likewise `bN`/`rcN`) and their own
 dated entry here; pip only installs them on explicit request.
 
-## [Unreleased]
+## [0.0.1a1] - 2026-07-24
 
 ## [0.0.1a1] — 2026-07-25
 
