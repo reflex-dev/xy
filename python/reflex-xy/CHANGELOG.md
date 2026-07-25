@@ -4,19 +4,7 @@ All notable changes to **reflex-xy** (the Reflex adapter for xy) are
 documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-The adapter versions independently of the xy core: its releases are tagged
-`reflex-xy-vX.Y.Z` (the core keeps bare `vX.Y.Z`), and the distribution
-version is derived from that tag — there is no number to bump in a file.
-Cutting a release is: date the entry below, tag, push the tag. The release
-gate (`scripts/check_release_version.py --package reflex-xy`) blocks the
-publish unless this file carries a dated entry for the tagged version.
-Pre-releases work the same way with a canonical PEP 440 suffix on the tag
-(`reflex-xy-v0.0.1a1` → version `0.0.1a1`, likewise `bN`/`rcN`) and their own
-dated entry here; pip only installs them on explicit request.
-
-## [Unreleased]
-
-## [0.0.1a1] — 2026-07-25
+## [0.0.1] — 2026-07-25
 
 ### Added
 - First packaged release line of the adapter: `reflex_xy.chart()` components,
