@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="spec/assets/xy-sdf-binned-scatter.png" alt="XY-shaped probability field shown as a binned scatter chart." width="521">
+</p>
+
+<p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="spec/assets/xy-pan-zoom-2m-dark.gif">
     <img src="spec/assets/xy-pan-zoom-2m-light.gif" alt="Panning, zooming, and hovering a chart of two million points; the tooltip reads back an exact source row." width="900">
