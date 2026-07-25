@@ -38,6 +38,7 @@ def test_wire_payload_still_ships_the_overlay() -> None:
     assert "sample" in density, "the JS client draws this overlay"
     assert density["sample"]["n"] > 0
     assert density["sample"]["mode"] == "sampled"
+    assert "overlay_omitted" not in density, "the raster-only reason must not reach the wire"
 
 
 def test_raster_payload_omits_the_overlay() -> None:
@@ -45,6 +46,8 @@ def test_raster_payload_omits_the_overlay() -> None:
     spec, _blob, _borrowed = fig._build_raster_payload()
     density = spec["traces"][0]["density"]
     assert "sample" not in density
+    # §28: the omission is recorded, not silent.
+    assert density["overlay_omitted"] == "static_raster"
     # The grid itself must be fully intact.
     assert density["w"] > 0 and density["h"] > 0 and density["max"] > 0
 
