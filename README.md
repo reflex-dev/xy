@@ -99,17 +99,6 @@ chart = xy.scatter_chart(
 chart
 ```
 
-Past a threshold the scatter becomes a density surface &mdash; 100M points compose
-in 0.2 s into a 1.03 MB payload sized by the screen, not by `n` &mdash; and zooming
-into a sparse region drills back to the real rows, 189,319 at the depth shown.
-That is the [live drilldown example](examples/fastapi/); a self-contained
-`to_html` export re-bins its retained sample instead and says so in the corner.
-
-XY also covers line, area, histogram, bar and column, heatmap, error bar and
-band, box, violin, ECDF, hexbin, contour, step, stairs, stem, triangle mesh, and
-faceted charts &mdash; see the
-[copyable examples](spec/api/api-examples.md).
-
 ### Coming from matplotlib
 
 For common pyplot workflows, change the import and keep the plotting code:
