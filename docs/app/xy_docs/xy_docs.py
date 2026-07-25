@@ -12,7 +12,7 @@ from reflex_site_shared.utils.docpage import right_sidebar_item_highlight
 
 from xy_docs.breadcrumb import xy_docs_breadcrumb
 from xy_docs.config import DOCS_CONFIG, DOCS_REDIRECTS
-from xy_docs.constants import PUBLIC_DOCS_URL, SOCIAL_IMAGE_URL
+from xy_docs.constants import LLMS_TXT_PATH, PUBLIC_DOCS_URL, SOCIAL_IMAGE_URL
 from xy_docs.footer import xy_docs_footer
 from xy_docs.markdown import page_with_api_reference_toc, render_xy_markdown_page
 from xy_docs.navbar import xy_docs_navbar
@@ -27,6 +27,22 @@ _CHART_STYLE = {
     "--chart-tooltip-text": "var(--secondary-12)",
     "--chart-focus": "var(--primary-9)",
 }
+
+
+def _llms_txt_directive() -> rx.Component:
+    """Return the hidden agent-facing documentation index directive."""
+    return rx.el.blockquote(
+        rx.el.span("For AI agents: the complete XY documentation index is at "),
+        rx.el.a(
+            "llms.txt",
+            href=f"{PUBLIC_DOCS_URL}{LLMS_TXT_PATH}",
+        ),
+        rx.el.span(
+            ". Markdown versions are available by appending .md or sending Accept: text/markdown."
+        ),
+        class_name="sr-only",
+    )
+
 
 app = rx.App(
     style={**styles.BASE_STYLE, **_CHART_STYLE},
@@ -72,6 +88,7 @@ def _without_faq_in_toc(page):
 def xy_docs_layout(page, content, navigation) -> rx.Component:
     """Render the shared docs layout with Reflex's TOC scroll highlighter."""
     return rx.box(
+        _llms_txt_directive(),
         docs_layout(
             page_with_api_reference_toc(_without_faq_in_toc(page)),
             content,
