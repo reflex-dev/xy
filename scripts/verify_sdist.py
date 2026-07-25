@@ -125,6 +125,7 @@ REQUIRED_FILES = {
     "tests/test_verify_benchmark_report.py",
     "tests/test_verify_ci_workflow.py",
     "tests/test_verify_local.py",
+    "tests/test_verify_reflex_xy_dist.py",
     "tests/test_verify_sdist.py",
     "tests/test_verify_wheel.py",
 }

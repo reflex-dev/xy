@@ -140,11 +140,10 @@ def _require_job_contains(
         errors.append(f"{workflow_label} {job} job missing {description}: {missing}")
 
 
-def _step_is_conditioned(job_text: str, step_needle: str) -> bool:
-    """True if the step whose `uses:`/`run:` line contains `step_needle` has its
-    own `if:` key — not just any `if:` elsewhere in the job (e.g. a sibling
-    step's dry-run summary). Scoped to the step's own indented block so a
-    same-level sibling step can't mask a missing gate.
+def _step_block(job_text: str, step_needle: str) -> Optional[str]:
+    """The indented block of the step whose `uses:`/`run:` line contains
+    `step_needle` — the step's own lines only, so a same-level sibling step
+    can't mask a missing key.
 
     The prefix (the step's own `uses:`/`name:`/`run:` line) is matched with
     `[^\\n]*`, not a dot-all `.*` — under re.DOTALL a greedy `.*` would happily
@@ -155,9 +154,28 @@ def _step_is_conditioned(job_text: str, step_needle: str) -> bool:
         rf"( *)- (?:uses|name|run): [^\n]*{re.escape(step_needle)}[^\n]*\n([\s\S]*?)(?=\n\1- |\Z)",
         job_text,
     )
-    if match is None:
-        return False
-    return "if:" in match.group(0)
+    return None if match is None else match.group(0)
+
+
+def _step_is_conditioned(job_text: str, step_needle: str) -> bool:
+    """True if the step has its own `if:` key — not just any `if:` elsewhere
+    in the job (e.g. a sibling step's dry-run summary)."""
+    block = _step_block(job_text, step_needle)
+    return block is not None and "if:" in block
+
+
+# The one condition that actually gates a PyPI upload behind the manual
+# dry-run switch. Requiring this exact predicate on the upload step itself —
+# not merely *an* `if:` — is the point: `if: always()` or any unrelated
+# condition would satisfy a mere presence check while gating nothing.
+PYPI_PUBLISH_GATE = (
+    "if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'"
+)
+
+
+def _step_carries_publish_gate(job_text: str, step_needle: str) -> bool:
+    block = _step_block(job_text, step_needle)
+    return block is not None and PYPI_PUBLISH_GATE in block
 
 
 def _require_workflow_contains(
@@ -812,13 +830,14 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
     publish = jobs.get("publish", "")
     if "password:" in publish or "api-token" in publish:
         errors.append("release publish job should use trusted publishing, not a PyPI token")
-    if "pypa/gh-action-pypi-publish@" in publish and not _step_is_conditioned(
+    if "pypa/gh-action-pypi-publish@" in publish and not _step_carries_publish_gate(
         publish, "pypa/gh-action-pypi-publish@"
     ):
         errors.append(
-            "release publish job's PyPI upload step has no if: condition of its "
-            "own — it must be gated (dry_run) so a manual dispatch cannot "
-            "publish unintentionally, even if a sibling step also has an if:"
+            "release publish job's PyPI upload step is not gated by the dry-run "
+            f"predicate on the step itself (`{PYPI_PUBLISH_GATE}`) — a missing or "
+            "unrelated condition (e.g. `if: always()`) would let a manual "
+            "dispatch publish unintentionally"
         )
     return errors
 
@@ -904,14 +923,14 @@ def validate_reflex_xy_release_workflow(
         errors.append(
             "reflex-xy release publish job should use trusted publishing, not a PyPI token"
         )
-    if "pypa/gh-action-pypi-publish@" in publish and not _step_is_conditioned(
+    if "pypa/gh-action-pypi-publish@" in publish and not _step_carries_publish_gate(
         publish, "pypa/gh-action-pypi-publish@"
     ):
         errors.append(
-            "reflex-xy release publish job's PyPI upload step has no if: "
-            "condition of its own — it must be gated (dry_run) so a manual "
-            "dispatch cannot publish unintentionally, even if a sibling step "
-            "also has an if:"
+            "reflex-xy release publish job's PyPI upload step is not gated by "
+            f"the dry-run predicate on the step itself (`{PYPI_PUBLISH_GATE}`) — "
+            "a missing or unrelated condition (e.g. `if: always()`) would let a "
+            "manual dispatch publish unintentionally"
         )
     return errors
 

@@ -727,7 +727,7 @@ def test_release_workflow_rejects_ungated_pypi_publish_step(tmp_path: Path) -> N
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
-    assert any("has no if: condition of its own" in error for error in errors)
+    assert any("is not gated by the dry-run predicate" in error for error in errors)
 
 
 def test_release_workflow_rejects_non_retryable_pypi_publish(tmp_path: Path) -> None:
@@ -781,7 +781,7 @@ def test_reflex_xy_release_workflow_rejects_ungated_pypi_publish(tmp_path: Path)
 
     errors = verify_ci_workflow.validate_reflex_xy_release_workflow(path)
 
-    assert any("has no if: condition of its own" in error for error in errors)
+    assert any("is not gated by the dry-run predicate" in error for error in errors)
 
 
 def test_reflex_xy_release_workflow_rejects_missing_dist_verifier(tmp_path: Path) -> None:
@@ -838,3 +838,37 @@ def test_release_workflow_rejects_adapter_tag_namespace(tmp_path: Path) -> None:
     errors = verify_ci_workflow.validate_release_workflow(path)
 
     assert any("must not touch the reflex-xy tag namespace" in error for error in errors)
+
+
+def test_release_workflow_rejects_always_conditioned_pypi_publish(tmp_path: Path) -> None:
+    # `if: always()` is *a* condition but gates nothing: a mere has-an-if
+    # check would accept it and let a manual dispatch publish unconditionally.
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    gate = (
+        "        if: github.event_name != 'workflow_dispatch' "
+        "|| github.event.inputs.dry_run != 'true'\n"
+    )
+    assert gate in workflow
+    path.write_text(workflow.replace(gate, "        if: always()\n"), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("is not gated by the dry-run predicate" in error for error in errors)
+
+
+def test_reflex_xy_release_workflow_rejects_always_conditioned_pypi_publish(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release-reflex-xy.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release-reflex-xy.yml"
+    gate = (
+        "        if: github.event_name != 'workflow_dispatch' "
+        "|| github.event.inputs.dry_run != 'true'\n"
+    )
+    assert gate in workflow
+    path.write_text(workflow.replace(gate, "        if: always()\n"), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_reflex_xy_release_workflow(path)
+
+    assert any("is not gated by the dry-run predicate" in error for error in errors)

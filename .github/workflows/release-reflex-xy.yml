@@ -22,18 +22,24 @@ on:
         type: boolean
         default: true
 
+# Least privilege for every job, declared once: reading the repo is all the
+# build needs, and nothing here relies on repository/org defaults. The
+# publish job's own block *replaces* this with the OIDC grant it needs.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build sdist + wheel
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history and tags: the distribution version is derived
           # from the latest `reflex-xy-v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          # No later step needs the token; don't leave it in .git/config.
+          persist-credentials: false
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: false
@@ -73,6 +79,8 @@ jobs:
           # Full history and tags: the release gate reads the tag from the ref
           # and the adapter changelog from the checkout.
           fetch-depth: 0
+          # No later step needs the token; don't leave it in .git/config.
+          persist-credentials: false
       # The tag *is* the version, so the one thing it cannot vouch for is that
       # the release was written up: require a dated entry in the adapter's own
       # changelog (python/reflex-xy/CHANGELOG.md) for the tagged version.
