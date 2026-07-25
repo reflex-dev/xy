@@ -2,7 +2,7 @@
   "matplotlib_version": "3.11.0",
   "base_code_commit": "47871a01db1ad02d1f64bda71fd1a50f9ab89853",
   "head_code_commit": "8fa2d4d0bcea9e9601276ce9773ab2318d272eed",
-  "full_gallery_verified_code_commit": "d0dc732321192c2974291278ac5abb41d30d5493",
+  "full_gallery_verified_code_commit": "56fea7254cf7f89cf6558071ff2cb818ea9e2652",
   "full_gallery_execution": {
     "in_scope_examples": 88,
     "paired_examples": 81,
@@ -10,7 +10,7 @@
     "paired_figures": 143
   },
   "pdsh_source_commit": "9b080851617c7fe3547a77bbb0726f57c0ac8158",
-  "pdsh_verified_code_commit": "d0dc732321192c2974291278ac5abb41d30d5493",
+  "pdsh_verified_code_commit": "56fea7254cf7f89cf6558071ff2cb818ea9e2652",
   "pdsh_execution": {
     "included_notebooks": 13,
     "excluded_notebooks": [
@@ -23,7 +23,7 @@
     "capture_errors": 0
   },
   "full_frame": true,
-  "source_tree_note": "The exact full-gallery and PDSH reruns executed at cdd902e. The final functional head d0dc732 changes only browser gutter capping beyond that executable boundary; the static-export Python/Rust sources and tests used by both reruns are byte-identical, and the browser delta passed the narrow-label, measured-gutter, and legend-alias Chrome probes. The violin reference and xy PNGs are byte-identical to the original 8fa2d4d comparison boundary.",
+  "source_tree_note": "The exact full-gallery and PDSH reruns executed at 56fea725 after Stack B was rebased onto Stack A a91ca2e. The results remained 81/88 paired gallery examples with 143 paired figures and 153/154 applicable PDSH cells with 289 captures and no capture errors. This provenance-only update does not change render code. The violin reference and xy PNGs remain the evidence captured at the original 8fa2d4d comparison boundary.",
   "comparisons": [
     {
       "source": "statistics/violinplot.py",
