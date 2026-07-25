@@ -642,10 +642,16 @@ def _bar_like(
         raise ValueError(f"{kind} orientation must be 'vertical' or 'horizontal'")
     category_axis = "x" if orientation == "vertical" else "y"
     pos, category_labels = self._axis_positions_with_labels(x, category_axis)
-    raw_width_array = np.asarray(width)
+    try:
+        raw_width_array = np.asarray(width)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{kind} width must be scalar or contain numeric values") from exc
     if np.issubdtype(raw_width_array.dtype, np.bool_):
         raise ValueError(f"{kind} width must be scalar or contain numeric values")
-    width_array = np.asarray(width, dtype=np.float64)
+    try:
+        width_array = np.asarray(width, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{kind} width must be scalar or contain numeric values") from exc
     if width_array.ndim == 0:
         width_values: float | np.ndarray = self._positive_scalar(
             float(width_array), f"{kind} width"
@@ -2313,8 +2319,11 @@ def contour(
             raise ValueError("contour color arrays must contain direct RGB/RGBA rows")
         color_table = color_channel.rgba
         color = None
-    if np.isscalar(width):
-        width = self._positive_scalar(width, "contour width")
+    width_array = np.asarray(width)
+    if width_array.ndim == 0:
+        # Unwrap before scalar validation so a 0-D boolean array remains a
+        # boolean (and is rejected) instead of coercing silently to 0.0/1.0.
+        width = self._positive_scalar(width_array.item(), "contour width")
         width_values = None
     else:
         width_values = self._as_1d_float(width, "contour width")

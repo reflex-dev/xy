@@ -81,11 +81,17 @@ def _raster_text_bold(stream: bytes, text: str) -> bool:
     at = stream.find(struct.pack("<I", len(payload)) + payload)
     assert at >= 0, f"no native text record carries {text!r}"
     body = at + 4
-    styled = body - _STYLED_HEADER
-    if styled >= 0 and stream[styled] == _raster._STYLED_TEXT:
-        (ranges,) = struct.unpack("<I", stream[body - 12 : body - 8])
-        if ranges == 0:
-            return bool(stream[body - 13] & _raster._TEXT_BOLD)
+    if body >= _STYLED_HEADER:
+        max_ranges = (body - _STYLED_HEADER) // 8
+        for range_count in range(max_ranges + 1):
+            styled = body - _STYLED_HEADER - 8 * range_count
+            if stream[styled] != _raster._STYLED_TEXT:
+                continue
+            count_at = body - 12 - 8 * range_count
+            (declared_count,) = struct.unpack("<I", stream[count_at : count_at + 4])
+            if declared_count == range_count:
+                flags_at = body - 13 - 8 * range_count
+                return bool(stream[flags_at] & _raster._TEXT_BOLD)
     plain = body - _TEXT_OP_HEADER
     assert plain >= 0 and stream[plain] == _raster._TEXT_OP, (
         f"record for {text!r} is neither a plain nor a styled text record"
@@ -121,6 +127,28 @@ def test_svg_honors_an_explicit_heavier_title_weight() -> None:
 
 
 # --- native raster exporter ------------------------------------------------
+
+
+@pytest.mark.parametrize("bold", [False, True])
+def test_raster_text_bold_decodes_styled_math_ranges(bold: bool) -> None:
+    cmd = _raster._Cmd(scale=1)
+    text = "a+b+c+d+e+f+g+h+i"
+    ranges = [(start, start + 1) for start in range(0, len(text), 2)]
+    cmd.text(
+        0,
+        0,
+        0,
+        10,
+        (0, 0, 0, 255),
+        text,
+        bold=bold,
+        italic_ranges=ranges,
+    )
+
+    # Nine ranges also guard against replacing the old zero-range assumption
+    # with another arbitrary small-count cap.
+    assert len(ranges) == 9
+    assert _raster_text_bold(bytes(cmd.buf), text) is bold
 
 
 def test_native_raster_chrome_text_carries_no_bold_by_default() -> None:

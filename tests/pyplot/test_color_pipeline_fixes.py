@@ -227,9 +227,12 @@ def test_monochrome_contour_dashes_negative_levels():
     plt.contour(xx, yy, zz, colors="black")
     contours = [t for t in _compiled_traces() if t.kind == "contour"]
     assert len(contours) == 2
-    dashes = sorted(str(t.style.get("dash")) for t in contours)
-    assert dashes == ["None", "[7.4, 3.2]"]  # negatives dashed, non-negatives solid
-    assert all(t.style["width"] == pytest.approx(2.0) for t in contours)
+    expected_width = plt.rcParams["lines.linewidth"] * plt.rcParams["figure.dpi"] / 72.0
+    dashed = [trace for trace in contours if trace.style.get("dash") is not None]
+    solid = [trace for trace in contours if trace.style.get("dash") is None]
+    assert len(dashed) == len(solid) == 1
+    assert dashed[0].style["dash"] == pytest.approx([3.7 * expected_width, 1.6 * expected_width])
+    assert all(t.style["width"] == pytest.approx(expected_width) for t in contours)
     assert all(t.style["opacity"] == pytest.approx(1.0) for t in contours)
 
 

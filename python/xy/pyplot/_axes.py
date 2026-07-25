@@ -171,7 +171,6 @@ def _path_intersects_boxes(
                         hit = True
                         break
                 if hit:
-                    hit = True
                     break
         result.append(hit)
     return result
@@ -1841,7 +1840,6 @@ class Axes(PlotTypeMixin):
             except (TypeError, ValueError):
                 raise ValueError("bar align='edge' requires numeric positions") from None
         check_unsupported(kwargs, "bar()/barh()")
-        n_bars = int(np.asarray(vals).size)
         patch_labels: Optional[list[str]] = None
         if label is not None and not isinstance(label, str) and np.iterable(label):
             patch_labels = [_plain_text(value) for value in label]
@@ -2051,7 +2049,11 @@ class Axes(PlotTypeMixin):
         linewidths = dataset_values(linewidth, "linewidth")
         linestyles = dataset_values(linestyle, "linestyle")
         hatches = dataset_values(hatch, "hatch")
-        labels = label if isinstance(label, (list, tuple)) else [label] * len(datasets)
+        # Matplotlib intentionally tolerates label-count mismatches: a scalar
+        # labels only the first dataset, short sequences leave later datasets
+        # unlabeled, and extra labels are ignored.
+        label_values = [] if label is None else np.atleast_1d(np.asarray(label, dtype=str)).tolist()
+        labels = (label_values + [None] * len(datasets))[: len(datasets)]
         containers: list[BarContainer] = []
         base = np.zeros(len(edges) - 1, dtype=np.float64)
         centers = (edges[:-1] + edges[1:]) * 0.5
@@ -2603,12 +2605,14 @@ class Axes(PlotTypeMixin):
             # The notebook's ordinary image box is ~369 px per side. A 128²
             # intermediate left each interpolated sample covering about 3×3
             # display pixels because heatmaps intentionally use nearest texture
-            # sampling. Keep a bounded 512² surface so non-nearest imshow output
-            # is at least display-resolution while nearest retains source cells.
+            # sampling. Keep a bounded 512–1024 px surface so non-nearest
+            # imshow output is at least display-resolution without making a
+            # large source image allocate or multiply dense source-sized
+            # resampling matrices. Nearest retains the original source cells.
             grid = _resample_grid(
                 grid,
-                max(512, grid.shape[1]),
-                max(512, grid.shape[0]),
+                min(1024, max(512, grid.shape[1])),
+                min(1024, max(512, grid.shape[0])),
                 effective_interpolation,
             )
         if transform == self.transAxes and extent is not None:
@@ -7039,10 +7043,16 @@ def _masked_float(value: Any) -> np.ndarray:
     return np.ma.asarray(value, dtype=np.float64).filled(np.nan)
 
 
-def _interpolation_weights(source: int, target: int, method: str) -> np.ndarray:
-    """Return a normalized target-by-source matrix for a separable filter."""
+def _interpolation_taps(source: int, target: int, method: str) -> tuple[np.ndarray, np.ndarray]:
+    """Return source indices and normalized local taps for a separable filter."""
     positions = np.linspace(0.0, source - 1.0, target)[:, None]
-    distance = positions - np.arange(source, dtype=np.float64)[None, :]
+    # Every supported kernel has radius at most four. Gathering those local
+    # taps avoids the old target-by-source dense matrix, whose mostly-zero
+    # allocation and matrix multiplies made ordinary large-image imshow
+    # quadratic in memory and cubic in work.
+    indices = np.floor(positions).astype(np.int64) + np.arange(-4, 5, dtype=np.int64)
+    valid = (indices >= 0) & (indices < source)
+    distance = positions - indices
     absolute = np.abs(distance)
 
     def keys(a: float) -> np.ndarray:
@@ -7096,24 +7106,42 @@ def _interpolation_weights(source: int, target: int, method: str) -> np.ndarray:
             "antialiased": -0.5,
         }.get(method, -0.5)
         weights = keys(cubic_a)
+    weights = np.where(valid, weights, 0.0)
     totals = weights.sum(axis=1, keepdims=True)
-    return weights / np.where(np.abs(totals) > 1e-12, totals, 1.0)
+    return (
+        np.clip(indices, 0, source - 1),
+        weights / np.where(np.abs(totals) > 1e-12, totals, 1.0),
+    )
 
 
 def _resample_grid(grid: np.ndarray, width: int, height: int, method: str) -> np.ndarray:
     """Dependency-free separable resampling for scalar and RGB(A) images."""
     values = np.asarray(grid, dtype=np.float64)
-    wy = _interpolation_weights(values.shape[0], height, method)
-    wx = _interpolation_weights(values.shape[1], width, method)
+    iy, wy = _interpolation_taps(values.shape[0], height, method)
+    ix, wx = _interpolation_taps(values.shape[1], width, method)
+
+    def apply_taps(array: np.ndarray) -> np.ndarray:
+        # Accumulate one tap at a time. A vectorized ``take`` over the whole
+        # tap matrix materializes target × taps × source intermediates and can
+        # consume more memory than the dense weights this replaces.
+        vertical = np.zeros((len(iy), *array.shape[1:]), dtype=np.float64)
+        y_shape = (len(iy),) + (1,) * (array.ndim - 1)
+        for tap in range(iy.shape[1]):
+            vertical += np.take(array, iy[:, tap], axis=0) * wy[:, tap].reshape(y_shape)
+        horizontal = np.zeros((vertical.shape[0], len(ix), *vertical.shape[2:]), dtype=np.float64)
+        x_shape = (1, len(ix)) + (1,) * (array.ndim - 2)
+        for tap in range(ix.shape[1]):
+            horizontal += np.take(vertical, ix[:, tap], axis=1) * wx[:, tap].reshape(x_shape)
+        return horizontal
 
     def resample(channel: np.ndarray) -> np.ndarray:
         finite = np.isfinite(channel)
         if finite.all():
-            return wy @ channel @ wx.T
+            return apply_taps(channel)
         # Renormalize around masked samples instead of allowing IEEE
         # ``0 * nan`` terms to poison every output pixel touched by a filter.
-        numerator = wy @ np.where(finite, channel, 0.0) @ wx.T
-        denominator = wy @ finite.astype(np.float64) @ wx.T
+        numerator = apply_taps(np.where(finite, channel, 0.0))
+        denominator = apply_taps(finite.astype(np.float64))
         return np.divide(
             numerator,
             denominator,

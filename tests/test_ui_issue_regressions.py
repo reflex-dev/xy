@@ -10,6 +10,10 @@ import xy
 from conftest import run_browser_probe
 from xy.export import find_chromium
 
+# Browser renderer rule: rotated y titles clear the tick-label union by this
+# multiple of the title's font size.
+_Y_TITLE_TICK_GAP_EM = 0.4
+
 
 def _probe(chart: xy.Chart, script: str, tmp_path: Path, name: str) -> dict:
     chromium = find_chromium()
@@ -340,6 +344,19 @@ def test_y_axis_title_stays_attached_when_left_padding_is_wide(tmp_path: Path) -
     script = (
         _PRELUDE
         + """
+    const realGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+    let titleLayoutReads = 0;
+    Element.prototype.getBoundingClientRect = function () {
+      if (this.dataset &&
+          this.dataset.xyLabelKind === "label" &&
+          this.dataset.xyAxis === "y") {
+        titleLayoutReads += 1;
+      }
+      return realGetBoundingClientRect.call(this);
+    };
+    view._drawNow();
+    view._raf = null;
+    Element.prototype.getBoundingClientRect = realGetBoundingClientRect;
     const root = view.root.getBoundingClientRect();
     const title = view.root.querySelector(
       '[data-xy-label-kind="label"][data-xy-axis="y"]'
@@ -352,15 +369,57 @@ def test_y_axis_title_stays_attached_when_left_padding_is_wide(tmp_path: Path) -
       gap: tickLeft - title.right,
       titleInside: title.left >= root.left,
       tickInside: tickLeft >= root.left,
+      titleLayoutReads,
     }));
 """
         + _POSTLUDE
     )
     result = _probe(chart, script, tmp_path, "wide left gutter title attachment")
 
-    assert result["gap"] == pytest.approx(0.4 * 13.8889, abs=0.75), result
+    assert result["gap"] == pytest.approx(_Y_TITLE_TICK_GAP_EM * 13.8889, abs=0.75), result
     assert result["titleInside"] is True, result
     assert result["tickInside"] is True, result
+    assert result["titleLayoutReads"] == 1, result
+
+
+def test_structured_y_axis_title_position_remains_authoritative(tmp_path: Path) -> None:
+    chart = xy.chart(
+        xy.line([0, 1], [0, 1]),
+        xy.x_axis(),
+        xy.y_axis(
+            label="author positioned",
+            label_position={
+                "right": 18,
+                "top": "52%",
+                "transform": "rotate(-75deg)",
+            },
+        ),
+        width=480,
+        height=320,
+    )
+    script = (
+        _PRELUDE
+        + """
+    const title = view.root.querySelector(
+      '[data-xy-label-kind="label"][data-xy-axis="y"]'
+    );
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      left: title.style.left,
+      right: title.style.right,
+      top: title.style.top,
+      transform: title.style.transform,
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "structured y title placement")
+
+    assert result == {
+        "left": "",
+        "right": "18px",
+        "top": "52%",
+        "transform": "rotate(-75deg)",
+    }
 
 
 def test_long_y_categories_expand_the_browser_gutter(tmp_path: Path) -> None:
@@ -399,7 +458,7 @@ def test_long_y_categories_expand_the_browser_gutter(tmp_path: Path) -> None:
     result = _probe(chart, script, tmp_path, "long category y gutter")
 
     assert result["plotX"] > 150, result
-    assert result["gap"] == pytest.approx(0.4 * 14, abs=0.75), result
+    assert result["gap"] == pytest.approx(_Y_TITLE_TICK_GAP_EM * 14, abs=0.75), result
     assert result["clipped"] is False, result
     assert result["titleInside"] is True, result
     assert sorted(result["tickTexts"]) == categories, result

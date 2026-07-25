@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 import xy.pyplot as plt
+from xy.pyplot import _grid
+from xy.pyplot._mathtext import mathtext_italic_ranges
 
 
 @pytest.fixture(autouse=True)
@@ -48,6 +50,43 @@ def test_positioned_png_keeps_figure_suptitle() -> None:
     pixels = np.asarray(plt.imread(BytesIO(fig._to_png())))
 
     assert np.any(pixels[:48, :, :3] < 200)
+
+
+def test_raster_suptitle_composites_as_straight_alpha() -> None:
+    canvas = np.zeros((48, 320, 4), dtype=np.uint8)
+
+    _grid._blend_raster_suptitle(
+        canvas,
+        "visible figure title",
+        None,
+        scale=1.0,
+        title_h=48,
+    )
+
+    ink = canvas[:, :, 3] > 0
+    assert np.any(ink)
+    # The native text overlay is straight-alpha RGBA: antialiasing belongs in
+    # alpha, while every covered pixel retains the authored #262626 RGB.
+    np.testing.assert_array_equal(
+        np.unique(canvas[:, :, :3][ink], axis=0),
+        np.array([[38, 38, 38]], dtype=np.uint8),
+    )
+
+
+@pytest.mark.parametrize("absolute", [False, True])
+def test_transparent_png_keeps_suptitle_in_grid_and_absolute_layouts(absolute: bool) -> None:
+    fig, ax = plt.subplots(figsize=(3.2, 2.4), dpi=100)
+    ax.set_axis_off()
+    fig.suptitle("visible figure title")
+    if absolute:
+        fig.subplots_adjust(top=0.8)
+    output = BytesIO()
+
+    fig.savefig(output, format="png", transparent=True)
+    output.seek(0)
+    pixels = np.asarray(plt.imread(output))
+
+    assert np.any(pixels[:48, :, 3] > 0)
 
 
 @pytest.mark.parametrize(
@@ -211,6 +250,35 @@ def test_text_preserves_mathtext_italic_span_across_all_exporters() -> None:
     fig.savefig(target, format="png")
     rgba = np.asarray(plt.imread(BytesIO(target.getvalue())))
     assert np.any(rgba[..., :3] < 0.5)
+
+
+@pytest.mark.parametrize(
+    ("source", "rendered", "ranges"),
+    [
+        (r"$\sum+\prod+\Sigma+\Gamma$", "Σ+Π+Σ+Γ", []),
+        (r"$\min+min$", "min+min", [(4, 7)]),
+        (r"$\cos x$", "cosx", [(3, 4)]),
+        (r"$\Sigma x+\pi$", "Σx+π", [(1, 2), (3, 4)]),
+        (r"$\mathrm{abc}+\mathit{def}$", "abc+def", [(4, 7)]),
+    ],
+)
+def test_mathtext_italic_ranges_preserve_source_command_provenance(
+    source: str,
+    rendered: str,
+    ranges: list[tuple[int, int]],
+) -> None:
+    assert mathtext_italic_ranges(source) == (rendered, ranges)
+
+
+def test_mathtext_operator_stays_upright_next_to_italic_variable_in_svg() -> None:
+    fig, ax = plt.subplots()
+    label = ax.text(0, 0, r"$\Sigma x$")
+
+    assert label.get_text() == "Σx"
+    assert label._entry["kwargs"]["style"]["math_italic_ranges"] == "1:2"
+    svg = ax._build_chart(*fig._panel_px()).figure().to_svg()
+    assert ">Σ<tspan" in svg
+    assert '<tspan font-style="italic">x</tspan>' in svg
 
 
 def test_text_fontdict_styles_title_labels_and_named_math_functions() -> None:

@@ -251,7 +251,7 @@ def test_ylabel_renders_rotated_in_png_left_margin() -> None:
     height, width = pixels.shape[:2]
     # Ink confined to a tall, narrow left-margin band — rotated text; the old
     # horizontal top-left placement would change the top band instead. Compare
-    # against the same axes without a title so tick-label ink cannot satisfy
+    # against the same axes without the y-label so tick-label ink cannot satisfy
     # the assertion by accident.
     left_band = np.s_[height // 4 : 3 * height // 4, : width // 12, :3]
     assert (pixels[left_band] != plain[left_band]).any()

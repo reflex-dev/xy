@@ -5,6 +5,7 @@ import pytest
 
 import xy.pyplot as plt
 from xy._figure import Figure
+from xy.pyplot import _axes as axes_module
 
 
 def test_axis_equal_before_fill_keeps_data_autoscaling() -> None:
@@ -88,6 +89,76 @@ def test_imshow_interpolation_does_not_spread_one_nan_over_the_image() -> None:
     interpolated = np.asarray(ax.imshow(values, interpolation="bilinear")._entry["z"])
     assert np.isfinite(interpolated).any()
     assert np.isfinite(interpolated[-1, -1])
+
+
+def test_sparse_imshow_resampling_matches_dense_bilinear_reference() -> None:
+    values = np.arange(12.0).reshape(3, 4)
+
+    def dense_weights(source: int, target: int) -> np.ndarray:
+        positions = np.linspace(0.0, source - 1.0, target)[:, None]
+        distance = np.abs(positions - np.arange(source, dtype=np.float64)[None, :])
+        weights = np.maximum(0.0, 1.0 - distance)
+        return weights / weights.sum(axis=1, keepdims=True)
+
+    wy = dense_weights(values.shape[0], 5)
+    wx = dense_weights(values.shape[1], 7)
+    expected = wy @ values @ wx.T
+
+    np.testing.assert_allclose(
+        axes_module._resample_grid(values, 7, 5, "bilinear"),
+        expected,
+        atol=1e-12,
+    )
+
+
+def test_sparse_imshow_resampling_matches_dense_lanczos_with_nan() -> None:
+    values = np.arange(20.0).reshape(4, 5)
+    values[1, 2] = np.nan
+
+    def dense_weights(source: int, target: int) -> np.ndarray:
+        positions = np.linspace(0.0, source - 1.0, target)[:, None]
+        distance = positions - np.arange(source, dtype=np.float64)[None, :]
+        absolute = np.abs(distance)
+        weights = np.where(
+            absolute < 3.0,
+            np.sinc(distance) * np.sinc(distance / 3.0),
+            0.0,
+        )
+        return weights / weights.sum(axis=1, keepdims=True)
+
+    wy = dense_weights(values.shape[0], 7)
+    wx = dense_weights(values.shape[1], 9)
+    finite = np.isfinite(values)
+    numerator = wy @ np.where(finite, values, 0.0) @ wx.T
+    denominator = wy @ finite.astype(np.float64) @ wx.T
+    expected = np.divide(
+        numerator,
+        denominator,
+        out=np.full_like(numerator, np.nan),
+        where=np.abs(denominator) > 1e-12,
+    )
+
+    np.testing.assert_allclose(
+        axes_module._resample_grid(values, 9, 7, "lanczos"),
+        expected,
+        atol=1e-12,
+        equal_nan=True,
+    )
+
+
+def test_imshow_bounds_large_non_nearest_resampling(monkeypatch: pytest.MonkeyPatch) -> None:
+    requested: list[tuple[int, int]] = []
+
+    def record_target(grid: np.ndarray, width: int, height: int, method: str) -> np.ndarray:
+        del method
+        requested.append((width, height))
+        return grid
+
+    monkeypatch.setattr(axes_module, "_resample_grid", record_target)
+    _fig, ax = plt.subplots()
+    ax.imshow(np.zeros((1025, 1537)), interpolation="bilinear")
+
+    assert requested == [(1024, 1024)]
 
 
 def test_regular_gouraud_pcolormesh_uses_a_smooth_scalar_surface() -> None:

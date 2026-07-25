@@ -292,6 +292,10 @@ def subplots(
         ``gridspec_kw``).
     subplot_kw : dict, optional
         Properties applied to every created axes via ``Axes.set``.
+    layout : {"none", "tight", "constrained", "compressed"}, optional
+        Layout mode applied after axes are created. ``"tight"``,
+        ``"constrained"``, and ``"compressed"`` use the shim's deterministic
+        tight-layout pass; ``None`` and ``"none"`` leave layout unchanged.
     **kwargs
         Remaining keywords are forwarded to `figure` (e.g.
         ``facecolor``, ``toolbar``).
@@ -343,7 +347,11 @@ def subplot_mosaic(mosaic: str | list[Any], **kwargs: Any) -> tuple[Figure, dict
 
     ``mosaic`` is a string like ``"AB;CC"`` or a nested list of labels;
     the result maps each label to its `Axes`. ``figsize``/``dpi`` size
-    the figure; other keywords go to ``Figure.subplot_mosaic``.
+    the figure. ``layout`` accepts ``None``, ``"none"``, ``"tight"``,
+    ``"constrained"``, or ``"compressed"`` and is applied after the axes are
+    created; ``None``/``"none"`` leave layout unchanged, while the latter three
+    use the shim's deterministic tight-layout pass. All other keywords go to
+    ``Figure.subplot_mosaic``.
     """
     figsize = kwargs.pop("figsize", None)
     dpi = kwargs.pop("dpi", None)

@@ -435,7 +435,4 @@ def _blend_raster_suptitle(
         in {"bold", "semibold", "demibold", "heavy", "black"},
     )
     overlay = kernels.rasterize(bytes(cmd.buf), canvas.shape[1], title_h)
-    alpha = overlay[:, :, 3:4].astype(np.float64) / 255.0
-    canvas[:title_h, :, :3] = np.round(
-        overlay[:, :, :3] * alpha + canvas[:title_h, :, :3] * (1.0 - alpha)
-    ).astype(np.uint8)
+    _composite_rgba(canvas[:title_h], overlay)

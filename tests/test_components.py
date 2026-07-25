@@ -6,6 +6,7 @@ data= column-name resolution, event-prop wiring, and box-select (§34)."""
 from __future__ import annotations
 
 import json
+from dataclasses import fields
 from pathlib import Path
 
 import numpy as np
@@ -1487,6 +1488,101 @@ def test_legend_location_and_columns_are_serialized():
     )
     spec, _ = chart.figure().build_payload()
     assert spec["legend"] == {"loc": "upper left", "ncols": 2}
+
+
+def test_public_component_dataclasses_preserve_v003_positional_prefix():
+    released_axis_fields = (
+        "which",
+        "id",
+        "label",
+        "label_position",
+        "label_offset",
+        "label_angle",
+        "type_",
+        "constant",
+        "domain",
+        "bounds",
+        "reverse",
+        "format",
+        "tick_count",
+        "tick_values",
+        "tick_labels",
+        "tick_label_angle",
+        "tick_label_strategy",
+        "tick_label_anchor",
+        "tick_label_min_gap",
+        "side",
+        "style",
+    )
+    released_legend_fields = (
+        "show",
+        "loc",
+        "ncols",
+        "title",
+        "class_name",
+        "style",
+        "render",
+        "highlight",
+        "toggle",
+    )
+
+    axis_fields = tuple(item.name for item in fields(Axis))
+    legend_fields = tuple(item.name for item in fields(Legend))
+    assert axis_fields[: len(released_axis_fields)] == released_axis_fields
+    assert axis_fields[len(released_axis_fields)] == "margin"
+    assert legend_fields[: len(released_legend_fields)] == released_legend_fields
+    assert legend_fields[len(released_legend_fields)] == "anchor"
+
+    renderer = object()
+    axis = Axis(
+        "x",
+        "x",
+        "label",
+        None,
+        None,
+        None,
+        "linear",
+        None,
+        (0.0, 1.0),
+        (0.0, 2.0),
+        True,
+        ".1f",
+        3,
+        [0.0, 1.0],
+        ["zero", "one"],
+        15.0,
+        "rotate",
+        "end",
+        2.0,
+        "top",
+        {},
+    )
+    legend = Legend(False, "upper right", 2, "Title", "legend-class", {}, renderer, False, False)
+
+    assert axis.bounds == (0.0, 2.0)
+    assert axis.reverse is True
+    assert axis.format == ".1f"
+    assert axis.margin is None
+    assert legend.ncols == 2
+    assert legend.title == "Title"
+    assert legend.render is renderer
+    assert legend.anchor is None
+
+    anchored = xy.legend(anchor=(0.25, 0.75))
+    assert anchored.anchor == (0.25, 0.75)
+
+
+def test_component_bar_width_contracts_match_runtime_behavior():
+    widths = np.array([0.25, 0.75])
+    for mark in (
+        xy.bar(x=["a", "b"], y=[1.0, 2.0], width=widths),
+        xy.column(x=["a", "b"], y=[1.0, 2.0], width=widths),
+    ):
+        trace = xy.chart(mark).figure().traces[0]
+        np.testing.assert_allclose(trace.x1.values - trace.x0.values, widths)
+
+    with pytest.raises(ValueError, match="violin width must be a finite real number"):
+        xy.violin_chart(xy.violin(values=[[1.0, 2.0], [2.0, 3.0]], width=[0.25, 0.75])).figure()
 
 
 def test_component_axis_and_legend_validate_public_props_without_caching_failure():

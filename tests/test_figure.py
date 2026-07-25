@@ -606,9 +606,19 @@ def test_column_alias_and_negative_bars_range_from_baseline():
 
 def test_positive_bar_and_histogram_baselines_touch_value_axis():
     bar_spec, _bar_blob = Figure().bar(["A", "B"], [2.0, 4.0]).build_payload()
+    column_spec, _column_blob = Figure().column(["A", "B"], [2.0, 4.0]).build_payload()
     hist_spec, _hist_blob = Figure().histogram([0.0, 0.1, 0.2], bins=2).build_payload()
     assert bar_spec["y_axis"]["range"][0] == 0.0
+    assert column_spec["y_axis"]["range"][0] == 0.0
     assert hist_spec["y_axis"]["range"][0] == 0.0
+
+
+def test_column_baseline_stays_sticky_for_negative_and_horizontal_values():
+    negative = Figure().column(["A", "B"], [-2.0, -4.0])
+    horizontal = Figure().column(["A", "B"], [2.0, 4.0], orientation="horizontal")
+
+    assert negative.y_range()[1] == 0.0
+    assert horizontal.x_range()[0] == 0.0
 
 
 def test_negative_horizontal_bar_baseline_touches_value_axis():

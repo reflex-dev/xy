@@ -5264,13 +5264,17 @@ export class ChartView {
         : Math.min(...tickRects.map((rect) => rect.left)) - 0.4 * fontSize - labelOffset;
       const currentEdge = onRight ? titleRect.left : titleRect.right;
       const currentLeft = parseFloat(title.style.left) || 0;
-      title.style.left = `${currentLeft + targetEdge - currentEdge}px`;
-      // Keep an unusually large title inside the chart canvas.
-      const adjusted = title.getBoundingClientRect();
-      const correction = adjusted.left < root.left
-        ? root.left - adjusted.left + 1
-        : adjusted.right > root.right ? root.right - adjusted.right - 1 : 0;
-      if (correction) title.style.left = `${parseFloat(title.style.left) + correction}px`;
+      const delta = targetEdge - currentEdge;
+      // Keep an unusually large title inside the chart canvas. Moving an
+      // absolutely positioned label by `delta` translates its measured box by
+      // the same amount, so derive the clamp from the captured geometry and
+      // avoid a write-then-layout-read on every chrome redraw.
+      const adjustedLeft = titleRect.left + delta;
+      const adjustedRight = titleRect.right + delta;
+      const correction = adjustedLeft < root.left
+        ? root.left - adjustedLeft + 1
+        : adjustedRight > root.right ? root.right - adjustedRight - 1 : 0;
+      title.style.left = `${currentLeft + delta + correction}px`;
     };
     if (s.x_axis.label && !hideX) {
       const top = xAxis.side === "top" ? p.y - 34 : p.y + p.h + 24;
@@ -5284,7 +5288,12 @@ export class ChartView {
         : `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:400;`;
       const placement = this._axisLabelCss(yAxis, "y", fallbackCss);
       const title = label(s.y_axis.label, placement.css, yAxis, "label", placement.style);
-      attachYTitleToTicks(title, yAxis, yAxis.side === "right");
+      // A structured CSS label_position is the placement authority. It may
+      // deliberately omit `left` in favor of `right`, so tick attachment must
+      // not synthesize a competing left offset.
+      if (placement.style === null) {
+        attachYTitleToTicks(title, yAxis, yAxis.side === "right");
+      }
     }
     this._drawAnnotationLabels(updateLabels);
     // Label layout resolves responsive callout offsets before the pointer is

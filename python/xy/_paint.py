@@ -24,8 +24,10 @@ def triangle_mesh_boundary(*vertices: np.ndarray) -> np.ndarray | None:
     n = min((len(values) for values in arrays), default=0)
     if n == 0:
         return None
-    finite = np.concatenate(arrays)
-    span = float(np.nanmax(finite) - np.nanmin(finite))
+    coordinates = np.concatenate([values[:n] for values in arrays])
+    if not np.isfinite(coordinates).all():
+        return None
+    span = float(coordinates.max() - coordinates.min())
     # Each triangle coordinate is transported in an independently offset
     # float32 column, so the same source vertex may decode a few ULPs apart in
     # x0/x1/x2. The joined-fill flag is only used for one simple polygon; a

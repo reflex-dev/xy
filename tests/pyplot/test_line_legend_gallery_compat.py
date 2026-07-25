@@ -266,6 +266,27 @@ def test_scatter_legend_elements_return_real_legend_artists_and_two_boxes():
     assert all(item["name"].startswith("$ ") for item in spec["extra_legends"][1]["items"])
 
 
+def test_scatter_legend_elements_none_and_array_num_follow_matplotlib() -> None:
+    _, ax = plt.subplots()
+    scatter = ax.scatter(
+        np.arange(4),
+        np.arange(4),
+        c=np.array([1.0, 2.0, 2.0, 4.0]),
+        s=np.array([10.0, 20.0, 20.0, 40.0]),
+    )
+
+    color_handles, color_labels = scatter.legend_elements(num=None)
+    size_handles, size_labels = scatter.legend_elements(prop="sizes", num=None)
+    fixed_handles, fixed_labels = scatter.legend_elements(num=np.array([1.0, 4.0]))
+
+    assert len(color_handles) == len(color_labels) == 3
+    assert color_labels == ["1", "2", "4"]
+    assert len(size_handles) == len(size_labels) == 3
+    assert size_labels == ["10", "20", "40"]
+    assert len(fixed_handles) == len(fixed_labels) == 2
+    assert fixed_labels == ["1", "4"]
+
+
 def test_round_dash_capstyle_mutation_matches_fixed_round_renderers():
     _, ax = plt.subplots()
     line = ax.plot([0, 1], [0, 1], "--")[0]

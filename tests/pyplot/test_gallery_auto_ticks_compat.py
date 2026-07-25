@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import xy.pyplot as plt
-from xy.pyplot._ticker import AutoLocator
+from xy.pyplot._ticker import AutoLocator, MaxNLocator
 
 
 def _auto_ticks_data() -> tuple[np.ndarray, np.ndarray]:
@@ -85,6 +85,36 @@ def test_auto_locator_round_view_limits_use_edge_ticks() -> None:
     with plt.rc_context({"axes.autolimit_mode": "round_numbers"}):
         assert locator.view_limits(0.255, 1.245) == pytest.approx((0.2, 1.4))
         assert locator.view_limits(-0.42, 1.92) == pytest.approx((-0.5, 2.0))
+
+
+def test_maxn_locator_round_mode_uses_the_same_step_for_ticks_and_limits() -> None:
+    locator = MaxNLocator(4)
+
+    np.testing.assert_allclose(locator.tick_values(0.25, 0.35), [0.25, 0.275, 0.3, 0.325, 0.35])
+    assert locator.view_limits(0.25, 0.35) == (0.25, 0.35)
+
+    with plt.rc_context({"axes.autolimit_mode": "round_numbers"}):
+        np.testing.assert_allclose(locator.tick_values(0.25, 0.35), [0.24, 0.27, 0.3, 0.33, 0.36])
+        assert locator.view_limits(0.25, 0.35) == pytest.approx((0.24, 0.36))
+
+
+@pytest.mark.parametrize("mode", ["data", "round_numbers"])
+def test_maxn_locator_expands_singular_and_nonfinite_limits(mode: str) -> None:
+    locator = MaxNLocator(4)
+
+    with plt.rc_context({"axes.autolimit_mode": mode}):
+        lo, hi = locator.view_limits(2.0, 2.0)
+        assert np.isfinite([lo, hi]).all()
+        assert lo < 2.0 < hi
+
+        lo, hi = locator.view_limits(np.nan, np.inf)
+        assert np.isfinite([lo, hi]).all()
+        assert lo < hi
+
+        ticks = locator.tick_values(2.0, 2.0)
+        assert len(ticks) >= 2
+        assert np.isfinite(ticks).all()
+        assert ticks[0] < ticks[-1]
 
 
 def test_autolimit_mode_rejects_unknown_values() -> None:

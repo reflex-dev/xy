@@ -309,7 +309,9 @@ def test_colorbar_returns_handle_and_set_label_lands():
     assert ax._colorbar["label"] == "counts in bin"
 
 
-def test_colorbar_set_label_renders_rotated_beside_the_bar_in_both_exports():
+def test_colorbar_set_label_renders_rotated_beside_the_bar_in_both_exports(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """PDSH ch. 4.05 (`hist2d`/`hexbin`/`imshow` + `set_label`) expects
     Matplotlib's rotated label alongside a vertical colorbar. It used to render
     horizontally above the bar, clipped off the top of the native PNG canvas."""
@@ -326,15 +328,12 @@ def test_colorbar_set_label_renders_rotated_beside_the_bar_in_both_exports():
     recorded: list[tuple[float, float, int, str]] = []
     original_text = _raster._Cmd.text
 
-    def record_text(self, x, y, anchor, size, color, value):
+    def record_text(self, x, y, anchor, size, color, value, *args, **kwargs):
         recorded.append((float(x), float(y), int(anchor), str(value)))
-        return original_text(self, x, y, anchor, size, color, value)
+        return original_text(self, x, y, anchor, size, color, value, *args, **kwargs)
 
-    _raster._Cmd.text = record_text
-    try:
-        _png()
-    finally:
-        _raster._Cmd.text = original_text
+    monkeypatch.setattr(_raster._Cmd, "text", record_text)
+    _png()
 
     native_x, native_y, anchor, _text = next(
         entry for entry in recorded if entry[3] == "counts in bin"

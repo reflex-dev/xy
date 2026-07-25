@@ -62,6 +62,30 @@ def test_hist_dataset_style_lengths_must_match_dataset_count() -> None:
         ax.hist([[0, 1], [2, 3]], bins=2, linewidth=[1, 2, 3])
 
 
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        ("first", ["first", None]),
+        (["first"], ["first", None]),
+        (["first", "second"], ["first", "second"]),
+        (["first", "second", "unused"], ["first", "second"]),
+        (None, [None, None]),
+    ],
+)
+def test_hist_labels_are_padded_or_truncated_like_matplotlib(
+    label: object, expected: list[str | None]
+) -> None:
+    _fig, ax = plt.subplots()
+
+    _counts, _edges, containers = ax.hist(
+        [[0, 1], [2, 3]],
+        bins=2,
+        label=label,
+    )
+
+    assert [container.get_label() for container in containers] == expected
+
+
 @pytest.mark.parametrize("histtype", ["step", "stepfilled"])
 def test_hist_step_geometry_contributes_to_autoscale(histtype: str) -> None:
     _fig, ax = plt.subplots()

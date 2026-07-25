@@ -215,7 +215,6 @@ class Axis(Component):
     type_: Optional[str] = None  # "linear" | "time" | "log" | "symlog"
     constant: Optional[float] = None
     domain: Optional[tuple[float, float]] = None
-    margin: Optional[float] = None
     bounds: Union[tuple[float, float], Literal["data"], None] = None
     reverse: bool = False
     format: Optional[str] = None
@@ -228,6 +227,8 @@ class Axis(Component):
     tick_label_min_gap: Optional[float] = None
     side: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
+    # New fields append after the v0.0.3 positional surface.
+    margin: Optional[float] = None
 
 
 @dataclass
@@ -236,7 +237,6 @@ class Legend(Component):
 
     show: bool = True
     loc: Optional[str] = None
-    anchor: Optional[tuple[float, ...]] = None
     ncols: int = 1
     title: Optional[str] = None
     class_name: Optional[str] = None
@@ -246,6 +246,7 @@ class Legend(Component):
     # construction over the released field order must keep binding.
     highlight: bool = True
     toggle: bool = True
+    anchor: Optional[tuple[float, ...]] = None
 
 
 @dataclass
@@ -1262,7 +1263,7 @@ def violin(
     group: Union[str, ArrayLike, None] = None,
     name: Optional[str] = None,
     color: Optional[str] = None,
-    width: Any = 0.8,
+    width: float = 0.8,
     bins: int = 64,
     opacity: float = 0.55,
     orientation: str = "vertical",
@@ -1560,7 +1561,7 @@ def bar(
     name: Optional[str] = None,
     color: Any = None,
     colors: Optional[list[str]] = None,
-    width: float = 0.8,
+    width: Union[Scalar, ArrayLike] = 0.8,
     base: Union[str, Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
@@ -1643,7 +1644,7 @@ def column(
     name: Optional[str] = None,
     color: Union[str, Sequence[str], None] = None,
     colors: Optional[list[str]] = None,
-    width: Any = 0.8,
+    width: Union[Scalar, ArrayLike] = 0.8,
     base: Union[str, Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
@@ -1669,7 +1670,7 @@ def column(
         name: Series label used by legends and tooltips.
         color: Constant color, values, or a column name.
         colors: Colors assigned to multiple series.
-        width: Column width in category units.
+        width: Scalar or per-column widths in category units.
         base: Baseline value, values, or a column name.
         mode: ``grouped``, ``stacked``, or ``normalized`` layout.
         orientation: Orientation forwarded to the bar renderer.

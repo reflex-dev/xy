@@ -41,8 +41,12 @@ def test_maxn_locator_keeps_scale_for_narrow_far_offset_ranges():
     assert inside.sum() == 3
 
 
-def test_singular_range_still_returns_a_tick():
-    assert list(plt.MaxNLocator(4).tick_values(2.0, 2.0)) == [2.0]
+def test_singular_range_expands_to_multiple_finite_ticks():
+    ticks = plt.MaxNLocator(4).tick_values(2.0, 2.0)
+
+    assert len(ticks) >= 2
+    assert np.isfinite(ticks).all()
+    assert ticks[0] < 2.0 < ticks[-1]
 
 
 # -- absolute panel placement: titled axes ------------------------------------

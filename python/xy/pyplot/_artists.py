@@ -517,7 +517,8 @@ class PathCollection(Artist):
         if not unique.size:
             return [], []
         transformed = np.asarray(func(unique), dtype=np.float64)
-        if num == "auto" and len(unique) <= 9:
+        auto = isinstance(num, str) and num == "auto"
+        if num is None or (auto and len(unique) <= 9):
             chosen = unique
             label_values = transformed
         elif not np.isscalar(num):
@@ -1054,18 +1055,26 @@ class ContourSet(Artist):
                     },
                 )
         if "linewidth" in kwargs:
-            self._entry["kwargs"]["width"] = float(kwargs.pop("linewidth"))
+            self.set_linewidth(kwargs.pop("linewidth"))
         self._touch()
         return self
 
     def get_linewidth(self) -> list[float]:
-        return np.asarray(self._entry["kwargs"].get("width", 1.1), dtype=float).reshape(-1).tolist()
+        authored = self._entry.get(
+            "source_linewidths",
+            np.asarray(self._entry["kwargs"].get("width", 1.1), dtype=float)
+            / self._axes._point_scale(),
+        )
+        return np.asarray(authored, dtype=float).reshape(-1).tolist()
 
     def set_linewidth(self, width: Any) -> None:
         values = np.asarray(width, dtype=float).reshape(-1)
         if not len(values) or not np.isfinite(values).all() or np.any(values <= 0):
             raise ValueError("contour linewidth must contain positive finite values")
-        self._entry["kwargs"]["width"] = float(values[0]) if len(values) == 1 else values
+        authored: Any = float(values[0]) if len(values) == 1 else values
+        rendered = values * self._axes._point_scale()
+        self._entry["source_linewidths"] = authored
+        self._entry["kwargs"]["width"] = float(rendered[0]) if len(rendered) == 1 else rendered
         self._touch()
 
     def set_linestyle(self, style: Any) -> None:

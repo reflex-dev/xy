@@ -2932,16 +2932,21 @@ class PlotTypeMixin:
                         resolve_rgba(color_values[-1]) if use_extreme_colors else resolved[-1],
                     )
                 color = np.ascontiguousarray(resolved, dtype=np.float64)
-        # Matplotlib contour linewidths are points.  The browser renderer uses
-        # CSS pixels, so the 1.5 pt default becomes 2 px at 96 dpi.
+        # Keep Matplotlib's public linewidth state in points while the render
+        # trace uses output pixels.
         if linewidths is None:
-            width: Any = float(rcParams["lines.linewidth"]) * (4.0 / 3.0)
+            public_width: Any = float(rcParams["lines.linewidth"])
         elif np.isscalar(linewidths):
-            width = _float(linewidths) * (4.0 / 3.0)
+            public_width = _float(linewidths)
         else:
-            width = np.asarray(linewidths, dtype=float).reshape(-1) * (4.0 / 3.0)
-            if not len(width):
+            public_width = np.asarray(linewidths, dtype=float).reshape(-1)
+            if not len(public_width):
                 raise ValueError("linewidths must contain at least one value")
+        public_values = np.asarray(public_width, dtype=float).reshape(-1)
+        if not np.isfinite(public_values).all() or np.any(public_values <= 0):
+            raise ValueError("linewidths must contain positive finite values")
+        width_values = public_values * self._point_scale()
+        width: Any = float(width_values[0]) if len(width_values) == 1 else width_values
         transparent_fill = filled and isinstance(colors, str) and colors.lower() == "none"
         entry = self._add(
             "@mark",
@@ -2970,6 +2975,7 @@ class PlotTypeMixin:
                     "corner_mask": bool(corner_mask),
                 },
                 "source_z": za,
+                "source_linewidths": public_width,
                 "corner_mask": bool(corner_mask),
                 "domain": (float(public_levels[0]), float(public_levels[-1])),
                 "hatches": list(hatches) if hatches is not None else None,

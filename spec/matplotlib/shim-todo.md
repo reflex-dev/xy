@@ -653,13 +653,11 @@ streamplot
 
 ### Accepted approximations (documented, still divergent)
 
-- Barbs glyph is a bounded tick count, not WMO 50/10/5 geometry.
-- Streamplot uses a fixed-step integrator; paths differ from Matplotlib's
-  adaptive one; density tuples reduce to their max.
-- imshow smoothing-mode names collapse to one bilinear upsample; truecolor
-  RGB(A) is unresampled.
-- `annotate(arrowprops=)` reduces to callout text; errorbar limit flags drop
-  caret arrows.
+- imshow's dependency-free named filters approximate Matplotlib's AGG kernels
+  and use a bounded 512–1024 px intermediate rather than selecting the filter
+  and target size from the final display resolution; explicit
+  `interpolation="auto"` remains unsupported.
+- Errorbar limit flags render one-sided bars without Matplotlib's caret arrows.
 - stem/eventplot/triplot/hlines/vlines dashes are data-space geometry (they
   scale with zoom).
 - Exception types diverge by design: TypeError/NotImplementedError where

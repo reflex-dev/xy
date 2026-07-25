@@ -491,15 +491,32 @@ def test_contour_solid_style_and_negative_rc_setting() -> None:
 
 def test_contour_linewidths_cycle_by_level_and_artist_updates_preserve_arrays() -> None:
     _fig, ax = plt.subplots()
+    point_scale = ax._point_scale()
     contour = ax.contour(
         np.arange(25.0).reshape(5, 5),
         levels=[4, 8, 12, 16, 20],
         colors="black",
         linewidths=[0.5, 2.0],
     )
-    np.testing.assert_allclose(contour.get_linewidth(), [2 / 3, 8 / 3])
+    np.testing.assert_allclose(contour.get_linewidth(), [0.5, 2.0])
+    np.testing.assert_allclose(
+        contour._entry["kwargs"]["width"],
+        np.array([0.5, 2.0]) * point_scale,
+    )
+
     contour.set_linewidth([1.0, 3.0, 2.0])
     np.testing.assert_allclose(contour.get_linewidth(), [1.0, 3.0, 2.0])
+    np.testing.assert_allclose(
+        contour._entry["kwargs"]["width"],
+        np.array([1.0, 3.0, 2.0]) * point_scale,
+    )
+
+    contour.set(linewidth=[0.75, 1.5])
+    np.testing.assert_allclose(contour.get_linewidth(), [0.75, 1.5])
+    np.testing.assert_allclose(
+        contour._entry["kwargs"]["width"],
+        np.array([0.75, 1.5]) * point_scale,
+    )
 
     traces = ax._build_chart(640, 480).figure().traces
     widths = np.concatenate(
@@ -509,7 +526,10 @@ def test_contour_linewidths_cycle_by_level_and_artist_updates_preserve_arrays() 
             if trace.kind == "contour" and "width" in trace.style_channels
         ]
     )
-    assert set(widths) == {1.0, 2.0, 3.0}
+    np.testing.assert_allclose(
+        sorted(set(widths)),
+        np.array([0.75, 1.5]) * point_scale,
+    )
 
 
 def test_stem_dashed_linefmt_emits_dash_segments_and_markers() -> None:

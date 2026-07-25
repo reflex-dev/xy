@@ -415,7 +415,9 @@ def test_svg_vertical_colorbar_clears_right_named_axis_chrome() -> None:
     assert float(bar.get("x", "nan")) > plot["x"] + plot["w"] + 40
 
 
-def test_svg_vertical_colorbar_label_is_rotated_beside_the_bar_inside_the_canvas() -> None:
+def test_svg_vertical_colorbar_label_is_rotated_beside_the_bar_inside_the_canvas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """SVG places a vertical colorbar's label like Matplotlib — rotated 90° CCW,
     centered beside the bar, on canvas — and the native PNG exporter must agree
     on the baseline so the two static paths cannot drift apart."""
@@ -452,15 +454,12 @@ def test_svg_vertical_colorbar_label_is_rotated_beside_the_bar_inside_the_canvas
     recorded: list[tuple[float, float, int, float, str]] = []
     original_text = _raster._Cmd.text
 
-    def record_text(self, x, y, anchor, size, color, value):
+    def record_text(self, x, y, anchor, size, color, value, *args, **kwargs):
         recorded.append((float(x), float(y), int(anchor), float(size), str(value)))
-        return original_text(self, x, y, anchor, size, color, value)
+        return original_text(self, x, y, anchor, size, color, value, *args, **kwargs)
 
-    _raster._Cmd.text = record_text
-    try:
-        _raster.render_raster(spec, blob, scale=1)
-    finally:
-        _raster._Cmd.text = original_text
+    monkeypatch.setattr(_raster._Cmd, "text", record_text)
+    _raster.render_raster(spec, blob, scale=1)
     native_x, native_y, anchor, _size, _text = next(
         entry for entry in recorded if entry[4] == "counts in bin"
     )

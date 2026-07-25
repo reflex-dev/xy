@@ -1210,6 +1210,15 @@ def _text_cell(font_size: float) -> tuple[float, float]:
     )
 
 
+def _has_outside_y_title(axis: dict[str, Any]) -> bool:
+    """Whether a y-axis title needs space outside the plot rectangle."""
+    if not axis.get("label"):
+        return False
+    raw_position = axis.get("label_position")
+    position = raw_position if isinstance(raw_position, str) else "center"
+    return not position.replace("-", "_").startswith("inside_")
+
+
 def _y_title_baseline(
     axis: dict[str, Any],
     plot: dict[str, float],
@@ -1221,12 +1230,8 @@ def _y_title_baseline(
     browser positions a centered line box; the returned coordinate includes
     that box-to-baseline correction.
     """
-    if not axis.get("label"):
-        return None
-    raw_position = axis.get("label_position")
-    position = raw_position if isinstance(raw_position, str) else "center"
-    if position.replace("-", "_").startswith("inside_"):
-        return None  # drawn over the plot; it needs no gutter
+    if not _has_outside_y_title(axis):
+        return None  # absent or drawn over the plot; it needs no gutter
     style = axis.get("style") or {}
     font_size = float(style.get("label_size", 12))
     side = axis.get("side", "left")
@@ -1289,7 +1294,7 @@ def _y_axis_left_room(spec: dict[str, Any], plot_h: float) -> float:
         if not axis_id.startswith("y") or axis.get("side", "left") == "right":
             continue
         tick_offset, tick_room = _y_tick_label_room(axis, plot_h)
-        if _y_title_baseline(axis, {"x": 0.0, "y": 0.0, "w": 0.0, "h": plot_h}) is None:
+        if not _has_outside_y_title(axis):
             room = max(room, _AXIS_TEXT_EDGE_PAD + tick_offset + tick_room)
             continue
         label_size = float((axis.get("style") or {}).get("label_size", 12))
@@ -2329,9 +2334,20 @@ def _svg_mathtext_spans(line: str, style: dict[str, Any], offset: int) -> str:
             ranges.append((start, end))
     if not ranges:
         return escape(line)
+    ranges.sort()
+    merged: list[tuple[int, int]] = []
+    for start, end in ranges:
+        if merged and start <= merged[-1][1]:
+            previous_start, previous_end = merged[-1]
+            merged[-1] = previous_start, max(previous_end, end)
+        else:
+            merged.append((start, end))
     out: list[str] = []
     cursor = 0
-    for start, end in ranges:
+    for start, end in merged:
+        start = max(start, cursor)
+        if start >= end:
+            continue
         if cursor < start:
             out.append(escape(line[cursor:start]))
         out.append(f'<tspan font-style="italic">{escape(line[start:end])}</tspan>')
@@ -2407,33 +2423,37 @@ def _box_corner_radius(style: dict[str, Any], width: float, height: float) -> fl
     return max(0.0, min(radius, width / 2.0, height / 2.0))
 
 
+def _fontmetrics_text_width(
+    value: Any,
+    font_size: float,
+    *,
+    missing_advance: float,
+) -> float:
+    """Embedded-face advance with a conservative fallback for unknown glyphs."""
+    text = str(value)
+    missing = sum(
+        1
+        for char in text
+        if not (
+            _fontmetrics.FIRST <= ord(char) <= _fontmetrics.LAST
+            or ord(char) in _fontmetrics.EXTRA_ADVANCES
+        )
+    )
+    return _fontmetrics.advance(text, font_size) + missing * missing_advance
+
+
 def _estimated_text_width(lines: list[str], font_size: float) -> float:
-    """Dependency-free label-box width using glyph-shaped em advances.
+    """Measured label-box width using the embedded DejaVu face.
 
-    Static SVG leaves final glyph layout to the viewer and the native stream
-    owns its atlas in Rust, so neither Python emitter has a browser text
-    measurer. A flat character count made narrow and wide strings equally
-    wide and visibly let labels such as ``Thanksgiving`` escape their box.
-    These bounded advances follow ordinary sans-serif proportions closely
-    enough to keep boxes readable without shipping a second font table.
+    The native rasterizer blits the same generated face metrics, and DejaVu is
+    also the default SVG/Matplotlib face. SVG viewers may still resolve an
+    unbaked Unicode glyph through another font, so reserve one em for each
+    unknown codepoint instead of inheriting the native atlas's zero advance.
     """
-
-    def line_width(line: str) -> float:
-        advance = 0.0
-        for char in line:
-            if char in " !'.,:;|ijlI":
-                advance += 0.28
-            elif char in "MW@%&":
-                advance += 0.9
-            elif char.isupper():
-                advance += 0.66
-            elif char.isdigit():
-                advance += 0.64
-            else:
-                advance += 0.56
-        return advance * font_size
-
-    return max((line_width(line) for line in lines), default=0.0)
+    return max(
+        (_fontmetrics_text_width(line, font_size, missing_advance=font_size) for line in lines),
+        default=0.0,
+    )
 
 
 def _segment_marks(
@@ -3157,16 +3177,8 @@ def _legend_text_width(value: Any, char_width: float = _LEGEND_CHAR_WIDTH) -> fl
     fonts and does paint it, and over-reserving only widens the frame, which
     can never spill a label.
     """
-    scale = char_width * (_LEGEND_FONT_PX / _LEGEND_CHAR_WIDTH) / _fontmetrics.BASE_PX
-    total = 0.0
-    for ch in str(value):
-        code = ord(ch)
-        if _fontmetrics.FIRST <= code <= _fontmetrics.LAST:
-            total += _fontmetrics.ASCII_ADVANCES[code - _fontmetrics.FIRST] * scale
-        else:
-            advance = _fontmetrics.EXTRA_ADVANCES.get(code)
-            total += char_width if advance is None else advance * scale
-    return total
+    font_size = char_width * (_LEGEND_FONT_PX / _LEGEND_CHAR_WIDTH)
+    return _fontmetrics_text_width(value, font_size, missing_advance=char_width)
 
 
 def _legend_text(value: Any, max_width: float, char_width: float = _LEGEND_CHAR_WIDTH) -> str:

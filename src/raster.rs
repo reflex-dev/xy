@@ -2174,7 +2174,7 @@ fn rasterize_with_spans(
                     let angle = r.f32()?;
                     let flags = r.u8()?;
                     let range_count = r.u32()? as usize;
-                    let mut italic_ranges = Vec::with_capacity(range_count);
+                    let mut italic_ranges = Vec::with_capacity(r.bounded_capacity(range_count, 8));
                     for _ in 0..range_count {
                         italic_ranges.push((r.u32()?, r.u32()?));
                     }
@@ -2701,6 +2701,37 @@ mod tests {
         assert!(symbol_sdf(0.6 * extent, 0.0, radius, 14).abs() < 1e-6);
     }
 
+    #[test]
+    fn axis_aligned_symbol_bounds_do_not_use_radial_corner_distance() {
+        let radius = 3.0;
+        let corner = radius * std::f32::consts::SQRT_2;
+        let boundary_points = [
+            (1, (radius, radius)),
+            (3, (-radius, radius)),
+            (8, (-radius, -radius)),
+            (9, (radius, radius)),
+            (10, (-radius, -radius)),
+            (13, (radius, radius)),
+        ];
+
+        for (symbol, (x, y)) in boundary_points {
+            assert_eq!(
+                symbol_extent(radius, symbol),
+                radius,
+                "symbol {symbol} has an axis-aligned half-extent of r"
+            );
+            assert!(
+                symbol_sdf(x, y, radius, symbol).abs() < 1e-6,
+                "symbol {symbol} must reach its diagonal boundary point"
+            );
+            assert_eq!(
+                x.abs().max(y.abs()),
+                radius,
+                "the AABB extent is not the corner's {corner} radial distance"
+            );
+        }
+    }
+
     fn px(out: &[u8], w: usize, x: usize, y: usize) -> [u8; 4] {
         let o = (y * w + x) * 4;
         [out[o], out[o + 1], out[o + 2], out[o + 3]]
@@ -2908,7 +2939,22 @@ mod tests {
         smooth_dashes.extend([0; 8]); // width and RGBA
         smooth_dashes.extend(huge);
 
-        for cmd in [points, gradient_stops, stroke_dashes, smooth_dashes] {
+        let mut styled_text_ranges = vec![OP_STYLED_TEXT];
+        styled_text_ranges.extend(f32le(0.0)); // x
+        styled_text_ranges.extend(f32le(0.0)); // y
+        styled_text_ranges.push(0); // anchor
+        styled_text_ranges.extend(f32le(12.0)); // size
+        styled_text_ranges.extend(f32le(0.0)); // angle
+        styled_text_ranges.push(0); // flags
+        styled_text_ranges.extend(u32le(u32::MAX)); // no range bytes follow
+
+        for cmd in [
+            points,
+            gradient_stops,
+            stroke_dashes,
+            smooth_dashes,
+            styled_text_ranges,
+        ] {
             assert!(!rasterize_into(&cmd, 4, 4, &mut out));
         }
     }

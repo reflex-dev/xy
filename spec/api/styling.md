@@ -208,7 +208,7 @@ subtracting these reservations.
 The **left** gutter is additionally floored at what the left y axis's own text
 measures, rather than trusting the flat `46/62 px`:
 
-```
+```text
 left ≥ 10 px inset + half the title's line box
      + 0.4 em title-to-tick gap
      + tick_padding (+ the outward part of tick_length)

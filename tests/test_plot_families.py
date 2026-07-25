@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import xy
+from xy import _paint
 from xy._figure import Figure
 
 
@@ -127,6 +128,20 @@ def test_triangle_mesh_filters_nonfinite_geometry_and_color_rows() -> None:
     assert trace["n_points"] == 3
     assert trace["n_marks"] == 1
     assert spec["columns"][trace["color"]["buf"]]["len"] == 1
+
+
+@pytest.mark.parametrize("nonfinite", [np.nan, np.inf, -np.inf])
+def test_triangle_mesh_boundary_rejects_nonfinite_coordinates(nonfinite: float) -> None:
+    boundary = _paint.triangle_mesh_boundary(
+        np.array([0.0]),
+        np.array([0.0]),
+        np.array([1.0]),
+        np.array([0.0]),
+        np.array([nonfinite]),
+        np.array([1.0]),
+    )
+
+    assert boundary is None
 
 
 def test_new_marks_reject_invalid_inputs_without_mutating_figure() -> None:
