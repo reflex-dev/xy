@@ -1792,7 +1792,12 @@ class Axes(PlotTypeMixin):
             autoscale. Array-like containers such as Series already expose a
             meaningful ndarray and should stay untouched.
             """
-            if isinstance(value, (str, bytes)) or np.isscalar(value):
+            # Keep the common bar path allocation-neutral. In particular,
+            # probing a list of category labels with ``np.asarray`` here and
+            # again below doubled the string-array conversion cost.
+            if value is None or isinstance(value, (str, bytes, list, tuple, range, np.ndarray)):
+                return value
+            if np.isscalar(value):
                 return value
             array = np.asarray(value)
             if array.ndim != 0:
