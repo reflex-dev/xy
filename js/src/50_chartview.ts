@@ -5125,7 +5125,7 @@ export class ChartView {
       this._axisStyleNumber(xAxis, "tick_size", 11),
     );
     // Spine→label distance. mpl measures tick padding from the outward end of
-    // the tick mark, and a `top` label then needs `fontRoom` more to clear its
+    // the tick mark, and a `top` label then needs `fontRoomPx` more to clear its
     // own line box. That derived geometry only applies once the axis authors
     // tick geometry: core's default tick_length is 0 and it has no default
     // tick_label_pad, so deriving it unconditionally would move the labels of
@@ -5133,7 +5133,7 @@ export class ChartView {
     // per-side gap this client has always used (pyplot supplies mpl's
     // {x,y}tick.major.pad, so it takes the derived branch). Mirrors
     // `_axis_tick_label_offset` in `_svg.py`/`_raster.py`.
-    const tickLabelOffset = (axis, unstyled, fontRoom = 0) => {
+    const tickLabelOffset = (axis, unstyled, fontRoomPx = 0) => {
       const authored = this._axisStyleValue(axis, "tick_padding") !== undefined
         || this._axisStyleValue(axis, "tick_length") !== undefined;
       if (!authored) return unstyled;
@@ -5141,7 +5141,7 @@ export class ChartView {
       const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
       const outward = direction === "in" ? 0 : direction === "inout" ? length / 2 : length;
       const pad = outward + this._axisStyleNumber(axis, "tick_padding", 4);
-      return pad + fontRoom;
+      return pad + fontRoomPx;
     };
     for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
       const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);

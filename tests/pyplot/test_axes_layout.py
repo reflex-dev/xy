@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import builtins
-import re
 
 import pytest
+from tests.svg_test_utils import tick_label_positions
 
 import xy.pyplot as plt
 from xy._svg import layout
@@ -201,15 +201,6 @@ def test_tick_params_records_supported_style_and_rejects_unknown() -> None:
         ax.tick_params(which="minor")
 
 
-def _tick_label_positions(chart) -> dict[str, tuple[float, float]]:
-    return {
-        match.group(3): (float(match.group(1)), float(match.group(2)))
-        for match in re.finditer(
-            r'<text x="([-\d.]+)" y="([-\d.]+)"[^>]*>([^<]*)</text>', chart.to_svg()
-        )
-    }
-
-
 def test_rc_tick_padding_places_labels_by_the_matplotlib_rule() -> None:
     """The shim always supplies `{x,y}tick.major.size` and `.pad` from rcParams,
     so its tick labels follow matplotlib's geometry rule — padding measured from
@@ -224,7 +215,7 @@ def test_rc_tick_padding_places_labels_by_the_matplotlib_rule() -> None:
 
     chart = ax._build_chart(400, 300)
     plot = layout(chart.figure().build_payload()[0])[3]
-    labels = _tick_label_positions(chart)
+    labels = tick_label_positions(chart.to_svg())
 
     scale = 100.0 / 72.0  # figure.dpi 100: points -> px
     # 3.5 pt outward tick + 3.5 pt pad, then 0.8 * the 10 pt label font.
@@ -248,7 +239,7 @@ def test_tick_params_pad_moves_the_labels_further_from_the_spine() -> None:
 
     chart = ax._build_chart(400, 300)
     plot = layout(chart.figure().build_payload()[0])[3]
-    labels = _tick_label_positions(chart)
+    labels = tick_label_positions(chart.to_svg())
 
     scale = 100.0 / 72.0
     assert labels["0.5"][0] == pytest.approx(plot["x"] - (3.5 + 12.0) * scale, abs=0.01)

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from tests.svg_test_utils import tick_label_positions
 
 import xy
 from xy import channels
@@ -894,14 +895,6 @@ def test_segment_constant_translucent_color_applies_alpha_once() -> None:
     assert opaque_lines, "opaque constant color should pass through verbatim"
 
 
-def _tick_label_positions(svg: str) -> dict[str, tuple[float, float]]:
-    """``{label text: (x, y)}`` for every ``<text>`` node in an export."""
-    return {
-        match.group(3): (float(match.group(1)), float(match.group(2)))
-        for match in re.finditer(r'<text x="([-\d.]+)" y="([-\d.]+)"[^>]*>([^<]*)</text>', svg)
-    }
-
-
 def _geometry_chart(side_x: str = "bottom", side_y: str = "left", style=None) -> xy.Chart:
     """A 3x3 tick grid with a pinned plot rect, so offsets are exact integers."""
     return xy.chart(
@@ -927,7 +920,7 @@ def test_unstyled_tick_labels_keep_their_historical_svg_placement() -> None:
     plot = layout(_geometry_chart().figure().build_payload()[0])[3]
     assert (plot["x"], plot["y"], plot["w"], plot["h"]) == (50.0, 40.0, 300.0, 220.0)
 
-    bottom_left = _tick_label_positions(_geometry_chart().to_svg())
+    bottom_left = tick_label_positions(_geometry_chart().to_svg())
     # x, bottom: baseline 16 px below the spine, centered on the tick.
     assert bottom_left["0"] == (50.0, 276.0)
     assert bottom_left["1"] == (200.0, 276.0)
@@ -945,7 +938,7 @@ def test_unstyled_tick_labels_keep_their_historical_svg_placement() -> None:
         258.0,
         194.0,
     )
-    top_right = _tick_label_positions(flipped.to_svg())
+    top_right = tick_label_positions(flipped.to_svg())
     # x, top: baseline 7 px above the spine. y, right: 8 px outside it.
     assert top_right["0"] == (50.0, 59.0)
     assert top_right["2"] == (308.0, 59.0)
@@ -957,8 +950,8 @@ def test_unstyled_tick_label_placement_ignores_the_tick_font_size() -> None:
     """The unstyled gaps are flat constants, as they were before
     `tick_padding` existed: a bigger tick font must not move the labels,
     because scaling the gap with the font belongs to the authored rule."""
-    plain = _tick_label_positions(_geometry_chart().to_svg())
-    big = _tick_label_positions(_geometry_chart(style={"tick_size": 20}).to_svg())
+    plain = tick_label_positions(_geometry_chart().to_svg())
+    big = tick_label_positions(_geometry_chart(style={"tick_size": 20}).to_svg())
     assert big["0"] == plain["0"]
     assert big["1.0"] == plain["1.0"]
 
@@ -967,7 +960,7 @@ def test_authored_tick_geometry_moves_the_labels_off_the_spine() -> None:
     """Authoring `tick_length`/`tick_padding` switches to matplotlib's rule:
     padding measured from the outward end of the tick mark, with the anchor
     then clearing the glyph box."""
-    styled = _tick_label_positions(
+    styled = tick_label_positions(
         _geometry_chart(style={"tick_length": 6, "tick_padding": 5}).to_svg()
     )
     # 6 px outward tick + 5 px pad = 11 px, then 0.8 * the 11 px font to the baseline.
@@ -976,13 +969,13 @@ def test_authored_tick_geometry_moves_the_labels_off_the_spine() -> None:
     assert styled["0.0"] == (39.0, 263.85)
 
     # tick_direction decides how much of tick_length counts as outward.
-    inward = _tick_label_positions(
+    inward = tick_label_positions(
         _geometry_chart(
             style={"tick_length": 6, "tick_padding": 5, "tick_direction": "in"}
         ).to_svg()
     )
     assert inward["0.0"] == (45.0, 263.85)
-    halfway = _tick_label_positions(
+    halfway = tick_label_positions(
         _geometry_chart(
             style={"tick_length": 6, "tick_padding": 5, "tick_direction": "inout"}
         ).to_svg()
@@ -990,7 +983,7 @@ def test_authored_tick_geometry_moves_the_labels_off_the_spine() -> None:
     assert halfway["0.0"] == (42.0, 263.85)
 
     # A pad alone opts in; tick_length then contributes its default 0.
-    pad_only = _tick_label_positions(_geometry_chart(style={"tick_padding": 5}).to_svg())
+    pad_only = tick_label_positions(_geometry_chart(style={"tick_padding": 5}).to_svg())
     assert pad_only["0.0"] == (45.0, 263.85)
 
 
@@ -1000,7 +993,7 @@ def test_tick_label_offset_defaults_stay_in_sync_with_js_client() -> None:
     label's box, not its baseline, so its numbers differ from the exporters').
     Pin them at the source: this suite has no browser."""
     js = (ROOT / "js" / "src" / "50_chartview.ts").read_text(encoding="utf-8")
-    body = js.split("const tickLabelOffset = (axis, unstyled, fontRoom = 0) => {", 1)
+    body = js.split("const tickLabelOffset = (axis, unstyled, fontRoomPx = 0) => {", 1)
     assert len(body) == 2, "tickLabelOffset signature changed; re-check the unstyled gaps"
     assert 'this._axisStyleValue(axis, "tick_padding") !== undefined' in body[1]
     assert 'this._axisStyleValue(axis, "tick_length") !== undefined' in body[1]

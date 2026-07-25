@@ -141,16 +141,20 @@ def normalize_css_style(value: StyleMapping | None, label: str = "style") -> dic
     return out
 
 
-def _px(value: StyleValue, label: str, *, positive: bool = False) -> float:
+def _parse_px(value: StyleValue, label: str) -> float:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        number = float(value)
+        return float(value)
     elif isinstance(value, str):
         match = _PX_RE.match(value)
         if match is None:
             raise ValueError(f"{label} must be a finite CSS px length")
-        number = float(match.group(1))
+        return float(match.group(1))
     else:  # pragma: no cover - normalize_css_style rejects this first
         raise ValueError(f"{label} must be a finite CSS px length")
+
+
+def _px(value: StyleValue, label: str, *, positive: bool = False) -> float:
+    number = _parse_px(value, label)
     if not np.isfinite(number) or number < 0 or (positive and number <= 0):
         qualifier = "positive " if positive else "non-negative "
         raise ValueError(f"{label} must be a {qualifier}finite CSS px length")
@@ -158,15 +162,7 @@ def _px(value: StyleValue, label: str, *, positive: bool = False) -> float:
 
 
 def _signed_px(value: StyleValue, label: str) -> float:
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        number = float(value)
-    elif isinstance(value, str):
-        match = _PX_RE.match(value)
-        if match is None:
-            raise ValueError(f"{label} must be a finite CSS px length")
-        number = float(match.group(1))
-    else:  # pragma: no cover - normalize_css_style rejects this first
-        raise ValueError(f"{label} must be a finite CSS px length")
+    number = _parse_px(value, label)
     if not np.isfinite(number):
         raise ValueError(f"{label} must be a finite CSS px length")
     return number
