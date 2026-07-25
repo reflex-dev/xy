@@ -3,19 +3,7 @@
 </p>
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="spec/assets/xy-pan-zoom-2m-dark.gif">
-    <img src="spec/assets/xy-pan-zoom-2m-light.gif" alt="Panning, zooming, and hovering a chart of two million points; the tooltip reads back an exact source row." width="900">
-  </picture>
-</p>
-
-<p align="center">
   <b><a href="https://reflex.dev/docs/xy/" target="_blank" rel="noopener noreferrer">Try it live: a million points in your browser &rarr;</a></b>
-</p>
-
-<p align="center">
-  <sub>Pan, zoom, and hover across 2,000,000 points &mdash; the chart built by the
-  <a href="#getting-started">example below</a>, in the light and dark themes.</sub>
 </p>
 
 <p align="center">
