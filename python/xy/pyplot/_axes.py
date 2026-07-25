@@ -101,12 +101,14 @@ _BEST_LOC_ORDER = (
     "upper center",
     "center",
 )
-# Per-series vertex budget for occupancy scoring (§28: decimation is specified,
-# never silent). Matplotlib counts every vertex and says so in its own
-# `loc="best"` slowness warning; the shim strides instead and weights the count
-# back up, so relative badness survives but a lone excursion into an otherwise
-# empty candidate box can be missed on a series far longer than this.
+# Per-series path-vertex budget for occupancy scoring (§28: decimation is
+# specified, never silent). Path scoring also tests segment/box intersections,
+# so 512 vertices preserve the gallery parity without restoring the old cost.
 _BEST_LOC_SAMPLE = 512
+# Scatter offsets have no connecting segments to recover a skipped excursion.
+# Retain #274's 4,096-offset coverage for that one mark family while keeping
+# the lower path budget that restored the compatibility benchmark performance.
+_BEST_LOC_SCATTER_SAMPLE = 4096
 # Plot box of the default 640x480 figure, for direct `_best_legend_loc` callers
 # that have no chart geometry to hand.
 _DEFAULT_BEST_PLOT_SIZE = (564.0, 428.0)
@@ -6039,7 +6041,8 @@ class Axes(PlotTypeMixin):
             xv, yv = xv.reshape(-1), yv.reshape(-1)
             total = len(xv)
             sampled = total
-            if total > _BEST_LOC_SAMPLE:
+            sample_budget = _BEST_LOC_SCATTER_SAMPLE if kind == "scatter" else _BEST_LOC_SAMPLE
+            if total > sample_budget:
                 # Stride down before the finite scan: occupancy scoring is
                 # already sampled, so the full-array isfinite pass was pure
                 # O(n) per-build cost on large legended series. Sparse finite
@@ -6047,11 +6050,11 @@ class Axes(PlotTypeMixin):
                 # a sample with no finite pair falls back to the full array —
                 # a series the old full-array pass scored still scores instead
                 # of vanishing from placement.
-                strided = np.linspace(0, total - 1, _BEST_LOC_SAMPLE, dtype=np.intp)
+                strided = np.linspace(0, total - 1, sample_budget, dtype=np.intp)
                 sampled_x, sampled_y = xv[strided], yv[strided]
                 if (np.isfinite(sampled_x) & np.isfinite(sampled_y)).any():
                     xv, yv = sampled_x, sampled_y
-                    sampled = _BEST_LOC_SAMPLE
+                    sampled = sample_budget
             path_xn = (xv - xlo) / (xhi - xlo)
             path_yn = (yv - ylo) / (yhi - ylo)
             if x_reverse:

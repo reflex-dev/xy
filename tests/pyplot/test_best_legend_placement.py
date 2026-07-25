@@ -342,6 +342,26 @@ def test_bar_rectangle_overlap_is_not_reduced_to_its_anchor():
     assert resolved_loc(ax) == "upper left"
 
 
+def test_sparse_scatter_offset_outside_path_budget_disqualifies_the_corner():
+    """Scatter keeps #274's offset budget because it has no segment fallback.
+
+    Index 2 is absent from the 512-point path sample of these 1,000 offsets.
+    The other 999 points occupy the lower-right corner; this lone upper-right
+    offset therefore has to be observed for Matplotlib's upper-left choice.
+    """
+    x = np.full(1000, 0.95)
+    y = np.full(1000, 0.05)
+    y[2] = 0.95
+
+    _, ax = plt.subplots()
+    ax.scatter(x, y, label="points")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.legend(loc="best")
+
+    assert resolved_loc(ax) == "upper left"
+
+
 def test_datetime_paths_participate_in_best_placement():
     """Datetime vertices use the same converted millisecond space as drawing."""
     _, ax = plt.subplots()
