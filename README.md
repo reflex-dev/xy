@@ -51,7 +51,10 @@ Python lists need no NumPy:
 import xy
 
 chart = xy.line_chart(xy.line([1, 2, 3, 4, 5], [120, 180, 165, 240, 310]))
-chart  # notebooks render it; elsewhere: chart.to_html("chart.html")
+# chart.to_html("chart.html")
+# chart.to_png("chart.png")
+# chart.to_svg("chart.svg")
+chart  # notebooks render it
 ```
 
 The same API scales. Chart a hundred million points as a density surface:
@@ -93,9 +96,6 @@ chart = xy.scatter_chart(
     ),
     title="100 million points",
 )
-# chart.to_html("chart.html")
-# chart.to_png("chart.png")
-# chart.to_svg("chart.svg")
 chart
 ```
 
