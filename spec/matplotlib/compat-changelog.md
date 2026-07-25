@@ -4,6 +4,18 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Vector-field gallery corrections — 2026-07-24
+
+- `quiver(units=...)` now converts Matplotlib's width-unit vocabulary without
+  changing arrow length semantics; figure-coordinate quiver keys also convert
+  their basic MathText labels.
+- `barbs` now renders fixed-length WMO-style flag/full/half geometry and honors
+  length, pivot, increments, rounding, empty fill, size, color, and flip
+  controls.
+- `streamplot` now uses an occupancy-aware adaptive Heun integrator for default
+  and explicit seeds. `broken_streamlines=False` and both Matplotlib 3.11
+  integration scale controls affect the generated trajectories.
+
 ## Matplotlib 3.11 development snapshot — 2026-07-13
 
 - Pinned upstream revision `bde111fb4e`
@@ -265,6 +277,57 @@ colorbar domains) fully cleared.
   `"toolmanager"`). `figure(toolbar=...)` — also reachable through
   `subplots(..., toolbar=...)`, which forwards it to `figure` — overrides
   rcParams for one figure.
+
+### Default colorbar label orientation — 2026-07-24 (Matplotlib 3.11.1 reference)
+
+- `Colorbar.set_label(...)` / `colorbar(label=...)` now render Matplotlib's
+  default label geometry in native PNG: rotated 90° counter-clockwise and
+  centered beside a vertical bar, outboard of its tick labels. The native exporter had
+  instead drawn the label horizontally above the bar at `plot.y - 5`, where the
+  glyph ascent overflowed the canvas top edge and the text was clipped — the
+  placement was chosen on the since-outdated assumption that the native text
+  primitive could not rotate. It rotates in quarter turns
+  (`TEXT_ROTATED`/`TEXT_ROTATED_CW`, already used for rotated axis titles), so
+  90° is exact here; only arbitrary text angles still fall back to upright
+  glyphs. The two static exporters now use the same baseline. Browser and SVG
+  output are unchanged — both already had the correct default orientation.
+  This clears the three loud-free but visually wrong PDSH ch. 04.05 cells
+  (`hist2d`, `hexbin`, and `imshow` colorbars with labels).
+- Non-pyplot (composition API) colorbars built with `xy.colorbar(title=...)`
+  share the same renderer, so their vertical labels change in PNG export the
+  same way. Horizontal colorbar labels are untouched in every renderer.
+- Matplotlib's `Colorbar.set_label` customization keywords (`loc`, `labelpad`,
+  rotation, and other text properties) remain outside this change and are
+  currently accepted and ignored by the shim.
+
+### Mesh and distribution autoscale — 2026-07-24 (Matplotlib 3.11.1 reference)
+
+- The shim's pre-build autoscale scan (`Axes._iter_entry_arrays`) now
+  recognizes the `@mark`/`heatmap`, `step`, and `box` entry shapes, which keep
+  their coordinates inside `kwargs` or compact factory arguments rather than
+  as top-level `x`/`y`. Those
+  axes previously scanned as *dataless* and were pinned to the empty `(0, 1)`
+  view, clipping the geometry: a 30×30 `hist2d` showed roughly 3×1 of its bins.
+  Affects `hist2d` (uniform bins), `pcolormesh` on a uniform grid, `specgram`,
+  `ecdf`, `step`, and the compact `boxplot` path. Non-uniform
+  `hist2d`/`pcolormesh` meshes now carry their coordinate-grid extent through
+  the triangle expansion too, including when every scalar is masked.
+  `hexbin`, `contour`/`contourf`, `imshow`, `tripcolor`, `violinplot`, and
+  `errorbar` already scanned correctly and are unchanged.
+- Sticky edges are now derived for mesh, image, and ECDF entries, so
+  `hist2d`/`pcolormesh`/`specgram`/`imshow` view limits are exactly the outer
+  cell edges and an ECDF's cumulative axis is exactly `0..1` — matching
+  Matplotlib, which gives these artists sticky edges and therefore no margin.
+  An axis with sticky edges on *both* ends ships a materialized `domain`
+  instead of a `margin`; one-sided rectangle baselines are unchanged and stay
+  anchored by the engine.
+- `pcolormesh(C)` uses Matplotlib's implicit integer edges `0..N` and `0..M`;
+  `specgram` reconstructs its image centers so the frequency view lands on the
+  FFT endpoints instead of adding half a frequency bin beyond them.
+- `boxplot` autoscales its value axis over the Tukey whiskers plus the flier
+  points when `showfliers` is on. Its default category positions are
+  Matplotlib's 1-based ordinals, and `manage_ticks=True` reserves a half unit
+  around the outer positions regardless of the drawn box width.
 
 Future entries must identify the Matplotlib release/revision, inventory
 additions or removals, and any compatibility-level changes.

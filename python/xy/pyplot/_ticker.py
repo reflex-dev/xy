@@ -135,7 +135,7 @@ class MaxNLocator(Locator):
             ]
         )
 
-    def tick_values(self, vmin: float, vmax: float) -> np.ndarray:
+    def _raw_ticks(self, vmin: float, vmax: float, *, round_numbers: bool = False) -> np.ndarray:
         vmin, vmax = sorted((float(vmin), float(vmax)))
         if not (np.isfinite(vmin) and np.isfinite(vmax)) or vmin == vmax:
             return np.asarray([vmin], dtype=float)
@@ -152,7 +152,14 @@ class MaxNLocator(Locator):
             # For steps > 1, keep only integer values.
             steps = steps[(steps < 1) | (np.abs(steps - np.round(steps)) < 0.001)]
         raw_step = (_vmax - _vmin) / nbins
-        large = np.nonzero(steps >= raw_step)[0]
+        large_steps = steps >= raw_step
+        if round_numbers:
+            # Match Matplotlib's MaxNLocator round-number mode: reject a step
+            # that cannot span the entire padded view in ``nbins`` intervals.
+            floored_vmins = (_vmin // steps) * steps
+            floored_vmaxs = floored_vmins + steps * nbins
+            large_steps &= floored_vmaxs >= _vmax
+        large = np.nonzero(large_steps)[0]
         istep = int(large[0]) if len(large) else len(steps) - 1
         # Start at the smallest step >= the raw step; walk down only if it
         # leaves fewer than min_n_ticks ticks inside the view.
@@ -169,6 +176,20 @@ class MaxNLocator(Locator):
             if ((ticks >= _vmin) & (ticks <= _vmax)).sum() >= self._min_n_ticks:
                 break
         return ticks + offset
+
+    def tick_values(self, vmin: float, vmax: float) -> np.ndarray:
+        return self._raw_ticks(vmin, vmax)
+
+    def view_limits(self, vmin: float, vmax: float) -> tuple[float, float]:
+        """Return data limits, or edge ticks in Matplotlib round-number mode."""
+        from ._rc import rcParams
+
+        if rcParams["axes.autolimit_mode"] != "round_numbers":
+            return float(vmin), float(vmax)
+        ticks = self._raw_ticks(vmin, vmax, round_numbers=True)
+        if len(ticks) < 2:
+            return float(vmin), float(vmax)
+        return float(ticks[0]), float(ticks[-1])
 
 
 class AutoLocator(MaxNLocator):

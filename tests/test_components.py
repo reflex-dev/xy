@@ -1579,6 +1579,32 @@ def test_component_axis_types_emit_log_domain_reverse_and_format():
     assert spec["y_axis"]["style"] == {"axis_color": "#dc2626", "label_size": 13}
 
 
+def test_component_axis_margin_controls_automatic_range():
+    chart = xy.chart(
+        xy.line(x=np.array([0.0, 10.0]), y=np.array([2.0, 4.0])),
+        xy.x_axis(margin=0.1),
+        xy.y_axis(margin=0.0),
+    )
+
+    assert chart.figure().x_range() == pytest.approx((-1.0, 11.0))
+    assert chart.figure().y_range() == pytest.approx((2.0, 4.0))
+    with pytest.raises(ValueError, match="x_axis margin"):
+        xy.x_axis(margin=-0.1)
+    with pytest.raises(ValueError, match="y_axis margin"):
+        xy.y_axis(margin=np.nan)
+
+
+def test_component_axis_margin_controls_singleton_range():
+    chart = xy.chart(
+        xy.line(x=np.array([5.0]), y=np.array([1.0])),
+        xy.x_axis(margin=0.0),
+        xy.y_axis(margin=0.1),
+    )
+
+    assert chart.figure().x_range() == pytest.approx((5.0, 6.0))
+    assert chart.figure().y_range() == pytest.approx((0.9, 2.1))
+
+
 def test_component_axis_label_position_controls_emit_to_payload():
     chart = xy.chart(
         xy.scatter(x=np.arange(3.0), y=np.arange(3.0)),

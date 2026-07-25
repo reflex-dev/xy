@@ -12,8 +12,16 @@ import numpy as np
 import pytest
 
 import xy
+from xy import channels
 from xy._figure import Figure
-from xy._svg import COLORMAP_STOPS, _axis_tick_label_layout, _Scale
+from xy._svg import (
+    COLORMAP_STOPS,
+    _axis_tick_label_layout,
+    _colormap_stops,
+    _Scale,
+    layout,
+    render_svg,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -101,6 +109,29 @@ def test_svg_honors_tick_label_anchor() -> None:
     default_svg = default.figure().to_svg()
     assert 'text-anchor="middle"' in default_svg
     assert 'text-anchor="end"' in default_svg
+
+
+def test_svg_tick_padding_starts_after_the_outward_tick() -> None:
+    from xy import _svg
+
+    chart = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[0.0, 1.0]),
+        xy.x_axis(
+            tick_values=(0.5,),
+            tick_labels=("middle",),
+            style={"tick_length": 6, "tick_padding": 5, "tick_label_size": 10},
+        ),
+        width=300,
+        height=200,
+    )
+    spec, _blob = chart.figure().build_payload()
+    _width, _height, _compact, plot = _svg.layout(spec)
+    root = _parse(chart.figure().to_svg())
+    label = next(node for node in root.iter() if node.text == "middle")
+
+    # SVG text y is its baseline. The label's top begins after the 6 px
+    # outward tick plus the independent 5 px Matplotlib-style pad.
+    assert float(label.get("y", "nan")) == pytest.approx(plot["y"] + plot["h"] + 6 + 5 + 8)
 
 
 def test_svg_tick_label_anchor_collision_parity() -> None:
@@ -382,6 +413,59 @@ def test_svg_vertical_colorbar_clears_right_named_axis_chrome() -> None:
     # The whole colorbar shifts right of the axis gutter, past the rotated
     # secondary-axis title at plot-right+40.
     assert float(bar.get("x", "nan")) > plot["x"] + plot["w"] + 40
+
+
+def test_svg_vertical_colorbar_label_is_rotated_beside_the_bar_inside_the_canvas() -> None:
+    """SVG places a vertical colorbar's label like Matplotlib — rotated 90° CCW,
+    centered beside the bar, on canvas — and the native PNG exporter must agree
+    on the baseline so the two static paths cannot drift apart."""
+    from xy import _raster, _svg
+
+    chart = xy.heatmap_chart(
+        xy.heatmap([[0.0, 1.0], [2.0, 3.0]], colormap="viridis", domain=(0.0, 3.0)),
+        xy.colorbar(title="counts in bin"),
+        width=560,
+        height=320,
+    )
+    fig = chart.figure()
+    spec, blob = fig.build_payload()
+    width, _height, _compact, plot = _svg.layout(spec)
+    root = _parse(fig.to_svg())
+
+    label = next(node for node in root.iter() if node.text == "counts in bin")
+    label_x, label_y = float(label.get("x", "nan")), float(label.get("y", "nan"))
+    bar = next(
+        node for node in root.iter() if (node.get("fill") or "").startswith("url(#xy-colorbar-")
+    )
+    bar_x, bar_w = float(bar.get("x", "nan")), float(bar.get("width", "nan"))
+
+    # Rotated a quarter turn counter-clockwise about its own anchor.
+    assert label.get("transform") == f"rotate(-90 {label_x:g} {label_y:g})"
+    assert label.get("text-anchor") == "middle"
+    # Beside the bar and centered on it, never above it.
+    assert label_x > bar_x + bar_w
+    assert label_y == plot["y"] + plot["h"] / 2
+    # Inside the canvas the labeled colorbar reserved room for.
+    assert label_x < width
+
+    # The native PNG exporter shares this baseline.
+    recorded: list[tuple[float, float, int, float, str]] = []
+    original_text = _raster._Cmd.text
+
+    def record_text(self, x, y, anchor, size, color, value):
+        recorded.append((float(x), float(y), int(anchor), float(size), str(value)))
+        return original_text(self, x, y, anchor, size, color, value)
+
+    _raster._Cmd.text = record_text
+    try:
+        _raster.render_raster(spec, blob, scale=1)
+    finally:
+        _raster._Cmd.text = original_text
+    native_x, native_y, anchor, _size, _text = next(
+        entry for entry in recorded if entry[4] == "counts in bin"
+    )
+    assert (native_x, native_y) == (label_x, label_y)
+    assert anchor == 1 | _raster._TEXT_ROT_CCW
 
 
 def test_svg_colorbar_clears_primary_right_axis_and_bottom_axis_chrome() -> None:
@@ -684,6 +768,84 @@ def test_colormap_stops_stay_in_sync_with_js_client() -> None:
             assert f"[{r}, {g}, {b}]" in body, (
                 f"{name} stop ({r},{g},{b}) missing in 10_colormaps.ts"
             )
+    assert set(COLORMAP_STOPS) == set(channels.COLORMAPS), (
+        "renderer and public colormap registries diverged"
+    )
+
+
+def test_matplotlib_gallery_colormap_stops_and_reversal() -> None:
+    expected = {
+        "reds": [
+            (255, 245, 240),
+            (254, 229, 216),
+            (253, 202, 181),
+            (252, 171, 143),
+            (252, 138, 106),
+            (251, 105, 74),
+            (241, 68, 50),
+            (217, 37, 35),
+            (188, 20, 26),
+            (152, 12, 19),
+            (103, 0, 13),
+        ],
+        "bone": [
+            (0, 0, 0),
+            (22, 22, 30),
+            (45, 45, 62),
+            (66, 66, 93),
+            (89, 92, 121),
+            (112, 123, 144),
+            (134, 154, 166),
+            (157, 185, 188),
+            (185, 210, 210),
+            (221, 233, 233),
+            (255, 255, 255),
+        ],
+        "autumn": [
+            (255, 0, 0),
+            (255, 25, 0),
+            (255, 51, 0),
+            (255, 76, 0),
+            (255, 102, 0),
+            (255, 128, 0),
+            (255, 153, 0),
+            (255, 179, 0),
+            (255, 204, 0),
+            (255, 230, 0),
+            (255, 255, 0),
+        ],
+        "winter": [
+            (0, 0, 255),
+            (0, 25, 242),
+            (0, 51, 230),
+            (0, 76, 217),
+            (0, 102, 204),
+            (0, 128, 191),
+            (0, 153, 178),
+            (0, 179, 166),
+            (0, 204, 153),
+            (0, 230, 140),
+            (0, 255, 128),
+        ],
+        "bupu": [
+            (247, 252, 253),
+            (229, 239, 246),
+            (204, 221, 236),
+            (178, 202, 225),
+            (154, 180, 214),
+            (140, 149, 198),
+            (140, 116, 181),
+            (138, 81, 165),
+            (133, 45, 144),
+            (118, 12, 113),
+            (77, 0, 75),
+        ],
+    }
+    for name, stops in expected.items():
+        assert COLORMAP_STOPS[name] == stops
+        assert channels.is_colormap(name)
+        assert channels.is_colormap(f"{name}_r")
+        assert _colormap_stops(f"{name}_r") == list(reversed(stops))
 
 
 def test_scalar_stroke_color_survives_vectorized_style_path() -> None:
@@ -731,3 +893,158 @@ def test_segment_constant_translucent_color_applies_alpha_once() -> None:
         entry for entry in re.findall(r"<line[^>]*/>", opaque) if 'stroke="red"' in entry
     ]
     assert opaque_lines, "opaque constant color should pass through verbatim"
+
+
+def _tick_label_positions(svg: str) -> dict[str, tuple[float, float]]:
+    """``{label text: (x, y)}`` for every ``<text>`` node in an export."""
+    return {
+        match.group(3): (float(match.group(1)), float(match.group(2)))
+        for match in re.finditer(r'<text x="([-\d.]+)" y="([-\d.]+)"[^>]*>([^<]*)</text>', svg)
+    }
+
+
+def _geometry_chart(side_x: str = "bottom", side_y: str = "left", style=None) -> xy.Chart:
+    """A 3x3 tick grid with a pinned plot rect, so offsets are exact integers."""
+    return xy.chart(
+        xy.line([0.0, 1.0, 2.0], [0.0, 1.0, 0.5]),
+        xy.x_axis(domain=(0.0, 2.0), tick_values=[0.0, 1.0, 2.0], side=side_x, style=style),
+        xy.y_axis(domain=(0.0, 1.0), tick_values=[0.0, 0.5, 1.0], side=side_y, style=style),
+        width=400,
+        height=300,
+        padding=(40, 50, 40, 50),
+    )
+
+
+def test_unstyled_tick_labels_keep_their_historical_svg_placement() -> None:
+    """A chart that authors no tick styling places its tick labels at the exact
+    pixels it always has.
+
+    `tick_padding` derives the spine-to-label gap from tick geometry, but
+    core's default `tick_length` is 0, so deriving it unconditionally silently
+    pulls every unstyled chart's labels toward the spine. The per-side unstyled
+    defaults in `_axis_tick_label_offset` exist to prevent that, and these are
+    the literal numbers they have to reproduce.
+    """
+    plot = layout(_geometry_chart().figure().build_payload()[0])[3]
+    assert (plot["x"], plot["y"], plot["w"], plot["h"]) == (50.0, 40.0, 300.0, 220.0)
+
+    bottom_left = _tick_label_positions(_geometry_chart().to_svg())
+    # x, bottom: baseline 16 px below the spine, centered on the tick.
+    assert bottom_left["0"] == (50.0, 276.0)
+    assert bottom_left["1"] == (200.0, 276.0)
+    assert bottom_left["2"] == (350.0, 276.0)
+    # y, left: 8 px outside the spine, baseline nudged 4 px below the tick.
+    assert bottom_left["0.0"] == (42.0, 264.0)
+    assert bottom_left["0.5"] == (42.0, 154.0)
+    assert bottom_left["1.0"] == (42.0, 44.0)
+
+    flipped = _geometry_chart(side_x="top", side_y="right")
+    top_plot = layout(flipped.figure().build_payload()[0])[3]
+    assert (top_plot["x"], top_plot["y"], top_plot["w"], top_plot["h"]) == (
+        50.0,
+        66.0,
+        258.0,
+        194.0,
+    )
+    top_right = _tick_label_positions(flipped.to_svg())
+    # x, top: baseline 7 px above the spine. y, right: 8 px outside it.
+    assert top_right["0"] == (50.0, 59.0)
+    assert top_right["2"] == (308.0, 59.0)
+    assert top_right["0.0"] == (316.0, 264.0)
+    assert top_right["1.0"] == (316.0, 70.0)
+
+
+def test_unstyled_tick_label_placement_ignores_the_tick_font_size() -> None:
+    """The unstyled gaps are flat constants, as they were before
+    `tick_padding` existed: a bigger tick font must not move the labels,
+    because scaling the gap with the font belongs to the authored rule."""
+    plain = _tick_label_positions(_geometry_chart().to_svg())
+    big = _tick_label_positions(_geometry_chart(style={"tick_size": 20}).to_svg())
+    assert big["0"] == plain["0"]
+    assert big["1.0"] == plain["1.0"]
+
+
+def test_authored_tick_geometry_moves_the_labels_off_the_spine() -> None:
+    """Authoring `tick_length`/`tick_padding` switches to matplotlib's rule:
+    padding measured from the outward end of the tick mark, with the anchor
+    then clearing the glyph box."""
+    styled = _tick_label_positions(
+        _geometry_chart(style={"tick_length": 6, "tick_padding": 5}).to_svg()
+    )
+    # 6 px outward tick + 5 px pad = 11 px, then 0.8 * the 11 px font to the baseline.
+    assert styled["0"] == (50.0, 279.8)
+    # y: 11 px outside the spine, baseline centered on 0.35 * the font size.
+    assert styled["0.0"] == (39.0, 263.85)
+
+    # tick_direction decides how much of tick_length counts as outward.
+    inward = _tick_label_positions(
+        _geometry_chart(
+            style={"tick_length": 6, "tick_padding": 5, "tick_direction": "in"}
+        ).to_svg()
+    )
+    assert inward["0.0"] == (45.0, 263.85)
+    halfway = _tick_label_positions(
+        _geometry_chart(
+            style={"tick_length": 6, "tick_padding": 5, "tick_direction": "inout"}
+        ).to_svg()
+    )
+    assert halfway["0.0"] == (42.0, 263.85)
+
+    # A pad alone opts in; tick_length then contributes its default 0.
+    pad_only = _tick_label_positions(_geometry_chart(style={"tick_padding": 5}).to_svg())
+    assert pad_only["0.0"] == (45.0, 263.85)
+
+
+def test_tick_label_offset_defaults_stay_in_sync_with_js_client() -> None:
+    """`tickLabelOffset` in 50_chartview.ts is the third implementation of this
+    rule and carries its own unstyled per-side gaps (the client positions a
+    label's box, not its baseline, so its numbers differ from the exporters').
+    Pin them at the source: this suite has no browser."""
+    js = (ROOT / "js" / "src" / "50_chartview.ts").read_text(encoding="utf-8")
+    body = js.split("const tickLabelOffset = (axis, unstyled, fontRoom = 0) => {", 1)
+    assert len(body) == 2, "tickLabelOffset signature changed; re-check the unstyled gaps"
+    assert 'this._axisStyleValue(axis, "tick_padding") !== undefined' in body[1]
+    assert 'this._axisStyleValue(axis, "tick_length") !== undefined' in body[1]
+    assert "if (!authored) return unstyled;" in body[1]
+    # x bottom 6, x top 18 (plus its own line box), y 8 — unchanged since before
+    # tick_padding existed. Primary and extra axes each have one call site.
+    assert js.count("tickLabelOffset(xAxis, 6)") == 1
+    assert js.count("tickLabelOffset(axis, 6)") == 1
+    assert js.count("tickLabelOffset(xAxis, 18, Math.max(8, tickLabelSize) * 1.2)") == 1
+    assert js.count("tickLabelOffset(axis, 18, Math.max(8, tickLabelSize) * 1.2)") == 1
+    assert js.count("tickLabelOffset(axis, 8)") == 1
+
+
+def test_svg_scopes_the_legend_clip_exemption_per_legend() -> None:
+    """An anchored legend escapes the plot-rect clip that bounds static
+    legends; a non-anchored sibling in the same figure must still be clipped
+    (the native raster exporter mirrors this)."""
+    spec, blob = Figure().line([0.0, 1.0], [0.0, 1.0], name="a").build_payload()
+    spec["show_legend"] = False
+    spec["extra_legends"] = [
+        {
+            "title": "anchored",
+            "loc": "lower left",
+            "anchor": [0.0, 1.0],
+            "items": [{"name": "outside", "kind": "line", "style": {}}],
+        },
+        {
+            "title": "bounded",
+            "loc": "upper right",
+            "items": [{"name": "inside", "kind": "line", "style": {}}],
+        },
+    ]
+
+    svg = render_svg(spec, blob)
+    groups = {
+        title: match
+        for title, match in (
+            (title, match)
+            for match in re.findall(r"<g(?: [^>]*)?>(?:(?!<g).)*?</g>", svg, re.S)
+            for title in ("anchored", "bounded")
+            if f">{title}</text>" in match
+        )
+    }
+    assert set(groups) == {"anchored", "bounded"}, "both legend boxes should render"
+    assert "clip-path=" not in groups["anchored"].split(">", 1)[0]
+    assert "clip-path=" in groups["bounded"].split(">", 1)[0]

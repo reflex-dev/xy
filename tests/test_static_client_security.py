@@ -698,6 +698,9 @@ def test_client_axis_tick_labels_have_collision_layout() -> None:
         "tick_label_angle",
         "tick_label_anchor",
         "tick_label_min_gap",
+        '"tick_padding"',
+        "const tick = tickParts(xAxis)",
+        "tick.outward",
     )
 
     for path, text in CLIENT_FILES:
@@ -801,6 +804,7 @@ def test_client_renders_mark_level_styling() -> None:
         "xySmoothResample(",  # monotone cubic (Fritsch–Carlson)
         "xyMonotoneTangents(",
         "xyMarkerSdf(d, u_symbol)",  # scatter symbol shapes (circle/square/diamond/triangle/cross)
+        "symbolScale = symbol == 2 || symbol == 14",  # mpl diamond paths exceed marker box by sqrt(2)
         "_pointMarkStyle(",  # point stroke + symbol resolution
         "rgb = mix(rgb, sc.rgb, sc.a);",  # selected/unselected recolor (mark_style)
         "v_dash = mix(a_len0, mix(a_len0, a_len1, reveal), c.x);",  # fractional reveal preserves line dashes

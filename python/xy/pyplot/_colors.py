@@ -72,6 +72,7 @@ CMAPS = {
     "inferno": "inferno",
     "magma": "magma",
     "cividis": "cividis",
+    "autumn": "autumn",
     "gray": "gray",
     "grey": "gray",
     "greys": "gray",
@@ -91,6 +92,10 @@ CMAPS = {
     "rdgy": "rdgy",
     "jet": "jet",
     "binary": "binary",
+    "reds": "reds",
+    "bone": "bone",
+    "winter": "winter",
+    "bupu": "bupu",
 }
 
 

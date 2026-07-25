@@ -1,0 +1,24 @@
+{
+  "matplotlib_version": "3.11.0",
+  "live_base_commit": "077c53f761ae5a9de2324daa527aadc48cd8bb17",
+  "rendered_base_commit": "58a3782082cb80507033af19a79ec683f6438936",
+  "head_code_commit": "47871a01db1ad02d1f64bda71fd1a50f9ab89853",
+  "base_source_tree_note": "The rendered base and live base are byte-identical under js, python/xy, and src; intervening commits only changed release infrastructure and documentation.",
+  "full_frame": true,
+  "comparisons": [
+    {
+      "source": "lines_bars_and_markers/bar_label_demo.py",
+      "figure": 0,
+      "file": "bar-label-demo.png",
+      "dimensions": [2304, 670],
+      "sha256": "a4e3c429176559133f87cc8aecb3b9aeaa2faf1eacc9e2c9de2012632ae83f51"
+    },
+    {
+      "source": "text_labels_and_annotations/annotation_basic.py",
+      "figure": 0,
+      "file": "annotation-basic.png",
+      "dimensions": [2304, 670],
+      "sha256": "4a9974b506a41ce36f1b94b1c536fa1460b4acfc097105921b62bad8eab9687f"
+    }
+  ]
+}

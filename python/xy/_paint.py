@@ -10,6 +10,70 @@ import numpy as np
 ColumnReader = Callable[[int], np.ndarray]
 
 
+def triangle_mesh_boundary(*vertices: np.ndarray) -> np.ndarray | None:
+    """Recover the single exterior ring of a tessellated simple polygon.
+
+    ``Axes.fill`` reaches the shared triangle renderer for WebGL, but static
+    exporters should paint its triangulation as one polygon. Otherwise each
+    independently antialiased triangle leaks a hairline of background (and
+    applies translucent alpha more than once) along internal diagonals.
+    """
+    if len(vertices) != 6:
+        raise ValueError("triangle mesh boundary requires six coordinate arrays")
+    arrays = [np.asarray(values, dtype=np.float64).reshape(-1) for values in vertices]
+    n = min((len(values) for values in arrays), default=0)
+    if n == 0:
+        return None
+    finite = np.concatenate(arrays)
+    span = float(np.nanmax(finite) - np.nanmin(finite))
+    # Each triangle coordinate is transported in an independently offset
+    # float32 column, so the same source vertex may decode a few ULPs apart in
+    # x0/x1/x2. The joined-fill flag is only used for one simple polygon; a
+    # generous relative bucket is still far below meaningful edge spacing.
+    tolerance = max(span * 2e-5, 1e-12)
+
+    def vertex_key(point: tuple[float, float]) -> tuple[int, int]:
+        return (round(point[0] / tolerance), round(point[1] / tolerance))
+
+    edge_counts: dict[tuple[tuple[int, int], tuple[int, int]], int] = {}
+    points_by_key: dict[tuple[int, int], tuple[float, float]] = {}
+    for index in range(n):
+        points = (
+            (float(arrays[0][index]), float(arrays[1][index])),
+            (float(arrays[2][index]), float(arrays[3][index])),
+            (float(arrays[4][index]), float(arrays[5][index])),
+        )
+        for start, end in zip(points, points[1:] + points[:1], strict=True):
+            start_key, end_key = vertex_key(start), vertex_key(end)
+            points_by_key.setdefault(start_key, start)
+            points_by_key.setdefault(end_key, end)
+            edge = (start_key, end_key) if start_key <= end_key else (end_key, start_key)
+            edge_counts[edge] = edge_counts.get(edge, 0) + 1
+    boundary = [edge for edge, count in edge_counts.items() if count == 1]
+    if len(boundary) < 3:
+        return None
+    adjacency: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    for start, end in boundary:
+        adjacency.setdefault(start, []).append(end)
+        adjacency.setdefault(end, []).append(start)
+    if any(len(neighbors) != 2 for neighbors in adjacency.values()):
+        return None
+    first = boundary[0][0]
+    ring = [first]
+    previous: tuple[int, int] | None = None
+    current = first
+    for _ in range(len(boundary)):
+        neighbors = adjacency[current]
+        following = neighbors[0] if neighbors[0] != previous else neighbors[1]
+        if following == first:
+            if len(ring) != len(boundary):
+                return None
+            return np.asarray([points_by_key[key] for key in ring], dtype=np.float64)
+        ring.append(following)
+        previous, current = current, following
+    return None
+
+
 def direct_rgba(channel: dict[str, Any], n: int, read_column: ColumnReader) -> np.ndarray | None:
     """Decode a packed normalized RGBA8 channel to canonical float RGBA."""
     if channel.get("mode") != "direct_rgba":

@@ -305,6 +305,7 @@ def subplots(
     gridspec_kw = kwargs.pop("gridspec_kw", None) or {}
     subplot_kw = kwargs.pop("subplot_kw", None) or {}
     toolbar = kwargs.pop("toolbar", None)
+    layout = kwargs.pop("layout", None)
     # Remaining kwargs are matplotlib's **fig_kw, forwarded to figure().
     fig = figure(figsize=figsize, dpi=dpi, toolbar=toolbar, **kwargs)
     if fig._axes and any(ax._entries for ax in fig._axes):
@@ -323,6 +324,7 @@ def subplots(
     if subplot_kw:
         for ax in np.atleast_1d(np.asarray(axes, dtype=object)).ravel():
             ax.set(**subplot_kw)
+    _apply_factory_layout(fig, layout)
     return fig, axes
 
 
@@ -345,8 +347,24 @@ def subplot_mosaic(mosaic: str | list[Any], **kwargs: Any) -> tuple[Figure, dict
     """
     figsize = kwargs.pop("figsize", None)
     dpi = kwargs.pop("dpi", None)
+    layout = kwargs.pop("layout", None)
     fig = figure(None, figsize=figsize, dpi=dpi)
-    return fig, fig.subplot_mosaic(mosaic, **kwargs)
+    axes = fig.subplot_mosaic(mosaic, **kwargs)
+    _apply_factory_layout(fig, layout)
+    return fig, axes
+
+
+def _apply_factory_layout(fig: Figure, layout: Any) -> None:
+    """Apply Matplotlib's figure-factory layout option after axes exist."""
+    if layout is None or layout == "none":
+        return
+    if layout in {"tight", "constrained", "compressed"}:
+        # The shim's deterministic tight-layout pass reserves the native
+        # panels' tick/title chrome.  Apply it after the factory has created
+        # the grid; applying it in figure() would run against an empty figure.
+        fig.tight_layout()
+        return
+    raise ValueError(f"Invalid value for 'layout': {layout!r}")
 
 
 def axes(arg: Sequence[float] | None = None, **kwargs: Any) -> Axes:
@@ -2833,12 +2851,16 @@ class _CmapNamespace:
         return get_cmap(name, lut)
 
     def __getattr__(self, name: str) -> Any:
-        from ._colors import CMAPS
+        from ._colors import resolve_cmap
 
         if name == "ScalarMappable":
             return type("ScalarMappable", (), {"__init__": lambda self, **kwargs: None})
 
-        if name.lower() in CMAPS:
+        try:
+            resolve_cmap(name)
+        except ValueError:
+            pass
+        else:
             return name
         raise AttributeError(f"colormap {name!r} is not supported; see spec/matplotlib/compat.md")
 

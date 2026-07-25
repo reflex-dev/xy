@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Iterator
-from itertools import pairwise
 from operator import index as operator_index
 from typing import Any, Optional
 
@@ -357,17 +356,45 @@ class Line2D(Artist):
     set_lw = set_linewidth
 
     def set_dashes(self, sequence: Any) -> None:
-        self._entry["kwargs"]["dash"] = [float(value) for value in sequence]
+        self._entry["kwargs"]["dash"] = self._axes._mpl_dash(
+            [float(value) for value in sequence],
+            self._entry["kwargs"].get("width", 1.5),
+        )
         self._touch()
 
     def set_dash_capstyle(self, style: Any) -> None:
-        raise NotImplementedError("xy.pyplot does not support dash cap style mutation")
+        value = str(style)
+        if value != "round":
+            raise NotImplementedError(
+                "xy.pyplot's renderers currently support only round dash cap mutation"
+            )
+        self._entry["kwargs"]["dash_capstyle"] = value
+        self._touch()
+
+    def get_dash_capstyle(self) -> str:
+        return str(self._entry["kwargs"].get("dash_capstyle", "round"))
 
     def set_solid_capstyle(self, style: Any) -> None:
         raise NotImplementedError("xy.pyplot does not support solid cap style mutation")
 
     def set_gapcolor(self, color: Any) -> None:
-        raise NotImplementedError("xy.pyplot does not support gapcolor mutation")
+        from ._translate import resolve_color
+
+        if color is None:
+            self._entry["kwargs"].pop("_gapcolor", None)
+        else:
+            self._entry["kwargs"]["_gapcolor"] = resolve_color(color)
+        self._touch()
+
+    def get_gapcolor(self) -> Any:
+        return self._entry["kwargs"].get("_gapcolor")
+
+
+class _LegendElementHandle:
+    """Synthetic collection handle used only to build explicit legend items."""
+
+    def __init__(self, entry: dict[str, Any]) -> None:
+        self._entry = entry
 
 
 class PathCollection(Artist):
@@ -467,24 +494,82 @@ class PathCollection(Artist):
         self._touch()
 
     def get_sizes(self) -> np.ndarray:
+        if "source_sizes" in self._entry:
+            return np.atleast_1d(np.asarray(self._entry["source_sizes"], dtype=np.float64))
         sizes = np.asarray(self._entry["kwargs"].get("size", 0.0), dtype=np.float64)
         return np.atleast_1d(sizes**2)
 
     def legend_elements(
         self, prop: str = "colors", num: Any = "auto", **kwargs: Any
-    ) -> tuple[list["PathCollection"], list[str]]:
-        import numpy as np
-
-        del kwargs
-        values = self._entry["kwargs"].get("size" if prop == "sizes" else "color")
+    ) -> tuple[list[Any], list[str]]:
+        if prop not in {"colors", "sizes"}:
+            raise ValueError("prop must be 'colors' or 'sizes'")
+        func = kwargs.pop("func", lambda value: value)
+        fmt = kwargs.pop("fmt", None)
+        alpha = kwargs.pop("alpha", self.get_alpha())
+        color_override = kwargs.pop("color", None)
+        values = self.get_sizes() if prop == "sizes" else self.get_array()
         try:
             array = np.asarray(values, dtype=np.float64).reshape(-1)
         except (TypeError, ValueError):
-            array = np.arange(1, dtype=np.float64)
+            array = np.asarray([], dtype=np.float64)
         unique = np.unique(array[np.isfinite(array)])
-        count = 5 if num == "auto" else max(1, int(num))
-        chosen = unique if len(unique) <= count else np.linspace(unique.min(), unique.max(), count)
-        return [self] * len(chosen), [f"{value:g}" for value in chosen]
+        if not unique.size:
+            return [], []
+        transformed = np.asarray(func(unique), dtype=np.float64)
+        if num == "auto" and len(unique) <= 9:
+            chosen = unique
+            label_values = transformed
+        elif not np.isscalar(num):
+            label_values = np.asarray(num, dtype=np.float64).reshape(-1)
+            chosen = np.interp(label_values, transformed, unique)
+        else:
+            from ._ticker import MaxNLocator
+
+            count = 9 if num == "auto" else max(1, int(num))
+            ticks = MaxNLocator(count).tick_values(
+                float(transformed.min()), float(transformed.max())
+            )
+            label_values = ticks[(ticks >= transformed.min()) & (ticks <= transformed.max())]
+            chosen = np.interp(label_values, transformed, unique)
+        base = self._entry.get("kwargs", {})
+        lo, hi = self._entry.get("kwargs", {}).get(
+            "domain", (float(unique.min()), float(unique.max()))
+        )
+        handles = []
+        for value in chosen:
+            handle_kwargs = {
+                "symbol": base.get("symbol", "circle"),
+                "stroke": base.get("stroke"),
+                "stroke_width": base.get("stroke_width", 0.0),
+                "opacity": 1.0 if alpha is None else float(alpha),
+            }
+            if prop == "sizes":
+                from ._translate import marker_size_to_scatter_size
+
+                handle_kwargs["size"] = marker_size_to_scatter_size(
+                    float(value), point_scale=self._axes._point_scale()
+                )
+                handle_kwargs["color"] = resolve_color(
+                    color_override
+                    if color_override is not None
+                    else base.get("color")
+                    if isinstance(base.get("color"), str)
+                    else "#1f77b4"
+                )
+            else:
+                normalized = 0.5 if hi == lo else (float(value) - lo) / (hi - lo)
+                handle_kwargs["color"] = resolve_color(self.cmap(normalized))
+            handles.append(_LegendElementHandle({"kind": "scatter", "kwargs": handle_kwargs}))
+
+        def format_label(value: float) -> str:
+            if callable(fmt):
+                return str(fmt(value))
+            if isinstance(fmt, str):
+                return fmt.format(x=value)
+            return f"{value:g}"
+
+        return handles, [format_label(float(value)) for value in label_values]
 
     @property
     def cmap(self) -> Any:
@@ -835,18 +920,32 @@ class StepPatch(Artist):
 class StemContainer:
     """Small tuple-compatible analogue of matplotlib's StemContainer."""
 
-    def __init__(self, artist: Artist) -> None:
-        self.markerline = artist
-        self.stemlines = artist
-        self.baseline = artist
-        artist._axes._register_container(self)
+    def __init__(
+        self,
+        markerline: Artist,
+        stemlines: Optional[Artist] = None,
+        baseline: Optional[Artist] = None,
+    ) -> None:
+        # Older callers supplied one compact artist for all three handles.
+        # Keep that form working while allowing the pyplot stem adapter to
+        # expose independently mutable marker, stem, and baseline artists.
+        self.markerline = markerline
+        self.stemlines = markerline if stemlines is None else stemlines
+        self.baseline = markerline if baseline is None else baseline
+        markerline._axes._register_container(self)
 
     def __iter__(self) -> Iterator[Any]:
         return iter((self.markerline, self.stemlines, self.baseline))
 
     def remove(self) -> None:
-        self.stemlines.remove()
-        self.stemlines._axes._unregister_container(self)
+        axes = self.markerline._axes
+        seen: set[int] = set()
+        for artist in (self.markerline, self.stemlines, self.baseline):
+            if id(artist) in seen:
+                continue
+            seen.add(id(artist))
+            artist.remove()
+        axes._unregister_container(self)
 
 
 class ErrorbarContainer:
@@ -876,9 +975,37 @@ class ContourSet(Artist):
 
     @property
     def cmap(self) -> Any:
-        from ._colors import Cmap
+        from ._colors import Cmap, resolve_rgba
 
-        return Cmap(self._entry["kwargs"].get("colormap", "viridis"))
+        contour = self
+
+        class BoundContourCmap(Cmap):
+            """Colormap facade whose extended listed colors remain live."""
+
+            def _set_extreme(self, end: int, color: object, alpha: object) -> None:
+                table = contour._entry["kwargs"].get("color")
+                if isinstance(table, str) or table is None:
+                    return
+                values = np.asarray(table, dtype=np.float64)
+                if values.ndim != 2 or values.shape[1] != 4 or not len(values):
+                    return
+                rgba = resolve_rgba(color if alpha is None else (color, alpha))
+                updated = values.copy()
+                updated[end] = rgba
+                contour._entry["kwargs"]["color"] = updated
+                contour._touch()
+
+            def set_under(self, color: object = "transparent", alpha: object = None) -> None:
+                super().set_under(color, alpha)
+                if contour._entry["kwargs"].get("extend") in ("min", "both"):
+                    self._set_extreme(0, color, alpha)
+
+            def set_over(self, color: object = "transparent", alpha: object = None) -> None:
+                super().set_over(color, alpha)
+                if contour._entry["kwargs"].get("extend") in ("max", "both"):
+                    self._set_extreme(-1, color, alpha)
+
+        return BoundContourCmap(self._entry["kwargs"].get("colormap", "viridis"))
 
     def set(self, **kwargs: Any) -> "ContourSet":
         path_effects = kwargs.pop("path_effects", None)
@@ -932,23 +1059,129 @@ class ContourSet(Artist):
         return self
 
     def get_linewidth(self) -> list[float]:
-        return [float(self._entry["kwargs"].get("width", 1.1))]
+        return np.asarray(self._entry["kwargs"].get("width", 1.1), dtype=float).reshape(-1).tolist()
 
     def set_linewidth(self, width: Any) -> None:
-        self._entry["kwargs"]["width"] = float(np.asarray(width).reshape(-1)[0])
+        values = np.asarray(width, dtype=float).reshape(-1)
+        if not len(values) or not np.isfinite(values).all() or np.any(values <= 0):
+            raise ValueError("contour linewidth must contain positive finite values")
+        self._entry["kwargs"]["width"] = float(values[0]) if len(values) == 1 else values
         self._touch()
 
     def set_linestyle(self, style: Any) -> None:
         self._entry["linestyle"] = style
         self._touch()
 
-    def legend_elements(self, **kwargs: Any) -> tuple[list["ContourSet"], list[str]]:
+    def legend_elements(self, **kwargs: Any) -> tuple[list[Any], list[str]]:
+        """Return independent legend proxies for every line or filled band.
+
+        Matplotlib deliberately returns lightweight ``Line2D``/``Rectangle``
+        artists here, not the contour collection itself.  Keeping that
+        distinction is important for hatched contour legends: each band needs
+        its own color and hatch even though all bands belong to one mark.
+        """
+        variable_name = kwargs.pop("variable_name", "x")
         formatter = kwargs.pop("str_format", str)
+        if kwargs:
+            raise TypeError(
+                f"legend_elements() got an unexpected keyword argument {next(iter(kwargs))!r}"
+            )
         levels = np.asarray(self.levels).reshape(-1)
-        labels = [
-            f"{formatter(float(lo))} < x <= {formatter(float(hi))}" for lo, hi in pairwise(levels)
+        entry = self._entry
+        mark_kwargs = entry.get("kwargs", {})
+        filled = bool(mark_kwargs.get("filled", False))
+        if not filled:
+            widths = np.asarray(mark_kwargs.get("width", 1.1), dtype=float).reshape(-1)
+            colors = _contour_legend_colors(entry, len(levels))
+            artists = [
+                _LegendProxy(
+                    {
+                        "kind": "line",
+                        "kwargs": {
+                            "color": colors[index],
+                            "width": float(widths[index % len(widths)]),
+                            "opacity": mark_kwargs.get("opacity", 1.0),
+                        },
+                    }
+                )
+                for index in range(len(levels))
+            ]
+            labels = [f"${variable_name} = {formatter(float(level))}$" for level in levels]
+            return artists, labels
+
+        extend = entry.get("extend") or mark_kwargs.get("extend") or "neither"
+        private_levels = levels.tolist()
+        if extend in ("min", "both"):
+            private_levels.insert(0, -1e250)
+        if extend in ("max", "both"):
+            private_levels.append(1e250)
+        lowers = np.asarray(private_levels[:-1], dtype=float)
+        uppers = np.asarray(private_levels[1:], dtype=float)
+        source = np.asarray(entry.get("source_z", []), dtype=float)
+        finite = source[np.isfinite(source)]
+        if len(lowers) and finite.size and float(finite.min()) == float(lowers[0]):
+            lowers = lowers.copy()
+            lowers[0] -= 1.0
+        n_bands = len(lowers)
+        colors = _contour_legend_colors(entry, n_bands)
+        hatches = entry.get("hatches") or [None]
+        artists = [
+            _LegendProxy(
+                {
+                    "kind": "bar",
+                    "kwargs": {
+                        "color": colors[index],
+                        "opacity": mark_kwargs.get("opacity", 1.0),
+                        "hatch": hatches[index % len(hatches)],
+                    },
+                }
+            )
+            for index in range(n_bands)
         ]
-        return [self] * len(labels), labels
+        labels: list[str] = []
+        for index, (lower, upper) in enumerate(zip(lowers, uppers, strict=True)):
+            lower_text, upper_text = formatter(float(lower)), formatter(float(upper))
+            if index == 0 and extend in ("min", "both"):
+                labels.append(f"${variable_name} <= {lower_text}s$")
+            elif index == n_bands - 1 and extend in ("max", "both"):
+                labels.append(f"${variable_name} > {upper_text}s$")
+            else:
+                labels.append(f"${lower_text} < {variable_name} <= {upper_text}$")
+        return artists, labels
+
+
+class _LegendProxy:
+    """Unregistered artist-like handle used by ``ContourSet.legend_elements``."""
+
+    def __init__(self, entry: dict[str, Any]) -> None:
+        self._entry = entry
+
+
+def _contour_legend_colors(entry: dict[str, Any], count: int) -> list[str]:
+    """Resolve a contour's scalar/listed color channel to CSS proxy colors."""
+    if count <= 0:
+        return []
+    kwargs = entry.get("kwargs", {})
+    value = kwargs.get("color")
+    if isinstance(value, str):
+        return [value] * count
+    if value is not None:
+        array = np.asarray(value)
+        if array.ndim == 1 and array.size in (3, 4):
+            array = np.tile(array, (count, 1))
+        if array.ndim == 2 and array.shape[1] in (3, 4) and len(array):
+            if array.shape[1] == 3:
+                array = np.column_stack((array, np.ones(len(array))))
+            return [_rgba_css(array[index % len(array)]) for index in range(count)]
+    from ._colors import Cmap
+
+    rgba = np.asarray(Cmap(kwargs.get("colormap", "viridis"))((np.arange(count) + 0.5) / count))
+    return [_rgba_css(row) for row in rgba]
+
+
+def _rgba_css(value: Any) -> str:
+    red, green, blue, alpha = np.clip(np.asarray(value, dtype=float), 0.0, 1.0)
+    return f"rgba({round(255 * red)},{round(255 * green)},{round(255 * blue)},{float(alpha):g})"
 
 
 class PolyCollection(Artist):
@@ -976,13 +1209,27 @@ class PieContainer:
         import numpy as np
 
         self.wedges = wedges
-        self.values = np.asarray(values, dtype=np.float64)
-        total = float(np.sum(self.values)) if normalize else 1.0
-        self.fracs = self.values / total
+        # Matplotlib keeps the input dtype here.  In particular, integer pie
+        # data must remain integers so pie_label("{absval:d}") is valid.
+        self._values = np.asarray(values).copy()
         self.normalize = bool(normalize)
         self._texts: list[list[Text]] = [texts]
         if autotexts:
             self._texts.append(autotexts)
+
+    @property
+    def values(self) -> Any:
+        result = self._values.copy()
+        result.flags.writeable = False
+        return result
+
+    @property
+    def fracs(self) -> Any:
+        import numpy as np
+
+        result = self._values / np.sum(self._values) if self.normalize else self._values.copy()
+        result.flags.writeable = False
+        return result
 
     @property
     def texts(self) -> list[list["Text"]]:
@@ -1089,6 +1336,10 @@ def _legend_item_from_entry(
     opacity = kw.get("opacity")
     if opacity is not None:
         style["opacity"] = float(opacity)
+    hatch = kw.get("hatch")
+    if hatch:
+        style["hatch"] = str(hatch)
+        style["hatch_color"] = str(kw.get("hatch_color", "#222222"))
     # Rule annotations keep renderer-specific geometry inside ``style`` while
     # ordinary line/step entries keep it at the top level. Accept both shapes
     # so explicit Legend handles preserve the plotted dash.
@@ -1113,7 +1364,7 @@ def _legend_item_from_entry(
         symbol = kw.get("symbol")
         if symbol:
             style["symbol"] = symbol
-        for key in ("stroke", "stroke_width"):
+        for key in ("size", "stroke", "stroke_width"):
             if kw.get(key) is not None:
                 style[key] = kw[key]
     return {"name": str(label), "kind": kind, "style": style}

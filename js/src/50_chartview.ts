@@ -1518,7 +1518,8 @@ export class ChartView {
     this.overlay.width = this.size.w * this.dpr;
     this.overlay.height = this.size.h * this.dpr;
     for (const lg of this._legends || []) {
-      this._positionLegend(lg, lg.dataset.xyLegendLoc || "upper right");
+      const anchor = lg.dataset.xyLegendAnchor ? JSON.parse(lg.dataset.xyLegendAnchor) : null;
+      this._positionLegend(lg, lg.dataset.xyLegendLoc || "upper right", anchor);
     }
     this._positionReductionBadges();
     this._positionColorbar();
@@ -1749,11 +1750,23 @@ export class ChartView {
     this._legendOffCats = this._legendOffCats || new Map();
     const items = [];
     if (s.show_legend !== false) {
-      // Two identically-encoded unnamed continuous traces must not stack two
-      // identical gradient rows; the row is about the encoding, so later
-      // traces join the first row's hover-target list instead.
-      const continuousRows = new Map();
-      s.traces.forEach((t, ti) => {
+      const explicit = (s.legend && s.legend.items) || [];
+      if (explicit.length) {
+        for (const it of explicit) {
+          items.push({
+            swatch: it.style && it.style.color,
+            name: it.name,
+            symbol: it.kind === "scatter" ? (it.style?.symbol || "circle") : null,
+            line: ["line", "segments", "step", "stairs", "errorbar"].includes(it.kind),
+            style: it.style || {},
+          });
+        }
+      } else {
+        // Two identically-encoded unnamed continuous traces must not stack two
+        // identical gradient rows; the row is about the encoding, so later
+        // traces join the first row's hover-target list instead.
+        const continuousRows = new Map();
+        s.traces.forEach((t, ti) => {
         // A density-tier surface encodes count as alpha and wears the mean
         // point color (LOD doc §2), so it gets no colormap gradient swatch —
         // a gradient would claim color == density. A named density trace
@@ -1786,7 +1799,8 @@ export class ChartView {
           // same handle the raster/SVG exporters draw — not a filled swatch.
           items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {}, traces: [ti] });
         }
-      });
+        });
+      }
       for (const it of items) {
         if (!it.traces) continue;
         it.off = it.cat != null
@@ -1814,16 +1828,27 @@ export class ChartView {
     const loc = options.loc || "upper right";
     const ncols = Math.max(1, Number(options.ncols) || 1);
     const horizontal = ncols > 1;
+    const handleHeight = options.handleheight == null
+      ? null
+      : Math.max(8, 11 * Number(options.handleheight));
     lg.style.cssText = "position:absolute;" +
       `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
-      "overflow:auto;";
+      "column-gap:2em;row-gap:.5em;overflow:auto;";
     lg.dataset.xyLegendLoc = loc;
-    this._positionLegend(lg, loc);
+    if (Array.isArray(options.anchor)) {
+      lg.dataset.xyLegendAnchor = JSON.stringify(options.anchor);
+    }
+    if (Number.isFinite(Number(options.border_pad))) {
+      lg.dataset.xyLegendBorderPad = String(Math.max(0, Number(options.border_pad)));
+    }
+    this._positionLegend(lg, loc, options.anchor);
     this._applySlot(lg, "legend");
+    this._applyStyle(lg, options.style);
     if (options.title) {
       const title = document.createElement("div");
       title.textContent = String(options.title);
-      title.style.fontWeight = "600";
+      title.style.fontWeight = "400";
+      title.style.textAlign = "center";
       title.style.gridColumn = `1 / span ${horizontal ? ncols : 1}`;
       lg.appendChild(title);
     }
@@ -1831,6 +1856,7 @@ export class ChartView {
     for (const it of items) {
       const row = document.createElement("div");
       this._applySlot(row, "legend_item");
+      if (handleHeight != null) row.style.minHeight = `${handleHeight + 2}px`;
       const sw = document.createElement("span");
       // Swatch geometry is a stylesheet default; only the paint (dynamic per
       // series) stays inline, and it now has its own slot so it's classable.
@@ -1901,7 +1927,25 @@ export class ChartView {
         sw.style.width = "22px";
         sw.style.height = "12px";
       } else if (it.swatch !== "gradient") {
+        // Keep the dynamic paint on the security-audited safe sink. Hatch
+        // layers below only add generated gradients over that sanitized base.
         sw.style.background = safeCssPaint(this.root, bg);
+        if (it.style?.hatch) {
+          const hatchColor = safeCssPaint(this.root, it.style.hatch_color || "#222222");
+          const patterns = [];
+          const hatch = String(it.style.hatch);
+          if (hatch.includes("/") || hatch.includes("*"))
+            patterns.push(`repeating-linear-gradient(135deg,transparent 0 4px,${hatchColor} 4px 5px)`);
+          if (hatch.includes("\\") || hatch.includes("*"))
+            patterns.push(`repeating-linear-gradient(45deg,transparent 0 4px,${hatchColor} 4px 5px)`);
+          if (hatch.includes("-"))
+            patterns.push(`repeating-linear-gradient(0deg,transparent 0 4px,${hatchColor} 4px 5px)`);
+          if (hatch.includes("."))
+            patterns.push(`radial-gradient(circle,${hatchColor} 1px,transparent 1px)`);
+          sw.style.backgroundImage = patterns.join(",");
+          if (hatch.includes(".")) sw.style.backgroundSize = "5px 5px";
+        }
+        if (handleHeight != null) sw.style.height = `${handleHeight}px`;
       }
       this._applySlot(sw, "legend_swatch");
       row.appendChild(sw);
@@ -2282,7 +2326,7 @@ export class ChartView {
     }
   }
 
-  _positionLegend(lg, loc) {
+  _positionLegend(lg, loc, anchor = null) {
     if (!lg) return;
     // Responsive anchors flow through private custom properties consumed by a
     // zero-specificity rule. Author classes or component styles can still set
@@ -2290,16 +2334,29 @@ export class ChartView {
     const rightInset = this.size.w - (this.plot.x + this.plot.w);
     const h = loc.includes("left") ? "left" : loc.includes("right") ? "right" : "center";
     const v = loc.includes("upper") ? "upper" : loc.includes("lower") ? "lower" : "center";
-    const left = h === "left" ? this.plot.x + 6 : h === "center" ? this.plot.x + this.plot.w / 2 : null;
-    const right = h === "right" ? rightInset + 6 : null;
-    const top = v === "upper" ? this.plot.y + 6 : v === "center" ? this.plot.y + this.plot.h / 2 : null;
-    const bottom = v === "lower" ? this.size.h - (this.plot.y + this.plot.h) + 6 : null;
+    let left = h === "left" ? this.plot.x + 6 : h === "center" ? this.plot.x + this.plot.w / 2 : null;
+    let right = h === "right" ? rightInset + 6 : null;
+    let top = v === "upper" ? this.plot.y + 6 : v === "center" ? this.plot.y + this.plot.h / 2 : null;
+    let bottom = v === "lower" ? this.size.h - (this.plot.y + this.plot.h) + 6 : null;
+    if (Array.isArray(anchor) && (anchor.length === 2 || anchor.length === 4)) {
+      const hx = h === "left" ? 0 : h === "right" ? 1 : 0.5;
+      const vy = v === "lower" ? 0 : v === "upper" ? 1 : 0.5;
+      const aw = anchor.length === 4 ? Number(anchor[2]) : 0;
+      const ah = anchor.length === 4 ? Number(anchor[3]) : 0;
+      const borderPad = Math.max(0, Number(lg.dataset.xyLegendBorderPad) || 0);
+      left = this.plot.x + (Number(anchor[0]) + hx * aw) * this.plot.w +
+        (hx === 0 ? borderPad : hx === 1 ? -borderPad : 0);
+      top = this.plot.y + (1 - Number(anchor[1]) - vy * ah) * this.plot.h +
+        (vy === 1 ? borderPad : vy === 0 ? -borderPad : 0);
+      right = null;
+      bottom = null;
+    }
     lg.style.setProperty("--xy-legend-left", left == null ? "auto" : left + "px");
     lg.style.setProperty("--xy-legend-right", right == null ? "auto" : right + "px");
     lg.style.setProperty("--xy-legend-top", top == null ? "auto" : top + "px");
     lg.style.setProperty("--xy-legend-bottom", bottom == null ? "auto" : bottom + "px");
-    const tx = h === "center" ? "-50%" : "0";
-    const ty = v === "center" ? "-50%" : "0";
+    const tx = h === "center" ? "-50%" : h === "right" && anchor ? "-100%" : "0";
+    const ty = v === "center" ? "-50%" : v === "lower" && anchor ? "-100%" : "0";
     lg.style.setProperty("--xy-legend-transform", `translate(${tx},${ty})`);
   }
 
@@ -2338,7 +2395,10 @@ export class ChartView {
     const domain = cb.domain || [0, 1];
     const lo = Number(domain[0]), hi = Number(domain[1]);
     const span = hi - lo || 1;
-    const tickResult = linearTicks(lo, hi, 8);
+    const shrink = Math.max(0.01, Math.min(1, Number(cb.shrink) || 1));
+    const barLength = (horizontal ? this.plot.w : this.plot.h) * shrink;
+    const tickTarget = Math.max(2, Math.min(8, Math.floor(Math.max(0, barLength) / 48) + 1));
+    const tickResult = linearTicks(lo, hi, tickTarget);
     const hasExplicitTicks = Array.isArray(cb.ticks);
     const tickValues = hasExplicitTicks ? cb.ticks : tickResult.ticks;
     const tickStep = tickResult.step;
@@ -2353,6 +2413,25 @@ export class ChartView {
         : `position:absolute;left:${COLORBAR_THICKNESS + 5}px;top:${100 * (1 - fraction)}%;transform:translateY(-50%);white-space:nowrap;`;
       this._applySlot(tick, "colorbar_tick");
       box.appendChild(tick);
+    }
+    if (cb.minor_ticks) {
+      const orderedTicks = [...tickValues]
+        .map(Number)
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b);
+      for (let index = 0; index + 1 < orderedTicks.length; index++) {
+        const left = orderedTicks[index], right = orderedTicks[index + 1];
+        for (let step = 1; step < 5; step++) {
+          const value = left + (right - left) * step / 5;
+          const fraction = (value - lo) / span;
+          const tick = document.createElement("i");
+          tick.dataset.xyColorbarMinor = "true";
+          tick.style.cssText = horizontal
+            ? `position:absolute;left:${100 * fraction}%;top:${COLORBAR_THICKNESS}px;height:3px;border-left:1px solid currentColor;`
+            : `position:absolute;left:${COLORBAR_THICKNESS}px;top:${100 * (1 - fraction)}%;width:3px;border-top:1px solid currentColor;`;
+          box.appendChild(tick);
+        }
+      }
     }
     if (cb.label) {
       const label = document.createElement("span");
@@ -2372,19 +2451,24 @@ export class ChartView {
 
   _positionColorbar() {
     if (!this._colorbar) return;
+    const cb = this.spec.colorbar || {};
     const horizontal = this._colorbarHorizontal;
     const compactVertical = !horizontal && this._compactVerticalColorbar;
     const gap = compactVertical ? COMPACT_COLORBAR_GAP : COLORBAR_GAP;
+    const shrink = Math.max(0.01, Math.min(1, Number(cb.shrink) || 1));
+    const anchor = Array.isArray(cb.anchor) ? cb.anchor : [0.5, 0.5];
+    const barWidth = this.plot.w * shrink;
+    const barHeight = this.plot.h * shrink;
     this._colorbar.style.left = (horizontal
-      ? this.plot.x
+      ? this.plot.x + (this.plot.w - barWidth) * Number(anchor[0] ?? 0.5)
       : this.plot.x + this.plot.w + this._rightAxisRoom + gap) + "px";
     this._colorbar.style.top = (horizontal
       ? this.plot.y + this.plot.h + (this._bottomAxisRoom || 8)
-      : this.plot.y) + "px";
+      : this.plot.y + (this.plot.h - barHeight) * (1 - Number(anchor[1] ?? 0.5))) + "px";
     this._colorbar.style.width = (horizontal
-      ? this.plot.w
+      ? barWidth
       : compactVertical ? COLORBAR_THICKNESS : 66) + "px";
-    this._colorbar.style.height = (horizontal ? 50 : Math.max(24, this.plot.h)) + "px";
+    this._colorbar.style.height = (horizontal ? 50 : Math.max(24, barHeight)) + "px";
     this._colorbar.dataset.xyCompact = compactVertical ? "true" : "false";
     for (const node of this._colorbar.querySelectorAll(
       '[data-xy-slot="colorbar_tick"], [data-xy-slot="colorbar_title"]'
@@ -2995,7 +3079,7 @@ export class ChartView {
     // stack in and premultiplies there (uniform and buffer strokes alike).
     const sc = g.strokeColor || [0, 0, 0, 0];
     gl.uniform4f(u("u_stroke"), sc[0], sc[1], sc[2], sc[3]);
-    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : (g.strokeMatchFill ? 2 : 0));
     gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}));
     this._setGradientUniforms(prog, g.grad);
   }
@@ -3011,6 +3095,7 @@ export class ChartView {
       ? [Number(cr[0]) || 0, Number(cr[1]) || 0]
       : [Number(cr) || 0, Number(cr) || 0];
     g.strokeWidth = Number(s.stroke_width) || 0;
+    g.strokeMatchFill = !!(t.stroke && t.stroke.mode === "match_fill");
     const opaque = [g.color[0], g.color[1], g.color[2], 1];
     g.strokeColor = s.stroke ? parseColor(this.root, s.stroke, opaque) : opaque;
     g.grad = this._resolveMarkFill(s, g.color);
@@ -3134,6 +3219,7 @@ export class ChartView {
     const style = t.style || {};
     g.meshStrokeWidth = Number(style.stroke_width) || 0;
     g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
+    g.strokeMatchFill = !!(t.stroke && t.stroke.mode === "match_fill");
   }
 
   // Hexbin ships cell centers plus one color value per cell; every hexagon
@@ -4190,7 +4276,7 @@ export class ChartView {
     const stroke = g.meshStroke || [0, 0, 0, 0];
     gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
     gl.uniform1f(u("u_strokeWidth"), g.meshStrokeWidth || 0);
-    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : (g.strokeMatchFill ? 2 : 0));
     gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style) * (g._legendDim ?? 1));
     if (g.colorMode && g.lut) {
       gl.activeTexture(gl.TEXTURE0);
@@ -4649,7 +4735,7 @@ export class ChartView {
     const hasAngle = axis && Number.isFinite(Number(axis.label_angle));
     if (!hasPosition && !hasOffset && !hasAngle) return { css: fallbackCss, style: null };
     if (rawPosition && typeof rawPosition === "object" && !Array.isArray(rawPosition)) {
-      return { css: "font-weight:500;white-space:nowrap;", style: rawPosition };
+      return { css: "font-weight:400;white-space:nowrap;", style: rawPosition };
     }
 
     const p = this.plot;
@@ -4672,7 +4758,7 @@ export class ChartView {
         css:
           `left:${x}px;top:${y}px;` +
           `transform:translateX(${translateX}%) rotate(${angle}deg);` +
-          "transform-origin:center;font-weight:500;white-space:nowrap;",
+          "transform-origin:center;font-weight:400;white-space:nowrap;",
         style: null,
       };
     }
@@ -4687,7 +4773,7 @@ export class ChartView {
       css:
         `left:${x}px;top:${y}px;` +
         `transform:translate(-50%,-50%) rotate(${angle}deg);` +
-        "transform-origin:center;font-weight:500;white-space:nowrap;",
+        "transform-origin:center;font-weight:400;white-space:nowrap;",
       style: null,
     };
   }
@@ -4780,6 +4866,14 @@ export class ChartView {
     // instead of covering the chrome line drawn behind it (grid lines stay on
     // the chrome canvas, behind the data). Rebuilt with the labels; static
     // between throttled zoom frames since the plot rect doesn't move on zoom.
+    const tickParts = (axis) => {
+      const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
+      const width = Math.max(0.5, this._axisStyleNumber(axis, "tick_width", 1));
+      const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+      if (direction === "in") return { inward: length, outward: 0, width };
+      if (direction === "inout") return { inward: length / 2, outward: length / 2, width };
+      return { inward: 0, outward: length, width };
+    };
     if (updateLabels) {
       const rule = (styleAxis, left, top, w, h, colorKey = "axis_color") => {
         const d = document.createElement("div");
@@ -4792,12 +4886,13 @@ export class ChartView {
       const frameSides = Array.isArray(s.frame_sides)
         ? s.frame_sides
         : [xAxis.side || "bottom", yAxis.side || "left"];
-      if (!hideY) {
+      const explicitFrameSides = Array.isArray(s.frame_sides);
+      if (!hideY || explicitFrameSides) {
         const yWidth = Math.max(1, this._axisStyleNumber(yAxis, "axis_width", 1));
         if (frameSides.includes("left")) rule(yAxis, p.x, p.y, yWidth, p.h);
         if (frameSides.includes("right")) rule(yAxis, p.x + p.w - yWidth, p.y, yWidth, p.h);
       }
-      if (!hideX) {
+      if (!hideX || explicitFrameSides) {
         const xHeight = Math.max(1, this._axisStyleNumber(xAxis, "axis_width", 1));
         if (frameSides.includes("top")) rule(xAxis, p.x, p.y, p.w, xHeight);
         if (frameSides.includes("bottom")) rule(xAxis, p.x, p.y + p.h - xHeight, p.w, xHeight);
@@ -4815,14 +4910,6 @@ export class ChartView {
         rule(axis, x, p.y, w, p.h);
       }
 
-      const tickParts = (axis) => {
-        const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
-        const width = Math.max(0.5, this._axisStyleNumber(axis, "tick_width", 1));
-        const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
-        if (direction === "in") return { inward: length, outward: 0, width };
-        if (direction === "inout") return { inward: length / 2, outward: length / 2, width };
-        return { inward: 0, outward: length, width };
-      };
       if (!hideX) {
         const tick = tickParts(xAxis);
         const side = xAxis.side || "bottom";
@@ -4880,7 +4967,7 @@ export class ChartView {
     }
 
     const label = (text, css, axis, kind = "tick", extraStyle = null, yPlacement = null) => {
-      if (!updateLabels) return;
+      if (!updateLabels) return null;
       const d = document.createElement("div");
       d.textContent = text;
       d.dataset.xyLabelKind = kind;
@@ -4917,7 +5004,22 @@ export class ChartView {
         d.style.boxSizing = "border-box";
       }
       this._applySlot(d, kind === "label" ? "axis_title" : "tick_label");
-      this._applyStyle(d, extraStyle);
+      const axisLabelStyle = kind === "label" ? {
+        "font-family": this._axisStyleValue(axis, "label_font_family"),
+        "font-style": this._axisStyleValue(axis, "label_font_style"),
+        "font-weight": this._axisStyleValue(axis, "label_font_weight"),
+      } : null;
+      if (axisLabelStyle) {
+        for (const key of Object.keys(axisLabelStyle)) {
+          if (axisLabelStyle[key] === undefined) delete axisLabelStyle[key];
+        }
+      }
+      this._applyStyle(
+        d,
+        axisLabelStyle || extraStyle
+          ? { ...(axisLabelStyle || {}), ...(extraStyle || {}) }
+          : null,
+      );
       this.labels.appendChild(d);
       if (kind === "tick" && axis && axis.kind === "category" && yPlacement) {
         // Rotation contributes half the untransformed label height to each
@@ -4943,6 +5045,7 @@ export class ChartView {
         d.style.maxWidth =
           `min(var(--chart-tick-label-max-width, ${available}px), ${available}px)`;
       }
+      return d;
     };
     const xLabelCandidates = [];
     for (const v of (xt.labels || xt.ticks)) {
@@ -4956,9 +5059,30 @@ export class ChartView {
       "tick_label_size",
       this._axisStyleNumber(xAxis, "tick_size", 11),
     );
+    // Spine→label distance. mpl measures tick padding from the outward end of
+    // the tick mark, and a `top` label then needs `fontRoom` more to clear its
+    // own line box. That derived geometry only applies once the axis authors
+    // tick geometry: core's default tick_length is 0 and it has no default
+    // tick_label_pad, so deriving it unconditionally would move the labels of
+    // every chart that styles no ticks. Unstyled axes keep `unstyled`, the
+    // per-side gap this client has always used (pyplot supplies mpl's
+    // {x,y}tick.major.pad, so it takes the derived branch). Mirrors
+    // `_axis_tick_label_offset` in `_svg.py`/`_raster.py`.
+    const tickLabelOffset = (axis, unstyled, fontRoom = 0) => {
+      const authored = this._axisStyleValue(axis, "tick_padding") !== undefined
+        || this._axisStyleValue(axis, "tick_length") !== undefined;
+      if (!authored) return unstyled;
+      const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
+      const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+      const outward = direction === "in" ? 0 : direction === "inout" ? length / 2 : length;
+      const pad = outward + this._axisStyleNumber(axis, "tick_padding", 4);
+      return pad + fontRoom;
+    };
     for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
       const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
-      const top = xAxis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
+      const top = xAxis.side === "top"
+        ? p.y - tickLabelOffset(xAxis, 18, Math.max(8, tickLabelSize) * 1.2) - rowOffset
+        : p.y + p.h + tickLabelOffset(xAxis, 6) + rowOffset;
       const placement = this._xTickLabelTransform(xAxis, item.angle);
       label(
         item.text,
@@ -4985,7 +5109,9 @@ export class ChartView {
           this._axisStyleNumber(axis, "tick_size", 11),
         );
         const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
-        const top = axis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
+        const top = axis.side === "top"
+          ? p.y - tickLabelOffset(axis, 18, Math.max(8, tickLabelSize) * 1.2) - rowOffset
+          : p.y + p.h + tickLabelOffset(axis, 6) + rowOffset;
         const placement = this._xTickLabelTransform(axis, item.angle);
         label(
           item.text,
@@ -4997,7 +5123,7 @@ export class ChartView {
       if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
         const top = axis.side === "top" ? p.y - 34 : p.y + p.h + 24;
         const fallbackCss =
-          `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`;
+          `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:400;`;
         const placement = this._axisLabelCss(axis, "x", fallbackCss);
         label(axis.label, placement.css, axis, "label", placement.style);
       }
@@ -5014,7 +5140,8 @@ export class ChartView {
     // tick. Unset defaults to the tick-side edge — mpl `ha`: "end" left of
     // the plot, "start" right of it — reproducing the classic layout.
     const yLabelPlacement = (axis, onRight, item) => {
-      const pin = onRight ? p.x + p.w + 8 : p.x - 8;
+      const offset = tickLabelOffset(axis, 8);
+      const pin = onRight ? p.x + p.w + offset : p.x - offset;
       const anchor = this._axisTickLabelAnchor(axis) ?? (onRight ? "start" : "end");
       const angle = Number(item.angle || 0);
       const shift = anchor === "end" ? "-100%" : anchor === "start" ? "0%" : "-50%";
@@ -5047,24 +5174,52 @@ export class ChartView {
       }
       if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
         const fallbackCss = axis.side === "left"
-          ? `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`
-          : `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`;
+          ? `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:400;`
+          : `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:400;`;
         const placement = this._axisLabelCss(axis, "y", fallbackCss);
         label(axis.label, placement.css, axis, "label", placement.style);
       }
     }
+    const attachYTitleToTicks = (title, axis, onRight) => {
+      if (!title || !axis) return;
+      const position = String(axis.label_position || "center").replace(/-/g, "_");
+      if (position.startsWith("inside_")) return;
+      const tickLabels = [...this.labels.children].filter((element) =>
+        element.dataset.xyLabelKind === "tick"
+        && element.dataset.xyAxis === String(axis.id ?? "")
+      );
+      if (!tickLabels.length) return;
+      const root = this.root.getBoundingClientRect();
+      const tickRects = tickLabels.map((element) => element.getBoundingClientRect());
+      const titleRect = title.getBoundingClientRect();
+      const fontSize = parseFloat(getComputedStyle(title).fontSize) || 12;
+      const labelOffset = Number(axis.label_offset || 0);
+      const targetEdge = onRight
+        ? Math.max(...tickRects.map((rect) => rect.right)) + 0.4 * fontSize + labelOffset
+        : Math.min(...tickRects.map((rect) => rect.left)) - 0.4 * fontSize - labelOffset;
+      const currentEdge = onRight ? titleRect.left : titleRect.right;
+      const currentLeft = parseFloat(title.style.left) || 0;
+      title.style.left = `${currentLeft + targetEdge - currentEdge}px`;
+      // Keep an unusually large title inside the chart canvas.
+      const adjusted = title.getBoundingClientRect();
+      const correction = adjusted.left < root.left
+        ? root.left - adjusted.left + 1
+        : adjusted.right > root.right ? root.right - adjusted.right - 1 : 0;
+      if (correction) title.style.left = `${parseFloat(title.style.left) + correction}px`;
+    };
     if (s.x_axis.label && !hideX) {
       const top = xAxis.side === "top" ? p.y - 34 : p.y + p.h + 24;
-      const fallbackCss = `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`;
+      const fallbackCss = `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:400;`;
       const placement = this._axisLabelCss(xAxis, "x", fallbackCss);
       label(s.x_axis.label, placement.css, xAxis, "label", placement.style);
     }
     if (s.y_axis.label && !hideY) {
       const fallbackCss = yAxis.side === "right"
-        ? `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`
-        : `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`;
+        ? `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:400;`
+        : `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:400;`;
       const placement = this._axisLabelCss(yAxis, "y", fallbackCss);
-      label(s.y_axis.label, placement.css, yAxis, "label", placement.style);
+      const title = label(s.y_axis.label, placement.css, yAxis, "label", placement.style);
+      attachYTitleToTicks(title, yAxis, yAxis.side === "right");
     }
     this._drawAnnotationLabels(updateLabels);
     // Label layout resolves responsive callout offsets before the pointer is

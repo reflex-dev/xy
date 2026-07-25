@@ -514,6 +514,20 @@ def test_marching_squares_skips_nonfinite_cells_and_empty_levels(impl):
     assert all(len(values) == 0 for values in empty)
 
 
+def test_marching_squares_corner_mask_keeps_only_the_valid_triangle(impl):
+    z = np.array([[np.nan, 1.0], [0.0, 0.0]])
+    args = (z, np.array([0.0, 1.0]), np.array([0.0, 1.0]), np.array([0.5]))
+    discarded = impl.marching_squares(*args, corner_mask=False)
+    assert all(len(values) == 0 for values in discarded)
+
+    x0, x1, y0, y1, emitted_levels = impl.marching_squares(*args, corner_mask=True)
+    np.testing.assert_allclose(np.minimum(x0, x1), [0.5])
+    np.testing.assert_allclose(np.maximum(x0, x1), [1.0])
+    np.testing.assert_allclose(y0, [0.5])
+    np.testing.assert_allclose(y1, [0.5])
+    np.testing.assert_allclose(emitted_levels, [0.5])
+
+
 # -- chart-prep kernels -------------------------------------------------------
 
 

@@ -1511,6 +1511,7 @@ pub unsafe extern "C" fn xy_marching_squares(
     y_coords: *const f64,
     levels: *const f64,
     n_levels: usize,
+    corner_mask: u8,
     out_x0: *mut f64,
     out_x1: *mut f64,
     out_y0: *mut f64,
@@ -1572,6 +1573,7 @@ pub unsafe extern "C" fn xy_marching_squares(
                 x_coords,
                 y_coords,
                 levels,
+                corner_mask != 0,
                 empty_x0,
                 empty_x1,
                 empty_y0,
@@ -1585,7 +1587,17 @@ pub unsafe extern "C" fn xy_marching_squares(
             let y1_out = std::slice::from_raw_parts_mut(out_y1, capacity);
             let level_out = std::slice::from_raw_parts_mut(out_levels, capacity);
             kernels::marching_squares_into(
-                z, rows, cols, x_coords, y_coords, levels, x0_out, x1_out, y0_out, y1_out,
+                z,
+                rows,
+                cols,
+                x_coords,
+                y_coords,
+                levels,
+                corner_mask != 0,
+                x0_out,
+                x1_out,
+                y0_out,
+                y1_out,
                 level_out,
             )
         }

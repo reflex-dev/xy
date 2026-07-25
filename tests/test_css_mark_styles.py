@@ -172,6 +172,7 @@ def test_axis_style_reaches_svg_and_native_renderers() -> None:
                 "axis_color": "#0000ff",
                 "axis_width": 2,
                 "tick_length": 6,
+                "tick_padding": 5,
                 "tick_width": 2,
                 "tick_color": "#00aa00",
                 "tick_label_color": "#cc5500",
@@ -187,7 +188,9 @@ def test_axis_style_reaches_svg_and_native_renderers() -> None:
     assert 'stroke="#0000ff" stroke-width="2"' in svg
     assert 'stroke="#00aa00" stroke-width="2"' in svg
     assert 'fill="#cc5500" font-size="13" text-anchor="middle"' in svg
-    assert 'font-size="15" font-weight="500" fill="#aa00aa"' in svg
+    # 400 is the matplotlib-parity axis-label default; this style sets no
+    # `label_font_weight`, so the default is what lands in the SVG.
+    assert 'font-size="15" font-weight="400" fill="#aa00aa"' in svg
     assert _raster.render_raster(*fig.build_payload(), scale=1).shape[-1] == 4
 
 
@@ -196,6 +199,7 @@ def test_axis_style_is_normalized_and_rejected_before_render() -> None:
         style={
             "grid-width": "3px",
             "tick_label_size": "13px",
+            "tick-label-pad": "5px",
             "tick-direction": "inout",
             "tick-label-anchor": "right",  # mpl `ha` alias -> canonical "end"
             "label-color": "rebeccapurple",
@@ -204,6 +208,7 @@ def test_axis_style_is_normalized_and_rejected_before_render() -> None:
     assert axis.style == {
         "grid_width": 3.0,
         "tick_label_size": 13.0,
+        "tick_padding": 5.0,
         "tick_direction": "inout",
         "tick_label_anchor": "end",
         "label_color": "rebeccapurple",

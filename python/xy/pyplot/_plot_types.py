@@ -35,9 +35,10 @@ from ._artists import (
     Text,
     Wedge,
 )
-from ._colors import PROP_CYCLE, resolve_cmap, resolve_color
+from ._colors import PROP_CYCLE, resolve_cmap, resolve_color, resolve_rgba
 from ._fmt import parse_fmt
-from ._rc import rcParams
+from ._mathtext import mathtext_to_unicode
+from ._rc import rc_figsize_px, rcParams
 from ._translate import (
     LINESTYLE_TO_DASH,
     MARKER_TO_SYMBOL,
@@ -126,6 +127,14 @@ def _textprops_kwargs(textprops: Any, where: str) -> dict[str, Any]:
     fontsize = source.pop("fontsize", source.pop("size", None))
     ha = source.pop("ha", source.pop("horizontalalignment", None))
     va = source.pop("va", source.pop("verticalalignment", None))
+    weight = source.pop("fontweight", source.pop("weight", None))
+    family = source.pop("fontfamily", source.pop("family", None))
+    fontstyle = source.pop("fontstyle", source.pop("style", None))
+    rotation = source.pop("rotation", None)
+    # Axes.pie_label creates unclipped labels before applying textprops.
+    # Accepting the matching default keeps that implementation detail from
+    # becoming a gallery incompatibility while non-default clipping stays loud.
+    _reject_non_default(where, "clip_on", source.pop("clip_on", None), False)
     check_unsupported(source, where)
     out: dict[str, Any] = {}
     if color is not None:
@@ -134,12 +143,49 @@ def _textprops_kwargs(textprops: Any, where: str) -> dict[str, Any]:
         out["anchor"] = {"left": "start", "center": "middle", "right": "end"}.get(str(ha), "start")
     style: dict[str, Any] = {}
     if fontsize is not None:
-        style["font_size"] = float(fontsize)
+        style["font_size"] = _text_font_size_points(fontsize)
     if va is not None:
         style["vertical_align"] = str(va)
+    if weight is not None:
+        style["font_weight"] = str(weight)
+    if family is not None:
+        style["font_family"] = str(family)
+    if fontstyle is not None:
+        style["font_style"] = _validated_font_style(fontstyle)
+    if rotation is not None:
+        style["rotation"] = 90.0 if rotation == "vertical" else float(rotation)
     if style:
         out["style"] = style
     return out
+
+
+def _text_font_size_points(value: Any) -> float:
+    """Resolve Matplotlib's named font sizes against the current base size."""
+    relative = {
+        "xx-small": 0.6,
+        "x-small": 0.75,
+        "small": 0.85,
+        "medium": 1.0,
+        "large": 1.2,
+        "x-large": 1.45,
+        "xx-large": 1.75,
+    }
+    if isinstance(value, str):
+        try:
+            return float(rcParams["font.size"]) * relative[value]
+        except KeyError as exc:
+            raise ValueError(f"unsupported relative font size {value!r}") from exc
+    result = float(value)
+    if result <= 0:
+        raise ValueError("font size must be positive")
+    return result
+
+
+def _validated_font_style(value: Any) -> str:
+    result = str(value)
+    if result not in {"normal", "italic", "oblique"}:
+        raise ValueError("font style must be 'normal', 'italic', or 'oblique'")
+    return result
 
 
 def _bilinear_grid_sample(
@@ -170,16 +216,49 @@ def _integrate_streamlines(
     seeds: np.ndarray,
     direction: str,
     max_steps: int,
+    max_length: float,
+    min_length: float = 0.1,
+    broken_streamlines: bool = True,
+    density: float | tuple[float, float] = 1.0,
+    step_scale: float = 1.0,
+    error_scale: float = 1.0,
+    skip_occupied_seeds: bool = True,
 ) -> list[np.ndarray]:
-    """Fixed-step field-line integration matching the native kernel's scheme."""
-    step = 0.35 * min(float(np.min(np.diff(x_coords))), float(np.min(np.diff(y_coords))))
+    """Integrate field lines with an adaptive second-order Heun step.
+
+    Matplotlib exposes multipliers for both its maximum integration step and
+    accepted local error.  Keeping those controls here (rather than silently
+    accepting them at the public API) also gives explicit seeds and unbroken
+    streamlines the same accuracy contract.
+    """
+    x_span = max(float(np.ptp(x_coords)), np.finfo(float).eps)
+    y_span = max(float(np.ptp(y_coords)), np.finfo(float).eps)
+    density_x, density_y = np.broadcast_to(np.asarray(density, dtype=np.float64), 2)
+    mask_width = max(1, int(30 * density_x))
+    mask_height = max(1, int(30 * density_y))
+    max_step = min(x_span / mask_width, y_span / mask_height) * step_scale
+    max_error = 0.003 * error_scale
+    occupied: set[tuple[int, int]] = set()
+
+    def mask_cell(px: float, py: float) -> tuple[int, int]:
+        mx = int(np.clip(round((px - x_coords[0]) / x_span * (mask_width - 1)), 0, mask_width - 1))
+        my = int(
+            np.clip(round((py - y_coords[0]) / y_span * (mask_height - 1)), 0, mask_height - 1)
+        )
+        return mx, my
+
     signs = {"forward": (1.0,), "backward": (-1.0,), "both": (-1.0, 1.0)}[direction]
     lines: list[np.ndarray] = []
     for seed_x, seed_y in seeds:
+        if skip_occupied_seeds and mask_cell(float(seed_x), float(seed_y)) in occupied:
+            continue
+        trajectory_cells: set[tuple[int, int]] = set()
         branches: list[list[tuple[float, float]]] = []
         for sign in signs:
             px, py = float(seed_x), float(seed_y)
             points = [(px, py)]
+            step = max_step
+            path_length = 0.0
             for _ in range(max_steps):
                 su = float(_bilinear_grid_sample(x_coords, y_coords, u, px, py))
                 sv = float(_bilinear_grid_sample(x_coords, y_coords, v, px, py))
@@ -188,16 +267,58 @@ def _integrate_streamlines(
                 speed = float(np.hypot(su, sv))
                 if speed <= np.finfo(float).eps:
                     break
-                nx = px + sign * step * su / speed
-                ny = py + sign * step * sv / speed
+                k1x, k1y = sign * su / speed, sign * sv / speed
+                trial_x, trial_y = px + step * k1x, py + step * k1y
+                tu = float(_bilinear_grid_sample(x_coords, y_coords, u, trial_x, trial_y))
+                tv = float(_bilinear_grid_sample(x_coords, y_coords, v, trial_x, trial_y))
+                trial_speed = float(np.hypot(tu, tv))
+                if not (np.isfinite(tu) and np.isfinite(tv)) or trial_speed <= np.finfo(float).eps:
+                    break
+                k2x, k2y = sign * tu / trial_speed, sign * tv / trial_speed
+                nx = px + 0.5 * step * (k1x + k2x)
+                ny = py + 0.5 * step * (k1y + k2y)
+                error = float(
+                    np.hypot(
+                        (nx - trial_x) / x_span,
+                        (ny - trial_y) / y_span,
+                    )
+                )
+                if error >= max_error:
+                    step = max(
+                        max_step * 1e-4,
+                        min(max_step, 0.85 * step * np.sqrt(max_error / error)),
+                    )
+                    continue
                 if not (x_coords[0] <= nx <= x_coords[-1] and y_coords[0] <= ny <= y_coords[-1]):
                     break
+                cell = mask_cell(nx, ny)
+                if broken_streamlines and cell in occupied and cell not in trajectory_cells:
+                    break
+                path_length += float(np.hypot((nx - px) / x_span, (ny - py) / y_span))
                 px, py = nx, ny
                 points.append((px, py))
+                trajectory_cells.add(cell)
+                if path_length >= max_length:
+                    break
+                if error == 0.0:
+                    step = max_step
+                else:
+                    step = min(max_step, 0.85 * step * np.sqrt(max_error / error))
             branches.append(points)
         combined = branches[0][::-1] + branches[1][1:] if len(branches) == 2 else branches[0]
-        if len(combined) >= 2:
-            lines.append(np.asarray(combined, dtype=np.float64))
+        combined_array = np.asarray(combined, dtype=np.float64)
+        if len(combined_array) >= 2:
+            length = float(
+                np.hypot(
+                    np.diff(combined_array[:, 0]) / x_span,
+                    np.diff(combined_array[:, 1]) / y_span,
+                ).sum()
+            )
+        else:
+            length = 0.0
+        if length >= min_length:
+            lines.append(combined_array)
+            occupied.update(trajectory_cells)
     return lines
 
 
@@ -277,6 +398,18 @@ def _limit_error(error: Any, lower_limits: Any, upper_limits: Any, size: int) ->
     return np.vstack((low, high))
 
 
+def _error_sides(error: Any, size: int) -> tuple[np.ndarray, np.ndarray]:
+    """Return broadcast lower and upper error magnitudes."""
+    raw = np.asarray(error, dtype=np.float64)
+    if raw.ndim >= 2 and raw.shape[0] == 2:
+        return (
+            np.broadcast_to(raw[0], (size,)),
+            np.broadcast_to(raw[1], (size,)),
+        )
+    values = np.broadcast_to(raw, (size,))
+    return values, values
+
+
 def _plain_label(value: Any) -> str:
     text = str(value).replace("$", "")
     for source, target in {
@@ -354,6 +487,41 @@ def _uniform_mesh_axes(
     if x_centers is None or y_centers is None:
         return None
     return x_centers, y_centers
+
+
+def _gouraud_rect_axes(
+    x: Any, y: Any, shape: tuple[int, int]
+) -> Optional[tuple[np.ndarray, np.ndarray]]:
+    """Return same-shape, uniform rectilinear vertices for Gouraud shading."""
+    rows, cols = shape
+    xa, ya = np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64)
+    if xa.ndim == ya.ndim == 2:
+        if xa.shape != shape or ya.shape != shape:
+            raise ValueError("pcolormesh Gouraud X, Y, and C must have matching shapes")
+        if not np.allclose(xa, xa[:1, :], equal_nan=True) or not np.allclose(
+            ya, ya[:, :1], equal_nan=True
+        ):
+            return None
+        xa, ya = xa[0], ya[:, 0]
+    elif xa.shape != (cols,) or ya.shape != (rows,):
+        raise ValueError("pcolormesh Gouraud X, Y, and C must have matching shapes")
+    if (len(xa) > 2 and not np.allclose(np.diff(xa), np.diff(xa)[0])) or (
+        len(ya) > 2 and not np.allclose(np.diff(ya), np.diff(ya)[0])
+    ):
+        return None
+    return xa, ya
+
+
+def _bilinear_grid(grid: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Small NumPy-only bilinear expansion used by regular Gouraud meshes."""
+    source_y = np.linspace(0.0, 1.0, grid.shape[0])
+    source_x = np.linspace(0.0, 1.0, grid.shape[1])
+    target_y = np.linspace(0.0, 1.0, height)
+    target_x = np.linspace(0.0, 1.0, width)
+    horizontal = np.vstack([np.interp(target_x, source_x, row) for row in grid])
+    return np.vstack(
+        [np.interp(target_y, source_y, horizontal[:, column]) for column in range(width)]
+    ).T
 
 
 def _regular_mesh_axes(x: Any, y: Any, shape: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
@@ -847,6 +1015,7 @@ class PlotTypeMixin:
                 "color": resolve_color(chosen) if chosen is not None else self._next_color(),
                 "name": None if label is None else str(label),
                 "opacity": 1.0 if alpha is None else float(alpha),
+                "_joined_fill": True,
             }
             entry = self._add(
                 "@mark",
@@ -946,23 +1115,49 @@ class PlotTypeMixin:
         """
         if (xy2 is None) == (slope is None):
             raise TypeError("axline() requires exactly one of xy2 or slope")
-        if xy2 is None:
-            xy2 = (float(xy1[0]) + 1.0, float(xy1[1]) + float(slope))
+        if slope is not None and any(
+            self._scale_specs[axis]["name"] != "linear" for axis in ("x", "y")
+        ):
+            raise TypeError("'slope' cannot be used with non-linear scales")
         transform = kwargs.pop("transform", None)
-        if transform is not None:
-            tx, ty = self._transform_points([xy1[0], xy2[0]], [xy1[1], xy2[1]], transform)
-            xy1, xy2 = (float(tx[0]), float(ty[0])), (float(tx[1]), float(ty[1]))
+        transform_space = None
+        if transform is self.transAxes:
+            # Resolve against the final view at materialization time: callers
+            # commonly set limits after adding axlines, and Matplotlib applies
+            # the transform to the point(s) but never to the data-space slope.
+            transform_space = "axes_fraction"
+        elif transform is not None:
+            points = [xy1] if xy2 is None else [xy1, xy2]
+            tx, ty = self._transform_points(
+                [point[0] for point in points],
+                [point[1] for point in points],
+                transform,
+            )
+            points = [(float(x), float(y)) for x, y in zip(tx, ty, strict=True)]
+            xy1, xy2 = points[0], None if xy2 is None else points[1]
         props = _line_props(self, kwargs)
         check_unsupported(kwargs, "axline()")
+        width = props.get("width", rcParams["lines.linewidth"])
+        if props.get("dash") is not None:
+            props["dash"] = self._mpl_dash(props["dash"], width)
         entry = self._add(
-            "@mark",
+            "@axline",
             {
-                "factory": "segments",
-                "args": ([xy1[0]], [xy1[1]], [xy2[0]], [xy2[1]]),
+                "xy1": (float(xy1[0]), float(xy1[1])),
+                "xy2": (None if xy2 is None else (float(xy2[0]), float(xy2[1]))),
+                "slope": None if slope is None else float(slope),
+                "transform_space": transform_space,
                 "kwargs": {
                     "color": props.get("color"),
                     "opacity": props.get("opacity", 1.0),
-                    "width": props.get("width", 1.2),
+                    "width": width,
+                    "name": props.get("name"),
+                    **({"dash": props["dash"]} if props.get("dash") is not None else {}),
+                    **(
+                        {"_gapcolor": props["_gapcolor"]}
+                        if props.get("_gapcolor") is not None
+                        else {}
+                    ),
                 },
             },
         )
@@ -1191,6 +1386,13 @@ class PlotTypeMixin:
         if kwargs.pop("fontproperties", None) is not None:
             raise not_implemented("bar_label(fontproperties=...)", alternative="fontsize=")
         check_unsupported(kwargs, "bar_label()")
+        if label_type == "edge":
+            value_axis = "y" if container.orientation == "vertical" else "x"
+            # Matplotlib's Annotation does not contribute its text bbox to
+            # dataLim. Its default 5% margin therefore leaves a padded 10 pt
+            # bar label on (or fractionally beyond) the top spine. Reserve a
+            # small label-aware default while preserving explicit margins().
+            self._reserve_annotation_margin(value_axis, 0.075)
         result: list[Text] = []
         for index, value in enumerate(values):
             if raw_labels[index] is not None:
@@ -1209,26 +1411,35 @@ class PlotTypeMixin:
                 if container.orientation == "vertical"
                 else (coordinate, centers[index])
             )
-            pixel_padding = float(padding) * (4.0 / 3.0)
+            pixel_padding = float(padding) * self._point_scale()
+            positive = value >= 0
             if container.orientation == "vertical":
                 anchor = "middle"
                 dx = 0.0
-                dy = 4.0 if label_type == "center" else -(4.0 + pixel_padding)
+                dy = pixel_padding * (1.0 if positive else -1.0)
+                # SVG/browser y grows downward, so matplotlib's positive
+                # point offset is an upward (negative) screen-space offset.
+                dy *= -1.0
+                vertical_align = (
+                    "center" if label_type == "center" else ("bottom" if positive else "top")
+                )
             elif label_type == "center":
-                anchor, dx, dy = "middle", 0.0, 4.0
+                anchor, dx, dy = "middle", pixel_padding * (1.0 if positive else -1.0), 0.0
+                vertical_align = "center"
             else:
-                positive = value >= 0
                 anchor = "start" if positive else "end"
-                dx = (4.0 + pixel_padding) * (1.0 if positive else -1.0)
-                dy = 4.0
+                dx = pixel_padding * (1.0 if positive else -1.0)
+                dy = 0.0
+                vertical_align = "center"
             text_kwargs: dict[str, Any] = {
                 "color": resolve_color(color) if color is not None else None,
                 "anchor": anchor,
                 "dx": dx,
                 "dy": dy,
+                "style": {"vertical_align": vertical_align},
             }
             if fontsize is not None:
-                text_kwargs["style"] = {"font_size": float(fontsize)}
+                text_kwargs["style"]["font_size"] = float(fontsize)
             entry = self._add("@text", {"args": (x, y, label), "kwargs": text_kwargs})
             result.append(Text(self, entry))
         return result
@@ -1420,7 +1631,14 @@ class PlotTypeMixin:
         check_unsupported(kwargs, "specgram()")
         mark_kwargs: dict[str, Any] = {
             "x": time,
-            "y": frequency,
+            # Matplotlib draws the spectrogram through imshow with the
+            # frequency *endpoints* as its extent, not as cell centers.  Pick
+            # centers whose reconstructed cell edges land on those endpoints.
+            "y": np.linspace(
+                frequency[0] + (frequency[-1] - frequency[0]) / (2 * len(frequency)),
+                frequency[-1] - (frequency[-1] - frequency[0]) / (2 * len(frequency)),
+                len(frequency),
+            ),
             "colormap": resolve_cmap(cmap) if cmap is not None else "viridis",
             "opacity": 1.0 if alpha is None else float(alpha),
         }
@@ -1501,9 +1719,7 @@ class PlotTypeMixin:
 
         Call as ``stem(y)`` or ``stem(x, y)``. ``linefmt``/``markerfmt`` are
         ``plot``-style fmt strings for the stems and heads, ``bottom`` moves
-        the baseline, and ``orientation`` may be ``"horizontal"``. Only the
-        default ``basefmt`` (``"C3-"``) is honored — the shim renders no
-        baseline rule.
+        the baseline, and ``orientation`` may be ``"horizontal"``.
         """
         if len(args) == 1:
             y = _from_data(args[0], data)
@@ -1519,42 +1735,55 @@ class PlotTypeMixin:
             color = resolve_color(color_spec) if color_spec else None
             dash_pattern = _dash_segment_pattern("stem", linestyle)
         symbol = "circle"
+        marker_color = None
         if markerfmt:
-            marker_color, _linestyle, marker = parse_fmt(str(markerfmt))
-            color = color or (resolve_color(marker_color) if marker_color else None)
+            marker_color_spec, _linestyle, marker = parse_fmt(str(markerfmt))
+            marker_color = resolve_color(marker_color_spec) if marker_color_spec else None
             from ._translate import MARKER_TO_SYMBOL
 
             symbol = MARKER_TO_SYMBOL.get(marker or "o", "circle")
-        # The shim renders no baseline rule, so only the default basefmt passes.
-        _reject_non_default("stem", "basefmt", basefmt, "C3-")
         chosen = color or self._next_color()
+        if orientation not in ("vertical", "horizontal"):
+            raise ValueError("stem orientation must be 'vertical' or 'horizontal'")
+
+        xv = np.asarray(x, dtype=np.float64)
+        yv = np.asarray(y, dtype=np.float64)
+        if xv.ndim != 1 or yv.ndim != 1 or xv.shape != yv.shape:
+            raise ValueError("stem x and y must be equally sized 1-D arrays")
+        base = np.full_like(xv, float(bottom))
+        if orientation == "vertical":
+            segments = (xv, base, xv, yv)
+            marker_x, marker_y = xv, yv
+            baseline_x = np.asarray([xv.min(), xv.max()]) if xv.size else np.asarray([])
+            baseline_y = np.full(2 if xv.size else 0, float(bottom))
+        else:
+            segments = (base, xv, yv, xv)
+            marker_x, marker_y = yv, xv
+            baseline_x = np.full(2 if xv.size else 0, float(bottom))
+            baseline_y = np.asarray([xv.min(), xv.max()]) if xv.size else np.asarray([])
+        if dash_pattern is not None:
+            segments = _dashed_segments(*segments, dash_pattern)
+
         if orientation == "vertical" and dash_pattern is None:
-            entry = self._add(
+            # Retain the compact native stem primitive (and its public trace
+            # kind), but render markers separately so the returned markerline
+            # can be styled independently like Matplotlib's Line2D.
+            stem_entry = self._add(
                 "@mark",
                 {
                     "factory": "stem",
-                    "args": (x, y),
+                    "args": (xv, yv),
                     "kwargs": {
                         "base": bottom,
+                        "marker": False,
                         "name": str(label) if label is not None else None,
                         "color": chosen,
-                        "symbol": symbol,
+                        "width": 1.2,
                     },
                 },
             )
-        elif orientation in ("vertical", "horizontal"):
-            xv = np.asarray(x, dtype=np.float64)
-            yv = np.asarray(y, dtype=np.float64)
-            base = np.full_like(xv, float(bottom))
-            if orientation == "vertical":
-                segments = (xv, base, xv, yv)
-                marker_x, marker_y = xv, yv
-            else:
-                segments = (base, xv, yv, xv)
-                marker_x, marker_y = yv, xv
-            if dash_pattern is not None:
-                segments = _dashed_segments(*segments, dash_pattern)
-            entry = self._add(
+        else:
+            stem_entry = self._add(
                 "@mark",
                 {
                     "factory": "segments",
@@ -1566,17 +1795,47 @@ class PlotTypeMixin:
                     },
                 },
             )
-            self._add(
-                "scatter",
-                {
-                    "x": marker_x,
-                    "y": marker_y,
-                    "kwargs": {"color": chosen, "symbol": symbol, "size": 5.0},
+        edge_width = float(rcParams["lines.markeredgewidth"]) * self._point_scale()
+        marker_size = float(rcParams["lines.markersize"]) * self._point_scale() + edge_width
+        marker_entry = self._add(
+            "scatter",
+            {
+                "x": marker_x,
+                "y": marker_y,
+                "kwargs": {
+                    "color": marker_color or chosen,
+                    "stroke": marker_color or chosen,
+                    "stroke_width": edge_width,
+                    "symbol": symbol,
+                    "size": marker_size,
+                    "opacity": 1.0,
                 },
-            )
-        else:
-            raise ValueError("stem orientation must be 'vertical' or 'horizontal'")
-        return StemContainer(Artist(self, entry))
+            },
+        )
+
+        base_color, base_linestyle, _base_marker = parse_fmt(str(basefmt or "C3-"))
+        base_dash = _dash_segment_pattern("stem", base_linestyle)
+        baseline_entry = self._add(
+            "line",
+            {
+                "x": baseline_x,
+                "y": baseline_y,
+                "kwargs": {
+                    "color": resolve_color(base_color or "C3"),
+                    # The axes spine is painted after marks.  Matplotlib's
+                    # baseline remains visible when it coincides with that
+                    # spine, so give the colored rule enough width to remain
+                    # visible on either side of the 1 px frame.
+                    "width": 1.5,
+                    **({"dash": list(base_dash)} if base_dash is not None else {}),
+                },
+            },
+        )
+        return StemContainer(
+            Line2D(self, marker_entry),
+            Artist(self, stem_entry),
+            Line2D(self, baseline_entry),
+        )
 
     def stairs(
         self,
@@ -1641,7 +1900,9 @@ class PlotTypeMixin:
                 entry = entry or item
             assert entry is not None
             if hatch:
-                self._stairs_hatch(vals, edge_values, base_values, orientation, props)
+                self._stairs_hatch(
+                    vals, edge_values, base_values, orientation, props, hatch=str(hatch)
+                )
             return StepPatch(self, entry)
         if orientation == "horizontal":
             x0 = np.concatenate((vals, vals[:-1]))
@@ -1668,7 +1929,9 @@ class PlotTypeMixin:
                 base_values = np.broadcast_to(
                     np.asarray(0.0 if baseline is None else baseline, dtype=np.float64), vals.shape
                 )
-                self._stairs_hatch(vals, edge_values, base_values, orientation, props)
+                self._stairs_hatch(
+                    vals, edge_values, base_values, orientation, props, hatch=str(hatch)
+                )
             return StepPatch(self, entry)
         entry = self._add(
             "@mark",
@@ -1689,41 +1952,134 @@ class PlotTypeMixin:
         bases: np.ndarray,
         orientation: str,
         props: dict[str, Any],
+        *,
+        hatch: str = "/",
+        right_edges: np.ndarray | None = None,
     ) -> None:
-        """Approximate Matplotlib slash hatching with clipped bin-local strokes."""
+        """Approximate Matplotlib hatch families with bin-local geometry."""
         x0: list[float] = []
         y0: list[float] = []
         x1: list[float] = []
         y1: list[float] = []
-        for value, base, edge0, edge1 in zip(values, bases, edges[:-1], edges[1:], strict=True):
+        dot_x: list[float] = []
+        dot_y: list[float] = []
+        ring_x: list[float] = []
+        ring_y: list[float] = []
+        left_edges = np.asarray(edges, dtype=np.float64)
+        if right_edges is None:
+            right_values = left_edges[1:]
+            left_edges = left_edges[:-1]
+        else:
+            right_values = np.asarray(right_edges, dtype=np.float64)
+        if not (len(values) == len(bases) == len(left_edges) == len(right_values)):
+            raise ValueError("hatch geometry must have one rectangle per value")
+        pattern = set(hatch)
+        density = max(1, min(3, max((hatch.count(char) for char in pattern), default=1)))
+        line_count = 4 + density * 3
+
+        for value, base, edge0, edge1 in zip(values, bases, left_edges, right_values, strict=True):
             if orientation == "vertical":
                 rx0, rx1 = edge0, edge1
                 ry0, ry1 = sorted((base, value))
             else:
                 rx0, rx1 = sorted((base, value))
                 ry0, ry1 = edge0, edge1
-            for offset in np.linspace(-0.75, 0.75, 7):
-                u0, u1 = max(0.0, -offset), min(1.0, 1.0 - offset)
-                if u1 <= u0:
-                    continue
-                v0, v1 = u0 + offset, u1 + offset
-                x0.append(float(rx0 + u0 * (rx1 - rx0)))
-                y0.append(float(ry0 + v0 * (ry1 - ry0)))
-                x1.append(float(rx0 + u1 * (rx1 - rx0)))
-                y1.append(float(ry0 + v1 * (ry1 - ry0)))
-        self._add(
-            "@mark",
-            {
-                "factory": "segments",
-                "args": (x0, y0, x1, y1),
-                "kwargs": {
-                    "color": props.get("color"),
-                    "width": 0.8,
-                    "opacity": props.get("opacity", 1.0),
-                    "name": None,
+
+            def segment(
+                u0: float,
+                v0: float,
+                u1: float,
+                v1: float,
+                *,
+                _rx0: float = float(rx0),
+                _rx1: float = float(rx1),
+                _ry0: float = float(ry0),
+                _ry1: float = float(ry1),
+            ) -> None:
+                x0.append(_rx0 + u0 * (_rx1 - _rx0))
+                y0.append(_ry0 + v0 * (_ry1 - _ry0))
+                x1.append(_rx0 + u1 * (_rx1 - _rx0))
+                y1.append(_ry0 + v1 * (_ry1 - _ry0))
+
+            def diagonals(reverse: bool) -> None:
+                for offset in np.linspace(-0.85, 0.85, line_count):
+                    u0, u1 = max(0.0, -offset), min(1.0, 1.0 - offset)
+                    if u1 <= u0:
+                        continue
+                    v0, v1 = u0 + offset, u1 + offset
+                    if reverse:
+                        v0, v1 = 1.0 - v0, 1.0 - v1
+                    segment(u0, v0, u1, v1)
+
+            if "/" in pattern or "x" in pattern or "*" in pattern:
+                diagonals(False)
+            if "\\" in pattern or "x" in pattern or "*" in pattern:
+                diagonals(True)
+            if "|" in pattern or "+" in pattern or "*" in pattern:
+                for position in np.linspace(0.1, 0.9, line_count):
+                    segment(float(position), 0.0, float(position), 1.0)
+            if "-" in pattern or "+" in pattern or "*" in pattern:
+                for position in np.linspace(0.1, 0.9, line_count):
+                    segment(0.0, float(position), 1.0, float(position))
+            if "." in pattern:
+                grid = np.linspace(0.12, 0.88, 3 + density)
+                for u in grid:
+                    for v in grid:
+                        dot_x.append(float(rx0 + u * (rx1 - rx0)))
+                        dot_y.append(float(ry0 + v * (ry1 - ry0)))
+            if "o" in pattern or "O" in pattern:
+                grid = np.linspace(0.14, 0.86, 3 + density)
+                for u in grid:
+                    for v in grid:
+                        ring_x.append(float(rx0 + u * (rx1 - rx0)))
+                        ring_y.append(float(ry0 + v * (ry1 - ry0)))
+
+        color = props.get("color")
+        opacity = props.get("opacity", 1.0)
+        if x0:
+            self._add(
+                "@mark",
+                {
+                    "factory": "segments",
+                    "args": (x0, y0, x1, y1),
+                    "kwargs": {
+                        "color": color,
+                        "width": 0.8,
+                        "opacity": opacity,
+                        "name": None,
+                    },
                 },
-            },
-        )
+            )
+        if dot_x:
+            self._add(
+                "scatter",
+                {
+                    "x": dot_x,
+                    "y": dot_y,
+                    "kwargs": {
+                        "color": color,
+                        "size": 2.0,
+                        "symbol": "circle",
+                        "opacity": opacity,
+                    },
+                },
+            )
+        if ring_x:
+            self._add(
+                "scatter",
+                {
+                    "x": ring_x,
+                    "y": ring_y,
+                    "kwargs": {
+                        "color": props.get("facecolor", "transparent"),
+                        "stroke": color,
+                        "stroke_width": 0.8,
+                        "size": 13.0 if "O" in pattern else 10.0,
+                        "symbol": "circle",
+                        "opacity": opacity,
+                    },
+                },
+            )
 
     def ecdf(
         self,
@@ -1771,7 +2127,13 @@ class PlotTypeMixin:
         else:
             raise ValueError("ecdf orientation must be 'vertical' or 'horizontal'")
         entry = self._add(
-            "@mark", {"factory": "step", "args": args, "kwargs": {"where": "post", **props}}
+            "@mark",
+            {
+                "factory": "step",
+                "args": args,
+                "kwargs": {"where": "post", **props},
+                "_mpl_sticky_edges": {"y" if orientation == "vertical" else "x": (0.0, 1.0)},
+            },
         )
         return Artist(self, entry)
 
@@ -1851,6 +2213,17 @@ class PlotTypeMixin:
         )
         if not advanced:
             color = self._next_color()
+            if positions is None:
+                if (
+                    isinstance(values, (list, tuple))
+                    and values
+                    and all(np.ndim(value) == 1 for value in values)
+                ):
+                    count = len(values)
+                else:
+                    array = np.asarray(values)
+                    count = array.shape[1] if array.ndim == 2 else 1
+                positions = np.arange(1, count + 1, dtype=np.float64)
             entry = self._add(
                 "@mark",
                 {
@@ -2201,9 +2574,38 @@ class PlotTypeMixin:
 
             lolims, uplims = subset_limit(lolims), subset_limit(uplims)
             xlolims, xuplims = subset_limit(xlolims), subset_limit(xuplims)
-        yerr = _limit_error(yerr, lolims, uplims, len(np.asarray(y)))
-        xerr = _limit_error(xerr, xlolims, xuplims, len(np.asarray(x)))
+        x_values = np.asarray(x)
+        y_values = np.asarray(y)
+        limit_markers: list[tuple[np.ndarray, np.ndarray, str]] = []
+        if yerr is not None:
+            lower, upper = _error_sides(yerr, len(y_values))
+            lower_flags = np.broadcast_to(np.asarray(lolims, dtype=bool), y_values.shape)
+            upper_flags = np.broadcast_to(np.asarray(uplims, dtype=bool), y_values.shape)
+            if lower_flags.any():
+                limit_markers.append(
+                    (x_values[lower_flags], y_values[lower_flags] + upper[lower_flags], "^")
+                )
+            if upper_flags.any():
+                limit_markers.append(
+                    (x_values[upper_flags], y_values[upper_flags] - lower[upper_flags], "v")
+                )
+        if xerr is not None:
+            lower, upper = _error_sides(xerr, len(x_values))
+            lower_flags = np.broadcast_to(np.asarray(xlolims, dtype=bool), x_values.shape)
+            upper_flags = np.broadcast_to(np.asarray(xuplims, dtype=bool), x_values.shape)
+            if lower_flags.any():
+                limit_markers.append(
+                    (x_values[lower_flags] + upper[lower_flags], y_values[lower_flags], ">")
+                )
+            if upper_flags.any():
+                limit_markers.append(
+                    (x_values[upper_flags] - lower[upper_flags], y_values[upper_flags], "<")
+                )
+        yerr = _limit_error(yerr, lolims, uplims, len(y_values))
+        xerr = _limit_error(xerr, xlolims, xuplims, len(x_values))
         base = line_kwargs(kwargs)
+        marker = kwargs.pop("marker", None)
+        markersize = kwargs.pop("markersize", kwargs.pop("ms", None))
         check_unsupported(kwargs, "errorbar()")
         # When ecolor is omitted, the bars inherit the resolved data-series
         # color, exactly as matplotlib does: an explicit color kwarg wins, then
@@ -2223,6 +2625,10 @@ class PlotTypeMixin:
             if line_color is None:
                 line_color = self._next_color()
             color = line_color
+        resolved_capsize = float(rcParams["errorbar.capsize"] if capsize is None else capsize)
+        errorbar_width = float(
+            elinewidth if elinewidth is not None else base.get("width", rcParams["lines.linewidth"])
+        )
         entry = self._add(
             "@mark",
             {
@@ -2233,12 +2639,23 @@ class PlotTypeMixin:
                     "xerr": xerr,
                     "name": base.get("name"),
                     "color": color,
-                    "width": float(elinewidth or base.get("width", 1.2)),
-                    "cap_size": None if capsize is None else float(capsize),
+                    "width": errorbar_width,
+                    "cap_size": resolved_capsize,
                     "opacity": base.get("opacity", 1.0),
                 },
             },
         )
+        marker_area = float(max(float(rcParams["lines.markersize"]), 2.0 * resolved_capsize) ** 2)
+        for marker_x, marker_y, marker_symbol in limit_markers:
+            self.scatter(
+                marker_x,
+                marker_y,
+                s=marker_area,
+                c=color,
+                marker=marker_symbol,
+                edgecolors=color,
+                linewidths=0.0,
+            )
         data_line: Optional[Line2D] = None
         if fmt.lower() != "none":
             line_kwargs_for_plot: dict[str, Any] = {}
@@ -2254,6 +2671,14 @@ class PlotTypeMixin:
                 line_kwargs_for_plot["alpha"] = base["opacity"]
             if "name" in base:
                 line_kwargs_for_plot["label"] = base["name"]
+            if "linestyle" in base:
+                line_kwargs_for_plot["linestyle"] = base["linestyle"]
+            if "dash" in base:
+                line_kwargs_for_plot["dashes"] = base["dash"]
+            if marker is not None:
+                line_kwargs_for_plot["marker"] = marker
+            if markersize is not None:
+                line_kwargs_for_plot["markersize"] = markersize
             data_line = self.plot(x, y, fmt, **line_kwargs_for_plot)[0]
         return ErrorbarContainer(Artist(self, entry), data_line)
 
@@ -2340,11 +2765,13 @@ class PlotTypeMixin:
         return PathCollection(self, entry)
 
     def _contour(self, filled: bool, args: tuple[Any, ...], kwargs: dict[str, Any]) -> ContourSet:
+        inherited_corner_mask: bool | None = None
         if args and isinstance(args[0], ContourSet):
             source = args[0]._entry
             z = source["args"][0]
             x = source["kwargs"].get("x")
             y = source["kwargs"].get("y")
+            inherited_corner_mask = source.get("corner_mask")
             positional_levels = args[1] if len(args) > 1 else None
             args = ()
         elif len(args) in (1, 2):
@@ -2378,23 +2805,67 @@ class PlotTypeMixin:
         colors = kwargs.pop("colors", None)
         linewidths = kwargs.pop("linewidths", None)
         alpha = kwargs.pop("alpha", None)
-        if kwargs.pop("origin", None) is not None:
-            raise not_implemented("contour(origin=...)")
+        origin = kwargs.pop("origin", None)
+        if origin == "image":
+            origin = rcParams["image.origin"]
+        if origin not in (None, "lower", "upper"):
+            raise ValueError("origin must be None, 'lower', 'upper', or 'image'")
         extent = kwargs.pop("extent", None)
         norm = kwargs.pop("norm", None)
-        if kwargs.pop("linestyles", None) is not None:
+        linestyles = kwargs.pop("linestyles", None)
+        if linestyles not in (None, "-", "solid"):
             raise not_implemented("contour(linestyles=...)")
-        _reject_non_default("contour", "corner_mask", kwargs.pop("corner_mask", None), True)
+        corner_mask = kwargs.pop("corner_mask", inherited_corner_mask)
+        if corner_mask is None:
+            corner_mask = rcParams["contour.corner_mask"]
+        if not isinstance(corner_mask, (bool, np.bool_)):
+            raise TypeError("corner_mask must be a boolean")
         extend = kwargs.pop("extend", None)
+        if extend is None:
+            extend = "neither"
+        if extend not in ("neither", "min", "max", "both"):
+            raise ValueError("extend must be 'neither', 'min', 'max', or 'both'")
         hatches = kwargs.pop("hatches", None)
         locator = kwargs.pop("locator", None)
         za = np.asarray(z, dtype=np.float64)
-        if extent is not None and x is None and za.ndim == 2:
-            # origin=None semantics: extent gives the positions of Z[0, 0] and
-            # Z[-1, -1]; extent is documented to be ignored when X/Y are given.
-            x0_extent, x1_extent, y0_extent, y1_extent = map(float, extent)
-            x = np.linspace(x0_extent, x1_extent, za.shape[1])
-            y = np.linspace(y0_extent, y1_extent, za.shape[0])
+        if x is None and za.ndim == 2:
+            rows, cols = za.shape
+            if origin is None:
+                if extent is not None:
+                    # Without image-oriented origin, extent gives the exact
+                    # positions of Z[0, 0] and Z[-1, -1].
+                    x0_extent, x1_extent, y0_extent, y1_extent = map(float, extent)
+                    x = np.linspace(x0_extent, x1_extent, cols)
+                    y = np.linspace(y0_extent, y1_extent, rows)
+            else:
+                # Matplotlib places contour samples at image-pixel centers.
+                # For origin='upper', the first Z row belongs at the top.
+                x0_extent, x1_extent, y0_extent, y1_extent = (
+                    (0.0, float(cols), 0.0, float(rows))
+                    if extent is None
+                    else tuple(map(float, extent))
+                )
+                dx = (x1_extent - x0_extent) / cols
+                dy = (y1_extent - y0_extent) / rows
+                x = x0_extent + (np.arange(cols, dtype=float) + 0.5) * dx
+                y = y0_extent + (np.arange(rows, dtype=float) + 0.5) * dy
+                if origin == "upper":
+                    y = y[::-1]
+        # The native regular-grid contour kernel intentionally requires
+        # increasing coordinates.  Matplotlib's origin='upper' represents the
+        # same field with descending y centers; reverse both the centers and
+        # the corresponding data rows so geometry and public axis direction
+        # remain identical while satisfying the kernel contract.
+        if x is not None and np.asarray(x).ndim == 1 and len(x) > 1:
+            x_values = np.asarray(x, dtype=np.float64)
+            if np.all(np.diff(x_values) < 0):
+                x = x_values[::-1]
+                za = za[:, ::-1]
+        if y is not None and np.asarray(y).ndim == 1 and len(y) > 1:
+            y_values = np.asarray(y, dtype=np.float64)
+            if np.all(np.diff(y_values) < 0):
+                y = y_values[::-1]
+                za = za[::-1, :]
         if np.isscalar(levels):
             finite = za[np.isfinite(za)]
             if locator is not None and "LogLocator" in type(locator).__name__:
@@ -2409,7 +2880,7 @@ class PlotTypeMixin:
                 count = int(np.asarray(levels, dtype=np.float64).item())
                 levels = _nice_contour_levels(float(finite.min()), float(finite.max()), count)
         public_levels = np.asarray(levels, dtype=np.float64)
-        rendered_z = z
+        rendered_z = za
         rendered_levels = public_levels
         if norm is not None and callable(norm):
             rendered_z = np.ma.asarray(norm(za), dtype=np.float64).filled(np.nan)
@@ -2418,17 +2889,59 @@ class PlotTypeMixin:
             rendered_z = np.where(za > 0, np.log10(za), np.nan)
             rendered_levels = np.log10(public_levels)
         check_unsupported(kwargs, "contour()/contourf()")
-        color = None
+        color: Any = None
+        monochrome = False
         if colors is not None:
-            color = resolve_color(colors if isinstance(colors, str) else next(iter(colors)))
+            scalar_color = isinstance(colors, str) or (
+                isinstance(colors, tuple)
+                and len(colors) in (3, 4)
+                and all(
+                    np.isscalar(value) and not isinstance(value, (str, bytes)) for value in colors
+                )
+            )
+            color_values = [colors] if scalar_color else list(colors)
+            if not color_values:
+                raise ValueError("colors must contain at least one color")
+            monochrome = len(color_values) == 1
+            if not filled and monochrome:
+                color = resolve_color(color_values[0])
+            else:
+                # Matplotlib resizes the supplied sequence to one color per
+                # isoline (or one per filled band), repeating short sequences
+                # and truncating long ones.  Filled contours may additionally
+                # reserve the first/last colors for extended regions.
+                ncolors = len(public_levels) - int(filled)
+                extend_min = filled and extend in ("min", "both")
+                extend_max = filled and extend in ("max", "both")
+                total = ncolors + int(extend_min) + int(extend_max)
+                use_extreme_colors = len(color_values) == total and (extend_min or extend_max)
+                interior_source = (
+                    color_values[1:] if use_extreme_colors and extend_min else color_values
+                )
+                interior = [
+                    interior_source[index % len(interior_source)] for index in range(ncolors)
+                ]
+                resolved = [resolve_rgba(value) for value in interior]
+                if extend_min:
+                    resolved.insert(
+                        0,
+                        resolve_rgba(color_values[0]) if use_extreme_colors else resolved[0],
+                    )
+                if extend_max:
+                    resolved.append(
+                        resolve_rgba(color_values[-1]) if use_extreme_colors else resolved[-1],
+                    )
+                color = np.ascontiguousarray(resolved, dtype=np.float64)
         # Matplotlib contour linewidths are points.  The browser renderer uses
         # CSS pixels, so the 1.5 pt default becomes 2 px at 96 dpi.
-        width_pt = (
-            _float(linewidths)
-            if np.isscalar(linewidths) and linewidths is not None
-            else float(rcParams["lines.linewidth"])
-        )
-        width = width_pt * (4.0 / 3.0)
+        if linewidths is None:
+            width: Any = float(rcParams["lines.linewidth"]) * (4.0 / 3.0)
+        elif np.isscalar(linewidths):
+            width = _float(linewidths) * (4.0 / 3.0)
+        else:
+            width = np.asarray(linewidths, dtype=float).reshape(-1) * (4.0 / 3.0)
+            if not len(width):
+                raise ValueError("linewidths must contain at least one value")
         transparent_fill = filled and isinstance(colors, str) and colors.lower() == "none"
         entry = self._add(
             "@mark",
@@ -2443,14 +2956,21 @@ class PlotTypeMixin:
                     "colormap": resolve_cmap(cmap) if cmap is not None else "viridis",
                     "color": color,
                     "width": width,
+                    "extend": extend,
                     "opacity": 0.0
                     if transparent_fill
                     else (1.0 if alpha is None else float(alpha)),
                     # Matplotlib dashes negative-level lines for a single-color
                     # contour; a colormapped contour keeps every level solid.
-                    "dash_negative": color is not None,
+                    "dash_negative": (
+                        monochrome
+                        and linestyles is None
+                        and rcParams["contour.negative_linestyle"] == "dashed"
+                    ),
+                    "corner_mask": bool(corner_mask),
                 },
                 "source_z": za,
+                "corner_mask": bool(corner_mask),
                 "domain": (float(public_levels[0]), float(public_levels[-1])),
                 "hatches": list(hatches) if hatches is not None else None,
                 "extend": extend,
@@ -2566,8 +3086,9 @@ class PlotTypeMixin:
         Call as ``contour(Z)``, ``contour(X, Y, Z)``, or with a trailing
         level count/sequence. Supported keywords: ``levels``, ``cmap``,
         ``colors``, ``linewidths``, ``alpha``, ``extent``, ``norm``,
-        ``extend``, ``hatches``, and ``locator``; ``origin``,
-        ``linestyles``, and unknown keywords raise loudly.
+        ``extend``, ``hatches``, ``locator``, and image-oriented ``origin``.
+        ``linestyles`` accepts the solid forms ``"-"`` and ``"solid"``;
+        other line styles and unknown keywords raise loudly.
         """
         return self._contour(False, tuple(_from_data(value, data) for value in args), kwargs)
 
@@ -2735,22 +3256,24 @@ class PlotTypeMixin:
             dtype=np.float64,
         )
 
-        def style(props: Any, fallback: Any = None) -> dict[str, Any]:
+        def style(
+            props: Any, fallback: Any = None
+        ) -> tuple[dict[str, Any], Optional[tuple[tuple[float, float], ...]]]:
             source = dict(props or {})
             color = source.pop("color", source.pop("edgecolor", fallback))
             width = source.pop("linewidth", source.pop("lw", 1.2))
             alpha = source.pop("alpha", 1.0)
             linestyle = source.pop("linestyle", source.pop("ls", None))
-            if linestyle not in (None, "-", "solid"):
-                raise not_implemented(
-                    "bxp component linestyle", "solid component lines with color/width/alpha"
-                )
+            dash_pattern = _dash_segment_pattern("bxp component", linestyle)
             check_unsupported(source, "bxp component properties")
-            return {
-                "color": resolve_color(color) if color is not None else fallback,
-                "width": float(width),
-                "opacity": float(alpha),
-            }
+            return (
+                {
+                    "color": resolve_color(color) if color is not None else fallback,
+                    "width": float(width),
+                    "opacity": float(alpha),
+                },
+                dash_pattern,
+            )
 
         default_color = self._next_color()
 
@@ -2758,12 +3281,21 @@ class PlotTypeMixin:
             if not coords:
                 return []
             values = np.asarray(coords, dtype=np.float64)
+            rendered_style, dash_pattern = style(props, default_color)
+            x0, y0, x1, y1 = (
+                values[:, 0],
+                values[:, 1],
+                values[:, 2],
+                values[:, 3],
+            )
+            if dash_pattern is not None:
+                x0, y0, x1, y1 = _dashed_segments(x0, y0, x1, y1, dash_pattern)
             entry = self._add(
                 "@mark",
                 {
                     "factory": "segments",
-                    "args": (values[:, 0], values[:, 1], values[:, 2], values[:, 3]),
-                    "kwargs": style(props, default_color),
+                    "args": (x0, y0, x1, y1),
+                    "kwargs": rendered_style,
                 },
             )
             return [Artist(self, entry)]
@@ -2773,6 +3305,8 @@ class PlotTypeMixin:
         whisker_segments: list[tuple[float, float, float, float]] = []
         cap_segments: list[tuple[float, float, float, float]] = []
         mean_segments: list[tuple[float, float, float, float]] = []
+        mean_x: list[float] = []
+        mean_y: list[float] = []
         flier_x: list[float] = []
         flier_y: list[float] = []
         for index, item in enumerate(stats):
@@ -2825,11 +3359,11 @@ class PlotTypeMixin:
                 flier_y.extend(float(value) for value in item.get("fliers", ()))
                 if showmeans and "mean" in item:
                     mean = float(item["mean"])
-                    mean_segments.append(
-                        (center - half, mean, center + half, mean)
-                        if meanline
-                        else (center, mean, center, mean)
-                    )
+                    if meanline:
+                        mean_segments.append((center - half, mean, center + half, mean))
+                    else:
+                        mean_x.append(center)
+                        mean_y.append(mean)
             else:
                 if shownotches:
                     cilo = float(item.get("cilo", med))
@@ -2870,45 +3404,83 @@ class PlotTypeMixin:
                 flier_y.extend([center] * len(item.get("fliers", ())))
                 if showmeans and "mean" in item:
                     mean = float(item["mean"])
-                    mean_segments.append(
-                        (mean, center - half, mean, center + half)
-                        if meanline
-                        else (mean, center, mean, center)
-                    )
+                    if meanline:
+                        mean_segments.append((mean, center - half, mean, center + half))
+                    else:
+                        mean_x.append(mean)
+                        mean_y.append(center)
+
+        def emit_points(
+            x_values: list[float],
+            y_values: list[float],
+            props: Any,
+            *,
+            default_marker: str,
+            default_face: Any,
+            default_size: float,
+            default_edge: Any = None,
+        ) -> list[Artist]:
+            if not x_values:
+                return []
+            source = dict(props or {})
+            color = source.pop("color", default_face)
+            marker = source.pop("marker", default_marker)
+            size = source.pop("markersize", source.pop("ms", default_size))
+            facecolor = source.pop("markerfacecolor", source.pop("mfc", color))
+            edgecolor = source.pop(
+                "markeredgecolor",
+                source.pop("mec", color if default_edge is None else default_edge),
+            )
+            edgewidth = source.pop("markeredgewidth", source.pop("mew", 1.0))
+            alpha = source.pop("alpha", 1.0)
+            source.pop("linestyle", source.pop("ls", None))
+            check_unsupported(source, "bxp point properties")
+            entry = self._add(
+                "scatter",
+                {
+                    "x": x_values,
+                    "y": y_values,
+                    "kwargs": {
+                        "color": resolve_color(facecolor),
+                        "stroke": resolve_color(edgecolor),
+                        "stroke_width": float(edgewidth),
+                        "size": float(size),
+                        "symbol": MARKER_TO_SYMBOL.get(marker or default_marker, "circle"),
+                        "opacity": float(alpha),
+                    },
+                },
+            )
+            return [Artist(self, entry)]
+
         result = {
             "boxes": emit(box_segments, boxprops) if showbox else [],
             "medians": emit(median_segments, medianprops),
             "whiskers": emit(whisker_segments, whiskerprops),
             "caps": emit(cap_segments, capprops) if showcaps else [],
-            "means": emit(mean_segments, meanprops),
+            "means": (
+                emit(mean_segments, meanprops)
+                if meanline
+                else emit_points(
+                    mean_x,
+                    mean_y,
+                    meanprops,
+                    default_marker="^",
+                    default_face="C2",
+                    default_size=6.0,
+                )
+            ),
             "fliers": [],
         }
         if showfliers and flier_x:
-            source = dict(flierprops or {})
-            color = source.pop("color", default_color)
-            marker = source.pop("marker", "o")
-            size = source.pop("markersize", source.pop("ms", 5.0))
-            # single-color flier dots: face color wins, else the edge color
-            facecolor = source.pop("markerfacecolor", source.pop("mfc", None))
-            edgecolor = source.pop("markeredgecolor", source.pop("mec", None))
-            if facecolor is not None:
-                color = facecolor
-            elif edgecolor is not None:
-                color = edgecolor
-            check_unsupported(source, "bxp(flierprops=)")
-            entry = self._add(
-                "scatter",
-                {
-                    "x": flier_x,
-                    "y": flier_y,
-                    "kwargs": {
-                        "color": resolve_color(color),
-                        "size": float(size),
-                        "symbol": MARKER_TO_SYMBOL.get(marker or "o", "circle"),
-                    },
-                },
+            result["fliers"] = emit_points(
+                flier_x,
+                flier_y,
+                flierprops,
+                default_marker="o",
+                default_face="transparent",
+                default_size=5.0,
+                default_edge=default_color,
             )
-            result["fliers"] = [Artist(self, entry)]
         if label is not None and result["medians"]:
             result["medians"][0].set_label(str(label))
         if zorder is not None:
@@ -3381,9 +3953,47 @@ class PlotTypeMixin:
             vmax = norm_vmax
         domain = (float(vmin), float(vmax)) if vmin is not None and vmax is not None else None
         regular = None if x is None else _uniform_mesh_axes(x, y, z.shape)
+        if shading == "gouraud":
+            gouraud_axes = (
+                (np.arange(z.shape[1], dtype=float), np.arange(z.shape[0], dtype=float))
+                if x is None
+                else _gouraud_rect_axes(x, y, z.shape)
+            )
+            no_edges = edgecolors is None or (
+                isinstance(edgecolors, str) and edgecolors.lower() == "none"
+            )
+            if gouraud_axes is not None and no_edges:
+                width = max(2, min(512, max(256, z.shape[1] * 32)))
+                height = max(2, min(512, max(256, z.shape[0] * 32)))
+                smooth = _bilinear_grid(z, width, height)
+                gx, gy = gouraud_axes
+                mark_kwargs: dict[str, Any] = {
+                    "x": np.linspace(float(gx[0]), float(gx[-1]), width),
+                    "y": np.linspace(float(gy[0]), float(gy[-1]), height),
+                    "colormap": colormap,
+                    "opacity": opacity,
+                }
+                if domain is not None:
+                    mark_kwargs["domain"] = domain
+                entry = self._add(
+                    "@mark",
+                    {
+                        "factory": "heatmap",
+                        "args": (smooth,),
+                        "kwargs": mark_kwargs,
+                        "source_z": z,
+                    },
+                )
+                return PolyCollection(self, entry)
         if x is None or (regular is not None and shading != "gouraud"):
             if regular is not None:
                 x, y = regular
+            elif x is None:
+                # Matplotlib's implicit pcolormesh coordinates are cell
+                # *edges* 0..N and 0..M.  Heatmaps consume centers, so use
+                # half-integer centers to preserve that exact geometry.
+                x = np.arange(z.shape[1], dtype=np.float64) + 0.5
+                y = np.arange(z.shape[0], dtype=np.float64) + 0.5
             mark_kwargs: dict[str, Any] = {
                 "x": x,
                 "y": y,
@@ -3408,6 +4018,24 @@ class PlotTypeMixin:
         if y is None:
             raise ValueError("pcolormesh requires Y when X is provided")
         x0, y0, x1, y1, x2, y2, scalar = kernels.quad_mesh_triangles(x, y, z)
+        mesh_x = np.concatenate((x0, x1, x2))
+        mesh_y = np.concatenate((y0, y1, y2))
+        finite_x = mesh_x[np.isfinite(mesh_x)]
+        finite_y = mesh_y[np.isfinite(mesh_y)]
+        # The native expansion elides triangles whose scalar is masked.  An
+        # entirely masked QuadMesh still contributes its coordinate grid to
+        # Matplotlib's data limits, so recover that extent from X/Y when no
+        # triangle survives.
+        if not finite_x.size:
+            source_x = np.asarray(x, dtype=np.float64).reshape(-1)
+            finite_x = source_x[np.isfinite(source_x)]
+        if not finite_y.size:
+            source_y = np.asarray(y, dtype=np.float64).reshape(-1)
+            finite_y = source_y[np.isfinite(source_y)]
+        mesh_extent = {
+            "x": (float(finite_x.min()), float(finite_x.max())),
+            "y": (float(finite_y.min()), float(finite_y.max())),
+        }
         finite_triangles = np.isfinite(scalar)
         if not np.all(finite_triangles):
             x0, y0, x1, y1, x2, y2, scalar = (
@@ -3434,6 +4062,8 @@ class PlotTypeMixin:
                 "kwargs": mark_kwargs,
                 "source_z": scalar,
                 "domain": domain,
+                "_mpl_extent": mesh_extent,
+                "_mpl_sticky_edges": mesh_extent,
             },
         )
         return PolyCollection(self, entry)
@@ -3551,7 +4181,8 @@ class PlotTypeMixin:
         _reject_non_default("pie", "rotatelabels", rotatelabels, False)
         if hatch is not None:
             raise not_implemented("pie(hatch=...)")
-        values = np.asarray(_from_data(x, data), dtype=np.float64)
+        source_values = np.asarray(_from_data(x, data))
+        values = np.asarray(source_values, dtype=np.float64)
         if values.ndim != 1 or len(values) == 0:
             raise ValueError("pie x must be a non-empty 1-D array")
         offsets = np.zeros(len(values), dtype=np.float64)
@@ -3602,14 +4233,21 @@ class PlotTypeMixin:
         wedges: list[Wedge] = []
         for index in range(len(values)):
             selected = sectors == float(index)
+            face = resolve_color(color_values[index])
             mark_kwargs: dict[str, Any] = {
-                "color": resolve_color(color_values[index]),
+                "color": face,
                 "name": None if label_values[index] is None else str(label_values[index]),
                 "opacity": 1.0 if alpha is None else float(alpha),
             }
             if edgecolor is not None:
                 mark_kwargs["stroke"] = resolve_color(edgecolor)
                 mark_kwargs["stroke_width"] = 1.0 if linewidth is None else float(linewidth)
+            else:
+                # A sector is a fan of adjacent triangles. Stroke each fan
+                # triangle with its own face color so anti-aliasing cannot
+                # expose the figure background as radial hairline spokes.
+                mark_kwargs["stroke"] = face
+                mark_kwargs["stroke_width"] = 0.75
             entry = self._add(
                 "@mark",
                 {
@@ -3674,7 +4312,11 @@ class PlotTypeMixin:
         extent = float(radius) * (1.25 + float(np.max(offsets)))
         self.set_xlim(float(center[0]) - extent, float(center[0]) + extent)
         self.set_ylim(float(center[1]) - extent, float(center[1]) + extent)
-        return PieContainer(wedges, values, bool(normalize), texts, autotexts)
+        self.set_aspect("equal", adjustable="box")
+        if not frame:
+            self.set_axis_off()
+            self._hidden_spines.update(("left", "bottom", "top", "right"))
+        return PieContainer(wedges, source_values, bool(normalize), texts, autotexts)
 
     def pie_label(
         self,
@@ -3691,11 +4333,13 @@ class PlotTypeMixin:
         ``labels`` may be a sequence or a ``{}``-format string receiving
         ``absval`` and ``frac`` per wedge; ``distance`` places labels as a
         fraction of the radius and ``textprops`` styles them.
-        ``rotate=True`` raises loudly.
+        ``rotate=True`` orients each label away from its wedge center.
         """
-        _reject_non_default("pie_label", "rotate", rotate, False)
         if alignment not in ("auto", "center", "outer"):
             raise ValueError("pie_label alignment must be 'auto', 'center', or 'outer'")
+        resolved_alignment = "outer" if alignment == "auto" and distance > 1 else alignment
+        if resolved_alignment == "auto":
+            resolved_alignment = "center"
         if isinstance(labels, str):
             formatted = [
                 labels.format(absval=value, frac=frac)
@@ -3714,15 +4358,25 @@ class PlotTypeMixin:
             radius = float(entry_data["pie_radius"])
             explode = float(entry_data["pie_explode"])
             radial = (float(distance) + explode) * radius
+            x = center_x + radial * np.cos(mid)
+            y = center_y + radial * np.sin(mid)
+            base_style: dict[str, Any] = {"vertical_align": "center"}
+            anchor = "middle"
+            if resolved_alignment == "outer":
+                anchor = "start" if x > 0 else "end"
+            if rotate:
+                if resolved_alignment == "outer":
+                    base_style["vertical_align"] = "bottom" if y > 0 else "top"
+                base_style["rotation"] = float(np.rad2deg(mid) + (0.0 if x > 0 else 180.0))
+            kwargs = {"anchor": anchor, "style": base_style}
+            kwargs.update({key: value for key, value in text_kwargs.items() if key != "style"})
+            if text_kwargs.get("style"):
+                kwargs["style"] = {**base_style, **text_kwargs["style"]}
             entry = self._add(
                 "@text",
                 {
-                    "args": (
-                        center_x + radial * np.cos(mid),
-                        center_y + radial * np.sin(mid),
-                        str(label),
-                    ),
-                    "kwargs": dict(text_kwargs),
+                    "args": (x, y, str(label)),
+                    "kwargs": kwargs,
                 },
             )
             result.append(Text(self, entry))
@@ -4225,12 +4879,12 @@ class PlotTypeMixin:
             raise TypeError(f"{name}() expects U, V or X, Y, U, V[, C]")
         color = kwargs.pop("color", c)
         alpha = kwargs.pop("alpha", None)
-        width = kwargs.pop("width", kwargs.pop("linewidth", 1.2))
+        width = kwargs.pop("width", kwargs.pop("linewidth", None))
         scale = kwargs.pop("scale", None)
         pivot = kwargs.pop("pivot", "tail")
         angles = kwargs.pop("angles", "uv")
         scale_units = kwargs.pop("scale_units", None)
-        _reject_non_default(name, "units", kwargs.pop("units", None), "width")
+        units = kwargs.pop("units", "width")
         _reject_non_default(name, "headwidth", kwargs.pop("headwidth", None), 3.0)
         _reject_non_default(name, "headlength", kwargs.pop("headlength", None), 5.0)
         _reject_non_default(name, "headaxislength", kwargs.pop("headaxislength", None), 4.5)
@@ -4254,6 +4908,8 @@ class PlotTypeMixin:
             raise ValueError(f"invalid {name} angles {angles!r}")
         if scale_units not in (None, "width", "height", "dots", "inches", "x", "y", "xy"):
             raise ValueError(f"invalid {name} scale_units {scale_units!r}")
+        if units not in ("width", "height", "dots", "inches", "x", "y", "xy"):
+            raise ValueError(f"invalid {name} units {units!r}")
         from xy import kernels
 
         magnitudes = np.hypot(u, v)
@@ -4266,7 +4922,7 @@ class PlotTypeMixin:
             spacing = min(spacings) if spacings else 1.0
             finite_magnitudes = magnitudes[np.isfinite(magnitudes) & (magnitudes > 0)]
             typical = float(np.median(finite_magnitudes)) if len(finite_magnitudes) else 1.0
-            vector_scale = typical / max(0.75 * spacing, np.finfo(float).eps)
+            vector_scale = typical / max(0.55 * spacing, np.finfo(float).eps)
         else:
             vector_scale = float(scale)
         color_repeats: Optional[np.ndarray] = None
@@ -4323,6 +4979,25 @@ class PlotTypeMixin:
             )
         else:
             segment_color = resolve_color(color) if color is not None else self._next_color()
+        if width is None:
+            rendered_width = 1.2
+        else:
+            # Matplotlib's ``units`` controls arrow *width*, while
+            # ``scale_units`` controls length.  Segment widths are pixels in
+            # xy, so convert with a stable nominal 500x370 px Axes viewport;
+            # resizing preserves the important data-unit distinction.
+            x_span = max(float(np.ptp(x[np.isfinite(x)])), np.finfo(float).eps)
+            y_span = max(float(np.ptp(y[np.isfinite(y)])), np.finfo(float).eps)
+            dots_per_unit = {
+                "width": 500.0,
+                "height": 370.0,
+                "dots": 1.0,
+                "inches": 100.0,
+                "x": 500.0 / x_span,
+                "y": 370.0 / y_span,
+                "xy": float(np.hypot(500.0, 370.0) / np.hypot(x_span, y_span)),
+            }[units]
+            rendered_width = max(0.5, float(width) * dots_per_unit)
         entry = self._add(
             "@mark",
             {
@@ -4331,7 +5006,7 @@ class PlotTypeMixin:
                 "kwargs": {
                     "color": segment_color,
                     "colormap": resolve_cmap(cmap) if cmap is not None else "viridis",
-                    "width": max(1.0, float(width) * 200.0) if float(width) < 0.1 else float(width),
+                    "width": rendered_width,
                     "opacity": 1.0 if alpha is None else float(alpha),
                 },
                 "vector_scale": vector_scale,
@@ -4339,14 +5014,359 @@ class PlotTypeMixin:
         )
         return PolyCollection(self, entry)
 
+    def _barb_field(
+        self,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        *,
+        length: float,
+        fill_empty: bool,
+        rounding: bool,
+        flip_barb: Any,
+        sizes: Mapping[str, float],
+        barbcolor: Any,
+        flagcolor: Any,
+        barb_increments: Mapping[str, float],
+    ) -> PolyCollection:
+        """Render Matplotlib-compatible fixed-length wind-barb geometry."""
+        if len(args) == 2:
+            raw_u, raw_v = args
+            u_grid, v_grid = _masked_float(raw_u), _masked_float(raw_v)
+            if u_grid.shape != v_grid.shape:
+                raise ValueError("barbs U and V must have matching shapes")
+            if u_grid.ndim == 1:
+                x, y = np.arange(u_grid.size, dtype=np.float64), np.zeros(u_grid.size)
+            elif u_grid.ndim == 2:
+                rows, cols = u_grid.shape
+                x, y = (
+                    values.reshape(-1) for values in np.meshgrid(np.arange(cols), np.arange(rows))
+                )
+            else:
+                raise ValueError("barbs U and V must be 1-D or 2-D")
+            u, v, c = u_grid.reshape(-1), v_grid.reshape(-1), None
+        elif len(args) in (4, 5):
+            raw_x, raw_y, raw_u, raw_v = args[:4]
+            c = args[4] if len(args) == 5 else None
+            u_grid, v_grid = _masked_float(raw_u), _masked_float(raw_v)
+            x_grid, y_grid = _masked_float(raw_x), _masked_float(raw_y)
+            if x_grid.ndim == y_grid.ndim == 1 and u_grid.ndim == 2:
+                x_grid, y_grid = np.meshgrid(x_grid, y_grid)
+            if (
+                u_grid.shape != v_grid.shape
+                or x_grid.shape != u_grid.shape
+                or y_grid.shape != u_grid.shape
+            ):
+                raise ValueError("barbs X, Y, U, and V must resolve to matching shapes")
+            x, y = x_grid.reshape(-1), y_grid.reshape(-1)
+            u, v = u_grid.reshape(-1), v_grid.reshape(-1)
+        else:
+            raise TypeError("barbs() expects U, V or X, Y, U, V[, C]")
+
+        pivot = kwargs.pop("pivot", "tip")
+        linewidth = float(kwargs.pop("linewidth", kwargs.pop("lw", 1.0)))
+        alpha = float(kwargs.pop("alpha", 1.0))
+        color = kwargs.pop("color", None)
+        cmap = kwargs.pop("cmap", None)
+        if kwargs.pop("norm", None) is not None:
+            raise not_implemented("barbs(norm=...)")
+        check_unsupported(kwargs, "barbs()")
+        if length <= 0:
+            raise ValueError("barbs length must be positive")
+        if isinstance(pivot, str) and pivot.lower() not in ("tip", "middle", "mid"):
+            raise ValueError("barbs pivot must be 'tip', 'middle', or a number")
+
+        allowed_sizes = {"spacing", "height", "width", "emptybarb"}
+        unknown_sizes = set(sizes) - allowed_sizes
+        if unknown_sizes:
+            raise ValueError(f"unsupported barbs sizes: {sorted(unknown_sizes)}")
+        increments = {"half": 5.0, "full": 10.0, "flag": 50.0}
+        unknown_increments = set(barb_increments) - set(increments)
+        if unknown_increments:
+            raise ValueError(f"unsupported barb_increments: {sorted(unknown_increments)}")
+        increments.update({key: float(value) for key, value in barb_increments.items()})
+        if any(value <= 0 for value in increments.values()):
+            raise ValueError("barb increments must be positive")
+
+        valid = np.isfinite(x) & np.isfinite(y) & np.isfinite(u) & np.isfinite(v)
+        x, y, u, v = x[valid], y[valid], u[valid], v[valid]
+        if c is not None:
+            c_values = np.ma.asarray(c).filled(np.nan).reshape(-1)
+            if len(c_values) != len(valid):
+                raise ValueError("barbs color values must match U and V")
+            c = c_values[valid]
+        flip_values = np.asarray(flip_barb, dtype=bool).reshape(-1)
+        if len(flip_values) == 1:
+            flip_values = np.broadcast_to(flip_values, len(x))
+        elif len(flip_values) == len(valid):
+            flip_values = flip_values[valid]
+        elif len(flip_values) != len(x):
+            raise ValueError("barbs flip_barb must be scalar or match U and V")
+
+        magnitudes = np.hypot(u, v)
+        rounded = (
+            increments["half"] * np.around(magnitudes / increments["half"])
+            if rounding
+            else magnitudes.copy()
+        )
+        nflags = np.floor_divide(rounded, increments["flag"]).astype(int)
+        remainder = np.mod(rounded, increments["flag"])
+        nbarbs = np.floor_divide(remainder, increments["full"]).astype(int)
+        remainder = np.mod(remainder, increments["full"])
+        halves = remainder >= increments["half"]
+        empty = ~(halves | (nflags > 0) | (nbarbs > 0))
+
+        def visible_span(values: np.ndarray) -> float:
+            span = float(np.ptp(values))
+            if span > np.finfo(float).eps:
+                return span
+            # Matplotlib's nonsingular locator expands a constant zero-valued
+            # offset range to roughly (-.05, .05).
+            return max(0.1, 0.1 * float(np.max(np.abs(values), initial=0.0)))
+
+        x_span = visible_span(x)
+        y_span = visible_span(y)
+        figure_width, figure_height = rc_figsize_px(self.figure._figsize, self.figure._dpi)
+        rects = self.figure._effective_rects()
+        if rects is None:
+            plot_width = figure_width * 0.775
+            plot_height = figure_height * 0.77
+        else:
+            axes_index = self.figure._axes.index(self)
+            rect = rects[axes_index]
+            plot_width = figure_width * rect[2]
+            plot_height = figure_height * rect[3]
+        # Barbs are a point-sized PolyCollection in Matplotlib. Its path is
+        # scaled by sqrt(length**2 / 4) * dpi / 72 before the data-position
+        # offset is applied. Convert that screen-space path scale separately
+        # on x/y so a single-panel and a dense subplot grid retain the same
+        # visual glyph size and circular calm-wind markers remain circular.
+        dpi = float(self.figure._dpi if self.figure._dpi is not None else rcParams["figure.dpi"])
+        path_pixel_scale = length * 0.5 * dpi / 72.0
+        data_per_path_x = path_pixel_scale * x_span / max(plot_width, 1.0)
+        data_per_path_y = path_pixel_scale * y_span / max(plot_height, 1.0)
+        spacing = length * float(sizes.get("spacing", 0.125))
+        full_height = length * float(sizes.get("height", 0.4))
+        full_width = length * float(sizes.get("width", 0.25))
+        empty_radius = length * float(sizes.get("emptybarb", 0.15))
+
+        sx0: list[float] = []
+        sy0: list[float] = []
+        sx1: list[float] = []
+        sy1: list[float] = []
+        segment_sources: list[int] = []
+        tx0: list[float] = []
+        ty0: list[float] = []
+        tx1: list[float] = []
+        ty1: list[float] = []
+        tx2: list[float] = []
+        ty2: list[float] = []
+        triangle_sources: list[int] = []
+
+        def add_segment(ax: float, ay: float, bx: float, by: float, source: int) -> None:
+            sx0.append(ax)
+            sy0.append(ay)
+            sx1.append(bx)
+            sy1.append(by)
+            segment_sources.append(source)
+
+        def add_triangle(
+            ax: float,
+            ay: float,
+            bx: float,
+            by: float,
+            cx: float,
+            cy: float,
+            source: int,
+        ) -> None:
+            tx0.append(ax)
+            ty0.append(ay)
+            tx1.append(bx)
+            ty1.append(by)
+            tx2.append(cx)
+            ty2.append(cy)
+            triangle_sources.append(source)
+
+        for index, (px, py, du, dv, magnitude) in enumerate(
+            zip(x, y, u, v, magnitudes, strict=True)
+        ):
+            if empty[index] or magnitude <= np.finfo(float).eps:
+                theta = np.linspace(0.0, 2.0 * np.pi, 13)
+                circle_x = px + empty_radius * data_per_path_x * np.cos(theta)
+                circle_y = py + empty_radius * data_per_path_y * np.sin(theta)
+                for point_index in range(12):
+                    add_segment(
+                        float(circle_x[point_index]),
+                        float(circle_y[point_index]),
+                        float(circle_x[point_index + 1]),
+                        float(circle_y[point_index + 1]),
+                        index,
+                    )
+                    if fill_empty:
+                        add_triangle(
+                            float(px),
+                            float(py),
+                            float(circle_x[point_index]),
+                            float(circle_y[point_index]),
+                            float(circle_x[point_index + 1]),
+                            float(circle_y[point_index + 1]),
+                            index,
+                        )
+                continue
+
+            ux, uy = du / magnitude, dv / magnitude
+            shaft_x, shaft_y = -ux, -uy
+            side_sign = -1.0 if flip_values[index] else 1.0
+            side_x, side_y = side_sign * -uy, side_sign * ux
+
+            def transform_point(
+                staff: float,
+                side: float = 0.0,
+                *,
+                origin_x: float = float(px),
+                origin_y: float = float(py),
+                staff_x: float = float(shaft_x),
+                staff_y: float = float(shaft_y),
+                feature_x: float = float(side_x),
+                feature_y: float = float(side_y),
+            ) -> tuple[float, float]:
+                return (
+                    origin_x + (staff_x * staff + feature_x * side) * data_per_path_x,
+                    origin_y + (staff_y * staff + feature_y * side) * data_per_path_y,
+                )
+
+            if isinstance(pivot, str):
+                pivot_offset = -length / 2.0 if pivot.lower() in ("middle", "mid") else 0.0
+            else:
+                pivot_offset = float(pivot)
+            root_x, root_y = transform_point(pivot_offset)
+            outer_x, outer_y = transform_point(pivot_offset + length)
+            add_segment(root_x, root_y, outer_x, outer_y, index)
+            offset = length
+
+            for _ in range(nflags[index]):
+                if offset != length:
+                    offset += spacing / 2.0
+                a_x, a_y = transform_point(pivot_offset + offset)
+                b_x, b_y = transform_point(
+                    pivot_offset + offset - full_width / 2.0,
+                    full_height,
+                )
+                c_x, c_y = transform_point(pivot_offset + offset - full_width)
+                add_triangle(a_x, a_y, b_x, b_y, c_x, c_y, index)
+                add_segment(a_x, a_y, b_x, b_y, index)
+                add_segment(b_x, b_y, c_x, c_y, index)
+                offset -= full_width + spacing
+
+            for _ in range(nbarbs[index]):
+                a_x, a_y = transform_point(pivot_offset + offset)
+                b_x, b_y = transform_point(
+                    pivot_offset + offset + full_width / 2.0,
+                    full_height,
+                )
+                add_segment(a_x, a_y, b_x, b_y, index)
+                offset -= spacing
+
+            if halves[index]:
+                if offset == length:
+                    offset -= 1.5 * spacing
+                a_x, a_y = transform_point(pivot_offset + offset)
+                b_x, b_y = transform_point(
+                    pivot_offset + offset + full_width / 4.0,
+                    full_height / 2.0,
+                )
+                add_segment(a_x, a_y, b_x, b_y, index)
+
+        edge_spec = c if c is not None else (barbcolor if barbcolor is not None else color or "k")
+        face_spec = c if c is not None else (flagcolor if flagcolor is not None else edge_spec)
+        colormap = resolve_cmap(cmap) if cmap is not None else "viridis"
+        entries: list[dict[str, Any]] = []
+
+        def emit(
+            factory: str,
+            coordinates: tuple[list[float], ...],
+            sources: list[int],
+            color_spec: Any,
+            extra: dict[str, Any],
+        ) -> None:
+            arrays = tuple(np.asarray(values, dtype=np.float64) for values in coordinates)
+            source_array = np.asarray(sources, dtype=np.int64)
+            if isinstance(color_spec, str):
+                groups = [(np.ones(len(source_array), dtype=bool), resolve_color(color_spec))]
+            else:
+                colors = np.asarray(color_spec)
+                if colors.ndim == 0:
+                    groups = [
+                        (np.ones(len(source_array), dtype=bool), resolve_color(colors.item()))
+                    ]
+                elif colors.dtype.kind in "OUS":
+                    cycled = np.asarray(
+                        [resolve_color(colors.reshape(-1)[i % colors.size]) for i in range(len(x))]
+                    )
+                    groups = [
+                        (cycled[source_array] == chosen, chosen)
+                        for chosen in dict.fromkeys(cycled.tolist())
+                    ]
+                else:
+                    if colors.size != len(x):
+                        raise ValueError("barbs color values must match U and V")
+                    groups = [
+                        (np.ones(len(source_array), dtype=bool), colors.reshape(-1)[source_array])
+                    ]
+            for keep, chosen_color in groups:
+                if not np.any(keep):
+                    continue
+                entries.append(
+                    self._add(
+                        "@mark",
+                        {
+                            "factory": factory,
+                            "args": tuple(values[keep] for values in arrays),
+                            "kwargs": {
+                                "color": chosen_color,
+                                "colormap": colormap,
+                                "opacity": alpha,
+                                **extra,
+                            },
+                        },
+                    )
+                )
+
+        emit(
+            "segments",
+            (sx0, sy0, sx1, sy1),
+            segment_sources,
+            edge_spec,
+            {"width": linewidth},
+        )
+        if triangle_sources:
+            emit(
+                "triangle_mesh",
+                (tx0, ty0, tx1, ty1, tx2, ty2),
+                triangle_sources,
+                face_spec,
+                {},
+            )
+        if not entries:
+            entries.append(
+                self._add(
+                    "@mark",
+                    {
+                        "factory": "segments",
+                        "args": ([], [], [], []),
+                        "kwargs": {"color": "#000000", "opacity": 0.0},
+                    },
+                )
+            )
+        return PolyCollection(self, entries[0])
+
     def quiver(self, *args: Any, data: TableLike = None, **kwargs: Any) -> PolyCollection:
         """A field of arrows: ``quiver(U, V)`` or ``quiver(X, Y, U, V[, C])``.
 
         Supported keywords: ``color``, ``alpha``, ``width``/``linewidth``,
-        ``scale``, ``pivot``, ``angles``, ``scale_units``, ``cmap``, and
-        ``data``. Non-default ``units``/``headwidth``/``headlength``/
-        ``headaxislength``/``minshaft``/``minlength``, any
-        ``norm``/``clim``/``zorder``, and unknown keywords raise loudly.
+        ``scale``, ``pivot``, ``angles``, ``units``, ``scale_units``,
+        ``cmap``, and ``data``. Non-default ``headwidth``/``headlength``/
+        ``headaxislength``/``minshaft``/``minlength``, any ``norm``/``clim``/
+        ``zorder``, and unknown keywords raise loudly.
         """
         return self._vector_field(
             tuple(_from_data(value, data) for value in args), kwargs, "quiver"
@@ -4355,21 +5375,23 @@ class PlotTypeMixin:
     def barbs(self, *args: Any, data: TableLike = None, **kwargs: Any) -> PolyCollection:
         """A field of wind barbs: ``barbs(U, V)`` or ``barbs(X, Y, U, V[, C])``.
 
-        Accepts the ``quiver`` field keywords (``color``, ``alpha``,
-        ``width``/``linewidth``, ``scale``, ``pivot``, ...). Rendered at
-        matplotlib's default barb geometry: non-default
-        ``length``/``fill_empty``/``rounding``/``flip_barb`` raise loudly,
-        as do ``sizes``/``barbcolor``/``flagcolor``/``barb_increments``.
+        Supports Matplotlib's fixed-length staff, flag/full/half-barb
+        decomposition, pivot, colors, empty-barb fill, feature sizes,
+        increment controls, rounding, and per-vector flipping.
         """
         args = tuple(_from_data(value, data) for value in args)
-        _reject_non_default("barbs", "length", kwargs.pop("length", None), 7.0)
-        _reject_non_default("barbs", "fill_empty", kwargs.pop("fill_empty", None), False)
-        _reject_non_default("barbs", "rounding", kwargs.pop("rounding", None), True)
-        _reject_non_default("barbs", "flip_barb", kwargs.pop("flip_barb", None), False)
-        for option in ("sizes", "barbcolor", "flagcolor", "barb_increments"):
-            if kwargs.pop(option, None) is not None:
-                raise not_implemented(f"barbs({option}=...)")
-        return self._vector_field(args, kwargs, "barbs")
+        return self._barb_field(
+            args,
+            kwargs,
+            length=float(kwargs.pop("length", 7.0)),
+            fill_empty=bool(kwargs.pop("fill_empty", False)),
+            rounding=bool(kwargs.pop("rounding", True)),
+            flip_barb=kwargs.pop("flip_barb", False),
+            sizes=dict(kwargs.pop("sizes", None) or {}),
+            barbcolor=kwargs.pop("barbcolor", None),
+            flagcolor=kwargs.pop("flagcolor", None),
+            barb_increments=dict(kwargs.pop("barb_increments", None) or {}),
+        )
 
     def quiverkey(
         self,
@@ -4400,13 +5422,23 @@ class PlotTypeMixin:
         check_unsupported(kwargs, "quiverkey()")
         from xy import kernels
 
-        if coordinates == "axes":
+        if coordinates in ("axes", "figure"):
             qx = np.concatenate((np.asarray(Q._entry["args"][0]), np.asarray(Q._entry["args"][2])))
             qy = np.concatenate((np.asarray(Q._entry["args"][1]), np.asarray(Q._entry["args"][3])))
-            px = float(np.nanmin(qx) + float(X) * (np.nanmax(qx) - np.nanmin(qx)))
-            py = float(np.nanmin(qy) + float(Y) * (np.nanmax(qy) - np.nanmin(qy)))
-        else:
+            x_fraction, y_fraction = float(X), float(Y)
+            if coordinates == "figure":
+                # Default Matplotlib subplot bounds: left/right=.125/.9 and
+                # bottom/top=.11/.88.  Convert figure fractions into the
+                # equivalent axes fractions so keys at (.9, .9) sit on the
+                # outer top-right edge, as in the gallery.
+                x_fraction = (x_fraction - 0.125) / 0.775
+                y_fraction = (y_fraction - 0.11) / 0.77
+            px = float(np.nanmin(qx) + x_fraction * (np.nanmax(qx) - np.nanmin(qx)))
+            py = float(np.nanmin(qy) + y_fraction * (np.nanmax(qy) - np.nanmin(qy)))
+        elif coordinates == "data":
             px, py = float(X), float(Y)
+        else:
+            raise ValueError("quiverkey coordinates must be 'axes', 'figure', or 'data'")
         x0, x1, y0, y1 = kernels.vector_segments(
             np.asarray([px], dtype=np.float64),
             np.asarray([py], dtype=np.float64),
@@ -4437,10 +5469,13 @@ class PlotTypeMixin:
         if labelpos not in offsets:
             raise ValueError("quiverkey labelpos must be N, S, E, or W")
         dx, dy = offsets[labelpos]
+        # Math mode discards ordinary whitespace, but the plain-text fraction
+        # fallback needs a visible word gap before units (`1 m/s`).
+        key_label = str(label).replace(r" \frac", r"\ \frac")
         self._add(
             "@text",
             {
-                "args": (px + dx, py + dy, str(label)),
+                "args": (px + dx, py + dy, mathtext_to_unicode(key_label)),
                 "kwargs": {"color": resolve_color(labelcolor)} if labelcolor is not None else {},
             },
         )
@@ -4476,10 +5511,10 @@ class PlotTypeMixin:
 
         ``density`` controls line spacing, ``start_points`` seeds specific
         trajectories, and ``color``/``linewidth`` may be arrays evaluated
-        along the field (``cmap``/``norm`` map array colors). Non-default
-        ``arrowstyle``, ``minlength``, ``broken_streamlines``, and
-        integration scale options raise loudly, as do ``transform`` and
-        ``zorder``.
+        along the field (``cmap``/``norm`` map array colors). Unbroken
+        streamlines and the integration step/error scale controls use the
+        adaptive Python integrator. Non-default ``arrowstyle`` and
+        ``minlength`` raise loudly, as do ``transform`` and ``zorder``.
         """
         if transform is not None:
             raise not_implemented("streamplot(transform=...)")
@@ -4487,13 +5522,10 @@ class PlotTypeMixin:
             raise not_implemented("streamplot(zorder=...)")
         _reject_non_default("streamplot", "arrowstyle", arrowstyle, "-|>")
         _reject_non_default("streamplot", "minlength", minlength, 0.1)
-        _reject_non_default("streamplot", "broken_streamlines", broken_streamlines, True)
-        _reject_non_default(
-            "streamplot", "integration_max_step_scale", integration_max_step_scale, 1.0
-        )
-        _reject_non_default(
-            "streamplot", "integration_max_error_scale", integration_max_error_scale, 1.0
-        )
+        if integration_max_step_scale <= 0.0:
+            raise ValueError("streamplot integration_max_step_scale must be positive")
+        if integration_max_error_scale <= 0.0:
+            raise ValueError("streamplot integration_max_error_scale must be positive")
         if norm is not None and type(norm).__name__ != "Normalize":
             # Only the linear Normalize maps onto the engine's domain contract.
             raise not_implemented(
@@ -4517,57 +5549,47 @@ class PlotTypeMixin:
             x_values, y_values = _regular_mesh_axes(x_values, y_values, u_values.shape)
         if x_values.ndim != 1 or y_values.ndim != 1:
             raise ValueError("streamplot X and Y must define a regular grid")
-        density_value = float(np.max(np.asarray(density, dtype=np.float64)))
+        try:
+            density_xy = np.broadcast_to(np.asarray(density, dtype=np.float64), 2)
+        except ValueError as exc:
+            raise ValueError("streamplot density must be a scalar or have length 2") from exc
+        if np.any(density_xy <= 0):
+            raise ValueError("streamplot density must be positive")
         max_steps = max(1, min(100_000, int(float(maxlength) * max(u_values.shape) * 8)))
-        # One dependency-free integrator regardless of environment: the native
-        # kernel covers default grid seeding; explicit seeds and one-sided
-        # integration run the same fixed-step scheme in Python.
-        if start_points is None and integration_direction == "both":
-            from xy import kernels
-
-            kx0, kx1, ky0, ky1 = kernels.streamlines(
-                x_values,
-                y_values,
-                u_values,
-                v_values,
-                density=density_value,
-                max_steps=max_steps,
+        if start_points is not None:
+            seeds = np.asarray(start_points, dtype=np.float64)
+            if seeds.ndim != 2 or seeds.shape[1] != 2:
+                raise ValueError("streamplot start_points must have shape (n, 2)")
+            inside = (
+                (seeds[:, 0] >= x_values[0])
+                & (seeds[:, 0] <= x_values[-1])
+                & (seeds[:, 1] >= y_values[0])
+                & (seeds[:, 1] <= y_values[-1])
             )
-            source_segments = [
-                np.asarray([[sx, sy], [ex, ey]], dtype=np.float64)
-                for sx, ex, sy, ey in zip(kx0, kx1, ky0, ky1, strict=True)
-            ]
-            arrow_budget = max(1, min(len(source_segments), int(30 * density_value)))
+            if not np.all(inside):
+                raise ValueError("streamplot start_points must lie inside the x/y grid")
         else:
-            if start_points is not None:
-                seeds = np.asarray(start_points, dtype=np.float64)
-                if seeds.ndim != 2 or seeds.shape[1] != 2:
-                    raise ValueError("streamplot start_points must have shape (n, 2)")
-                inside = (
-                    (seeds[:, 0] >= x_values[0])
-                    & (seeds[:, 0] <= x_values[-1])
-                    & (seeds[:, 1] >= y_values[0])
-                    & (seeds[:, 1] <= y_values[-1])
-                )
-                if not np.all(inside):
-                    raise ValueError("streamplot start_points must lie inside the x/y grid")
-            else:
-                rows, cols = u_values.shape
-                stride = max(1, int(min(rows, cols) / (12.0 * density_value)))
-                seed_x, seed_y = np.meshgrid(x_values[::stride], y_values[::stride])
-                seeds = np.column_stack((seed_x.reshape(-1), seed_y.reshape(-1)))
-            source_segments = _integrate_streamlines(
-                x_values,
-                y_values,
-                u_values,
-                v_values,
-                seeds,
-                integration_direction,
-                max_steps,
+            seed_x, seed_y = np.meshgrid(
+                np.linspace(x_values[0], x_values[-1], max(2, int(18 * density_xy[0]))),
+                np.linspace(y_values[0], y_values[-1], max(2, int(18 * density_xy[1]))),
             )
-            arrow_budget = max(1, len(source_segments))
-        arrow_count = num_arrows * arrow_budget
-
+            seeds = np.column_stack((seed_x.reshape(-1), seed_y.reshape(-1)))
+        source_segments = _integrate_streamlines(
+            x_values,
+            y_values,
+            u_values,
+            v_values,
+            seeds,
+            integration_direction,
+            max_steps,
+            float(maxlength),
+            float(minlength),
+            broken_streamlines=broken_streamlines,
+            density=(float(density_xy[0]), float(density_xy[1])),
+            step_scale=integration_max_step_scale,
+            error_scale=integration_max_error_scale,
+            skip_occupied_seeds=start_points is None,
+        )
         x0_values: list[float] = []
         y0_values: list[float] = []
         x1_values: list[float] = []
@@ -4667,10 +5689,24 @@ class PlotTypeMixin:
             )
         collection = PolyCollection(self, entries[0])
         arrow_collection = collection
-        if arrow_count > 0 and len(x0):
-            arrow_indices = np.unique(
-                np.linspace(0, len(x0) - 1, min(arrow_count, len(x0))).astype(int)
-            )
+        if num_arrows > 0 and len(x0):
+            arrow_indices_list: list[int] = []
+            segment_offset = 0
+            for streamline in source_segments:
+                deltas = np.diff(streamline, axis=0)
+                lengths = np.hypot(
+                    deltas[:, 0] / max(float(np.ptp(x_values)), np.finfo(float).eps),
+                    deltas[:, 1] / max(float(np.ptp(y_values)), np.finfo(float).eps),
+                )
+                cumulative = np.cumsum(lengths)
+                if cumulative.size and cumulative[-1] > 0.0:
+                    targets = cumulative[-1] * (
+                        np.arange(1, num_arrows + 1, dtype=np.float64) / (num_arrows + 1)
+                    )
+                    local = np.clip(np.searchsorted(cumulative, targets), 0, len(lengths) - 1)
+                    arrow_indices_list.extend((segment_offset + local).tolist())
+                segment_offset += len(lengths)
+            arrow_indices = np.unique(np.asarray(arrow_indices_list, dtype=np.int64))
             dx = x1[arrow_indices] - x0[arrow_indices]
             dy = y1[arrow_indices] - y0[arrow_indices]
             lengths = np.hypot(dx, dy)

@@ -32,6 +32,7 @@ const OP_HEATMAP_IMAGE: u8 = 13;
 const OP_AFFINE_POINTS: u8 = 14;
 const OP_AFFINE_CHANNEL_POINTS: u8 = 15;
 const OP_STROKED_TRIANGLES: u8 = 16;
+const OP_STYLED_TEXT: u8 = 17;
 
 const SS: usize = 4; // vertical supersamples per scanline for polygon AA
 
@@ -749,14 +750,14 @@ fn pentagon_sdf(p: (f32, f32), r: f32) -> f32 {
 fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
     match sym {
         1 => px.abs().max(py.abs()) - r, // square
-        2 => (px.abs() + py.abs()) - r,  // diamond
+        2 => (px.abs() + py.abs()) - r * std::f32::consts::SQRT_2, // diamond
         3 | 8 | 9 | 10 => {
             // Matplotlib's normalized triangle: apex at one edge and a
             // full-width base at the opposite edge.
             let d = match sym {
                 8 => (-px, -py), // down
-                9 => (py, -px),  // left
-                10 => (-py, px), // right
+                9 => (-py, px),  // left
+                10 => (py, -px), // right
                 _ => (px, py),
             };
             triangle_sdf(d, (0.0, -r), (-r, r), (r, r))
@@ -774,7 +775,7 @@ fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
             (ax - 0.34 * r).max(ay - r).min((ax - r).max(ay - 0.34 * r))
         }
         13 => px.abs().max(py.abs()) - r,      // snapped pixel
-        14 => (px.abs() / 0.6 + py.abs()) - r, // thin diamond
+        14 => (px.abs() / 0.6 + py.abs()) - r * std::f32::consts::SQRT_2, // thin diamond
         15 => {
             // Unfilled plus: its width comes from markeredgewidth below.
             let (ax, ay) = (px.abs(), py.abs());
@@ -817,6 +818,15 @@ fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
             (q.0 * q.0 + q.1 * q.1).sqrt() * (p.1 * ba.0 - p.0 * ba.1).signum()
         }
         _ => (px * px + py * py).sqrt() - r, // circle
+    }
+}
+
+#[inline]
+fn symbol_extent(r: f32, sym: u8) -> f32 {
+    if matches!(sym, 2 | 14) {
+        r * std::f32::consts::SQRT_2
+    } else {
+        r
     }
 }
 
@@ -865,7 +875,7 @@ fn point_u8_at(
     let stroke_rgb = [stroke[0], stroke[1], stroke[2]];
     let fill_alpha = fill[3] as f32 / 255.0;
     let stroke_alpha = stroke[3] as f32 / 255.0;
-    let ext = r + 1.0;
+    let ext = symbol_extent(r, sym) + 1.0;
     let (bx0, by0, bx1, by1) = cv.bbox(cx - ext, cy - ext, cx + ext, cy + ext);
     if sw <= 0.0 && sym == 0 {
         // Stroke-free circle — the default mark and the overwhelming batch
@@ -1188,6 +1198,8 @@ fn glyph_index(ch: char) -> Option<usize> {
 pub const TEXT_ROTATED: u8 = 0x80;
 /// 0x40 requests 90°-CW text (top-down right-margin titles, mpl rotation=270).
 pub const TEXT_ROTATED_CW: u8 = 0x40;
+const TEXT_ITALIC: u8 = 0x01;
+const TEXT_BOLD: u8 = 0x02;
 
 fn text(cv: &mut Canvas, x: f32, y: f32, anchor: u8, size: f32, rgba: [f32; 4], s: &[u8]) {
     let rotated = anchor & TEXT_ROTATED != 0;
@@ -1307,6 +1319,131 @@ fn text(cv: &mut Canvas, x: f32, y: f32, anchor: u8, size: f32, rgba: [f32; 4], 
         } else {
             penx += advance as f32 * scale;
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn styled_text(
+    cv: &mut Canvas,
+    x: f32,
+    y: f32,
+    anchor: u8,
+    size: f32,
+    angle_degrees: f32,
+    flags: u8,
+    italic_ranges: &[(u32, u32)],
+    rgba: [f32; 4],
+    s: &[u8],
+) {
+    let scale = size / font::BASE_PX as f32;
+    let text = String::from_utf8_lossy(s);
+    let advance = text
+        .chars()
+        .filter_map(glyph_index)
+        .map(|index| font::GLYPHS[index].0 as f32)
+        .sum::<f32>()
+        * scale;
+    let mut pen = match anchor {
+        1 => -advance * 0.5,
+        2 => -advance,
+        _ => 0.0,
+    };
+    let theta = angle_degrees.to_radians();
+    let (sin_theta, cos_theta) = theta.sin_cos();
+    let bold_shift = if flags & TEXT_BOLD != 0 {
+        (size * 0.055).clamp(0.55, 1.2)
+    } else {
+        0.0
+    };
+
+    for (char_index, ch) in text.chars().enumerate() {
+        let Some(index) = glyph_index(ch) else {
+            continue;
+        };
+        let italic = flags & TEXT_ITALIC != 0
+            || italic_ranges
+                .iter()
+                .any(|&(start, end)| {
+                    start <= char_index as u32 && (char_index as u32) < end
+                });
+        let italic_shear = if italic { 0.22 } else { 0.0 };
+        let (glyph_advance, gw, gh, left, top, offset, len) = font::GLYPHS[index];
+        if gw > 0 && gh > 0 {
+            let coverage = &font::COVERAGE[offset as usize..(offset + len) as usize];
+            let sample =
+                |sx: usize, sy: usize| coverage[sy * gw as usize + sx] as f32 / 255.0;
+            let bilinear = |u: f32, v: f32| {
+                if u < -0.5 || v < -0.5 || u > gw as f32 - 0.5 || v > gh as f32 - 0.5 {
+                    return 0.0;
+                }
+                let u = u.clamp(0.0, gw as f32 - 1.0);
+                let v = v.clamp(0.0, gh as f32 - 1.0);
+                let (x0, y0) = (u.floor() as usize, v.floor() as usize);
+                let (x1, y1) = ((x0 + 1).min(gw as usize - 1), (y0 + 1).min(gh as usize - 1));
+                let (fx, fy) = (u - x0 as f32, v - y0 as f32);
+                sample(x0, y0) * (1.0 - fx) * (1.0 - fy)
+                    + sample(x1, y0) * fx * (1.0 - fy)
+                    + sample(x0, y1) * (1.0 - fx) * fy
+                    + sample(x1, y1) * fx * fy
+            };
+
+            let u0 = pen + left as f32 * scale;
+            let v0 = top as f32 * scale;
+            let u1 = u0 + gw as f32 * scale + bold_shift;
+            let v1 = v0 + gh as f32 * scale;
+            let transform = |u: f32, v: f32| {
+                let sheared_u = u - italic_shear * v;
+                (
+                    x + sheared_u * cos_theta - v * sin_theta,
+                    y + sheared_u * sin_theta + v * cos_theta,
+                )
+            };
+            let corners = [
+                transform(u0, v0),
+                transform(u1, v0),
+                transform(u1, v1),
+                transform(u0, v1),
+            ];
+            let min_x = corners
+                .iter()
+                .map(|point| point.0)
+                .fold(f32::INFINITY, f32::min);
+            let max_x = corners
+                .iter()
+                .map(|point| point.0)
+                .fold(f32::NEG_INFINITY, f32::max);
+            let min_y = corners
+                .iter()
+                .map(|point| point.1)
+                .fold(f32::INFINITY, f32::min);
+            let max_y = corners
+                .iter()
+                .map(|point| point.1)
+                .fold(f32::NEG_INFINITY, f32::max);
+            let (bx0, by0, bx1, by1) = cv.bbox(min_x, min_y, max_x, max_y);
+            for py in by0..by1 {
+                for px in bx0..bx1 {
+                    let dx = px as f32 + 0.5 - x;
+                    let dy = py as f32 + 0.5 - y;
+                    let sheared_u = dx * cos_theta + dy * sin_theta;
+                    let local_v = -dx * sin_theta + dy * cos_theta;
+                    let local_u = sheared_u + italic_shear * local_v;
+                    let atlas_u = (local_u - u0) / scale - 0.5;
+                    let atlas_v = (local_v - v0) / scale - 0.5;
+                    let mut alpha = bilinear(atlas_u, atlas_v);
+                    if bold_shift > 0.0 {
+                        alpha = alpha.max(bilinear(
+                            (local_u - bold_shift - u0) / scale - 0.5,
+                            atlas_v,
+                        ));
+                    }
+                    if alpha > 0.0 {
+                        cv.blend(px, py, rgba, alpha);
+                    }
+                }
+            }
+        }
+        pen += glyph_advance as f32 * scale;
     }
 }
 
@@ -1709,7 +1846,7 @@ fn paint_affine_points(cv: &mut Canvas, batch: &AffinePointsBatch, threads: usiz
         xs.push(batch.x.project(i));
         ys.push(batch.y.project(i));
     }
-    let ext = batch.radius + batch.sw + 1.0;
+    let ext = symbol_extent(batch.radius, batch.sym) + batch.sw + 1.0;
     paint_banded(
         cv,
         threads,
@@ -1783,7 +1920,7 @@ fn paint_styled_points(cv: &mut Canvas, batch: &StyledPointsBatch, threads: usiz
         threads,
         batch.n,
         |i| {
-            let ext = batch.rs[i] + batch.sw + 1.0;
+            let ext = symbol_extent(batch.rs[i], batch.sym) + batch.sw + 1.0;
             Some((batch.ys[i] - ext, batch.ys[i] + ext))
         },
         |surface, indices| {
@@ -2030,6 +2167,33 @@ fn rasterize_with_spans(
                     let s = r.bytes(nb)?;
                     text(&mut cv, x, y, anchor, size, c, s);
                 }
+                OP_STYLED_TEXT => {
+                    let (x, y) = (r.f32()?, r.f32()?);
+                    let anchor = r.u8()?;
+                    let size = r.f32()?;
+                    let angle = r.f32()?;
+                    let flags = r.u8()?;
+                    let range_count = r.u32()? as usize;
+                    let mut italic_ranges = Vec::with_capacity(range_count);
+                    for _ in 0..range_count {
+                        italic_ranges.push((r.u32()?, r.u32()?));
+                    }
+                    let c = r.rgba()?;
+                    let nb = r.u32()? as usize;
+                    let s = r.bytes(nb)?;
+                    styled_text(
+                        &mut cv,
+                        x,
+                        y,
+                        anchor,
+                        size,
+                        angle,
+                        flags,
+                        &italic_ranges,
+                        c,
+                        s,
+                    );
+                }
                 OP_POINTS => {
                     // Batched marks, struct-of-arrays: one header (symbol +
                     // shared stroke) then cx/cy/r f32 arrays and per-point
@@ -2119,7 +2283,7 @@ fn rasterize_with_spans(
                             output_scale,
                         },
                     };
-                    let side = 2.0 * (radius + sw + 1.0);
+                    let side = 2.0 * (symbol_extent(radius, sym) + sw + 1.0);
                     let est_px = side * side * n as f32;
                     paint_affine_points(
                         &mut cv,
@@ -2260,7 +2424,7 @@ fn rasterize_with_spans(
                         };
                         fills.push(fill);
                         if radius.is_finite() {
-                            let side = 2.0 * (radius + sw + 1.0);
+                            let side = 2.0 * (symbol_extent(radius, sym) + sw + 1.0);
                             est_px += side * side;
                         }
                     }
@@ -2500,6 +2664,43 @@ fn grad_color(stops: &[(f32, [f32; 4])], t: f32) -> [f32; 4] {
 mod tests {
     use super::*;
 
+    #[test]
+    fn horizontal_triangle_symbols_point_in_the_named_direction() {
+        let moment = |symbol| {
+            let mut total = 0.0;
+            for y in -20..=20 {
+                for x in -20..=20 {
+                    let px = x as f32 / 10.0;
+                    let py = y as f32 / 10.0;
+                    if symbol_sdf(px, py, 2.0, symbol) <= 0.0 {
+                        total += px;
+                    }
+                }
+            }
+            total
+        };
+
+        assert!(
+            moment(9) > 0.0,
+            "triangle_left must put its wide base right of the leftward apex"
+        );
+        assert!(
+            moment(10) < 0.0,
+            "triangle_right must put its wide base left of the rightward apex"
+        );
+    }
+
+    #[test]
+    fn diamond_symbols_match_matplotlib_marker_extents() {
+        let radius = 3.0;
+        let extent = radius * std::f32::consts::SQRT_2;
+
+        assert_eq!(symbol_extent(radius, 2), extent);
+        assert_eq!(symbol_extent(radius, 14), extent);
+        assert!(symbol_sdf(0.0, extent, radius, 2).abs() < 1e-6);
+        assert!(symbol_sdf(0.6 * extent, 0.0, radius, 14).abs() < 1e-6);
+    }
+
     fn px(out: &[u8], w: usize, x: usize, y: usize) -> [u8; 4] {
         let o = (y * w + x) * 4;
         [out[o], out[o + 1], out[o + 2], out[o + 3]]
@@ -2637,6 +2838,25 @@ mod tests {
         assert!(rasterize_into(&cmd, 40, 40, &mut out));
         let ink: u32 = out.chunks(4).map(|p| (p[3] > 32) as u32).sum();
         assert!(ink > 5, "glyph produced no ink: {ink}");
+    }
+
+    #[test]
+    fn matplotlib_text_commands_umlauts_have_native_glyphs() {
+        assert!(glyph_index('ö').is_some());
+        assert!(glyph_index('ü').is_some());
+        let mut cmd = vec![OP_TEXT];
+        cmd.extend(f32le(1.0));
+        cmd.extend(f32le(30.0));
+        cmd.push(0); // anchor start
+        cmd.extend(f32le(20.0)); // size
+        cmd.extend([0, 0, 0, 255]);
+        let s = "öü".as_bytes();
+        cmd.extend(u32le(s.len() as u32));
+        cmd.extend_from_slice(s);
+        let mut out = vec![0u8; 40 * 40 * 4];
+        assert!(rasterize_into(&cmd, 40, 40, &mut out));
+        let ink: u32 = out.chunks(4).map(|p| (p[3] > 32) as u32).sum();
+        assert!(ink > 10, "umlaut glyphs produced no ink: {ink}");
     }
 
     #[test]
