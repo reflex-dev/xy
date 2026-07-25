@@ -12,8 +12,9 @@ matching the §2 "typical scatter ≤ 24 B/pt" budget with headroom.
 from __future__ import annotations
 
 import numbers
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, TypeAlias
 
 import numpy as np
 import numpy.typing as npt
@@ -51,10 +52,9 @@ COLORMAPS = (
 def is_colormap(name: str) -> bool:
     """Return whether *name* is a supported colormap, including ``_r`` variants.
 
-    Non-strings answer False rather than raising: a caller passing a stop list
-    (``colormap=["#fff", "#f00"]``, the natural guess for a custom ramp) must
-    reach the ValueError that names the supported colormaps, not an
-    AttributeError from inside this helper.
+    Non-strings answer False rather than raising, so a stop list reaches
+    `resolve_colormap` and is interpreted there rather than dying on an
+    AttributeError inside this helper.
     """
     if not isinstance(name, str):
         return False
@@ -62,6 +62,87 @@ def is_colormap(name: str) -> bool:
 
 
 DEFAULT_COLORMAP = "viridis"
+
+# A custom continuous colormap is a list of CSS colors, resolved here to the
+# same `(r, g, b)` stop list shape the built-in tables use and carried on the
+# wire in place of a name. Every renderer resolves a colormap through one
+# function — `_svg._colormap_stops` for the static exporters, `colormapStops`
+# in `js/src/10_colormaps.ts` for the client — so both accept either form and
+# the native rasterizer, which is handed explicit stops by Python, needs no
+# change at all. Two stops is the floor: one color is a constant, not a scale.
+MIN_COLORMAP_STOPS = 2
+# The client interpolates a 256-texel LUT, so more stops than texels cannot
+# add detail and would only bloat the spec.
+MAX_COLORMAP_STOPS = 256
+
+# What a caller may pass, and what the wire carries after resolution. Keeping
+# them separate is what lets the type checker catch a raw user colormap being
+# handed to a renderer that only understands names or stops.
+ColormapLike: TypeAlias = "str | Sequence[str]"
+ResolvedColormap: TypeAlias = "str | list[list[int]]"
+# `resolve_colormap` is idempotent, so any consumer may be handed either form.
+ColormapArg: TypeAlias = "str | Sequence[str] | list[list[int]]"
+
+
+def _is_resolved_stops(value: Any) -> bool:
+    """Whether `value` is already a resolved `(r, g, b)` stop list."""
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(
+            isinstance(stop, (list, tuple))
+            and len(stop) == 3
+            and all(isinstance(channel, (int, np.integer)) for channel in stop)
+            for stop in value
+        )
+    )
+
+
+def resolve_colormap(colormap: Any, label: str = "colormap") -> ResolvedColormap:
+    """Normalize `colormap=` to a built-in name or an explicit RGB stop list.
+
+    Accepts a built-in name (`"viridis"`, `"viridis_r"`) or a sequence of two
+    or more CSS colors interpolated evenly across the domain. A bad name still
+    raises the historical message; a bad *sequence* names the offending entry,
+    because "unknown colormap ['#f00', 'nope']" would send the caller looking
+    for a colormap by that name.
+    """
+    if is_colormap(colormap):
+        return colormap
+    if _is_resolved_stops(colormap):
+        # Idempotent: a mark may resolve once for its own use and hand the
+        # result to `resolve_color`, which resolves again.
+        return [[int(r), int(g), int(b)] for r, g, b in colormap]
+    if isinstance(colormap, str):
+        raise ValueError(f"unknown colormap {colormap!r}; known: {COLORMAPS}")
+    if isinstance(colormap, (bytes, Mapping)) or not isinstance(colormap, Sequence):
+        raise ValueError(
+            f"{label} must be a built-in colormap name or a sequence of CSS colors, "
+            f"got {type(colormap).__name__}"
+        )
+    entries = list(colormap)
+    if not (MIN_COLORMAP_STOPS <= len(entries) <= MAX_COLORMAP_STOPS):
+        raise ValueError(
+            f"{label} colors must be between {MIN_COLORMAP_STOPS} and "
+            f"{MAX_COLORMAP_STOPS} CSS colors, got {len(entries)}"
+        )
+    stops: list[list[int]] = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, str):
+            raise ValueError(f"{label} color {index} must be a CSS color string, got {entry!r}")
+        status, rgba = kernels.css_check(kernels.CSS_COLOR, entry)
+        if status != 1 or rgba is None:
+            # Shape-checked browser forms (`var()`, `color-mix()`) resolve in
+            # a cascade the exporters and the LUT builder do not run, so a
+            # colormap stop has to be a color this process can actually
+            # sample — reject it here rather than paint a silent fallback.
+            raise ValueError(
+                f"{label} color {index} {entry!r} is not a color XY can resolve to RGB; "
+                "use a hex, rgb(), hsl(), or named color"
+            )
+        stops.append([round(channel * 255) for channel in rgba[:3]])
+    return stops
+
 
 # The client palette LUT is 256 texels; categories beyond this collide in the
 # shader, so we warn (channels.resolve_color).
@@ -81,7 +162,8 @@ class ColorChannel:
     # for the axis/legend readout (exact, f64 — never through f32, §16).
     values: Optional[npt.NDArray[np.float64]] = None
     domain: Optional[tuple[float, float]] = None
-    colormap: str = DEFAULT_COLORMAP
+    # A built-in name, or explicit `(r, g, b)` stops for a custom colormap.
+    colormap: ResolvedColormap = DEFAULT_COLORMAP
     # Declarative source of the continuous values (the `color="temperature"`
     # column-name idiom). Legend/colorbar chrome uses it when the trace itself
     # is unnamed; with neither name nor label the encoding gets no legend row.
@@ -395,7 +477,7 @@ def resolve_color(
     color: Any,
     n: int,
     *,
-    colormap: str = DEFAULT_COLORMAP,
+    colormap: ColormapArg = DEFAULT_COLORMAP,
     default_constant: str,
     domain: Optional[tuple[float, float]] = None,
 ) -> ColorChannel:
@@ -408,14 +490,7 @@ def resolve_color(
     `domain` pins the continuous normalization window (matplotlib's
     vmin/vmax); values outside clip to the colormap ends.
     """
-    if not is_colormap(colormap):
-        if not isinstance(colormap, str):
-            raise ValueError(
-                f"colormap must be one of the built-in names, got {type(colormap).__name__}. "
-                "A custom stop list is not supported; pass an (n, 3) or (n, 4) float array "
-                f"as color= for arbitrary per-point color. Known: {COLORMAPS}"
-            )
-        raise ValueError(f"unknown colormap {colormap!r}; known: {COLORMAPS}")
+    resolved = resolve_colormap(colormap)
     if domain is not None:
         lo, hi = float(domain[0]), float(domain[1])
         if not (np.isfinite(lo) and np.isfinite(hi)) or hi <= lo:
@@ -426,12 +501,12 @@ def resolve_color(
     # ramp when the trace aggregates (§5 Tier 2), and a typo'd name must
     # error here rather than render a silently wrong ramp.
     if color is None:
-        return ColorChannel(mode="constant", constant=default_constant, colormap=colormap)
+        return ColorChannel(mode="constant", constant=default_constant, colormap=resolved)
     if isinstance(color, str):
         # Literal constant color: validated against the native CSS grammar so
         # a typo errors here instead of rendering a silently wrong mark.
         return ColorChannel(
-            mode="constant", constant=_validate.css_color(color, "color"), colormap=colormap
+            mode="constant", constant=_validate.css_color(color, "color"), colormap=resolved
         )
 
     if hasattr(color, "to_numpy"):
@@ -493,7 +568,7 @@ def resolve_color(
         mode="continuous",
         values=vals,
         domain=domain if domain is not None else _continuous_domain(vals),
-        colormap=colormap,
+        colormap=resolved,
     )
 
 
@@ -544,7 +619,7 @@ def quantize_unit_u8(values: npt.NDArray[np.float64], domain: tuple[float, float
     return np.rint(np.clip(unit, 0.0, 1.0) * 255.0).astype(np.uint8)
 
 
-def colormap_lut_rgba8(colormap: str) -> npt.NDArray[np.uint8]:
+def colormap_lut_rgba8(colormap: ResolvedColormap) -> npt.NDArray[np.uint8]:
     """The client's 256-texel colormap LUT as (256, 4) straight-alpha RGBA8.
 
     Built from the same stop tables the SVG exporter mirrors from

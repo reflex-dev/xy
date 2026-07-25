@@ -636,14 +636,30 @@ class _Scale:
         return not (self.log or self.symlog)
 
 
-def _colormap_stops(colormap: str) -> list[tuple[int, int, int]]:
+def _colormap_stops(colormap: Any) -> list[tuple[int, int, int]]:
+    """Stops for a built-in colormap name, or for explicit wire stops.
+
+    A custom `colormap=["#0d1b2a", …]` arrives already resolved to RGB triples
+    (channels.resolve_colormap), so every colormap consumer in the static
+    exporters — heatmaps, density planes, scatter LUTs, the colorbar gradient —
+    picks it up by going through this one function.
+    """
+    if not isinstance(colormap, str):
+        stops = [(int(r), int(g), int(b)) for r, g, b in colormap]
+        return stops or list(COLORMAP_STOPS["viridis"])
     reversed_map = colormap.endswith("_r")
     base = colormap[:-2] if reversed_map else colormap
     stops = COLORMAP_STOPS.get(base) or COLORMAP_STOPS["viridis"]
     return list(reversed(stops)) if reversed_map else stops
 
 
-def _lut(colormap: str, t: np.ndarray) -> np.ndarray:
+def _spec_colormap(spec: dict[str, Any]) -> Any:
+    """A spec node's colormap: a built-in name or explicit wire stops."""
+    colormap = spec.get("colormap", "viridis")
+    return colormap if colormap is not None else "viridis"
+
+
+def _lut(colormap: Any, t: np.ndarray) -> np.ndarray:
     """Vectorized colormap sample: t in [0,1] -> (n,3) uint8, matching the
     client's 256-texel LUT interpolation."""
     stops = np.array(_colormap_stops(colormap), dtype=np.float64)
@@ -3034,9 +3050,12 @@ def _colorbar_tick_text(value: float, format: Any) -> str:
 def _colorbar(
     options: dict, plot: dict, right_axis_room: float = 0.0, text_color: str = _TEXT
 ) -> str:
-    cmap = str(options.get("colormap", "viridis"))
-    gradient_id = f"xy-colorbar-{sum(map(ord, cmap))}"
+    cmap = _spec_colormap(options)
     stops = _colormap_stops(cmap)
+    # One <defs> gradient per distinct ramp, so two colorbars in the same
+    # document never share an id. Derived from the resolved STOPS rather than
+    # the name, which is the only thing a custom colormap has.
+    gradient_id = f"xy-colorbar-{hash(tuple(stops)) & 0xFFFFFFFF:08x}"
     stop_nodes = "".join(
         f'<stop offset="{100 * index / max(1, len(stops) - 1):.2f}%" '
         f'stop-color="rgb({r},{g},{b})"/>'
@@ -3140,7 +3159,7 @@ def _colorbar_body(
             f'height="{_num(height)}" fill="url(#{gradient_id})"/>'
         )
     n = int(levels)
-    cmap = str(options.get("colormap", "viridis"))
+    cmap = _spec_colormap(options)
     positions = (np.arange(n, dtype=np.float64) + 0.5) / n
     colors = _lut(cmap, positions)
     rects = []

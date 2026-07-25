@@ -15,6 +15,8 @@ Use this page to:
 
 - **Set chart-wide colors and chrome.**
   [Start with the theme component →](#start-with-the-theme-component)
+- **Use your own brand colors for series.**
+  [Set the series palette →](#set-the-series-palette)
 - **Build and reuse a semantic palette.**
   [Open the palette example →](#build-a-reusable-palette)
 - **Understand which declaration wins.**
@@ -132,6 +134,39 @@ xy.area(
     line_width=2,
 )
 ~~~
+
+## Set the series palette
+
+Series and categories that carry no explicit `color=` take their colors, in
+order, from the chart's palette. `xy.theme(palette=[...])` replaces it, so a
+brand palette applies to every series, every category of a categorical color
+channel, and the legend swatches — in the browser and in every export:
+
+~~~python
+BRAND = ["#ff5c00", "#111827", "#00b3a4", "#8b5cf6"]
+
+chart = xy.line_chart(
+    xy.line(weeks, north, name="north"),
+    xy.line(weeks, south, name="south"),
+    xy.line(weeks, east, name="east"),
+    xy.legend(),
+    xy.theme(palette=BRAND),
+)
+~~~
+
+Colors repeat once the list runs out, so a four-color palette gives series 5
+the color of series 1. XY's shipped default is eight colors validated for
+color-vision deficiency, and its ordering is part of that guarantee; a
+replacement palette is not checked, so confirm a brand palette stays
+distinguishable — including for readers with CVD — before shipping it.
+
+For a **continuous** scale, pass a list of colors as the colormap instead:
+`xy.scatter(..., colormap=["#0d1b2a", "#1b6ca8", "#48cae4", "#ffd166"])`.
+The colors are interpolated evenly across the color domain and drive the
+marks, the density surface, and the colorbar gradient together. Between 2 and
+256 colors are accepted, and each must be one XY can resolve to RGB (hex,
+`rgb()`, `hsl()`, or a named color) — a `var()` that only a browser cascade
+could resolve is rejected rather than silently painted a fallback.
 
 ## Build a reusable palette
 

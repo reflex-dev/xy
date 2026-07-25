@@ -319,7 +319,7 @@ def segments(
     *,
     name: Optional[str] = None,
     color: Union[str, ArrayLike, None] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapArg = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     width: Any = 1.2,
     opacity: Any = 1.0,
@@ -369,7 +369,7 @@ def triangle_mesh(
     y2: ArrayLike,
     *,
     color: Union[str, ArrayLike, None] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapArg = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     name: Optional[str] = None,
     opacity: Any = 1.0,
@@ -1343,7 +1343,7 @@ def scatter(
     zoom_size_factor: float = 1.0,
     zoom_opacity: Optional[float] = None,
     zoom_emphasis: float = 16.0,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapArg = channels.DEFAULT_COLORMAP,
     color_domain: Optional[tuple[float, float]] = None,
     size_range: tuple[float, float] = (2.0, 18.0),
     density: Optional[bool] = None,
@@ -1946,7 +1946,7 @@ def hexbin(
     reduce_C_function: Callable[[np.ndarray], Scalar] = np.mean,
     mincnt: Optional[int] = None,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapArg = channels.DEFAULT_COLORMAP,
     opacity: float = 0.9,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
@@ -1977,8 +1977,7 @@ def hexbin(
         raise ValueError("hexbin bins must be 'count' or 'log'")
     name = self._optional_text(name, "hexbin name")
     opacity = self._opacity(opacity, "hexbin opacity")
-    if not channels.is_colormap(colormap):
-        raise ValueError(f"unknown colormap {colormap!r}; known: {channels.COLORMAPS}")
+    resolved_colormap = channels.resolve_colormap(colormap)
     # Canonicalize WITHOUT ingesting: only occupied bin centers ship, so the
     # raw points must not stay resident in the figure's column store.
     x_all, _x_kind, _x_copies = columns._canonicalize(x)
@@ -2057,7 +2056,7 @@ def hexbin(
             reduced.append(float(made))
         metric = np.asarray(reduced, dtype=np.float64)
     color_ch = channels.resolve_color(
-        metric, len(metric), colormap=colormap, default_constant=DEFAULT_PALETTE[0]
+        metric, len(metric), colormap=resolved_colormap, default_constant=DEFAULT_PALETTE[0]
     )
     checkpoint = self._checkpoint()
     try:
@@ -2137,7 +2136,7 @@ def contour(
     levels: Union[int, ArrayLike] = 10,
     filled: bool = False,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapArg = channels.DEFAULT_COLORMAP,
     color: Optional[str] = None,
     width: float = 1.1,
     opacity: float = 0.9,
@@ -2185,8 +2184,7 @@ def contour(
         raise ValueError(
             f"contour grid x levels exceeds the bounded work budget ({MAX_CONTOUR_WORK:,})"
         )
-    if not channels.is_colormap(colormap):
-        raise ValueError(f"unknown colormap {colormap!r}; known: {channels.COLORMAPS}")
+    resolved_colormap = channels.resolve_colormap(colormap)
     name = self._optional_text(name, "contour name")
     color = self._optional_css_color(color, "contour color")
     width = self._positive_scalar(width, "contour width")
@@ -2214,7 +2212,7 @@ def contour(
                     x=dense_x,
                     y=dense_y,
                     name=name,
-                    colormap=colormap,
+                    colormap=resolved_colormap,
                     domain=(float(edges[0]), float(edges[-1])),
                     opacity=min(opacity, 0.9),
                 )
@@ -2224,7 +2222,7 @@ def contour(
                     x=x,
                     y=y,
                     name=name,
-                    colormap=colormap,
+                    colormap=resolved_colormap,
                     opacity=min(opacity, 0.7),
                 )
         x0, x1, y0, y1, level_values = _contour_segments(arr, xpos, ypos, level_values)
@@ -2233,7 +2231,7 @@ def contour(
         domain = self._auto_domain((float(np.min(level_values)), float(np.max(level_values))))
         color_ch = (
             channels.ColorChannel(
-                mode="continuous", values=level_values, domain=domain, colormap=colormap
+                mode="continuous", values=level_values, domain=domain, colormap=resolved_colormap
             )
             if color is None
             else None
@@ -2387,7 +2385,7 @@ def heatmap(
     x: Optional[ArrayLike] = None,
     y: Optional[ArrayLike] = None,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapArg = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     opacity: float = 0.95,
     style: styles.StyleMapping | None = None,
@@ -2424,8 +2422,10 @@ def heatmap(
     x_edges = self._cell_edges(xpos, "heatmap x")
     y_edges = self._cell_edges(ypos, "heatmap y")
     z_flat = zv.reshape(-1)
-    if not truecolor and not channels.is_colormap(colormap):
-        raise ValueError(f"unknown colormap {colormap!r}; known: {channels.COLORMAPS}")
+    # A truecolor heatmap carries its own RGB and never samples a ramp, so its
+    # unused `colormap=` stays unvalidated as it always has — but it still has
+    # to reach the spec, where nothing reads it.
+    resolved_colormap = colormap if truecolor else channels.resolve_colormap(colormap)
     explicit_domain = (
         None
         if truecolor or domain is None
@@ -2470,7 +2470,7 @@ def heatmap(
                 style={
                     "opacity": opacity,
                     "role": "heatmap",
-                    "colormap": colormap,
+                    "colormap": resolved_colormap,
                     "domain": [lo, hi],
                     "truecolor": truecolor,
                     "x_range": [float(x_edges[0]), float(x_edges[-1])],
