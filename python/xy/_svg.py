@@ -301,6 +301,29 @@ _TEXT = "rgba(32,32,32,0.85)"
 _GRID = "rgba(32,32,32,0.14)"
 _AXIS = "rgba(32,32,32,0.55)"
 _FONT = "system-ui, -apple-system, 'Segoe UI', sans-serif"
+# Every default chrome size below is expressed as a multiple of this, so
+# `theme(font_size=)` moves ticks, axis titles, and the chart title together
+# and a chart that sets no font size renders byte-identically to before.
+_BASE_FONT_SIZE = 11.0
+
+
+def _theme_font(spec: dict[str, Any]) -> tuple[str, float]:
+    """(font stack, base text size) for a chart, honoring `xy.theme(...)`.
+
+    Both arrive as ordinary chart-root style tokens, already declaration-
+    checked in `_validate`, so the exporters read them the same way they read
+    `--chart-text` — no separate wire field, and the browser client picks the
+    same two values off the same node.
+    """
+    dom_style = (spec.get("dom") or {}).get("style") or {}
+    family = dom_style.get("font-family") or dom_style.get("font_family")
+    size = dom_style.get("font-size", dom_style.get("font_size"))
+    return (
+        str(family) if isinstance(family, str) and family.strip() else _FONT,
+        _px_size(size, _BASE_FONT_SIZE),
+    )
+
+
 _MS = {"s": 1e3, "m": 6e4, "h": 36e5, "d": 864e5}
 _STATIC_COLOR_FALLBACK = (0.3, 0.47, 0.66, 1.0)
 _AXIS_GRID_DASHES = {
@@ -1260,21 +1283,21 @@ def _colorbar_right_axis_room(
 # against this budget and the gutter grows by the OVERFLOW only, so every
 # chart whose labels already fit keeps its historical geometry to the pixel.
 _Y_LABEL_BUDGET_CHARS = 6.0
-# The size those six characters are measured at.
-_Y_BASE_FONT_SIZE = 11.0
 _Y_CHAR_ASPECT = 0.62
 # One wide label must not be able to collapse the plot rect.
 _Y_EXTRA_ROOM_CAP = 120.0
 
 
-def _left_axis_room(axes: dict[str, dict[str, Any]], plot_h: float, default_left: float) -> float:
+def _left_axis_room(
+    axes: dict[str, dict[str, Any]], plot_h: float, default_left: float, base_font: float
+) -> float:
     """Left gutter for the widest left-side y tick label, never below `default_left`.
 
     `y_axis(format="$,.0f")` turns `800000` into `$800,000` and
     `theme(font_size=)` scales every label; both used to run under the axis
     title because the gutter was a constant.
     """
-    budget = _Y_LABEL_BUDGET_CHARS * _Y_BASE_FONT_SIZE
+    budget = _Y_LABEL_BUDGET_CHARS * _BASE_FONT_SIZE
     extra = 0.0
     for axis_id, axis in axes.items():
         if not axis_id.startswith("y") or axis.get("side", "left") != "left":
@@ -1285,7 +1308,7 @@ def _left_axis_room(axes: dict[str, dict[str, Any]], plot_h: float, default_left
             _ticks, labeled, step = axis_ticks(axis, max(1.0, plot_h), False)
         except (KeyError, TypeError, ValueError):
             continue
-        font_size = _axis_tick_font_size(axis)
+        font_size = _axis_tick_font_size(axis, base_font)
         widest = max((len(_tick_text(axis, value, step)) for value in labeled), default=0)
         extra = max(extra, (widest * font_size - budget) * _Y_CHAR_ASPECT)
     return default_left + min(max(0.0, extra), _Y_EXTRA_ROOM_CAP)
@@ -1351,7 +1374,7 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         # Otherwise the left gutter grows to fit labels wider than the default
         # reserve assumes — `y_axis(format="$,.0f")` turns `800000` into
         # `$800,000`, which used to run under the rotated axis title.
-        left = _left_axis_room(axes, height - top - bottom, left)
+        left = _left_axis_room(axes, height - top - bottom, left, _theme_font(spec)[1])
     plot = {
         "x": left,
         "y": top,
@@ -1415,9 +1438,9 @@ def _axis_tick_label_strategy(axis: dict[str, Any]) -> str:
     return value if value in {"auto", "hide", "rotate", "stagger", "none", "off"} else "auto"
 
 
-def _axis_tick_font_size(axis: dict[str, Any]) -> float:
+def _axis_tick_font_size(axis: dict[str, Any], base: float = _BASE_FONT_SIZE) -> float:
     style = axis.get("style") or {}
-    return max(8.0, float(style.get("tick_label_size", style.get("tick_size", 11))))
+    return max(8.0, float(style.get("tick_label_size", style.get("tick_size", base))))
 
 
 def _axis_tick_label_layout(
@@ -1426,13 +1449,14 @@ def _axis_tick_label_layout(
     step: float,
     scale: _Scale,
     is_x: bool,
+    base: float = _BASE_FONT_SIZE,
 ) -> list[dict[str, Any]]:
     """Port ChartView._layoutTickLabels for deterministic static chrome."""
     strategy = _axis_tick_label_strategy(axis)
     if strategy in {"none", "off"}:
         return []
 
-    font_size = _axis_tick_font_size(axis)
+    font_size = _axis_tick_font_size(axis, base)
     min_gap = float(axis.get("tick_label_min_gap", 8 if is_x else 4))
     raw_angle = axis.get("tick_label_angle")
     explicit_angle = float(raw_angle) if raw_angle is not None else None
@@ -1535,6 +1559,7 @@ def _axis_label_geometry(
     plot: dict[str, float],
     *,
     is_x: bool,
+    base: float = _BASE_FONT_SIZE,
 ) -> dict[str, Any]:
     """Resolve named axis-title placement shared by SVG and native output.
 
@@ -1543,7 +1568,7 @@ def _axis_label_geometry(
     do not have a CSS layout engine.
     """
     style = axis.get("style") or {}
-    font_size = float(style.get("label_size", 12))
+    font_size = float(style.get("label_size", base * (12.0 / _BASE_FONT_SIZE)))
     raw_position = axis.get("label_position")
     position = raw_position if isinstance(raw_position, str) else "center"
     position = position.replace("-", "_")
@@ -1612,6 +1637,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     xt, xlab, xstep = ticks_for(xa, plot["w"])
     yt, ylab, ystep = ticks_for(ya, plot["h"])
     dom_style = (spec.get("dom") or {}).get("style") or {}
+    font_family, base_font = _theme_font(spec)
     xstyle, ystyle = xa.get("style") or {}, ya.get("style") or {}
     default_grid = _css(dom_style.get("--chart-grid"), _GRID)
     default_axis = _css(dom_style.get("--chart-axis"), _AXIS)
@@ -1659,14 +1685,14 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 default_text,
             )
         )
-        font_size = _axis_tick_font_size(axis)
+        font_size = _axis_tick_font_size(axis, base_font)
         side = axis.get("side", "bottom" if is_x else "left")
         # An explicit tick_label_anchor (axis spec or style) overrides the
         # angle/side-derived default. Anchored labels rotate about the tick
         # point (the rotate() pivot below), so anchor and rotation compose —
         # matching the browser client.
         explicit_anchor = _tick_label_anchor(axis, axis_style, "")
-        for item in _axis_tick_label_layout(axis, values, step, axis_scale, is_x):
+        for item in _axis_tick_label_layout(axis, values, step, axis_scale, is_x, base_font):
             angle = float(item["angle"])
             if is_x:
                 row_offset = float(item["row"]) * (font_size + 4)
@@ -1802,7 +1828,8 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         chrome.append(
             f'<text x="{_num(width / 2)}" '
             f'y="{_num(plot["y"] - plot["top_axis_room"] - (10 if compact else 12))}" '
-            f'text-anchor="middle" font-size="14" font-weight="600" '
+            f'text-anchor="middle" font-size="{_num(base_font * (14.0 / _BASE_FONT_SIZE))}" '
+            f'font-weight="600" '
             f'fill="{escape(default_text)}">{escape(str(spec["title"]))}</text>'
         )
 
@@ -1810,7 +1837,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         if not axis.get("label") or _axis_tick_label_strategy(axis) == "none":
             return
         axis_style = axis.get("style") or {}
-        geometry = _axis_label_geometry(axis, plot, is_x=is_x)
+        geometry = _axis_label_geometry(axis, plot, is_x=is_x, base=base_font)
         x, y = float(geometry["x"]), float(geometry["y"])
         angle = float(geometry["angle"])
         transform = f' transform="rotate({_num(angle)} {_num(x)} {_num(y)})"' if angle else ""
@@ -1827,7 +1854,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         append_axis_title(axis, is_x=True)
     for _axis_id, axis, _axis_scale in extra_y_axes:
         append_axis_title(axis, is_x=False)
-    named = [t for t in spec["traces"] if t.get("name")]
+    named = legend_entries(spec)
     if spec.get("show_legend", True) and named:
         chrome.append(_legend(named, plot, spec.get("legend") or {}, clip_id, default_text))
     for extra in spec.get("extra_legends") or []:
@@ -2001,7 +2028,8 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         )
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
-        f'viewBox="0 0 {width} {height}" font-family="{_FONT}" font-size="11">'
+        f'viewBox="0 0 {width} {height}" font-family="{escape(font_family)}" '
+        f'font-size="{_num(base_font)}">'
         f"{defs}"
         f"{backgrounds}"
         f"<g>{''.join(grid)}</g>"
@@ -2011,6 +2039,72 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         f"{''.join(chrome)}"
         f"</svg>"
     )
+
+
+def _rule_label_anchor(
+    ann: dict[str, Any],
+    kind: str,
+    sx: Callable[[float], float],
+    sy: Callable[[float], float],
+    plot: dict[str, float],
+) -> tuple[float, float, str, str]:
+    """Where a rule's or band's own `text=` label sits, and how it anchors.
+
+    One rule, three renderers: `js/src/51_annotations.ts` places these labels
+    for the live client, and the static SVG and native raster paths both come
+    through here, so `xy.hline(2.5, text="target")` reads the same in a
+    notebook and in an exported PNG.
+    """
+    vertical = ann.get("axis") == "x"
+    if kind == "band":
+        start, end = float(ann.get("start", 0.0)), float(ann.get("end", 0.0))
+        along = (
+            (float(sx(start)) + float(sx(end))) / 2
+            if vertical
+            else (float(sy(start)) + float(sy(end))) / 2
+        )
+    else:
+        value = float(ann.get("value", 0.0))
+        along = float(sx(value)) if vertical else float(sy(value))
+    if vertical:
+        # Pinned just inside the top of the plot, reading downward from the line.
+        anchor = "middle" if kind == "band" else "start"
+        return along, plot["y"] + 6.0, anchor, "top"
+    # Pinned just inside the right edge, sitting on the line.
+    return plot["x"] + plot["w"] - 6.0, along, "end", "middle" if kind == "band" else ""
+
+
+def legend_entries(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """Legend rows for a spec, in the client's order and with its rules.
+
+    A *categorical* color channel contributes one row per category rather than
+    one row for the trace — a scatter colored by `continent` has no trace name
+    to show, and without this the static exporters drew no legend at all while
+    the browser drew one row per continent (`js/src/50_chartview.ts`, the
+    `color.mode === "categorical"` branch). Each row is shaped like a trace so
+    the existing legend layout and painters need no special case.
+    """
+    entries: list[dict[str, Any]] = []
+    for trace in spec.get("traces") or []:
+        color = trace.get("color") or {}
+        if color.get("mode") == "categorical":
+            categories = color.get("categories") or []
+            palette = color.get("palette") or DEFAULT_PALETTE
+            style = trace.get("style") or {}
+            for index, category in enumerate(categories):
+                entries.append(
+                    {
+                        **trace,
+                        "name": str(category),
+                        # The row wears its category's palette slot, not the
+                        # trace's own default color.
+                        "style": {**style, "color": palette[index % len(palette)]},
+                        "color": None,
+                    }
+                )
+        elif trace.get("name"):
+            entries.append(trace)
+    return entries
 
 
 def _annotation_svg(
@@ -2092,22 +2186,34 @@ def _annotation_svg(
                             f'<polyline points="{points}" fill="none" stroke="{color}" '
                             f'stroke-width="{stroke_width}" stroke-opacity="{_num(opacity)}"/>'
                         )
-        if kind in ("text", "callout") and ann.get("text"):
-            x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
-            space = style.get("coordinate_space")
-            if space == "axes_fraction":
-                tx, ty = px0 + x * plot["w"], py0 + (1 - y) * plot["h"]
-            elif space == "figure_fraction":
-                tx, ty = x * width, (1 - y) * height
-            elif space == "yaxis_transform":
-                tx, ty = px0 + x * plot["w"], float(sy(y))
-            elif space == "xaxis_transform":
-                tx, ty = float(sx(x)), py0 + (1 - y) * plot["h"]
+        if kind in ("text", "callout", "rule", "band") and ann.get("text"):
+            default_anchor = "start"
+            default_va = ""
+            if kind in ("rule", "band"):
+                # A rule/band label has no coordinates of its own: it rides the
+                # line or the band's middle, pinned to the plot edge exactly as
+                # the client places it (js/src/51_annotations.ts).
+                tx, ty, default_anchor, default_va = _rule_label_anchor(ann, kind, sx, sy, plot)
             else:
-                tx, ty = float(sx(x)), float(sy(y))
+                x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
+                space = style.get("coordinate_space")
+                if space == "axes_fraction":
+                    tx, ty = px0 + x * plot["w"], py0 + (1 - y) * plot["h"]
+                elif space == "figure_fraction":
+                    tx, ty = x * width, (1 - y) * height
+                elif space == "yaxis_transform":
+                    tx, ty = px0 + x * plot["w"], float(sy(y))
+                elif space == "xaxis_transform":
+                    tx, ty = float(sx(x)), py0 + (1 - y) * plot["h"]
+                else:
+                    tx, ty = float(sx(x)), float(sy(y))
+            if not np.isfinite(tx) or not np.isfinite(ty):
+                continue
             anchor = {"start": "start", "middle": "middle", "end": "end"}.get(
-                ann.get("anchor"), "start"
+                ann.get("anchor"), default_anchor
             )
+            if default_va and not style.get("vertical_align"):
+                style = {**style, "vertical_align": default_va}
             font_size = _px_size(style.get("font_size"), 11.0)
             lines = str(ann["text"]).splitlines() or [""]
             line_height = font_size * 1.2

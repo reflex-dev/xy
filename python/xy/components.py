@@ -2661,6 +2661,8 @@ def theme(
     selection_color: Optional[StyleValue] = None,
     selection_fill: Optional[StyleValue] = None,
     palette: Optional[Sequence[str]] = None,
+    font_family: Optional[str] = None,
+    font_size: Optional[float] = None,
     **tokens: StyleValue,
 ) -> Theme:
     """Configure chart theme tokens.
@@ -2684,6 +2686,14 @@ def theme(
             out. XY's default eight are validated for color-vision deficiency
             (``config.DEFAULT_PALETTE``); a replacement is not checked, so
             verify a brand palette stays distinguishable.
+        font_family: Chart-wide font stack, applied to every text element the
+            chart draws. Honored by the browser client and the SVG and PDF
+            exports; the native raster exporter draws with a baked bitmap
+            font, so PNG/JPEG/WebP keep their own face (see
+            ``Engine.chromium`` for pixel-exact browser text).
+        font_size: Base chart text size in px. Every text element scales from
+            it, so tick labels, axis titles, legends, and the chart title keep
+            their relative proportions.
         **tokens: Additional supported theme tokens.
     """
     merged = _style_dict(style, "theme style")
@@ -2702,9 +2712,31 @@ def theme(
             "theme",
         )
     )
+    if font_family is not None:
+        # Routed through the same declaration check as any other style value,
+        # so a font stack cannot smuggle CSS into the chrome or the SVG.
+        merged.update(_style_dict({"font-family": font_family}, "theme font_family"))
+    if font_size is not None:
+        merged["font-size"] = _theme_font_size(font_size)
     if tokens:
         merged.update(_theme_tokens(tokens, "theme tokens"))
     return Theme(style=merged, palette=_theme_palette(palette))
+
+
+# Below ~6px text stops being text on any renderer, and a runaway size blows
+# the reserved axis/legend room rather than producing a bigger chart.
+_MIN_FONT_SIZE = 6.0
+_MAX_FONT_SIZE = 48.0
+
+
+def _theme_font_size(value: Any) -> float:
+    size = _finite_number(value, "theme font_size")
+    if not _MIN_FONT_SIZE <= size <= _MAX_FONT_SIZE:
+        raise ValueError(
+            f"theme font_size must be between {_MIN_FONT_SIZE:g} and {_MAX_FONT_SIZE:g} px, "
+            f"got {size:g}"
+        )
+    return size
 
 
 def _theme_palette(value: Any) -> Optional[list[str]]:
