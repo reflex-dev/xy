@@ -4,7 +4,7 @@ All notable changes to **reflex-xy** (the Reflex adapter for xy) are
 documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.0.1] — 2026-07-25
+## [0.0.1] — 2026-07-24
 
 ### Added
 - First packaged release line of the adapter: `reflex_xy.chart()` components,
