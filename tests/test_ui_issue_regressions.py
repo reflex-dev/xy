@@ -363,6 +363,48 @@ def test_y_axis_title_stays_attached_when_left_padding_is_wide(tmp_path: Path) -
     assert result["tickInside"] is True, result
 
 
+def test_long_y_categories_expand_the_browser_gutter(tmp_path: Path) -> None:
+    categories = [f"Questionnaire item {index}" for index in range(1, 7)]
+    chart = xy.bar_chart(
+        xy.bar(
+            x=categories,
+            y=[10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+            orientation="horizontal",
+        ),
+        xy.y_axis(label="survey question", style={"label_size": 14, "tick_label_size": 14}),
+        width=640,
+        height=480,
+    )
+    script = (
+        _PRELUDE
+        + """
+    const root = view.root.getBoundingClientRect();
+    const title = view.root.querySelector(
+      '[data-xy-label-kind="label"][data-xy-axis="y"]'
+    ).getBoundingClientRect();
+    const ticks = [...view.root.querySelectorAll(
+      '[data-xy-label-kind="tick"][data-xy-axis="y"]'
+    )];
+    const tickBoxes = ticks.map((element) => element.getBoundingClientRect());
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      plotX: view.plot.x,
+      gap: Math.min(...tickBoxes.map((box) => box.left)) - title.right,
+      clipped: ticks.some((element) => element.scrollWidth > element.clientWidth),
+      titleInside: title.left >= root.left,
+      tickTexts: ticks.map((element) => element.textContent),
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "long category y gutter")
+
+    assert result["plotX"] > 150, result
+    assert result["gap"] == pytest.approx(0.4 * 14, abs=0.75), result
+    assert result["clipped"] is False, result
+    assert result["titleInside"] is True, result
+    assert sorted(result["tickTexts"]) == categories, result
+
+
 def test_categorical_tick_bounds_follow_anchor_rotation_and_extra_axis_side(
     tmp_path: Path,
 ) -> None:

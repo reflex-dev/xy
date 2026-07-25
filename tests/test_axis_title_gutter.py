@@ -156,6 +156,25 @@ def test_authored_padding_too_narrow_for_the_text_still_reserves_the_gutter() ->
     assert _first_ink_column(spec, blob, plot) > 0
 
 
+def test_positive_label_offset_expands_the_gutter_instead_of_clipping() -> None:
+    """An explicit title-to-tick gap must reserve the canvas room it consumes."""
+    chart = _chart(
+        y_label="average daily births",
+        y_values=[3600.0, 5400.0],
+        label_offset=20.0,
+    )
+    spec, blob = _payload(chart)
+    _width, _height, _compact, plot = _svg.layout(spec)
+    title_box, tick_span = _assert_clear(
+        _svg.render_svg(spec, blob),
+        plot,
+        "average daily births",
+        canvas_width=760,
+    )
+    assert tick_span[0] - title_box[1] == pytest.approx(20.0, abs=0.05)
+    assert title_box[0] > 0
+
+
 def test_ordinary_numeric_axis_keeps_the_default_gutter() -> None:
     """The measured reservation is a floor: it must not inflate ordinary charts.
 

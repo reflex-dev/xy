@@ -1193,17 +1193,9 @@ def _colorbar_right_axis_room(
     return 0.0
 
 
-# Canvas inset the browser's rotated y-title line box is centered on
-# (`left:10px` / `plot-right+40px` in ChartView), and the smallest gap left
-# between the canvas edge and the outermost axis ink when no title claims that
-# inset. Antialiased leading glyphs must not land on the export boundary.
-_Y_TITLE_INSET = 10.0
+# Smallest gap between the canvas edge and the outermost axis ink.
+# Antialiased leading glyphs must not land on the export boundary.
 _AXIS_TEXT_EDGE_PAD = 4.0
-# Floor on the y title's leading ink, for a title whose line box is taller than
-# twice the inset. Deliberately below `_AXIS_TEXT_EDGE_PAD`: at ordinary sizes
-# the inset itself governs, and matching ChartView's placement matters more than
-# a rounder outer margin (a 13.89 px title inks from x=1.75 in both renderers).
-_Y_TITLE_MIN_INK = 1.0
 # Gap between the y title's ink and the nearest tick label's ink, as a fraction
 # of the title's font size. Matplotlib leaves 5.6 px at its 13.89 px (10 pt at
 # 100 dpi) default — measured with `Text.get_window_extent` on 3.11.1.
@@ -1218,15 +1210,16 @@ def _text_cell(font_size: float) -> tuple[float, float]:
     )
 
 
-def _y_title_baseline(axis: dict[str, Any], plot_right: float) -> Optional[float]:
+def _y_title_baseline(
+    axis: dict[str, Any],
+    plot: dict[str, float],
+) -> Optional[float]:
     """Baseline x of a quarter-turned y-axis title, or None when it has none.
 
-    ChartView positions the title as a rotated DOM line box *centered* on a
-    fixed canvas inset; a static exporter emits a baseline. The two differ by
-    half a line box, which is why the SVG/PNG title used to sit one full ascent
-    further toward the canvas edge than the browser draws it — the same
-    box-to-baseline correction the x-axis title already makes with
-    `font_size * 0.82`. Titles at any other angle keep the raw inset.
+    Matplotlib positions a y title from the outer edge of the tick-label union,
+    not from the canvas edge. A static exporter emits a baseline while the
+    browser positions a centered line box; the returned coordinate includes
+    that box-to-baseline correction.
     """
     if not axis.get("label"):
         return None
@@ -1237,17 +1230,17 @@ def _y_title_baseline(axis: dict[str, Any], plot_right: float) -> Optional[float
     style = axis.get("style") or {}
     font_size = float(style.get("label_size", 12))
     side = axis.get("side", "left")
-    angle = float(axis.get("label_angle", 90.0 if side == "right" else -90.0))
     ascent, descent = _text_cell(font_size)
-    # Ink is [x - ascent, x + descent] at -90° and [x - descent, x + ascent] at
-    # +90°, so centering the cell on the inset shifts the baseline by half the
-    # ascent/descent asymmetry, away from the plot in both cases.
-    shift = (ascent - descent) / 2 if abs(abs(angle) - 90.0) < 0.5 else 0.0
-    offset = float(axis.get("label_offset", 0.0))
     if side == "right":
-        return plot_right + 40.0 - shift + offset
-    # Clamp so an oversized title cannot be pushed off the canvas by the inset.
-    return max(_Y_TITLE_MIN_INK + ascent, _Y_TITLE_INSET + shift) - offset
+        # Right-side axes still use the existing fixed 42/54 px reservation.
+        # Keep their plot-relative placement unchanged; this repair only
+        # measures the left gutter that can otherwise clip against x=0.
+        angle = float(axis.get("label_angle", 90.0))
+        shift = (ascent - descent) / 2 if abs(abs(angle) - 90.0) < 0.5 else 0.0
+        return plot["x"] + plot["w"] + 40.0 - shift + float(axis.get("label_offset", 0.0))
+    tick_offset, tick_room = _y_tick_label_room(axis, plot["h"])
+    gap = float(axis.get("label_offset", _Y_TITLE_TICK_GAP * font_size))
+    return plot["x"] - tick_offset - tick_room - gap - descent
 
 
 def _y_tick_label_room(axis: dict[str, Any], plot_h: float) -> tuple[float, float]:
@@ -1296,14 +1289,16 @@ def _y_axis_left_room(spec: dict[str, Any], plot_h: float) -> float:
         if not axis_id.startswith("y") or axis.get("side", "left") == "right":
             continue
         tick_offset, tick_room = _y_tick_label_room(axis, plot_h)
-        baseline = _y_title_baseline(axis, 0.0)
-        if baseline is None:
+        if _y_title_baseline(axis, {"x": 0.0, "y": 0.0, "w": 0.0, "h": plot_h}) is None:
             room = max(room, _AXIS_TEXT_EDGE_PAD + tick_offset + tick_room)
             continue
         label_size = float((axis.get("style") or {}).get("label_size", 12))
-        _ascent, descent = _text_cell(label_size)
-        gap = _Y_TITLE_TICK_GAP * label_size if tick_room else 0.0
-        room = max(room, baseline + descent + gap + tick_offset + tick_room)
+        ascent, descent = _text_cell(label_size)
+        gap = float(axis.get("label_offset", _Y_TITLE_TICK_GAP * label_size))
+        room = max(
+            room,
+            _AXIS_TEXT_EDGE_PAD + ascent + descent + gap + tick_offset + tick_room,
+        )
     return room
 
 
@@ -1649,20 +1644,7 @@ def _axis_label_geometry(
             # baseline. `_y_title_baseline` applies that half-line-box
             # correction and the axis's own `label_offset`, and is the same
             # function `layout()` reserves the gutter from.
-            baseline = _y_title_baseline(axis, plot["x"] + plot["w"])
-            if baseline is not None and side != "right":
-                # Matplotlib positions a left title from the tick-label ink,
-                # not from the canvas edge.  This matters when an explicit
-                # axes rectangle reserves more left room than the minimum
-                # measured gutter: keep the title attached to the ticks
-                # instead of leaving the extra frame padding between them.
-                tick_offset, tick_room = _y_tick_label_room(axis, plot["h"])
-                ascent, descent = _text_cell(font_size)
-                angle = float(axis.get("label_angle", -90.0))
-                title_inner_ink = ascent if angle > 0 else descent
-                gap = _Y_TITLE_TICK_GAP * font_size if tick_room else 0.0
-                attached = plot["x"] - tick_offset - tick_room - gap - title_inner_ink - offset
-                baseline = max(baseline, attached)
+            baseline = _y_title_baseline(axis, plot)
             x = (
                 baseline
                 if baseline is not None

@@ -502,7 +502,6 @@ export class ChartView {
     // vertical colorbar to its gradient; the full tick/title chrome returns
     // automatically when the container widens again.
     const responsivePad = this.fluid && compact && pad;
-    const marginLeft = pad ? (responsivePad ? Math.min(pad[3], 46) : pad[3]) : compact ? 46 : MARGIN.l;
     this._compactVerticalColorbar = Boolean(this.fluid && compact && verticalColorbar);
     const colorbarRightRoom = verticalColorbar
       ? (this._compactVerticalColorbar
@@ -528,6 +527,14 @@ export class ChartView {
       ? (compact ? 26 : 32)
       : 0;
     const top = marginTop + (this.spec.title ? (compact ? 26 : 30) : 0) + topAxisRoom;
+    const plotHeight = Math.max(40, this.size.h - top - marginBottom);
+    const authoredLeft = pad
+      ? (responsivePad ? Math.min(pad[3], 46) : pad[3])
+      : (compact ? 46 : MARGIN.l);
+    // Explicit padding is a floor, not permission to clip. Long numeric or
+    // categorical ticks and an outside y title reserve the room their actual
+    // strings need before the plot rectangle is fixed.
+    const marginLeft = Math.max(authoredLeft, this._yAxisLeftRoom(plotHeight));
     const rightAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("y") &&
       axis.side === "right" && this._axisTickLabelStrategy(axis) !== "none");
@@ -541,6 +548,53 @@ export class ChartView {
       w: Math.max(40, this.size.w - marginLeft - right),
       h: Math.max(40, this.size.h - top - marginBottom),
     };
+  }
+
+  _yAxisLeftRoom(plotHeight) {
+    let room = 0;
+    for (const axis of Object.values<any>(this.axes || {})) {
+      if (!axis || !String(axis.id || "").startsWith("y") || axis.side === "right") continue;
+      if (this._axisTickLabelStrategy(axis) === "none") continue;
+      const size = Math.max(
+        8,
+        this._axisStyleNumber(
+          axis,
+          "tick_label_size",
+          this._axisStyleNumber(axis, "tick_size", 11),
+        ),
+      );
+      const angle = Math.abs(Number(this._axisTickLabelAngle(axis) || 0)) * Math.PI / 180;
+      const ticks = this._axisTicks(
+        axis.id,
+        this._axisTickTarget(axis.id, Math.max(3, plotHeight / 45)),
+      );
+      let tickRoom = 0;
+      for (const value of (ticks.labels || ticks.ticks)) {
+        const text = this._axisTickText(axis, value, ticks.step);
+        const estimate = this._estimateTickLabel(text, size);
+        tickRoom = Math.max(
+          tickRoom,
+          Math.abs(Math.cos(angle)) * estimate.w + Math.abs(Math.sin(angle)) * estimate.h,
+        );
+      }
+      const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
+      const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+      const outward = direction === "in" ? 0 : direction === "inout" ? length / 2 : length;
+      const tickOffset =
+        outward + Math.max(0, this._axisStyleNumber(axis, "tick_padding", 4));
+      let needed = 4 + tickOffset + tickRoom;
+      const rawPosition = axis.label_position;
+      const position = typeof rawPosition === "string" ? rawPosition.replace(/-/g, "_") : "";
+      if (axis.label && !position.startsWith("inside_")) {
+        const labelSize = Math.max(8, this._axisStyleNumber(axis, "label_size", 12));
+        const gap = Number.isFinite(Number(axis.label_offset))
+          ? Number(axis.label_offset)
+          : 0.4 * labelSize;
+        needed += gap + 1.2 * labelSize;
+      }
+      room = Math.max(room, needed);
+    }
+    return room;
   }
 
   _normalizeAxes(spec) {
