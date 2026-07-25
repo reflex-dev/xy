@@ -272,7 +272,7 @@ the chart gallery, guides, and API reference. The repository also includes
 
 ## Roadmap
 
-XY is 2D-first: Plotly-class chart breadth on top of the binary transport and
+XY is 2D-first: broad chart coverage on top of the binary transport and
 screen-bounded rendering, before any 3D work. Queued next, no dates implied:
 
 - **Categorical distributions** &mdash; strip, swarm, beeswarm, boxen, rug
