@@ -23,6 +23,7 @@ from ._arrowgeom import arrow_shapes as _arrow_shapes
 from ._svg import (
     _AXIS,
     _AXIS_GRID_DASHES,
+    _BASE_FONT_SIZE,
     _GRID,
     _STATIC_COLOR_FALLBACK,
     _TEXT,
@@ -45,14 +46,17 @@ from ._svg import (
     _physical_density_alpha,
     _px_size,
     _resolve_static_css_vars,
+    _rule_label_anchor,
     _Scale,
     _solid_paint,
     _step_arrays,
+    _theme_font,
     _tick_label_anchor,
     apply_export_background,
     axis_ticks,
     hexbin_ring,
     layout,
+    legend_entries,
     warp_grid_rgba,
 )
 
@@ -658,6 +662,10 @@ def render_raster(
     cmd = _Cmd(scale)
 
     dom_style = (spec.get("dom") or {}).get("style") or {}
+    # The native rasterizer draws with a baked bitmap face, so only the SIZE
+    # half of `theme(font_family=, font_size=)` can apply here; the family is
+    # honored by the SVG/PDF exports and the browser client.
+    _theme_family, base_font = _theme_font(spec)
 
     # Figure patch (mpl figure.facecolor): `theme(background=)` lands on the
     # root element's CSS background, painted over the whole canvas so the
@@ -935,14 +943,16 @@ def render_raster(
                 "tick_label_angle": 0,
                 "tick_label_strategy": "hide",
             }
-            items = _axis_tick_label_layout(fallback_axis, values, step, axis_scale, is_x)
+            items = _axis_tick_label_layout(
+                fallback_axis, values, step, axis_scale, is_x, base_font
+            )
         tick_color = _parse_color(
             _css(
                 axis_style.get("tick_label_color", axis_style.get("tick_color")),
                 default_text,
             )
         )
-        font_size = _axis_tick_font_size(axis)
+        font_size = _axis_tick_font_size(axis, base_font)
         side = axis.get("side", "bottom" if is_x else "left")
         # An explicit tick_label_anchor (axis spec or style) overrides the
         # side-derived default, matching the browser client and SVG export.
@@ -974,7 +984,7 @@ def render_raster(
             width / 2,
             plot["y"] - plot["top_axis_room"] - (10 if compact else 12),
             1,
-            14,
+            base_font * (14.0 / _BASE_FONT_SIZE),
             text_c,
             str(spec["title"]),
         )
@@ -983,7 +993,7 @@ def render_raster(
         if not axis.get("label") or _axis_tick_label_strategy(axis) == "none":
             return
         axis_style = axis.get("style") or {}
-        geometry = _axis_label_geometry(axis, plot, is_x=is_x)
+        geometry = _axis_label_geometry(axis, plot, is_x=is_x, base=base_font)
         anchor = {"start": 0, "middle": 1, "end": 2}[geometry["anchor"]]
         cmd.text(
             geometry["x"],
@@ -1001,7 +1011,7 @@ def render_raster(
     for _axis_id, axis, _axis_scale in extra_y_axes:
         emit_axis_title(axis, is_x=False)
 
-    named = [t for t in spec["traces"] if t.get("name")]
+    named = legend_entries(spec)
     show_main_legend = spec.get("show_legend", True) and bool(named)
     extra_legends = [(extra, extra.get("items") or []) for extra in spec.get("extra_legends") or []]
     legend_present = show_main_legend or any(items for _extra, items in extra_legends)
@@ -1158,9 +1168,23 @@ def _emit_annotations(
                         cmd.fill(decoration["points"], color)
                     else:
                         cmd.stroke(decoration["points"], stroke_width, color)
-        if ann.get("kind") in ("text", "callout") and ann.get("text"):
-            x, y = _annotation_point(ann, style, sx, sy, plot, width, height)
-            anchor = {"start": 0, "middle": 1, "end": 2}.get(ann.get("anchor"), 0)
+        if ann.get("kind") in ("text", "callout", "rule", "band") and ann.get("text"):
+            kind = str(ann.get("kind"))
+            default_va = ""
+            if kind in ("rule", "band"):
+                # Same placement rule the SVG and the client use, so a rule's
+                # label lands in the same spot in all three outputs.
+                x, y, default_anchor, default_va = _rule_label_anchor(ann, kind, sx, sy, plot)
+            else:
+                x, y = _annotation_point(ann, style, sx, sy, plot, width, height)
+                default_anchor = "start"
+            if not (np.isfinite(x) and np.isfinite(y)):
+                continue
+            anchor = {"start": 0, "middle": 1, "end": 2}.get(
+                ann.get("anchor"), {"start": 0, "middle": 1, "end": 2}[default_anchor]
+            )
+            if default_va and not style.get("vertical_align"):
+                style = {**style, "vertical_align": default_va}
             font_size = _px_size(style.get("font_size"), 11.0)
             lines = str(ann["text"]).splitlines() or [""]
             line_height = font_size * 1.2

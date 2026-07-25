@@ -15,6 +15,8 @@ Use this page to:
 
 - **Set chart-wide colors and chrome.**
   [Start with the theme component →](#start-with-the-theme-component)
+- **Use your own brand colors for series.**
+  [Set the series palette →](#set-the-series-palette)
 - **Build and reuse a semantic palette.**
   [Open the palette example →](#build-a-reusable-palette)
 - **Understand which declaration wins.**
@@ -132,6 +134,39 @@ xy.area(
     line_width=2,
 )
 ~~~
+
+## Set the series palette
+
+Series and categories that carry no explicit `color=` take their colors, in
+order, from the chart's palette. `xy.theme(palette=[...])` replaces it, so a
+brand palette applies to every series, every category of a categorical color
+channel, and the legend swatches — in the browser and in every export:
+
+~~~python
+BRAND = ["#ff5c00", "#111827", "#00b3a4", "#8b5cf6"]
+
+chart = xy.line_chart(
+    xy.line(weeks, north, name="north"),
+    xy.line(weeks, south, name="south"),
+    xy.line(weeks, east, name="east"),
+    xy.legend(),
+    xy.theme(palette=BRAND),
+)
+~~~
+
+Colors repeat once the list runs out, so a four-color palette gives series 5
+the color of series 1. XY's shipped default is eight colors validated for
+color-vision deficiency, and its ordering is part of that guarantee; a
+replacement palette is not checked, so confirm a brand palette stays
+distinguishable — including for readers with CVD — before shipping it.
+
+For a **continuous** scale, pass a list of colors as the colormap instead:
+`xy.scatter(..., colormap=["#0d1b2a", "#1b6ca8", "#48cae4", "#ffd166"])`.
+The colors are interpolated evenly across the color domain and drive the
+marks, the density surface, and the colorbar gradient together. Between 2 and
+256 colors are accepted, and each must be one XY can resolve to RGB (hex,
+`rgb()`, `hsl()`, or a named color) — a `var()` that only a browser cascade
+could resolve is rejected rather than silently painted a fallback.
 
 ## Build a reusable palette
 
@@ -352,6 +387,14 @@ browser-only adaptation.
 | Native PNG | Full validated static surface | Chart-local tokens and `var()` fallbacks | Supported static chrome fields; no general slot-class cascade | No | One resolved state |
 | Chromium PNG | Full | Full | Full serialized component and slot styling | Only CSS included with `custom_css` | Evaluated at capture time, then frozen |
 
+The palette, colormaps, and `format=` on axes, colorbars, and tooltips are
+part of the chart itself rather than the cascade, so they render identically in
+every column above. So do the legend for a categorical `color=` channel and the
+`text=` label on a reference line or band — both used to appear only in the
+browser. The one split is `theme(font_family=)`, which the native
+PNG/JPEG/WebP path cannot honor — see
+[Custom fonts and export limitations](#custom-fonts-and-export-limitations).
+
 “Supported static chrome fields” means options the SVG/native renderer owns,
 such as axes and the built-in legend. It does not mean arbitrary DOM CSS or
 Tailwind classes are evaluated without a browser. Browser-only color
@@ -369,7 +412,36 @@ For exporter selection, engine arguments, and complete code examples, see
 
 ## Custom fonts and export limitations
 
-Browser charts inherit fonts from the chart root. Load the font in the host
+`xy.theme(font_family=..., font_size=...)` sets the typeface and base text size
+for the whole chart. Every text element scales from `font_size`, so tick
+labels, axis titles, the legend, and the chart title keep their proportions:
+
+~~~python
+chart = xy.line_chart(
+    xy.line(months, revenue, name="revenue"),
+    xy.y_axis(label="revenue", format="$,.0f"),
+    xy.legend(),
+    xy.theme(font_family="Georgia, 'Times New Roman', serif", font_size=15),
+    title="Quarterly revenue",
+)
+~~~
+
+Where each half applies:
+
+| Output | `font_family` | `font_size` |
+| --- | --- | --- |
+| Browser (notebook, Reflex, standalone HTML) | yes | yes |
+| SVG, PDF | yes | yes |
+| PNG, JPEG, WebP (native engine) | no — baked bitmap face | yes |
+| PNG via `engine=Engine.chromium` | yes | yes |
+
+The native raster exporter draws text with XY's own bitmap font and runs no
+browser cascade, so it cannot switch typefaces. Use
+`chart.to_image(..., engine=xy.Engine.chromium)` when a raster export must
+match the browser's text exactly, or export SVG or PDF, which carry the family
+through as a real font attribute.
+
+Browser charts also inherit fonts from the chart root. Load the font in the host
 application first, then set `font_family` through chart `style=` or apply a
 class that defines `font-family`. The live example uses a system serif so it
 does not depend on a network font; replace that stack with the family your host

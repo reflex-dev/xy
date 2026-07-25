@@ -304,6 +304,9 @@ class Theme(Component):
     """Chart-wide style tokens (plot background, grid/axis/text colors)."""
 
     style: dict[str, StyleValue] = field(default_factory=dict)
+    # Series/category color cycle. Kept beside `style` rather than inside it
+    # because a token is one CSS declaration and a palette is an ordered list.
+    palette: Optional[list[str]] = None
 
 
 @dataclass
@@ -511,7 +514,7 @@ def scatter(
     color: Union[str, ColorLike, ArrayLike, None] = None,
     size: Union[str, Scalar, ArrayLike, None] = 4.0,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     color_domain: Optional[tuple[float, float]] = None,
     size_range: tuple[float, float] = (2.0, 18.0),
     opacity: Any = 0.8,
@@ -855,7 +858,7 @@ def segments(
     data: TableLike = None,
     name: Optional[str] = None,
     color: Union[str, ColorLike, ArrayLike, None] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     width: Any = 1.2,
     opacity: Any = 1.0,
@@ -915,7 +918,7 @@ def triangle_mesh(
     *,
     data: TableLike = None,
     color: Union[str, ColorLike, ArrayLike, None] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     name: Optional[str] = None,
     opacity: Any = 1.0,
@@ -1315,7 +1318,7 @@ def hexbin(
     reduce_C_function: Callable[[np.ndarray], Scalar] = np.mean,
     mincnt: Optional[int] = None,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     opacity: float = 0.9,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
@@ -1374,7 +1377,7 @@ def contour(
     levels: Union[int, ArrayLike] = 10,
     filled: bool = False,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     color: Optional[str] = None,
     width: float = 1.1,
     opacity: float = 0.9,
@@ -1709,7 +1712,7 @@ def heatmap(
     y: Union[str, ArrayLike, None] = None,
     data: TableLike = None,
     name: Optional[str] = None,
-    colormap: str = channels.DEFAULT_COLORMAP,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     opacity: float = 0.95,
     style: Optional[dict[str, StyleValue]] = None,
@@ -2657,6 +2660,9 @@ def theme(
     crosshair_color: Optional[StyleValue] = None,
     selection_color: Optional[StyleValue] = None,
     selection_fill: Optional[StyleValue] = None,
+    palette: Optional[Sequence[str]] = None,
+    font_family: Optional[str] = None,
+    font_size: Optional[float] = None,
     **tokens: StyleValue,
 ) -> Theme:
     """Configure chart theme tokens.
@@ -2675,6 +2681,19 @@ def theme(
         crosshair_color: Hover crosshair color.
         selection_color: Selection-outline color.
         selection_fill: Selection-region fill color.
+        palette: Series and category color cycle, replacing the shipped
+            default. Series take colors in order and repeat once the list runs
+            out. XY's default eight are validated for color-vision deficiency
+            (``config.DEFAULT_PALETTE``); a replacement is not checked, so
+            verify a brand palette stays distinguishable.
+        font_family: Chart-wide font stack, applied to every text element the
+            chart draws. Honored by the browser client and the SVG and PDF
+            exports; the native raster exporter draws with a baked bitmap
+            font, so PNG/JPEG/WebP keep their own face (see
+            ``Engine.chromium`` for pixel-exact browser text).
+        font_size: Base chart text size in px. Every text element scales from
+            it, so tick labels, axis titles, legends, and the chart title keep
+            their relative proportions.
         **tokens: Additional supported theme tokens.
     """
     merged = _style_dict(style, "theme style")
@@ -2693,9 +2712,44 @@ def theme(
             "theme",
         )
     )
+    if font_family is not None:
+        # Routed through the same declaration check as any other style value,
+        # so a font stack cannot smuggle CSS into the chrome or the SVG.
+        merged.update(_style_dict({"font-family": font_family}, "theme font_family"))
+    if font_size is not None:
+        merged["font-size"] = _theme_font_size(font_size)
     if tokens:
         merged.update(_theme_tokens(tokens, "theme tokens"))
-    return Theme(style=merged)
+    return Theme(style=merged, palette=_theme_palette(palette))
+
+
+# Below ~6px text stops being text on any renderer, and a runaway size blows
+# the reserved axis/legend room rather than producing a bigger chart.
+_MIN_FONT_SIZE = 6.0
+_MAX_FONT_SIZE = 48.0
+
+
+def _theme_font_size(value: Any) -> float:
+    size = _finite_number(value, "theme font_size")
+    if not _MIN_FONT_SIZE <= size <= _MAX_FONT_SIZE:
+        raise ValueError(
+            f"theme font_size must be between {_MIN_FONT_SIZE:g} and {_MAX_FONT_SIZE:g} px, "
+            f"got {size:g}"
+        )
+    return size
+
+
+def _theme_palette(value: Any) -> Optional[list[str]]:
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValueError("theme palette must be a sequence of CSS color strings")
+    colors = [
+        _validate.css_color(entry, f"theme palette[{index}]") for index, entry in enumerate(value)
+    ]
+    if not colors:
+        raise ValueError("theme palette must contain at least one color")
+    return colors
 
 
 def interaction_config(
@@ -3073,6 +3127,10 @@ class Chart(Component):
         fig.style = {}
         for theme_node in themes:
             fig.style.update(theme_node.style)
+            # Last theme with a palette wins, matching how the style tokens
+            # above merge; a theme that sets no palette leaves the prior one.
+            if theme_node.palette is not None:
+                fig.palette = _theme_palette(theme_node.palette)
         fig.style.update(self.style)
         chart_animation = animations[-1] if animations else None
         if chart_animation is not None:
@@ -3906,7 +3964,11 @@ def _declarative_colorbar_options(mark: Mark, traces: list[Any]) -> Optional[dic
             continue
         options = {
             "domain": [float(domain[0]), float(domain[1])],
-            "colormap": str(colormap),
+            # Either a built-in name or resolved RGB stops — `str()` here would
+            # turn a custom colormap's stops into a name no renderer knows, and
+            # the bar would silently wear viridis while the marks wore the
+            # user's ramp.
+            "colormap": colormap if not isinstance(colormap, str) else str(colormap),
         }
 
     if options is None:

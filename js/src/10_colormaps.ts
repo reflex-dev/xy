@@ -27,6 +27,9 @@ const COLORMAP_STOPS = {
 };
 
 export function colormapStops(name) {
+  // A custom colormap arrives as explicit [r,g,b] stops instead of a name
+  // (Python resolves the CSS colors, so the client never parses color text).
+  if (Array.isArray(name)) return name.length ? name : COLORMAP_STOPS.viridis;
   const reversed = typeof name === "string" && name.endsWith("_r");
   const base = reversed ? name.slice(0, -2) : name;
   const stops = COLORMAP_STOPS[base] || COLORMAP_STOPS.viridis;

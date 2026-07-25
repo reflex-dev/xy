@@ -600,6 +600,21 @@ Python, no browser, no extra dependencies. Because decimation runs first, the
 file is **screen-bounded**: a 10M-point line exports in ~4 ms as a ~58 KB SVG.
 Density/heatmap tiers embed as compact rasters.
 
+### Chrome the static exporters draw
+
+`_svg.render_svg` and `_raster` share one layout (`_svg.layout`) and one legend
+model (`_svg.legend_entries`), so their chrome matches the client's:
+
+- **Categorical legends.** A `color=` channel that resolves to categories
+  contributes one legend row per category, wearing that category's palette
+  slot — the same rule as the client's `color.mode === "categorical"` branch.
+  Before this, only *named traces* produced rows, so a scatter colored by a
+  category column exported with no legend at all while the browser drew one.
+- **Rule and band labels.** `xy.hline(..., text=)`, `vline`, `x_band`/`y_band`
+  render their own label, anchored by `_svg._rule_label_anchor` — the port of
+  the client's placement in `js/src/51_annotations.ts`. A label whose scale
+  maps it off the finite plane is dropped rather than emitted as `x="nan"`.
+
 `fig.to_png(path?, width=, height=, scale=)` defaults to
 `engine=xy.Engine.default`: the
 built-in **Rust rasterizer** paints that same decimated payload — no browser and

@@ -417,13 +417,30 @@ class PayloadMixin(_Host):
             return values, (float(bounds[0]), float(bounds[1]))
         return self._axis_coord(axis_id, values), (c0, c1)
 
-    @staticmethod
-    def _default_styled(t: Trace) -> dict[str, Any]:
+    @property
+    def _series_palette(self) -> list[str]:
+        """This figure's series/category color cycle.
+
+        `xy.theme(palette=[...])` overrides the shipped default; the fallback
+        is the CVD-validated eight, so charts that never theme keep exactly
+        the colors they had.
+        """
+        return getattr(self, "palette", None) or DEFAULT_PALETTE
+
+    def _default_styled(self, t: Trace) -> dict[str, Any]:
         """Trace style dict with the per-trace palette default when no color
         was given — the one place this rule lives (was copy-pasted per kind)."""
         style = dict(t.style)
         if style.get("color") is None:
-            style["color"] = default_palette_color(t.id)
+            palette = self._series_palette
+            style["color"] = (
+                default_palette_color(t.id)
+                if palette is DEFAULT_PALETTE
+                # A user palette is their own call: it carries no CVD
+                # guarantee and no eight-slot rule, so the wrap warning that
+                # polices the shipped default would be noise here.
+                else palette[t.id % len(palette)]
+            )
         return style
 
     def _m4_decimate(
@@ -901,15 +918,21 @@ class PayloadMixin(_Host):
         path keeps unit f32 because tooltips denormalize the shipped columns
         (see channels.ship_channels)."""
         return channels.ship_channels(
-            t, sel, ship_scalar, ship_u8, DEFAULT_PALETTE, quantize_continuous=quantize_continuous
+            t,
+            sel,
+            ship_scalar,
+            ship_u8,
+            self._series_palette,
+            quantize_continuous=quantize_continuous,
         )
 
-    @staticmethod
-    def _ship_trace_styles(entry: dict[str, Any], t: Trace, sel, pw: "_PayloadWriter") -> None:  # noqa: ANN001
+    def _ship_trace_styles(
+        self, entry: dict[str, Any], t: Trace, sel, pw: "_PayloadWriter"
+    ) -> None:  # noqa: ANN001
         """Attach outline paint and direct instance attributes to a trace spec."""
         if t.stroke_ch is not None:
             entry["stroke"] = channels.ship_color_channel(
-                t.stroke_ch, sel, pw.ship_scalar, pw.ship_u8, DEFAULT_PALETTE
+                t.stroke_ch, sel, pw.ship_scalar, pw.ship_u8, self._series_palette
             )
         if t.style_channels:
             entry["channels"] = channels.ship_style_channels(
@@ -1134,7 +1157,7 @@ class PayloadMixin(_Host):
             # color == density.
             color_spec = t.color_ch.spec()
             color_spec["palette"] = channels.categorical_palette(
-                DEFAULT_PALETTE, len(t.color_ch.categories or ())
+                self._series_palette, len(t.color_ch.categories or ())
             )
             entry["color"] = color_spec
         return entry
