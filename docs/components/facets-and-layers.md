@@ -117,7 +117,7 @@ layered_legend_chart = xy.chart(
     xy.line(layer_months, layer_actual, name="Actual", color="#1b212a", width=2.5),
     xy.scatter(layer_months, layer_actual, name="Monthly close", color="#1b212a", size=6),
     xy.hline(7.5, text="Goal", color="#dc2626"),
-    xy.legend(loc="top left"),
+    xy.legend(loc="upper left"),
     xy.x_axis(label="month"),
     xy.y_axis(label="revenue ($M)"),
     title="Actuals over a forecast band",

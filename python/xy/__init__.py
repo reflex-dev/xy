@@ -22,8 +22,9 @@ native core; those initialize when a chart-building API is first imported/used.
 
 from __future__ import annotations
 
-from importlib import import_module
-from typing import TYPE_CHECKING, Any
+from importlib import import_module as _import_module
+from typing import TYPE_CHECKING
+from typing import Any as _Any
 
 __version__ = "0.0.1"
 
@@ -205,21 +206,26 @@ __all__ = [
 ]
 
 
-def _load_export(name: str) -> Any:
+def _load_export(name: str) -> _Any:
     module_name = _EXPORTS.get(name)
     if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    value = getattr(import_module(module_name, __name__), name)
+    value = getattr(_import_module(module_name, __name__), name)
     globals()[name] = value
     return value
 
 
-def __getattr__(name: str) -> Any:
+def __getattr__(name: str) -> _Any:
     return _load_export(name)
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(__all__))
+    # `__all__` alone, not the module globals: the import machinery leaves
+    # helpers behind (`annotations` from the __future__ import, `Any`,
+    # `TYPE_CHECKING`, `import_module`), and `xy.annotations` in particular
+    # collides with the annotations components. `scripts/check_public_api.py`
+    # asserts nothing public leaks past this.
+    return sorted(__all__)
 
 
 if TYPE_CHECKING:
@@ -298,3 +304,13 @@ if TYPE_CHECKING:
     )
     from .dom import CHART_DOM_SLOTS
     from .export import Engine, write_images
+
+
+# Import machinery, not API. `annotations` in particular is the compile-time
+# `from __future__` directive, whose runtime binding would otherwise resolve as
+# `xy.annotations` and shadow the annotation components (`xy.hline`,
+# `xy.callout`, …) documented under that word. `Any`/`TYPE_CHECKING` are only
+# needed while this module executes: annotations are strings under the future
+# import, and the `if TYPE_CHECKING:` block above has already run.
+# `scripts/check_public_api.py` asserts no public name outlives this.
+del annotations, TYPE_CHECKING
