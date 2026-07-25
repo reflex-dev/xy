@@ -80,17 +80,15 @@ chart = xy.line_chart(
 chart
 ```
 
-Drag to pan, scroll to zoom, and hover to read back an exact source row. The
-overview is drawn from a decimated view of the data, and detail returns as the
-visible range narrows &mdash; the two lines above reach the browser as a single
-payload of about 54 KB rather than two million JSON numbers.
+Drag to pan, scroll to zoom, hover to read back an exact source row. The
+overview is decimated and detail returns as you zoom, so both lines reach the
+browser as one 54 KB payload rather than two million JSON numbers. The same
+chart exports unchanged.
 
-The same chart can be exported without changing how it is built.
-
-XY currently includes line, scatter, area, histogram, bar and column, heatmap,
-error bar and band, box, violin, ECDF, hexbin, contour, step, stairs, stem,
-triangle mesh, and faceted charts. See the
-[copyable examples](spec/api/api-examples.md) for the complete surface.
+XY also covers scatter, area, histogram, bar and column, heatmap, error bar and
+band, box, violin, ECDF, hexbin, contour, step, stairs, stem, triangle mesh, and
+faceted charts &mdash; see the
+[copyable examples](spec/api/api-examples.md).
 
 ### Coming from matplotlib
 
