@@ -122,6 +122,16 @@ DEFAULT_COLORMAP = "viridis"
 MAX_CATEGORIES = 256
 _FACTORIZE_PROBE_ROWS = 4096
 _FACTORIZE_NATIVE_MAX_PROBE_CATEGORIES = 512
+# How near-unique a probe must look before hashing stops paying for itself.
+# Measured on an M-series Mac at N=500k, native-vs-object by probe uniqueness
+# ratio: 0.146 -> native 13.2x, 0.904 -> 5.8x, 0.989 -> 1.29x. Wide records
+# cross over earlier because hashing them costs more per row, so narrow columns
+# only give up the fast path for a true id column (no repeats in the probe at
+# all) while wide ones give it up as soon as repeats get scarce. Category
+# *count* is the wrong axis: 600 categories over millions of rows probes at
+# 0.146, nowhere near unique.
+_FACTORIZE_NEAR_UNIQUE_RATIO = 0.95
+_FACTORIZE_NARROW_ITEMSIZE = 32
 
 
 @dataclass
@@ -275,12 +285,18 @@ def _category_code_dtype(category_count: int) -> type[np.uint8] | type[np.uint32
 
 
 def _use_native_fixed_factorizer(arr: np.ndarray) -> bool:
-    """Choose the O(N) hash path when a bounded global probe is low-cardinality.
+    """Choose the O(N) hash path unless a bounded global probe says it cannot pay.
 
-    With nearly every label unique, Python must still materialize and sort the
-    complete display-label set; hashing those records first is redundant work.
-    Sampling across the full array avoids that regression while keeping the
-    decision independent of N.
+    The native pass earns its keep by keeping N records out of Python: only the
+    compact unique set crosses the label-policy path. It stops paying when the
+    column is near-unique, because then Python must materialize and sort
+    essentially the whole label set anyway and hashing the records first is
+    redundant. What decides that is how *repetitive* the probe is, not how many
+    categories it happens to contain — a few hundred categories spread over
+    millions of rows is an ordinary categorical column and keeps the fast path.
+    Wide records cross over sooner, so they hand back the fast path as soon as
+    repeats get scarce while narrow ones hold it until the probe is entirely
+    distinct. Sampling across the full array keeps the decision independent of N.
     """
     n = len(arr)
     if n <= _FACTORIZE_PROBE_ROWS:
@@ -288,7 +304,13 @@ def _use_native_fixed_factorizer(arr: np.ndarray) -> bool:
     else:
         rows = np.linspace(0, n - 1, _FACTORIZE_PROBE_ROWS, dtype=np.intp)
         probe = arr[rows]
-    return len(np.unique(probe)) <= _FACTORIZE_NATIVE_MAX_PROBE_CATEGORIES
+    distinct = len(np.unique(probe))
+    if distinct <= _FACTORIZE_NATIVE_MAX_PROBE_CATEGORIES:
+        return True
+    near_unique = (
+        1.0 if arr.dtype.itemsize <= _FACTORIZE_NARROW_ITEMSIZE else _FACTORIZE_NEAR_UNIQUE_RATIO
+    )
+    return distinct < near_unique * len(probe)
 
 
 def _factorize_categories(
