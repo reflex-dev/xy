@@ -1784,6 +1784,28 @@ class Axes(PlotTypeMixin):
         orientation: str,
         kwargs: dict[str, Any],
     ) -> BarContainer:
+        def materialize_iterable(value: Any) -> Any:
+            """Turn one-shot and view iterables into real bar columns.
+
+            ``np.asarray(dict.values())`` is a scalar object array, which made
+            one apparent bar and left the raw view to fail later during
+            autoscale. Array-like containers such as Series already expose a
+            meaningful ndarray and should stay untouched.
+            """
+            if isinstance(value, (str, bytes)) or np.isscalar(value):
+                return value
+            array = np.asarray(value)
+            if array.ndim != 0:
+                return value
+            try:
+                return list(value)
+            except TypeError:
+                return value
+
+        cats = materialize_iterable(cats)
+        vals = materialize_iterable(vals)
+        thickness = materialize_iterable(thickness)
+        base = materialize_iterable(base)
         cat_array = np.asarray(cats)
         if cat_array.dtype.kind == "U" and cat_array.dtype.isnative:
             # _plain_text only rewrites labels containing TeX markers; a
@@ -5926,6 +5948,11 @@ class Axes(PlotTypeMixin):
                 return np.asarray(unit_converted_values(values), dtype=np.float64).reshape(-1)
             except (TypeError, ValueError):
                 array = np.asanyarray(values).reshape(-1)
+                if self._axis_holds_datetimes(axis):
+                    converted = [self._data_coordinate(value, axis) for value in array]
+                    if not all(value is not None for value in converted):
+                        raise
+                    return np.asarray(converted, dtype=np.float64)
                 if not all(isinstance(value, str) for value in array):
                     raise
                 mapping = category_maps.setdefault(axis, {})

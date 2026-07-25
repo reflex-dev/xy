@@ -1,0 +1,16 @@
+{
+  "matplotlib_version": "3.11.0",
+  "base_code_commit": "47871a01db1ad02d1f64bda71fd1a50f9ab89853",
+  "head_code_commit": "8fa2d4d0bcea9e9601276ce9773ab2318d272eed",
+  "full_frame": true,
+  "source_tree_note": "The published stack only adds these evidence files beyond the exact rendered code boundaries.",
+  "comparisons": [
+    {
+      "source": "statistics/violinplot.py",
+      "figure": 0,
+      "file": "violinplot.png",
+      "dimensions": [3112, 528],
+      "sha256": "7be44485a7bb337b576f1ebe2f2a34b30c2a6cf7aa66088269cf48bb3d031913"
+    }
+  ]
+}

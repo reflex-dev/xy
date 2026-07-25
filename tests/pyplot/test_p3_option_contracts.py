@@ -453,6 +453,25 @@ def test_contourf_legend_elements_keep_per_band_hatches_and_handleheight() -> No
     assert all(item["kind"] == "bar" for item in spec["legend"]["items"])
 
 
+def test_contourf_preserves_unknown_public_extend_as_unextended_geometry() -> None:
+    _fig, ax = plt.subplots()
+    contour = ax.contourf(_Z, levels=4, extend="lower")
+
+    assert contour._entry["extend"] == "lower"
+    assert contour._entry["kwargs"]["extend"] == "neither"
+
+
+def test_violinplot_flat_quantiles_are_one_single_violin_group() -> None:
+    _fig, ax = plt.subplots()
+    result = ax.violinplot(
+        [1.0, 2.0, 3.0, 4.0],
+        quantiles=[0.25, 0.5, 0.75],
+        showextrema=False,
+    )
+
+    assert len(result["cquantiles"]._entry["args"][0]) == 3
+
+
 def test_plot_masked_integer_coordinates_use_nan_gaps() -> None:
     _fig, ax = plt.subplots()
     line = ax.plot(

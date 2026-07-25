@@ -2492,9 +2492,14 @@ class PlotTypeMixin:
             }
             vpstats.append(item)
         if quantiles is not None:
-            if len(quantiles) != len(groups):
+            quantile_groups = list(quantiles)
+            if quantile_groups and all(np.isscalar(value) for value in quantile_groups):
+                quantile_groups = [quantile_groups]
+            elif not quantile_groups:
+                quantile_groups = [[] for _ in groups]
+            if len(quantile_groups) != len(groups):
                 raise ValueError("quantiles must contain one sequence per violin")
-            for item, group, requested in zip(vpstats, groups, quantiles, strict=True):
+            for item, group, requested in zip(vpstats, groups, quantile_groups, strict=True):
                 item["quantiles"] = np.quantile(group[np.isfinite(group)], requested)
         return self.violin(
             vpstats,
@@ -2820,11 +2825,13 @@ class PlotTypeMixin:
             corner_mask = rcParams["contour.corner_mask"]
         if not isinstance(corner_mask, (bool, np.bool_)):
             raise TypeError("corner_mask must be a boolean")
-        extend = kwargs.pop("extend", None)
-        if extend is None:
-            extend = "neither"
-        if extend not in ("neither", "min", "max", "both"):
-            raise ValueError("extend must be 'neither', 'min', 'max', or 'both'")
+        public_extend = kwargs.pop("extend", None)
+        if public_extend is None:
+            public_extend = "neither"
+        # Matplotlib stores unrecognized public values but treats them as an
+        # unextended contour. Keep that observable value on the ContourSet
+        # while passing the renderer its normalized four-value contract.
+        extend = public_extend if public_extend in ("neither", "min", "max", "both") else "neither"
         hatches = kwargs.pop("hatches", None)
         locator = kwargs.pop("locator", None)
         za = np.asarray(z, dtype=np.float64)
@@ -2979,7 +2986,7 @@ class PlotTypeMixin:
                 "corner_mask": bool(corner_mask),
                 "domain": (float(public_levels[0]), float(public_levels[-1])),
                 "hatches": list(hatches) if hatches is not None else None,
-                "extend": extend,
+                "extend": public_extend,
                 "levels": public_levels,
             },
         )
@@ -4273,6 +4280,9 @@ class PlotTypeMixin:
             entry["pie_mid"] = float(mids[index])
             entry["pie_radius"] = float(radius)
             entry["pie_explode"] = float(offsets[index])
+            theta_start, theta_end = np.rad2deg(boundaries[index : index + 2])
+            entry["pie_theta1"] = float(min(theta_start, theta_end))
+            entry["pie_theta2"] = float(max(theta_start, theta_end))
             wedges.append(Wedge(self, entry))
 
         angle = np.deg2rad(float(startangle))

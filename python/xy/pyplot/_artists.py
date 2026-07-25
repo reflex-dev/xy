@@ -1203,6 +1203,16 @@ class PolyCollection(Artist):
 class Wedge(PolyCollection):
     """Pie wedge backed by a grouped subset of one native sector mesh."""
 
+    @property
+    def theta1(self) -> float:
+        """Starting angle in degrees, matching Matplotlib's public geometry."""
+        return float(self._entry["pie_theta1"])
+
+    @property
+    def theta2(self) -> float:
+        """Ending angle in degrees, matching Matplotlib's public geometry."""
+        return float(self._entry["pie_theta2"])
+
 
 class PieContainer:
     """Matplotlib 3.11-compatible pie result with legacy tuple unpacking."""

@@ -367,6 +367,8 @@ def test_datetime_paths_participate_in_best_placement():
     _, ax = plt.subplots()
     dates = np.asarray(["2026-01-01", "2026-01-02"], dtype="datetime64[D]")
     ax.plot(dates, [0.0, 1.0], label="dated")
+    ax.text("2026-1-1", 0.4, "start")
+    ax.annotate("finish", xy=("2026-1-2", 1.0))
     ax.legend(loc="best")
     assert resolved_loc(ax) == "upper left"
 

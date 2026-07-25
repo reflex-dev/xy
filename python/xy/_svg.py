@@ -44,9 +44,24 @@ def _stroke_opacity(style: dict[str, Any], default: float = 1.0) -> float:
     return float(style.get("opacity", default)) * float(style.get("stroke_opacity", 1.0))
 
 
+def _flag_stops() -> list[tuple[int, int, int]]:
+    """Matplotlib's high-frequency ``flag`` map at the native 256 LUT positions."""
+    x = np.linspace(0.0, 1.0, 256)
+    channels = np.column_stack(
+        (
+            0.75 * np.sin((x * 31.5 + 0.25) * np.pi) + 0.5,
+            np.sin(x * 31.5 * np.pi),
+            0.75 * np.sin((x * 31.5 - 0.25) * np.pi) + 0.5,
+        )
+    )
+    rgb = np.rint(np.clip(channels, 0.0, 1.0) * 255.0).astype(np.uint8)
+    return [tuple(int(channel) for channel in row) for row in rgb]
+
+
 # Mirrors js/src/10_colormaps.ts COLORMAP_STOPS (§36) — test-guarded.
 COLORMAP_STOPS: dict[str, list[tuple[int, int, int]]] = {
     "binary": [(255, 255, 255), (0, 0, 0)],
+    "flag": _flag_stops(),
     "reds": [
         (255, 245, 240),
         (254, 229, 216),

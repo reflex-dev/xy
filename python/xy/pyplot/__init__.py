@@ -2896,6 +2896,7 @@ class _ColormapRegistry:
             "RdGy",
             "bwr",
             "jet",
+            "flag",
             "Blues",
             "RdYlGn",
             "rainbow",

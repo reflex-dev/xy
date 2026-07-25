@@ -3,8 +3,25 @@
 // interpolates a 256-texel LUT texture once per colormap.
 // ---------------------------------------------------------------------------
 
+function flagStops() {
+  // Matplotlib's flag colormap is an intentionally high-frequency
+  // red → white → blue → black cycle. Sample its three canonical channel
+  // functions at the client LUT's native 256 positions so the oscillations
+  // are not flattened by the compact-stop interpolation used by other maps.
+  const clip = (value) => Math.max(0, Math.min(1, value));
+  return Array.from({ length: 256 }, (_, index) => {
+    const x = index / 255;
+    return [
+      Math.round(255 * clip(0.75 * Math.sin((x * 31.5 + 0.25) * Math.PI) + 0.5)),
+      Math.round(255 * clip(Math.sin(x * 31.5 * Math.PI))),
+      Math.round(255 * clip(0.75 * Math.sin((x * 31.5 - 0.25) * Math.PI) + 0.5)),
+    ];
+  });
+}
+
 const COLORMAP_STOPS = {
   binary: [[255, 255, 255], [0, 0, 0]],
+  flag: flagStops(),
   reds: [[255, 245, 240], [254, 229, 216], [253, 202, 181], [252, 171, 143], [252, 138, 106], [251, 105, 74], [241, 68, 50], [217, 37, 35], [188, 20, 26], [152, 12, 19], [103, 0, 13]],
   bone: [[0, 0, 0], [22, 22, 30], [45, 45, 62], [66, 66, 93], [89, 92, 121], [112, 123, 144], [134, 154, 166], [157, 185, 188], [185, 210, 210], [221, 233, 233], [255, 255, 255]],
   autumn: [[255, 0, 0], [255, 25, 0], [255, 51, 0], [255, 76, 0], [255, 102, 0], [255, 128, 0], [255, 153, 0], [255, 179, 0], [255, 204, 0], [255, 230, 0], [255, 255, 0]],
