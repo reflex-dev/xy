@@ -85,6 +85,10 @@ _STANDALONE_CSP = (
     "script-src 'unsafe-inline'; "
     "style-src 'unsafe-inline'; "
     "img-src data:; "
+    # data: only — `custom_css` may embed a brand face as a data-URL
+    # `@font-face` (the documented portable-font recipe); no network origin
+    # is reachable, so a standalone file stays self-contained offline.
+    "font-src data:; "
     "connect-src 'none'; "
     # blob: only — the density re-bin worker boots from a Blob URL of its own
     # bundled source; no external worker script can ever load.

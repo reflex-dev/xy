@@ -238,7 +238,8 @@ def main() -> None:
     # same policy a real to_html export ships.
     csp = (
         "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
-        "img-src data:; connect-src 'none'; worker-src blob:; object-src 'none'; "
+        "img-src data:; font-src data:; connect-src 'none'; worker-src blob:; "
+        "object-src 'none'; "
         "base-uri 'none'; form-action 'none'"
     )
     page = f"""<!doctype html><html><head><meta charset=utf-8>

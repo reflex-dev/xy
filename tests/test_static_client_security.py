@@ -871,6 +871,27 @@ def test_standalone_csp_allows_blob_workers_and_matches_smoke() -> None:
     assert smoke_csp == _STANDALONE_CSP, "smoke CSP diverged from export._STANDALONE_CSP"
 
 
+def test_standalone_csp_allows_data_url_fonts_only() -> None:
+    """`custom_css` may embed a brand face as a data-URL `@font-face` — the
+    portable-font recipe in docs/styling/themes-and-tokens.md. Without an
+    explicit `font-src`, `default-src 'none'` blocks every font load including
+    `data:`, so the documented recipe silently falls back to system-ui.
+
+    `data:` and nothing else: a standalone file must stay self-contained, so no
+    network origin may serve a face."""
+    from xy.export import _STANDALONE_CSP
+
+    directives = dict(
+        part.strip().split(" ", 1) for part in _STANDALONE_CSP.split(";") if part.strip()
+    )
+    assert directives.get("font-src") == "data:", (
+        "font-src must be exactly 'data:' — absent means default-src 'none' "
+        "blocks the documented data-URL @font-face recipe; anything wider "
+        "would let a standalone export reach the network for a font"
+    )
+    assert directives["default-src"] == "'none'"
+
+
 def test_client_supports_edge_to_edge_sparklines() -> None:
     """Dashboards need chrome-less, edge-to-edge charts: an explicit `padding`
     override collapses the label-aware margins, and tick_label_strategy="none"
