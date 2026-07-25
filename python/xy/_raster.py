@@ -46,6 +46,7 @@ from ._svg import (
     _physical_density_alpha,
     _px_size,
     _resolve_static_css_vars,
+    _rule_label_anchor,
     _Scale,
     _solid_paint,
     _step_arrays,
@@ -55,6 +56,7 @@ from ._svg import (
     axis_ticks,
     hexbin_ring,
     layout,
+    legend_entries,
     warp_grid_rgba,
 )
 
@@ -1009,7 +1011,7 @@ def render_raster(
     for _axis_id, axis, _axis_scale in extra_y_axes:
         emit_axis_title(axis, is_x=False)
 
-    named = [t for t in spec["traces"] if t.get("name")]
+    named = legend_entries(spec)
     show_main_legend = spec.get("show_legend", True) and bool(named)
     extra_legends = [(extra, extra.get("items") or []) for extra in spec.get("extra_legends") or []]
     legend_present = show_main_legend or any(items for _extra, items in extra_legends)
@@ -1166,9 +1168,23 @@ def _emit_annotations(
                         cmd.fill(decoration["points"], color)
                     else:
                         cmd.stroke(decoration["points"], stroke_width, color)
-        if ann.get("kind") in ("text", "callout") and ann.get("text"):
-            x, y = _annotation_point(ann, style, sx, sy, plot, width, height)
-            anchor = {"start": 0, "middle": 1, "end": 2}.get(ann.get("anchor"), 0)
+        if ann.get("kind") in ("text", "callout", "rule", "band") and ann.get("text"):
+            kind = str(ann.get("kind"))
+            default_va = ""
+            if kind in ("rule", "band"):
+                # Same placement rule the SVG and the client use, so a rule's
+                # label lands in the same spot in all three outputs.
+                x, y, default_anchor, default_va = _rule_label_anchor(ann, kind, sx, sy, plot)
+            else:
+                x, y = _annotation_point(ann, style, sx, sy, plot, width, height)
+                default_anchor = "start"
+            if not (np.isfinite(x) and np.isfinite(y)):
+                continue
+            anchor = {"start": 0, "middle": 1, "end": 2}.get(
+                ann.get("anchor"), {"start": 0, "middle": 1, "end": 2}[default_anchor]
+            )
+            if default_va and not style.get("vertical_align"):
+                style = {**style, "vertical_align": default_va}
             font_size = _px_size(style.get("font_size"), 11.0)
             lines = str(ann["text"]).splitlines() or [""]
             line_height = font_size * 1.2

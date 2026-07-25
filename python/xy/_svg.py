@@ -1854,7 +1854,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         append_axis_title(axis, is_x=True)
     for _axis_id, axis, _axis_scale in extra_y_axes:
         append_axis_title(axis, is_x=False)
-    named = [t for t in spec["traces"] if t.get("name")]
+    named = legend_entries(spec)
     if spec.get("show_legend", True) and named:
         chrome.append(_legend(named, plot, spec.get("legend") or {}, clip_id, default_text))
     for extra in spec.get("extra_legends") or []:
@@ -2041,6 +2041,72 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     )
 
 
+def _rule_label_anchor(
+    ann: dict[str, Any],
+    kind: str,
+    sx: Callable[[float], float],
+    sy: Callable[[float], float],
+    plot: dict[str, float],
+) -> tuple[float, float, str, str]:
+    """Where a rule's or band's own `text=` label sits, and how it anchors.
+
+    One rule, three renderers: `js/src/51_annotations.ts` places these labels
+    for the live client, and the static SVG and native raster paths both come
+    through here, so `xy.hline(2.5, text="target")` reads the same in a
+    notebook and in an exported PNG.
+    """
+    vertical = ann.get("axis") == "x"
+    if kind == "band":
+        start, end = float(ann.get("start", 0.0)), float(ann.get("end", 0.0))
+        along = (
+            (float(sx(start)) + float(sx(end))) / 2
+            if vertical
+            else (float(sy(start)) + float(sy(end))) / 2
+        )
+    else:
+        value = float(ann.get("value", 0.0))
+        along = float(sx(value)) if vertical else float(sy(value))
+    if vertical:
+        # Pinned just inside the top of the plot, reading downward from the line.
+        anchor = "middle" if kind == "band" else "start"
+        return along, plot["y"] + 6.0, anchor, "top"
+    # Pinned just inside the right edge, sitting on the line.
+    return plot["x"] + plot["w"] - 6.0, along, "end", "middle" if kind == "band" else ""
+
+
+def legend_entries(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """Legend rows for a spec, in the client's order and with its rules.
+
+    A *categorical* color channel contributes one row per category rather than
+    one row for the trace — a scatter colored by `continent` has no trace name
+    to show, and without this the static exporters drew no legend at all while
+    the browser drew one row per continent (`js/src/50_chartview.ts`, the
+    `color.mode === "categorical"` branch). Each row is shaped like a trace so
+    the existing legend layout and painters need no special case.
+    """
+    entries: list[dict[str, Any]] = []
+    for trace in spec.get("traces") or []:
+        color = trace.get("color") or {}
+        if color.get("mode") == "categorical":
+            categories = color.get("categories") or []
+            palette = color.get("palette") or DEFAULT_PALETTE
+            style = trace.get("style") or {}
+            for index, category in enumerate(categories):
+                entries.append(
+                    {
+                        **trace,
+                        "name": str(category),
+                        # The row wears its category's palette slot, not the
+                        # trace's own default color.
+                        "style": {**style, "color": palette[index % len(palette)]},
+                        "color": None,
+                    }
+                )
+        elif trace.get("name"):
+            entries.append(trace)
+    return entries
+
+
 def _annotation_svg(
     annotations: Sequence[dict[str, Any]],
     sx: Callable[[float], float],
@@ -2120,22 +2186,34 @@ def _annotation_svg(
                             f'<polyline points="{points}" fill="none" stroke="{color}" '
                             f'stroke-width="{stroke_width}" stroke-opacity="{_num(opacity)}"/>'
                         )
-        if kind in ("text", "callout") and ann.get("text"):
-            x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
-            space = style.get("coordinate_space")
-            if space == "axes_fraction":
-                tx, ty = px0 + x * plot["w"], py0 + (1 - y) * plot["h"]
-            elif space == "figure_fraction":
-                tx, ty = x * width, (1 - y) * height
-            elif space == "yaxis_transform":
-                tx, ty = px0 + x * plot["w"], float(sy(y))
-            elif space == "xaxis_transform":
-                tx, ty = float(sx(x)), py0 + (1 - y) * plot["h"]
+        if kind in ("text", "callout", "rule", "band") and ann.get("text"):
+            default_anchor = "start"
+            default_va = ""
+            if kind in ("rule", "band"):
+                # A rule/band label has no coordinates of its own: it rides the
+                # line or the band's middle, pinned to the plot edge exactly as
+                # the client places it (js/src/51_annotations.ts).
+                tx, ty, default_anchor, default_va = _rule_label_anchor(ann, kind, sx, sy, plot)
             else:
-                tx, ty = float(sx(x)), float(sy(y))
+                x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
+                space = style.get("coordinate_space")
+                if space == "axes_fraction":
+                    tx, ty = px0 + x * plot["w"], py0 + (1 - y) * plot["h"]
+                elif space == "figure_fraction":
+                    tx, ty = x * width, (1 - y) * height
+                elif space == "yaxis_transform":
+                    tx, ty = px0 + x * plot["w"], float(sy(y))
+                elif space == "xaxis_transform":
+                    tx, ty = float(sx(x)), py0 + (1 - y) * plot["h"]
+                else:
+                    tx, ty = float(sx(x)), float(sy(y))
+            if not np.isfinite(tx) or not np.isfinite(ty):
+                continue
             anchor = {"start": "start", "middle": "middle", "end": "end"}.get(
-                ann.get("anchor"), "start"
+                ann.get("anchor"), default_anchor
             )
+            if default_va and not style.get("vertical_align"):
+                style = {**style, "vertical_align": default_va}
             font_size = _px_size(style.get("font_size"), 11.0)
             lines = str(ann["text"]).splitlines() or [""]
             line_height = font_size * 1.2
