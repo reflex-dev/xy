@@ -1,5 +1,17 @@
 <p align="center">
-  <img src="spec/assets/xy-sdf-binned-scatter.png" alt="XY-shaped probability field shown as a binned scatter chart." width="521">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="spec/assets/xy-pan-zoom-2m-dark.gif">
+    <img src="spec/assets/xy-pan-zoom-2m-light.gif" alt="Panning, zooming, and hovering a chart of two million points; the tooltip reads back an exact source row." width="900">
+  </picture>
+</p>
+
+<p align="center">
+  <b><a href="https://reflex.dev/docs/xy/" target="_blank" rel="noopener noreferrer">Try it live: a million points in your browser &rarr;</a></b>
+</p>
+
+<p align="center">
+  <sub>Pan, zoom, and hover across 2,000,000 points &mdash; the chart built by the
+  <a href="#getting-started">example below</a>, in the light and dark themes.</sub>
 </p>
 
 <p align="center">
@@ -73,28 +85,50 @@ await micropip.install("xy")
 
 ## Getting started
 
-Create a small business chart:
+Chart two million random-walk points, generated with nothing but the standard
+library:
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="spec/assets/xy-pan-zoom-2m-dark.gif">
+    <img src="spec/assets/xy-pan-zoom-2m-light.gif" alt="The chart from the example below being panned, zoomed, and hovered." width="900">
+  </picture>
+</p>
 
 ```python
+import itertools
+import random
+
 import xy
 
-months = [1, 2, 3, 4, 5, 6]
-revenue = [42, 45, 48, 51, 55, 59]
-pipeline = [35, 38, 42, 40, 46, 50]
+rng = random.Random(7)
+n = 1_000_000
+
+
+def walk() -> list[float]:
+    """One million accumulated Gaussian steps."""
+    return list(itertools.accumulate(rng.gauss(0.0, 1.0) for _ in range(n)))
+
 
 chart = xy.line_chart(
-    xy.line(months, revenue, name="revenue", color="#2563eb"),
-    xy.line(months, pipeline, name="pipeline", color="#16a34a"),
-    xy.x_axis(label="month"),
-    xy.y_axis(label="USD thousands"),
+    xy.line(range(n), walk(), name="signal", color="#2a78d6", width=1.6),
+    xy.line(range(n), walk(), name="control", color="#eb6834", width=1.6),
+    xy.x_axis(label="sample"),
+    xy.y_axis(label="value"),
     xy.legend(),
-    title="Revenue vs pipeline",
+    xy.theme(grid_color="#e6e6e1", axis_color="#c3c2b7"),
+    title="Two million-point random walks",
 )
 # chart.to_html("chart.html")
 # chart.to_png("chart.png")
 # chart.to_svg("chart.svg")
 chart
 ```
+
+Drag to pan, scroll to zoom, and hover to read back an exact source row. The
+overview is drawn from a decimated view of the data, and detail returns as the
+visible range narrows &mdash; the two lines above reach the browser as a single
+payload of about 54 KB rather than two million JSON numbers.
 
 The same chart can be exported without changing how it is built.
 
