@@ -92,7 +92,7 @@ def test_multicolumn_legend_sizes_each_column_to_its_own_labels():
     assert layout["box_w"] < equal_width_box
 
 
-def test_outside_top_legend_reserves_its_measured_box_and_axes_gap():
+def test_outside_top_legend_preserves_gallery_labels_and_reserves_its_box(monkeypatch):
     fig, ax = plt.subplots(figsize=(9.2, 5))
     labels = [
         "Strongly disagree",
@@ -110,7 +110,7 @@ def test_outside_top_legend_reserves_its_measured_box_and_axes_gap():
         fontsize="small",
     )
 
-    spec, _ = ax._build_chart(920, 500).figure().build_payload()
+    spec, blob = ax._build_chart(920, 500).figure().build_payload()
     _, _, _, plot = layout(spec)
     legend = _legend_layout(
         [trace for trace in spec["traces"] if trace.get("name")],
@@ -118,11 +118,32 @@ def test_outside_top_legend_reserves_its_measured_box_and_axes_gap():
         spec["legend"],
     )
 
+    assert legend["names"] == labels
     assert spec["padding"][0] >= legend["box_h"] + spec["legend"]["border_pad"] + 6
     assert legend["y"] >= 6
     assert plot["y"] - (legend["y"] + legend["box_h"]) == pytest.approx(
         spec["legend"]["border_pad"]
     )
+
+    output = BytesIO()
+    fig.savefig(output, format="svg", dpi=100)
+    texts = {
+        element.text
+        for element in ElementTree.fromstring(output.getvalue()).iter()
+        if element.tag.endswith("text")
+    }
+    assert set(labels) <= texts
+
+    raster_text: set[str] = set()
+    original_text = _raster._Cmd.text
+
+    def record_text(self, x, y, anchor, size, color, text, **kwargs):
+        raster_text.add(str(text))
+        return original_text(self, x, y, anchor, size, color, text, **kwargs)
+
+    monkeypatch.setattr(_raster._Cmd, "text", record_text)
+    _raster.render_raster(spec, blob, scale=1)
+    assert set(labels) <= raster_text
 
 
 def test_titled_scatter_legend_box_fits_title_and_every_entry():

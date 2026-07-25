@@ -3226,7 +3226,18 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     title = options.get("title")
     title_h = line_h if title else 0.0
     inset = 6.0
-    available_w = max(1.0, float(plot["w"]) - 2 * inset)
+    anchor = options.get("anchor")
+    # An anchored legend is positioned from ``bbox_to_anchor`` rather than
+    # inset from both plot edges.  Charging it the unanchored 6 px inset on
+    # both sides unnecessarily shortened otherwise fitting labels.  The
+    # Matplotlib survey-gallery legend is the boundary case: its measured
+    # five-column box fits the axes width, but not ``axes width - 12 px``.
+    # Keep the plot-width cap so genuinely oversized static legends still
+    # ellipsize instead of escaping the bounded export.
+    available_w = max(
+        1.0,
+        float(plot["w"]) if anchor and len(anchor) in (2, 4) else float(plot["w"]) - 2 * inset,
+    )
     ncols = requested_cols
     min_column_w = handle + gap + 4 * char_width
     if ncols * min_column_w + (ncols - 1) * column_gap + pad > available_w:
@@ -3299,7 +3310,6 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     loc_tokens = set(re.split(r"[\s_-]+", loc))
     loc_is_upper = "upper" in loc or "top" in loc_tokens
     loc_is_lower = "lower" in loc or "bottom" in loc_tokens
-    anchor = options.get("anchor")
     if anchor and len(anchor) in (2, 4):
         ax, ay = float(anchor[0]), float(anchor[1])
         aw, ah = (0.0, 0.0) if len(anchor) == 2 else (float(anchor[2]), float(anchor[3]))
