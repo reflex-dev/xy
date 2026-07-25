@@ -163,3 +163,11 @@ Each section shows its own source, read live with `inspect.getsource`.
 
 For serving the same charts without Reflex, [`examples/fastapi/`](../../examples/fastapi)
 renders standalone HTML and a live 100M-point drilldown from a plain FastAPI app.
+
+## Versioning & releases
+
+`reflex-xy` versions independently of `xy`: the distribution version is
+derived from `reflex-xy-vX.Y.Z` git tags (the core uses bare `vX.Y.Z`), and
+releases publish from the repository's `release-reflex-xy.yml` workflow after
+a dated entry lands in this package's [CHANGELOG](CHANGELOG.md). Builds
+between tags carry a `.devN+<commit>` version that PyPI rejects by design.

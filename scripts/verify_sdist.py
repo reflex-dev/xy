@@ -24,6 +24,7 @@ REQUIRED_FILES = {
     ".github/workflows/ci.yml",
     ".github/workflows/codspeed.yml",
     ".github/workflows/release.yml",
+    ".github/workflows/release-reflex-xy.yml",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
     "Cargo.lock",
@@ -109,6 +110,7 @@ REQUIRED_FILES = {
     "scripts/verify_ci_workflow.py",
     "scripts/verify_benchmark_report.py",
     "scripts/verify_local.py",
+    "scripts/verify_reflex_xy_dist.py",
     "scripts/verify_sdist.py",
     "scripts/verify_wheel.py",
     "src/kernels.rs",
@@ -413,6 +415,18 @@ def verify_sdist(path: str) -> None:
             "pypa/gh-action-pypi-publish@",
             "scripts/verify_wheel.py",
             "scripts/verify_sdist.py",
+            "id-token: write",
+        },
+    )
+    _require_file_contains(
+        path,
+        root,
+        ".github/workflows/release-reflex-xy.yml",
+        {
+            'tags: ["reflex-xy-v*"]',
+            "pypa/gh-action-pypi-publish@",
+            "scripts/verify_reflex_xy_dist.py",
+            "scripts/check_release_version.py --package reflex-xy",
             "id-token: write",
         },
     )

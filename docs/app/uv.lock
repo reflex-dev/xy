@@ -1304,7 +1304,6 @@ dependencies = [
 
 [[package]]
 name = "reflex-xy"
-version = "0.1.0"
 source = { editable = "../../python/reflex-xy" }
 dependencies = [
     { name = "reflex" },

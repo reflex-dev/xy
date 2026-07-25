@@ -4,7 +4,8 @@
 The workflows are YAML, but this checker intentionally stays stdlib-only so it
 can run before the dev environment is installed. It does not try to be a full
 YAML parser; it checks stable, high-value invariants that are easy to lose when
-editing `.github/workflows/ci.yml` or `.github/workflows/release.yml`.
+editing `.github/workflows/ci.yml`, `.github/workflows/release.yml`, or
+`.github/workflows/release-reflex-xy.yml`.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 DEFAULT_CODSPEED_WORKFLOW = ROOT / ".github" / "workflows" / "codspeed.yml"
 DEFAULT_RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+DEFAULT_REFLEX_XY_RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release-reflex-xy.yml"
 DEFAULT_WORKFLOW = DEFAULT_CI_WORKFLOW
 REQUIRED_CI_JOBS = {
     "browser_conformance",
@@ -34,6 +36,7 @@ REQUIRED_CI_JOBS = {
 }
 REQUIRED_CODSPEED_JOBS = {"benchmarks"}
 REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "publish-pyodide", "wasm"}
+REQUIRED_REFLEX_XY_RELEASE_JOBS = {"build", "publish"}
 
 
 def _job_blocks(text: str) -> dict[str, str]:
@@ -678,6 +681,12 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         'tags: ["v*"]',
         "workflow_dispatch:",
     )
+    if "reflex-xy-v" in text:
+        errors.append(
+            "release workflow must not touch the reflex-xy tag namespace — the "
+            "adapter publishes via release-reflex-xy.yml (bare `v*` tags never "
+            "match `reflex-xy-v*` and vice versa; keep it that way)"
+        )
     _require_job_contains(
         errors,
         jobs,
@@ -814,15 +823,110 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
     return errors
 
 
+def validate_reflex_xy_release_workflow(
+    path: Path = DEFAULT_REFLEX_XY_RELEASE_WORKFLOW,
+) -> list[str]:
+    """The adapter's deliberately small release pipeline stays wired.
+
+    reflex-xy is a pure-Python distribution (one py3-none-any wheel + one
+    sdist), so it publishes from its own `reflex-xy-vX.Y.Z` tags via a
+    separate workflow rather than a second build shape wedged into
+    release.yml's cross-compile matrix. Small is the point — but the safety
+    rails must match release.yml's: unshallow checkouts (tag-derived
+    version), artifact verification, a changelog gate, trusted publishing,
+    and a dry-run default that keeps manual dispatches from publishing.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"cannot read reflex-xy release workflow {path}: {exc}"]
+
+    jobs = _job_blocks(text)
+    errors: list[str] = []
+    _require_unshallow_checkouts(errors, text, "reflex-xy release")
+    missing_jobs = sorted(REQUIRED_REFLEX_XY_RELEASE_JOBS - set(jobs))
+    if missing_jobs:
+        errors.append(f"reflex-xy release workflow missing required jobs: {missing_jobs}")
+
+    _require_workflow_contains(
+        errors,
+        text,
+        "reflex-xy release",
+        "adapter tag trigger and a workflow_dispatch dry-run input defaulting "
+        "to true, so a manual run never accidentally publishes",
+        'tags: ["reflex-xy-v*"]',
+        "workflow_dispatch:",
+        "dry_run:",
+        "type: boolean",
+        "default: true",
+    )
+    if 'tags: ["v*"]' in text or '"v*"' in text:
+        errors.append(
+            "reflex-xy release workflow must not trigger on bare `v*` tags — "
+            "those belong to the xy core's release.yml"
+        )
+    _require_job_contains(
+        errors,
+        jobs,
+        "build",
+        "reflex-xy release",
+        "pure sdist+wheel build, verification, install smoke, and upload",
+        "astral-sh/setup-uv@",
+        "working-directory: python/reflex-xy",
+        "uv build",
+        "scripts/verify_reflex_xy_dist.py",
+        '--tag "$GITHUB_REF_NAME"',
+        "import reflex_xy",
+        "actions/upload-artifact@",
+        "name: dist-reflex-xy",
+    )
+    _require_job_contains(
+        errors,
+        jobs,
+        "publish",
+        "reflex-xy release",
+        "trusted PyPI publishing from downloaded artifacts, gated by a dry-run "
+        "switch and the adapter tag/CHANGELOG agreement gate",
+        "needs: [build]",
+        "environment: pypi",
+        "id-token: write",
+        "scripts/check_release_version.py --package reflex-xy",
+        "actions/download-artifact@",
+        "name: dist-reflex-xy",
+        "dry_run",
+        "pypa/gh-action-pypi-publish@",
+        "packages-dir: dist/",
+        "skip-existing: true",
+    )
+
+    publish = jobs.get("publish", "")
+    if "password:" in publish or "api-token" in publish:
+        errors.append(
+            "reflex-xy release publish job should use trusted publishing, not a PyPI token"
+        )
+    if "pypa/gh-action-pypi-publish@" in publish and not _step_is_conditioned(
+        publish, "pypa/gh-action-pypi-publish@"
+    ):
+        errors.append(
+            "reflex-xy release publish job's PyPI upload step has no if: "
+            "condition of its own — it must be gated (dry_run) so a manual "
+            "dispatch cannot publish unintentionally, even if a sibling step "
+            "also has an if:"
+        )
+    return errors
+
+
 def validate_all_workflows(
     ci_path: Path = DEFAULT_CI_WORKFLOW,
     codspeed_path: Path = DEFAULT_CODSPEED_WORKFLOW,
     release_path: Path = DEFAULT_RELEASE_WORKFLOW,
+    reflex_xy_release_path: Path = DEFAULT_REFLEX_XY_RELEASE_WORKFLOW,
 ) -> list[str]:
     return [
         *validate_ci_workflow(ci_path),
         *validate_codspeed_workflow(codspeed_path),
         *validate_release_workflow(release_path),
+        *validate_reflex_xy_release_workflow(reflex_xy_release_path),
     ]
 
 
@@ -837,14 +941,26 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--ci-workflow", type=Path, default=DEFAULT_CI_WORKFLOW)
     parser.add_argument("--codspeed-workflow", type=Path, default=DEFAULT_CODSPEED_WORKFLOW)
     parser.add_argument("--release-workflow", type=Path, default=DEFAULT_RELEASE_WORKFLOW)
+    parser.add_argument(
+        "--reflex-xy-release-workflow", type=Path, default=DEFAULT_REFLEX_XY_RELEASE_WORKFLOW
+    )
     parser.add_argument("--ci-only", action="store_true")
     parser.add_argument("--codspeed-only", action="store_true")
     parser.add_argument("--release-only", action="store_true")
+    parser.add_argument("--reflex-xy-release-only", action="store_true")
     args = parser.parse_args(argv)
 
-    selected_modes = [args.ci_only, args.codspeed_only, args.release_only]
+    selected_modes = [
+        args.ci_only,
+        args.codspeed_only,
+        args.release_only,
+        args.reflex_xy_release_only,
+    ]
     if sum(1 for selected in selected_modes if selected) > 1:
-        parser.error("--ci-only, --codspeed-only, and --release-only are mutually exclusive")
+        parser.error(
+            "--ci-only, --codspeed-only, --release-only, and "
+            "--reflex-xy-release-only are mutually exclusive"
+        )
 
     if args.workflow is not None:
         errors = validate_ci_workflow(args.workflow)
@@ -858,11 +974,22 @@ def main(argv: Optional[list[str]] = None) -> int:
     elif args.release_only:
         errors = validate_release_workflow(args.release_workflow)
         checked = [args.release_workflow]
+    elif args.reflex_xy_release_only:
+        errors = validate_reflex_xy_release_workflow(args.reflex_xy_release_workflow)
+        checked = [args.reflex_xy_release_workflow]
     else:
         errors = validate_all_workflows(
-            args.ci_workflow, args.codspeed_workflow, args.release_workflow
+            args.ci_workflow,
+            args.codspeed_workflow,
+            args.release_workflow,
+            args.reflex_xy_release_workflow,
         )
-        checked = [args.ci_workflow, args.codspeed_workflow, args.release_workflow]
+        checked = [
+            args.ci_workflow,
+            args.codspeed_workflow,
+            args.release_workflow,
+            args.reflex_xy_release_workflow,
+        ]
 
     if errors:
         print(

@@ -94,7 +94,28 @@ __all__ = [
     "setup",
 ]
 
-__version__ = "0.1.0"
+
+def __getattr__(name: str) -> str:
+    """Resolve ``__version__`` lazily from the installed distribution.
+
+    The version is not written down in the source tree — it is derived from
+    the latest ``reflex-xy-vX.Y.Z`` git tag at build time (pyproject's
+    uv-dynamic-versioning config) and baked into the wheel's METADATA, so
+    package metadata is the only place that can answer this at runtime. An
+    uninstalled source tree reports the same unreal ``0.0.0`` the build-time
+    fallback uses.
+    """
+    if name == "__version__":
+        from importlib.metadata import PackageNotFoundError
+        from importlib.metadata import version as _distribution_version
+
+        try:
+            value = _distribution_version("reflex-xy")
+        except PackageNotFoundError:
+            value = "0.0.0"
+        globals()["__version__"] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def register(chart_or_figure: Any) -> str:

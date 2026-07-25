@@ -97,6 +97,23 @@ RELEASE_YML = (
     "    steps:\n"
     "      - uses: pypa/gh-action-pypi-publish@release/v1\n" + ("release workflow padding\n" * 100)
 )
+RELEASE_REFLEX_XY_YML = (
+    "name: Release reflex-xy\n"
+    "on:\n"
+    "  push:\n"
+    '    tags: ["reflex-xy-v*"]\n'
+    "jobs:\n"
+    "  build:\n"
+    "    steps:\n"
+    "      - run: python3 scripts/verify_reflex_xy_dist.py python/reflex-xy/dist/*\n"
+    "  publish:\n"
+    "    permissions:\n"
+    "      id-token: write\n"
+    "    steps:\n"
+    "      - run: python3 scripts/check_release_version.py --package reflex-xy\n"
+    "      - uses: pypa/gh-action-pypi-publish@release/v1\n"
+    + ("adapter release workflow padding\n" * 40)
+)
 DEFAULT_PKG_INFO = (
     "Metadata-Version: 2.4\n"
     "Name: xy\n"
@@ -171,6 +188,8 @@ def _write_sdist(
                 data = CODSPEED_YML.encode("utf-8")
             elif name == ".github/workflows/release.yml":
                 data = RELEASE_YML.encode("utf-8")
+            elif name == ".github/workflows/release-reflex-xy.yml":
+                data = RELEASE_REFLEX_XY_YML.encode("utf-8")
             _add_file(tf, f"{root}/{name}", data)
         for name, data in extra.items():
             _add_file(tf, f"{root}/{name}", data)
