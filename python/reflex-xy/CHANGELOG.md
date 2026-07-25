@@ -10,8 +10,13 @@ version is derived from that tag — there is no number to bump in a file.
 Cutting a release is: date the entry below, tag, push the tag. The release
 gate (`scripts/check_release_version.py --package reflex-xy`) blocks the
 publish unless this file carries a dated entry for the tagged version.
+Pre-releases work the same way with a canonical PEP 440 suffix on the tag
+(`reflex-xy-v0.0.1a1` → version `0.0.1a1`, likewise `bN`/`rcN`) and their own
+dated entry here; pip only installs them on explicit request.
 
 ## [Unreleased]
+
+## [0.0.1a1] — 2026-07-25
 
 ### Added
 - First packaged release line of the adapter: `reflex_xy.chart()` components,
@@ -22,8 +27,9 @@ publish unless this file carries a dated entry for the tagged version.
   streaming `append`.
 - The distribution version is derived from `reflex-xy-vX.Y.Z` git tags
   (uv-dynamic-versioning with `pattern-prefix = "reflex-xy-"`) instead of a
-  number in `pyproject.toml`; builds between tags are versioned
-  `<next>.devN+<commit>`, which PyPI rejects by design. The adapter and core
+  number in `pyproject.toml`; canonical pre-release tags (`aN`/`bN`/`rcN`)
+  publish too, and builds between tags are versioned `<next>.devN+<commit>`,
+  which PyPI rejects by design. The adapter and core
   tag namespaces are mutually invisible by pattern anchoring: this derivation
   never sees bare `v*` tags, and the core's never sees `reflex-xy-*` ones.
   Releases publish via the dedicated

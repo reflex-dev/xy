@@ -338,6 +338,14 @@ consequences worth knowing:
   clone fetches no tags and would *silently* build at the `0.0.0` fallback;
   `make check-ci` enforces this.
 
+Pre-releases are tagged the same way with a canonical PEP 440 suffix —
+`vX.Y.ZaN` / `bN` / `rcN` (e.g. `v1.0.0rc1`) — and publish through the same
+pipeline; pip ignores them unless a pre-release is requested explicitly. Only
+the canonical spelling passes the release gate: `-alpha1`-style tags would be
+normalized by the version derivation and could never match their own built
+artifacts. A pre-release needs its own dated changelog entry, exactly like a
+final release.
+
 Two release lines share the repo, in disjoint tag namespaces. Everything above
 and below in this checklist is the **xy core** (`vX.Y.Z` tags,
 `release.yml`, the full wheel matrix). The **reflex-xy adapter** releases
@@ -412,6 +420,9 @@ second build shape wedged into the cross-compile matrix. Cutting an adapter
 release is `git tag reflex-xy-vX.Y.Z && git push --tags` after dating the
 version's entry in `python/reflex-xy/CHANGELOG.md` (the adapter has its own
 changelog; the gate is `scripts/check_release_version.py --package reflex-xy`).
+Pre-releases follow the core's rule: a canonical suffix on the tag
+(`reflex-xy-v0.0.1a1`, likewise `bN`/`rcN`) and a dated entry for that exact
+pre-release version.
 
 The workflow builds `python/reflex-xy` with `uv build`, verifies the pair with
 `scripts/verify_reflex_xy_dist.py --tag <tag>` (pure wheel, JSX asset present,

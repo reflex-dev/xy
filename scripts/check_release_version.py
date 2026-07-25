@@ -15,10 +15,20 @@ Two release lines share the repo, in disjoint tag namespaces (`--package`):
 - ``reflex-xy``: `reflex-xy-vX.Y.Z` tags, gated against
   `python/reflex-xy/CHANGELOG.md`.
 
+Both accept an optional PEP 440 pre-release suffix in its canonical spelling
+(`a1`/`b2`/`rc3` — e.g. `reflex-xy-v0.0.1a1`), which the version derivation
+serializes verbatim; PyPI accepts pre-releases but does not serve them to
+default `pip install`. Only the canonical spelling passes: `-alpha1`-style
+tags would be *normalized* by the derivation (`0.0.1a1`) and so could never
+match their own artifacts. A pre-release still needs its own dated changelog
+entry — publishing to PyPI is publishing, alpha or not.
+
 The tag must also be shaped like the selected package's release tag, which is
 what its version derivation matches on; the docs-deploy CalVer tags
 (2026.WW.N) match neither shape and trigger neither workflow, and each
-package's tags fail the other package's gate.
+package's tags fail the other package's gate. Dev/post/local shapes stay
+rejected: dev versions are the *between*-tags marker and must stay
+unpublishable.
 """
 
 from __future__ import annotations
@@ -36,21 +46,26 @@ ROOT = Path(__file__).resolve().parents[1]
 class _Package(NamedTuple):
     # The release tag shape uv-dynamic-versioning derives this package's
     # distribution version from: prefix + `v` + a PEP 440 release number,
-    # nothing else.
+    # optionally a canonical pre-release suffix (aN/bN/rcN), nothing else.
     tag_re: re.Pattern[str]
     tag_shape: str
     changelog: Path
 
 
+# Canonical PEP 440 spellings only: the derivation would normalize `alpha1`
+# to `a1`, so a non-canonical tag can never equal its own built version.
+_RELEASE = r"\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?"
+_SHAPE = "vX.Y.Z with an optional aN/bN/rcN pre-release suffix"
+
 PACKAGES = {
     "xy": _Package(
-        tag_re=re.compile(r"^v(?P<version>\d+\.\d+\.\d+)$"),
-        tag_shape="vX.Y.Z",
+        tag_re=re.compile(rf"^v(?P<version>{_RELEASE})$"),
+        tag_shape=_SHAPE,
         changelog=ROOT / "CHANGELOG.md",
     ),
     "reflex-xy": _Package(
-        tag_re=re.compile(r"^reflex-xy-v(?P<version>\d+\.\d+\.\d+)$"),
-        tag_shape="reflex-xy-vX.Y.Z",
+        tag_re=re.compile(rf"^reflex-xy-v(?P<version>{_RELEASE})$"),
+        tag_shape=f"reflex-xy-{_SHAPE}",
         changelog=ROOT / "python" / "reflex-xy" / "CHANGELOG.md",
     ),
 }
@@ -74,9 +89,16 @@ def check_release(tag: str, changelog: Path, package: str = "xy") -> list[str]:
     except OSError as exc:
         errors.append(f"cannot read {changelog}: {exc}")
         return errors
-    # Keep-a-Changelog heading with a real date (this repo separates with an
-    # em dash; accept a plain hyphen too): `## [X.Y.Z] — 2026-07-09`.
-    dated = re.compile(rf"^## \[{re.escape(version)}\] [—-] \d{{4}}-\d{{2}}-\d{{2}}\s*$", re.M)
+    # A heading with a real date. The gate checks substance (this version has
+    # dated notes), not heading style: both spellings used in this repo pass —
+    # Keep-a-Changelog brackets (`## [0.0.2] — 2026-07-24`) and the plain
+    # v-prefixed form v0.0.2 was actually documented with
+    # (`## v0.0.2 - 2026-07-24`); em dash or hyphen either way.
+    dated = re.compile(
+        rf"^## (?:\[{re.escape(version)}\]|v?{re.escape(version)}) [—-] "
+        rf"\d{{4}}-\d{{2}}-\d{{2}}\s*$",
+        re.M,
+    )
     if not dated.search(text):
         errors.append(
             f"{changelog.name} has no dated '## [{version}]' entry — date the "

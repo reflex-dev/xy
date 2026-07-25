@@ -240,3 +240,11 @@ def test_release_workflow_wires_the_verifier() -> None:
 
     assert "scripts/verify_reflex_xy_dist.py" in workflow
     assert '--tag "$GITHUB_REF_NAME"' in workflow
+
+
+def test_accepts_a_prerelease_pair_under_its_tag(tmp_path: Path) -> None:
+    version = "0.0.1a1"
+    paths = [_wheel(tmp_path, version), _sdist(tmp_path, version)]
+
+    assert verify_reflex_xy_dist.verify_dist(paths, tag="reflex-xy-v0.0.1a1") == []
+    assert verify_reflex_xy_dist.verify_dist(paths, tag="reflex-xy-v0.0.1") != []

@@ -144,3 +144,48 @@ def test_reflex_xy_release_workflow_wires_the_gate() -> None:
 
     assert "scripts/check_release_version.py --package reflex-xy" in workflow
     assert "if: github.event_name == 'push'" in workflow
+
+
+def test_gate_passes_a_canonical_prerelease_tag(tmp_path: Path) -> None:
+    changelog = _changelog(tmp_path, "## [0.0.1a1] — 2026-07-25")
+
+    errors = check_release_version.check_release(
+        "reflex-xy-v0.0.1a1", changelog, package="reflex-xy"
+    )
+
+    assert errors == []
+
+
+def test_gate_passes_prerelease_tags_for_the_core_too(tmp_path: Path) -> None:
+    changelog = _changelog(tmp_path, "## [1.0.0rc2] — 2026-07-25")
+
+    assert check_release_version.check_release("v1.0.0rc2", changelog) == []
+
+
+def test_gate_rejects_non_canonical_prerelease_spellings(tmp_path: Path) -> None:
+    # The derivation normalizes `alpha1` to `a1`, so a non-canonical tag can
+    # never equal its own built version — refuse it before it builds anything.
+    changelog = _changelog(tmp_path, "## [0.0.1a1] — 2026-07-25")
+
+    for tag in ("reflex-xy-v0.0.1-alpha1", "reflex-xy-v0.0.1alpha1", "reflex-xy-v0.0.1a"):
+        errors = check_release_version.check_release(tag, changelog, package="reflex-xy")
+        assert any("is not a release tag" in e for e in errors), tag
+
+
+def test_a_prerelease_needs_its_own_dated_entry(tmp_path: Path) -> None:
+    # An entry for the final 0.0.1 must not vouch for 0.0.1a1 (or vice versa).
+    changelog = _changelog(tmp_path, "## [0.0.1] — 2026-07-25")
+
+    errors = check_release_version.check_release(
+        "reflex-xy-v0.0.1a1", changelog, package="reflex-xy"
+    )
+
+    assert any("no dated" in e for e in errors)
+
+
+def test_gate_accepts_the_unbracketed_v_heading_style(tmp_path: Path) -> None:
+    # v0.0.2 was documented as `## v0.0.2 - 2026-07-24` (no brackets, leading
+    # v). The gate checks that dated notes exist, not heading punctuation.
+    changelog = _changelog(tmp_path, "## v0.0.2 - 2026-07-24")
+
+    assert check_release_version.check_release("v0.0.2", changelog) == []
