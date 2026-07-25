@@ -65,15 +65,23 @@ def test_svg_export_does_not_import_urllib_or_ssl() -> None:
     """The whole point: a static export must not drag in the network stack.
 
     Runs in a fresh subprocess because pytest itself imports `email` and
-    friends, which would mask the regression in-process.
+    friends, which would mask the regression in-process. The module set is
+    sampled *after* NumPy so nothing NumPy pulls in is blamed on xy, and
+    `xml.sax.saxutils` is checked directly rather than only the urllib/ssl/email
+    tree it happens to drag in today — otherwise a future slimmer saxutils would
+    let the removed import creep back without failing this guard.
     """
     code = (
-        "import sys; import numpy as np; import xy\n"
+        "import sys; import numpy as np\n"
+        "before = set(sys.modules)\n"
+        "import xy\n"
         "fig = xy.scatter_chart(xy.scatter(x=np.arange(5.0), y=np.arange(5.0)),\n"
         "                       title='a & b < c > d').figure()\n"
         "svg = fig.to_svg(width=200, height=150)\n"
         "assert '&amp;' in svg and '&lt;' in svg and '&gt;' in svg, 'escape not exercised'\n"
-        "leaked = {'urllib.request', 'ssl', 'http.client', 'email', 'socket'} & set(sys.modules)\n"
+        "forbidden = {'xml.sax.saxutils', 'urllib.request', 'ssl',\n"
+        "             'http.client', 'email', 'socket'}\n"
+        "leaked = forbidden & (set(sys.modules) - before)\n"
         "assert not leaked, f'static SVG export imported {sorted(leaked)}'\n"
         "print('ok')\n"
     )
