@@ -2518,7 +2518,11 @@ export class ChartView {
   get heatmapProg() { return this._prog("heatmap", GRID_VS, HEATMAP_FS); }
 
   _lut(name) {
-    if (this._lutCache.has(name)) return this._lutCache.get(name);
+    // Custom colormaps are stop ARRAYS, and every spec rebuild deserializes a
+    // fresh one — an identity-keyed cache would miss on each rebuild and leak
+    // a GL texture per frame. Key on the stops' text instead.
+    const key = Array.isArray(name) ? " stops:" + name.join(",") : name;
+    if (this._lutCache.has(key)) return this._lutCache.get(key);
     const gl = this.gl;
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -2527,7 +2531,7 @@ export class ChartView {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    this._lutCache.set(name, tex);
+    this._lutCache.set(key, tex);
     return tex;
   }
 

@@ -430,7 +430,7 @@ re-exports several of them as a historic import path and is not listed for those
 | `LOD_POINT_CACHE_WINDOWS` | `3` | Retired exact point windows kept per trace client-side beyond the live drill; LRU-bounded VRAM, swept by the T11 outgrown rule. | `js/src/45_lod.ts` (`lodRetireDrill`, `lodPromoteCachedDrill`) |
 | `LOD_POINTS_REQUEST_BAND` | `4` | The aggregate tier never refines per view (T13, revised): a raw-view `density_view` goes out only when the estimated in-view count sits within `budget × 4` of points territory — the LOWER of an area-scaled cached-window count and the retained sample counted in-view (`lodSampleViewCount`, distribution-true where area-scaling over-estimates sparse tails). | `js/src/45_lod.ts` (`lodAggregateStands`) |
 | `LOD_AGG_STEP_FACTOR` / `LOD_AGG_STEP_MAX` / `LOD_AGG_STEP_SLACK` | `4` / `2` / `1.5` | The stepped aggregate ladder (T13): while standing, the only density request is the view snapped outward to a power-of-4 block grid over the extent (per axis), at most 2 steps below home, and only when every covering texture is coarser than the step by more than the slack. Quantized windows are pan-stable and dedupable — at most 2 smooth-to-smooth swaps before points, worst-case softness ≈ 4× stretch per axis. | `js/src/45_lod.ts` (`lodAggregateStepWindow`) |
-| `DEFAULT_PALETTE` | 10 CVD-safe hex entries | Per-trace default color cycle and the fallback categorical palette when a channel supplies none (§20/§36). | `marks.py`, `_payload.py`, `_svg.py`, `_raster.py` |
+| `DEFAULT_PALETTE` | 8 CVD-safe hex entries | Per-trace default color cycle and the fallback categorical palette when a channel supplies none (§20/§36). `xy.theme(palette=[...])` replaces it per chart (`Figure.palette` → `_payload._series_palette`); the default's adjacency order is the CVD gate, so a user palette carries no such guarantee and skips the eight-slot wrap warning. | `marks.py`, `_payload.py`, `_svg.py`, `_raster.py` |
 | `PYRAMID_MIN_POINTS` | `2_000_000` | Trace size at/above which a Tier-3 tile pyramid is built lazily; smaller traces never pay for one. | `interaction.py` |
 | `PYRAMID_BASE_DIM` | `2048` | Edge of the pyramid's base level in cells (`dim²` u32 counts, ~1/3 overhead for the coarser levels); sets resident pyramid bytes. | `interaction.py` |
 
@@ -1323,8 +1323,13 @@ author expects.
 - *Pending:* a **series-palette token** (`--chart-series-N`, indexed rather than a
   space-separated list so entries cascade and override individually, cycling with a
   lightness rotation past the highest defined index) and a **colormap token**
-  (`--chart-colormap`, named ramp or stops → LUT texture). Neither is wired: series
-  colors and colormaps come from the spec / `theme()` only. The categorical and
+  (`--chart-colormap`, named ramp or stops → LUT texture). Neither CSS token is wired:
+  series colors and colormaps come from the spec / `theme()` only. Both are settable
+  from Python — `xy.theme(palette=[...])` for the series/category cycle and
+  `colormap=["#…", …]` on any colormapped mark for a custom continuous ramp, which
+  ships resolved `(r, g, b)` stops in place of a name so `colormapStops`
+  (`js/src/10_colormaps.ts`) and `_svg._colormap_stops` accept either form and the
+  native rasterizer, already handed explicit stops, is unchanged. The categorical and
   sequential defaults are the accessible, CVD-safe palettes from §20, not arbitrary.
 - **Live re-resolution.** The client watches `matchMedia('(prefers-color-scheme: dark)')`
   and a `MutationObserver` on the container's `class`/`data-theme`/`style`, re-resolving

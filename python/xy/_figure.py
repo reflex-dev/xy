@@ -128,6 +128,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # pyplot sets an explicit Matplotlib-style spine list.
         self.frame_sides: Optional[list[str]] = None
         self.colorbar_options: Optional[dict[str, Any]] = None
+        # Series/category color cycle. None means config.DEFAULT_PALETTE — the
+        # CVD-validated eight — so an unthemed chart is byte-identical to
+        # before. `xy.theme(palette=[...])` replaces it for this chart.
+        self.palette: Optional[list[str]] = None
         # Declarative export defaults (xy.export_config): governs the client
         # modebar's format menu + filename and the Python export defaults.
         self.export_options: Optional[dict[str, Any]] = None
