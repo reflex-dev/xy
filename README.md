@@ -26,8 +26,7 @@ Small datasets render directly and exactly. As data grows, XY's Rust core,
 binary transport, and WebGL2 renderer reduce work to what the screen can show,
 then bring detail back as you zoom. The same composable API controls marks,
 axes, annotations, legends, tooltips, interactions, themes, responsive layout,
-and HTML, raster, and vector exports. Find guides, API reference, and examples
-in the [documentation](https://reflex.dev/docs/xy/).
+and HTML, raster, and vector exports.
 
 ## Highlights
 
