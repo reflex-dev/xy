@@ -240,6 +240,33 @@ XY rejects strings that could break out of that style element. The same option
 works for Chromium PNG capture; native PNG has no browser cascade and rejects
 `custom_css`.
 
+### What survives which export
+
+Slot styling is a browser mechanism, and the native writers have no cascade to
+apply it with. Rather than leave that to be discovered, it is a contract:
+
+| You wrote | Browser (HTML, widget, Chromium capture) | Native PNG/JPEG/WebP | Native SVG/PDF |
+| --- | --- | --- | --- |
+| mark / axis `style=` | yes | yes | yes |
+| chart-level `style=` (design tokens) | yes | yes | yes |
+| `styles={slot: {...}}` | yes, all 23 slots | dropped | dropped |
+| `class_names={slot: "..."}` | yes, all 23 slots | dropped | dropped |
+| `custom_css=` | yes | raises | raises |
+| `xy.legend(style=...)` | yes | 6 keys | 6 keys |
+| `xy.colorbar(style=...)` | yes | dropped | dropped |
+
+The two "dropped" rows are deliberate. Raising instead would break every native
+export of a chart that carries Tailwind classes for its live view, which is the
+normal way to use both surfaces together — so the behavior is contracted and
+tested rather than enforced. `custom_css` raises because there is no honest
+partial application of an author stylesheet, and the error names
+`Engine.chromium` as the fix.
+
+A chart that must look identical on screen and in a PNG should carry its design
+decisions in chart-level `style=` tokens and mark/axis `style=`, which every
+renderer reads, and use slot classes only for things the browser alone shows —
+tooltips, the modebar, hover chrome.
+
 ## Cascade and structural layout
 
 Built-in visual rules live in the low-priority `base` cascade layer and use

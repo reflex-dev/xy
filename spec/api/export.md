@@ -227,3 +227,54 @@ Writes are atomic per file (same-directory temp file, fsync, `os.replace`), so a
 reader never observes a partial image. Failure mid-batch is not transactional:
 files already written stay on disk. The return value is the list of written
 byte strings, in input order.
+## 9. What styling survives which export path
+
+XY has five styling mechanisms (`spec/api/styling.md` § The five ways to style)
+and three rendering families. They do not intersect uniformly, and until this
+section existed the gaps were discoverable only by exporting and looking. An
+undocumented asymmetry reads as a bug; a documented one is a contract.
+
+The families are **browser** (standalone HTML, the notebook iframe, the widget,
+the Reflex adapter, and Chromium capture, which screenshots the same document),
+**native raster** (`_raster.render_raster` → PNG/JPEG/WebP), and **native
+vector** (`_svg.to_svg`, and `_pdf.svg_to_pdf` on top of it).
+
+| Mechanism | Browser | Native raster | Native vector | Enforcement |
+| --- | --- | --- | --- | --- |
+| `style={...}` on a mark | yes | yes | yes | validated CSS subset, `styles.compile_mark_style` |
+| `style={...}` on an axis | yes | yes | yes | validated vocabulary, `styles.compile_axis_style` |
+| `style={...}` on the chart (token bag) | yes | yes | yes | `spec["dom"]["style"]`, read at `_svg.py:767,1481` and `_raster.py:662` |
+| `styles={slot: {...}}` (per-slot inline) | yes, all 23 slots | **dropped** | **dropped** | silent — see below |
+| `class_names={slot: "..."}` | yes, all 23 slots | **dropped** | **dropped** | silent — the SVG writer emits no `class` at all |
+| `custom_css="..."` | yes (HTML + Chromium capture) | **raises** | **raises** | `_resolve_image_engine`, `export.py:812` |
+| `xy.legend(style=...)` | yes | 6 keys | 6 keys | parallel `legend_options["style"]` channel |
+| `xy.colorbar(style=...)` | yes | **dropped** | **dropped** | no native channel exists |
+
+### Why two of those rows are silent, and why that is the right default
+
+`custom_css` raises because it is an author stylesheet: there is no honest
+partial application of it, and the caller can switch to `Engine.chromium` in one
+edit. The message says so. SVG rejects it for *every* engine, because a browser
+screenshot cannot produce vector output — that row is a hard "never", not a
+default.
+
+`class_names` and per-slot `styles` are dropped instead, because raising would
+break every native export of a chart that carries Tailwind classes for its live
+view, which is the normal way to use both surfaces together. The cost of that
+choice is exactly this table: the behavior has to be written down and tested,
+which is what `tests/test_export_style_survival.py` does — including that the
+two native writers agree with each other and not merely with this page.
+
+### The legend's parallel channel
+
+`xy.legend(style=...)` is written twice: into `chrome_styles["legend"]` for the
+browser and into `fig.legend_options["style"]`, which the native writers do
+read (`_svg.py:2827`, `_raster.py:1970`). Native honors `background`,
+`boxShadow`, `borderRadius`, and `--xy-legend-frame-alpha`, plus `padding` and
+`rowGap` when they carry an `em` unit. The chart-level `styles={"legend": ...}`
+spelling never reaches `legend_options`, so the two spellings that look
+equivalent in the browser are not equivalent in a PNG. `colorbar` has no such
+channel at all.
+
+This is an asymmetry worth closing, not just documenting; it is tracked as a
+row in the capability registry rather than as prose here.
