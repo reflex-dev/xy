@@ -47,8 +47,23 @@ through untouched.
 In Reflex, Tailwind utilities require `rx.plugins.TailwindV4Plugin()`. Complete
 literal classes emitted into Reflex's generated JSX work with the plugin's
 normal scan paths; the original Python or Markdown path does not need to be
-added. See the public [Chrome Slots](../../docs/styling/chrome-slots.md) guide for the
+added. Fixed Chart/Figure sources expose their class inventory automatically;
+token/Var sources pass their complete build-time inventory through
+`reflex_xy.chart(..., tailwind_classes=...)`. See the public
+[Chrome Slots](../../docs/styling/chrome-slots.md) guide for the
 standalone-export and dynamic-class boundaries.
+
+Before the live-chart inventory existed, the class names reached the DOM but
+their utilities were absent from the compiled stylesheet:
+
+![Live token chart before the Tailwind scan inventory: classes are present but
+the chart keeps its default chrome.](../assets/tailwind-live-before.jpg)
+
+The same production build with `tailwind_classes=` emits the requested
+utilities for the chart root, title, tooltip, and controls:
+
+![Live token chart after the Tailwind scan inventory: rounded fuchsia frame,
+amber surface, large title, and shadow utilities are applied.](../assets/tailwind-live-after.jpg)
 
 ## Rendered marks: standard CSS vocabulary
 

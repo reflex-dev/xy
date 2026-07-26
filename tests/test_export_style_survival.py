@@ -30,8 +30,8 @@ def _styled_chart() -> xy.Chart:
 
 
 def test_browser_spec_carries_every_slot_class_and_style() -> None:
-    # The browser client applies dom.class_names / dom.styles to all 23 slots
-    # (js/src/50_chartview.ts _applySlot), so the spec must carry all 23.
+    # The browser client applies dom.class_names / dom.styles to all 29 slots
+    # (js/src/50_chartview.ts _applySlot), so the spec must carry all 29.
     spec, _ = _styled_chart().figure().build_payload()
     dom = spec["dom"]
 

@@ -366,6 +366,7 @@ reflex_xy.chart(
     Dash.cloud,                      # a figure var / inline() / register() token…
     on_point_hover=Dash.on_hover,    # semantic events -> normal handlers
     on_select_end=Dash.on_select,
+    tailwind_classes="rounded-xl dark:bg-slate-950",  # build-time scan inventory
     height="460px",
 )
 
@@ -378,6 +379,16 @@ passed directly compiles to a payload asset and lands in the `src` prop,
 which the wrapper fetches and renders kernel-less. Semantic-event props
 apply to live sources; a static chart resolves hover tooltips client-side
 but dispatches no backend events.
+
+Static Chart/Figure sources mirror every class string from
+`Figure.dom_class_strings()` into the scan-only `tailwindClassTokens` JSX prop,
+because their XYBF payload is opaque to Tailwind. Token/Var sources have no
+compile-time figure, so `tailwind_classes=` supplies their possible complete
+utility names explicitly. The adapter accepts one string or an iterable of
+strings, validates concrete strings, de-duplicates tokens in order, merges an
+explicit inventory with static discovery, and applies the explicit inventory
+to every panel of a facet grid. `XYChart.jsx` destructures and discards the
+scan prop before `divProps` reaches the DOM.
 
 Sizing is the mount's, not the payload's. `chart()` defaults the outer
 element to `width: 100%` / `height: 420px` (override with any style prop),

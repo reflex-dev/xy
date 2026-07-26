@@ -110,10 +110,28 @@ Keep each utility name complete and literal, such as `bg-zinc-950/90`. Tailwind
 cannot discover a name assembled at runtime from fragments such as
 `f"bg-{tone}-950"`; map dynamic state to complete class strings instead.
 
-For charts produced from a token or `Var`, Tailwind still needs to see every
-possible utility at build time. Put each complete utility name in a normal
-Reflex component or safelist it in the host app. The same rule applies when
-application logic chooses classes dynamically.
+For charts produced from a token or `Var`, pass every possible complete
+utility through the adapter's build-time inventory:
+
+~~~python
+LIVE_CHART_CLASSES = [
+    "rounded-2xl border border-slate-200 dark:border-slate-800",
+    "bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100",
+    "hover:bg-slate-100 dark:hover:bg-slate-800",
+]
+live_chart = reflex_xy.chart(
+    Dashboard.chart,
+    tailwind_classes=LIVE_CHART_CLASSES,
+    height="360px",
+)
+~~~
+
+`tailwind_classes` accepts one string or an iterable of strings and exists only
+for Tailwind's compile-time source scan; it never becomes a DOM attribute.
+Static Chart/Figure sources still discover their own classes automatically,
+and an explicit inventory is merged with those discovered classes. The same
+complete-literal rule applies when application logic chooses classes
+dynamically.
 
 Without `TailwindV4Plugin`, XY still places the names in the DOM but no Tailwind
 utilities are generated, so the chart renders without those styles. An XY
@@ -250,8 +268,8 @@ apply it with. Rather than leave that to be discovered, it is a contract:
 | --- | --- | --- | --- |
 | mark / axis `style=` | yes | yes | yes |
 | chart-level `style=` (design tokens) | yes | yes | yes |
-| `styles={slot: {...}}` | yes, all 23 slots | dropped | dropped |
-| `class_names={slot: "..."}` | yes, all 23 slots | dropped | dropped |
+| `styles={slot: {...}}` | yes, all 29 slots | dropped | dropped |
+| `class_names={slot: "..."}` | yes, all 29 slots | dropped | dropped |
 | `custom_css=` | yes | raises | raises |
 | `xy.legend(style=...)` | yes | 6 keys | 6 keys |
 | `xy.colorbar(style=...)` | yes | dropped | dropped |

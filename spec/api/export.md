@@ -245,8 +245,8 @@ vector** (`_svg.to_svg`, and `_pdf.svg_to_pdf` on top of it).
 | `style={...}` on a mark | yes | yes | yes | validated CSS subset, `styles.compile_mark_style` |
 | `style={...}` on an axis | yes | yes | yes | validated vocabulary, `styles.compile_axis_style` |
 | `style={...}` on the chart (token bag) | yes | yes | yes | `spec["dom"]["style"]`, read at `_svg.py:767,1481` and `_raster.py:662` |
-| `styles={slot: {...}}` (per-slot inline) | yes, all 23 slots | **dropped** | **dropped** | silent — see below |
-| `class_names={slot: "..."}` | yes, all 23 slots | **dropped** | **dropped** | silent — the SVG writer emits no `class` at all |
+| `styles={slot: {...}}` (per-slot inline) | yes, all 29 slots | **dropped** | **dropped** | silent — see below |
+| `class_names={slot: "..."}` | yes, all 29 slots | **dropped** | **dropped** | silent — the SVG writer emits no `class` at all |
 | `custom_css="..."` | yes (HTML + Chromium capture) | **raises** | **raises** | `_resolve_image_engine`, `export.py:812` |
 | `xy.legend(style=...)` | yes | 6 keys | 6 keys | parallel `legend_options["style"]` channel |
 | `xy.colorbar(style=...)` | yes | **dropped** | **dropped** | no native channel exists |

@@ -286,7 +286,8 @@ def test_tailwind_styling_docs_match_the_reflex_plugin_contract() -> None:
     assert "literal class strings in Tailwind's default scan" in content
     assert "original Python or Markdown file" in content
     assert "charts produced from a token or `Var`" in content
-    assert "safelist it in the host app" in content
+    assert "tailwind_classes=LIVE_CHART_CLASSES" in content
+    assert "never becomes a DOM attribute" in content
 
 
 def test_styling_troubleshooting_covers_common_host_and_export_failures() -> None:

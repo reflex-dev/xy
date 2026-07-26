@@ -125,12 +125,19 @@ def test_static_facet_chart_compiles_as_grid_of_panel_payloads(app_cwd):
         share_y=True,
     )
 
-    rendered = str(reflex_xy.chart(facets, id="regional-grid"))
+    rendered = str(
+        reflex_xy.chart(
+            facets,
+            id="regional-grid",
+            tailwind_classes="rounded-lg dark:bg-slate-950",
+        )
+    )
 
     assert "regional-grid" in rendered
     assert "repeat(2, minmax(0, 1fr))" in rendered
     assert rendered.count("XYChart") == 2
     assert rendered.count("/xy/") == 2
+    assert rendered.count("rounded-lg dark:bg-slate-950") == 2
     asset_files = list((pathlib.Path(app_cwd) / "assets" / "xy").glob("*.xyf"))
     assert len(asset_files) == 2
     # Facet identity is not in the JSX: each panel payload carries its facet
@@ -143,3 +150,46 @@ def test_static_facet_chart_compiles_as_grid_of_panel_payloads(app_cwd):
 def test_live_chart_does_not_claim_runtime_classes_are_compile_time_known(app_cwd):
     rendered = str(reflex_xy.chart("xyfig-runtime"))
     assert "tailwindClassTokens" not in rendered
+
+
+def test_live_chart_accepts_explicit_tailwind_scan_inventory(app_cwd):
+    """Token payloads are runtime-only; callers can expose complete utilities."""
+    rendered = str(
+        reflex_xy.chart(
+            "xyfig-runtime",
+            tailwind_classes=[
+                "rounded-[28px] border-fuchsia-500",
+                "dark:bg-slate-950 hover:bg-fuchsia-100",
+                "rounded-[28px]",
+            ],
+        )
+    )
+
+    assert "tailwindClassTokens" in rendered
+    assert ("rounded-[28px] border-fuchsia-500 dark:bg-slate-950 hover:bg-fuchsia-100") in rendered
+
+
+def test_explicit_tailwind_inventory_merges_with_static_discovery(app_cwd):
+    static_chart = xy.line_chart(
+        xy.line([0, 1], [1, 2]),
+        class_name="rounded-xl bg-white",
+    )
+
+    rendered = str(
+        reflex_xy.chart(
+            static_chart,
+            tailwind_classes="motion-safe:transition-shadow hover:shadow-xl",
+        )
+    )
+
+    assert "rounded-xl bg-white motion-safe:transition-shadow hover:shadow-xl" in rendered
+
+
+@pytest.mark.parametrize("value", [42, ["rounded-xl", 2]])
+def test_tailwind_inventory_requires_literal_strings(app_cwd, value):
+    with pytest.raises(
+        TypeError,
+        match=r"tailwind_classes must be a string or iterable of strings|"
+        "tailwind_classes must contain only strings",
+    ):
+        reflex_xy.chart("xyfig-runtime", tailwind_classes=value)

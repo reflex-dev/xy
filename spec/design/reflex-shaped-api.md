@@ -366,9 +366,13 @@ This keeps Tailwind useful without pretending CSS can reach GPU buffers.
 
 The Reflex adapter mirrors class strings from a fixed `xy.Chart` (or an
 internal `Figure`) into generated JSX so Tailwind can discover them at compile
-time; the inventory comes from `Figure.dom_class_strings()`. A live token
-or Var figure does not exist until runtime; its complete utility names must
-also appear literally in ordinary application source or in the host safelist.
+time; the inventory comes from `Figure.dom_class_strings()`. A live token or
+Var figure does not exist until runtime, so `reflex_xy.chart(...,
+tailwind_classes=...)` accepts one literal class string or an iterable of
+literal class strings and mirrors that explicit inventory into the same
+compile-only JSX prop. The wrapper discards the prop before spreading DOM
+properties. Static charts merge an explicit inventory with automatic
+discovery; utility tokens are de-duplicated in input order.
 
 ## 5. Tooltip Customization
 

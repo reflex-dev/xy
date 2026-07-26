@@ -37,6 +37,7 @@ chart renders, pans/zooms, and resolves hover tooltips client-side; its small
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Optional
 
 import reflex as rx
@@ -119,7 +120,47 @@ def _tailwind_class_manifest(figure: Any) -> str:
     return " ".join(figure.dom_class_strings())
 
 
-def _facet_grid(grid: Any, *, tooltip: Any, props: dict[str, Any]) -> Any:
+def _tailwind_class_tokens(value: Optional[str | Iterable[str]]) -> str:
+    """Normalize a build-time Tailwind class inventory.
+
+    Live figure tokens cannot expose the classes inside their runtime payload
+    to Tailwind's source scanner.  Accept either one class string or an
+    iterable of class strings, require concrete strings (never a reactive
+    ``Var``), and de-duplicate individual utility tokens while preserving
+    order.
+    """
+    if value is None:
+        return ""
+    values: Iterable[Any] = (value,) if isinstance(value, str) else value
+    try:
+        iterator = iter(values)
+    except TypeError as exc:
+        raise TypeError("tailwind_classes must be a string or iterable of strings") from exc
+
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for class_string in iterator:
+        if not isinstance(class_string, str):
+            raise TypeError("tailwind_classes must contain only strings")
+        for token in class_string.split():
+            if token not in seen:
+                seen.add(token)
+                tokens.append(token)
+    return " ".join(tokens)
+
+
+def _merge_tailwind_class_tokens(*manifests: str) -> str:
+    """Join scan manifests without emitting duplicate utility tokens."""
+    return _tailwind_class_tokens(manifests)
+
+
+def _facet_grid(
+    grid: Any,
+    *,
+    tooltip: Any,
+    tailwind_manifest: str,
+    props: dict[str, Any],
+) -> Any:
     """Render a core ``FacetGrid`` as a responsive Reflex CSS grid.
 
     A facet grid intentionally has no single wire payload: every panel is an
@@ -140,7 +181,10 @@ def _facet_grid(grid: Any, *, tooltip: Any, props: dict[str, Any]) -> Any:
         panel_props = dict(event_props)
         panel_props.update(width="100%", height=f"{grid.panel_height}px")
         panel_props["src"] = payload_asset(figure)
-        class_manifest = _tailwind_class_manifest(figure)
+        class_manifest = _merge_tailwind_class_tokens(
+            _tailwind_class_manifest(figure),
+            tailwind_manifest,
+        )
         if class_manifest:
             panel_props["tailwind_class_tokens"] = class_manifest
         panel = (
@@ -182,7 +226,13 @@ def _facet_grid(grid: Any, *, tooltip: Any, props: dict[str, Any]) -> Any:
     )
 
 
-def chart(source: Any, *, tooltip: Any = None, **props: Any) -> Any:
+def chart(
+    source: Any,
+    *,
+    tooltip: Any = None,
+    tailwind_classes: Optional[str | Iterable[str]] = None,
+    **props: Any,
+) -> Any:
     """Place a xy chart.
 
     `source` is a figure token (a `@reflex_xy.figure` state var, or a
@@ -199,14 +249,23 @@ def chart(source: Any, *, tooltip: Any = None, **props: Any) -> Any:
     Sizing: the outer element defaults to `width: 100%` and a 420px height;
     pass `width=`/`height=` (or any style prop) to override. Charts built
     with `width="100%"` track the element responsively.
+
+    `tailwind_classes=` is a build-time inventory for token/Var-backed charts,
+    whose runtime payload is otherwise invisible to Tailwind's source scan.
+    Pass complete literal utility strings (or an iterable of them). Static
+    Chart/Figure sources are discovered automatically; an explicit inventory
+    is merged with their discovered classes.
     """
     global _component_cls
     if _component_cls is None:
         _component_cls = _build_component_cls()
+    tailwind_manifest = _tailwind_class_tokens(tailwind_classes)
     if isinstance(source, (str, rx.Var)):
         props.setdefault("width", "100%")
         props.setdefault("height", "420px")
         props["token"] = source
+        if tailwind_manifest:
+            props["tailwind_class_tokens"] = tailwind_manifest
     elif _is_chart_like(source):
         # Build a public Chart once, then reuse the cached Figure for both the
         # payload and its Tailwind scan manifest.  In particular, do not call
@@ -216,11 +275,19 @@ def chart(source: Any, *, tooltip: Any = None, **props: Any) -> Any:
             tooltip = source.chrome_components().get("tooltip")
         figure = _figure_of(source)
         if isinstance(figure, FacetGrid):
-            return _facet_grid(figure, tooltip=tooltip, props=props)
+            return _facet_grid(
+                figure,
+                tooltip=tooltip,
+                tailwind_manifest=tailwind_manifest,
+                props=props,
+            )
         props.setdefault("width", "100%")
         props.setdefault("height", "420px")
         props["src"] = payload_asset(figure)
-        class_manifest = _tailwind_class_manifest(figure)
+        class_manifest = _merge_tailwind_class_tokens(
+            _tailwind_class_manifest(figure),
+            tailwind_manifest,
+        )
         if class_manifest:
             props["tailwind_class_tokens"] = class_manifest
     else:

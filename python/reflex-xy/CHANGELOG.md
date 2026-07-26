@@ -4,6 +4,15 @@ All notable changes to **reflex-xy** (the Reflex adapter for xy) are
 documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- `reflex_xy.chart(..., tailwind_classes=...)` exposes complete utility names
+  for live token/Var charts to Reflex's Tailwind build without leaking a scan
+  prop into the DOM. It accepts a string or iterable of strings, merges with
+  automatic static-chart discovery, de-duplicates utility tokens, and applies
+  to every facet panel.
+
 ## [0.0.1] — 2026-07-24
 
 ### Added

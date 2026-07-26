@@ -67,6 +67,38 @@ def index() -> rx.Component:
 app = rx.App()
 ```
 
+### Tailwind classes on live charts
+
+Add Reflex's Tailwind plugin when chart chrome uses utility classes. A direct
+fixed `xy.Chart` is scanned automatically. A token or `Var` is resolved only at
+runtime, so expose its possible complete utility names through the adapter:
+
+```python
+# rxconfig.py
+config = rx.Config(
+    app_name="dash",
+    plugins=[
+        rx.plugins.TailwindV4Plugin(),
+        reflex_xy.XYPlugin(),
+    ],
+)
+
+# dash.py
+LIVE_CHART_CLASSES = [
+    "rounded-2xl border border-slate-200 dark:border-slate-800",
+    "bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100",
+]
+
+reflex_xy.chart(
+    Dash.chart,
+    tailwind_classes=LIVE_CHART_CLASSES,
+)
+```
+
+The inventory is present only in generated source for Tailwind's build-time
+scan. It never reaches the DOM; the runtime chart receives the same class names
+from its XY payload.
+
 Change `points` in an event handler and the chart re-publishes itself to
 every subscriber — the token never changes, so nothing re-renders except
 pixels.
