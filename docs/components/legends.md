@@ -110,9 +110,10 @@ def multi_column_legend_demo():
 ## Style the Built-in Legend
 
 `class_name` and `style` apply to the legend container. Chart-level
-`class_names` and `styles` can separately target `legend`, `legend_item`, and
-`legend_swatch` slots. Those are browser DOM hooks; native SVG and PNG use the
-legend options and renderable style values carried in the chart specification.
+`class_names` and `styles` can separately target `legend`, `legend_title`,
+`legend_item`, `legend_swatch`, and `legend_label` slots. Those are browser DOM
+hooks; native SVG and PNG use the legend options and renderable style values
+carried in the chart specification.
 
 See [Customize Each Part](/docs/xy/styling/customize/#legend) for the stable
 legend-slot contract.

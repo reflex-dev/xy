@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, SupportsFloat, SupportsIndex, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from ._figure import Figure
 
 
@@ -168,6 +170,21 @@ def _javascript_for_inline_script(source: str) -> str:
     return source.replace("</", "<\\/")
 
 
+def _iter_base64_chunks(blob: bytes) -> "Iterator[str]":
+    """`_base64_chunks` as a generator, for callers that consume chunks once.
+
+    The encoded text is 4/3 of the payload, so materializing the list *and* the
+    string built from it doubles that; yielding lets each chunk be wrapped and
+    released as it is produced.
+    """
+    if not blob:
+        return
+    view = memoryview(blob)
+    step = _B64_CHUNK_BYTES
+    for i in range(0, len(view), step):
+        yield base64.b64encode(view[i : i + step]).decode("ascii")
+
+
 def _base64_chunks(blob: bytes) -> list[str]:
     """Base64 the payload as 3-byte-aligned chunks (see `_B64_CHUNK_BYTES`).
 
@@ -175,11 +192,7 @@ def _base64_chunks(blob: bytes) -> list[str]:
     interior `=` padding and decodes to an exact byte length — letting the client
     reassemble one contiguous buffer without tracking base64 boundaries. A
     memoryview avoids copying the (potentially huge) blob per slice."""
-    if not blob:
-        return []
-    view = memoryview(blob)
-    step = _B64_CHUNK_BYTES
-    return [base64.b64encode(view[i : i + step]).decode("ascii") for i in range(0, len(view), step)]
+    return list(_iter_base64_chunks(blob))
 
 
 # Inline decoder for the chunked base64 payload. Prefers the native Uint8Array
@@ -310,10 +323,16 @@ def to_html(
     # valid JS string literal verbatim and can never close the <script>. Quote
     # it directly rather than via `json.dumps`, whose full-string escape scan
     # dominated small-chart export cost.
-    chunk_scripts = "\n".join(
-        f'<script>__xyChunks.push("{c}");</script>' for c in _base64_chunks(blob)
-    )
-    doc = f"""<!doctype html>
+    # Assembled as parts joined once. Every large string — the client bundle, the
+    # spec, each base64 chunk — is its own part, so the join copies it exactly
+    # once and nothing is formatted into an intermediate first. Interpolating one
+    # of them costs a second full copy of it: folding the chunks through
+    # `"\n".join(...)` duplicated 4/3 of the payload, and (measured on
+    # `test_html_export_line`, where the ~330 KB client bundle *is* the document)
+    # interpolating `client_js` into a header part cost ~10% of a small export.
+    blob_len = len(blob)
+    parts = [
+        f"""<!doctype html>
 <html>
 <head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="{_STANDALONE_CSP}">
@@ -325,18 +344,32 @@ html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;
 {_custom_css_block(custom_css)}</head>
 <body>
 <div id="chart"></div>
-<script>{client_js}</script>
+<script>""",
+        client_js,
+        """</script>
 <script>var __xyChunks = [];</script>
-{chunk_scripts}
-<script>
-  {_DECODE_B64_JS}
-  const spec = {spec_js};
-  const buf = xyDecodeB64(__xyChunks, {len(blob)});
+""",
+    ]
+    for index, chunk in enumerate(_iter_base64_chunks(blob)):
+        # The newline goes *between* blocks, exactly as the previous `"\n".join`
+        # did, so a payload-free document keeps its byte layout too.
+        parts.append('\n<script>__xyChunks.push("' if index else '<script>__xyChunks.push("')
+        parts.append(chunk)
+        parts.append('");</script>')
+    del blob
+    parts.append("\n<script>\n  ")
+    parts.append(_DECODE_B64_JS)
+    parts.append("\n  const spec = ")
+    parts.append(spec_js)
+    parts.append(f""";
+  const buf = xyDecodeB64(__xyChunks, {blob_len});
   __xyChunks.length = 0;
   xy.renderStandalone(document.getElementById("chart"), spec, buf);
 </script>
 </body>
-</html>"""
+</html>""")
+    doc = "".join(parts)
+    del parts
     if path is not None:
         _atomic_write_text(path, doc)
     return doc

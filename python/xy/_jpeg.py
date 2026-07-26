@@ -20,7 +20,9 @@ export path must not grow an imaging dependency.
 
 from __future__ import annotations
 
+import itertools
 import struct
+from typing import Optional
 
 import numpy as np
 
@@ -168,6 +170,9 @@ _DCT = _dct_matrix()
 # searchsorted keeps this exact where a float log2 could round at the edges.
 _POW2 = np.int64(1) << np.arange(12, dtype=np.int64)
 
+#: Placeholder that releases a token field's storage while its list slot lives on.
+_EMPTY_I64 = np.empty(0, dtype=np.int64)
+
 
 def _bit_size(magnitude: np.ndarray) -> np.ndarray:
     return np.searchsorted(_POW2, magnitude, side="right").astype(np.int64)
@@ -255,22 +260,61 @@ def _component_tokens(
     return merged[0], merged[1], merged[2], merged[3], merged[4], merged[5]
 
 
+#: Bits packed per `_pack_entropy` pass. The exploded form costs 17 bytes per
+#: output *bit* (two int64 index vectors plus the bit itself), so packing a whole
+#: image at once peaked at ~130 MB for a 1 MB entropy stream. Bit packing is not
+#: chunk-independent — group boundaries land mid-byte — so each pass carries its
+#: leftover bits into the next one, which keeps the byte stream identical.
+_ENTROPY_BIT_CHUNK = 1 << 18
+
+
 def _pack_entropy(chunk: np.ndarray, nbits: np.ndarray) -> bytes:
     """MSB-first bit packing of (value, bit-count) chunks, with 1-padding to a
-    byte boundary and 0x00 stuffing after every 0xFF (both per T.81)."""
+    byte boundary and 0x00 stuffing after every 0xFF (both per T.81).
+
+    Packed in bounded passes: token groups of at most `_ENTROPY_BIT_CHUNK` bits,
+    with sub-byte remainders carried across group boundaries so the emitted bytes
+    are exactly those of a single whole-image pass. Byte stuffing is per-byte
+    local, so it applies per group.
+    """
     total = int(nbits.sum())
-    start = np.cumsum(nbits) - nbits
-    idx = np.repeat(np.arange(chunk.size, dtype=np.int64), nbits)
-    offset = np.arange(total, dtype=np.int64) - np.repeat(start, nbits)
-    bits = ((chunk[idx] >> (nbits[idx] - 1 - offset)) & 1).astype(np.uint8)
-    pad = (-total) % 8
-    if pad:
-        bits = np.concatenate((bits, np.ones(pad, dtype=np.uint8)))
-    stream = np.packbits(bits)
-    ff = np.flatnonzero(stream == 0xFF)
-    if ff.size:
-        stream = np.insert(stream, ff + 1, np.uint8(0))
-    return stream.tobytes()
+    cum = np.cumsum(nbits)
+    # Token index at each bit-budget boundary: a group is [t0, t1) tokens, and a
+    # single token never spans groups (its bits stay contiguous, as before).
+    edges = np.searchsorted(
+        cum, np.arange(_ENTROPY_BIT_CHUNK, total, _ENTROPY_BIT_CHUNK), side="left"
+    )
+    bounds = [0, *(int(e) + 1 for e in edges), chunk.size]
+    parts: list[bytes] = []
+    carry = np.empty(0, dtype=np.uint8)
+    for t0, t1 in itertools.pairwise(bounds):
+        if t1 <= t0:
+            continue
+        values = chunk[t0:t1]
+        widths = nbits[t0:t1]
+        group_total = int(widths.sum())
+        start = np.cumsum(widths) - widths
+        idx = np.repeat(np.arange(values.size, dtype=np.int64), widths)
+        offset = np.arange(group_total, dtype=np.int64) - np.repeat(start, widths)
+        bits = ((values[idx] >> (widths[idx] - 1 - offset)) & 1).astype(np.uint8)
+        if carry.size:
+            bits = np.concatenate((carry, bits))
+        whole = (bits.size // 8) * 8
+        if t1 == chunk.size:
+            # Final group: 1-pad the tail to a byte boundary (T.81).
+            pad = (-bits.size) % 8
+            if pad:
+                bits = np.concatenate((bits, np.ones(pad, dtype=np.uint8)))
+            whole = bits.size
+            carry = np.empty(0, dtype=np.uint8)
+        else:
+            carry = bits[whole:].copy()
+        stream = np.packbits(bits[:whole])
+        ff = np.flatnonzero(stream == 0xFF)
+        if ff.size:
+            stream = np.insert(stream, ff + 1, np.uint8(0))
+        parts.append(stream.tobytes())
+    return b"".join(parts)
 
 
 def _headers(h: int, w: int, qy_zz: np.ndarray, qc_zz: np.ndarray) -> bytes:
@@ -310,6 +354,26 @@ def _headers(h: int, w: int, qy_zz: np.ndarray, qc_zz: np.ndarray) -> bytes:
     return b"\xff\xd8" + app0 + dqt + sof0 + dht + sos
 
 
+def _gathered(fields: list[list[np.ndarray]], index: int, order: np.ndarray) -> np.ndarray:
+    """One token field, concatenated across components into MCU order.
+
+    The per-component pieces are released as they are joined, so a field costs
+    one joined copy plus the gathered result rather than both plus the parts —
+    each is an int64 per token, and a photographic image has millions. `parts`
+    is dropped explicitly rather than left to the frame: a local stays alive
+    until the function returns, so `return np.concatenate(parts)[order]` would
+    hold the pieces, the join, *and* the gather at once.
+    """
+    parts = [f[index] for f in fields]
+    for f in fields:
+        f[index] = _EMPTY_I64
+    joined = np.concatenate(parts)
+    del parts
+    gathered = joined[order]
+    del joined
+    return gathered
+
+
 def encode(rgba: np.ndarray, *, quality: int = 90) -> bytes:
     """Encode an `(h, w, 4)` RGBA (alpha ignored) or `(h, w, 3)` RGB uint8
     image as a baseline JFIF JPEG. Deterministic for identical input."""
@@ -338,6 +402,10 @@ def encode(rgba: np.ndarray, *, quality: int = 90) -> bytes:
     y = 0.299 * r + 0.587 * g + 0.114 * b - 128.0
     cb = -0.168736 * r - 0.331264 * g + 0.5 * b
     cr = 0.5 * r - 0.418688 * g - 0.081312 * b
+    # The interleaved f32 source is dead once the planes exist, and it is three
+    # floats per pixel — hand it back before the per-component pipeline runs.
+    # (`r`/`g`/`b` are views into it, so all four references have to go.)
+    del rgb, r, g, b
 
     qy = _scaled_quant(_QUANT_LUMA, quality)
     qc = _scaled_quant(_QUANT_CHROMA, quality)
@@ -346,37 +414,77 @@ def encode(rgba: np.ndarray, *, quality: int = 90) -> bytes:
 
     pad_h, pad_w = (-h) % 8, (-w) % 8
     h8, w8 = h + pad_h, w + pad_w
-    fields: list[tuple[np.ndarray, ...]] = []
+    fields: list[list[np.ndarray]] = []
     keys: list[np.ndarray] = []
-    for comp, (plane, q_zz) in enumerate(zip((y, cb, cr), (qy_zz, qc_zz, qc_zz), strict=True)):
+    # Planes are released as they are consumed (one float per pixel each), so the
+    # pipeline holds one component's working set instead of all three.
+    planes: list[Optional[np.ndarray]] = [y, cb, cr]
+    del y, cb, cr
+    for comp, q_zz in enumerate((qy_zz, qc_zz, qc_zz)):
+        plane = planes[comp]
+        planes[comp] = None
+        assert plane is not None
         # Edge replication avoids the ringing a zero/black pad would inject
         # into every border block.
         padded = np.pad(plane, ((0, pad_h), (0, pad_w)), mode="edge")
+        del plane
         blocks = padded.reshape(h8 // 8, 8, w8 // 8, 8).swapaxes(1, 2).reshape(-1, 8, 8)
+        del padded
         coef = _DCT @ blocks @ _DCT.T
-        scaled = coef.reshape(-1, 64)[:, _ZIGZAG] / q_zz.astype(np.float32)
+        del blocks
+        # The zigzag gather is a fresh array, so the divide, the round, and the
+        # sign restore all run in place on it: same f32 operations in the same
+        # order as the one-shot chain, five fewer full-size temporaries.
+        scaled = coef.reshape(-1, 64)[:, _ZIGZAG]
+        del coef
+        scaled /= q_zz.astype(np.float32)
         # Round half away from zero: any deterministic tie rule is valid JPEG;
-        # this one matches the common integer implementations.
-        quant = (np.sign(scaled) * np.floor(np.abs(scaled) + 0.5)).astype(np.int64)
+        # this one matches the common integer implementations. `trunc(x + ±0.5)`
+        # is that rule in three in-place passes and one temporary, where
+        # `sign(x) * floor(|x| + 0.5)` took four passes and four full-size
+        # temporaries. It is exact, not approximate: IEEE addition is
+        # sign-symmetric, so for x < 0 the sum is the exact negation of
+        # `|x| + 0.5`, and truncation toward zero then matches the floor of that
+        # magnitude. The ±0 cases land on ±0.0 either way and integer-cast to 0.
+        bias = np.copysign(np.float32(0.5), scaled)
+        scaled += bias
+        del bias
+        np.trunc(scaled, out=scaled)
+        quant = scaled.astype(np.int64)
+        del scaled
         # Exact-math AC magnitudes cap at 1020 (category 10); clamp is one-LSB
         # insurance against float rounding ever minting category 11, which the
         # baseline AC tables cannot code.
         quant[:, 1:] = np.clip(quant[:, 1:], -1023, 1023)
         dc_tbl, ac_tbl = (0, 1) if comp == 0 else (2, 3)
         toks = _component_tokens(quant, dc_tbl, ac_tbl)
+        del quant
         # 4:4:4 → one block per component per MCU, so the MCU-interleaved
         # order Y, Cb, Cr is a stable sort on (block, component, in-block seq).
         keys.append(((toks[0] * 3 + comp) << 8) | toks[1])
-        fields.append(toks)
+        # Only the four emitted fields outlive the key: the block and in-block
+        # sequence numbers are folded into it, and on a photographic image each
+        # dropped field is an int64 per token.
+        fields.append(list(toks[2:]))
+        del toks
 
     order = np.argsort(np.concatenate(keys), kind="stable")
-    tbl = np.concatenate([f[2] for f in fields])[order]
-    sym = np.concatenate([f[3] for f in fields])[order]
-    ampl = np.concatenate([f[4] for f in fields])[order]
-    abits = np.concatenate([f[5] for f in fields])[order]
+    keys.clear()
+    tbl = _gathered(fields, 0, order)
+    sym = _gathered(fields, 1, order)
+    ampl = _gathered(fields, 2, order)
+    abits = _gathered(fields, 3, order)
+    del fields
     code = _HUFF_CODES[tbl, sym]
     clen = _HUFF_LENS[tbl, sym]
-    # Huffman code then amplitude bits, as one ≤27-bit chunk per token.
-    entropy = _pack_entropy((code << abits) | ampl, clen + abits)
+    del tbl, sym
+    # Huffman code then amplitude bits, as one ≤27-bit chunk per token. Both
+    # gathers are fresh arrays, so the combine runs in place.
+    code <<= abits
+    code |= ampl
+    clen += abits
+    del ampl, abits
+    entropy = _pack_entropy(code, clen)
+    del code, clen
 
     return _headers(h, w, qy_zz, qc_zz) + entropy + b"\xff\xd9"

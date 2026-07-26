@@ -14,9 +14,9 @@ renderer cannot silently ignore a declaration that another honors.
 
 | Mark family | Supported properties in `style=` |
 | --- | --- |
-| `line`, `step`, `stairs`, `ecdf` | `stroke`, `stroke-width`, `stroke-opacity`, `stroke-dasharray`, `opacity` |
+| `line`, `step`, `stairs`, `ecdf` | `stroke`, `stroke-width`, `stroke-opacity`, `stroke-dasharray`, `stroke-linecap`, `opacity` |
 | `area`, `error_band` | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity`; `area` also supports `stroke-dasharray` |
-| `scatter` | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
+| `scatter` | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `marker-shape`, `opacity` |
 | `histogram`, `bar`, `column` | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `border-radius`, `opacity` |
 | `segments`, `errorbar`, `contour`, `stem` | `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
 | `box`, `violin` | `fill`, `fill-opacity`, `opacity` |
@@ -57,6 +57,36 @@ of each mark's API. A declaration in `style=` is the final override when both
 surfaces set the same rendered property. Inside `style`, use `stroke` for
 line-like geometry and `fill` for filled geometry; `color` is deliberately not
 a CSS paint alias there.
+
+## Stroke geometry: line caps
+
+`stroke-linecap` (`butt`, `round`, `square`) shapes the two ends of a polyline
+and each dash end. It is polyline geometry, so only the line family accepts it —
+a `bar` or a `scatter` raises rather than accepting a declaration no renderer
+can draw.
+
+XY defaults to `round`, **not** to the CSS initial value `butt`: the native
+rasterizer has always drawn round caps and it is the reference for static
+export. Set the property to opt into the CSS initial value.
+
+~~~python
+xy.line(x, y, style={"stroke-width": "6px", "stroke-linecap": "butt"})
+~~~
+
+Joins are always round and are not selectable.
+
+## Marker shape
+
+`marker-shape` picks one of the 17 renderer-backed scatter symbols — `circle`,
+`square`, `diamond`, `triangle`, `cross`, `hexagon`, `pentagon`, `star`,
+`triangle_down`, `triangle_left`, `triangle_right`, `x`, `point`, `pixel`,
+`thin_diamond`, `plus_line`, `x_line` — and is the CSS spelling of the existing
+`symbol=` argument. It is an XY vocabulary name rather than a standard CSS
+property: CSS has no shape keyword for a non-DOM point mark.
+
+~~~python
+xy.scatter(x, y, size=12, style={"marker-shape": "diamond", "fill": "#22c55e"})
+~~~
 
 ## Combine mark styles
 

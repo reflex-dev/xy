@@ -81,6 +81,11 @@ def _base_checks(
             (py, "scripts/check_claim_guardrails.py"),
         ),
         Check(
+            "capability_matrix",
+            "generated capability matrix is current",
+            (py, "scripts/gen_capability_matrix.py", "--check"),
+        ),
+        Check(
             "benchmark_harness",
             "benchmark metadata, report, regression, and claim guardrail tests",
             (
@@ -284,6 +289,7 @@ QUICK_CHECKS = (
     "python_floor",
     "public_api",
     "claim_guardrails",
+    "capability_matrix",
     "ci_workflow",
     "ruff_check",
     "ruff_format",

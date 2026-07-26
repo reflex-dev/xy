@@ -89,6 +89,10 @@ _TEXT_ROT_CCW = 0x80
 _TEXT_ROT_CW = 0x40
 _TEXT_ITALIC = 0x01
 _TEXT_BOLD = 0x02
+# stroke-linecap — must match CAP_* in src/raster.rs. XY's default is round,
+# which is the geometry the rasterizer's capsule distance field has always
+# drawn. Joins are always round and carry no wire field.
+_CAP_CODES = {"butt": 0, "round": 1, "square": 2}
 _SYMBOLS = {
     "circle": 0,
     "square": 1,
@@ -232,6 +236,7 @@ class _Cmd:
         color: tuple[int, ...],
         closed: bool = False,
         dash: Sequence[float] | None = None,
+        cap: str = "round",
     ) -> None:
         if len(pts) < 2 or width <= 0:
             return
@@ -251,6 +256,7 @@ class _Cmd:
         self._u32(len(dash))
         for d in dash:
             self._f(d)
+        self.buf.append(_CAP_CODES[cap])
 
     def point(
         self,
@@ -498,6 +504,7 @@ class _Cmd:
         width: float,
         color: tuple[int, ...],
         dash: Sequence[float] | None = None,
+        cap: str = "round",
     ) -> None:
         """Native monotone-Hermite flattening + stroke for affine axes."""
         n = len(xv)
@@ -524,6 +531,7 @@ class _Cmd:
         self._u32(len(dash))
         for value in dash:
             self._f(value)
+        self.buf.append(_CAP_CODES[cap])
 
     def image(
         self,
@@ -1152,9 +1160,13 @@ def render_raster(
     from . import _native
 
     spans = (blob, *borrowed)
+    # The command buffer ships as a borrowed buffer, not a `bytes` copy: the
+    # ctypes seam wraps it with `np.frombuffer` and the native rasterizer only
+    # reads it, so freezing it would duplicate a display list that is O(marks)
+    # (megabytes on a direct-tier scatter) for nothing.
     if fast_png:
-        return _native.rasterize_png_spans(bytes(cmd.buf), spans, w_px, h_px)
-    return _native.rasterize_spans(bytes(cmd.buf), spans, w_px, h_px)
+        return _native.rasterize_png_spans(cmd.buf, spans, w_px, h_px)
+    return _native.rasterize_spans(cmd.buf, spans, w_px, h_px)
 
 
 def _emit_line(
@@ -1172,11 +1184,17 @@ def _emit_line(
         xv, yv = _step_arrays(xv, yv, style["step"])
     c = _rgba(style.get("color"), color, _stroke_opacity(style))
     width = float(style.get("width", 1.5))
+    # `render_raster` takes a plain spec dict, so a hand-built or round-tripped
+    # one can carry a value `compile_mark_style` would have rejected. Fall back
+    # to the documented default rather than raising a bare KeyError from inside
+    # the byte packer.
+    cap = str(style.get("linecap", "round"))
+    cap = cap if cap in _CAP_CODES else "round"
     if style.get("curve") == "smooth" and len(xv) >= 3 and sx.affine and sy.affine:
-        cmd.smooth_stroke(xv, yv, sx, sy, width, c, dash=style.get("dash"))
+        cmd.smooth_stroke(xv, yv, sx, sy, width, c, dash=style.get("dash"), cap=cap)
     else:
         pts = _scene.curve_points(xv, yv, sx, sy, False)
-        cmd.stroke(pts, width, c, dash=style.get("dash"))
+        cmd.stroke(pts, width, c, dash=style.get("dash"), cap=cap)
 
 
 def _annotation_point(
@@ -2209,8 +2227,11 @@ def _emit_legend(
     x, y = legend["x"], legend["y"]
     # frameon=False (background transparent) drops the box entirely (§ mpl parity).
     if style_opts.get("background") != "transparent":
+        radius = 4.0 if style_opts.get("borderRadius") else 0.0
+        frame_points = _round_rect_pts(x, y, x + box_w, y + box_h, radius)
         if style_opts.get("boxShadow"):
-            cmd.fill(_rect_pts(x + 2, y + 2, x + box_w + 2, y + box_h + 2), (0, 0, 0, 55))
+            shadow_points = _round_rect_pts(x + 2, y + 2, x + box_w + 2, y + box_h + 2, radius)
+            cmd.fill(shadow_points, (0, 0, 0, 55))
         alpha = float(style_opts.get("--xy-legend-frame-alpha", 0.08))
         background = style_opts.get("background")
         frame = (
@@ -2218,12 +2239,11 @@ def _emit_legend(
             if background
             else (128, 128, 128, round(255 * alpha))
         )
-        cmd.fill(_rect_pts(x, y, x + box_w, y + box_h), frame)
+        cmd.fill(frame_points, frame)
         border = _rgba(style_opts.get("borderColor"), "#cccccc", alpha)
-        # closed=True: _rect_pts is four corners, so an open polyline strokes
-        # top/right/bottom and silently drops the left edge. Matplotlib's frame
-        # is a FancyBboxPatch — all four sides — and so is SVG's <rect>.
-        cmd.stroke(_rect_pts(x, y, x + box_w, y + box_h), 1.0, border, closed=True)
+        # closed=True: the point list omits a repeated start point. Without it,
+        # the final edge is silently dropped for both square and rounded frames.
+        cmd.stroke(frame_points, 1.0, border, closed=True)
     if title:
         cmd.text(
             x + box_w / 2,
@@ -2245,8 +2265,11 @@ def _emit_legend(
         hx0, hx1, cy = rx, rx + handle, ry + text_h / 2
         kind = t.get("kind")
         if kind == "scatter":
-            sym = _SYMBOLS.get(style.get("symbol", "circle"), 0)
+            symbol = style.get("symbol", "circle")
+            sym = _SYMBOLS.get(symbol, 0)
             sw = float(style.get("stroke_width", 0.0))
+            if symbol in {"plus_line", "x_line"} and sw <= 0:
+                sw = 1.0
             stroke = _rgba(style.get("stroke"), color_str) if sw > 0 else (0, 0, 0, 0)
             cmd.point(
                 (hx0 + hx1) / 2,

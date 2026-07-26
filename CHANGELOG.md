@@ -9,6 +9,13 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- `xy.tooltip(labels={...})` gives source columns readable display names
+  without changing lookup, formatting keys, title placeholders, or hover-event
+  payloads; without `fields=`, labels rename matching default channel rows.
+  Built-in tooltips now expose `tooltip_title`, `tooltip_row`,
+  `tooltip_label`, and `tooltip_value` DOM slots for independent typography
+  and layout; legends likewise expose `legend_title` and `legend_label`.
+  User-provided labels remain text-only and are never parsed as HTML.
 - `colormap=` accepts a **custom ramp** built from your own colors, not only one
   of the twenty built-in names: a sequence of 2–256 CSS colors, `(position,
   color)` pairs, or a CSS `linear-gradient(...)`. Every form resolves once, in
@@ -35,6 +42,53 @@ in the README).
   `xy.y_axis(show=False, grid=True)` leaves only the grid. They compile to the
   same validated style properties, so an explicit `style=` still wins and specs
   that don't use them are byte-identical.
+
+### Changed
+- Host theme changes made through an ancestor `data-theme` attribute now
+  refresh canvas/SVG paint just like `.dark` class and inline-style changes;
+  DOM chrome continues to follow the cascade automatically.
+- Peak memory cut on four paths, with byte-identical output everywhere (89
+  payload/export/view fingerprints pinned before and after):
+  - The indexed-palette PNG encoder stages one scanline buffer and hands it to
+    zlib directly instead of building a per-row `bytes` list, joining it, and
+    narrowing an `intp`-per-pixel `np.unique` inverse. A 1800×840 export peaks
+    at 6 MB instead of 50 MB (33 MB instead of 274 MB at 4K) and encodes ~1.8x
+    faster; the truecolor branch drops ~17%.
+  - Full-column color quantization (density mean-color planes, `direct_rgba`
+    channels, u8 live-wire channels) runs chunk-bounded and in place. Its chunk
+    was 4M rows, so every real column still paid the one-shot peak: a 2.1M-row
+    continuous color channel resolved in 44 MB and now resolves in 7 MB, taking
+    a colored 2.1M-point first paint from 181 MB to 147 MB of RSS.
+  - Direct-tier scatter/line/area payloads skip the all-visible row mask. Zone
+    maps already count NaN *and* ±inf as null, so on linear axes with no nulls
+    the mask is provably all-true; it was three O(N) passes and two N-byte
+    temporaries per build. Emit is 16–35% faster, and area no longer allocates
+    an identity index vector (nor gathers animation keys through it).
+  - SVG documents assemble in one flat join with block-buffered markers, and the
+    native rasterizer borrows the display list instead of freezing a `bytes`
+    copy. A 100k-point SVG export peaks at 27 MB instead of 39 MB.
+  - The JPEG encoder streams instead of exploding: the entropy packer works in
+    bounded bit passes (it cost 17 bytes per output *bit*, so a 2.8 MB stream
+    peaked over 1.5 GB), the YCbCr planes are released as they are consumed, the
+    quantize chain rounds in place via `trunc(x + copysign(0.5, x))`, and the
+    per-component token fields are freed as they are gathered. A 1800x840 export
+    peaks at 48 MB instead of 108 (photographic: **400 MB instead of 1516 MB**)
+    and is 5-19% faster.
+  - Standalone HTML export joins the document once from parts, with every large
+    string — the client bundle, the spec, each base64 chunk — as its own part, so
+    the join copies it exactly once. Previously the chunks were folded through a
+    `"\n".join(...)` and then into an f-string, duplicating 4/3 of the payload. A
+    1M-point export peaks at 33 MB instead of 41; a small export (where the
+    ~330 KB client bundle is the document) is ~2% faster.
+  - The native rasterizer's serial point and segment passes no longer
+    materialize an `0..n` index vector to read back in order (4 bytes per mark),
+    and the per-point density quantizer keeps one temporary instead of three.
+- `memory_report()` reports `capacity_bytes` per column and
+  `canonical_capacity_bytes` per store, and builds `resident_array_bytes` from
+  the capacity total. A streamed column's `values` is a prefix view of its
+  capacity-doubling buffer, so up to half of what it holds was invisible to the
+  report (§27: if a number isn't in the report, it isn't real). Figures that
+  never appended report exactly what they did before.
 
 ### Fixed
 - The colorbar stringified its colormap, so a custom ramp reached it as an

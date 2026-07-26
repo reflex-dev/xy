@@ -34,8 +34,8 @@ styles it.
 
 | Surface | Configure content or behavior | Style it |
 | --- | --- | --- |
-| Built-in legend | `legend(loc=..., ncols=..., title=...)` | `legend(class_name=..., style=...)`; `legend`, `legend_item`, and `legend_swatch` slots |
-| Built-in tooltip | `tooltip(fields=..., title=..., format=...)` | `tooltip(class_name=..., style=...)` or the `tooltip` slot |
+| Built-in legend | `legend(loc=..., ncols=..., title=...)` | `legend(class_name=..., style=...)`; `legend`, `legend_title`, `legend_item`, `legend_swatch`, and `legend_label` slots |
+| Built-in tooltip | `tooltip(fields=..., labels=..., title=..., format=...)` | `tooltip(class_name=..., style=...)`; `tooltip`, `tooltip_title`, `tooltip_row`, `tooltip_label`, and `tooltip_value` slots |
 | Colorbar chrome | `colorbar(title=..., orientation=..., ticks=...)` on a supported continuous mark | `colorbar`, `colorbar_bar`, `colorbar_tick`, and `colorbar_title` slots |
 | X and Y axes | `x_axis(...)`, `y_axis(...)`, including named secondary axes | Validated axis `style`; `tick_label` and `axis_title` DOM slots |
 | Reference lines | `vline(x)` and `hline(y)` | Geometry through `color`, `width`, and `opacity`; label through `class_name` and `style` |
@@ -102,6 +102,7 @@ legend_tooltip_chart = xy.area_chart(
         fields=["month", "actual", "plan"],
         title="Month {month}",
         format={"actual": ",.0f", "plan": ",.0f"},
+        labels={"actual": "Actual", "plan": "Plan"},
         style={
             "background": "#18181ff0",
             "color": "#f9fafb",
@@ -140,6 +141,14 @@ legend_tooltip_chart = xy.area_chart(
     styles={
         "legend_item": {"gap": 6, "padding": "3px 5px"},
         "legend_swatch": {"border-radius": 3},
+        "tooltip_title": {"font-weight": 700, "margin-bottom": 4},
+        "tooltip_row": {
+            "display": "grid",
+            "grid-template-columns": "5rem 1fr",
+            "gap": 8,
+        },
+        "tooltip_label": {"color": "#a1a1aa"},
+        "tooltip_value": {"font-weight": 600, "text-align": "right"},
     },
     class_name=(
         "bg-[#ffffff] py-4 sm:py-5 [--demo-surface:#ffffff] [--demo-grid:#e5e7eb] "
@@ -500,15 +509,20 @@ filters, aggregate cards, or related views.
 
 ## Custom component replacements
 
-There are two different meanings of “custom”:
+There are three different meanings of “custom”:
 
 1. **Restyle built-in chrome.** Use the component and slot APIs demonstrated
    above. This works in browser and Reflex charts, standalone HTML, and
    Chromium export.
-2. **Replace chrome with a framework component.** The built-in
-   `reflex_xy.chart` adapter does not render components passed through
-   `legend(render=...)`, `tooltip(render=...)`, or `colorbar(render=...)`.
-   Standalone exports cannot include framework-owned components either.
+2. **Replace the tooltip with a Reflex component.** For a Chart source, the
+   built-in `reflex_xy.chart` adapter mounts `xy.tooltip(render=...)`
+   automatically; for a live figure token, pass `tooltip=` to
+   `reflex_xy.chart(...)`. Standalone exports cannot include the
+   framework-owned component.
+3. **Compose other framework chrome around the chart.** Legend and colorbar
+   replacements remain framework-owned siblings: `legend(render=...)` and
+   `colorbar(render=...)` stay opaque for adapters and are not mounted by the
+   built-in Reflex adapter.
 
 For a framework-owned legend in Reflex, compose it next to the chart and hide
 XY's built-in legend:

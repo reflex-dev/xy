@@ -105,7 +105,7 @@ section that owns it.
   scale chrome. [Open section →](/docs/xy/styling/customize/#color-scales-and-colorbars)
 - **Legend** — content, placement, swatches, and DOM styling.
   [Open section →](/docs/xy/styling/customize/#legend)
-- **Tooltip** — fields, formatting, placement, and container styling.
+- **Tooltip** — field labels, formatting, placement, and title/row/value styling.
   [Open section →](/docs/xy/styling/customize/#tooltip)
 - **Annotations** — rules, bands, arrows, markers, and callouts.
   [Open section →](/docs/xy/styling/customize/#annotations)
@@ -259,10 +259,14 @@ For build, export, and adapter failures beyond styling, continue with the
 - **Styling Overview** (you are here) — identify the rendering surface and
   choose the right styling mechanism.
 - **Examples** — start from a polished, copyable chart or experiment with the
-  interactive palette playground. [Open Examples →](/docs/xy/styling/examples/)
+  interactive palette playground.
+  [Open the palette playground →](/docs/xy/styling/examples/#palette-playground)
 - **Customize Each Part** — change marks, axes, grid, color scales, legends,
   tooltips, annotations, and interaction chrome.
   [Open Customize Each Part →](/docs/xy/styling/customize/)
+- **Chrome Slots** — look up every stable DOM hook for titles, legends,
+  tooltips, axes, annotations, badges, and controls.
+  [Open Chrome Slots →](/docs/xy/styling/chrome-slots/)
 - **Themes and Export** — define reusable tokens, dark mode, fonts, and
   consistent HTML, SVG, or PNG output.
   [Open Themes and Export →](/docs/xy/styling/themes-and-tokens/)
