@@ -3445,6 +3445,51 @@ class Axes(PlotTypeMixin):
         prefix probe answers real data immediately; only all-non-finite
         prefixes fall through to a full scan.
         """
+        host = self._y2_of or self
+        y_axis = "y2" if self._y2_of is not None else "y"
+        # Bars are a frequent build-path boundary case: `_iter_entry_arrays`
+        # expands their centers, widths, bases, and endpoints before its first
+        # yield. Dataless detection only needs one real coordinate, so answer
+        # the ordinary bar case from the compact entry and leave pathological
+        # all-non-finite inputs to the exact fallback below.
+        for entry in host._entries:
+            if axis == "y" and entry.get("y_axis", "y") != y_axis:
+                continue
+            if entry.get("kind") != "bar":
+                continue
+            kwargs = entry.get("kwargs", {})
+            orientation = kwargs.get("orientation", "vertical")
+            category_axis = "x" if orientation == "vertical" else "y"
+            if axis == category_axis:
+                centers = np.asarray(entry.get("x", ())).reshape(-1)
+                if not centers.size:
+                    continue
+                if centers.dtype.kind in {"U", "S", "O", "b"}:
+                    return False
+                try:
+                    numeric = np.asarray(unit_converted_values(centers), dtype=np.float64).reshape(
+                        -1
+                    )
+                except (TypeError, ValueError):
+                    return False
+                if np.isfinite(numeric).any():
+                    return False
+                continue
+            values = np.asarray(entry.get("y", ())).reshape(-1)
+            if not values.size:
+                continue
+            base = np.asarray(kwargs.get("base", 0.0), dtype=np.float64)
+            if base.ndim == 0:
+                if np.isfinite(base).item():
+                    return False
+                continue
+            try:
+                bases = np.broadcast_to(base, values.shape).reshape(-1)
+                numeric_values = np.asarray(values, dtype=np.float64)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(bases).any() or np.isfinite(bases + numeric_values).any():
+                return False
         for array, needs_filter in self._iter_entry_arrays(axis):
             if not needs_filter:
                 if array.size:

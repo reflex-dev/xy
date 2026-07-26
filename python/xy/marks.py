@@ -656,29 +656,39 @@ def _bar_like(
         raise ValueError(f"{kind} orientation must be 'vertical' or 'horizontal'")
     category_axis = "x" if orientation == "vertical" else "y"
     pos, category_labels = self._axis_positions_with_labels(x, category_axis)
-    try:
-        raw_width_array = np.asarray(width)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{kind} width must be scalar or contain numeric values") from exc
-    if np.issubdtype(raw_width_array.dtype, np.bool_):
-        raise ValueError(f"{kind} width must be scalar or contain numeric values")
-    try:
-        width_array = np.asarray(width, dtype=np.float64)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{kind} width must be scalar or contain numeric values") from exc
-    if width_array.ndim == 0:
-        width_values: float | np.ndarray = self._positive_scalar(
-            float(width_array), f"{kind} width"
-        )
+    if np.isscalar(width):
+        # Scalar widths are overwhelmingly the common path. Preserve the
+        # established scalar validator (including bool rejection) without
+        # allocating two temporary NumPy arrays for every bar chart.
+        try:
+            width_values: float | np.ndarray = self._positive_scalar(width, f"{kind} width")
+        except ValueError as exc:
+            if isinstance(width, (str, bytes)):
+                raise ValueError(f"{kind} width must be scalar or contain numeric values") from exc
+            raise
+    elif isinstance(width, np.ndarray) and width.ndim == 0:
+        if np.issubdtype(width.dtype, np.bool_):
+            raise ValueError(f"{kind} width must be scalar or contain numeric values")
+        width_values = self._positive_scalar(width.item(), f"{kind} width")
     else:
+        try:
+            raw_width_array = np.asarray(width)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{kind} width must be scalar or contain numeric values") from exc
+        if np.issubdtype(raw_width_array.dtype, np.bool_):
+            raise ValueError(f"{kind} width must be scalar or contain numeric values")
+        try:
+            width_array = raw_width_array.astype(np.float64, copy=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{kind} width must be scalar or contain numeric values") from exc
         try:
             width_values = np.broadcast_to(width_array, (len(pos),)).astype(np.float64, copy=False)
         except ValueError:
             raise ValueError(
                 f"{kind} width must be scalar or broadcast to the {len(pos)} bars"
             ) from None
-    if not np.isfinite(width_values).all() or np.any(width_values <= 0.0):
-        raise ValueError(f"{kind} width values must be finite and positive")
+        if not np.isfinite(width_values).all() or np.any(width_values <= 0.0):
+            raise ValueError(f"{kind} width values must be finite and positive")
     vals = self._bar_value_matrix(y, len(pos), kind)
     n_series, n_items = vals.shape
     if mode == "normalized":
