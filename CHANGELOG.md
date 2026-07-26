@@ -9,65 +9,30 @@ in the README).
 ## [Unreleased]
 
 ### Added
-- The **retrieval path** for capability questions: `CLAUDE.md`/`AGENTS.md` name
-  both registries in their opening paragraph, `limitations-and-alpha-status.md`
-  and the capability matrix cross-link, the README points at both, and an
-  `xy-evaluate` agent skill carries the same pointers outside the checkout. The
-  claim ladder — including the rung that is never defensible — is committed in
-  `spec/api/customization-vs-alternatives.md`.
-
-### Changed
-- `scripts/check_claim_guardrails.py` now covers **customization** claims, not
-  only performance ones, and scans `README.md`, which it previously did not.
-  "Most customizable", "fully customizable", "style anything", and "more
-  extensible than any …" are rejected outright; a comparative claim against a
-  named library has to carry its dimension and its evidence. Two live overclaims
-  in `docs/index.md` were caught by the new rule and rewritten.
-- **Plotly attribute coverage is now a number** (§24):
-  `scripts/plotly_schema_coverage.py` ingests Plotly's schema and classifies
-  every attribute `supported | mapped-with-difference | unsupported` by a
-  committed rule table, writing `spec/api/plotly-coverage.md`. Two corrections
-  to the plan it implements: no published Plotly wheel ships `plot-schema.json`
-  (the equivalent is `validators/_validators.json`, and the real surface is
-  9,472 leaf attributes rather than ~3,000), and there is no Plotly shim to warn
-  — so "supported" means XY can express the same visual outcome, not that a shim
-  accepts the key. Scoped to the trace types XY implements plus `layout`: 217
-  supported and 115 mapped-with-difference of 3,387.
-- A **committed customization comparison** against Plotly, Vega-Lite, Bokeh, and
-  Matplotlib (`spec/api/customization-vs-alternatives.md`), with the same
-  discipline as the benchmark harness: pinned competitor versions, a named
-  method per row (`schema`, `code`, or `docs`), a claim taxonomy, and a loss
-  table that `tests/test_customization_comparison.py` refuses to let anyone
-  empty. XY's own numbers in it are checked against the capability registry
-  rather than typed in.
-- **A capability registry** at `python/xy/styling/capabilities.py`: one entry per
-  mark style property and per chrome slot, each carrying its support level in
-  the WebGL client, the SVG writer, and the native rasterizer, plus the
-  extension points and the renderer divergences that no property selects.
+- **A capability inventory** at `python/xy/styling/capabilities.py`: one entry
+  per mark style property and per chrome slot, each carrying its support level
+  in the WebGL client, the SVG writer, and the native rasterizer, plus the
+  extension points and the renderer differences that no property selects.
   `scripts/gen_capability_matrix.py` generates `spec/api/capability-matrix.md`
   and the public Capability Matrix page from it, and the test suite fails if
-  either is stale or if the registry falls out of step with what `styles.py`
-  actually compiles. `benchmarks/categories.py` made performance claims
-  auditable and left the generated-table half open; this closes it for
-  customization.
+  either is stale or if the inventory falls out of step with what `styles.py`
+  actually compiles.
 - **Mark plugins**: `xy.register_mark(xy.MarkPlugin(...))` adds a chart kind XY
   does not ship, and `xy.mark("name", ...)` uses it. A plugin supplies a `calc`
   over its declared columns and a `build` that returns *built-in* marks — the
-  composition half of dossier §24, with the custom-shader half deliberately
-  deferred. Because a plugin's output is ordinary traces it inherits decimation,
-  hover, picking, the a11y summary, and every export path including the two with
-  no browser; `build` never sees the `Figure`, the trace list, or the column
-  store, so it cannot draw anything the engine could not already draw. The
-  registry refuses to shadow a built-in kind and refuses to silently replace
-  another plugin.
+  composition half of dossier §24, with the custom-shader half deferred. Its
+  output is ordinary traces, so it reuses the built-in rendering, picking, and
+  export paths rather than reimplementing them; `build` never sees the
+  `Figure`, the trace list, or the column store, so it cannot draw anything the
+  engine could not already draw. Declared columns arrive as canonical f64. The
+  registry refuses to shadow a built-in kind, refuses to silently replace
+  another plugin, and rejects column names `xy.mark()` binds itself.
 - Mark `style=` accepts **`stroke-linecap`** (`butt`/`round`/`square`) on the
   line family, with the standard SVG semantics: it shapes the polyline's two
   ends and each dash end. Only the line family takes it, because it describes
   stroked open-path geometry. XY's default is `round`, not CSS's `butt`, so
-  existing specs are byte-identical. `stroke-linejoin` is deliberately not
-  offered yet — the SVG and native-raster writers implement it but the WebGL
-  client has no join geometry, and a property two renderers honor and one
-  ignores is exactly what the mark style subset exists to prevent.
+  existing specs are byte-identical. Joins are always round and are not
+  selectable.
 - Mark `style=` accepts **`marker-shape`** on `scatter`, the CSS spelling of the
   existing `symbol=` argument. Both resolve to the same trace-style value, so
   the two spellings build identical specs.
@@ -98,14 +63,22 @@ in the README).
   same validated style properties, so an explicit `style=` still wins and specs
   that don't use them are byte-identical.
 
+### Changed
+- `scripts/check_claim_guardrails.py` now also rejects unqualifiable
+  superlatives about the styling surface, and scans `README.md` and `CLAUDE.md`,
+  which it previously did not. The styling surface is a bounded, enumerated
+  subset, so those shapes are wrong however they are framed. Two live overclaims
+  in `docs/index.md` were caught by the new rule and rewritten.
+
 ### Fixed
 - The three mark renderers disagreed about line caps and never said so: the
   native rasterizer capped round, the WebGL client capped butt with a
   half-pixel bleed, and the SVG writer hardcoded `round` on line paths while
   the area outline silently inherited SVG's `butt` — which the PDF exporter
   then read back as `butt` too. All three now draw XY's documented `round`
-  default, and the SVG writer names both cap and join on every stroked path
-  instead of letting the format's defaults decide.
+  default. The SVG writer also names the join on every stroked path instead of
+  letting the format's `miter` default through, which `_pdf` had been reading
+  back as a mismatch with the rasterizer.
 - The colorbar stringified its colormap, so a custom ramp reached it as an
   unparseable name and silently painted viridis while the marks beside it
   painted the ramp correctly.

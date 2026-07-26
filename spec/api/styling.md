@@ -128,27 +128,12 @@ rasterizer is the reference for static export.
 a key that equals it, so a spec that never asks for another cap stays
 byte-identical to one built before the change.
 
-**`stroke-linejoin` is not offered yet, and the reason is a renderer, not an
-oversight.** SVG emits the attribute and the native rasterizer implements all
-three joins (`join_shape` in `src/raster.rs`, exercised whenever a non-round cap
-forces the shaped path). The WebGL client draws a polyline as one instanced
-quad per segment with *no join geometry whatsoever* — adjacent quads simply
-overlap by half a pixel — so it has no way to distinguish a miter from a bevel.
-Shipping the property would mean two renderers honoring it and one ignoring it,
-which is the failure this module exists to prevent. It waits for the client.
-
-![The area outline before and after: the SVG writer inherited the format's flat
-cap while the rasterizer drew round; both now cap round.](../assets/area-outline-cap-before-after.png)
-
-The area outline carried the same bug one level quieter — the SVG writer named
-its join and let the cap default, so `_pdf` read it back flat too. Both now say
-what they draw.
-
-That leaves a real cross-renderer difference in the *default*: the rasterizer
-fills interior vertices with a round join and the WebGL client leaves the notch
-two overlapping quads produce. That predates this vocabulary, is visible only on
-wide strokes at sharp angles, and is recorded as a row in
-`xy.styling.capabilities` rather than left for a reader to discover.
+Joins are always round and are not selectable. That was already the geometry
+the native rasterizer produced, so nothing changed there; what did change is
+that the SVG writer now *names* the join on every stroked path instead of
+letting the format's `miter` default through — `_pdf` reads these attributes
+straight back out of that markup, so an unnamed join meant SVG and PDF
+disagreeing with the rasterizer at no benefit.
 
 ### Marker shape
 

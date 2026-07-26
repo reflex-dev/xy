@@ -1,13 +1,12 @@
-"""What XY can be styled with, per renderer — the machine-checkable record.
+"""An inventory of what XY can be styled with, and where each thing reaches.
 
-`benchmarks/categories.py` made performance claims auditable by publishing one
-committed registry of categories that every harness and report keys off. This
-module does the same job for customization: one entry per CSS-addressable DOM
-slot and one per mark style property, each carrying its support level in each
-renderer, so "how customizable is XY" is a table someone can read rather than a
-claim someone has to take on faith.
+One entry per CSS-addressable DOM slot and one per mark style property, each
+carrying its support level in the WebGL client, the SVG writer, and the native
+rasterizer. The styling surface is spread across `styles.py`, `dom.py`, the
+three renderers, and the export paths, so answering "can I change this, and
+will it survive `to_png()`" otherwise means reading all of them.
 
-Two rules keep it honest, both enforced by `tests/test_capability_registry.py`:
+Two rules keep it accurate, both enforced by `tests/test_capability_registry.py`:
 
 1. **It cannot drift.** The registry must cover exactly `dom.CHART_DOM_SLOTS`
    and exactly the property set `styles._supported_mark_style_properties`
@@ -18,14 +17,12 @@ Two rules keep it honest, both enforced by `tests/test_capability_registry.py`:
    property is *derived* from `styles.py` at import, never typed out here, so
    the two cannot disagree.
 
-Support levels are deliberately coarse, because a finer scale would invite
-optimism: `full` means the renderer draws the property as specified, `partial`
-means it draws something the docs have to qualify, and `none` means it does not
-draw it at all. `none` is not a bug report — several of them are deliberate,
-and the `notes` field says which.
+Support levels are deliberately coarse: `full` means the renderer draws the
+property as specified, `partial` means it draws something the notes have to
+qualify, and `none` means it does not draw it at all. `none` is not a bug
+report — several are deliberate, and the `notes` field says which.
 
-Keep `id` values stable: they are the join key for the generated docs table and
-for anything downstream that audits coverage.
+Keep `id` values stable: they are the join key for the generated table.
 """
 
 from __future__ import annotations
@@ -183,25 +180,11 @@ MARK_STYLE_PROPERTIES: tuple[MarkStyleProperty, ...] = (
         support={"webgl": "full", "svg": "full", "native": "full"},
         status="shipped",
         notes=(
-            "XY's default is `round`, not CSS's `butt`. Verified per renderer, "
-            "not assumed: a Rust coverage test, a rasterized-ink test, and three "
+            "Line family only — a cap is open-path geometry. XY's default is "
+            "`round`, not CSS's `butt`, because the native rasterizer has always "
+            "drawn round and is the reference for static export. Verified per "
+            "renderer: a Rust coverage test, a rasterized-ink test, and three "
             "Chromium screenshots that hash differently per cap."
-        ),
-    ),
-    MarkStyleProperty(
-        id="stroke-linejoin",
-        vocabulary="svg",
-        compiles_to="",
-        support={"webgl": "none", "svg": "full", "native": "full"},
-        status="planned",
-        notes=(
-            "NOT ACCEPTED by `style=` today, deliberately. The SVG writer emits "
-            "the attribute and `src/raster.rs` implements miter/round/bevel with "
-            "SVG's miter limit of 4, but the WebGL client draws a polyline as one "
-            "instanced quad per segment with no join geometry at all, so it "
-            "cannot tell a miter from a bevel. Two renderers out of three is what "
-            "`styles.py` exists to prevent. Unblocking it means giving the client "
-            "a join pass."
         ),
     ),
     MarkStyleProperty(
@@ -239,7 +222,7 @@ KNOWN_RENDERER_DIVERGENCES: tuple[RendererDivergence, ...] = (
         svg="round (the writer names it explicitly)",
         native="round (the capsule distance field fills the vertex)",
         visible_when="stroke-width above ~4px at a sharp angle",
-        tracked_by="the `stroke-linejoin` row above",
+        tracked_by="no style property selects a join; the default is the whole contract",
     ),
 )
 
@@ -293,8 +276,9 @@ EXTENSION_POINTS: tuple[ExtensionPoint, ...] = (
         entry_point="xy.register_mark / xy.MarkPlugin / xy.mark",
         notes=(
             "A calc over declared columns plus a build that returns built-in "
-            "marks. Its traces are ordinary traces, so it inherits decimation, "
-            "picking, hover, a11y, and every export path."
+            "marks. Its output is ordinary traces, so it reuses the built-in "
+            "rendering, picking, and export paths rather than reimplementing "
+            "them."
         ),
         limits=(
             "composes built-in marks only, one level deep",
@@ -307,9 +291,9 @@ EXTENSION_POINTS: tuple[ExtensionPoint, ...] = (
         status="planned",
         entry_point="",
         notes=(
-            "§24's WGSL/GLSL snippet pair. Deferred on purpose: a plugin with "
-            "its own shader inherits none of what composition gets for free and "
-            "has to re-earn LOD, picking, a11y, and three export paths."
+            "§24's WGSL/GLSL snippet pair. Deferred: a plugin with its own "
+            "shader reuses none of the built-in rendering, picking, or export "
+            "paths and would have to reimplement them."
         ),
         limits=(),
     ),

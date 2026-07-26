@@ -431,36 +431,17 @@ fn fill_poly(cv: &mut Canvas, pts: &[(f32, f32)], mut color_at: impl FnMut(f32, 
 
 type StrokeSegment = ((f32, f32), (f32, f32));
 
-// stroke-linecap / stroke-linejoin, in the wire order python/xy/styles.py
-// compiles: butt/round/square and miter/round/bevel. XY's default is round for
-// both, which is what the clamped segment distance field below has always
-// drawn, so `stroke` stays the fast path and byte-for-byte unchanged; anything
-// else routes through `stroke_shaped`.
+// stroke-linecap, in the wire order python/xy/styles.py compiles:
+// butt/round/square. XY's default is round, which is what the clamped segment
+// distance field below has always drawn, so `stroke` stays the fast path and
+// byte-for-byte unchanged; the other two route through `stroke_shaped`.
+//
+// Joins are always round. That is what the capsule field produced before caps
+// were selectable, and it is what every renderer draws today; `stroke-linejoin`
+// is not part of the style vocabulary, so there is nothing to select.
 pub const CAP_BUTT: u8 = 0;
 pub const CAP_ROUND: u8 = 1;
 pub const CAP_SQUARE: u8 = 2;
-pub const JOIN_MITER: u8 = 0;
-pub const JOIN_ROUND: u8 = 1;
-pub const JOIN_BEVEL: u8 = 2;
-
-/// SVG's default miter limit: past it a miter degrades to a bevel, so a near
-/// reversal in the data cannot grow a spike that is not in the data.
-const MITER_LIMIT: f32 = 4.0;
-
-/// A stroke's cap and join, carried together because they are decided together
-/// and always travel together — and because a stroke entry point already takes
-/// six arguments without them.
-#[derive(Clone, Copy)]
-struct StrokeGeometry {
-    cap: u8,
-    join: u8,
-}
-
-impl StrokeGeometry {
-    fn is_default(self) -> bool {
-        self.cap == CAP_ROUND && self.join == JOIN_ROUND
-    }
-}
 
 #[inline]
 fn cov_from_sd(sd: f32) -> f32 {
@@ -486,83 +467,10 @@ fn box_sd(p: (f32, f32), a: (f32, f32), b: (f32, f32), hw: f32) -> f32 {
     outside + along.max(across).min(0.0)
 }
 
-/// Signed distance to the intersection of the half-planes bounded by each
-/// directed edge of a convex polygon wound consistently. Exact on the edges and
-/// conservative at the corners, which is all a 1px ramp needs — the corners of
-/// a bevel or miter sit under the segment boxes anyway.
-fn convex_sd(p: (f32, f32), poly: &[(f32, f32)]) -> f32 {
-    let mut sd = f32::NEG_INFINITY;
-    for i in 0..poly.len() {
-        let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
-        let (ex, ey) = (b.0 - a.0, b.1 - a.1);
-        let len = (ex * ex + ey * ey).sqrt();
-        if len <= 1e-6 {
-            continue;
-        }
-        // Outward normal for clockwise winding in this frame; `join_shape`
-        // winds every polygon it builds the same way.
-        let (nx, ny) = (ey / len, -ex / len);
-        sd = sd.max((p.0 - a.0) * nx + (p.1 - a.1) * ny);
-    }
-    sd
-}
-
-/// The filler for the notch two segment boxes leave on the outside of a turn.
-/// Returns `None` for a straight or degenerate joint, which needs nothing.
-fn join_shape(
-    prev: (f32, f32),
-    at: (f32, f32),
-    next: (f32, f32),
-    hw: f32,
-    join: u8,
-) -> Option<Vec<(f32, f32)>> {
-    let (d0x, d0y) = (at.0 - prev.0, at.1 - prev.1);
-    let (d1x, d1y) = (next.0 - at.0, next.1 - at.1);
-    let l0 = (d0x * d0x + d0y * d0y).sqrt();
-    let l1 = (d1x * d1x + d1y * d1y).sqrt();
-    if l0 <= 1e-6 || l1 <= 1e-6 {
-        return None;
-    }
-    let (d0x, d0y) = (d0x / l0, d0y / l0);
-    let (d1x, d1y) = (d1x / l1, d1y / l1);
-    let cross = d0x * d1y - d0y * d1x;
-    if cross.abs() <= 1e-6 {
-        return None; // collinear: the boxes already meet flush
-    }
-    // Outward side is the one the path turns away from.
-    let side = if cross > 0.0 { -1.0 } else { 1.0 };
-    let n0 = (side * -d0y, side * d0x);
-    let n1 = (side * -d1y, side * d1x);
-    let c0 = (at.0 + n0.0 * hw, at.1 + n0.1 * hw);
-    let c1 = (at.0 + n1.0 * hw, at.1 + n1.1 * hw);
-    // Wind so `convex_sd`'s outward normals point away from the interior.
-    let wound = |a: (f32, f32), b: (f32, f32), c: (f32, f32)| -> bool {
-        (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0) > 0.0
-    };
-    let mut poly = vec![at, c0, c1];
-    if join == JOIN_MITER {
-        let (sx, sy) = (n0.0 + n1.0, n0.1 + n1.1);
-        let slen = (sx * sx + sy * sy).sqrt();
-        if slen > 1e-4 {
-            let (mx, my) = (sx / slen, sy / slen);
-            let mcos = mx * n0.0 + my * n0.1;
-            if mcos >= 1.0 / MITER_LIMIT {
-                let reach = hw / mcos;
-                poly = vec![at, c0, (at.0 + mx * reach, at.1 + my * reach), c1];
-            }
-        }
-    }
-    if !wound(poly[0], poly[1], poly[2]) {
-        poly.reverse();
-    }
-    Some(poly)
-}
-
 /// One coverage primitive of a shaped stroke, in the order they are painted.
 enum StrokePiece {
     Box(StrokeSegment),
     Disc((f32, f32)),
-    Convex(Vec<(f32, f32)>),
 }
 
 impl StrokePiece {
@@ -582,7 +490,6 @@ impl StrokePiece {
                 extend(*b);
             }
             StrokePiece::Disc(c) => extend(*c),
-            StrokePiece::Convex(poly) => poly.iter().copied().for_each(&mut extend),
         }
         ((x0 - pad, y0 - pad), (x1 + pad, y1 + pad))
     }
@@ -593,7 +500,6 @@ impl StrokePiece {
             StrokePiece::Disc(c) => {
                 cov_from_sd(((p.0 - c.0).powi(2) + (p.1 - c.1).powi(2)).sqrt() - hw)
             }
-            StrokePiece::Convex(poly) => cov_from_sd(convex_sd(p, poly)),
         }
     }
 }
@@ -653,9 +559,11 @@ fn stroke(
     stroke_with_threads(cv, pts, width, rgba, closed, dash, None);
 }
 
-/// Stroke honoring an explicit cap and join. Round/round is XY's default and
-/// is exactly what the capsule field above draws, so it delegates and the
-/// common path keeps its banding, its scratch-buffer reuse, and its bytes.
+/// Stroke honoring an explicit cap. `round` is XY's default and is exactly what
+/// the capsule field above draws, so it delegates and the common path keeps its
+/// banding, its scratch-buffer reuse, and its bytes. Interior vertices always
+/// get a round join, which is what the capsule field produced before the cap
+/// became selectable.
 fn stroke_shaped(
     cv: &mut Canvas,
     pts: &[(f32, f32)],
@@ -663,13 +571,12 @@ fn stroke_shaped(
     rgba: [f32; 4],
     closed: bool,
     dash: &[f32],
-    geometry: StrokeGeometry,
+    cap: u8,
 ) {
-    if geometry.is_default() || pts.len() < 2 || width <= 0.0 {
+    if cap == CAP_ROUND || pts.len() < 2 || width <= 0.0 {
         stroke(cv, pts, width, rgba, closed, dash);
         return;
     }
-    let StrokeGeometry { cap, join } = geometry;
     let hw = width * 0.5;
     let dash: &[f32] = if usable_dash(dash) { dash } else { &[] };
     let n = pts.len();
@@ -757,23 +664,14 @@ fn stroke_shaped(
         for pair in ends.windows(2) {
             pieces.push(StrokePiece::Box((pair[0], pair[1])));
         }
-        for i in 1..run.len() - 1 {
-            match join {
-                JOIN_ROUND => pieces.push(StrokePiece::Disc(run[i])),
-                _ => {
-                    if let Some(poly) = join_shape(run[i - 1], run[i], run[i + 1], hw, join) {
-                        pieces.push(StrokePiece::Convex(poly));
-                    }
-                }
-            }
+        // Butt- and square-capped boxes meet edge-to-edge and leave a notch on
+        // the outside of every turn; a disc at the shared vertex is the round
+        // join that fills it.
+        for vertex in run.iter().take(run.len() - 1).skip(1) {
+            pieces.push(StrokePiece::Disc(*vertex));
         }
         if closed && runs.len() == 1 && run.len() > 2 {
-            let joint = match join {
-                JOIN_ROUND => Some(StrokePiece::Disc(run[0])),
-                _ => join_shape(run[run.len() - 2], run[0], run[1], hw, join)
-                    .map(StrokePiece::Convex),
-            };
-            pieces.extend(joint);
+            pieces.push(StrokePiece::Disc(run[0]));
         }
     }
     paint_stroke_pieces(cv, &pieces, hw, rgba);
@@ -2299,11 +2197,8 @@ fn rasterize_with_spans(
                     for _ in 0..nd {
                         dash.push(r.f32()?);
                     }
-                    let geometry = StrokeGeometry {
-                        cap: r.u8()?,
-                        join: r.u8()?,
-                    };
-                    stroke_shaped(&mut cv, &pts, width, c, closed, &dash, geometry);
+                    let cap = r.u8()?;
+                    stroke_shaped(&mut cv, &pts, width, c, closed, &dash, cap);
                 }
                 OP_POINT => {
                     let (cx, cy, rr) = (r.f32()?, r.f32()?, r.f32()?);
@@ -2748,12 +2643,9 @@ fn rasterize_with_spans(
                     for _ in 0..nd {
                         dash.push(r.f32()?);
                     }
-                    let geometry = StrokeGeometry {
-                        cap: r.u8()?,
-                        join: r.u8()?,
-                    };
+                    let cap = r.u8()?;
                     let points = smooth_points(xs, ys, n, x_scale, y_scale);
-                    stroke_shaped(&mut cv, &points, width, color, false, &dash, geometry);
+                    stroke_shaped(&mut cv, &points, width, color, false, &dash, cap);
                 }
                 _ => return None,
             }
@@ -2930,7 +2822,7 @@ mod tests {
         cmd.extend([0, 0, 0, 255]);
         cmd.push(0); // not closed
         cmd.extend(u32le(0)); // no dash
-        cmd.extend([CAP_ROUND, JOIN_ROUND]);
+        cmd.push(CAP_ROUND);
         let mut out = vec![0u8; 10 * 10 * 4];
         assert!(rasterize_into(&cmd, 10, 10, &mut out));
         assert!(px(&out, 10, 5, 5)[3] > 200); // on the line
@@ -2954,7 +2846,7 @@ mod tests {
             cmd.extend([0, 0, 0, 255]);
             cmd.push(0); // not closed
             cmd.extend(u32le(0)); // no dash
-            cmd.extend([cap, JOIN_ROUND]);
+            cmd.push(cap);
             let mut out = vec![0u8; 40 * 40 * 4];
             assert!(rasterize_into(&cmd, 40, 40, &mut out));
             (0..40 * 40).filter(|i| out[i * 4 + 3] > 128).count()
@@ -2977,36 +2869,13 @@ mod tests {
             cmd.extend([0, 0, 0, 255]);
             cmd.push(0);
             cmd.extend(u32le(0));
-            cmd.extend([cap, JOIN_ROUND]);
+            cmd.push(cap);
             let mut out = vec![0u8; 40 * 40 * 4];
             assert!(rasterize_into(&cmd, 40, 40, &mut out));
             px(&out, 40, 32, 20)[3]
         };
         assert_eq!(probe(CAP_BUTT), 0);
         assert!(probe(CAP_SQUARE) > 200);
-    }
-
-    /// SVG's miter limit is a ratio of miter length to stroke *width*:
-    /// `miterLength / strokeWidth = 1 / cos(phi/2)`, where `phi` is the turn
-    /// angle. So the join degrades to a bevel exactly when `cos(phi/2)` drops
-    /// below `1 / MITER_LIMIT`. This pins that threshold: halving it — guarding
-    /// on `1 / (2 * MITER_LIMIT)` — would admit ratio-8 spikes, twice what SVG
-    /// and PDF draw for the same path.
-    #[test]
-    fn miter_joins_bevel_past_svgs_four_to_one_limit() {
-        let corners = |phi_deg: f32| -> usize {
-            let phi = phi_deg.to_radians();
-            let at = (0.0f32, 0.0f32);
-            let prev = (-10.0f32, 0.0f32);
-            let next = (10.0 * phi.cos(), 10.0 * phi.sin());
-            join_shape(prev, at, next, 5.0, JOIN_MITER)
-                .expect("a turned joint has a shape")
-                .len()
-        };
-        // ratio = 1/cos(phi/2): 90° -> 1.41, 150° -> 3.86, 155° -> 4.62.
-        assert_eq!(corners(90.0), 4, "a right angle miters (ratio 1.41)");
-        assert_eq!(corners(150.0), 4, "ratio 3.86 is inside the 4:1 limit");
-        assert_eq!(corners(155.0), 3, "ratio 4.62 degrades to a bevel");
     }
 
     /// A dash pattern the public API cannot produce must not steer the walker.
@@ -3018,38 +2887,6 @@ mod tests {
         assert!(!usable_dash(&[6.0, f32::NAN]));
         assert!(!usable_dash(&[f32::INFINITY, 4.0]));
         assert!(!usable_dash(&[0.0, 4.0]));
-    }
-
-    /// stroke-linejoin fills the notch on the outside of a turn. A miter
-    /// reaches furthest, a bevel cuts the corner off, and round is the disc
-    /// the capsule field already drew.
-    #[test]
-    fn stroke_joins_shape_the_corner() {
-        let corner = |join: u8| {
-            let mut cmd = vec![OP_STROKE];
-            cmd.extend(u32le(3));
-            for (x, y) in [(10.0f32, 10.0f32), (30.0, 10.0), (30.0, 30.0)] {
-                cmd.extend(f32le(x));
-                cmd.extend(f32le(y));
-            }
-            cmd.extend(f32le(10.0)); // width
-            cmd.extend([0, 0, 0, 255]);
-            cmd.push(0);
-            cmd.extend(u32le(0));
-            cmd.extend([CAP_BUTT, join]);
-            let mut out = vec![0u8; 50 * 50 * 4];
-            assert!(rasterize_into(&cmd, 50, 50, &mut out));
-            // The outside of this right-angle turn is up and to the right of
-            // the vertex; the miter apex is the only shape that reaches it.
-            (px(&out, 50, 34, 6)[3], (0..50 * 50).filter(|i| out[i * 4 + 3] > 128).count())
-        };
-        let (miter_apex, miter_ink) = corner(JOIN_MITER);
-        let (bevel_apex, bevel_ink) = corner(JOIN_BEVEL);
-        let (_, round_ink) = corner(JOIN_ROUND);
-
-        assert!(miter_apex > 200, "a miter fills its apex");
-        assert_eq!(bevel_apex, 0, "a bevel cuts the apex off");
-        assert!(bevel_ink < round_ink && round_ink < miter_ink);
     }
 
     #[test]
@@ -3574,7 +3411,7 @@ mod tests {
             expanded.extend(stroke_color);
             expanded.push(1); // closed
             expanded.extend(u32le(0)); // no dash
-            expanded.extend([CAP_ROUND, JOIN_ROUND]);
+            expanded.push(CAP_ROUND);
         }
 
         for opaque in [false, true] {

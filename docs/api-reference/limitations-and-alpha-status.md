@@ -53,12 +53,10 @@ and [Benchmarks](/docs/xy/overview/benchmarks/) for scoped evidence.
 
 ## Styling and Export Boundaries
 
-The per-renderer record of what can be styled, and how far each mechanism
-travels, is the
-[Capability Matrix](/docs/xy/styling/capabilities/) — generated from
-`python/xy/styling/capabilities.py` and checked against the implementation, so
-it cannot promise a property the code does not compile. The bullets below are
-the boundaries that page's rows imply.
+The per-renderer inventory of what can be styled, and how far each mechanism
+travels, is the [Capability Matrix](/docs/xy/styling/capabilities/) — generated
+from `python/xy/styling/capabilities.py` and checked against the
+implementation. The bullets below are the boundaries that page's rows imply.
 
 - Browser chrome accepts CSS and Tailwind classes through stable DOM slots.
   WebGL/native marks accept a validated CSS subset through `style=`; arbitrary
@@ -107,12 +105,6 @@ required by your application.
 XY requires Python 3.11 or newer. Published native wheels include the Rust core
 and bundled browser client; source builds require a Rust toolchain. There is no
 silent NumPy compute fallback when the native core is unavailable.
-
-For how XY's customization compares to Plotly, Vega-Lite, Bokeh, and
-Matplotlib — including the dimensions where it loses — see the committed
-comparison in the project specification
-(`spec/api/customization-vs-alternatives.md`) and the measured Plotly attribute
-coverage (`spec/api/plotly-coverage.md`).
 
 Review [Installation](/docs/xy/overview/installation/),
 [Serving, CSP, and offline use](/docs/xy/guides/serving-csp-and-offline-use/),

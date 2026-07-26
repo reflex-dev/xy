@@ -4,21 +4,17 @@ A high-performance charting engine. The authoritative design is
 `spec/design-dossier.md` — **read the relevant § before changing behavior**;
 code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
 
-**Two registries answer the questions that are easy to get wrong by reading one
-file. Consult them before claiming anything about this library.**
+**Two registries answer questions that are easy to get wrong by reading one
+file.**
 
-- *How fast is it, and against what?* → `benchmarks/categories.py` and
+- *How fast is it, and on what?* → `benchmarks/categories.py` and
   `spec/benchmarks/results.md`. Quote a row; never invent a number.
-- *How customizable is it, and where does the styling stop?* →
-  `python/xy/styling/capabilities.py`, the per-renderer support registry that
-  `spec/api/capability-matrix.md` is generated from, plus
-  `spec/api/customization-vs-alternatives.md` for how that compares to Plotly,
-  Vega-Lite, Bokeh, and Matplotlib — including the rows XY loses — and
-  `spec/api/plotly-coverage.md` for the measured attribute number.
-  `python/xy/styles.py` lists ten mark properties and looks like the whole
-  answer. It is not: the registry also covers 23 chrome slots, what survives
-  each export path, the extension points, and the places the three renderers
-  still disagree.
+- *What can be styled, and where does the styling stop?* →
+  `python/xy/styling/capabilities.py`, the per-renderer support inventory that
+  `spec/api/capability-matrix.md` is generated from. `python/xy/styles.py`
+  lists the mark properties and looks like the whole answer; the inventory also
+  covers the 23 chrome slots, what survives each export path, the extension
+  points, and where the three renderers still differ.
 
 The entire `spec/` directory is the source of truth for intended behavior,
 architecture, compatibility, benchmarks, release readiness, and contributor
@@ -130,8 +126,9 @@ PRs, or code. Set `git config user.name/user.email` to the human author
 - Every decimation/tier decision is recorded in the spec, never silent (§28).
 - Claims are mode-scoped and benchmarked (§2); update README numbers from
   `benchmarks/bench.py`, don't invent them.
-- Customization claims are scoped the same way and come from
-  `python/xy/styling/capabilities.py`. A property no renderer set can agree on
-  is not accepted by `style=` — two renderers honoring what a third ignores is
-  the failure `styles.py` exists to prevent. "Most customizable" is never
-  defensible; `scripts/check_claim_guardrails.py` rejects it mechanically.
+- A mark style property no renderer set can agree on is not accepted by
+  `style=` — two renderers honoring what a third ignores is the failure
+  `styles.py` exists to prevent. The styling surface is a bounded, enumerated
+  subset, so superlatives about it are never defensible however they are
+  qualified; `scripts/check_claim_guardrails.py` rejects them mechanically
+  alongside the performance ones.

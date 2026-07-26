@@ -4,8 +4,8 @@
 
 What XY can be styled and extended with, per renderer. Generated from
 `python/xy/styling/capabilities.py`, which `tests/test_capability_registry.py`
-pins to `styles.py` and `dom.py` — so this page cannot claim a property the
-implementation does not compile, and cannot omit one it does.
+pins to `styles.py` and `dom.py`, so it cannot list a property the
+implementation does not compile or omit one it does.
 
 `full` means the renderer draws the property as specified. `partial` means it
 draws something the notes have to qualify. `none` means it does not draw it —
@@ -20,11 +20,9 @@ which is sometimes deliberate, and the notes say which.
 
 ## Mark style properties
 
-Every property the registry tracks. A **`shipped`** row is accepted by a
-mark's `style=` mapping today; a **`planned`** row is recorded but is *not*
-accepted, and its note says what blocks it. Anything outside the shipped set
-raises before data is ingested, so no renderer silently drops a declaration
-another one honors.
+The subset a mark's `style=` mapping accepts. Anything outside it raises
+before data is ingested, so no renderer silently drops a declaration another
+one honors.
 
 | property | vocabulary | mark kinds | webgl | svg | native | status |
 |---|---|---|---|---|---|---|
@@ -36,7 +34,6 @@ another one honors.
 | `stroke-width` | svg | `area`, `bar`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `hist`, `histogram`, `line`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
 | `stroke-dasharray` | svg | `area`, `ecdf`, `line`, `stairs`, `step` | full | full | full | shipped |
 | `stroke-linecap` | svg | `ecdf`, `line`, `stairs`, `step` | full | full | full | shipped |
-| `stroke-linejoin` | svg | — | none | full | full | planned |
 | `border-radius` | css | `bar`, `column`, `hist`, `histogram` | full | full | full | shipped |
 | `marker-shape` | xy | `scatter` | full | full | full | shipped |
 
@@ -48,8 +45,7 @@ another one honors.
 - **`stroke`** — The paint for line-like geometry, and the border for filled marks.
 - **`stroke-width`** — CSS px; a bare number is px, matching the chrome style convention.
 - **`stroke-dasharray`** — 2-8 positive px lengths, or `none`. The WebGL client tracks arc length on the CPU so dashes stay continuous across segments and constant on screen through zoom.
-- **`stroke-linecap`** — XY's default is `round`, not CSS's `butt`. Verified per renderer, not assumed: a Rust coverage test, a rasterized-ink test, and three Chromium screenshots that hash differently per cap.
-- **`stroke-linejoin`** — NOT ACCEPTED by `style=` today, deliberately. The SVG writer emits the attribute and `src/raster.rs` implements miter/round/bevel with SVG's miter limit of 4, but the WebGL client draws a polyline as one instanced quad per segment with no join geometry at all, so it cannot tell a miter from a bevel. Two renderers out of three is what `styles.py` exists to prevent. Unblocking it means giving the client a join pass.
+- **`stroke-linecap`** — Line family only — a cap is open-path geometry. XY's default is `round`, not CSS's `butt`, because the native rasterizer has always drawn round and is the reference for static export. Verified per renderer: a Rust coverage test, a rasterized-ink test, and three Chromium screenshots that hash differently per cap.
 - **`border-radius`** — Rect kinds only. `corner_radius=(tip, base)` rounds the two ends separately.
 - **`marker-shape`** — 17 shapes, drawn as analytic signed-distance fields in all three renderers. An XY vocabulary name: CSS has no shape keyword for a non-DOM point mark, and the CSS spelling and `symbol=` compile to the same value.
 
@@ -104,8 +100,8 @@ Ways to add behavior the core does not ship, without forking it.
 
 ### Notes
 
-- **mark_plugin_composition** — A calc over declared columns plus a build that returns built-in marks. Its traces are ordinary traces, so it inherits decimation, picking, hover, a11y, and every export path.
-- **mark_plugin_shader** — §24's WGSL/GLSL snippet pair. Deferred on purpose: a plugin with its own shader inherits none of what composition gets for free and has to re-earn LOD, picking, a11y, and three export paths.
+- **mark_plugin_composition** — A calc over declared columns plus a build that returns built-in marks. Its output is ordinary traces, so it reuses the built-in rendering, picking, and export paths rather than reimplementing them.
+- **mark_plugin_shader** — §24's WGSL/GLSL snippet pair. Deferred: a plugin with its own shader reuses none of the built-in rendering, picking, or export paths and would have to reimplement them.
 - **custom_renderer** — No way to add a fourth renderer or replace one of the three.
 
 ## Known renderer divergences
@@ -115,7 +111,7 @@ until someone diffs two exports. Listed here for that reason.
 
 | what | webgl | svg | native | visible when | tracked by |
 |---|---|---|---|---|---|
-| Interior vertices of a wide polyline | the notch two overlapping segment quads leave | round (the writer names it explicitly) | round (the capsule distance field fills the vertex) | stroke-width above ~4px at a sharp angle | the `stroke-linejoin` row above |
+| Interior vertices of a wide polyline | the notch two overlapping segment quads leave | round (the writer names it explicitly) | round (the capsule distance field fills the vertex) | stroke-width above ~4px at a sharp angle | no style property selects a join; the default is the whole contract |
 
 ## Regenerating
 

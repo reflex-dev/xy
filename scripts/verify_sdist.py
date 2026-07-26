@@ -106,7 +106,6 @@ REQUIRED_FILES = {
     "scripts/check_public_api.py",
     "scripts/check_claim_guardrails.py",
     "scripts/gen_capability_matrix.py",
-    "scripts/plotly_schema_coverage.py",
     "scripts/check_python_floor.py",
     "scripts/check_regressions.py",
     "scripts/bench_dashboard.py",

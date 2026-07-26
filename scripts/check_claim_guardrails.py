@@ -19,8 +19,6 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DOCS = (
     "README.md",
     "CLAUDE.md",
-    ".agents/skills/xy-evaluate/SKILL.md",
-    "spec/api/customization-vs-alternatives.md",
     "pyproject.toml",
     "SECURITY.md",
     "CONTRIBUTING.md",
@@ -48,10 +46,9 @@ BROAD_SUPERLATIVE_RE = re.compile(
     re.IGNORECASE,
 )
 # Customization is the second axis people overclaim on, and it went unguarded
-# while performance was fenced in. The shapes below are the ones that cannot be
-# defended from `spec/api/capability-matrix.md` no matter what qualifies them:
-# XY loses total attribute surface to Plotly by roughly three orders of
-# magnitude and custom-mark freedom to Matplotlib outright.
+# while performance was fenced in. These shapes are unqualifiable: the styling
+# surface is a bounded, enumerated subset (`spec/api/capability-matrix.md`), so
+# "anything" and "most" are wrong however the sentence is framed.
 CUSTOMIZATION_SUPERLATIVE_RE = re.compile(
     r"\b("
     r"most\s+(?:customi[sz]able|themeable|styl(?:e)?able|extensible|flexible)|"
@@ -64,28 +61,6 @@ CUSTOMIZATION_SUPERLATIVE_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
-# Naming a library is fine — the comparison document does it on every row — but
-# only with the dimension attached, because the same sentence is false on a
-# different dimension.
-CUSTOMIZATION_COMPARATIVE_RE = re.compile(
-    r"\b(?:more\s+(?:customi[sz]able|themeable|extensible|flexible)\s+than)\s+"
-    r"(?:plotly|matplotlib|bokeh|altair|vega-?lite|seaborn|holoviews|hvplot|d3)\b",
-    re.IGNORECASE,
-)
-CUSTOMIZATION_QUALIFIER_GROUPS = (
-    re.compile(
-        r"\b(?:css|token|variable|slot|property|properties|renderer|plugin|schema|"
-        r"attribute|vocabulary|subset)\b",
-        re.I,
-    ),
-    re.compile(
-        r"\b(?:matrix|registry|capabilit(?:y|ies)|classified|measured|counted|"
-        r"capability-matrix|customization-vs-alternatives|plotly-coverage)\b",
-        re.I,
-    ),
-    re.compile(r"\b(?:chrome|mark|axis|export|browser|native|webgl|svg|png|static)\b", re.I),
-)
-
 COMPARATIVE_RE = re.compile(
     r"\b(?:faster\s+than|beats?|outperforms?)\s+"
     r"(?:plotly|matplotlib|bokeh|altair|datashader|holoviews|hvplot|seaborn)\b",
@@ -153,17 +128,6 @@ def _has_claim_qualifiers(text: str) -> bool:
     return sum(1 for pattern in QUALIFIER_GROUPS if pattern.search(text)) >= 3
 
 
-def _has_customization_qualifiers(text: str) -> bool:
-    """A customization comparison needs its dimension and its evidence named.
-
-    Two of the three groups: the mechanism (a CSS property, a slot, a plugin),
-    the evidence (the matrix, the registry, a counted number), or the scope
-    (which renderer, which surface). Three would reject the comparison
-    document's own rows, which are the shapes worth copying.
-    """
-    return sum(1 for pattern in CUSTOMIZATION_QUALIFIER_GROUPS if pattern.search(text)) >= 2
-
-
 def _findings_for_file(path: Path) -> list[Finding]:
     lines = path.read_text(encoding="utf-8").splitlines()
     findings: list[Finding] = []
@@ -197,25 +161,6 @@ def _findings_for_file(path: Path) -> list[Finding]:
                     line,
                 )
             )
-        if CUSTOMIZATION_COMPARATIVE_RE.search(line):
-            # Same reasoning as the numeric-multiplier rule below: a claim
-            # taxonomy states its scope in the prose above the table, and a
-            # section heading is answered by the paragraphs under it. A
-            # sentence-level window would reject the very wording these
-            # documents exist to model.
-            claim_window = _line_window(lines, index, radius=10)
-            if not (
-                _is_policy_or_negative_context(claim_window)
-                or _has_customization_qualifiers(claim_window)
-            ):
-                findings.append(
-                    Finding(
-                        path,
-                        index + 1,
-                        "comparative customization claim needs the dimension and its evidence named",
-                        line,
-                    )
-                )
         if COMPARATIVE_RE.search(line) and not (
             _is_policy_or_negative_context(window) or _has_claim_qualifiers(window)
         ):

@@ -1080,15 +1080,16 @@ def _cap_join_attrs(style: dict[str, Any], *, join: bool = True) -> str:
     """Polyline stroke geometry, always written out rather than inherited.
 
     SVG's initial values are `butt`/`miter`; XY's are `round`/`round`, and the
-    trace only carries a key when it differs (`marks._stroke_geometry`). Naming
-    both attributes on every stroked path is what keeps the SVG agreeing with
-    the native rasterizer — and with `_pdf`, which reads them straight back out
-    of this markup and would otherwise fall through to SVG's defaults.
+    trace only carries `linecap` when it differs (`marks._stroke_geometry`).
+    The join is not selectable, but it is still named on every stroked path:
+    leaving it out let the format's `miter` default through, and `_pdf` reads
+    these attributes straight back out of this markup, so an unnamed join meant
+    SVG and PDF disagreeing with the rasterizer for free.
     """
     cap = style.get("linecap", "round")
     attrs = f' stroke-linecap="{escape(str(cap))}"'
     if join:
-        attrs = f' stroke-linejoin="{escape(str(style.get("linejoin", "round")))}"' + attrs
+        attrs = ' stroke-linejoin="round"' + attrs
     return attrs
 
 

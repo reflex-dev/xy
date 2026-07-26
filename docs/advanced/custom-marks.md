@@ -17,9 +17,9 @@ A mark plugin is two functions and a name:
   `xy.segments(...)`, `xy.scatter(...)`, `xy.line(...)` you would write by hand.
 
 That second constraint is the point rather than a limitation. Because a plugin's
-output is ordinary traces, it gets decimation on large inputs, hover and
-picking, the accessibility summary, and every export path — including native PNG
-and SVG, which have no browser — without writing a line of code for any of them.
+output is ordinary traces, it reuses the built-in rendering, picking, and export
+paths — including native PNG and SVG, which have no browser — rather than
+reimplementing them.
 
 ## A worked example
 
@@ -88,12 +88,10 @@ in `ctx.options` untouched.
 
 The last two are the real boundary, and it is deliberate rather than temporary
 scaffolding. A plugin that composes built-in marks cannot draw anything the
-engine could not already draw, which is exactly why it inherits everything the
-engine already guarantees. A plugin carrying its own shader would inherit none
-of it and would have to re-implement decimation, picking, accessibility, and
-three export paths correctly on its own. See
-[§24 of the design dossier](https://github.com/reflex-dev/xy/blob/main/spec/design-dossier.md)
-for the full argument.
+engine could not already draw, which is what lets it reuse the engine's
+existing paths. A plugin carrying its own shader would reuse none of them and
+would have to reimplement decimation, picking, and three export paths itself.
+See [§24 of the design dossier](https://github.com/reflex-dev/xy/blob/main/spec/design-dossier.md).
 
 ## Registry rules
 

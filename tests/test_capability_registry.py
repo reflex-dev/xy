@@ -13,8 +13,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from xy import styles
 from xy.dom import CHART_DOM_SLOTS
 from xy.styling import capabilities as caps
@@ -40,17 +38,16 @@ def test_registry_covers_exactly_the_properties_styles_compiles() -> None:
 
 
 def test_planned_properties_are_exactly_the_ones_style_still_refuses() -> None:
-    # A `planned` row is a promise that the property is NOT accepted yet. If one
-    # ships without its status changing, the matrix would understate the library
-    # — which is the failure mode that is easy to miss.
+    # There are no planned rows today; the registry lists what ships. The guard
+    # stays so that if one is ever added, it has to actually be refused —
+    # a `planned` row the implementation quietly accepts would understate the
+    # library, which is the direction that is easy to miss.
     for prop in caps.MARK_STYLE_PROPERTIES:
         if prop.status != "planned":
             continue
         assert prop.id not in _compiled_property_names(), (
             f"{prop.id!r} is marked planned but styles.py now compiles it"
         )
-        with pytest.raises(ValueError, match="unsupported CSS property"):
-            styles.compile_mark_style("line", {prop.id: "miter"})
 
 
 def test_registry_covers_exactly_the_public_dom_slots() -> None:

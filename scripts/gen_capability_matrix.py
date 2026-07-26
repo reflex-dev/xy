@@ -4,8 +4,7 @@
 The committed table is an artifact, never hand-edited. `--check` fails when it
 has fallen behind the registry, and `tests/test_capability_registry.py` runs
 that check — so the document cannot drift from the registry, and the registry
-cannot drift from `styles.py`. That is the whole chain, and it is what makes a
-customization claim checkable rather than assertable.
+cannot drift from `styles.py`.
 
     uv run python scripts/gen_capability_matrix.py --write
     uv run python scripts/gen_capability_matrix.py --check
@@ -52,8 +51,8 @@ def render() -> str:
         "",
         "What XY can be styled and extended with, per renderer. Generated from",
         "`python/xy/styling/capabilities.py`, which `tests/test_capability_registry.py`",
-        "pins to `styles.py` and `dom.py` — so this page cannot claim a property the",
-        "implementation does not compile, and cannot omit one it does.",
+        "pins to `styles.py` and `dom.py`, so it cannot list a property the",
+        "implementation does not compile or omit one it does.",
         "",
         "`full` means the renderer draws the property as specified. `partial` means it",
         "draws something the notes have to qualify. `none` means it does not draw it —",
@@ -73,11 +72,9 @@ def render() -> str:
         "",
         "## Mark style properties",
         "",
-        "Every property the registry tracks. A **`shipped`** row is accepted by a",
-        "mark's `style=` mapping today; a **`planned`** row is recorded but is *not*",
-        "accepted, and its note says what blocks it. Anything outside the shipped set",
-        "raises before data is ingested, so no renderer silently drops a declaration",
-        "another one honors.",
+        "The subset a mark's `style=` mapping accepts. Anything outside it raises",
+        "before data is ingested, so no renderer silently drops a declaration another",
+        "one honors.",
         "",
     ]
     lines += caps.markdown_mark_property_table()
@@ -163,8 +160,7 @@ def render_public() -> str:
         "",
         "Every styling question about XY has the same two halves: *can I change this*,",
         "and *does the change survive where I need it*. This page answers both from the",
-        "registry the implementation is checked against, so it cannot promise a property",
-        "the code does not compile.",
+        "registry the implementation is checked against.",
         "",
         f"- **{counts['mark_style_properties_shipped']}** mark style properties across "
         f"**{counts['mark_kinds']}** mark kinds, {claim}.",
@@ -174,10 +170,8 @@ def render_public() -> str:
         "",
         "## Mark style properties",
         "",
-        "Every property the registry tracks. A **`shipped`** row is accepted by a mark's",
-        "`style=` today; a **`planned`** row is *not* accepted yet, and its note says what",
-        "blocks it. Anything outside the shipped set raises while the chart is built — one",
-        "renderer never silently ignores what another draws.",
+        "What a mark's `style=` accepts. Anything outside this raises while the chart is",
+        "built — one renderer never silently ignores what another draws.",
         "",
     ]
     lines += caps.markdown_mark_property_table()
@@ -224,8 +218,6 @@ def render_public() -> str:
         )
     lines += [
         "",
-        "For how this compares to Plotly, Vega-Lite, Bokeh, and Matplotlib — including",
-        "the columns XY loses — see the comparison in the project specification.",
         "For what is still alpha, see",
         "[Limitations and Alpha Status](/docs/xy/api-reference/limitations-and-alpha-status/).",
         "",

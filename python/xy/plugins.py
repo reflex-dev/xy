@@ -6,13 +6,12 @@ snippet pair, and hover/a11y descriptors. This module ships the first and the
 composition half of the second, and deliberately not the shader half.
 
 The reason is not schedule. A plugin that composes built-in marks cannot draw
-anything the engine could not already draw, which means it inherits — for free,
-and without a way to get them wrong — LOD and decimation (§28), picking and
-hover, the a11y summary (§20), the wire protocol's f32 discipline (§29), and
-every export path including the two that have no browser. A plugin carrying its
-own shader inherits none of that and has to re-earn all of it. Composition is
-where the breadth-without-forking argument actually holds; shaders are a second
-system, and they can wait until something real needs one.
+anything the engine could not already draw, so its traces move through the
+paths that already exist: LOD and decimation (§28), picking and hover, the wire
+protocol's f32 discipline (§29), and every export path including the two that
+have no browser. It reuses them rather than reimplementing them. A plugin
+carrying its own shader would reuse none of that, so shaders are a second
+system and can wait until something real needs one.
 
     import numpy as np
     import xy
@@ -38,11 +37,10 @@ system, and they can wait until something real needs one.
     chart = xy.chart(xy.mark("hilo", t=ts, low=lows, high=highs, data=frame))
 
 A plugin's `build` returns built-in `Mark` objects and nothing else; it never
-sees the `Figure`, the trace list, or the column store. That is the whole
-containment argument, and `tests/test_mark_plugins.py` holds it: the composed
-marks go through the same appliers, the same axis assignment, and the same
-post-processing as marks written by hand, because they *are* marks written by
-hand — just written by someone else's function.
+sees the `Figure`, the trace list, or the column store. `tests/test_mark_plugins.py`
+holds that boundary: the composed marks go through the same appliers, the same
+axis assignment, and the same post-processing as marks written by hand, because
+they *are* marks written by hand — just written by someone else's function.
 """
 
 from __future__ import annotations

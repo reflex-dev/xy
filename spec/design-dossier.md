@@ -650,7 +650,7 @@ missing entirely.*
 | 10 | Autorange is an O(n) full scan per update | Moderate | Chunk zone maps make it O(chunks) (§22) |
 | 11 | No VRAM budget/eviction; no device-loss recovery | Moderate | Byte-budgeted caches; rebuildable GPU state (§6, §18) |
 | 12 | No bundle-size budget — a fat WASM blob forfeits a real Plotly pain point (3.5 MB+) | Moderate | Feature-gated modules + CI size budget (§23) |
-| 13 | Compat shim scope unquantified (~3,000 Plotly schema attributes) | Moderate | **Quantified**: 9,472 leaf attributes, classified by committed rules (§24, `spec/api/plotly-coverage.md`). The estimate was 3x low. |
+| 13 | Compat shim scope unquantified (~3,000 Plotly schema attributes) | Moderate | Generated conformance suite + explicit degradation contract (§24) |
 | 14 | Benchmarks measured throughput but not interaction latency; "60fps" undefined | Minor | Latency budgets + p99 framing added (§17, §12) |
 | 15 | No extensibility story (Plotly has custom traces) | Minor | **Shipped v0**: composition mark plugins, `xy.register_mark` (§24). Custom shaders still deferred. |
 
@@ -903,32 +903,6 @@ partial-bundle pain). Neither exists today.
   unsupported attributes (never silently drops), and the docs publish the coverage
   table per release. "Drop-in for the common 80%" becomes checkable, not vibes.
 
-  **Shipped, with two amendments the original wording did not anticipate**
-  (`scripts/plotly_schema_coverage.py` → `spec/api/plotly-coverage.md`):
-
-  1. *No published Plotly wheel ships `plot-schema.json`.* Verified against
-     4.14.3, 5.24.1, and 6.9.0 — it is a plotly.js artifact, and the Python
-     package generates validator classes from it instead. The equivalent, and a
-     better shape for this job, is `plotly/validators/_validators.json`: one flat
-     entry per dotted path. **9,472 leaf attributes** once compound namespaces
-     and `*src` column-reference companions come out — three times the estimate.
-  2. *There is no Plotly shim to warn.* The shipped shim is `xy.pyplot`, which is
-     Matplotlib-flavored. So "supported" cannot mean "the shim accepts the
-     attribute"; it means XY can express the same visual outcome, decided by a
-     committed rule table rather than by hand — 9,472 attributes cannot be
-     audited one at a time, and a table claiming otherwise would be fiction.
-
-  The number, scoped to the trace types XY implements plus `layout`: **217
-  supported, 115 mapped-with-difference of 3,387**. Whole-schema it is 218 and
-  115 of 9,472, a denominator dominated by trace types XY does not implement.
-  Both are published, because either one quoted alone misleads in a different
-  direction. Attributes no rule claims land in `unsupported/unclassified` —
-  currently 2,190 — which is reported rather than folded somewhere friendlier;
-  shrinking it is how the table improves. Quote these from
-  `spec/api/plotly-coverage.md` rather than from here: rule order is
-  load-bearing (`*` spans dots in `fnmatch`), and an earlier ordering silently
-  counted 3-D, geo, polar, ternary, and smith axes as supported, overstating
-  the figure by 127 attributes.
 - **Custom traces without forking:** a registered *mark plugin* provides
   (a) a calc function over columns → columns (runs in the worker, gets zone maps),
   (b) either a composition of built-in GPU primitives (instanced marks, density
@@ -938,16 +912,14 @@ partial-bundle pain). Neither exists today.
 
   **Shipped (v0):** `xy.register_mark` / `xy.MarkPlugin` / `xy.mark` in
   `python/xy/plugins.py`. It ships (a) and the composition half of (b); the
-  shader half is deliberately deferred, and (c) turns out to need nothing —
-  a plugin that composes built-in marks inherits hover, picking, the a11y
-  summary, LOD, and every export path *by construction*, because its output is
-  ordinary traces. `build` returns `Mark` objects and cannot reach the `Figure`,
-  the trace list, or the column store, so a plugin cannot draw anything the
-  engine could not already draw. Composition is one level deep: plugins compose
-  built-ins, not each other. That is what makes the containment argument hold,
-  and it is the reason the shader half should stay deferred until something
-  real needs it — a plugin carrying its own shader inherits none of the above
-  and has to re-earn all of it.
+  shader half is deferred. `build` returns built-in `Mark` objects and cannot
+  reach the `Figure`, the trace list, or the column store, so a plugin cannot
+  draw anything the engine could not already draw — and its output being
+  ordinary traces is what lets it reuse the built-in rendering, picking, and
+  export paths instead of reimplementing them. Composition is one level deep:
+  plugins compose built-ins, not each other. The shader half stays deferred for
+  the same reason the composition half works: a plugin carrying its own shader
+  reuses none of that.
 
 ## 25. Milestone amendments (audit-driven)
 

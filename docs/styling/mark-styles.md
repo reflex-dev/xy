@@ -73,11 +73,7 @@ export. Set the property to opt into the CSS initial value.
 xy.line(x, y, style={"stroke-width": "6px", "stroke-linecap": "butt"})
 ~~~
 
-`stroke-linejoin` is **not** available yet. The SVG and native-raster writers
-both implement it, but the browser client draws polylines as one quad per
-segment with no join geometry, so honoring it in two renderers out of three
-would break the rule that every accepted declaration is drawn everywhere. See
-the capability matrix for the current state of that row.
+Joins are always round and are not selectable.
 
 ## Marker shape
 

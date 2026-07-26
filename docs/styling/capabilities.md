@@ -9,8 +9,7 @@ description: What XY can be styled and extended with, per renderer, generated fr
 
 Every styling question about XY has the same two halves: *can I change this*,
 and *does the change survive where I need it*. This page answers both from the
-registry the implementation is checked against, so it cannot promise a property
-the code does not compile.
+registry the implementation is checked against.
 
 - **10** mark style properties across **20** mark kinds, drawn by all three renderers.
 - **23** stable chrome slots for CSS and Tailwind in the browser.
@@ -18,10 +17,8 @@ the code does not compile.
 
 ## Mark style properties
 
-Every property the registry tracks. A **`shipped`** row is accepted by a mark's
-`style=` today; a **`planned`** row is *not* accepted yet, and its note says what
-blocks it. Anything outside the shipped set raises while the chart is built — one
-renderer never silently ignores what another draws.
+What a mark's `style=` accepts. Anything outside this raises while the chart is
+built — one renderer never silently ignores what another draws.
 
 | property | vocabulary | mark kinds | webgl | svg | native | status |
 |---|---|---|---|---|---|---|
@@ -33,7 +30,6 @@ renderer never silently ignores what another draws.
 | `stroke-width` | svg | `area`, `bar`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `hist`, `histogram`, `line`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
 | `stroke-dasharray` | svg | `area`, `ecdf`, `line`, `stairs`, `step` | full | full | full | shipped |
 | `stroke-linecap` | svg | `ecdf`, `line`, `stairs`, `step` | full | full | full | shipped |
-| `stroke-linejoin` | svg | — | none | full | full | planned |
 | `border-radius` | css | `bar`, `column`, `hist`, `histogram` | full | full | full | shipped |
 | `marker-shape` | xy | `scatter` | full | full | full | shipped |
 
@@ -45,8 +41,7 @@ renderer never silently ignores what another draws.
 - **`stroke`** — The paint for line-like geometry, and the border for filled marks.
 - **`stroke-width`** — CSS px; a bare number is px, matching the chrome style convention.
 - **`stroke-dasharray`** — 2-8 positive px lengths, or `none`. The WebGL client tracks arc length on the CPU so dashes stay continuous across segments and constant on screen through zoom.
-- **`stroke-linecap`** — XY's default is `round`, not CSS's `butt`. Verified per renderer, not assumed: a Rust coverage test, a rasterized-ink test, and three Chromium screenshots that hash differently per cap.
-- **`stroke-linejoin`** — NOT ACCEPTED by `style=` today, deliberately. The SVG writer emits the attribute and `src/raster.rs` implements miter/round/bevel with SVG's miter limit of 4, but the WebGL client draws a polyline as one instanced quad per segment with no join geometry at all, so it cannot tell a miter from a bevel. Two renderers out of three is what `styles.py` exists to prevent. Unblocking it means giving the client a join pass.
+- **`stroke-linecap`** — Line family only — a cap is open-path geometry. XY's default is `round`, not CSS's `butt`, because the native rasterizer has always drawn round and is the reference for static export. Verified per renderer: a Rust coverage test, a rasterized-ink test, and three Chromium screenshots that hash differently per cap.
 - **`border-radius`** — Rect kinds only. `corner_radius=(tip, base)` rounds the two ends separately.
 - **`marker-shape`** — 17 shapes, drawn as analytic signed-distance fields in all three renderers. An XY vocabulary name: CSS has no shape keyword for a non-DOM point mark, and the CSS spelling and `symbol=` compile to the same value.
 
@@ -107,7 +102,5 @@ an undocumented difference reads as a bug; a documented one is a contract.
 |---|---|---|---|---|
 | Interior vertices of a wide polyline | the notch two overlapping segment quads leave | round (the writer names it explicitly) | round (the capsule distance field fills the vertex) | stroke-width above ~4px at a sharp angle |
 
-For how this compares to Plotly, Vega-Lite, Bokeh, and Matplotlib — including
-the columns XY loses — see the comparison in the project specification.
 For what is still alpha, see
 [Limitations and Alpha Status](/docs/xy/api-reference/limitations-and-alpha-status/).
