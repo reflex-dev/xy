@@ -46,6 +46,7 @@ DOCS_SECTIONS = (
             ("Customize Each Part", "/styling/customize/"),
             ("Animations", "/styling/animations/"),
             ("Themes and Export", "/styling/themes-and-tokens/"),
+            ("Capability Matrix", "/styling/capabilities/"),
             ("Advanced Styling Gallery", "/styling/gallery/"),
         ),
     ),

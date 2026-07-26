@@ -9,6 +9,16 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- **A capability registry** at `python/xy/styling/capabilities.py`: one entry per
+  mark style property and per chrome slot, each carrying its support level in
+  the WebGL client, the SVG writer, and the native rasterizer, plus the
+  extension points and the renderer divergences that no property selects.
+  `scripts/gen_capability_matrix.py` generates `spec/api/capability-matrix.md`
+  and the public Capability Matrix page from it, and the test suite fails if
+  either is stale or if the registry falls out of step with what `styles.py`
+  actually compiles. `benchmarks/categories.py` made performance claims
+  auditable and left the generated-table half open; this closes it for
+  customization.
 - **Mark plugins**: `xy.register_mark(xy.MarkPlugin(...))` adds a chart kind XY
   does not ship, and `xy.mark("name", ...)` uses it. A plugin supplies a `calc`
   over its declared columns and a `build` that returns *built-in* marks — the
