@@ -78,9 +78,8 @@ There are two different scaling regimes:
 2. The resulting wire payload, WebGL geometry, and static SVG/native-PNG scene
    are bounded by the chosen viewport representation.
 
-This is why a “cost scales with pixels, not points” slogan needs qualification:
-it describes the output side after reduction, not the complete data-to-pixels
-pipeline.
+The output side after reduction scales with pixels; the complete data-to-pixels
+pipeline still includes row-dependent ingest and reduction work.
 
 ## Inspect memory and tier decisions
 

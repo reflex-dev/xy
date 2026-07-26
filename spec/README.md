@@ -29,8 +29,8 @@ The public surface: what callers can build, style, export, and interact with.
   `python/xy/styling/capabilities.py`.
   Regenerate with `scripts/gen_capability_matrix.py --write`; the test suite
   fails if it is stale.
-- [`chart-roadmap.md`](api/chart-roadmap.md) — the single 2D-first chart-type
-  coverage backlog, prioritized by popularity and primitive reuse.
+- [`chart-roadmap.md`](api/chart-roadmap.md) — the staged chart-type coverage
+  backlog, from core 2D through geographic, 3D, and volume visualization.
 - [`export.md`](api/export.md) — how a figure becomes bytes: one entry point
   across five image formats, deterministic engine choice, browser-free default.
 - [`interaction.md`](api/interaction.md) — the authority on which browser

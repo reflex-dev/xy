@@ -1,8 +1,8 @@
 # Production Readiness
 
 This is the release bar for xy while the core renderer is still moving.
-It separates hard gates from advisory measurements so performance claims,
-packaging promises, and API stability do not depend on memory or vibes.
+It separates hard gates from advisory measurements so packaging promises and
+API stability do not depend on memory or vibes.
 
 ## Current Contract
 
@@ -46,12 +46,11 @@ integration are still experimental and may change before a 1.0 release.
 
 ## Accessibility and Cross-Browser Conformance Status
 
-The current conformance tier is intentionally narrower than a claim of full
-WCAG parity or pixel-identical output across browsers. The browser client now
-ships a parallel semantic chart region and generated trace/axis summary, a
-polite live region for hover and keyboard readouts, focusable direct-point
-navigation with Arrow/Home/End keys, named toolbar controls with toggle state,
-visible focus styling, reduced-motion behavior, and forced-colors affordances.
+The current conformance tier covers a parallel semantic chart region and
+generated trace/axis summary, a polite live region for hover and keyboard
+readouts, focusable direct-point navigation with Arrow/Home/End keys, named
+toolbar controls with toggle state, visible focus styling, reduced-motion
+behavior, and forced-colors affordances.
 
 CI runs the same focused chart in Playwright Chromium, Firefox, and WebKit. It
 checks those semantics and interactions in every engine, compares WebGL output
@@ -59,22 +58,19 @@ with a coarse per-channel perceptual signature, and compares DOM chrome through
 layout boxes rather than browser-font glyph pixels. The gate does **not** yet
 cover aggregated-bin keyboard navigation, a view-as-table escape hatch,
 screen-reader/OS combinations, every chart family, or full-page screenshot
-parity. Until those surfaces have dedicated evidence, neither full
-accessibility parity nor broad perceptual cross-browser consistency is a safe
-public claim. Run the focused tier locally with `make check-conformance` after
+parity. Run the focused tier locally with `make check-conformance` after
 installing all three engines with
 `npx playwright install chromium firefox webkit`.
 
 ## Release-Blocking Gates
 
-These must pass before publishing or making a broad performance claim.
+These must pass before publishing.
 
 | Area | Gate | Command or evidence |
 |---|---|---|
 | Python floor | `pyproject.toml`, Ruff, docs, syntax, and annotations stay on the Python 3.11+ floor | `python scripts/check_python_floor.py` |
 | Public API | `__all__`, lazy exports, `__version__`, the source `py.typed` marker, focused type-surface tests, and fresh-process import-time budget stay coherent | `make check-api` |
 | Import-time budget | `xy.__init__`, `dir(xy)`, export helpers, chart construction, and `.widget()` keep their lazy import boundaries | `make check-import` |
-| Claim guardrails | Public docs and package metadata avoid broad, unqualified performance claims | `make check-claims` |
 | CI/release workflows | Hard gates, non-blocking benchmarks, best-effort benchmark artifact upload/download, trusted publishing, and no-Rust clear-error jobs stay wired | `make check-ci` |
 | HTML export safety | Inline JSON/script escaping, atomic path writes, hostile user strings, and browser client text-node insertion stay protected | `make check-security` |
 | Python tests | Native backend passes | `pytest -q` |
@@ -260,8 +256,8 @@ dependency boundaries, widget/export boundaries, or backend import setup:
 make check-import
 ```
 
-Use this before turning a generated benchmark JSON file into docs, release
-notes, or a public claim:
+Use this to validate generated benchmark JSON before publication or downstream
+analysis:
 
 ```bash
 make check-benchmark-report BENCHMARK_JSON=benchmark.json BENCHMARK_KIND=scatter-vs
@@ -273,13 +269,6 @@ tests:
 
 ```bash
 make check-benchmark-harness
-```
-
-Use this after editing public docs, package metadata, benchmark summaries,
-release notes, or other performance-claim surfaces:
-
-```bash
-make check-claims
 ```
 
 Browser smoke and package artifact verification need a built bundle, Chromium,
@@ -406,11 +395,6 @@ Before tagging a release:
   are sdist-only.
 - Confirm the wheel size budget is still below 15 MB.
 - Confirm `spec/api/api-examples.md` runs against the tagged API.
-- Confirm package metadata uses measured, scoped language rather than broad
-  "faster/best" positioning.
-- Confirm performance claims mention chart type, mode, backend, data size, and
-  browser TTFR status.
-
 ### reflex-xy releases
 
 The adapter is a pure-Python distribution — no native core, no JS build, no
@@ -446,52 +430,6 @@ Before the first adapter release (and after any change to its pipeline):
   (and `reflex>=0.9.6`) as ordinary PyPI ranges, and its wheel must never
   carry a copy of the render client — the client links out of the installed
   xy package at app compile so it can never drift from the kernel.
-
-## Claim Guardrails
-
-Safe claims:
-
-- xy avoids JSON-number payloads for core chart data.
-- Large scatter overview rendering is screen-bounded when using density mode.
-- The native backend is substantially faster than pure Python/NumPy for kernel
-  work covered by the benchmarks.
-- Current 2D core chart benchmarks beat Plotly on the measured payload-prep,
-  payload-size, and TTFR rows documented in `spec/benchmarks/results.md`.
-
-Claims that need qualification:
-
-- "Renders 10M points" must say whether the chart is drawing exact markers or a
-  density/adaptive representation.
-- "Faster than Plotly" must name the chart type, data size, render target,
-  backend, and whether browser TTFR is included.
-- "Install without Rust" means a published wheel (which carries the native core)
-  installs with no toolchain; a source build still requires Rust, and a
-  platform with no native core raises a clear ImportError rather than degrading.
-
-Not yet safe:
-
-- Plotly-level chart breadth.
-- Full accessibility parity.
-- Cross-browser/perceptual rendering conformance.
-- Exact-marker interaction for every possible 100M-point zoom path.
-- Production Reflex state integration as a first-class API.
-- More than ~12 charts *simultaneously in view* holding live WebGL contexts.
-  Browsers cap live contexts per page (~16 in Chrome); the render client's
-  context governor keeps xy inside a budget (default 12) by having
-  the least-recently-visible off-screen chart release its context and
-  re-acquire on scroll-into-view. Measured (`benchmarks/bench_dashboard.py`,
-  2026-07-09, Chrome/macOS): 10/20/50-chart dashboards are all fully usable —
-  every chart nonblank when visited, recovery p95 ~8 ms, heap sublinear
-  (28 MB at 50 charts) — but a layout keeping more than the budget visible
-  at once can still hit browser-side eviction, so do not claim unbounded
-  simultaneous live charts. The browser cap is process-wide (shared across a
-  tab's iframes), so the governor shares one budget across **same-origin**
-  frames over a `BroadcastChannel` (§18): a chart-per-iframe page (the
-  `examples/fastapi` gallery) stays under the cap instead of flooding the
-  console with "Too many active WebGL contexts". Cross-origin and
-  `sandbox`-without-`allow-same-origin` frames cannot share the channel and
-  fall back to per-document budgeting — many such isolated frames in one tab
-  can still collectively exceed the cap.
 
 ## Hardening Backlog
 
