@@ -2607,10 +2607,10 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def _axis_holds_datetimes(self, axis: str) -> bool:
-        from xy.components import _is_datetime_like
+        from xy.columns import is_datetime_like
 
         key = "x" if axis == "x" else "y"
-        return any(key in entry and _is_datetime_like(entry[key]) for entry in self._entries)
+        return any(key in entry and is_datetime_like(entry[key]) for entry in self._entries)
 
     def _data_coordinate(self, value: Any, axis: str) -> Optional[float]:
         """A data-space coordinate as the engine's float — numbers directly,

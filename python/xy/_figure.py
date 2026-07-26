@@ -41,7 +41,9 @@ from .config import (  # noqa: E402, F401
 )
 from .dom import validate_dom_slots
 
-_FigureCheckpoint: TypeAlias = tuple[ColumnStoreCheckpoint, int, dict[str, list[str]], int]
+_FigureCheckpoint: TypeAlias = tuple[
+    ColumnStoreCheckpoint, int, dict[str, list[str]], int, set[str]
+]
 
 # "selection not passed" sentinel for state_patch_message: None is meaningful
 # there (clear the selection), so absence needs its own marker.
@@ -161,6 +163,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
         self._series_cursor = 0
         self.annotations: list[dict[str, Any]] = []
         self._axis_categories: dict[str, list[str]] = {}
+        # Axis ids whose positions are datetimes canonicalized to ms. The
+        # sibling of `_axis_categories`: `_axis_kind` reads it so a bar or
+        # heatmap on dates reports "time", exactly as a line on the same
+        # dates already does through its ingested column.
+        self._axis_temporal: set[str] = set()
         # Declarative marks still call the shared fluent mark bodies with the
         # channel dimensions ("x"/"y").  Chart temporarily points those
         # dimensions at the mark's bound axis ids while it applies each mark,
@@ -455,14 +462,16 @@ class Figure(AnnotationsMixin, PayloadMixin):
             len(self.traces),
             {axis: list(labels) for axis, labels in self._axis_categories.items()},
             len(self.annotations),
+            set(self._axis_temporal),
         )
 
     def _rollback(self, checkpoint: _FigureCheckpoint) -> None:
-        store_checkpoint, trace_len, axis_categories, annotation_len = checkpoint
+        store_checkpoint, trace_len, axis_categories, annotation_len, axis_temporal = checkpoint
         self.store.rollback(store_checkpoint)
         del self.traces[trace_len:]
         del self.annotations[annotation_len:]
         self._axis_categories = axis_categories
+        self._axis_temporal = axis_temporal
 
     # The mark implementations live in the declarative core (marks.py); they
     # are bound here as the fluent methods, so `Figure.scatter is marks.scatter`
@@ -889,8 +898,41 @@ class Figure(AnnotationsMixin, PayloadMixin):
         """Resolve a mark channel dimension to its active declarative axis id."""
         return self._active_axis_ids.get(axis, axis)
 
+    def _register_temporal_axis(self, axis: str) -> None:
+        """Mark an axis as holding datetimes. Separate from the conversion so
+        the validate-then-commit path can register only after the mark that
+        needs it has actually been built — the same shape as
+        `_commit_category_labels`."""
+        axis_id = self._category_axis_id(axis)
+        if self._axis_categories.get(axis_id):
+            raise ValueError(
+                f"{axis} axis {axis_id!r} already holds categories; a single axis cannot be "
+                "both categorical and temporal. Format the datetimes as strings to keep "
+                "them categorical, or move the categorical mark to its own axis."
+            )
+        self._axis_temporal.add(axis_id)
+
+    def _temporal_positions(
+        self, values: Any, axis: str, *, commit: bool = True
+    ) -> Optional[np.ndarray]:
+        """Datetime positions as ms, or None when *values* is not temporal.
+
+        Probed BEFORE `_is_category_like`, which is the whole point: a list of
+        `datetime.date` is object dtype, so it used to win the category test
+        and plot three dates two months apart as three evenly spaced bars.
+        Registers the axis as temporal so `_axis_kind` reports "time" the way
+        it already does for columns the store ingested."""
+        if not columns.is_datetime_like(values):
+            return None
+        if commit:
+            self._register_temporal_axis(axis)
+        return columns.datetime_ms(values, f"{axis} values")
+
     def _axis_positions(self, values: Any, axis: str, *, commit: bool = True) -> np.ndarray:
         values = self._materialize_sequence(values)
+        temporal = self._temporal_positions(values, axis)
+        if temporal is not None:
+            return temporal
         if not self._is_category_like(values):
             return self._as_1d_float(values, f"{axis} values")
         raw_labels = self._category_axis_labels(values, axis)
@@ -925,18 +967,25 @@ class Figure(AnnotationsMixin, PayloadMixin):
 
     def _axis_positions_with_labels(
         self, values: Any, axis: str
-    ) -> tuple[np.ndarray, Optional[list[str]]]:
-        """Uncommitted positions plus the normalized labels (None for numeric
-        values), so validate-then-commit callers replay the commit as a label
-        merge instead of re-running the O(n) conversion."""
+    ) -> tuple[np.ndarray, Optional[list[str]], bool]:
+        """Uncommitted positions, the normalized labels (None for numeric or
+        datetime values), and whether the axis is temporal — so
+        validate-then-commit callers replay the commit as a label merge or a
+        temporal registration instead of re-running the O(n) conversion, and a
+        mark that raises afterwards leaves neither recorded."""
         values = self._materialize_sequence(values)
+        temporal = self._temporal_positions(values, axis, commit=False)
+        if temporal is not None:
+            return temporal, None, True
         if not self._is_category_like(values):
-            return self._as_1d_float(values, f"{axis} values"), None
+            return self._as_1d_float(values, f"{axis} values"), None, False
         raw_labels = self._category_axis_labels(values, axis)
         axis_id = self._category_axis_id(axis)
-        return self._category_positions(
-            raw_labels, list(self._axis_categories.get(axis_id, []))
-        ), raw_labels
+        return (
+            self._category_positions(raw_labels, list(self._axis_categories.get(axis_id, []))),
+            raw_labels,
+            False,
+        )
 
     def _commit_category_labels(self, raw_labels: list[str], axis: str) -> None:
         axis_id = self._category_axis_id(axis)
@@ -952,6 +1001,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if values is None:
             return
         values = self._materialize_sequence(values)
+        if columns.is_datetime_like(values):
+            self._temporal_positions(values, axis)
+            return
         if self._is_category_like(values):
             self._commit_category_labels(self._category_axis_labels(values, axis), axis)
 
@@ -968,7 +1020,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if values is None:
             return np.arange(n, dtype=np.float64)
         values = self._materialize_sequence(values)
-        is_category = self._is_category_like(values)
+        is_category = self._is_category_like(values) and not columns.is_datetime_like(values)
         pos = self._axis_positions(values, axis, commit=False)
         if len(pos) != n:
             raise ValueError(f"heatmap {axis} must have length {n}, got {len(pos)}")
@@ -1176,6 +1228,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
         axis = self._axis_dim(axis_id)
         forced = self.axis_options.get(axis_id, {}).get("type")
         if forced == "time":
+            return "time"
+        if axis_id in self._axis_temporal:
+            # A rect/segment mark ingests derived *centers*, so its columns are
+            # always kind="float" and the loop below cannot see the datetimes
+            # the caller passed. `_temporal_positions` records them here.
             return "time"
         if axis_id in self._axis_categories:
             return "category"

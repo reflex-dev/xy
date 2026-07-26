@@ -141,6 +141,27 @@ def quarterly_mix():
     return reflex_xy.chart(chart, height="320px")
 ~~~
 
+## Bars over Dates
+
+Pass datetimes as the category argument and the axis becomes a time axis, the
+same one a line chart gets: positions are proportional to the real gaps between
+dates, ticks render as dates, and the bar width defaults to a real duration.
+
+~~~python
+import numpy as np
+
+days = np.arange("2024-01-01", "2024-04-01", dtype="datetime64[D]")
+chart = xy.bar_chart(xy.bar(days, signups))
+~~~
+
+Every datetime form works — `datetime.date`, `datetime.datetime`, any
+`numpy.datetime64` unit, a pandas `Series` or `DatetimeIndex` — and all of them
+canonicalize to the same milliseconds-since-epoch coordinates.
+
+Irregular dates therefore show their real gaps. If you want one evenly spaced
+bar per date regardless of the intervals, format them as strings first
+(`[d.isoformat() for d in days]`) and they stay categorical.
+
 ## Interactive Bar Charts
 
 Every bar chart is interactive out of the box — drag to pan, scroll or pinch to
@@ -157,7 +178,8 @@ a Reflex app, or exported HTML with no extra configuration.
 | `base` | Stacking baseline as a scalar, array, or another bar series. |
 | `color` | Bar fill color (any CSS color). |
 | `corner_radius` | Rounded bar corners in pixels. |
-| `width` | Bar thickness as a fraction of the category band. |
+| `width` | Bar thickness in axis units. Defaults to 0.8 of the gap between
+  adjacent positions — one category band, or a real duration on a date axis. |
 | `opacity` | Bar opacity from 0 to 1. |
 | `name` | Series label shown in the `legend()`. |
 

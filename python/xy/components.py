@@ -43,7 +43,7 @@ from typing import Any, Literal, Optional, TypeAlias, Union
 
 import numpy as np
 
-from . import _validate, channels, export, plugins, styles
+from . import _validate, channels, columns, export, plugins, styles
 from ._figure import Figure, Selection
 from ._typing import ArrayLike, ColorLike, Scalar, TableLike
 from .dom import CHART_DOM_SLOTS, validate_dom_slots
@@ -1559,7 +1559,7 @@ def bar(
     name: Optional[str] = None,
     color: Any = None,
     colors: Optional[list[str]] = None,
-    width: float = 0.8,
+    width: Optional[float] = None,
     base: Union[str, Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
@@ -1586,7 +1586,9 @@ def bar(
         name: Series label used by legends and tooltips.
         color: Constant color, values, or a column name.
         colors: Colors assigned to multiple series.
-        width: Bar width in category units.
+        width: Bar width in axis units. Defaults to 0.8 of the typical gap
+            between adjacent positions — one category slot on a category
+            axis, and a real duration on a datetime one.
         base: Baseline value, values, or a column name.
         mode: ``grouped``, ``stacked``, or ``normalized`` layout.
         orientation: ``vertical`` or ``horizontal`` orientation.
@@ -1642,7 +1644,7 @@ def column(
     name: Optional[str] = None,
     color: Union[str, Sequence[str], None] = None,
     colors: Optional[list[str]] = None,
-    width: float = 0.8,
+    width: Optional[float] = None,
     base: Union[str, Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
@@ -1668,7 +1670,9 @@ def column(
         name: Series label used by legends and tooltips.
         color: Constant color, values, or a column name.
         colors: Colors assigned to multiple series.
-        width: Column width in category units.
+        width: Column width in axis units. Defaults to 0.8 of the typical gap
+            between adjacent positions — one category slot on a category
+            axis, and a real duration on a datetime one.
         base: Baseline value, values, or a column name.
         mode: ``grouped``, ``stacked``, or ``normalized`` layout.
         orientation: Orientation forwarded to the bar renderer.
@@ -2936,7 +2940,7 @@ def _resolve_axis_values(fig: Figure, data: Any, key: Any, axis: str, context: s
     # (§12). A dtype-carrying numeric (NumPy array, pandas Series) can never
     # be category- or datetime-like, so skip the probes outright. A plain
     # Python list/tuple is converted exactly once here and the array is
-    # passed on — otherwise `_is_category_like`, `_is_datetime_like`, and
+    # passed on — otherwise `_is_category_like`, `is_datetime_like`, and
     # engine ingest each re-run the same O(n) conversion on the raw list.
     dtype = getattr(values, "dtype", None)
     if dtype is not None:
@@ -2946,32 +2950,9 @@ def _resolve_axis_values(fig: Figure, data: Any, key: Any, axis: str, context: s
         values = np.asarray(values)
         if values.dtype.kind in "fiu":
             return values
-    if Figure._is_category_like(values) and not _is_datetime_like(values):
+    if Figure._is_category_like(values) and not columns.is_datetime_like(values):
         return fig._axis_positions(values, axis)
     return values
-
-
-def _is_datetime_like(values: Any) -> bool:
-    if hasattr(values, "to_numpy"):
-        try:
-            values = values.to_numpy()
-        except ValueError:
-            # pyarrow Arrays with nulls refuse the default zero-copy
-            # conversion (ArrowInvalid is a ValueError); this probe needs the
-            # actual values, so allow the copy.
-            values = values.to_numpy(zero_copy_only=False)
-    arr = np.asarray(values)
-    if np.issubdtype(arr.dtype, np.datetime64):
-        return True
-    if arr.dtype != object:
-        return False
-    for value in arr.flat:
-        if value is None:
-            continue
-        if value.__class__.__name__ in {"NAType", "NaTType"}:
-            continue
-        return isinstance(value, (dt.datetime, dt.date, np.datetime64))
-    return False
 
 
 class Chart(Component):
