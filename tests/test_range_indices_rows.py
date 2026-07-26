@@ -123,6 +123,36 @@ def test_out_of_range_row_is_an_error_not_a_read() -> None:
         kernels.range_indices_rows(x, x, np.array([4], dtype=np.uint32), -1.0, 1.0, -1.0, 1.0)
 
 
+@pytest.mark.parametrize("bad", [2**32, 2**32 + 3, 2**40, -1, -(2**31)])
+def test_a_row_id_that_would_wrap_is_rejected_not_cast(bad: int) -> None:
+    """The u32 conversion is an unchecked C cast, so `2**32 + 3` would arrive as
+    row 3 — in range, and therefore answered rather than refused. The caller
+    would get a row it never asked for, which is worse than the error the
+    kernel's bounds check exists to produce."""
+    x = np.arange(10.0)
+    y = np.zeros(10)
+    rows = np.array([bad], dtype=np.int64)
+    square_x = np.array([-1e9, 1e9, 1e9, -1e9])
+    square_y = np.array([-1e9, -1e9, 1e9, 1e9])
+    with pytest.raises(ValueError, match=r"canonical row ids in \[0, 2\*\*32\)"):
+        kernels.range_indices_rows(x, y, rows, -1e9, 1e9, -1e9, 1e9)
+    with pytest.raises(ValueError, match=r"canonical row ids in \[0, 2\*\*32\)"):
+        kernels.polygon_select(x, y, rows, square_x, square_y)
+
+
+def test_in_range_ids_survive_every_integer_dtype() -> None:
+    """The range check must not start rejecting ordinary callers: any integer
+    dtype holding valid ids still answers, and a uint32 array is passed through
+    untouched."""
+    x = np.arange(10.0)
+    y = np.zeros(10)
+    want = np.array([2, 5], dtype=np.uint32)
+    for dtype in (np.uint32, np.int64, np.int32, np.uint64, np.int16, np.uint8):
+        got = kernels.range_indices_rows(x, y, np.array([2, 5], dtype=dtype), -1e9, 1e9, -1e9, 1e9)
+        np.testing.assert_array_equal(got, want)
+        assert got.dtype == np.uint32
+
+
 def test_select_range_agrees_across_the_pruning_branches() -> None:
     """Zone-pruned and whole-column selection must return the same rows.
 

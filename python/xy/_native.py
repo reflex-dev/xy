@@ -34,6 +34,8 @@ ABI_VERSION = 45
 # would be sliced as data.
 _USIZE_MAX = ctypes.c_size_t(-1).value
 _FACTORIZE_CAPACITY_EXCEEDED = _USIZE_MAX - 1
+# Canonical row ids ship as u32 (the index ceiling the kernels enforce).
+_U32_MAX = 2**32 - 1
 
 
 def _lib_filename() -> str:
@@ -828,6 +830,27 @@ def _as_f64(arr: npt.NDArray[np.float64], label: str = "data") -> npt.NDArray[np
     if out.ndim != 1:
         raise ValueError(f"{label} must be 1-D, got shape {out.shape}")
     return out
+
+
+def _as_row_ids(rows: npt.NDArray[np.uint32], label: str = "rows") -> npt.NDArray[np.uint32]:
+    """Canonical row ids as contiguous u32, rejecting anything that would wrap.
+
+    `ascontiguousarray(..., dtype=np.uint32)` is an unchecked C cast: an id of
+    `2**32 + 3` becomes 3 and a negative id becomes a huge one. The kernels
+    bounds-check the ids they are *given*, so a wrapped id is indistinguishable
+    from a real one there — the call would answer with a row the caller never
+    asked for instead of returning the error sentinel. Range-check before the
+    cast so the out-of-range contract holds for the value the caller passed.
+    """
+    out = np.ascontiguousarray(rows)
+    if out.ndim != 1:
+        raise ValueError(f"{label} must be 1-D, got shape {out.shape}")
+    if out.dtype == np.uint32:
+        return out
+    widened = out.astype(np.int64, copy=False)
+    if widened.size and (widened.min() < 0 or widened.max() > _U32_MAX):
+        raise ValueError(f"{label} must be canonical row ids in [0, 2**32)")
+    return np.ascontiguousarray(widened, dtype=np.uint32)
 
 
 def _ptr_f64(arr: npt.NDArray[np.float64]) -> int:
@@ -2658,9 +2681,7 @@ def range_indices_rows(
     y = _as_f64(y, "y")
     if len(x) != len(y):
         raise ValueError("x and y must have equal length")
-    rows = np.ascontiguousarray(rows, dtype=np.uint32)
-    if rows.ndim != 1:
-        raise ValueError("rows must be 1-D")
+    rows = _as_row_ids(rows)
     out = np.empty(len(rows), dtype=np.uint32)
     if len(rows) == 0:
         return out
@@ -2700,9 +2721,7 @@ def polygon_select(
     poly_y = _as_f64(poly_y, "polygon y")
     if len(poly_x) != len(poly_y):
         raise ValueError("polygon x and y must have equal length")
-    rows = np.ascontiguousarray(rows, dtype=np.uint32)
-    if rows.ndim != 1:
-        raise ValueError("rows must be 1-D")
+    rows = _as_row_ids(rows)
     out = np.empty(len(rows), dtype=np.uint32)
     if len(rows) == 0:
         return out
