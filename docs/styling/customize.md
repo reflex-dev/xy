@@ -330,12 +330,140 @@ tick colors with zero widths on both axes, `grid_opacity=0` on the x axis, and
 a subtle `grid_color` on the y axis. Keep extra top padding when a legend sits
 inside the plot.
 
+### Hide axis chrome with a switch
+
+Because hiding axis parts is subtraction, each axis takes plain switches
+instead of transparent colors: `show`, `line`, `ticks`, `grid`, and `text`
+(tick labels plus the axis title). `show` sets the other four, and each of them
+overrides `show`, so the reporting look above is two lines.
+
+| Want | Write |
+| --- | --- |
+| No axis chrome at all | `xy.x_axis(show=False)` |
+| Horizontal guides only | `xy.y_axis(show=False, grid=True)` |
+| Labels, but no baseline or ticks | `xy.x_axis(line=False, ticks=False)` |
+| Everything except the grid | `xy.x_axis(grid=False)` |
+
+~~~python
+chart = xy.area_chart(
+    xy.area(months, revenue, name="Revenue", color="#00b8db", curve="smooth"),
+    xy.x_axis(show=False),
+    xy.y_axis(show=False, grid=True, style={"grid_color": "#e5e7eb"}),
+)
+~~~
+
+An explicit `style=` property still wins, so you can switch a part off and then
+bring one property back — `xy.x_axis(show=False, style={"grid_color": "#eee",
+"grid_opacity": 1})` — without writing the other six.
+
 ## Color scales and colorbars
 
 Set a continuous mark's `colormap=` and `domain=` together when colors must
 have a stable meaning across charts. Add `xy.colorbar(...)` to explain that
 scale, then style its container, gradient, ticks, and title through the
 `colorbar`, `colorbar_bar`, `colorbar_tick`, and `colorbar_title` slots.
+
+### Build a colormap from your own colors
+
+`colormap=` takes any of XY's twenty built-in names, and also a **custom ramp**
+built from the colors your design system already defines:
+
+| Form | Example |
+| --- | --- |
+| A list of CSS colors, evenly spaced | `colormap=["#0b1220", "#2563eb", "#22d3ee", "#fde68a"]` |
+| `(position, color)` pairs | `colormap=[(0.0, "#f8fafc"), (0.2, "#38bdf8"), (1.0, "#0f172a")]` |
+| A CSS gradient (2–8 stops) | `colormap="linear-gradient(#0b1220, #2563eb 30%, #fde68a)"` |
+
+A gradient takes up to 8 stops, the list forms up to 256. Colormap stops are
+opaque: use the mark's `opacity`/`fill-opacity` for transparency rather than a
+translucent stop, which XY refuses instead of silently flattening to black.
+
+~~~python
+chart = xy.hexbin_chart(
+    xy.hexbin(throughput, latency, gridsize=54, colormap=BRAND_RAMP),
+    xy.colorbar(title="Requests"),
+)
+~~~
+
+The ramp is resolved once, in Python, so the browser, `to_svg()`, and
+`to_png()` paint identical marks, and the colorbar follows it in every renderer.
+In the browser the legend row for a continuous encoding also becomes a gradient
+swatch of the ramp; the static legend draws a solid handle, as it always has.
+
+One rule follows from that: colormap stops must be colors XY can resolve
+without a browser — hex, `rgb()`, `hsl()`, or a named color. `var(--brand)`,
+`oklch(...)`, and `color-mix(...)` are fine on `color=`, `stroke`, `fill`, and
+in `xy.theme(palette=...)`, but as a colormap stop they raise, because a static
+export has no cascade to resolve them against and would silently paint a
+different ramp. Resolve the token to a literal in Python and pass that.
+
+### Recolor categories with a chart palette
+
+A categorical `color=` channel and unnamed series both draw from the chart's
+palette. `xy.theme(palette=[...])` replaces it for the whole chart, so a set of
+brand swatches colors every series and every category at once:
+
+~~~python
+BRAND = ["#38bdf8", "#e879f9", "#fbbf24", "#34d399", "#a78bfa", "#fb7185"]
+
+chart = xy.scatter_chart(
+    xy.scatter(x, y, color=stage_labels, size=2.2, opacity=0.7),
+    xy.theme(palette=BRAND),
+)
+~~~
+
+Series take the palette in order; an explicit `color=` on a mark still wins.
+A palette shorter than the number of series or categories repeats, and says so
+with a warning rather than quietly reusing a color.
+
+Palette entries follow the same rule as colormap stops: literal colors only —
+hex, `rgb()`, `hsl()`, or a named color. `var(--brand-500)` is fine on an
+individual `color=`, but not in a palette, because a palette is indexed and XY
+has to resolve each entry itself for density surfaces and for `to_svg()` /
+`to_png()`. Several `var()` entries would land on one fallback and merge
+distinct categories into a single color, so XY refuses them and says why.
+Resolve your token to a literal in Python and pass that. Named colors,
+`rgb()`, and `hsl()` are all fine — XY normalizes them to hex for you.
+
+~~~python demo exec toggle preview-code id=customize-palette-demo
+stages = ["Ingest", "Compact", "Query", "Replicate", "Snapshot", "Vacuum"]
+months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"]
+throughput = [
+    [42, 47, 45, 53, 58, 61, 66, 71],
+    [31, 34, 38, 36, 41, 45, 44, 49],
+    [58, 61, 66, 70, 68, 74, 79, 83],
+    [22, 25, 24, 29, 33, 31, 36, 39],
+    [15, 17, 21, 20, 24, 27, 26, 30],
+    [9, 11, 10, 14, 16, 15, 19, 22],
+]
+
+# --- chart ---
+import reflex_xy
+import xy
+
+palette_chart = xy.line_chart(
+    *[
+        xy.line(months, values, name=stage, width=2, curve="smooth")
+        for stage, values in zip(stages, throughput, strict=True)
+    ],
+    xy.theme(
+        palette=[
+            "#0ea5e9", "#d946ef", "#f59e0b", "#10b981", "#8b5cf6", "#f43f5e",
+        ],
+    ),
+    xy.x_axis(line=False, ticks=False),
+    xy.y_axis(show=False, grid=True, style={"grid_color": "#e2e8f0"}),
+    xy.legend(loc="upper left", ncols=3),
+    class_name="text-slate-600 dark:text-zinc-300",
+    width="100%",
+    height=320,
+    padding=(48, 20, 40, 44),
+)
+
+
+def customize_palette_preview():
+    return reflex_xy.chart(palette_chart, height="320px")
+~~~
 
 ~~~python demo exec toggle preview-code id=customize-colorbar-demo
 conversion = [

@@ -6,6 +6,51 @@ adheres to [Semantic Versioning](https://semver.org/) once `1.0.0` ships;
 pre-1.0, minor versions may contain breaking changes (see the stability table
 in the README).
 
+## [Unreleased]
+
+### Added
+- `colormap=` accepts a **custom ramp** built from your own colors, not only one
+  of the twenty built-in names: a sequence of 2–256 CSS colors, `(position,
+  color)` pairs, or a CSS `linear-gradient(...)`. Every form resolves once, in
+  Python, to evenly spaced 8-bit RGB stops — the shape the built-in tables
+  already use — so the WebGL client, the SVG writer, and the native rasterizer
+  build byte-identical LUTs, and the colorbar follows the ramp automatically.
+  Positioned stops resample at the LUT's own 256 texels, making the round trip
+  exact. Stops must be colors resolvable without a browser (hex, `rgb()`,
+  `hsl()`, named) and must be opaque; `var()`/`oklch()`/`color-mix()` and
+  translucent stops raise with that reason rather than painting one ramp on
+  screen and a different one in `to_png()`.
+- `xy.theme(palette=[...])` sets a chart's **categorical color cycle** — the
+  colors unnamed series take in order, and the colors a categorical `color=`
+  channel assigns to its categories. Previously the built-in eight-slot palette
+  was the only option for a categorical channel. Entries follow the same
+  literal-color rule as colormap stops — a palette is indexed and has to resolve
+  without a DOM for density surfaces and static export, where several `var()`
+  entries would collapse onto one color. Entries are normalized to hex on the
+  wire so every renderer decodes them without a cascade. Short palettes repeat
+  with a warning, as the built-in one already did.
+- `x_axis`/`y_axis` take `show`, `line`, `ticks`, `grid`, and `text` switches.
+  Hiding axis chrome no longer needs seven transparent-color and zero-width
+  style properties per axis: `xy.x_axis(show=False)` is the whole edit, and
+  `xy.y_axis(show=False, grid=True)` leaves only the grid. They compile to the
+  same validated style properties, so an explicit `style=` still wins and specs
+  that don't use them are byte-identical.
+
+### Fixed
+- The colorbar stringified its colormap, so a custom ramp reached it as an
+  unparseable name and silently painted viridis while the marks beside it
+  painted the ramp correctly.
+- The client's categorical LUT builders decoded palette entries as hex only and
+  would throw on any other CSS color; they now resolve through one helper.
+- The density mean-color plane, the SVG writer, and the native rasterizer each
+  resolved categorical palettes differently — one of them mapping every
+  unresolvable entry to a single shared fallback, merging distinct categories.
+  All three now share `channels.palette_rows_rgba8`, which substitutes per
+  index and warns.
+- `_svg._lut` indexed colormap stops through `uint8`, which was safe only while
+  every colormap had ≤ 11 stops; a 256-stop ramp sits exactly at that limit, so
+  the index is now `int32`.
+
 ## [0.0.3] - 2026-07-24
 
 ### Changed

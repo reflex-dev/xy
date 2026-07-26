@@ -23,7 +23,6 @@ from . import channels, columns, kernels, lod
 from ._ooc import is_memmapped
 from .config import (
     DECIMATION_THRESHOLD,
-    DEFAULT_PALETTE,
     DENSITY_TARGET_POINTS_PER_CELL,  # noqa: F401  (historic import path)
     DRILL_EXIT_FACTOR,
     DRILL_PAD_SPAN_CAP,
@@ -503,7 +502,7 @@ def trace_bin_colors(t: Trace) -> Optional[dict]:
     spike."""
     cached = t._bin_colors
     if cached is None:
-        resolved = channels.resolve_bin_colors(t.color_ch, None, DEFAULT_PALETTE)
+        resolved = channels.resolve_bin_colors(t.color_ch, None)
         if not (is_memmapped(t.x.values) or len(t.x) > PYRAMID_NO_RESCAN_ROWS):
             t._bin_colors = 0 if resolved is None else resolved
         return resolved
@@ -518,7 +517,7 @@ def _view_bin_colors(t: Trace, vis_rows: Optional[np.ndarray]) -> Optional[dict]
     dynamic predicate."""
     if vis_rows is None:
         return trace_bin_colors(t)
-    return channels.resolve_bin_colors(t.color_ch, vis_rows, DEFAULT_PALETTE)
+    return channels.resolve_bin_colors(t.color_ch, vis_rows)
 
 
 def bin_color_cache_bytes(fig: Any) -> int:
@@ -1166,7 +1165,7 @@ def _drill_points(
     }
     if t.stroke_ch is not None:
         trace_update["stroke"] = channels.ship_color_channel(
-            t.stroke_ch, sel, writer.add_f32, writer.add_u8, DEFAULT_PALETTE
+            t.stroke_ch, sel, writer.add_f32, writer.add_u8
         )
     if t.style_channels:
         trace_update["channels"] = channels.ship_style_channels(

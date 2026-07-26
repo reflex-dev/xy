@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 import xy
+from xy import channels as ch
 from xy import kernels as k
 from xy._figure import Figure  # harness type annotations only
 
@@ -328,6 +329,32 @@ def test_factorize_unicode1_categorical(benchmark):
     assert len(codes) == N and len(unique) == len(labels)
     np.testing.assert_array_equal(codes[:48], np.tile(np.arange(24, dtype=np.uint8), 2))
     assert int(counts.sum()) == N
+
+
+def test_factorize_many_categories_routing(benchmark):
+    """Categorical resolve above the compact-palette ceiling, routing included.
+
+    The two rows above call the kernels directly, so neither prices the choice
+    of path. Every other categorical workload in the suite carries 24
+    categories, which short-circuits on `_FACTORIZE_NATIVE_MAX_PROBE_CATEGORIES`
+    — leaving the regime this covers untested: enough categories to clear that
+    early-out while staying far from a unique-id column. Routing it back onto
+    per-row Python label boxing costs an O(N) object pass, which instruction
+    counting sees loudly.
+    """
+    labels = np.asarray([f"{i:08d}" for i in range(600)])
+    values = np.resize(labels, N)
+    # `np.resize` tiles with period 600 and the router samples on a fixed
+    # stride, so the probe's distinct count is an aliasing accident of N and
+    # the probe width. Pin it: if either constant drifts so the probe falls
+    # back inside the early-out, this row silently stops covering the regime
+    # its docstring claims.
+    probe = values[np.linspace(0, N - 1, ch._FACTORIZE_PROBE_ROWS, dtype=np.intp)]
+    assert len(np.unique(probe)) > ch._FACTORIZE_NATIVE_MAX_PROBE_CATEGORIES
+    assert ch._use_native_fixed_factorizer(values)
+    categories, codes, _ = benchmark(ch._factorize_categories, values)
+    assert len(categories) == len(labels) and len(codes) == N
+    np.testing.assert_array_equal(codes[:24], np.arange(24, dtype=codes.dtype))
 
 
 def test_m4_indices_full(benchmark, data):

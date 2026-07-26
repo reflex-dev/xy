@@ -16,6 +16,16 @@ from xy.config import DENSITY_SAMPLE_TARGET, MAX_SCREEN_DIM
 from xy.interaction import _decode_log_u8
 
 
+def _factorize_forcing(labels, use_native):
+    """Factorize down one specific path, whichever one the router would pick."""
+    original = ch._use_native_fixed_factorizer
+    ch._use_native_fixed_factorizer = lambda _a: use_native
+    try:
+        return ch._factorize_categories(labels)
+    finally:
+        ch._use_native_fixed_factorizer = original
+
+
 def _col(spec, blob, ref, dtype=None):
     m = spec["columns"][ref]
     if dtype is None:
@@ -127,17 +137,53 @@ def test_categorical_code_width_changes_without_wrapping_at_palette_boundary() -
     assert int(channel_257.codes.max()) == 256
 
 
-def test_high_cardinality_fixed_labels_avoid_redundant_native_hash(monkeypatch) -> None:
+def test_id_like_column_avoids_redundant_native_hash(monkeypatch) -> None:
+    # Every row distinct: Python has to materialize the whole label set anyway,
+    # so hashing the records first buys nothing.
     labels = np.asarray([f"category-{i:04d}" for i in range(600)])
 
     def unexpected_native(_values):
-        raise AssertionError("high-cardinality probe should retain the direct label path")
+        raise AssertionError("id-like probe should retain the direct label path")
 
     monkeypatch.setattr(ch.kernels, "factorize_fixed", unexpected_native)
     with pytest.warns(RuntimeWarning, match="categories"):
         channel = ch.resolve_color(labels, len(labels), default_constant="#000")
     assert channel.codes is not None and channel.codes.dtype == np.uint32
     assert len(channel.categories or []) == len(labels)
+
+
+def test_many_categories_over_many_rows_uses_native_factorizer() -> None:
+    # A few hundred categories spread over many rows is an ordinary categorical
+    # column, not an id column: it must keep the native path, which is where the
+    # O(N) Python label materialization is avoided. Routing on category *count*
+    # sent this to the object path and cost 383.6 MB / 889 ms at 5M rows versus
+    # 40.3 MB / 63 ms here.
+    rng = np.random.default_rng(0)
+    categories = np.asarray([f"{i:08d}" for i in range(600)])
+    labels = categories[rng.integers(0, len(categories), size=20_000)]
+
+    assert ch._use_native_fixed_factorizer(labels)
+
+    native_cats, native_codes, native_counts = ch._factorize_categories(labels)
+    object_cats, object_codes, object_counts = _factorize_forcing(labels, use_native=False)
+    assert native_cats == object_cats
+    np.testing.assert_array_equal(native_codes, object_codes)
+    # Counts ride along only from the compact (<= MAX_CATEGORIES) kernel; above
+    # that both paths report None and callers recount.
+    assert native_counts is None and object_counts is None
+
+
+def test_both_factorizer_paths_agree_across_the_width_threshold() -> None:
+    # The routing threshold is width-dependent, so pin that both sides of it
+    # factorize identically whichever path a column is routed down.
+    rng = np.random.default_rng(1)
+    for width in (8, 64):
+        categories = np.asarray([f"{i:0{width}d}"[-width:] for i in range(4_000)])
+        labels = categories[rng.integers(0, len(categories), size=12_000)]
+        native_cats, native_codes, _ = _factorize_forcing(labels, use_native=True)
+        object_cats, object_codes, _ = _factorize_forcing(labels, use_native=False)
+        assert native_cats == object_cats, f"width {width}"
+        np.testing.assert_array_equal(native_codes, object_codes)
 
 
 def test_numeric_object_color_with_missing_is_continuous():

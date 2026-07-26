@@ -198,6 +198,23 @@ def axes_dual_axis_demo():
     return reflex_xy.chart(dual_axis_chart, height="320px")
 ~~~
 
+## Show and Hide Axis Parts
+
+Each axis takes five switches: `show`, `line`, `ticks`, `grid`, and `text`
+(tick labels plus the axis title). `show` sets the other four; each of the four
+overrides `show`, so a grid with no other chrome is one call.
+
+~~~python
+xy.x_axis(show=False)                       # nothing drawn for this axis
+xy.y_axis(show=False, grid=True)            # horizontal guides only
+xy.x_axis(line=False, ticks=False)          # tick labels, no baseline or ticks
+~~~
+
+The switches compile to ordinary axis `style` properties, so they work in HTML,
+SVG, and native PNG alike, and an explicit `style=` property still wins over a
+switch. `text` controls whether axis text is *drawn*; `tick_labels=` supplies
+the label strings.
+
 ## Style Axes
 
 Axis `style=` uses a validated, cross-renderer vocabulary for grid, axis, tick,

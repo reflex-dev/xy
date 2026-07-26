@@ -18,6 +18,7 @@ browser-dependent in SVG and use the native PNG fallback.
 from __future__ import annotations
 
 import base64
+import hashlib
 import math
 import re
 from collections.abc import Callable, Sequence
@@ -25,13 +26,36 @@ from datetime import UTC, datetime
 from itertools import pairwise
 from os import PathLike
 from typing import Any, Optional
-from xml.sax.saxutils import escape
 
 import numpy as np
 
 from . import _fontmetrics, _native, _paint, _png
 from ._arrowgeom import arrow_shapes as _arrow_shapes
 from .config import DEFAULT_PALETTE
+
+
+def escape(data: str, entities: dict[str, str] | None = None) -> str:
+    """Escape ``&``, ``<`` and ``>`` in a string of data.
+
+    Byte-for-byte equivalent to :func:`xml.sax.saxutils.escape`, vendored so a
+    static export does not import it. That one function costs ~7.5 ms of cold
+    start: ``xml.sax.saxutils`` pulls in ``urllib.request``, which pulls in
+    ``http.client``, ``ssl``, ``socket`` and the whole ``email`` package — 35+
+    modules for three ``str.replace`` calls. Nothing else in xy needs them, and
+    a cold ``to_png`` at 10M points spent more time on that import than on
+    binning ten million points.
+
+    ``tests/test_svg_escape.py`` differentially fuzzes this against the stdlib
+    so it cannot drift.
+    """
+    # must do ampersand first
+    data = data.replace("&", "&amp;")
+    data = data.replace(">", "&gt;")
+    data = data.replace("<", "&lt;")
+    if entities:
+        for key, value in entities.items():
+            data = data.replace(key, value)
+    return data
 
 
 def _fill_opacity(style: dict[str, Any], default: float = 1.0) -> float:
@@ -631,19 +655,38 @@ class _Scale:
         return not (self.log or self.symlog)
 
 
-def _colormap_stops(colormap: str) -> list[tuple[int, int, int]]:
+def _colormap_key(colormap: Any) -> str:
+    """A stable, document-unique id fragment for a colormap — a built-in name,
+    or the digest of a custom ramp's stops (two colorbars in one document must
+    not share a `<linearGradient>` id unless they are the same ramp)."""
+    if isinstance(colormap, str):
+        return colormap
+    return "custom-" + hashlib.sha256(repr(_colormap_stops(colormap)).encode()).hexdigest()[:12]
+
+
+def _colormap_stops(colormap: Any) -> list[tuple[int, int, int]]:
+    """Evenly spaced RGB stops for a shipped colormap.
+
+    Mirrors `colormapStops` in js/src/10_colormaps.ts: a string names a
+    built-in table (`_r` reverses it), while a sequence is an already-resolved
+    custom ramp (`channels.resolve_colormap`) and is used verbatim."""
+    if not isinstance(colormap, str):
+        return [(int(r), int(g), int(b)) for r, g, b in colormap]
     reversed_map = colormap.endswith("_r")
     base = colormap[:-2] if reversed_map else colormap
     stops = COLORMAP_STOPS.get(base) or COLORMAP_STOPS["viridis"]
     return list(reversed(stops)) if reversed_map else stops
 
 
-def _lut(colormap: str, t: np.ndarray) -> np.ndarray:
+def _lut(colormap: Any, t: np.ndarray) -> np.ndarray:
     """Vectorized colormap sample: t in [0,1] -> (n,3) uint8, matching the
     client's 256-texel LUT interpolation."""
     stops = np.array(_colormap_stops(colormap), dtype=np.float64)
     pos = np.clip(t, 0.0, 1.0) * (len(stops) - 1)
-    lo = np.floor(pos).astype(np.uint8)
+    # int32, not uint8: a resampled custom ramp ships 256 stops, whose top
+    # index is exactly 255 -- one more stop would wrap to 0 and paint the
+    # ramp's dark end at its bright end.
+    lo = np.floor(pos).astype(np.int32)
     hi = np.minimum(lo + 1, len(stops) - 1)
     fraction = pos - lo
     out = np.empty((len(pos), 3), dtype=np.uint8)
@@ -1219,6 +1262,27 @@ def _has_outside_y_title(axis: dict[str, Any]) -> bool:
     return not position.replace("-", "_").startswith("inside_")
 
 
+def _axis_text_paint_visible(
+    axis: dict[str, Any],
+    key: str,
+    fallback_key: Optional[str] = None,
+) -> bool:
+    """Whether an axis text paint can contribute visible ink.
+
+    Axis visibility shorthands are compiled to transparent CSS colors. Layout
+    must not measure that invisible text back into an explicit zero padding,
+    or ``show=False`` cannot produce the documented edge-to-edge sparkline.
+    Unknown/browser-only paints stay conservative and reserve their room.
+    """
+    style = axis.get("style") or {}
+    paint = style.get(key)
+    if paint is None and fallback_key is not None:
+        paint = style.get(fallback_key)
+    if paint is None:
+        return True
+    return _paint_rgba8(_css(paint, _TEXT))[3] != 0
+
+
 def _y_title_baseline(
     axis: dict[str, Any],
     plot: dict[str, float],
@@ -1256,7 +1320,9 @@ def _y_tick_label_room(axis: dict[str, Any], plot_h: float) -> tuple[float, floa
     which is also Matplotlib's default face, so an advance measured here is the
     advance Matplotlib lays out.
     """
-    if _axis_tick_label_strategy(axis) in {"none", "off"}:
+    if _axis_tick_label_strategy(axis) in {"none", "off"} or not _axis_text_paint_visible(
+        axis, "tick_label_color", "tick_color"
+    ):
         return 0.0, 0.0
     font_size = _axis_tick_font_size(axis)
     ascent, descent = _text_cell(font_size)
@@ -1294,7 +1360,10 @@ def _y_axis_left_room(spec: dict[str, Any], plot_h: float) -> float:
         if not axis_id.startswith("y") or axis.get("side", "left") == "right":
             continue
         tick_offset, tick_room = _y_tick_label_room(axis, plot_h)
-        if not _has_outside_y_title(axis):
+        title_visible = _has_outside_y_title(axis) and _axis_text_paint_visible(axis, "label_color")
+        if not title_visible:
+            if tick_offset == 0.0 and tick_room == 0.0:
+                continue
             room = max(room, _AXIS_TEXT_EDGE_PAD + tick_offset + tick_room)
             continue
         label_size = float((axis.get("style") or {}).get("label_size", 12))
@@ -1447,9 +1516,17 @@ def _axis_tick_geometry_authored(axis: dict[str, Any]) -> bool:
     that author neither key therefore keep the historical placement, and only
     authored geometry — an explicit ``tick_length``/``tick_padding``, or
     pyplot's rc-supplied ``{x,y}tick.major.pad`` — opts into matplotlib's rule.
+    The visibility shorthand's exact ``tick_length=0, tick_width=0`` sentinel
+    only suppresses paint and therefore keeps the historical label placement.
     """
     style = axis.get("style") or {}
-    return "tick_padding" in style or "tick_length" in style
+    if "tick_padding" in style:
+        return True
+    if "tick_length" not in style:
+        return False
+    return not (
+        float(style.get("tick_length", 0)) == 0.0 and float(style.get("tick_width", 1)) == 0.0
+    )
 
 
 def _axis_tick_label_offset(axis: dict[str, Any], unstyled: float, font_room: float = 0.0) -> float:
@@ -1804,6 +1881,10 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
 
     # -- marks --------------------------------------------------------------
     marks: list[str] = []
+    # The chart's categorical cycle (`xy.theme(palette=...)`), else the
+    # built-in default. Traces normally carry a baked style color; this is the
+    # fallback for specs that do not.
+    spec_palette: Sequence[str] = spec.get("palette") or DEFAULT_PALETTE
     palette_cycle = 0
 
     def line_attrs(style: dict[str, Any], color: str) -> str:
@@ -1820,7 +1901,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         style = t.get("style") or {}
         kind = t["kind"]
         tier = t.get("tier")
-        color = _css(style.get("color"), DEFAULT_PALETTE[palette_cycle % len(DEFAULT_PALETTE)])
+        color = _css(style.get("color"), spec_palette[palette_cycle % len(spec_palette)])
         palette_cycle += 1
         trace_sx = x_scales.get(t.get("x_axis", "x"), sx)
         trace_sy = y_scales.get(t.get("y_axis", "y"), sy)
@@ -1944,11 +2025,11 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     main_legend = spec.get("legend") or {}
     main_items = main_legend.get("items") or named
     if spec.get("show_legend", True) and main_items:
-        chrome.append(_legend(main_items, plot, main_legend, clip_id, default_text))
+        chrome.append(_legend(main_items, plot, main_legend, clip_id, default_text, spec_palette))
     for extra in spec.get("extra_legends") or []:
         items = extra.get("items") or []
         if items:
-            chrome.append(_legend(items, plot, extra, clip_id, default_text))
+            chrome.append(_legend(items, plot, extra, clip_id, default_text, spec_palette))
     if spec.get("colorbar"):
         chrome.append(
             _colorbar(
@@ -2663,7 +2744,12 @@ def _trace_paint_rgba(
     elif mode == "categorical":
         codes = np.asarray(read(channel["buf"]), dtype=np.int64)[:n]
         palette = channel.get("palette") or DEFAULT_PALETTE
-        table = np.asarray([_paint_rgba8(value) for value in palette], dtype=np.float64) / 255.0
+        # Per-index resolution (channels.palette_rows_rgba8), not _paint_rgba8
+        # per entry: browser-only entries must degrade to DISTINCT built-in
+        # colors, or every var() category exports as the same fallback blue.
+        from . import channels as _channels
+
+        table = _channels.palette_rows_rgba8(palette, len(palette)).astype(np.float64) / 255.0
         rgba[:] = table[codes % len(table)]
     else:
         rgba[:] = (
@@ -3388,7 +3474,12 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
 
 
 def _legend(
-    named: list[dict], plot: dict, options: dict, clip_id: str, text_color: str = _TEXT
+    named: list[dict],
+    plot: dict,
+    options: dict,
+    clip_id: str,
+    text_color: str = _TEXT,
+    palette: Sequence[str] = DEFAULT_PALETTE,
 ) -> str:
     legend = _legend_layout(named, plot, options)
     if not legend["visible_count"]:
@@ -3435,7 +3526,7 @@ def _legend(
         style = t.get("style") or {}
         color = _css(
             style.get("color") or (t.get("color") or {}).get("color"),
-            DEFAULT_PALETTE[i % len(DEFAULT_PALETTE)],
+            palette[i % len(palette)],
         )
         col, row = i % ncols, i // ncols
         rx, ry = x + column_offsets[col], y + pad / 2 + title_h + row * line_h
@@ -3524,8 +3615,8 @@ def _legend_hatch_svg(x0: float, x1: float, y0: float, y1: float, hatch: str, co
 def _colorbar(
     options: dict, plot: dict, right_axis_room: float = 0.0, text_color: str = _TEXT
 ) -> str:
-    cmap = str(options.get("colormap", "viridis"))
-    gradient_id = f"xy-colorbar-{sum(map(ord, cmap))}"
+    cmap = options.get("colormap", "viridis")
+    gradient_id = f"xy-colorbar-{_colormap_key(cmap)}"
     stops = _colormap_stops(cmap)
     stop_nodes = "".join(
         f'<stop offset="{100 * index / max(1, len(stops) - 1):.2f}%" '
@@ -3671,7 +3762,7 @@ def _colorbar_body(
             f'height="{_num(height)}" fill="url(#{gradient_id})"/>'
         )
     n = int(levels)
-    cmap = str(options.get("colormap", "viridis"))
+    cmap = options.get("colormap", "viridis")
     positions = (np.arange(n, dtype=np.float64) + 0.5) / n
     colors = _lut(cmap, positions)
     rects = []

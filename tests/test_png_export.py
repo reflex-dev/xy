@@ -1103,9 +1103,16 @@ def test_raster_scopes_the_legend_clip_exemption_per_legend(monkeypatch) -> None
         events.append(("clip", (float(x), float(y), float(w), float(h))))
         return original_clip(self, x, y, w, h)
 
-    def record_legend(cmd, named, legend_plot, options, text_color=_raster._TEXT):
+    def record_legend(
+        cmd,
+        named,
+        legend_plot,
+        options,
+        text_color=_raster._TEXT,
+        palette=_raster.DEFAULT_PALETTE,
+    ):
         events.append(("legend", options.get("title")))
-        return original_legend(cmd, named, legend_plot, options, text_color)
+        return original_legend(cmd, named, legend_plot, options, text_color, palette)
 
     monkeypatch.setattr(_raster._Cmd, "clip", record_clip)
     monkeypatch.setattr(_raster, "_emit_legend", record_legend)

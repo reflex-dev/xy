@@ -50,11 +50,12 @@ by the string `K` on the wire (`trace.kind`).
   into the `ColumnStore` and appends a `Trace`. Reuse `_ingest_xy` for the
   equal-length (x,y) contract; a non-xy mark ingests its own columns.
 - **Channels** (optional): if the mark has per-mark color/size, reuse
-  `channels.ship_channels(trace, sel, ship_scalar, ship_u8, palette)` — the same
-  wire shape scatter and heatmap use, so continuous/categorical color and size
-  come from one path. Most kernels should call the `Figure._ship_channels(t, sel,
-  pw.ship_scalar, pw.ship_u8)` wrapper in `_payload.py`, which supplies
-  `DEFAULT_PALETTE`.
+  `channels.ship_channels(trace, sel, ship_scalar, ship_u8)` — the same wire
+  shape scatter and heatmap use, so continuous/categorical color and size come
+  from one path. Most kernels should call the `Figure._ship_channels(t, sel,
+  pw.ship_scalar, pw.ship_u8)` wrapper in `_payload.py`. A categorical channel
+  carries its own palette (`ColorChannel.palette`, resolved at build against the
+  figure's cycle), so no palette is threaded through the ship call.
 
 #### Shared-geometry marks: the hexbin centers-only contract
 
