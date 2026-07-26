@@ -44,8 +44,10 @@ DOCS_SECTIONS = (
             ("Overview", "/styling/"),
             ("Examples", "/styling/examples/"),
             ("Customize Each Part", "/styling/customize/"),
+            ("Chrome Slots", "/styling/chrome-slots/"),
             ("Animations", "/styling/animations/"),
             ("Themes and Export", "/styling/themes-and-tokens/"),
+            ("Capability Matrix", "/styling/capabilities/"),
             ("Advanced Styling Gallery", "/styling/gallery/"),
         ),
     ),
@@ -132,6 +134,7 @@ DOCS_SECTIONS = (
         "network",
         (
             ("XY Architecture", "/advanced/"),
+            ("Custom Marks", "/advanced/custom-marks/"),
             (
                 "Runtime and Deployment",
                 "/advanced/runtime-and-deployment/",
@@ -163,7 +166,6 @@ DOCS_REDIRECTS = {
     "/core-concepts/animations/": "/styling/animations/",
     "/styling/playground/": "/styling/examples/#palette-playground",
     "/styling/recipes/": "/styling/examples/#responsive-combo-chart",
-    "/styling/chrome-slots/": "/styling/customize/#legend",
     "/styling/mark-styles/": "/styling/customize/#fill,-stroke,-opacity,-and-gradients",
     "/styling/component-variations/": "/styling/customize/#annotations",
 }
@@ -209,7 +211,6 @@ DOCS_CONFIG = DocsSiteConfig(
     exclude=(
         "app/**",
         "assets/**",
-        "styling/chrome-slots.md",
         "styling/component-variations.md",
         "styling/mark-styles.md",
         "styling/playground.md",

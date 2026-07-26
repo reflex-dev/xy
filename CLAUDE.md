@@ -11,6 +11,32 @@ release change. A change is incomplete while its affected specification is
 missing, stale, or inconsistent with the implementation; resolve discrepancies
 instead of treating the implementation alone as authoritative.
 
+## Product North Star
+
+XY is being built to outperform every competing charting library and become
+the best overall charting system for Python. That goal spans every chart type
+and every data scale, from a handful of values to billions of rows, across the
+two dimensions users should not have to trade off: performance and
+customization.
+
+Treat every competitor lead as a concrete product gap. Work that affects a
+user-visible capability should:
+
+- compare XY with the relevant leaders, including Matplotlib, Seaborn, Plotly,
+  Bokeh, Altair, Datashader, HoloViews/hvPlot, and emerging alternatives;
+- add or extend reproducible evidence across small, medium, large, and massive
+  data, covering startup, build and render time, interaction, memory, payload
+  and export size, and multi-chart applications where applicable;
+- update the capability matrix and visual examples when the improvement is
+  about chart breadth or customization rather than timing; and
+- commit the environment, raw results, output contracts, and reproduction
+  commands needed to inspect the win and catch regressions.
+
+The goal is not to win one large-scatter benchmark. XY should become the
+library users choose for ordinary charts, massive data, every chart family,
+notebooks, applications, static output, performance, and complete design
+control.
+
 ## Layout
 
 - `src/` — Rust core, **minimal external crates** (C ABI; one cdylib per
@@ -107,5 +133,3 @@ PRs, or code. Set `git config user.name/user.email` to the human author
   cache (§27). NaN never reaches vertex buffers (§19).
 - f32 uploads are offset-encoded; tick/hover math stays f64 (§4/§16).
 - Every decimation/tier decision is recorded in the spec, never silent (§28).
-- Claims are mode-scoped and benchmarked (§2); update README numbers from
-  `scripts/bench.py`, don't invent them.

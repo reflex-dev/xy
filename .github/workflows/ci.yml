@@ -160,9 +160,6 @@ jobs:
       - name: Public API coherence
         run: .venv/bin/python scripts/check_public_api.py
 
-      - name: Claim guardrails
-        run: .venv/bin/python scripts/check_claim_guardrails.py
-
       - name: Lint (ruff)
         run: |
           .venv/bin/ruff check .

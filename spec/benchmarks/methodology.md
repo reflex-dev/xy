@@ -10,10 +10,10 @@ are published.
 
 ## 0. The three rules
 
-1. **Mode-scoped claims only** (§2 of the dossier, already policy): "10M
-   density in X ms" is a different claim from "10M individually-styled
-   markers." Output labels every row `direct | decimated | density | sampled`
-   — a reader can never mistake an aggregate result for a raw-marker result.
+1. **Record the rendering mode.** "10M density in X ms" and "10M
+   individually-styled markers in X ms" are different workloads. Output labels
+   every row `direct | decimated | density | sampled`, preserving the result
+   needed to compare and improve each path.
 2. **Same-work comparisons.** Each competitor renders the *same visual
    contract*, not the same API call: if XY aggregates at 10M, the
    fair Plotly comparison is Plotly failing/succeeding at raw markers AND

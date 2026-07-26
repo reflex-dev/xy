@@ -5,18 +5,18 @@ description: Inspect XY's recorded launch benchmark with its exact output contra
 
 # Benchmarks
 
-XY's large-data claim is about the representation sent to a fixed-size output,
-not about drawing every source row as an individual marker. The committed 0.1.0
-launch baseline measures identical seeded scatter data at 900×420 pixels on an
-Apple M5 Pro with 64 GiB RAM. Each successful cell below is the mean of three
-isolated cold runs. The machine name and memory are copied verbatim from the
-committed environment record.
+XY's large-data architecture reduces source rows to the representation useful
+for a fixed-size output instead of drawing every row as an individual marker.
+The committed 0.1.0 launch baseline measures identical seeded scatter data at
+900×420 pixels on an Apple M5 Pro with 64 GiB RAM. Each successful cell below
+is the mean of three isolated cold runs. The machine name and memory are copied
+verbatim from the committed environment record.
 
 > **How to read this comparison.** XY switches dense scatter output to a
 > screen-bounded density representation, while the default Plotly and
 > Matplotlib paths retain every marker. These results compare each library's
-> default user-visible outcome at the same output size; they do not claim that
-> the libraries send identical geometry to the renderer.
+> default user-visible outcome at the same output size; the libraries send
+> different geometry to the renderer.
 
 ## Snapshot at 10 million points
 
@@ -121,8 +121,9 @@ frozen:
 - **Release and hardware tracking:** immutable release directories plus
   clearly separated macOS hardware-WebGL and CI SwiftShader results.
 
-Until those artifacts are published, this page intentionally keeps its
-headline claims scoped to the committed launch scatter.
+The launch scatter is the first committed proof point. The competitive
+benchmark program expands it across these workloads, chart families,
+competitors, and environments.
 
 ## Inspect and reproduce the evidence
 
@@ -148,9 +149,7 @@ uv run --project "$BASELINE" --frozen python benchmarks/bench_launch_scatter.py 
   --chrome "$CHROME" --out launch-scatter-default.json
 ```
 
-One machine and three runs describe that recorded environment, not every
-machine or workload. New comparisons should retain chart type, data size,
-representation, backend, output target, and browser-TTFR status rather than
-shortening these results to a universal “faster than” claim. For the rendering
-model behind the numbers, read
+Each new comparison records its chart type, data size, representation, backend,
+output target, and browser-TTFR status so the result can be reproduced and
+improved. For the rendering model behind the numbers, read
 [Large data and performance](/docs/xy/core-concepts/large-data-and-performance/).
