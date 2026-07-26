@@ -3999,7 +3999,20 @@ def _encode_transition_keys(value: Any, expected: int, label: str) -> np.ndarray
         raise ValueError(f"{label} must have length {expected}, got {len(arr)}")
     result = np.empty((expected, 2), dtype=np.uint32, order="F")
     for index, raw in enumerate(arr):
-        token = _transition_key_token(raw, index)
+        try:
+            token = _transition_key_token(raw, index)
+        except ValueError:
+            # Deferring the uniqueness test to after the walk also defers every
+            # duplicate behind every *later* bad row, which reorders the errors:
+            # `["a", "a", None]` reported the row-0/1 duplicate before this and
+            # must keep doing so. The rows already walked tokenized cleanly, so
+            # their digests are complete and a conflict among them belongs to an
+            # earlier row than this one. Error path only, and the prefix is
+            # re-walked below, so the message and the rows it names are the
+            # per-row bookkeeping's.
+            if np.unique(result[:index].reshape(-1).view(np.uint64)).size != index:
+                _raise_transition_key_conflict(arr[:index], label)
+            raise
         digest = hashlib.blake2s(token, digest_size=8, person=b"xykeyv1").digest()
         result[index, 0] = int.from_bytes(digest[:4], "little")
         result[index, 1] = int.from_bytes(digest[4:], "little")

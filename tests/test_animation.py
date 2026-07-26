@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import re
 
 import numpy as np
 import pytest
@@ -824,6 +825,39 @@ def test_transition_key_type_errors_still_report_their_row() -> None:
         _encode_transition_keys([1.0, 2.0, float("nan")], 3, "keys")
     with pytest.raises(ValueError, match="row 1 has list"):
         _encode_transition_keys(["a", [], "c"], 3, "keys")
+
+
+@pytest.mark.parametrize(
+    ("keys", "rows"),
+    [
+        pytest.param(["a", "a", None], (0, 1), id="missing"),
+        pytest.param([1.0, 1.0, float("nan")], (0, 1), id="non-finite"),
+        pytest.param(["a", "a", {}], (0, 1), id="wrong-type"),
+        pytest.param(["a", "b", "a", None], (0, 2), id="later-duplicate"),
+    ],
+)
+def test_a_duplicate_outranks_a_later_invalid_row(keys: list, rows: tuple[int, int]) -> None:
+    """First bad row wins, whichever kind of bad it is.
+
+    The uniqueness test runs after the walk, so a duplicate would otherwise be
+    reported only once every later row had tokenized — and any invalid row
+    behind it would mask the duplicate entirely. Both inputs are wrong twice
+    over; which error surfaces is the contract.
+    """
+    from xy.components import _encode_transition_keys
+
+    expected = f"keys contains duplicate value at rows {rows[0]} and {rows[1]}"
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        _encode_transition_keys(keys, len(keys), "keys")
+
+
+def test_an_invalid_row_before_a_duplicate_still_wins() -> None:
+    """The converse: nothing about the prefix re-check promotes a later
+    duplicate over an earlier bad row."""
+    from xy.components import _encode_transition_keys
+
+    with pytest.raises(ValueError, match="animation key is missing at row 0"):
+        _encode_transition_keys([None, "a", "a"], 3, "keys")
 
 
 def test_transition_keys_length_and_shape_are_validated() -> None:
