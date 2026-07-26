@@ -30,6 +30,10 @@ The public surface: what callers can build, style, export, and interact with.
   fails if it is stale.
 - [`chart-roadmap.md`](api/chart-roadmap.md) — the single 2D-first chart-type
   coverage backlog, prioritized by popularity and primitive reuse.
+- [`customization-vs-alternatives.md`](api/customization-vs-alternatives.md) —
+  the committed comparison of customization and extensibility against Plotly,
+  Vega-Lite, Bokeh, and Matplotlib, with its method, its pinned versions, and
+  the rows XY loses. Pinned by `tests/test_customization_comparison.py`.
 - [`export.md`](api/export.md) — how a figure becomes bytes: one entry point
   across five image formats, deterministic engine choice, browser-free default.
 - [`interaction.md`](api/interaction.md) — the authority on which browser

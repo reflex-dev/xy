@@ -9,6 +9,13 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- A **committed customization comparison** against Plotly, Vega-Lite, Bokeh, and
+  Matplotlib (`spec/api/customization-vs-alternatives.md`), with the same
+  discipline as the benchmark harness: pinned competitor versions, a named
+  method per row (`schema`, `code`, or `docs`), a claim taxonomy, and a loss
+  table that `tests/test_customization_comparison.py` refuses to let anyone
+  empty. XY's own numbers in it are checked against the capability registry
+  rather than typed in.
 - **A capability registry** at `python/xy/styling/capabilities.py`: one entry per
   mark style property and per chrome slot, each carrying its support level in
   the WebGL client, the SVG writer, and the native rasterizer, plus the
