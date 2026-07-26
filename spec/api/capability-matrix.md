@@ -14,7 +14,7 @@ which is sometimes deliberate, and the notes say which.
 ## In one line
 
 - **10** mark style properties across **20** mark kinds, drawn by all three renderers.
-- **23** stable chrome slots, CSS- and Tailwind-addressable in the browser; **2** of them reach the native writers, through a channel other than per-slot styles.
+- **29** stable chrome slots, CSS- and Tailwind-addressable in the browser; **2** of them reach the native writers, through a channel other than per-slot styles.
 - **1** shipped extension point.
 - **1** known default divergence between renderers, listed below rather than left to be discovered.
 
@@ -65,13 +65,19 @@ contracted in [export.md](export.md) §9 and pinned by
 | `canvas` | full | none | none |
 | `labels` | full | none | none |
 | `legend` | full | partial | partial |
+| `legend_title` | full | none | none |
 | `legend_item` | full | none | none |
 | `legend_swatch` | full | none | none |
+| `legend_label` | full | none | none |
 | `colorbar` | full | none | none |
 | `colorbar_bar` | full | none | none |
 | `colorbar_tick` | full | none | none |
 | `colorbar_title` | full | none | none |
 | `tooltip` | full | none | none |
+| `tooltip_title` | full | none | none |
+| `tooltip_row` | full | none | none |
+| `tooltip_label` | full | none | none |
+| `tooltip_value` | full | none | none |
 | `modebar` | full | none | none |
 | `modebar_button` | full | none | none |
 | `selection` | full | none | none |

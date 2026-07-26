@@ -12,7 +12,7 @@ and *does the change survive where I need it*. This page answers both from the
 registry the implementation is checked against.
 
 - **10** mark style properties across **20** mark kinds, drawn by all three renderers.
-- **23** stable chrome slots for CSS and Tailwind in the browser.
+- **29** stable chrome slots for CSS and Tailwind in the browser.
 - **1** way to add a mark kind XY does not ship, without forking it.
 
 ## Mark style properties
@@ -60,13 +60,19 @@ token bag or in mark and axis `style=`, which every renderer reads.
 | `canvas` | full | none | none |
 | `labels` | full | none | none |
 | `legend` | full | partial | partial |
+| `legend_title` | full | none | none |
 | `legend_item` | full | none | none |
 | `legend_swatch` | full | none | none |
+| `legend_label` | full | none | none |
 | `colorbar` | full | none | none |
 | `colorbar_bar` | full | none | none |
 | `colorbar_tick` | full | none | none |
 | `colorbar_title` | full | none | none |
 | `tooltip` | full | none | none |
+| `tooltip_title` | full | none | none |
+| `tooltip_row` | full | none | none |
+| `tooltip_label` | full | none | none |
+| `tooltip_value` | full | none | none |
 | `modebar` | full | none | none |
 | `modebar_button` | full | none | none |
 | `selection` | full | none | none |
