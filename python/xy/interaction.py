@@ -299,11 +299,16 @@ def select_range(
         elif len(candidate_chunks) == 0:
             out[t.id] = np.empty(0, dtype=np.uint32)
         else:
+            # Scan the candidates in place. Gathering `x[candidates]` and
+            # `y[candidates]` first cost two fresh f64 columns — 16 bytes per
+            # candidate — so a partial selection could cost several times a
+            # whole-domain one: half of a 10M-row trace peaked at 134.6 MB
+            # where selecting every row peaked at 38.1 MB. The kernel returns
+            # canonical row ids directly, so the re-index is gone too.
             candidates = _expand_zone_chunks(t.x, candidate_chunks)
-            out[t.id] = kernels.range_indices(
-                t.x.values[candidates], t.y.values[candidates], lo_x, hi_x, lo_y, hi_y
+            out[t.id] = kernels.range_indices_rows(
+                t.x.values, t.y.values, candidates, lo_x, hi_x, lo_y, hi_y
             )
-            out[t.id] = candidates[out[t.id]]
         out[t.id] = _drop_hidden_rows(t, out[t.id])
     return out
 

@@ -5062,6 +5062,86 @@ fn range_indices_impl(
     write
 }
 
+/// Which of `rows` land inside the rectangular window (§34 selection), the
+/// row-restricted twin of [`range_indices`]. Writes the surviving canonical row
+/// ids to `out` (capacity `rows.len()`, order preserved) and returns how many.
+///
+/// The predicate is the same inclusive comparison chain `range_scan_scalar`
+/// uses, so a subset scan agrees with a full scan row for row — including on
+/// NaN, which fails every comparison and is therefore never selected.
+///
+/// This exists because the zone-map-pruned selection path already knows its
+/// candidate rows before it scans. Without it, that path had to gather
+/// `x[rows]` and `y[rows]` into two fresh f64 columns just to call
+/// `range_indices` — 16 bytes per candidate, which is why selecting *half* a
+/// 10M-row trace cost 134.6 MB where selecting *all* of it cost 38.1 MB.
+#[allow(clippy::too_many_arguments)]
+pub fn range_indices_rows(
+    x: &[f64],
+    y: &[f64],
+    rows: &[u32],
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    out: &mut [u32],
+) -> usize {
+    assert_eq!(x.len(), y.len());
+    assert!(out.len() >= rows.len());
+    let n = rows.len();
+    let threads = par_threads(n);
+    if threads <= 1 || n < threads {
+        return range_scan_rows(x, y, rows, lo_x, hi_x, lo_y, hi_y, out);
+    }
+    let chunk = n.div_ceil(threads);
+    let counts: Vec<usize> = std::thread::scope(|s| {
+        let handles: Vec<_> = rows
+            .chunks(chunk)
+            .zip(out[..n].chunks_mut(chunk))
+            .map(|(rseg, oseg)| {
+                s.spawn(move || range_scan_rows(x, y, rseg, lo_x, hi_x, lo_y, hi_y, oseg))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|hd| hd.join().expect("range_indices_rows worker panicked"))
+            .collect()
+    });
+    // Same gather-down as `range_indices_impl`: each worker packed its hits at
+    // the front of its own out-segment, so slide the later segments back.
+    let mut write = counts[0];
+    for (t, &c) in counts.iter().enumerate().skip(1) {
+        let start = t * chunk;
+        out.copy_within(start..start + c, write);
+        write += c;
+    }
+    write
+}
+
+#[allow(clippy::too_many_arguments)]
+fn range_scan_rows(
+    x: &[f64],
+    y: &[f64],
+    rows: &[u32],
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    out: &mut [u32],
+) -> usize {
+    let mut n = 0usize;
+    for &row in rows {
+        let i = row as usize;
+        let xv = x[i];
+        let yv = y[i];
+        if xv >= lo_x && xv <= hi_x && yv >= lo_y && yv <= hi_y {
+            out[n] = row;
+            n += 1;
+        }
+    }
+    n
+}
+
 /// Per-point log-normalized local density for a subset. This fuses the
 /// grid-bin + point-lookup pass used during drill handoff, avoiding Python-side
 /// integer temp arrays.

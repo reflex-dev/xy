@@ -558,6 +558,19 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_void_p,
     ]
+    lib.xy_range_indices_rows.restype = ctypes.c_size_t
+    lib.xy_range_indices_rows.argtypes = [
+        ctypes.c_void_p,  # x
+        ctypes.c_void_p,  # y
+        ctypes.c_size_t,  # len
+        ctypes.c_void_p,  # candidate row ids
+        ctypes.c_size_t,  # candidate count
+        ctypes.c_double,  # lo_x
+        ctypes.c_double,  # hi_x
+        ctypes.c_double,  # lo_y
+        ctypes.c_double,  # hi_y
+        ctypes.c_void_p,  # output row IDs
+    ]
     lib.xy_polygon_select.restype = ctypes.c_size_t
     lib.xy_polygon_select.argtypes = [
         ctypes.c_void_p,  # x
@@ -2620,6 +2633,51 @@ def range_indices(
     )
     if written == _USIZE_MAX:
         raise ValueError("invalid range_indices arguments")
+    return out if written == len(out) else out[:written].copy()
+
+
+def range_indices_rows(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    rows: npt.NDArray[np.uint32],
+    lo_x: float,
+    hi_x: float,
+    lo_y: float,
+    hi_y: float,
+) -> npt.NDArray[np.uint32]:
+    """Those of `rows` whose canonical point is in the inclusive window.
+
+    The row-restricted form of `range_indices`, shaped like `polygon_select`.
+    A caller that already knows its candidate rows (zone-map pruning, a drill
+    window) reads them in place instead of gathering `x[rows]`/`y[rows]` into
+    two fresh f64 columns first.
+    """
+    lo_x, hi_x = _finite_ordered(lo_x, hi_x, "x range")
+    lo_y, hi_y = _finite_ordered(lo_y, hi_y, "y range")
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    rows = np.ascontiguousarray(rows, dtype=np.uint32)
+    if rows.ndim != 1:
+        raise ValueError("rows must be 1-D")
+    out = np.empty(len(rows), dtype=np.uint32)
+    if len(rows) == 0:
+        return out
+    written = _lib.xy_range_indices_rows(
+        _ptr_f64(x),
+        _ptr_f64(y),
+        len(x),
+        rows.ctypes.data,
+        len(rows),
+        lo_x,
+        hi_x,
+        lo_y,
+        hi_y,
+        out.ctypes.data,
+    )
+    if written == _USIZE_MAX:
+        raise ValueError("invalid range_indices_rows arguments")
     return out if written == len(out) else out[:written].copy()
 
 
