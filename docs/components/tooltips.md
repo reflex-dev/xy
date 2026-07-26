@@ -9,8 +9,9 @@ components:
 
 XY shows a built-in hover tooltip by default. With no tooltip component it
 reports the available x/y values and encoded color or size values. Add
-`tooltip()` to choose fields, format values, supply a title template, hide the
-tooltip, or register framework-rendered content.
+`tooltip()` to choose fields, give source columns readable labels, format
+values, supply a title template, hide the tooltip, or register
+framework-rendered content.
 
 ## Default Hover Tooltip
 
@@ -65,6 +66,7 @@ tooltip_fields_chart = xy.scatter_chart(
         fields=["revenue", "growth"],
         title="Month {month}",
         format={"revenue": ",.0f", "growth": ".1%"},
+        labels={"revenue": "Revenue", "growth": "Growth"},
     ),
 )
 
@@ -74,9 +76,13 @@ def tooltip_fields_demo():
 ~~~
 
 Braced field names in `title` are replaced from the hovered row. `format` maps
-field names to the client's numeric format strings. A source column that is not
-bound to a rendered channel is not shipped merely because its name appears in
-`fields`.
+source field names to the client's numeric format strings, while `labels` maps
+those same source names to presentation text. Labels never change title
+placeholder lookup or the event payload. When `fields` is omitted, `labels`
+renames the matching default x/y/color/size rows; direct array channels can use
+the channel names `"x"`, `"y"`, `"color"`, and `"size"`. A source column that
+is not bound to a rendered channel is not shipped merely because its name
+appears in `fields`.
 
 ### Title Templates Across Multiple Series
 
@@ -136,16 +142,44 @@ receives that exact row rather than tooltip text.
 ## Hide, Style, or Replace
 
 Use `show=False` to disable built-in tooltips. `class_name` and `style` target
-the tooltip container; chart-level slot styling can target `tooltip` as well.
-The last tooltip component supplies the effective configuration.
+the tooltip container. Chart-level `class_names` and `styles` can target the
+container plus `tooltip_title`, `tooltip_row`, `tooltip_label`, and
+`tooltip_value`, so field labels and values can be aligned or styled
+independently:
 
-Like legends, a positional child or `render=` object is kept opaque for an
-adapter and can be retrieved through `chart.chrome_components()`. It is not
-embedded into standalone HTML, and the shipped `reflex_xy.chart` adapter does
-not mount it. With that adapter, disable the built-in tooltip, handle
-`on_point_hover` in Reflex state, and render the framework-owned tooltip beside
-or over the chart. See [Customize Each Part](/docs/xy/styling/customize/#tooltip)
-for the complete integration boundary.
+~~~python
+chart = xy.scatter_chart(
+    xy.scatter(x="month", y="revenue", data=tooltip_fields_data),
+    xy.tooltip(
+        fields=["revenue"],
+        labels={"revenue": "Revenue"},
+        format={"revenue": "$,.0f"},
+    ),
+    styles={
+        "tooltip_row": {
+            "display": "grid",
+            "grid_template_columns": "7rem 1fr",
+            "gap": 8,
+        },
+        "tooltip_label": {"color": "#94a3b8"},
+        "tooltip_value": {"font_weight": 700, "text_align": "right"},
+    },
+)
+~~~
+
+All label and value strings are inserted as text, never parsed as HTML. The
+last tooltip component supplies the effective configuration.
+
+A positional child or `render=` object is kept opaque to the core renderer and
+can be retrieved through `chart.chrome_components()`. It is not embedded into
+standalone HTML. For a Chart source, the shipped `reflex_xy.chart` adapter
+mounts `xy.tooltip(render=...)` automatically in the renderer-owned tooltip
+slot; for a live figure token, pass the Reflex component through
+`reflex_xy.chart(..., tooltip=...)`. The adapter suppresses the built-in
+tooltip while the component is mounted and supplies hover data through the
+normal event path. See
+[Customize Each Part](/docs/xy/styling/customize/#tooltip) for the complete
+integration boundary.
 
 See [Events and callbacks](/docs/xy/api-reference/events-and-callbacks/) for
 hover payloads and [Marks and components reference](/docs/xy/api-reference/marks-and-components/)
@@ -163,7 +197,7 @@ or a title template.
 ### How do I customize which fields a tooltip shows and how numbers are formatted?
 
 Pass `fields=` and `format=` to `xy.tooltip()`, e.g.
-`xy.tooltip(fields=["revenue", "growth"], format={"revenue": ",.0f", "growth": ".1%"})`.
+`xy.tooltip(fields=["revenue", "growth"], labels={"revenue": "Revenue", "growth": "Growth"}, format={"revenue": ",.0f", "growth": ".1%"})`.
 Only source columns bound to a rendered channel (x, y, color, size, or
 heatmap value) can be used as tooltip fields.
 

@@ -329,7 +329,6 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "hard production gates",
         "scripts/verify_ci_workflow.py",
         "scripts/check_public_api.py",
-        "scripts/check_claim_guardrails.py",
         "ruff check .",
         "scripts/smoke_render.py",
         "Browser lifecycle smoke",

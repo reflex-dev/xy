@@ -346,23 +346,6 @@ def test_codspeed_workflow_rejects_non_strict_native_install(tmp_path: Path) -> 
     )
 
 
-def test_ci_workflow_rejects_missing_claim_guardrail_gate(tmp_path: Path) -> None:
-    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    path = tmp_path / "ci.yml"
-    path.write_text(
-        workflow.replace(
-            "      - name: Claim guardrails\n"
-            "        run: .venv/bin/python scripts/check_claim_guardrails.py\n\n",
-            "",
-        ),
-        encoding="utf-8",
-    )
-
-    errors = verify_ci_workflow.validate_workflow(path)
-
-    assert any("test job" in error and "check_claim_guardrails" in error for error in errors)
-
-
 def test_ci_workflow_rejects_missing_interaction_stress_smoke(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"

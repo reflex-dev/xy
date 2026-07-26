@@ -46,6 +46,23 @@ _AXIS_COMPAT_PROPERTIES = frozenset({"grid_dash", "grid_opacity"})
 _AXIS_DASH_STYLES = frozenset({"solid", "dashed", "dotted", "dashdot"})
 _AXIS_DIRECTIONS = frozenset({"in", "out", "inout"})
 
+# Polyline stroke geometry. All three mark renderers (WebGL, SVG, native
+# rasterizer) draw these caps identically; XY defaults to `round` rather than
+# the CSS initial value `butt` because the native rasterizer is the reference
+# for static export and has always drawn round. Set the property to opt into
+# the CSS initial value.
+#
+# `stroke-linejoin` is deliberately absent. SVG and the native rasterizer both
+# implement all three joins, but the WebGL client draws polylines as one
+# instanced quad per segment with no join geometry at all, so a `miter` there
+# would render as the overlap the segments already produce. Accepting a
+# declaration one renderer silently ignores is exactly what this module exists
+# to prevent, so the property waits for the client. The gap — including the
+# joins the three renderers already disagree on by default — is a row in
+# `xy.styling.capabilities`.
+LINE_CAPS = frozenset({"butt", "round", "square"})
+DEFAULT_LINE_CAP = "round"
+
 _MARK_KINDS = tuple(
     sorted(
         _LINE_KINDS
@@ -170,6 +187,12 @@ def _dasharray(value: StyleValue, label: str) -> list[float] | None:
     return lengths
 
 
+def _keyword(value: StyleValue, allowed: frozenset[str], label: str) -> str:
+    if not isinstance(value, str) or value not in allowed:
+        raise ValueError(f"{label} must be one of {sorted(allowed)}")
+    return value
+
+
 def _paint(value: StyleValue, label: str) -> str:
     return _validate.css_color(value, label)
 
@@ -195,7 +218,13 @@ def _supported_mark_style_properties(kind: str) -> tuple[str, ...]:
         raise ValueError(f"unknown mark kind {kind!r}; expected one of {_MARK_KINDS}")
     props = {"opacity"}
     if kind in _LINE_KINDS:
-        props |= {"stroke", "stroke-width", "stroke-opacity", "stroke-dasharray"}
+        props |= {
+            "stroke",
+            "stroke-width",
+            "stroke-opacity",
+            "stroke-dasharray",
+            "stroke-linecap",
+        }
     elif kind in _SIMPLE_STROKE_KINDS:
         props |= {"stroke", "stroke-width", "stroke-opacity"}
     elif kind in _AREA_KINDS:
@@ -216,6 +245,7 @@ def _supported_mark_style_properties(kind: str) -> tuple[str, ...]:
             "stroke",
             "stroke-width",
             "stroke-opacity",
+            "marker-shape",
         }
     elif kind in _RECT_KINDS:
         props |= {
@@ -302,6 +332,10 @@ def _compile_mark_style(kind: str, value: StyleMapping | None, label: str) -> di
             _set(out, target, _px(raw, f"{label}['stroke-width']"), prop, seen)
         elif prop == "stroke-dasharray":
             _set(out, "dash", _dasharray(raw, f"{label}['stroke-dasharray']"), prop, seen)
+        elif prop == "stroke-linecap":
+            _set(out, "linecap", _keyword(raw, LINE_CAPS, f"{label}['stroke-linecap']"), prop, seen)
+        elif prop == "marker-shape":
+            _set(out, "symbol", _validate.point_symbol(raw, f"{label}['marker-shape']"), prop, seen)
         elif prop == "border-radius":
             _set(out, "corner_radius", _px(raw, f"{label}['border-radius']"), prop, seen)
     return out
@@ -371,6 +405,8 @@ def _opacity_channels(compiled: Mapping[str, Any]) -> dict[str, float]:
 
 
 __all__ = [
+    "DEFAULT_LINE_CAP",
+    "LINE_CAPS",
     "StyleMapping",
     "StyleValue",
     "compile_axis_style",

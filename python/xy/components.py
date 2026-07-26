@@ -43,7 +43,7 @@ from typing import Any, Literal, Optional, TypeAlias, Union
 
 import numpy as np
 
-from . import _validate, channels, columns, export, styles
+from . import _validate, channels, columns, export, plugins, styles
 from ._figure import Figure, Selection
 from ._typing import ArrayLike, ColorLike, Scalar, TableLike
 from .dom import CHART_DOM_SLOTS, validate_dom_slots
@@ -113,6 +113,7 @@ __all__ = [
     "legend",
     "line",
     "line_chart",
+    "mark",
     "marker",
     "modebar",
     "scatter",
@@ -257,6 +258,9 @@ class Tooltip(Component):
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
     render: Any = None
+    # New fields append after ``render``: Tooltip is public and positional
+    # construction over the released field order must keep binding.
+    labels: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -2523,6 +2527,7 @@ def tooltip(
     fields: Optional[list[str]] = None,
     title: Optional[str] = None,
     format: Optional[dict[str, str]] = None,
+    labels: Optional[dict[str, str]] = None,
     class_name: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Tooltip:
@@ -2535,6 +2540,9 @@ def tooltip(
         fields: Data fields shown in each tooltip.
         title: Optional tooltip title.
         format: Per-field value formats.
+        labels: Display labels keyed by source field. Without ``fields``, they
+            rename the matching default x/y/color/size rows. Formatting and
+            title placeholders continue to use the source field names.
         class_name: DOM class name applied to the tooltip.
         style: Tooltip style overrides.
     """
@@ -2544,6 +2552,7 @@ def tooltip(
         fields=_string_list(fields, "tooltip fields"),
         title=_optional_string(title, "tooltip title"),
         format=_string_dict(format, "tooltip format"),
+        labels=_string_dict(labels, "tooltip labels"),
         class_name=_optional_string(class_name, "tooltip class_name"),
         style=_style_dict(style, "tooltip style"),
         render=render,
@@ -3250,7 +3259,7 @@ class Chart(Component):
         colorbar_candidates: list[dict[str, Any]] = []
         for m in marks:
             data = m.data if m.data is not None else self.data
-            applier = _MARK_APPLIERS.get(m.kind)
+            applier = _MARK_APPLIERS.get(m.kind) or _plugin_applier(m.kind)
             if applier is None:
                 raise TypeError(f"no applier registered for mark kind {m.kind!r}")
             x_axis_id, y_axis_id = _mark_axis_ids(m, axes)
@@ -3347,6 +3356,20 @@ class Chart(Component):
             fig.export_options = export_options or None
         if tooltips:
             node = tooltips[-1]
+            # ``Tooltip`` is public as a dataclass as well as the return type
+            # of ``tooltip()``. Re-run the shared validators so direct
+            # construction or later mutation cannot put malformed fields,
+            # labels, styles, or booleans on the wire.
+            node = tooltip(
+                show=node.show,
+                render=node.render,
+                fields=node.fields,
+                title=node.title,
+                format=node.format,
+                labels=node.labels,
+                class_name=node.class_name,
+                style=node.style,
+            )
             _apply_chrome_node(fig, "tooltip", node.class_name, node.style)
             fig.show_tooltip = node.show
             fig.tooltip = _tooltip_spec(node, tooltip_aliases, tooltip_sources)
@@ -4191,6 +4214,8 @@ def _tooltip_spec(
         spec["title"] = node.title
     if node.format:
         spec["format"] = dict(node.format)
+    if node.labels:
+        spec["labels"] = dict(node.labels)
     if aliases:
         spec["aliases"] = dict(aliases)
     if sources:
@@ -5205,6 +5230,96 @@ _MARK_APPLIERS: dict[str, Callable[[Figure, Mark, Any], None]] = {
 }
 
 
+def _plugin_column(values: Any) -> Any:
+    """A plugin's declared column, as canonical f64 when it is numeric.
+
+    `np.asarray` alone preserves float32, which would let a plugin's `calc` do
+    its arithmetic at f32 and hand the rounded result to a built-in mark that
+    then widens it back to f64 — precision lost between two f64 endpoints for
+    no reason. Canonical data is CPU-side f64 (§27), and the conversion is not
+    extra work: the column store would do it at ingest anyway. Non-numeric
+    columns (categorical strings, datetimes) pass through untouched.
+    """
+    if values is None:
+        return values
+    try:
+        array = np.asarray(values)
+        if np.issubdtype(array.dtype, np.number) and not np.issubdtype(array.dtype, np.bool_):
+            return np.ascontiguousarray(array, dtype=np.float64)
+        return array
+    except (TypeError, ValueError):  # pragma: no cover - exotic column objects
+        return values
+
+
+def _plugin_applier(kind: str) -> Optional[Callable[[Figure, Mark, Any], None]]:
+    """An applier for a registered mark plugin, or None if `kind` is unknown.
+
+    Resolved per compile rather than folded into `_MARK_APPLIERS` so a plugin
+    can never shadow a built-in, and so `registered_marks()` stays the single
+    answer to what is contributed from outside.
+    """
+    resolved = plugins.get_mark_plugin(kind)
+    if resolved is None:
+        return None
+    plugin = resolved
+
+    def apply(fig: Figure, m: Mark, data: Any) -> None:
+        # Declared columns arrive as arrays, never as the raw list a caller
+        # happened to pass: a calc function is arithmetic over columns (§24),
+        # and making every plugin author write np.asarray first would be a
+        # papercut that shows up as a TypeError in their code, not ours.
+        columns = {
+            column: _plugin_column(_resolve(data, m.props.get(column), context=f"{kind}.{column}"))
+            for column in plugin.columns
+        }
+        if plugin.calc is not None:
+            calculated = plugin.calc(columns)
+            if not isinstance(calculated, Mapping):
+                raise TypeError(
+                    f"mark plugin {kind!r} calc must return a mapping of columns, "
+                    f"got {type(calculated).__name__}"
+                )
+            columns = dict(calculated)
+        # Axis ids are chart plumbing, already applied by the compile loop.
+        options = {
+            k: v
+            for k, v in m.props.items()
+            if k not in plugin.columns and k not in {"x_axis", "y_axis"}
+        }
+        built = plugin.build(
+            plugins.MarkContext(
+                columns=columns,
+                options=options,
+                name=m.name,
+                style=dict(m.style or {}),
+                class_name=m.class_name,
+            )
+        )
+        if isinstance(built, (Mark, str, bytes)) or not isinstance(built, Sequence):
+            raise TypeError(
+                f"mark plugin {kind!r} build must return a sequence of marks, "
+                f"got {type(built).__name__}"
+            )
+        for child in built:
+            if not isinstance(child, Mark):
+                raise TypeError(
+                    f"mark plugin {kind!r} build returned {type(child).__name__}, "
+                    "expected marks built by xy's mark constructors"
+                )
+            child_applier = _MARK_APPLIERS.get(child.kind)
+            if child_applier is None:
+                # One level only: a plugin composes built-in primitives. Letting
+                # plugins compose each other turns a registry into a dependency
+                # graph with cycles, for a case nothing has asked for yet.
+                raise TypeError(
+                    f"mark plugin {kind!r} build returned mark kind {child.kind!r}, "
+                    f"which is not a built-in; plugins compose built-in marks only"
+                )
+            child_applier(fig, child, child.data if child.data is not None else data)
+
+    return apply
+
+
 _ANNOTATION_APPLIERS: dict[str, Callable[[Figure, Annotation], None]] = {
     "arrow": _apply_arrow_annotation,
     "band": _apply_band_annotation,
@@ -5213,6 +5328,57 @@ _ANNOTATION_APPLIERS: dict[str, Callable[[Figure, Annotation], None]] = {
     "rule": _apply_rule_annotation,
     "text": _apply_text_annotation,
 }
+
+
+def mark(
+    kind: str,
+    *,
+    data: TableLike = None,
+    name: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+    class_name: Optional[str] = None,
+    key: Any = None,
+    animation: "Animation | bool | None" = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
+    **fields: Any,
+) -> Mark:
+    """A mark contributed by a registered plugin (`xy.register_mark`).
+
+    `kind` names the plugin. Fields it declared in `MarkPlugin.columns` accept a
+    column name resolved from ``data`` or values directly, exactly like a
+    built-in mark's ``x``/``y``; every other keyword reaches the plugin as an
+    option untouched.
+
+    Args:
+        kind: Registered plugin name.
+        data: Table used to resolve column-name inputs.
+        name: Series label used by legends and tooltips.
+        style: Mark style overrides, passed to the plugin verbatim.
+        class_name: Adapter-only trace metadata.
+        key: Stable row identities, or a column name resolved from ``data``.
+        animation: Per-mark animation override; ``False`` disables animation.
+        x_axis: Identifier of the x axis used by this mark.
+        y_axis: Identifier of the y axis used by this mark.
+        **fields: The plugin's declared columns and options.
+    """
+    if plugins.get_mark_plugin(kind) is None:
+        known = ", ".join(plugins.registered_marks()) or "none registered"
+        raise ValueError(f"unknown mark plugin {kind!r}; registered plugins: {known}")
+    return Mark(
+        kind=kind,
+        data=data,
+        name=_optional_string(name, "mark name"),
+        class_name=_optional_string(class_name, "mark class_name"),
+        style=styles.normalize_css_style(style, "mark style"),
+        key=key,
+        animation=animation,
+        props={
+            **fields,
+            "x_axis": _axis_id(x_axis, "mark x_axis"),
+            "y_axis": _axis_id(y_axis, "mark y_axis"),
+        },
+    )
 
 
 def chart(*children: Component, **props: Any) -> Chart:
