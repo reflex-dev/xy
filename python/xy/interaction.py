@@ -161,6 +161,15 @@ def legend_toggle(
         t.hidden_categories.add(code)
     else:
         t.hidden_categories.discard(code)
+        if not t.hidden_categories:
+            # Release here, not on the next `_legend_visible_rows`. That is the
+            # cache's only reader, and un-hiding the last category is exactly
+            # the state where nothing needs to read it again — a toggle that is
+            # the last thing to happen to this trace would otherwise pin
+            # 8 bytes per visible row for the figure's lifetime. The reader
+            # still drops it too, for the paths that reach unmasked without a
+            # toggle (a color encoding replaced under a stale mask).
+            t._legend_vis_cache = None
 
 
 def pick(
