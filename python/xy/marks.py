@@ -12,7 +12,7 @@ axis-position helpers — through it.
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 import numpy as np
@@ -91,6 +91,19 @@ def _direct_symbols(value: Any, n: int, style_channels: dict[str, channels.Style
         codes[index] = _SYMBOL_CODES[symbol]
     style_channels["symbol"] = channels.StyleChannel(codes, dtype="u8")
     return "circle"
+
+
+def _stroke_geometry(css: Mapping[str, Any]) -> dict[str, str]:
+    """The polyline cap key from compiled CSS, omitted at its default.
+
+    Every renderer already draws XY's default `round`, so a spec that never
+    asks for another cap stays byte-identical to one built before the property
+    existed.
+    """
+    value = css.get("linecap")
+    if value is None or value == styles.DEFAULT_LINE_CAP:
+        return {}
+    return {"linecap": str(value)}
 
 
 def _stroke_channel(
@@ -816,6 +829,7 @@ def line(
             yc = self.store.ingest(yc.values[order])
         style: dict[str, Any] = {"color": color, "width": width, "opacity": opacity}
         style.update(styles._opacity_channels(css))
+        style.update(_stroke_geometry(css))
         if curve != "linear":
             style["curve"] = curve
         if dash_spec is not None:
@@ -1149,6 +1163,7 @@ def step(
     )
     self.traces[-1].style["step"] = where
     self.traces[-1].style.update(styles._opacity_channels(css))
+    self.traces[-1].style.update(_stroke_geometry(css))
     return self
 
 
@@ -1373,6 +1388,7 @@ def scatter(
     opacity = css.get("opacity", opacity)
     stroke = css.get("stroke", stroke)
     stroke_width = css.get("stroke_width", stroke_width)
+    symbol = css.get("symbol", symbol)
     name = self._optional_text(name, "scatter name")
     zoom_size_factor = self._nonnegative_scalar(zoom_size_factor, "scatter zoom_size_factor")
     if zoom_size_factor == 0.0:

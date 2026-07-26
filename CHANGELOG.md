@@ -9,6 +9,17 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- Mark `style=` accepts **`stroke-linecap`** (`butt`/`round`/`square`) on the
+  line family, with the standard SVG semantics: it shapes the polyline's two
+  ends and each dash end. Only the line family takes it, because it describes
+  stroked open-path geometry. XY's default is `round`, not CSS's `butt`, so
+  existing specs are byte-identical. `stroke-linejoin` is deliberately not
+  offered yet — the SVG and native-raster writers implement it but the WebGL
+  client has no join geometry, and a property two renderers honor and one
+  ignores is exactly what the mark style subset exists to prevent.
+- Mark `style=` accepts **`marker-shape`** on `scatter`, the CSS spelling of the
+  existing `symbol=` argument. Both resolve to the same trace-style value, so
+  the two spellings build identical specs.
 - `colormap=` accepts a **custom ramp** built from your own colors, not only one
   of the twenty built-in names: a sequence of 2–256 CSS colors, `(position,
   color)` pairs, or a CSS `linear-gradient(...)`. Every form resolves once, in
@@ -37,6 +48,13 @@ in the README).
   that don't use them are byte-identical.
 
 ### Fixed
+- The three mark renderers disagreed about line caps and never said so: the
+  native rasterizer capped round, the WebGL client capped butt with a
+  half-pixel bleed, and the SVG writer hardcoded `round` on line paths while
+  the area outline silently inherited SVG's `butt` — which the PDF exporter
+  then read back as `butt` too. All three now draw XY's documented `round`
+  default, and the SVG writer names both cap and join on every stroked path
+  instead of letting the format's defaults decide.
 - The colorbar stringified its colormap, so a custom ramp reached it as an
   unparseable name and silently painted viridis while the marks beside it
   painted the ramp correctly.

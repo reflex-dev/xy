@@ -307,3 +307,121 @@ def test_faceting_preserves_concrete_css_style() -> None:
     grid = chart.figure()
 
     assert all(figure.traces[0].style["color"] == "#7c3aed" for figure in grid.figures)
+
+
+def test_line_cap_compiles_to_the_polyline_contract() -> None:
+    assert compile_mark_style("line", {"stroke-linecap": "butt"}) == {"linecap": "butt"}
+
+    with pytest.raises(ValueError, match=r"must be one of \['butt', 'round', 'square'\]"):
+        compile_mark_style("line", {"stroke-linecap": "flat"})
+
+
+def test_line_cap_is_a_polyline_only_property() -> None:
+    # A cap is polyline geometry. Marks that are not stroked open paths reject
+    # it rather than accepting a declaration no renderer would draw.
+    for kind in ("bar", "scatter", "heatmap", "box", "segments"):
+        with pytest.raises(ValueError, match="unsupported CSS property"):
+            compile_mark_style(kind, {"stroke-linecap": "butt"})
+
+
+def test_stroke_linejoin_is_not_offered_until_the_client_draws_joins() -> None:
+    # SVG and the native rasterizer implement all three joins; the WebGL client
+    # has no join geometry at all. Until it does, the property is refused
+    # rather than honored by two renderers out of three.
+    with pytest.raises(ValueError, match="unsupported CSS property"):
+        compile_mark_style("line", {"stroke-linejoin": "miter"})
+
+
+def test_default_cap_stays_off_the_wire() -> None:
+    # XY's default is round in every renderer, so a spec that asks for it
+    # explicitly must stay byte-identical to one that never mentions it.
+    plain = xy.chart(xy.line(x=[0.0, 1.0, 2.0], y=[1.0, 2.0, 1.0])).figure()
+    explicit = xy.chart(
+        xy.line(x=[0.0, 1.0, 2.0], y=[1.0, 2.0, 1.0], style={"stroke-linecap": "round"})
+    ).figure()
+
+    assert "linecap" not in explicit.traces[0].style
+    assert plain.build_payload()[0] == explicit.build_payload()[0]
+
+
+def test_cap_rides_the_spec_for_the_line_family() -> None:
+    for mark in (
+        xy.line(x=[0.0, 1.0, 2.0], y=[1.0, 2.0, 1.0], style={"stroke-linecap": "square"}),
+        xy.step(x=[0.0, 1.0, 2.0], y=[1.0, 2.0, 1.0], style={"stroke-linecap": "square"}),
+        xy.ecdf(values=[0.0, 1.0, 2.0], style={"stroke-linecap": "square"}),
+    ):
+        spec, _ = xy.chart(mark).figure().build_payload()
+        assert spec["traces"][0]["style"]["linecap"] == "square"
+
+
+def test_cap_reaches_svg_and_native_renderers() -> None:
+    fig = xy.chart(
+        xy.line(
+            x=[0.0, 1.0, 2.0],
+            y=[1.0, 2.0, 1.0],
+            style={"stroke-width": "9px", "stroke-linecap": "butt"},
+        )
+    ).figure()
+
+    svg = fig.to_svg()
+    assert 'stroke-linecap="butt"' in svg
+    # The SVG writer names the join too, so the PDF exporter (which reads these
+    # attributes straight back out) cannot fall through to SVG's `miter`.
+    assert 'stroke-linejoin="round"' in svg
+
+    # The native rasterizer must actually draw a different shape, not just
+    # accept the keyword: a square cap paints past the endpoint, butt does not.
+    def _ink(cap: str) -> int:
+        figure = xy.chart(
+            xy.line(
+                x=[0.0, 1.0, 2.0],
+                y=[1.0, 2.0, 1.0],
+                style={"stroke": "#ff0000", "stroke-width": "9px", "stroke-linecap": cap},
+            )
+        ).figure()
+        image = _raster.render_raster(*figure.build_payload(), scale=1)
+        return int(np.count_nonzero(image[:, :, 0] > image[:, :, 2]))
+
+    assert _ink("square") > _ink("butt")
+
+
+def test_marker_shape_css_selects_the_scatter_symbol() -> None:
+    assert compile_mark_style("scatter", {"marker-shape": "diamond"}) == {"symbol": "diamond"}
+    with pytest.raises(ValueError, match="must be one of"):
+        compile_mark_style("scatter", {"marker-shape": "blob"})
+    with pytest.raises(ValueError, match="unsupported CSS property"):
+        compile_mark_style("line", {"marker-shape": "diamond"})
+
+    fig = xy.chart(
+        xy.scatter(
+            x=[0.0, 1.0],
+            y=[1.0, 2.0],
+            size=12,
+            style={"marker-shape": "square", "fill": "#22c55e"},
+        )
+    ).figure()
+    spec, blob = fig.build_payload()
+    assert spec["traces"][0]["style"]["symbol"] == "square"
+
+    # A square marker fills its bounding box; a circle of the same size cannot.
+    def _ink(shape: str) -> int:
+        figure = xy.chart(
+            xy.scatter(
+                x=[0.0, 1.0],
+                y=[1.0, 2.0],
+                size=24,
+                style={"marker-shape": shape, "fill": "#22c55e", "opacity": 1},
+            )
+        ).figure()
+        image = _raster.render_raster(*figure.build_payload(), scale=1)
+        return int(np.count_nonzero(image[:, :, 1] > image[:, :, 2]))
+
+    assert _ink("square") > _ink("circle")
+
+
+def test_marker_shape_css_loses_to_no_one_but_agrees_with_the_symbol_argument() -> None:
+    css = xy.chart(
+        xy.scatter(x=[0.0], y=[1.0], symbol="circle", style={"marker-shape": "triangle"})
+    ).figure()
+    argument = xy.chart(xy.scatter(x=[0.0], y=[1.0], symbol="triangle")).figure()
+    assert css.build_payload()[0] == argument.build_payload()[0]

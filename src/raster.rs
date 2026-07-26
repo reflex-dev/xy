@@ -427,9 +427,161 @@ fn fill_poly(cv: &mut Canvas, pts: &[(f32, f32)], mut color_at: impl FnMut(f32, 
     }
 }
 
-// ---- stroke (distance field, round caps/joins) ------------------------------
+// ---- stroke (distance field, round caps/joins by default) -------------------
 
 type StrokeSegment = ((f32, f32), (f32, f32));
+
+// stroke-linecap / stroke-linejoin, in the wire order python/xy/styles.py
+// compiles: butt/round/square and miter/round/bevel. XY's default is round for
+// both, which is what the clamped segment distance field below has always
+// drawn, so `stroke` stays the fast path and byte-for-byte unchanged; anything
+// else routes through `stroke_shaped`.
+pub const CAP_BUTT: u8 = 0;
+pub const CAP_ROUND: u8 = 1;
+pub const CAP_SQUARE: u8 = 2;
+pub const JOIN_MITER: u8 = 0;
+pub const JOIN_ROUND: u8 = 1;
+pub const JOIN_BEVEL: u8 = 2;
+
+/// SVG's default miter limit: past it a miter degrades to a bevel, so a near
+/// reversal in the data cannot grow a spike that is not in the data.
+const MITER_LIMIT: f32 = 4.0;
+
+#[inline]
+fn cov_from_sd(sd: f32) -> f32 {
+    // Same 1px ramp `seg_coverage` uses, expressed on a signed distance so the
+    // box, disc, and wedge primitives below all antialias identically.
+    (0.5 - sd).clamp(0.0, 1.0)
+}
+
+/// Signed distance to an oriented box of half-width `hw` around segment `a`-`b`
+/// — a capsule with both ends cut flush, i.e. a butt cap.
+fn box_sd(p: (f32, f32), a: (f32, f32), b: (f32, f32), hw: f32) -> f32 {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let len = (dx * dx + dy * dy).sqrt();
+    if len <= 1e-6 {
+        return f32::INFINITY;
+    }
+    let (ux, uy) = (dx / len, dy / len);
+    let (mx, my) = ((a.0 + b.0) * 0.5, (a.1 + b.1) * 0.5);
+    let (rx, ry) = (p.0 - mx, p.1 - my);
+    let along = (rx * ux + ry * uy).abs() - len * 0.5;
+    let across = (rx * -uy + ry * ux).abs() - hw;
+    let outside = (along.max(0.0).powi(2) + across.max(0.0).powi(2)).sqrt();
+    outside + along.max(across).min(0.0)
+}
+
+/// Signed distance to the intersection of the half-planes bounded by each
+/// directed edge of a convex polygon wound consistently. Exact on the edges and
+/// conservative at the corners, which is all a 1px ramp needs — the corners of
+/// a bevel or miter sit under the segment boxes anyway.
+fn convex_sd(p: (f32, f32), poly: &[(f32, f32)]) -> f32 {
+    let mut sd = f32::NEG_INFINITY;
+    for i in 0..poly.len() {
+        let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+        let (ex, ey) = (b.0 - a.0, b.1 - a.1);
+        let len = (ex * ex + ey * ey).sqrt();
+        if len <= 1e-6 {
+            continue;
+        }
+        // Outward normal for clockwise winding in this frame; `join_shape`
+        // winds every polygon it builds the same way.
+        let (nx, ny) = (ey / len, -ex / len);
+        sd = sd.max((p.0 - a.0) * nx + (p.1 - a.1) * ny);
+    }
+    sd
+}
+
+/// The filler for the notch two segment boxes leave on the outside of a turn.
+/// Returns `None` for a straight or degenerate joint, which needs nothing.
+fn join_shape(
+    prev: (f32, f32),
+    at: (f32, f32),
+    next: (f32, f32),
+    hw: f32,
+    join: u8,
+) -> Option<Vec<(f32, f32)>> {
+    let (d0x, d0y) = (at.0 - prev.0, at.1 - prev.1);
+    let (d1x, d1y) = (next.0 - at.0, next.1 - at.1);
+    let l0 = (d0x * d0x + d0y * d0y).sqrt();
+    let l1 = (d1x * d1x + d1y * d1y).sqrt();
+    if l0 <= 1e-6 || l1 <= 1e-6 {
+        return None;
+    }
+    let (d0x, d0y) = (d0x / l0, d0y / l0);
+    let (d1x, d1y) = (d1x / l1, d1y / l1);
+    let cross = d0x * d1y - d0y * d1x;
+    if cross.abs() <= 1e-6 {
+        return None; // collinear: the boxes already meet flush
+    }
+    // Outward side is the one the path turns away from.
+    let side = if cross > 0.0 { -1.0 } else { 1.0 };
+    let n0 = (side * -d0y, side * d0x);
+    let n1 = (side * -d1y, side * d1x);
+    let c0 = (at.0 + n0.0 * hw, at.1 + n0.1 * hw);
+    let c1 = (at.0 + n1.0 * hw, at.1 + n1.1 * hw);
+    // Wind so `convex_sd`'s outward normals point away from the interior.
+    let wound = |a: (f32, f32), b: (f32, f32), c: (f32, f32)| -> bool {
+        (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0) > 0.0
+    };
+    let mut poly = vec![at, c0, c1];
+    if join == JOIN_MITER {
+        let (sx, sy) = (n0.0 + n1.0, n0.1 + n1.1);
+        let slen = (sx * sx + sy * sy).sqrt();
+        if slen > 1e-4 {
+            let (mx, my) = (sx / slen, sy / slen);
+            let mcos = mx * n0.0 + my * n0.1;
+            if mcos >= 1.0 / MITER_LIMIT {
+                let reach = hw / mcos;
+                poly = vec![at, c0, (at.0 + mx * reach, at.1 + my * reach), c1];
+            }
+        }
+    }
+    if !wound(poly[0], poly[1], poly[2]) {
+        poly.reverse();
+    }
+    Some(poly)
+}
+
+/// One coverage primitive of a shaped stroke, in the order they are painted.
+enum StrokePiece {
+    Box(StrokeSegment),
+    Disc((f32, f32)),
+    Convex(Vec<(f32, f32)>),
+}
+
+impl StrokePiece {
+    fn bounds(&self, hw: f32) -> ((f32, f32), (f32, f32)) {
+        let pad = hw + 1.0;
+        let (mut x0, mut y0, mut x1, mut y1) =
+            (f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+        let mut extend = |p: (f32, f32)| {
+            x0 = x0.min(p.0);
+            y0 = y0.min(p.1);
+            x1 = x1.max(p.0);
+            y1 = y1.max(p.1);
+        };
+        match self {
+            StrokePiece::Box((a, b)) => {
+                extend(*a);
+                extend(*b);
+            }
+            StrokePiece::Disc(c) => extend(*c),
+            StrokePiece::Convex(poly) => poly.iter().copied().for_each(&mut extend),
+        }
+        ((x0 - pad, y0 - pad), (x1 + pad, y1 + pad))
+    }
+
+    fn coverage(&self, p: (f32, f32), hw: f32) -> f32 {
+        match self {
+            StrokePiece::Box(( a, b)) => cov_from_sd(box_sd(p, *a, *b, hw)),
+            StrokePiece::Disc(c) => {
+                cov_from_sd(((p.0 - c.0).powi(2) + (p.1 - c.1).powi(2)).sqrt() - hw)
+            }
+            StrokePiece::Convex(poly) => cov_from_sd(convex_sd(p, poly)),
+        }
+    }
+}
 
 #[inline]
 fn seg_dist2(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
@@ -472,6 +624,184 @@ fn stroke(
     dash: &[f32],
 ) {
     stroke_with_threads(cv, pts, width, rgba, closed, dash, None);
+}
+
+/// Stroke honoring an explicit cap and join. Round/round is XY's default and
+/// is exactly what the capsule field above draws, so it delegates and the
+/// common path keeps its banding, its scratch-buffer reuse, and its bytes.
+fn stroke_shaped(
+    cv: &mut Canvas,
+    pts: &[(f32, f32)],
+    width: f32,
+    rgba: [f32; 4],
+    closed: bool,
+    dash: &[f32],
+    cap: u8,
+    join: u8,
+) {
+    if (cap == CAP_ROUND && join == JOIN_ROUND) || pts.len() < 2 || width <= 0.0 {
+        stroke(cv, pts, width, rgba, closed, dash);
+        return;
+    }
+    let hw = width * 0.5;
+    let n = pts.len();
+    let last = if closed { n } else { n - 1 };
+    let raw: Vec<StrokeSegment> = (0..last).map(|i| (pts[i], pts[(i + 1) % n])).collect();
+
+    // Each run is a maximal stretch of painted stroke: the whole polyline when
+    // undashed, one per "on" interval otherwise. Caps shape a run's two ends;
+    // joins shape the vertices inside it. SVG caps every dash the same way, so
+    // a dashed line gets one pair of caps per run rather than one per line.
+    let mut runs: Vec<Vec<(f32, f32)>> = Vec::new();
+    if dash.is_empty() {
+        let mut run: Vec<(f32, f32)> = vec![raw[0].0];
+        run.extend(raw.iter().map(|(_, b)| *b));
+        runs.push(run);
+    } else {
+        let total: f32 = dash.iter().sum();
+        if total <= 0.0 {
+            let mut run: Vec<(f32, f32)> = vec![raw[0].0];
+            run.extend(raw.iter().map(|(_, b)| *b));
+            runs.push(run);
+        } else {
+            let (mut di, mut drem, mut on) = (0usize, dash[0], true);
+            let mut current: Vec<(f32, f32)> = Vec::new();
+            for (a, b) in &raw {
+                let (mut ax, mut ay) = *a;
+                let seglen = ((b.0 - ax).powi(2) + (b.1 - ay).powi(2)).sqrt();
+                if seglen <= 1e-9 {
+                    continue;
+                }
+                let (ux, uy) = ((b.0 - a.0) / seglen, (b.1 - a.1) / seglen);
+                let mut remain = seglen;
+                while remain > 1e-6 {
+                    let step = drem.min(remain);
+                    let next = (ax + ux * step, ay + uy * step);
+                    if on {
+                        if current.is_empty() {
+                            current.push((ax, ay));
+                        }
+                        current.push(next);
+                    }
+                    ax = next.0;
+                    ay = next.1;
+                    remain -= step;
+                    drem -= step;
+                    if drem <= 1e-6 {
+                        di = (di + 1) % dash.len();
+                        drem = dash[di];
+                        on = !on;
+                        if !on && !current.is_empty() {
+                            runs.push(std::mem::take(&mut current));
+                        }
+                    }
+                }
+            }
+            if !current.is_empty() {
+                runs.push(current);
+            }
+        }
+    }
+
+    let mut pieces: Vec<StrokePiece> = Vec::new();
+    for run in &runs {
+        if run.len() < 2 {
+            continue;
+        }
+        let mut ends = run.clone();
+        if cap == CAP_SQUARE {
+            // A square cap is a butt cap on a segment pushed out by hw, which
+            // is the whole difference between the two.
+            let extend = |from: (f32, f32), to: (f32, f32)| -> (f32, f32) {
+                let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+                let len = (dx * dx + dy * dy).sqrt();
+                if len <= 1e-6 {
+                    return to;
+                }
+                (to.0 + dx / len * hw, to.1 + dy / len * hw)
+            };
+            let head = extend(run[1], run[0]);
+            let tail = extend(run[run.len() - 2], run[run.len() - 1]);
+            ends[0] = head;
+            let end = ends.len() - 1;
+            ends[end] = tail;
+        }
+        for pair in ends.windows(2) {
+            pieces.push(StrokePiece::Box((pair[0], pair[1])));
+        }
+        for i in 1..run.len() - 1 {
+            match join {
+                JOIN_ROUND => pieces.push(StrokePiece::Disc(run[i])),
+                _ => {
+                    if let Some(poly) = join_shape(run[i - 1], run[i], run[i + 1], hw, join) {
+                        pieces.push(StrokePiece::Convex(poly));
+                    }
+                }
+            }
+        }
+        if closed && runs.len() == 1 && run.len() > 2 {
+            let joint = match join {
+                JOIN_ROUND => Some(StrokePiece::Disc(run[0])),
+                _ => join_shape(run[run.len() - 2], run[0], run[1], hw, join)
+                    .map(StrokePiece::Convex),
+            };
+            pieces.extend(joint);
+        }
+    }
+    paint_stroke_pieces(cv, &pieces, hw, rgba);
+}
+
+/// Max-combine every piece's coverage into one scratch buffer, then composite
+/// each touched pixel once — the same contract `stroke_with_threads` keeps, so
+/// overlapping joins never double-darken a translucent stroke.
+fn paint_stroke_pieces(cv: &mut Canvas, pieces: &[StrokePiece], hw: f32, rgba: [f32; 4]) {
+    if pieces.is_empty() {
+        return;
+    }
+    let (mut x0, mut y0, mut x1, mut y1) =
+        (f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for piece in pieces {
+        let ((px0, py0), (px1, py1)) = piece.bounds(hw);
+        x0 = x0.min(px0);
+        y0 = y0.min(py0);
+        x1 = x1.max(px1);
+        y1 = y1.max(py1);
+    }
+    let (bx0, by0, bx1, by1) = cv.bbox(x0, y0, x1, y1);
+    if bx1 <= bx0 || by1 <= by0 {
+        return;
+    }
+    let (sw, sh) = (bx1 - bx0, by1 - by0);
+    let mut scratch = vec![0u8; sw * sh];
+    let mut touched = Vec::<usize>::with_capacity(pieces.len().saturating_mul(8));
+    for piece in pieces {
+        let ((px0, py0), (px1, py1)) = piece.bounds(hw);
+        let sx0 = (px0.floor().max(bx0 as f32) as usize).max(bx0);
+        let sy0 = (py0.floor().max(by0 as f32) as usize).max(by0);
+        let sx1 = (px1.ceil().max(0.0) as usize).min(bx1);
+        let sy1 = (py1.ceil().max(0.0) as usize).min(by1);
+        for y in sy0..sy1 {
+            for x in sx0..sx1 {
+                let c = piece.coverage((x as f32 + 0.5, y as f32 + 0.5), hw);
+                if c <= 0.0 {
+                    continue;
+                }
+                let index = (y - by0) * sw + (x - bx0);
+                let slot = &mut scratch[index];
+                if *slot == 0 {
+                    touched.push(index);
+                }
+                let coverage = to_u8(c);
+                if coverage > *slot {
+                    *slot = coverage;
+                }
+            }
+        }
+    }
+    for index in touched {
+        let (row, col) = (index / sw, index % sw);
+        cv.blend(bx0 + col, by0 + row, rgba, scratch[index] as f32 / 255.0);
+    }
 }
 
 fn stroke_with_threads(
@@ -1940,7 +2270,9 @@ fn rasterize_with_spans(
                     for _ in 0..nd {
                         dash.push(r.f32()?);
                     }
-                    stroke(&mut cv, &pts, width, c, closed, &dash);
+                    let cap = r.u8()?;
+                    let join = r.u8()?;
+                    stroke_shaped(&mut cv, &pts, width, c, closed, &dash, cap, join);
                 }
                 OP_POINT => {
                     let (cx, cy, rr) = (r.f32()?, r.f32()?, r.f32()?);
@@ -2385,8 +2717,10 @@ fn rasterize_with_spans(
                     for _ in 0..nd {
                         dash.push(r.f32()?);
                     }
+                    let cap = r.u8()?;
+                    let join = r.u8()?;
                     let points = smooth_points(xs, ys, n, x_scale, y_scale);
-                    stroke(&mut cv, &points, width, color, false, &dash);
+                    stroke_shaped(&mut cv, &points, width, color, false, &dash, cap, join);
                 }
                 _ => return None,
             }
@@ -2563,10 +2897,92 @@ mod tests {
         cmd.extend([0, 0, 0, 255]);
         cmd.push(0); // not closed
         cmd.extend(u32le(0)); // no dash
+        cmd.extend([CAP_ROUND, JOIN_ROUND]);
         let mut out = vec![0u8; 10 * 10 * 4];
         assert!(rasterize_into(&cmd, 10, 10, &mut out));
         assert!(px(&out, 10, 5, 5)[3] > 200); // on the line
         assert_eq!(px(&out, 10, 5, 0)[3], 0); // far from it
+    }
+
+    /// stroke-linecap changes what is painted past the endpoint, and round —
+    /// XY's default — must keep drawing exactly what it drew before caps
+    /// existed, because it is the geometry every committed PNG expectation
+    /// was rendered with.
+    #[test]
+    fn stroke_caps_shape_the_ends() {
+        let ink = |cap: u8| {
+            let mut cmd = vec![OP_STROKE];
+            cmd.extend(u32le(2));
+            for (x, y) in [(10.0f32, 20.0f32), (30.0, 20.0)] {
+                cmd.extend(f32le(x));
+                cmd.extend(f32le(y));
+            }
+            cmd.extend(f32le(8.0)); // width
+            cmd.extend([0, 0, 0, 255]);
+            cmd.push(0); // not closed
+            cmd.extend(u32le(0)); // no dash
+            cmd.extend([cap, JOIN_ROUND]);
+            let mut out = vec![0u8; 40 * 40 * 4];
+            assert!(rasterize_into(&cmd, 40, 40, &mut out));
+            (0..40 * 40).filter(|i| out[i * 4 + 3] > 128).count()
+        };
+        // A square cap adds a half-width block at each end; a round cap adds a
+        // semicircle, which is less; a butt cap adds nothing.
+        assert!(ink(CAP_BUTT) < ink(CAP_ROUND));
+        assert!(ink(CAP_ROUND) < ink(CAP_SQUARE));
+
+        // Butt clips at the end plane: the pixel a half-width past the last
+        // point is painted for square, bare for butt.
+        let probe = |cap: u8| {
+            let mut cmd = vec![OP_STROKE];
+            cmd.extend(u32le(2));
+            for (x, y) in [(10.0f32, 20.0f32), (30.0, 20.0)] {
+                cmd.extend(f32le(x));
+                cmd.extend(f32le(y));
+            }
+            cmd.extend(f32le(8.0));
+            cmd.extend([0, 0, 0, 255]);
+            cmd.push(0);
+            cmd.extend(u32le(0));
+            cmd.extend([cap, JOIN_ROUND]);
+            let mut out = vec![0u8; 40 * 40 * 4];
+            assert!(rasterize_into(&cmd, 40, 40, &mut out));
+            px(&out, 40, 32, 20)[3]
+        };
+        assert_eq!(probe(CAP_BUTT), 0);
+        assert!(probe(CAP_SQUARE) > 200);
+    }
+
+    /// stroke-linejoin fills the notch on the outside of a turn. A miter
+    /// reaches furthest, a bevel cuts the corner off, and round is the disc
+    /// the capsule field already drew.
+    #[test]
+    fn stroke_joins_shape_the_corner() {
+        let corner = |join: u8| {
+            let mut cmd = vec![OP_STROKE];
+            cmd.extend(u32le(3));
+            for (x, y) in [(10.0f32, 10.0f32), (30.0, 10.0), (30.0, 30.0)] {
+                cmd.extend(f32le(x));
+                cmd.extend(f32le(y));
+            }
+            cmd.extend(f32le(10.0)); // width
+            cmd.extend([0, 0, 0, 255]);
+            cmd.push(0);
+            cmd.extend(u32le(0));
+            cmd.extend([CAP_BUTT, join]);
+            let mut out = vec![0u8; 50 * 50 * 4];
+            assert!(rasterize_into(&cmd, 50, 50, &mut out));
+            // The outside of this right-angle turn is up and to the right of
+            // the vertex; the miter apex is the only shape that reaches it.
+            (px(&out, 50, 34, 6)[3], (0..50 * 50).filter(|i| out[i * 4 + 3] > 128).count())
+        };
+        let (miter_apex, miter_ink) = corner(JOIN_MITER);
+        let (bevel_apex, bevel_ink) = corner(JOIN_BEVEL);
+        let (_, round_ink) = corner(JOIN_ROUND);
+
+        assert!(miter_apex > 200, "a miter fills its apex");
+        assert_eq!(bevel_apex, 0, "a bevel cuts the apex off");
+        assert!(bevel_ink < round_ink && round_ink < miter_ink);
     }
 
     #[test]
@@ -3091,6 +3507,7 @@ mod tests {
             expanded.extend(stroke_color);
             expanded.push(1); // closed
             expanded.extend(u32le(0)); // no dash
+            expanded.extend([CAP_ROUND, JOIN_ROUND]);
         }
 
         for opaque in [false, true] {

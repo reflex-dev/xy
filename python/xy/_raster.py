@@ -80,6 +80,11 @@ from ._svg import (
 # (right-margin titles, matplotlib rotation=270).
 _TEXT_ROT_CCW = 0x80
 _TEXT_ROT_CW = 0x40
+# stroke-linecap / stroke-linejoin — must match CAP_*/JOIN_* in src/raster.rs.
+# XY's default is round for both, which is the geometry the rasterizer's
+# capsule distance field has always drawn.
+_CAP_CODES = {"butt": 0, "round": 1, "square": 2}
+_JOIN_CODES = {"miter": 0, "round": 1, "bevel": 2}
 _SYMBOLS = {
     "circle": 0,
     "square": 1,
@@ -223,6 +228,8 @@ class _Cmd:
         color: tuple[int, ...],
         closed: bool = False,
         dash: Sequence[float] | None = None,
+        cap: str = "round",
+        join: str = "round",
     ) -> None:
         if len(pts) < 2 or width <= 0:
             return
@@ -242,6 +249,8 @@ class _Cmd:
         self._u32(len(dash))
         for d in dash:
             self._f(d)
+        self.buf.append(_CAP_CODES[cap])
+        self.buf.append(_JOIN_CODES[join])
 
     def point(
         self,
@@ -489,6 +498,8 @@ class _Cmd:
         width: float,
         color: tuple[int, ...],
         dash: Sequence[float] | None = None,
+        cap: str = "round",
+        join: str = "round",
     ) -> None:
         """Native monotone-Hermite flattening + stroke for affine axes."""
         n = len(xv)
@@ -515,6 +526,8 @@ class _Cmd:
         self._u32(len(dash))
         for value in dash:
             self._f(value)
+        self.buf.append(_CAP_CODES[cap])
+        self.buf.append(_JOIN_CODES[join])
 
     def image(
         self,
@@ -1052,11 +1065,13 @@ def _emit_line(
         xv, yv = _step_arrays(xv, yv, style["step"])
     c = _rgba(style.get("color"), color, _stroke_opacity(style))
     width = float(style.get("width", 1.5))
+    cap = str(style.get("linecap", "round"))
+    join = str(style.get("linejoin", "round"))
     if style.get("curve") == "smooth" and len(xv) >= 3 and sx.affine and sy.affine:
-        cmd.smooth_stroke(xv, yv, sx, sy, width, c, dash=style.get("dash"))
+        cmd.smooth_stroke(xv, yv, sx, sy, width, c, dash=style.get("dash"), cap=cap, join=join)
     else:
         pts = _scene.curve_points(xv, yv, sx, sy, False)
-        cmd.stroke(pts, width, c, dash=style.get("dash"))
+        cmd.stroke(pts, width, c, dash=style.get("dash"), cap=cap, join=join)
 
 
 def _annotation_point(

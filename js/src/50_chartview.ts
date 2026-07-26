@@ -2,7 +2,7 @@ import { PROTOCOL, xyByteSpan } from "./00_header";
 import { buildLutData, colormapKey, colormapStops } from "./10_colormaps";
 import { chartBackdrop, cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
-import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
+import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_CAP_MODES, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
 import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodDropDensityCache, lodDropPointCache, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
 
@@ -4031,7 +4031,12 @@ export class ChartView {
     const reveal = Math.max(0, Math.min(1, g._transitionReveal ?? 1));
     gl.uniform1f(u("u_revealProgress"), reveal);
     gl.uniform1f(u("u_revealSegments"), g.n - 1);
-    gl.uniform1f(u("u_width"), (width ?? g.trace.style.width ?? 1.5) * this.dpr);
+    const lineWidth = (width ?? g.trace.style.width ?? 1.5) * this.dpr;
+    gl.uniform1f(u("u_width"), lineWidth);
+    // Absent cap/join keys mean XY's default, which is round for both — the
+    // trace only carries them when they differ from it (marks._stroke_geometry).
+    const cap = LINE_CAP_MODES[g.trace.style.linecap] ?? LINE_CAP_MODES.round;
+    gl.uniform1i(u("u_cap"), cap);
     const [r, gg, b, a] = color || g.color;
     const strokeOpacity = this._strokeOpacity(g.trace.style) * (opacity ?? 1) * (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
     gl.uniform4f(u("u_color"), r, gg, b, a * strokeOpacity);
@@ -4060,6 +4065,7 @@ export class ChartView {
       }
     );
     const segments = Math.max(0, Math.min(g.n - 1, Math.ceil((g.n - 1) * reveal)));
+    gl.uniform1i(u("u_capSegments"), segments);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, segments);
   }
 

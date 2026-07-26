@@ -83,9 +83,9 @@ xy.bar(
 
 | Mark family | Supported CSS properties |
 | --- | --- |
-| line, step, stairs, ECDF | `stroke`, `stroke-width`, `stroke-opacity`, `stroke-dasharray`, `opacity` |
+| line, step, stairs, ECDF | `stroke`, `stroke-width`, `stroke-opacity`, `stroke-dasharray`, `stroke-linecap`, `opacity` |
 | area, error band | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity`; area also supports `stroke-dasharray` |
-| scatter | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
+| scatter | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `marker-shape`, `opacity` |
 | histogram, bar, column | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `border-radius`, `opacity` |
 | segments, error bars, contour, stem | `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
 | box, violin | `fill`, `fill-opacity`, `opacity` |
@@ -102,6 +102,51 @@ same declarations meaningful in SVG, WebGL, and native PNG output.
 A mark's `class_name` is adapter-only trace metadata. It does not create a DOM
 node and is not interpreted as a paint selector by the shipped browser,
 Reflex, SVG, or native renderers.
+
+### Polyline stroke geometry
+
+`stroke-linecap` (`butt` | `round` | `square`) carries its standard SVG
+semantics: it shapes the two ends of an open polyline and each dash end. It is
+accepted **only** by the line family, because it describes stroked open-path
+geometry; every other mark rejects it at build time rather than accepting a
+declaration no renderer would draw.
+
+XY's default is `round`, deliberately not the CSS initial value `butt`. Before
+this vocabulary existed the three renderers silently disagreed — the native
+rasterizer capped round from its clamped segment distance field
+(`src/raster.rs`), the WebGL client capped butt with a half-pixel bleed, and
+the SVG writer hardcoded `round` on line paths while the area outline inherited
+SVG's `butt`. Round is now the contract in all three, because the native
+rasterizer is the reference for static export.
+
+`styles.DEFAULT_LINE_CAP` names that default and `marks._stroke_geometry` omits
+a key that equals it, so a spec that never asks for another cap stays
+byte-identical to one built before the change.
+
+**`stroke-linejoin` is not offered yet, and the reason is a renderer, not an
+oversight.** SVG emits the attribute and the native rasterizer implements all
+three joins (`join_shape` in `src/raster.rs`, exercised whenever a non-round cap
+forces the shaped path). The WebGL client draws a polyline as one instanced
+quad per segment with *no join geometry whatsoever* — adjacent quads simply
+overlap by half a pixel — so it has no way to distinguish a miter from a bevel.
+Shipping the property would mean two renderers honoring it and one ignoring it,
+which is the failure this module exists to prevent. It waits for the client.
+
+That leaves a real cross-renderer difference in the *default*: the rasterizer
+fills interior vertices with a round join and the WebGL client leaves the notch
+two overlapping quads produce. That predates this vocabulary, is visible only on
+wide strokes at sharp angles, and is recorded as a row in
+`xy.styling.capabilities` rather than left for a reader to discover.
+
+### Marker shape
+
+`marker-shape` selects one of the 17 renderer-backed scatter symbols and is the
+CSS spelling of the existing `symbol=` argument — both resolve to the same
+`symbol` trace-style value, so the two spellings produce identical specs. It is
+an **XY vocabulary name, not a standard CSS property**: CSS has no shape keyword
+for a non-DOM point mark, and the alternative (a `-xy-` vendor prefix) would
+force an unusable `_xy_marker_shape` Python alias. The distinction is recorded
+per property rather than encoded in the name.
 
 ### Reflex integration boundary
 

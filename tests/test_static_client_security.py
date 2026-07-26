@@ -803,7 +803,9 @@ def test_client_renders_mark_level_styling() -> None:
         "xyMarkerSdf(d, u_symbol)",  # scatter symbol shapes (circle/square/diamond/triangle/cross)
         "_pointMarkStyle(",  # point stroke + symbol resolution
         "rgb = mix(rgb, sc.rgb, sc.a);",  # selected/unselected recolor (mark_style)
-        "v_dash = mix(a_len0, mix(a_len0, a_len1, reveal), c.x);",  # fractional reveal preserves line dashes
+        "float dashEnd = mix(a_len0, a_len1, reveal);",  # fractional reveal preserves line dashes
+        "uniform int u_cap; uniform int u_capSegments;",  # stroke-linecap on the polyline's ends
+        "LINE_CAP_MODES",  # cap keywords resolve to the shared wire codes
         "_lineDash(g)",
         "_resolveMarkFill(",
         "_setRectStyleUniforms(",
