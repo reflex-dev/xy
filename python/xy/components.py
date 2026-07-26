@@ -5201,11 +5201,22 @@ _MARK_APPLIERS: dict[str, Callable[[Figure, Mark, Any], None]] = {
 
 
 def _plugin_column(values: Any) -> Any:
-    """A plugin's declared column, as an array when it can be one."""
-    if values is None or isinstance(values, np.ndarray):
+    """A plugin's declared column, as canonical f64 when it is numeric.
+
+    `np.asarray` alone preserves float32, which would let a plugin's `calc` do
+    its arithmetic at f32 and hand the rounded result to a built-in mark that
+    then widens it back to f64 — precision lost between two f64 endpoints for
+    no reason. Canonical data is CPU-side f64 (§27), and the conversion is not
+    extra work: the column store would do it at ingest anyway. Non-numeric
+    columns (categorical strings, datetimes) pass through untouched.
+    """
+    if values is None:
         return values
     try:
-        return np.asarray(values)
+        array = np.asarray(values)
+        if np.issubdtype(array.dtype, np.number) and not np.issubdtype(array.dtype, np.bool_):
+            return np.ascontiguousarray(array, dtype=np.float64)
+        return array
     except (TypeError, ValueError):  # pragma: no cover - exotic column objects
         return values
 

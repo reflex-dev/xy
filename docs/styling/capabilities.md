@@ -12,14 +12,16 @@ and *does the change survive where I need it*. This page answers both from the
 registry the implementation is checked against, so it cannot promise a property
 the code does not compile.
 
-- **10** mark style properties across **20** mark kinds, drawn identically by WebGL, SVG, and the native rasterizer.
+- **10** mark style properties across **20** mark kinds, drawn by all three renderers.
 - **23** stable chrome slots for CSS and Tailwind in the browser.
 - **1** way to add a mark kind XY does not ship, without forking it.
 
 ## Mark style properties
 
-What a mark's `style=` accepts. Anything outside this raises while the chart is
-built — one renderer never silently ignores what another draws.
+Every property the registry tracks. A **`shipped`** row is accepted by a mark's
+`style=` today; a **`planned`** row is *not* accepted yet, and its note says what
+blocks it. Anything outside the shipped set raises while the chart is built — one
+renderer never silently ignores what another draws.
 
 | property | vocabulary | mark kinds | webgl | svg | native | status |
 |---|---|---|---|---|---|---|

@@ -27,8 +27,24 @@ REPORT = ROOT / "spec" / "api" / "capability-matrix.md"
 PUBLIC = ROOT / "docs" / "styling" / "capabilities.md"
 
 
+def _shipped_renderer_claim() -> str:
+    """How the summary may describe shipped properties, read from the registry.
+
+    The sentence used to hard-code "drawn by all three renderers". If a shipped
+    property ever lands `partial` somewhere, that prose would overclaim in the
+    generated document — the exact failure the registry exists to prevent.
+    """
+    shipped = [p for p in caps.MARK_STYLE_PROPERTIES if p.status == "shipped"]
+    if all(level == "full" for prop in shipped for level in prop.support.values()):
+        return "drawn by all three renderers"
+    partial = sorted(prop.id for prop in shipped if any(v != "full" for v in prop.support.values()))
+    return "not all drawn identically everywhere — see " + ", ".join(f"`{p}`" for p in partial)
+
+
 def render() -> str:
+    """The engineering-facing capability matrix, as markdown."""
     counts = caps.summary()
+    claim = _shipped_renderer_claim()
     lines = [
         "# Capability matrix",
         "",
@@ -46,7 +62,7 @@ def render() -> str:
         "## In one line",
         "",
         f"- **{counts['mark_style_properties_shipped']}** mark style properties across "
-        f"**{counts['mark_kinds']}** mark kinds, drawn by all three renderers.",
+        f"**{counts['mark_kinds']}** mark kinds, {claim}.",
         f"- **{counts['chart_slots']}** stable chrome slots, CSS- and Tailwind-addressable "
         "in the browser; "
         f"**{counts['slots_styleable_natively']}** of them reach the native writers, "
@@ -57,9 +73,11 @@ def render() -> str:
         "",
         "## Mark style properties",
         "",
-        "The subset a mark's `style=` mapping accepts. Anything outside it raises",
-        "before data is ingested, so no renderer silently drops a declaration another",
-        "one honors.",
+        "Every property the registry tracks. A **`shipped`** row is accepted by a",
+        "mark's `style=` mapping today; a **`planned`** row is recorded but is *not*",
+        "accepted, and its note says what blocks it. Anything outside the shipped set",
+        "raises before data is ingested, so no renderer silently drops a declaration",
+        "another one honors.",
         "",
     ]
     lines += caps.markdown_mark_property_table()
@@ -106,8 +124,8 @@ def render() -> str:
     ]
     for div in caps.KNOWN_RENDERER_DIVERGENCES:
         lines.append(
-            f"| {div['what']} | {div['webgl']} | {div['svg']} | {div['native']} | "
-            f"{div['visible_when']} | {div['tracked_by']} |"
+            f"| {div.what} | {div.webgl} | {div.svg} | {div.native} | "
+            f"{div.visible_when} | {div.tracked_by} |"
         )
     lines += [
         "",
@@ -131,6 +149,7 @@ def render_public() -> str:
     to prevent.
     """
     counts = caps.summary()
+    claim = _shipped_renderer_claim()
     lines = [
         "---",
         "title: Capability Matrix",
@@ -148,16 +167,17 @@ def render_public() -> str:
         "the code does not compile.",
         "",
         f"- **{counts['mark_style_properties_shipped']}** mark style properties across "
-        f"**{counts['mark_kinds']}** mark kinds, drawn identically by WebGL, SVG, and the "
-        "native rasterizer.",
+        f"**{counts['mark_kinds']}** mark kinds, {claim}.",
         f"- **{counts['chart_slots']}** stable chrome slots for CSS and Tailwind in the browser.",
         f"- **{counts['extension_points_shipped']}** way to add a mark kind XY does not "
         "ship, without forking it.",
         "",
         "## Mark style properties",
         "",
-        "What a mark's `style=` accepts. Anything outside this raises while the chart is",
-        "built — one renderer never silently ignores what another draws.",
+        "Every property the registry tracks. A **`shipped`** row is accepted by a mark's",
+        "`style=` today; a **`planned`** row is *not* accepted yet, and its note says what",
+        "blocks it. Anything outside the shipped set raises while the chart is built — one",
+        "renderer never silently ignores what another draws.",
         "",
     ]
     lines += caps.markdown_mark_property_table()
@@ -200,8 +220,7 @@ def render_public() -> str:
     ]
     for div in caps.KNOWN_RENDERER_DIVERGENCES:
         lines.append(
-            f"| {div['what']} | {div['webgl']} | {div['svg']} | {div['native']} | "
-            f"{div['visible_when']} |"
+            f"| {div.what} | {div.webgl} | {div.svg} | {div.native} | {div.visible_when} |"
         )
     lines += [
         "",
@@ -215,6 +234,7 @@ def render_public() -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Print, write, or check the generated capability documents."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", action="store_true", help="regenerate the committed matrix")
     parser.add_argument(

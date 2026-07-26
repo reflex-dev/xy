@@ -918,13 +918,17 @@ partial-bundle pain). Neither exists today.
      committed rule table rather than by hand — 9,472 attributes cannot be
      audited one at a time, and a table claiming otherwise would be fiction.
 
-  The number, scoped to the trace types XY implements plus `layout`: **344
-  supported, 126 mapped-with-difference of 3,387**. Whole-schema it is 345 and
-  126 of 9,472, a denominator dominated by trace types XY does not implement.
+  The number, scoped to the trace types XY implements plus `layout`: **217
+  supported, 115 mapped-with-difference of 3,387**. Whole-schema it is 218 and
+  115 of 9,472, a denominator dominated by trace types XY does not implement.
   Both are published, because either one quoted alone misleads in a different
   direction. Attributes no rule claims land in `unsupported/unclassified` —
   currently 2,190 — which is reported rather than folded somewhere friendlier;
-  shrinking it is how the table improves.
+  shrinking it is how the table improves. Quote these from
+  `spec/api/plotly-coverage.md` rather than from here: rule order is
+  load-bearing (`*` spans dots in `fnmatch`), and an earlier ordering silently
+  counted 3-D, geo, polar, ternary, and smith axes as supported, overstating
+  the figure by 127 attributes.
 - **Custom traces without forking:** a registered *mark plugin* provides
   (a) a calc function over columns → columns (runs in the worker, gets zone maps),
   (b) either a composition of built-in GPU primitives (instanced marks, density

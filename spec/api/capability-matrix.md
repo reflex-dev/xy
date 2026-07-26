@@ -20,9 +20,11 @@ which is sometimes deliberate, and the notes say which.
 
 ## Mark style properties
 
-The subset a mark's `style=` mapping accepts. Anything outside it raises
-before data is ingested, so no renderer silently drops a declaration another
-one honors.
+Every property the registry tracks. A **`shipped`** row is accepted by a
+mark's `style=` mapping today; a **`planned`** row is recorded but is *not*
+accepted, and its note says what blocks it. Anything outside the shipped set
+raises before data is ingested, so no renderer silently drops a declaration
+another one honors.
 
 | property | vocabulary | mark kinds | webgl | svg | native | status |
 |---|---|---|---|---|---|---|

@@ -97,3 +97,43 @@ def test_the_scoped_number_is_reported_next_to_the_whole_schema_one() -> None:
     assert "## Whole schema" in text
     assert "## Scoped to the trace types XY implements" in text
     assert "must be quoted *with* its scope" in text
+
+
+def test_excluded_subtrees_are_not_stolen_by_the_wildcard_axis_rules() -> None:
+    # `fnmatch` lets `*` span dots and the first matching rule wins, so
+    # `layout.*axis.showgrid` will happily claim `layout.polar.angularaxis.
+    # showgrid` unless the exclusions are ordered ahead of it. That ordering is
+    # load-bearing: getting it wrong silently counted 3-D, geo, polar, ternary,
+    # and smith axes as supported and overstated the headline number by 127
+    # attributes. This pins the ordering, not the prose about it.
+    module = _module()
+    for path in (
+        "layout.scene.xaxis.title.text",
+        "layout.scene.yaxis.showgrid",
+        "layout.polar.angularaxis.showgrid",
+        "layout.polar.radialaxis.range",
+        "layout.geo.lataxis.showgrid",
+        "layout.ternary.aaxis.ticks",
+        "layout.smith.realaxis.linecolor",
+    ):
+        verdict, _, _ = module.classify(path)
+        assert verdict == module.UNSUPPORTED, f"{path} is inside an excluded subtree"
+
+    # The genuine top-level axes still resolve.
+    for path in ("layout.xaxis.showgrid", "layout.yaxis.type", "layout.xaxis.range"):
+        verdict, surface, _ = module.classify(path)
+        assert verdict == module.SUPPORTED and surface, path
+
+
+def test_the_unsupported_reason_table_accounts_for_every_attribute() -> None:
+    # A table whose rows trail off short of the total implies accounting it does
+    # not do. The generated report folds the tail into one row and prints the
+    # total, so the column sums.
+    module = _module()
+    schema, version = module.load_schema()
+    _, summary = module.build_report(schema, version)
+    assert sum(summary["unsupported_reasons"].values()) == summary["verdicts"]["unsupported"]
+
+    text = REPORT.read_text(encoding="utf-8")
+    assert "all other reasons" in text
+    assert f"**{summary['verdicts']['unsupported']:,}**" in text

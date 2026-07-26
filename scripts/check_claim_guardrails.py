@@ -18,6 +18,9 @@ from typing import Optional
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DOCS = (
     "README.md",
+    "CLAUDE.md",
+    ".agents/skills/xy-evaluate/SKILL.md",
+    "spec/api/customization-vs-alternatives.md",
     "pyproject.toml",
     "SECURITY.md",
     "CONTRIBUTING.md",
@@ -102,7 +105,7 @@ NUMERIC_PERFORMANCE_RE = re.compile(
 STALE_REPO_RE = re.compile(r"github\.com/Alek99|app\.codspeed\.io/Alek99|charts-exp", re.IGNORECASE)
 
 POLICY_WORDS = re.compile(
-    r"\b(do not|don't|must|should|guardrail|policy|claim|goal|planned|target|"
+    r"\b(do not|don't|never|no amount of|must|should|guardrail|policy|claim|goal|planned|target|"
     r"blurry|rather than|not\s+(?:a|the|safe|same|one)|without naming|"
     r"needs qualification)\b",
     re.IGNORECASE,
@@ -194,17 +197,25 @@ def _findings_for_file(path: Path) -> list[Finding]:
                     line,
                 )
             )
-        if CUSTOMIZATION_COMPARATIVE_RE.search(line) and not (
-            _is_policy_or_negative_context(window) or _has_customization_qualifiers(window)
-        ):
-            findings.append(
-                Finding(
-                    path,
-                    index + 1,
-                    "comparative customization claim needs the dimension and its evidence named",
-                    line,
+        if CUSTOMIZATION_COMPARATIVE_RE.search(line):
+            # Same reasoning as the numeric-multiplier rule below: a claim
+            # taxonomy states its scope in the prose above the table, and a
+            # section heading is answered by the paragraphs under it. A
+            # sentence-level window would reject the very wording these
+            # documents exist to model.
+            claim_window = _line_window(lines, index, radius=10)
+            if not (
+                _is_policy_or_negative_context(claim_window)
+                or _has_customization_qualifiers(claim_window)
+            ):
+                findings.append(
+                    Finding(
+                        path,
+                        index + 1,
+                        "comparative customization claim needs the dimension and its evidence named",
+                        line,
+                    )
                 )
-            )
         if COMPARATIVE_RE.search(line) and not (
             _is_policy_or_negative_context(window) or _has_claim_qualifiers(window)
         ):

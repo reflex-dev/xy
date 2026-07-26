@@ -40,6 +40,20 @@ def test_the_skill_names_both_registries_and_the_guardrail() -> None:
         assert pointer in text, f"xy-evaluate no longer points at {pointer}"
 
 
+def test_every_count_the_skill_states_matches_its_registry() -> None:
+    # The skill shipped saying "15 axis keys" the day after a 16th landed —
+    # stale drift inside the document whose whole job is to stop stale drift.
+    # Prose cannot hold a number; a test can.
+    from xy.styling import capabilities as caps
+
+    counts = caps.summary()
+    # Collapse wrapping so a reflowed paragraph does not read as a changed count.
+    text = re.sub(r"\s+", " ", _body())
+    assert f"{counts['axis_style_keys']} axis keys" in text
+    assert f"{counts['chart_slots']} CSS-addressable chrome slots" in text
+    assert f"{counts['mark_style_properties_shipped']} mark style properties" in text
+
+
 def test_the_skill_states_the_failure_it_exists_to_prevent() -> None:
     # Without this the skill reads as a link list, and an agent skims it.
     text = _body().lower()

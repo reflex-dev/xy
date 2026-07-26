@@ -95,8 +95,9 @@ def customize_mark_paint_preview():
 Use `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, and
 `opacity` only on mark families that support them. Lines use stroke properties;
 areas, points, bars, and columns also support fill properties. Bar-like marks
-add `border-radius`; line-like marks add `stroke-dasharray` and
-`stroke-linecap`; and `scatter` adds `marker-shape`.
+add `border-radius`. `line`, `step`, `stairs`, and `ecdf` add
+`stroke-dasharray` and `stroke-linecap`; `area` adds `stroke-dasharray` only,
+because a cap is open-path geometry. `scatter` adds `marker-shape`.
 
 `stroke-linecap` (`butt`, `round`, `square`) carries its standard SVG meaning,
 and XY defaults it to `round` rather than to the CSS initial value — the native

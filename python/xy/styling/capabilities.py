@@ -84,6 +84,23 @@ class SlotCapability:
 
 
 @dataclass(frozen=True)
+class RendererDivergence:
+    """A default the three renderers do not agree on.
+
+    Typed like every other registry entry rather than left as a bare dict: a
+    mistyped key in a dict fails silently at render time instead of raising.
+    """
+
+    id: str
+    what: str
+    webgl: str
+    svg: str
+    native: str
+    visible_when: str
+    tracked_by: str
+
+
+@dataclass(frozen=True)
 class ExtensionPoint:
     """A way to add behavior XY does not ship, without forking it."""
 
@@ -214,16 +231,16 @@ MARK_STYLE_PROPERTIES: tuple[MarkStyleProperty, ...] = (
 #: Cross-renderer differences that exist in the *defaults* — no style property
 #: selects them, so they are invisible until someone diffs two exports. They
 #: belong in the registry for exactly that reason.
-KNOWN_RENDERER_DIVERGENCES: tuple[dict[str, str], ...] = (
-    {
-        "id": "polyline_join_default",
-        "what": "Interior vertices of a wide polyline",
-        "webgl": "the notch two overlapping segment quads leave",
-        "svg": "round (the writer names it explicitly)",
-        "native": "round (the capsule distance field fills the vertex)",
-        "visible_when": "stroke-width above ~4px at a sharp angle",
-        "tracked_by": "the `stroke-linejoin` row above",
-    },
+KNOWN_RENDERER_DIVERGENCES: tuple[RendererDivergence, ...] = (
+    RendererDivergence(
+        id="polyline_join_default",
+        what="Interior vertices of a wide polyline",
+        webgl="the notch two overlapping segment quads leave",
+        svg="round (the writer names it explicitly)",
+        native="round (the capsule distance field fills the vertex)",
+        visible_when="stroke-width above ~4px at a sharp angle",
+        tracked_by="the `stroke-linejoin` row above",
+    ),
 )
 
 
@@ -309,6 +326,7 @@ EXTENSION_POINTS: tuple[ExtensionPoint, ...] = (
 def markdown_mark_property_table(
     properties: Iterable[MarkStyleProperty] = MARK_STYLE_PROPERTIES,
 ) -> list[str]:
+    """One row per style property, with its per-renderer support."""
     lines = [
         "| property | vocabulary | mark kinds | webgl | svg | native | status |",
         "|---|---|---|---|---|---|---|",
@@ -324,6 +342,7 @@ def markdown_mark_property_table(
 
 
 def markdown_slot_table(slots: Iterable[SlotCapability] = CHART_SLOTS) -> list[str]:
+    """One row per chrome slot, with how far its styling travels."""
     lines = [
         "| slot | browser | native raster | native vector |",
         "|---|---|---|---|",
@@ -337,6 +356,7 @@ def markdown_slot_table(slots: Iterable[SlotCapability] = CHART_SLOTS) -> list[s
 
 
 def markdown_extension_table(points: Iterable[ExtensionPoint] = EXTENSION_POINTS) -> list[str]:
+    """One row per extension point, with its declared limits."""
     lines = ["| extension point | status | entry point | limits |", "|---|---|---|---|"]
     for point in points:
         limits = "; ".join(point.limits) or "—"
@@ -388,6 +408,7 @@ __all__ = [
     "SURFACES",
     "ExtensionPoint",
     "MarkStyleProperty",
+    "RendererDivergence",
     "SlotCapability",
     "axis_style_keys",
     "markdown_extension_table",

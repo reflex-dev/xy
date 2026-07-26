@@ -197,3 +197,40 @@ def test_a_plugin_cannot_reach_the_figure(hilo) -> None:
     ctx = seen["ctx"]
     assert set(vars(ctx)) == {"columns", "options", "name", "style", "class_name"}
     assert not any(hasattr(ctx, attr) for attr in ("figure", "traces", "store", "fig"))
+
+
+def test_a_plugin_cannot_claim_a_name_that_xy_mark_binds_itself() -> None:
+    # `xy.mark(name=...)` is the series label, so a plugin column called `name`
+    # could never be passed — the value would bind to the parameter and the
+    # column would resolve to None. Reject the schema, not the call site.
+    for reserved in ("name", "style", "data", "x_axis", "key"):
+        with pytest.raises(ValueError, match=re.escape("xy.mark() binds itself")):
+            xy.register_mark(
+                xy.MarkPlugin(name="clashing", columns=(reserved,), build=lambda ctx: [])
+            )
+    assert "clashing" not in xy.registered_marks()
+
+
+def test_declared_columns_reach_calc_as_canonical_f64(hilo) -> None:
+    # Canonical data is CPU-side f64 (§27). A float32 input must widen before
+    # `calc` runs, or the arithmetic rounds at f32 and hands the loss to a
+    # built-in mark that stores f64 anyway.
+    seen = {}
+
+    def build(ctx):
+        seen["dtypes"] = {k: v.dtype for k, v in ctx.columns.items()}
+        return [xy.line(x=ctx.columns["t"], y=ctx.columns["low"])]
+
+    xy.register_mark(xy.MarkPlugin(name="dtypes", columns=("t", "low"), build=build))
+    try:
+        xy.chart(
+            xy.mark(
+                "dtypes",
+                t=np.array([0.0, 1.0], dtype=np.float32),
+                low=np.array([1, 2], dtype=np.int16),
+            )
+        ).figure()
+    finally:
+        xy.unregister_mark("dtypes")
+
+    assert all(dtype == np.float64 for dtype in seen["dtypes"].values())

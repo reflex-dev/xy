@@ -1656,7 +1656,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 outline_path = joined if style.get("stroke_perimeter") else top_path
                 marks.append(
                     f'<path d="{outline_path}" stroke="{escape(line_color)}" stroke-width="{_num(lw)}" '
-                    f'fill="none"'
+                    'fill="none"'
                     # The area outline named its join but inherited SVG's `butt`
                     # cap, while the native rasterizer capped it round. Naming
                     # both settles that on the rasterizer's answer.

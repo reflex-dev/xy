@@ -78,6 +78,20 @@ class Rule(NamedTuple):
 #: (fnmatch semantics), which is what makes `*.marker.symbol` reach both
 #: `scatter.marker.symbol` and `scatter.selected.marker.symbol`.
 RULES: tuple[Rule, ...] = (
+    # --- excluded subtrees, first because `*` spans dots ---------------------
+    # `fnmatch` treats `*` as matching across `.`, and the first matching rule
+    # wins, so `layout.*axis.showgrid` would otherwise claim
+    # `layout.polar.angularaxis.showgrid` before the exclusion below could
+    # reject it — silently counting 3-D, geo, polar, ternary, and smith axes as
+    # supported and inflating the headline number. Order is load-bearing here.
+    Rule("layout.scene*", UNSUPPORTED, "", "3-D is explicitly out of v1"),
+    Rule("layout.geo*", UNSUPPORTED, "", "geo is explicitly out of v1"),
+    Rule("layout.map*", UNSUPPORTED, "", "mapbox/map is explicitly out of v1"),
+    Rule("layout.polar*", UNSUPPORTED, "", "polar axes are not implemented"),
+    Rule("layout.ternary*", UNSUPPORTED, "", "ternary axes are not implemented"),
+    Rule("layout.smith*", UNSUPPORTED, "", "smith axes are not implemented"),
+    Rule("layout.updatemenus*", UNSUPPORTED, "", "no in-chart widget layer"),
+    Rule("layout.sliders*", UNSUPPORTED, "", "no in-chart widget layer"),
     # --- paint and geometry XY draws exactly -------------------------------
     Rule("*.marker.symbol", SUPPORTED, "style={'marker-shape': ...}", "17 shared shapes"),
     Rule("*.marker.color", SUPPORTED, "color= / style={'fill': ...}", ""),
@@ -124,22 +138,14 @@ RULES: tuple[Rule, ...] = (
     Rule("layout.shapes.*", MAPPED, "xy.rule() / xy.band()", "no arbitrary path shapes"),
     Rule("layout.hovermode", MAPPED, "xy.tooltip(...)", ""),
     Rule("layout.dragmode", MAPPED, "xy.modebar(...) / interaction options", ""),
-    # --- deliberate exclusions, named as such -------------------------------
-    Rule("layout.scene*", UNSUPPORTED, "", "3-D is explicitly out of v1"),
-    Rule("layout.geo*", UNSUPPORTED, "", "geo is explicitly out of v1"),
-    Rule("layout.map*", UNSUPPORTED, "", "mapbox/map is explicitly out of v1"),
-    Rule("layout.polar*", UNSUPPORTED, "", "polar axes are not implemented"),
-    Rule("layout.ternary*", UNSUPPORTED, "", "ternary axes are not implemented"),
-    Rule("layout.smith*", UNSUPPORTED, "", "smith axes are not implemented"),
     Rule("layout.transition*", MAPPED, "xy.animation(...)", "different easing vocabulary"),
-    Rule("layout.updatemenus*", UNSUPPORTED, "", "no in-chart widget layer"),
-    Rule("layout.sliders*", UNSUPPORTED, "", "no in-chart widget layer"),
     Rule("*.hovertemplate", MAPPED, "xy.tooltip(...)", "not a mini-language"),
     Rule("*.customdata", MAPPED, "tooltip sources", ""),
 )
 
 
 def load_schema() -> tuple[dict[str, dict], str]:
+    """The installed plotly's flat validator schema, and its version."""
     try:
         import plotly
     except ModuleNotFoundError:  # pragma: no cover - depends on the extra
@@ -182,6 +188,7 @@ def classify(path: str) -> tuple[str, str, str]:
 
 
 def build_report(schema: dict[str, dict], version: str) -> tuple[str, dict]:
+    """Classify every attribute and render the report plus its summary counts."""
     paths = attribute_paths(schema)
     rows = [(path, *classify(path)) for path in paths]
     verdicts = Counter(verdict for _, verdict, _, _ in rows)
@@ -242,11 +249,23 @@ def build_report(schema: dict[str, dict], version: str) -> tuple[str, dict]:
         "",
         "## Why attributes are unsupported",
         "",
+        "Every unsupported attribute is accounted for: the table lists the "
+        "fifteen largest reasons and folds the rest into one row, so the column "
+        "sums to the unsupported total above rather than trailing off.",
+        "",
         "| reason | attributes |",
         "|---|---|",
     ]
-    for reason, count in reasons.most_common(15):
+    top = reasons.most_common(15)
+    for reason, count in top:
         lines.append(f"| {reason} | {count:,} |")
+    remainder = sum(reasons.values()) - sum(count for _, count in top)
+    if remainder:
+        lines.append(
+            f"| all other reasons ({len(reasons) - len(top)} more, "
+            f"each smaller than the rows above) | {remainder:,} |"
+        )
+    lines.append(f"| **total unsupported** | **{sum(reasons.values()):,}** |")
     lines += [
         "",
         "`unclassified` is the honest residue: attributes no committed rule in",
@@ -269,6 +288,7 @@ def build_report(schema: dict[str, dict], version: str) -> tuple[str, dict]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Print, write, or check the committed coverage report."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", action="store_true", help="regenerate the committed report")
     parser.add_argument(

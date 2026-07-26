@@ -89,6 +89,14 @@ class MarkPlugin:
     doc: str = ""
 
 
+#: `xy.mark()` binds these itself, so a column with one of these names could
+#: never be passed: the caller's value would land on the `mark()` parameter and
+#: the column would silently resolve to None. Rejecting the schema at
+#: registration turns a confusing runtime result into an import-time error.
+_MARK_CONTROL_FIELDS: frozenset[str] = frozenset(
+    {"kind", "data", "name", "style", "class_name", "key", "animation", "x_axis", "y_axis"}
+)
+
 _REGISTRY: dict[str, MarkPlugin] = {}
 
 
@@ -119,6 +127,12 @@ def register_mark(plugin: MarkPlugin, *, replace: bool = False) -> MarkPlugin:
     duplicates = sorted({c for c in plugin.columns if plugin.columns.count(c) > 1})
     if duplicates:
         raise ValueError(f"mark plugin {plugin.name!r} repeats column(s) {duplicates}")
+    reserved = sorted(set(plugin.columns) & _MARK_CONTROL_FIELDS)
+    if reserved:
+        raise ValueError(
+            f"mark plugin {plugin.name!r} declares column(s) {reserved}, which "
+            f"xy.mark() binds itself; rename them"
+        )
     _REGISTRY[plugin.name] = plugin
     return plugin
 
@@ -134,6 +148,7 @@ def registered_marks() -> tuple[str, ...]:
 
 
 def get_mark_plugin(name: str) -> MarkPlugin | None:
+    """The registered plugin for `name`, or None if nothing claims it."""
     return _REGISTRY.get(name)
 
 

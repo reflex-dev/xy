@@ -13,7 +13,7 @@ registry. Read the registry.
 
 `python/xy/styles.py` lists ten mark style properties. An agent that opens it
 and stops will conclude xy is barely customizable, and will be wrong: the
-styling surface is those ten properties **plus** 15 axis keys, 23
+styling surface is those ten properties **plus** 16 axis keys, 23
 CSS-addressable chrome slots, chart-level design-token variables that reach the
 marks in every renderer, and a mark-plugin API. Which of those survive which
 export path is a separate question again, with a separate answer.
@@ -72,7 +72,8 @@ document:
   drawn by all three renderers or rejected at build time.
 - **Far narrower.** 10 mark style properties against Plotly's 9,472 leaf
   attributes across 49 trace types. Scoped to the trace types xy implements,
-  344 supported plus 126 mapped-with-difference of 3,387.
+  217 supported plus 115 mapped-with-difference of 3,387. Do not retype these —
+  regenerate them, they move.
 - **Less extensible than Matplotlib.** `xy.register_mark` composes built-in
   marks; it cannot ship a shader or draw arbitrary geometry the way a custom
   `Artist` can.

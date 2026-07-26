@@ -8,9 +8,9 @@ Measured against **plotly 6.9.0**, `plotly/validators/_validators.json`, 9,472 l
 
 | verdict | attributes | share |
 |---|---|---|
-| supported | 345 | 3.6% |
-| mapped-with-difference | 126 | 1.3% |
-| unsupported | 9,001 | 95.0% |
+| supported | 218 | 2.3% |
+| mapped-with-difference | 115 | 1.2% |
+| unsupported | 9,139 | 96.5% |
 
 That denominator is dominated by trace types XY does not implement, so
 the whole-schema share is a poor headline number. The scoped one below
@@ -22,21 +22,24 @@ Trace types: `bar`, `box`, `contour`, `heatmap`, `histogram`, `histogram2d`, `sc
 
 | verdict | attributes | share |
 |---|---|---|
-| supported | 344 | 10.2% |
-| mapped-with-difference | 126 | 3.7% |
-| unsupported | 2,917 | 86.1% |
+| supported | 217 | 6.4% |
+| mapped-with-difference | 115 | 3.4% |
+| unsupported | 3,055 | 90.2% |
 
 ## Why attributes are unsupported
+
+Every unsupported attribute is accounted for: the table lists the fifteen largest reasons and folds the rest into one row, so the column sums to the unsupported total above rather than trailing off.
 
 | reason | attributes |
 |---|---|
 | unclassified | 2,190 |
+| 3-D is explicitly out of v1 | 323 |
 | no such trace: XY does not implement 'scatter3d' | 290 |
-| 3-D is explicitly out of v1 | 281 |
 | no such trace: XY does not implement 'carpet' | 200 |
 | no such trace: XY does not implement 'treemap' | 198 |
 | no such trace: XY does not implement 'funnel' | 197 |
 | no such trace: XY does not implement 'icicle' | 192 |
+| ternary axes are not implemented | 187 |
 | no such trace: XY does not implement 'scatterpolar' | 187 |
 | no such trace: XY does not implement 'scattercarpet' | 184 |
 | no such trace: XY does not implement 'scatterternary' | 184 |
@@ -44,7 +47,8 @@ Trace types: `bar`, `box`, `contour`, `heatmap`, `histogram`, `histogram2d`, `sc
 | no such trace: XY does not implement 'histogram2dcontour' | 182 |
 | no such trace: XY does not implement 'scattersmith' | 182 |
 | no such trace: XY does not implement 'scattergeo' | 180 |
-| no such trace: XY does not implement 'sunburst' | 177 |
+| all other reasons (32 more, each smaller than the rows above) | 4,080 |
+| **total unsupported** | **9,139** |
 
 `unclassified` is the honest residue: attributes no committed rule in
 `scripts/plotly_schema_coverage.py` claims. It is reported rather than

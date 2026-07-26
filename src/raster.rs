@@ -589,7 +589,7 @@ impl StrokePiece {
 
     fn coverage(&self, p: (f32, f32), hw: f32) -> f32 {
         match self {
-            StrokePiece::Box(( a, b)) => cov_from_sd(box_sd(p, *a, *b, hw)),
+            StrokePiece::Box((a, b)) => cov_from_sd(box_sd(p, *a, *b, hw)),
             StrokePiece::Disc(c) => {
                 cov_from_sd(((p.0 - c.0).powi(2) + (p.1 - c.1).powi(2)).sqrt() - hw)
             }
@@ -628,6 +628,18 @@ fn seg_coverage(p: (f32, f32), a: (f32, f32), b: (f32, f32), hw: f32) -> f32 {
     outer - distance2.sqrt()
 }
 
+/// Dash lengths a stroke walker can safely step through.
+///
+/// Both stroke paths advance by `drem.min(remain)` and subtract, which assumes
+/// every entry is finite and positive. The public API cannot produce anything
+/// else (`_validate.dash` requires positive px lengths), but `rasterize_into`
+/// decodes arbitrary bytes, and this is where the rest of that validation
+/// lives. A pattern with any non-positive or non-finite entry is treated as
+/// solid rather than half-walked.
+fn usable_dash(dash: &[f32]) -> bool {
+    !dash.is_empty() && dash.iter().all(|d| d.is_finite() && *d > 0.0)
+}
+
 /// Rasterize on-segments into a scratch coverage buffer (max-combined so
 /// overlapping joins don't double-darken), then composite once.
 fn stroke(
@@ -659,6 +671,7 @@ fn stroke_shaped(
     }
     let StrokeGeometry { cap, join } = geometry;
     let hw = width * 0.5;
+    let dash: &[f32] = if usable_dash(dash) { dash } else { &[] };
     let n = pts.len();
     let last = if closed { n } else { n - 1 };
     let raw: Vec<StrokeSegment> = (0..last).map(|i| (pts[i], pts[(i + 1) % n])).collect();
@@ -831,6 +844,7 @@ fn stroke_with_threads(
     if pts.len() < 2 || width <= 0.0 {
         return;
     }
+    let dash: &[f32] = if usable_dash(dash) { dash } else { &[] };
     if pts.len() == 2 && !closed && dash.is_empty() {
         stroke_segment(cv, pts[0], pts[1], width, rgba);
         return;
@@ -2970,6 +2984,40 @@ mod tests {
         };
         assert_eq!(probe(CAP_BUTT), 0);
         assert!(probe(CAP_SQUARE) > 200);
+    }
+
+    /// SVG's miter limit is a ratio of miter length to stroke *width*:
+    /// `miterLength / strokeWidth = 1 / cos(phi/2)`, where `phi` is the turn
+    /// angle. So the join degrades to a bevel exactly when `cos(phi/2)` drops
+    /// below `1 / MITER_LIMIT`. This pins that threshold: halving it — guarding
+    /// on `1 / (2 * MITER_LIMIT)` — would admit ratio-8 spikes, twice what SVG
+    /// and PDF draw for the same path.
+    #[test]
+    fn miter_joins_bevel_past_svgs_four_to_one_limit() {
+        let corners = |phi_deg: f32| -> usize {
+            let phi = phi_deg.to_radians();
+            let at = (0.0f32, 0.0f32);
+            let prev = (-10.0f32, 0.0f32);
+            let next = (10.0 * phi.cos(), 10.0 * phi.sin());
+            join_shape(prev, at, next, 5.0, JOIN_MITER)
+                .expect("a turned joint has a shape")
+                .len()
+        };
+        // ratio = 1/cos(phi/2): 90° -> 1.41, 150° -> 3.86, 155° -> 4.62.
+        assert_eq!(corners(90.0), 4, "a right angle miters (ratio 1.41)");
+        assert_eq!(corners(150.0), 4, "ratio 3.86 is inside the 4:1 limit");
+        assert_eq!(corners(155.0), 3, "ratio 4.62 degrades to a bevel");
+    }
+
+    /// A dash pattern the public API cannot produce must not steer the walker.
+    #[test]
+    fn malformed_dash_patterns_fall_back_to_solid() {
+        assert!(usable_dash(&[6.0, 4.0]));
+        assert!(!usable_dash(&[]));
+        assert!(!usable_dash(&[6.0, -4.0]), "a negative entry would rewind the walker");
+        assert!(!usable_dash(&[6.0, f32::NAN]));
+        assert!(!usable_dash(&[f32::INFINITY, 4.0]));
+        assert!(!usable_dash(&[0.0, 4.0]));
     }
 
     /// stroke-linejoin fills the notch on the outside of a turn. A miter

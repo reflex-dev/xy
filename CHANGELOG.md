@@ -31,8 +31,8 @@ in the README).
   (the equivalent is `validators/_validators.json`, and the real surface is
   9,472 leaf attributes rather than ~3,000), and there is no Plotly shim to warn
   — so "supported" means XY can express the same visual outcome, not that a shim
-  accepts the key. Scoped to the trace types XY implements plus `layout`: 344
-  supported and 126 mapped-with-difference of 3,387.
+  accepts the key. Scoped to the trace types XY implements plus `layout`: 217
+  supported and 115 mapped-with-difference of 3,387.
 - A **committed customization comparison** against Plotly, Vega-Lite, Bokeh, and
   Matplotlib (`spec/api/customization-vs-alternatives.md`), with the same
   discipline as the benchmark harness: pinned competitor versions, a named

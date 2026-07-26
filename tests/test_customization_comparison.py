@@ -66,7 +66,12 @@ def test_pinned_competitor_versions_match_the_benchmark_constraints() -> None:
     pinned = dict(
         re.findall(r"^([a-z0-9-]+)==([0-9.]+)", pins.read_text(encoding="utf-8"), re.MULTILINE)
     )
-    for package, label in (("plotly", "Plotly"), ("bokeh", "Bokeh"), ("matplotlib", "Matplotlib")):
+    for package, label in (
+        ("plotly", "Plotly"),
+        ("bokeh", "Bokeh"),
+        ("matplotlib", "Matplotlib"),
+        ("altair", "Altair"),
+    ):
         assert f"{label} {pinned[package]}" in text, (
             f"{label} is pinned at {pinned[package]} but the comparison quotes another version"
         )

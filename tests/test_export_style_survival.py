@@ -76,8 +76,11 @@ def test_custom_css_is_refused_by_every_native_path() -> None:
     # browser can emit vector SVG.
     chart = _styled_chart()
 
-    with pytest.raises(ValueError, match=re.escape("custom_css requires engine=Engine.chromium")):
-        chart.to_image(format="png", engine=Engine.default, custom_css=".x{color:red}")
+    for fmt in ("png", "pdf", "jpeg", "webp"):
+        with pytest.raises(
+            ValueError, match=re.escape("custom_css requires engine=Engine.chromium")
+        ):
+            chart.to_image(format=fmt, engine=Engine.default, custom_css=".x{color:red}")
     for engine in (Engine.auto, Engine.default, Engine.chromium):
         with pytest.raises(ValueError, match=r"SVG export is native-only|custom_css requires"):
             chart.to_image(format="svg", engine=engine, custom_css=".x{color:red}")

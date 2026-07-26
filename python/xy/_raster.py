@@ -1065,8 +1065,14 @@ def _emit_line(
         xv, yv = _step_arrays(xv, yv, style["step"])
     c = _rgba(style.get("color"), color, _stroke_opacity(style))
     width = float(style.get("width", 1.5))
+    # `render_raster` takes a plain spec dict, so a hand-built or round-tripped
+    # one can carry a value `compile_mark_style` would have rejected. Fall back
+    # to the documented default rather than raising a bare KeyError from inside
+    # the byte packer.
     cap = str(style.get("linecap", "round"))
     join = str(style.get("linejoin", "round"))
+    cap = cap if cap in _CAP_CODES else "round"
+    join = join if join in _JOIN_CODES else "round"
     if style.get("curve") == "smooth" and len(xv) >= 3 and sx.affine and sy.affine:
         cmd.smooth_stroke(xv, yv, sx, sy, width, c, dash=style.get("dash"), cap=cap, join=join)
     else:
