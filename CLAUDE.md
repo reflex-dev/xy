@@ -4,18 +4,6 @@ A high-performance charting engine. The authoritative design is
 `spec/design-dossier.md` — **read the relevant § before changing behavior**;
 code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
 
-**Two registries answer questions that are easy to get wrong by reading one
-file.**
-
-- *How fast is it, and on what?* → `benchmarks/categories.py` and
-  `spec/benchmarks/results.md`. Quote a row; never invent a number.
-- *What can be styled, and where does the styling stop?* →
-  `python/xy/styling/capabilities.py`, the per-renderer support inventory that
-  `spec/api/capability-matrix.md` is generated from. `python/xy/styles.py`
-  lists the mark properties and looks like the whole answer; the inventory also
-  covers the 23 chrome slots, what survives each export path, the extension
-  points, and where the three renderers still differ.
-
 The entire `spec/` directory is the source of truth for intended behavior,
 architecture, compatibility, benchmarks, release readiness, and contributor
 contracts. Keep it current with every relevant code, configuration, build, and
@@ -72,12 +60,8 @@ instead of treating the implementation alone as authoritative.
   widget, HTML export, and tests have the bundles on disk. npm devDependencies
   (vite/typescript/playwright, pinned in `package-lock.json`) are build/test-time
   only — the shipped client stays runtime-dependency-free.
-- `tests/`, `benchmarks/bench.py` (§12 harness; the harnesses live in
-  `benchmarks/`, not `scripts/`), `scripts/render_smoke_nonumpy.py` (headless
-  Chromium pixel probe).
-- `python/xy/styling/capabilities.py` — the customization registry (above).
-  `scripts/gen_capability_matrix.py --write` regenerates the committed matrix;
-  the suite fails if it is stale or out of step with `styles.py`.
+- `tests/`, `scripts/bench.py` (§12 harness), `scripts/smoke_render.py`
+  (headless Chromium pixel probe).
 
 ## Commands
 
@@ -93,10 +77,9 @@ uv pip install -e "python/reflex-xy[dev]"  # enables tests/reflex_adapter (insta
 uv run pytest                         # native core required (no fallback)
 python3 scripts/reflex_ws_smoke.py    # browser E2E vs a running reflex-xy demo app
 uv run ruff check . && uv run ruff format . && uv run ty check
-uv run python benchmarks/bench.py     # §12 benchmark harness
+uv run python scripts/bench.py        # §12 benchmark harness
 python3 scripts/bench_scatter_native.py --render   # xy scatter, no deps
-uv run python benchmarks/bench_vs.py  # three-way vs plotly/matplotlib (needs both)
-uv run python scripts/gen_capability_matrix.py --check   # capability matrix currency
+uv run python scripts/bench_vs.py     # three-way vs plotly/matplotlib (needs both)
 ```
 
 Before every commit or push, run the repository hooks and Ruff checks across the
@@ -125,10 +108,4 @@ PRs, or code. Set `git config user.name/user.email` to the human author
 - f32 uploads are offset-encoded; tick/hover math stays f64 (§4/§16).
 - Every decimation/tier decision is recorded in the spec, never silent (§28).
 - Claims are mode-scoped and benchmarked (§2); update README numbers from
-  `benchmarks/bench.py`, don't invent them.
-- A mark style property no renderer set can agree on is not accepted by
-  `style=` — two renderers honoring what a third ignores is the failure
-  `styles.py` exists to prevent. The styling surface is a bounded, enumerated
-  subset, so superlatives about it are never defensible however they are
-  qualified; `scripts/check_claim_guardrails.py` rejects them mechanically
-  alongside the performance ones.
+  `scripts/bench.py`, don't invent them.
