@@ -57,6 +57,13 @@ in the README).
   - SVG documents assemble in one flat join with block-buffered markers, and the
     native rasterizer borrows the display list instead of freezing a `bytes`
     copy. A 100k-point SVG export peaks at 27 MB instead of 39 MB.
+  - The JPEG encoder streams instead of exploding: the entropy packer works in
+    bounded bit passes (it cost 17 bytes per output *bit*, so a 2.8 MB stream
+    peaked over 1.5 GB), the YCbCr planes are released as they are consumed, the
+    quantize chain rounds in place via `trunc(x + copysign(0.5, x))`, and the
+    per-component token fields are freed as they are gathered. A 1800x840 export
+    peaks at 48 MB instead of 108 (photographic: **400 MB instead of 1516 MB**)
+    and is 5-19% faster.
 - `memory_report()` reports `capacity_bytes` per column and
   `canonical_capacity_bytes` per store, and builds `resident_array_bytes` from
   the capacity total. A streamed column's `values` is a prefix view of its
