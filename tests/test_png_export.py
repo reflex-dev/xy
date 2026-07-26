@@ -1004,10 +1004,22 @@ def test_the_raster_atlas_draws_latin_and_currency(char: str) -> None:
 def test_characters_outside_the_atlas_box_instead_of_vanishing(char: str) -> None:
     """CJK and emoji stay unbakeable, but the failure must be visible (§28)."""
     assert _title_png(f"X{char}") != _title_png("X"), f"{char!r} vanished silently"
-    assert _title_png(f"X{char}") == _title_png("X�"), (
+    assert _title_png(f"X{char}") == _title_png("X\ufffd"), (
         "an unbaked character should render as the replacement glyph"
     )
 
 
+@pytest.mark.parametrize("space", ["\u00a0", "\u202f", "\u2009"])
+def test_unicode_spaces_render_as_spaces_not_boxes(space: str) -> None:
+    """Locale-aware number formatting emits NBSP and narrow NBSP as group
+    separators, so these reach the rasterizer through ordinary tick labels.
+    Whitespace is drawn by its advance, not its shape — a replacement box
+    would be plainly wrong where a space belongs."""
+    assert _title_png(f"X{space}Y") == _title_png("X Y")
+
+
 def test_zero_width_characters_still_draw_nothing() -> None:
-    assert _title_png("X​") == _title_png("X")
+    # Spelled as an escape on purpose: a literal U+200B is invisible in the
+    # source, and an editor or a copy-paste that strips it would silently
+    # reduce this to `_title_png("X") == _title_png("X")`.
+    assert _title_png("X\u200b") == _title_png("X")

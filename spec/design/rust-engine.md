@@ -130,35 +130,47 @@ cannot reach crates.io, so required crates must be vendored or the sandbox
 loses local build/test; prefer feature-gated optional deps (e.g. SIMD
 argminmax, tsdownsample-class speed) with the lean build as default.
 
-### 2.1 Native text is a bounded subset, and misses are silent
+### 2.1 Native text is a bounded subset, and misses are visible
 
 Declining FreeType bought the single-cdylib property (§3.1) and paid for it in
-Unicode coverage. `font.rs` bakes exactly 205 glyphs: ASCII 32–126 (95) plus
-the 110 codepoints enumerated in `font::EXTRA_CODEPOINTS` — lowercase Greek
-(α–ω) and the eleven uppercase Greek letters that differ from Latin forms
-(Γ Δ Θ Λ Ξ Π Σ Υ Φ Ψ Ω), math operators (`∂ ∇ ∈ − ∓ √ ∝ ∞ ∫ ≈ ≠ ≤ ≥`), the
-left and right arrows only, super/subscript digits and a handful of subscript
-letters, typographic quotes, en/em dashes, and a few symbols (`° ± × · µ ²³¹ …`).
-Nothing else exists: no accented Latin at all, no Cyrillic, no CJK, no Arabic,
-no emoji.
+Unicode coverage. `font.rs` bakes exactly 424 glyphs: ASCII 32–126 (95) plus
+the 329 codepoints enumerated in `font::EXTRA_CODEPOINTS` — the Latin-1
+Supplement and Latin Extended-A letters (U+00C0–U+017F, which carry Western,
+Central, and Northern European orthographies), non-ASCII currency symbols,
+lowercase Greek (α–ω) and the eleven uppercase Greek letters that differ from
+Latin forms (Γ Δ Θ Λ Ξ Π Σ Υ Φ Ψ Ω), math operators
+(`∂ ∇ ∈ − ∓ √ ∝ ∞ ∫ ≈ ≠ ≤ ≥`), the left and right arrows only, super/subscript
+digits and a handful of subscript letters, typographic quotes, en/em dashes,
+and a few symbols (`° ± × · µ ²³¹ …`).
 
-The failure mode is worse than the coverage gap. `glyph_index`
-(`src/raster.rs:1175`) returns `None` for an uncovered codepoint, and the paint
-loop's `let … else { continue; }` (`src/raster.rs:1236-1238`) drops that
-character **before** the advance is applied — so the glyph is deleted, not
-substituted, and the following glyphs close up over the hole. There is no tofu
-box, no fallback glyph, no warning, and no error. `"Müller"` rasterizes as
-`"Mller"`; a fully non-Latin label rasterizes as nothing. The anchoring pass
-sums advances through the same `glyph_index` filter (`src/raster.rs:1200-1204`),
-so a centered or right-anchored label is positioned on its *shortened* width —
-the loss is self-consistent and therefore invisible in the output.
+Still absent: Cyrillic, CJK, Arabic, emoji, and the Latin blocks beyond
+Extended-A — so Vietnamese (Latin Extended Additional) and Romanian's `ș`/`ț`
+(Latin Extended-B) are **not** covered. Coverage is a bounded set of blocks,
+not a language guarantee.
 
-This violates §28 (no silent decisions) and is recorded as a known defect, not
-a design intent. The minimum honest fix is a substitution glyph with a real
-advance, so a coverage miss is *visible*; a warning surfaced at the Python
-export boundary (where messages belong, §4) is the complete fix. Until then the
-documented escape is `engine=xy.Engine.chromium`, and the user-facing statement
-of the same limitation lives in `spec/api/styling.md` §"Native text coverage" —
+The failure mode used to be worse than the coverage gap. `glyph_index` returned
+`None` for an uncovered codepoint and the paint loop's `let … else { continue; }`
+dropped that character **before** the advance was applied — the glyph was
+deleted, not substituted, and the following glyphs closed up over the hole. No
+tofu box, no fallback, no warning. `"Müller"` rasterized as `"Mller"`; a fully
+non-Latin label rasterized as nothing. The anchoring pass summed advances
+through the same filter, so a centered label was positioned on its *shortened*
+width — the loss was self-consistent and therefore invisible.
+
+That violated §28 (no silent decisions). `glyph_index` (`src/raster.rs`) now
+substitutes **U+FFFD** for any codepoint the atlas lacks, so the miss occupies
+space and is visible in the output; the anchoring pass sums the replacement
+glyph's real advance, so the label's width is honest. Two exceptions stay
+invisible on purpose: control and zero-width characters (U+200B–U+200F, U+FEFF)
+have nothing to show, and **whitespace maps to the ASCII space glyph** rather
+than to a box — locale-aware number formatting emits NBSP (U+00A0) and narrow
+NBSP (U+202F) as group separators, and those reach the rasterizer through
+ordinary tick labels, where a box would be plainly wrong.
+
+A warning surfaced at the Python export boundary (where messages belong, §4)
+remains the complete fix and is not yet implemented. The documented escape for
+real coverage is `engine=xy.Engine.chromium`, and the user-facing statement of
+the same limitation lives in `spec/api/styling.md` §"Native text coverage" —
 these two must be amended together. The bound applies to the native raster
 formats only; the SVG and PDF export paths have their own text contracts.
 

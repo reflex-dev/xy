@@ -1457,6 +1457,13 @@ fn glyph_index(ch: char) -> Option<usize> {
     if ch.is_control() || matches!(code, 0x200B..=0x200F | 0xFEFF) {
         return None;
     }
+    // Whitespace is *drawn* by its advance, not its shape, so a box is a worse
+    // answer than the space it stands for. Locale-aware number formatting emits
+    // NBSP (U+00A0) and narrow NBSP (U+202F) as group separators, so these do
+    // reach the rasterizer through ordinary tick labels.
+    if ch.is_whitespace() {
+        return atlas_row(' ' as u32);
+    }
     atlas_row(0xFFFD)
 }
 
@@ -2823,6 +2830,15 @@ mod tests {
         // Zero-width and control characters have nothing to show.
         for ch in ['\u{200b}', '\u{feff}', '\u{7}'] {
             assert_eq!(glyph_index(ch), None, "{ch:?} should stay invisible");
+        }
+        // Whitespace draws by its advance, not its shape. Locale-aware number
+        // formatting emits these as group separators, so a box would be wrong.
+        for ch in ['\u{a0}', '\u{202f}', '\u{2009}'] {
+            assert_eq!(
+                glyph_index(ch),
+                atlas_row(' ' as u32),
+                "{ch:?} should render as a space"
+            );
         }
     }
 
