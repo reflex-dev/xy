@@ -2231,3 +2231,114 @@ def test_line_dash_presets_and_custom() -> None:
         Figure().line([0.0, 1.0], [0.0, 1.0], dash=[5.0])
     with pytest.raises(ValueError, match=r"dash\[1\]"):
         Figure().line([0.0, 1.0], [0.0, 1.0], dash=[5.0, -1.0])
+
+
+# --------------------------------------------------------------------------
+# Row-dropping conditions behind `_payload._visible_mask_needed`
+# --------------------------------------------------------------------------
+# The direct-tier emitters skip the visible-row mask when it is provably
+# all-true (linear axes, no nulls — zone maps count NaN *and* ±inf as null).
+# These pin the three cases where a row really must be dropped, so the
+# predicate cannot be tightened past what the mask actually rejects. Without
+# them the log and baseline branches are invisible to CI: removing either one
+# left the whole suite green.
+
+
+def test_log_axis_drops_nonpositive_rows_from_the_payload():
+    """A log axis rejects <= 0, which no zone-map null count can predict."""
+    x = np.array([1.0, -2.0, 3.0, 0.0, 5.0])
+    y = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    fig = Figure().scatter(x, y)
+    fig.set_axis("x", type_="log")
+    spec, _blob = fig.build_payload()
+    trace = spec["traces"][0]
+    assert trace["tier"] == "direct"
+    assert trace["n_marks"] == 3
+    # shipped rows translate back to the canonical rows that survived (§17).
+    np.testing.assert_array_equal(fig.traces[0].shipped_sel, [0, 2, 4])
+
+
+def test_log_y_axis_drops_nonpositive_rows_for_a_line():
+    x = np.array([1.0, 2.0, 3.0, 4.0])
+    y = np.array([5.0, 0.0, -1.0, 8.0])
+    fig = Figure().line(x, y)
+    fig.set_axis("y", type_="log")
+    spec, _blob = fig.build_payload()
+    assert spec["traces"][0]["n_marks"] == 2
+
+
+def test_log_axis_with_nonfinite_and_nonpositive_rows():
+    """Both rejection rules at once: the null count exists *and* a log axis."""
+    x = np.array([1.0, np.nan, 4.0, -3.0, np.inf, 9.0])
+    y = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    fig = Figure().scatter(x, y)
+    fig.set_axis("x", type_="log")
+    spec, _blob = fig.build_payload()
+    assert spec["traces"][0]["n_marks"] == 3
+    np.testing.assert_array_equal(fig.traces[0].shipped_sel, [0, 2, 5])
+
+
+def test_symlog_axis_keeps_nonpositive_rows():
+    """symlog exists to show zero and negatives — it must drop nothing."""
+    x = np.array([-5.0, 0.0, 5.0])
+    y = np.array([1.0, 2.0, 3.0])
+    fig = Figure().scatter(x, y)
+    fig.set_axis("x", type_="symlog", constant=1.0)
+    spec, _blob = fig.build_payload()
+    assert spec["traces"][0]["n_marks"] == 3
+
+
+def test_area_drops_rows_whose_baseline_is_null():
+    """The baseline column has its own zone maps; x/y nulls cannot cover it."""
+    x = np.arange(5.0)
+    upper = np.array([2.0, 3.0, 4.0, 5.0, 6.0])
+    lower = np.array([1.0, np.nan, 1.0, np.inf, 1.0])
+    fig = Figure().error_band(x, lower, upper)
+    spec, _blob = fig.build_payload()
+    assert spec["traces"][0]["n_marks"] == 3
+
+
+def test_area_with_finite_baseline_keeps_every_row():
+    x = np.arange(4.0)
+    fig = Figure().area(x, np.array([1.0, 2.0, 3.0, 4.0]), base=0.5)
+    spec, _blob = fig.build_payload()
+    assert spec["traces"][0]["n_marks"] == 4
+
+
+# --------------------------------------------------------------------------
+# memory_report: growth-buffer capacity
+# --------------------------------------------------------------------------
+
+
+def test_memory_report_counts_growth_buffer_capacity() -> None:
+    """A streamed column holds its capacity, not just its length (§27).
+
+    `values` is a prefix view of a capacity-doubling buffer, so `values.nbytes`
+    under-reports resident RAM by up to 2x after a stream of appends. The
+    capacity total is what `resident_array_bytes` is built from.
+    """
+    n = 10_000
+    x = np.arange(n, dtype=np.float64)
+    fig = Figure().line(x, np.sin(x))
+    before = fig.memory_report()
+    # Nothing appended: capacity is exactly the live length, as it always was.
+    assert before["canonical_capacity_bytes"] == before["canonical_bytes"] == 2 * n * 8
+    assert before["resident_array_bytes"] == 2 * n * 8
+    assert all(c["capacity_bytes"] == c["bytes"] for c in before["columns"])
+
+    for step in range(1, 21):
+        tail = np.arange(n + (step - 1) * 100, n + step * 100, dtype=np.float64)
+        fig.append(0, tail, np.sin(tail))
+    after = fig.memory_report()
+
+    grown = 2 * (n + 20 * 100) * 8
+    assert after["canonical_bytes"] == grown  # live values, as before
+    # The doubling buffer holds strictly more than the live values, and the
+    # report says so rather than hiding the slack.
+    assert after["canonical_capacity_bytes"] > after["canonical_bytes"]
+    assert after["resident_array_bytes"] == after["canonical_capacity_bytes"]
+    for column, source in zip(after["columns"], fig.store.columns, strict=True):
+        assert column["capacity_bytes"] >= column["bytes"]
+        assert column["capacity_bytes"] == source.capacity_bytes
+        # Amortized growth is bounded: never more than double the live length.
+        assert column["capacity_bytes"] <= 2 * column["bytes"]

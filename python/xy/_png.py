@@ -51,10 +51,20 @@ def _filtered_rows(h: int, stride: int) -> np.ndarray:
 
 
 def png_truecolor(
-    w: int, h: int, rgba: object, *, compression_level: int = _COMPRESSION_LEVEL
+    w: int,
+    h: int,
+    rgba: bytes | bytearray | memoryview | np.ndarray,
+    *,
+    compression_level: int = _COMPRESSION_LEVEL,
 ) -> bytes:
     """RGBA8 PNG (color type 6). `rgba` is row-major `w*h*4` bytes, top row
-    first — any buffer (`bytes`, `memoryview`, contiguous uint8 array)."""
+    first.
+
+    Any buffer works and none is copied: `bytes`/`bytearray`/`memoryview`, or a
+    **C-contiguous** uint8 array (pass `np.ascontiguousarray` if that is not
+    guaranteed — a strided view would be read in memory order, not row order).
+    Only the first `w * h * 4` bytes are read.
+    """
     ihdr = struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)
     stride = w * 4
     rows = _filtered_rows(h, stride)

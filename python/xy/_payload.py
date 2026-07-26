@@ -433,6 +433,14 @@ class PayloadMixin(_Host):
         yv: np.ndarray,
         base: Optional[np.ndarray] = None,
     ) -> np.ndarray:
+        """Rows this trace may actually ship.
+
+        Paired with `_visible_mask_needed`, which decides whether calling this
+        can drop anything at all: **a new rejection rule here needs a matching
+        condition there**, or the emitters will skip the mask on data it would
+        now reject. (`tests/test_figure.py` pins one case per rule; the
+        predicate going stale is otherwise silent.)
+        """
         mask = np.isfinite(xv) & np.isfinite(yv)
         if self._axis_scale(t.x_axis) == "log":
             mask &= xv > 0
