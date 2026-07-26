@@ -278,6 +278,15 @@ def test_stable_keys_are_type_sensitive_and_deterministic() -> None:
             ),
             id="numpy-float64-swapped-subnormal",
         ),
+        # Object storage still routes when every row is one builtin type —
+        # this is the shape a pandas string column arrives in.
+        pytest.param(np.array(["a", "b"], dtype=object), id="object-array"),
+        pytest.param(np.array([1.25, 2.5], dtype=object), id="object-floats"),
+        pytest.param(np.array([3, -4], dtype=object), id="object-ints"),
+        # An interior NUL survives fixed-width storage intact; only a
+        # *trailing* one is ambiguous against padding.
+        pytest.param(["a\x00b", "plain"], id="list-unicode-interior-nul"),
+        pytest.param([b"a\x00b", b"plain"], id="list-bytes-interior-nul"),
     ],
 )
 def test_native_transition_key_fast_paths_match_python_reference(keys, monkeypatch) -> None:
@@ -304,10 +313,11 @@ def test_native_transition_key_fast_paths_match_python_reference(keys, monkeypat
     "keys",
     [
         pytest.param([1, "1", True, b"1"], id="mixed-builtins"),
-        pytest.param(np.array(["a", "b"], dtype=object), id="object-array"),
-        pytest.param(np.array([1.25, 2.5], dtype=object), id="object-floats"),
-        pytest.param(["a\x00b", "plain"], id="list-unicode-nul"),
-        pytest.param([b"a\x00b", b"plain"], id="list-bytes-nul"),
+        pytest.param(np.array([1, "1"], dtype=object), id="object-array-mixed"),
+        # A trailing NUL is indistinguishable from fixed-width padding, so
+        # these must keep their exact Python tokens.
+        pytest.param(["a\x00", "plain"], id="list-unicode-trailing-nul"),
+        pytest.param([b"a\x00", b"plain"], id="list-bytes-trailing-nul"),
         pytest.param(
             [dt.date(2024, 1, 1), dt.date(2024, 1, 2)],
             id="dates",
@@ -387,6 +397,67 @@ def test_transition_key_empty_shape_and_length_semantics() -> None:
         component_api._encode_transition_keys([["a"], ["b"]], 2, "shape key")
     with pytest.raises(ValueError, match="length key must have length 3, got 2"):
         component_api._encode_transition_keys(["a", "b"], 3, "length key")
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        pytest.param(["alpha", "beta", "gamma"], id="string-column"),
+        pytest.param([3, -4, 5], id="integer-column"),
+        pytest.param([1.5, -0.0, 2.25], id="float-column"),
+        pytest.param([True, False], id="bool-column"),
+    ],
+)
+def test_dataframe_key_columns_reach_the_native_encoder(column, monkeypatch) -> None:
+    """`data=df, key="id"` resolves to a Series, not an ndarray (§ routing)."""
+    pd = pytest.importorskip("pandas")
+    series = pd.Series(column)
+    calls: list[np.ndarray] = []
+    native = k.transition_keys_fixed
+
+    def tracked(values: np.ndarray, label: str):
+        calls.append(values)
+        return native(values, label)
+
+    monkeypatch.setattr(k, "transition_keys_fixed", tracked)
+    actual = component_api._encode_transition_keys(series, len(series), "frame key")
+
+    assert len(calls) == 1
+    np.testing.assert_array_equal(actual, _python_transition_key_reference(column))
+
+
+def test_dataframe_key_column_with_missing_values_keeps_its_python_error() -> None:
+    pd = pytest.importorskip("pandas")
+    series = pd.Series([1.0, None, 3.0], dtype="Float64")
+    with pytest.raises(ValueError, match="animation key is missing at row 1"):
+        component_api._encode_transition_keys(series, 3, "frame key")
+
+
+def test_native_transition_key_argument_errors_are_loud() -> None:
+    """A layout the kernel refuses is a bug, not a reason to degrade silently.
+
+    Status 1 means "declined this data, use the oracle"; status 4 means the
+    caller sent a layout the ABI does not define. Collapsing the two would let
+    a `_native.py`/`valid_layout` drift turn into a silent ~7x regression that
+    every existing assertion still passes.
+    """
+    with pytest.raises(ValueError, match="must be a non-object 1-D array"):
+        k.transition_keys_fixed(np.array(["a", "b"], dtype=object), "bad key")
+    with pytest.raises(ValueError, match="must use Unicode, bytes, bool, integer, or float"):
+        k.transition_keys_fixed(np.array(["2024-01-01"], dtype="datetime64[D]"), "bad key")
+
+    # The wrapper's own dtype gate and Rust's `valid_layout` agree today, so
+    # reaching status 4 needs the seam forced open. What matters is that it
+    # raises rather than returning the None that means "use the oracle".
+    from xy import _native
+
+    original = _native._lib.xy_transition_keys_fixed
+    try:
+        _native._lib.xy_transition_keys_fixed = lambda *_args: 4
+        with pytest.raises(RuntimeError, match=r"rejected the .* layout it was handed"):
+            _native.transition_keys_fixed(np.array([b"ab"], dtype="S2"), "bad key")
+    finally:
+        _native._lib.xy_transition_keys_fixed = original
 
 
 def test_aggregate_tier_records_key_matching_fallback() -> None:

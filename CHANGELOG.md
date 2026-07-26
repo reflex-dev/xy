@@ -63,12 +63,17 @@ in the README).
   integers, plus finite floating arrays, including non-native-endian NumPy
   arrays. Float16/32 values widen exactly to the f64 token contract. It
   preserves the existing 64-bit identities and duplicate-row errors; mixed
-  objects, NUL-containing Python sequences, dates, and non-finite row
-  diagnostics stay on the conservative Python reference path. Highly padded
-  Python string/bytes sequences also stay there to bound fixed-width temporary
-  memory. Fixed-width NumPy strings retain their exact embedded-NUL semantics
-  natively.
-  This adds the C ABI v43 transition-key kernel.
+  objects, dates, and non-finite row diagnostics stay on the conservative
+  Python reference path. Highly padded Python string/bytes sequences also stay
+  there to bound fixed-width temporary memory. Fixed-width NumPy strings retain
+  their exact embedded-NUL semantics natively.
+  Routing follows the values rather than the container, so a key column passed
+  as a pandas Series or as homogeneous object storage — what `data=df,
+  key="id"` actually resolves to — takes the same path as an ndarray instead of
+  falling back. Only keys that *end* in NUL stay on the reference encoder,
+  where fixed-width padding would otherwise absorb them; interior NULs are
+  encoded natively.
+  This adds the C ABI v44 transition-key kernel.
 - Host theme changes made through an ancestor `data-theme` attribute now
   refresh canvas/SVG paint just like `.dark` class and inline-style changes;
   DOM chrome continues to follow the cascade automatically.

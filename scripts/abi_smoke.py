@@ -568,8 +568,44 @@ def main() -> None:
             ctypes.byref(transition_first),
             ctypes.byref(transition_index),
         )
-        == 1,
-        "transition_keys_fixed non-empty/null rejected",
+        == 4,
+        "transition_keys_fixed non-empty/null is an argument error",
+    )
+    nonfinite_records = array("d", [float("inf")])
+    nonfinite_low = array("I", [99])
+    nonfinite_high = array("I", [99])
+    transition_first = ctypes.c_size_t(size_max)
+    transition_index = ctypes.c_size_t(size_max)
+    ok(
+        lib.xy_transition_keys_fixed(
+            _ptr(nonfinite_records, ctypes.c_uint8),
+            1,
+            8,
+            5,
+            0,
+            _ptr(nonfinite_low, ctypes.c_uint32),
+            _ptr(nonfinite_high, ctypes.c_uint32),
+            ctypes.byref(transition_first),
+            ctypes.byref(transition_index),
+        )
+        == 1
+        and transition_first.value == 0,
+        "transition_keys_fixed declines non-finite data with its row",
+    )
+    ok(
+        lib.xy_transition_keys_fixed(
+            _ptr(nonfinite_records, ctypes.c_uint8),
+            1,
+            3,
+            0,
+            0,
+            _ptr(nonfinite_low, ctypes.c_uint32),
+            _ptr(nonfinite_high, ctypes.c_uint32),
+            ctypes.byref(transition_first),
+            ctypes.byref(transition_index),
+        )
+        == 4,
+        "transition_keys_fixed bad layout is an argument error",
     )
     small_unique = array("I", [99] * 2)
     ok(

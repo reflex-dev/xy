@@ -128,18 +128,28 @@ there is O(sample), not O(N).
 
 ### Medium
 
-3. **Resolved after this audit — animation `key=` encoding hashed homogeneous
-   columns row-by-row in Python** (`components.py`). ABI v43 adds a borrowed
-   fixed-width native encoder for homogeneous string, bytes, bool, integer,
-   and finite floating keys (f16/f32 widen exactly to f64). It emits both u32
-   identity planes in one pass and reports the first duplicate pair so Python
-   preserves the exact error
-   contract. Conservative Python fallback retains mixed-object,
-   NUL-containing Python sequence, date, and non-finite-row diagnostic
+3. **Mostly resolved after this audit — animation `key=` encoding hashed
+   homogeneous columns row-by-row in Python** (`components.py`). ABI v43 added
+   a borrowed fixed-width native encoder for homogeneous string, bytes, bool,
+   integer, and finite floating keys (f16/f32 widen exactly to f64). It emits
+   both u32 identity planes in one pass and reports the first duplicate pair so
+   Python preserves the exact error contract. Conservative Python fallback
+   retains mixed-object, trailing-NUL, date, and non-finite-row diagnostic
    semantics; fixed-width NumPy `U`/`S` records keep exact embedded-NUL
-   semantics natively.
+   semantics natively. A follow-up extended routing to `to_numpy` columns and
+   homogeneous object storage — without it the documented `data=df, key="id"`
+   idiom, which resolves to a Series, never reached the kernel at all.
    `benchmarks/test_codspeed_animation.py::test_animation_encode_100k_stable_keys`
-   keeps the original 100k end-to-end row as the regression gate.
+   keeps the original 100k end-to-end row as the regression gate, and now
+   asserts the input actually routes so the gate cannot pass on the slow path.
+
+   Residual: the *discarded-work* half of this finding is still open. Keys are
+   encoded for every row before `_transition_entry` decides, and above
+   `MAX_ANIMATION_MATCH_ROWS` (200k) it drops them for `snap:key-limit`. A
+   1M-row keyed mark still spends ~144 ms (was ~800 ms) producing identities
+   nothing reads. Fix remains: short-circuit when the fallback is certain,
+   minding that duplicate-key errors are part of the construction contract and
+   must still fire.
 4. **Direct-tier traces retain f32 wire buffers for the widget lifetime**
    (`widget.py:55`, `_payload.py:154`). A near-ceiling direct scatter
    (500k–2M pts) holds f64 canonical + f32 wire simultaneously (~24 B/pt)

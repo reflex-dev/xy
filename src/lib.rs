@@ -83,7 +83,7 @@ unsafe fn borrowed_byte_spans<'a>(
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 43;
+pub const ABI_VERSION: u32 = 44;
 const FACTORIZE_CAPACITY_EXCEEDED: usize = usize::MAX - 1;
 
 #[no_mangle]
@@ -97,11 +97,13 @@ pub extern "C" fn xy_abi_version() -> u32 {
 /// 1/2/4/8 bytes; Unicode width is a positive multiple of four. `swap_endian`
 /// must be zero or one.
 ///
-/// Returns 0 on success, 1 for invalid arguments or scalar data, 2 for a
-/// duplicate token, and 3 for a digest collision. For status 2 or 3,
-/// `out_error_first` and `out_error_index` receive the prior/current row
-/// indices. Invalid scalar data also records its row in both outputs when they
-/// are non-null; invalid pointer/dimension calls do not write error outputs.
+/// Returns 0 on success, 1 for scalar data this kernel declines to tokenize
+/// (the caller falls back to its reference encoder), 2 for a duplicate token,
+/// 3 for a digest collision, and 4 for invalid arguments. Statuses 1, 2, and 3
+/// write `out_error_first`/`out_error_index`: the offending row for 1, and the
+/// prior/current pair for 2 and 3. Status 4 writes neither, and is a caller
+/// bug rather than a data property — keeping it distinct from 1 stops a
+/// layout-contract drift from degrading silently into the slow path.
 ///
 /// # Safety
 /// For non-empty input, `data` addresses `len * width` readable bytes and each
@@ -120,34 +122,35 @@ pub unsafe extern "C" fn xy_transition_keys_fixed(
     out_error_index: *mut usize,
 ) -> i32 {
     if !matches!(swap_endian, 0 | 1) {
-        return 1;
+        return 4;
     }
     if len == 0 {
         return 0;
     }
     if out_error_first.is_null() || out_error_index.is_null() {
-        return 1;
+        return 4;
     }
     let byte_len = match len.checked_mul(width) {
         Some(value) if width > 0 => value,
-        _ => return 1,
+        _ => return 4,
     };
     if data.is_null() || out_lo.is_null() || out_hi.is_null() {
-        return 1;
+        return 4;
     }
     let data = std::slice::from_raw_parts(data, byte_len);
     let low = std::slice::from_raw_parts_mut(out_lo, len);
     let high = std::slice::from_raw_parts_mut(out_hi, len);
-    ffi_guard(1, || {
+    ffi_guard(4, || {
         match transition::encode_fixed_into(data, width, kind, swap_endian != 0, low, high) {
             Ok(()) => 0,
-            Err(transition::TransitionKeyError::Invalid { index }) => {
-                if let Some(index) = index {
+            Err(transition::TransitionKeyError::Invalid { index }) => match index {
+                Some(index) => {
                     *out_error_first = index;
                     *out_error_index = index;
+                    1
                 }
-                1
-            }
+                None => 4,
+            },
             Err(transition::TransitionKeyError::Duplicate { first, index }) => {
                 *out_error_first = first;
                 *out_error_index = index;
@@ -3279,7 +3282,43 @@ mod tests {
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),
                 ),
-                1
+                4
+            );
+            // A layout the caller should never send is status 4, not the
+            // status-1 "declined this data" that means "use the oracle".
+            let row = [0u8; 3];
+            let mut low = [0u32];
+            let mut high = [0u32];
+            let mut first = usize::MAX;
+            let mut index = usize::MAX;
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    row.as_ptr(),
+                    1,
+                    3,
+                    transition::KIND_UNICODE,
+                    0,
+                    low.as_mut_ptr(),
+                    high.as_mut_ptr(),
+                    &mut first,
+                    &mut index,
+                ),
+                4
+            );
+            assert_eq!((first, index), (usize::MAX, usize::MAX));
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    row.as_ptr(),
+                    1,
+                    1,
+                    transition::KIND_BYTES,
+                    7,
+                    low.as_mut_ptr(),
+                    high.as_mut_ptr(),
+                    &mut first,
+                    &mut index,
+                ),
+                4
             );
         }
     }

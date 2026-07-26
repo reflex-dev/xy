@@ -19,7 +19,7 @@ import pytest
 
 import xy
 from xy import kernels as k
-from xy.components import _encode_transition_keys
+from xy.components import _encode_transition_keys, _fixed_transition_key_values
 
 N = 100_000
 
@@ -72,6 +72,15 @@ def payload_figures(animation_data):
 def test_animation_encode_100k_stable_keys(benchmark, animation_data) -> None:
     """Track the public list-to-native path, including homogeneous routing."""
     _x, _y, keys = animation_data
+    # Routing is the whole point of this row, and nothing about the result
+    # distinguishes the two paths — both return the same F-order planes. Prove
+    # the native kernel accepts this input before timing anything, so a
+    # layout-contract drift shows up as a red row instead of a silent ~7×
+    # regression into the reference encoder.
+    fixed = _fixed_transition_key_values(keys)
+    assert fixed is not None, "benchmark keys must route to the native encoder"
+    assert k.transition_keys_fixed(fixed, "benchmark key") is not None
+
     encoded = benchmark(_encode_transition_keys, keys, N, "benchmark key")
     assert encoded.shape == (N, 2)
     assert encoded.dtype == np.uint32

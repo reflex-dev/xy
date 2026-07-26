@@ -3872,62 +3872,101 @@ _TRANSITION_KEY_SEQUENCE_MAX_FIXED_BYTES = 256 * 1024 * 1024
 _TRANSITION_KEY_SEQUENCE_MAX_PADDING_RATIO = 8
 
 
+_TRANSITION_KEY_SEQUENCE_KINDS = {
+    str: {"U"},
+    bytes: {"S"},
+    bool: {"b"},
+    int: {"i", "u"},
+    float: {"f"},
+}
+
+
+def _column_ndarray(value: Any) -> np.ndarray | None:
+    """Unwrap a dtype-carrying column (pandas/polars Series) as plain NumPy.
+
+    `data=df, key="id"` resolves to a Series, not an ndarray, so without this
+    the whole native path would be unreachable from the documented idiom.
+    """
+    if isinstance(value, (str, bytes)) or not hasattr(value, "to_numpy"):
+        return None
+    try:
+        arr = value.to_numpy()
+    except (TypeError, ValueError):
+        # Extension arrays may refuse a zero-copy conversion; the reference
+        # encoder reads the same values through the object protocol anyway.
+        return None
+    return arr if type(arr) is np.ndarray else None
+
+
+def _fixed_sequence_array(sequence: Any) -> np.ndarray | None:
+    """Convert a homogeneous scalar sequence to fixed-width NumPy storage.
+
+    Returns None whenever the conversion would change an identity or cost
+    disproportionate memory, leaving the row to the Python reference encoder.
+    """
+    items = sequence.tolist() if isinstance(sequence, np.ndarray) else sequence
+    if not items:
+        return None
+    first = items[0]
+    if isinstance(first, np.generic):
+        first = first.item()
+    item_type = type(first)
+    if item_type not in _TRANSITION_KEY_SEQUENCE_KINDS:
+        return None
+    if set(map(type, items)) != {item_type}:
+        # Either genuinely mixed, or NumPy scalars needing ``.item()``. Retry
+        # through the scalar protocol, then insist on one exact builtin type:
+        # never coerce mixed bool/int or int/float keys, whose scalar tokens
+        # are deliberately type-sensitive.
+        items = [raw.item() if isinstance(raw, np.generic) else raw for raw in items]
+        if set(map(type, items)) != {item_type}:
+            return None
+    if item_type in (str, bytes):
+        lengths = list(map(len, items))
+        unit_bytes = 4 if item_type is str else 1
+        # NumPy's fixed-width conversion costs N × longest key. Keep a single
+        # long outlier from turning a compact sequence into a huge temporary
+        # before Rust can scan it. The ratio compares padding to payload in
+        # those same fixed-width units — it is not a bound on the growth over
+        # the source objects' own footprint; the absolute cap is.
+        padded_bytes = len(items) * max(max(lengths), 1) * unit_bytes
+        source_bytes = max(sum(lengths) * unit_bytes, 1)
+        if (
+            padded_bytes > _TRANSITION_KEY_SEQUENCE_MAX_FIXED_BYTES
+            or padded_bytes > source_bytes * _TRANSITION_KEY_SEQUENCE_MAX_PADDING_RATIO
+        ):
+            return None
+        # A key that *ends* in NUL is indistinguishable from padding once
+        # stored fixed-width, which would silently retokenize it. Interior
+        # NULs survive the round trip and stay on the native path.
+        nul = "\x00" if item_type is str else b"\x00"
+        if any(item.endswith(nul) for item in items):
+            return None
+    try:
+        arr = np.asarray(items)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if arr.dtype.kind not in _TRANSITION_KEY_SEQUENCE_KINDS[item_type]:
+        # NumPy may coerce an integer list outside its fixed-width range to
+        # f64. That would change the type-sensitive ``i:`` token into an
+        # ``f:`` token, so leave arbitrary-width integers to Python.
+        return None
+    return arr
+
+
 def _fixed_transition_key_values(value: Any) -> np.ndarray | None:
     """Return a conservative homogeneous array for the native key encoder."""
-    if type(value) is np.ndarray:
-        arr = value
-    elif isinstance(value, (list, tuple)) and value:
-        first = value[0].item() if isinstance(value[0], np.generic) else value[0]
-        item_type = type(first)
-        if item_type not in (str, bytes, bool, int, float):
+    arr = value if type(value) is np.ndarray else _column_ndarray(value)
+    if arr is None:
+        if not isinstance(value, (list, tuple)):
             return None
-        total_units = 0
-        max_units = 0
-        for raw in value:
-            item = raw.item() if isinstance(raw, np.generic) else raw
-            if type(item) is not item_type:
-                # In particular, never coerce mixed bool/int or int/float
-                # keys: their scalar tokens are deliberately type-sensitive.
-                return None
-            if (item_type is str and "\x00" in item) or (item_type is bytes and b"\x00" in item):
-                # Fixed-width storage cannot distinguish padding from an
-                # explicitly trailing NUL supplied in a Python scalar.
-                return None
-            if item_type in (str, bytes):
-                units = len(item)
-                total_units += units
-                max_units = max(max_units, units)
-        if item_type in (str, bytes):
-            unit_bytes = 4 if item_type is str else 1
-            # NumPy's fixed-width sequence conversion costs N × max width.
-            # Keep a single long outlier from turning a compact Python list
-            # into a huge temporary before Rust can scan it.
-            padded_bytes = len(value) * max(max_units, 1) * unit_bytes
-            source_bytes = max(total_units * unit_bytes, 1)
-            if (
-                padded_bytes > _TRANSITION_KEY_SEQUENCE_MAX_FIXED_BYTES
-                or padded_bytes > source_bytes * _TRANSITION_KEY_SEQUENCE_MAX_PADDING_RATIO
-            ):
-                return None
-        try:
-            arr = np.asarray(value)
-        except (OverflowError, TypeError, ValueError):
-            return None
-        expected_kinds = {
-            str: {"U"},
-            bytes: {"S"},
-            bool: {"b"},
-            int: {"i", "u"},
-            float: {"f"},
-        }
-        if arr.dtype.kind not in expected_kinds[item_type]:
-            # NumPy may coerce an integer list outside its fixed-width range
-            # to f64. That would change the type-sensitive ``i:`` token into
-            # an ``f:`` token, so leave arbitrary-width integers to Python.
-            return None
-    else:
-        return None
-    if arr.ndim != 1:
+        arr = _fixed_sequence_array(value)
+    elif arr.dtype.hasobject:
+        # Object storage — a pandas string column, or an explicitly
+        # object-dtype array — still reaches the encoder when every row
+        # carries the same builtin scalar type.
+        arr = _fixed_sequence_array(arr) if arr.ndim == 1 else None
+    if arr is None or arr.ndim != 1:
         return None
     if arr.dtype.kind == "U" and arr.dtype.itemsize > 0 and arr.dtype.itemsize % 4 == 0:
         return arr

@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
-ABI_VERSION = 43
+ABI_VERSION = 44
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -971,11 +971,17 @@ def transition_keys_fixed(
     """Encode homogeneous fixed-width transition keys in one native row scan.
 
     The returned ``(N, 2)`` array is Fortran-contiguous: its two ``u32``
-    columns are the caller-allocated lo/hi planes written by Rust and can be
-    shipped independently without another full-size copy. ``None`` asks the
-    policy layer to use its scalar oracle for an invalid value (for example a
-    non-finite float or invalid Unicode scalar), preserving its precise
-    user-facing error.
+    columns are the caller-allocated lo/hi planes written by Rust, so an
+    unreordered result ships each plane without another full-size copy.
+    Reordering the rows (the line-like geometry sort, or a finite-row
+    selection) hands back C-order and restores the usual per-column copy at
+    ship time.
+
+    ``None`` asks the policy layer to use its scalar oracle for a value this
+    kernel declines (a non-finite float, an invalid Unicode scalar),
+    preserving its precise user-facing error. An invalid *argument* is a bug
+    here rather than a data property, and raises instead of degrading
+    silently into the reference path.
     """
     records = np.asarray(values)
     if records.ndim != 1 or records.dtype.hasobject:
@@ -1040,6 +1046,11 @@ def transition_keys_fixed(
         )
     if status == 3:
         raise ValueError(f"{label} produced an identity digest collision")
+    if status == 4:
+        raise RuntimeError(
+            "native transition-key encoder rejected the "
+            f"{records.dtype.str!r} layout it was handed (kind {kind}, width {width})"
+        )
     raise RuntimeError(f"native transition-key encoder returned unknown status {status}")
 
 
