@@ -34,6 +34,10 @@ The public surface: what callers can build, style, export, and interact with.
   the committed comparison of customization and extensibility against Plotly,
   Vega-Lite, Bokeh, and Matplotlib, with its method, its pinned versions, and
   the rows XY loses. Pinned by `tests/test_customization_comparison.py`.
+- [`plotly-coverage.md`](api/plotly-coverage.md) — **generated**: every Plotly
+  attribute classified `supported | mapped-with-difference | unsupported` (§24).
+  Regenerate with `scripts/plotly_schema_coverage.py --write` (needs the `bench`
+  extra).
 - [`export.md`](api/export.md) — how a figure becomes bytes: one entry point
   across five image formats, deterministic engine choice, browser-free default.
 - [`interaction.md`](api/interaction.md) — the authority on which browser

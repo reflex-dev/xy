@@ -9,6 +9,16 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- **Plotly attribute coverage is now a number** (§24):
+  `scripts/plotly_schema_coverage.py` ingests Plotly's schema and classifies
+  every attribute `supported | mapped-with-difference | unsupported` by a
+  committed rule table, writing `spec/api/plotly-coverage.md`. Two corrections
+  to the plan it implements: no published Plotly wheel ships `plot-schema.json`
+  (the equivalent is `validators/_validators.json`, and the real surface is
+  9,472 leaf attributes rather than ~3,000), and there is no Plotly shim to warn
+  — so "supported" means XY can express the same visual outcome, not that a shim
+  accepts the key. Scoped to the trace types XY implements plus `layout`: 344
+  supported and 126 mapped-with-difference of 3,387.
 - A **committed customization comparison** against Plotly, Vega-Lite, Bokeh, and
   Matplotlib (`spec/api/customization-vs-alternatives.md`), with the same
   discipline as the benchmark harness: pinned competitor versions, a named
