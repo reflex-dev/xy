@@ -848,6 +848,11 @@ class Figure:
             if not self._subplot_adjust:
                 return _DEFAULT_AXES_RECT
             return _GridSpec(self, 1, 1, **self._subplot_adjust).cell_rect((0, 1), (0, 1))
+        if len(self._axes) == 1 and self._nrows == self._ncols == 1 and not self._subplot_adjust:
+            # The overwhelmingly common single-subplot case is exactly the
+            # Matplotlib default frame. Avoid rebuilding a one-cell GridSpec
+            # every time layout asks for the axes rectangle.
+            return _DEFAULT_AXES_RECT
         # A uniform grid (adjusted or default SubplotParams): the panel
         # resolves to its gridspec cell rectangle under the frame and spacing.
         index = ax._subplot_index
@@ -1421,6 +1426,11 @@ def _parse_subplot_args(args: tuple) -> tuple[int, int, int]:
 def make_axes_grid(fig: Figure, nrows: int, ncols: int, squeeze: bool = True) -> Any:
     """The plt.subplots() return contract: Axes, 1-D, or 2-D ndarray."""
     fig._ensure_grid(nrows, ncols)
+    if squeeze and nrows == ncols == 1:
+        # Avoid allocating and populating an object ndarray for the dominant
+        # plt.subplots() case whose public return value is a bare Axes.
+        fig._current_ax = fig._axes[0]
+        return fig._axes[0]
     axes = np.empty((nrows, ncols), dtype=object)
     for r in range(nrows):
         for c in range(ncols):
@@ -1428,11 +1438,8 @@ def make_axes_grid(fig: Figure, nrows: int, ncols: int, squeeze: bool = True) ->
     # Matplotlib's subplots() constructs axes in row-major order and leaves
     # the final one active for subsequent stateful ``plt.*`` calls.
     fig._current_ax = axes[-1, -1]
-    if squeeze:
-        if nrows == ncols == 1:
-            return axes[0, 0]
-        if nrows == 1 or ncols == 1:
-            return axes.ravel()
+    if squeeze and (nrows == 1 or ncols == 1):
+        return axes.ravel()
     return axes
 
 
