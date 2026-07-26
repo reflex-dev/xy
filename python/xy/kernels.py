@@ -43,6 +43,7 @@ factorize_fixed = _impl.factorize_fixed
 factorize_fixed_u8 = _impl.factorize_fixed_u8
 factorize_fixed_u8_counts = _impl.factorize_fixed_u8_counts
 factorize_unicode1_u8_counts = _impl.factorize_unicode1_u8_counts
+transition_keys_fixed = _impl.transition_keys_fixed
 m4_indices = _impl.m4_indices
 marching_squares = _impl.marching_squares
 marching_triangles = _impl.marching_triangles
@@ -145,6 +146,7 @@ __all__ = [
     "stratified_sample_mask",
     "stratified_sample_range_u8",
     "streamlines",
+    "transition_keys_fixed",
     "triangle_edges",
     "valid_indices_f64",
     "vector_segments",

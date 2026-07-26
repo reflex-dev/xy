@@ -12,8 +12,8 @@ float64 is zero-copy through ctypes; a 10M-point density scatter makes **zero
 full-size copies** from user array to wire bytes; heavy reductions run in
 parallel AVX2-dispatched Rust; LOD tiers are computed on demand, not retained;
 the widget transport is binary with no join copy. The findings are therefore
-second-tier: conditional paths (categorical/object dtypes, animation keys,
-hover fallbacks) and residual serial kernels. Three kernel findings were fixed
+second-tier: conditional paths (categorical/object dtypes and hover fallbacks)
+and residual serial kernels. Three kernel findings were fixed
 in this audit; the rest are recorded as a ranked backlog.
 
 ## Fixed in this audit (measured, bit-identical)
@@ -128,12 +128,18 @@ there is O(sample), not O(N).
 
 ### Medium
 
-3. **Animation `key=` encoding hashes all rows even when discarded**
-   (`components.py:3629`). Per-row Python `blake2s` over N rows, then
-   `_transition_entry` falls back to `snap:key-limit` above
-   `MAX_ANIMATION_MATCH_ROWS` (200k) and throws the digests away. Fix:
-   short-circuit when the fallback is certain (mind duplicate-key error
-   semantics), and/or hash fixed-width key buffers natively.
+3. **Resolved after this audit — animation `key=` encoding hashed homogeneous
+   columns row-by-row in Python** (`components.py`). ABI v43 adds a borrowed
+   fixed-width native encoder for homogeneous string, bytes, bool, integer,
+   and finite floating keys (f16/f32 widen exactly to f64). It emits both u32
+   identity planes in one pass and reports the first duplicate pair so Python
+   preserves the exact error
+   contract. Conservative Python fallback retains mixed-object,
+   NUL-containing Python sequence, date, and non-finite-row diagnostic
+   semantics; fixed-width NumPy `U`/`S` records keep exact embedded-NUL
+   semantics natively.
+   `benchmarks/test_codspeed_animation.py::test_animation_encode_100k_stable_keys`
+   keeps the original 100k end-to-end row as the regression gate.
 4. **Direct-tier traces retain f32 wire buffers for the widget lifetime**
    (`widget.py:55`, `_payload.py:154`). A near-ceiling direct scatter
    (500k–2M pts) holds f64 canonical + f32 wire simultaneously (~24 B/pt)

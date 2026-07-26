@@ -44,6 +44,17 @@ in the README).
   that don't use them are byte-identical.
 
 ### Changed
+- Stable animation `key=` identity encoding now uses one native Rust row scan
+  for homogeneous fixed-width strings, bytes, booleans, and signed or unsigned
+  integers, plus finite floating arrays, including non-native-endian NumPy
+  arrays. Float16/32 values widen exactly to the f64 token contract. It
+  preserves the existing 64-bit identities and duplicate-row errors; mixed
+  objects, NUL-containing Python sequences, dates, and non-finite row
+  diagnostics stay on the conservative Python reference path. Highly padded
+  Python string/bytes sequences also stay there to bound fixed-width temporary
+  memory. Fixed-width NumPy strings retain their exact embedded-NUL semantics
+  natively.
+  This adds the C ABI v43 transition-key kernel.
 - Host theme changes made through an ancestor `data-theme` attribute now
   refresh canvas/SVG paint just like `.dark` class and inline-style changes;
   DOM chrome continues to follow the cascade automatically.

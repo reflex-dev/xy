@@ -3850,13 +3850,97 @@ def _transition_key_token(value: Any, index: int) -> bytes:
     )
 
 
+_TRANSITION_KEY_SEQUENCE_MAX_FIXED_BYTES = 256 * 1024 * 1024
+_TRANSITION_KEY_SEQUENCE_MAX_PADDING_RATIO = 8
+
+
+def _fixed_transition_key_values(value: Any) -> np.ndarray | None:
+    """Return a conservative homogeneous array for the native key encoder."""
+    if type(value) is np.ndarray:
+        arr = value
+    elif isinstance(value, (list, tuple)) and value:
+        first = value[0].item() if isinstance(value[0], np.generic) else value[0]
+        item_type = type(first)
+        if item_type not in (str, bytes, bool, int, float):
+            return None
+        total_units = 0
+        max_units = 0
+        for raw in value:
+            item = raw.item() if isinstance(raw, np.generic) else raw
+            if type(item) is not item_type:
+                # In particular, never coerce mixed bool/int or int/float
+                # keys: their scalar tokens are deliberately type-sensitive.
+                return None
+            if (item_type is str and "\x00" in item) or (item_type is bytes and b"\x00" in item):
+                # Fixed-width storage cannot distinguish padding from an
+                # explicitly trailing NUL supplied in a Python scalar.
+                return None
+            if item_type in (str, bytes):
+                units = len(item)
+                total_units += units
+                max_units = max(max_units, units)
+        if item_type in (str, bytes):
+            unit_bytes = 4 if item_type is str else 1
+            # NumPy's fixed-width sequence conversion costs N × max width.
+            # Keep a single long outlier from turning a compact Python list
+            # into a huge temporary before Rust can scan it.
+            padded_bytes = len(value) * max(max_units, 1) * unit_bytes
+            source_bytes = max(total_units * unit_bytes, 1)
+            if (
+                padded_bytes > _TRANSITION_KEY_SEQUENCE_MAX_FIXED_BYTES
+                or padded_bytes > source_bytes * _TRANSITION_KEY_SEQUENCE_MAX_PADDING_RATIO
+            ):
+                return None
+        try:
+            arr = np.asarray(value)
+        except (OverflowError, TypeError, ValueError):
+            return None
+        expected_kinds = {
+            str: {"U"},
+            bytes: {"S"},
+            bool: {"b"},
+            int: {"i", "u"},
+            float: {"f"},
+        }
+        if arr.dtype.kind not in expected_kinds[item_type]:
+            # NumPy may coerce an integer list outside its fixed-width range
+            # to f64. That would change the type-sensitive ``i:`` token into
+            # an ``f:`` token, so leave arbitrary-width integers to Python.
+            return None
+    else:
+        return None
+    if arr.ndim != 1:
+        return None
+    if arr.dtype.kind == "U" and arr.dtype.itemsize > 0 and arr.dtype.itemsize % 4 == 0:
+        return arr
+    if arr.dtype.kind == "S" and arr.dtype.itemsize > 0:
+        return arr
+    if arr.dtype.kind == "b" and arr.dtype.itemsize == 1:
+        return arr
+    if arr.dtype.kind in {"i", "u"} and arr.dtype.itemsize in (1, 2, 4, 8):
+        return arr
+    if arr.dtype.kind == "f" and arr.dtype.itemsize in (2, 4, 8):
+        return arr
+    return None
+
+
 def _encode_transition_keys(value: Any, expected: int, label: str) -> np.ndarray:
+    fixed = _fixed_transition_key_values(value)
+    if fixed is not None:
+        if len(fixed) != expected:
+            raise ValueError(f"{label} must have length {expected}, got {len(fixed)}")
+        from . import kernels
+
+        encoded = kernels.transition_keys_fixed(fixed, label)
+        if encoded is not None:
+            return encoded
+
     arr = np.asarray(value, dtype=object)
     if arr.ndim != 1:
         raise ValueError(f"{label} must be one-dimensional")
     if len(arr) != expected:
         raise ValueError(f"{label} must have length {expected}, got {len(arr)}")
-    result = np.empty((expected, 2), dtype=np.uint32)
+    result = np.empty((expected, 2), dtype=np.uint32, order="F")
     seen: dict[bytes, int] = {}
     digests: dict[bytes, bytes] = {}
     for index, raw in enumerate(arr):

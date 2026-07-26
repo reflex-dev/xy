@@ -70,10 +70,13 @@ def payload_figures(animation_data):
 
 
 def test_animation_encode_100k_stable_keys(benchmark, animation_data) -> None:
+    """Track the public list-to-native path, including homogeneous routing."""
     _x, _y, keys = animation_data
     encoded = benchmark(_encode_transition_keys, keys, N, "benchmark key")
     assert encoded.shape == (N, 2)
     assert encoded.dtype == np.uint32
+    assert encoded[:, 0].flags.c_contiguous
+    assert encoded[:, 1].flags.c_contiguous
 
 
 def test_animation_plain_payload_100k(benchmark, payload_figures) -> None:

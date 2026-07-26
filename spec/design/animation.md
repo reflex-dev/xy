@@ -60,13 +60,25 @@ points are dropped. Layouts that cannot share positional buffers record a
 errorbar marks. It may be an array or a column name resolved through `data=`.
 `match="key"` requires a key on every effectively keyed mark.
 
-Keys are canonicalized type-sensitively and hashed once in Python to a stable
-64-bit identity, shipped as two binary `u32` columns. Strings, finite numbers,
-booleans, bytes, dates, datetimes, and NumPy equivalents are supported.
-Missing, unsupported, wrong-length, or duplicate values fail during figure
-construction. Line-like keys follow the same stable geometry sort as their
-coordinates. Errorbar point keys are role-qualified after expansion so the
-main segment and caps remain unique and stable.
+Keys are canonicalized type-sensitively to a stable 64-bit identity, shipped as
+two binary `u32` columns. Homogeneous fixed-width strings, bytes, booleans,
+signed or unsigned integers, and finite floating arrays take one bulk native
+path, including non-native endian NumPy arrays; f16/f32 values widen exactly to
+the f64 token contract. Its identities and first-duplicate row diagnostics are
+byte-for-byte compatible with the original Python encoder.
+Python remains the conservative reference path for mixed objects,
+NUL-containing Python string/bytes sequences, dates, and datetimes, and
+supplies the exact row error for non-finite numbers. Python sequences whose
+fixed-width conversion would exceed the byte budget or 8× padding ratio also
+stay on that path, bounding temporary memory under skewed key lengths.
+Fixed-width NumPy `U`/`S` records keep their exact trailing-padding and
+embedded-NUL semantics in the native path. This keeps the complete public
+grammar—strings, finite numbers, booleans, bytes, dates, datetimes, and NumPy
+equivalents—without pushing Python object policy through the C ABI. Missing,
+unsupported, wrong-length, or duplicate values fail during figure construction.
+Line-like keys follow the same stable geometry sort as their coordinates.
+Errorbar point keys are role-qualified after expansion so the main segment and
+caps remain unique and stable.
 
 The browser builds a bounded key→old-index map. `append` instead matches the
 old/new x identity and `index` pairs equal positions. Above
@@ -151,14 +163,16 @@ an exact deterministic progress without starting a frame loop.
 
 ## 7. Verification and performance gates
 
-- `tests/test_animation.py` owns validation, serialization, identity, wire,
-  sorting, errorbar expansion, and deterministic-export contracts.
+- `tests/test_animation.py` owns validation, serialization, native/reference
+  identity parity and routing, wire, sorting, errorbar expansion, and
+  deterministic-export contracts.
 - `scripts/animation_smoke.py` exercises pixel-checked, ghost-free keyed interpolation,
   explicit partial-match fallback, GPU scratch buffers, rapid replacement,
   bounded lifetime, lifecycle balance (including destroy), and reduced motion
   in headless Chrome.
-- `benchmarks/test_codspeed_animation.py` attributes key encoding and animated
-  payload build overhead separately from the plain payload path.
+- `benchmarks/test_codspeed_animation.py` attributes the end-to-end native
+  stable-key encoding row and animated payload build overhead separately from
+  the plain payload path.
 - Browser frame/allocation measurements belong to the real-Chrome benchmark
   lane, not CodSpeed simulation; the animation smoke asserts the hard
   previous+next allocation bound.

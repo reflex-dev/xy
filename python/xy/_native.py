@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
-ABI_VERSION = 42
+ABI_VERSION = 43
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -116,6 +116,18 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_size_t,
+    ]
+    lib.xy_transition_keys_fixed.restype = ctypes.c_int32
+    lib.xy_transition_keys_fixed.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_uint32,
+        ctypes.c_int32,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_size_t),
+        ctypes.POINTER(ctypes.c_size_t),
     ]
     lib.xy_remap_u8.restype = ctypes.c_int32
     lib.xy_remap_u8.argtypes = [
@@ -951,6 +963,84 @@ def factorize_unicode1_u8_counts(
     if written == _USIZE_MAX or written > capacity:
         raise ValueError("native factorize_unicode1_u8_counts rejected the array")
     return codes, unique_indices[:written].copy(), counts[:written].copy()
+
+
+def transition_keys_fixed(
+    values: np.ndarray, label: str = "animation key"
+) -> Optional[npt.NDArray[np.uint32]]:
+    """Encode homogeneous fixed-width transition keys in one native row scan.
+
+    The returned ``(N, 2)`` array is Fortran-contiguous: its two ``u32``
+    columns are the caller-allocated lo/hi planes written by Rust and can be
+    shipped independently without another full-size copy. ``None`` asks the
+    policy layer to use its scalar oracle for an invalid value (for example a
+    non-finite float or invalid Unicode scalar), preserving its precise
+    user-facing error.
+    """
+    records = np.asarray(values)
+    if records.ndim != 1 or records.dtype.hasobject:
+        raise ValueError("transition key values must be a non-object 1-D array")
+
+    kind_name = records.dtype.kind
+    width = int(records.dtype.itemsize)
+    if kind_name == "U" and width > 0 and width % 4 == 0:
+        kind = 0
+    elif kind_name == "S" and width > 0:
+        kind = 1
+    elif kind_name == "b" and width == 1:
+        kind = 2
+    elif kind_name == "i" and width in (1, 2, 4, 8):
+        kind = 3
+    elif kind_name == "u" and width in (1, 2, 4, 8):
+        kind = 4
+    elif kind_name == "f" and width in (2, 4, 8):
+        # Python canonicalizes NumPy float16/32 scalars through ``.item()``;
+        # widening to f64 is exact and gives the native kernel the same value.
+        if width != 8:
+            records = records.astype(np.float64)
+            width = 8
+        kind = 5
+    else:
+        raise ValueError(
+            "transition key values must use Unicode, bytes, bool, integer, or float dtype"
+        )
+
+    records = np.ascontiguousarray(records)
+    n = len(records)
+    result = np.empty((n, 2), dtype=np.uint32, order="F")
+    if n == 0:
+        return result
+
+    native_order = "<" if sys.byteorder == "little" else ">"
+    swap_endian = records.dtype.byteorder not in ("=", "|", native_order)
+    error_first = ctypes.c_size_t(_USIZE_MAX)
+    error_index = ctypes.c_size_t(_USIZE_MAX)
+    status = int(
+        _lib.xy_transition_keys_fixed(
+            records.ctypes.data,
+            n,
+            width,
+            kind,
+            int(swap_endian),
+            result[:, 0].ctypes.data,
+            result[:, 1].ctypes.data,
+            ctypes.byref(error_first),
+            ctypes.byref(error_index),
+        )
+    )
+    if status == 0:
+        return result
+    if status == 1:
+        return None
+    if status == 2:
+        if error_first.value >= n or error_index.value >= n:
+            raise RuntimeError("native transition-key encoder returned invalid row indices")
+        raise ValueError(
+            f"{label} contains duplicate value at rows {error_first.value} and {error_index.value}"
+        )
+    if status == 3:
+        raise ValueError(f"{label} produced an identity digest collision")
+    raise RuntimeError(f"native transition-key encoder returned unknown status {status}")
 
 
 def remap_u8(values: npt.NDArray[np.uint8], mapping: npt.NDArray[np.uint8]) -> None:

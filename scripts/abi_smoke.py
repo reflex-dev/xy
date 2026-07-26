@@ -104,6 +104,18 @@ def load() -> ctypes.CDLL:
         U64P,
         ctypes.c_size_t,
     ]
+    lib.xy_transition_keys_fixed.restype = ctypes.c_int32
+    lib.xy_transition_keys_fixed.argtypes = [
+        U8P,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_uint32,
+        ctypes.c_int32,
+        U32P,
+        U32P,
+        ctypes.POINTER(ctypes.c_size_t),
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
     lib.xy_remap_u8.restype = ctypes.c_int32
     lib.xy_remap_u8.argtypes = [U8P, ctypes.c_size_t, U8P, ctypes.c_size_t]
     lib.xy_encode_f32.restype = ctypes.c_int32
@@ -488,6 +500,76 @@ def main() -> None:
     ok(
         swapped_count == 4 and list(unicode_codes) == [0, 1, 0, 2, 3],
         "factorize_unicode1_u8_counts swapped endian",
+    )
+    transition_low = array("I", [99, 99])
+    transition_high = array("I", [99, 99])
+    transition_first = ctypes.c_size_t(size_max)
+    transition_index = ctypes.c_size_t(size_max)
+    transition_records = array("B", b"a\0\0a\0b")
+    status = lib.xy_transition_keys_fixed(
+        _ptr(transition_records, ctypes.c_uint8),
+        2,
+        3,
+        1,
+        0,
+        _ptr(transition_low, ctypes.c_uint32),
+        _ptr(transition_high, ctypes.c_uint32),
+        ctypes.byref(transition_first),
+        ctypes.byref(transition_index),
+    )
+    ok(status == 0, "transition_keys_fixed success status")
+    ok(
+        list(transition_low) == [0x5B3B753B, 0xB1A7FF88]
+        and list(transition_high) == [0xE1379B39, 0x9D296CBA],
+        "transition_keys_fixed personalized digest words",
+    )
+    duplicate_records = array("B", b"a\0\0b\0\0a\0\0")
+    duplicate_low = array("I", [99, 99, 99])
+    duplicate_high = array("I", [99, 99, 99])
+    status = lib.xy_transition_keys_fixed(
+        _ptr(duplicate_records, ctypes.c_uint8),
+        3,
+        3,
+        1,
+        0,
+        _ptr(duplicate_low, ctypes.c_uint32),
+        _ptr(duplicate_high, ctypes.c_uint32),
+        ctypes.byref(transition_first),
+        ctypes.byref(transition_index),
+    )
+    ok(
+        status == 2 and transition_first.value == 0 and transition_index.value == 2,
+        "transition_keys_fixed duplicate rows",
+    )
+    ok(
+        lib.xy_transition_keys_fixed(
+            null_u8,
+            0,
+            1,
+            1,
+            0,
+            null_u32,
+            null_u32,
+            ctypes.byref(transition_first),
+            ctypes.byref(transition_index),
+        )
+        == 0,
+        "transition_keys_fixed empty/null succeeds",
+    )
+    ok(
+        lib.xy_transition_keys_fixed(
+            null_u8,
+            1,
+            1,
+            1,
+            0,
+            null_u32,
+            null_u32,
+            ctypes.byref(transition_first),
+            ctypes.byref(transition_index),
+        )
+        == 1,
+        "transition_keys_fixed non-empty/null rejected",
     )
     small_unique = array("I", [99] * 2)
     ok(

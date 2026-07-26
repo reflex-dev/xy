@@ -26,6 +26,7 @@ pub mod raster;
 mod simd;
 pub mod svg;
 pub mod tiles;
+mod transition;
 
 use kernels::ZoneMap;
 
@@ -82,12 +83,83 @@ unsafe fn borrowed_byte_spans<'a>(
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 42;
+pub const ABI_VERSION: u32 = 43;
 const FACTORIZE_CAPACITY_EXCEEDED: usize = usize::MAX - 1;
 
 #[no_mangle]
 pub extern "C" fn xy_abi_version() -> u32 {
     ABI_VERSION
+}
+
+/// Encode homogeneous fixed-width NumPy records as stable animation identity
+/// keys. `kind` is 0 for UTF-32 Unicode, 1 for fixed bytes, 2 for bool, 3 for
+/// signed integers, 4 for unsigned integers, and 5 for f64. Integer widths are
+/// 1/2/4/8 bytes; Unicode width is a positive multiple of four. `swap_endian`
+/// must be zero or one.
+///
+/// Returns 0 on success, 1 for invalid arguments or scalar data, 2 for a
+/// duplicate token, and 3 for a digest collision. For status 2 or 3,
+/// `out_error_first` and `out_error_index` receive the prior/current row
+/// indices. Invalid scalar data also records its row in both outputs when they
+/// are non-null; invalid pointer/dimension calls do not write error outputs.
+///
+/// # Safety
+/// For non-empty input, `data` addresses `len * width` readable bytes and each
+/// key output addresses `len` writable u32s. Error outputs address one writable
+/// usize each. Input and output spans must not overlap.
+#[no_mangle]
+pub unsafe extern "C" fn xy_transition_keys_fixed(
+    data: *const u8,
+    len: usize,
+    width: usize,
+    kind: u32,
+    swap_endian: i32,
+    out_lo: *mut u32,
+    out_hi: *mut u32,
+    out_error_first: *mut usize,
+    out_error_index: *mut usize,
+) -> i32 {
+    if !matches!(swap_endian, 0 | 1) {
+        return 1;
+    }
+    if len == 0 {
+        return 0;
+    }
+    if out_error_first.is_null() || out_error_index.is_null() {
+        return 1;
+    }
+    let byte_len = match len.checked_mul(width) {
+        Some(value) if width > 0 => value,
+        _ => return 1,
+    };
+    if data.is_null() || out_lo.is_null() || out_hi.is_null() {
+        return 1;
+    }
+    let data = std::slice::from_raw_parts(data, byte_len);
+    let low = std::slice::from_raw_parts_mut(out_lo, len);
+    let high = std::slice::from_raw_parts_mut(out_hi, len);
+    ffi_guard(1, || {
+        match transition::encode_fixed_into(data, width, kind, swap_endian != 0, low, high) {
+            Ok(()) => 0,
+            Err(transition::TransitionKeyError::Invalid { index }) => {
+                if let Some(index) = index {
+                    *out_error_first = index;
+                    *out_error_index = index;
+                }
+                1
+            }
+            Err(transition::TransitionKeyError::Duplicate { first, index }) => {
+                *out_error_first = first;
+                *out_error_index = index;
+                2
+            }
+            Err(transition::TransitionKeyError::Collision { first, index }) => {
+                *out_error_first = first;
+                *out_error_index = index;
+                3
+            }
+        }
+    })
 }
 
 /// Serialize parallel f64 screen coordinates into SVG polyline path data.
@@ -3129,6 +3201,87 @@ mod tests {
         std::panic::set_hook(hook);
         assert_eq!(got, usize::MAX);
         assert_eq!(ffi_guard(0i32, || 1i32), 1);
+    }
+
+    #[test]
+    fn transition_key_ffi_reports_duplicate_rows_and_invalid_data() {
+        let values = [7i16, -2, 7];
+        let mut low = [0u32; 3];
+        let mut high = [0u32; 3];
+        let mut first = usize::MAX;
+        let mut index = usize::MAX;
+        unsafe {
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    values.as_ptr().cast(),
+                    values.len(),
+                    std::mem::size_of::<i16>(),
+                    transition::KIND_SIGNED,
+                    0,
+                    low.as_mut_ptr(),
+                    high.as_mut_ptr(),
+                    &mut first,
+                    &mut index,
+                ),
+                2
+            );
+        }
+        assert_eq!((first, index), (0, 2));
+
+        let nonfinite = f64::INFINITY;
+        first = usize::MAX;
+        index = usize::MAX;
+        unsafe {
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    (&nonfinite as *const f64).cast(),
+                    1,
+                    std::mem::size_of::<f64>(),
+                    transition::KIND_FLOAT64,
+                    0,
+                    low.as_mut_ptr(),
+                    high.as_mut_ptr(),
+                    &mut first,
+                    &mut index,
+                ),
+                1
+            );
+        }
+        assert_eq!((first, index), (0, 0));
+    }
+
+    #[test]
+    fn transition_key_ffi_accepts_empty_null_spans_and_rejects_bad_pointers() {
+        unsafe {
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    std::ptr::null(),
+                    0,
+                    0,
+                    transition::KIND_BYTES,
+                    0,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                ),
+                0
+            );
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    std::ptr::null(),
+                    1,
+                    1,
+                    transition::KIND_BYTES,
+                    0,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                ),
+                1
+            );
+        }
     }
 
     #[test]
