@@ -608,7 +608,7 @@ def test_what_is_xy_restores_the_sdf_hero_and_ends_with_a_short_pitch() -> None:
     content = (DOCS_ROOT / "index.md").read_text(encoding="utf-8")
 
     heading = content.index("# What is `xy`?")
-    styling = content.index("**Completely customizable.**")
+    styling = content.index("**Styled by your CSS, not ours.**")
     hero = content.index("~~~python demo-only exec")
     early_alpha = content.index("**Early alpha.**")
     start_here = content.index("## Start here")

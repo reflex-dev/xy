@@ -447,6 +447,21 @@ pub const JOIN_BEVEL: u8 = 2;
 /// reversal in the data cannot grow a spike that is not in the data.
 const MITER_LIMIT: f32 = 4.0;
 
+/// A stroke's cap and join, carried together because they are decided together
+/// and always travel together — and because a stroke entry point already takes
+/// six arguments without them.
+#[derive(Clone, Copy)]
+struct StrokeGeometry {
+    cap: u8,
+    join: u8,
+}
+
+impl StrokeGeometry {
+    fn is_default(self) -> bool {
+        self.cap == CAP_ROUND && self.join == JOIN_ROUND
+    }
+}
+
 #[inline]
 fn cov_from_sd(sd: f32) -> f32 {
     // Same 1px ramp `seg_coverage` uses, expressed on a signed distance so the
@@ -636,13 +651,13 @@ fn stroke_shaped(
     rgba: [f32; 4],
     closed: bool,
     dash: &[f32],
-    cap: u8,
-    join: u8,
+    geometry: StrokeGeometry,
 ) {
-    if (cap == CAP_ROUND && join == JOIN_ROUND) || pts.len() < 2 || width <= 0.0 {
+    if geometry.is_default() || pts.len() < 2 || width <= 0.0 {
         stroke(cv, pts, width, rgba, closed, dash);
         return;
     }
+    let StrokeGeometry { cap, join } = geometry;
     let hw = width * 0.5;
     let n = pts.len();
     let last = if closed { n } else { n - 1 };
@@ -2270,9 +2285,11 @@ fn rasterize_with_spans(
                     for _ in 0..nd {
                         dash.push(r.f32()?);
                     }
-                    let cap = r.u8()?;
-                    let join = r.u8()?;
-                    stroke_shaped(&mut cv, &pts, width, c, closed, &dash, cap, join);
+                    let geometry = StrokeGeometry {
+                        cap: r.u8()?,
+                        join: r.u8()?,
+                    };
+                    stroke_shaped(&mut cv, &pts, width, c, closed, &dash, geometry);
                 }
                 OP_POINT => {
                     let (cx, cy, rr) = (r.f32()?, r.f32()?, r.f32()?);
@@ -2717,10 +2734,12 @@ fn rasterize_with_spans(
                     for _ in 0..nd {
                         dash.push(r.f32()?);
                     }
-                    let cap = r.u8()?;
-                    let join = r.u8()?;
+                    let geometry = StrokeGeometry {
+                        cap: r.u8()?,
+                        join: r.u8()?,
+                    };
                     let points = smooth_points(xs, ys, n, x_scale, y_scale);
-                    stroke_shaped(&mut cv, &points, width, color, false, &dash, cap, join);
+                    stroke_shaped(&mut cv, &points, width, color, false, &dash, geometry);
                 }
                 _ => return None,
             }
