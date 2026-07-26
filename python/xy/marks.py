@@ -2508,7 +2508,13 @@ def heatmap(
                 grid=grid,
                 rgba_grid=(
                     (
-                        self.store.ingest(rgba[..., 0].reshape(-1)),
+                        # `grid` already holds this plane: `z_flat` is
+                        # `rgba[..., 0].reshape(-1)`, and re-ingesting the
+                        # expression built a second contiguous copy (the source
+                        # is a strided view, so each reshape materializes one)
+                        # that the store kept for the figure's lifetime — 8
+                        # bytes per pixel of pure duplicate.
+                        grid,
                         self.store.ingest(rgba[..., 1].reshape(-1)),
                         self.store.ingest(rgba[..., 2].reshape(-1)),
                         self.store.ingest(rgba[..., 3].reshape(-1)),

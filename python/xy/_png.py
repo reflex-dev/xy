@@ -28,9 +28,22 @@ import zlib
 import numpy as np
 
 
+def _chunk_parts(tag: bytes, data: bytes) -> tuple[bytes, bytes, bytes, bytes]:
+    """A PNG chunk as join-ready parts, without ever copying `data`.
+
+    The IDAT payload is the whole compressed image, and the obvious spelling
+    copies it repeatedly: `tag + data` is one copy, building the chunk around
+    it is a second, and each `+` in the caller's document chain is another.
+    Returning parts lets one `b"".join` at the top produce the file with a
+    single copy. CRC is accumulated over the tag and then the data, which is
+    exactly `crc32(tag + data)` without materializing the concatenation.
+    """
+    crc = zlib.crc32(data, zlib.crc32(tag))
+    return struct.pack(">I", len(data)), tag, data, struct.pack(">I", crc)
+
+
 def _chunk(tag: bytes, data: bytes) -> bytes:
-    body = tag + data
-    return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+    return b"".join(_chunk_parts(tag, data))
 
 
 _SIG = b"\x89PNG\r\n\x1a\n"
@@ -69,11 +82,13 @@ def png_truecolor(
     stride = w * 4
     rows = _filtered_rows(h, stride)
     rows[:, 1:] = np.frombuffer(rgba, dtype=np.uint8, count=h * stride).reshape(h, stride)
-    return (
-        _SIG
-        + _chunk(b"IHDR", ihdr)
-        + _chunk(b"IDAT", zlib.compress(rows, compression_level))
-        + _chunk(b"IEND", b"")
+    return b"".join(
+        (
+            _SIG,
+            *_chunk_parts(b"IHDR", ihdr),
+            *_chunk_parts(b"IDAT", zlib.compress(rows, compression_level)),
+            *_chunk_parts(b"IEND", b""),
+        )
     )
 
 
@@ -84,11 +99,17 @@ def _png_indexed(w: int, h: int, rows: np.ndarray, palette: np.ndarray) -> bytes
     ihdr = struct.pack(">IIBBBBB", w, h, 8, 3, 0, 0, 0)
     plte = palette[:, :3].astype(np.uint8).tobytes()
     trns = palette[:, 3].astype(np.uint8).tobytes()
-    out = _SIG + _chunk(b"IHDR", ihdr) + _chunk(b"PLTE", plte)
     # tRNS may omit trailing opaque (255) entries; keep it simple and always emit.
-    out += _chunk(b"tRNS", trns)
-    out += _chunk(b"IDAT", zlib.compress(rows, _COMPRESSION_LEVEL)) + _chunk(b"IEND", b"")
-    return out
+    return b"".join(
+        (
+            _SIG,
+            *_chunk_parts(b"IHDR", ihdr),
+            *_chunk_parts(b"PLTE", plte),
+            *_chunk_parts(b"tRNS", trns),
+            *_chunk_parts(b"IDAT", zlib.compress(rows, _COMPRESSION_LEVEL)),
+            *_chunk_parts(b"IEND", b""),
+        )
+    )
 
 
 def encode(img: np.ndarray) -> bytes:

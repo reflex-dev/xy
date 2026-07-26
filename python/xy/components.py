@@ -3998,6 +3998,24 @@ def _encode_transition_keys(value: Any, expected: int, label: str) -> np.ndarray
     if len(arr) != expected:
         raise ValueError(f"{label} must have length {expected}, got {len(arr)}")
     result = np.empty((expected, 2), dtype=np.uint32, order="F")
+    for index, raw in enumerate(arr):
+        token = _transition_key_token(raw, index)
+        digest = hashlib.blake2s(token, digest_size=8, person=b"xykeyv1").digest()
+        result[index, 0] = int.from_bytes(digest[:4], "little")
+        result[index, 1] = int.from_bytes(digest[4:], "little")
+    # Equal tokens hash equally, so distinct digests prove distinct keys *and*
+    # no collision: one vectorized uniqueness test stands in for the two
+    # per-row dictionaries this carried, which held a token and a digest bytes
+    # object for every row — hundreds of bytes of peak per 8-byte result row.
+    # A conflict is re-walked below so the message, and the rows it names, are
+    # exactly what the per-row bookkeeping produced.
+    if np.unique(result.reshape(-1).view(np.uint64)).size != expected:
+        _raise_transition_key_conflict(arr, label)
+    return result
+
+
+def _raise_transition_key_conflict(arr: np.ndarray, label: str) -> None:
+    """Name the conflict the vectorized digest check found (error path only)."""
     seen: dict[bytes, int] = {}
     digests: dict[bytes, bytes] = {}
     for index, raw in enumerate(arr):
@@ -4011,9 +4029,7 @@ def _encode_transition_keys(value: Any, expected: int, label: str) -> np.ndarray
         if collision is not None and collision != token:
             raise ValueError(f"{label} produced an identity digest collision")
         digests[digest] = token
-        result[index, 0] = int.from_bytes(digest[:4], "little")
-        result[index, 1] = int.from_bytes(digest[4:], "little")
-    return result
+    raise AssertionError(f"{label} digest conflict did not reproduce")
 
 
 def _original_mark_positions(

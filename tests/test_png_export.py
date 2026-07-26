@@ -1023,3 +1023,28 @@ def test_zero_width_characters_still_draw_nothing() -> None:
     # source, and an editor or a copy-paste that strips it would silently
     # reduce this to `_title_png("X") == _title_png("X")`.
     assert _title_png("X\u200b") == _title_png("X")
+
+
+def test_chunk_parts_join_to_the_canonical_chunk():
+    """Parts assembly must equal the naive `tag + data` construction.
+
+    PNG chunks are built as join-ready parts so the compressed IDAT — the whole
+    image — is copied once into the file instead of once per `+`. The CRC is
+    accumulated over the tag and then the data, which is exactly
+    `crc32(tag + data)` without materializing the concatenation.
+    """
+    import struct
+    import zlib
+
+    from xy import _png
+
+    for tag, data in (
+        (b"IHDR", b"\x00" * 13),
+        (b"IEND", b""),
+        (b"IDAT", bytes(range(256)) * 40),
+        (b"tRNS", b"\xff\x00\x7f"),
+    ):
+        body = tag + data
+        canonical = struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+        assert b"".join(_png._chunk_parts(tag, data)) == canonical
+        assert _png._chunk(tag, data) == canonical

@@ -770,3 +770,67 @@ def test_animation_validation(kwargs: dict) -> None:
 def test_exit_is_not_a_supported_animation_option() -> None:
     with pytest.raises(TypeError, match="unexpected keyword argument 'exit'"):
         xy.animation(**{"exit": "fade"})
+
+
+# --- stable-key encoding: same answers, without the per-row dictionaries -----
+
+
+def test_transition_key_digests_are_stable_and_row_aligned() -> None:
+    """Encoding is a pure per-row hash: order-independent and reproducible."""
+    from xy.components import _encode_transition_keys
+
+    keys = ["a", "b", "c", "d"]
+    first = _encode_transition_keys(keys, 4, "keys")
+    assert first.dtype == np.uint32 and first.shape == (4, 2)
+    np.testing.assert_array_equal(first, _encode_transition_keys(keys, 4, "keys"))
+    # Row i's digest depends only on key i, so permuting the input permutes the
+    # output rows and nothing else.
+    shuffled = _encode_transition_keys(["c", "a", "d", "b"], 4, "keys")
+    np.testing.assert_array_equal(shuffled, first[[2, 0, 3, 1]])
+    # Distinct keys must give distinct digests, which is what the vectorized
+    # uniqueness check the encoder now relies on is asserting.
+    assert len({tuple(row) for row in first}) == 4
+
+
+@pytest.mark.parametrize(
+    "keys",
+    [
+        ["a", "b", "a"],
+        [1, 2, 1],
+        [1.5, 2.5, 1.5],
+        [True, False, True],
+        [b"x", b"y", b"x"],
+    ],
+    ids=["str", "int", "float", "bool", "bytes"],
+)
+def test_duplicate_transition_keys_name_both_rows(keys: list) -> None:
+    """The duplicate message still names the first and second offending rows.
+
+    The encoder no longer keeps a token dictionary while hashing; a conflict is
+    re-walked to produce this message, so it must be unchanged.
+    """
+    from xy.components import _encode_transition_keys
+
+    with pytest.raises(ValueError, match=r"keys contains duplicate value at rows 0 and 2"):
+        _encode_transition_keys(keys, 3, "keys")
+
+
+def test_transition_key_type_errors_still_report_their_row() -> None:
+    from xy.components import _encode_transition_keys
+
+    with pytest.raises(ValueError, match="animation key is missing at row 1"):
+        _encode_transition_keys(["a", None, "c"], 3, "keys")
+    with pytest.raises(ValueError, match="animation key must be finite at row 2"):
+        _encode_transition_keys([1.0, 2.0, float("nan")], 3, "keys")
+    with pytest.raises(ValueError, match="row 1 has list"):
+        _encode_transition_keys(["a", [], "c"], 3, "keys")
+
+
+def test_transition_keys_length_and_shape_are_validated() -> None:
+    from xy.components import _encode_transition_keys
+
+    with pytest.raises(ValueError, match="must have length 4"):
+        _encode_transition_keys(["a", "b"], 4, "keys")
+    with pytest.raises(ValueError, match="must be one-dimensional"):
+        _encode_transition_keys([["a"], ["b"]], 2, "keys")
+    assert _encode_transition_keys([], 0, "keys").shape == (0, 2)
