@@ -64,6 +64,15 @@ in the README).
     per-component token fields are freed as they are gathered. A 1800x840 export
     peaks at 48 MB instead of 108 (photographic: **400 MB instead of 1516 MB**)
     and is 5-19% faster.
+  - Standalone HTML export appends the base64 payload chunks as their own
+    document parts and joins once, instead of interpolating each chunk into a
+    wrapper string and folding a second joined copy into an f-string. The
+    encoded text is the bulk of the document, so that was two extra full copies
+    of it: a 1M-point export peaks at 34 MB instead of 41 and is marginally
+    faster.
+  - The native rasterizer's serial point and segment passes no longer
+    materialize an `0..n` index vector to read back in order (4 bytes per mark),
+    and the per-point density quantizer keeps one temporary instead of three.
 - `memory_report()` reports `capacity_bytes` per column and
   `canonical_capacity_bytes` per store, and builds `resident_array_bytes` from
   the capacity total. A streamed column's `values` is a prefix view of its

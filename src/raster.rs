@@ -1608,8 +1608,7 @@ struct PointsBatch<'a> {
 
 fn paint_points(cv: &mut Canvas, batch: &PointsBatch, threads: usize) {
     if threads <= 1 {
-        let indices: Vec<u32> = (0..batch.n as u32).collect();
-        paint_points_band(&mut cv.surface(), batch, &indices);
+        paint_points_band(&mut cv.surface(), batch, 0..batch.n);
         return;
     }
     paint_banded(
@@ -1621,13 +1620,17 @@ fn paint_points(cv: &mut Canvas, batch: &PointsBatch, threads: usize) {
             let ext = rr + batch.sw + 1.0;
             Some((cy - ext, cy + ext))
         },
-        |sf, indices| paint_points_band(sf, batch, indices),
+        |sf, indices| paint_points_band(sf, batch, indices.iter().map(|&i| i as usize)),
     );
 }
 
-fn paint_points_band(sf: &mut Surface, b: &PointsBatch, indices: &[u32]) {
-    for &i in indices {
-        let i = i as usize;
+/// `items` is the mark order to paint: a band's bucketed indices when fanned
+/// out, or a plain `0..n` range when serial. Taking an iterator rather than a
+/// slice keeps the serial path from materializing an `0..n` index vector it
+/// would only read back in order (4 bytes per mark, megabytes on a direct-tier
+/// scatter); monomorphization makes both callers cost the same per mark.
+fn paint_points_band(sf: &mut Surface, b: &PointsBatch, items: impl IntoIterator<Item = usize>) {
+    for i in items {
         let (cx, cy, rr) = (f32_at(b.xs, i), f32_at(b.ys, i), f32_at(b.rs, i));
         // NaN coordinates poison the whole framebuffer via NaN-vs-clip
         // comparisons; skip them (the payload ships only finite marks, this
@@ -1825,8 +1828,7 @@ struct SegmentsBatch<'a> {
 
 fn paint_segments(cv: &mut Canvas, batch: &SegmentsBatch, threads: usize) {
     if threads <= 1 {
-        let indices: Vec<u32> = (0..batch.n as u32).collect();
-        paint_segments_band(&mut cv.surface(), batch, &indices);
+        paint_segments_band(&mut cv.surface(), batch, 0..batch.n);
         return;
     }
     paint_banded(
@@ -1838,13 +1840,18 @@ fn paint_segments(cv: &mut Canvas, batch: &SegmentsBatch, threads: usize) {
             let ext = batch.width * 0.5 + 1.0;
             Some((ay.min(by) - ext, ay.max(by) + ext))
         },
-        |sf, indices| paint_segments_band(sf, batch, indices),
+        |sf, indices| paint_segments_band(sf, batch, indices.iter().map(|&i| i as usize)),
     );
 }
 
-fn paint_segments_band(sf: &mut Surface, sb: &SegmentsBatch, indices: &[u32]) {
-    for &i in indices {
-        let i = i as usize;
+/// `items` is the mark order to paint; see `paint_points_band` on why this is
+/// an iterator rather than a slice.
+fn paint_segments_band(
+    sf: &mut Surface,
+    sb: &SegmentsBatch,
+    items: impl IntoIterator<Item = usize>,
+) {
+    for i in items {
         let a = (f32_at(sb.x0s, i), f32_at(sb.y0s, i));
         let b = (f32_at(sb.x1s, i), f32_at(sb.y1s, i));
         if !(a.0.is_finite() && a.1.is_finite() && b.0.is_finite() && b.1.is_finite()) {

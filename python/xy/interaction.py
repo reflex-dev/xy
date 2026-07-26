@@ -749,8 +749,12 @@ def _quantize_dval(dval: np.ndarray) -> np.ndarray:
 
     The value only weights the density→points intensity handoff (§5) — 256
     levels exceed what the crossfade can show, at a quarter of the f32 wire
-    bytes (§29)."""
-    return np.rint(np.clip(dval, 0.0, 1.0) * 255.0).astype(np.uint8)
+    bytes (§29). `clip` copies the window once and the scale/round run in place
+    on that copy, so the pass costs one temporary instead of three."""
+    out = np.clip(dval, 0.0, 1.0)
+    out *= 255.0
+    np.rint(out, out=out)
+    return out.astype(np.uint8)
 
 
 def _has_point_channels(t: "Trace") -> bool:

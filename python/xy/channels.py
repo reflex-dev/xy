@@ -854,9 +854,9 @@ def ship_channels(
     `quantize_continuous` ships continuous color/size as u8 LUT coordinates
     (`dtype: "u8"` marker) instead of unit f32. Live-interaction paths opt in:
     their hover/pick answers come from the server's canonical columns, so the
-    quantization is invisible. The build path must NOT opt in — it retains the
-    shipped columns CPU-side (`_cpu.color`/`_cpu.size`) and denormalizes them
-    for tooltip readouts, where 8-bit steps would show as wrong digits.
+    quantization is invisible. The build path must NOT opt in — the client keeps
+    the shipped columns CPU-side and denormalizes them for tooltip readouts,
+    where 8-bit steps would show as wrong digits.
     Returns (color_spec, size_spec)."""
     cc = trace.color_ch or ColorChannel(mode="constant", constant=None)
     color_spec = ship_color_channel(
