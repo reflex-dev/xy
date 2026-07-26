@@ -6,15 +6,18 @@ description: XY is a fast Python charting library for interactive data visualiza
 # What is `xy`?
 
 XY is a Python charting library for interactive 2D visualizations that stay
-smooth at millions of points and is completely customizable. Two ideas shape
-the library:
+smooth at millions of points and take your design system seriously. Two ideas
+shape the library:
 
 - **Fast, even with lots of data.** XY draws the detail you can actually see
   instead of every row at once, so pan, zoom, and hover stay responsive as
   your data grows.
-- **Completely customizable.** Style titles, axes, legends, tooltips, and controls
-  with CSS or Tailwind, and keep the same look in interactive charts, SVGs, and
-  PNGs.
+- **Styled by your CSS, not ours.** Titles, axes, legends, tooltips, and controls
+  are addressable with plain CSS or Tailwind through 23 stable slots, and your
+  design tokens reach the marks themselves — in the browser, in SVG, and in
+  native PNG. What each mechanism reaches is published per renderer in the
+  [Capability Matrix](/docs/xy/styling/capabilities/), including where it
+  stops.
 
 
 ~~~python demo-only exec

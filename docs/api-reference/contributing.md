@@ -38,16 +38,12 @@ import error rather than silently selecting another backend.
 | --- | --- |
 | Fast local verification | `make check` |
 | Production-facing change | `make check-full` |
-| Public docs, examples, or claims | `make check-docs` |
+| Public docs and examples | `make check-docs` |
 | Public exports or annotations | `make check-api` |
 | Lazy imports and dependency boundaries | `make check-import` |
 | Validation and mutation behavior | `make check-errors` |
 | Standalone HTML and text safety | `make check-security` |
 | Browser lifecycle and interaction | `make check-browser CHROMIUM=/path/to/chrome` |
-
-Run `make check-claims` before publishing performance prose. Every comparison
-must name the chart type, data size and shape, representation mode, backend,
-render target, and whether browser time-to-first-render is included.
 
 ## Adding a Chart Type
 

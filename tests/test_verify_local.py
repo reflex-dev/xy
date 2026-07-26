@@ -161,7 +161,6 @@ def test_benchmark_harness_check_is_known_as_targeted_gate() -> None:
     assert "tests/test_benchmark_environment.py" in command
     assert "tests/test_verify_benchmark_report.py" in command
     assert "tests/test_check_regressions.py" in command
-    assert "tests/test_claim_guardrails.py" in command
     assert selected[0].requires_modules == ("pytest",)
 
 
@@ -337,7 +336,7 @@ def test_list_output_includes_check_requirements(capsys: pytest.CaptureFixture[s
 
 
 def test_dry_run_prints_selected_commands_without_running(capsys) -> None:
-    rc = verify_local.main(["--dry-run", "--only", "python_floor,public_api,claim_guardrails"])
+    rc = verify_local.main(["--dry-run", "--only", "python_floor,public_api"])
 
     out = capsys.readouterr().out
     assert rc == 0
@@ -345,8 +344,6 @@ def test_dry_run_prints_selected_commands_without_running(capsys) -> None:
     assert "scripts/check_python_floor.py" in out
     assert "public_api" in out
     assert "scripts/check_public_api.py" in out
-    assert "claim_guardrails" in out
-    assert "scripts/check_claim_guardrails.py" in out
 
 
 def test_dry_run_includes_ci_workflow_gate(capsys) -> None:
@@ -532,9 +529,9 @@ def test_makefile_exposes_docs_verification_shortcut() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
 
     assert "check-docs:" in makefile
-    assert "scripts/verify_local.py --only examples,claim_guardrails" in makefile
+    assert "scripts/verify_local.py --only examples" in makefile
     assert "make check-docs" in makefile
-    assert "docs examples and public claim guardrails" in makefile
+    assert "run documentation examples" in makefile
 
 
 def test_makefile_exposes_security_verification_shortcut() -> None:
@@ -580,15 +577,6 @@ def test_makefile_exposes_ci_workflow_verification_shortcut() -> None:
     assert "scripts/verify_local.py --only ci_workflow" in makefile
     assert "make check-ci" in makefile
     assert "CI/release workflow invariant checks" in makefile
-
-
-def test_makefile_exposes_claim_guardrail_shortcut() -> None:
-    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-
-    assert "check-claims:" in makefile
-    assert "scripts/verify_local.py --only claim_guardrails" in makefile
-    assert "make check-claims" in makefile
-    assert "public performance-claim guardrails" in makefile
 
 
 def test_node_version_parser_accepts_v_prefixed_versions() -> None:

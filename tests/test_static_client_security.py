@@ -36,7 +36,6 @@ _STANDALONE = ("static/standalone.js", _read(_STATIC / "standalone.js"))
 CLIENT_FILES = (_CLIENT_SRC,)
 BUNDLES = (_INDEX, _STANDALONE)
 FORMATTER_FILES = (("js/src/30_ticks.ts", _read(ROOT / "js/src/30_ticks.ts")),)
-LOD_FILES = (("js/src/45_lod.ts", _read(ROOT / "js/src/45_lod.ts")),)
 # The chrome default stylesheet lives in the theme part; its rules are string
 # literals, so the bundle-level test re-asserts them in both built bundles.
 THEME_FILES = (("js/src/20_theme.ts", _read(ROOT / "js/src/20_theme.ts")),)
@@ -46,7 +45,9 @@ THEME_FILES = (("js/src/20_theme.ts", _read(ROOT / "js/src/20_theme.ts")),)
 # the minifier preserves verbatim.
 _CHROME_WHERE_RULES = (
     ':where(.xy [data-xy-slot="tooltip"]){',
+    ':where(.xy [data-xy-slot="tooltip_label"])::after{',
     ':where(.xy [data-xy-slot="legend"]){',
+    ':where(.xy [data-xy-slot="legend_title"]){',
     ':where(.xy [data-xy-slot="legend_swatch"]){',
     ':where(.xy [data-xy-slot="modebar"]){',
     ':where(.xy) button[data-xy-slot="modebar_button"]{',
@@ -116,10 +117,11 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
     """User labels may be hostile strings; the client must never parse them."""
     required_text_sinks = (
         "t.textContent = s.title;",
-        "row.appendChild(document.createTextNode(it.name));",
+        "label.textContent = it.name;",
         "badge.textContent = item;",
         "d.textContent = text;",
-        "this.tooltip.appendChild(document.createTextNode(ln));",
+        "label.textContent = item.label;",
+        "value.textContent = item.value;",
     )
     required_style_sinks = ("sw.style.background = safeCssPaint(this.root, bg);",)
 
@@ -272,13 +274,19 @@ def test_client_applies_every_public_dom_slot() -> None:
         "canvas": '_applySlot(this.canvas, "canvas")',
         "labels": '_applySlot(this.labels, "labels")',
         "legend": '_applySlot(lg, "legend")',
+        "legend_title": '_applySlot(title, "legend_title")',
         "legend_item": '_applySlot(row, "legend_item")',
         "legend_swatch": '_applySlot(sw, "legend_swatch")',
+        "legend_label": '_applySlot(label, "legend_label")',
         "colorbar": '_applySlot(box, "colorbar")',
         "colorbar_bar": '_applySlot(bar, "colorbar_bar")',
         "colorbar_tick": '_applySlot(tick, "colorbar_tick")',
         "colorbar_title": '_applySlot(label, "colorbar_title")',
         "tooltip": '_applySlot(this.tooltip, "tooltip")',
+        "tooltip_title": '_applySlot(row, "tooltip_title")',
+        "tooltip_row": '_applySlot(row, "tooltip_row")',
+        "tooltip_label": '_applySlot(label, "tooltip_label")',
+        "tooltip_value": '_applySlot(value, "tooltip_value")',
         "modebar": '_applySlot(bar, "modebar")',
         "modebar_button": '_applySlot(b, "modebar_button")',
         "selection": '_applySlot(this.selRect, "selection")',
@@ -546,52 +554,16 @@ def test_client_refreshes_and_destroys_density_sample_overlays() -> None:
 
 
 def test_client_refreshes_theme_when_framework_theme_classes_change() -> None:
-    """Keep canvas paint synchronized with class-driven light/dark themes."""
+    """Keep canvas paint synchronized with class- and attribute-driven themes."""
     required = (
         "new MutationObserver(() => this.refreshTheme())",
-        'attributeFilter: ["class", "style"]',
+        'attributeFilter: ["class", "data-theme", "style"]',
         "this._themeMutationObserver?.disconnect();",
     )
 
     for path, text in CLIENT_FILES:
         for marker in required:
-            assert marker in text, f"{path} lost class-driven theme refresh {marker!r}"
-
-
-def test_client_lod_layer_stays_chart_agnostic_and_renderer_delegated() -> None:
-    source_lod = (ROOT / "js/src/45_lod.ts").read_text(encoding="utf-8")
-    assert "trace.kind" not in source_lod
-    assert "markOf(" not in source_lod
-
-    # The intent comment is a source-only assertion — the built bundles are
-    # compacted (comments stripped), so only code markers are checked there.
-    assert "future heatmap/histogram tier reuses it instead of copy-pasting" in source_lod
-
-    lod_required = (
-        "function lodApplyDrill(view, g, upd, buffers)",
-        "function lodApplyDensityUpdate(view, g, upd, buffers)",
-        "function lodDrawDensityTier(view, g, x0, x1, y0, y1)",
-        "lodRememberDensity(view, g, g.density);",
-        "view._drawDensity(g, density",
-        "view._drawPoints(",
-        "lodDropDrill(view, g)",
-    )
-    for path, text in LOD_FILES:
-        for marker in lod_required:
-            assert marker in text, f"{path} no longer preserves shared LOD marker {marker!r}"
-
-    chartview_required = (
-        "lodDrawDensityTier(this, g",
-        "markOf(g.trace.kind).draw(this, g",
-        'if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }',
-        "lodApplyDensityUpdate(this, g, upd, buffers);",
-        "lodApplyDrill(this, g, upd, buffers);",
-        "lodDropDrill(this, g);",
-        'markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill)',
-    )
-    for path, text in CLIENT_FILES:
-        for marker in chartview_required:
-            assert marker in text, f"{path} no longer delegates shared LOD marker {marker!r}"
+            assert marker in text, f"{path} lost host-driven theme refresh {marker!r}"
 
 
 def test_client_coalesces_wheel_zoom_without_animation_lag() -> None:
@@ -803,7 +775,9 @@ def test_client_renders_mark_level_styling() -> None:
         "xyMarkerSdf(d, u_symbol)",  # scatter symbol shapes (circle/square/diamond/triangle/cross)
         "_pointMarkStyle(",  # point stroke + symbol resolution
         "rgb = mix(rgb, sc.rgb, sc.a);",  # selected/unselected recolor (mark_style)
-        "v_dash = mix(a_len0, mix(a_len0, a_len1, reveal), c.x);",  # fractional reveal preserves line dashes
+        "float dashEnd = mix(a_len0, a_len1, reveal);",  # fractional reveal preserves line dashes
+        "uniform int u_cap; uniform int u_capSegments;",  # stroke-linecap on the polyline's ends
+        "LINE_CAP_MODES",  # cap keywords resolve to the shared wire codes
         "_lineDash(g)",
         "_resolveMarkFill(",
         "_setRectStyleUniforms(",

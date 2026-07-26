@@ -469,16 +469,21 @@ void main() {
   outColor = vec4(rgb * u_opacity, u_opacity);
 }`;
 
+// Polylines: one instanced quad per segment. `u_cap` is the compiled
+// stroke-linecap value (see LINE_CAP_MODES); XY defaults it to round, which is
+// what the native rasterizer's clamped segment distance field draws
+// (src/raster.rs), so all three renderers agree.
 export const LINE_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1;
 in float a_prevx; in float a_prevy; in float a_prevx1; in float a_prevy1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
 uniform int u_colorMode;
+uniform int u_cap; uniform int u_capSegments;
 uniform float u_transitionProgress; uniform int u_transitionActive;
 uniform float u_revealProgress; uniform float u_revealSegments;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
 in float a_len0; in float a_len1;
-out float v_off; out float v_dash;
+out float v_off; out float v_dash; out vec2 v_cap;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -498,44 +503,73 @@ void main() {
   vec2 n = vec2(-dir.y, dir.x);
   vec2 c = corners[gl_VertexID];
   float half_w = u_width * 0.5 + 0.5;
-  vec2 pos = mix(pix0, pix1, c.x) + dir * (c.x * 2.0 - 1.0) * 0.5 + n * c.y * half_w;
+  // Along-segment coordinate in px. Interior joints keep the 0.5px overlap that
+  // hides the seam between consecutive quads; the polyline's two outer ends
+  // instead grow by half_w when the cap reaches past them (round semicircle,
+  // square extension), giving LINE_FS room to shape it.
+  bool first = gl_InstanceID == 0;
+  bool last = gl_InstanceID == u_capSegments - 1;
+  float capExt = u_cap == 0 ? 0.5 : half_w;
+  float t = mix(first ? -capExt : -0.5, len + (last ? capExt : 0.5), c.x);
+  vec2 pos = pix0 + dir * t + n * c.y * half_w;
   gl_Position = vec4(pos / u_res * 2.0 - 1.0, 0.0, 1.0);
   v_off = c.y * half_w;
+  // Signed px overrun past the polyline's start/end, far negative where that
+  // end is an interior joint instead; LINE_FS takes the max of the two.
+  v_cap = vec2(first ? -t : -1e4, last ? t - len : -1e4);
   // Cumulative screen-space arc length at this fragment (device px), fed from
   // CPU-computed per-vertex lengths so dashes stay continuous across segments
-  // and constant on screen through zoom.
-  v_dash = mix(a_len0, mix(a_len0, a_len1, reveal), c.x);
+  // and constant on screen through zoom. Driven off t rather than c.x so the
+  // overhang carries the pattern on at 1px of arc per px of screen instead of
+  // stretching the segment's slice of it over the widened quad.
+  float dashEnd = mix(a_len0, a_len1, reveal);
+  v_dash = a_len0 + t * (len > 1e-3 ? (dashEnd - a_len0) / len : 1.0);
 }`;
 
 export const LINE_FS = `#version 300 es
 precision highp float; precision highp int;
-uniform vec4 u_color; uniform float u_width;
+uniform vec4 u_color; uniform float u_width; uniform int u_cap;
 uniform int u_dashCount; uniform float u_dashArr[8]; uniform float u_dashPeriod;
-in float v_off; in float v_dash;
+in float v_off; in float v_dash; in vec2 v_cap;
 out vec4 outColor;
 void main() {
   float half_w = u_width * 0.5;
-  float alpha = (1.0 - smoothstep(half_w - 0.5, half_w + 0.5, abs(v_off))) * u_color.a;
+  // How far past the nearest end of painted stroke this fragment lies, along
+  // the path. Two kinds of end contribute and the cap shapes both: the
+  // polyline's own ends (v_cap) and, when dashed, the ends of the dash run —
+  // the distance to the nearer dash boundary is exactly the overrun a cap has
+  // to bridge, so the greater of the two is the one that governs.
+  float axial = max(v_cap.x, v_cap.y);
   if (u_dashCount > 0) {
     float m = mod(v_dash, u_dashPeriod);
     float acc = 0.0;
-    float on = 0.0;
+    float sd = 0.0;
     for (int i = 0; i < 8; i++) {
       if (i >= u_dashCount) break;
       float next = acc + u_dashArr[i];
       if (m < next) {
-        // 0.6px feather at each dash start/end so edges aren't aliased.
         float d = min(m - acc, next - m);
-        on = (i % 2 == 0) ? clamp(d + 0.6, 0.0, 1.0) : 1.0 - clamp(d + 0.6, 0.0, 1.0);
+        sd = (i % 2 == 0) ? d : -d; // + inside an "on" run, - inside a gap
         break;
       }
       acc = next;
     }
-    alpha *= on;
+    axial = max(axial, -sd);
   }
+  // round = semicircle of radius half_w about the end, so the distance field
+  // picks up the overrun; butt = flush; square = flush pushed out by half_w.
+  float radial = u_cap == 1 ? length(vec2(max(axial, 0.0), v_off)) : abs(v_off);
+  float alpha = (1.0 - smoothstep(half_w - 0.5, half_w + 0.5, radial)) * u_color.a;
+  if (u_cap == 0) alpha *= 1.0 - smoothstep(-0.5, 0.5, axial);
+  else if (u_cap == 2) alpha *= 1.0 - smoothstep(half_w - 0.5, half_w + 0.5, axial);
   if (alpha <= 0.001) discard;
   outColor = vec4(u_color.rgb * alpha, alpha);
 }`;
+
+// Wire spellings of stroke-linecap → the u_cap int LINE_FS switches on. A
+// trace omits the key at XY's default (round), so an unset style must resolve
+// to `round`, not to the CSS initial value `butt`.
+export const LINE_CAP_MODES = { butt: 0, round: 1, square: 2 };
 
 // Segment marks (errorbar/stem/box whiskers/contour isolines): independent
 // endpoint pairs with per-column axis metas and an optional per-segment LUT

@@ -95,7 +95,20 @@ def customize_mark_paint_preview():
 Use `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, and
 `opacity` only on mark families that support them. Lines use stroke properties;
 areas, points, bars, and columns also support fill properties. Bar-like marks
-add `border-radius`, while line-like marks add `stroke-dasharray`.
+add `border-radius`. `line`, `step`, `stairs`, and `ecdf` add
+`stroke-dasharray` and `stroke-linecap`; `area` adds `stroke-dasharray` only,
+because a cap is open-path geometry. `scatter` adds `marker-shape`.
+
+`stroke-linecap` (`butt`, `round`, `square`) carries its standard SVG meaning,
+and XY defaults it to `round` rather than to the CSS initial value — the native
+rasterizer has always drawn round caps and it is the reference for static
+export. `marker-shape` is the CSS spelling of `symbol=` and takes any of the 17
+built-in marker names.
+
+~~~python
+xy.line(x, y, style={"stroke-width": "6px", "stroke-linecap": "butt"})
+xy.scatter(x, y, size=12, style={"marker-shape": "diamond"})
+~~~
 
 ## Axes, grid, and ticks
 
@@ -392,10 +405,11 @@ swatch of the ramp; the static legend draws a solid handle, as it always has.
 
 One rule follows from that: colormap stops must be colors XY can resolve
 without a browser — hex, `rgb()`, `hsl()`, or a named color. `var(--brand)`,
-`oklch(...)`, and `color-mix(...)` are fine on `color=`, `stroke`, `fill`, and
-in `xy.theme(palette=...)`, but as a colormap stop they raise, because a static
-export has no cascade to resolve them against and would silently paint a
-different ramp. Resolve the token to a literal in Python and pass that.
+`oklch(...)`, and `color-mix(...)` are fine on an individual `color=`, `stroke`,
+or `fill`, but not as a colormap stop or an `xy.theme(palette=...)` entry. Both
+are indexed color lookups used by static renderers that have no cascade to
+resolve browser-only colors. Resolve the token to a literal in Python and pass
+that.
 
 ### Recolor categories with a chart palette
 
@@ -556,10 +570,10 @@ orientation, inferred scales, and custom-component boundaries.
 ## Legend
 
 Configure legend content and layout with `xy.legend(...)`. Style the component
-directly, or use the chart's `legend`, `legend_item`, and `legend_swatch` slots
-when one rule should cover several charts. Complete literal Tailwind utilities
-work through `class_name` / `class_names` when the host enables Reflex's
-`TailwindV4Plugin`.
+directly, or use the chart's `legend`, `legend_title`, `legend_item`,
+`legend_swatch`, and `legend_label` slots when one rule should cover several
+charts. Complete literal Tailwind utilities work through `class_name` /
+`class_names` when the host enables Reflex's `TailwindV4Plugin`.
 
 ~~~python demo exec toggle preview-code id=customize-legend-demo
 periods = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"]
@@ -655,8 +669,10 @@ beside it. Host-owned UI is not included in standalone XY exports.
 ## Tooltip
 
 Tooltip fields must already be resident in a rendered data channel. Use named
-data columns for readable titles and formats, then style the built-in tooltip
-directly or through the chart's `tooltip` slot.
+data columns for stable lookup, map them to readable display text with
+`labels=`, and format them with `format=`. Style the built-in container
+directly or target `tooltip_title`, `tooltip_row`, `tooltip_label`, and
+`tooltip_value` independently.
 
 ~~~python demo exec toggle preview-code id=customize-tooltip-demo
 data = {
@@ -686,6 +702,7 @@ def customize_tooltip_preview():
             fields=["revenue"],
             title="{period}",
             format={"revenue": "$,.0f"},
+            labels={"revenue": "Revenue"},
             style={
                 "background": "var(--tooltip-surface, #ffffff)",
                 "color": "var(--tooltip-text, #1d293d)",
@@ -718,12 +735,24 @@ def customize_tooltip_preview():
             plot_background="var(--custom-surface, #ffffff)",
             grid_color="var(--custom-grid, #e5e7eb)",
         ),
+        styles={
+            "tooltip_title": {"font-weight": 700, "margin-bottom": 4},
+            "tooltip_row": {
+                "display": "grid",
+                "grid-template-columns": "5rem 1fr",
+                "gap": 8,
+            },
+            "tooltip_label": {"color": "var(--tooltip-muted, #64748b)"},
+            "tooltip_value": {"font-weight": 700, "text-align": "right"},
+        },
         class_name=(
             "bg-[#ffffff] [--custom-surface:#ffffff] [--custom-grid:#e5e7eb] "
             "[--tooltip-surface:#ffffff] [--tooltip-text:#1d293d] "
+            "[--tooltip-muted:#64748b] "
             "[--tooltip-border:#e5e7eb] dark:bg-[#000000] "
             "dark:[--custom-surface:#000000] dark:[--custom-grid:#27272a] "
             "dark:[--tooltip-surface:#18181f] dark:[--tooltip-text:#f3f4f6] "
+            "dark:[--tooltip-muted:#a1a1aa] "
             "dark:[--tooltip-border:#3f3f46]"
         ),
         width="100%",

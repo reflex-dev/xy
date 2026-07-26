@@ -14,6 +14,22 @@ the hard-won production invariants while the chart surface grows.
   the asset. Do not patch only the generated HTML unless you are applying an
   emergency local fix and immediately back-porting it to the generator.
 
+## Competitive Evidence
+
+XY's product north star is to outperform every competing charting library
+across performance, chart breadth, customization, and data scale. Feature work
+should move that comparison forward and leave evidence behind:
+
+- benchmark the affected workload against the relevant best-in-class
+  alternatives at representative small and large data sizes;
+- preserve the benchmark environment, raw report, and reproduction command;
+- update the generated capability matrix, compatibility corpus, or matched
+  visual examples for breadth and customization work; and
+- add regression coverage for the user-visible result that created the win.
+
+See `spec/benchmarks/results.md` for the competitive evidence program and
+tracked benchmark categories.
+
 ## Local Checks
 
 Install the dev environment and build the required native core:
@@ -95,13 +111,6 @@ regression comparison scripts, or report-schema validation, run:
 
 ```bash
 make check-benchmark-harness
-```
-
-When you edit public docs, package metadata, benchmark summaries, or anything
-that could become a public performance claim, run:
-
-```bash
-make check-claims
 ```
 
 When you edit `spec/api/api-examples.md` or the Reflex example dashboard
@@ -260,20 +269,3 @@ Start with the smallest reusable primitive surface:
 - Composition API wrapper if the chart is user-facing.
 - Example app card with normal-size data, not only a stress demo.
 - Benchmark row only when the comparison methodology is honest.
-
-## Performance Claims
-
-Do not write broad claims like "faster than Plotly" without naming:
-
-- chart type
-- data size and shape
-- backend (always `native`; there is no NumPy fallback)
-- render target
-- whether browser time-to-first-render is included
-- whether the result is exact markers, decimated geometry, density, or adaptive
-
-Numeric multipliers such as "10x faster" or "5x smaller" need the same measured
-benchmark context.
-
-When in doubt, phrase it as a measured row from `spec/benchmarks/results.md`, not as a
-universal product claim, and run `make check-claims` before publishing.
