@@ -99,6 +99,15 @@ in the README).
   never appended report exactly what they did before.
 
 ### Fixed
+- **The native raster exporter silently deleted every character outside its
+  glyph atlas.** No glyph and no advance, so `Zürich` came out of `to_png()` as
+  `Zrich`, a `format="€,.0f"` axis lost its symbol on every tick, and a CJK tick
+  label exported as blank space — while the same figure's SVG rendered all of
+  them correctly. The atlas now carries Latin-1 Supplement and Latin Extended-A
+  (every Latin-script language) plus non-ASCII currency, and anything still
+  unbaked — CJK, Cyrillic, emoji — renders as the U+FFFD replacement box with
+  its advance reserved, so the limitation is visible rather than silent (§28).
+  Costs ~48 KB of baked coverage (+4% on the core dylib).
 - **The categorical palette cycled per trace instead of per series.** A box is
   four traces and a stem is two, so four box series under a four-color
   `xy.theme(palette=...)` all wore `palette[0]`, and eight box series drew two
