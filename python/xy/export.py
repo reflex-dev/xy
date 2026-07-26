@@ -921,15 +921,33 @@ def _export_dimensions(
     return w, h
 
 
+#: Pixels per band of the alpha flatten. The composite is elementwise, so the
+#: band size cannot change a byte; it bounds the six uint16 full-frame
+#: temporaries the one-shot form held (117 MB on a 3200x2400 export).
+_FLATTEN_PIXEL_CHUNK = 1 << 18
+
+
 def _flatten_alpha(rgba: "Any") -> "Any":
-    """Composite leftover alpha over white — the JPEG determinism backstop."""
+    """Composite leftover alpha over white — the JPEG determinism backstop.
+
+    Returns `(h, w, 3)`: both callers hand the result straight to the JPEG
+    encoder, which ignores alpha, so a fourth opaque plane is a quarter of a
+    frame carried for nothing. Composited in row bands — `rgb * a + 255 *
+    (255 - a) + 127` peaks at 65152 for any 8-bit input, so the uint16
+    intermediates are exact, and banding an elementwise expression is
+    bit-identical.
+    """
     import numpy as np
 
-    alpha = rgba[..., 3:4].astype(np.uint16)
-    rgb = (rgba[..., :3].astype(np.uint16) * alpha + 255 * (255 - alpha) + 127) // 255
-    out = np.empty_like(rgba)
-    out[..., :3] = rgb.astype(np.uint8)
-    out[..., 3] = 255
+    h, w = rgba.shape[0], rgba.shape[1]
+    out = np.empty((h, w, 3), dtype=np.uint8)
+    band = max(1, _FLATTEN_PIXEL_CHUNK // max(w, 1))
+    for r0 in range(0, h, band):
+        r1 = min(r0 + band, h)
+        chunk = rgba[r0:r1]
+        alpha = chunk[..., 3:4].astype(np.uint16)
+        rgb = (chunk[..., :3].astype(np.uint16) * alpha + 255 * (255 - alpha) + 127) // 255
+        out[r0:r1] = rgb.astype(np.uint8)
     return out
 
 

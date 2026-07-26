@@ -208,18 +208,32 @@ def _write_prefix_code(put, hist: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return emit_len, emit_code
 
 
+#: Entries per bit-scatter pass. Each pass builds a boolean mask and three
+#: compacted gathers over the entries it covers, so an unbounded pass costs
+#: ~5 machine words per entry *per bit position* -- 216 MB of transient on a
+#: 3200x2400 export. Bounding it changes nothing about which bits are written
+#: or where, because every entry scatters to absolute positions in `bits`.
+_PACK_ENTRY_CHUNK = 1 << 17
+
+
 def _pack_lsb(values: np.ndarray, nbits: np.ndarray) -> bytes:
     """Pack (value, nbits) pairs into an LSB-first byte stream.
 
     Expands to one uint8 per bit and lets packbits fold them: one vectorized
-    pass per bit *position* (<= ~40) instead of a Python loop per symbol.
+    pass per bit *position* (<= ~40) instead of a Python loop per symbol. The
+    passes run over bounded entry blocks, and each block only iterates as far
+    as its own widest entry.
     """
-    ends = np.cumsum(nbits, dtype=np.int64)
-    starts = ends - nbits
-    bits = np.zeros(int(ends[-1]), np.uint8)
-    for k in range(int(nbits.max())):
-        m = nbits > k
-        bits[starts[m] + k] = (values[m] >> np.uint64(k)) & np.uint64(1)
+    starts = np.cumsum(nbits, dtype=np.int64)
+    total = int(starts[-1]) if starts.size else 0
+    starts -= nbits  # exclusive scan, in place: the ends array is dead here
+    bits = np.zeros(total, np.uint8)
+    for i0 in range(0, values.size, _PACK_ENTRY_CHUNK):
+        i1 = min(i0 + _PACK_ENTRY_CHUNK, values.size)
+        vals, widths, offs = values[i0:i1], nbits[i0:i1], starts[i0:i1]
+        for k in range(int(widths.max())):
+            m = widths > k
+            bits[offs[m] + k] = (vals[m] >> np.uint64(k)) & np.uint64(1)
     return np.packbits(bits, bitorder="little").tobytes()
 
 
@@ -293,10 +307,18 @@ def encode(rgba: np.ndarray) -> bytes:
     # --- token stream as (value, nbits) entries: two per literal (green+red,
     # blue+alpha packed pairwise, <=30 bits each) and one per reference
     # (length code + extra bits + distance code, <=40 bits).
+    # The header rides in the same buffer rather than being concatenated onto
+    # the front of it: `put` has finished by now, so its length is known, and
+    # joining afterwards would hold a second copy of the whole token stream.
+    nhead = len(head_vals)
     per_seg = 2 + nref
-    offsets = np.cumsum(per_seg) - per_seg
-    ev = np.zeros(int(per_seg.sum()), np.uint64)
+    offsets = np.cumsum(per_seg)
+    offsets -= per_seg
+    offsets += nhead
+    ev = np.zeros(nhead + int(per_seg.sum()), np.uint64)
     eb = np.zeros(ev.size, np.uint8)
+    ev[:nhead] = head_vals
+    eb[:nhead] = head_bits
     gi, ri, bi, ai = lit[:, 1], lit[:, 0], lit[:, 2], lit[:, 3]
     ev[offsets] = g_code[gi] | (r_code[ri] << g_len[gi].astype(np.uint64))
     eb[offsets] = g_len[gi] + r_len[ri]
@@ -312,10 +334,7 @@ def encode(rgba: np.ndarray) -> bytes:
         )
         eb[pos] = g_len[ref_sym] + _LP_EBITS[run] + d_len[1]
 
-    payload = _pack_lsb(
-        np.concatenate([np.asarray(head_vals, np.uint64), ev]),
-        np.concatenate([np.asarray(head_bits, np.uint8), eb]),
-    )
+    payload = _pack_lsb(ev, eb)
     chunk = b"VP8L" + struct.pack("<I", len(payload)) + payload
     if len(payload) & 1:
         chunk += b"\x00"  # RIFF chunks are even-aligned; pad byte is unsized

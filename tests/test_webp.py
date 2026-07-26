@@ -140,3 +140,47 @@ def test_single_color_compresses():
     img = np.full((256, 256, 4), (10, 30, 200, 255), np.uint8)
     out = _assert_roundtrip(img)
     assert len(out) < 5000  # 256 KiB raw; runs + Huffman crush it
+
+
+@pytest.mark.parametrize("chunk", [1, 2, 17, 512, 1 << 30])
+def test_pack_entry_chunk_is_transparent(monkeypatch, chunk):
+    """Every entry scatters to absolute bit positions, so blocking is a no-op.
+
+    The bit-scatter passes run over bounded entry blocks to keep their masks
+    and gathers off the whole token stream; the block size must not be able to
+    change a single emitted byte.
+    """
+    img = _chart_like(64, 96)
+    monkeypatch.setattr(_webp, "_PACK_ENTRY_CHUNK", 1 << 30)
+    one_shot = _webp.encode(img)
+    monkeypatch.setattr(_webp, "_PACK_ENTRY_CHUNK", chunk)
+    assert _webp.encode(img) == one_shot
+
+
+def test_pack_lsb_matches_a_scalar_reference(monkeypatch):
+    """The blocked packer against a plain per-symbol LSB-first reference."""
+    rng = np.random.default_rng(9)
+    nbits = rng.integers(1, 41, 5000).astype(np.uint8)
+    raw = rng.integers(0, 1 << 40, 5000).astype(np.uint64)
+    values = raw & ((np.uint64(1) << nbits.astype(np.uint64)) - np.uint64(1))
+    acc, nacc, out = 0, 0, bytearray()
+    for v, n in zip(values.tolist(), nbits.tolist(), strict=True):
+        acc |= v << nacc
+        nacc += n
+        while nacc >= 8:
+            out.append(acc & 0xFF)
+            acc >>= 8
+            nacc -= 8
+    if nacc:
+        out.append(acc & 0xFF)
+    monkeypatch.setattr(_webp, "_PACK_ENTRY_CHUNK", 64)
+    assert _webp._pack_lsb(values, nbits) == bytes(out)
+
+
+def test_header_shares_the_token_buffer():
+    """The header rides in `ev`/`eb`, so no second copy of the stream exists."""
+    img = _chart_like(48, 64)
+    data = _webp.encode(img)
+    # Framing still parses and the payload still decodes bit-exactly.
+    assert data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+    np.testing.assert_array_equal(_decode(data), img)
