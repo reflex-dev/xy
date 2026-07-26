@@ -3,12 +3,14 @@ for every chart kind, `scale=`/dimension handling, indexed-vs-truecolor
 selection, the screen-bounded size guarantee, colormap fidelity, and parity of
 the shared layout with the SVG exporter."""
 
+# ruff: noqa: RUF001 — the glyph-coverage tests are ABOUT confusable non-ASCII.
 from __future__ import annotations
 
 import struct
 import zlib
 
 import numpy as np
+import pytest
 
 import xy
 from xy import _png, _raster
@@ -977,3 +979,35 @@ def test_the_raster_exporter_expands_categorical_legend_rows() -> None:
     finally:
         raster._Cmd.text = original_text
     assert {"setosa", "versicolor", "virginica"} <= set(drawn)
+
+
+# --- glyph coverage -----------------------------------------------------------
+
+
+def _title_png(title: str) -> bytes:
+    return xy.line_chart(xy.line([1, 2], [1, 2]), title=title, width=420, height=240).to_png()
+
+
+@pytest.mark.parametrize(
+    "char",
+    ["é", "ü", "ł", "Ø", "€", "£", "¥", "₹", "α", "²", "≤"],
+)
+def test_the_raster_atlas_draws_latin_and_currency(char: str) -> None:
+    """A character outside the atlas was dropped whole — no glyph, no advance.
+
+    `Zürich` exported as `Zrich` from `to_png()` while the same figure's SVG
+    rendered it correctly, and `format="€,.0f"` lost its symbol."""
+    assert _title_png(f"X{char}") != _title_png("X"), f"{char!r} left no marks on the canvas"
+
+
+@pytest.mark.parametrize("char", ["東", "🎉"])
+def test_characters_outside_the_atlas_box_instead_of_vanishing(char: str) -> None:
+    """CJK and emoji stay unbakeable, but the failure must be visible (§28)."""
+    assert _title_png(f"X{char}") != _title_png("X"), f"{char!r} vanished silently"
+    assert _title_png(f"X{char}") == _title_png("X�"), (
+        "an unbaked character should render as the replacement glyph"
+    )
+
+
+def test_zero_width_characters_still_draw_nothing() -> None:
+    assert _title_png("X​") == _title_png("X")
