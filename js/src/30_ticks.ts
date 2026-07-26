@@ -218,6 +218,21 @@ export function fmtLog(v) {
   return v.toFixed(Math.min(dec, 8));
 }
 
+// Whether a formatted label has lost the value it was meant to show. Tests the
+// numeric CORE, not the whole label: the grammar allows prefixes and suffixes,
+// so a `"$,.0f"` axis produces `"$0"` for a sub-unit decade. Testing the
+// affixed string gave `Number("$0") === NaN`, so this side shipped the
+// collapsed label while Python's `float("$0")` raised outright — two different
+// wrong answers from the layer that exists to keep them identical.
+// Mirrored by `_collapsed_to_zero` in python/xy/_svg.py.
+function collapsedToZero(formatted) {
+  if (formatted === null) return true;
+  const core = String(formatted).replace(/[^0-9eE+.\-]/g, "");
+  if (!core) return true;
+  const value = Number(core);
+  return Number.isFinite(value) && value === 0;
+}
+
 export function fmtAxis(axis, v, tickStep) {
   if (axis && axis.kind === "category") return fmtCategory(v, axis.categories || []);
   if (axis && axis.kind === "time") return fmtTimeSpec(v, axis.format) || fmtTime(v, tickStep);
@@ -225,7 +240,7 @@ export function fmtAxis(axis, v, tickStep) {
   if (axis && axis.scale === "log" && Number(v) > 0 && Number(v) < 1) {
     // A fixed-decimal spec collapses sub-unit decades; so does the linear
     // fallback. Either way the magnitude-derived label is the useful one.
-    if (formatted === null || Number(formatted.replace("%", "")) === 0) return fmtLog(v);
+    if (collapsedToZero(formatted)) return fmtLog(v);
   }
   return formatted || fmtLinear(v, tickStep);
 }
