@@ -344,10 +344,29 @@ def markdown_extension_table(points: Iterable[ExtensionPoint] = EXTENSION_POINTS
     return lines
 
 
+def axis_style_keys() -> tuple[str, ...]:
+    """The axis `style=` vocabulary, read from `styles.py` rather than listed.
+
+    A fresh-agent evaluation of this repo caught the comparison document
+    quoting 15 of these after a 16th shipped. Prose cannot hold a count; the
+    registry derives it and `summary()` publishes it.
+    """
+    return tuple(
+        sorted(
+            styles._AXIS_COLOR_PROPERTIES
+            | styles._AXIS_LENGTH_PROPERTIES
+            | styles._AXIS_SIZE_PROPERTIES
+            | styles._AXIS_COMPAT_PROPERTIES
+            | {"tick_direction", "tick_label_anchor"}
+        )
+    )
+
+
 def summary() -> dict[str, object]:
     """Counts a release note can quote without anyone recounting by hand."""
     shipped = [p for p in MARK_STYLE_PROPERTIES if p.status == "shipped"]
     return {
+        "axis_style_keys": len(axis_style_keys()),
         "mark_style_properties": len(MARK_STYLE_PROPERTIES),
         "mark_style_properties_shipped": len(shipped),
         "mark_kinds": len(styles._MARK_KINDS),
@@ -370,6 +389,7 @@ __all__ = [
     "ExtensionPoint",
     "MarkStyleProperty",
     "SlotCapability",
+    "axis_style_keys",
     "markdown_extension_table",
     "markdown_mark_property_table",
     "markdown_slot_table",

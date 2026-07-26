@@ -50,7 +50,7 @@ Same rules as the benchmark harness, adapted to a capability question.
 
 | Question | XY | Best alternative | Method |
 | --- | --- | --- | --- |
-| Total styleable attribute surface | 10 shipped mark style properties, 15 axis keys, 23 chrome slots | **Plotly**: 9,472 non-`src` leaf attributes across 49 trace types and `layout` (plotly 6.9.0) | schema |
+| Total styleable attribute surface | 10 shipped mark style properties, 16 axis keys, 23 chrome slots | **Plotly**: 9,472 non-`src` leaf attributes across 49 trace types and `layout` (plotly 6.9.0) | schema |
 | Chart families you can style at all | 20 mark kinds | **Plotly**: 49 trace types, including 3-D, geo, and financial families XY does not implement | schema |
 | Writing a genuinely new mark | `xy.register_mark` composes existing primitives only; no custom shader | **Matplotlib**: a custom `Artist` can draw anything the backend can | docs |
 | Custom rendering primitives | none — deferred from §24 v0 | **Bokeh**: custom models ship their own TypeScript | docs |
