@@ -53,13 +53,33 @@ and [Benchmarks](/docs/xy/overview/benchmarks/) for scoped evidence.
 
 ## Styling and Export Boundaries
 
+The per-renderer inventory of what can be styled, and how far each mechanism
+travels, is the [Capability Matrix](/docs/xy/styling/capabilities/) — generated
+from `python/xy/styling/capabilities.py` and checked against the
+implementation. The bullets below are the boundaries that page's rows imply.
+
 - Browser chrome accepts CSS and Tailwind classes through stable DOM slots.
   WebGL/native marks accept a validated CSS subset through `style=`; arbitrary
   selectors do not paint mark geometry.
 - “Your styles win” applies to themeable browser chrome defaults, not every
   structural layout rule, mark renderer, annotation shape, or native export.
-- Native PNG cannot apply author `custom_css`. Use renderable chart/mark styles
-  or `Engine.chromium` for browser CSS fidelity.
+- **Styling does not survive every export path equally, and the boundary is
+  published rather than left to be discovered.** Mark, axis, and chart-level
+  `style=` reach all three renderers. Per-slot `styles={slot: {...}}` and
+  `class_names={slot: "..."}` are **browser-only and are dropped, silently, by
+  the native raster, SVG, and PDF writers** — raising instead would break every
+  native export of a chart that carries Tailwind classes for its live view, so
+  the behavior is contracted and tested instead. `xy.legend(style=...)` is the
+  one slot with a partial native channel (six keys); `xy.colorbar(style=...)`
+  has none. The full matrix is
+  [Static export §9](https://github.com/reflex-dev/xy/blob/main/spec/api/export.md),
+  pinned by `tests/test_export_style_survival.py`.
+- Native PNG cannot apply author `custom_css`, and neither can native SVG, PDF,
+  JPEG, or WebP. Unlike the per-slot case this one *raises* rather than
+  dropping: an author stylesheet has no honest partial application. Use
+  `Engine.chromium` for browser CSS fidelity — except for SVG, which rejects
+  `custom_css` under every engine because a browser screenshot cannot produce
+  vector output.
 - Declarative `colorbar()` derives built-in chrome from supported continuous
   marks. It intentionally omits constant/categorical color, truecolor grids,
   and density scatter after that tier drops per-row color values.

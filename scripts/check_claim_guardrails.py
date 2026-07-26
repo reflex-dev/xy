@@ -17,6 +17,8 @@ from typing import Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DOCS = (
+    "README.md",
+    "CLAUDE.md",
     "pyproject.toml",
     "SECURITY.md",
     "CONTRIBUTING.md",
@@ -43,6 +45,22 @@ BROAD_SUPERLATIVE_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+# Customization is the second axis people overclaim on, and it went unguarded
+# while performance was fenced in. These shapes are unqualifiable: the styling
+# surface is a bounded, enumerated subset (`spec/api/capability-matrix.md`), so
+# "anything" and "most" are wrong however the sentence is framed.
+CUSTOMIZATION_SUPERLATIVE_RE = re.compile(
+    r"\b("
+    r"most\s+(?:customi[sz]able|themeable|styl(?:e)?able|extensible|flexible)|"
+    r"(?:fully|completely|infinitely|endlessly|totally)\s+customi[sz]able|"
+    r"customi[sz]e\s+(?:everything|anything)|"
+    r"style\s+(?:everything|anything)|"
+    r"unlimited\s+(?:styling|customi[sz]ation)|"
+    r"(?:more|as)\s+(?:customi[sz]able|themeable|extensible)\s+than\s+"
+    r"(?:all|every|any|everything|anything)"
+    r")\b",
+    re.IGNORECASE,
+)
 COMPARATIVE_RE = re.compile(
     r"\b(?:faster\s+than|beats?|outperforms?)\s+"
     r"(?:plotly|matplotlib|bokeh|altair|datashader|holoviews|hvplot|seaborn)\b",
@@ -62,7 +80,7 @@ NUMERIC_PERFORMANCE_RE = re.compile(
 STALE_REPO_RE = re.compile(r"github\.com/Alek99|app\.codspeed\.io/Alek99|charts-exp", re.IGNORECASE)
 
 POLICY_WORDS = re.compile(
-    r"\b(do not|don't|must|should|guardrail|policy|claim|goal|planned|target|"
+    r"\b(do not|don't|never|no amount of|must|should|guardrail|policy|claim|goal|planned|target|"
     r"blurry|rather than|not\s+(?:a|the|safe|same|one)|without naming|"
     r"needs qualification)\b",
     re.IGNORECASE,
@@ -131,6 +149,15 @@ def _findings_for_file(path: Path) -> list[Finding]:
                     path,
                     index + 1,
                     "broad superlative needs measured scope or policy framing",
+                    line,
+                )
+            )
+        if CUSTOMIZATION_SUPERLATIVE_RE.search(line) and not _is_policy_or_negative_context(window):
+            findings.append(
+                Finding(
+                    path,
+                    index + 1,
+                    "customization superlative is not defensible from the capability matrix",
                     line,
                 )
             )

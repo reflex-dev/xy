@@ -1076,6 +1076,23 @@ def _star_path(cx: float, cy: float, r: float, points: int, inner: float, start_
     return f'<path d="{d} Z"'
 
 
+def _cap_join_attrs(style: dict[str, Any], *, join: bool = True) -> str:
+    """Polyline stroke geometry, always written out rather than inherited.
+
+    SVG's initial values are `butt`/`miter`; XY's are `round`/`round`, and the
+    trace only carries `linecap` when it differs (`marks._stroke_geometry`).
+    The join is not selectable, but it is still named on every stroked path:
+    leaving it out let the format's `miter` default through, and `_pdf` reads
+    these attributes straight back out of this markup, so an unnamed join meant
+    SVG and PDF disagreeing with the rasterizer for free.
+    """
+    cap = style.get("linecap", "round")
+    attrs = f' stroke-linecap="{escape(str(cap))}"'
+    if join:
+        attrs = ' stroke-linejoin="round"' + attrs
+    return attrs
+
+
 def _dash_attr(style: dict[str, Any]) -> str:
     dash = style.get("dash")
     if not dash:
@@ -1591,7 +1608,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         op = _stroke_opacity(style)
         return (
             f'stroke="{escape(color)}" stroke-width="{_num(w)}" fill="none" '
-            f'stroke-linejoin="round" stroke-linecap="round"'
+            + _cap_join_attrs(style)
             + (f' stroke-opacity="{_num(op)}"' if op < 1 else "")
             + _dash_attr(style)
         )
@@ -1640,7 +1657,11 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 outline_path = joined if style.get("stroke_perimeter") else top_path
                 marks.append(
                     f'<path d="{outline_path}" stroke="{escape(line_color)}" stroke-width="{_num(lw)}" '
-                    f'fill="none" stroke-linejoin="round"'
+                    'fill="none"'
+                    # The area outline named its join but inherited SVG's `butt`
+                    # cap, while the native rasterizer capped it round. Naming
+                    # both settles that on the rasterizer's answer.
+                    + _cap_join_attrs(style)
                     + (f' stroke-opacity="{_num(lop)}"' if lop < 1 else "")
                     + _dash_attr(style)
                     + "/>"

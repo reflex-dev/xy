@@ -652,7 +652,7 @@ missing entirely.*
 | 12 | No bundle-size budget — a fat WASM blob forfeits a real Plotly pain point (3.5 MB+) | Moderate | Feature-gated modules + CI size budget (§23) |
 | 13 | Compat shim scope unquantified (~3,000 Plotly schema attributes) | Moderate | Generated conformance suite + explicit degradation contract (§24) |
 | 14 | Benchmarks measured throughput but not interaction latency; "60fps" undefined | Minor | Latency budgets + p99 framing added (§17, §12) |
-| 15 | No extensibility story (Plotly has custom traces) | Minor | Custom-mark API sketch (§24) |
+| 15 | No extensibility story (Plotly has custom traces) | Minor | **Shipped v0**: composition mark plugins, `xy.register_mark` (§24). Custom shaders still deferred. |
 
 ## 16. Numeric precision & deep zoom
 
@@ -902,12 +902,24 @@ partial-bundle pain). Neither exists today.
   `supported | mapped-with-difference | unsupported`, the shim **warns loudly** on
   unsupported attributes (never silently drops), and the docs publish the coverage
   table per release. "Drop-in for the common 80%" becomes checkable, not vibes.
+
 - **Custom traces without forking:** a registered *mark plugin* provides
   (a) a calc function over columns → columns (runs in the worker, gets zone maps),
   (b) either a composition of built-in GPU primitives (instanced marks, density
   textures, line strips) *or* a WGSL/GLSL snippet pair for exotic marks, and
   (c) hover/a11y descriptors so §17/§20 work uncalled-for. Plotly's moat is breadth;
   a plugin API is how breadth arrives without the core team writing all 40 traces.
+
+  **Shipped (v0):** `xy.register_mark` / `xy.MarkPlugin` / `xy.mark` in
+  `python/xy/plugins.py`. It ships (a) and the composition half of (b); the
+  shader half is deferred. `build` returns built-in `Mark` objects and cannot
+  reach the `Figure`, the trace list, or the column store, so a plugin cannot
+  draw anything the engine could not already draw — and its output being
+  ordinary traces is what lets it reuse the built-in rendering, picking, and
+  export paths instead of reimplementing them. Composition is one level deep:
+  plugins compose built-ins, not each other. The shader half stays deferred for
+  the same reason the composition half works: a plugin carrying its own shader
+  reuses none of that.
 
 ## 25. Milestone amendments (audit-driven)
 

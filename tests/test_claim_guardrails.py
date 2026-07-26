@@ -152,3 +152,24 @@ def test_claim_guardrail_rejects_stale_repo_identity(tmp_path: Path) -> None:
     findings = check_claim_guardrails.check_claims([path])
 
     assert any("stale repository identity" in finding.message for finding in findings)
+
+
+def test_claim_guardrail_rejects_customization_superlatives(tmp_path: Path) -> None:
+    # The styling surface is a bounded, enumerated subset — see
+    # spec/api/capability-matrix.md — so these shapes are wrong however the
+    # sentence is framed, and no amount of shipping earns them.
+    for line in (
+        "XY is the most customizable charting library.\n",
+        "XY is fully customizable.\n",
+        "Style anything you like.\n",
+        "Customize everything about your chart.\n",
+        "More extensible than any Python plotting library.\n",
+    ):
+        findings = check_claim_guardrails.check_claims([_write(tmp_path, line)])
+        assert any("customization superlative" in f.message for f in findings), line
+
+
+def test_claim_guardrail_scans_the_readme(tmp_path: Path) -> None:
+    # The README was outside the default set, which is where a slogan is most
+    # likely to be written and least likely to be reviewed.
+    assert "README.md" in check_claim_guardrails.DEFAULT_DOCS

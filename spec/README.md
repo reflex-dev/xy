@@ -24,6 +24,11 @@ The public surface: what callers can build, style, export, and interact with.
   `tests/test_docs_examples.py`, so API drift fails the suite.
 - [`chart-kind-contract.md`](api/chart-kind-contract.md) — how to add a 2D chart
   type: what the shared machinery provides and what a new kind must supply.
+- [`capability-matrix.md`](api/capability-matrix.md) — **generated**: the
+  inventory of what can be styled and extended, per renderer, from
+  `python/xy/styling/capabilities.py`.
+  Regenerate with `scripts/gen_capability_matrix.py --write`; the test suite
+  fails if it is stale.
 - [`chart-roadmap.md`](api/chart-roadmap.md) — the single 2D-first chart-type
   coverage backlog, prioritized by popularity and primitive reuse.
 - [`export.md`](api/export.md) — how a figure becomes bytes: one entry point
