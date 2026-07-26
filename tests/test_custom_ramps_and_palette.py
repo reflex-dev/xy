@@ -358,6 +358,31 @@ def test_a_list_of_css_colors_paints_those_colors_instead_of_factorizing():
     assert "255,0,0" in svg.replace(" ", "") or "#ff0000" in svg
 
 
+class _NoMaterialize(np.ndarray):
+    """An array that refuses to become a Python list."""
+
+    def tolist(self):  # noqa: D102 - the whole point is that this never runs
+        raise AssertionError("the literal-color probe materialized the whole column")
+
+
+def test_the_literal_color_probe_does_not_materialize_category_columns():
+    """`_factorize_categories` identifies equal records in Rust precisely to
+    avoid creating N Python objects; an unconditional `tolist()` in the probe
+    ahead of it threw that away for every categorical scatter (~39% of the
+    payload build at 500k rows). A category column must be rejected on its
+    first value."""
+    column = np.array([f"group-{i % 24:02d}" for i in range(1000)]).view(_NoMaterialize)
+    assert channels._literal_color_rgba(column) is None
+
+
+def test_the_probe_still_reads_a_column_that_actually_looks_like_paint():
+    column = np.array(["#ff0000", "#00ff00", "#0000ff"])
+    rgba = channels._literal_color_rgba(column)
+    assert rgba is not None and rgba.shape == (3, 4)
+    # One bad entry anywhere still means "this is data, not paint".
+    assert channels._literal_color_rgba(np.array(["#ff0000", "b"])) is None
+
+
 def test_named_colors_stay_categorical_because_a_column_can_hold_them():
     chart = xy.scatter_chart(
         xy.scatter([0.0, 1.0, 2.0], [0.0, 1.0, 2.0], color=["red", "green", "blue"])
