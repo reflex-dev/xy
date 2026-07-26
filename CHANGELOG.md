@@ -73,6 +73,20 @@ in the README).
   - The native rasterizer's serial point and segment passes no longer
     materialize an `0..n` index vector to read back in order (4 bytes per mark),
     and the per-point density quantizer keeps one temporary instead of three.
+  - The JPEG token pipeline carries every field at its natural width. It held
+    ~20 parallel `int64` arrays over the nonzero coefficients — positions that
+    top out at 62, categories at 12, symbols that are a byte by definition —
+    while the coefficients themselves fit `int16`, because an orthonormal 8×8
+    DCT of level-shifted 8-bit samples is bounded by 1024 and quantizers are
+    ≥ 1. The RGB→YCbCr transform also promoted the whole frame to interleaved
+    float before splitting it into planes. A 3200×2400 photographic encode now
+    peaks at **200 MB instead of 731 MB** and is ~3% faster; the chart-shaped
+    export in the memory suite drops 418 MB → 205 MB.
+  - The lossless WebP packer scatters bits in bounded entry blocks instead of
+    one masked pass per bit position over the whole token stream (five machine
+    words per entry, per position), and the header now rides in the token
+    buffer rather than being concatenated onto the front of it. A 3200×2400
+    export peaks at 135 MB instead of 216 MB at unchanged speed.
 - `memory_report()` reports `capacity_bytes` per column and
   `canonical_capacity_bytes` per store, and builds `resident_array_bytes` from
   the capacity total. A streamed column's `values` is a prefix view of its
