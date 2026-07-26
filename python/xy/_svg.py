@@ -575,6 +575,31 @@ def _fmt_log(v: float) -> str:
     return f"{v:.{min(dec, 8)}f}"
 
 
+# Everything a formatted number can carry that is not part of its value:
+# the affixes the spec grammar allows ("$", "K", "%") and the group separators.
+_NON_NUMERIC = re.compile(r"[^0-9eE+.\-]")
+
+
+def _collapsed_to_zero(formatted: Optional[str]) -> bool:
+    """Whether a formatted label has lost the value it was meant to show.
+
+    Tests the numeric CORE, not the whole label: the grammar allows prefixes
+    and suffixes, so a `"$,.0f"` axis produces `"$0"` for a sub-unit decade.
+    Comparing the affixed string against zero read `float("$0")`, which raises
+    and took the entire render down with it — and `Number("$0")` on the client
+    is `NaN`, so that side shipped the collapsed label instead. Two different
+    wrong answers from the layer that exists to keep them identical."""
+    if formatted is None:
+        return True
+    core = _NON_NUMERIC.sub("", formatted)
+    if not core:
+        return True
+    try:
+        return float(core) == 0.0
+    except ValueError:
+        return False
+
+
 def _fmt_axis(axis: dict[str, Any], v: float, step: float) -> str:
     kind = axis.get("kind")
     if kind == "category":
@@ -587,11 +612,7 @@ def _fmt_axis(axis: dict[str, Any], v: float, step: float) -> str:
     # A fixed-decimal spec collapses sub-unit decades ("0.001" at `.0f`), and so
     # does the linear fallback; the magnitude-derived label is the useful one
     # either way. Mirrors `fmtAxis`.
-    if (
-        axis.get("scale") == "log"
-        and 0 < v < 1
-        and (formatted is None or float(formatted.strip("%") or 0) == 0)
-    ):
+    if axis.get("scale") == "log" and 0 < v < 1 and _collapsed_to_zero(formatted):
         return _fmt_log(v)
     return formatted if formatted is not None else _fmt_linear(v, step)
 
