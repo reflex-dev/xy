@@ -152,3 +152,41 @@ def test_claim_guardrail_rejects_stale_repo_identity(tmp_path: Path) -> None:
     findings = check_claim_guardrails.check_claims([path])
 
     assert any("stale repository identity" in finding.message for finding in findings)
+
+
+def test_claim_guardrail_rejects_customization_superlatives(tmp_path: Path) -> None:
+    # The "never" rung of the claim ladder in
+    # spec/api/customization-vs-alternatives.md. Plotly's attribute surface is
+    # ~3 orders of magnitude larger and Matplotlib's custom Artist is strictly
+    # more powerful, so no amount of shipping earns these sentences.
+    for line in (
+        "XY is the most customizable charting library.\n",
+        "XY is fully customizable.\n",
+        "Style anything you like.\n",
+        "Customize everything about your chart.\n",
+        "More extensible than any Python plotting library.\n",
+    ):
+        findings = check_claim_guardrails.check_claims([_write(tmp_path, line)])
+        assert any("customization superlative" in f.message for f in findings), line
+
+
+def test_claim_guardrail_requires_a_dimension_on_customization_comparisons(
+    tmp_path: Path,
+) -> None:
+    bare = _write(tmp_path, "XY is more customizable than Plotly.\n")
+    findings = check_claim_guardrails.check_claims([bare])
+    assert any("comparative customization claim" in f.message for f in findings)
+
+    qualified = _write(
+        tmp_path,
+        "XY resolves host CSS variables into mark paint in the browser, SVG, and\n"
+        "native renderers; on that dimension it is more themeable than Plotly, and\n"
+        "the capability matrix records it per property.\n",
+    )
+    assert check_claim_guardrails.check_claims([qualified]) == []
+
+
+def test_claim_guardrail_scans_the_readme(tmp_path: Path) -> None:
+    # The README was outside the default set, which is where a slogan is most
+    # likely to be written and least likely to be reviewed.
+    assert "README.md" in check_claim_guardrails.DEFAULT_DOCS

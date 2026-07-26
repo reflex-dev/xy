@@ -137,6 +137,13 @@ methodology, and raw results.
 
 Customize marks and chart chrome with Python, CSS, or Tailwind. See the [styling guide](docs/styling/index.md).
 
+What each mechanism reaches — per property, per chrome slot, per renderer, and
+where it stops — is the [capability matrix](spec/api/capability-matrix.md),
+generated from `python/xy/styling/capabilities.py` and checked against the
+implementation. How that compares to Plotly, Vega-Lite, Bokeh, and Matplotlib,
+including the dimensions XY loses, is
+[customization-vs-alternatives.md](spec/api/customization-vs-alternatives.md).
+
 ```python
 chart = xy.line_chart(
     xy.line(x, y, color="#7c3aed", width=3),

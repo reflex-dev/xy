@@ -74,6 +74,26 @@ if it names the dimension it is true on.
 | Extensibility | "XY marks can be extended by composing built-in primitives without forking; it does not offer custom shaders or a custom-artist API." | what the plugin can and cannot do |
 | Cap/join fidelity | "`stroke-linecap` is drawn identically by all three renderers, verified per renderer; `stroke-linejoin` is not offered because the WebGL client has no join geometry." | the specific property, the specific blocker |
 
+## The claim ladder
+
+What is defensible depends on what has shipped, so the ladder is written down
+rather than re-argued each release. A rung is earned by an artifact, not by an
+opinion.
+
+| Once this exists | You may say |
+| --- | --- |
+| `xy.styling.capabilities` + the generated matrix | "measurably more themeable than Plotly on the dimensions in the published capability matrix" |
+| The comparison document with its loss table | "more themeable, less extensible than Matplotlib — here is the matrix, losses included" |
+| `xy.register_mark` | "themeable *and* extensible, by composition" |
+| A shader-level plugin API and per-slot styling in static export | revisit this table; do not extrapolate to it from here |
+| — | **"most customizable" — never.** Plotly's attribute surface is roughly three orders of magnitude larger and Matplotlib's custom `Artist` is strictly more powerful. No amount of shipping changes those two facts. |
+
+The last row is enforced rather than trusted:
+`scripts/check_claim_guardrails.py` rejects "most customizable", "fully
+customizable", "style anything", and "more customizable than any/all" wherever
+they appear in `README.md` or `docs/`, and requires a comparative claim against
+a named library to carry its dimension and its evidence.
+
 Claims that are never defensible, regardless of context: "most customizable",
 "most themeable charting library", "more extensible than Matplotlib", "as
 customizable as Plotly". `scripts/check_claim_guardrails.py` rejects the first

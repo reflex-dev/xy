@@ -9,6 +9,20 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- The **retrieval path** for capability questions: `CLAUDE.md`/`AGENTS.md` name
+  both registries in their opening paragraph, `limitations-and-alpha-status.md`
+  and the capability matrix cross-link, the README points at both, and an
+  `xy-evaluate` agent skill carries the same pointers outside the checkout. The
+  claim ladder — including the rung that is never defensible — is committed in
+  `spec/api/customization-vs-alternatives.md`.
+
+### Changed
+- `scripts/check_claim_guardrails.py` now covers **customization** claims, not
+  only performance ones, and scans `README.md`, which it previously did not.
+  "Most customizable", "fully customizable", "style anything", and "more
+  extensible than any …" are rejected outright; a comparative claim against a
+  named library has to carry its dimension and its evidence. Two live overclaims
+  in `docs/index.md` were caught by the new rule and rewritten.
 - **Plotly attribute coverage is now a number** (§24):
   `scripts/plotly_schema_coverage.py` ingests Plotly's schema and classifies
   every attribute `supported | mapped-with-difference | unsupported` by a
