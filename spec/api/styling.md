@@ -111,6 +111,11 @@ accepted **only** by the line family, because it describes stroked open-path
 geometry; every other mark rejects it at build time rather than accepting a
 declaration no renderer would draw.
 
+![Line caps before and after: the native rasterizer capped round while the WebGL
+client capped flat; both now cap round.](../assets/linecap-cross-renderer-before-after.png)
+
+![The three stroke-linecap values: butt, round, and square.](../assets/linecap-values.png)
+
 XY's default is `round`, deliberately not the CSS initial value `butt`. Before
 this vocabulary existed the three renderers silently disagreed — the native
 rasterizer capped round from its clamped segment distance field
@@ -131,6 +136,13 @@ quad per segment with *no join geometry whatsoever* — adjacent quads simply
 overlap by half a pixel — so it has no way to distinguish a miter from a bevel.
 Shipping the property would mean two renderers honoring it and one ignoring it,
 which is the failure this module exists to prevent. It waits for the client.
+
+![The area outline before and after: the SVG writer inherited the format's flat
+cap while the rasterizer drew round; both now cap round.](../assets/area-outline-cap-before-after.png)
+
+The area outline carried the same bug one level quieter — the SVG writer named
+its join and let the cap default, so `_pdf` read it back flat too. Both now say
+what they draw.
 
 That leaves a real cross-renderer difference in the *default*: the rasterizer
 fills interior vertices with a round join and the WebGL client leaves the notch
