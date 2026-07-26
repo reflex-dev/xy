@@ -3,10 +3,6 @@
 </p>
 
 <p align="center">
-  <b><a href="https://reflex.dev/docs/xy/" target="_blank" rel="noopener noreferrer">Try it live: a million points in your browser &rarr;</a></b>
-</p>
-
-<p align="center">
   <a href="https://github.com/reflex-dev/xy/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/reflex-dev/xy/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://app.codspeed.io/reflex-dev/xy?utm_source=badge"><img alt="CodSpeed" src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json"></a>
   <a href="pyproject.toml"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab?logo=python&logoColor=white"></a>
