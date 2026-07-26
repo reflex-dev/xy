@@ -564,3 +564,57 @@ def test_browser_legend_click_toggles_series() -> None:
         ("legend_toggle", 0, None, True),
         ("legend_toggle", 0, None, False),
     ], payload["sent"]
+
+
+# --- the visible-row cache is bounded, and it is reported (§27) --------------
+
+
+def test_legend_vis_cache_is_dropped_when_nothing_is_hidden() -> None:
+    """Un-hiding everything releases the index, instead of pinning 8 B/row.
+
+    The cache exists so a pan/zoom sequence does not repeat the O(N) code scan
+    while the predicate holds. Once no category is hidden there is no consumer
+    for it at all, so keeping it is pure retention — and it was never dropped,
+    never invalidated and never reported.
+    """
+    from xy import interaction
+
+    fig, _ = _density_fig(200_000)
+    trace = fig.traces[0]
+    assert trace._legend_vis_cache is None
+
+    channel.handle_message(
+        fig, {"type": "legend_toggle", "trace": 0, "category": 1, "hidden": True}
+    )
+    interaction.density_view(fig, trace.id, -4.0, 4.0, -4.0, 4.0, 256, 192)
+    cached = trace._legend_vis_cache
+    assert cached is not None and cached[1].size > 0
+    # ...and it shows up in the report while it is held.
+    assert fig.memory_report()["legend_vis_cache_bytes"] == cached[1].nbytes
+
+    channel.handle_message(
+        fig, {"type": "legend_toggle", "trace": 0, "category": 1, "hidden": False}
+    )
+    interaction.density_view(fig, trace.id, -4.0, 4.0, -4.0, 4.0, 256, 192)
+    assert trace._legend_vis_cache is None
+    assert fig.memory_report()["legend_vis_cache_bytes"] == 0
+
+
+def test_legend_vis_cache_bytes_is_counted_in_resident_total() -> None:
+    """§27: if a number isn't in the report, it isn't real."""
+    from xy import interaction
+
+    fig, _ = _density_fig(200_000)
+    channel.handle_message(
+        fig, {"type": "legend_toggle", "trace": 0, "category": 1, "hidden": True}
+    )
+    interaction.density_view(fig, fig.traces[0].id, -4.0, 4.0, -4.0, 4.0, 256, 192)
+    report = fig.memory_report()
+    assert report["legend_vis_cache_bytes"] > 0
+    assert report["resident_array_bytes"] >= (
+        report["canonical_capacity_bytes"]
+        + report["channel_bytes"]
+        + report["pyramid_bytes"]
+        + report["bin_color_bytes"]
+        + report["legend_vis_cache_bytes"]
+    )

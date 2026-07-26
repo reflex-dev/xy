@@ -107,6 +107,11 @@ def _legend_visible_rows(t: "Trace") -> Optional[np.ndarray]:
     """
     pred = _hidden_predicate(t)
     if pred is None:
+        # Unmasked: nothing can consume the cache, and an 8-byte-per-visible-row
+        # index array is far too large to keep on the chance the user hides a
+        # category again (350 MB for a 50M-row trace). Un-hiding everything is
+        # the one state where dropping it is provably free.
+        t._legend_vis_cache = None
         return None
     hidden, codes = pred
     key = (frozenset(t.hidden_categories), len(codes))
@@ -549,6 +554,25 @@ def bin_color_cache_bytes(fig: Any) -> int:
             if any(np.shares_memory(v, arr) for arr in owned):
                 continue
             total += int(v.nbytes)
+    return total
+
+
+def legend_vis_cache_bytes(fig: Any) -> int:
+    """Memory-report line (design dossier §27): bytes held by cached
+    legend-visible row indices.
+
+    One `np.intp` per visible row per masked trace. It survives every pan and
+    zoom by design — that is the point of the cache — so §27's rule applies:
+    if a number isn't in the report, it isn't real.
+    """
+    total = 0
+    for t in fig.traces:
+        cached = getattr(t, "_legend_vis_cache", None)
+        if cached is None:
+            continue
+        rows = cached[1]
+        if isinstance(rows, np.ndarray):
+            total += int(rows.nbytes)
     return total
 
 

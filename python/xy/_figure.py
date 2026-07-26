@@ -1904,6 +1904,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         report["transport_bytes_per_point"] = len(blob) / n_total
         report["pyramid_bytes"] = interaction.pyramid_report_bytes(self)
         report["bin_color_bytes"] = interaction.bin_color_cache_bytes(self)
+        report["legend_vis_cache_bytes"] = interaction.legend_vis_cache_bytes(self)
         # Capacity, not live length: a streamed column's growth-buffer slack is
         # resident RAM (§27), and equals `canonical_bytes` when nothing appended.
         report["resident_array_bytes"] = (
@@ -1911,6 +1912,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             + report["channel_bytes"]
             + report["pyramid_bytes"]
             + report["bin_color_bytes"]
+            + report["legend_vis_cache_bytes"]
         )
         report["backend"] = kernels.BACKEND
         return report
