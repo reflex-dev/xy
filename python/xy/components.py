@@ -4001,7 +4001,7 @@ def _encode_transition_keys(value: Any, expected: int, label: str) -> np.ndarray
     for index, raw in enumerate(arr):
         try:
             token = _transition_key_token(raw, index)
-        except ValueError:
+        except Exception:
             # Deferring the uniqueness test to after the walk also defers every
             # duplicate behind every *later* bad row, which reorders the errors:
             # `["a", "a", None]` reported the row-0/1 duplicate before this and
@@ -4010,6 +4010,11 @@ def _encode_transition_keys(value: Any, expected: int, label: str) -> np.ndarray
             # earlier row than this one. Error path only, and the prefix is
             # re-walked below, so the message and the rows it names are the
             # per-row bookkeeping's.
+            #
+            # Catching Exception, not ValueError: the rule is "the first bad row
+            # wins", and which exception the token raised does not change which
+            # row was first. A key type whose __format__/isoformat/encode raises
+            # something else would otherwise still mask the earlier duplicate.
             if np.unique(result[:index].reshape(-1).view(np.uint64)).size != index:
                 _raise_transition_key_conflict(arr[:index], label)
             raise
@@ -4028,19 +4033,28 @@ def _encode_transition_keys(value: Any, expected: int, label: str) -> np.ndarray
 
 
 def _raise_transition_key_conflict(arr: np.ndarray, label: str) -> None:
-    """Name the conflict the vectorized digest check found (error path only)."""
+    """Name the conflict the vectorized digest check found (error path only).
+
+    Every raise here is `from None`. One caller is the prefix re-check inside an
+    `except`, where the token error it is deliberately superseding would
+    otherwise be chained in front of this one — so the first thing printed would
+    be the very error this function exists to *not* report. The other caller is
+    outside any handler, where `from None` costs nothing.
+    """
     seen: dict[bytes, int] = {}
     digests: dict[bytes, bytes] = {}
     for index, raw in enumerate(arr):
         token = _transition_key_token(raw, index)
         previous = seen.get(token)
         if previous is not None:
-            raise ValueError(f"{label} contains duplicate value at rows {previous} and {index}")
+            raise ValueError(
+                f"{label} contains duplicate value at rows {previous} and {index}"
+            ) from None
         seen[token] = index
         digest = hashlib.blake2s(token, digest_size=8, person=b"xykeyv1").digest()
         collision = digests.get(digest)
         if collision is not None and collision != token:
-            raise ValueError(f"{label} produced an identity digest collision")
+            raise ValueError(f"{label} produced an identity digest collision") from None
         digests[digest] = token
     raise AssertionError(f"{label} digest conflict did not reproduce")
 

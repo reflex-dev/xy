@@ -851,6 +851,46 @@ def test_a_duplicate_outranks_a_later_invalid_row(keys: list, rows: tuple[int, i
         _encode_transition_keys(keys, len(keys), "keys")
 
 
+def test_the_superseded_token_error_is_not_chained_onto_the_duplicate() -> None:
+    """The prefix re-check runs inside an `except`, so without suppression the
+    error it deliberately discards would print *first*, above a 'During handling
+    of the above exception' banner — the traceback would lead with the one
+    message this is not supposed to report."""
+    import traceback
+
+    from xy.components import _encode_transition_keys
+
+    try:
+        _encode_transition_keys(["a", "a", None], 3, "keys")
+    except ValueError as exc:
+        assert exc.__context__ is None or exc.__suppress_context__
+        rendered = "".join(traceback.format_exception(exc))
+        assert "During handling of the above exception" not in rendered
+        assert "is missing at row 2" not in rendered
+        assert "keys contains duplicate value at rows 0 and 1" in rendered
+    else:  # pragma: no cover
+        raise AssertionError("expected a duplicate-key error")
+
+
+def test_a_duplicate_outranks_a_non_valueerror_token_failure() -> None:
+    """Which row was first cannot depend on which exception the token raised.
+
+    A key type whose `encode` raises something other than ValueError must not
+    smuggle a later row's failure past an earlier duplicate.
+    """
+    from xy.components import _encode_transition_keys
+
+    class BadStr(str):
+        def encode(self, *args: object, **kwargs: object) -> bytes:
+            raise RuntimeError("boom-encode")
+
+    with pytest.raises(ValueError, match="keys contains duplicate value at rows 0 and 1"):
+        _encode_transition_keys(["a", "a", BadStr("z")], 3, "keys")
+    # With no earlier duplicate the original failure still propagates untouched.
+    with pytest.raises(RuntimeError, match="boom-encode"):
+        _encode_transition_keys(["a", "b", BadStr("z")], 3, "keys")
+
+
 def test_an_invalid_row_before_a_duplicate_still_wins() -> None:
     """The converse: nothing about the prefix re-check promotes a later
     duplicate over an earlier bad row."""
