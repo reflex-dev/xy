@@ -19,13 +19,19 @@ and a plain CSS attribute selector.
 | `canvas` | WebGL2 plot canvas |
 | `labels` | Axis and annotation label layer |
 | `legend` | Legend container |
+| `legend_title` | Legend title |
 | `legend_item` | One legend row |
 | `legend_swatch` | One legend color swatch |
+| `legend_label` | One legend text label |
 | `colorbar` | Colorbar container |
 | `colorbar_bar` | Colorbar gradient or bands |
 | `colorbar_tick` | One colorbar tick label |
 | `colorbar_title` | Colorbar title |
-| `tooltip` | Hover tooltip |
+| `tooltip` | Hover tooltip container |
+| `tooltip_title` | Formatted tooltip title |
+| `tooltip_row` | One tooltip field row |
+| `tooltip_label` | One tooltip field label |
+| `tooltip_value` | One formatted tooltip value |
 | `modebar` | Mode/tool bar container |
 | `modebar_button` | One mode/tool button; `.xy-active` when active |
 | `selection` | Box/x-range/y-range select or box-zoom rectangle (persists until cleared for selects) |
@@ -73,34 +79,21 @@ chart = xy.area_chart(
         curve="smooth",
         line_width=2,
     ),
-    xy.x_axis(
-        style={
-            "axis_width": 0,
-            "axis_color": "#00000000",
-            "grid_opacity": 0,
-            "tick_width": 0,
-            "tick_color": "#00000000",
-            "tick_label_color": "#00000000",
-            "label_color": "#00000000",
-        },
-    ),
+    xy.x_axis(show=False),
     xy.y_axis(
         domain=(0, 80),
-        style={
-            "axis_width": 0,
-            "axis_color": "#00000000",
-            "grid_color": "#e2e8f0",
-            "tick_width": 0,
-            "tick_color": "#00000000",
-            "tick_label_color": "#00000000",
-            "label_color": "#00000000",
-        },
+        show=False,
+        grid=True,
+        style={"grid_color": "#e2e8f0"},
     ),
     xy.legend(),
     class_name="text-slate-900 dark:text-zinc-100",
     class_names={
         "legend": "bg-transparent text-xs text-slate-600 dark:text-slate-300",
+        "legend_label": "font-medium",
         "tooltip": "rounded-lg bg-zinc-950/90 px-3 py-2 text-white shadow-xl",
+        "tooltip_label": "text-slate-400",
+        "tooltip_value": "text-right font-semibold tabular-nums",
         "modebar_button": "hover:bg-zinc-100 focus:ring-2 dark:hover:bg-zinc-800",
     },
     width="100%",
@@ -130,9 +123,10 @@ portable file.
 
 ## One tooltip, three styling approaches
 
-All three examples target the same `tooltip` slot. Choose based on where the
-style originates; do not combine them unless you intentionally want normal CSS
-cascade precedence.
+All three examples target the tooltip container. The same mechanisms also
+target `tooltip_title`, `tooltip_row`, `tooltip_label`, and `tooltip_value`.
+Choose based on where the style originates; do not combine them unless you
+intentionally want normal CSS cascade precedence.
 
 Use `class_names` when the host already provides utilities or reusable classes:
 
@@ -161,7 +155,14 @@ chart = xy.scatter_chart(
             "border_radius": 8,
             "padding": "8px 12px",
             "box_shadow": "0 12px 30px rgb(15 23 42 / 35%)",
-        }
+        },
+        "tooltip_row": {
+            "display": "grid",
+            "grid_template_columns": "7rem 1fr",
+            "gap": 8,
+        },
+        "tooltip_label": {"color": "#94a3b8"},
+        "tooltip_value": {"font_weight": 700, "text_align": "right"},
     },
 )
 ~~~

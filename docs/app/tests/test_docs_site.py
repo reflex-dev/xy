@@ -256,6 +256,8 @@ def test_public_markdown_routes_match_the_docs_navigation() -> None:
         leaves for title, _route, _icon, leaves in DOCS_SECTIONS if title == "Styling"
     )
     assert ("Animations", "/styling/animations/") in styling_leaves
+    assert ("Chrome Slots", "/styling/chrome-slots/") in styling_leaves
+    assert "/styling/chrome-slots/" not in DOCS_REDIRECTS
     assert (
         max(len(tuple(part for part in route.split("/") if part)) for route in section_routes) <= 2
     )
@@ -311,7 +313,7 @@ def test_component_styling_matrix_covers_public_chrome_boundaries() -> None:
     expected = {
         "legend_item",
         "legend_swatch",
-        "tooltip(fields=..., title=..., format=...)",
+        "tooltip(fields=..., labels=..., title=..., format=...)",
         "x_axis(...)",
         "y_axis(...)",
         "vline(x)",
@@ -328,8 +330,10 @@ def test_component_styling_matrix_covers_public_chrome_boundaries() -> None:
     assert not missing
     assert "button_class_name=" in content
     assert "button_style=" in content
-    assert "does not render components passed through" in content
-    assert "Standalone exports cannot include framework-owned components either." in content
+    assert "built-in `reflex_xy.chart` adapter mounts `xy.tooltip(render=...)`" in content
+    assert "Legend and colorbar replacements remain framework-owned siblings" in " ".join(
+        content.split()
+    )
 
 
 def test_styling_docs_cover_every_public_dom_slot() -> None:
@@ -485,14 +489,43 @@ def test_animation_replay_demos_reuse_example_chrome_and_controls() -> None:
 
 
 def test_palette_playground_drives_a_reactive_chart_grid() -> None:
-    """Keep the preset palettes wired to the state-backed XY figures."""
-    from xy_docs.playground import PLAYGROUND_PALETTES, ChartPlaygroundState, chart_playground
+    """Keep preset and custom colors wired to the state-backed XY figures."""
+    from xy_docs.playground import (
+        BERRY_PALETTE,
+        PLAYGROUND_PALETTES,
+        ChartPlaygroundState,
+        chart_playground,
+    )
 
     rendered_page = str(chart_playground())
+    state_source = inspect.getsource(ChartPlaygroundState)
+    state = ChartPlaygroundState(_reflex_internal_init=True)
 
     assert rendered_page.count("XYChart") == 6
-    assert 'type:"color"' not in rendered_page
+    assert rendered_page.count('type:"color"') == 3
     assert rendered_page.count("apply_palette") == len(PLAYGROUND_PALETTES) == 5
+    assert "reset_palette" in rendered_page
+    for role in ("Primary", "Secondary", "Accent"):
+        assert f"{role} chart color" in rendered_page
+        assert f"set_{role.lower()}_color" in rendered_page
+    assert state_source.count('self.preset = "Custom"') == 3
+    assert "self.primary, self.secondary, self.accent = BERRY_PALETTE" in state_source
+    assert state_source.count("xy.theme(palette=") == 6
+    assert "_HIDDEN_AXIS_STYLE" not in state_source
+    assert '"axis_color": "#00000000"' not in state_source
+    assert "xy.x_axis(tick_count=6, show=False)" in state_source
+    assert "xy.y_axis(domain=(0, 80), show=False, grid=True)" in state_source
+    for handler, value, role in (
+        (ChartPlaygroundState.set_primary_color, "#123456", "primary"),
+        (ChartPlaygroundState.set_secondary_color, "#abcdef", "secondary"),
+        (ChartPlaygroundState.set_accent_color, "#fedcba", "accent"),
+    ):
+        handler.fn(state, value)
+        assert state.preset == "Custom"
+        assert getattr(state, role) == value
+    ChartPlaygroundState.reset_palette.fn(state)
+    assert state.preset == "Berry"
+    assert (state.primary, state.secondary, state.accent) == BERRY_PALETTE
     assert "xy-palette-playground" in rendered_page
     assert "grid grid-cols-1 gap-5 xl:grid-cols-2" in rendered_page
     for label, palette in PLAYGROUND_PALETTES:
@@ -509,6 +542,19 @@ def test_palette_playground_drives_a_reactive_chart_grid() -> None:
     } <= set(ChartPlaygroundState.computed_vars)
     assert "div:has(#toc-navigation)" in rendered_page
     assert "display: none" in rendered_page
+
+
+def test_custom_color_docs_require_literal_palette_entries() -> None:
+    """Do not promise browser-only colors for renderer-neutral indexed palettes."""
+    content = (DOCS_ROOT / "styling/customize.md").read_text(encoding="utf-8")
+    colormap_rule = content[
+        content.index("One rule follows from that") : content.index(
+            "### Recolor categories with a chart palette"
+        )
+    ]
+
+    assert "not as a colormap stop or an `xy.theme(palette=...)` entry" in colormap_rule
+    assert "indexed color lookups used by static renderers" in colormap_rule
 
 
 def test_markdown_heading_links_are_route_local_after_client_navigation() -> None:

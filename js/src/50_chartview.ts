@@ -470,7 +470,7 @@ export class ChartView {
     this._onScheme = () => this.refreshTheme();
     this._themeWatch.addEventListener?.("change", this._onScheme);
     // Framework theme switches usually toggle a class (for example `.dark`)
-    // on the chart or one of its ancestors without changing the OS color
+    // or data-theme on the chart or an ancestor without changing the OS color
     // scheme. Watch that cascade path as well so canvas/SVG paint refreshed
     // from --chart-* tokens stays in sync with the CSS-owned chart chrome.
     if (typeof MutationObserver !== "undefined") {
@@ -478,7 +478,7 @@ export class ChartView {
       for (let node = this.root; node; node = node.parentElement) {
         this._themeMutationObserver.observe(node, {
           attributes: true,
-          attributeFilter: ["class", "style"],
+          attributeFilter: ["class", "data-theme", "style"],
         });
       }
     }
@@ -1823,8 +1823,8 @@ export class ChartView {
     if (options.title) {
       const title = document.createElement("div");
       title.textContent = String(options.title);
-      title.style.fontWeight = "600";
       title.style.gridColumn = `1 / span ${horizontal ? ncols : 1}`;
+      this._applySlot(title, "legend_title");
       lg.appendChild(title);
     }
     const rows = [];
@@ -1905,7 +1905,10 @@ export class ChartView {
       }
       this._applySlot(sw, "legend_swatch");
       row.appendChild(sw);
-      row.appendChild(document.createTextNode(it.name));
+      const label = document.createElement("span");
+      label.textContent = it.name;
+      this._applySlot(label, "legend_label");
+      row.appendChild(label);
       // Hover emphasis (interaction spec §9): rows backed by live traces dim the rest
       // of the chart while hovered. Manually-added Legend artists carry no
       // trace linkage, so extra_legends rows stay inert.

@@ -1298,6 +1298,12 @@ an interaction surface: hovering a row emphasizes its series by dimming the rest
 the first shipped §34 predicate: state syncs to the kernel (`legend_toggle`),
 direct tiers re-filter client-side (0 bytes, §37), density tiers re-bin
 kernel-side under the mask (contract in `spec/api/interaction.md` §10).
+Legend titles, rows, swatches, and labels and tooltip titles, rows, field labels,
+and formatted values each carry stable `data-xy-slot` hooks. Tooltip `labels=`
+changes presentation text without changing source-field lookup, formatting keys,
+title placeholders, or event payloads; without an explicit `fields=` list it
+renames the matching default x/y/color/size rows. User-provided chrome text is
+assigned through `textContent` / text nodes, never parsed as HTML.
 
 **(b) Marks — themed via a CSS-custom-property bridge.** The render client reads
 `--chart-*` custom properties off its container and maps them to GPU state, so the

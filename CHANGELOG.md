@@ -9,6 +9,13 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- `xy.tooltip(labels={...})` gives source columns readable display names
+  without changing lookup, formatting keys, title placeholders, or hover-event
+  payloads; without `fields=`, labels rename matching default channel rows.
+  Built-in tooltips now expose `tooltip_title`, `tooltip_row`,
+  `tooltip_label`, and `tooltip_value` DOM slots for independent typography
+  and layout; legends likewise expose `legend_title` and `legend_label`.
+  User-provided labels remain text-only and are never parsed as HTML.
 - `colormap=` accepts a **custom ramp** built from your own colors, not only one
   of the twenty built-in names: a sequence of 2–256 CSS colors, `(position,
   color)` pairs, or a CSS `linear-gradient(...)`. Every form resolves once, in
@@ -37,6 +44,9 @@ in the README).
   that don't use them are byte-identical.
 
 ### Changed
+- Host theme changes made through an ancestor `data-theme` attribute now
+  refresh canvas/SVG paint just like `.dark` class and inline-style changes;
+  DOM chrome continues to follow the cascade automatically.
 - Peak memory cut on four paths, with byte-identical output everywhere (89
   payload/export/view fingerprints pinned before and after):
   - The indexed-palette PNG encoder stages one scanline buffer and hands it to

@@ -427,6 +427,7 @@ def test_component_style_tooltip_and_modebar_metadata_is_opt_in():
             fields=["feature_a", "feature_b", "segment"],
             title="{segment}",
             format={"feature_a": ".2f"},
+            labels={"feature_a": "Feature A", "feature_b": "Feature B"},
             class_name="tooltip-node",
             style={"background-color": "black"},
         ),
@@ -467,6 +468,7 @@ def test_component_style_tooltip_and_modebar_metadata_is_opt_in():
         "fields": ["feature_a", "feature_b", "segment"],
         "title": "{segment}",
         "format": {"feature_a": ".2f"},
+        "labels": {"feature_a": "Feature A", "feature_b": "Feature B"},
         "aliases": {
             "feature_a": "x",
             "feature_b": "y",
@@ -1312,10 +1314,23 @@ def test_component_style_validation_rejects_non_serializable_values():
         xy.chart(xy.scatter(x=[1.0], y=[2.0]), style={"--bad": np.inf})
     with pytest.raises(ValueError, match="tooltip fields"):
         xy.tooltip(fields=["x", 2])
+    with pytest.raises(ValueError, match="tooltip labels"):
+        xy.tooltip(labels={"x": 2})
     with pytest.raises(TypeError, match="at most one"):
         xy.legend(FakeReflexComponent("a"), FakeReflexComponent("b"))
     with pytest.raises(TypeError, match="component child with render"):
         xy.tooltip(FakeReflexComponent("a"), render=FakeReflexComponent("b"))
+
+
+def test_tooltip_revalidates_public_dataclass_construction_and_mutation():
+    direct = xy.Tooltip(labels={"x": object()})
+    mutated = xy.tooltip(labels={"x": "X"})
+    mutated.labels["x"] = object()
+
+    for node in (direct, mutated):
+        chart = xy.scatter_chart(xy.scatter(x=[1.0], y=[2.0]), node)
+        with pytest.raises(ValueError, match="tooltip labels"):
+            chart.figure()
 
 
 def test_composition_builds_figure():

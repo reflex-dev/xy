@@ -165,7 +165,8 @@ tokens statically from `spec["dom"]["style"]` — the tokens the chart declared 
 Python (`_svg._resolve_static_css_vars`). The live client instead reads
 *computed* CSS off the chart root (`readTheme`, `js/src/20_theme.ts:51`) and
 re-reads it on scheme change or a class mutation via `refreshTheme()`
-(`js/src/50_chartview.ts:4037`). That refresh is **local to the browser**: no
+(`js/src/50_chartview.ts:4037`); `data-theme` and inline-style changes are
+observed as well. That refresh is **local to the browser**: no
 theme snapshot ever travels back. The eight client→kernel request types are
 enumerated exhaustively in [wire-protocol.md](../design/wire-protocol.md) §2, and
 their fields are view geometry, screen dimensions, trace/vertex indices,

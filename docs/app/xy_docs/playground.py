@@ -32,16 +32,6 @@ main:has(#xy-palette-playground) > div:has(article #xy-palette-playground) {
 }
 """
 
-_HIDDEN_AXIS_STYLE = {
-    "axis_width": 0,
-    "axis_color": "#00000000",
-    "tick_width": 0,
-    "tick_color": "#00000000",
-    "tick_label_color": "#00000000",
-    "label_color": "#00000000",
-}
-_HIDDEN_X_AXIS_STYLE = {**_HIDDEN_AXIS_STYLE, "grid_opacity": 0}
-
 
 class ChartPlaygroundState(rx.State):
     """Palette values shared by every live chart in the playground."""
@@ -66,6 +56,30 @@ class ChartPlaygroundState(rx.State):
         self.primary = primary
         self.secondary = secondary
         self.accent = accent
+
+    @rx.event
+    def set_primary_color(self, color: str) -> None:
+        """Set the primary color and mark the palette as custom."""
+        self.preset = "Custom"
+        self.primary = color
+
+    @rx.event
+    def set_secondary_color(self, color: str) -> None:
+        """Set the secondary color and mark the palette as custom."""
+        self.preset = "Custom"
+        self.secondary = color
+
+    @rx.event
+    def set_accent_color(self, color: str) -> None:
+        """Set the accent color and mark the palette as custom."""
+        self.preset = "Custom"
+        self.accent = color
+
+    @rx.event
+    def reset_palette(self) -> None:
+        """Restore the default Berry palette."""
+        self.preset = "Berry"
+        self.primary, self.secondary, self.accent = BERRY_PALETTE
 
     @rx.event(background=True)
     async def mark_copied(self, chart: str) -> None:
@@ -101,13 +115,12 @@ class ChartPlaygroundState(rx.State):
             xy.tooltip(title="Week {x}", format={"y": ",.0f"}),
             xy.x_axis(
                 tick_count=6,
-                tick_label_strategy="none",
-                style=_HIDDEN_X_AXIS_STYLE,
+                show=False,
             ),
             xy.y_axis(
                 domain=(0, 80),
-                tick_label_strategy="none",
-                style=_HIDDEN_AXIS_STYLE,
+                show=False,
+                grid=True,
             ),
             width="100%",
             height=300,
@@ -121,11 +134,11 @@ class ChartPlaygroundState(rx.State):
         signups = [18, 24, 22, 31, 36, 40, 45, 43, 52, 58, 63, 69]
         activated = [12, 16, 17, 21, 25, 29, 32, 35, 39, 44, 49, 54]
         return xy.line_chart(
+            xy.theme(palette=[self.primary, self.secondary, self.accent]),
             xy.line(
                 months,
                 signups,
                 name="Signups",
-                color=self.primary,
                 width=2.6,
                 curve="smooth",
             ),
@@ -133,7 +146,6 @@ class ChartPlaygroundState(rx.State):
                 months,
                 activated,
                 name="Activated",
-                color=self.secondary,
                 width=2.6,
                 curve="smooth",
             ),
@@ -142,12 +154,12 @@ class ChartPlaygroundState(rx.State):
             xy.x_axis(
                 tick_count=6,
                 tick_label_strategy="none",
-                style={"grid_opacity": 0},
+                grid=False,
             ),
             xy.y_axis(
                 domain=(0, 80),
-                tick_label_strategy="none",
-                style=_HIDDEN_AXIS_STYLE,
+                show=False,
+                grid=True,
             ),
             width="100%",
             height=300,
@@ -165,23 +177,23 @@ class ChartPlaygroundState(rx.State):
             core_value + growth_value for core_value, growth_value in zip(core, growth, strict=True)
         ]
         return xy.column_chart(
-            xy.column(months, core, name="Core", color=self.primary),
-            xy.column(months, growth, base=core, name="Growth", color=self.secondary),
+            xy.theme(palette=[self.primary, self.secondary, self.accent]),
+            xy.column(months, core, name="Core"),
+            xy.column(months, growth, base=core, name="Growth"),
             xy.column(
                 months,
                 enterprise,
                 base=enterprise_base,
                 name="Enterprise",
-                color=self.accent,
                 corner_radius=(6, 0),
             ),
             xy.tooltip(title="{x}", format={"y": "$,.0fK"}),
             xy.legend(loc="upper left"),
-            xy.x_axis(tick_label_strategy="none", style={"grid_opacity": 0}),
+            xy.x_axis(tick_label_strategy="none", grid=False),
             xy.y_axis(
                 domain=(0, 100),
-                tick_label_strategy="none",
-                style=_HIDDEN_AXIS_STYLE,
+                show=False,
+                grid=True,
             ),
             width="100%",
             height=300,
@@ -209,9 +221,9 @@ class ChartPlaygroundState(rx.State):
             xy.x_axis(
                 domain=(0, 100),
                 tick_label_strategy="none",
-                style={"grid_opacity": 0},
+                grid=False,
             ),
-            xy.y_axis(tick_label_strategy="none", style=_HIDDEN_AXIS_STYLE),
+            xy.y_axis(show=False, grid=True),
             width="100%",
             height=300,
             padding=(24, 24, 42, 82),
@@ -252,13 +264,12 @@ class ChartPlaygroundState(rx.State):
             xy.x_axis(
                 tick_values=months,
                 tick_labels=month_labels,
-                tick_label_strategy="none",
-                style=_HIDDEN_X_AXIS_STYLE,
+                show=False,
             ),
             xy.y_axis(
                 domain=(0, 0.8),
-                tick_label_strategy="none",
-                style=_HIDDEN_AXIS_STYLE,
+                show=False,
+                grid=True,
             ),
             width="100%",
             height=300,
@@ -273,11 +284,11 @@ class ChartPlaygroundState(rx.State):
         organic = [72, 58, 64, 49, 43, 36]
         paid = [54, 46, 38, 42, 35, 29]
         return xy.column_chart(
+            xy.theme(palette=[self.primary, self.secondary, self.accent]),
             xy.column(
                 [center - 0.14 for center in channel_centers],
                 organic,
                 name="Organic",
-                color=self.primary,
                 width=0.22,
                 opacity=1,
                 corner_radius=0,
@@ -287,7 +298,6 @@ class ChartPlaygroundState(rx.State):
                 [center + 0.14 for center in channel_centers],
                 paid,
                 name="Paid",
-                color=self.secondary,
                 width=0.22,
                 opacity=1,
                 corner_radius=0,
@@ -299,13 +309,12 @@ class ChartPlaygroundState(rx.State):
                 domain=(-0.5, 5.5),
                 tick_values=channel_centers,
                 tick_labels=channels,
-                tick_label_strategy="none",
-                style=_HIDDEN_X_AXIS_STYLE,
+                show=False,
             ),
             xy.y_axis(
                 domain=(0, 80),
-                tick_label_strategy="none",
-                style=_HIDDEN_AXIS_STYLE,
+                show=False,
+                grid=True,
             ),
             width="100%",
             height=300,
@@ -328,31 +337,8 @@ class ChartPlaygroundState(rx.State):
         line_opacity=1,
     ),
     xy.tooltip(title="Week {{x}}", format={{"y": ",.0f"}}),
-    xy.x_axis(
-        tick_count=6,
-        tick_label_strategy="none",
-        style={{
-            "axis_width": 0,
-            "axis_color": "#00000000",
-            "grid_opacity": 0,
-            "tick_width": 0,
-            "tick_color": "#00000000",
-            "tick_label_color": "#00000000",
-            "label_color": "#00000000",
-        }},
-    ),
-    xy.y_axis(
-        domain=(0, 80),
-        tick_label_strategy="none",
-        style={{
-            "axis_width": 0,
-            "axis_color": "#00000000",
-            "tick_width": 0,
-            "tick_color": "#00000000",
-            "tick_label_color": "#00000000",
-            "label_color": "#00000000",
-        }},
-    ),
+    xy.x_axis(tick_count=6, show=False),
+    xy.y_axis(domain=(0, 80), show=False, grid=True),
 )'''
 
     @rx.var
@@ -360,11 +346,11 @@ class ChartPlaygroundState(rx.State):
         """Return a copyable line-chart snippet using the selected palette."""
         return f'''months = list(range(1, 13))
 chart = xy.line_chart(
+    xy.theme(palette=["{self.primary}", "{self.secondary}", "{self.accent}"]),
     xy.line(
         months,
         [18, 24, 22, 31, 36, 40, 45, 43, 52, 58, 63, 69],
         name="Signups",
-        color="{self.primary}",
         width=2.6,
         curve="smooth",
     ),
@@ -372,23 +358,13 @@ chart = xy.line_chart(
         months,
         [12, 16, 17, 21, 25, 29, 32, 35, 39, 44, 49, 54],
         name="Activated",
-        color="{self.secondary}",
         width=2.6,
         curve="smooth",
     ),
     xy.tooltip(title="Month {{x}}", format={{"y": ",.0f"}}),
     xy.legend(loc="upper left"),
-    xy.x_axis(tick_label_strategy="none", style={{"grid_opacity": 0}}),
-    xy.y_axis(
-        domain=(0, 80),
-        tick_label_strategy="none",
-        style={{
-            "axis_width": 0,
-            "axis_color": "#00000000",
-            "tick_width": 0,
-            "tick_color": "#00000000",
-        }},
-    ),
+    xy.x_axis(tick_label_strategy="none", grid=False),
+    xy.y_axis(domain=(0, 80), show=False, grid=True),
 )'''
 
     @rx.var
@@ -401,29 +377,20 @@ enterprise = [7, 8, 10, 12, 14, 17]
 enterprise_base = [a + b for a, b in zip(core, growth, strict=True)]
 
 chart = xy.column_chart(
-    xy.column(months, core, name="Core", color="{self.primary}"),
-    xy.column(months, growth, base=core, name="Growth", color="{self.secondary}"),
+    xy.theme(palette=["{self.primary}", "{self.secondary}", "{self.accent}"]),
+    xy.column(months, core, name="Core"),
+    xy.column(months, growth, base=core, name="Growth"),
     xy.column(
         months,
         enterprise,
         base=enterprise_base,
         name="Enterprise",
-        color="{self.accent}",
         corner_radius=(6, 0),
     ),
     xy.tooltip(title="{{x}}", format={{"y": "$,.0fK"}}),
     xy.legend(loc="upper left"),
-    xy.x_axis(tick_label_strategy="none", style={{"grid_opacity": 0}}),
-    xy.y_axis(
-        domain=(0, 100),
-        tick_label_strategy="none",
-        style={{
-            "axis_width": 0,
-            "axis_color": "#00000000",
-            "tick_width": 0,
-            "tick_color": "#00000000",
-        }},
-    ),
+    xy.x_axis(tick_label_strategy="none", grid=False),
+    xy.y_axis(domain=(0, 100), show=False, grid=True),
 )'''
 
     @rx.var
@@ -442,20 +409,8 @@ chart = xy.column_chart(
         corner_radius=(6, 0),
     ),
     xy.tooltip(title="{{x}}", format={{"y": ".0f%"}}),
-    xy.x_axis(
-        domain=(0, 100),
-        tick_label_strategy="none",
-        style={{"grid_opacity": 0}},
-    ),
-    xy.y_axis(
-        tick_label_strategy="none",
-        style={{
-            "axis_width": 0,
-            "axis_color": "#00000000",
-            "tick_width": 0,
-            "tick_color": "#00000000",
-        }},
-    ),
+    xy.x_axis(domain=(0, 100), tick_label_strategy="none", grid=False),
+    xy.y_axis(show=False, grid=True),
 )'''
 
     @rx.var
@@ -494,29 +449,9 @@ chart = xy.area_chart(
     xy.x_axis(
         tick_values=months,
         tick_labels=month_labels,
-        tick_label_strategy="none",
-        style={{
-            "axis_width": 0,
-            "axis_color": "#00000000",
-            "grid_opacity": 0,
-            "tick_width": 0,
-            "tick_color": "#00000000",
-            "tick_label_color": "#00000000",
-            "label_color": "#00000000",
-        }},
+        show=False,
     ),
-    xy.y_axis(
-        domain=(0, 0.8),
-        tick_label_strategy="none",
-        style={{
-            "axis_width": 0,
-            "axis_color": "#00000000",
-            "tick_width": 0,
-            "tick_color": "#00000000",
-            "tick_label_color": "#00000000",
-            "label_color": "#00000000",
-        }},
-    ),
+    xy.y_axis(domain=(0, 0.8), show=False, grid=True),
 )'''
 
     @rx.var
@@ -528,11 +463,11 @@ organic = [72, 58, 64, 49, 43, 36]
 paid = [54, 46, 38, 42, 35, 29]
 
 chart = xy.column_chart(
+    xy.theme(palette=["{self.primary}", "{self.secondary}", "{self.accent}"]),
     xy.column(
         [center - 0.14 for center in channel_centers],
         organic,
         name="Organic",
-        color="{self.primary}",
         width=0.22,
         opacity=1,
         corner_radius=0,
@@ -542,7 +477,6 @@ chart = xy.column_chart(
         [center + 0.14 for center in channel_centers],
         paid,
         name="Paid",
-        color="{self.secondary}",
         width=0.22,
         opacity=1,
         corner_radius=0,
@@ -554,29 +488,9 @@ chart = xy.column_chart(
         domain=(-0.5, 5.5),
         tick_values=channel_centers,
         tick_labels=channels,
-        tick_label_strategy="none",
-        style={{
-            "axis_width": 0,
-            "axis_color": "#00000000",
-            "grid_opacity": 0,
-            "tick_width": 0,
-            "tick_color": "#00000000",
-            "tick_label_color": "#00000000",
-            "label_color": "#00000000",
-        }},
+        show=False,
     ),
-    xy.y_axis(
-        domain=(0, 80),
-        tick_label_strategy="none",
-        style={{
-            "axis_width": 0,
-            "axis_color": "#00000000",
-            "tick_width": 0,
-            "tick_color": "#00000000",
-            "tick_label_color": "#00000000",
-            "label_color": "#00000000",
-        }},
-    ),
+    xy.y_axis(domain=(0, 80), show=False, grid=True),
 )'''
 
 
@@ -610,6 +524,106 @@ def _preset_button(label: str, palette: Sequence[str]) -> rx.Component:
                 "hover:border-primary-7 hover:bg-primary-3 hover:text-primary-11 "
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-7"
             ),
+        ),
+    )
+
+
+def _color_control(
+    label: str,
+    color: rx.Var,
+    on_change: rx.EventHandler,
+) -> rx.Component:
+    """Render one labelled native color picker with its current hex value."""
+    input_id = f"playground-{label.lower()}-color"
+    return rx.el.label(
+        rx.el.span(
+            label,
+            class_name="font-small font-medium text-secondary-11",
+        ),
+        rx.el.span(
+            rx.el.input(
+                type="color",
+                id=input_id,
+                value=color,
+                on_change=on_change,
+                aria_label=f"{label} chart color",
+                title=f"Choose {label.lower()} chart color",
+                class_name=(
+                    "h-8 w-10 cursor-pointer rounded-md border border-secondary-6 "
+                    "bg-secondary-1 p-0.5 focus:outline-none "
+                    "focus-visible:ring-2 focus-visible:ring-primary-7"
+                ),
+            ),
+            rx.el.code(
+                color,
+                class_name="font-mono text-xs uppercase text-secondary-11",
+            ),
+            class_name="flex items-center gap-2",
+        ),
+        html_for=input_id,
+        class_name=(
+            "flex min-w-0 items-center justify-between gap-3 rounded-lg border "
+            "border-secondary-5 bg-secondary-1 px-3 py-2"
+        ),
+    )
+
+
+def _palette_controls() -> rx.Component:
+    """Render preset, custom-color, and reset controls for the playground."""
+    return rx.el.div(
+        rx.el.div(
+            rx.el.div(
+                rx.el.span(
+                    "Palette",
+                    class_name="font-small font-medium text-secondary-12",
+                ),
+                rx.el.span(
+                    "Current: ",
+                    rx.el.strong(ChartPlaygroundState.preset),
+                    aria_live="polite",
+                    class_name="font-small text-secondary-10",
+                ),
+                class_name="flex flex-wrap items-center gap-x-3 gap-y-1",
+            ),
+            rx.el.button(
+                "Reset",
+                type="button",
+                on_click=ChartPlaygroundState.reset_palette,
+                aria_label="Reset palette to Berry",
+                class_name=(
+                    "inline-flex h-8 items-center rounded-md border border-secondary-6 "
+                    "bg-secondary-1 px-3 font-small font-medium text-secondary-11 "
+                    "transition hover:border-primary-7 hover:bg-primary-3 "
+                    "hover:text-primary-11 focus:outline-none "
+                    "focus-visible:ring-2 focus-visible:ring-primary-7"
+                ),
+            ),
+            class_name="flex flex-wrap items-center justify-between gap-3",
+        ),
+        rx.el.div(
+            *(_preset_button(label, palette) for label, palette in PLAYGROUND_PALETTES),
+            class_name="flex flex-wrap gap-2",
+        ),
+        rx.el.div(
+            _color_control(
+                "Primary",
+                ChartPlaygroundState.primary,
+                ChartPlaygroundState.set_primary_color,
+            ),
+            _color_control(
+                "Secondary",
+                ChartPlaygroundState.secondary,
+                ChartPlaygroundState.set_secondary_color,
+            ),
+            _color_control(
+                "Accent",
+                ChartPlaygroundState.accent,
+                ChartPlaygroundState.set_accent_color,
+            ),
+            class_name="grid grid-cols-1 gap-2 sm:grid-cols-3",
+        ),
+        class_name=(
+            "mb-5 flex flex-col gap-3 rounded-xl border border-secondary-5 bg-secondary-2 p-3"
         ),
     )
 
@@ -661,24 +675,11 @@ def _chart_card(
 
 
 def chart_playground() -> rx.Component:
-    """Render palette presets and a responsive grid of state-backed charts."""
+    """Render editable palette controls and a grid of state-backed charts."""
     return rx.fragment(
         rx.el.style(_PLAYGROUND_LAYOUT_CSS),
         rx.el.div(
-            rx.el.div(
-                rx.el.span(
-                    "Palette",
-                    class_name="shrink-0 font-small font-medium text-secondary-11",
-                ),
-                rx.el.div(
-                    *(_preset_button(label, palette) for label, palette in PLAYGROUND_PALETTES),
-                    class_name="flex flex-wrap gap-2",
-                ),
-                class_name=(
-                    "mb-5 flex flex-col gap-3 rounded-xl border border-secondary-5 "
-                    "bg-secondary-2 p-3 sm:flex-row sm:items-center sm:justify-between"
-                ),
-            ),
+            _palette_controls(),
             rx.el.div(
                 _chart_card(
                     "Momentum",

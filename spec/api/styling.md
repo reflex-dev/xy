@@ -304,13 +304,19 @@ raises before it reaches the client.
 | `canvas` | WebGL2 plot canvas |
 | `labels` | Axis/annotation label layer |
 | `legend` | Legend container |
+| `legend_title` | Legend title |
 | `legend_item` | One legend row |
 | `legend_swatch` | Legend color swatch |
+| `legend_label` | Legend text label |
 | `colorbar` | Colorbar container |
 | `colorbar_bar` | Colorbar gradient/bands |
 | `colorbar_tick` | Colorbar tick label |
 | `colorbar_title` | Colorbar title |
-| `tooltip` | Hover tooltip |
+| `tooltip` | Hover tooltip container |
+| `tooltip_title` | Formatted tooltip title |
+| `tooltip_row` | One tooltip field row |
+| `tooltip_label` | One tooltip field label |
+| `tooltip_value` | One formatted tooltip value |
 | `modebar` | Mode/tool bar container |
 | `modebar_button` | One mode/tool button (`.xy-active` when engaged) |
 | `selection` | Active box-select or box-zoom rectangle |

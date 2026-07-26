@@ -257,6 +257,9 @@ class Tooltip(Component):
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
     render: Any = None
+    # New fields append after ``render``: Tooltip is public and positional
+    # construction over the released field order must keep binding.
+    labels: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -2518,6 +2521,7 @@ def tooltip(
     fields: Optional[list[str]] = None,
     title: Optional[str] = None,
     format: Optional[dict[str, str]] = None,
+    labels: Optional[dict[str, str]] = None,
     class_name: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Tooltip:
@@ -2530,6 +2534,9 @@ def tooltip(
         fields: Data fields shown in each tooltip.
         title: Optional tooltip title.
         format: Per-field value formats.
+        labels: Display labels keyed by source field. Without ``fields``, they
+            rename the matching default x/y/color/size rows. Formatting and
+            title placeholders continue to use the source field names.
         class_name: DOM class name applied to the tooltip.
         style: Tooltip style overrides.
     """
@@ -2539,6 +2546,7 @@ def tooltip(
         fields=_string_list(fields, "tooltip fields"),
         title=_optional_string(title, "tooltip title"),
         format=_string_dict(format, "tooltip format"),
+        labels=_string_dict(labels, "tooltip labels"),
         class_name=_optional_string(class_name, "tooltip class_name"),
         style=_style_dict(style, "tooltip style"),
         render=render,
@@ -3357,6 +3365,20 @@ class Chart(Component):
             fig.export_options = export_options or None
         if tooltips:
             node = tooltips[-1]
+            # ``Tooltip`` is public as a dataclass as well as the return type
+            # of ``tooltip()``. Re-run the shared validators so direct
+            # construction or later mutation cannot put malformed fields,
+            # labels, styles, or booleans on the wire.
+            node = tooltip(
+                show=node.show,
+                render=node.render,
+                fields=node.fields,
+                title=node.title,
+                format=node.format,
+                labels=node.labels,
+                class_name=node.class_name,
+                style=node.style,
+            )
             _apply_chrome_node(fig, "tooltip", node.class_name, node.style)
             fig.show_tooltip = node.show
             fig.tooltip = _tooltip_spec(node, tooltip_aliases, tooltip_sources)
@@ -4185,6 +4207,8 @@ def _tooltip_spec(
         spec["title"] = node.title
     if node.format:
         spec["format"] = dict(node.format)
+    if node.labels:
+        spec["labels"] = dict(node.labels)
     if aliases:
         spec["aliases"] = dict(aliases)
     if sources:
