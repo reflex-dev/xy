@@ -199,6 +199,24 @@ this contract): `pointPick` (participates in the point-geometry GPU pick pass),
 colors, §36). The registry and `markOf()` are exported (`xy.MARK_KINDS`)
 — it is the public extension surface.
 
+## Contributing a kind from outside the repo
+
+The checklist above is for kinds that join the core: six touch points across
+Python, the client, and the docs. A kind that only needs to *compose* existing
+primitives does not have to pay it. `xy.register_mark` (`python/xy/plugins.py`,
+dossier §24) takes a `calc` over declared columns plus a `build` that returns
+built-in `Mark` objects, and `components._plugin_applier` runs the result
+through the same appliers, axis assignment, and post-processing as a hand-built
+mark. `_MARK_APPLIERS` is consulted first, so a plugin can never shadow a
+built-in.
+
+The dividing line is whether the kind needs a **new primitive**. A candlestick,
+a dumbbell, a ribbon, a high-low band — all compositions, all plugin territory.
+A kind that needs geometry no shader draws yet is a core kind and takes the
+checklist. Composition is one level deep on purpose: plugins compose built-ins,
+not each other, which keeps the registry a lookup rather than a dependency
+graph.
+
 ## Extension points not yet generalized (do it when the case lands)
 
 These are still shaped for the marks that exist. Generalize them when a real new

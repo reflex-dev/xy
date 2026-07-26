@@ -9,6 +9,16 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- **Mark plugins**: `xy.register_mark(xy.MarkPlugin(...))` adds a chart kind XY
+  does not ship, and `xy.mark("name", ...)` uses it. A plugin supplies a `calc`
+  over its declared columns and a `build` that returns *built-in* marks — the
+  composition half of dossier §24, with the custom-shader half deliberately
+  deferred. Because a plugin's output is ordinary traces it inherits decimation,
+  hover, picking, the a11y summary, and every export path including the two with
+  no browser; `build` never sees the `Figure`, the trace list, or the column
+  store, so it cannot draw anything the engine could not already draw. The
+  registry refuses to shadow a built-in kind and refuses to silently replace
+  another plugin.
 - Mark `style=` accepts **`stroke-linecap`** (`butt`/`round`/`square`) on the
   line family, with the standard SVG semantics: it shapes the polyline's two
   ends and each dash end. Only the line family takes it, because it describes
