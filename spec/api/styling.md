@@ -720,6 +720,63 @@ them through the annotation's own `color` / `stroke_color` / `stroke_width` /
 `opacity` arguments. Only annotation **labels** are DOM (`annotation_label`)
 and thus fully CSS-styleable.
 
+### Per-slot styles in a file
+
+`styles={slot: {...}}` is a browser surface first — the browser has a cascade
+and a file does not — but the slots that name chrome a static file *contains*
+carry a defined subset of their declarations into SVG, PNG and PDF:
+
+| | |
+| --- | --- |
+| Slots | `title`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`, `colorbar_title`, `colorbar_tick` (`_svg.STATIC_STYLED_SLOTS`) |
+| Properties | `font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`, `opacity`, and the text paint — `fill`, or `color` |
+| Raster caveat | the baked atlas is one face: PNG/JPEG/WebP honor size and paint, and leave weight/style/family to the vector writers |
+
+```python
+xy.chart(
+    xy.line(x=months, y=revenue),
+    title="Quarterly performance",
+    styles={
+        "title": {"font_size": 22, "fill": "#7c3aed", "font_weight": 800},
+        "tick_label": {"font_size": 13, "fill": "#0891b2"},
+        "legend": {"background": "#fef3c7", "border_radius": "10px"},
+    },
+)
+```
+
+![Before and after, six scenes: per-slot title/axis/tick/legend styling, colorbar
+chrome, `loc="best"`, an unrecognized `loc`, the `legend_bg` theme token, and a
+`theme()` typo. Before, every one of them was silently ignored.](../assets/chrome-styling-before-after.png)
+
+Everything else stays browser-only: the remaining slots are live chrome
+(`tooltip*`, `modebar*`, `crosshair_*`, `selection`, `badge*`) with nothing in a
+file to paint, and `class_names` cannot apply anywhere without a stylesheet to
+select from. Where two surfaces name the same chrome the narrower selector
+wins — an axis's own `label_color` over `styles={"axis_title": ...}`.
+
+The legend's three spellings — `styles={"legend": ...}`,
+`xy.legend(style=...)`, and the `--chart-legend-bg` theme token — merge into one
+declaration block before either native writer reads it, so what agrees in the
+browser agrees in a PNG. An explicit `background` paints opaque;
+`--xy-legend-frame-alpha` stays the knob for the default grey frame.
+
+Full contract and enforcement: [export.md](export.md) § 9 and
+`tests/test_export_style_survival.py`.
+
+### Legend placement
+
+`xy.legend(loc=...)` takes Matplotlib's vocabulary — `"upper right"`,
+`"lower left"`, `"center"`, `"upper center"`, and so on — case- and
+space-insensitively, plus `"best"`. The vocabulary is **closed**: the writers
+resolve a location by substring, so an unrecognized string used to land the
+legend silently in the middle of the data rather than fail.
+
+`"best"` scores each candidate box by the fraction of sampled marks inside it
+and keeps the least occupied, preferring the earlier candidate on a near-tie —
+Matplotlib's rule. It resolves **once, at payload-build time**
+(`xy._legendfit`), so the client and the two static writers all receive a
+settled location and cannot disagree about it (§28).
+
 ## Static export
 
 `fig.to_image(format="png", *, width=, height=, scale=2.0, background=,

@@ -55,19 +55,19 @@ token bag or in mark and axis `style=`, which every renderer reads.
 | slot | browser | native raster | native vector |
 |---|---|---|---|
 | `root` | full | partial | partial |
-| `title` | full | none | none |
+| `title` | full | partial | partial |
 | `chrome` | full | none | none |
 | `canvas` | full | none | none |
 | `labels` | full | none | none |
 | `legend` | full | partial | partial |
-| `legend_title` | full | none | none |
+| `legend_title` | full | partial | partial |
 | `legend_item` | full | none | none |
 | `legend_swatch` | full | none | none |
-| `legend_label` | full | none | none |
-| `colorbar` | full | none | none |
+| `legend_label` | full | partial | partial |
+| `colorbar` | full | partial | partial |
 | `colorbar_bar` | full | none | none |
-| `colorbar_tick` | full | none | none |
-| `colorbar_title` | full | none | none |
+| `colorbar_tick` | full | partial | partial |
+| `colorbar_title` | full | partial | partial |
 | `tooltip` | full | none | none |
 | `tooltip_title` | full | none | none |
 | `tooltip_row` | full | none | none |
@@ -80,14 +80,22 @@ token bag or in mark and axis `style=`, which every renderer reads.
 | `crosshair_y` | full | none | none |
 | `badge` | full | none | none |
 | `badge_item` | full | none | none |
-| `tick_label` | full | none | none |
-| `axis_title` | full | none | none |
+| `tick_label` | full | partial | partial |
+| `axis_title` | full | partial | partial |
 | `annotation_label` | full | none | none |
 
 ### Notes
 
 - **`root`** (via `chart style=`) — `styles={'root': ...}` is browser-only, but the chart-level `style=` token bag targets the same element and every renderer reads it (`spec['dom']['style']`). Prefer it for anything that must survive export.
-- **`legend`** (via `xy.legend(style=...)`) — Written twice: to chrome_styles for the browser and to legend_options['style'], which `_svg` and `_raster` do read — but only `background`, `boxShadow`, `borderRadius`, `--xy-legend-frame-alpha`, and `padding`/`rowGap` in `em`. The chart-level styles={'legend': ...} spelling reaches none of it, so two spellings that agree in the browser disagree in a PNG.
+- **`title`** (via `styles={'title': ...}`) — Honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`). The raster writer's atlas is a single baked face, so it reads size and paint only and leaves the typeface properties to the vector writers. Properties outside that subset stay browser-only.
+- **`legend`** (via `styles={'legend': ...} / xy.legend(style=...) / --chart-legend-bg`) — The frame box. Both spellings and the theme token now converge on one merged declaration block before the writers see it, so what agrees in the browser agrees in a PNG. `background`, `boxShadow`, `borderRadius`, `--xy-legend-frame-alpha`, and `padding`/`rowGap` in `em` are honored; an explicit background paints opaque, as it does in the browser.
+- **`legend_title`** (via `styles={'legend_title': ...}`) — Honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`). The raster writer's atlas is a single baked face, so it reads size and paint only and leaves the typeface properties to the vector writers. Properties outside that subset stay browser-only.
+- **`legend_label`** (via `styles={'legend_label': ...}`) — Honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`). The raster writer's atlas is a single baked face, so it reads size and paint only and leaves the typeface properties to the vector writers. Properties outside that subset stay browser-only.
+- **`colorbar`** (via `styles={'colorbar': ...}`) — Honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`). The raster writer's atlas is a single baked face, so it reads size and paint only and leaves the typeface properties to the vector writers. Properties outside that subset stay browser-only.
+- **`colorbar_tick`** (via `styles={'colorbar_tick': ...}`) — Honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`). The raster writer's atlas is a single baked face, so it reads size and paint only and leaves the typeface properties to the vector writers. Properties outside that subset stay browser-only.
+- **`colorbar_title`** (via `styles={'colorbar_title': ...}`) — Honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`). The raster writer's atlas is a single baked face, so it reads size and paint only and leaves the typeface properties to the vector writers. Properties outside that subset stay browser-only.
+- **`tick_label`** (via `styles={'tick_label': ...}`) — Honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`). The raster writer's atlas is a single baked face, so it reads size and paint only and leaves the typeface properties to the vector writers. Properties outside that subset stay browser-only.
+- **`axis_title`** (via `styles={'axis_title': ...}`) — Honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`). The raster writer's atlas is a single baked face, so it reads size and paint only and leaves the typeface properties to the vector writers. Properties outside that subset stay browser-only.
 
 ## Extension points
 

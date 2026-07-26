@@ -54,6 +54,10 @@ from ._svg import (
     hexbin_ring,
     layout,
     legend_items,
+    legend_options_with_slot,
+    slot_font_size,
+    slot_styles,
+    slot_text_color,
     warp_grid_rgba,
 )
 
@@ -920,6 +924,15 @@ def render_raster(
             )
 
     text_c = _parse_color(default_text)
+    # The baked atlas is a single face at one weight, so the raster writer
+    # reads a slot's size and paint and leaves font-weight/style/family to
+    # the vector writers (recorded in the capability inventory, §28).
+    slots = slot_styles(spec)
+
+    def slot_paint(slot: str, fallback: tuple) -> tuple:
+        style = slots.get(slot) or {}
+        resolved = slot_text_color(style, "")
+        return _parse_color(resolved) if resolved else fallback
 
     def rotation_flag(angle: float) -> int:
         normalized = angle % 360.0
@@ -949,13 +962,11 @@ def render_raster(
                 "tick_label_strategy": "hide",
             }
             items = _axis_tick_label_layout(fallback_axis, values, step, axis_scale, is_x)
-        tick_color = _parse_color(
-            _css(
-                axis_style.get("tick_label_color", axis_style.get("tick_color")),
-                default_text,
-            )
+        axis_tick_paint = _css(axis_style.get("tick_label_color", axis_style.get("tick_color")), "")
+        tick_color = (
+            _parse_color(axis_tick_paint) if axis_tick_paint else slot_paint("tick_label", text_c)
         )
-        font_size = _axis_tick_font_size(axis)
+        font_size = slot_font_size(slots.get("tick_label") or {}, _axis_tick_font_size(axis))
         side = axis.get("side", "bottom" if is_x else "left")
         # An explicit tick_label_anchor (axis spec or style) overrides the
         # side-derived default, matching the browser client and SVG export.
@@ -987,8 +998,8 @@ def render_raster(
             width / 2,
             plot["y"] - plot["top_axis_room"] - (10 if compact else 12),
             1,
-            14,
-            text_c,
+            slot_font_size(slots.get("title") or {}, 14.0),
+            slot_paint("title", text_c),
             str(spec["title"]),
         )
 
@@ -998,12 +1009,14 @@ def render_raster(
         axis_style = axis.get("style") or {}
         geometry = _axis_label_geometry(axis, plot, is_x=is_x)
         anchor = {"start": 0, "middle": 1, "end": 2}[geometry["anchor"]]
+        slot = slots.get("axis_title") or {}
+        label_color = _css(axis_style.get("label_color"), "")
         cmd.text(
             geometry["x"],
             geometry["y"],
             anchor | rotation_flag(float(geometry["angle"])),
-            geometry["font_size"],
-            _parse_color(_css(axis_style.get("label_color"), default_text)),
+            slot_font_size(slot, float(geometry["font_size"])),
+            _parse_color(label_color) if label_color else slot_paint("axis_title", text_c),
             str(axis["label"]),
         )
 
@@ -1023,7 +1036,16 @@ def render_raster(
         # clip the bounded/truncated equivalent to the plot rectangle.
         cmd.clip(px0, py0, plot["w"], plot["h"])
     if show_main_legend:
-        _emit_legend(cmd, named, plot, spec.get("legend") or {}, default_text, spec_palette)
+        _emit_legend(
+            cmd,
+            named,
+            plot,
+            legend_options_with_slot(spec, spec.get("legend") or {}),
+            default_text,
+            spec_palette,
+            slots.get("legend_label") or {},
+            slots.get("legend_title") or {},
+        )
     for extra, items in extra_legends:
         if items:
             _emit_legend(cmd, items, plot, extra, default_text, spec_palette)
@@ -1036,6 +1058,8 @@ def render_raster(
             plot,
             _colorbar_right_axis_room(ya, extra_y_axes, compact),
             default_text,
+            slots.get("colorbar_title") or slots.get("colorbar") or {},
+            slots.get("colorbar_tick") or slots.get("colorbar") or {},
         )
 
     w_px, h_px = max(1, round(width * scale)), max(1, round(height * scale))
@@ -1978,7 +2002,15 @@ def _emit_legend(
     options: dict[str, Any],
     text_color: str = _TEXT,
     palette: Sequence[str] = DEFAULT_PALETTE,
+    label_slot: Optional[dict[str, Any]] = None,
+    title_slot: Optional[dict[str, Any]] = None,
 ) -> None:
+    label_slot = label_slot or {}
+    title_slot = title_slot or {}
+    label_size = slot_font_size(label_slot, 11.0)
+    label_paint = _parse_color(slot_text_color(label_slot, text_color))
+    title_size = slot_font_size(title_slot, 11.0)
+    title_paint = _parse_color(slot_text_color(title_slot, text_color))
     legend = _legend_layout(named, plot, options)
     if not legend["visible_count"]:
         # A plot too short for even one entry: no floating frame/title either.
@@ -1994,8 +2026,14 @@ def _emit_legend(
     if style_opts.get("background") != "transparent":
         if style_opts.get("boxShadow"):
             cmd.fill(_rect_pts(x + 2, y + 2, x + box_w + 2, y + box_h + 2), (0, 0, 0, 55))
-        alpha = float(style_opts.get("--xy-legend-frame-alpha", 0.08))
         background = style_opts.get("background")
+        # An explicit background is a paint, not a tint — see the matching
+        # note in `_svg._legend`; the two writers must agree.
+        frame_alpha = style_opts.get("--xy-legend-frame-alpha")
+        if frame_alpha is not None:
+            alpha = float(frame_alpha)
+        else:
+            alpha = 0.08 if background is None else 1.0
         frame = (
             _rgba(background, "#808080", alpha)
             if background
@@ -2003,7 +2041,7 @@ def _emit_legend(
         )
         cmd.fill(_rect_pts(x, y, x + box_w, y + box_h), frame)
     if title:
-        cmd.text(x + pad, y + pad / 2 + 11, 0, 11, _parse_color(text_color), str(title))
+        cmd.text(x + pad, y + pad / 2 + 11, 0, title_size, title_paint, str(title))
     for i, t in enumerate(named[: legend["visible_count"]]):
         style = t.get("style") or {}
         color_str = _css(
@@ -2029,7 +2067,7 @@ def _emit_legend(
             )
         else:
             cmd.fill(_rect_pts(hx0, cy - 4, hx1, cy + 4), c)
-        cmd.text(hx1 + gap, ry + 11, 0, 11, _parse_color(text_color), legend["names"][i])
+        cmd.text(hx1 + gap, ry + 11, 0, label_size, label_paint, legend["names"][i])
 
 
 def _emit_colorbar(
@@ -2038,8 +2076,17 @@ def _emit_colorbar(
     plot: dict[str, float],
     right_axis_room: float = 0.0,
     text_color: str = _TEXT,
+    title_slot: Optional[dict[str, Any]] = None,
+    tick_slot: Optional[dict[str, Any]] = None,
 ) -> None:
     from ._svg import _linear_ticks, _lut
+
+    title_slot = title_slot or {}
+    tick_slot = tick_slot or {}
+    title_size = slot_font_size(title_slot, 10.0)
+    title_paint = _parse_color(slot_text_color(title_slot, text_color))
+    tick_size = slot_font_size(tick_slot, 10.0)
+    tick_paint = _parse_color(slot_text_color(tick_slot, text_color))
 
     orientation = options.get("orientation", "vertical")
     if orientation == "horizontal":
@@ -2101,8 +2148,8 @@ def _emit_colorbar(
                 x + width * (value - lo) / span,
                 y + height + 13,
                 1,
-                10,
-                _parse_color(text_color),
+                tick_size,
+                tick_paint,
                 f"{value:g}",
             )
         if options.get("label"):
@@ -2110,8 +2157,8 @@ def _emit_colorbar(
                 x + width / 2,
                 y + height + 26,
                 1,
-                10,
-                _parse_color(text_color),
+                title_size,
+                title_paint,
                 str(options["label"]),
             )
     else:
@@ -2125,8 +2172,8 @@ def _emit_colorbar(
                 x + width + 4,
                 y + height * (1 - (value - lo) / span) + 4,
                 0,
-                10,
-                _parse_color(text_color),
+                tick_size,
+                tick_paint,
                 f"{value:g}",
             )
         # The native text primitive does not rotate; a compact label above the
@@ -2136,8 +2183,8 @@ def _emit_colorbar(
                 x,
                 y - 5,
                 0,
-                10,
-                _parse_color(text_color),
+                title_size,
+                title_paint,
                 str(options["label"]),
             )
 

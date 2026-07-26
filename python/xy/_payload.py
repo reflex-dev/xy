@@ -299,7 +299,16 @@ class PayloadMixin(_Host):
             # palette would otherwise ship its category NAMES as colors.
             spec["palette"] = self.palette_cycle
         if self.legend_options:
-            spec["legend"] = self.legend_options
+            legend = self.legend_options
+            if legend.get("loc") == "best":
+                # Settle `best` here, once, so the client and the two static
+                # writers all receive a concrete location and cannot disagree
+                # about it (§28: the decision ships, it is not re-made
+                # downstream three times).
+                from ._legendfit import resolve_for_figure
+
+                legend = {**legend, "loc": resolve_for_figure(self)}
+            spec["legend"] = legend
         extra_legends = getattr(self, "extra_legends", None)
         if extra_legends:
             spec["extra_legends"] = extra_legends

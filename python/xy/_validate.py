@@ -133,6 +133,47 @@ def optional_text(value: Any, label: str) -> Optional[str]:
     raise ValueError(f"{label} must be a string or None")
 
 
+#: Legend placements, in Matplotlib's vocabulary. `best` is resolved to one of
+#: the others at payload-build time (`xy._legendfit`).
+LEGEND_LOCATIONS: tuple[str, ...] = (
+    "best",
+    "upper right",
+    "upper left",
+    "lower left",
+    "lower right",
+    "upper center",
+    "lower center",
+    "center left",
+    "center right",
+    "center",
+)
+
+
+def legend_loc(value: Any, label: str) -> Optional[str]:
+    """A legend placement, or None for the default.
+
+    The writers resolve a location by substring (`"left" in loc`), so an
+    unrecognized string does not fail — it silently lands somewhere. `"best"`
+    (Matplotlib's default), `"top-left"` (the CSS/Plotly spelling) and
+    `"LOWER RIGHT"` all used to park the legend dead center, on top of the
+    data. Close the vocabulary instead: a chart that cannot honor the request
+    says so.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string or None")
+    normalized = " ".join(value.lower().split())
+    if normalized in LEGEND_LOCATIONS:
+        return normalized
+    # `right` is Matplotlib's code 5 and aliases `center right`; the writers
+    # already resolve it that way, so accept it as the alias it is.
+    if normalized == "right":
+        return "center right"
+    options = ", ".join(repr(name) for name in LEGEND_LOCATIONS)
+    raise ValueError(f"{label} {value!r} is not a legend location; expected one of: {options}")
+
+
 def axis_id(value: Any, label: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{label} must be a non-empty string")

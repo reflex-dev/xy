@@ -789,6 +789,137 @@ def _px_size(value: Any, default: float) -> float:
     return default
 
 
+#: Text properties a static writer can honor on a chrome slot. The vector
+#: writers carry all of them; the raster atlas is a single baked face, so it
+#: reads only `_SLOT_RASTER_PROPS` and records the rest as an omission (§28).
+_SLOT_TEXT_PROPS: tuple[str, ...] = (
+    "font-size",
+    "font-weight",
+    "font-style",
+    "font-family",
+    "letter-spacing",
+    "fill",
+    "color",
+    "opacity",
+)
+_SLOT_RASTER_PROPS: tuple[str, ...] = ("font-size", "fill", "color", "opacity")
+
+#: Slots the native writers style. Every one names chrome that a static file
+#: actually contains; the rest of `CHART_DOM_SLOTS` is live-only chrome
+#: (tooltip, modebar, crosshair, selection, badge) or a container with no
+#: painted text of its own, and stays browser-only.
+STATIC_STYLED_SLOTS: tuple[str, ...] = (
+    "title",
+    "axis_title",
+    "tick_label",
+    "legend",
+    "legend_title",
+    "legend_label",
+    "colorbar",
+    "colorbar_title",
+    "colorbar_tick",
+)
+
+
+def slot_styles(spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """`styles={slot: {...}}` from the payload, normalized to kebab-case CSS.
+
+    `chrome_styles` keeps whatever spelling the caller used (`font_size` and
+    `font-size` both reach the browser, which sees the same declaration); the
+    static writers match on property names, so they need one spelling.
+    """
+    raw = (spec.get("dom") or {}).get("styles") or {}
+    out: dict[str, dict[str, Any]] = {}
+    for slot, decls in raw.items():
+        if not isinstance(decls, dict):
+            continue
+        out[str(slot)] = {
+            (k if str(k).startswith("--") else str(k).replace("_", "-")): v
+            for k, v in decls.items()
+        }
+    return out
+
+
+#: `styles={"legend": ...}` is CSS; `xy.legend(style=...)` reaches the writers
+#: under the browser's camelCase property spelling. Same declaration, two
+#: spellings — the writers key on the second, so the first is translated.
+_LEGEND_SLOT_ALIASES: dict[str, str] = {
+    "background-color": "background",
+    "box-shadow": "boxShadow",
+    "border-radius": "borderRadius",
+    "row-gap": "rowGap",
+}
+
+
+def legend_options_with_slot(spec: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
+    """Fold the chart-level legend styling into a legend's own options, so every
+    spelling that agrees in the browser also agrees in a file.
+
+    Three sources, widest first: the `--chart-legend-bg` theme token, the
+    `styles={"legend": ...}` slot, then `xy.legend(style=...)` — the narrowest
+    selector and the winner.
+    """
+    slot = slot_styles(spec).get("legend") or {}
+    token = (spec.get("dom") or {}).get("style", {}).get("--chart-legend-bg")
+    if not slot and token is None:
+        return options
+    folded: dict[str, Any] = {}
+    if token is not None:
+        # The browser's rule is `background:var(--chart-legend-bg, <default>)`,
+        # so the token is the frame's paint, at full strength.
+        folded["background"] = token
+    folded.update({_LEGEND_SLOT_ALIASES.get(key, key): value for key, value in slot.items()})
+    folded.update(options.get("style") or {})
+    return {**options, "style": folded}
+
+
+def slot_text_color(style: dict[str, Any], fallback: str) -> str:
+    """A slot's resolved text paint. `fill` is the SVG spelling and wins; CSS
+    authors reach for `color`, so both are accepted."""
+    for prop in ("fill", "color"):
+        value = style.get(prop)
+        if value is not None:
+            resolved = _css(value, "")
+            if resolved:
+                return resolved
+    return fallback
+
+
+def _slot_size_attr(style: dict[str, Any]) -> str:
+    """` font-size="N"` only when the slot asks for one. Text that inherits the
+    root `font-size` must keep inheriting it when unstyled, so that existing
+    output stays byte-identical."""
+    if "font-size" not in style:
+        return ""
+    return f' font-size="{_num(_px_size(style["font-size"], 11.0))}"'
+
+
+def slot_font_size(style: dict[str, Any], default: float) -> float:
+    """A slot's resolved font size in px, or `default`."""
+    return _px_size(style.get("font-size"), default) if "font-size" in style else default
+
+
+def slot_text_attrs(style: dict[str, Any], **defaults: Any) -> str:
+    """Extra SVG `<text>` attributes for a slot's non-paint text properties.
+
+    `font-size` and the paint are resolved by the caller (they have per-slot
+    defaults and feed the raster writer too); this covers the rest, which map
+    one-to-one onto SVG presentation attributes. `defaults` carries the
+    writer's own values under their Python spelling (`font_weight="600"`) and
+    each is emitted exactly once — a repeated attribute is malformed XML, and
+    the parser would keep the first, silently discarding the author's.
+    """
+    parts: list[str] = []
+    for prop in ("font-weight", "font-style", "font-family", "letter-spacing", "opacity"):
+        value = style.get(prop, defaults.get(prop.replace("-", "_")))
+        if value is None:
+            continue
+        if prop == "letter-spacing" and not isinstance(value, str):
+            value = _num(_px_size(value, 0.0))
+        parts.append(f' {prop}="{escape(str(value))}"')
+    return "".join(parts)
+
+
 def apply_export_background(spec: dict[str, Any], background: Optional[str]) -> None:
     """Apply the unified export API's `background=` override to a payload spec.
 
@@ -1645,6 +1776,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     default_grid = _css(dom_style.get("--chart-grid"), _GRID)
     default_axis = _css(dom_style.get("--chart-axis"), _AXIS)
     default_text = _css(dom_style.get("--chart-text"), _TEXT)
+    slots = slot_styles(spec)
     grid: list[str] = []
     labels: list[str] = []
     # "none" silences the whole axis chrome (sparklines); "off" hides only the
@@ -1682,13 +1814,18 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         is_x: bool,
     ) -> None:
         axis_style = axis.get("style") or {}
+        slot = slots.get("tick_label") or {}
+        # The axis's own tick_label_color/tick_color is the narrower selector
+        # and wins; the chart-wide slot fills in when the axis says nothing.
         color = escape(
             _css(
                 axis_style.get("tick_label_color", axis_style.get("tick_color")),
-                default_text,
+                "",
             )
+            or slot_text_color(slot, default_text)
         )
-        font_size = _axis_tick_font_size(axis)
+        font_size = slot_font_size(slot, _axis_tick_font_size(axis))
+        slot_attrs = slot_text_attrs(slot)
         side = axis.get("side", "bottom" if is_x else "left")
         # An explicit tick_label_anchor (axis spec or style) overrides the
         # angle/side-derived default. Anchored labels rotate about the tick
@@ -1723,7 +1860,8 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             transform = f' transform="rotate({_num(angle)} {_num(x)} {_num(y)})"' if angle else ""
             labels.append(
                 f'<text x="{_num(x)}" y="{_num(y)}" fill="{color}" '
-                f'font-size="{_num(font_size)}" text-anchor="{anchor}"{transform}>'
+                f'font-size="{_num(font_size)}" text-anchor="{anchor}"'
+                f"{slot_attrs}{transform}>"
                 f"{escape(str(item['text']))}</text>"
             )
 
@@ -1836,25 +1974,33 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     # -- chrome text ----------------------------------------------------------
     chrome: list[str] = []
     if spec.get("title"):
+        title_slot = slots.get("title") or {}
         chrome.append(
             f'<text x="{_num(width / 2)}" '
             f'y="{_num(plot["y"] - plot["top_axis_room"] - (10 if compact else 12))}" '
-            f'text-anchor="middle" font-size="14" font-weight="600" '
-            f'fill="{escape(default_text)}">{escape(str(spec["title"]))}</text>'
+            f'text-anchor="middle" font-size="{_num(slot_font_size(title_slot, 14.0))}"'
+            f"{slot_text_attrs(title_slot, font_weight='600')} "
+            f'fill="{escape(slot_text_color(title_slot, default_text))}">'
+            f"{escape(str(spec['title']))}</text>"
         )
 
     def append_axis_title(axis: dict[str, Any], *, is_x: bool) -> None:
         if not axis.get("label") or _axis_tick_label_strategy(axis) == "none":
             return
         axis_style = axis.get("style") or {}
+        slot = slots.get("axis_title") or {}
         geometry = _axis_label_geometry(axis, plot, is_x=is_x)
         x, y = float(geometry["x"]), float(geometry["y"])
         angle = float(geometry["angle"])
         transform = f' transform="rotate({_num(angle)} {_num(x)} {_num(y)})"' if angle else ""
+        # The axis's own `label_color` is the narrower selector, so it wins over
+        # the chart-wide slot; the slot still supplies size, weight and family.
+        paint = _css(axis_style.get("label_color"), "") or slot_text_color(slot, default_text)
         chrome.append(
             f'<text x="{_num(x)}" y="{_num(y)}" text-anchor="{geometry["anchor"]}" '
-            f'font-size="{_num(float(geometry["font_size"]))}" font-weight="500" '
-            f'fill="{escape(_css(axis_style.get("label_color"), default_text))}"{transform}>'
+            f'font-size="{_num(slot_font_size(slot, float(geometry["font_size"])))}"'
+            f"{slot_text_attrs(slot, font_weight='500')} "
+            f'fill="{escape(paint)}"{transform}>'
             f"{escape(str(axis['label']))}</text>"
         )
 
@@ -1865,14 +2011,36 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     for _axis_id, axis, _axis_scale in extra_y_axes:
         append_axis_title(axis, is_x=False)
     named = legend_items(spec["traces"], spec_palette)
+    legend_label_slot = slots.get("legend_label") or {}
+    legend_title_slot = slots.get("legend_title") or {}
     if spec.get("show_legend", True) and named:
         chrome.append(
-            _legend(named, plot, spec.get("legend") or {}, clip_id, default_text, spec_palette)
+            _legend(
+                named,
+                plot,
+                legend_options_with_slot(spec, spec.get("legend") or {}),
+                clip_id,
+                default_text,
+                spec_palette,
+                legend_label_slot,
+                legend_title_slot,
+            )
         )
     for extra in spec.get("extra_legends") or []:
         items = extra.get("items") or []
         if items:
-            chrome.append(_legend(items, plot, extra, clip_id, default_text, spec_palette))
+            chrome.append(
+                _legend(
+                    items,
+                    plot,
+                    legend_options_with_slot(spec, extra),
+                    clip_id,
+                    default_text,
+                    spec_palette,
+                    legend_label_slot,
+                    legend_title_slot,
+                )
+            )
     if spec.get("colorbar"):
         chrome.append(
             _colorbar(
@@ -1880,6 +2048,8 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 plot,
                 _colorbar_right_axis_room(ya, extra_y_axes, compact),
                 default_text,
+                slots.get("colorbar_title") or slots.get("colorbar") or {},
+                slots.get("colorbar_tick") or slots.get("colorbar") or {},
             )
         )
 
@@ -3094,7 +3264,11 @@ def _legend(
     clip_id: str,
     text_color: str = _TEXT,
     palette: Sequence[str] = DEFAULT_PALETTE,
+    label_slot: Optional[dict[str, Any]] = None,
+    title_slot: Optional[dict[str, Any]] = None,
 ) -> str:
+    label_slot = label_slot or {}
+    title_slot = title_slot or {}
     legend = _legend_layout(named, plot, options)
     if not legend["visible_count"]:
         # A plot too short for even one entry: no floating frame/title either.
@@ -3113,9 +3287,16 @@ def _legend(
                 f'<rect x="{_num(x + 2)}" y="{_num(y + 2)}" width="{_num(box_w)}" '
                 f'height="{_num(box_h)}" rx="4" fill="black" fill-opacity="0.22"/>'
             )
-        alpha = float(style_opts.get("--xy-legend-frame-alpha", 0.08))
         radius = "4" if style_opts.get("borderRadius") else "0"
         background_value = style_opts.get("background")
+        # An explicit background is a paint, not a tint. The browser renders
+        # `background:#fef3c7` opaque, so the writers must too; the
+        # frame-alpha token stays the knob for the default grey frame.
+        frame_alpha = style_opts.get("--xy-legend-frame-alpha")
+        if frame_alpha is not None:
+            alpha = float(frame_alpha)
+        else:
+            alpha = 0.08 if background_value is None else 1.0
         if background_value is None and alpha == 0.08:
             fill_attrs = 'fill="rgba(128,128,128,0.08)"'
         else:
@@ -3127,8 +3308,11 @@ def _legend(
         )
     if title:
         rows.append(
-            f'<text x="{_num(x + pad)}" y="{_num(y + pad / 2 + 11)}" '
-            f'font-weight="600" fill="{escape(text_color)}">{escape(str(title))}</text>'
+            f'<text x="{_num(x + pad)}" y="{_num(y + pad / 2 + 11)}"'
+            f"{_slot_size_attr(title_slot)}"
+            f"{slot_text_attrs(title_slot, font_weight='600')} "
+            f'fill="{escape(slot_text_color(title_slot, text_color))}">'
+            f"{escape(str(title))}</text>"
         )
     for i, t in enumerate(named[: legend["visible_count"]]):
         style = t.get("style") or {}
@@ -3173,15 +3357,28 @@ def _legend(
                 f'rx="2" fill="{escape(color)}"/>'
             )
         rows.append(
-            f'<text x="{_num(hx1 + gap)}" y="{_num(ry + 11)}" '
-            f'fill="{escape(text_color)}">{escape(legend["names"][i])}</text>'
+            f'<text x="{_num(hx1 + gap)}" y="{_num(ry + 11)}"'
+            f"{_slot_size_attr(label_slot)}{slot_text_attrs(label_slot)} "
+            f'fill="{escape(slot_text_color(label_slot, text_color))}">'
+            f"{escape(legend['names'][i])}</text>"
         )
     return f'<g clip-path="url(#{clip_id})">{"".join(rows)}</g>'
 
 
 def _colorbar(
-    options: dict, plot: dict, right_axis_room: float = 0.0, text_color: str = _TEXT
+    options: dict,
+    plot: dict,
+    right_axis_room: float = 0.0,
+    text_color: str = _TEXT,
+    title_slot: Optional[dict[str, Any]] = None,
+    tick_slot: Optional[dict[str, Any]] = None,
 ) -> str:
+    title_slot = title_slot or {}
+    tick_slot = tick_slot or {}
+    title_attrs = _slot_size_attr(title_slot) + slot_text_attrs(title_slot)
+    title_paint = escape(slot_text_color(title_slot, text_color))
+    tick_attrs = _slot_size_attr(tick_slot) + slot_text_attrs(tick_slot)
+    tick_paint = escape(slot_text_color(tick_slot, text_color))
     cmap = options.get("colormap", "viridis")
     gradient_id = f"xy-colorbar-{_colormap_key(cmap)}"
     stops = _colormap_stops(cmap)
@@ -3207,11 +3404,11 @@ def _colorbar(
     label_node = (
         f'<text x="{_num(x + width + 38)}" y="{_num(y + height / 2)}" '
         f'text-anchor="middle" transform="rotate(-90 {_num(x + width + 38)} '
-        f'{_num(y + height / 2)})" fill="{escape(text_color)}">{escape(label)}</text>'
+        f'{_num(y + height / 2)})"{title_attrs} fill="{title_paint}">{escape(label)}</text>'
         if label and orientation != "horizontal"
         else (
             f'<text x="{_num(x + width / 2)}" y="{_num(y + height + 22)}" '
-            f'text-anchor="middle" fill="{escape(text_color)}">{escape(label)}</text>'
+            f'text-anchor="middle"{title_attrs} fill="{title_paint}">{escape(label)}</text>'
             if label
             else ""
         )
@@ -3227,15 +3424,15 @@ def _colorbar(
     tick_nodes = (
         "".join(
             f'<text x="{_num(x + width + 4)}" '
-            f'y="{_num(y + height * (1 - (value - lo) / span) + 4)}" '
-            f'fill="{escape(text_color)}">{value:g}</text>'
+            f'y="{_num(y + height * (1 - (value - lo) / span) + 4)}"'
+            f'{tick_attrs} fill="{tick_paint}">{value:g}</text>'
             for value in tick_positions
         )
         if orientation != "horizontal"
         else "".join(
             f'<text x="{_num(x + width * (value - lo) / span)}" '
-            f'y="{_num(y + height + 12)}" text-anchor="middle" '
-            f'fill="{escape(text_color)}">{value:g}</text>'
+            f'y="{_num(y + height + 12)}" text-anchor="middle"'
+            f'{tick_attrs} fill="{tick_paint}">{value:g}</text>'
             for value in tick_positions
         )
     )
