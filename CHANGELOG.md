@@ -9,6 +9,12 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- `xy.box(...)` exposes its four visible parts without a parallel styling
+  language: the main `style=` now controls body fill and border, while
+  `whisker_style=`, `median_style=`, and `outlier_style=` reuse the validated
+  segment/scatter CSS vocabularies. Contrasting borders, emphasized medians,
+  muted whiskers, and independently shaped/bordered outliers survive WebGL,
+  SVG/PDF, and native raster output.
 - `xy.tooltip(labels={...})` gives source columns readable display names
   without changing lookup, formatting keys, title placeholders, or hover-event
   payloads; without `fields=`, labels rename matching default channel rows.

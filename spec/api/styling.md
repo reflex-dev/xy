@@ -88,7 +88,8 @@ xy.bar(
 | scatter | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `marker-shape`, `opacity` |
 | histogram, bar, column | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `border-radius`, `opacity` |
 | segments, error bars, contour, stem | `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
-| box, violin | `fill`, `fill-opacity`, `opacity` |
+| box | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
+| violin | `fill`, `fill-opacity`, `opacity` |
 | triangle mesh | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
 | heatmap, hexbin | `fill-opacity`, `opacity` |
 
@@ -98,6 +99,22 @@ Within `style`, use the standard paint property for the geometry: `stroke` for
 line-like marks and `fill` for filled marks. `color` is not a paint alias there;
 this avoids ambiguous combinations such as `color` plus `stroke` and keeps the
 same declarations meaningful in SVG, WebGL, and native PNG output.
+
+### Compound box-plot parts
+
+`box` compiles into a rectangle body, segment whiskers, a segment median, and
+scatter outliers. The public mark exposes the renderer-backed parts directly:
+
+| Mapping | Compiles as | Accepted vocabulary |
+| --- | --- | --- |
+| `style` | box-body rectangle | fill, fill/stroke opacity, stroke paint/width, overall opacity |
+| `whisker_style` | segments | stroke paint/width/opacity, overall opacity |
+| `median_style` | segments | stroke paint/width/opacity, overall opacity |
+| `outlier_style` | scatter | fill/stroke paint/width/opacity, marker shape, overall opacity |
+
+Each mapping is validated against its actual primitive. A fill on a whisker or
+a marker shape on the body raises before the figure mutates. The default path
+emits the same trace styles as before these mappings existed.
 
 A mark's `class_name` is adapter-only trace metadata. It does not create a DOM
 node and is not interpreted as a paint selector by the shipped browser,

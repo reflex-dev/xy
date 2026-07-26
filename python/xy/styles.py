@@ -258,6 +258,12 @@ def _supported_mark_style_properties(kind: str) -> tuple[str, ...]:
         }
     elif kind in _FILL_KINDS:
         props |= {"fill", "fill-opacity"}
+        # Box bodies use the shared rectangle renderer, so their border is a
+        # real cross-renderer stroke. Violin marks are adjacent density bands:
+        # stroking every band would draw internal seams rather than one
+        # distribution outline, so keep their smaller fill-only contract.
+        if kind == "box":
+            props |= {"stroke", "stroke-width", "stroke-opacity"}
     elif kind in _MESH_KINDS:
         props |= {
             "fill",
@@ -322,12 +328,12 @@ def _compile_mark_style(kind: str, value: StyleMapping | None, label: str) -> di
             _set(out, target, paint, prop, seen)
         elif prop == "stroke":
             target = "line_color" if kind == "area" else "color"
-            if kind in _POINT_KINDS | _RECT_KINDS | _MESH_KINDS:
+            if kind in _POINT_KINDS | _RECT_KINDS | _MESH_KINDS | {"box"}:
                 target = "stroke"
             _set(out, target, _paint(raw, f"{label}['stroke']"), prop, seen)
         elif prop == "stroke-width":
             target = "line_width" if kind in _AREA_KINDS else "width"
-            if kind in _POINT_KINDS | _RECT_KINDS | _MESH_KINDS:
+            if kind in _POINT_KINDS | _RECT_KINDS | _MESH_KINDS | {"box"}:
                 target = "stroke_width"
             _set(out, target, _px(raw, f"{label}['stroke-width']"), prop, seen)
         elif prop == "stroke-dasharray":

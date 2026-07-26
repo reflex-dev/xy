@@ -1214,6 +1214,9 @@ def box(
     show_outliers: bool = True,
     outlier_size: float = 4.0,
     style: Optional[dict[str, StyleValue]] = None,
+    whisker_style: Optional[dict[str, StyleValue]] = None,
+    median_style: Optional[dict[str, StyleValue]] = None,
+    outlier_style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -1232,7 +1235,10 @@ def box(
         orientation: ``vertical`` or ``horizontal`` orientation.
         show_outliers: Whether to render outlier points.
         outlier_size: Outlier marker size in pixels.
-        style: Mark style overrides.
+        style: Box-body fill, border, and overall opacity overrides.
+        whisker_style: Whisker stroke overrides.
+        median_style: Median-line stroke overrides.
+        outlier_style: Outlier marker fill, border, shape, and opacity overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
@@ -1253,6 +1259,9 @@ def box(
             "orientation": orientation,
             "show_outliers": show_outliers,
             "outlier_size": outlier_size,
+            "whisker_style": _mark_style_dict(whisker_style, "box whisker_style"),
+            "median_style": _mark_style_dict(median_style, "box median_style"),
+            "outlier_style": _mark_style_dict(outlier_style, "box outlier_style"),
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -4975,6 +4984,9 @@ def _apply_box(fig: Figure, m: Mark, data: Any) -> None:
         show_outliers=m.props["show_outliers"],
         outlier_size=m.props["outlier_size"],
         style=m.style,
+        whisker_style=m.props["whisker_style"],
+        median_style=m.props["median_style"],
+        outlier_style=m.props["outlier_style"],
     )
 
 

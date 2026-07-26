@@ -1742,9 +1742,15 @@ def box(
     show_outliers: bool = True,
     outlier_size: float = 4.0,
     style: styles.StyleMapping | None = None,
+    whisker_style: styles.StyleMapping | None = None,
+    median_style: styles.StyleMapping | None = None,
+    outlier_style: styles.StyleMapping | None = None,
 ) -> "Figure":
-    """Add grouped Tukey box plots from 1-D or column-oriented 2-D values."""
+    """Add grouped Tukey box plots with independently styleable parts."""
     css = styles.compile_mark_style("box", style)
+    whisker_css = styles.compile_mark_style("segments", whisker_style, "box whisker_style")
+    median_css = styles.compile_mark_style("segments", median_style, "box median_style")
+    styles.compile_mark_style("scatter", outlier_style, "box outlier_style")
     color = css.get("color", color)
     opacity = css.get("opacity", opacity)
     if orientation not in {"vertical", "horizontal"}:
@@ -1817,10 +1823,11 @@ def box(
             wy0,
             wy1,
             name=None,
-            color=color,
-            opacity=opacity,
-            width=1.0,
+            color=whisker_css.get("color", color),
+            opacity=whisker_css.get("opacity", opacity),
+            width=whisker_css.get("width", 1.0),
             role="box-whisker",
+            extra_style=styles._opacity_channels(whisker_css),
         )
         self._append_rect_trace(
             "box",
@@ -1833,8 +1840,9 @@ def box(
             opacity=opacity,
             role="box",
             extra_style={
-                "stroke_width": 1.0,
+                "stroke_width": css.get("stroke_width", 1.0),
                 "box_orientation": orientation,
+                **({"stroke": css["stroke"]} if "stroke" in css else {}),
                 **styles._opacity_channels(css),
             },
         )
@@ -1845,10 +1853,11 @@ def box(
             my0,
             my1,
             name=None,
-            color=color,
-            opacity=opacity,
-            width=1.4,
+            color=median_css.get("color", color),
+            opacity=median_css.get("opacity", opacity),
+            width=median_css.get("width", 1.4),
             role="box-median",
+            extra_style=styles._opacity_channels(median_css),
         )
         if show_outliers:
             out_x: list[float] = []
@@ -1873,6 +1882,7 @@ def box(
                     opacity=opacity,
                     density=None,
                     symbol="circle",
+                    style=outlier_style,
                 )
         return self
     except Exception:

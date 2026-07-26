@@ -19,7 +19,8 @@ renderer cannot silently ignore a declaration that another honors.
 | `scatter` | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `marker-shape`, `opacity` |
 | `histogram`, `bar`, `column` | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `border-radius`, `opacity` |
 | `segments`, `errorbar`, `contour`, `stem` | `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
-| `box`, `violin` | `fill`, `fill-opacity`, `opacity` |
+| `box` | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
+| `violin` | `fill`, `fill-opacity`, `opacity` |
 | `triangle_mesh` | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
 | `heatmap`, `hexbin` | `fill-opacity`, `opacity` |
 
@@ -57,6 +58,42 @@ of each mark's API. A declaration in `style=` is the final override when both
 surfaces set the same rendered property. Inside `style`, use `stroke` for
 line-like geometry and `fill` for filled geometry; `color` is deliberately not
 a CSS paint alias there.
+
+## Style compound box plots
+
+A box plot is one public mark composed from four renderer traces. Its main
+`style=` mapping controls the box body; the three part mappings use the same
+validated vocabularies as the built-in segment and scatter marks:
+
+~~~python
+xy.box(
+    values,
+    group=cohorts,
+    style={
+        "fill": "#dbeafe",
+        "fill-opacity": 0.45,
+        "stroke": "#2563eb",
+        "stroke-width": 2,
+    },
+    whisker_style={
+        "stroke": "#64748b",
+        "stroke-width": 1.5,
+        "stroke-opacity": 0.75,
+    },
+    median_style={"stroke": "#0f172a", "stroke-width": 3},
+    outlier_style={
+        "fill": "#ffffff",
+        "stroke": "#dc2626",
+        "stroke-width": 2,
+        "marker-shape": "diamond",
+    },
+)
+~~~
+
+The mappings are intentionally separate: `fill` is invalid for a whisker and
+`marker-shape` is invalid for the box body, so a misplaced declaration raises
+with the part name instead of disappearing. All four paths survive WebGL,
+native PNG, SVG, and PDF output.
 
 ## Stroke geometry: line caps
 
@@ -178,6 +215,8 @@ declarations:
   `cross`, `x`, `hexagon`, `pentagon`, `star`, `point`, `pixel`,
   `thin_diamond`, `plus_line`, and `x_line`. Every shape combines with
   `stroke` / `stroke_width`; the last two are intentionally line-only glyphs.
+- Box plots expose `whisker_style`, `median_style`, and `outlier_style` for
+  their compound parts; the main `style` mapping controls the box body.
 
 All CSS gradients accept two to eight color stops and the four axis-aligned
 directions. `currentColor` resolves to the mark's color; `transparent` retains
