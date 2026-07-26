@@ -4,7 +4,12 @@ from pathlib import Path
 
 from reflex_site_shared.docs import discover_docs
 from xy_docs.config import DOCS_CONFIG
-from xy_docs.plugins import page_markdown_with_api_reference
+from xy_docs.plugins import (
+    _markdown_directive,
+    build_llms_full_txt,
+    build_llms_txt,
+    page_markdown_with_api_reference,
+)
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 BUILD_ROOT = APP_ROOT / ".web" / "build" / "client" / "docs" / "xy"
@@ -46,6 +51,25 @@ def main() -> None:
             if output_path.read_bytes() != expected:
                 msg = f"Markdown asset differs from generated content: {output_path}"
                 raise RuntimeError(msg)
+
+            if not output_path.read_text(encoding="utf-8").startswith(
+                f"{_markdown_directive()}\n\n"
+            ):
+                msg = f"Markdown asset omits the llms.txt directive: {output_path}"
+                raise RuntimeError(msg)
+
+    expected_agent_files = {
+        "llms.txt": build_llms_txt(DOCS_CONFIG),
+        "llms-full.txt": build_llms_full_txt(DOCS_CONFIG),
+    }
+    for filename, expected in expected_agent_files.items():
+        output_path = BUILD_ROOT / filename
+        if not output_path.is_file():
+            msg = f"Missing agent documentation asset: {output_path}"
+            raise RuntimeError(msg)
+        if output_path.read_text(encoding="utf-8") != expected:
+            msg = f"Agent documentation asset differs from generated content: {output_path}"
+            raise RuntimeError(msg)
 
 
 if __name__ == "__main__":

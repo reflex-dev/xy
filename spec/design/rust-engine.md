@@ -42,7 +42,13 @@ binning (1D/2D/channel-aware) ✅/plan · decimation (M4 ✅, OHLC plan) ·
 range filtering (`xy_range_indices` ✅) · implicit uniform and compact-u8
 stratified sampling (`xy_sample_range_indices` / `xy_stratified_sample_range_u8` ✅) · grouping/category encoding
 (`xy_factorize_fixed` ✅ for contiguous fixed-width values; defensive Python
-label canonicalization for mixed objects) · histogram stats ✅ · quantiles (plan:
+label canonicalization for mixed objects. Routing is decided by a bounded
+4096-row probe on how *repetitive* the column is, never by how many categories
+it holds: the native pass exists to keep N records out of Python, so it is
+declined only for a near-unique id/key column, where Python must materialize
+essentially the whole label set regardless. Wide records cross over sooner —
+above 32 B they are declined once the probe is 95% distinct, at or below 32 B
+only when it is entirely distinct) · histogram stats ✅ · quantiles (plan:
 `xy_quantiles`, needed by box/violin) · box/violin stats (thin composition
 over quantiles — stats in Rust, assembly in Python) · multi-resolution tile
 generation (`tiles.rs` ✅, including stable-domain incremental updates) ·

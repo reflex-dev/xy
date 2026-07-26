@@ -42,6 +42,21 @@ directive listed above is unchanged. `tests/test_static_client_security.py`
 asserts the directive is exactly `worker-src blob:`, and
 `docs/guides/serving-csp-and-offline-use.md` documents it for host operators.
 
+#### Status as of 2026-07-24 (XY-SEC-2026-01)
+
+`font-src data:` was added. The policy previously declared no `font-src`, so it
+inherited `default-src 'none'` and blocked **every** font load — including the
+`data:` URL `@font-face` that `docs/styling/themes-and-tokens.md` documents as
+the portable brand-font recipe. A standalone export therefore fell back to
+`system-ui` with only a console CSP violation to explain it, and the same
+failure reached Chromium PNG, which renders that document.
+
+The new directive is exactly `data:`, so no network origin can serve a face and
+a standalone file stays self-contained offline — the property `default-src
+'none'` exists to protect. `img-src data:` already grants the same shape of
+access for images. `tests/test_static_client_security.py` asserts `font-src` is
+exactly `data:`.
+
 ### XY-SEC-2026-02: Legend swatches accepted raw CSS paint strings
 
 Severity: medium.

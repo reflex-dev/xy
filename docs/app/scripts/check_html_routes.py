@@ -14,6 +14,7 @@ LIVE_PREVIEW_MARKERS = ("python demo exec", "python demo-only exec")
 INLINE_SVG_PREVIEW_ROUTES = {"/overview/gallery/"}
 XY_PAYLOAD_PATTERN = re.compile(r'["\'](?P<url>/docs/xy/xy/[a-f0-9]+\.xyf)["\']')
 XY_PAYLOAD_MAGIC = b"XYBF"
+LLMS_DIRECTIVE = "For AI agents: the complete XY documentation index is at"
 
 
 def route_html_paths(route: str) -> tuple[Path, ...]:
@@ -109,6 +110,10 @@ def main() -> None:
         if not any(path.is_file() for path in html_paths):
             msg = f"Missing prerendered documentation route: {html_paths!r}"
             raise RuntimeError(msg)
+        for html_path in html_paths:
+            if html_path.is_file() and LLMS_DIRECTIVE not in html_path.read_text(encoding="utf-8"):
+                msg = f"Prerendered route omits the llms.txt directive: {html_path}"
+                raise RuntimeError(msg)
 
     for route in DOCS_REDIRECTS:
         module_path = route_module_path(route)

@@ -282,23 +282,23 @@ def test_resolve_bin_colors_modes():
     # constant -> None (count-only grid + client tint)
     assert (
         channels.resolve_bin_colors(
-            channels.ColorChannel(mode="constant", constant="#123456"), None, DEFAULT_PALETTE
+            channels.ColorChannel(mode="constant", constant="#123456"), None
         )
         is None
     )
     # continuous -> 256-texel colormap LUT + quantized indices
     cc = channels.resolve_color(np.array([0.0, 0.5, 1.0]), 3, default_constant="#000000")
-    out = channels.resolve_bin_colors(cc, None, DEFAULT_PALETTE)
+    out = channels.resolve_bin_colors(cc, None)
     assert out is not None and out["lut"].shape == (256, 4)
     assert out["idx"].dtype == np.uint8 and list(out["idx"]) == [0, 128, 255]
     # categorical -> palette rows, codes pass through
     cc = channels.resolve_color(np.array(["a", "b", "a"]), 3, default_constant="#000000")
-    out = channels.resolve_bin_colors(cc, None, DEFAULT_PALETTE)
+    out = channels.resolve_bin_colors(cc, None)
     assert out is not None and out["lut"].shape[0] == 2
     assert list(out["idx"]) == [0, 1, 0]
     # direct rgba -> packed straight-alpha bytes
     cc = channels.resolve_color(np.array([[1.0, 0.0, 0.0, 0.5]] * 3), 3, default_constant="#000000")
-    out = channels.resolve_bin_colors(cc, None, DEFAULT_PALETTE)
+    out = channels.resolve_bin_colors(cc, None)
     assert out is not None and out["rgba"].shape == (3, 4)
     assert list(out["rgba"][0]) == [255, 0, 0, 128]
 
@@ -341,7 +341,7 @@ def test_wide_categorical_codes_fold_onto_palette():
         codes=codes,
         categories=[f"c{i}" for i in range(n_cats)],
     )
-    out = channels.resolve_bin_colors(cc, None, DEFAULT_PALETTE)
+    out = channels.resolve_bin_colors(cc, None)
     assert out is not None
     assert out["lut"].shape[0] == len(DEFAULT_PALETTE)
     expected = (codes % len(DEFAULT_PALETTE)).astype(np.uint8)
@@ -360,9 +360,9 @@ def _count_resolves(monkeypatch) -> dict[str, int]:
     calls = {"n": 0}
     original = channels.resolve_bin_colors
 
-    def counting(cc, sel, palette):
+    def counting(cc, sel):
         calls["n"] += 1
-        return original(cc, sel, palette)
+        return original(cc, sel)
 
     monkeypatch.setattr(channels, "resolve_bin_colors", counting)
     return calls

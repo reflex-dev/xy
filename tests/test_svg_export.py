@@ -1051,8 +1051,10 @@ def test_tick_label_offset_defaults_stay_in_sync_with_js_client() -> None:
     js = (ROOT / "js" / "src" / "50_chartview.ts").read_text(encoding="utf-8")
     body = js.split("const tickLabelOffset = (axis, unstyled, fontRoomPx = 0) => {", 1)
     assert len(body) == 2, "tickLabelOffset signature changed; re-check the unstyled gaps"
-    assert 'this._axisStyleValue(axis, "tick_padding") !== undefined' in body[1]
-    assert 'this._axisStyleValue(axis, "tick_length") !== undefined' in body[1]
+    assert 'const rawPadding = this._axisStyleValue(axis, "tick_padding")' in body[1]
+    assert 'const rawLength = this._axisStyleValue(axis, "tick_length")' in body[1]
+    assert 'const rawWidth = this._axisStyleValue(axis, "tick_width")' in body[1]
+    assert "const hiddenSentinel = Number(rawLength) === 0 && Number(rawWidth) === 0" in body[1]
     assert "if (!authored) return unstyled;" in body[1]
     # x bottom 6, x top 18 (plus its own line box), y 8 — unchanged since before
     # tick_padding existed. Primary and extra axes each have one call site.

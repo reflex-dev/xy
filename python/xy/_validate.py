@@ -489,6 +489,165 @@ def mark_fill(value: Any, label: str) -> Optional[dict[str, Any]]:
     }
 
 
+def resolvable_paint(css: str, label: str, subject: str) -> tuple[float, float, float, float]:
+    """Assert a validated CSS color has fixed channels, and return them.
+
+    The gate for every paint XY must resolve *itself* rather than hand to the
+    browser — colormap stops and palette entries. Both are indexed lookups
+    consumed by renderers with no DOM (SVG, native raster, the density plane),
+    so a `var()`/`oklch()`/`color-mix()` value cannot produce the same result
+    there as on screen. Refusing it with the reason beats every alternative:
+    a shared fallback collapses distinct entries onto one color, and a silent
+    per-renderer difference is what §28 exists to prevent."""
+    from . import kernels
+
+    status, rgba = kernels.css_check(kernels.CSS_COLOR, css)
+    if status != 1 or rgba is None:
+        raise ValueError(
+            f"{label} {css!r} cannot be resolved to fixed channels; {subject} must be "
+            "hex, rgb()/rgba(), hsl()/hsla(), or a named color (var()/oklch()/color-mix() "
+            "resolve only in a browser, and XY has to resolve this one itself for SVG, "
+            "native PNG, and aggregated density surfaces)"
+        )
+    return rgba
+
+
+def resolved_hex_paint(value: Any, label: str, subject: str) -> str:
+    """A CSS color normalized to `#rrggbb` / `#rrggbbaa`.
+
+    Resolving and then shipping the *original* string would be the worst of
+    both: the value is checked here, but every consumer still has to resolve it
+    again — and the browser client's only DOM-free path is `hexColor`, so a
+    `tomato` or `rgb(...)` entry would fall through to a `getComputedStyle`
+    probe. That probe returns "" on a root that is not yet in the document
+    (notebook webviews attach asynchronously), which yields black, and nothing
+    later rebuilds the cached LUT. Normalizing here means every renderer reads
+    the same bytes off the wire with no cascade involved."""
+    css = css_color(value, label)
+    red, green, blue, alpha = resolvable_paint(css, label, subject)
+    hex_rgb = "#{:02x}{:02x}{:02x}".format(*(int(round(c * 255)) for c in (red, green, blue)))
+    return hex_rgb if alpha >= 1.0 else f"{hex_rgb}{int(round(alpha * 255)):02x}"
+
+
+def _resolved_rgb(color: Any, label: str) -> tuple[int, int, int]:
+    """One colormap stop as 8-bit sRGB.
+
+    A colormap becomes a LUT in three renderers — the WebGL client, the SVG
+    writer, and the native rasterizer — and only the first of those has a DOM.
+    So a stop must parse to concrete channels *here* (hex, `rgb()`, `hsl()`,
+    named colors: the closed grammars in src/css.rs). Browser-resolved forms
+    (`var()`, `oklch()`, `color-mix()`) are legal everywhere XY takes a single
+    paint color, but they cannot produce the same ramp in a headless export, so
+    they are refused with the reason rather than silently baked to a fallback
+    (§28).
+
+    A colormap LUT is opaque RGB by construction — every builder writes alpha
+    255, and a mark's transparency comes from `opacity`/`fill-opacity`, which
+    the density compositor accounts for separately. A translucent stop is
+    therefore refused too: dropping its alpha would turn `["transparent",
+    "#0000ff"]` into an opaque BLACK→blue ramp, which is exactly the silent
+    misrender this function exists to prevent."""
+    css = css_color(color, label)
+    rgba = resolvable_paint(css, label, "colormap stops")
+    if len(rgba) > 3 and float(rgba[3]) < 1.0:
+        raise ValueError(
+            f"{label} {css!r} is translucent; colormap stops are opaque RGB (a LUT carries "
+            "no alpha). Set the mark's opacity/fill-opacity instead, or use the color the "
+            "stop should blend to."
+        )
+    red, green, blue = (int(round(channel * 255)) for channel in rgba[:3])
+    return red, green, blue
+
+
+def _colormap_stop_item(item: Any, index: int, label: str) -> tuple[Optional[float], Any]:
+    """One entry of a colormap sequence: a color, or a `(position, color)` pair."""
+    if isinstance(item, str) or not hasattr(item, "__iter__"):
+        return None, item
+    pair = list(item)
+    if len(pair) != 2:
+        raise ValueError(
+            f"{label}[{index}] must be a color or a (position, color) pair, got {item!r}"
+        )
+    position, color = pair
+    if isinstance(position, bool) or not isinstance(
+        position, (int, float, np.integer, np.floating)
+    ):
+        raise ValueError(f"{label}[{index}] position must be a number between 0 and 1")
+    pos = float(position)
+    if not np.isfinite(pos) or not 0.0 <= pos <= 1.0:
+        raise ValueError(f"{label}[{index}] position must be between 0 and 1, got {position!r}")
+    return pos, color
+
+
+# Positioned ramps resample onto the client's LUT width, so the shipped stops
+# reproduce the declared gradient exactly rather than approximately.
+_LUT_TEXELS = 256
+
+
+def _resample_stops(positions: list[float], rgb: list[tuple[int, int, int]]) -> list[list[int]]:
+    """Positioned stops -> `_LUT_TEXELS` evenly spaced stops.
+
+    The wire form for a colormap is always *evenly spaced* stops — the same
+    shape the built-in tables use — so every renderer keeps one interpolation
+    path. Sampling at the LUT's own texel count makes the round trip exact."""
+    grid = np.linspace(0.0, 1.0, _LUT_TEXELS)
+    pos = np.asarray(positions, dtype=np.float64)
+    channels = np.asarray(rgb, dtype=np.float64)
+    out = np.empty((_LUT_TEXELS, 3), dtype=np.int64)
+    for c in range(3):
+        out[:, c] = np.rint(np.interp(grid, pos, channels[:, c]))
+    return [[int(v) for v in row] for row in out]
+
+
+def colormap_stops(value: Any, label: str) -> list[list[int]]:
+    """A custom colormap as evenly spaced 8-bit RGB stops.
+
+    Accepts a `linear-gradient(...)` string or a sequence of 2–256 CSS colors,
+    optionally as `(position, color)` pairs. Uniformly spaced input ships as
+    given; positioned input resamples onto the LUT grid."""
+    if isinstance(value, str):
+        gradient = mark_fill(value, label)
+        assert gradient is not None
+        if gradient["dir"] != "down":
+            # A mark fill runs along a direction in space; a colormap maps a
+            # VALUE to a color and has no spatial axis, so a direction keyword
+            # here would be accepted and ignored. Refuse it instead (§28).
+            raise ValueError(
+                f"{label} gradient has a direction keyword, but a colormap maps values to "
+                "colors and has no direction; drop it, or reverse the stop order"
+            )
+        stops = gradient["stops"]
+        positions = [float(p) for p, _ in stops]
+        rgb = [_resolved_rgb(c, f"{label} stop {i + 1}") for i, (_, c) in enumerate(stops)]
+    else:
+        items = list(value)
+        if not 2 <= len(items) <= 256:
+            raise ValueError(f"{label} must have between 2 and 256 color stops, got {len(items)}")
+        raw = [_colormap_stop_item(item, i, label) for i, item in enumerate(items)]
+        rgb = [_resolved_rgb(c, f"{label}[{i}]") for i, (_, c) in enumerate(raw)]
+        declared = [p for p, _ in raw]
+        if all(p is None for p in declared):
+            return [list(c) for c in rgb]
+        count = len(declared)
+        anchors: dict[int, float] = {i: p for i, p in enumerate(declared) if p is not None}
+        anchors.setdefault(0, 0.0)
+        anchors.setdefault(count - 1, 1.0)
+        keys = sorted(anchors)
+        previous = 0.0
+        for i in keys:
+            previous = anchors[i] = max(anchors[i], previous)
+        positions = [0.0] * count
+        for i0, i1 in itertools.pairwise(keys):
+            v0, v1 = anchors[i0], anchors[i1]
+            for k in range(i0, i1):
+                positions[k] = v0 + (v1 - v0) * (k - i0) / (i1 - i0)
+        positions[count - 1] = anchors[count - 1]
+    uniform = np.linspace(positions[0], positions[-1], len(positions))
+    if positions[0] == 0.0 and positions[-1] == 1.0 and np.allclose(positions, uniform):
+        return [list(c) for c in rgb]
+    return _resample_stops(positions, rgb)
+
+
 def axis_label_position(value: Any, label: str) -> Optional[str | dict[str, str | int | float]]:
     if value is None:
         return None

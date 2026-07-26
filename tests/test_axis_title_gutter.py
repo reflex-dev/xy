@@ -265,3 +265,18 @@ def test_hidden_tick_labels_do_not_reserve_tick_room() -> None:
     spec, _blob = _payload(chart)
     _width, _height, _compact, plot = _svg.layout(spec)
     assert plot["x"] == 62.0
+
+
+def test_transparent_axis_text_does_not_reinflate_zero_padding() -> None:
+    """The axis switches and measured gutter must compose."""
+    chart = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[1_000_000.0, 2_000_000.0]),
+        xy.x_axis(show=False),
+        xy.y_axis(label="hidden title", show=False),
+        width=320,
+        height=180,
+        padding=0,
+    )
+    spec, _blob = _payload(chart)
+    _width, _height, _compact, plot = _svg.layout(spec)
+    assert plot["x"] == 0.0

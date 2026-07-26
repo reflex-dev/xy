@@ -27,6 +27,11 @@ blocks external connections, objects, forms, and base-URL changes. Density
 refinement can start a worker from the bundled source, so the policy allows
 `worker-src blob:`; it does not allow an external worker script.
 
+Two `data:` allowances keep the file self-contained: `img-src data:` for
+embedded raster content, and `font-src data:` so a `custom_css` `@font-face`
+can carry a brand face inline. Neither permits a network origin, so a
+standalone chart still loads nothing from the network.
+
 Portable single-file output necessarily uses inline script and style blocks.
 Its policy therefore includes `script-src 'unsafe-inline'` and
 `style-src 'unsafe-inline'`. `custom_css=` is added to that inline author

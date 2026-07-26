@@ -14,7 +14,11 @@ import warnings
 # rides the spec/buffers trait update (`spec.append.seq`) with no custom send.
 # v6: symlog axis scale (`scale: "symlog"` + `constant`) and scale-coordinate
 # density grids — an older cached client would render both silently wrong.
-PROTOCOL_VERSION = 6
+# v7: a `colormap` may now be explicit RGB stops rather than a built-in name,
+# and the spec may carry a chart `palette`. A v6 client indexes its built-in
+# table with the stop array, misses, and paints viridis without erroring — the
+# same silent-misrender case v6 itself was cut for.
+PROTOCOL_VERSION = 7
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the

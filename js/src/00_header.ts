@@ -24,7 +24,10 @@
 
 // v6: symlog axis scale (`scale: "symlog"` + `constant`) and scale-coordinate
 // density grids — a v5 client would render both silently wrong.
-export const PROTOCOL = 6;
+// v7: `colormap` may be explicit RGB stops rather than a built-in name, and the
+// spec may carry a chart `palette`. A v6 client indexes COLORMAP_STOPS with the
+// stop array, misses, and paints viridis without erroring.
+export const PROTOCOL = 7;
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
 // python/xy/_framing.py). The chart spec's PROTOCOL

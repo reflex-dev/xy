@@ -9,6 +9,7 @@ work is forbidden on the client).
 from __future__ import annotations
 
 import math
+import warnings
 from collections.abc import Mapping
 from os import PathLike
 from typing import Any, Optional, TypeAlias
@@ -36,6 +37,7 @@ from .config import (  # noqa: E402, F401
     DIRECT_SOFT_CEILING,
     PROTOCOL_VERSION,
     SCATTER_DENSITY_THRESHOLD,
+    default_palette_color,
 )
 from .dom import validate_dom_slots
 
@@ -143,6 +145,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # ignore this and always render the deterministic final scene.
         self.animation_options: Optional[dict[str, Any]] = None
         self.mark_style: dict[str, dict[str, str | int | float]] = {}
+        # Categorical color cycle for this chart: unnamed series colors AND
+        # categorical color channels. `xy.theme(palette=[...])` replaces it;
+        # None means the built-in CVD-safe default (config.DEFAULT_PALETTE).
+        # Set before any mark is applied — a trace bakes its color at build.
+        self.palette: Optional[list[str]] = None
         self.annotations: list[dict[str, Any]] = []
         self._axis_categories: dict[str, list[str]] = {}
         # Declarative marks still call the shared fluent mark bodies with the
@@ -161,6 +168,32 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # `append.seq` so trait-transported hosts can detect the refresh
         # (wire-protocol §4).
         self._append_seq = 0
+
+    # -- palette ------------------------------------------------------------
+
+    @property
+    def colors(self) -> list[str]:
+        """This chart's categorical cycle — its own palette, else the default."""
+        return self.palette or list(DEFAULT_PALETTE)
+
+    def palette_color(self, index: int, *, stacklevel: int = 3) -> str:
+        """Color for the `index`-th series (0-based): the chart palette, cycled.
+
+        Wrapping is allowed but never silent (§28) — see
+        `config.default_palette_color`, which owns the built-in-palette warning
+        and its CVD-order rationale."""
+        if self.palette is None:
+            return default_palette_color(index, stacklevel=stacklevel + 1)
+        if index >= len(self.palette):
+            warnings.warn(
+                f"more than {len(self.palette)} series use default colors; the chart "
+                f"palette repeats every {len(self.palette)} (series "
+                f"{len(self.palette) + 1} wears series 1's color). Pass a longer "
+                "xy.theme(palette=...), or an explicit color= per series.",
+                RuntimeWarning,
+                stacklevel=stacklevel,
+            )
+        return self.palette[index % len(self.palette)]
 
     # -- axis config --------------------------------------------------------
 

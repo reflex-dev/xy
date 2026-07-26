@@ -473,16 +473,26 @@ Standalone HTML and Chromium PNG accept the font declaration through
 `custom_css`. Embed the font as a data URL when the HTML file must remain fully
 portable; an ordinary URL still depends on that resource being reachable.
 
+Declare the face in `custom_css` and select it with `xy.theme(font_family=...)`.
+The chart root carries a computed `font` shorthand, which an ordinary
+`.xy { font-family: ... }` rule cannot outrank — the theme token writes that
+shorthand, so it is the reliable way to apply the family.
+
 ~~~python
 from xy import Engine
+import xy
 
 font_css = """
   @font-face {
     font-family: "Acme Sans";
     src: url("data:font/woff2;base64,...") format("woff2");
   }
-  .xy { font-family: "Acme Sans", system-ui, sans-serif; }
 """
+
+chart = xy.line_chart(
+    xy.line([1, 2, 3], [2, 5, 3]),
+    xy.theme(font_family='"Acme Sans", system-ui, sans-serif'),
+)
 
 chart.to_html("chart.html", custom_css=font_css)
 chart.to_png(
