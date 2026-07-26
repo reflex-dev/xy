@@ -800,6 +800,27 @@ def test_log_decades_below_one_get_distinct_labels() -> None:
     assert len(labels) == len(set(labels)), f"duplicate decade labels: {labels}"
 
 
+@pytest.mark.parametrize("spec_format", ["$,.0f", ".0fK", ".0f", ".0%"])
+def test_a_log_axis_survives_an_affixed_format(spec_format) -> None:
+    """The sub-unit fallback tested the whole label, not its numeric core.
+
+    `"$,.0f"` renders a sub-unit decade as `"$0"`, and `float("$0")` raises —
+    taking the entire render down. The client's `Number("$0")` is `NaN`
+    instead, so it shipped the collapsed label: two different wrong answers
+    from the layer that exists to keep them identical."""
+    chart = xy.line_chart(
+        xy.line([1, 2, 3], [0.001, 0.01, 1.0]),
+        xy.y_axis(type_="log", format=spec_format),
+        width=560,
+        height=340,
+    )
+    labels = [t for t in _texts(chart.to_svg()) if (t and t[0].isdigit()) or t.startswith("$")]
+    assert labels, "the axis rendered no labels at all"
+    # Whatever the affix, no sub-unit decade may collapse to a bare zero.
+    cores = [re.sub(r"[^0-9eE+.\-]", "", t) for t in labels]
+    assert not any(core and float(core) == 0.0 for core in cores), labels
+
+
 def test_formatted_labels_widen_the_gutter_instead_of_running_off_the_canvas() -> None:
     wide = xy.line_chart(
         xy.line([1, 2, 3], [1e9, 2e9, 3e9]),

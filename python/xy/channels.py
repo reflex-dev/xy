@@ -637,9 +637,13 @@ def resolve_color(
             # map has NOT already spent — cycling the map's own values would
             # paint every unmapped category the same as a mapped one.
             spent = set(palette_map.values())
-            spare = [color for color in config.DEFAULT_PALETTE if color not in spent] or list(
-                config.DEFAULT_PALETTE
-            )
+            spare = [color for color in config.DEFAULT_PALETTE if color not in spent]
+            # A map that pins every built-in color leaves nothing distinct for
+            # an unmapped category, so it necessarily reuses one — say which,
+            # rather than let two categories quietly share a color (§28).
+            exhausted = not spare
+            if exhausted:
+                spare = list(config.DEFAULT_PALETTE)
             resolved: list[str] = []
             unmapped: list[str] = []
             for category in cats:
@@ -656,7 +660,14 @@ def resolve_color(
                     f"({', '.join(map(repr, unmapped[:4]))}"
                     f"{', ...' if len(unmapped) > 4 else ''}) are not in the "
                     "xy.theme(palette={...}) map and fall back to the cycle. Add "
-                    "them to the map to pin their colors.",
+                    "them to the map to pin their colors."
+                    + (
+                        " The map already pins every built-in color, so those "
+                        "fallbacks repeat a color the map assigned to another "
+                        "category."
+                        if exhausted
+                        else ""
+                    ),
                     RuntimeWarning,
                     stacklevel=3,
                 )
