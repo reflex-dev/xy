@@ -598,6 +598,33 @@ def _contour_segments(
     return kernels.marching_squares(z, x_coords, y_coords, levels)
 
 
+# One day, the useful width for a lone datetime bar that has no neighbor to
+# measure against.
+_DAY_MS = 86_400_000.0
+
+
+def _default_bar_width(positions: np.ndarray, *, temporal: bool) -> float:
+    """0.8 of the *closest* gap between adjacent positions.
+
+    Reproduces the historical 0.8 exactly on a category axis, whose positions
+    are one unit apart, and stays meaningful on a datetime axis, whose
+    positions are milliseconds — where a literal 0.8 asked for a bar 0.8 ms
+    wide and the chart came out blank.
+
+    The smallest gap rather than the mean or median: bars that overlap hide
+    each other's data, so irregular spacing should yield narrow bars rather
+    than wide ones. Duplicate positions are collapsed first, so a repeated
+    category cannot drive the width to zero."""
+    finite = positions[np.isfinite(positions)]
+    unique = np.unique(finite)
+    if len(unique) < 2:
+        return 0.8 * _DAY_MS if temporal else 0.8
+    step = float(np.min(np.diff(unique)))
+    if step <= 0.0:  # unreachable after np.unique; a guard, not a policy
+        return 0.8 * _DAY_MS if temporal else 0.8
+    return 0.8 * step
+
+
 def _bar_like(
     self: "Figure",
     kind: str,
@@ -607,7 +634,7 @@ def _bar_like(
     name: Optional[str],
     color: Any,
     colors: Optional[list[str]],
-    width: float,
+    width: Optional[float],
     base: Union[Scalar, ArrayLike],
     mode: str,
     orientation: str,
@@ -621,13 +648,21 @@ def _bar_like(
     style_extra: Optional[dict[str, Any]] = None,
 ) -> "Figure":
     name = self._optional_text(name, f"{kind} name")
-    width = self._positive_scalar(width, f"{kind} width")
+    if width is not None:
+        width = self._positive_scalar(width, f"{kind} width")
     if mode not in {"grouped", "stacked", "normalized"}:
         raise ValueError(f"{kind} mode must be 'grouped', 'stacked', or 'normalized'")
     if orientation not in {"vertical", "horizontal"}:
         raise ValueError(f"{kind} orientation must be 'vertical' or 'horizontal'")
     category_axis = "x" if orientation == "vertical" else "y"
-    pos, category_labels = self._axis_positions_with_labels(x, category_axis)
+    pos, category_labels, temporal = self._axis_positions_with_labels(x, category_axis)
+    # `width` is in axis units, and a category axis puts its ticks one unit
+    # apart — which is why 0.8 was ever a sensible default. A datetime axis is
+    # in milliseconds, so the same 0.8 asked for a bar 0.8 ms wide: it rounded
+    # to zero pixels and the chart came out blank. Derive the default from the
+    # actual spacing when the caller did not name one.
+    if width is None:
+        width = _default_bar_width(pos, temporal=temporal)
     vals = self._bar_value_matrix(y, len(pos), kind)
     n_series, n_items = vals.shape
     if mode == "normalized":
@@ -714,6 +749,8 @@ def _bar_like(
     try:
         if category_labels is not None:
             self._commit_category_labels(category_labels, category_axis)
+        elif temporal:
+            self._register_temporal_axis(category_axis)
         half = width / 2.0
         if vals.shape[0] == 1:
             self._append_bar_rect(
@@ -2307,7 +2344,7 @@ def bar(
     name: Optional[str] = None,
     color: Any = None,
     colors: Optional[list[str]] = None,
-    width: float = 0.8,
+    width: Optional[float] = None,
     base: Union[Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
@@ -2364,7 +2401,7 @@ def column(
     name: Optional[str] = None,
     color: Union[str, Sequence[str], None] = None,
     colors: Optional[list[str]] = None,
-    width: float = 0.8,
+    width: Optional[float] = None,
     base: Union[Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",

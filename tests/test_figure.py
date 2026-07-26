@@ -6,13 +6,16 @@ from __future__ import annotations
 
 import datetime as dt
 import html as _html
+import itertools
 import json
+import re
 import warnings
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+import xy
 import xy.export as export_module
 from xy._figure import DECIMATION_THRESHOLD, PROTOCOL_VERSION, Figure
 from xy.columns import ColumnStore
@@ -2342,3 +2345,150 @@ def test_memory_report_counts_growth_buffer_capacity() -> None:
         assert column["capacity_bytes"] == source.capacity_bytes
         # Amortized growth is bounded: never more than double the live length.
         assert column["capacity_bytes"] <= 2 * column["bytes"]
+
+
+# --- datetime position axes ---------------------------------------------------
+#
+# `line()` canonicalizes datetimes to ms through the column store. The position
+# axes (`bar`, `column`, `box`/`violin` grouping, `heatmap`) resolve outside it
+# and used to reach `astype(float64)`, yielding the raw tick count in whatever
+# unit the array carried — nanoseconds for `[ns]`, days for `[D]` — while a
+# list of `datetime.date` was object dtype and got read as *categories*.
+
+_DATES = ["2024-01-01", "2024-03-01", "2024-03-02"]
+
+
+def _date_inputs():
+    return {
+        "date objects": [dt.date(2024, 1, 1), dt.date(2024, 3, 1), dt.date(2024, 3, 2)],
+        "datetime objects": [
+            dt.datetime(2024, 1, 1),
+            dt.datetime(2024, 3, 1),
+            dt.datetime(2024, 3, 2),
+        ],
+        "datetime64[D]": np.array(_DATES, dtype="datetime64[D]"),
+        "datetime64[s]": np.array(_DATES, dtype="datetime64[s]"),
+        "datetime64[ns]": np.array(_DATES, dtype="datetime64[ns]"),
+    }
+
+
+@pytest.mark.parametrize("label", list(_date_inputs()))
+def test_bar_puts_datetimes_on_a_time_axis_like_line_does(label: str) -> None:
+    values = _date_inputs()[label]
+    bar_fig = xy.bar_chart(xy.bar(values, [3.0, 5.0, 4.0])).figure()
+    line_fig = xy.line_chart(xy.line(values, [3.0, 5.0, 4.0])).figure()
+    spec, _ = bar_fig.build_payload()
+    assert spec["x_axis"]["kind"] == "time", f"{label} should be temporal"
+    assert "categories" not in spec["x_axis"]
+    # The same positions the line path produces: ms since the epoch, not the
+    # raw tick count of whichever unit the caller happened to pass. Compared on
+    # the centers, not the axis range — bars legitimately pad the domain by
+    # half a bar at each end.
+    assert bar_fig.traces[0].x.values == pytest.approx(line_fig.traces[0].x.values)
+
+
+@pytest.mark.parametrize("label", list(_date_inputs()))
+def test_datetime_bars_have_a_visible_width(label: str) -> None:
+    """`width` is in axis units, so the 0.8 that means "0.8 of a category slot"
+    meant "0.8 ms" on a time axis and every bar rounded to zero pixels."""
+    svg = xy.bar_chart(
+        xy.bar(_date_inputs()[label], [3.0, 5.0, 4.0]), width=600, height=380
+    ).to_svg()
+    widths = [float(w) for w in re.findall(r'<rect[^>]*width="([0-9.]+)"[^>]*fill="rgb', svg)]
+    assert len(widths) == 3
+    assert all(w >= 1.0 for w in widths), f"{label} drew {widths}"
+
+
+def test_datetime_bar_width_follows_the_closest_gap() -> None:
+    """Bars that overlap hide each other's data, so irregular spacing yields
+    narrow bars, not wide ones."""
+    monthly = np.array(["2024-01-01", "2024-02-01", "2024-03-01"], dtype="datetime64[ns]")
+    svg = xy.bar_chart(xy.bar(monthly, [1.0, 2.0, 3.0]), width=600, height=380).to_svg()
+    rects = [
+        (float(x), float(w))
+        for x, w in re.findall(r'<rect x="([0-9.]+)"[^>]*width="([0-9.]+)"[^>]*fill="rgb', svg)
+    ]
+    for (x0, w0), (x1, _w1) in itertools.pairwise(rects):
+        assert x0 + w0 <= x1 + 1e-6, "adjacent bars must not overlap"
+
+
+def test_a_lone_datetime_bar_still_has_width() -> None:
+    one = np.array(["2024-01-01"], dtype="datetime64[ns]")
+    svg = xy.bar_chart(xy.bar(one, [3.0]), width=600, height=380).to_svg()
+    widths = [float(w) for w in re.findall(r'<rect[^>]*width="([0-9.]+)"[^>]*fill="rgb', svg)]
+    assert widths and widths[0] >= 1.0
+
+
+def test_layering_a_line_over_datetime_bars_no_longer_crashes_the_exporters() -> None:
+    """The bar sat at raw nanoseconds while the line's ingested column flipped
+    the axis to time, so the calendar tick code got a domain in the year
+    54,001,545 and every static exporter raised."""
+    stamps = np.array(["2024-01-01", "2024-01-02", "2024-01-03"], dtype="datetime64[ns]")
+    chart = xy.chart(
+        xy.bar(x=stamps, y=[1.0, 2.0, 3.0]),
+        xy.line(x=stamps, y=[1.0, 2.0, 3.0]),
+        width=600,
+        height=380,
+    )
+    assert chart.to_svg().startswith("<svg")
+    assert chart.to_png().startswith(b"\x89PNG")
+
+
+def test_horizontal_bars_get_the_same_treatment_on_their_category_axis() -> None:
+    stamps = np.array(_DATES, dtype="datetime64[ns]")
+    spec, _ = (
+        xy.bar_chart(xy.bar(stamps, [3.0, 5.0, 4.0], orientation="horizontal"))
+        .figure()
+        .build_payload()
+    )
+    assert spec["y_axis"]["kind"] == "time"
+
+
+def test_heatmap_and_distribution_axes_are_temporal_too() -> None:
+    stamps = np.array(_DATES, dtype="datetime64[ns]")
+    heat, _ = (
+        xy.chart(xy.heatmap(z=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], x=stamps))
+        .figure()
+        .build_payload()
+    )
+    assert heat["x_axis"]["kind"] == "time"
+    box, _ = (
+        xy.chart(xy.box(values=[1.0, 2.0, 3.0, 4.0, 9.0], x=[stamps[0]] * 5))
+        .figure()
+        .build_payload()
+    )
+    assert box["x_axis"]["kind"] == "time"
+
+
+def test_categories_and_numbers_are_untouched() -> None:
+    cats, _ = xy.bar_chart(xy.bar(["a", "b", "c"], [1.0, 2.0, 3.0])).figure().build_payload()
+    assert cats["x_axis"]["kind"] == "category"
+    assert cats["x_axis"]["categories"] == ["a", "b", "c"]
+    nums, _ = xy.bar_chart(xy.bar([1.0, 2.0, 3.0], [1.0, 2.0, 3.0])).figure().build_payload()
+    assert nums["x_axis"]["kind"] == "linear"
+    # Booleans are dtype 'b' and must stay label-like, not become timestamps.
+    bools, _ = xy.bar_chart(xy.bar([True, False], [1.0, 2.0])).figure().build_payload()
+    assert bools["x_axis"]["kind"] == "category"
+
+
+def test_the_historical_category_width_is_unchanged() -> None:
+    svg = xy.bar_chart(xy.bar(["a", "b", "c"], [1.0, 2.0, 3.0]), width=600, height=380).to_svg()
+    widths = {w for w in re.findall(r'<rect[^>]*width="([0-9.]+)"[^>]*fill="rgb', svg)}
+    assert widths == {"141.24"}, "auto width must reproduce the old 0.8 on unit spacing"
+
+
+def test_mixing_categories_and_datetimes_on_one_axis_is_refused() -> None:
+    stamps = np.array(_DATES, dtype="datetime64[ns]")
+    with pytest.raises(ValueError, match="cannot be both categorical and temporal"):
+        xy.chart(
+            xy.bar(x=["a", "b", "c"], y=[1.0, 2.0, 3.0]),
+            xy.bar(x=stamps, y=[1.0, 2.0, 3.0]),
+        ).figure()
+
+
+def test_a_failed_datetime_mark_does_not_leave_the_axis_temporal() -> None:
+    stamps = np.array(_DATES, dtype="datetime64[ns]")
+    fig = Figure()
+    with pytest.raises(ValueError):
+        fig.bar(stamps, [1.0, 2.0])  # length mismatch
+    assert fig._axis_temporal == set(), "rollback must restore the temporal set"

@@ -25,6 +25,7 @@ class FigureHost(Protocol):
     annotations: list[dict[str, Any]]
     axis_options: dict[str, dict[str, Any]]
     _axis_categories: dict[str, list[str]]
+    _axis_temporal: set[str]
     title: Optional[str]
     width: Any
     height: Any
@@ -43,6 +44,8 @@ class FigureHost(Protocol):
     def palette_cycle(self) -> Optional[list[str]]: ...
 
     def palette_color(self, index: int, *, stacklevel: int = 3) -> str: ...
+
+    def _register_temporal_axis(self, axis: str) -> None: ...
 
     # -- shared validators (static on `Figure`, aliases of `_validate`) --
     @staticmethod

@@ -614,6 +614,53 @@ def _astype_counted(arr: npt.NDArray[Any], dtype: Any, copies: int) -> tuple[npt
     return out, copies
 
 
+def is_datetime_like(values: Any) -> bool:
+    """Whether *values* is a datetime column — datetime64, or objects that are.
+
+    The single probe: `components` used to carry its own copy and `_figure`
+    had none at all, which is why `bar()` classified a list of `datetime.date`
+    as *categories* (object dtype) while `line()` canonicalized the same list
+    to ms. Nulls are skipped, so a leading NaT does not decide the answer."""
+    if hasattr(values, "to_numpy"):
+        try:
+            values = values.to_numpy()
+        except ValueError:
+            # pyarrow Arrays with nulls refuse the default zero-copy
+            # conversion (ArrowInvalid is a ValueError); this probe needs the
+            # actual values, so allow the copy.
+            values = values.to_numpy(zero_copy_only=False)
+    arr = np.asarray(values)
+    if np.issubdtype(arr.dtype, np.datetime64):
+        return True
+    if arr.dtype != object:
+        return False
+    for value in arr.flat:
+        if _is_object_missing(value):
+            continue
+        return isinstance(value, (dt.datetime, dt.date, np.datetime64))
+    return False
+
+
+def datetime_ms(values: Any, label: str) -> npt.NDArray[np.float64]:
+    """Datetime-like *values* as f64 ms since the epoch, NaT preserved as NaN.
+
+    The same canonicalization `ColumnStore.ingest` applies, exposed for the
+    position axes (`Figure._axis_positions*`), which resolve outside the store
+    and so used to reach `astype(float64)` — yielding the raw tick count in
+    whatever unit the array happened to carry (days for `[D]`, nanoseconds for
+    `[ns]`)."""
+    if hasattr(values, "to_numpy"):
+        try:
+            values = values.to_numpy()
+        except ValueError:
+            values = values.to_numpy(zero_copy_only=False)
+    arr = np.asarray(values)
+    if arr.ndim != 1:
+        raise ValueError(f"{label} must be 1-D, got shape {arr.shape}")
+    out, _copies = _datetime_to_float_ms(arr, 0)
+    return out
+
+
 def _is_datetime_object_array(arr: npt.NDArray[Any]) -> bool:
     """Detect Python datetime/date object arrays without classifying strings."""
     if arr.dtype != object:

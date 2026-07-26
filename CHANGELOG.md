@@ -89,6 +89,34 @@ in the README).
   never appended report exactly what they did before.
 
 ### Fixed
+- **Bars, columns, heatmaps and distribution groups treated datetime positions
+  as raw numbers, so a `bar()` on dates was blank.** Those marks resolve their
+  positions outside the column store, which is where `line()` canonicalizes
+  datetimes to milliseconds — they reached `astype(float64)` instead and got
+  the raw tick count of whichever unit the array carried. Nanoseconds meant the
+  default bar width of "0.8" asked for a bar 0.8 ms wide, which rounds to zero
+  pixels: the chart came out empty with an axis labelled `1.7e18`. A list of
+  `datetime.date` is object dtype, so it took the *category* path instead and
+  drew three dates two months apart as three evenly spaced bars. Datetime
+  positions now canonicalize to ms on every mark, and the axis reports `time`
+  the way it already did for lines.
+
+  Layering a line over datetime bars used to raise `ValueError: year must be
+  in 1..9999` out of `to_svg()`, `to_png()` and `to_pdf()` — the line's ingested
+  column flipped the axis to time while the bars sat at raw nanoseconds. That
+  crash is gone.
+
+  `width=` on `bar`/`column` now defaults to 0.8 of the *closest* gap between
+  adjacent positions rather than a literal 0.8. On a category axis, whose
+  positions are one unit apart, that is the same 0.8 as before, byte for byte;
+  on a datetime axis it is a real duration.
+
+  **Behavior change:** `bar(list_of_dates, y)` was a categorical axis (equal
+  spacing, `spec["x_axis"]["categories"]` populated) and is now temporal
+  (proportional spacing, no `categories`). That matches `line()` on identical
+  input, but irregular date series will now show their real gaps. Pass strings
+  (`d.isoformat()`) to keep dates categorical. Mixing categories and datetimes
+  on one axis now raises instead of silently letting one win.
 - **The native raster exporter silently deleted every character outside its
   glyph atlas.** No glyph and no advance, so `Zürich` came out of `to_png()` as
   `Zrich`, a `format="€,.0f"` axis lost its symbol on every tick, and a CJK tick
