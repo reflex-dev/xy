@@ -140,6 +140,31 @@ def test_a_row_id_that_would_wrap_is_rejected_not_cast(bad: int) -> None:
         kernels.polygon_select(x, y, rows, square_x, square_y)
 
 
+@pytest.mark.parametrize("bad", [[3.9], [np.nan], [np.inf], [-0.5], [3.0]])
+def test_a_float_row_id_is_refused_rather_than_rounded(bad: list[float]) -> None:
+    """A float id has no row, and choosing one by cast is platform-dependent:
+    `nan` saturates to 0 on arm64 but traps to INT64_MIN on x86_64, so a cast
+    would make the guard disagree across the wheels we ship. `3.9` silently
+    selecting row 3 is the same class of wrong answer as a wrapped id."""
+    x = np.arange(8.0)
+    y = np.arange(8.0)
+    rows = np.asarray(bad)
+    assert rows.dtype == np.float64
+    with pytest.raises(ValueError, match="must be an integer array of row ids"):
+        kernels.range_indices_rows(x, y, rows, 0.0, 8.0, 0.0, 8.0)
+    with pytest.raises(ValueError, match="must be an integer array of row ids"):
+        kernels.polygon_select(
+            x, y, rows, np.array([-1e9, 1e9, 1e9, -1e9]), np.array([-1e9, -1e9, 1e9, 1e9])
+        )
+
+
+def test_an_empty_row_list_is_not_a_dtype_error() -> None:
+    """`np.asarray([])` is float64, but selecting nothing is legitimate."""
+    x = np.arange(8.0)
+    got = kernels.range_indices_rows(x, x, np.asarray([]), 0.0, 8.0, 0.0, 8.0)
+    assert got.size == 0 and got.dtype == np.uint32
+
+
 def test_in_range_ids_survive_every_integer_dtype() -> None:
     """The range check must not start rejecting ordinary callers: any integer
     dtype holding valid ids still answers, and a uint32 array is passed through

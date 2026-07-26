@@ -841,14 +841,25 @@ def _as_row_ids(rows: npt.NDArray[np.uint32], label: str = "rows") -> npt.NDArra
     from a real one there — the call would answer with a row the caller never
     asked for instead of returning the error sentinel. Range-check before the
     cast so the out-of-range contract holds for the value the caller passed.
+
+    Integer dtypes only, and deliberately so: a float id has no row, and
+    deciding one by cast is both silent and platform-dependent. `3.9` would
+    become row 3 and `nan` would become row 0 on arm64, where the NaN cast
+    saturates, while the same `nan` traps as `INT64_MIN` on x86_64 — the guard
+    itself would disagree across the wheels we ship.
     """
     out = np.ascontiguousarray(rows)
     if out.ndim != 1:
         raise ValueError(f"{label} must be 1-D, got shape {out.shape}")
     if out.dtype == np.uint32:
         return out
+    if out.size == 0:
+        # `np.asarray([])` is float64; selecting no rows is not a dtype error.
+        return np.empty(0, dtype=np.uint32)
+    if not np.issubdtype(out.dtype, np.integer):
+        raise ValueError(f"{label} must be an integer array of row ids, got dtype {out.dtype}")
     widened = out.astype(np.int64, copy=False)
-    if widened.size and (widened.min() < 0 or widened.max() > _U32_MAX):
+    if widened.min() < 0 or widened.max() > _U32_MAX:
         raise ValueError(f"{label} must be canonical row ids in [0, 2**32)")
     return np.ascontiguousarray(widened, dtype=np.uint32)
 
