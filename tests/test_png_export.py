@@ -915,3 +915,65 @@ def test_scatter_direct_edges_with_colormap_c_render_in_png() -> None:
         opacity=1.0,
     )
     assert _dark_pixel_count(fig.to_png(width=300, height=200)) > 200
+
+
+def test_the_raster_exporter_draws_annotation_labels_and_marker_glyphs() -> None:
+    """The PNG path had the same gap as SVG: rule/band/arrow/marker labels were
+    never emitted, and `xy.marker()` drew nothing at all."""
+    import xy._raster as raster
+
+    chart = xy.line_chart(
+        xy.line([1, 2, 3, 4], [1, 3, 2, 3.4], name="signal"),
+        xy.hline(y=2, text="target"),
+        xy.x_band(x0=2.6, x1=3.2, text="window"),
+        xy.marker(x=2, y=3, text="peak"),
+        width=680,
+        height=400,
+    )
+    spec, blob = chart.figure().build_payload()
+    calls: list[tuple] = []
+    original_text = raster._Cmd.text
+    original_point = raster._Cmd.point
+
+    def record_text(self, *args, **kwargs):
+        calls.append(("text", args[-1] if args else None))
+        return original_text(self, *args, **kwargs)
+
+    def record_point(self, *args, **kwargs):
+        calls.append(("point", None))
+        return original_point(self, *args, **kwargs)
+
+    raster._Cmd.text, raster._Cmd.point = record_text, record_point
+    try:
+        chart.to_png()
+    finally:
+        raster._Cmd.text, raster._Cmd.point = original_text, original_point
+
+    drawn = {value for kind, value in calls if kind == "text"}
+    assert {"target", "window", "peak"} <= drawn
+    assert any(kind == "point" for kind, _ in calls), "marker glyph never drawn"
+
+
+def test_the_raster_exporter_expands_categorical_legend_rows() -> None:
+    import xy._raster as raster
+
+    species = ["setosa"] * 4 + ["versicolor"] * 4 + ["virginica"] * 4
+    chart = xy.scatter_chart(
+        xy.scatter(list(range(12)), list(range(12)), color=species, name="iris"),
+        xy.legend(),
+        width=560,
+        height=380,
+    )
+    drawn: list[str] = []
+    original_text = raster._Cmd.text
+
+    def record_text(self, *args, **kwargs):
+        drawn.append(args[-1] if args else "")
+        return original_text(self, *args, **kwargs)
+
+    raster._Cmd.text = record_text
+    try:
+        chart.to_png()
+    finally:
+        raster._Cmd.text = original_text
+    assert {"setosa", "versicolor", "virginica"} <= set(drawn)

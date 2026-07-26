@@ -12,7 +12,7 @@ import math
 import warnings
 from collections.abc import Mapping
 from os import PathLike
-from typing import Any, Optional, TypeAlias
+from typing import Any, Optional, TypeAlias, Union
 
 import numpy as np
 
@@ -149,7 +149,16 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # categorical color channels. `xy.theme(palette=[...])` replaces it;
         # None means the built-in CVD-safe default (config.DEFAULT_PALETTE).
         # Set before any mark is applied — a trace bakes its color at build.
-        self.palette: Optional[list[str]] = None
+        # A list is a positional cycle; a `{category: color}` mapping pins
+        # colors to category labels (`palette_cycle` flattens it for the
+        # series cycle, `channels.resolve_color` looks categories up in it).
+        self.palette: Union[list[str], dict[str, str], None] = None
+        # How many logical series have already taken a palette slot. The cycle
+        # advances per *series*, never per trace: a box is four traces and a
+        # stem is two, and indexing by `len(self.traces)` made those marks skip
+        # (or collide on) palette entries — four brand colors and four boxes
+        # painted every box `palette[0]`.
+        self._series_cursor = 0
         self.annotations: list[dict[str, Any]] = []
         self._axis_categories: dict[str, list[str]] = {}
         # Declarative marks still call the shared fluent mark bodies with the
@@ -172,9 +181,22 @@ class Figure(AnnotationsMixin, PayloadMixin):
     # -- palette ------------------------------------------------------------
 
     @property
+    def palette_cycle(self) -> Optional[list[str]]:
+        """The chart palette as a positional cycle, or None when unset.
+
+        A `{category: color}` palette pins colors by label; series that are not
+        categories still need an order, and the mapping's own is the only one
+        the author expressed."""
+        if self.palette is None:
+            return None
+        if isinstance(self.palette, dict):
+            return list(self.palette.values())
+        return list(self.palette)
+
+    @property
     def colors(self) -> list[str]:
         """This chart's categorical cycle — its own palette, else the default."""
-        return self.palette or list(DEFAULT_PALETTE)
+        return self.palette_cycle or list(DEFAULT_PALETTE)
 
     def palette_color(self, index: int, *, stacklevel: int = 3) -> str:
         """Color for the `index`-th series (0-based): the chart palette, cycled.
@@ -182,18 +204,29 @@ class Figure(AnnotationsMixin, PayloadMixin):
         Wrapping is allowed but never silent (§28) — see
         `config.default_palette_color`, which owns the built-in-palette warning
         and its CVD-order rationale."""
-        if self.palette is None:
+        cycle = self.palette_cycle
+        if cycle is None:
             return default_palette_color(index, stacklevel=stacklevel + 1)
-        if index >= len(self.palette):
+        if index >= len(cycle):
             warnings.warn(
-                f"more than {len(self.palette)} series use default colors; the chart "
-                f"palette repeats every {len(self.palette)} (series "
-                f"{len(self.palette) + 1} wears series 1's color). Pass a longer "
+                f"more than {len(cycle)} series use default colors; the chart "
+                f"palette repeats every {len(cycle)} (series "
+                f"{len(cycle) + 1} wears series 1's color). Pass a longer "
                 "xy.theme(palette=...), or an explicit color= per series.",
                 RuntimeWarning,
                 stacklevel=stacklevel,
             )
-        return self.palette[index % len(self.palette)]
+        return cycle[index % len(cycle)]
+
+    def next_series_color(self, *, stacklevel: int = 4) -> str:
+        """Take the next categorical slot for one logical series.
+
+        Marks call this only when the caller gave no `color=`, so a mark that
+        builds several traces (box, stem) — or that delegates to another mark
+        body with the color already resolved — consumes exactly one slot."""
+        index = self._series_cursor
+        self._series_cursor += 1
+        return self.palette_color(index, stacklevel=stacklevel)
 
     # -- axis config --------------------------------------------------------
 

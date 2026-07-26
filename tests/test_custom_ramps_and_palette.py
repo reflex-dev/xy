@@ -220,7 +220,7 @@ def test_without_a_theme_palette_nothing_changes():
     assert "palette" not in spec, "the default palette must not bloat every spec"
 
 
-def test_explicit_color_still_beats_the_palette():
+def test_explicit_color_still_beats_the_palette_and_keeps_its_slot():
     chart = xy.line_chart(
         xy.line([0, 1], [0, 1], name="a", color="#ff00ff"),
         xy.line([0, 1], [0, 2], name="b"),
@@ -228,8 +228,142 @@ def test_explicit_color_still_beats_the_palette():
     )
     spec, _ = chart.figure().build_payload()
     colors = [t["style"]["color"] for t in spec["traces"]]
-    # The explicit color wins, and the palette still advances by trace index.
-    assert colors[0] == "#ff00ff" and colors[1] == PALETTE[1]
+    # The explicit color wins and does NOT consume a palette slot, so the
+    # first series that actually needs one still gets the brand's first color
+    # (matplotlib's property cycle behaves the same way).
+    assert colors[0] == "#ff00ff" and colors[1] == PALETTE[0]
+
+
+@pytest.mark.parametrize(
+    ("mark", "kwargs"),
+    [
+        (xy.line, {"x": [0, 1], "y": [0, 1]}),
+        (xy.area, {"x": [0, 1], "y": [1, 2]}),
+        (xy.scatter, {"x": [0, 1], "y": [0, 1]}),
+        (xy.box, {"values": [1, 2, 3, 4, 9]}),
+        (xy.violin, {"values": [1, 2, 3, 4, 2, 3, 9]}),
+        (xy.stem, {"x": [0, 1], "y": [0, 1]}),
+        (xy.errorbar, {"x": [0, 1], "y": [0, 1], "yerr": [0.1, 0.1]}),
+        (xy.error_band, {"x": [0, 1], "lower": [0, 1], "upper": [2, 3]}),
+        (xy.bar, {"x": [0, 1], "y": [1, 2]}),
+        (xy.hist, {"values": [1, 2, 2, 3, 3, 3]}),
+    ],
+)
+def test_every_mark_takes_exactly_one_palette_slot_per_series(mark, kwargs):
+    """A mark is one series, whatever its trace count.
+
+    `box` builds four traces and `stem` two. Cycling on `len(traces)` made
+    four boxes under a four-color palette all wear `palette[0]`, and made any
+    later series skip entries — this pins one slot per series instead.
+    """
+    chart = xy.chart(
+        xy.theme(palette=PALETTE),
+        *[mark(name=f"s{i}", **kwargs) for i in range(4)],
+    )
+    spec, _ = chart.figure().build_payload()
+    colors = [
+        (t.get("style") or {}).get("color") or (t.get("color") or {}).get("color")
+        for t in spec["traces"]
+        if t.get("name")
+    ]
+    assert colors == PALETTE[:4]
+
+
+def test_a_multi_trace_mark_does_not_shift_the_series_after_it():
+    chart = xy.chart(
+        xy.theme(palette=PALETTE),
+        xy.box(values=[1, 2, 3, 4, 9], x=[0] * 5, name="dist"),
+        xy.line([0, 1], [2, 3], name="a"),
+        xy.line([0, 1], [3, 4], name="b"),
+    )
+    spec, _ = chart.figure().build_payload()
+    named = [t for t in spec["traces"] if t.get("name")]
+    assert [t["style"]["color"] for t in named] == PALETTE[:3]
+
+
+def test_a_grouped_bar_takes_one_slot_per_series_it_emits():
+    chart = xy.chart(
+        xy.theme(palette=PALETTE),
+        xy.bar(x=["p", "q"], y=[[1, 2], [3, 4], [2, 1]], series=["s1", "s2", "s3"]),
+        xy.line([0, 1], [5, 6], name="after"),
+    )
+    spec, _ = chart.figure().build_payload()
+    named = [t for t in spec["traces"] if t.get("name")]
+    assert [t["style"]["color"] for t in named] == PALETTE[:4]
+
+
+def test_a_palette_map_pins_colors_to_category_labels():
+    x, y = _xy()
+    brand = {"setosa": "#4c72b0", "versicolor": "#dd8452", "virginica": "#55a868"}
+    cats = np.array(["setosa", "versicolor", "virginica"])[np.arange(len(x)) % 3]
+    chart = xy.scatter_chart(xy.scatter(x, y, color=cats), xy.theme(palette=brand))
+    spec, _ = chart.figure().build_payload()
+    color = spec["traces"][0]["color"]
+    assert color["categories"] == ["setosa", "versicolor", "virginica"]
+    assert color["palette"] == [brand[c] for c in color["categories"]]
+
+
+def test_a_palette_map_survives_a_panel_that_is_missing_a_category():
+    """The drift a positional cycle cannot avoid.
+
+    A facet panel holding only two of three species factorizes to codes 0 and
+    1, so a positional palette repaints them with the first two colors and the
+    same species means a different color in each panel."""
+    brand = {"setosa": "#4c72b0", "versicolor": "#dd8452", "virginica": "#55a868"}
+    x, y = _xy(60)
+
+    def palette_for(labels):
+        cats = np.array(labels)[np.arange(len(x)) % len(labels)]
+        chart = xy.scatter_chart(xy.scatter(x, y, color=cats), xy.theme(palette=brand))
+        spec, _ = chart.figure().build_payload()
+        color = spec["traces"][0]["color"]
+        return dict(zip(color["categories"], color["palette"], strict=True))
+
+    full = palette_for(["setosa", "versicolor", "virginica"])
+    partial = palette_for(["versicolor", "virginica"])
+    assert partial["versicolor"] == full["versicolor"] == brand["versicolor"]
+    assert partial["virginica"] == full["virginica"] == brand["virginica"]
+
+
+def test_categories_outside_the_palette_map_take_unused_defaults_and_warn():
+    x, y = _xy()
+    cats = np.array(["a", "b", "c"])[np.arange(len(x)) % 3]
+    with pytest.warns(RuntimeWarning, match="not in the xy.theme"):
+        chart = xy.scatter_chart(xy.scatter(x, y, color=cats), xy.theme(palette={"a": "#ff0000"}))
+        spec, _ = chart.figure().build_payload()
+    palette = spec["traces"][0]["color"]["palette"]
+    assert palette[0] == "#ff0000"
+    # Distinct, and never a repeat of a color the map already spent.
+    assert len(set(palette)) == 3
+
+
+def test_a_palette_map_still_cycles_plain_series():
+    chart = xy.line_chart(
+        *[xy.line([0, 1], [0, i], name=f"s{i}") for i in range(3)],
+        xy.theme(palette={"a": "#ff0000", "b": "#00ff00", "c": "#0000ff"}),
+    )
+    spec, _ = chart.figure().build_payload()
+    assert [t["style"]["color"] for t in spec["traces"]] == ["#ff0000", "#00ff00", "#0000ff"]
+    assert spec["palette"] == ["#ff0000", "#00ff00", "#0000ff"], "must ship colors, not labels"
+
+
+def test_a_list_of_css_colors_paints_those_colors_instead_of_factorizing():
+    """`["#ff0000", "#00ff00"]` is paint, not two categories to re-encode."""
+    chart = xy.scatter_chart(
+        xy.scatter([0.0, 1.0, 2.0], [0.0, 1.0, 2.0], color=["#ff0000", "#00ff00", "#0000ff"])
+    )
+    spec, _ = chart.figure().build_payload()
+    assert spec["traces"][0]["color"]["mode"] == "direct_rgba"
+    svg = chart.to_svg()
+    assert "255,0,0" in svg.replace(" ", "") or "#ff0000" in svg
+
+
+def test_named_colors_stay_categorical_because_a_column_can_hold_them():
+    chart = xy.scatter_chart(
+        xy.scatter([0.0, 1.0, 2.0], [0.0, 1.0, 2.0], color=["red", "green", "blue"])
+    )
+    spec, _ = chart.figure().build_payload()
+    assert spec["traces"][0]["color"]["mode"] == "categorical"
 
 
 def test_palette_shorter_than_the_categories_warns_before_it_repeats():

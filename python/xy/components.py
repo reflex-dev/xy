@@ -301,10 +301,11 @@ class ExportConfig(Component):
 @dataclass
 class Theme(Component):
     """Chart-wide style tokens (plot background, grid/axis/text colors) and
-    the categorical color cycle."""
+    the categorical color cycle — a positional list, or a `{category: color}`
+    map that pins colors to labels."""
 
     style: dict[str, StyleValue] = field(default_factory=dict)
-    palette: Optional[list[str]] = None
+    palette: Union[list[str], dict[str, str], None] = None
 
 
 @dataclass
@@ -2747,7 +2748,7 @@ def theme(
     crosshair_color: Optional[StyleValue] = None,
     selection_color: Optional[StyleValue] = None,
     selection_fill: Optional[StyleValue] = None,
-    palette: Optional[Sequence[str]] = None,
+    palette: Union[Sequence[str], Mapping[str, str], None] = None,
     **tokens: StyleValue,
 ) -> Theme:
     """Configure chart theme tokens.
@@ -2770,6 +2771,14 @@ def theme(
             series take in order, and the colors a categorical ``color=``
             channel assigns to its categories. Defaults to XY's CVD-safe
             eight-slot palette; a shorter list repeats (with a warning).
+
+            A ``{category: color}`` mapping pins colors to category *labels*
+            instead of positions, so a category keeps its color across marks
+            and across facet panels — including panels where some categories
+            are absent, which a positional cycle silently recolors. Categories
+            the map does not name take the next unused default color (with a
+            warning), and unnamed series cycle the map's values in order.
+
             Entries must be colors XY can resolve without a browser (hex,
             ``rgb()``, ``hsl()``, named), like colormap stops: a palette is
             indexed, and browser-only entries would collapse several categories
@@ -4081,8 +4090,11 @@ def _slot_styles_dict(value: Any, label: str) -> dict[str, dict[str, StyleValue]
     }
 
 
-def _palette_list(value: Any, label: str) -> Optional[list[str]]:
+def _palette_list(value: Any, label: str) -> Union[list[str], dict[str, str], None]:
     """A categorical color cycle: one or more CSS colors XY can resolve itself.
+
+    A `{category: color}` mapping pins colors to category *labels* instead;
+    both forms come back normalized to hex.
 
     Same rule as colormap stops, for the same reason. A palette is *indexed* —
     XY has to hand a concrete color to four consumers that have no DOM between
@@ -4103,8 +4115,21 @@ def _palette_list(value: Any, label: str) -> Optional[list[str]]:
     palette LUT. Resolved here once, every renderer reads the same bytes."""
     if value is None:
         return None
+    if isinstance(value, Mapping):
+        # `{category: color}` pins the mapping by *label*, so a category keeps
+        # its color no matter which panel it lands in or what else shares the
+        # chart. A sequence can only ever pin it by position.
+        mapping = {
+            str(category): _validate.resolved_hex_paint(
+                color, f"{label}[{category!r}]", "palette entries"
+            )
+            for category, color in value.items()
+        }
+        if not mapping:
+            raise ValueError(f"{label} must have at least one color")
+        return mapping
     if isinstance(value, str) or not hasattr(value, "__iter__"):
-        raise ValueError(f"{label} must be a sequence of CSS colors")
+        raise ValueError(f"{label} must be a sequence of CSS colors, or a {{category: color}} map")
     colors = [
         _validate.resolved_hex_paint(color, f"{label}[{index}]", "palette entries")
         for index, color in enumerate(value)

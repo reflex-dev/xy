@@ -11,7 +11,7 @@ cyclic). This module has no runtime role — it is imported only under
 
 from __future__ import annotations
 
-from typing import Any, Optional, Protocol
+from typing import Any, Optional, Protocol, Union
 
 from .columns import ColumnStore
 
@@ -37,7 +37,10 @@ class FigureHost(Protocol):
     colorbar_options: Optional[dict[str, Any]]
     show_modebar: bool
     show_tooltip: bool
-    palette: Optional[list[str]]
+    palette: Union[list[str], dict[str, str], None]
+
+    @property
+    def palette_cycle(self) -> Optional[list[str]]: ...
 
     def palette_color(self, index: int, *, stacklevel: int = 3) -> str: ...
 

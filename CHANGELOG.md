@@ -9,6 +9,14 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- `xy.theme(palette=...)` also accepts a **`{category: color}` mapping**, which
+  pins colors to category *labels* rather than positions. A positional cycle can
+  only ever say "the first category is blue", so the same category changes color
+  whenever the set of categories does — most visibly across facet panels, where
+  a panel missing one species silently repaints the other two. The mapping
+  survives that. Categories the map does not name take the next default color it
+  has not already spent, with a warning; unnamed series cycle the map's values
+  in order.
 - `colormap=` accepts a **custom ramp** built from your own colors, not only one
   of the twenty built-in names: a sequence of 2–256 CSS colors, `(position,
   color)` pairs, or a CSS `linear-gradient(...)`. Every form resolves once, in
@@ -81,6 +89,43 @@ in the README).
   never appended report exactly what they did before.
 
 ### Fixed
+- **The categorical palette cycled per trace instead of per series.** A box is
+  four traces and a stem is two, so four box series under a four-color
+  `xy.theme(palette=...)` all wore `palette[0]`, and eight box series drew two
+  colors out of the built-in eight. Adding an outlier to one series repainted a
+  different one, because it changed the trace count. Marks now take one slot per
+  logical series (`Figure.next_series_color`), a mark given an explicit `color=`
+  takes none — matching matplotlib's property cycle — and a multi-trace mark no
+  longer shifts every series after it.
+- **`x_axis(format=...)` / `y_axis(format=...)` were dropped by every static
+  exporter.** `format="$,.0f"` read `$1,000,000` in the browser and `1.0e6` in
+  the PNG exported from the same figure; `".1%"` read `15.0%` and `0.15`. The
+  SVG/raster path now shares the client's grammar, including the strftime subset
+  on time axes, and the left gutter grows for labels that need it instead of
+  running them off the canvas.
+- **A categorical `color=` channel produced no legend in any static export.**
+  One trace carries N categories, and the exporters listed rows per *named
+  trace*, so `color="species"` drew a single row bearing the trace's name and
+  the trace's constant color — a legend that misdescribed the three colors
+  printed beside it. Both exporters now expand categories the way the client
+  does.
+- **`text=` on `hline`/`vline`/bands/`threshold`/`arrow` was silently dropped by
+  the static exporters, and `xy.marker()` drew nothing at all.** Labels were
+  emitted for `text`/`callout` annotations only, and `marker` had no geometry
+  branch. Placement is now one shared helper ported from the client's
+  `_drawAnnotationLabels`, so the badge lands in the same place in all three
+  renderers.
+- **Log-axis decades below 1.0 all rendered as `0`.** Tick precision came from
+  the tick *step*, which is meaningless on a multiplicative axis: `0.001` and
+  `0.01` became two identical, wrong labels in the client and both exporters.
+  Sub-unit decades are now labeled from their own magnitude.
+- **A list of CSS colors was re-encoded as categories.**
+  `color=["#ff0000", "#00ff00", "#0000ff"]` factorized the three hex strings,
+  sorted them alphabetically, and repainted them from the palette, so the marks
+  came out in palette colors in the wrong order. `#rrggbb`/`rgb()`/`hsl()` lists
+  now paint the colors asked for. Named colors stay categorical on purpose: a
+  column of `["red", "green", "blue"]` is ordinary category data, and guessing
+  wrong there would turn an encoding into a paint.
 - The colorbar stringified its colormap, so a custom ramp reached it as an
   unparseable name and silently painted viridis while the marks beside it
   painted the ramp correctly.

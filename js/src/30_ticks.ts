@@ -207,12 +207,25 @@ function fmtTimeSpec(ms, format) {
   });
 }
 
+// Decade ticks are multiplicative, so the linear formatter's step-derived
+// precision rounds every decade under 1.0 to a bare "0" — 0.001 and 0.01 read
+// as two identical, wrong labels. Label these from their own magnitude.
+// Mirrored by `_fmt_log` in python/xy/_svg.py.
+export function fmtLog(v) {
+  const av = Math.abs(v);
+  if (av >= 1e6 || (av !== 0 && av < 1e-4)) return v.toExponential(1).replace("e+", "e");
+  const dec = av && av < 1 ? Math.max(0, Math.ceil(-Math.log10(av))) : 0;
+  return v.toFixed(Math.min(dec, 8));
+}
+
 export function fmtAxis(axis, v, tickStep) {
   if (axis && axis.kind === "category") return fmtCategory(v, axis.categories || []);
   if (axis && axis.kind === "time") return fmtTimeSpec(v, axis.format) || fmtTime(v, tickStep);
   const formatted = fmtNumberSpec(v, axis && axis.format);
-  if (axis && axis.scale === "log" && Number(v) > 0 && Number(v) < 1 && formatted === "0") {
-    return fmtLinear(v, tickStep);
+  if (axis && axis.scale === "log" && Number(v) > 0 && Number(v) < 1) {
+    // A fixed-decimal spec collapses sub-unit decades; so does the linear
+    // fallback. Either way the magnitude-derived label is the useful one.
+    if (formatted === null || Number(formatted.replace("%", "")) === 0) return fmtLog(v);
   }
   return formatted || fmtLinear(v, tickStep);
 }

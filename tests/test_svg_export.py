@@ -731,3 +731,139 @@ def test_segment_constant_translucent_color_applies_alpha_once() -> None:
         entry for entry in re.findall(r"<line[^>]*/>", opaque) if 'stroke="red"' in entry
     ]
     assert opaque_lines, "opaque constant color should pass through verbatim"
+
+
+# --- what the browser draws, the export must draw too -------------------------
+#
+# Every case here is one option the live client honored while all three static
+# exporters silently dropped it — the failure mode a user only discovers in the
+# PNG they already pasted into a report.
+
+
+def _texts(svg: str) -> list[str]:
+    """Rendered strings, whether a <text> holds them directly or in <tspan>s."""
+    return [
+        "".join(node.itertext()).strip()
+        for node in _parse(svg).iter("{http://www.w3.org/2000/svg}text")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("spec_format", "values", "expected"),
+    [
+        ("$,.0f", [1e6, 3e6, 5e6], "$1,000,000"),
+        (".1%", [0.1, 0.2, 0.3], "10.0%"),
+        (",.2f", [1000.0, 2000.0, 3000.0], "1,000.00"),
+    ],
+)
+def test_axis_format_reaches_the_static_export(spec_format, values, expected) -> None:
+    chart = xy.line_chart(
+        xy.line([1, 2, 3], values),
+        xy.y_axis(format=spec_format),
+        width=640,
+        height=380,
+    )
+    assert expected in _texts(chart.to_svg())
+
+
+def test_time_axis_format_reaches_the_static_export() -> None:
+    import datetime as dt
+
+    days = [dt.datetime(2024, month, 1) for month in (1, 3, 5)]
+    chart = xy.line_chart(
+        xy.line(days, [1, 2, 3]),
+        xy.x_axis(type_="time", format="%Y-%m"),
+        width=680,
+        height=380,
+    )
+    assert "2024-01" in _texts(chart.to_svg())
+
+
+def test_an_unparseable_format_falls_back_instead_of_erroring() -> None:
+    chart = xy.line_chart(xy.line([1, 2, 3], [1, 2, 3]), xy.y_axis(format="nonsense"))
+    assert "1.0" in _texts(chart.to_svg())
+
+
+def test_log_decades_below_one_get_distinct_labels() -> None:
+    """0.001 and 0.01 both rendered as a bare "0": two identical, wrong labels.
+
+    A log axis steps multiplicatively, so precision taken from the tick step
+    is meaningless below 1.0."""
+    chart = xy.line_chart(
+        xy.line([1, 2, 3], [0.001, 0.01, 1.0]),
+        xy.y_axis(type_="log"),
+        width=560,
+        height=340,
+    )
+    labels = [t for t in _texts(chart.to_svg()) if t.startswith("0")]
+    assert labels, "expected sub-unit decade labels"
+    assert len(labels) == len(set(labels)), f"duplicate decade labels: {labels}"
+
+
+def test_formatted_labels_widen_the_gutter_instead_of_running_off_the_canvas() -> None:
+    wide = xy.line_chart(
+        xy.line([1, 2, 3], [1e9, 2e9, 3e9]),
+        xy.y_axis(format="$,.0f"),
+        width=640,
+        height=380,
+    )
+    svg = wide.to_svg()
+    plot_x = float(re.search(r'<rect x="([0-9.]+)"', svg).group(1))
+    starts = [float(x) for x, text in re.findall(r'<text x="(-?[0-9.]+)"[^>]*>([^<]+)</text>', svg)]
+    assert min(starts) >= 0.0, "a tick label was placed off the left edge"
+    assert plot_x > 62, "the gutter must grow for $1,000,000,000-wide labels"
+
+
+def test_an_ordinary_chart_keeps_its_historical_gutter() -> None:
+    svg = xy.line_chart(xy.line([1, 2, 3], [1, 2, 3]), width=640, height=380).to_svg()
+    assert re.search(r'<rect x="62"', svg), "auto-sizing must only ever widen"
+
+
+def test_a_categorical_color_channel_gets_one_legend_row_per_category() -> None:
+    """One trace, three categories: the export drew a single row bearing the
+    trace name and the trace's constant color — a legend that misdescribed the
+    three colors printed beside it."""
+    species = ["setosa"] * 4 + ["versicolor"] * 4 + ["virginica"] * 4
+    chart = xy.scatter_chart(
+        xy.scatter(list(range(12)), list(range(12)), color=species, name="iris"),
+        xy.legend(),
+        width=560,
+        height=380,
+    )
+    svg = chart.to_svg()
+    assert {"setosa", "versicolor", "virginica"} <= set(_texts(svg))
+    assert "iris" not in _texts(svg), "the trace name must not stand in for the categories"
+
+
+def test_categorical_legend_swatches_use_the_category_colors() -> None:
+    species = ["a"] * 3 + ["b"] * 3
+    chart = xy.scatter_chart(
+        xy.scatter(list(range(6)), list(range(6)), color=species, name="s"),
+        xy.theme(palette=["#ff0000", "#0000ff"]),
+        xy.legend(),
+    )
+    svg = chart.to_svg()
+    assert "#ff0000" in svg and "#0000ff" in svg
+
+
+@pytest.mark.parametrize(
+    ("annotation", "label"),
+    [
+        (lambda: xy.hline(y=2, text="target"), "target"),
+        (lambda: xy.vline(x=2, text="launch"), "launch"),
+        (lambda: xy.x_band(x0=1.2, x1=1.8, text="window"), "window"),
+        (lambda: xy.marker(x=2, y=3, text="peak"), "peak"),
+        (lambda: xy.arrow(x0=1, y0=1, x1=2, y1=3, text="rise"), "rise"),
+    ],
+)
+def test_annotation_text_reaches_the_static_export(annotation, label) -> None:
+    chart = xy.line_chart(xy.line([1, 2, 3], [1, 3, 2]), annotation(), width=680, height=400)
+    assert label in _texts(chart.to_svg())
+
+
+def test_a_marker_annotation_draws_its_glyph_not_just_its_label() -> None:
+    plain = xy.line_chart(xy.line([1, 2, 3], [1, 3, 2]), width=680, height=400).to_svg()
+    marked = xy.line_chart(
+        xy.line([1, 2, 3], [1, 3, 2]), xy.marker(x=2, y=3), width=680, height=400
+    ).to_svg()
+    assert marked.count("<circle") == plain.count("<circle") + 1

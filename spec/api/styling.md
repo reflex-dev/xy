@@ -276,9 +276,17 @@ but they fail differently, and only the numeric grammar falls back.
   `fmtNumberSpec` returns `null` and `fmtAxis` takes its `|| fmtLinear(...)`
   branch (`js/src/30_ticks.ts`), so the axis silently reverts to the automatic
   formatter. On a log axis, a value in `(0, 1)` that the spec would render as
-  `"0"` falls back the same way. The same grammar formats tooltip fields
-  (`xy.tooltip(format=...)`, `js/src/52_tooltip.ts`). Static SVG/PNG exports
-  do not yet consult `format` — automatic labels only (known gap).
+  `"0"` takes `fmtLog` instead, which labels the decade from its own magnitude
+  (`0.001`), because both the spec and the linear fallback collapse sub-unit
+  decades to a bare `"0"`. The same grammar formats tooltip fields
+  (`xy.tooltip(format=...)`, `js/src/52_tooltip.ts`). The static exporters
+  consult `format` too: `_fmt_number_spec` / `_fmt_time_spec` / `_fmt_log` in
+  `python/xy/_svg.py` are ports of the same three functions, deliberately
+  restricted to the same grammar so an axis cannot read `$1,000,000` in the
+  browser and `1.0e6` in the exported PNG. Formatted labels are wider than
+  automatic ones, so `layout()` measures them and widens the left gutter when
+  they need it (`_left_tick_label_room`); a chart whose labels already fit keeps
+  its previous geometry byte for byte.
 - **Time axes** accept a strftime subset of exactly `%Y %m %d %H %M %S %b %B`.
   All fields are **UTC**; `%b`/`%B` are English month names. A time spec
   **never** falls back: `fmtTimeSpec` (`js/src/30_ticks.ts:180-200`)
