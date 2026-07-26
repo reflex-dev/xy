@@ -268,7 +268,14 @@ rebuilt otherwise:
   the kernel makes it *hold* in the common case by keeping each column's
   encode offset sticky across appends while every value stays within one
   span of it (`Column.suggest_offset`, ≤1 f32 mantissa bit vs a fresh
-  midpoint — a right-growing stream never exceeds that bound).
+  midpoint — a right-growing stream never exceeds that bound). The kernel
+  exploits the same prefix stability itself: a whole-column geometry ship is
+  served from a per-column f32 encode cache (`Column.encoded_f32`, a
+  capacity-doubling buffer mirroring `Column.append`), so each streaming
+  tick encodes only the appended rows — O(rows appended) CPU per tick, not
+  O(N) per column. Offset/scale changes or filtered/masked ships fall back
+  to a full fresh encode, which is always correct; the cache bytes are
+  itemized in `memory_report()` as `encode_cache_bytes`.
 - Any precondition failure falls back to destroy + rebuild of that trace,
   which is always correct.
 

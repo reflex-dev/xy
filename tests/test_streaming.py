@@ -396,6 +396,72 @@ def test_ship_offset_recenters_when_stale_center_leaves_domain():
     assert col.suggest_offset() == 4.5  # re-centered to the fresh midpoint
 
 
+# --------------------------------------------------------------------------
+# Tail-only re-encode — the kernel-side twin of the client's tail upload.
+# The sticky offset keeps the encoding prefix-stable, so a streaming tick must
+# pay O(appended rows) in encode_f32, not O(N) per column per tick.
+# --------------------------------------------------------------------------
+
+
+def test_append_reencodes_only_the_tail(monkeypatch):
+    n = 4096
+    fig = Figure().scatter(np.arange(float(n)), np.sin(np.arange(float(n))))
+    fig.build_payload_split()  # first build encodes (and caches) full columns
+
+    calls: list[int] = []
+    real = kernels.encode_f32
+
+    def spy(values, offset, scale=1.0):
+        calls.append(len(values))
+        return real(values, offset, scale)
+
+    monkeypatch.setattr(kernels, "encode_f32", spy)
+    fig.append(0, [float(n)], [0.5])
+    assert calls, "append must encode the appended tail"
+    # Tail-only: the O(N) full-column re-encode is the regression this pins.
+    assert max(calls) <= 16, f"append re-encoded a full column: {max(calls)} rows"
+
+
+def test_append_cached_encode_matches_full_reencode():
+    fig = Figure().scatter(np.arange(64.0), np.arange(64.0) * 2)
+    fig.build_payload_split()
+    msg, buffers = None, None
+    for i in range(4):
+        msg, buffers = fig.append(0, [64.0 + i], [128.0 + 2.0 * i])
+    spec = msg["spec"]
+    t = fig.traces[0]
+    for axis, col in (("x", t.x), ("y", t.y)):
+        meta, got = _column_bytes(spec, buffers, spec["traces"][0][axis])
+        ref = kernels.encode_f32(col.values, meta["offset"], meta["scale"]).tobytes()
+        assert got == ref, axis
+
+
+def test_shipped_buffers_survive_later_appends_and_recenter():
+    # Split-mode buffers are zero-copy views. Later appends write only past
+    # the shipped prefix, and a cache invalidation (offset recenter) must
+    # re-encode into a *fresh* buffer — never mutate memory a previously
+    # shipped payload may still borrow (widget reopen state holds it).
+    fig = Figure().scatter(np.arange(100.0), np.arange(100.0))
+    fig.build_payload_split()
+    _, bufs1 = fig.append(0, [100.0], [100.0])
+    snap = [bytes(b) for b in bufs1]
+    fig.append(0, [101.0], [101.0])  # tail extension
+    t = fig.traces[0]
+    t.x._ship_offset = 1e9  # stale center leaves the domain -> recenter
+    t.y._ship_offset = 1e9
+    fig.append(0, [102.0], [102.0])  # full re-encode under a new offset
+    assert [bytes(b) for b in bufs1] == snap
+
+
+def test_memory_report_itemizes_encode_cache_bytes():
+    n = 256
+    fig = Figure().scatter(np.arange(float(n)), np.arange(float(n)) * 3)
+    report = fig.memory_report()  # builds a payload, so the caches are warm
+    assert report["encode_cache_bytes"] >= 2 * n * 4  # x and y f32 caches
+    for entry in report["columns"]:
+        assert entry["encode_cache_bytes"] >= n * 4
+
+
 def test_decimated_entries_record_their_px_width():
     from xy.config import DECIMATION_THRESHOLD
 

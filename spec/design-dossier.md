@@ -994,6 +994,13 @@ Rules that make the mode targets in §2 real:
    `resident_array_bytes` is built from the capacity total — equal to `canonical_bytes`
    for any figure that never appended. Continuous channels already reported their own
    growth buffers this way; columns now match.
+   Second corollary: every whole-column geometry ship keeps the encoded f32 result as
+   a per-column cache (`Column.encoded_f32`) so a streaming append re-encodes only the
+   appended tail (§5) — +4 B/point of resident RAM per shipped column (even when the
+   canonical column is memmapped), itemized per column and totaled as
+   `encode_cache_bytes`. It is a rebuildable derived cache under rule 1: any
+   offset/scale change or values rebinding drops it for a full re-encode into a fresh
+   buffer, never overwriting bytes a previously shipped split payload still borrows.
 5. **Canonical may be out-of-core (native `mmap`).** The "mmap (native)" cell in the
    table above is realized: a canonical column may be backed by a disk `np.memmap`
    instead of RAM. Because a memmap is a transparent `ndarray` — same dedup key, same

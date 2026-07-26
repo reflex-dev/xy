@@ -89,6 +89,15 @@ class _PayloadWriter:
             if lod.pins_offset_to_zero(scale)
             else col.suggest_offset()
         )
+        if values is col.values and len(values):
+            # Whole-column identity ship: serve the column's f32 encode cache,
+            # which re-encodes only the rows appended since the last build —
+            # the kernel-side twin of the client's tail-only GPU upload.
+            # Filtered/decimated/masked views take the fresh-encode path below.
+            offset_f = float(offset)
+            f32_scale = lod.f32_safe_scale(offset_f, float(col.min), float(col.max))
+            enc = col.encoded_f32(offset_f, f32_scale)
+            return self._append(enc, {"offset": offset_f, "scale": f32_scale, "kind": col.kind})
         encoded = lod.encode_f32_values(
             values,
             offset,

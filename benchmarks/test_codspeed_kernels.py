@@ -1074,6 +1074,24 @@ def test_stream_line_append(benchmark, append_data):
     assert buffers
 
 
+def test_stream_scatter_append_direct(benchmark, append_data):
+    """Direct-tier scatter append: the tail-only f32 re-encode keeps the
+    refresh proportional to the appended batch, not the accumulated rows
+    (`Column.encoded_f32`; wire-protocol §4). `density=False` pins the
+    direct tier so accumulation across iterations never flips the path."""
+    x, y, tail_x, tail_y = append_data
+    fig = xy.chart(xy.scatter(x=x, y=y, density=False)).figure()
+    fig.build_payload(N_BUCKETS)
+
+    def append_next():
+        return fig.append(0, tail_x, tail_y)
+
+    update, buffers = benchmark(append_next)
+    assert update["spec"]["traces"][0]["tier"] == "direct"
+    assert update["spec"]["traces"][0]["n_points"] >= APPEND_N + APPEND_BATCH
+    assert buffers
+
+
 def test_stream_density_append_incremental_pyramid(benchmark, pyramid_data):
     """Stable-domain density append with an in-place native pyramid update."""
     x, y = pyramid_data
