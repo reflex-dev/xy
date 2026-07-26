@@ -27,6 +27,10 @@ def test_the_xy_counts_match_the_registry() -> None:
 
     assert f"{counts['mark_style_properties_shipped']} shipped mark style properties" in text
     assert f"{counts['chart_slots']} chrome slots" in text
+    # Added after a fresh-agent evaluation caught this line quoting 15 axis
+    # keys once a 16th had shipped. Every count the document states is pinned;
+    # an unpinned one is the drift this whole chain exists to prevent.
+    assert f"{counts['axis_style_keys']} axis keys" in text
 
 
 def test_every_row_names_its_method() -> None:
