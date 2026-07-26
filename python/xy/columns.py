@@ -210,6 +210,17 @@ class Column:
         return len(self.values)
 
     @property
+    def capacity_bytes(self) -> int:
+        """Bytes this column actually holds, slack included.
+
+        `append` keeps values as a prefix view of a capacity-doubling buffer, so
+        after a stream of appends the allocation can be up to twice
+        `values.nbytes`. The memory report needs the real number (§27).
+        """
+        grow = getattr(self, "_grow", None)
+        return int(grow.nbytes if grow is not None else self.values.nbytes)
+
+    @property
     def zone(self) -> ZoneMaps:
         """Materialize deferred statistics at most once."""
         if self._zone is None:
@@ -456,23 +467,36 @@ class ColumnStore:
         OS as a reclaimable cache, so they do not sit in the process's resident
         set the way an in-RAM column does. ``canonical_bytes`` therefore stays
         the honest RAM-resident canonical figure (unchanged for all-RAM
-        figures, where ``canonical_mapped_bytes`` is 0)."""
+        figures, where ``canonical_mapped_bytes`` is 0).
+
+        A streamed column's values are a prefix *view* of its capacity-doubling
+        growth buffer (`Column.append`), so up to half of what it holds is slack
+        that `values.nbytes` cannot see. That slack is resident RAM like any
+        other allocation, so each column also reports ``capacity_bytes`` and the
+        report totals them as ``canonical_capacity_bytes`` — equal to
+        ``canonical_bytes`` for every never-appended figure, and the number the
+        resident total is built from (channels already report their own growth
+        buffers this way)."""
         resident = 0
+        resident_capacity = 0
         mapped = 0
         columns = []
         for c in self._columns:
             nbytes = int(c.values.nbytes)
+            capacity = int(c.capacity_bytes)
             memmapped = _ooc.is_memmapped(c.values)
             if memmapped:
                 mapped += nbytes
             else:
                 resident += nbytes
+                resident_capacity += capacity
             columns.append(
                 {
                     "id": c.id,
                     "kind": c.kind,
                     "len": len(c),
                     "bytes": nbytes,
+                    "capacity_bytes": capacity,
                     "backing": "memmap" if memmapped else "ram",
                     "ingest_copies": c.ingest_copies,
                     "null_count": c.zone.null_count,
@@ -480,6 +504,7 @@ class ColumnStore:
             )
         return {
             "canonical_bytes": resident,
+            "canonical_capacity_bytes": resident_capacity,
             "canonical_mapped_bytes": mapped,
             "columns": columns,
         }

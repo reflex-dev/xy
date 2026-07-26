@@ -180,15 +180,50 @@ Object.assign(ChartView.prototype, {
     return lo + v * (hi - lo);
   },
 
-  _defaultTooltipLines(row) {
-    const lines = [];
-    if (row.x !== undefined) lines.push(`x: ${fmtValue(row.x, row.x_kind)}`);
-    if (row.y !== undefined) lines.push(`y: ${fmtValue(row.y, row.y_kind)}`);
-    if (row.color_value !== undefined) lines.push(`color: ${fmtValue(row.color_value)}`);
-    if (row.color_category !== undefined) lines.push(`${row.color_category}`);
-    if (row.size_value !== undefined) lines.push(`size: ${fmtValue(row.size_value)}`);
-    if (!lines.length) lines.push(`#${row.index}`);
-    return lines;
+  _defaultTooltipLabel(channel, fallback, labels, aliases) {
+    for (const [field, alias] of Object.entries(aliases)) {
+      if (alias === channel && typeof labels[field] === "string") {
+        return { label: labels[field], customized: true };
+      }
+    }
+    if (typeof labels[fallback] === "string") {
+      return { label: labels[fallback], customized: true };
+    }
+    return { label: fallback, customized: false };
+  },
+
+  _defaultTooltipItems(row, labels = {}, aliases = {}) {
+    const items = [];
+    if (row.x !== undefined) {
+      const { label } = this._defaultTooltipLabel("x", "x", labels, aliases);
+      items.push({ kind: "field", label, value: fmtValue(row.x, row.x_kind) });
+    }
+    if (row.y !== undefined) {
+      const { label } = this._defaultTooltipLabel("y", "y", labels, aliases);
+      items.push({ kind: "field", label, value: fmtValue(row.y, row.y_kind) });
+    }
+    if (row.color_value !== undefined) {
+      const { label } = this._defaultTooltipLabel(
+        "color_value", "color", labels, aliases,
+      );
+      items.push({ kind: "field", label, value: fmtValue(row.color_value) });
+    }
+    if (row.color_category !== undefined) {
+      const { label, customized } = this._defaultTooltipLabel(
+        "color_category", "color", labels, aliases,
+      );
+      items.push(customized
+        ? { kind: "field", label, value: String(row.color_category) }
+        : { kind: "value", value: String(row.color_category) });
+    }
+    if (row.size_value !== undefined) {
+      const { label } = this._defaultTooltipLabel(
+        "size_value", "size", labels, aliases,
+      );
+      items.push({ kind: "field", label, value: fmtValue(row.size_value) });
+    }
+    if (!items.length) items.push({ kind: "value", value: `#${row.index}` });
+    return items;
   },
 
   _tooltipLookup(row, field) {
@@ -204,27 +239,65 @@ Object.assign(ChartView.prototype, {
     return fmtValue(value, kind);
   },
 
-  _tooltipLines(row) {
+  _tooltipItems(row) {
     const tooltip = this.spec.tooltip || {};
-    if (!tooltip.title && !Array.isArray(tooltip.fields)) return this._defaultTooltipLines(row);
+    const labels = tooltip.labels || {};
+    const aliases = tooltip.aliases || {};
+    if (!tooltip.title && !Array.isArray(tooltip.fields)) {
+      return this._defaultTooltipItems(row, labels, aliases);
+    }
     const formats = tooltip.format || {};
-    const lines = [];
+    const items = [];
     if (typeof tooltip.title === "string") {
       const title = tooltip.title.replace(/\{([^}]+)\}/g, (_, field) => {
         const [value, kind] = this._tooltipLookup(row, field);
         return value === undefined ? "" : this._formatTooltipValue(value, kind, formats[field]);
       });
-      if (title) lines.push(title);
+      if (title) items.push({ kind: "title", value: title });
     }
     if (Array.isArray(tooltip.fields)) {
       for (const field of tooltip.fields) {
         if (typeof field !== "string") continue;
         const [value, kind] = this._tooltipLookup(row, field);
         if (value === undefined) continue;
-        lines.push(`${field}: ${this._formatTooltipValue(value, kind, formats[field])}`);
+        items.push({
+          kind: "field",
+          label: typeof labels[field] === "string" ? labels[field] : field,
+          value: this._formatTooltipValue(value, kind, formats[field]),
+        });
       }
     }
-    return lines.length ? lines : this._defaultTooltipLines(row);
+    return items.length ? items : this._defaultTooltipItems(row, labels, aliases);
+  },
+
+  _tooltipLines(items) {
+    return items.map((item) => (
+      item.kind === "field" ? `${item.label}: ${item.value}` : item.value
+    ));
+  },
+
+  _renderBuiltinTooltip(items) {
+    this.tooltip.textContent = "";
+    for (const item of items) {
+      const row = document.createElement("div");
+      if (item.kind === "title") {
+        this._applySlot(row, "tooltip_title");
+        row.textContent = item.value;
+      } else {
+        this._applySlot(row, "tooltip_row");
+        if (item.kind === "field") {
+          const label = document.createElement("span");
+          this._applySlot(label, "tooltip_label");
+          label.textContent = item.label;
+          row.appendChild(label);
+        }
+        const value = document.createElement("span");
+        this._applySlot(value, "tooltip_value");
+        value.textContent = item.value;
+        row.appendChild(value);
+      }
+      this.tooltip.appendChild(row);
+    }
   },
 
   // Anchor in data space so view changes carry the tooltip with its point.
@@ -296,15 +369,12 @@ Object.assign(ChartView.prototype, {
       this._hideTooltip();
       return;
     }
-    const lines = this._tooltipLines(row);
+    const items = this._tooltipItems(row);
+    const lines = this._tooltipLines(items);
     if (!this._customTooltip) {
-      // Text nodes, not innerHTML: category labels are user data and must never
-      // be parsed as markup (a category named "<img onerror=…>" is just a label).
-      this.tooltip.textContent = "";
-      lines.forEach((ln, i) => {
-        if (i) this.tooltip.appendChild(document.createElement("br"));
-        this.tooltip.appendChild(document.createTextNode(ln));
-      });
+      // textContent/text nodes, not innerHTML: field labels and category
+      // values are user data and must never be parsed as markup.
+      this._renderBuiltinTooltip(items);
     }
     if (this.a11yLive && options.announce !== false) {
       const prefix = this._a11yKeyboardReadout;

@@ -9,7 +9,8 @@ Explore polished chart treatments built for real product interfaces. Each
 responsive preview includes the complete Python needed to recreate it. Switch
 to **Code** for the implementation; examples with more than 10 lines of
 hardcoded inputs add a separate **Data** tab. Compare the patterns, or recolor
-the live playground.
+the live playground with a preset or your own three brand colors.
+[Jump to the palette playground →](#palette-playground)
 
 Each preview displays a compact legend above the plot. The copied chart uses
 `xy.legend(show=False)` so it does not render a second legend; replace it with
@@ -816,8 +817,11 @@ def release_velocity():
 
 ## Palette playground
 
-Choose a preset to recolor a responsive grid of area and bar charts in real
-time. Copy any card when the palette and chart treatment fit your product.
+Choose a preset or edit the Primary, Secondary, and Accent colors to recolor a
+responsive grid of area and bar charts in real time. Manual edits switch the
+palette to **Custom**; **Reset** restores Berry. Copy any card when the palette
+and chart treatment fit your product—the generated code uses
+`xy.theme(palette=...)` where a chart-wide series cycle is the clearest fit.
 
 ~~~python exec
 from xy_docs.playground import chart_playground

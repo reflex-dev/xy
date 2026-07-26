@@ -632,9 +632,21 @@ def quantize_unit_u8(values: npt.NDArray[np.float64], domain: tuple[float, float
     The lossy sibling of :func:`normalize_to_unit`, for wire paths where the
     value is only ever a GPU LUT/ramp coordinate (a colormap texture has 256
     texels; a size ramp spans ~16 px) and is never read back into a displayed
-    number — 75% less traffic than f32, same rendered output (§29)."""
-    unit = normalize_to_unit(values, domain)
-    return np.rint(np.clip(unit, 0.0, 1.0) * 255.0).astype(np.uint8)
+    number — 75% less traffic than f32, same rendered output (§29).
+
+    Chunk-bounded like the other quantizers (`_QUANTIZE_CHUNK`): the arithmetic
+    is element-wise and stays in f32 exactly as the one-shot chain did, so the
+    bytes are identical while the transient stays independent of N."""
+    out = np.empty(len(values), dtype=np.uint8)
+    for start in range(0, len(values), _QUANTIZE_CHUNK):
+        end = start + _QUANTIZE_CHUNK
+        # Fresh f32 kernel output: clip/scale/round can all run in place on it.
+        unit = normalize_to_unit(values[start:end], domain)
+        np.clip(unit, 0.0, 1.0, out=unit)
+        unit *= 255.0
+        np.rint(unit, out=unit)
+        out[start:end] = unit.astype(np.uint8)
+    return out
 
 
 def colormap_lut_rgba8(colormap: Colormap) -> npt.NDArray[np.uint8]:
@@ -729,7 +741,15 @@ def bins_mean_color(cc: Optional[ColorChannel]) -> bool:
 # (~20 GB at 1e9 rows — the difference between a colored billion-point build
 # fitting in RAM or not), while chunked passes keep every temporary at chunk
 # size and the only N-sized allocation is the u8 result.
-_QUANTIZE_CHUNK = 1 << 22
+#
+# The chunk is sized so a whole pass (one f32 normalize output + one f64 stage
+# array + the u8 slice) stays inside a core's private cache rather than
+# streaming through DRAM: at 2^18 rows that is ~3 MB of live temporary, versus
+# ~50 MB at 2^22, where "chunked" still meant a 4M-row f64 pipeline for every
+# real-world column (a 2.1M-row colored trace fit in a single chunk and paid
+# the full one-shot peak). Bigger chunks buy nothing — the per-chunk Python
+# overhead is already amortized thousands of elements ago.
+_QUANTIZE_CHUNK = 1 << 18
 
 
 def _quantized_lut_idx(values: npt.NDArray[np.float64], domain: tuple[float, float]) -> np.ndarray:
@@ -738,12 +758,17 @@ def _quantized_lut_idx(values: npt.NDArray[np.float64], domain: tuple[float, flo
     Per-element math is exactly the historical one-shot chain —
     `normalize_to_unit` (f32), widen to f64, ×255, `rint`, cast u8 — applied
     per chunk, so results are bitwise identical while peak memory stays
-    O(chunk) + the N-byte output."""
+    O(chunk) + the N-byte output. The ×255/`rint` stages run in place on the
+    widened copy, so one f64 chunk buffer serves the whole pipeline."""
     out = np.empty(len(values), dtype=np.uint8)
     for start in range(0, len(values), _QUANTIZE_CHUNK):
         end = start + _QUANTIZE_CHUNK
-        unit = normalize_to_unit(values[start:end], domain)
-        out[start:end] = np.rint(np.asarray(unit, dtype=np.float64) * 255.0).astype(np.uint8)
+        # `normalize_to_unit` hands back a fresh f32 kernel output, so the
+        # widened copy below is ours to mutate.
+        scaled = np.asarray(normalize_to_unit(values[start:end], domain), dtype=np.float64)
+        scaled *= 255.0
+        np.rint(scaled, out=scaled)
+        out[start:end] = scaled.astype(np.uint8)
     return out
 
 
@@ -752,8 +777,11 @@ def _quantized_rgba8(values: npt.NDArray[np.float64]) -> np.ndarray:
     out = np.empty(values.shape, dtype=np.uint8)
     for start in range(0, len(values), _QUANTIZE_CHUNK):
         end = start + _QUANTIZE_CHUNK
-        seg = values[start:end]
-        out[start:end] = np.rint(np.clip(seg, 0.0, 1.0) * 255.0).astype(np.uint8)
+        # `clip` copies the input rows; the rest of the chain reuses that copy.
+        seg = np.clip(values[start:end], 0.0, 1.0)
+        seg *= 255.0
+        np.rint(seg, out=seg)
+        out[start:end] = seg.astype(np.uint8)
     return out
 
 
@@ -832,9 +860,9 @@ def ship_channels(
     `quantize_continuous` ships continuous color/size as u8 LUT coordinates
     (`dtype: "u8"` marker) instead of unit f32. Live-interaction paths opt in:
     their hover/pick answers come from the server's canonical columns, so the
-    quantization is invisible. The build path must NOT opt in — it retains the
-    shipped columns CPU-side (`_cpu.color`/`_cpu.size`) and denormalizes them
-    for tooltip readouts, where 8-bit steps would show as wrong digits.
+    quantization is invisible. The build path must NOT opt in — the client keeps
+    the shipped columns CPU-side and denormalizes them for tooltip readouts,
+    where 8-bit steps would show as wrong digits.
     Returns (color_spec, size_spec)."""
     cc = trace.color_ch or ColorChannel(mode="constant", constant=None)
     color_spec = ship_color_channel(
@@ -871,7 +899,10 @@ def ship_color_channel(
         if rgba is None:
             raise ValueError("direct RGBA color channel missing values")
         values = rgba if sel is None else rgba[sel]
-        packed = np.rint(np.clip(values, 0.0, 1.0) * 255.0).astype(np.uint8)
+        # Same per-element chain as the historical one-shot expression, but
+        # chunk-bounded: a full-column direct-RGBA trace otherwise holds three
+        # 32-bytes-per-point f64 temporaries at once (§27).
+        packed = _quantized_rgba8(values)
         color_spec["buf"] = ship_u8(packed.reshape(-1))
         color_spec["n"] = int(len(values))
     elif cc.mode == "match_fill":

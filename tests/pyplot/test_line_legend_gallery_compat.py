@@ -401,9 +401,9 @@ def test_raster_legend_frame_strokes_all_four_sides(monkeypatch):
     recorded: list[tuple[list[tuple[float, float]], bool]] = []
     original_stroke = _raster._Cmd.stroke
 
-    def record_stroke(self, pts, width, color, closed=False, dash=None):
+    def record_stroke(self, pts, width, color, closed=False, dash=None, cap="round"):
         recorded.append(([tuple(map(float, point)) for point in pts], bool(closed)))
-        return original_stroke(self, pts, width, color, closed=closed, dash=dash)
+        return original_stroke(self, pts, width, color, closed=closed, dash=dash, cap=cap)
 
     monkeypatch.setattr(_raster._Cmd, "stroke", record_stroke)
 
@@ -427,13 +427,108 @@ def test_raster_legend_frame_strokes_all_four_sides(monkeypatch):
     matches = [
         closed
         for pts, closed in recorded
-        if len(pts) == 4
-        and all(
-            abs(pts[index][axis] - corners[index][axis]) < 1e-6
-            for index in range(4)
-            for axis in (0, 1)
-        )
+        if abs(min(point[0] for point in pts) - corners[0][0]) < 1e-6
+        and abs(max(point[0] for point in pts) - corners[1][0]) < 1e-6
+        and abs(min(point[1] for point in pts) - corners[0][1]) < 1e-6
+        and abs(max(point[1] for point in pts) - corners[2][1]) < 1e-6
     ]
-    assert matches, [pts for pts, _ in recorded if len(pts) == 4]
+    assert matches, [pts for pts, _ in recorded]
     # Four corners stroked open would leave the closing left edge unpainted.
     assert all(matches), "legend frame stroked as an open polyline (left edge missing)"
+
+
+def test_raster_legend_rounds_frame_and_shadow_only_when_requested():
+    class Recorder:
+        def __init__(self):
+            self.fills = []
+            self.strokes = []
+
+        def fill(self, pts, _color):
+            self.fills.append(list(pts))
+
+        def stroke(self, pts, _width, _color, closed=False, dash=None, cap="round"):
+            self.strokes.append((list(pts), closed))
+
+        def text(self, *_args, **_kwargs):
+            pass
+
+    named = [{"name": "line", "kind": "line", "style": {}}]
+    plot = {"x": 0.0, "y": 0.0, "w": 240.0, "h": 160.0}
+
+    rounded = Recorder()
+    _raster._emit_legend(
+        rounded,
+        named,
+        plot,
+        {
+            "style": {
+                "background": "#ffffff",
+                "borderRadius": "4px",
+                "boxShadow": "0 2px 8px rgba(0,0,0,.3)",
+            }
+        },
+    )
+    assert len(rounded.fills) == 2
+    assert all(len(points) > 4 for points in rounded.fills)
+    rounded_frame = [points for points, closed in rounded.strokes if closed]
+    assert len(rounded_frame) == 1
+    assert len(rounded_frame[0]) > 4
+
+    square = Recorder()
+    _raster._emit_legend(
+        square,
+        named,
+        plot,
+        {"style": {"background": "#ffffff", "boxShadow": "0 2px 8px rgba(0,0,0,.3)"}},
+    )
+    assert [len(points) for points in square.fills] == [4, 4]
+    square_frame = [points for points, closed in square.strokes if closed]
+    assert len(square_frame) == 1
+    assert len(square_frame[0]) == 4
+
+
+def test_raster_line_only_legend_symbols_receive_visible_strokes():
+    class Recorder:
+        def __init__(self):
+            self.points = []
+
+        def fill(self, *_args, **_kwargs):
+            pass
+
+        def stroke(self, *_args, **_kwargs):
+            pass
+
+        def text(self, *_args, **_kwargs):
+            pass
+
+        def point(self, _x, _y, _r, symbol, _fill, width, stroke):
+            self.points.append((symbol, width, stroke))
+
+    recorder = Recorder()
+    _raster._emit_legend(
+        recorder,
+        [
+            {
+                "name": "plus",
+                "kind": "scatter",
+                "style": {"symbol": "plus_line", "color": "#123456"},
+            },
+            {
+                "name": "x",
+                "kind": "scatter",
+                "style": {
+                    "symbol": "x_line",
+                    "color": "#abcdef",
+                    "stroke": "#ff0000",
+                    "stroke_width": 2.5,
+                },
+            },
+        ],
+        {"x": 0.0, "y": 0.0, "w": 240.0, "h": 160.0},
+        {},
+    )
+
+    assert recorder.points == [
+        (_raster._SYMBOLS["plus_line"], 1.0, (18, 52, 86, 255)),
+        (_raster._SYMBOLS["x_line"], 2.5, (255, 0, 0, 255)),
+    ]

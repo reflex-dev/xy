@@ -46,7 +46,9 @@ THEME_FILES = (("js/src/20_theme.ts", _read(ROOT / "js/src/20_theme.ts")),)
 # the minifier preserves verbatim.
 _CHROME_WHERE_RULES = (
     ':where(.xy [data-xy-slot="tooltip"]){',
+    ':where(.xy [data-xy-slot="tooltip_label"])::after{',
     ':where(.xy [data-xy-slot="legend"]){',
+    ':where(.xy [data-xy-slot="legend_title"]){',
     ':where(.xy [data-xy-slot="legend_swatch"]){',
     ':where(.xy [data-xy-slot="modebar"]){',
     ':where(.xy) button[data-xy-slot="modebar_button"]{',
@@ -116,10 +118,11 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
     """User labels may be hostile strings; the client must never parse them."""
     required_text_sinks = (
         "t.textContent = s.title;",
-        "row.appendChild(document.createTextNode(it.name));",
+        "label.textContent = it.name;",
         "badge.textContent = item;",
         "d.textContent = text;",
-        "this.tooltip.appendChild(document.createTextNode(ln));",
+        "label.textContent = item.label;",
+        "value.textContent = item.value;",
     )
     required_style_sinks = ("sw.style.background = safeCssPaint(this.root, bg);",)
 
@@ -272,13 +275,19 @@ def test_client_applies_every_public_dom_slot() -> None:
         "canvas": '_applySlot(this.canvas, "canvas")',
         "labels": '_applySlot(this.labels, "labels")',
         "legend": '_applySlot(lg, "legend")',
+        "legend_title": '_applySlot(title, "legend_title")',
         "legend_item": '_applySlot(row, "legend_item")',
         "legend_swatch": '_applySlot(sw, "legend_swatch")',
+        "legend_label": '_applySlot(label, "legend_label")',
         "colorbar": '_applySlot(box, "colorbar")',
         "colorbar_bar": '_applySlot(bar, "colorbar_bar")',
         "colorbar_tick": '_applySlot(tick, "colorbar_tick")',
         "colorbar_title": '_applySlot(label, "colorbar_title")',
         "tooltip": '_applySlot(this.tooltip, "tooltip")',
+        "tooltip_title": '_applySlot(row, "tooltip_title")',
+        "tooltip_row": '_applySlot(row, "tooltip_row")',
+        "tooltip_label": '_applySlot(label, "tooltip_label")',
+        "tooltip_value": '_applySlot(value, "tooltip_value")',
         "modebar": '_applySlot(bar, "modebar")',
         "modebar_button": '_applySlot(b, "modebar_button")',
         "selection": '_applySlot(this.selRect, "selection")',
@@ -546,16 +555,16 @@ def test_client_refreshes_and_destroys_density_sample_overlays() -> None:
 
 
 def test_client_refreshes_theme_when_framework_theme_classes_change() -> None:
-    """Keep canvas paint synchronized with class-driven light/dark themes."""
+    """Keep canvas paint synchronized with class- and attribute-driven themes."""
     required = (
         "new MutationObserver(() => this.refreshTheme())",
-        'attributeFilter: ["class", "style"]',
+        'attributeFilter: ["class", "data-theme", "style"]',
         "this._themeMutationObserver?.disconnect();",
     )
 
     for path, text in CLIENT_FILES:
         for marker in required:
-            assert marker in text, f"{path} lost class-driven theme refresh {marker!r}"
+            assert marker in text, f"{path} lost host-driven theme refresh {marker!r}"
 
 
 def test_client_lod_layer_stays_chart_agnostic_and_renderer_delegated() -> None:
@@ -807,7 +816,9 @@ def test_client_renders_mark_level_styling() -> None:
         "symbolScale = symbol == 2 || symbol == 14",  # mpl diamond paths exceed marker box by sqrt(2)
         "_pointMarkStyle(",  # point stroke + symbol resolution
         "rgb = mix(rgb, sc.rgb, sc.a);",  # selected/unselected recolor (mark_style)
-        "v_dash = mix(a_len0, mix(a_len0, a_len1, reveal), c.x);",  # fractional reveal preserves line dashes
+        "float dashEnd = mix(a_len0, a_len1, reveal);",  # fractional reveal preserves line dashes
+        "uniform int u_cap; uniform int u_capSegments;",  # stroke-linecap on the polyline's ends
+        "LINE_CAP_MODES",  # cap keywords resolve to the shared wire codes
         "_lineDash(g)",
         "_resolveMarkFill(",
         "_setRectStyleUniforms(",
