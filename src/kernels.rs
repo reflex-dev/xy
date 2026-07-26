@@ -3231,7 +3231,17 @@ pub(crate) fn bin_2d_counts(
             .collect()
     });
 
-    let mut grid = vec![0u32; w * h];
+    // Fold into the last worker's grid rather than a fresh one. Every other
+    // member of this family merges into a caller-owned buffer; this one
+    // allocated and zeroed a whole extra `w * h` u32 grid that it then
+    // overwrote completely, so peak was (threads + 1) grids instead of
+    // `threads` — 16.8 MB of surplus on a 2048^2 pyramid build, and far more
+    // out-of-core, where an adaptive `base_dim` keeps the parallel branch live
+    // at much larger grids. Integer addition is associative and the single
+    // saturation point is unchanged, so the result is bitwise identical for
+    // any thread count.
+    let mut grids = grids;
+    let mut grid = grids.pop().expect("at least one worker grid");
     let cell_chunk = (w * h).div_ceil(threads);
     let grids_ref = &grids;
     std::thread::scope(|s| {
@@ -3239,11 +3249,9 @@ pub(crate) fn bin_2d_counts(
             let base = ci * cell_chunk;
             s.spawn(move || {
                 for (j, cell) in out.iter_mut().enumerate() {
-                    *cell = grids_ref
-                        .iter()
-                        .map(|g| g[base + j] as u64)
-                        .sum::<u64>()
-                        .min(u32::MAX as u64) as u32;
+                    *cell = (*cell as u64
+                        + grids_ref.iter().map(|g| g[base + j] as u64).sum::<u64>())
+                    .min(u32::MAX as u64) as u32;
                 }
             });
         }

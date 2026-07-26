@@ -40,21 +40,30 @@ const SS: usize = 4; // vertical supersamples per scanline for polygon AA
 /// avoids a 16-byte-per-pixel float canvas plus a full-frame conversion pass.
 /// The generic translucent-destination branch preserves correct source-over
 /// behavior for direct rasterizer callers that do not begin with a background.
-struct Canvas {
+/// The framebuffer is **borrowed**, not owned. For the RGBA entry points that
+/// is the caller's own output buffer, so painting lands directly in it: the
+/// canvas used to own a `Vec<u8>` and hand it over with a full-frame
+/// `copy_from_slice` at the end, which meant two complete framebuffers live at
+/// once (4 bytes per device pixel of pure surplus — 33 MB at 3840x2160) plus an
+/// allocation, a zero-fill and a memcpy that the caller never asked for.
+struct Canvas<'a> {
     w: usize,
     h: usize,
-    px: Vec<u8>,
+    px: &'a mut [u8],
     opaque: bool,
     clip: [f32; 4], // x0, y0, x1, y1
 }
 
-impl Canvas {
-    fn new(w: usize, h: usize, opaque_white: bool) -> Self {
-        let channels = if opaque_white { 3 } else { 4 };
+impl<'a> Canvas<'a> {
+    /// Wrap `px` as a `w * h` framebuffer, initialized exactly as the owning
+    /// constructor did: opaque white for the 3-channel PNG path, transparent
+    /// black for the 4-channel RGBA path.
+    fn wrap(w: usize, h: usize, opaque_white: bool, px: &'a mut [u8]) -> Self {
+        px.fill(if opaque_white { 255 } else { 0 });
         Canvas {
             w,
             h,
-            px: vec![if opaque_white { 255 } else { 0 }; w * h * channels],
+            px,
             opaque: opaque_white,
             clip: [0.0, 0.0, w as f32, h as f32],
         }
@@ -86,7 +95,7 @@ impl Canvas {
     #[inline]
     fn blend_u8(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
         let o = (y * self.w + x) * self.channels();
-        blend_px(&mut self.px, o, self.opaque, rgba);
+        blend_px(self.px, o, self.opaque, rgba);
     }
 
     /// Full-height window over the framebuffer. Painting through it is
@@ -99,7 +108,7 @@ impl Canvas {
             channels: self.channels(),
             opaque: self.opaque,
             clip: self.clip,
-            px: &mut self.px,
+            px: self.px,
         }
     }
 
@@ -118,18 +127,6 @@ impl Canvas {
             (cx1.ceil() as usize).min(self.w),
             (cy1.ceil() as usize).min(self.h),
         )
-    }
-
-    /// Export to straight-alpha RGBA8.
-    fn to_rgba8(&self, out: &mut [u8]) {
-        if self.opaque {
-            for (rgb, rgba) in self.px.chunks_exact(3).zip(out.chunks_exact_mut(4)) {
-                rgba[..3].copy_from_slice(rgb);
-                rgba[3] = 255;
-            }
-        } else {
-            out.copy_from_slice(&self.px);
-        }
     }
 }
 
@@ -226,7 +223,7 @@ impl Surface<'_> {
     }
 }
 
-fn stroke_segment(cv: &mut Canvas, a: (f32, f32), b: (f32, f32), width: f32, rgba: [f32; 4]) {
+fn stroke_segment(cv: &mut Canvas<'_>, a: (f32, f32), b: (f32, f32), width: f32, rgba: [f32; 4]) {
     stroke_segment_at(&mut cv.surface(), a, b, width, rgba);
 }
 
@@ -300,7 +297,7 @@ fn to_u8(v: f32) -> u8 {
 /// Fast analytic path for the overwhelmingly common axis-aligned rectangle.
 /// It is exact at subpixel edges and turns the full-canvas white background
 /// from millions of polygon-coverage blends into a contiguous byte fill.
-fn fill_rect(cv: &mut Canvas, pts: &[(f32, f32)], rgba: [f32; 4]) -> bool {
+fn fill_rect(cv: &mut Canvas<'_>, pts: &[(f32, f32)], rgba: [f32; 4]) -> bool {
     if pts.len() != 4 {
         return false;
     }
@@ -353,7 +350,7 @@ fn fill_rect(cv: &mut Canvas, pts: &[(f32, f32)], rgba: [f32; 4]) -> bool {
 /// Per-row coverage in [0,1] over the polygon's x-span, with `color_at` giving
 /// the paint per pixel (flat or gradient). Non-zero winding, `SS` vertical
 /// samples, analytic horizontal endpoint coverage.
-fn fill_poly(cv: &mut Canvas, pts: &[(f32, f32)], mut color_at: impl FnMut(f32, f32) -> [f32; 4]) {
+fn fill_poly(cv: &mut Canvas<'_>, pts: &[(f32, f32)], mut color_at: impl FnMut(f32, f32) -> [f32; 4]) {
     if pts.len() < 3 {
         return;
     }
@@ -549,7 +546,7 @@ fn usable_dash(dash: &[f32]) -> bool {
 /// Rasterize on-segments into a scratch coverage buffer (max-combined so
 /// overlapping joins don't double-darken), then composite once.
 fn stroke(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     pts: &[(f32, f32)],
     width: f32,
     rgba: [f32; 4],
@@ -731,7 +728,7 @@ fn paint_stroke_pieces(cv: &mut Canvas, pieces: &[StrokePiece], hw: f32, rgba: [
 }
 
 fn stroke_with_threads(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     pts: &[(f32, f32)],
     width: f32,
     rgba: [f32; 4],
@@ -1079,7 +1076,7 @@ fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
 
 #[allow(clippy::too_many_arguments)]
 fn point(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     cx: f32,
     cy: f32,
     r: f32,
@@ -1093,7 +1090,7 @@ fn point(
 
 #[allow(clippy::too_many_arguments)]
 fn point_u8(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     cx: f32,
     cy: f32,
     r: f32,
@@ -1194,7 +1191,7 @@ fn point_u8_at(
 
 #[allow(clippy::too_many_arguments)]
 fn blit(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     dx: f32,
     dy: f32,
     dw: f32,
@@ -1215,7 +1212,7 @@ const IMAGE_FANOUT_PX: f32 = 250_000.0;
 /// batch, an image writes every destination pixel once, so no bucketing or
 /// ordering merge is needed and the parallel result is byte-identical.
 fn paint_image_bands(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     y0: usize,
     y1: usize,
     threads: usize,
@@ -1252,7 +1249,7 @@ fn paint_image_bands(
 
 #[allow(clippy::too_many_arguments)]
 fn blit_with_threads(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     dx: f32,
     dy: f32,
     dw: f32,
@@ -1325,7 +1322,7 @@ fn blit_with_threads(
 /// followed by `blit`, but avoids the 4x expanded image and its copy.
 #[allow(clippy::too_many_arguments)]
 fn blit_density(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     dx: f32,
     dy: f32,
     dw: f32,
@@ -1381,7 +1378,7 @@ fn blit_density(
 /// rounding path, so raster-only borrowing cannot change output pixels.
 #[allow(clippy::too_many_arguments)]
 fn blit_heatmap(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     dx: f32,
     dy: f32,
     dw: f32,
@@ -1472,7 +1469,7 @@ pub const TEXT_ROTATED: u8 = 0x80;
 /// 0x40 requests 90°-CW text (top-down right-margin titles, mpl rotation=270).
 pub const TEXT_ROTATED_CW: u8 = 0x40;
 
-fn text(cv: &mut Canvas, x: f32, y: f32, anchor: u8, size: f32, rgba: [f32; 4], s: &[u8]) {
+fn text(cv: &mut Canvas<'_>, x: f32, y: f32, anchor: u8, size: f32, rgba: [f32; 4], s: &[u8]) {
     let rotated = anchor & TEXT_ROTATED != 0;
     let rotated_cw = anchor & TEXT_ROTATED_CW != 0;
     let anchor = anchor & !(TEXT_ROTATED | TEXT_ROTATED_CW);
@@ -1812,7 +1809,7 @@ fn raster_fanout(est_px: f32, min_px: f32, rows: usize) -> usize {
 /// item order, so every pixel receives the same blends in the same order as
 /// the serial pass.
 fn paint_banded(
-    cv: &mut Canvas,
+    cv: &mut Canvas<'_>,
     threads: usize,
     n_items: usize,
     y_extent: impl Fn(usize) -> Option<(f32, f32)>,
@@ -1836,7 +1833,7 @@ fn paint_banded(
         }
     }
     let mut jobs = Vec::with_capacity(n_bands);
-    let mut rest = cv.px.as_mut_slice();
+    let mut rest = &mut cv.px[..];
     let mut y0 = 0;
     for bucket in buckets {
         let take = band_rows.min(h - y0);
@@ -1889,7 +1886,7 @@ struct PointsBatch<'a> {
     fills: &'a [u8],
 }
 
-fn paint_points(cv: &mut Canvas, batch: &PointsBatch, threads: usize) {
+fn paint_points(cv: &mut Canvas<'_>, batch: &PointsBatch, threads: usize) {
     if threads <= 1 {
         paint_points_band(&mut cv.surface(), batch, 0..batch.n);
         return;
@@ -1977,7 +1974,7 @@ struct AffinePointsBatch<'a> {
     y: AffineAxis<'a>,
 }
 
-fn paint_affine_points(cv: &mut Canvas, batch: &AffinePointsBatch, threads: usize) {
+fn paint_affine_points(cv: &mut Canvas<'_>, batch: &AffinePointsBatch, threads: usize) {
     if threads <= 1 {
         for i in 0..batch.n {
             paint_affine_point(&mut cv.surface(), batch, i);
@@ -2057,7 +2054,7 @@ struct StyledPointsBatch<'a> {
     fills: &'a [[u8; 4]],
 }
 
-fn paint_styled_points(cv: &mut Canvas, batch: &StyledPointsBatch, threads: usize) {
+fn paint_styled_points(cv: &mut Canvas<'_>, batch: &StyledPointsBatch, threads: usize) {
     if threads <= 1 {
         for i in 0..batch.n {
             paint_styled_point(&mut cv.surface(), batch, i);
@@ -2109,7 +2106,7 @@ struct SegmentsBatch<'a> {
     colors: &'a [u8],
 }
 
-fn paint_segments(cv: &mut Canvas, batch: &SegmentsBatch, threads: usize) {
+fn paint_segments(cv: &mut Canvas<'_>, batch: &SegmentsBatch, threads: usize) {
     if threads <= 1 {
         paint_segments_band(&mut cv.surface(), batch, 0..batch.n);
         return;
@@ -2170,17 +2167,18 @@ fn read_affine_axis<'a>(
 
 /// Parse and paint a display list, retaining the native byte framebuffer so a
 /// latency-oriented PNG export can feed it straight into the encoder.
-fn rasterize_with_spans(
+fn rasterize_with_spans<'a>(
     cmds: &[u8],
     spans: &[&[u8]],
     w: usize,
     h: usize,
     opaque_white: bool,
-) -> Option<Canvas> {
+    px: &'a mut [u8],
+) -> Option<Canvas<'a>> {
     if w == 0 || h == 0 {
         return None;
     }
-    let mut cv = Canvas::new(w, h, opaque_white);
+    let mut cv = Canvas::wrap(w, h, opaque_white, px);
     let mut r = Reader { b: cmds, i: 0 };
     while r.i < cmds.len() {
         let op = r.u8()?;
@@ -2712,11 +2710,11 @@ pub fn rasterize_spans_into(
     if out.len() != w.checked_mul(h).and_then(|n| n.checked_mul(4)).unwrap_or(0) {
         return false;
     }
-    let Some(cv) = rasterize_with_spans(cmds, spans, w, h, false) else {
-        return false;
-    };
-    cv.to_rgba8(out);
-    true
+    // Paint straight into the caller's buffer. `Canvas::wrap` zeroes it first,
+    // which is exactly what the owned `vec![0; w * h * 4]` did, and straight
+    // alpha is already the canvas's own layout — so the export step that used
+    // to `copy_from_slice` a whole frame is now nothing at all.
+    rasterize_with_spans(cmds, spans, w, h, false, out).is_some()
 }
 
 /// Fused low-latency raster + PNG path. `Fast` uses fdeflate's PNG-tuned
@@ -2746,7 +2744,11 @@ pub fn rasterize_png_spans_into(
     out: &mut [u8],
 ) -> Option<usize> {
     let (wu, hu) = (u32::try_from(w).ok()?, u32::try_from(h).ok()?);
-    let cv = rasterize_with_spans(cmds, spans, w, h, true)?;
+    // The PNG path is 3-channel and the destination is the encoded stream, so
+    // this one still owns its framebuffer — but it is a plane fewer than the
+    // RGBA path, and nothing is copied out of it.
+    let mut px = vec![0u8; w.checked_mul(h)?.checked_mul(3)?];
+    let cv = rasterize_with_spans(cmds, spans, w, h, true, &mut px)?;
     let mut cursor = Cursor::new(out);
     {
         let mut encoder = png::Encoder::new(&mut cursor, wu, hu);
@@ -2759,7 +2761,7 @@ pub fn rasterize_png_spans_into(
         encoder.set_compression(png::Compression::Fast);
         encoder.set_filter(png::Filter::Up);
         let mut writer = encoder.write_header().ok()?;
-        writer.write_image_data(&cv.px).ok()?;
+        writer.write_image_data(cv.px).ok()?;
         writer.finish().ok()?;
     }
     usize::try_from(cursor.position()).ok()
@@ -2791,6 +2793,26 @@ fn grad_color(stops: &[(f32, [f32; 4])], t: f32) -> [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Backing store for a test canvas, which borrows rather than owns.
+    fn canvas_px(w: usize, h: usize, opaque: bool) -> Vec<u8> {
+        vec![0u8; w * h * if opaque { 3 } else { 4 }]
+    }
+
+    /// Paint a display list and hand back the framebuffer. The canvas borrows
+    /// its pixels now, so a test that wants to keep the result past the call
+    /// has to own the buffer itself.
+    fn rasterize_to_vec(
+        cmds: &[u8],
+        spans: &[&[u8]],
+        w: usize,
+        h: usize,
+        opaque: bool,
+    ) -> Option<Vec<u8>> {
+        let mut px = canvas_px(w, h, opaque);
+        rasterize_with_spans(cmds, spans, w, h, opaque, &mut px)?;
+        Some(px)
+    }
 
     fn px(out: &[u8], w: usize, x: usize, y: usize) -> [u8; 4] {
         let o = (y * w + x) * 4;
@@ -2966,9 +2988,11 @@ mod tests {
             ((15.25, 9.75), (15.25, 9.75), 2.0, [90, 40, 200, 128]),
         ];
         for opaque in [false, true] {
-            let mut fast = Canvas::new(30, 22, opaque);
+            let mut fast_px = canvas_px(30, 22, opaque);
+            let mut fast = Canvas::wrap(30, 22, opaque, &mut fast_px);
             fast.clip = [2.0, 1.0, 28.0, 21.0];
-            let mut reference = Canvas::new(30, 22, opaque);
+            let mut reference_px = canvas_px(30, 22, opaque);
+            let mut reference = Canvas::wrap(30, 22, opaque, &mut reference_px);
             reference.clip = fast.clip;
             for (a, b, width, color) in cases {
                 stroke_segment_u8_at(&mut fast.surface(), a, b, width, color);
@@ -3165,9 +3189,11 @@ mod tests {
         };
         for opaque in [true, false] {
             for threads in [3usize, 8] {
-                let mut serial = Canvas::new(w, h, opaque);
+                let mut serial_px = canvas_px(w, h, opaque);
+                let mut serial = Canvas::wrap(w, h, opaque, &mut serial_px);
                 serial.clip = [2.0, 3.0, w as f32 - 4.0, h as f32 - 2.0];
-                let mut banded = Canvas::new(w, h, opaque);
+                let mut banded_px = canvas_px(w, h, opaque);
+                let mut banded = Canvas::wrap(w, h, opaque, &mut banded_px);
                 banded.clip = serial.clip;
                 paint_points(&mut serial, &batch, 1);
                 paint_points(&mut banded, &batch, threads);
@@ -3175,8 +3201,10 @@ mod tests {
                     serial.px, banded.px,
                     "points opaque={opaque} threads={threads}"
                 );
-                let mut serial = Canvas::new(w, h, opaque);
-                let mut banded = Canvas::new(w, h, opaque);
+                let mut serial_px = canvas_px(w, h, opaque);
+                let mut serial = Canvas::wrap(w, h, opaque, &mut serial_px);
+                let mut banded_px = canvas_px(w, h, opaque);
+                let mut banded = Canvas::wrap(w, h, opaque, &mut banded_px);
                 paint_segments(&mut serial, &seg_batch, 1);
                 paint_segments(&mut banded, &seg_batch, threads);
                 assert_eq!(
@@ -3203,9 +3231,11 @@ mod tests {
                 (2.4, false, &[5.0, 2.0][..]),
                 (1.5, true, &[3.0, 1.0, 1.0, 1.0][..]),
             ] {
-                let mut serial = Canvas::new(101, 63, opaque);
+                let mut serial_px = canvas_px(101, 63, opaque);
+                let mut serial = Canvas::wrap(101, 63, opaque, &mut serial_px);
                 serial.clip = [2.0, 3.0, 98.0, 60.0];
-                let mut banded = Canvas::new(101, 63, opaque);
+                let mut banded_px = canvas_px(101, 63, opaque);
+                let mut banded = Canvas::wrap(101, 63, opaque, &mut banded_px);
                 banded.clip = serial.clip;
                 stroke_with_threads(&mut serial, &points, width, rgba, closed, dash, Some(1));
                 stroke_with_threads(&mut banded, &points, width, rgba, closed, dash, Some(4));
@@ -3232,9 +3262,11 @@ mod tests {
         for opaque in [true, false] {
             for nearest in [true, false] {
                 for threads in [3usize, 8] {
-                    let mut serial = Canvas::new(97, 61, opaque);
+                    let mut serial_px = canvas_px(97, 61, opaque);
+                    let mut serial = Canvas::wrap(97, 61, opaque, &mut serial_px);
                     serial.clip = [3.0, 2.0, 93.0, 59.0];
-                    let mut banded = Canvas::new(97, 61, opaque);
+                    let mut banded_px = canvas_px(97, 61, opaque);
+                    let mut banded = Canvas::wrap(97, 61, opaque, &mut banded_px);
                     banded.clip = serial.clip;
                     blit_with_threads(
                         &mut serial,
@@ -3308,11 +3340,11 @@ mod tests {
         }
 
         for opaque in [false, true] {
-            let got = rasterize_with_spans(&compact, &[&encoded], 34, 24, opaque)
+            let got = rasterize_to_vec(&compact, &[&encoded], 34, 24, opaque)
                 .expect("compact density command");
-            let want = rasterize_with_spans(&expanded, &[], 34, 24, opaque)
+            let want = rasterize_to_vec(&expanded, &[], 34, 24, opaque)
                 .expect("expanded image command");
-            assert_eq!(got.px, want.px, "opaque={opaque}");
+            assert_eq!(got, want, "opaque={opaque}");
         }
 
         let mut out = vec![0u8; 34 * 24 * 4];
@@ -3375,11 +3407,11 @@ mod tests {
         }
 
         for opaque in [false, true] {
-            let got = rasterize_with_spans(&direct, &[&arena], 18, 11, opaque)
+            let got = rasterize_to_vec(&direct, &[&arena], 18, 11, opaque)
                 .expect("direct heatmap command");
-            let want = rasterize_with_spans(&expanded, &[], 18, 11, opaque)
+            let want = rasterize_to_vec(&expanded, &[], 18, 11, opaque)
                 .expect("expanded image command");
-            assert_eq!(got.px, want.px, "opaque={opaque}");
+            assert_eq!(got, want, "opaque={opaque}");
         }
 
         let mut canonical = vec![OP_HEATMAP_IMAGE];
@@ -3404,11 +3436,11 @@ mod tests {
         }
         for opaque in [false, true] {
             let got =
-                rasterize_with_spans(&canonical, &[b"unused", &canonical_arena], 18, 11, opaque)
+                rasterize_to_vec(&canonical, &[b"unused", &canonical_arena], 18, 11, opaque)
                     .expect("canonical heatmap command");
-            let want = rasterize_with_spans(&expanded, &[], 18, 11, opaque)
+            let want = rasterize_to_vec(&expanded, &[], 18, 11, opaque)
                 .expect("expanded image command");
-            assert_eq!(got.px, want.px, "canonical opaque={opaque}");
+            assert_eq!(got, want, "canonical opaque={opaque}");
         }
 
         let mut out = vec![0u8; 18 * 11 * 4];
@@ -3483,11 +3515,11 @@ mod tests {
         }
 
         for opaque in [false, true] {
-            let got = rasterize_with_spans(&batch, &[], 28, 30, opaque)
+            let got = rasterize_to_vec(&batch, &[], 28, 30, opaque)
                 .expect("batched stroked triangles");
-            let want = rasterize_with_spans(&expanded, &[], 28, 30, opaque)
+            let want = rasterize_to_vec(&expanded, &[], 28, 30, opaque)
                 .expect("expanded stroked triangles");
-            assert_eq!(got.px, want.px, "opaque={opaque}");
+            assert_eq!(got, want, "opaque={opaque}");
         }
 
         let mut out = vec![0u8; 28 * 30 * 4];
@@ -3613,11 +3645,11 @@ mod tests {
         }
 
         for opaque in [false, true] {
-            let got = rasterize_with_spans(&direct, &[&x_arena, &y_arena], 72, 52, opaque)
+            let got = rasterize_to_vec(&direct, &[&x_arena, &y_arena], 72, 52, opaque)
                 .expect("borrowed affine points");
             let want =
-                rasterize_with_spans(&expanded, &[], 72, 52, opaque).expect("expanded points");
-            assert_eq!(got.px, want.px, "opaque={opaque}");
+                rasterize_to_vec(&expanded, &[], 72, 52, opaque).expect("expanded points");
+            assert_eq!(got, want, "opaque={opaque}");
         }
 
         let mut out = vec![0u8; 72 * 52 * 4];
@@ -3713,11 +3745,11 @@ mod tests {
         }
 
         for opaque in [false, true] {
-            let got = rasterize_with_spans(&direct, &[&arena], 48, 36, opaque)
+            let got = rasterize_to_vec(&direct, &[&arena], 48, 36, opaque)
                 .expect("borrowed affine channel points");
-            let want = rasterize_with_spans(&expanded, &[], 48, 36, opaque)
+            let want = rasterize_to_vec(&expanded, &[], 48, 36, opaque)
                 .expect("expanded styled points");
-            assert_eq!(got.px, want.px, "opaque={opaque}");
+            assert_eq!(got, want, "opaque={opaque}");
         }
 
         let mut out = vec![0u8; 48 * 36 * 4];
@@ -3778,11 +3810,11 @@ mod tests {
         for rgb in stops {
             expanded_categories.extend([rgb[0], rgb[1], rgb[2], alpha]);
         }
-        let got = rasterize_with_spans(&categorical, &[&arena], 48, 36, false)
+        let got = rasterize_to_vec(&categorical, &[&arena], 48, 36, false)
             .expect("borrowed u8 categorical points");
-        let want = rasterize_with_spans(&expanded_categories, &[], 48, 36, false)
+        let want = rasterize_to_vec(&expanded_categories, &[], 48, 36, false)
             .expect("expanded categorical points");
-        assert_eq!(got.px, want.px);
+        assert_eq!(got, want);
 
         let mut bad_encoding = categorical;
         bad_encoding[147] = 2;
