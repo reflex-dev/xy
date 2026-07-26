@@ -101,11 +101,26 @@ def test_invalid_window_raises(bad: tuple[float, float, float, float]) -> None:
 
 
 def test_out_of_range_row_is_an_error_not_a_read() -> None:
-    """A row id past the column length must come back as the error sentinel."""
+    """A row id past the column length must come back as the error sentinel.
+
+    The entry point validates the ids rather than relying on the scan's own
+    indexing panic: `ffi_guard` turns a panic into the sentinel only where
+    panics unwind, and the PyEmscripten wheel is built `-C panic=abort` (see
+    `.github/workflows/release.yml`) precisely so they cannot. There the panic
+    aborted the Pyodide instance — and `xy.kernels` is public API, so the row
+    array is caller data.
+    """
     x = np.zeros(4)
     rows = np.array([0, 9], dtype=np.uint32)
     with pytest.raises(ValueError):
         kernels.range_indices_rows(x, x, rows, -1.0, 1.0, -1.0, 1.0)
+    # The boundary id itself is valid; only past-the-end is an error.
+    np.testing.assert_array_equal(
+        kernels.range_indices_rows(x, x, np.array([3], dtype=np.uint32), -1.0, 1.0, -1.0, 1.0),
+        np.array([3], dtype=np.uint32),
+    )
+    with pytest.raises(ValueError):
+        kernels.range_indices_rows(x, x, np.array([4], dtype=np.uint32), -1.0, 1.0, -1.0, 1.0)
 
 
 def test_select_range_agrees_across_the_pruning_branches() -> None:

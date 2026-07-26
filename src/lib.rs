@@ -2875,8 +2875,9 @@ pub unsafe extern "C" fn xy_range_indices(
 /// Canonical row ids from `rows` that fall inside the rectangular window —
 /// the row-restricted twin of `xy_range_indices`, shaped like
 /// `xy_polygon_select`. Returns the count written; `out` must hold `n_rows`
-/// u32s. Row ids must be < `len`; an out-of-range id is caught by the bounds
-/// check inside and returned as the error sentinel.
+/// u32s. Row ids must be < `len`; an out-of-range id returns the error
+/// sentinel on every target, including panic-abort ones where the kernel's own
+/// indexing panic could not (see `kernels::range_scan_rows`).
 ///
 /// # Safety
 /// `x`/`y` must point to `len` readable f64s, `rows` to `n_rows` readable
@@ -2913,13 +2914,15 @@ pub unsafe extern "C" fn xy_range_indices_rows(
     let rows = std::slice::from_raw_parts(rows, n_rows);
     let out = std::slice::from_raw_parts_mut(out, n_rows);
     ffi_guard(usize::MAX, || {
-        kernels::range_indices_rows(x, y, rows, lo_x, hi_x, lo_y, hi_y, out)
+        kernels::range_indices_rows(x, y, rows, lo_x, hi_x, lo_y, hi_y, out).unwrap_or(usize::MAX)
     })
 }
 
 /// Canonical row ids from `rows` that fall inside the lasso polygon, by
 /// even-odd ray casting. Returns the count written; `out` must hold
-/// `n_rows` u32s. A polygon of fewer than 3 vertices selects nothing.
+/// `n_rows` u32s. A polygon of fewer than 3 vertices selects nothing. Row ids
+/// must be < `len`; an out-of-range id returns the error sentinel on every
+/// target (see `kernels::range_scan_rows`).
 ///
 /// # Safety
 /// `x`/`y` must point to `len` readable f64s, `rows` to `n_rows` readable
@@ -2964,10 +2967,8 @@ pub unsafe extern "C" fn xy_polygon_select(
     let poly_x = std::slice::from_raw_parts(poly_x, n_poly);
     let poly_y = std::slice::from_raw_parts(poly_y, n_poly);
     let out = std::slice::from_raw_parts_mut(out, n_rows);
-    // An out-of-range row id panics the bounds check inside; ffi_guard turns
-    // that into the error sentinel rather than unwinding across the ABI.
     ffi_guard(usize::MAX, || {
-        kernels::polygon_select(x, y, rows, poly_x, poly_y, out)
+        kernels::polygon_select(x, y, rows, poly_x, poly_y, out).unwrap_or(usize::MAX)
     })
 }
 
