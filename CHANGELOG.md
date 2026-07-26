@@ -9,33 +9,6 @@ in the README).
 ## [Unreleased]
 
 ### Added
-- **A capability inventory** at `python/xy/styling/capabilities.py`: one entry
-  per mark style property and per chrome slot, each carrying its support level
-  in the WebGL client, the SVG writer, and the native rasterizer, plus the
-  extension points and the renderer differences that no property selects.
-  `scripts/gen_capability_matrix.py` generates `spec/api/capability-matrix.md`
-  and the public Capability Matrix page from it, and the test suite fails if
-  either is stale or if the inventory falls out of step with what `styles.py`
-  actually compiles.
-- **Mark plugins**: `xy.register_mark(xy.MarkPlugin(...))` adds a chart kind XY
-  does not ship, and `xy.mark("name", ...)` uses it. A plugin supplies a `calc`
-  over its declared columns and a `build` that returns *built-in* marks — the
-  composition half of dossier §24, with the custom-shader half deferred. Its
-  output is ordinary traces, so it reuses the built-in rendering, picking, and
-  export paths rather than reimplementing them; `build` never sees the
-  `Figure`, the trace list, or the column store, so it cannot draw anything the
-  engine could not already draw. Declared columns arrive as canonical f64. The
-  registry refuses to shadow a built-in kind, refuses to silently replace
-  another plugin, and rejects column names `xy.mark()` binds itself.
-- Mark `style=` accepts **`stroke-linecap`** (`butt`/`round`/`square`) on the
-  line family, with the standard SVG semantics: it shapes the polyline's two
-  ends and each dash end. Only the line family takes it, because it describes
-  stroked open-path geometry. XY's default is `round`, not CSS's `butt`, so
-  existing specs are byte-identical. Joins are always round and are not
-  selectable.
-- Mark `style=` accepts **`marker-shape`** on `scatter`, the CSS spelling of the
-  existing `symbol=` argument. Both resolve to the same trace-style value, so
-  the two spellings build identical specs.
 - `colormap=` accepts a **custom ramp** built from your own colors, not only one
   of the twenty built-in names: a sequence of 2–256 CSS colors, `(position,
   color)` pairs, or a CSS `linear-gradient(...)`. Every form resolves once, in
@@ -63,22 +36,7 @@ in the README).
   same validated style properties, so an explicit `style=` still wins and specs
   that don't use them are byte-identical.
 
-### Changed
-- `scripts/check_claim_guardrails.py` now also rejects unqualifiable
-  superlatives about the styling surface, and scans `README.md` and `CLAUDE.md`,
-  which it previously did not. The styling surface is a bounded, enumerated
-  subset, so those shapes are wrong however they are framed. Two live overclaims
-  in `docs/index.md` were caught by the new rule and rewritten.
-
 ### Fixed
-- The three mark renderers disagreed about line caps and never said so: the
-  native rasterizer capped round, the WebGL client capped butt with a
-  half-pixel bleed, and the SVG writer hardcoded `round` on line paths while
-  the area outline silently inherited SVG's `butt` — which the PDF exporter
-  then read back as `butt` too. All three now draw XY's documented `round`
-  default. The SVG writer also names the join on every stroked path instead of
-  letting the format's `miter` default through, which `_pdf` had been reading
-  back as a mismatch with the rasterizer.
 - The colorbar stringified its colormap, so a custom ramp reached it as an
   unparseable name and silently painted viridis while the marks beside it
   painted the ramp correctly.
