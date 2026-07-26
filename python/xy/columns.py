@@ -300,10 +300,14 @@ class Column:
                     buf[n_old:n] = kernels.encode_f32(self.values[n_old:], offset, scale)
                 self._enc_cache = (offset, scale, n, ptr, buf)
                 return buf[:n]
-        buf = np.empty(max(n, 1024), dtype=np.float32)
-        buf[:n] = kernels.encode_f32(self.values, offset, scale)
+        # Cold path: adopt the encode output itself as the cache buffer, so a
+        # first build costs exactly one encode and one exact-size allocation —
+        # identical to the uncached path (first-paint latency is benchmarked;
+        # CodSpeed flagged the extra alloc+copy of a slack buffer here). The
+        # doubling slack starts on the first append instead.
+        buf = kernels.encode_f32(self.values, offset, scale)
         self._enc_cache = (offset, scale, n, ptr, buf)
-        return buf[:n]
+        return buf
 
     def append(self, data: Any) -> None:
         """Streaming append (design dossier §5, Phase-0 Python-side).
