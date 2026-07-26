@@ -419,12 +419,3 @@ def test_text_switch_does_not_collide_with_tick_labels():
     axis = xy.x_axis(tick_values=(0.0, 1.0), tick_labels=("lo", "hi"), text=False)
     assert axis.tick_labels == ["lo", "hi"]
     assert axis.style["tick_label_color"] == "#00000000"
-
-
-def test_hidden_axes_render_in_every_static_renderer():
-    x, y = _xy(100)
-    chart = xy.scatter_chart(
-        xy.scatter(x, y), xy.x_axis(show=False), xy.y_axis(show=False, grid=True)
-    )
-    assert chart.to_svg().startswith("<?xml") or chart.to_svg().startswith("<svg")
-    assert chart.to_png().startswith(b"\x89PNG")

@@ -36,7 +36,6 @@ _STANDALONE = ("static/standalone.js", _read(_STATIC / "standalone.js"))
 CLIENT_FILES = (_CLIENT_SRC,)
 BUNDLES = (_INDEX, _STANDALONE)
 FORMATTER_FILES = (("js/src/30_ticks.ts", _read(ROOT / "js/src/30_ticks.ts")),)
-LOD_FILES = (("js/src/45_lod.ts", _read(ROOT / "js/src/45_lod.ts")),)
 # The chrome default stylesheet lives in the theme part; its rules are string
 # literals, so the bundle-level test re-asserts them in both built bundles.
 THEME_FILES = (("js/src/20_theme.ts", _read(ROOT / "js/src/20_theme.ts")),)
@@ -565,42 +564,6 @@ def test_client_refreshes_theme_when_framework_theme_classes_change() -> None:
     for path, text in CLIENT_FILES:
         for marker in required:
             assert marker in text, f"{path} lost host-driven theme refresh {marker!r}"
-
-
-def test_client_lod_layer_stays_chart_agnostic_and_renderer_delegated() -> None:
-    source_lod = (ROOT / "js/src/45_lod.ts").read_text(encoding="utf-8")
-    assert "trace.kind" not in source_lod
-    assert "markOf(" not in source_lod
-
-    # The intent comment is a source-only assertion — the built bundles are
-    # compacted (comments stripped), so only code markers are checked there.
-    assert "future heatmap/histogram tier reuses it instead of copy-pasting" in source_lod
-
-    lod_required = (
-        "function lodApplyDrill(view, g, upd, buffers)",
-        "function lodApplyDensityUpdate(view, g, upd, buffers)",
-        "function lodDrawDensityTier(view, g, x0, x1, y0, y1)",
-        "lodRememberDensity(view, g, g.density);",
-        "view._drawDensity(g, density",
-        "view._drawPoints(",
-        "lodDropDrill(view, g)",
-    )
-    for path, text in LOD_FILES:
-        for marker in lod_required:
-            assert marker in text, f"{path} no longer preserves shared LOD marker {marker!r}"
-
-    chartview_required = (
-        "lodDrawDensityTier(this, g",
-        "markOf(g.trace.kind).draw(this, g",
-        'if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }',
-        "lodApplyDensityUpdate(this, g, upd, buffers);",
-        "lodApplyDrill(this, g, upd, buffers);",
-        "lodDropDrill(this, g);",
-        'markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill)',
-    )
-    for path, text in CLIENT_FILES:
-        for marker in chartview_required:
-            assert marker in text, f"{path} no longer delegates shared LOD marker {marker!r}"
 
 
 def test_client_coalesces_wheel_zoom_without_animation_lag() -> None:

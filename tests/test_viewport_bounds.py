@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 import xy
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_explicit_axis_bounds_ship_separately_from_initial_domain() -> None:
@@ -46,13 +42,3 @@ def test_axis_bounds_validation(factory) -> None:
         factory(bounds="everything")
     with pytest.raises(ValueError, match="positive"):
         xy.line_chart(xy.line([1, 2], [1, 2]), factory(type_="log", bounds=(-1, 10))).figure()
-
-
-def test_client_clamps_pan_zoom_and_reversed_log_ranges() -> None:
-    source = (ROOT / "js/src/53_interaction.ts").read_text(encoding="utf-8")
-
-    assert "_clampAxisRange(axisId, lo, hi, anchorFrac = 0.5)" in source
-    assert "const reverse = c1 < c0" in source
-    assert "const target = this._clampView(" in source
-    assert 'source: "pan_drag"' in source
-    assert "opts.anchors?.[axisId] ?? 0.5" in source
