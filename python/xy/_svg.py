@@ -1647,7 +1647,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 )
 
         elif kind == "scatter":
-            marks.append(_scatter_marks(t, blob, cols, trace_sx, trace_sy, style, color))
+            marks.extend(_scatter_marks(t, blob, cols, trace_sx, trace_sy, style, color))
 
         elif kind == "hexbin":
             marks.append(_hexbin_marks(t, blob, cols, trace_sx, trace_sy, style, color))
@@ -1872,17 +1872,29 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             f'<rect x="{_num(plot["x"])}" y="{_num(plot["y"])}" width="{_num(plot["w"])}" '
             f'height="{_num(plot["h"])}" fill="{escape(plot_paint)}"/>'
         )
-    return (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
-        f'viewBox="0 0 {width} {height}" font-family="{_FONT}" font-size="11">'
-        f"{defs}"
-        f"{backgrounds}"
-        f"<g>{''.join(grid)}</g>"
-        f'<g clip-path="url(#{clip_id})">{"".join(marks)}</g>'
-        f"{baselines}"
-        f'<g fill="{escape(default_text)}">{"".join(labels)}</g>'
-        f"{''.join(chrome)}"
-        f"</svg>"
+    # One flat join over the pieces rather than nested `join`s inside an
+    # f-string: the mark list is the whole document for a per-point chart (tens
+    # of MB at 100k markers), and joining it separately would materialize a
+    # second full copy of it before the result string is built.
+    return "".join(
+        [
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+            f'viewBox="0 0 {width} {height}" font-family="{_FONT}" font-size="11">',
+            defs,
+            backgrounds,
+            "<g>",
+            *grid,
+            "</g>",
+            f'<g clip-path="url(#{clip_id})">',
+            *marks,
+            "</g>",
+            baselines,
+            f'<g fill="{escape(default_text)}">',
+            *labels,
+            "</g>",
+            *chrome,
+            "</svg>",
+        ]
     )
 
 
@@ -2080,9 +2092,18 @@ def _segment_marks(
     )
 
 
+#: Markers per emitted string block. One SVG element per point means the mark
+#: list is the document, and a list of N short strings costs ~50 bytes of object
+#: header each on top of the markup — 40% overhead at 100k points, live at the
+#: same time as the joined result. Collapsing every block keeps the per-object
+#: overhead bounded while staying a single linear pass (byte-identical output:
+#: concatenation is associative).
+_SVG_MARK_BLOCK = 4096
+
+
 def _scatter_marks(
     t: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict, fallback: str
-) -> str:
+) -> list[str]:
     xv = _column(blob, cols[t["x"]])
     yv = _column(blob, cols[t["y"]])
     px, py = sx(xv), sy(yv)
@@ -2150,9 +2171,10 @@ def _scatter_marks(
     if grouped_alpha:
         fill_group = float(scalar_artist) * _fill_opacity(style, 1.0)
         stroke_group = float(scalar_artist) * _stroke_opacity(style, 1.0)
-        out = [f'<g fill-opacity="{_num(fill_group)}" stroke-opacity="{_num(stroke_group)}">']
+        blocks = [f'<g fill-opacity="{_num(fill_group)}" stroke-opacity="{_num(stroke_group)}">']
     else:
-        out = ["<g>"]
+        blocks = ["<g>"]
+    out: list[str] = []
     for i in range(n):
         fill = face_rgba[i]
         fill_value = (
@@ -2197,8 +2219,13 @@ def _scatter_marks(
             out.append(
                 builder(float(px[i]), float(py[i]), marker_radius) + f"{fill_attr}{stroke_attr}/>"
             )
-    out.append("</g>")
-    return "".join(out)
+        if len(out) >= _SVG_MARK_BLOCK:
+            blocks.append("".join(out))
+            out.clear()
+    if out:
+        blocks.append("".join(out))
+    blocks.append("</g>")
+    return blocks
 
 
 _SYMBOL_NAMES = (

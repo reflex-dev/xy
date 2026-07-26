@@ -975,6 +975,13 @@ Rules that make the mode targets in §2 real:
    API call that returns the freed bytes and records the trace as `degraded` —
    visible in the debug HUD and in `chart.memory_report()`, which itemizes all five
    classes per trace. If a memory number isn't in the report, it isn't real.
+   Corollary for growth buffers: a streamed column's `values` is a prefix *view* of a
+   capacity-doubling allocation (§5), so `values.nbytes` under-reports what the process
+   holds by up to 2x. Every column therefore reports `capacity_bytes` alongside
+   `bytes`, the store totals them as `canonical_capacity_bytes`, and
+   `resident_array_bytes` is built from the capacity total — equal to `canonical_bytes`
+   for any figure that never appended. Continuous channels already reported their own
+   growth buffers this way; columns now match.
 5. **Canonical may be out-of-core (native `mmap`).** The "mmap (native)" cell in the
    table above is realized: a canonical column may be backed by a disk `np.memmap`
    instead of RAM. Because a memmap is a transparent `ndarray` — same dedup key, same

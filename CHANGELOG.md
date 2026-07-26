@@ -36,6 +36,34 @@ in the README).
   same validated style properties, so an explicit `style=` still wins and specs
   that don't use them are byte-identical.
 
+### Changed
+- Peak memory cut on four paths, with byte-identical output everywhere (89
+  payload/export/view fingerprints pinned before and after):
+  - The indexed-palette PNG encoder stages one scanline buffer and hands it to
+    zlib directly instead of building a per-row `bytes` list, joining it, and
+    narrowing an `intp`-per-pixel `np.unique` inverse. A 1800×840 export peaks
+    at 6 MB instead of 50 MB (33 MB instead of 274 MB at 4K) and encodes ~1.8x
+    faster; the truecolor branch drops ~17%.
+  - Full-column color quantization (density mean-color planes, `direct_rgba`
+    channels, u8 live-wire channels) runs chunk-bounded and in place. Its chunk
+    was 4M rows, so every real column still paid the one-shot peak: a 2.1M-row
+    continuous color channel resolved in 44 MB and now resolves in 7 MB, taking
+    a colored 2.1M-point first paint from 181 MB to 147 MB of RSS.
+  - Direct-tier scatter/line/area payloads skip the all-visible row mask. Zone
+    maps already count NaN *and* ±inf as null, so on linear axes with no nulls
+    the mask is provably all-true; it was three O(N) passes and two N-byte
+    temporaries per build. Emit is 16–35% faster, and area no longer allocates
+    an identity index vector (nor gathers animation keys through it).
+  - SVG documents assemble in one flat join with block-buffered markers, and the
+    native rasterizer borrows the display list instead of freezing a `bytes`
+    copy. A 100k-point SVG export peaks at 27 MB instead of 39 MB.
+- `memory_report()` reports `capacity_bytes` per column and
+  `canonical_capacity_bytes` per store, and builds `resident_array_bytes` from
+  the capacity total. A streamed column's `values` is a prefix view of its
+  capacity-doubling buffer, so up to half of what it holds was invisible to the
+  report (§27: if a number isn't in the report, it isn't real). Figures that
+  never appended report exactly what they did before.
+
 ### Fixed
 - The colorbar stringified its colormap, so a custom ramp reached it as an
   unparseable name and silently painted viridis while the marks beside it

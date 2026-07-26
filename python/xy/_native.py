@@ -17,7 +17,7 @@ import operator
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -3093,8 +3093,11 @@ def _byte_span_arrays(spans):  # noqa: ANN001, ANN202 - private ctypes adapter
     return arenas, pointers, lengths
 
 
-def rasterize_spans(cmds: bytes, spans, w: int, h: int) -> npt.NDArray[np.uint8]:  # noqa: ANN001
-    """Paint a display list borrowing multiple call-scoped byte arenas."""
+def rasterize_spans(cmds: Any, spans, w: int, h: int) -> npt.NDArray[np.uint8]:  # noqa: ANN001
+    """Paint a display list borrowing multiple call-scoped byte arenas.
+
+    `cmds` is any read-only-safe buffer (`bytes`, `bytearray`, `memoryview`):
+    it is borrowed through `np.frombuffer`, never copied."""
     w = _positive_int(w, "raster width")
     h = _positive_int(h, "raster height")
     buf = np.frombuffer(cmds, dtype=np.uint8)
@@ -3115,8 +3118,9 @@ def rasterize_spans(cmds: bytes, spans, w: int, h: int) -> npt.NDArray[np.uint8]
     return out
 
 
-def rasterize_png_spans(cmds: bytes, spans, w: int, h: int) -> bytes:  # noqa: ANN001
-    """Paint and encode a display list borrowing multiple byte arenas."""
+def rasterize_png_spans(cmds: Any, spans, w: int, h: int) -> bytes:  # noqa: ANN001
+    """Paint and encode a display list borrowing multiple byte arenas
+    (`cmds` is borrowed, as in `rasterize_spans`)."""
     w = _positive_int(w, "raster width")
     h = _positive_int(h, "raster height")
     buf = np.frombuffer(cmds, dtype=np.uint8)

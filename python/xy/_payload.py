@@ -403,6 +403,29 @@ class PayloadMixin(_Host):
             return None
         return np.flatnonzero(np.isfinite(xv) & np.isfinite(yv))
 
+    def _visible_mask_needed(
+        self,
+        t: Trace,
+        *,
+        prefiltered: bool,
+        base_column: Optional[Column] = None,
+    ) -> bool:
+        """Whether `_log_visible_mask` can drop any row for this trace.
+
+        The mask is three O(N) passes plus two N-byte temporaries, and on the
+        common shape (linear axes, no nulls) it is provably all-True: zone maps
+        count NaN *and* ±inf as null (§22/§19), so a null-free column has no
+        row for `isfinite` to reject, and `prefiltered` rows already went
+        through `_finite_sel`. Only a log axis (which additionally rejects
+        non-positive values) or a baseline column outside the x/y zone maps can
+        actually remove something.
+        """
+        if self._axis_scale(t.x_axis) == "log" or self._axis_scale(t.y_axis) == "log":
+            return True
+        if base_column is not None and base_column.zone.null_count:
+            return True
+        return not prefiltered and bool(t.x.zone.null_count or t.y.zone.null_count)
+
     def _log_visible_mask(
         self,
         t: Trace,
@@ -483,7 +506,7 @@ class PayloadMixin(_Host):
             sel = self._finite_sel(t, xv, yv)
             if sel is not None:
                 xv, yv = xv[sel], yv[sel]
-        if len(xv):
+        if len(xv) and self._visible_mask_needed(t, prefiltered=sel is not None):
             finite = self._log_visible_mask(t, xv, yv)
             if not bool(np.all(finite)):
                 sel = np.flatnonzero(finite) if sel is None else sel[finite]
@@ -507,9 +530,11 @@ class PayloadMixin(_Host):
         tier, (xv, yv, bv) = self._m4_decimate(
             t, xr, px_width, t.x.values, t.y.values, t.base.values
         )
-        sel = np.flatnonzero(self._log_visible_mask(t, xv, yv, bv))
-        if len(sel) != len(xv):
-            xv, yv, bv = xv[sel], yv[sel], bv[sel]
+        sel = None
+        if self._visible_mask_needed(t, prefiltered=False, base_column=t.base):
+            sel = np.flatnonzero(self._log_visible_mask(t, xv, yv, bv))
+            if len(sel) != len(xv):
+                xv, yv, bv = xv[sel], yv[sel], bv[sel]
         entry = self._base_entry(t, pw, xv, yv, tier, self._default_styled(t))
         if tier == "decimated":
             entry["decimation_px"] = int(px_width)
@@ -535,7 +560,7 @@ class PayloadMixin(_Host):
         sel = self._finite_sel(t, xv, yv)
         if sel is not None:
             xv, yv = xv[sel], yv[sel]
-        if len(xv):
+        if len(xv) and self._visible_mask_needed(t, prefiltered=sel is not None):
             visible = self._log_visible_mask(t, xv, yv)
             if not bool(np.all(visible)):
                 sel = np.flatnonzero(visible) if sel is None else sel[visible]

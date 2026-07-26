@@ -338,10 +338,12 @@ for(const p of panels){{
             data = (
                 encode_png(canvas)
                 if optimize
+                # The encoder borrows the frame buffer; `tobytes` would add a
+                # whole extra canvas to peak RSS at every export scale.
                 else png_truecolor(
                     canvas.shape[1],
                     canvas.shape[0],
-                    np.ascontiguousarray(canvas).tobytes(),
+                    np.ascontiguousarray(canvas),
                     compression_level=1,
                 )
             )
@@ -397,7 +399,7 @@ for(const p of panels){{
                 return png_truecolor(
                     canvas.shape[1],
                     canvas.shape[0],
-                    np.ascontiguousarray(canvas).tobytes(),
+                    np.ascontiguousarray(canvas),
                     compression_level=1,
                 )
             canvas = self._compose_rgba(scale, background)

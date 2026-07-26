@@ -1032,9 +1032,13 @@ def render_raster(
     from . import _native
 
     spans = (blob, *borrowed)
+    # The command buffer ships as a borrowed buffer, not a `bytes` copy: the
+    # ctypes seam wraps it with `np.frombuffer` and the native rasterizer only
+    # reads it, so freezing it would duplicate a display list that is O(marks)
+    # (megabytes on a direct-tier scatter) for nothing.
     if fast_png:
-        return _native.rasterize_png_spans(bytes(cmd.buf), spans, w_px, h_px)
-    return _native.rasterize_spans(bytes(cmd.buf), spans, w_px, h_px)
+        return _native.rasterize_png_spans(cmd.buf, spans, w_px, h_px)
+    return _native.rasterize_spans(cmd.buf, spans, w_px, h_px)
 
 
 def _emit_line(
