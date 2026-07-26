@@ -87,10 +87,18 @@ The kernel separates "declined this data, use the oracle" from "this layout is
 not in the ABI": only the first falls back, so a contract drift between the
 ctypes gate and the Rust layout check raises instead of silently costing the
 whole speedup.
+Encoding runs whenever `key=` is given, because uniqueness and typing are
+construction contract rather than animation policy. The resulting identity
+planes are only retained and shipped when the *resolved* spec can key-match —
+`match` defaults to `"index"`, so a bare `xy.animation(...)`, an
+`enabled=False` chart, or a `key=` with no animation at all would otherwise
+carry two u32 columns nothing reads, both in the widget's retained payload and
+on the wire. Duplicate and row-count errors are unaffected by that skip.
 Line-like keys follow the same stable geometry sort as their coordinates; the
 encoder hands back Fortran-order planes that ship without a per-column copy,
 but that sort and any finite-row selection reorder through NumPy advanced
-indexing, which returns C-order and restores the copy at ship time.
+indexing, which returns C-order and restores the copy at ship time. The sort is
+skipped along with the planes when nothing will match on them.
 Errorbar point keys are role-qualified after expansion so the main segment and
 caps remain unique and stable.
 

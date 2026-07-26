@@ -58,6 +58,15 @@ in the README).
   that don't use them are byte-identical.
 
 ### Changed
+- Stable animation `key=` identity planes are now retained and shipped only
+  when the resolved animation spec can actually key-match. `match` defaults to
+  `"index"`, so `key=` combined with a bare `xy.animation(...)`, with
+  `enabled=False`, or with no animation at all previously put two dead `u32`
+  columns in the payload — 8 B/row held for the widget lifetime and 8 B/row on
+  the wire (400 KB at 50k rows) that no client code read. Encoding still runs
+  in every case: duplicate-key and row-count errors are construction contract,
+  not animation policy, and are unchanged. Payloads that do key-match are
+  byte-identical.
 - Stable animation `key=` identity encoding now uses one native Rust row scan
   for homogeneous fixed-width strings, bytes, booleans, and signed or unsigned
   integers, plus finite floating arrays, including non-native-endian NumPy

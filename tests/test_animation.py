@@ -460,6 +460,95 @@ def test_native_transition_key_argument_errors_are_loud() -> None:
         _native._lib.xy_transition_keys_fixed = original
 
 
+def _keyed_scatter(animation, n: int = 8):
+    x = [float(i) for i in range(n)]
+    marks = [xy.scatter(x=x, y=x, key=[f"k{i}" for i in range(n)])]
+    return xy.scatter_chart(*marks, *([animation] if animation is not None else [])).figure()
+
+
+@pytest.mark.parametrize(
+    ("animation", "ships"),
+    [
+        pytest.param(xy.animation(match="key"), True, id="match-key"),
+        pytest.param(xy.animation(match="index"), False, id="match-index"),
+        # `match` defaults to "index", so a bare animation() never key-matches.
+        pytest.param(xy.animation(duration=250), False, id="match-defaulted"),
+        pytest.param(xy.animation(match="key", enabled=False), False, id="disabled"),
+        pytest.param(None, False, id="no-animation-spec"),
+    ],
+)
+def test_identity_planes_ship_only_when_the_client_can_key_match(animation, ships) -> None:
+    """`key=` alone must not put two dead u32 columns on the wire."""
+    figure = _keyed_scatter(animation)
+    spec, _buffers = figure.build_payload_split()
+    trace = spec["traces"][0]
+
+    assert ("keys" in trace) is ships
+    assert (figure.traces[0].transition_keys is not None) is ships
+
+
+@pytest.mark.parametrize(
+    "animation",
+    [
+        pytest.param(xy.animation(match="index"), id="match-index"),
+        pytest.param(xy.animation(enabled=False), id="disabled"),
+        pytest.param(None, id="no-animation-spec"),
+    ],
+)
+def test_key_validation_still_runs_when_planes_are_skipped(animation) -> None:
+    """Uniqueness and typing are construction contract, not animation policy."""
+    marks = xy.scatter(x=[1.0, 2.0, 3.0], y=[1.0, 2.0, 3.0], key=["a", "b", "a"])
+    with pytest.raises(ValueError, match="duplicate value at rows 0 and 2"):
+        xy.scatter_chart(marks, *([animation] if animation is not None else [])).figure()
+
+    bad = xy.scatter(x=[1.0, 2.0], y=[1.0, 2.0], key=[object(), object()])
+    with pytest.raises(ValueError, match="animation key values must be"):
+        xy.scatter_chart(bad, *([animation] if animation is not None else [])).figure()
+
+
+def test_key_matching_payload_is_unchanged_by_the_skip() -> None:
+    """The path that does key-match must be byte-identical to before."""
+    spec, blob = _keyed_scatter(xy.animation(match="key"), n=32).build_payload()
+    trace = spec["traces"][0]
+    lo = _column(blob, spec, trace["keys"]["lo"])
+    hi = _column(blob, spec, trace["keys"]["hi"])
+    expected = _python_transition_key_reference([f"k{i}" for i in range(32)])
+    np.testing.assert_array_equal(lo, expected[:, 0])
+    np.testing.assert_array_equal(hi, expected[:, 1])
+
+
+def test_mark_animation_spec_clobbers_chart_level_fields() -> None:
+    """KNOWN BUG (reflex-dev/xy#329) — pinned so a fix is a deliberate change.
+
+    `Animation.to_spec()` emits every field, and both the Python merge and the
+    client's `{...spec.animation, ...trace.animation}` are plain dict spreads.
+    So a mark-level `xy.animation(duration=90)` resets `match`, `easing`,
+    `enter`, `update`, and `interpolate` to their defaults, silently turning
+    off the chart-level `match="key"` the caller asked for.
+    """
+    figure = xy.scatter_chart(
+        xy.scatter(
+            x=[1.0, 2.0],
+            y=[1.0, 2.0],
+            key=["a", "b"],
+            animation=xy.animation(duration=90),
+        ),
+        xy.animation(match="key", easing="linear"),
+    ).figure()
+    spec, _ = figure.build_payload_split()
+    resolved = {**spec.get("animation", {}), **(spec["traces"][0].get("animation") or {})}
+
+    assert resolved["match"] == "index"  # caller asked for "key"
+    assert resolved["easing"] == "ease-out"  # caller asked for "linear"
+    assert resolved["duration"] == 90.0  # the one field they meant to set
+
+    # The same clobbering suppresses the match='key' requires key= guard.
+    xy.scatter_chart(
+        xy.scatter(x=[1.0, 2.0], y=[1.0, 2.0], animation=xy.animation(duration=90)),
+        xy.animation(match="key"),
+    ).figure()
+
+
 def test_aggregate_tier_records_key_matching_fallback() -> None:
     chart = xy.scatter_chart(
         xy.scatter(
@@ -467,7 +556,10 @@ def test_aggregate_tier_records_key_matching_fallback() -> None:
             y=[3.0, 4.0, 5.0],
             key=["a", "b", "c"],
             density=True,
-            animation=xy.animation(duration=90),
+            # `match="key"` has to be restated here: a mark-level animation
+            # spec is a full dict, so it resets every field the chart set.
+            # See test_mark_animation_spec_clobbers_chart_level_fields.
+            animation=xy.animation(duration=90, match="key"),
         ),
         xy.animation(match="key"),
     )

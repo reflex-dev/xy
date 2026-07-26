@@ -4069,6 +4069,12 @@ def _apply_mark_transition_metadata(
     ):
         raise ValueError(f"{mark.kind} animation match='key' requires key=")
     keys: np.ndarray | None = None
+    # `match` defaults to "index", so a bare `xy.animation(...)` — or no
+    # animation at all — never key-matches. Encoding still runs for its
+    # uniqueness and typing contract, but the identity planes are dead weight
+    # nothing reads: 8 B/row retained for the widget lifetime and 8 B/row on
+    # the wire. Only carry them when the client can actually match on them.
+    key_matching = effective.get("enabled") is not False and effective.get("match") == "key"
     if mark.key is not None:
         raw = (
             _resolve(data, mark.key, context=f"{mark.kind}.key")
@@ -4081,19 +4087,22 @@ def _apply_mark_transition_metadata(
             )
         expected = int(traces[0].n_points)
         keys = _encode_transition_keys(raw, expected, f"{mark.kind} key")
-        if mark.kind in {"line", "area", "error_band"}:
+        if key_matching and mark.kind in {"line", "area", "error_band"}:
             positions = _original_mark_positions(fig, mark, data, expected)
             if positions is not None:
                 keys = keys[np.argsort(positions, kind="stable")]
     for trace in traces:
         trace.animation = None if mark_spec is None else dict(mark_spec)
         if keys is not None:
+            # The per-trace row check is contract too, so it runs whether or
+            # not the planes are kept.
             if trace.n_points != len(keys):
                 raise ValueError(
                     f"{mark.kind} key has {len(keys)} rows but emitted trace {trace.id} "
                     f"has {trace.n_points} logical rows"
                 )
-            trace.transition_keys = keys
+            if key_matching:
+                trace.transition_keys = keys
 
 
 def _continuous_color_label(mark: Mark) -> Optional[str]:
