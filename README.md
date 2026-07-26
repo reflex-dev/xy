@@ -33,6 +33,11 @@ share interactive notebook results, or ship self-contained charts on the web.
 Build charts once, then display them in notebooks and apps or export them as
 HTML, images, and vector graphics.
 
+Large data is where XY is unusual, not where it starts: a 10-thousand-point
+chart takes the same exact-marker path as any other library, and the measured
+numbers for it are in [Benchmarks](#benchmarks). For what XY does not do yet,
+read [limitations and alpha status](docs/api-reference/limitations-and-alpha-status.md).
+
 ## Installation
 
 ```bash
@@ -123,15 +128,29 @@ matplotlib feature. See the [compatibility guide](spec/matplotlib/compat.md).
   <img src="spec/assets/launch-benchmark-comparison.svg" alt="Cold-render time for a 10-million-point chart in XY, Matplotlib, and Plotly. Lower is better." width="1200">
 </p>
 
-In the recorded 10-million-point baseline, XY produced a static PNG in 0.023 s
-versus 2.8 s for Matplotlib and 9.6 s for Plotly, and reached first interactive
-render 16–20× sooner.
+The same baseline covers everyday chart sizes, not only large ones. Both rows
+are means of three isolated cold runs on identical seeded data at a 900×420
+output:
+
+| Points | XY static PNG | Matplotlib | Plotly | XY interactive first render | XY mode |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 10k | 0.0085 s | 0.0234 s | 1.8830 s | 0.1533 s | direct |
+| 10M | 0.0232 s | 2.7842 s | 9.5834 s | 0.1797 s | density |
+
+At 10 million points XY reached first interactive render 16–20× sooner than
+Matplotlib and Plotly. At 10 thousand it is still drawing every marker
+exactly — the small-chart path is measured, not assumed.
 
 The committed launch baseline uses identical seeded data, a 900×420 output,
 and three isolated cold runs. See the
 [launch report](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md)
 and [benchmark runbook](benchmarks/README.md) for the environment,
-methodology, and raw results.
+methodology, and raw results. `benchmarks/categories.py` lists every tracked
+category with the committed baseline behind it, or `None` where a harness
+exists but has not been run into a committed artifact — a category with no
+baseline is unmeasured here, not slow. Known gaps live in
+[limitations and alpha status](docs/api-reference/limitations-and-alpha-status.md);
+read it alongside these numbers, not instead of them.
 
 ## Styling
 

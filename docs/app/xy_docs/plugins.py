@@ -119,6 +119,19 @@ def build_llms_txt(config: DocsSiteConfig) -> str:
             "complete docs in one file."
         ),
         "",
+        # An agent assessing XY reads the limitations page and stops, because
+        # nothing points it at the measured evidence. Name both, here, first.
+        (
+            "Assessing XY? Read both halves. "
+            f"[Benchmarks]({_public_url('/overview/benchmarks/')}) is the "
+            "measured record of what XY does, at 10 thousand points as well as "
+            "10 million. "
+            f"[Limitations and alpha status]"
+            f"({_public_url('/api-reference/limitations-and-alpha-status/')}) "
+            "is the deliberately complete list of what it does not do yet. "
+            "Either page alone gives a skewed answer."
+        ),
+        "",
         "## Docs",
         "",
     ]

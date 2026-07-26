@@ -5,7 +5,12 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from benchmarks.categories import CATEGORY_BY_ID
+from benchmarks.categories import (
+    BENCHMARK_CATEGORIES,
+    CATEGORIES_WITHOUT_BASELINE,
+    CATEGORY_BY_ID,
+    markdown_category_table,
+)
 from benchmarks.environment import SCHEMA_VERSION, collect_environment_metadata
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -351,3 +356,34 @@ def test_benchmark_categories_track_core_hardening_metrics() -> None:
     assert "tooltip stability" in interaction_metrics
     assert "frame color delta" in interaction_metrics
     assert "positive-domain correctness" in log_metrics
+
+
+def test_every_benchmark_category_declares_its_baseline_state() -> None:
+    """`status` is intent; `baseline` is evidence. Every category answers both.
+
+    A reader must be able to tell "harness exists, never run" from "measured and
+    lost" without leaving the registry, so the fields are required rather than
+    optional and a committed path has to resolve.
+    """
+    for category in BENCHMARK_CATEGORIES:
+        assert "baseline" in category, category["id"]
+        assert "baseline_scope" in category, category["id"]
+
+        baseline = category["baseline"]
+        scope = category["baseline_scope"]
+        if baseline is None:
+            assert scope is None, f"{category['id']} scopes a baseline it does not have"
+            continue
+
+        assert not Path(baseline).is_absolute(), f"{category['id']} baseline must be repo-relative"
+        assert (ROOT / baseline).is_file(), f"{category['id']} baseline {baseline} is missing"
+        assert scope, f"{category['id']} cites a baseline without saying what it covers"
+
+
+def test_categories_without_a_baseline_are_not_described_as_measured() -> None:
+    """The generated registry table must read as absence of evidence, not a result."""
+    table = "\n".join(markdown_category_table(CATEGORIES_WITHOUT_BASELINE))
+
+    assert CATEGORIES_WITHOUT_BASELINE, "every category gained a baseline; update this test"
+    assert "none committed (harness only)" in table
+    assert "launch_baselines" not in table

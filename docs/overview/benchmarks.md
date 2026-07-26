@@ -106,6 +106,12 @@ from the default API under a fixed output contract. A separate like-for-like
 representation study is still useful when the question is about the cost of
 aggregation itself.
 
+This page and
+[Limitations and alpha status](/docs/xy/api-reference/limitations-and-alpha-status/)
+are two halves of one picture: this page is the measured evidence, that page is
+the known gaps. Reading either alone gives a skewed answer, so evaluations
+should cite both.
+
 ## Next benchmark coverage
 
 The repository already has harnesses for more than the launch scatter. Results
@@ -123,6 +129,14 @@ frozen:
 
 Until those artifacts are published, this page intentionally keeps its
 headline claims scoped to the committed launch scatter.
+
+An unpublished category is an unmeasured one. The repository's category
+registry, `benchmarks/categories.py`, records for each tracked category whether
+a committed baseline exists — a path to the report, or `None` when the harness
+has been built but never run into a committed artifact. Ten of the fourteen
+tracked categories currently read `None`. That records the state of the
+evidence, not the state of the code: it does not mean those workloads are slow,
+unsupported, or untested for correctness.
 
 ## Inspect and reproduce the evidence
 

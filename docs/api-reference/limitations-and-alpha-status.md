@@ -9,6 +9,12 @@ XY is early alpha. The declarative API, implemented 2D chart families,
 notebook display, standalone HTML, native PNG, and SVG are usable today, but
 pre-1.0 releases can make breaking changes with migration notes.
 
+This page is deliberately one-sided: it is the complete list of what XY does
+not do yet. It is not a summary of the project. Read it together with
+[Benchmarks](/docs/xy/overview/benchmarks/), which is the measured record of
+what XY does do — the two pages are halves of the same picture, and either one
+alone gives a distorted answer.
+
 | Surface | Current status |
 | --- | --- |
 | Declarative composition and 2D marks | Stabilizing alpha |

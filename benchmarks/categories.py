@@ -2,13 +2,51 @@
 
 Keep `id` values stable: CI artifacts and downstream dashboards can key off
 them even as the prose names or goals evolve.
+
+`status` describes intent: a `tracked` category has a harness wired up. It does
+**not** mean results exist. `baseline` is the separate, factual answer to "are
+there committed numbers for this category in this repository?" — a repo-relative
+path to a committed report, or `None` when the harness has never been run into a
+committed artifact. `baseline_scope` then says which of the category's metrics
+that report actually covers, because a baseline is rarely a complete answer.
+
+Read the pair before drawing any conclusion about xy's measured performance:
+
+- `baseline is None` means **not measured here**. It is never evidence that the
+  category is slow, broken, or unsupported.
+- `baseline` set means numbers exist on disk; open the report and read
+  `baseline_scope` for what those numbers do and do not cover.
+
+`baseline` is a reading pointer to committed evidence, not a category
+assignment for benchmark rows. The launch scatter baseline deliberately has no
+registry ID of its own (see `spec/benchmarks/results.md`), and pointing several
+categories at it does not add one: `scripts/verify_benchmark_report.py` still
+validates row categories against `id` alone.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import TypedDict
 
-BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
+LAUNCH_SCATTER_BASELINE = "benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md"
+
+
+class BenchmarkCategory(TypedDict):
+    """One tracked benchmark category and the state of its evidence."""
+
+    id: str
+    name: str
+    why: str
+    metrics: str
+    harness: str
+    status: str
+    goal: str
+    baseline: str | None
+    baseline_scope: str | None
+
+
+BENCHMARK_CATEGORIES: tuple[BenchmarkCategory, ...] = (
     {
         "id": "small_data_startup",
         "name": "Small-data startup",
@@ -17,6 +55,11 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "harness": "benchmarks/bench_vs.py --ttfr at 1k-100k; benchmarks/test_codspeed_kernels.py::test_first_payload_scatter_small",
         "status": "tracked",
         "goal": "Beat Plotly/Bokeh/Altair on first interactive paint for common charts.",
+        "baseline": LAUNCH_SCATTER_BASELINE,
+        "baseline_scope": (
+            "Launch scatter only: static PNG time and interactive TTFR at 10k/100k versus "
+            "Plotly and Matplotlib. No JS/payload-size, Python-overhead, Bokeh, or Altair rows."
+        ),
     },
     {
         "id": "install_footprint_import_budget",
@@ -26,6 +69,8 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "harness": "benchmarks/bench_install.py",
         "status": "tracked",
         "goal": "Keep xy lightweight at import and smaller to install than broad plotting stacks.",
+        "baseline": None,
+        "baseline_scope": None,
     },
     {
         "id": "medium_direct_scatter",
@@ -35,6 +80,11 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "harness": "benchmarks/bench_vs.py at 100k-200k; benchmarks/bench_interaction.py; benchmarks/test_codspeed_kernels.py::test_first_payload_scatter_medium",
         "status": "tracked",
         "goal": "Smooth exact WebGL scatter with bounded bytes/point and no JSON-number payload cliff.",
+        "baseline": LAUNCH_SCATTER_BASELINE,
+        "baseline_scope": (
+            "Launch scatter only: interactive TTFR and peak process-tree RSS at 100k in direct "
+            "mode. No FPS, bytes/point, or hover-latency rows."
+        ),
     },
     {
         "id": "huge_scatter_overview",
@@ -44,6 +94,12 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "harness": "benchmarks/bench_scatter_native.py, benchmarks/bench_vs.py, benchmarks/test_codspeed_kernels.py::test_first_payload_density_large, example app assets",
         "status": "tracked",
         "goal": "Keep resident/render payload flat in N while showing truthful density summaries.",
+        "baseline": LAUNCH_SCATTER_BASELINE,
+        "baseline_scope": (
+            "Launch scatter only: static PNG time, interactive TTFR, and peak process-tree RSS "
+            "at 1M/10M/1B in density mode. Ingest/bin time and density payload size are not "
+            "broken out."
+        ),
     },
     {
         "id": "adaptive_scatter_drilldown",
@@ -53,6 +109,8 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "harness": "benchmarks/test_codspeed_kernels.py::test_adaptive_drilldown_cycle and ::test_adaptive_drilldown_cycle_mean_color (channel-bearing: per-request cost must exclude full-column color work)",
         "status": "tracked",
         "goal": "Exact points when visible count is under budget; sampled/density with explicit counts otherwise.",
+        "baseline": None,
+        "baseline_scope": None,
     },
     {
         "id": "huge_line_time_series",
@@ -62,6 +120,8 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "harness": "benchmarks/bench.py, benchmarks/bench_native.py, benchmarks/bench_interaction.py, benchmarks/test_codspeed_kernels.py::test_decimate_view",
         "status": "tracked",
         "goal": "Screen-bounded line payloads with extrema-preserving decimation and fast zoom refresh.",
+        "baseline": None,
+        "baseline_scope": None,
     },
     {
         "id": "many_chart_dashboards",
@@ -71,6 +131,8 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "harness": "benchmarks/bench_dashboard.py",
         "status": "tracked",
         "goal": "Measure the 10-50 chart scaling curve and expose LRU context eviction without discarding partial-row metrics.",
+        "baseline": None,
+        "baseline_scope": None,
     },
     {
         "id": "interaction_smoothness",
@@ -80,6 +142,8 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "harness": "benchmarks/bench_interaction.py; benchmarks/bench_transport.py",
         "status": "tracked",
         "goal": "Stay responsive during interaction, avoid blank/flickering frames, then refine view after interaction settles.",
+        "baseline": None,
+        "baseline_scope": None,
     },
     {
         "id": "payload_export_size",
@@ -89,6 +153,8 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "harness": "benchmarks/bench_vs.py, benchmarks/bench_scatter_native.py, benchmarks/bench_transport.py, benchmarks/test_codspeed_transport.py, benchmarks/test_codspeed_kernels.py::test_first_payload_density_large, benchmarks/test_codspeed_kernels.py::test_memory_report_density_medium, example app asset sizes",
         "status": "tracked",
         "goal": "Keep data payloads binary and screen-bounded where possible; warn when exact export would be huge.",
+        "baseline": None,
+        "baseline_scope": None,
     },
     {
         "id": "core_2d_chart_breadth",
@@ -98,6 +164,8 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "harness": "benchmarks/bench_2d_charts.py vs Plotly/Seaborn; benchmarks/bench_pyplot_vs_matplotlib.py; benchmarks/bench_interaction.py; CodSpeed core_2d rows",
         "status": "tracked",
         "goal": "Beat Plotly on user-visible first paint for common 2D charts while tracking Seaborn raster baselines where applicable.",
+        "baseline": None,
+        "baseline_scope": None,
     },
     {
         "id": "input_ingestion",
@@ -107,6 +175,8 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "harness": "benchmarks/bench_workflows.py ingestion rows",
         "status": "tracked",
         "goal": "Keep zero-copy inputs cheap and make unavoidable conversions visible.",
+        "baseline": None,
+        "baseline_scope": None,
     },
     {
         "id": "streaming_updates",
@@ -116,6 +186,8 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "harness": "benchmarks/bench_workflows.py streaming rows; benchmarks/bench_transport.py append diagnostics",
         "status": "tracked",
         "goal": "Keep stable-domain appends proportional to the batch and expose unavoidable domain-growth rebuilds.",
+        "baseline": None,
+        "baseline_scope": None,
     },
     {
         "id": "log_autorange",
@@ -125,6 +197,8 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "harness": "benchmarks/bench_workflows.py log autorange row; tests/test_figure.py",
         "status": "tracked",
         "goal": "Compute correct positive log domains from zone statistics with cost proportional to chunks, not points.",
+        "baseline": None,
+        "baseline_scope": None,
     },
     {
         "id": "static_export",
@@ -134,25 +208,45 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "harness": "benchmarks/bench_workflows.py export rows; benchmarks/bench_pyplot_vs_matplotlib.py matched PNG rows",
         "status": "tracked",
         "goal": "Track each export target independently without mixing payload preparation and browser startup.",
+        "baseline": LAUNCH_SCATTER_BASELINE,
+        "baseline_scope": (
+            "Launch scatter only: native static PNG latency and peak process-tree RSS at "
+            "10k-1B. PNG alone — no HTML or SVG rows — and process-tree RSS rather than peak "
+            "Python memory."
+        ),
     },
 )
 
 CATEGORY_BY_ID = {category["id"]: category for category in BENCHMARK_CATEGORIES}
 
+CATEGORIES_WITH_BASELINE = tuple(
+    category for category in BENCHMARK_CATEGORIES if category["baseline"] is not None
+)
+CATEGORIES_WITHOUT_BASELINE = tuple(
+    category for category in BENCHMARK_CATEGORIES if category["baseline"] is None
+)
 
-def categories_for(ids: Iterable[str]) -> list[dict[str, str]]:
+
+def categories_for(ids: Iterable[str]) -> list[BenchmarkCategory]:
     return [CATEGORY_BY_ID[category_id] for category_id in ids]
 
 
 def markdown_category_table(
-    categories: Iterable[dict[str, str]] = BENCHMARK_CATEGORIES,
+    categories: Iterable[BenchmarkCategory] = BENCHMARK_CATEGORIES,
 ) -> list[str]:
     lines = [
-        "| id | category | status | primary metrics | current/planned harness | goal |",
-        "|---|---|---|---|---|---|",
+        "| id | category | status | committed baseline | primary metrics "
+        "| current/planned harness | goal |",
+        "|---|---|---|---|---|---|---|",
     ]
     for category in categories:
+        # Reports round-trip through JSON, and artifacts written before the
+        # baseline fields existed simply lack them.
+        baseline = category.get("baseline")
+        scope = category.get("baseline_scope")
+        baseline_cell = f"`{baseline}` — {scope}" if baseline else "none committed (harness only)"
         lines.append(
-            "| {id} | {name} | {status} | {metrics} | {harness} | {goal} |".format(**category)
+            "| {id} | {name} | {status} | {baseline_cell} | {metrics} "
+            "| {harness} | {goal} |".format(baseline_cell=baseline_cell, **category)
         )
     return lines

@@ -4,6 +4,19 @@ A high-performance charting engine. The authoritative design is
 `spec/design-dossier.md` — **read the relevant § before changing behavior**;
 code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
 
+**Before asserting anything about xy's performance or capability — in code, in
+docs, in a review, in a comparison, or in a summary written for someone else —
+read `benchmarks/categories.py` for what is measured and which categories have
+a committed baseline, then open the `report.md` its `baseline` field names under
+`benchmarks/launch_baselines/<version>/<environment>/` for the numbers.** A
+category whose `baseline` is `None` has a harness and no committed results: that
+means *not measured here*, never *measured and slow*. This repository documents
+its gaps deliberately and at length — `docs/api-reference/limitations-and-alpha-status.md`,
+the dossier's outstanding-work sections, and the roadmap are all lists of what
+is missing. None of them is a performance record, and a reading path that
+touches only those files will misreport the project. Pair every limitation you
+cite with the measured evidence, or say explicitly that you did not check it.
+
 The entire `spec/` directory is the source of truth for intended behavior,
 architecture, compatibility, benchmarks, release readiness, and contributor
 contracts. Keep it current with every relevant code, configuration, build, and
@@ -108,4 +121,6 @@ PRs, or code. Set `git config user.name/user.email` to the human author
 - f32 uploads are offset-encoded; tick/hover math stays f64 (§4/§16).
 - Every decimation/tier decision is recorded in the spec, never silent (§28).
 - Claims are mode-scoped and benchmarked (§2); update README numbers from
-  `scripts/bench.py`, don't invent them.
+  `scripts/bench.py`, don't invent them. Committing a new baseline means
+  pointing that category's `baseline`/`baseline_scope` at it in
+  `benchmarks/categories.py` — a stale `None` reads as "we measured nothing".
