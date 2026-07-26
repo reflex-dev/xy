@@ -359,12 +359,19 @@ def _gathered(fields: list[list[np.ndarray]], index: int, order: np.ndarray) -> 
 
     The per-component pieces are released as they are joined, so a field costs
     one joined copy plus the gathered result rather than both plus the parts —
-    each is an int64 per token, and a photographic image has millions.
+    each is an int64 per token, and a photographic image has millions. `parts`
+    is dropped explicitly rather than left to the frame: a local stays alive
+    until the function returns, so `return np.concatenate(parts)[order]` would
+    hold the pieces, the join, *and* the gather at once.
     """
     parts = [f[index] for f in fields]
     for f in fields:
         f[index] = _EMPTY_I64
-    return np.concatenate(parts)[order]
+    joined = np.concatenate(parts)
+    del parts
+    gathered = joined[order]
+    del joined
+    return gathered
 
 
 def encode(rgba: np.ndarray, *, quality: int = 90) -> bytes:

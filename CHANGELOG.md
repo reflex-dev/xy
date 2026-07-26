@@ -64,12 +64,12 @@ in the README).
     per-component token fields are freed as they are gathered. A 1800x840 export
     peaks at 48 MB instead of 108 (photographic: **400 MB instead of 1516 MB**)
     and is 5-19% faster.
-  - Standalone HTML export appends the base64 payload chunks as their own
-    document parts and joins once, instead of interpolating each chunk into a
-    wrapper string and folding a second joined copy into an f-string. The
-    encoded text is the bulk of the document, so that was two extra full copies
-    of it: a 1M-point export peaks at 34 MB instead of 41 and is marginally
-    faster.
+  - Standalone HTML export joins the document once from parts, with every large
+    string — the client bundle, the spec, each base64 chunk — as its own part, so
+    the join copies it exactly once. Previously the chunks were folded through a
+    `"\n".join(...)` and then into an f-string, duplicating 4/3 of the payload. A
+    1M-point export peaks at 33 MB instead of 41; a small export (where the
+    ~330 KB client bundle is the document) is ~2% faster.
   - The native rasterizer's serial point and segment passes no longer
     materialize an `0..n` index vector to read back in order (4 bytes per mark),
     and the per-point density quantizer keeps one temporary instead of three.

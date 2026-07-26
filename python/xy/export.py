@@ -323,11 +323,13 @@ def to_html(
     # valid JS string literal verbatim and can never close the <script>. Quote
     # it directly rather than via `json.dumps`, whose full-string escape scan
     # dominated small-chart export cost.
-    # Assembled as parts joined once, not a `"\n".join(...)` folded into an
-    # f-string: the base64 text is 4/3 of the payload, so the intermediate
-    # chunk-script string was a second full copy of the document's bulk. Chunks
-    # are wrapped straight from the generator and the payload is released before
-    # the join, keeping peak at roughly one encoded copy plus the result.
+    # Assembled as parts joined once. Every large string — the client bundle, the
+    # spec, each base64 chunk — is its own part, so the join copies it exactly
+    # once and nothing is formatted into an intermediate first. Interpolating one
+    # of them costs a second full copy of it: folding the chunks through
+    # `"\n".join(...)` duplicated 4/3 of the payload, and (measured on
+    # `test_html_export_line`, where the ~330 KB client bundle *is* the document)
+    # interpolating `client_js` into a header part cost ~10% of a small export.
     blob_len = len(blob)
     parts = [
         f"""<!doctype html>
@@ -342,27 +344,24 @@ html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;
 {_custom_css_block(custom_css)}</head>
 <body>
 <div id="chart"></div>
-<script>{client_js}</script>
+<script>""",
+        client_js,
+        """</script>
 <script>var __xyChunks = [];</script>
-"""
+""",
     ]
     for index, chunk in enumerate(_iter_base64_chunks(blob)):
-        # The chunk is appended as its own part rather than interpolated into a
-        # wrapper string: the encoded text is the bulk of the document, and
-        # formatting it would copy every byte of it a second time. The newline
-        # goes *between* blocks, exactly as the previous `"\n".join` did, so a
-        # payload-free document keeps its byte layout too.
-        if index:
-            parts.append('\n<script>__xyChunks.push("')
-        else:
-            parts.append('<script>__xyChunks.push("')
+        # The newline goes *between* blocks, exactly as the previous `"\n".join`
+        # did, so a payload-free document keeps its byte layout too.
+        parts.append('\n<script>__xyChunks.push("' if index else '<script>__xyChunks.push("')
         parts.append(chunk)
         parts.append('");</script>')
     del blob
-    parts.append(f"""
-<script>
-  {_DECODE_B64_JS}
-  const spec = {spec_js};
+    parts.append("\n<script>\n  ")
+    parts.append(_DECODE_B64_JS)
+    parts.append("\n  const spec = ")
+    parts.append(spec_js)
+    parts.append(f""";
   const buf = xyDecodeB64(__xyChunks, {blob_len});
   __xyChunks.length = 0;
   xy.renderStandalone(document.getElementById("chart"), spec, buf);
