@@ -21,6 +21,15 @@ from PIL import Image, ImageFont
 
 # Printable ASCII. Axis labels/titles/legends mostly stay within this set.
 FIRST, LAST = 0x20, 0x7E
+# Latin-1 Supplement + Latin Extended-A letters: every language written in the
+# Latin script that xy is likely to label a chart in. Without these a `Café` or
+# `Zürich` tick label lost the accented letter *entirely* — no glyph, no
+# advance, no warning — while the same chart's SVG rendered it correctly.
+# Ranges, not a hand-typed string, so the coverage is auditable.
+_LATIN = "".join(chr(c) for c in [*range(0x00C0, 0x0180)] if chr(c).isalpha())
+# Currency beyond ASCII `$`. `xy.y_axis(format="€,.0f")` is a first-class
+# feature, so its symbol has to survive to_png().
+_CURRENCY = "¢£¤¥₣₤₦₩₪₫€₭₮₱₲₴₹₺₽₿"
 # Extra codepoints for the pyplot shim's TeX-subset → unicode conversion
 # (greek, super/subscripts, math operators) plus typography mpl emits (−, µ).
 EXTRA = sorted(
@@ -30,6 +39,13 @@ EXTRA = sorted(
         "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ"
         "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕᵢₖₗₘₙₒₚᵣₛₜᵤᵥₓ"
         "×·±∓≤≥≠≈∞√°→←∂∇∫∝∈−–—‘’“”…µ"
+        "§¶†‡•‰≡⌀"
+        + _LATIN
+        + _CURRENCY
+        # U+FFFD is the fallback the rasterizer substitutes for anything still
+        # missing, so a character xy cannot draw shows up as a visible box
+        # instead of vanishing (§28: never silent).
+        + "�"
     )
 )
 PX = 16  # render size; runtime scales this coverage bitmap to the requested size.

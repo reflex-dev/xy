@@ -1172,8 +1172,7 @@ fn blit_heatmap(
 // ---- text (baked glyph atlas) -----------------------------------------------
 
 /// Atlas row for a char: the contiguous ASCII block, then the sorted extras.
-fn glyph_index(ch: char) -> Option<usize> {
-    let code = ch as u32;
+fn atlas_row(code: u32) -> Option<usize> {
     if (font::FIRST as u32..=font::LAST as u32).contains(&code) {
         return Some((code - font::FIRST as u32) as usize);
     }
@@ -1182,6 +1181,26 @@ fn glyph_index(ch: char) -> Option<usize> {
         .binary_search(&code)
         .ok()
         .map(|i| ascii + i)
+}
+
+/// Atlas row for a char, substituting U+FFFD when the atlas has no glyph.
+///
+/// The atlas covers ASCII, Latin-1/Latin Extended-A, currency, Greek, and the
+/// math/typography set the pyplot shim emits — not CJK, not emoji. A character
+/// outside it used to be *dropped*: no glyph and no advance, so `東京` rendered
+/// as empty space in the PNG while the same figure's SVG rendered it correctly.
+/// Substituting the replacement character keeps the failure visible, which is
+/// what §28 asks of every decision the engine makes on the user's behalf.
+/// Zero-width and control characters stay dropped — they have nothing to show.
+fn glyph_index(ch: char) -> Option<usize> {
+    let code = ch as u32;
+    if let Some(row) = atlas_row(code) {
+        return Some(row);
+    }
+    if ch.is_control() || matches!(code, 0x200B..=0x200F | 0xFEFF) {
+        return None;
+    }
+    atlas_row(0xFFFD)
 }
 
 /// High bit of the anchor byte requests 90°-CCW text (bottom-up y-axis titles).
@@ -2520,6 +2539,32 @@ mod tests {
     }
     fn f64le(v: f64) -> [u8; 8] {
         v.to_le_bytes()
+    }
+
+    #[test]
+    fn atlas_covers_latin_and_currency_and_boxes_the_rest() {
+        // Accented Latin and non-ASCII currency used to have no atlas row, and
+        // a missing row meant the character was dropped outright — no glyph and
+        // no advance — so `Zürich` silently exported as `Zrich`.
+        for ch in ['é', 'ü', 'ł', 'Ø', '€', '£', '¥', '₹', 'α', '≤', '²'] {
+            let row = atlas_row(ch as u32);
+            assert!(row.is_some(), "atlas should carry {ch:?}");
+            let (advance, ..) = font::GLYPHS[row.unwrap()];
+            assert!(advance > 0, "{ch:?} should advance the pen");
+        }
+        // Outside the atlas: substituted, never dropped.
+        for ch in ['東', '🎉'] {
+            assert!(atlas_row(ch as u32).is_none(), "{ch:?} is not baked");
+            assert_eq!(
+                glyph_index(ch),
+                atlas_row(0xFFFD),
+                "{ch:?} should fall back to the replacement glyph"
+            );
+        }
+        // Zero-width and control characters have nothing to show.
+        for ch in ['\u{200b}', '\u{feff}', '\u{7}'] {
+            assert_eq!(glyph_index(ch), None, "{ch:?} should stay invisible");
+        }
     }
 
     #[test]
