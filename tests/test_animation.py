@@ -851,6 +851,51 @@ def test_a_duplicate_outranks_a_later_invalid_row(keys: list, rows: tuple[int, i
         _encode_transition_keys(keys, len(keys), "keys")
 
 
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (0, 1),  # both in the first block
+        (0, 4095),  # first block, at its last row
+        (0, 4096),  # spans the first block boundary
+        (4095, 4096),  # straddles it
+        (4096, 4097),  # both in the second block
+        (0, 32768),  # spans the second boundary (stride x8)
+        (5000, 40000),  # neither in the first block, different blocks
+        (0, 49999),  # last row of all
+    ],
+)
+def test_a_duplicate_is_named_the_same_wherever_the_block_boundaries_fall(
+    first: int, second: int
+) -> None:
+    """Uniqueness is tested on growing prefixes, so a duplicate whose two rows
+    land in different blocks must still be reported — and reported with the same
+    two row numbers a single trailing test would have produced."""
+    from xy.components import _encode_transition_keys
+
+    n = 50_000
+    keys = [f"k-{i:09d}" for i in range(n)]
+    keys[second] = keys[first]
+    expected = f"keys contains duplicate value at rows {first} and {second}"
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        _encode_transition_keys(keys, n, "keys")
+
+
+def test_prefix_checks_do_not_change_the_encoding() -> None:
+    """The blocked walk must produce the same digests as one straight pass, at
+    sizes below, at, and above the first block boundary."""
+    from xy.components import _encode_transition_keys
+
+    for n in (1, 4095, 4096, 4097, 32769, 40000):
+        keys = [f"k-{i:09d}" for i in range(n)]
+        got = _encode_transition_keys(keys, n, "keys")
+        assert got.shape == (n, 2) and got.dtype == np.uint32
+        # Every row is an independent hash of its own key, so a one-row encode
+        # of key i must equal row i of the bulk encode.
+        for probe in {0, n // 2, n - 1}:
+            single = _encode_transition_keys([keys[probe]], 1, "keys")
+            np.testing.assert_array_equal(single[0], got[probe])
+
+
 def test_the_superseded_token_error_is_not_chained_onto_the_duplicate() -> None:
     """The prefix re-check runs inside an `except`, so without suppression the
     error it deliberately discards would print *first*, above a 'During handling
