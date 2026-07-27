@@ -392,6 +392,58 @@ COLORMAP_STOPS: dict[str, list[tuple[int, int, int]]] = {
         (25, 151, 80),
         (0, 104, 55),
     ],
+    "rdylbu": [
+        (165, 0, 38),
+        (214, 47, 38),
+        (244, 109, 67),
+        (252, 172, 96),
+        (254, 224, 144),
+        (254, 254, 192),
+        (224, 243, 247),
+        (169, 216, 232),
+        (116, 173, 209),
+        (68, 115, 179),
+        (49, 54, 149),
+    ],
+    "ylgn": [
+        (255, 255, 229),
+        (248, 252, 194),
+        (229, 244, 171),
+        (200, 232, 154),
+        (162, 216, 137),
+        (119, 197, 120),
+        (75, 176, 98),
+        (46, 146, 76),
+        (21, 120, 62),
+        (0, 96, 51),
+        (0, 69, 41),
+    ],
+    "wistia": [
+        (228, 255, 122),
+        (238, 245, 84),
+        (249, 236, 45),
+        (255, 223, 21),
+        (255, 206, 10),
+        (255, 188, 0),
+        (255, 177, 0),
+        (255, 165, 0),
+        (254, 153, 0),
+        (253, 139, 0),
+        (252, 127, 0),
+    ],
+    "puor": [
+        (127, 59, 8),
+        (177, 87, 6),
+        (224, 130, 20),
+        (252, 182, 97),
+        (254, 224, 182),
+        (246, 246, 246),
+        (216, 218, 235),
+        (177, 169, 209),
+        (128, 115, 172),
+        (83, 38, 134),
+        (45, 0, 75),
+    ],
     "spectral": [
         (158, 1, 66),
         (212, 61, 79),
@@ -2019,10 +2071,15 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
     if measured_bottom_room:
         bottom = max(bottom, measured_bottom_room)
     colorbar = spec.get("colorbar") or {}
-    if colorbar.get("orientation") == "horizontal":
-        bottom += 38 + (16 if colorbar.get("label") else 0)
+    if colorbar.get("placement") == "axes":
+        if colorbar.get("orientation") == "horizontal":
+            bottom += 24 + (16 if colorbar.get("label") else 0)
+        else:
+            right += 44 + (18 if colorbar.get("label") else 0)
+    elif colorbar.get("orientation") == "horizontal":
+        bottom += (18 if colorbar.get("pad") == 0 else 38) + (16 if colorbar.get("label") else 0)
     elif colorbar:
-        right += 86 + (18 if colorbar.get("label") else 0)
+        right += (62 if colorbar.get("pad") == 0 else 86) + (18 if colorbar.get("label") else 0)
     if any(
         axis_id.startswith("y")
         and (
@@ -2817,7 +2874,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             )
         )
 
-    annotation_marks, annotation_labels = _annotation_svg(
+    annotation_marks, unclipped_annotation_marks, annotation_labels = _annotation_svg(
         spec.get("annotations") or [], sx, sy, plot, width, height
     )
     marks.extend(annotation_marks)
@@ -3025,6 +3082,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             f'<g clip-path="url(#{clip_id})">',
             *marks,
             "</g>",
+            *unclipped_annotation_marks,
             baselines,
             f'<g fill="{escape(default_text)}">',
             *labels,
@@ -3122,6 +3180,37 @@ def _annotation_first_baseline(
     return first_baseline
 
 
+def _annotation_connector_unclipped(
+    ann: dict[str, Any],
+    sx: Callable[[float], float],
+    sy: Callable[[float], float],
+    plot: dict[str, float],
+) -> bool:
+    """Whether an arrow may leave the axes because its target is in bounds.
+
+    Matplotlib's default ``annotation_clip=None`` clips based on the annotated
+    point, not the text/connector path.  A label may therefore sit outside the
+    axes while its connector remains visible back to an in-bounds target.
+    """
+    kind = ann.get("kind")
+    if kind == "arrow":
+        target = ann.get("x1"), ann.get("y1")
+    elif kind == "callout":
+        target = ann.get("x"), ann.get("y")
+    else:
+        return False
+    try:
+        px, py = float(sx(float(target[0]))), float(sy(float(target[1])))
+    except (TypeError, ValueError):
+        return False
+    return (
+        np.isfinite(px)
+        and np.isfinite(py)
+        and plot["x"] <= px <= plot["x"] + plot["w"]
+        and plot["y"] <= py <= plot["y"] + plot["h"]
+    )
+
+
 def _annotation_svg(
     annotations: Sequence[dict[str, Any]],
     sx: Callable[[float], float],
@@ -3129,8 +3218,9 @@ def _annotation_svg(
     plot: dict[str, float],
     width: float,
     height: float,
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], list[str]]:
     marks: list[str] = []
+    unclipped_marks: list[str] = []
     labels: list[str] = []
     px0, py0 = plot["x"], plot["y"]
     for ann in annotations:
@@ -3166,6 +3256,9 @@ def _annotation_svg(
                 f'height="{_num(y1 - y0)}" fill="{color}" fill-opacity="{_num(float(style.get("opacity", 0.14)))}"/>'
             )
         elif kind in ("arrow", "callout"):
+            connector_marks = (
+                unclipped_marks if _annotation_connector_unclipped(ann, sx, sy, plot) else marks
+            )
             if kind == "arrow":
                 x0, y0 = float(sx(float(ann["x0"]))), float(sy(float(ann["y0"])))
                 x1, y1 = float(sx(float(ann["x1"]))), float(sy(float(ann["y1"])))
@@ -3177,12 +3270,12 @@ def _annotation_svg(
                 stroke_width = _num(max(0.5, float(style.get("width", 1.5))))
                 if shapes["taper"] is not None:
                     taper = " ".join(f"{_num(px)},{_num(py)}" for px, py in shapes["taper"])
-                    marks.append(
+                    connector_marks.append(
                         f'<polygon points="{taper}" fill="{color}" fill-opacity="{_num(opacity)}"/>'
                     )
                 else:
                     shaft = " ".join(f"{_num(px)},{_num(py)}" for px, py in shapes["shaft"])
-                    marks.append(
+                    connector_marks.append(
                         f'<polyline points="{shaft}" fill="none" '
                         f'stroke="{color}" stroke-width="{stroke_width}" '
                         f'stroke-opacity="{_num(opacity)}"{_dash_attr(style)}/>'
@@ -3192,12 +3285,12 @@ def _annotation_svg(
                         continue
                     points = " ".join(f"{_num(px)},{_num(py)}" for px, py in decoration["points"])
                     if decoration["kind"] == "fill":
-                        marks.append(
+                        connector_marks.append(
                             f'<polygon points="{points}" fill="{color}" '
                             f'fill-opacity="{_num(opacity)}"/>'
                         )
                     else:
-                        marks.append(
+                        connector_marks.append(
                             f'<polyline points="{points}" fill="none" stroke="{color}" '
                             f'stroke-width="{stroke_width}" stroke-opacity="{_num(opacity)}"/>'
                         )
@@ -3311,7 +3404,7 @@ def _annotation_svg(
                 + (f'fill-opacity="{_num(text_opacity)}" ' if text_opacity < 1 else "")
                 + f'fill="{label_color}">{tspans}</text>'
             )
-    return marks, labels
+    return marks, unclipped_marks, labels
 
 
 def _svg_font_attrs(style: dict[str, Any]) -> str:
@@ -3507,6 +3600,22 @@ def _segment_marks(
 _SVG_MARK_BLOCK = 4096
 
 
+def _authored_marker_path_d(
+    marker_path: dict[str, Any], cx: float, cy: float, diameter: float
+) -> str:
+    parts: list[str] = []
+    for contour in marker_path.get("contours") or ():
+        values = np.asarray(contour, dtype=np.float64).reshape(-1, 2)
+        if not len(values):
+            continue
+        points = [(cx + diameter * float(x), cy - diameter * float(y)) for x, y in values]
+        parts.append(f"M {_num(points[0][0])} {_num(points[0][1])}")
+        parts.extend(f"L {_num(x)} {_num(y)}" for x, y in points[1:])
+        if bool(marker_path.get("filled", True)):
+            parts.append("Z")
+    return " ".join(parts)
+
+
 def _scatter_marks(
     t: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict, fallback: str
 ) -> list[str]:
@@ -3574,6 +3683,8 @@ def _scatter_marks(
     stroke_rgba = _paint.effective_rgba(
         stroke_source, effective_trace, read, component="stroke", default_opacity=0.8
     )
+    marker_path = style.get("marker_path")
+    marker_glyph = style.get("marker_glyph")
     if grouped_alpha:
         fill_group = float(scalar_artist) * _fill_opacity(style, 1.0)
         stroke_group = float(scalar_artist) * _stroke_opacity(style, 1.0)
@@ -3593,18 +3704,25 @@ def _scatter_marks(
         )
         symbol = symbols[i]
         builder = _SYMBOL_BUILDERS.get(symbol)
-        line_symbol = symbol in {
-            "plus_line",
-            "x_line",
-            "horizontal_line",
-            "vertical_line",
-        }
+        authored_line = bool(marker_path) and not bool(marker_path.get("filled", True))
+        line_symbol = (
+            symbol
+            in {
+                "plus_line",
+                "x_line",
+                "horizontal_line",
+                "vertical_line",
+            }
+            or authored_line
+        )
         stroke_w = float(stroke_widths[i])
         if line_symbol and stroke_w <= 0:
             stroke_w = 1.0
         stroke_color = stroke_rgba[i]
         stroke_value = (
-            escape(stroke_css)
+            fill_value
+            if authored_line
+            else escape(stroke_css)
             if stroke_css_constant
             else f"rgb({round(stroke_color[0] * 255)},{round(stroke_color[1] * 255)},{round(stroke_color[2] * 255)})"
         )
@@ -3621,7 +3739,18 @@ def _scatter_marks(
         )
         # `size` includes the edge; SVG strokes are centered on the path.
         marker_radius = max(0.0, float(radii[i]) - stroke_w / 2)
-        if builder is None:
+        if marker_glyph:
+            out.append(
+                f'<text x="{_num(px[i])}" y="{_num(py[i])}" '
+                f'font-family="DejaVu Sans" font-size="{_num(2 * marker_radius)}" '
+                f'text-anchor="middle" dominant-baseline="central"'
+                f"{fill_attr}{stroke_attr}>{escape(str(marker_glyph))}</text>"
+            )
+        elif marker_path:
+            d = _authored_marker_path_d(marker_path, float(px[i]), float(py[i]), 2 * marker_radius)
+            authored_fill = fill_attr if bool(marker_path.get("filled", True)) else ' fill="none"'
+            out.append(f'<path d="{d}"{authored_fill}{stroke_attr}/>')
+        elif builder is None:
             out.append(
                 f'<circle cx="{_num(px[i])}" cy="{_num(py[i])}" r="{_num(marker_radius)}"'
                 f"{fill_attr}{stroke_attr}/>"
@@ -3757,13 +3886,22 @@ def _hexbin_marks(
     xs = np.asarray(sx(cx[:n, None] + ring_x[None, :]), dtype=np.float64)
     ys = np.asarray(sy(cy[:n, None] + ring_y[None, :]), dtype=np.float64)
     fill_op = _fill_opacity(style)
-    group_attr = f' fill-opacity="{_num(fill_op)}"' if fill_op < 1 else ""
+    group_attr = (
+        f' fill-opacity="{_num(fill_op)}" stroke-opacity="{_num(fill_op)}"' if fill_op < 1 else ""
+    )
     out = [f"<g{group_attr}>"]
     for i in range(n):
         points = " ".join(
             f"{_num(float(x))},{_num(float(y))}" for x, y in zip(xs[i], ys[i], strict=True)
         )
-        out.append(f'<polygon points="{points}" fill="{escape(fills[i])}"/>')
+        paint = escape(fills[i])
+        # Matplotlib's default ``edgecolors="face"`` covers antialiasing
+        # cracks where adjacent hexagons meet. A same-color hairline preserves
+        # the face color while preventing white striping in vector viewers.
+        out.append(
+            f'<polygon points="{points}" fill="{paint}" stroke="{paint}" '
+            'stroke-width="0.5" stroke-linejoin="round"/>'
+        )
     out.append("</g>")
     return "".join(out)
 
@@ -4251,16 +4389,25 @@ def legend_items(traces: list[dict], palette: Sequence[str] = DEFAULT_PALETTE) -
     exactly as `ChartView._legend` does for the live client."""
     items: list[dict] = []
     for trace in traces:
+        style = dict(trace.get("style") or {})
+        use_trace_size = bool(style.pop("_legend_trace_size", False))
+        size = trace.get("size") or {}
+        if trace.get("kind") == "scatter" and use_trace_size and size.get("mode") == "constant":
+            style["size"] = float(size.get("size", 8.0))
         color = trace.get("color") or {}
         if color.get("mode") == "categorical":
             categories = color.get("categories") or []
             entry_palette = list(color.get("palette") or palette) or list(palette)
             for index, category in enumerate(categories):
-                style = dict(trace.get("style") or {})
-                style["color"] = entry_palette[index % len(entry_palette)]
-                items.append({"name": str(category), "kind": trace.get("kind"), "style": style})
+                item_style = dict(style)
+                item_style["color"] = entry_palette[index % len(entry_palette)]
+                items.append(
+                    {"name": str(category), "kind": trace.get("kind"), "style": item_style}
+                )
         elif trace.get("name"):
-            items.append(trace)
+            item = dict(trace)
+            item["style"] = style
+            items.append(item)
     return items
 
 
@@ -4522,39 +4669,25 @@ def _legend(
         hx0, hx1, cy = rx, rx + handle, ry + text_h / 2
         kind = t.get("kind")
         if kind == "scatter":
-            symbol = style.get("symbol", "circle")
-            builder = _SYMBOL_BUILDERS.get(symbol)
-            radius = max(0.5, float(style.get("size", 8.0)) / 2.0)
-            stroke_w = float(style.get("stroke_width", 0.0))
-            line_symbol = symbol in {
-                "plus_line",
-                "x_line",
-                "horizontal_line",
-                "vertical_line",
-            }
-            if line_symbol and stroke_w <= 0:
-                stroke_w = 1.0
-            stroke = _css(style.get("stroke"), color) if stroke_w or line_symbol else None
-            stroke_attr = (
-                f' stroke="{escape(stroke)}" stroke-width="{_num(stroke_w)}"' if stroke else ""
-            )
-            cxm = (hx0 + hx1) / 2
-            if builder is None:
-                rows.append(
-                    f'<circle cx="{_num(cxm)}" cy="{_num(cy)}" r="{_num(radius)}" '
-                    f'fill="{escape(color)}"{stroke_attr}/>'
-                )
-            else:
-                rows.append(
-                    builder(float(cxm), float(cy), radius)
-                    + f' fill="{escape(color)}"{stroke_attr}/>'
-                )
+            rows.append(_legend_marker_svg(style, (hx0 + hx1) / 2, cy, color))
         elif kind in _LEGEND_LINE_KINDS:
+            width = float(style.get("width", 1.5))
+            gap_color = style.get("legend_gap_color")
+            if gap_color is not None and style.get("dash"):
+                rows.append(
+                    f'<line x1="{_num(hx0)}" y1="{_num(cy)}" '
+                    f'x2="{_num(hx1)}" y2="{_num(cy)}" '
+                    f'stroke="{escape(_css(gap_color, color))}" '
+                    f'stroke-width="{_num(width)}"/>'
+                )
             rows.append(
                 f'<line x1="{_num(hx0)}" y1="{_num(cy)}" x2="{_num(hx1)}" y2="{_num(cy)}" '
-                f'stroke="{escape(color)}" stroke-width="{_num(float(style.get("width", 1.5)))}"'
+                f'stroke="{escape(color)}" stroke-width="{_num(width)}"'
                 f"{_dash_attr(style)}/>"
             )
+            marker = style.get("legend_marker")
+            if isinstance(marker, dict):
+                rows.append(_legend_marker_svg(marker, (hx0 + hx1) / 2, cy, color))
         else:
             stroke_width = max(0.0, float(style.get("stroke_width", 0.0)))
             stroke = style.get("stroke")
@@ -4590,11 +4723,50 @@ def _legend(
     return f"<g{clip}>{''.join(rows)}</g>"
 
 
+def _legend_marker_svg(style: dict[str, Any], x: float, y: float, default_color: str) -> str:
+    """Render one Matplotlib legend marker at the center of its line handle."""
+    symbol = str(style.get("symbol", "circle"))
+    builder = _SYMBOL_BUILDERS.get(symbol)
+    marker_path = style.get("marker_path")
+    marker_glyph = style.get("marker_glyph")
+    radius = max(0.5, float(style.get("size", 8.0)) / 2.0)
+    color = _css(style.get("color"), default_color)
+    stroke_w = float(style.get("stroke_width", 0.0))
+    line_symbol = symbol in {
+        "plus_line",
+        "x_line",
+        "horizontal_line",
+        "vertical_line",
+    } or (bool(marker_path) and not bool(marker_path.get("filled", True)))
+    if line_symbol and stroke_w <= 0:
+        stroke_w = 1.0
+    stroke = _css(style.get("stroke"), color) if stroke_w or line_symbol else None
+    stroke_attr = f' stroke="{escape(stroke)}" stroke-width="{_num(stroke_w)}"' if stroke else ""
+    if marker_glyph:
+        return (
+            f'<text x="{_num(x)}" y="{_num(y)}" '
+            f'font-family="DejaVu Sans" font-size="{_num(2 * radius)}" '
+            f'text-anchor="middle" dominant-baseline="central" '
+            f'fill="{escape(color)}"{stroke_attr}>{escape(str(marker_glyph))}</text>'
+        )
+    if marker_path:
+        d = _authored_marker_path_d(marker_path, float(x), float(y), 2 * radius)
+        fill = escape(color) if bool(marker_path.get("filled", True)) else "none"
+        return f'<path d="{d}" fill="{fill}"{stroke_attr}/>'
+    if builder is None:
+        return (
+            f'<circle cx="{_num(x)}" cy="{_num(y)}" r="{_num(radius)}" '
+            f'fill="{escape(color)}"{stroke_attr}/>'
+        )
+    return builder(float(x), float(y), radius) + f' fill="{escape(color)}"{stroke_attr}/>'
+
+
 def _legend_hatch_svg(x0: float, x1: float, y0: float, y1: float, hatch: str, color: str) -> str:
     """Small, bounded hatch sample for explicit patch legend handles."""
     paths: list[str] = []
+    shapes: list[str] = []
     mid_y = (y0 + y1) / 2
-    if "-" in hatch or "*" in hatch:
+    if "-" in hatch:
         paths.append(f"M{_num(x0)},{_num(mid_y)} L{_num(x1)},{_num(mid_y)}")
     for char, direction in (("/", 1), ("\\", -1)):
         count = min(3, hatch.count(char))
@@ -4606,13 +4778,23 @@ def _legend_hatch_svg(x0: float, x1: float, y0: float, y1: float, hatch: str, co
                 f"L{_num(center + half)},{_num(mid_y - direction * half)}"
             )
     if "." in hatch:
+        radius = min(1.1, (y1 - y0) * 0.09)
         for fraction in (0.3, 0.7):
-            paths.append(f"M{_num(x0 + fraction * (x1 - x0))},{_num(mid_y)} l0.1,0")
+            shapes.append(
+                f'<circle cx="{_num(x0 + fraction * (x1 - x0))}" cy="{_num(mid_y)}" '
+                f'r="{_num(radius)}" fill="{escape(color)}"/>'
+            )
     if "*" in hatch:
-        paths.append(f"M{_num((x0 + x1) / 2)},{_num(y0)} L{_num((x0 + x1) / 2)},{_num(y1)}")
-    if not paths:
-        return ""
-    return f'<path d="{" ".join(paths)}" fill="none" stroke="{escape(color)}" stroke-width="1"/>'
+        radius = min(x1 - x0, y1 - y0) * 0.28
+        shapes.append(
+            _star_path((x0 + x1) / 2, mid_y, radius, 5, 0.45, -90.0) + f' fill="{escape(color)}"/>'
+        )
+    if paths:
+        shapes.insert(
+            0,
+            f'<path d="{" ".join(paths)}" fill="none" stroke="{escape(color)}" stroke-width="1"/>',
+        )
+    return "".join(shapes)
 
 
 def _colorbar(
@@ -4651,16 +4833,30 @@ def _colorbar(
     shrink = float(options.get("shrink", 1.0))
     anchor = options.get("anchor") or [0.5, 0.5]
     domain = options.get("domain", [0.0, 1.0])
-    if orientation == "horizontal":
+    placement = options.get("placement")
+    if placement == "axes":
+        x, y, width, height = plot["x"], plot["y"], plot["w"], plot["h"]
+        gradient_attrs = (
+            'x1="0" y1="0" x2="100%" y2="0"'
+            if orientation == "horizontal"
+            else 'x1="0" y1="100%" x2="0" y2="0"'
+        )
+    elif orientation == "horizontal":
         width = plot["w"] * shrink
         x = plot["x"] + (plot["w"] - width) * float(anchor[0])
-        y = plot["y"] + plot["h"] + (plot["bottom_axis_room"] or 10)
+        gap = (
+            float(options["pad"]) * plot["h"]
+            if options.get("pad") is not None
+            else (plot["bottom_axis_room"] or 10)
+        )
+        y = plot["y"] + plot["h"] + gap
         height = 18
         gradient_attrs = 'x1="0" y1="0" x2="100%" y2="0"'
     else:
         # right_axis_room shifts the whole colorbar clear of right-side named
         # y-axis chrome (layout() reserves room for both additively).
-        x = plot["x"] + plot["w"] + right_axis_room + 24
+        gap = float(options["pad"]) * plot["w"] if options.get("pad") is not None else 24.0
+        x = plot["x"] + plot["w"] + right_axis_room + gap
         height = plot["h"] * shrink
         y = plot["y"] + (plot["h"] - height) * (1.0 - float(anchor[1]))
         width = 18
@@ -4679,74 +4875,117 @@ def _colorbar(
         )
     )
     lo, hi = float(domain[0]), float(domain[1])
-    span = (hi - lo) or 1.0
+    log_scale = options.get("scale") == "log"
+
+    def fraction(value: float) -> float:
+        if log_scale:
+            return np.log(value / lo) / np.log(hi / lo) if hi != lo else 0.0
+        return (value - lo) / ((hi - lo) or 1.0)
+
     ticks = options.get("ticks")
-    tick_positions = (
-        [float(value) for value in ticks if lo <= float(value) <= hi]
-        if ticks is not None
-        else (
-            _linear_ticks(
+    supplied_labels = options.get("tick_labels")
+    paired_labels = (
+        supplied_labels
+        if isinstance(supplied_labels, list)
+        and isinstance(ticks, list)
+        and len(supplied_labels) == len(ticks)
+        else None
+    )
+    if ticks is not None:
+        tick_pairs = [
+            (
+                float(value),
+                None if paired_labels is None else str(paired_labels[index]),
+            )
+            for index, value in enumerate(ticks)
+            if lo <= float(value) <= hi
+        ]
+    else:
+        automatic_positions = (
+            _log_ticks(
+                lo,
+                hi,
+                _colorbar_tick_target(width if orientation == "horizontal" else height),
+            )[1]
+            if log_scale
+            else _linear_ticks(
                 lo,
                 hi,
                 _colorbar_tick_target(width if orientation == "horizontal" else height),
             )[0]
-            or [lo, hi]
-        )
-    )
+        ) or [lo, hi]
+        tick_pairs = [(float(value), None) for value in automatic_positions]
+    tick_positions = [value for value, _label in tick_pairs]
+    format_tick = _fmt_log if log_scale else lambda value: f"{value:g}"
     tick_nodes = (
         "".join(
             f'<text x="{_num(x + width + 4)}" '
-            f'y="{_num(y + height * (1 - (value - lo) / span) + 4)}"'
-            f'{tick_attrs} fill="{tick_paint}">{value:g}</text>'
-            for value in tick_positions
+            f'y="{_num(y + height * (1 - fraction(value)) + 4)}" '
+            f'{tick_attrs} fill="{tick_paint}">'
+            f"{escape(label if label is not None else format_tick(value))}</text>"
+            for value, label in tick_pairs
         )
         if orientation != "horizontal"
         else "".join(
-            f'<text x="{_num(x + width * (value - lo) / span)}" '
-            f'y="{_num(y + height + 12)}" text-anchor="middle"'
-            f'{tick_attrs} fill="{tick_paint}">{value:g}</text>'
-            for value in tick_positions
+            f'<text x="{_num(x + width * fraction(value))}" '
+            f'y="{_num(y + height + 12)}" text-anchor="middle" '
+            f'{tick_attrs} fill="{tick_paint}">'
+            f"{escape(label if label is not None else format_tick(value))}</text>"
+            for value, label in tick_pairs
         )
     )
     minor_nodes = ""
     if options.get("minor_ticks") and len(tick_positions) >= 2:
         ordered = sorted(set(tick_positions))
-        minor_positions = [
-            left + (right - left) * step / 5.0
-            for left, right in pairwise(ordered)
-            for step in range(1, 5)
-        ]
+        minor_positions = (
+            [
+                10 ** (np.log10(left) + (np.log10(right) - np.log10(left)) * step / 5.0)
+                for left, right in pairwise(ordered)
+                for step in range(1, 5)
+            ]
+            if log_scale
+            else [
+                left + (right - left) * step / 5.0
+                for left, right in pairwise(ordered)
+                for step in range(1, 5)
+            ]
+        )
         if orientation != "horizontal":
             minor_nodes = "".join(
                 f'<line data-xy-colorbar-minor="true" x1="{_num(x + width)}" '
                 f'x2="{_num(x + width + 3)}" '
-                f'y1="{_num(y + height * (1 - (value - lo) / span))}" '
-                f'y2="{_num(y + height * (1 - (value - lo) / span))}" '
+                f'y1="{_num(y + height * (1 - fraction(value)))}" '
+                f'y2="{_num(y + height * (1 - fraction(value)))}" '
                 f'stroke="{escape(text_color)}"/>'
                 for value in minor_positions
             )
         else:
             minor_nodes = "".join(
                 f'<line data-xy-colorbar-minor="true" '
-                f'x1="{_num(x + width * (value - lo) / span)}" '
-                f'x2="{_num(x + width * (value - lo) / span)}" '
+                f'x1="{_num(x + width * fraction(value))}" '
+                f'x2="{_num(x + width * fraction(value))}" '
                 f'y1="{_num(y + height)}" y2="{_num(y + height + 3)}" '
                 f'stroke="{escape(text_color)}"/>'
                 for value in minor_positions
             )
     extend = options.get("extend")
     extend_nodes = ""
+    line_only = bool(options.get("line_only"))
     if extend in ("max", "both"):
-        r, g, b = stops[-1]
+        r, g, b = options.get("over_color", stops[-1])
         points = (
             f"{_num(x)},{_num(y)} {_num(x + width)},{_num(y)} {_num(x + width / 2)},{_num(y - 9)}"
             if orientation != "horizontal"
             else f"{_num(x + width)},{_num(y)} {_num(x + width)},{_num(y + height)} "
             f"{_num(x + width + 9)},{_num(y + height / 2)}"
         )
-        extend_nodes += f'<polygon points="{points}" fill="rgb({r},{g},{b})"/>'
+        extend_nodes += (
+            f'<polygon points="{points}" fill="white" stroke="{escape(text_color)}"/>'
+            if line_only
+            else f'<polygon points="{points}" fill="rgb({r},{g},{b})"/>'
+        )
     if extend in ("min", "both"):
-        r, g, b = stops[0]
+        r, g, b = options.get("under_color", stops[0])
         points = (
             f"{_num(x)},{_num(y + height)} {_num(x + width)},{_num(y + height)} "
             f"{_num(x + width / 2)},{_num(y + height + 9)}"
@@ -4754,12 +4993,43 @@ def _colorbar(
             else f"{_num(x)},{_num(y)} {_num(x)},{_num(y + height)} "
             f"{_num(x - 9)},{_num(y + height / 2)}"
         )
-        extend_nodes += f'<polygon points="{points}" fill="rgb({r},{g},{b})"/>'
+        extend_nodes += (
+            f'<polygon points="{points}" fill="white" stroke="{escape(text_color)}"/>'
+            if line_only
+            else f'<polygon points="{points}" fill="rgb({r},{g},{b})"/>'
+        )
+    line_nodes = ""
+    for line in options.get("lines") or []:
+        value = float(line.get("value", np.nan))
+        if not np.isfinite(value) or value < min(lo, hi) or value > max(lo, hi):
+            continue
+        line_fraction = fraction(value)
+        color = escape(_css(line.get("color"), text_color))
+        line_width = _num(max(0.5, float(line.get("width", 1.0))))
+        dash = (
+            f' stroke-dasharray="{_num(3.7 * float(line_width))} {_num(1.6 * float(line_width))}"'
+            if line.get("dash") == "dashed"
+            else ""
+        )
+        if orientation == "horizontal":
+            position = x + width * line_fraction
+            line_nodes += (
+                f'<line data-xy-colorbar-line="true" x1="{_num(position)}" '
+                f'x2="{_num(position)}" y1="{_num(y)}" y2="{_num(y + height)}" '
+                f'stroke="{color}" stroke-width="{line_width}"{dash}/>'
+            )
+        else:
+            position = y + height * (1.0 - line_fraction)
+            line_nodes += (
+                f'<line data-xy-colorbar-line="true" x1="{_num(x)}" '
+                f'x2="{_num(x + width)}" y1="{_num(position)}" y2="{_num(position)}" '
+                f'stroke="{color}" stroke-width="{line_width}"{dash}/>'
+            )
     return (
         f'<defs><linearGradient id="{gradient_id}" {gradient_attrs}>'
         f"{stop_nodes}</linearGradient></defs>"
-        f"{_colorbar_body(options, x, y, width, height, orientation, gradient_id)}"
-        f"{extend_nodes}{minor_nodes}{tick_nodes}{label_node}"
+        f"{_colorbar_body(options, x, y, width, height, orientation, gradient_id, text_color)}"
+        f"{line_nodes}{extend_nodes}{minor_nodes}{tick_nodes}{label_node}"
     )
 
 
@@ -4776,9 +5046,16 @@ def _colorbar_body(
     height: float,
     orientation: str,
     gradient_id: str,
+    text_color: str,
 ) -> str:
     """Colorbar bar fill: a smooth gradient, or N solid bands for a discrete
     (resampled) colormap so it reads like Matplotlib's segmented colorbar."""
+    if options.get("line_only"):
+        return (
+            f'<rect data-xy-colorbar-line-only="true" x="{_num(x)}" y="{_num(y)}" '
+            f'width="{_num(width)}" height="{_num(height)}" fill="white" '
+            f'stroke="{escape(text_color)}" stroke-width="1"/>'
+        )
     levels = options.get("levels")
     if not levels or int(levels) < 1:
         return (
@@ -4786,22 +5063,39 @@ def _colorbar_body(
             f'height="{_num(height)}" fill="url(#{gradient_id})"/>'
         )
     n = int(levels)
-    cmap = options.get("colormap", "viridis")
-    positions = (np.arange(n, dtype=np.float64) + 0.5) / n
-    colors = _lut(cmap, positions)
+    exact_colors = options.get("band_colors")
+    if isinstance(exact_colors, list) and len(exact_colors) == n:
+        colors = np.asarray(exact_colors, dtype=np.uint8)
+    else:
+        cmap = options.get("colormap", "viridis")
+        positions = (np.arange(n, dtype=np.float64) + 0.5) / n
+        colors = _lut(cmap, positions)
+    fractions = np.linspace(0.0, 1.0, n + 1)
+    boundaries = np.asarray(options.get("boundaries", []), dtype=np.float64).reshape(-1)
+    if (
+        options.get("spacing") == "proportional"
+        and len(boundaries) == n + 1
+        and np.isfinite(boundaries).all()
+        and boundaries[-1] > boundaries[0]
+        and np.all(np.diff(boundaries) > 0.0)
+    ):
+        fractions = (boundaries - boundaries[0]) / (boundaries[-1] - boundaries[0])
     rects = []
     for index, (r, g, b) in enumerate(colors):
+        lower, upper = float(fractions[index]), float(fractions[index + 1])
         if orientation == "horizontal":
-            bx0 = x + width * index / n
+            bx0 = x + width * lower
+            bx1 = x + width * upper
             rects.append(
-                f'<rect x="{_num(bx0)}" y="{_num(y)}" width="{_num(width / n + 0.5)}" '
+                f'<rect x="{_num(bx0)}" y="{_num(y)}" width="{_num(bx1 - bx0 + 0.5)}" '
                 f'height="{_num(height)}" fill="rgb({int(r)},{int(g)},{int(b)})"/>'
             )
         else:
-            by0 = y + height * (n - 1 - index) / n
+            by0 = y + height * (1.0 - upper)
+            by1 = y + height * (1.0 - lower)
             rects.append(
                 f'<rect x="{_num(x)}" y="{_num(by0)}" width="{_num(width)}" '
-                f'height="{_num(height / n + 0.5)}" fill="rgb({int(r)},{int(g)},{int(b)})"/>'
+                f'height="{_num(by1 - by0 + 0.5)}" fill="rgb({int(r)},{int(g)},{int(b)})"/>'
             )
     return "".join(rects)
 

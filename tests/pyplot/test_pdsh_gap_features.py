@@ -351,13 +351,16 @@ def test_colorbar_ticks_and_extend_reach_both_exports():
     _png()
 
 
-def test_colorbar_rejects_unknown_kwargs_and_cax():
+def test_colorbar_rejects_unknown_kwargs_and_accepts_explicit_cax():
     fig, ax = plt.subplots()
     image = plt.imshow(np.eye(3))
     with pytest.raises(TypeError):
         plt.colorbar(image, fraction=0.05)
-    with pytest.raises(NotImplementedError):
-        plt.colorbar(image, cax=ax)
+    cax = fig.add_axes((0.85, 0.1, 0.075, 0.8))
+    colorbar = plt.colorbar(image, cax=cax)
+    assert colorbar.ax is cax
+    assert cax._colorbar["placement"] == "axes"
+    assert ax._colorbar is None
 
 
 # -- axes surface ----------------------------------------------------------------

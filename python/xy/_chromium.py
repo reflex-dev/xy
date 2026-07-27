@@ -324,18 +324,6 @@ class ChromiumSession:
                 self._call("Target.closeTarget", {"targetId": target_id})
             page_path.unlink(missing_ok=True)
 
-    def render_png(
-        self,
-        html: str,
-        width: int,
-        height: int,
-        *,
-        scale: float = 2.0,
-        timeout_s: float = 120.0,
-    ) -> bytes:
-        """Compatibility wrapper: `render_image` with format="png"."""
-        return self.render_image(html, width, height, scale=scale, timeout_s=timeout_s)
-
     def render_pdf(
         self,
         html: str,

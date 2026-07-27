@@ -144,6 +144,24 @@ def test_hexbin_and_contour_colorbars_use_compiled_domains() -> None:
         "orientation": "vertical",
     }
 
+    log_hex_chart = xy.hexbin_chart(
+        xy.hexbin(x, y, gridsize=4, mincnt=1, bins="log", colormap="inferno"),
+        xy.colorbar(),
+    )
+    log_hex_fig = log_hex_chart.figure()
+    log_hex_spec, _ = log_hex_fig.build_payload()
+    log_hex_trace = log_hex_fig.traces[0]
+
+    assert log_hex_trace.color_ch is not None
+    assert log_hex_trace.color_ch.domain != log_hex_trace.colorbar_domain
+    assert log_hex_spec["colorbar"] == {
+        "domain": list(log_hex_trace.colorbar_domain),
+        "colormap": "inferno",
+        "label": "count",
+        "orientation": "vertical",
+        "scale": "log",
+    }
+
     field = np.array(
         [
             [-2.0, -1.0, 0.0],
