@@ -11,6 +11,13 @@ which covers user-visible releases across the whole package.
   native-PNG serialization. Explicit `fontsize=14` therefore emits 19.44 px at
   100 dpi and follows temporary `savefig(dpi=...)` overrides.
 
+## Constrained colorbar-grid geometry — 2026-07-27
+
+- `Axes.get_position()` now enters the owning figure's final-content
+  constrained-layout solve before trusting a rectangle cached by the initial
+  empty-axes factory solve. A 2×2 contour grid with four colorbars therefore
+  reports the same balanced cells that sequential PNG/SVG exports render.
+
 ## Multiline chrome, tick fidelity, and final layout resolution — 2026-07-26
 
 - Newline-delimited axes titles, axis labels, tick/category labels, and

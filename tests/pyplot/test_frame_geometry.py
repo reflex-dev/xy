@@ -181,6 +181,57 @@ def test_tight_gridspec_panels_contain_terminal_x_tick_labels_in_static_exports(
     )
 
 
+def test_constrained_colorbar_grid_keeps_balanced_cells_across_static_exports():
+    """The contourf gallery's PNG→SVG capture must not compound colorbar room."""
+    x = np.linspace(-3.0, 3.0, 17)
+    xx, yy = np.meshgrid(x, x)
+    z = np.exp(-(xx**2) - yy**2) - np.exp(-((xx - 1) ** 2) - (yy - 1) ** 2)
+    levels = [-1.0, -0.5, 0.0, 0.5, 1.0]
+    extends = ("neither", "both", "min", "max")
+
+    fig, axes = plt.subplots(2, 2, figsize=(6.4, 4.8), dpi=100, layout="constrained")
+    for ax, extend in zip(np.asarray(axes).flat, extends, strict=True):
+        contours = ax.contourf(xx, yy, z, levels, extend=extend)
+        fig.colorbar(contours, ax=ax, shrink=0.9)
+        ax.set_title(f"extend = {extend}")
+        ax.locator_params(nbins=4)
+
+    expected = _reported_rects(fig)
+    rendered = _plot_rects(fig)
+    for want, got in zip(expected, rendered, strict=True):
+        assert got == pytest.approx(want, abs=1.0)
+    assert all(width >= 0.9 * height for _x, _y, width, height in expected)
+
+    png = io.BytesIO()
+    fig.savefig(png, format="png", dpi=100)
+    assert png.getvalue().startswith(b"\x89PNG")
+
+    svg = io.BytesIO()
+    fig.savefig(svg, format="svg", dpi=100)
+    root = ET.fromstring(svg.getvalue())
+    panels = [node for node in root if node.tag.endswith("svg")]
+    assert [(float(node.attrib["width"]), float(node.attrib["height"])) for node in panels] == [
+        (320.0, 240.0)
+    ] * 4
+    plot_boxes = [
+        next(
+            node
+            for node in panel.iter()
+            if node.tag.endswith("rect") and node.attrib.get("fill") == "white"
+        )
+        for panel in panels
+    ]
+    assert all(
+        float(box.attrib["width"]) >= 0.9 * float(box.attrib["height"]) for box in plot_boxes
+    )
+
+    # savefig restores transient state and dirties the requested layout. Its
+    # next final-content solve must be idempotent rather than reserving each
+    # axes' colorbar a second time.
+    for want, got in zip(expected, _reported_rects(fig), strict=True):
+        assert got == pytest.approx(want, abs=1.0)
+
+
 def test_get_position_reports_one_distinct_box_per_grid_panel():
     fig, axes = plt.subplots(8, 8, figsize=(6.0, 6.0), dpi=100)
     boxes = [tuple(np.round(ax.get_position().bounds, 6)) for ax in np.asarray(axes).ravel()]
