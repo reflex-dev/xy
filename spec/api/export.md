@@ -245,11 +245,15 @@ vector** (`_svg.to_svg`, and `_pdf.svg_to_pdf` on top of it).
 | `style={...}` on a mark | yes | yes | yes | validated CSS subset, `styles.compile_mark_style` |
 | `style={...}` on an axis | yes | yes | yes | validated vocabulary, `styles.compile_axis_style` |
 | `style={...}` on the chart (token bag) | yes | yes | yes | `spec["dom"]["style"]`, read at `_svg.py:767,1481` and `_raster.py:662` |
+<<<<<<< HEAD
+| `styles={slot: {...}}` (per-slot inline) | yes, all 29 slots | text subset, 9 slots | text subset, 9 slots | `_svg.STATIC_STYLED_SLOTS`; the rest is live-only chrome |
+=======
 | `styles={slot: {...}}` (per-slot inline) | yes, all 29 slots | **dropped** | **dropped** | silent — see below |
+>>>>>>> origin/main
 | `class_names={slot: "..."}` | yes, all 29 slots | **dropped** | **dropped** | silent — the SVG writer emits no `class` at all |
 | `custom_css="..."` | yes (HTML + Chromium capture) | **raises** | **raises** | `_resolve_image_engine`, `export.py:812` |
-| `xy.legend(style=...)` | yes | 6 keys | 6 keys | parallel `legend_options["style"]` channel |
-| `xy.colorbar(style=...)` | yes | **dropped** | **dropped** | no native channel exists |
+| `xy.legend(style=...)` | yes | 6 keys | 6 keys | merged with the slot and the theme token before the writers see it |
+| `xy.colorbar(style=...)` | yes | **dropped** | **dropped** | no native channel; use `styles={"colorbar_title"/"colorbar_tick": ...}` |
 
 ### Why two of those rows are silent, and why that is the right default
 
@@ -259,23 +263,39 @@ edit. The message says so. SVG rejects it for *every* engine, because a browser
 screenshot cannot produce vector output — that row is a hard "never", not a
 default.
 
-`class_names` and per-slot `styles` are dropped instead, because raising would
-break every native export of a chart that carries Tailwind classes for its live
-view, which is the normal way to use both surfaces together. The cost of that
-choice is exactly this table: the behavior has to be written down and tested,
-which is what `tests/test_export_style_survival.py` does — including that the
-two native writers agree with each other and not merely with this page.
+`class_names` is dropped rather than raising, because raising would break every
+native export of a chart that carries Tailwind classes for its live view, which
+is the normal way to use both surfaces together. A class name is also the one
+surface a file genuinely cannot honor: it selects a rule out of a stylesheet,
+and an exported file has no stylesheet to select from.
 
-### The legend's parallel channel
+### Which per-slot styles reach a file, and why only those
 
-`xy.legend(style=...)` is written twice: into `chrome_styles["legend"]` for the
-browser and into `fig.legend_options["style"]`, which the native writers do
-read (`_svg.py:2827`, `_raster.py:1970`). Native honors `background`,
-`boxShadow`, `borderRadius`, and `--xy-legend-frame-alpha`, plus `padding` and
-`rowGap` when they carry an `em` unit. The chart-level `styles={"legend": ...}`
-spelling never reaches `legend_options`, so the two spellings that look
-equivalent in the browser are not equivalent in a PNG. `colorbar` has no such
-channel at all.
+A slot reaches the native writers when it names chrome a static file actually
+contains. `_svg.STATIC_STYLED_SLOTS` is that list: `title`, `axis_title`,
+`tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`,
+`colorbar_title`, and `colorbar_tick`. The remaining slots are live-only chrome
+— `tooltip*`, `modebar*`, `crosshair_*`, `selection`, `badge*` — or containers
+with no painted text of their own; there is nothing in a PNG for them to style.
 
-This is an asymmetry worth closing, not just documenting; it is tracked as a
-row in the capability registry rather than as prose here.
+Within a supported slot the writers read a property subset, not a cascade:
+`font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`,
+`opacity`, and the text paint (`fill`, or `color`). The native raster's atlas is
+a single baked face, so it honors size and paint and leaves the typeface
+properties to the vector writers — the one documented divergence, and
+`tests/test_export_style_survival.py` pins it. A declaration outside the subset
+stays browser-only.
+
+Where two surfaces name the same chrome, the narrower selector wins: an axis's
+own `label_color` beats `styles={"axis_title": ...}`, which beats the
+chart-wide default.
+
+### The legend's three spellings
+
+`styles={"legend": ...}`, `xy.legend(style=...)`, and the `--chart-legend-bg`
+theme token all target the legend frame. They are merged into one declaration
+block — token, then slot, then component, narrowest last — before either native
+writer sees it (`_svg.legend_options_with_slot`), so spellings that agree in the
+browser agree in a PNG. An explicit `background` paints **opaque**, matching the
+browser's `background:var(--chart-legend-bg, …)`; `--xy-legend-frame-alpha`
+remains the separate knob for the default grey frame.

@@ -1105,16 +1105,11 @@ def test_raster_scopes_the_legend_clip_exemption_per_legend(monkeypatch) -> None
         events.append(("clip", (float(x), float(y), float(w), float(h))))
         return original_clip(self, x, y, w, h)
 
-    def record_legend(
-        cmd,
-        named,
-        legend_plot,
-        options,
-        text_color=_raster._TEXT,
-        palette=_raster.DEFAULT_PALETTE,
-    ):
+    def record_legend(cmd, named, legend_plot, options, *args, **kwargs):
+        # Signature-agnostic on purpose: this stub only records the emission
+        # order, so a new writer argument must not turn into a test failure.
         events.append(("legend", options.get("title")))
-        return original_legend(cmd, named, legend_plot, options, text_color, palette)
+        return original_legend(cmd, named, legend_plot, options, *args, **kwargs)
 
     monkeypatch.setattr(_raster._Cmd, "clip", record_clip)
     monkeypatch.setattr(_raster, "_emit_legend", record_legend)
