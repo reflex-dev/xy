@@ -3210,6 +3210,21 @@ class PlotTypeMixin:
             else:
                 count = int(np.asarray(levels, dtype=np.float64).item())
                 levels = _nice_contour_levels(float(finite.min()), float(finite.max()), count)
+                # Match ContourSet._autolev: keep one locator boundary beyond
+                # each data limit, except that an extended end discards its
+                # outer boundary because the under/over band owns that range.
+                # Unrecognized public values remain unextended; this preserves
+                # the gallery's legacy ``extend="lower"`` behavior.
+                under = np.flatnonzero(levels < float(finite.min()))
+                lower = int(under[-1]) if under.size else 0
+                over = np.flatnonzero(levels > float(finite.max()))
+                upper = int(over[0]) + 1 if over.size else len(levels)
+                if public_extend in ("min", "both"):
+                    lower += 1
+                if public_extend in ("max", "both"):
+                    upper -= 1
+                if upper - lower >= 3:
+                    levels = levels[lower:upper]
         public_levels = np.asarray(levels, dtype=np.float64)
         rendered_z = za
         rendered_levels = public_levels

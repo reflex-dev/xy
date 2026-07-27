@@ -285,6 +285,50 @@ def test_contourf_fills_discrete_bands_not_a_smooth_gradient():
     assert 0.0 in colorbar["ticks"]
 
 
+def test_default_contourf_levels_trim_extended_locator_ends() -> None:
+    x = np.linspace(-3.0, 5.0, 150)
+    y = np.linspace(-3.0, 5.0, 120)
+    z = np.cos(x[None, :]) + np.sin(y[:, None])
+
+    _fig, ax = plt.subplots()
+    contour = ax.contourf(
+        x,
+        y,
+        z,
+        hatches=["-", "/", "\\", "//"],
+        cmap="gray",
+        extend="both",
+    )
+    ax.figure.colorbar(contour)
+
+    assert contour.levels == pytest.approx([-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5])
+    assert contour._entry["domain"] == pytest.approx((-1.5, 1.5))
+    assert ax._colorbar["domain"] == pytest.approx((-1.5, 1.5))
+    assert ax._colorbar["boundaries"] == pytest.approx(contour.levels)
+    assert ax._colorbar["extend"] == "both"
+
+
+def test_explicit_integer_contourf_levels_keep_full_locator_span() -> None:
+    x = np.linspace(-3.0, 5.0, 150)
+    y = np.linspace(-3.0, 5.0, 120)
+    z = np.cos(x[None, :]) + np.sin(y[:, None])
+
+    _fig, ax = plt.subplots()
+    contour = ax.contourf(
+        x,
+        y,
+        z,
+        6,
+        colors="none",
+        hatches=[".", "/", "\\", None, "\\\\", "*"],
+        extend="lower",
+    )
+
+    assert contour.levels == pytest.approx(
+        [-2.4, -1.8, -1.2, -0.6, 0.0, 0.6, 1.2, 1.8, 2.4]
+    )
+
+
 def test_contourf_includes_samples_equal_to_the_final_level():
     values = np.array([[0.0, 1.0], [1.0, 2.0]])
     _fig, ax = plt.subplots()
