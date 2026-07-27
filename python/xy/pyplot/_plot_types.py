@@ -4592,7 +4592,8 @@ class PlotTypeMixin:
             shadow_zorder = float(shadow_options["zorder"])
             for index, (vertices, face) in enumerate(wedge_geometry):
                 face_rgba = resolve_rgba(face)
-                darkened = tuple((1.0 - shade) * channel for channel in face_rgba[:3])
+                shade_factor = round(1.0 - shade, 15)
+                darkened = tuple(shade_factor * channel for channel in face_rgba[:3])
                 explicit_face = shadow_options.get("facecolor")
                 shadow_face = (
                     resolve_color(explicit_face)
