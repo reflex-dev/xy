@@ -13,6 +13,7 @@ from conftest import probe_document, run_browser_probe
 from xy._arrowgeom import arrow_geometry, shaft_points
 from xy._svg import layout
 from xy.export import find_chromium
+from xy.pyplot._colors import resolve_color
 
 
 @pytest.fixture(autouse=True)
@@ -69,6 +70,139 @@ def test_one_slice_donut_outline_has_only_outer_and_inner_rings() -> None:
 
     assert wedge._outline_entry is not None
     assert len(wedge._outline_entry["args"][0]) == 120
+
+
+def _point_in_triangle(point: np.ndarray, triangle: np.ndarray) -> bool:
+    edges = np.roll(triangle, -1, axis=0) - triangle
+    offsets = point - triangle
+    crosses = edges[:, 0] * offsets[:, 1] - edges[:, 1] * offsets[:, 0]
+    return bool(np.all(crosses >= -1e-10) or np.all(crosses <= 1e-10))
+
+
+def test_pie_hatches_cycle_and_every_stroke_is_sector_clipped() -> None:
+    _fig, ax = plt.subplots()
+
+    pie = ax.pie(
+        [15, 30, 45, 10],
+        labels=["Frogs", "Hogs", "Dogs", "Logs"],
+        hatch=["**O", "oO"],
+    )
+
+    assert [wedge._entry["pie_hatch"] for wedge in pie.wedges] == [
+        "**O",
+        "oO",
+        "**O",
+        "oO",
+    ]
+    for wedge in pie.wedges:
+        hatch = wedge._hatch_entry
+        assert hatch is not None
+        assert hatch["factory"] == "segments"
+        assert hatch["_legend_skip"] is True
+        triangles = np.stack(
+            [
+                np.column_stack((wedge._entry["args"][0], wedge._entry["args"][1])),
+                np.column_stack((wedge._entry["args"][2], wedge._entry["args"][3])),
+                np.column_stack((wedge._entry["args"][4], wedge._entry["args"][5])),
+            ],
+            axis=1,
+        )
+        x0, y0, x1, y1 = hatch["args"]
+        assert len(x0) == len(y0) == len(x1) == len(y1) > 0
+        for start_x, start_y, end_x, end_y in zip(x0, y0, x1, y1, strict=True):
+            for point in (
+                np.asarray((start_x, start_y)),
+                np.asarray((end_x, end_y)),
+                np.asarray(((start_x + end_x) / 2, (start_y + end_y) / 2)),
+            ):
+                assert any(_point_in_triangle(point, triangle) for triangle in triangles)
+
+    legend = ax.legend(pie.wedges, ["one", "two", "three", "four"])
+    assert [item["style"]["hatch"] for item in legend.spec()["items"]] == [
+        "**O",
+        "oO",
+        "**O",
+        "oO",
+    ]
+
+
+def test_wedgeprops_hatch_overrides_the_pie_hatch_cycle() -> None:
+    _fig, ax = plt.subplots()
+
+    pie = ax.pie([1, 2, 3], hatch=["/", "\\"], wedgeprops={"hatch": "x"})
+
+    assert [wedge._entry["pie_hatch"] for wedge in pie.wedges] == ["x", "x", "x"]
+
+
+def test_pie_shadow_dict_darkens_offsets_and_applies_alpha() -> None:
+    _fig, ax = plt.subplots(figsize=(6.4, 4.8), dpi=100)
+
+    pie = ax.pie(
+        [1, 2],
+        colors=["#ff0000", "#00ff00"],
+        shadow={
+            "ox": -2,
+            "oy": 3,
+            "shade": 0.9,
+            "alpha": 0.25,
+            "edgecolor": "none",
+        },
+    )
+
+    for wedge in pie.wedges:
+        assert len(wedge._shadow_entries) == 1
+        shadow = wedge._shadow_entries[0]
+        assert shadow["factory"] == "triangle_mesh"
+        assert shadow["kwargs"]["opacity"] == 0.25
+        assert shadow["_pie_shadow_offset_points"] == (-2.0, 3.0)
+        assert shadow["_zorder"] < wedge.get_zorder()
+        assert ax._entries.index(shadow) < ax._entries.index(wedge._entry)
+        dx = np.asarray(shadow["args"][0]) - np.asarray(wedge._entry["args"][0])
+        dy = np.asarray(shadow["args"][1]) - np.asarray(wedge._entry["args"][1])
+        assert np.all(dx < 0)
+        assert np.all(dy > 0)
+        assert np.ptp(dx) < 1e-12
+        assert np.ptp(dy) < 1e-12
+
+    assert pie.wedges[0]._shadow_entries[0]["kwargs"]["color"] == resolve_color((0.1, 0, 0))
+    assert pie.wedges[1]._shadow_entries[0]["kwargs"]["color"] == resolve_color((0, 0.1, 0))
+
+
+def test_pie_shadow_point_offset_is_dpi_independent_in_data_space() -> None:
+    shifts = []
+    for dpi in (72, 144):
+        fig, ax = plt.subplots(figsize=(4, 4), dpi=dpi)
+        wedge = ax.pie([1], shadow={"ox": 2, "oy": -3, "edgecolor": "none"}).wedges[0]
+        shadow = wedge._shadow_entries[0]
+        shifts.append(
+            (
+                float(shadow["args"][0][0] - wedge._entry["args"][0][0]),
+                float(shadow["args"][1][0] - wedge._entry["args"][1][0]),
+            )
+        )
+        plt.close(fig)
+
+    assert shifts[0] == pytest.approx(shifts[1])
+
+
+def test_removing_a_wedge_removes_hatch_shadow_and_outline_entries() -> None:
+    _fig, ax = plt.subplots()
+    wedge = ax.pie(
+        [1],
+        hatch="/",
+        shadow=True,
+        wedgeprops={"edgecolor": "black"},
+    ).wedges[0]
+    owned = {
+        id(wedge._entry),
+        id(wedge._hatch_entry),
+        id(wedge._outline_entry),
+        *(id(entry) for entry in wedge._shadow_entries),
+    }
+
+    wedge.remove()
+
+    assert not owned.intersection(id(entry) for entry in ax._entries)
 
 
 def test_angle_connectionstyle_is_an_elbow_but_angle3_is_quadratic() -> None:

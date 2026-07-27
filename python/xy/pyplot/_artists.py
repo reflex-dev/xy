@@ -1209,17 +1209,32 @@ class Wedge(PolyCollection):
         axes: Any,
         entry: dict[str, Any],
         outline_entry: dict[str, Any] | None = None,
+        *,
+        hatch_entry: dict[str, Any] | None = None,
+        shadow_entries: list[dict[str, Any]] | None = None,
     ) -> None:
         super().__init__(axes, entry)
         self._outline_entry = outline_entry
+        self._hatch_entry = hatch_entry
+        self._shadow_entries = list(shadow_entries or [])
 
     def remove(self) -> None:
+        for entry in self._shadow_entries:
+            self._axes._remove_entry(entry)
+        self._shadow_entries.clear()
+        if self._hatch_entry is not None:
+            self._axes._remove_entry(self._hatch_entry)
+            self._hatch_entry = None
         if self._outline_entry is not None:
             self._axes._remove_entry(self._outline_entry)
             self._outline_entry = None
         super().remove()
 
     def set_zorder(self, level: float) -> None:
+        for entry in self._shadow_entries:
+            entry["_zorder"] = float(np.nextafter(float(level), -np.inf))
+        if self._hatch_entry is not None:
+            self._hatch_entry["_zorder"] = float(level)
         if self._outline_entry is not None:
             self._outline_entry["_zorder"] = float(level)
         super().set_zorder(level)
@@ -1376,10 +1391,10 @@ def _legend_item_from_entry(
     opacity = kw.get("opacity")
     if opacity is not None:
         style["opacity"] = float(opacity)
-    hatch = kw.get("hatch")
+    hatch = kw.get("hatch", entry.get("pie_hatch"))
     if hatch:
         style["hatch"] = str(hatch)
-        style["hatch_color"] = str(kw.get("hatch_color", "#222222"))
+        style["hatch_color"] = str(kw.get("hatch_color", entry.get("pie_hatch_color", "#222222")))
     # Rule annotations keep renderer-specific geometry inside ``style`` while
     # ordinary line/step entries keep it at the top level. Accept both shapes
     # so explicit Legend handles preserve the plotted dash.

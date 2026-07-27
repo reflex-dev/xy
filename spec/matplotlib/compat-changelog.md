@@ -4,6 +4,17 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Pie gallery corrections — 2026-07-27
+
+- `pie(hatch=...)` now cycles patterns per wedge and emits sector-clipped
+  line/dot/ring/star strokes through the shared segment mark, so browser, SVG,
+  and raster output use the same bounded geometry. A hatch supplied through
+  `wedgeprops` retains Matplotlib's override precedence.
+- `pie(shadow=True)` and shadow dictionaries now retain Matplotlib's
+  point-space offset, shade darkening, alpha, face/edge paint, linewidth, and
+  z-order semantics. Shadow outlines use the exterior sector boundary rather
+  than exposing the native wedge's triangle fan.
+
 ## Vector-field gallery corrections — 2026-07-24
 
 - `quiver(units=...)` now converts Matplotlib's width-unit vocabulary without
