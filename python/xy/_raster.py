@@ -1184,7 +1184,26 @@ def render_raster(
     for axis_id, axis, axis_scale in extra_y_axes:
         _ticks, tick_labels, step = extra_y_ticks[axis_id]
         emit_tick_labels(axis, tick_labels, step, axis_scale, is_x=False)
-    for title_entry in _title_entries(spec):
+    legacy_title = spec.get("title") if not spec.get("title_options") else None
+    if legacy_title:
+        title_slot = slots.get("title") or {}
+        title_italic, title_bold = _native_font_emphasis(
+            {
+                "font_style": title_slot.get("font-style"),
+                "font_weight": title_slot.get("font-weight", 400),
+            }
+        )
+        cmd.text(
+            width / 2,
+            plot["y"] - plot["top_axis_room"] - (10 if compact else 12),
+            1,
+            slot_font_size(title_slot, 14.0),
+            slot_paint("title", default_text),
+            str(legacy_title),
+            italic=title_italic,
+            bold=title_bold,
+        )
+    for title_entry in [] if legacy_title else _title_entries(spec):
         title_style, title_size, title_block = _title_metrics(spec, title_entry)
         title_italic, title_bold = _native_font_emphasis(
             {

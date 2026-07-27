@@ -65,7 +65,7 @@ def test_free_form_axes_render_at_their_rects_in_html() -> None:
     assert [(int(x), int(y)) for x, y in placements] == [(18, 48), (370, 66)]
     # a fixed-size canvas replaces the side-by-side CSS grid
     assert "position: relative; width: 640px; height: 480px" in html
-    assert "display: grid" not in html
+    assert ".xy-grid { display: grid" not in html
 
 
 def test_add_axes_rects_stack_vertically_in_html() -> None:

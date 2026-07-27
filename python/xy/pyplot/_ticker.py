@@ -239,7 +239,7 @@ class AutoMinorLocator(Locator):
         self.ndivs = n
 
     def tick_values(self, vmin: float, vmax: float) -> np.ndarray:
-        del vmin, vmax
+        del vmin, vmax  # compat-noop: resolved major ticks are required instead
         raise NotImplementedError("AutoMinorLocator requires the resolved major ticks")
 
 

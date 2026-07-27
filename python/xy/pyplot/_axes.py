@@ -3623,13 +3623,8 @@ class Axes(PlotTypeMixin):
         if isinstance(left, (tuple, list)):
             left, right = left
         host = (self._y2_of or self)._shared_ticker_source("x")
-        current = host._axis["x"].get("domain")
-        lo, hi = current if current is not None else self._entry_extent("x")
         spec = host._scale_specs["x"]
-        current_original = _scale_values(np.asarray((lo, hi)), spec, inverse=True)
-        current_start, current_end = map(float, current_original)
-        if host._axis["x"].get("reverse"):
-            current_start, current_end = current_end, current_start
+        current_start, current_end = self.get_xlim()
         if spec["name"] == "log":
             auto_start, auto_end = self._auto_domain("x")
             if host._axis["x"].get("reverse"):
@@ -3685,13 +3680,8 @@ class Axes(PlotTypeMixin):
         base = self._y2_of or self
         key = "y2" if self._y2_of is not None else "y"
         host = base._shared_ticker_source(key)
-        current = host._axis[key].get("domain")
-        lo, hi = current if current is not None else self._entry_extent("y")
         spec = host._scale_specs[key]
-        current_original = _scale_values(np.asarray((lo, hi)), spec, inverse=True)
-        current_start, current_end = map(float, current_original)
-        if host._axis[key].get("reverse"):
-            current_start, current_end = current_end, current_start
+        current_start, current_end = self.get_ylim()
         if spec["name"] == "log":
             auto_start, auto_end = self._auto_domain("y")
             if host._axis[key].get("reverse"):
@@ -7695,13 +7685,22 @@ class Axes(PlotTypeMixin):
                 tokens = dict(theme_tokens)
                 tokens["grid_color"] = self._grid_color if self._grid else "transparent"
                 children.append(xy.theme(style=self._theme_style, **tokens))
+        chrome_styles = self._chrome_styles
+        if self._title_style:
+            chrome_styles = {
+                **chrome_styles,
+                "title": {
+                    **chrome_styles.get("title", {}),
+                    **self._title_style,
+                },
+            }
         self._chart = xy.chart(
             *children,
             title=self._title,
             width=width,
             height=height,
             padding=chart_padding,
-            styles=self._chrome_styles,
+            styles=chrome_styles,
         )
         core_figure = self._chart.figure()
         core_figure.title_options = [
