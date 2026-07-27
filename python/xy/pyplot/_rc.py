@@ -79,6 +79,8 @@ _DEFAULTS: dict[str, Any] = {
     "legend.borderpad": 0.4,
     "legend.labelspacing": 0.5,
     "legend.borderaxespad": 0.5,
+    "legend.handlelength": 2.0,
+    "legend.handletextpad": 0.8,
     "text.usetex": False,
     "image.cmap": "viridis",
     # Matplotlib's "antialiased" default resolves to nearest-neighbor when a

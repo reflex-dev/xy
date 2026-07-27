@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from ._colors import is_color_like
+
 _LINESTYLES = ("--", "-.", "-", ":")  # two-char tokens first
 
 _MARKERS = set(".,ov^<>12348spP*hH+xXDd|_")
@@ -18,7 +20,10 @@ _COLOR_LETTERS = set("bgrcmykw")
 
 def parse_fmt(fmt: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """Return (color, linestyle, marker); raises on unparseable input."""
-    if len(fmt) > 1 and fmt.lower() in {"grey", "gray", "black", "white"}:
+    # Matplotlib first asks whether the *whole* string is a color, before
+    # interpreting MATLAB-style marker/line/color tokens. The "0"/"1"
+    # exceptions preserve their historical marker-token treatment.
+    if fmt not in {"0", "1"} and is_color_like(fmt):
         return fmt, None, None
     color: Optional[str] = None
     linestyle: Optional[str] = None

@@ -2041,21 +2041,59 @@ class Axes(PlotTypeMixin):
             weight_sets = [np.asarray(weights, dtype=np.float64)]
         else:
             weight_sets = [np.asarray(value, dtype=np.float64) for value in weights]
-        counts = [
-            np.histogram(values, bins=edges, weights=w, density=density)[0].astype(np.float64)
-            for values, w in zip(datasets, weight_sets, strict=True)
-        ]
+        stacked = stacked or histtype == "barstacked"
+        # Matplotlib bins stacked inputs as raw (possibly weighted) mass,
+        # cumulatively stacks the datasets, and only then normalizes the top
+        # envelope.  Normalizing each input independently would give every
+        # dataset unit area and is especially wrong for unequal bin widths.
+        counts_array = np.vstack(
+            [
+                np.histogram(
+                    values,
+                    bins=edges,
+                    weights=w,
+                    density=density and not stacked,
+                )[0].astype(np.float64)
+                for values, w in zip(datasets, weight_sets, strict=True)
+            ]
+        )
+        if stacked:
+            tops = np.cumsum(counts_array, axis=0)
+            if density:
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    tops = (tops / np.diff(edges)) / tops[-1].sum()
+            counts_array = np.diff(
+                np.vstack((np.zeros((1, counts_array.shape[1]), dtype=np.float64), tops)),
+                axis=0,
+            )
+        counts = list(counts_array)
         if cumulative:
             reverse = isinstance(cumulative, (int, float, np.number)) and cumulative < 0
-            counts = [
-                (
-                    np.cumsum((values * np.diff(edges) if density else values)[::-1])[::-1]
-                    if reverse
-                    else np.cumsum(values * np.diff(edges) if density else values)
+            cumulative_tops = np.cumsum(counts_array, axis=0) if stacked else counts_array
+            cumulative_tops = np.asarray(
+                [
+                    (
+                        np.cumsum((values * np.diff(edges) if density else values)[::-1])[::-1]
+                        if reverse
+                        else np.cumsum(values * np.diff(edges) if density else values)
+                    )
+                    for values in cumulative_tops
+                ]
+            )
+            counts_array = (
+                np.diff(
+                    np.vstack(
+                        (
+                            np.zeros((1, cumulative_tops.shape[1]), dtype=np.float64),
+                            cumulative_tops,
+                        )
+                    ),
+                    axis=0,
                 )
-                for values in counts
-            ]
-        stacked = stacked or histtype == "barstacked"
+                if stacked
+                else cumulative_tops
+            )
+            counts = list(counts_array)
 
         def dataset_values(value: Any, name: str, *, color_value: bool = False) -> list[Any]:
             if value is None:
@@ -2101,7 +2139,58 @@ class Axes(PlotTypeMixin):
             else (1.0 if (stacked or len(datasets) == 1) else 0.8)
         )
         width = binwidths * rel_width / (1 if stacked else len(datasets))
+        histogram_entry_start = len(self._entries)
+        histogram_entry_groups: list[list[dict[str, Any]]] = []
+        # Keep the common uniform-bin entry scalar. Besides avoiding a
+        # redundant per-bin column, explicit legends expect one swatch width;
+        # genuinely unequal bins retain their exact width array.
+        entry_width: float | np.ndarray = (
+            float(width[0])
+            if len(width) and np.allclose(width, width[0], rtol=1e-12, atol=0.0)
+            else width
+        )
+
+        def add_dashed_bar_perimeters(
+            positions: np.ndarray,
+            values: np.ndarray,
+            current_base: np.ndarray,
+            resolved_edge: Optional[str],
+            resolved_width: float,
+            dash: Any,
+        ) -> None:
+            if dash in (None, "none") or resolved_edge is None:
+                return
+            half_width = width / 2.0
+            low = positions - half_width
+            high = positions + half_width
+            top = current_base + values
+            if orientation == "vertical":
+                x0 = np.concatenate((low, high, high, low))
+                y0 = np.concatenate((current_base, current_base, top, top))
+                x1 = np.concatenate((high, high, low, low))
+                y1 = np.concatenate((current_base, top, top, current_base))
+            else:
+                x0 = np.concatenate((current_base, current_base, top, top))
+                y0 = np.concatenate((low, high, high, low))
+                x1 = np.concatenate((current_base, top, top, current_base))
+                y1 = np.concatenate((high, high, low, low))
+            self._add(
+                "@mark",
+                {
+                    "factory": "segments",
+                    "args": (x0, y0, x1, y1),
+                    "kwargs": {
+                        "color": resolved_edge,
+                        "width": resolved_width,
+                        "dash": dash,
+                        "opacity": 1.0 if alpha is None else float(alpha),
+                        "name": None,
+                    },
+                },
+            )
+
         for index, values in enumerate(counts):
+            group_start = len(self._entries)
             positions = centers if stacked else centers + (index - (len(datasets) - 1) / 2) * width
             current_base = base.copy() if stacked else np.zeros_like(values)
             series_color = (
@@ -2122,7 +2211,9 @@ class Axes(PlotTypeMixin):
             if linestyle_value not in LINESTYLE_TO_DASH:
                 raise ValueError(f"unsupported histogram linestyle: {linestyle_value!r}")
             dash = self._mpl_dash(LINESTYLE_TO_DASH[linestyle_value], resolved_width)
-            filled = histtype == "stepfilled" if fill is None else bool(fill)
+            # Matplotlib's Patch._set_edgecolor(None) makes a filled patch's
+            # edge transparent unless patch.force_edgecolor is enabled.
+            filled = histtype in {"bar", "barstacked", "stepfilled"} if fill is None else bool(fill)
             if not filled and resolved_edge is None:
                 resolved_edge = (
                     series_color
@@ -2131,6 +2222,7 @@ class Axes(PlotTypeMixin):
                 )
             elif filled and histtype == "step" and resolved_edge is None:
                 resolved_edge = series_color
+
             if orientation == "horizontal" and histtype.startswith("step") and filled:
                 # The core area primitive fills along y. Horizontal filled
                 # steps are equivalently represented by touching horizontal
@@ -2143,20 +2235,42 @@ class Axes(PlotTypeMixin):
                         "y": values,
                         "kwargs": {
                             "base": current_base,
-                            "width": width,
+                            "width": entry_width,
                             "orientation": "horizontal",
                             "color": resolved_color,
                             "opacity": 1.0 if alpha is None else float(alpha),
                             "name": None if labels[index] is None else str(labels[index]),
-                            "stroke": resolved_edge,
-                            "stroke_width": resolved_width,
+                            **(
+                                {"stroke": resolved_edge, "stroke_width": resolved_width}
+                                if resolved_edge is not None and dash is None
+                                else {}
+                            ),
                         },
                     },
                 )
+                add_dashed_bar_perimeters(
+                    positions, values, current_base, resolved_edge, resolved_width, dash
+                )
             elif orientation == "horizontal" and histtype.startswith("step"):
                 step_values = values + current_base
-                path_x = np.repeat(step_values, 2)
-                path_y = np.repeat(edges, 2)[1:-1]
+                # Matplotlib's unfilled step histogram is the top envelope
+                # plus one connector to the current baseline at each end.  A
+                # stacked series therefore starts/ends at the previous stack,
+                # not at zero.
+                path_x = np.concatenate(
+                    (
+                        current_base[:1],
+                        np.repeat(step_values, 2),
+                        current_base[-1:],
+                    )
+                )
+                path_y = np.concatenate(
+                    (
+                        edges[:1],
+                        np.repeat(edges, 2)[1:-1],
+                        edges[-1:],
+                    )
+                )
                 entry = self._add(
                     "@mark",
                     {
@@ -2200,6 +2314,27 @@ class Axes(PlotTypeMixin):
                 )
             elif histtype.startswith("step"):
                 step_values = values + current_base
+                # Keep the compact stairs trace for the O(bins) top envelope,
+                # then add only Matplotlib's two missing baseline connectors.
+                self._add(
+                    "@mark",
+                    {
+                        "factory": "segments",
+                        "args": (
+                            edges[[0, -1]],
+                            np.asarray((current_base[0], step_values[-1])),
+                            edges[[0, -1]],
+                            np.asarray((step_values[0], current_base[-1])),
+                        ),
+                        "kwargs": {
+                            "color": resolved_edge or series_color,
+                            "width": resolved_width,
+                            "dash": dash,
+                            "name": None,
+                            "opacity": 1.0 if alpha is None else float(alpha),
+                        },
+                    },
+                )
                 entry = self._add(
                     "@mark",
                     {
@@ -2222,45 +2357,22 @@ class Axes(PlotTypeMixin):
                         "y": values,
                         "kwargs": {
                             "base": current_base,
-                            "width": width,
+                            "width": entry_width,
                             "orientation": orientation,
                             "color": "transparent" if fill is False else resolved_color,
                             "opacity": 1.0 if alpha is None else float(alpha),
                             "name": None if labels[index] is None else str(labels[index]),
-                            "stroke": resolved_edge if dash is None else None,
-                            "stroke_width": resolved_width,
+                            **(
+                                {"stroke": resolved_edge, "stroke_width": resolved_width}
+                                if resolved_edge is not None and dash is None
+                                else {}
+                            ),
                         },
                     },
                 )
-                if dash not in (None, "none") and resolved_edge is not None:
-                    half_width = width / 2.0
-                    low = positions - half_width
-                    high = positions + half_width
-                    top = current_base + values
-                    if orientation == "vertical":
-                        x0 = np.concatenate((low, high, high, low))
-                        y0 = np.concatenate((current_base, current_base, top, top))
-                        x1 = np.concatenate((high, high, low, low))
-                        y1 = np.concatenate((current_base, top, top, current_base))
-                    else:
-                        x0 = np.concatenate((current_base, current_base, top, top))
-                        y0 = np.concatenate((low, high, high, low))
-                        x1 = np.concatenate((current_base, top, top, current_base))
-                        y1 = np.concatenate((high, high, low, low))
-                    self._add(
-                        "@mark",
-                        {
-                            "factory": "segments",
-                            "args": (x0, y0, x1, y1),
-                            "kwargs": {
-                                "color": resolved_edge,
-                                "width": resolved_width,
-                                "dash": dash,
-                                "opacity": 1.0 if alpha is None else float(alpha),
-                                "name": None,
-                            },
-                        },
-                    )
+                add_dashed_bar_perimeters(
+                    positions, values, current_base, resolved_edge, resolved_width, dash
+                )
                 if hatches[index]:
                     self._stairs_hatch(
                         values + current_base,
@@ -2268,7 +2380,7 @@ class Axes(PlotTypeMixin):
                         current_base,
                         orientation,
                         {
-                            "color": resolved_edge or series_color,
+                            "color": resolved_edge or resolve_color(rcParams["patch.edgecolor"]),
                             "facecolor": resolved_color,
                             "opacity": 1.0 if alpha is None else float(alpha),
                         },
@@ -2276,8 +2388,19 @@ class Axes(PlotTypeMixin):
                         right_edges=positions + width / 2.0,
                     )
             containers.append(BarContainer(self, entry))
+            histogram_entry_groups.append(self._entries[group_start:])
             if stacked:
                 base += values
+        if stacked and histtype.startswith("step"):
+            # Matplotlib draws stacked step polygons from the top dataset
+            # downward, so the topmost outline cannot be hidden by lower
+            # layers. Its automatic legend follows that artist insertion order
+            # (top-to-bottom), while the returned patch containers are restored
+            # to the caller's original dataset order. Keep those two contracts
+            # distinct here as well.
+            self._entries[histogram_entry_start:] = [
+                entry for group in reversed(histogram_entry_groups) for entry in group
+            ]
         returned = np.vstack(counts)
         if stacked:
             returned = np.cumsum(returned, axis=0)
@@ -2480,6 +2603,7 @@ class Axes(PlotTypeMixin):
         norm = kwargs.pop("norm", None)
         supported_interpolation = {
             None,
+            "auto",
             "none",
             "nearest",
             "bilinear",
@@ -2519,6 +2643,23 @@ class Axes(PlotTypeMixin):
         truecolor = grid.ndim == 3 and grid.shape[-1] in (3, 4)
         if not truecolor and grid.ndim != 2:
             raise ValueError(f"imshow image data must be 2-D or RGB(A), got shape {grid.shape}")
+        truecolor_ceiling = (
+            255.0 if truecolor and np.issubdtype(np.asanyarray(z).dtype, np.integer) else 1.0
+        )
+        source_rows, source_cols = grid.shape[:2]
+        effective_interpolation = (
+            rcParams["image.interpolation"] if interpolation is None else interpolation
+        )
+        (
+            effective_interpolation,
+            effective_interpolation_stage,
+            interpolation_width,
+            interpolation_height,
+        ) = _resolve_imshow_sampling(
+            grid.shape[:2],
+            effective_interpolation,
+            interpolation_stage,
+        )
         if clim is not None:
             vmin, vmax = clim
         norm_scale = "linear"
@@ -2643,12 +2784,9 @@ class Axes(PlotTypeMixin):
                 )
                 grid = np.dstack((rgb.reshape(grid.shape + (3,)) / 255.0, alpha_array))
                 truecolor = True
-        effective_interpolation = (
-            rcParams["image.interpolation"] if interpolation is None else interpolation
-        )
         if (
             not truecolor
-            and interpolation_stage == "rgba"
+            and effective_interpolation_stage == "rgba"
             and effective_interpolation not in ("none", "nearest")
         ):
             grid = _scalar_grid_rgba(
@@ -2668,10 +2806,17 @@ class Axes(PlotTypeMixin):
             # resampling matrices. Nearest retains the original source cells.
             grid = _resample_grid(
                 grid,
-                min(1024, max(512, grid.shape[1])),
-                min(1024, max(512, grid.shape[0])),
+                interpolation_width,
+                interpolation_height,
                 effective_interpolation,
             )
+            if truecolor:
+                # Ringing filters legitimately overshoot their input range.
+                # Scalar interpolation keeps that overshoot so normalization
+                # can expose under/over colors, but RGBA output is bounded
+                # channel data in Matplotlib and must be saturated before
+                # static uint conversion instead of wrapping to black.
+                grid = np.clip(grid, 0.0, truecolor_ceiling)
         if transform == self.transAxes and extent is not None:
             xlo, xhi = self._axis_props("x").get("domain", self._entry_extent("x"))
             ylo, yhi = self._axis_props("y").get("domain", self._entry_extent("y"))
@@ -2733,7 +2878,23 @@ class Axes(PlotTypeMixin):
             bounds = (left, right, bottom, top)
         else:
             rows, cols = grid.shape[:2]
-            bounds = (-0.5, cols - 0.5, -0.5, rows - 0.5)
+            bounds = (-0.5, source_cols - 0.5, -0.5, source_rows - 0.5)
+            # Resampling changes texture resolution, never the image's data
+            # coordinates. Give the intermediate samples explicit centers so
+            # the core infers Matplotlib's original MxN half-cell extent
+            # instead of exposing the implementation's 512--1024 grid.
+            if (rows, cols) != (source_rows, source_cols):
+                left, right, bottom, top = bounds
+                entry_kwargs["x"] = np.linspace(
+                    left + (right - left) / (2 * cols),
+                    right - (right - left) / (2 * cols),
+                    cols,
+                )
+                entry_kwargs["y"] = np.linspace(
+                    bottom + (top - bottom) / (2 * rows),
+                    top - (top - bottom) / (2 * rows),
+                    rows,
+                )
         if self._aspect_bounds is None:
             self._aspect_bounds = bounds
         else:
@@ -4172,21 +4333,29 @@ class Axes(PlotTypeMixin):
         host = self._y2_of or self
         return host._legend_handle if host._legend else None
 
-    def get_legend_handles_labels(self) -> tuple[list[Artist], list[str]]:
+    def get_legend_handles_labels(self) -> tuple[list[Any], list[str]]:
         """Handles and labels of the entries that would appear in the legend.
 
         Entries whose label starts with ``"_"`` are excluded, matching
         matplotlib.
         """
-        handles: list[Artist] = []
+        from ._artists import ErrorbarContainer
+
+        host = self._y2_of or self
+        errorbar_containers = {
+            id(container._artist._entry): container
+            for container in host._containers
+            if isinstance(container, ErrorbarContainer)
+        }
+        handles: list[Any] = []
         labels: list[str] = []
-        for entry in (self._y2_of or self)._entries:
+        for entry in host._entries:
             patch_labels = entry.get("patch_labels")
             if patch_labels is not None:
                 container = next(
                     (
                         item
-                        for item in (self._y2_of or self)._containers
+                        for item in host._containers
                         if isinstance(item, BarContainer) and item._entry is entry
                     ),
                     None,
@@ -4200,7 +4369,8 @@ class Axes(PlotTypeMixin):
                 continue
             label = entry.get("kwargs", {}).get("name")
             if label and not str(label).startswith("_"):
-                handles.append(Artist(self, entry))
+                handle = errorbar_containers.get(id(entry))
+                handles.append(handle if handle is not None else Artist(self, entry))
                 labels.append(str(label))
         return handles, labels
 
@@ -5282,12 +5452,17 @@ class Axes(PlotTypeMixin):
         ``prop={"size": ...}``), ``labelcolor``, ``frameon``, ``facecolor``,
         ``edgecolor``, ``framealpha``, ``fancybox``, ``shadow``,
         ``borderpad``, and ``labelspacing``; unsupported layout keywords
-        raise loudly. ``loc="best"`` picks the least occupied corner.
+        raise loudly. ``reverse=True`` reverses the resolved handle/label
+        order. ``loc="best"`` picks the least occupied corner.
         """
         host = self._y2_of or self
+        reverse = bool(kwargs.pop("reverse", False))
         if len(args) >= 2:
             handles = list(args[0])
             labels = [_plain_text(label) for label in args[1]]
+            if reverse:
+                handles.reverse()
+                labels.reverse()
             legend_artist = Legend(host, handles, labels, **kwargs)
             host._legend_handle = legend_artist
             # An explicit handles/labels call defines the primary legend even
@@ -5315,14 +5490,27 @@ class Axes(PlotTypeMixin):
             host._legend_artist = None
             host._legend_items = None
             handles, labels = host.get_legend_handles_labels()
+            if reverse:
+                handles.reverse()
+                labels.reverse()
             host._legend_handle = Legend(host, handles, labels, **kwargs)
             host._legend_options = dict(host._legend_handle._options)
+            if reverse:
+                # Automatic legends ordinarily let the renderer derive items
+                # from trace order. Freeze the reversed result so this call's
+                # explicit ordering survives materialization.
+                host._legend_items = list(host._legend_handle.spec()["items"])
         else:
             host._legend_artist = None
             host._legend_items = None
             handles, labels = host.get_legend_handles_labels()
+            if reverse:
+                handles.reverse()
+                labels.reverse()
             host._legend_handle = Legend(host, handles, labels, **kwargs)
             host._legend_options = dict(host._legend_handle._options)
+            if reverse:
+                host._legend_items = list(host._legend_handle.spec()["items"])
         host._legend = True
         host._invalidate()
         return host._legend_handle
@@ -5372,18 +5560,12 @@ class Axes(PlotTypeMixin):
         labelspacing = kwargs.pop("labelspacing", rcParams["legend.labelspacing"])
         borderaxespad = kwargs.pop("borderaxespad", rcParams["legend.borderaxespad"])
         handleheight = kwargs.pop("handleheight", None)
-        # Remaining handle/title geometry is not expressible yet and stays
-        # loud; the frame and row-layout options above map directly to CSS and
+        handlelength = kwargs.pop("handlelength", rcParams["legend.handlelength"])
+        handletextpad = kwargs.pop("handletextpad", rcParams["legend.handletextpad"])
+        # Remaining title geometry is not expressible yet and stays loud; the
+        # frame, handle, and row-layout options above map directly to CSS and
         # the static exporters.
-        layout_options = {
-            key: kwargs.pop(key)
-            for key in (
-                "title_fontsize",
-                "handlelength",
-                "handletextpad",
-            )
-            if key in kwargs
-        }
+        layout_options = {key: kwargs.pop(key) for key in ("title_fontsize",) if key in kwargs}
         if layout_options:
             raise not_implemented(
                 f"legend({sorted(layout_options)[0]}=...)",
@@ -5450,6 +5632,14 @@ class Axes(PlotTypeMixin):
             if not np.isfinite(handleheight_value) or handleheight_value <= 0:
                 raise ValueError("legend handleheight must be a positive finite number")
             options["handleheight"] = handleheight_value
+        handlelength_value = float(handlelength)
+        if not np.isfinite(handlelength_value) or handlelength_value < 0:
+            raise ValueError("legend handlelength must be a non-negative finite number")
+        options["handlelength"] = handlelength_value
+        handletextpad_value = float(handletextpad)
+        if not np.isfinite(handletextpad_value) or handletextpad_value < 0:
+            raise ValueError("legend handletextpad must be a non-negative finite number")
+        options["handletextpad"] = handletextpad_value
         if title is not None:
             options["title"] = _plain_text(title)
         if style:
@@ -5638,6 +5828,10 @@ class Axes(PlotTypeMixin):
                 kw["width"] = (
                     float(kw.get("width", rcParams["lines.linewidth"])) * self._point_scale()
                 )
+                # Every renderer already uses round caps for dashed lines.
+                # ``Line2D.set_dash_capstyle("round")`` records the public
+                # Matplotlib state, but it is not a core ``xy.line`` keyword.
+                kw.pop("dash_capstyle", None)
                 gapcolor = kw.pop("_gapcolor", None)
                 if gapcolor is not None and kw.get("dash"):
                     children.append(
@@ -5656,6 +5850,7 @@ class Axes(PlotTypeMixin):
                 kw["width"] = (
                     float(kw.get("width", rcParams["lines.linewidth"])) * self._point_scale()
                 )
+                kw.pop("dash_capstyle", None)
                 gapcolor = kw.pop("_gapcolor", None)
                 x, y = self._axline_data(e)
                 if gapcolor is not None and kw.get("dash"):
@@ -5743,6 +5938,12 @@ class Axes(PlotTypeMixin):
                         kw["domain"] = (float(dom[0]), float(dom[1]))
                 children.append(xy.heatmap(z=z, **kw, **axis_kw))
             elif kind == "@mark":
+                if e["factory"] == "step":
+                    kw = dict(kw)
+                    # ``Line2D.set_dash_capstyle()`` mutates the deferred
+                    # pyplot entry, but core ``xy.step`` has fixed round caps
+                    # and does not accept the Matplotlib-only keyword.
+                    kw.pop("dash_capstyle", None)
                 children.append(getattr(xy, e["factory"])(*e["args"], **kw, **axis_kw))
             elif kind == "@hline":
                 children.append(xy.hline(*e["args"], **kw))
@@ -6152,6 +6353,39 @@ class Axes(PlotTypeMixin):
                 args = entry.get("args") or ()
                 if len(args) >= 4:
                     x_values, y_values = (args[0], args[2]), (args[1], args[3])
+            elif kind == "@mark" and entry.get("factory") == "stairs":
+                # ``xy.stairs`` stores ``(values, edges)``, while Matplotlib's
+                # StepPatch contributes the expanded edge/value path to
+                # Legend._auto_legend_data(). Feeding the compact arguments to
+                # the generic (x, y) path reverses the axes and makes the
+                # histogram effectively invisible to ``loc="best"``.
+                args = entry.get("args") or ()
+                if len(args) >= 2:
+                    try:
+                        values = axis_values(args[0], "y")
+                        edges = axis_values(args[1], "x")
+                    except (TypeError, ValueError):
+                        continue
+                    if len(edges) != len(values) + 1:
+                        continue
+                    x_values = np.repeat(edges, 2)[1:-1]
+                    y_values = np.repeat(values, 2)
+            elif kind == "@mark" and entry.get("factory") == "ecdf":
+                # The compact ECDF mark owns only the source observations; the
+                # renderer materializes its sorted post-step path. Score that
+                # same path so a rising CDF occupies the upper-right region
+                # instead of disappearing from best-placement input.
+                args = entry.get("args") or ()
+                if args:
+                    try:
+                        values = axis_values(args[0], "x")
+                    except (TypeError, ValueError):
+                        continue
+                    values = np.sort(values[np.isfinite(values)])
+                    if not len(values):
+                        continue
+                    x_values = np.concatenate((values[:1], values))
+                    y_values = np.arange(len(values) + 1, dtype=np.float64) / len(values)
             elif kind == "area" and x_values is not None and y_values is not None:
                 # PolyCollection contributes the complete closed polygon path:
                 # top edge followed by the reversed baseline.
@@ -6579,6 +6813,8 @@ class Axes(PlotTypeMixin):
             component_legend_options = dict(legend_options)
             component_legend_options.pop("border_pad", None)
             component_legend_options.pop("handleheight", None)
+            component_legend_options.pop("handlelength", None)
+            component_legend_options.pop("handletextpad", None)
             children.append(xy.legend(**component_legend_options))
         elif not any(entry.get("kwargs", {}).get("name") for entry in self._entries):
             # Core XY can auto-create a continuous-color "value" legend.
@@ -6631,6 +6867,9 @@ class Axes(PlotTypeMixin):
             )
         if "handleheight" in self._legend_options:
             core_figure.legend_options["handleheight"] = self._legend_options["handleheight"]
+        for key in ("handlelength", "handletextpad"):
+            if key in self._legend_options:
+                core_figure.legend_options[key] = self._legend_options[key]
         core_figure.frame_sides = [
             side for side in ("left", "bottom", "top", "right") if side not in self._hidden_spines
         ]
@@ -7305,6 +7544,50 @@ def _masked_float(value: Any) -> np.ndarray:
     return np.ma.asarray(value, dtype=np.float64).filled(np.nan)
 
 
+def _resolve_imshow_sampling(
+    source_shape: tuple[int, int],
+    interpolation: str,
+    interpolation_stage: Any,
+) -> tuple[str, str, int, int]:
+    """Resolve Matplotlib's adaptive image defaults against our bounded surface.
+
+    Matplotlib 3.11 selects ``nearest`` for an image enlarged by more than
+    three times in both dimensions, or by exactly one or two times, and uses
+    ``hanning`` otherwise. Its automatic stage is RGBA for downsampling or
+    enlargement below three times in either dimension, and data otherwise.
+
+    Matplotlib makes that choice against the final display transform. Pyplot
+    pre-renders smooth images into a bounded 512--1024 px intermediate, so that
+    surface is the closest available display-resolution proxy and is also the
+    exact target passed to :func:`_resample_grid`.
+    """
+    source_height, source_width = source_shape
+    target_width = min(1024, max(512, source_width))
+    target_height = min(1024, max(512, source_height))
+
+    if interpolation in {"auto", "antialiased"}:
+        nearest_x = (
+            target_width > 3 * source_width
+            or target_width == source_width
+            or target_width == 2 * source_width
+        )
+        nearest_y = (
+            target_height > 3 * source_height
+            or target_height == source_height
+            or target_height == 2 * source_height
+        )
+        interpolation = "nearest" if nearest_x and nearest_y else "hanning"
+
+    if interpolation_stage in (None, "auto"):
+        interpolation_stage = (
+            "rgba"
+            if target_width < 3 * source_width or target_height < 3 * source_height
+            else "data"
+        )
+
+    return interpolation, interpolation_stage, target_width, target_height
+
+
 def _interpolation_taps(source: int, target: int, method: str) -> tuple[np.ndarray, np.ndarray]:
     """Return source indices and normalized local taps for a separable filter."""
     positions = np.linspace(0.0, source - 1.0, target)[:, None]
@@ -7331,10 +7614,16 @@ def _interpolation_taps(source: int, target: int, method: str) -> tuple[np.ndarr
     elif method == "gaussian":
         weights = np.where(absolute < 2.0, np.exp(-2.0 * absolute**2), 0.0)
     elif method == "kaiser":
-        radius = 3.0
+        # Match AGG's image_filter_kaiser, which Matplotlib delegates to:
+        # a compact one-pixel support with beta=6.33.  Treating Kaiser like
+        # the wider sinc-family filters averages almost the entire 4x4
+        # interpolation-methods example at every output location, collapsing
+        # its localized 2-D structure into a near one-dimensional gradient.
+        radius = 1.0
+        beta = 6.33
         weights = np.where(
             absolute < radius,
-            np.i0(5.0 * np.sqrt(np.maximum(0.0, 1.0 - (absolute / radius) ** 2))) / np.i0(5.0),
+            np.i0(beta * np.sqrt(np.maximum(0.0, 1.0 - (absolute / radius) ** 2))) / np.i0(beta),
             0.0,
         )
     elif method == "sinc":

@@ -15,6 +15,7 @@ raises `ValueError` (occasionally `TypeError`) naming `label`.
 from __future__ import annotations
 
 import itertools
+import re
 from functools import lru_cache
 from typing import Any, Optional
 
@@ -131,6 +132,63 @@ def optional_text(value: Any, label: str) -> Optional[str]:
     if value is None or isinstance(value, str):
         return value
     raise ValueError(f"{label} must be a string or None")
+
+
+#: Legend placements, in Matplotlib's vocabulary. `best` is resolved to one of
+#: the others at payload-build time (`xy._legendfit`).
+LEGEND_LOCATIONS: tuple[str, ...] = (
+    "best",
+    "upper right",
+    "upper left",
+    "lower left",
+    "lower right",
+    "upper center",
+    "lower center",
+    "center left",
+    "center right",
+    "center",
+)
+
+
+#: Unambiguous synonyms for the vertical band. Matplotlib says `upper`/`lower`;
+#: CSS, Plotly and XY's own docs say `top`/`bottom`. Both name the same edge, so
+#: both are accepted rather than made into a trap.
+_LEGEND_LOC_SYNONYMS: dict[str, str] = {"top": "upper", "bottom": "lower"}
+
+
+def legend_loc(value: Any, label: str) -> Optional[str]:
+    """A legend placement, or None for the default.
+
+    The writers resolve a location by substring and by token, so an
+    unrecognized string never failed — it silently landed somewhere.
+    `"northeast"` and `"best"` parked the legend dead center, on top of the
+    data. Close the vocabulary instead: refuse what is genuinely a guess.
+
+    The caller's **spelling is preserved** (lowercased, so `_legend_layout`'s
+    token match sees it). `top`/`bottom` are public core aliases for
+    `upper`/`lower` that `_svg._legend_layout` resolves to the same geometry;
+    rewriting them here would change a value the pyplot compatibility suite
+    pins as passthrough.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string or None")
+    normalized = " ".join(value.lower().split())
+    tokens = [token for token in re.split(r"[\s_-]+", normalized) if token]
+    # Aliases are folded for the CHECK only, never in what is returned.
+    canonical = " ".join(_LEGEND_LOC_SYNONYMS.get(token, token) for token in tokens)
+    recognized = (
+        canonical in LEGEND_LOCATIONS
+        # Matplotlib takes either word order for the two-word forms.
+        or (len(tokens) == 2 and " ".join(reversed(canonical.split())) in LEGEND_LOCATIONS)
+        # `right`/`left` alone are Matplotlib's codes 5/6 — the centered edges.
+        or canonical in ("right", "left")
+    )
+    if recognized:
+        return normalized
+    options = ", ".join(repr(name) for name in LEGEND_LOCATIONS)
+    raise ValueError(f"{label} {value!r} is not a legend location; expected one of: {options}")
 
 
 def axis_id(value: Any, label: str) -> str:
