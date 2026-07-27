@@ -441,9 +441,11 @@ Two independent version constants:
   older v7 client would accept but silently render with its old defaults. v9
   adds scalar-normalization scale, colorbar padding and explicit-axes
   placement, exact `band_colors`/extension colors, plus `colorbar.lines`
-  isoline overlays; a v8 client would place log ticks linearly, draw an
-  explicit colorbar outside its supplied axes, substitute a fallback ramp for
-  listed colors, and silently omit contour levels drawn across the ramp.
+  isoline overlays and the `line_only` body mode used by line-contour
+  mappables; a v8 client would place log ticks linearly, draw an explicit
+  colorbar outside its supplied axes, substitute a fallback ramp for listed
+  colors, silently omit contour levels drawn across the ramp, or incorrectly
+  fill a line-contour colorbar with that ramp.
 - **Transport frame.** `FRAME_MAGIC` `"XYBF"` with `FRAME_VERSION = 1`
   versions the binary envelope separately, so the transport and the renderer
   can evolve without coupling.

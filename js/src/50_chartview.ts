@@ -2471,8 +2471,11 @@ export class ChartView {
 
     const bar = document.createElement("div");
     const levels = Math.max(0, Number(cb.levels) || 0);
+    const lineOnly = Boolean(cb.line_only);
     let gradient;
-    if (levels > 0) {
+    if (lineOnly) {
+      gradient = "linear-gradient(white,white)";
+    } else if (levels > 0) {
       const lut = buildLutData(cb.colormap || "viridis");
       const exactColors = Array.isArray(cb.band_colors) && cb.band_colors.length === levels
         ? cb.band_colors
@@ -2499,8 +2502,39 @@ export class ChartView {
       ? `position:absolute;inset:0 0 auto 0;height:${barThickness}px;`
       : `position:absolute;inset:0 auto 0 0;width:${barThickness}px;`;
     bar.style.setProperty("--xy-colorbar-gradient", gradient);
+    if (lineOnly) {
+      bar.style.border = "1px solid currentColor";
+      bar.style.boxSizing = "border-box";
+      bar.dataset.xyColorbarLineOnly = "true";
+    }
     this._applySlot(bar, "colorbar_bar");
     box.appendChild(bar);
+    if (lineOnly && ["min", "max", "both"].includes(String(cb.extend))) {
+      const extension = (side) => {
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+        const atMinimum = side === "min";
+        svg.dataset.xyColorbarExtend = side;
+        svg.setAttribute("width", String(horizontal ? 9 : barThickness));
+        svg.setAttribute("height", String(horizontal ? barThickness : 9));
+        svg.style.cssText = horizontal
+          ? `position:absolute;top:0;${atMinimum ? "right:100%" : "left:100%"};overflow:visible;`
+          : `position:absolute;left:0;${atMinimum ? "top:100%" : "bottom:100%"};overflow:visible;`;
+        polygon.setAttribute("points", horizontal
+          ? (atMinimum
+            ? `9,0 9,${barThickness} 0,${barThickness / 2}`
+            : `0,0 0,${barThickness} 9,${barThickness / 2}`)
+          : (atMinimum
+            ? `0,0 ${barThickness},0 ${barThickness / 2},9`
+            : `0,9 ${barThickness},9 ${barThickness / 2},0`));
+        polygon.setAttribute("fill", "white");
+        polygon.setAttribute("stroke", "currentColor");
+        svg.appendChild(polygon);
+        bar.appendChild(svg);
+      };
+      if (cb.extend === "min" || cb.extend === "both") extension("min");
+      if (cb.extend === "max" || cb.extend === "both") extension("max");
+    }
 
     const domain = cb.domain || [0, 1];
     const lo = Number(domain[0]), hi = Number(domain[1]);

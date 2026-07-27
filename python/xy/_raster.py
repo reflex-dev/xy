@@ -2422,14 +2422,20 @@ def _emit_colorbar(
     else:
         n_seg = 64
         colors = _lut(options.get("colormap", "viridis"), np.linspace(0.0, 1.0, n_seg))
-    for index, color in enumerate(colors):
-        if orientation == "horizontal":
-            x0, x1 = x + width * index / n_seg, x + width * (index + 1) / n_seg
-            cmd.fill(_rect_pts(x0, y, x1 + 0.5, y + height), (*map(int, color), 255))
-        else:
-            y0 = y + height * (n_seg - 1 - index) / n_seg
-            y1 = y + height * (n_seg - index) / n_seg
-            cmd.fill(_rect_pts(x, y0, x + width, y1 + 0.5), (*map(int, color), 255))
+    line_only = bool(options.get("line_only"))
+    if line_only:
+        outline = _rect_pts(x, y, x + width, y + height)
+        cmd.fill(outline, (255, 255, 255, 255))
+        cmd.stroke([*outline, outline[0]], 1.0, _parse_color(text_color))
+    else:
+        for index, color in enumerate(colors):
+            if orientation == "horizontal":
+                x0, x1 = x + width * index / n_seg, x + width * (index + 1) / n_seg
+                cmd.fill(_rect_pts(x0, y, x1 + 0.5, y + height), (*map(int, color), 255))
+            else:
+                y0 = y + height * (n_seg - 1 - index) / n_seg
+                y1 = y + height * (n_seg - index) / n_seg
+                cmd.fill(_rect_pts(x, y0, x + width, y1 + 0.5), (*map(int, color), 255))
     domain = options.get("domain", [0.0, 1.0])
     lo, hi = float(domain[0]), float(domain[1])
     log_scale = options.get("scale") == "log"
@@ -2449,19 +2455,31 @@ def _emit_colorbar(
     ticks = options.get("ticks")
     extend = options.get("extend")
     if extend in ("max", "both"):
-        color = (*map(int, options.get("over_color", colors[-1])), 255)
+        color = (
+            (255, 255, 255, 255)
+            if line_only
+            else (*map(int, options.get("over_color", colors[-1])), 255)
+        )
         if orientation == "horizontal":
             pts = [(x + width, y), (x + width, y + height), (x + width + 9, y + height / 2)]
         else:
             pts = [(x, y), (x + width, y), (x + width / 2, y - 9)]
         cmd.fill(pts, color)
+        if line_only:
+            cmd.stroke([*pts, pts[0]], 1.0, _parse_color(text_color))
     if extend in ("min", "both"):
-        color = (*map(int, options.get("under_color", colors[0])), 255)
+        color = (
+            (255, 255, 255, 255)
+            if line_only
+            else (*map(int, options.get("under_color", colors[0])), 255)
+        )
         if orientation == "horizontal":
             pts = [(x, y), (x, y + height), (x - 9, y + height / 2)]
         else:
             pts = [(x, y + height), (x + width, y + height), (x + width / 2, y + height + 9)]
         cmd.fill(pts, color)
+        if line_only:
+            cmd.stroke([*pts, pts[0]], 1.0, _parse_color(text_color))
     for line in options.get("lines") or []:
         value = float(line.get("value", np.nan))
         if not np.isfinite(value) or value < min(lo, hi) or value > max(lo, hi):

@@ -4030,6 +4030,7 @@ def _colorbar(
             )
     extend = options.get("extend")
     extend_nodes = ""
+    line_only = bool(options.get("line_only"))
     if extend in ("max", "both"):
         r, g, b = options.get("over_color", stops[-1])
         points = (
@@ -4038,7 +4039,11 @@ def _colorbar(
             else f"{_num(x + width)},{_num(y)} {_num(x + width)},{_num(y + height)} "
             f"{_num(x + width + 9)},{_num(y + height / 2)}"
         )
-        extend_nodes += f'<polygon points="{points}" fill="rgb({r},{g},{b})"/>'
+        extend_nodes += (
+            f'<polygon points="{points}" fill="white" stroke="{escape(text_color)}"/>'
+            if line_only
+            else f'<polygon points="{points}" fill="rgb({r},{g},{b})"/>'
+        )
     if extend in ("min", "both"):
         r, g, b = options.get("under_color", stops[0])
         points = (
@@ -4048,7 +4053,11 @@ def _colorbar(
             else f"{_num(x)},{_num(y)} {_num(x)},{_num(y + height)} "
             f"{_num(x - 9)},{_num(y + height / 2)}"
         )
-        extend_nodes += f'<polygon points="{points}" fill="rgb({r},{g},{b})"/>'
+        extend_nodes += (
+            f'<polygon points="{points}" fill="white" stroke="{escape(text_color)}"/>'
+            if line_only
+            else f'<polygon points="{points}" fill="rgb({r},{g},{b})"/>'
+        )
     line_nodes = ""
     for line in options.get("lines") or []:
         value = float(line.get("value", np.nan))
@@ -4080,7 +4089,7 @@ def _colorbar(
     return (
         f'<defs><linearGradient id="{gradient_id}" {gradient_attrs}>'
         f"{stop_nodes}</linearGradient></defs>"
-        f"{_colorbar_body(options, x, y, width, height, orientation, gradient_id)}"
+        f"{_colorbar_body(options, x, y, width, height, orientation, gradient_id, text_color)}"
         f"{line_nodes}{extend_nodes}{minor_nodes}{tick_nodes}{label_node}"
     )
 
@@ -4098,9 +4107,16 @@ def _colorbar_body(
     height: float,
     orientation: str,
     gradient_id: str,
+    text_color: str,
 ) -> str:
     """Colorbar bar fill: a smooth gradient, or N solid bands for a discrete
     (resampled) colormap so it reads like Matplotlib's segmented colorbar."""
+    if options.get("line_only"):
+        return (
+            f'<rect data-xy-colorbar-line-only="true" x="{_num(x)}" y="{_num(y)}" '
+            f'width="{_num(width)}" height="{_num(height)}" fill="white" '
+            f'stroke="{escape(text_color)}" stroke-width="1"/>'
+        )
     levels = options.get("levels")
     if not levels or int(levels) < 1:
         return (

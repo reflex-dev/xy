@@ -58,6 +58,28 @@ def _measured_left_gutter(ax: Axes, width: int, height: int) -> float:
     return float(_svg.layout(spec)[3]["x"])
 
 
+def _contour_colorbar_lines(contour: Any, host: Axes) -> list[dict[str, Any]]:
+    """Serialize a ContourSet's visible isoline styles for colorbar chrome."""
+    from ._artists import _contour_legend_colors
+
+    levels = np.asarray(contour.levels, dtype=np.float64).reshape(-1)
+    widths = np.asarray(contour.get_linewidth(), dtype=np.float64).reshape(-1)
+    colors = _contour_legend_colors(contour._entry, len(levels))
+    return [
+        {
+            "value": float(level),
+            "color": colors[index],
+            "width": float(widths[index % len(widths)]) * host._point_scale(),
+            "dash": (
+                "dashed"
+                if contour._entry["kwargs"].get("dash_negative") and level < 0
+                else None
+            ),
+        }
+        for index, level in enumerate(levels)
+    ]
+
+
 def _png_with_metadata(data: bytes, metadata: dict[Any, Any]) -> bytes:
     """Insert standards-compliant PNG text chunks before IEND."""
     from xy import _png
@@ -677,6 +699,12 @@ class Figure:
             "label": _plain_text(kwargs.pop("label", "")),
             "orientation": orientation,
         }
+        line_contour = entry.get("factory") == "contour" and not props.get("filled", False)
+        if line_contour:
+            # Matplotlib's line-contour colorbar is an empty bar crossed by the
+            # ContourSet's own styled isolines; it is not a filled scalar ramp.
+            options["line_only"] = True
+            options["lines"] = _contour_colorbar_lines(mappable, source_axes)
         if norm_scale != "linear":
             options["scale"] = norm_scale
         pad = kwargs.pop("pad", None)
@@ -706,6 +734,17 @@ class Figure:
         ticks = kwargs.pop("ticks", None)
         if ticks is not None:
             options["ticks"] = [float(value) for value in np.asarray(ticks).reshape(-1)]
+        elif line_contour:
+            locations = np.asarray(mappable.levels, dtype=np.float64).reshape(-1)
+            step = max(1, int(np.ceil(len(locations) / 10)))
+            candidates = [locations[offset::step] for offset in range(step)]
+            selected = min(candidates, key=lambda values: np.min(np.abs(values)))
+            zero_tolerance = (
+                np.finfo(np.float64).eps * max(1.0, float(np.max(np.abs(locations)))) * 8
+            )
+            options["ticks"] = [
+                0.0 if abs(float(value)) <= zero_tolerance else float(value) for value in selected
+            ]
         elif levels is not None and entry.get("discrete_boundaries") is not None:
             # Matplotlib uses a FixedLocator capped at roughly ten bins for a
             # contour colorbar. Match its offset selection so zero (or the
@@ -877,29 +916,14 @@ class Figure:
                 )
 
             def add_lines(self, contour: Any, *, erase: bool = True) -> None:
-                from ._artists import ContourSet, _contour_legend_colors
+                from ._artists import ContourSet
 
                 if not isinstance(contour, ContourSet):
                     raise not_implemented(
                         "Colorbar.add_lines(levels, colors, linewidths)",
                         "Colorbar.add_lines(ContourSet)",
                     )
-                levels = np.asarray(contour.levels, dtype=np.float64).reshape(-1)
-                widths = np.asarray(contour.get_linewidth(), dtype=np.float64).reshape(-1)
-                colors = _contour_legend_colors(contour._entry, len(levels))
-                lines = [
-                    {
-                        "value": float(level),
-                        "color": colors[index],
-                        "width": float(widths[index % len(widths)]) * self._host._point_scale(),
-                        "dash": (
-                            "dashed"
-                            if contour._entry["kwargs"].get("dash_negative") and level < 0
-                            else None
-                        ),
-                    }
-                    for index, level in enumerate(levels)
-                ]
+                lines = _contour_colorbar_lines(contour, self._host)
                 if erase:
                     self._options["lines"] = lines
                 else:

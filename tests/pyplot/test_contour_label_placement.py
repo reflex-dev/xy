@@ -193,15 +193,44 @@ def test_second_automatic_colorbar_uses_explicit_axes_without_overwriting_first(
 
     assert ax._colorbar is first._options
     assert ax._colorbar["orientation"] == "vertical"
+    assert ax._colorbar["line_only"] is True
     assert second.ax is fig.axes[-1]
     assert second.ax is not ax
     assert second.ax._colorbar["orientation"] == "horizontal"
+    assert "line_only" not in second.ax._colorbar
     assert second.ax._colorbar["placement"] == "axes"
 
     output = io.BytesIO()
     fig.savefig(output, format="svg")
     svg = output.getvalue().decode()
     assert svg.count("<linearGradient") >= 2
+
+
+def test_line_contour_colorbar_is_unfilled_with_its_own_level_overlays() -> None:
+    fig, ax = plt.subplots()
+    values = np.linspace(-1.2, 1.4, 100).reshape(10, 10)
+    levels = np.arange(-1.2, 1.6, 0.2)
+    contour = ax.contour(
+        values,
+        levels=levels,
+        cmap="flag",
+        extend="both",
+        linewidths=2,
+    )
+
+    fig.colorbar(contour, shrink=0.8)
+
+    assert ax._colorbar["line_only"] is True
+    assert [line["value"] for line in ax._colorbar["lines"]] == pytest.approx(levels)
+    assert ax._colorbar["ticks"] == pytest.approx(levels[::2])
+    svg = fig._single().to_svg()
+    assert 'data-xy-colorbar-line-only="true"' in svg
+    assert svg.count('data-xy-colorbar-line="true"') == len(levels)
+    assert svg.count("<polygon points=") == 2
+
+    output = io.BytesIO()
+    fig.savefig(output, format="png")
+    assert output.getvalue().startswith(b"\x89PNG")
 
 
 def test_listed_contour_colorbar_keeps_exact_bands_and_extension_colors() -> None:
