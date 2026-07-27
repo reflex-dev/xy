@@ -1562,9 +1562,7 @@ def _x_tick_label_room(axis: dict[str, Any], plot_w: float) -> float:
     items = _axis_tick_label_layout(axis, values, step, scale, True)
     if not items:
         return 0.0
-    has_adaptive_layout = any(
-        float(item["angle"]) or int(item.get("row", 0)) for item in items
-    )
+    has_adaptive_layout = any(float(item["angle"]) or int(item.get("row", 0)) for item in items)
     font_size = _axis_tick_font_size(axis)
     has_multiline_ticks = any(
         _textblock.measure(item["text"], font_size).line_count > 1 for item in items
@@ -1606,13 +1604,7 @@ def _x_tick_label_room(axis: dict[str, Any], plot_w: float) -> float:
         else _axis_tick_label_offset(axis, 16.0, 0.8)
     )
     rows = max(int(item.get("row", 0)) for item in items)
-    return (
-        _AXIS_TEXT_EDGE_PAD
-        + label_offset
-        + rows * (font_size + 4.0)
-        + extent
-        + label_extra
-    )
+    return _AXIS_TEXT_EDGE_PAD + label_offset + rows * (font_size + 4.0) + extent + label_extra
 
 
 def _x_axis_rooms(

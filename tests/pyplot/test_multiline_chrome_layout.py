@@ -134,4 +134,5 @@ def test_browser_client_uses_the_same_preline_block_contract() -> None:
     assert "XY_ASCII_ADVANCES" in source
     assert "xyTextAdvance(line, fontSize)" in source
     assert "white-space:pre-line" in source
-    assert "_xAxisMultilineExtra" in source
+    assert "_xAxisRoom" in source
+    assert "hasMultilineTicks" in source
