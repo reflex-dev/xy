@@ -9,7 +9,7 @@ dominant mutation idioms without reproducing matplotlib's artist graph.
 from __future__ import annotations
 
 import warnings
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from operator import index as operator_index
 from typing import Any, Optional
 
@@ -953,11 +953,17 @@ class StemContainer:
 class ErrorbarContainer:
     """Tuple-compatible errorbar handle without reproducing mpl's artist graph."""
 
-    def __init__(self, artist: Artist, data_line: Optional[Line2D] = None) -> None:
-        self.lines = (data_line, (), (artist,))
+    def __init__(
+        self,
+        artist: Artist,
+        data_line: Optional[Line2D] = None,
+        cap_artists: Sequence[Artist] = (),
+    ) -> None:
+        self.lines = (data_line, tuple(cap_artists), (artist,))
         self.has_xerr = artist._entry["kwargs"].get("xerr") is not None
         self.has_yerr = artist._entry["kwargs"].get("yerr") is not None
         self._artist = artist
+        self._cap_artists = tuple(cap_artists)
         artist._axes._register_container(self)
 
     def __iter__(self) -> Iterator[Any]:
@@ -971,8 +977,12 @@ class ErrorbarContainer:
         self._artist._touch()
 
     def remove(self) -> None:
-        self._artist.remove()
-        self._artist._axes._unregister_container(self)
+        axes = self._artist._axes
+        for child in (*self._cap_artists, self._artist):
+            child.remove()
+        if self.lines[0] is not None:
+            self.lines[0].remove()
+        axes._unregister_container(self)
 
 
 class ContourSet(Artist):

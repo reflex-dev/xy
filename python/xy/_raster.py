@@ -63,6 +63,7 @@ from ._svg import (
     layout,
     legend_items,
     legend_options_with_slot,
+    minor_axis_ticks,
     slot_font_size,
     slot_styles,
     slot_text_color,
@@ -119,6 +120,8 @@ _SYMBOLS = {
     "thin_diamond": 14,
     "plus_line": 15,
     "x_line": 16,
+    "horizontal_line": 17,
+    "vertical_line": 18,
 }
 
 
@@ -781,6 +784,7 @@ def render_raster(
 
     xt, xlab, xstep = axis_ticks(xa, plot["w"], True)
     yt, ylab, ystep = axis_ticks(ya, plot["h"], False)
+    xmt, ymt = minor_axis_ticks(xa), minor_axis_ticks(ya)
     extra_x_ticks = {
         axis_id: axis_ticks(axis, plot["w"], True) for axis_id, axis, _axis_scale in extra_x_axes
     }
@@ -788,6 +792,7 @@ def render_raster(
         axis_id: axis_ticks(axis, plot["h"], False) for axis_id, axis, _axis_scale in extra_y_axes
     }
     xstyle, ystyle = xa.get("style") or {}, ya.get("style") or {}
+    xmstyle, ymstyle = xa.get("minor_style") or {}, ya.get("minor_style") or {}
     default_grid = _css(dom_style.get("--chart-grid"), _GRID)
     default_axis = _css(dom_style.get("--chart-axis"), _AXIS)
     default_text = _css(dom_style.get("--chart-text"), _TEXT)
@@ -798,6 +803,28 @@ def render_raster(
     hide_y = ya.get("tick_label_strategy") == "none"
 
     cmd.clip(px0, py0, plot["w"], plot["h"])
+    for v in [] if hide_x else xmt:
+        gx = float(sx(v))
+        cmd.stroke(
+            [(gx, py0), (gx, py1)],
+            float(xmstyle.get("grid_width", 1)),
+            _parse_color(
+                _css(xmstyle.get("grid_color"), "transparent"),
+                float(xmstyle.get("grid_opacity", 1.0)),
+            ),
+            dash=_AXIS_GRID_DASHES.get(str(xmstyle.get("grid_dash", "solid"))),
+        )
+    for v in [] if hide_y else ymt:
+        gy = float(sy(v))
+        cmd.stroke(
+            [(px0, gy), (px1, gy)],
+            float(ymstyle.get("grid_width", 1)),
+            _parse_color(
+                _css(ymstyle.get("grid_color"), "transparent"),
+                float(ymstyle.get("grid_opacity", 1.0)),
+            ),
+            dash=_AXIS_GRID_DASHES.get(str(ymstyle.get("grid_dash", "solid"))),
+        )
     for v in [] if hide_x else xt:
         gx = float(sx(v))
         cmd.stroke(
@@ -921,6 +948,21 @@ def render_raster(
         return 0.0, length
 
     if not hide_x:
+        inward, outward = tick_span(xmstyle)
+        side = xa.get("side", "bottom")
+        edge = py0 if side == "top" else py1
+        for value in xmt:
+            x = float(sx(value))
+            y0, y1 = (
+                (edge - outward, edge + inward)
+                if side == "top"
+                else (edge - inward, edge + outward)
+            )
+            cmd.stroke(
+                [(x, y0), (x, y1)],
+                float(xmstyle.get("tick_width", 1)),
+                _parse_color(_css(xmstyle.get("tick_color"), default_axis)),
+            )
         inward, outward = tick_span(xstyle)
         side = xa.get("side", "bottom")
         edge = py0 if side == "top" else py1
@@ -937,6 +979,21 @@ def render_raster(
                 _parse_color(_css(xstyle.get("tick_color"), default_axis)),
             )
     if not hide_y:
+        inward, outward = tick_span(ymstyle)
+        side = ya.get("side", "left")
+        edge = px1 if side == "right" else px0
+        for value in ymt:
+            y = float(sy(value))
+            x0, x1 = (
+                (edge - inward, edge + outward)
+                if side == "right"
+                else (edge - outward, edge + inward)
+            )
+            cmd.stroke(
+                [(x0, y), (x1, y)],
+                float(ymstyle.get("tick_width", 1)),
+                _parse_color(_css(ymstyle.get("tick_color"), default_axis)),
+            )
         inward, outward = tick_span(ystyle)
         side = ya.get("side", "left")
         edge = px1 if side == "right" else px0
@@ -2349,7 +2406,16 @@ def _emit_legend(
             symbol = style.get("symbol", "circle")
             sym = _SYMBOLS.get(symbol, 0)
             sw = float(style.get("stroke_width", 0.0))
-            if symbol in {"plus_line", "x_line"} and sw <= 0:
+            if (
+                symbol
+                in {
+                    "plus_line",
+                    "x_line",
+                    "horizontal_line",
+                    "vertical_line",
+                }
+                and sw <= 0
+            ):
                 sw = 1.0
             stroke = _rgba(style.get("stroke"), color_str) if sw > 0 else (0, 0, 0, 0)
             cmd.point(

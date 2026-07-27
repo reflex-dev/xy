@@ -241,7 +241,7 @@ class LogLocator(Locator):
         self._base = float(base)
         if self._base <= 1.0:
             raise ValueError("LogLocator base must be greater than 1")
-        self._subs = (1.0,) if subs is None else tuple(float(sub) for sub in subs)
+        self._subs = None if subs is None else tuple(float(sub) for sub in subs)
 
     def tick_values(self, vmin: float, vmax: float) -> np.ndarray:
         vmin, vmax = sorted((float(vmin), float(vmax)))
@@ -251,8 +251,211 @@ class LogLocator(Locator):
         first = np.floor(np.log(vmin) / np.log(self._base)) - 1
         last = np.ceil(np.log(vmax) / np.log(self._base)) + 1
         decades = self._base ** np.arange(first, last + 1)
-        ticks = np.sort(np.concatenate([decades * sub for sub in self._subs]))
+        # Matplotlib's ``subs=None`` means automatic minor ticks: all integral
+        # subdivisions between adjacent powers.  ``(1,)`` remains the major
+        # decade locator.
+        subs = (
+            tuple(float(sub) for sub in np.arange(2.0, self._base))
+            if self._subs is None
+            else self._subs
+        )
+        if not subs:
+            return np.asarray([], dtype=float)
+        ticks = np.sort(np.concatenate([decades * sub for sub in subs]))
         return ticks[(ticks >= vmin) & (ticks <= vmax)]
+
+
+class SymmetricalLogLocator(Locator):
+    """Matplotlib's decade locator on both sides of a symlog linear region."""
+
+    def __init__(
+        self,
+        *,
+        base: float,
+        linthresh: float,
+        subs: Any = None,
+        numticks: int = 15,
+    ) -> None:
+        self._base = float(base)
+        self._linthresh = float(linthresh)
+        if self._base <= 1:
+            raise ValueError("SymmetricalLogLocator base must be greater than 1")
+        if self._linthresh <= 0:
+            raise ValueError("SymmetricalLogLocator linthresh must be positive")
+        self._subs = (1.0,) if subs is None else tuple(float(value) for value in subs)
+        self.numticks = max(2, int(numticks))
+
+    def set_params(self, subs: Any = None, numticks: Optional[int] = None) -> None:
+        if numticks is not None:
+            self.numticks = max(2, int(numticks))
+        if subs is not None:
+            self._subs = tuple(float(value) for value in subs)
+
+    def tick_values(self, vmin: float, vmax: float) -> np.ndarray:
+        vmin, vmax = sorted((float(vmin), float(vmax)))
+        threshold = self._linthresh
+        if -threshold <= vmin < vmax <= threshold:
+            return np.asarray(sorted({vmin, 0.0, vmax}), dtype=float)
+
+        has_negative = vmin < -threshold
+        has_positive = vmax > threshold
+        has_linear = (has_negative and vmax > -threshold) or (has_positive and vmin < threshold)
+
+        def log_range(lo: float, hi: float) -> tuple[int, int]:
+            return (
+                int(np.floor(np.log(lo) / np.log(self._base))),
+                int(np.ceil(np.log(hi) / np.log(self._base))),
+            )
+
+        negative_lo = negative_hi = positive_lo = positive_hi = 0
+        if has_negative:
+            negative_lo, negative_hi = log_range(abs(min(-threshold, vmax)), abs(vmin) + 1)
+        if has_positive:
+            positive_lo, positive_hi = log_range(max(threshold, vmin), vmax + 1)
+        total = negative_hi - negative_lo + positive_hi - positive_lo + int(has_linear)
+        stride = max(total // (self.numticks - 1), 1)
+
+        decades: list[float] = []
+        if has_negative:
+            decades.extend(-(self._base ** np.arange(negative_lo, negative_hi, stride)[::-1]))
+        if has_linear:
+            decades.append(0.0)
+        if has_positive:
+            decades.extend(self._base ** np.arange(positive_lo, positive_hi, stride))
+        ticks = [
+            decade if decade == 0 else float(sub) * decade
+            for decade in decades
+            for sub in ((1.0,) if decade == 0 else self._subs)
+        ]
+        return np.asarray(ticks, dtype=float)
+
+
+class AsinhLocator(Locator):
+    """Source-faithful rounded ticks for Matplotlib's asinh scale."""
+
+    def __init__(
+        self,
+        linear_width: float,
+        *,
+        numticks: int = 11,
+        symthresh: float = 0.2,
+        base: float = 10,
+        subs: Any = None,
+    ) -> None:
+        self.linear_width = float(linear_width)
+        self.numticks = max(2, int(numticks))
+        self.symthresh = float(symthresh)
+        self.base = float(base)
+        self.subs = None if subs is None else tuple(float(value) for value in subs)
+        if self.linear_width <= 0:
+            raise ValueError("AsinhLocator linear_width must be positive")
+
+    def set_params(
+        self,
+        *,
+        numticks: Optional[int] = None,
+        symthresh: Optional[float] = None,
+        base: Optional[float] = None,
+        subs: Any = None,
+    ) -> None:
+        if numticks is not None:
+            self.numticks = max(2, int(numticks))
+        if symthresh is not None:
+            self.symthresh = float(symthresh)
+        if base is not None:
+            self.base = float(base)
+        if subs is not None:
+            self.subs = tuple(float(value) for value in subs) or None
+
+    def tick_values(self, vmin: float, vmax: float) -> np.ndarray:
+        vmin, vmax = sorted((float(vmin), float(vmax)))
+        ymin, ymax = self.linear_width * np.arcsinh(
+            np.asarray([vmin, vmax], dtype=float) / self.linear_width
+        )
+        transformed = np.linspace(ymin, ymax, self.numticks)
+        if ymin * ymax < 0:
+            zero_distance = np.abs(transformed / (ymax - ymin))
+            transformed = np.hstack([transformed[zero_distance > 0.5 / self.numticks], 0.0])
+        values = self.linear_width * np.sinh(transformed / self.linear_width)
+        zero = transformed == 0
+        with np.errstate(divide="ignore", invalid="ignore"):
+            if self.base > 1:
+                powers = np.sign(values) * self.base ** np.floor(
+                    np.log(np.abs(values)) / np.log(self.base)
+                )
+                rounded = np.outer(powers, self.subs).reshape(-1) if self.subs else powers
+            else:
+                powers = np.where(zero, 1.0, 10 ** np.floor(np.log10(np.abs(values))))
+                rounded = powers * np.round(values / powers)
+        ticks = np.asarray(sorted(set(map(float, rounded))), dtype=float)
+        return ticks if len(ticks) >= 2 else np.linspace(vmin, vmax, self.numticks)
+
+
+class LogitLocator(Locator):
+    """Matplotlib's probability-decade locator without an Axis dependency."""
+
+    def __init__(self, minor: bool = False, *, nbins: Any = "auto") -> None:
+        self.minor = bool(minor)
+        self._nbins = nbins if nbins == "auto" else max(1, int(nbins))
+
+    @staticmethod
+    def _ideal_tick(index: int) -> float:
+        if index < 0:
+            return float(10**index)
+        if index > 0:
+            return float(1 - 10 ** (-index))
+        return 0.5
+
+    def tick_values(self, vmin: float, vmax: float) -> np.ndarray:
+        vmin, vmax = sorted((float(vmin), float(vmax)))
+        epsilon = 1e-7
+        if not (np.isfinite(vmin) and np.isfinite(vmax)):
+            vmin, vmax = epsilon, 1 - epsilon
+        vmin, vmax = max(vmin, epsilon), min(vmax, 1 - epsilon)
+        if vmin >= vmax:
+            return np.asarray([], dtype=float)
+        nbins = max(2, int(self._nbins_hint or 9)) if self._nbins == "auto" else self._nbins
+        lower = (
+            int(np.floor(np.log10(vmin)))
+            if vmin < 0.5
+            else 0
+            if vmin < 0.9
+            else int(-np.ceil(np.log10(1 - vmin)))
+        )
+        upper = (
+            int(np.ceil(np.log10(vmax)))
+            if vmax <= 0.5
+            else 1
+            if vmax <= 0.9
+            else int(-np.floor(np.log10(1 - vmax)))
+        )
+        ideal_count = upper - lower - 1
+        if ideal_count >= 2:
+            if ideal_count > nbins:
+                stride = math.ceil(ideal_count / nbins)
+                indexes = [
+                    value
+                    for value in range(lower, upper + 1)
+                    if (value % stride != 0) == self.minor
+                ]
+                return np.asarray([self._ideal_tick(value) for value in indexes])
+            if self.minor:
+                ticks: list[float] = []
+                for value in range(lower, upper):
+                    if value < -1:
+                        ticks.extend(np.arange(2, 10) * 10**value)
+                    elif value == -1:
+                        ticks.extend(np.arange(2, 5) / 10)
+                    elif value == 0:
+                        ticks.extend(np.arange(6, 9) / 10)
+                    else:
+                        ticks.extend(1 - np.arange(2, 10)[::-1] * 10 ** (-value - 1))
+                return np.asarray(ticks, dtype=float)
+            return np.asarray([self._ideal_tick(value) for value in range(lower, upper + 1)])
+        if self.minor:
+            return np.asarray([], dtype=float)
+        locator = MaxNLocator(nbins=nbins, steps=(1, 2, 5, 10))
+        return locator.tick_values(vmin, vmax)
 
 
 class Formatter:
@@ -267,6 +470,80 @@ class ScalarFormatter(Formatter):
     """The default: the shim's ``%g`` rendering of tick values."""
 
     def __call__(self, value: float, pos: Optional[int] = None) -> str:
+        return f"{value:g}"
+
+
+_SUPERSCRIPT_DIGITS = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
+
+
+class LogFormatterSciNotation(Formatter):
+    """Readable decade labels for log, symlog, and asinh axes."""
+
+    def __init__(self, base: float = 10.0) -> None:
+        self.base = float(base)
+
+    def __call__(self, value: float, pos: Optional[int] = None) -> str:
+        del pos
+        if value == 0:
+            return "0"
+        absolute = abs(float(value))
+        exponent = (
+            np.log(absolute) / np.log(self.base) if absolute > 0 and self.base > 1 else np.nan
+        )
+        if not np.isfinite(exponent) or abs(exponent - round(exponent)) > 1e-9:
+            return f"{value:g}"
+        sign = "−" if value < 0 else ""  # noqa: RUF001 - intentional math minus
+        power = str(round(float(exponent))).translate(_SUPERSCRIPT_DIGITS)
+        return f"{sign}{self.base:g}{power}"
+
+
+class LogitFormatter(Formatter):
+    """Probability labels matching Matplotlib's major LogitFormatter forms."""
+
+    def __init__(
+        self,
+        *,
+        use_overline: bool = False,
+        one_half: str = r"\frac{1}{2}",
+        minor: bool = False,
+    ) -> None:
+        self.use_overline = bool(use_overline)
+        self.one_half = "1/2" if one_half == r"\frac{1}{2}" else str(one_half)
+        self.minor = bool(minor)
+        self._locs = np.asarray([], dtype=float)
+
+    def set_locs(self, locs: Any) -> None:
+        self._locs = np.asarray(locs, dtype=float)
+
+    @staticmethod
+    def _power(value: float) -> str:
+        exponent = round(float(np.log10(value)))
+        return "10" + str(exponent).translate(_SUPERSCRIPT_DIGITS)
+
+    @staticmethod
+    def _overline(value: str) -> str:
+        return "".join(character + "\N{COMBINING OVERLINE}" for character in value)
+
+    def __call__(self, value: float, pos: Optional[int] = None) -> str:
+        del pos
+        value = float(value)
+        if self.minor or not 0 < value < 1:
+            return ""
+        if np.isclose(value, 0.5, rtol=0, atol=1e-12):
+            return self.one_half
+        if value < 0.5 and np.isclose(np.log10(value), round(np.log10(value)), rtol=0, atol=1e-7):
+            return self._power(value)
+        complement = 1 - value
+        if value > 0.5 and np.isclose(
+            np.log10(complement),
+            round(np.log10(complement)),
+            rtol=0,
+            atol=1e-7,
+        ):
+            power = self._power(complement)
+            return (
+                self._overline(power) if self.use_overline else f"1−{power}"  # noqa: RUF001 - intentional math minus
+            )
         return f"{value:g}"
 
 
