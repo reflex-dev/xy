@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import numpy as np
 
@@ -225,6 +225,24 @@ class AutoLocator(MaxNLocator):
         super().__init__(nbins="auto", steps=(1.0, 2.0, 2.5, 5.0, 10.0))
 
 
+class AutoMinorLocator(Locator):
+    """Evenly subdivide the live major-tick interval.
+
+    Like Matplotlib's locator, this needs the resolved major locations and is
+    therefore materialized by :class:`~xy.pyplot.Axes` rather than through the
+    ordinary ``tick_values(vmin, vmax)`` protocol.
+    """
+
+    def __init__(self, n: int | Literal["auto"] | None = None) -> None:
+        if n not in (None, "auto"):
+            n = max(1, int(n))
+        self.ndivs = n
+
+    def tick_values(self, vmin: float, vmax: float) -> np.ndarray:
+        del vmin, vmax
+        raise NotImplementedError("AutoMinorLocator requires the resolved major ticks")
+
+
 class LinearLocator(Locator):
     def __init__(self, numticks: Optional[int] = None) -> None:
         self._numticks = 11 if numticks is None else max(2, int(numticks))
@@ -320,12 +338,23 @@ class StrMethodFormatter(Formatter):
         return self._fmt.format(x=value, pos=pos)
 
 
-def as_formatter(value: Any, where: str) -> Formatter:
-    """matplotlib's set_major_formatter coercions: Formatter, str, callable."""
+def as_formatter(value: Any, where: str) -> Any:
+    """Matplotlib's formatter coercions, preserving context-aware objects.
+
+    Foreign Matplotlib formatters often need the complete tick set through
+    ``format_ticks``/``set_locs`` (notably ConciseDateFormatter and
+    ScalarFormatter). Wrapping those objects in a one-value ``FuncFormatter``
+    loses that state, so retain them while keeping ordinary callables on the
+    lightweight xy wrapper.
+    """
     if isinstance(value, Formatter):
         return value
     if isinstance(value, str):
         return StrMethodFormatter(value)
+    if callable(value) and (
+        callable(getattr(value, "format_ticks", None)) or callable(getattr(value, "set_locs", None))
+    ):
+        return value
     if callable(value):
         return FuncFormatter(value)
     raise TypeError(f"{where} requires a Formatter, format string, or callable")
