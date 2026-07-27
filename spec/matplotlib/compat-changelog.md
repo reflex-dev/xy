@@ -4,6 +4,23 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Built-in scale gallery completion — 2026-07-27
+
+- `asinh`, `symlog`, and `logit` now install scale-specific default locators,
+  formatters, minor ticks, and Matplotlib-shaped transform metadata instead of
+  sharing one fixed candidate-tick approximation.
+- `asinh` accepts `base`/`subs`, `logit` accepts `one_half`/`use_overline`, and
+  the static shim supports `set_*scale("function", functions=(forward,
+  inverse))`. Explicit ticks expand the current view, retaining the zero tick
+  used by the function-scale gallery example.
+- `set_adjustable` and numeric aspects operate in transformed coordinates, so
+  logarithmic box and datalim aspect adjustment use decade spans rather than
+  raw-data spans. Constrained layout no longer probes an empty log axis with
+  the invalid domain `(0, 1)`.
+- Minor tick labels are not part of XY's wire contract. Consequently,
+  conditionally labeled LogitFormatter minors remain an explicit approximation
+  on narrowly zoomed logit axes; their positions are still drawn.
+
 ## Vector-field gallery corrections — 2026-07-24
 
 - `quiver(units=...)` now converts Matplotlib's width-unit vocabulary without
