@@ -20,6 +20,11 @@ which covers user-visible releases across the whole package.
 
 ## Multiline chrome, tick fidelity, and final layout resolution — 2026-07-26
 
+- `plt.figure(layout="tight"/"constrained"/"compressed")` now retains the
+  deferred layout engine for axes created later through `add_subplot()` or
+  `Figure.subplot_mosaic()`. This is the construction order used by the
+  spectrum gallery; previously the unconsumed keyword left all three plot rows
+  on default GridSpec spacing and their titles, ticks, and labels collided.
 - Newline-delimited axes titles, axis labels, tick/category labels, and
   suptitles now use one measured text-block contract across browser, SVG, and
   native PNG output. Each line is emitted separately at a `1.2 × font-size`

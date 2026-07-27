@@ -52,7 +52,18 @@ from ._axisgrid import FacetGrid
 from ._colors import Cmap, LinearSegmentedColormap, ListedColormap
 from ._mplfig import Figure, GridSpec
 from ._rc import _PropCycle, rc, rc_context, rcdefaults, rcParams
-from ._state import all_figures, close, figlabels, fignum_exists, fignums, figure, gca, gcf, sca
+from ._state import (
+    _apply_factory_layout,
+    all_figures,
+    close,
+    figlabels,
+    fignum_exists,
+    fignums,
+    figure,
+    gca,
+    gcf,
+    sca,
+)
 from ._ticker import (
     AutoLocator,
     FixedFormatter,
@@ -360,19 +371,6 @@ def subplot_mosaic(mosaic: str | list[Any], **kwargs: Any) -> tuple[Figure, dict
     axes = fig.subplot_mosaic(mosaic, **kwargs)
     _apply_factory_layout(fig, layout)
     return fig, axes
-
-
-def _apply_factory_layout(fig: Figure, layout: Any) -> None:
-    """Apply Matplotlib's figure-factory layout option after axes exist."""
-    if layout is None or layout == "none":
-        return
-    if layout in {"tight", "constrained", "compressed"}:
-        # The shim's deterministic tight-layout pass reserves the native
-        # panels' tick/title chrome.  Apply it after the factory has created
-        # the grid; applying it in figure() would run against an empty figure.
-        fig.tight_layout()
-        return
-    raise ValueError(f"Invalid value for 'layout': {layout!r}")
 
 
 def axes(arg: Sequence[float] | None = None, **kwargs: Any) -> Axes:
