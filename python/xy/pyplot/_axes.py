@@ -2037,21 +2037,59 @@ class Axes(PlotTypeMixin):
             weight_sets = [np.asarray(weights, dtype=np.float64)]
         else:
             weight_sets = [np.asarray(value, dtype=np.float64) for value in weights]
-        counts = [
-            np.histogram(values, bins=edges, weights=w, density=density)[0].astype(np.float64)
-            for values, w in zip(datasets, weight_sets, strict=True)
-        ]
+        stacked = stacked or histtype == "barstacked"
+        # Matplotlib bins stacked inputs as raw (possibly weighted) mass,
+        # cumulatively stacks the datasets, and only then normalizes the top
+        # envelope.  Normalizing each input independently would give every
+        # dataset unit area and is especially wrong for unequal bin widths.
+        counts_array = np.vstack(
+            [
+                np.histogram(
+                    values,
+                    bins=edges,
+                    weights=w,
+                    density=density and not stacked,
+                )[0].astype(np.float64)
+                for values, w in zip(datasets, weight_sets, strict=True)
+            ]
+        )
+        if stacked:
+            tops = np.cumsum(counts_array, axis=0)
+            if density:
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    tops = (tops / np.diff(edges)) / tops[-1].sum()
+            counts_array = np.diff(
+                np.vstack((np.zeros((1, counts_array.shape[1]), dtype=np.float64), tops)),
+                axis=0,
+            )
+        counts = list(counts_array)
         if cumulative:
             reverse = isinstance(cumulative, (int, float, np.number)) and cumulative < 0
-            counts = [
-                (
-                    np.cumsum((values * np.diff(edges) if density else values)[::-1])[::-1]
-                    if reverse
-                    else np.cumsum(values * np.diff(edges) if density else values)
+            cumulative_tops = np.cumsum(counts_array, axis=0) if stacked else counts_array
+            cumulative_tops = np.asarray(
+                [
+                    (
+                        np.cumsum((values * np.diff(edges) if density else values)[::-1])[::-1]
+                        if reverse
+                        else np.cumsum(values * np.diff(edges) if density else values)
+                    )
+                    for values in cumulative_tops
+                ]
+            )
+            counts_array = (
+                np.diff(
+                    np.vstack(
+                        (
+                            np.zeros((1, cumulative_tops.shape[1]), dtype=np.float64),
+                            cumulative_tops,
+                        )
+                    ),
+                    axis=0,
                 )
-                for values in counts
-            ]
-        stacked = stacked or histtype == "barstacked"
+                if stacked
+                else cumulative_tops
+            )
+            counts = list(counts_array)
 
         def dataset_values(value: Any, name: str, *, color_value: bool = False) -> list[Any]:
             if value is None:
@@ -2099,6 +2137,54 @@ class Axes(PlotTypeMixin):
         width = binwidths * rel_width / (1 if stacked else len(datasets))
         histogram_entry_start = len(self._entries)
         histogram_entry_groups: list[list[dict[str, Any]]] = []
+        # Keep the common uniform-bin entry scalar. Besides avoiding a
+        # redundant per-bin column, explicit legends expect one swatch width;
+        # genuinely unequal bins retain their exact width array.
+        entry_width: float | np.ndarray = (
+            float(width[0])
+            if len(width) and np.allclose(width, width[0], rtol=1e-12, atol=0.0)
+            else width
+        )
+
+        def add_dashed_bar_perimeters(
+            positions: np.ndarray,
+            values: np.ndarray,
+            current_base: np.ndarray,
+            resolved_edge: Optional[str],
+            resolved_width: float,
+            dash: Any,
+        ) -> None:
+            if dash in (None, "none") or resolved_edge is None:
+                return
+            half_width = width / 2.0
+            low = positions - half_width
+            high = positions + half_width
+            top = current_base + values
+            if orientation == "vertical":
+                x0 = np.concatenate((low, high, high, low))
+                y0 = np.concatenate((current_base, current_base, top, top))
+                x1 = np.concatenate((high, high, low, low))
+                y1 = np.concatenate((current_base, top, top, current_base))
+            else:
+                x0 = np.concatenate((current_base, current_base, top, top))
+                y0 = np.concatenate((low, high, high, low))
+                x1 = np.concatenate((current_base, top, top, current_base))
+                y1 = np.concatenate((high, high, low, low))
+            self._add(
+                "@mark",
+                {
+                    "factory": "segments",
+                    "args": (x0, y0, x1, y1),
+                    "kwargs": {
+                        "color": resolved_edge,
+                        "width": resolved_width,
+                        "dash": dash,
+                        "opacity": 1.0 if alpha is None else float(alpha),
+                        "name": None,
+                    },
+                },
+            )
+
         for index, values in enumerate(counts):
             group_start = len(self._entries)
             positions = centers if stacked else centers + (index - (len(datasets) - 1) / 2) * width
@@ -2121,7 +2207,9 @@ class Axes(PlotTypeMixin):
             if linestyle_value not in LINESTYLE_TO_DASH:
                 raise ValueError(f"unsupported histogram linestyle: {linestyle_value!r}")
             dash = self._mpl_dash(LINESTYLE_TO_DASH[linestyle_value], resolved_width)
-            filled = histtype == "stepfilled" if fill is None else bool(fill)
+            # Matplotlib's Patch._set_edgecolor(None) makes a filled patch's
+            # edge transparent unless patch.force_edgecolor is enabled.
+            filled = histtype in {"bar", "barstacked", "stepfilled"} if fill is None else bool(fill)
             if not filled and resolved_edge is None:
                 resolved_edge = (
                     series_color
@@ -2130,6 +2218,7 @@ class Axes(PlotTypeMixin):
                 )
             elif filled and histtype == "step" and resolved_edge is None:
                 resolved_edge = series_color
+
             if orientation == "horizontal" and histtype.startswith("step") and filled:
                 # The core area primitive fills along y. Horizontal filled
                 # steps are equivalently represented by touching horizontal
@@ -2142,20 +2231,42 @@ class Axes(PlotTypeMixin):
                         "y": values,
                         "kwargs": {
                             "base": current_base,
-                            "width": width,
+                            "width": entry_width,
                             "orientation": "horizontal",
                             "color": resolved_color,
                             "opacity": 1.0 if alpha is None else float(alpha),
                             "name": None if labels[index] is None else str(labels[index]),
-                            "stroke": resolved_edge,
-                            "stroke_width": resolved_width,
+                            **(
+                                {"stroke": resolved_edge, "stroke_width": resolved_width}
+                                if resolved_edge is not None and dash is None
+                                else {}
+                            ),
                         },
                     },
                 )
+                add_dashed_bar_perimeters(
+                    positions, values, current_base, resolved_edge, resolved_width, dash
+                )
             elif orientation == "horizontal" and histtype.startswith("step"):
                 step_values = values + current_base
-                path_x = np.repeat(step_values, 2)
-                path_y = np.repeat(edges, 2)[1:-1]
+                # Matplotlib's unfilled step histogram is the top envelope
+                # plus one connector to the current baseline at each end.  A
+                # stacked series therefore starts/ends at the previous stack,
+                # not at zero.
+                path_x = np.concatenate(
+                    (
+                        current_base[:1],
+                        np.repeat(step_values, 2),
+                        current_base[-1:],
+                    )
+                )
+                path_y = np.concatenate(
+                    (
+                        edges[:1],
+                        np.repeat(edges, 2)[1:-1],
+                        edges[-1:],
+                    )
+                )
                 entry = self._add(
                     "@mark",
                     {
@@ -2199,6 +2310,27 @@ class Axes(PlotTypeMixin):
                 )
             elif histtype.startswith("step"):
                 step_values = values + current_base
+                # Keep the compact stairs trace for the O(bins) top envelope,
+                # then add only Matplotlib's two missing baseline connectors.
+                self._add(
+                    "@mark",
+                    {
+                        "factory": "segments",
+                        "args": (
+                            edges[[0, -1]],
+                            np.asarray((current_base[0], step_values[-1])),
+                            edges[[0, -1]],
+                            np.asarray((step_values[0], current_base[-1])),
+                        ),
+                        "kwargs": {
+                            "color": resolved_edge or series_color,
+                            "width": resolved_width,
+                            "dash": dash,
+                            "name": None,
+                            "opacity": 1.0 if alpha is None else float(alpha),
+                        },
+                    },
+                )
                 entry = self._add(
                     "@mark",
                     {
@@ -2221,45 +2353,22 @@ class Axes(PlotTypeMixin):
                         "y": values,
                         "kwargs": {
                             "base": current_base,
-                            "width": width,
+                            "width": entry_width,
                             "orientation": orientation,
                             "color": "transparent" if fill is False else resolved_color,
                             "opacity": 1.0 if alpha is None else float(alpha),
                             "name": None if labels[index] is None else str(labels[index]),
-                            "stroke": resolved_edge if dash is None else None,
-                            "stroke_width": resolved_width,
+                            **(
+                                {"stroke": resolved_edge, "stroke_width": resolved_width}
+                                if resolved_edge is not None and dash is None
+                                else {}
+                            ),
                         },
                     },
                 )
-                if dash not in (None, "none") and resolved_edge is not None:
-                    half_width = width / 2.0
-                    low = positions - half_width
-                    high = positions + half_width
-                    top = current_base + values
-                    if orientation == "vertical":
-                        x0 = np.concatenate((low, high, high, low))
-                        y0 = np.concatenate((current_base, current_base, top, top))
-                        x1 = np.concatenate((high, high, low, low))
-                        y1 = np.concatenate((current_base, top, top, current_base))
-                    else:
-                        x0 = np.concatenate((current_base, current_base, top, top))
-                        y0 = np.concatenate((low, high, high, low))
-                        x1 = np.concatenate((current_base, top, top, current_base))
-                        y1 = np.concatenate((high, high, low, low))
-                    self._add(
-                        "@mark",
-                        {
-                            "factory": "segments",
-                            "args": (x0, y0, x1, y1),
-                            "kwargs": {
-                                "color": resolved_edge,
-                                "width": resolved_width,
-                                "dash": dash,
-                                "opacity": 1.0 if alpha is None else float(alpha),
-                                "name": None,
-                            },
-                        },
-                    )
+                add_dashed_bar_perimeters(
+                    positions, values, current_base, resolved_edge, resolved_width, dash
+                )
                 if hatches[index]:
                     self._stairs_hatch(
                         values + current_base,

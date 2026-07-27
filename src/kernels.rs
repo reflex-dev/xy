@@ -1508,21 +1508,19 @@ fn spectral_window(nfft: usize) -> Vec<f64> {
 
 fn windowed_fft(data: &[f64], start: usize, nfft: usize, window: &[f64]) -> (Vec<f64>, Vec<f64>) {
     let available = data.len().saturating_sub(start).min(nfft);
-    let mean = if available == 0 {
-        0.0
-    } else {
-        data[start..start + available].iter().sum::<f64>() / available as f64
-    };
     let mut real = vec![0.0; nfft];
     let mut imag = vec![0.0; nfft];
     for index in 0..available {
-        real[index] = (data[start + index] - mean) * window[index];
+        // Matplotlib's psd/csd/cohere/specgram default is detrend_none.
+        // Explicit detrending modes are rejected by the pyplot shim until
+        // the native kernel can select them deliberately.
+        real[index] = data[start + index] * window[index];
     }
     fft_in_place(&mut real, &mut imag);
     (real, imag)
 }
 
-/// Windowed real FFT returning the nonnegative-frequency half spectrum.
+/// Hann-windowed, non-detrended real FFT returning the nonnegative half spectrum.
 pub fn rfft_into(
     data: &[f64],
     nfft: usize,
@@ -1565,8 +1563,8 @@ fn spectral_segment_count(len: usize, nfft: usize, noverlap: usize) -> Option<us
     }
 }
 
-/// Welch auto/cross spectral estimate. A missing `y` computes only `pxx`;
-/// otherwise all auto and complex cross spectra are averaged natively.
+/// Non-detrended Welch auto/cross spectral estimate. A missing `y` computes
+/// only `pxx`; otherwise all auto and complex cross spectra are averaged.
 #[allow(clippy::too_many_arguments)]
 pub fn welch_spectra_into(
     x: &[f64],
@@ -1644,7 +1642,7 @@ pub fn welch_spectra_into(
     true
 }
 
-/// Spectrogram matrix in time-major `(segments, bins)` layout.
+/// Non-detrended spectrogram matrix in time-major `(segments, bins)` layout.
 #[allow(clippy::too_many_arguments)]
 pub fn spectrogram_into(
     data: &[f64],

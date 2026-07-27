@@ -334,16 +334,30 @@ apply it with. Rather than leave that to be discovered, it is a contract:
 | --- | --- | --- | --- |
 | mark / axis `style=` | yes | yes | yes |
 | chart-level `style=` (design tokens) | yes | yes | yes |
+<<<<<<< HEAD
+| `styles={slot: {...}}` | yes, all 29 slots | text subset, 9 slots | text subset, 9 slots |
+=======
 | `styles={slot: {...}}` | yes, all 29 slots | dropped | dropped |
+>>>>>>> origin/main
 | `class_names={slot: "..."}` | yes, all 29 slots | dropped | dropped |
 | `custom_css=` | yes | raises | raises |
 | `xy.legend(style=...)` | yes | 6 keys | 6 keys |
 | `xy.colorbar(style=...)` | yes | dropped | dropped |
 
-The two "dropped" rows are deliberate. Raising instead would break every native
-export of a chart that carries Tailwind classes for its live view, which is the
-normal way to use both surfaces together — so the behavior is contracted and
-tested rather than enforced. `custom_css` raises because there is no honest
+A per-slot `styles=` block reaches a file for the nine slots that name chrome a
+file actually contains — `title`, `axis_title`, `tick_label`, the three legend
+slots and the three colorbar slots — carrying `font-size`, `font-weight`,
+`font-style`, `font-family`, `letter-spacing`, `opacity` and the text paint.
+The rest are live-only chrome (`tooltip*`, `modebar*`, `crosshair_*`,
+`selection`, `badge*`) with nothing in a file to paint. The native raster's
+baked atlas is one face, so it honors a slot's size and paint and leaves the
+typeface properties to the vector writers.
+
+The `class_names` row is dropped rather than raising: raising would break every
+native export of a chart that carries Tailwind classes for its live view, which
+is the normal way to use both surfaces together — and a class name is the one
+surface a file genuinely cannot honor, since it selects a rule out of a
+stylesheet an export does not have. `custom_css` raises because there is no honest
 partial application of an author stylesheet, and the error names
 `Engine.chromium` as the fix.
 
