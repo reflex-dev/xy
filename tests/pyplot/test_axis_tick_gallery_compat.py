@@ -58,9 +58,8 @@ def test_axis_proxy_grid_targets_only_its_dimension_and_minor_is_accepted() -> N
     assert ax._axis_props("x")["style"]["grid_color"] == "transparent"
     assert ax._axis_props("y")["style"]["grid_color"] == "#1f77b4"
 
-    # Minor ticks are not rendered natively, but Matplotlib's accepted call is
-    # a compatibility no-op rather than a gallery-stopping ValueError.
     ax.xaxis.grid(which="minor", color="0.9")
+    assert ax._axis_props("x")["minor_style"]["grid_color"] == "rgb(230,230,230)"
     assert ax._axis_props("y")["style"]["grid_color"] == "#1f77b4"
 
 

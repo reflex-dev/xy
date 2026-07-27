@@ -28,10 +28,9 @@
 // spec may carry a chart `palette`. A v6 client indexes COLORMAP_STOPS with the
 // stop array, misses, and paints viridis without erroring.
 // v8: legend/colorbar geometry, extra colormap names, and match-fill strokes
-// add wire values an older v7 client would accept but silently misrender.
-// v9: `axis.tick_sides` and `axis.tick_label_sides` separate tick-mark and
-// label edges from `axis.side`. Without this bump, a cached v8 client would
-// ignore both and silently draw only one edge; v9 rejects it before rendering.
+// v9: explicit minor axis ticks/styles, log nonpositive behavior, and
+// `axis.tick_sides`/`axis.tick_label_sides` add wire values a cached v8 client
+// would accept but silently misrender.
 export const PROTOCOL = 9;
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in

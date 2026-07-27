@@ -2653,6 +2653,26 @@ class PlotTypeMixin:
                 line_color = self._next_color()
             color = line_color
         resolved_capsize = float(rcParams["errorbar.capsize"] if capsize is None else capsize)
+        # Matplotlib capsize is a half-width in points; core XY's errorbar
+        # accepts the perpendicular half-width in data units. Resolve that
+        # physical length against this axes' allocated pixel width so caps do
+        # not expand the data limits (or turn 5 pt into five whole x units).
+        if resolved_capsize > 0 and yerr is not None:
+            x_numeric = np.asarray(x_values, dtype=float)
+            finite_x = x_numeric[np.isfinite(x_numeric)]
+            x_span = float(np.ptp(finite_x)) if len(finite_x) > 1 else 1.0
+            axes_width_fraction = float(self.get_position(original=True).width)
+            figure_width_px = (
+                float(self.figure.get_size_inches()[0])
+                * float(self.figure.get_dpi())
+                * axes_width_fraction
+            )
+            resolved_capsize = (
+                resolved_capsize
+                * self._point_scale()
+                * max(x_span, np.finfo(float).eps)
+                / max(figure_width_px, 1.0)
+            )
         errorbar_width = float(
             elinewidth if elinewidth is not None else base.get("width", rcParams["lines.linewidth"])
         )
