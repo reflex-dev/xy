@@ -14,6 +14,7 @@ from typing import Any, Literal, Optional, overload
 
 import numpy as np
 
+from .. import _textblock
 from ._artists import Text
 from ._axes import _DEFAULT_AXES_RECT, Axes, _plain_text
 from ._colors import resolve_color
@@ -39,6 +40,30 @@ def _panel_chrome(ax: Axes, plot_w: int) -> tuple[float, float, float, float]:
     compact = plot_w + 54 < 520
     left, top = (46.0, 6.0) if compact else (62.0, 10.0)
     right, bottom = (8.0, 36.0) if compact else (14.0, 42.0)
+    y_props = ax._axis["y"]
+    y_style = y_props.get("style") or {}
+    y_labels = y_props.get("tick_labels") or ()
+    if y_labels and y_props.get("tick_label_strategy") not in {"none", "off"}:
+        tick_size = float(y_style.get("tick_label_size", y_style.get("tick_size", 11.0)))
+        tick_angle = float(y_props.get("tick_label_angle", 0.0))
+        tick_width = max(
+            _textblock.rotated_extent(_textblock.measure(label, tick_size), tick_angle)[0]
+            for label in y_labels
+        )
+        tick_length = max(0.0, float(y_style.get("tick_length", 0.0)))
+        direction = str(y_style.get("tick_direction", "out"))
+        outward = (
+            0.0 if direction == "in" else tick_length / 2.0 if direction == "inout" else tick_length
+        )
+        tick_offset = outward + max(0.0, float(y_style.get("tick_padding", 4.0)))
+        needed = 4.0 + tick_offset + tick_width
+        if y_props.get("label"):
+            label_size = float(y_style.get("label_size", 12.0))
+            needed += (
+                float(y_props.get("label_offset", 0.4 * label_size))
+                + _textblock.measure(y_props["label"], label_size).height
+            )
+        left = max(left, needed)
     extra_top, extra_right, extra_bottom = ax._outside_padding(compact)
     return left, top + extra_top, right + extra_right, bottom + extra_bottom
 
@@ -121,6 +146,8 @@ class Figure:
         self._width_ratios: Optional[tuple[float, ...]] = None
         self._height_ratios: Optional[tuple[float, ...]] = None
         self._layout_options: dict[str, Any] = {}
+        self._layout_dirty = False
+        self._layout_resolving = False
         self._subplot_adjust: dict[str, float] = {}
         self._label = ""
         self._gci: Any = None  # last color-mapped artist, for plt.colorbar()/clim()
@@ -140,6 +167,8 @@ class Figure:
 
     def _invalidate(self) -> None:
         self._html_cache = None
+        if self._layout_options and not self._layout_resolving:
+            self._layout_dirty = True
 
     @property
     def canvas(self) -> "_FigureCanvas":
@@ -366,6 +395,7 @@ class Figure:
         self._width_ratios = None
         self._height_ratios = None
         self._layout_options = {}
+        self._layout_dirty = False
         self._subplot_adjust = {}
         self._invalidate()
 
@@ -451,6 +481,25 @@ class Figure:
             "w_pad": w_pad,
             "rect": rect,
         }
+        self._layout_dirty = True
+        self._resolve_layout()
+
+    def _resolve_layout(self) -> None:
+        """Resolve a dirty layout from the figure's final chrome state."""
+        if not self._layout_dirty or self._layout_resolving:
+            return
+        self._layout_resolving = True
+        try:
+            self._resolve_tight_layout()
+            self._layout_dirty = False
+        finally:
+            self._layout_resolving = False
+
+    def _resolve_tight_layout(self) -> None:
+        pad = self._layout_options.get("pad")
+        h_pad = self._layout_options.get("h_pad")
+        w_pad = self._layout_options.get("w_pad")
+        rect = self._layout_options.get("rect")
         # The native panels carry their own tick/title chrome, while the
         # GridSpec rectangles describe plot boxes only.  Reserve enough
         # figure-edge and inter-panel room for that chrome so adjacent panels
@@ -463,13 +512,32 @@ class Figure:
         ):
             canvas_w, canvas_h = rc_figsize_px(self._figsize, self._dpi)
             compact = canvas_w / max(1, self._ncols) < 520
-            left_px, right_px = (46.0, 20.0) if compact else (62.0, 26.0)
-            bottom_px = 36.0 if compact else 42.0
-            title_px = 26.0 if compact else 30.0
-            top_px = max(20.0, (6.0 if compact else 10.0) + title_px)
-            has_title = any(ax._title for ax in self._axes)
+            nominal_plot_w = max(40, round(canvas_w / max(1, self._ncols)))
+            chrome = [_panel_chrome(ax, nominal_plot_w) for ax in self._axes]
+            left_px = max((item[0] for item in chrome), default=46.0 if compact else 62.0)
+            right_px = max(
+                20.0 if compact else 26.0,
+                max((item[2] for item in chrome), default=0.0),
+            )
+            bottom_px = max((item[3] for item in chrome), default=36.0 if compact else 42.0)
+            top_px = max(20.0, max((item[1] for item in chrome), default=0.0))
+
             horizontal_gap = 58.0 if compact else 76.0
-            vertical_gap = (68.0 if compact else 82.0) if has_title else (44.0 if compact else 56.0)
+            vertical_gap = 44.0 if compact else 56.0
+            for index, item in enumerate(chrome):
+                row, col = divmod(index, max(1, self._ncols))
+                if col + 1 < self._ncols and index + 1 < len(chrome):
+                    horizontal_gap = max(horizontal_gap, item[2] + chrome[index + 1][0])
+                below = index + self._ncols
+                if row + 1 < self._nrows and below < len(chrome):
+                    vertical_gap = max(vertical_gap, item[3] + chrome[below][1])
+
+            if self._suptitle:
+                style = self._suptitle_style or {}
+                block = _textblock.measure(self._suptitle, float(style.get("size", 16.0)))
+                y = float(style.get("y", 0.98))
+                suptitle_bottom = max(0.0, (1.0 - y) * canvas_h) + block.height
+                top_px += suptitle_bottom + 6.0
             # Explicit *_pad values are font-size multiples in Matplotlib.
             point_px = float(rcParams["font.size"]) * float(self._dpi or 100.0) / 72.0
             base_pad = 1.08 if pad is None else float(pad)
@@ -510,7 +578,7 @@ class Figure:
                 wspace=horizontal_gap / cell_w,
                 hspace=vertical_gap / cell_h,
             )
-        self._invalidate()
+        self._html_cache = None
 
     def subplots_adjust(
         self,
@@ -820,6 +888,7 @@ class Figure:
         default axes mixed with an inset keeps its full-size position instead
         of dragging every axes back onto the uniform grid.
         """
+        self._resolve_layout()
         if not self._axes:
             return None
         if (
@@ -837,6 +906,7 @@ class Figure:
         place) and `Axes.get_position` (what scripts read), so the reported box
         and the rendered box cannot drift apart.
         """
+        self._resolve_layout()
         if ax._figure_rect is not None:
             return ax._figure_rect
         if ax not in self._axes:

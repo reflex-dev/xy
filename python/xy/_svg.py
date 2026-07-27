@@ -29,7 +29,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from . import _fontmetrics, _native, _paint, _png
+from . import _fontmetrics, _native, _paint, _png, _textblock
 from ._arrowgeom import arrow_shapes as _arrow_shapes
 from .config import DEFAULT_PALETTE
 
@@ -1401,6 +1401,15 @@ def _text_cell(font_size: float) -> tuple[float, float]:
     )
 
 
+def _text_block_content(text: object, x: float, line_step: float) -> str:
+    """SVG text children for the shared newline-delimited block geometry."""
+    lines = []
+    for index, line in enumerate(_textblock.split_lines(text)):
+        dy = f' dy="{_num(line_step)}"' if index else ""
+        lines.append(f'<tspan x="{_num(x)}"{dy}>{escape(line)}</tspan>')
+    return "".join(lines)
+
+
 def _has_outside_y_title(axis: dict[str, Any]) -> bool:
     """Whether a y-axis title needs space outside the plot rectangle."""
     if not axis.get("label"):
@@ -1447,7 +1456,8 @@ def _y_title_baseline(
     style = axis.get("style") or {}
     font_size = float(style.get("label_size", 12))
     side = axis.get("side", "left")
-    ascent, descent = _text_cell(font_size)
+    block = _textblock.measure(axis["label"], font_size)
+    ascent, descent = block.ascent, block.descent
     if side == "right":
         # Right-side axes still use the existing fixed 42/54 px reservation.
         # Keep their plot-relative placement unchanged; this repair only
@@ -1457,7 +1467,10 @@ def _y_title_baseline(
         return plot["x"] + plot["w"] + 40.0 - shift + float(axis.get("label_offset", 0.0))
     tick_offset, tick_room = _y_tick_label_room(axis, plot["h"])
     gap = float(axis.get("label_offset", _Y_TITLE_TICK_GAP * font_size))
-    return plot["x"] - tick_offset - tick_room - gap - descent
+    # For a -90 degree title, later lines move toward the plot. Pin the first
+    # baseline so the whole block, not only line one, remains outside ticks.
+    title_depth = descent + (block.line_count - 1) * block.line_step
+    return plot["x"] - tick_offset - tick_room - gap - title_depth
 
 
 def _y_tick_label_room(axis: dict[str, Any], plot_h: float) -> tuple[float, float]:
@@ -1473,15 +1486,15 @@ def _y_tick_label_room(axis: dict[str, Any], plot_h: float) -> tuple[float, floa
     ):
         return 0.0, 0.0
     font_size = _axis_tick_font_size(axis)
-    ascent, descent = _text_cell(font_size)
     raw_angle = axis.get("tick_label_angle")
-    angle = abs(float(raw_angle or 0.0)) * math.pi / 180.0
+    angle = float(raw_angle or 0.0)
     _values, labels, step = axis_ticks(axis, plot_h, False)
     room = 0.0
     for value in labels:
-        advance = _fontmetrics.advance(str(_tick_text(axis, value, step)), font_size)
-        # A rotated label trades width for height about its pinned edge.
-        room = max(room, advance * math.cos(angle) + (ascent + descent) * math.sin(angle))
+        block = _textblock.measure(_tick_text(axis, value, step), font_size)
+        # A rotated block trades its measured width for its full line-box
+        # height about the pinned edge.
+        room = max(room, _textblock.rotated_extent(block, angle)[0])
     # Match the SVG y-label placement below.  A y label's anchored edge is
     # already the glyph-side edge, so unlike an x-label baseline it needs no
     # extra font-room term.
@@ -1515,13 +1528,48 @@ def _y_axis_left_room(spec: dict[str, Any], plot_h: float) -> float:
             room = max(room, _AXIS_TEXT_EDGE_PAD + tick_offset + tick_room)
             continue
         label_size = float((axis.get("style") or {}).get("label_size", 12))
-        ascent, descent = _text_cell(label_size)
+        block = _textblock.measure(axis["label"], label_size)
         gap = float(axis.get("label_offset", _Y_TITLE_TICK_GAP * label_size))
         room = max(
             room,
-            _AXIS_TEXT_EDGE_PAD + ascent + descent + gap + tick_offset + tick_room,
+            _AXIS_TEXT_EDGE_PAD
+            + block.ascent
+            + block.descent
+            + (block.line_count - 1) * block.line_step
+            + gap
+            + tick_offset
+            + tick_room,
         )
     return room
+
+
+def _x_axis_multiline_extra(axis: dict[str, Any], plot_w: float) -> float:
+    """Cross-axis room beyond the historical one-line x-axis gutter."""
+    if _axis_tick_label_strategy(axis) == "none":
+        return 0.0
+    extra = 0.0
+    if _axis_tick_label_strategy(axis) != "off" and _axis_text_paint_visible(
+        axis, "tick_label_color", "tick_color"
+    ):
+        font_size = _axis_tick_font_size(axis)
+        angle = float(axis.get("tick_label_angle") or 0.0)
+        _values, labels, step = axis_ticks(axis, plot_w, True)
+        for value in labels:
+            block = _textblock.measure(_tick_text(axis, value, step), font_size)
+            single = _textblock.measure(block.lines[0], font_size)
+            extra = max(
+                extra,
+                _textblock.rotated_extent(block, angle)[1]
+                - _textblock.rotated_extent(single, angle)[1],
+            )
+    if axis.get("label") and _axis_text_paint_visible(axis, "label_color"):
+        raw_position = axis.get("label_position")
+        position = raw_position if isinstance(raw_position, str) else "center"
+        if not position.replace("-", "_").startswith("inside_"):
+            size = float((axis.get("style") or {}).get("label_size", 12))
+            block = _textblock.measure(axis["label"], size)
+            extra = max(extra, block.height - size * _textblock.LINE_HEIGHT)
+    return max(0.0, extra)
 
 
 def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
@@ -1542,27 +1590,47 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         right = 8 if compact else 14
         top = 6 if compact else 10
         bottom = 36 if compact else 42
-    if spec.get("title"):
-        top += 26 if compact else 30
     axes = _axes_by_id(spec)
+    title_room = 0.0
+    if spec.get("title"):
+        title_style = ((spec.get("dom") or {}).get("styles") or {}).get("title") or {}
+        title_size = _px_size(title_style.get("font-size"), 14.0)
+        title_room = max(
+            26.0 if compact else 30.0, _textblock.measure(spec["title"], title_size).height + 8.0
+        )
+        top += title_room
     bottom_axis_room = 0.0
-    if any(
-        axis_id.startswith("x")
+    bottom_axes = [
+        axis
+        for axis_id, axis in axes.items()
+        if axis_id.startswith("x")
         and axis.get("side", "bottom") == "bottom"
         and _axis_tick_label_strategy(axis) != "none"
-        for axis_id, axis in axes.items()
-    ):
-        bottom_axis_room = 36 if compact else 42
+    ]
+    if bottom_axes:
+        provisional_w = max(40.0, width - left - right)
+        bottom_extra = max(
+            (_x_axis_multiline_extra(axis, provisional_w) for axis in bottom_axes),
+            default=0.0,
+        )
+        bottom_axis_room = (36.0 if compact else 42.0) + bottom_extra
+        bottom += bottom_extra
     top_axis_room = 0.0
-    if any(
-        axis_id.startswith("x")
+    top_axes = [
+        axis
+        for axis_id, axis in axes.items()
+        if axis_id.startswith("x")
         and axis.get("side", "bottom") == "top"
         and _axis_tick_label_strategy(axis) != "none"
-        for axis_id, axis in axes.items()
-    ):
+    ]
+    if top_axes:
         # One shared top gutter mirrors ChartView. Multiple named x axes on
         # the same edge intentionally overlap until per-axis offsets exist.
-        top_axis_room = 26 if compact else 32
+        provisional_w = max(40.0, width - left - right)
+        top_axis_room = (26.0 if compact else 32.0) + max(
+            (_x_axis_multiline_extra(axis, provisional_w) for axis in top_axes),
+            default=0.0,
+        )
         top += top_axis_room
     colorbar = spec.get("colorbar") or {}
     if colorbar.get("orientation") == "horizontal":
@@ -1594,6 +1662,7 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         "h": max(40, height - top - bottom),
         # Emitters place the figure title above this gutter; recording it here
         # keeps layout() the single source of the top-axis reservation.
+        "title_room": title_room,
         "top_axis_room": top_axis_room,
         "bottom_axis_room": bottom_axis_room,
     }
@@ -1747,8 +1816,9 @@ def _axis_tick_label_layout(
         return labels
 
     def extent(label: dict[str, Any]) -> float:
-        width = max(font_size * 0.7, len(str(label["text"])) * font_size * 0.62)
-        height = font_size * 1.2
+        block = _textblock.measure(label["text"], font_size)
+        width = max(font_size * 0.7, block.width)
+        height = block.height
         angle = abs(float(label.get("angle", 0.0))) * math.pi / 180.0
         if is_x:
             return abs(math.cos(angle)) * width + abs(math.sin(angle)) * height
@@ -1776,7 +1846,10 @@ def _axis_tick_label_layout(
                             return True
                     else:
                         lead = curr if anchor == "end" else prev
-                        w = max(font_size * 0.7, len(str(lead["text"])) * font_size * 0.62)
+                        w = max(
+                            font_size * 0.7,
+                            _textblock.measure(lead["text"], font_size).width,
+                        )
                         if spacing < w + min_gap:
                             return True
             else:
@@ -1980,6 +2053,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         explicit_anchor = _tick_label_anchor(axis, axis_style, "")
         for item in _axis_tick_label_layout(axis, values, step, axis_scale, is_x):
             angle = float(item["angle"])
+            block = _textblock.measure(item["text"], font_size)
             if is_x:
                 row_offset = float(item["row"]) * (font_size + 4)
                 x = float(item["pos"])
@@ -2002,7 +2076,11 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                     if side == "right"
                     else plot["x"] - label_offset
                 )
-                y = float(item["pos"]) + baseline_shift
+                y = (
+                    float(item["pos"])
+                    + baseline_shift
+                    - (block.line_count - 1) * block.line_step / 2.0
+                )
                 if explicit_anchor:
                     anchor = _TEXT_ANCHORS[explicit_anchor]
                 else:
@@ -2011,7 +2089,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             labels.append(
                 f'<text x="{_num(x)}" y="{_num(y)}" fill="{color}" '
                 f'font-size="{_num(font_size)}" text-anchor="{anchor}"{transform}>'
-                f"{escape(str(item['text']))}</text>"
+                f"{_text_block_content(item['text'], x, block.line_step)}</text>"
             )
 
     append_tick_labels(xa, xlab, xstep, sx, is_x=True)
@@ -2139,13 +2217,15 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             if title_font_style is not None
             else ""
         )
+        title_block = _textblock.measure(spec["title"], title_size)
+        title_y = plot["y"] - plot["top_axis_room"] - plot["title_room"] + 4.0 + title_block.ascent
         chrome.append(
             f'<text x="{_num(width / 2)}" '
-            f'y="{_num(plot["y"] - plot["top_axis_room"] - (10 if compact else 12))}" '
+            f'y="{_num(title_y)}" '
             f'text-anchor="middle" font-size="{_num(title_size)}" '
             f'font-weight="{_escape_attr(title_weight)}"{title_font_attrs} '
             f'fill="{escape(_css(title_style.get("color"), default_text))}">'
-            f"{escape(str(spec['title']))}</text>"
+            f"{_text_block_content(spec['title'], width / 2, title_block.line_step)}</text>"
         )
 
     def append_axis_title(axis: dict[str, Any], *, is_x: bool) -> None:
@@ -2161,12 +2241,13 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         font_attrs = (f' font-family="{_escape_attr(family)}"' if family is not None else "") + (
             f' font-style="{_escape_attr(font_style)}"' if font_style is not None else ""
         )
+        block = _textblock.measure(axis["label"], float(geometry["font_size"]))
         chrome.append(
             f'<text x="{_num(x)}" y="{_num(y)}" text-anchor="{geometry["anchor"]}" '
             f'font-size="{_num(float(geometry["font_size"]))}" '
             f'font-weight="{_escape_attr(axis_style.get("label_font_weight", 400))}"{font_attrs} '
             f'fill="{escape(_css(axis_style.get("label_color"), default_text))}"{transform}>'
-            f"{escape(str(axis['label']))}</text>"
+            f"{_text_block_content(axis['label'], x, block.line_step)}</text>"
         )
 
     append_axis_title(xa, is_x=True)

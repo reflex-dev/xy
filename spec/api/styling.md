@@ -325,7 +325,25 @@ stay in step, because a caller that pins a plot rectangle (as `xy.pyplot` does
 to honor Matplotlib's `figure.subplot.*` frame) computes its padding by
 subtracting these reservations.
 
-#### Measured left gutter and the rotated y-axis title
+#### Measured multiline chrome and the rotated y-axis title
+
+Every newline-delimited title or tick/category label is measured as a block.
+Line splitting normalizes CRLF/CR to LF and preserves empty lines; width is the
+widest DejaVu advance and height is `line_count × 1.2 × font_size`. SVG emits
+one `<tspan>` per line, native PNG emits one glyph command per line, and the
+browser uses `white-space: pre-line` with the same line height. Rotated extents
+use the whole block:
+
+```text
+rotated width  = |cos θ| × block width + |sin θ| × block height
+rotated height = |sin θ| × block width + |cos θ| × block height
+```
+
+The ordinary one-line gutters remain unchanged. Each extra title/tick line
+raises only the corresponding gutter by its line step. Tight/constrained pyplot
+layouts are marked dirty by later chrome mutations and resolve from these final
+per-panel measurements; a subplot boundary reserves the outward gutters of both
+neighbors rather than a single global title constant.
 
 The **left** gutter is additionally floored at what the left y axis's own text
 measures, rather than trusting the flat `46/62 px`:

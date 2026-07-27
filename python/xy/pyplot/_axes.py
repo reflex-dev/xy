@@ -24,6 +24,7 @@ import numpy as np
 
 import xy
 
+from .. import _textblock
 from .._typing import ArrayLike, ColorLike, ColorsLike, LimitsLike, Scalar
 from ._artists import (
     Artist,
@@ -5854,7 +5855,19 @@ class Axes(PlotTypeMixin):
         else:
             top, right, bottom, left = map(float, padding)
         if self._title:
-            top += 26.0 if compact else 30.0
+            title_style = {
+                **self._chrome_styles.get("title", {}),
+                **self._title_style,
+            }
+            raw_size = title_style.get("font-size", 14.0)
+            try:
+                title_size = float(str(raw_size).removesuffix("px"))
+            except ValueError:
+                title_size = 14.0
+            top += max(
+                26.0 if compact else 30.0,
+                _textblock.measure(self._title, title_size).height + 8.0,
+            )
         if x_side == "top":
             top += 26.0 if compact else 32.0
         return (
@@ -6247,11 +6260,23 @@ class Axes(PlotTypeMixin):
         """
         top = 0.0
         if self._title:
-            top += 26.0 if compact else 30.0
+            title_style = {
+                **self._chrome_styles.get("title", {}),
+                **self._title_style,
+            }
+            raw_size = title_style.get("font-size", 14.0)
+            try:
+                title_size = float(str(raw_size).removesuffix("px"))
+            except ValueError:
+                title_size = 14.0
+            top += max(
+                26.0 if compact else 30.0,
+                _textblock.measure(self._title, title_size).height + 8.0,
+            )
         if self._axis["x"].get("side") == "top":
-            top += 26.0 if compact else 32.0
+            top += (26.0 if compact else 32.0) + self._x_multiline_extra()
         right = 0.0
-        bottom = 0.0
+        bottom = self._x_multiline_extra() if self._axis["x"].get("side") != "top" else 0.0
         if self._colorbar is not None:
             if self._colorbar.get("orientation") == "horizontal":
                 bottom += 38.0 + (16.0 if self._colorbar.get("label") else 0.0)
@@ -6263,6 +6288,28 @@ class Axes(PlotTypeMixin):
         ):
             right += 42.0 if compact else 54.0
         return top, right, bottom
+
+    def _x_multiline_extra(self) -> float:
+        """Extra cross-axis room beyond the single-line matplotlib gutter."""
+        props = self._axis["x"]
+        style = props.get("style") or {}
+        size = float(style.get("tick_label_size", style.get("tick_size", 11.0)))
+        labels = props.get("tick_labels") or ()
+        angle = float(props.get("tick_label_angle", 0.0))
+        extra = 0.0
+        for label in labels:
+            block = _textblock.measure(label, size)
+            first = _textblock.measure(block.lines[0], size)
+            extra = max(
+                extra,
+                _textblock.rotated_extent(block, angle)[1]
+                - _textblock.rotated_extent(first, angle)[1],
+            )
+        if props.get("label"):
+            label_size = float(style.get("label_size", 12.0))
+            label_lines = _textblock.measure(props["label"], label_size).line_count
+            extra = max(extra, max(0, label_lines - 1) * label_size * _textblock.LINE_HEIGHT)
+        return extra
 
     def _aspect_anchor(self) -> tuple[float, float]:
         """Normalized anchor of an aspect-shrunk box within its allocation."""
