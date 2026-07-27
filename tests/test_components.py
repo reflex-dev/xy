@@ -498,13 +498,14 @@ def test_theme_background_separates_figure_and_plot():
     assert style["--chart-bg"] == "#111111"
 
 
-def test_figure_dom_class_strings_covers_every_class_carrying_surface():
+def test_figure_dom_class_strings_covers_every_dom_class_carrying_surface():
     """`Figure.dom_class_strings()` is the Tailwind scan inventory (see its
-    docstring): chart root, chrome slots, per-mark styles, annotation nodes."""
+    docstring): chart root, merged chrome slots, and annotation labels."""
     chart = xy.chart(
         xy.line([0, 1], [1, 2], class_name="mark-node"),
-        xy.line([0, 1], [2, 3], class_name="mark-node"),  # dedupe, keep order
         xy.vline(0.5, text="release", class_name="annotation-node"),
+        xy.hline(1.5, text="target", class_name="annotation-node"),  # dedupe
+        xy.marker(0.25, 1.25, class_name="shape-only-annotation"),
         xy.legend(class_name="legend-node"),
         class_name="root-node",
         class_names={"title": "title-slot"},
@@ -512,8 +513,14 @@ def test_figure_dom_class_strings_covers_every_class_carrying_surface():
 
     class_strings = chart.figure().dom_class_strings()
 
-    for class_string in ("root-node", "title-slot", "legend-node", "mark-node", "annotation-node"):
+    for class_string in ("root-node", "title-slot", "legend-node", "annotation-node"):
         assert class_string in class_strings, class_strings
+    # Mark classes remain trace metadata; WebGL/canvas marks have no DOM node
+    # that Tailwind could style.
+    assert "mark-node" not in class_strings
+    # Annotation geometry is canvas-painted. A per-annotation class reaches a
+    # DOM node only when there is label text.
+    assert "shape-only-annotation" not in class_strings
     assert len(class_strings) == len(set(class_strings)), class_strings
     assert class_strings[0] == "root-node", class_strings
 

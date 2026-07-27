@@ -104,6 +104,9 @@ Release bar, contribution rules, and audit trail.
   renderer churn safe.
 - [`security-audit-2026-07-06.md`](process/security-audit-2026-07-06.md) —
   scope, findings, and status of the 2026-07-06 source audit.
+- [`tailwind-customizability-audit-2026-07-26.md`](process/tailwind-customizability-audit-2026-07-26.md)
+  — Tailwind source discovery, cascade ownership, live updates, slot coverage,
+  production-browser matrix, and remaining browser boundaries.
 
 ## assets/
 

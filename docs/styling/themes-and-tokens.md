@@ -466,17 +466,20 @@ chart = xy.area_chart(
 )
 ~~~
 
-Tailwind users can apply a configured font utility through `class_name` in the
-same way. XY does not download, register, or rewrite font files itself.
+Tailwind users can apply configured `font-*`, `text-*`, and `leading-*`
+utilities through `class_name` in the same way. XY's default root typography
+lives in the low-priority browser chrome stylesheet, so those utilities win
+through the normal cascade. XY does not download, register, or rewrite font
+files itself.
 
 Standalone HTML and Chromium PNG accept the font declaration through
 `custom_css`. Embed the font as a data URL when the HTML file must remain fully
 portable; an ordinary URL still depends on that resource being reachable.
 
-Declare the face in `custom_css` and select it with `xy.theme(font_family=...)`.
-The chart root carries a computed `font` shorthand, which an ordinary
-`.xy { font-family: ... }` rule cannot outrank — the theme token writes that
-shorthand, so it is the reliable way to apply the family.
+Declare the face in `custom_css` and select it with
+`xy.theme(font_family=...)`. The theme writes explicit chart style as inline
+author intent, so it remains the most reliable option for portable exports and
+intentionally outranks a normal class.
 
 ~~~python
 from xy import Engine

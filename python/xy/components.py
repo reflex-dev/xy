@@ -1863,7 +1863,9 @@ def vline(
         color: Rule color.
         width: Rule width in pixels.
         opacity: Rule opacity from zero to one.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the optional text label. The rule is
+            canvas-painted and is styled through ``color``, ``width``, and
+            ``opacity``.
         style: Annotation style overrides.
     """
     return Annotation(
@@ -1895,7 +1897,9 @@ def hline(
         color: Rule color.
         width: Rule width in pixels.
         opacity: Rule opacity from zero to one.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the optional text label. The rule is
+            canvas-painted and is styled through ``color``, ``width``, and
+            ``opacity``.
         style: Annotation style overrides.
     """
     return Annotation(
@@ -1927,7 +1931,8 @@ def x_band(
         text: Optional label displayed in the band.
         color: Band color.
         opacity: Band opacity from zero to one.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the optional text label. The band is
+            canvas-painted and is styled through ``color`` and ``opacity``.
         style: Annotation style overrides.
     """
     return Annotation(
@@ -1960,7 +1965,8 @@ def y_band(
         text: Optional label displayed in the band.
         color: Band color.
         opacity: Band opacity from zero to one.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the optional text label. The band is
+            canvas-painted and is styled through ``color`` and ``opacity``.
         style: Annotation style overrides.
     """
     return Annotation(
@@ -1997,7 +2003,7 @@ def text(
         dy: Vertical pixel offset from the anchor.
         color: Text color.
         anchor: Text alignment relative to the anchor point.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the text label.
         style: Annotation style overrides.
     """
     if not isinstance(value, str):
@@ -2035,7 +2041,7 @@ def label(
         dy: Vertical pixel offset from the anchor.
         color: Text color.
         anchor: Text alignment relative to the anchor point.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the text label.
         style: Annotation style overrides.
     """
     return text(
@@ -2083,7 +2089,8 @@ def marker(
         dx: Horizontal label offset in pixels.
         dy: Vertical label offset in pixels.
         anchor: Label alignment relative to the marker.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the optional text label. The marker is
+            canvas-painted and is styled through its marker arguments.
         style: Annotation style overrides.
     """
     return Annotation(
@@ -2131,7 +2138,9 @@ def arrow(
         color: Arrow color.
         width: Arrow width in pixels.
         opacity: Arrow opacity from zero to one.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the optional text label. The arrow is
+            canvas-painted and is styled through ``color``, ``width``, and
+            ``opacity``.
         style: Annotation style overrides.
     """
     return Annotation(
@@ -2165,7 +2174,8 @@ def threshold(
         color: Rule color.
         width: Rule width in pixels.
         opacity: Rule opacity from zero to one.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the optional text label. The threshold
+            rule is canvas-painted.
         style: Annotation style overrides.
     """
     axis = _annotation_axis_name(axis, "threshold axis")
@@ -2212,7 +2222,8 @@ def threshold_zone(
         text: Optional threshold label.
         color: Band color.
         opacity: Band opacity from zero to one.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the optional text label. The threshold
+            band is canvas-painted.
         style: Annotation style overrides.
     """
     axis = _annotation_axis_name(axis, "threshold_zone axis")
@@ -2265,7 +2276,8 @@ def callout(
         width: Pointer width in pixels.
         opacity: Callout opacity from zero to one.
         anchor: Text alignment relative to the callout point.
-        class_name: DOM class name applied to the annotation.
+        class_name: DOM class applied to the callout text. The pointer is
+            canvas-painted.
         style: Annotation style overrides.
     """
     if not isinstance(value, str):

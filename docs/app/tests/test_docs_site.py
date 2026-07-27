@@ -282,11 +282,16 @@ def test_tailwind_styling_docs_match_the_reflex_plugin_contract() -> None:
     """Keep the Reflex scan-path guidance aligned with the configured plugin."""
     content = (DOCS_ROOT / "styling/chrome-slots.md").read_text(encoding="utf-8")
 
-    assert any(plugin.__class__.__name__ == "TailwindV4Plugin" for plugin in config.plugins)
+    tailwind = next(
+        plugin for plugin in config.plugins if plugin.__class__.__name__ == "TailwindV4Plugin"
+    )
+    assert tailwind.config.get("darkMode") == "selector"
     assert "literal class strings in Tailwind's default scan" in content
     assert "original Python or Markdown file" in content
     assert "charts produced from a token or `Var`" in content
-    assert "safelist it in the host app" in content
+    assert "tailwind_classes=LIVE_CHART_CLASSES" in content
+    assert "never becomes a DOM attribute" in content
+    assert 'darkMode": "selector"' in content
 
 
 def test_styling_troubleshooting_covers_common_host_and_export_failures() -> None:

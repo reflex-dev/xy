@@ -97,7 +97,10 @@ _HIGHLIGHT_PROBE = """
 
     const gradientRow = byName("temperature");
     const gradientSwatchSvg = !!gradientRow.querySelector("svg linearGradient");
-    const gradientSymbolFill = gradientRow.querySelector("svg path")?.getAttribute("fill") || "";
+    const gradientSymbol = gradientRow.querySelector("svg path");
+    const gradientSymbolFill = gradientSymbol
+      ? getComputedStyle(gradientSymbol).fill
+      : "";
 
     const dims = () => view.gpuTraces.map((g) => g._legendDim ?? null);
     const hover = (row) => row.dispatchEvent(new PointerEvent("pointerenter"));
@@ -196,7 +199,7 @@ def test_browser_legend_hover_dims_other_series() -> None:
     # The continuous swatch keeps the scatter's marker identity: a symbol
     # path filled with the colormap ramp, not a bare gradient chip.
     assert payload["gradientSwatchSvg"] is True, payload
-    assert payload["gradientSymbolFill"].startswith("url(#"), payload
+    assert payload["gradientSymbolFill"].startswith("url("), payload
 
     dim = 0.2
     # The row-less trace 4 still dims with everything else on any hover.

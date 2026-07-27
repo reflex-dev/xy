@@ -20,6 +20,13 @@ class CompState(rx.State):
         self.last_row = row
 
 
+TAILWIND_SCAN_EDGE_CLASSES = (
+    'before:content-["hello_world"]',
+    r"before:content-['hello\_world']",
+    "before:content-['✓']",
+)
+
+
 @pytest.fixture
 def app_cwd(tmp_path, monkeypatch):
     """rx.asset symlinks into Path.cwd()/assets — emulate an app directory."""
@@ -74,12 +81,12 @@ def test_static_chart_classes_are_visible_to_tailwind_source_scan(app_cwd):
         xy.line(
             [0, 1],
             [1, 2],
-            class_name="stroke-[3px] transition-opacity",
+            class_name="adapter-only-mark-metadata",
         ),
         xy.vline(
             0.5,
             text="release",
-            class_name="[&>text]:font-semibold opacity-80",
+            class_name="[text-wrap:balance] opacity-80",
         ),
         xy.legend(class_name="max-h-24 overflow-y-auto"),
         xy.tooltip(class_name="max-w-64 break-words"),
@@ -100,14 +107,14 @@ def test_static_chart_classes_are_visible_to_tailwind_source_scan(app_cwd):
         "rounded-xl border border-slate-200",
         "text-base font-semibold text-slate-900",
         "fill-blue-500/10 stroke-blue-500",
-        "stroke-[3px] transition-opacity",
-        "[&>text]:font-semibold opacity-80",
+        "[text-wrap:balance] opacity-80",
         "max-h-24 overflow-y-auto",
         "max-w-64 break-words",
         "rounded-lg shadow-sm",
         "hover:bg-slate-100 focus:ring-2",
     ):
         assert class_string in rendered
+    assert "adapter-only-mark-metadata" not in rendered
 
 
 def test_static_facet_chart_compiles_as_grid_of_panel_payloads(app_cwd):
@@ -125,12 +132,19 @@ def test_static_facet_chart_compiles_as_grid_of_panel_payloads(app_cwd):
         share_y=True,
     )
 
-    rendered = str(reflex_xy.chart(facets, id="regional-grid"))
+    rendered = str(
+        reflex_xy.chart(
+            facets,
+            id="regional-grid",
+            tailwind_classes="rounded-lg dark:bg-slate-950",
+        )
+    )
 
     assert "regional-grid" in rendered
     assert "repeat(2, minmax(0, 1fr))" in rendered
     assert rendered.count("XYChart") == 2
     assert rendered.count("/xy/") == 2
+    assert rendered.count("rounded-lg dark:bg-slate-950") == 2
     asset_files = list((pathlib.Path(app_cwd) / "assets" / "xy").glob("*.xyf"))
     assert len(asset_files) == 2
     # Facet identity is not in the JSX: each panel payload carries its facet
@@ -143,3 +157,104 @@ def test_static_facet_chart_compiles_as_grid_of_panel_payloads(app_cwd):
 def test_live_chart_does_not_claim_runtime_classes_are_compile_time_known(app_cwd):
     rendered = str(reflex_xy.chart("xyfig-runtime"))
     assert "tailwindClassTokens" not in rendered
+
+
+def test_live_chart_accepts_explicit_tailwind_scan_inventory(app_cwd):
+    """Token payloads are runtime-only; callers can expose complete utilities."""
+    rendered = str(
+        reflex_xy.chart(
+            "xyfig-runtime",
+            tailwind_classes=[
+                "rounded-[28px] border-fuchsia-500",
+                "dark:bg-slate-950 hover:bg-fuchsia-100",
+                "rounded-[28px]",
+            ],
+        )
+    )
+
+    assert "tailwindClassTokens" in rendered
+    assert ("rounded-[28px] border-fuchsia-500 dark:bg-slate-950 hover:bg-fuchsia-100") in rendered
+
+
+def test_tailwind_scan_inventory_is_verbatim_for_live_and_static_charts(app_cwd):
+    """Tailwind scans source text, so JSON-escaped candidates are different classes."""
+    manifest = " ".join(TAILWIND_SCAN_EDGE_CLASSES)
+    live_rendered = str(
+        reflex_xy.chart(
+            "xyfig-runtime",
+            tailwind_classes=TAILWIND_SCAN_EDGE_CLASSES,
+        )
+    )
+    static_rendered = str(
+        reflex_xy.chart(
+            xy.line_chart(
+                xy.line([0, 1], [1, 2]),
+                class_name=manifest,
+            )
+        )
+    )
+
+    scan_literal = f'("" // {manifest}\n)'
+    for rendered in (live_rendered, static_rendered):
+        assert scan_literal in rendered
+        assert r"before:content-[\"hello_world\"]" not in rendered
+        assert r"before:content-['hello\\_world']" not in rendered
+        assert r"before:content-['\u2713']" not in rendered
+
+
+def test_tailwind_scan_inventory_is_verbatim_for_every_facet_panel(app_cwd):
+    facets = xy.facet_chart(
+        xy.scatter(x="x", y="y"),
+        by="region",
+        data={
+            "x": [0, 1],
+            "y": [1, 2],
+            "region": ["West", "East"],
+        },
+        cols=2,
+    )
+
+    rendered = str(
+        reflex_xy.chart(
+            facets,
+            tailwind_classes=TAILWIND_SCAN_EDGE_CLASSES,
+        )
+    )
+
+    manifest = " ".join(TAILWIND_SCAN_EDGE_CLASSES)
+    assert rendered.count(f'("" // {manifest}\n)') == 2
+
+
+def test_explicit_tailwind_inventory_merges_with_static_discovery(app_cwd):
+    static_chart = xy.line_chart(
+        xy.line([0, 1], [1, 2]),
+        class_name="rounded-xl bg-white",
+    )
+
+    rendered = str(
+        reflex_xy.chart(
+            static_chart,
+            tailwind_classes="motion-safe:transition-shadow hover:shadow-xl",
+        )
+    )
+
+    assert "rounded-xl bg-white motion-safe:transition-shadow hover:shadow-xl" in rendered
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        42,
+        ["rounded-xl", 2],
+        {"root": "rounded-xl"},
+        {"rounded-xl", "bg-white"},
+        frozenset({"rounded-xl", "bg-white"}),
+    ],
+)
+def test_tailwind_inventory_requires_literal_strings(app_cwd, value):
+    with pytest.raises(
+        TypeError,
+        match=r"tailwind_classes must be a string or ordered iterable of strings|"
+        "tailwind_classes must contain only strings",
+    ):
+        reflex_xy.chart("xyfig-runtime", tailwind_classes=value)

@@ -4,6 +4,35 @@ All notable changes to **reflex-xy** (the Reflex adapter for xy) are
 documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- `reflex_xy.chart(..., tailwind_classes=...)` exposes complete utility names
+  for live token/Var charts to Reflex's Tailwind build without leaking a scan
+  prop into the DOM. It accepts a string or ordered iterable of strings, rejects
+  mappings and unordered sets, merges with automatic static-chart discovery,
+  de-duplicates utility tokens, and applies to every facet panel. Scan literals
+  preserve quotes, backslashes, and Unicode instead of exposing JSON-escaped
+  lookalike candidates to Tailwind.
+
+### Fixed
+- Live state-driven payloads rebuild when constructor-owned browser chrome
+  changes (including root/slot classes, title, legend, colorbar, badge,
+  modebar, or axis-band topology), so runtime Tailwind theme swaps do not
+  retain stale nodes. Rebuilds silently restore every named-axis viewport and
+  durable box/range/lasso geometry before refreshing the selection mask.
+- Chart-root Tailwind typography utilities can override XY's default font,
+  which now lives in the low-priority chrome stylesheet rather than an inline
+  shorthand.
+- Tailwind utilities can override legend-swatch paint and size, custom-tooltip
+  chrome, and the default axis-title weight without competing with renderer
+  inline defaults. Scatter/line SVG handles inherit defeatable fill, stroke,
+  width, and dash paint from the same public swatch slot. Explicit `styles`
+  values retain inline precedence.
+- The public `selection` slot now reaches completed lasso paths and editable
+  handles as well as box/range rectangles, while required handle pointer
+  behavior remains intact.
+
 ## [0.0.1] — 2026-07-24
 
 ### Added

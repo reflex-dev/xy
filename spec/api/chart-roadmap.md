@@ -345,11 +345,16 @@ nothing themeable competes with a user class. The full slot list (including
 active state via `--chart-modebar-active`) is `xy.CHART_DOM_SLOTS`.
 
 For a fixed chart, the Reflex adapter also mirrors embedded class strings into
-generated JSX for Tailwind's compile-time scan. Runtime token/Var charts must
-put their complete names in ordinary host source or a safelist. For the
-standalone `to_html(...)` export — which has no host page to inherit Tailwind
-from — pass `custom_css="…"` to inject the stylesheet defining those utility
-classes.
+generated JSX for Tailwind's compile-time scan. Runtime token/Var charts pass
+their complete names through
+`reflex_xy.chart(..., tailwind_classes="...")`; that scan-only manifest is
+emitted verbatim (including quotes, backslashes, and Unicode), discarded by the
+wrapper, and never reaches the DOM. State-driven constructor-chrome changes
+(including `dom`, title, legend, colorbar, badge, modebar, and axis-band
+topology) rebuild the view so runtime classes and nodes do not remain stale;
+durable selection and every named-axis range are restored silently. For the standalone
+`to_html(...)` export — which has no host page to inherit Tailwind from — pass
+`custom_css="…"` to inject the stylesheet defining those utility classes.
 
 Explicitly **out of scope** (browser limit, not a backlog item): the plotted
 marks are WebGL2 canvas pixels — no CSS, Tailwind or otherwise, can style them.

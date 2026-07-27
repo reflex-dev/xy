@@ -1375,12 +1375,14 @@ class Figure(AnnotationsMixin, PayloadMixin):
 
         Contract: this is the *complete* set of class strings that can reach
         the DOM — the chart root (``class_name``), the chrome slots
-        (``class_names`` values), per-trace mark styles
-        (``trace.style["class_name"]``), and annotation nodes
-        (``annotation["class_name"]``). The Reflex adapter joins it into the
-        Tailwind scan manifest for static charts (XYBF payloads are opaque to
-        Tailwind's source scan), so this method must be extended whenever a
-        new class-carrying surface is added to the figure.
+        (``class_names`` values, including component-local classes merged into
+        those slots), and annotation labels (``annotation["class_name"]`` when
+        the annotation has text).
+        Per-trace mark ``class_name`` values are adapter-only metadata for
+        canvas geometry and do not create DOM nodes. The Reflex adapter joins
+        this inventory into the Tailwind scan manifest for static charts (XYBF
+        payloads are opaque to Tailwind's source scan), so this method must be
+        extended whenever a new DOM class-carrying surface is added.
         """
         class_strings: list[str] = []
         seen: set[str] = set()
@@ -1393,10 +1395,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         add(self.class_name)
         for value in self.class_names.values():
             add(value)
-        for trace in self.traces:
-            add(trace.style.get("class_name"))
         for annotation in self.annotations:
-            add(annotation.get("class_name"))
+            if annotation.get("text"):
+                add(annotation.get("class_name"))
         return class_strings
 
     def _dom_spec(self) -> dict[str, Any]:

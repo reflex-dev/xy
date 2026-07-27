@@ -242,7 +242,7 @@ other canvas geometry through typed props or mark `style=`.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| Tailwind classes are present but have no effect | The utility was not emitted by the host's Tailwind build, or the Tailwind plugin is missing. | Enable Reflex's `TailwindV4Plugin`, keep fixed-chart classes literal, and continue to [Customize Each Part](/docs/xy/styling/customize/). |
+| Tailwind classes are present but have no effect | The utility was not emitted by the host's Tailwind build, or the Tailwind plugin is missing. | Enable Reflex's `TailwindV4Plugin`; keep fixed-chart classes literal and pass live-chart utilities through `reflex_xy.chart(..., tailwind_classes=...)`. |
 | A custom font silently falls back | `font-family` names a face the browser has not loaded. | Register it in host CSS with `@font-face`, then apply the family to the chart root; see [Custom fonts and export limitations](/docs/xy/styling/themes-and-tokens/#custom-fonts-and-export-limitations). |
 | A class changes the legend but not a line or point | Marks are WebGL/canvas geometry, not DOM nodes. | Use the mark's typed paint props or supported `style=` declarations from [Customize Each Part](/docs/xy/styling/customize/). |
 | Standalone HTML looks different from the application | The exported document cannot inherit the host page's stylesheet or design-system variables. | Put essential tokens on the chart and pass author rules with `to_html(custom_css=...)`. |

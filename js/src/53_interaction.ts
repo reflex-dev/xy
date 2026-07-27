@@ -25,6 +25,11 @@ Object.assign(ChartView.prototype, {
     this.selLasso.dataset.xySelectionLassoOverlay = "";
     this.selLassoPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
     this.selLassoPath.dataset.xySelectionLasso = "";
+    this._applySlot(this.selLassoPath, "selection");
+    // The selection slot controls paint, but the polygon itself must never
+    // intercept canvas gestures. Keep this structural behavior inline just as
+    // the rectangular selection band does.
+    this.selLassoPath.style.pointerEvents = "none";
     this.selLasso.appendChild(this.selLassoPath);
     this.selLassoHandles = document.createElementNS("http://www.w3.org/2000/svg", "g");
     this.selLassoHandles.dataset.xySelectionLassoHandles = "";
@@ -811,6 +816,10 @@ Object.assign(ChartView.prototype, {
       const handle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       handle.dataset.xySelectionLassoHandle = "";
       handle.setAttribute("r", "4");
+      this._applySlot(handle, "selection");
+      // Existing selection classes commonly include pointer-events-none for
+      // the box overlay. Reusing those classes must not disable lasso editing.
+      handle.style.pointerEvents = "all";
       this.selLassoHandles.appendChild(handle);
     }
     while (this.selLassoHandles.childElementCount > points.length) {
@@ -856,12 +865,14 @@ Object.assign(ChartView.prototype, {
     // the brush itself stays authoritative — 45_lod re-derives a provisional
     // mask from it so the highlight never blinks out on pan/zoom.
     this._lastBrush = { mode: "box", x0, x1, y0, y1 };
-    this._broadcastLinkedSelection({ range: rangeDoc });
-    this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
-    if (this.comm) {
-      this.comm.send({ type: "select", x0, x1, y0, y1 });
-    } else {
-      this._selectLocal(x0, x1, y0, y1); // standalone: compute from resident f32
+    if (opts.broadcast !== false) this._broadcastLinkedSelection({ range: rangeDoc });
+    if (opts.dispatch !== false) {
+      this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
+      if (this.comm) {
+        this.comm.send({ type: "select", x0, x1, y0, y1 });
+      } else {
+        this._selectLocal(x0, x1, y0, y1); // standalone: compute from resident f32
+      }
     }
   },
 
@@ -878,17 +889,54 @@ Object.assign(ChartView.prototype, {
     this._stateSelection = { polygon: polygon.map((point) => [...point]) };
     this._lassoPolygon = polygon;
     this._lastBrush = { mode: "poly", points: polygon }; // see _sendSelect
-    this._broadcastLinkedSelection({ polygon });
+    if (opts.broadcast !== false) this._broadcastLinkedSelection({ polygon });
     this._renderLassoSelection();
-    this._dispatchChartEvent("brush", {
-      polygon,
-      view: this._eventView("brush"),
-    });
-    if (this.comm) {
-      this.comm.send({ type: "select_polygon", points: polygon });
-    } else {
-      this._selectLocalPolygon(polygon);
+    if (opts.dispatch !== false) {
+      this._dispatchChartEvent("brush", {
+        polygon,
+        view: this._eventView("brush"),
+      });
+      if (this.comm) {
+        this.comm.send({ type: "select_polygon", points: polygon });
+      } else {
+        this._selectLocalPolygon(polygon);
+      }
     }
+  },
+
+  // Republish hydration has already restored the durable geometry through
+  // _applyStatePatch. Fill the rebuilt trace masks from the resident CPU
+  // columns while the authoritative kernel reply is in flight, without
+  // replaying a user gesture. The explicit option keeps this path private to
+  // restoration callers; an unavailable or lost GL context skips the preview.
+  _restoreSelectionLocalMask(selection, opts: any = {}) {
+    if (opts.localMask !== true || this._glLost || !this.gl
+        || !selection || typeof selection !== "object") {
+      return false;
+    }
+    if (selection.range) {
+      const { x0, x1, y0, y1 } = selection.range;
+      if (![x0, x1, y0, y1].every(Number.isFinite)) return false;
+      this._selectLocal(
+        Math.min(x0, x1),
+        Math.max(x0, x1),
+        Math.min(y0, y1),
+        Math.max(y0, y1),
+        { dispatch: false, localMask: true },
+      );
+      return true;
+    }
+    if (Array.isArray(selection.polygon)) {
+      if (selection.polygon.length < 3
+          || !selection.polygon.every((point) => Array.isArray(point)
+            && point.length === 2 && point.every(Number.isFinite))) {
+        return false;
+      }
+      const polygon = selection.polygon.map((point) => [point[0], point[1]]);
+      this._selectLocalPolygon(polygon, { dispatch: false, localMask: true });
+      return true;
+    }
+    return false;
   },
 
   _selectLocalPolygon(points, opts: any = {}) {
@@ -907,6 +955,11 @@ Object.assign(ChartView.prototype, {
     let total = 0;
     for (const g of this.gpuTraces) {
       if (!g._cpu || g.tier === "density") continue;
+      // Restoration mirrors the kernel selection universe exactly. Otherwise
+      // a provisional line/hidden-series mask would survive forever because
+      // the authoritative reply only contains visible scatter trace ids.
+      if (opts.localMask === true
+          && (g.trace.kind !== "scatter" || g._legendHidden)) continue;
       const cx = g._cpu.x, cy = g._cpu.y;
       const xMeta = g._cpu.xMeta || g.xMeta;
       const yMeta = g._cpu.yMeta || g.yMeta;
@@ -942,6 +995,8 @@ Object.assign(ChartView.prototype, {
     for (const g of this.gpuTraces) {
       // _cpu only exists where the standalone entry retained copies (retainCpu).
       if (!g._cpu || g.tier === "density") continue;
+      if (opts.localMask === true
+          && (g.trace.kind !== "scatter" || g._legendHidden)) continue;
       const cx = g._cpu.x, cy = g._cpu.y;
       const xMeta = g._cpu.xMeta || g.xMeta;
       const yMeta = g._cpu.yMeta || g.yMeta;

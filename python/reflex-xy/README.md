@@ -67,6 +67,54 @@ def index() -> rx.Component:
 app = rx.App()
 ```
 
+### Tailwind classes on live charts
+
+Add Reflex's Tailwind plugin when chart chrome uses utility classes. A direct
+fixed `xy.Chart` is scanned automatically. A token or `Var` is resolved only at
+runtime, so expose its possible complete utility names through the adapter:
+
+```python
+# rxconfig.py
+config = rx.Config(
+    app_name="dash",
+    plugins=[
+        # Keep dark: utilities synchronized with Reflex's .dark color mode.
+        rx.plugins.TailwindV4Plugin(config={"darkMode": "selector"}),
+        reflex_xy.XYPlugin(),
+    ],
+)
+
+# dash.py
+LIVE_CHART_CLASSES = [
+    "rounded-2xl border border-slate-200 dark:border-slate-800",
+    "bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100",
+]
+
+reflex_xy.chart(
+    Dash.chart,
+    tailwind_classes=LIVE_CHART_CLASSES,
+)
+```
+
+The inventory is present only in generated source for Tailwind's build-time
+scan. It never reaches the DOM; the runtime chart receives the same class names
+from its XY payload. Use a string or ordered iterable (not a mapping or set),
+and include every complete class that any state-driven version of the figure
+can emit. Quotes, escaped arbitrary-selector underscores, and Unicode content
+are preserved verbatim:
+
+```python
+LIVE_CHART_CLASSES = [
+    "before:content-['✓']",
+    r"[&_[data-xy-slot=legend\_label]]:font-semibold",
+]
+```
+
+When a recomputed live figure changes root or slot classes, the browser rebuilds
+its DOM chrome so the new classes take effect without changing the figure
+token. Every named-axis range and durable box/range/lasso geometry survives
+that rebuild without replaying semantic callbacks.
+
 Change `points` in an event handler and the chart re-publishes itself to
 every subscriber — the token never changes, so nothing re-renders except
 pixels.

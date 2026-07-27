@@ -123,7 +123,10 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
         "label.textContent = item.label;",
         "value.textContent = item.value;",
     )
-    required_style_sinks = ("sw.style.background = safeCssPaint(this.root, bg);",)
+    required_style_sinks = (
+        'sw.style.setProperty(\n          "--xy-legend-swatch-paint",\n'
+        "          safeCssPaint(this.root, bg),\n        );",
+    )
 
     for path, text in CLIENT_FILES:
         for sink in required_text_sinks:
@@ -263,6 +266,27 @@ def test_client_selection_band_paint_is_a_defeatable_stylesheet_default() -> Non
     for path, text in THEME_FILES:
         assert '[data-xy-slot="selection"][data-xy-band="zoom"]){' in text, (
             f"{path} is missing the defeatable zoom-band :where() default"
+        )
+
+
+def test_client_applies_selection_slot_to_lasso_without_losing_pointer_behavior() -> None:
+    """The public selection slot paints box and lasso geometry alike.
+
+    Lasso handles remain interactive even when an existing box-oriented class
+    inventory includes ``pointer-events: none``.
+    """
+    for path, text in CLIENT_FILES:
+        assert '_applySlot(this.selLassoPath, "selection")' in text, (
+            f"{path} does not expose the lasso path through the selection slot"
+        )
+        assert '_applySlot(handle, "selection")' in text, (
+            f"{path} does not expose lasso handles through the selection slot"
+        )
+        assert 'this.selLassoPath.style.pointerEvents = "none";' in text, (
+            f"{path} lets the lasso path intercept canvas gestures"
+        )
+        assert 'handle.style.pointerEvents = "all";' in text, (
+            f"{path} lets selection classes disable lasso-handle editing"
         )
 
 

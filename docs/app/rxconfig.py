@@ -19,7 +19,7 @@ config = rx.Config(
     ],
     telemetry_enabled=False,
     plugins=[
-        rx.plugins.TailwindV4Plugin(),
+        rx.plugins.TailwindV4Plugin(config={"darkMode": "selector"}),
         SharedSiteStylesPlugin(),
         rx.plugins.RadixThemesPlugin(),
         rx.plugins.SitemapPlugin(trailing_slash="always"),

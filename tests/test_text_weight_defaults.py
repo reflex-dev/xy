@@ -206,24 +206,23 @@ def test_theme_css_chrome_text_slots_declare_normal_weight() -> None:
         )
 
 
-def test_chartview_inline_text_weights_are_all_normal() -> None:
-    """The inline axis-label/legend-title weights beat the slot stylesheet.
+def test_chartview_does_not_pin_default_text_weights_inline() -> None:
+    """Default weights stay in the base layer so Tailwind utilities can win.
 
-    They are written out at ten sites in `_axisLabelCss`/`_drawChrome`/
-    `_legendBox`, so a guard on the stylesheet alone would not catch a drift
-    here.
+    Explicit axis or slot weights are still applied inline through their style
+    mappings, but constructor defaults must not compete with author utilities.
     """
     source = (_JS / "50_chartview.ts").read_text(encoding="utf-8")
 
     inline = set(re.findall(r"font-weight:\s*(\d+|normal|bold)", source))
-    assert inline, "expected inline font-weight declarations in 50_chartview.ts"
-    assert inline <= {"400", "normal"}, (
-        f"50_chartview.ts declares inline chrome weights {sorted(inline)}; "
-        "only normal/400 matches Matplotlib"
+    assert not inline, (
+        f"50_chartview.ts pins default chrome weights inline: {sorted(inline)}; "
+        "normal/400 belongs in the zero-specificity base stylesheet"
     )
 
     assigned = set(re.findall(r"\.style\.fontWeight\s*=\s*\"(\d+|normal|bold)\"", source))
-    assert assigned <= {"400", "normal"}, (
-        f"50_chartview.ts assigns chrome fontWeight {sorted(assigned)}; "
-        "only normal/400 matches Matplotlib"
+    assert not assigned, (
+        f"50_chartview.ts assigns default chrome fontWeight inline: {sorted(assigned)}; "
+        "author utilities must remain able to override the default"
     )
+    assert '"font-weight": this._axisStyleValue(axis, "label_font_weight")' in source

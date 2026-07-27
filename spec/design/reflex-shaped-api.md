@@ -297,7 +297,7 @@ DOM chrome slots:
 | `tooltip` | Tooltip container |
 | `modebar` | Modebar container |
 | `modebar_button` | Modebar button |
-| `selection` | Selection rectangle |
+| `selection` | Selection rectangle, lasso path, and lasso handles |
 | `crosshair_x` | Vertical crosshair line |
 | `crosshair_y` | Horizontal crosshair line |
 | `badge` | Reduction/density badge container |
@@ -366,9 +366,25 @@ This keeps Tailwind useful without pretending CSS can reach GPU buffers.
 
 The Reflex adapter mirrors class strings from a fixed `xy.Chart` (or an
 internal `Figure`) into generated JSX so Tailwind can discover them at compile
-time; the inventory comes from `Figure.dom_class_strings()`. A live token
-or Var figure does not exist until runtime; its complete utility names must
-also appear literally in ordinary application source or in the host safelist.
+time; the inventory comes from `Figure.dom_class_strings()`. A live token or
+Var figure does not exist until runtime, so `reflex_xy.chart(...,
+tailwind_classes=...)` accepts one literal class string or an ordered iterable
+of literal class strings and mirrors that explicit inventory into the same
+compile-only JSX prop. Mappings and unordered sets are rejected. The generated
+scan literal preserves quotes, backslashes, and Unicode verbatim rather than
+letting JavaScript string escaping change Tailwind's source candidate. The
+wrapper discards the prop before spreading DOM properties. Static charts merge
+an explicit inventory with automatic discovery; utility tokens are
+de-duplicated in input order, and adapter-only mark `class_name` metadata is
+excluded because canvas marks have no corresponding DOM node.
+
+When a state-driven live payload changes constructor-owned chrome — including
+its `dom` classes/styles, title, legend, colorbar, badge, modebar, or axis-band
+topology — the Reflex wrapper rebuilds the view. It restores every named-axis
+range and durable box/range/lasso geometry silently, then refreshes the
+selection mask once. The render client's data-only in-place update cannot
+retain persistent nodes in that case, or previous Tailwind classes and chrome
+would remain attached.
 
 ## 5. Tooltip Customization
 

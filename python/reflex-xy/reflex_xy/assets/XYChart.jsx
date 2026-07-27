@@ -100,6 +100,144 @@ const eventSpec = (spec, callbacks) => {
   return { ...fitted, interaction };
 };
 
+// Payload metadata is JSON-like, but key insertion order is not part of its
+// meaning. Compare it structurally so a republish only rebuilds constructor-
+// owned chrome when one of its inputs actually changed.
+const samePayloadValue = (left, right) => {
+  if (Object.is(left, right)) return true;
+  if (
+    left === null || right === null ||
+    typeof left !== "object" || typeof right !== "object" ||
+    Array.isArray(left) !== Array.isArray(right)
+  ) {
+    return false;
+  }
+  if (Array.isArray(left)) {
+    return left.length === right.length &&
+      left.every((value, index) => samePayloadValue(value, right[index]));
+  }
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(right, key) &&
+        samePayloadValue(left[key], right[key]),
+    );
+};
+
+const legendTraceSpec = (trace) => {
+  const color = trace?.color;
+  const style = trace?.style;
+  return {
+    id: trace?.id ?? null,
+    kind: trace?.kind ?? null,
+    name: trace?.name ?? null,
+    color: color
+      ? {
+          mode: color.mode ?? null,
+          color: color.color ?? null,
+          label: color.label ?? null,
+          categories: color.categories ?? null,
+          palette: color.palette ?? null,
+          colormap: color.colormap ?? null,
+        }
+      : null,
+    style: style
+      ? {
+          color: style.color ?? null,
+          symbol: style.symbol ?? null,
+          stroke_width: style.stroke_width ?? null,
+          width: style.width ?? null,
+          dash: style.dash ?? null,
+        }
+      : null,
+  };
+};
+
+const axisLayoutSpec = (spec) => {
+  const axes = { ...(spec?.axes || {}) };
+  if (spec?.x_axis) axes.x = spec.x_axis;
+  if (spec?.y_axis) axes.y = spec.y_axis;
+  return Object.fromEntries(
+    Object.entries(axes).map(([id, axis]) => [
+      id,
+      {
+        side: axis?.side ?? null,
+        tick_label_strategy: axis?.tick_label_strategy ?? null,
+      },
+    ]),
+  );
+};
+
+// updatePayload owns new axes/ranges, trace buffers, marks, annotations,
+// tooltip content, and animation. The fields below instead determine DOM
+// topology or layout built only by the ChartView constructor. Projecting just
+// those inputs preserves the fast path for an ordinary data-only publish while
+// still rebuilding title/legend/colorbar/badge/modebar/axis-band chrome.
+const mountedChromeSpec = (spec) => ({
+  dom: spec?.dom ?? null,
+  title: spec?.title ?? null,
+  padding: spec?.padding ?? null,
+  show_legend: spec?.show_legend !== false,
+  legend: spec?.legend ?? null,
+  extra_legends: spec?.extra_legends ?? null,
+  legend_traces: (spec?.traces || []).map(legendTraceSpec),
+  colorbar: spec?.colorbar ?? null,
+  has_density_badges: (spec?.traces || []).some((trace) => trace?.tier === "density"),
+  show_modebar: spec?.show_modebar !== false,
+  export: spec?.export ?? null,
+  interaction: spec?.interaction ?? null,
+  axes: axisLayoutSpec(spec),
+});
+
+const sameMountedChromeSpec = (left, right) =>
+  samePayloadValue(mountedChromeSpec(left), mountedChromeSpec(right));
+
+const selectionRequest = (selection) => {
+  if (selection?.range) {
+    const { x0, x1, y0, y1 } = selection.range;
+    return { type: "select", x0, x1, y0, y1 };
+  }
+  if (selection?.polygon) {
+    return {
+      type: "select_polygon",
+      points: selection.polygon.map((point) => [...point]),
+    };
+  }
+  return null;
+};
+
+const selectionFromRequest = (request) => {
+  if (request?.type === "select") {
+    return {
+      range: {
+        x0: request.x0,
+        x1: request.x1,
+        y0: request.y0,
+        y1: request.y1,
+        ...(request.mode === "x" || request.mode === "y" ? { mode: request.mode } : {}),
+      },
+    };
+  }
+  if (request?.type === "select_polygon") {
+    return { polygon: request.points.map((point) => [...point]) };
+  }
+  return null;
+};
+
+const changedFromHome = (state, home) => {
+  const ranges = state?.ranges;
+  if (!ranges || typeof ranges !== "object") return false;
+  return Object.entries(ranges).some(([axisId, range]) => {
+    const homeRange = home?.ranges?.[axisId];
+    return !Array.isArray(homeRange) ||
+      !Array.isArray(range) ||
+      range.length !== homeRange.length ||
+      range.some((value, index) => value !== homeRange[index]);
+  });
+};
+
 const pointEnvelope = (type, token, row, extra = {}) => {
   const { trace, index, x, y, ...datum } = row;
   return {
@@ -288,14 +426,32 @@ export function XYChart(props) {
       seq: `selection:${++selectionSeq}`,
     });
 
-    const restoreSelection = (selection) => {
+    const restoreSelectionMask = (request) => {
+      if (!request) return;
       const restore = withSelectionSeq(
         cbRef.current.onSelectEnd
-          ? { ...selection, include_rows: true }
-          : selection,
+          ? { ...request, include_rows: true }
+          : request,
       );
       restoreSelectionSeqs.add(restore.seq);
       emitMessage(restore);
+    };
+
+    const hydrateSelectionForRepublish = (selection) => {
+      if (!selection || !view) return false;
+      const applied = view._applyStatePatch?.(
+        { v: 1, selection },
+        {
+          source: "republish",
+          history: false,
+          dispatch: false,
+          broadcast: false,
+        },
+      );
+      if (applied === true) {
+        view._restoreSelectionLocalMask?.(selection, { localMask: true });
+      }
+      return applied === true;
     };
 
     const dispatchHover = (row) => {
@@ -400,25 +556,37 @@ export function XYChart(props) {
 
     const onPayload = (data) => {
       if (destroyed || !data || data.fig !== token) return;
-      const previousView = view?._eventView?.("republish") || null;
-      const homeView = view?.view0 || null;
-      const viewChanged = previousView && homeView && ["x0", "x1", "y0", "y1"].some(
-        (key) => previousView[key] !== homeView[key],
+      // The public durable-state document is the authoritative client mirror:
+      // unlike `lastSelect`, it includes linked selections, x/y band mode, and
+      // every named axis range. Fall back only for an older client bundle that
+      // predates the state handle.
+      const durableState = view?.root?.xy?.state?.() || null;
+      const previousView = durableState?.ranges
+        ? { ranges: durableState.ranges, source: "republish" }
+        : view?._eventView?.("republish") || null;
+      const viewChanged = changedFromHome(
+        durableState || (previousView?.ranges ? { ranges: previousView.ranges } : null),
+        view?.view0,
       );
-      const selectionToRestore = lastSelect;
+      const selectionToRestore = durableState
+        ? durableState.selection
+        : selectionFromRequest(lastSelect);
+      const selectionMaskRequest = selectionRequest(selectionToRestore);
       payloadVersion = Number.isInteger(data.version) ? data.version : null;
       const spec = withHoverFlag(eventSpec(data.spec, cbRef.current));
       const nextBuffers = toSpans(data.spec, data.buffers);
-      if (view?.updatePayload?.(spec, nextBuffers)) {
+      const chromeChanged = Boolean(view && !sameMountedChromeSpec(view.spec, spec));
+      if (!chromeChanged && view?.updatePayload?.(spec, nextBuffers)) {
         // updatePayload re-homes the viewport and rebuilds trace state, so pin
         // the domain and re-request the selection mask after the in-place swap.
         if (viewChanged) {
           view._transitionView = null;
           view._setView(previousView, { animate: false, source: "republish" });
         }
-        if (selectionToRestore) {
-          restoreSelection(selectionToRestore);
+        if (selectionMaskRequest) {
+          hydrateSelectionForRepublish(selectionToRestore);
         }
+        restoreSelectionMask(selectionMaskRequest);
         return;
       }
       reclaimTooltipSlot();
@@ -435,9 +603,12 @@ export function XYChart(props) {
       if (viewChanged) {
         view._setView(previousView, { animate: false, source: "republish" });
       }
-      if (selectionToRestore) {
-        restoreSelection(selectionToRestore);
+      if (selectionMaskRequest) {
+        // Hydrate durable geometry plus a provisional local mask before the
+        // eventual authoritative reply, without replaying the user gesture.
+        hydrateSelectionForRepublish(selectionToRestore);
       }
+      restoreSelectionMask(selectionMaskRequest);
       // Debug/e2e handle (same spirit as the standalone example's
       // window.xyLiveDrilldown): headless probes assert on live views.
       (window.__xy_views ||= new Map()).set(outerRef.current?.id || mid, view);
@@ -449,6 +620,7 @@ export function XYChart(props) {
       if (data.mid !== undefined && data.mid !== null && data.mid !== mid) return;
       const message = data.message;
       if (!message) return;
+      let clientMessage = message;
       if (typeof message.seq === "string" && message.seq.startsWith("click:")) {
         const clickInput = clickInputs.get(message.seq);
         clickInputs.delete(message.seq);
@@ -464,6 +636,11 @@ export function XYChart(props) {
       }
       if (message.type === "selection") {
         const isRestore = restoreSelectionSeqs.delete(message.seq);
+        // The mask reply still has to reach ChartView, but this restore was
+        // initiated by a payload swap rather than a new user gesture. Tag the
+        // client-only copy so it applies buffers without emitting xy:select;
+        // the Reflex callback is suppressed by the same sequence check below.
+        if (isRestore) clientMessage = { ...message, suppress_event: true };
         if (!isRestore && cbRef.current.onSelectEnd) {
           const cleared = message.total === 0 && lastSelect === null;
           const fallbackBounds = lastSelect && lastSelect.type === "select"
@@ -488,7 +665,7 @@ export function XYChart(props) {
           });
         }
       }
-      for (const cb of [...viewCallbacks]) cb(message, data.buffers || []);
+      for (const cb of [...viewCallbacks]) cb(clientMessage, data.buffers || []);
     };
 
     const onErr = (data) => {
