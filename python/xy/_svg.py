@@ -1642,6 +1642,76 @@ def _x_tick_label_room(axis: dict[str, Any], plot_w: float) -> float:
     return _AXIS_TEXT_EDGE_PAD + label_offset + rows * (font_size + 4.0) + extent + label_extra
 
 
+def _x_tick_label_edge_rooms(axes: dict[str, dict[str, Any]], plot_w: float) -> tuple[float, float]:
+    """Canvas-edge room needed by x tick labels that overhang the plot.
+
+    A terminal tick label is centered on the end of the spine by default, so
+    half its ink lives outside the plot rectangle. Matplotlib includes every
+    visible tick-label bbox in ``Axes.get_tightbbox``; mirror that horizontal
+    union here instead of relying on the compact layout's flat right gutter.
+    """
+    left = right = 0.0
+    for axis_id, axis in axes.items():
+        if (
+            not axis_id.startswith("x")
+            or _axis_tick_label_strategy(axis) in {"none", "off"}
+            or not _axis_text_paint_visible(axis, "tick_label_color", "tick_color")
+        ):
+            continue
+        _ticks, values, step = axis_ticks(axis, plot_w, True)
+        scale = _Scale(axis, 0.0, max(1.0, plot_w))
+        style = axis.get("style") or {}
+        font_size = _axis_tick_font_size(axis)
+        explicit_anchor = _tick_label_anchor(axis, style, "")
+        for side in _axis_tick_label_sides(axis, is_x=True):
+            side_axis = {**axis, "side": side}
+            if (
+                _axis_tick_label_strategy(axis) == "auto"
+                and axis.get("tick_label_angle") is None
+                and axis.get("tick_values") is None
+                and axis.get("kind") != "category"
+            ):
+                items = [
+                    {
+                        "pos": float(scale(value)),
+                        "text": _tick_text(axis, value, step),
+                        "angle": 0.0,
+                    }
+                    for value in values
+                ]
+            else:
+                items = _axis_tick_label_layout(side_axis, values, step, scale, True)
+            for item in items:
+                angle = float(item["angle"])
+                anchor = explicit_anchor
+                if not anchor:
+                    if angle == 0:
+                        anchor = "center"
+                    elif (side == "bottom" and angle < 0) or (side == "top" and angle > 0):
+                        anchor = "end"
+                    else:
+                        anchor = "start"
+                block = _textblock.measure(item["text"], font_size)
+                if anchor == "end":
+                    x0, x1 = -block.width, 0.0
+                elif anchor == "center":
+                    x0, x1 = -block.width / 2, block.width / 2
+                else:
+                    x0, x1 = 0.0, block.width
+                y0 = -block.ascent
+                y1 = block.descent + (block.line_count - 1) * block.line_step
+                radians = math.radians(angle)
+                cosine, sine = math.cos(radians), math.sin(radians)
+                rotated_x = [x * cosine - y * sine for x in (x0, x1) for y in (y0, y1)]
+                position = float(item["pos"])
+                left = max(left, _AXIS_TEXT_EDGE_PAD - position - min(rotated_x))
+                right = max(
+                    right,
+                    _AXIS_TEXT_EDGE_PAD + position + max(rotated_x) - plot_w,
+                )
+    return float(math.ceil(max(0.0, left))), float(math.ceil(max(0.0, right)))
+
+
 def _x_axis_rooms(
     axes: dict[str, dict[str, Any]], plot_w: float, compact: bool
 ) -> tuple[float, float, float]:
@@ -1737,6 +1807,18 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
     # than authoritative. Reserving less than the ink is not an option — a
     # static export has no ellipsis to fall back on the way the DOM does.
     left = max(left, _y_axis_left_room(spec, max(40, height - top - bottom)))
+    # Include terminal x tick-label ink that overhangs either end of the
+    # spine. Two passes cover a tick-density change caused by the new room.
+    for _pass in range(2):
+        edge_left, edge_right = _x_tick_label_edge_rooms(
+            axes,
+            max(40.0, width - left - right),
+        )
+        widened_left = max(left, edge_left)
+        widened_right = max(right, edge_right)
+        if widened_left == left and widened_right == right:
+            break
+        left, right = widened_left, widened_right
     final_w = max(40.0, width - left - right)
     if final_w == provisional_w:
         measured_top = top_axis_room

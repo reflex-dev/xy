@@ -11,12 +11,13 @@ rather than a snapshot churn.
 from __future__ import annotations
 
 import io
+import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
 
 import xy.pyplot as plt
-from xy import _svg
+from xy import _svg, _textblock
 
 
 def teardown_function():
@@ -140,6 +141,44 @@ def test_grid_panel_reservations_keep_the_plot_rect_on_its_cell():
             assert got[3] == pytest.approx(want[3], abs=1.0)
         else:
             assert got == pytest.approx(want, abs=1.0)
+
+
+def test_tight_gridspec_panels_contain_terminal_x_tick_labels_in_static_exports():
+    """Matplotlib tight-layout unions visible tick-label bboxes with each Axes.
+
+    The compact panel's historical 8 px right gutter clipped the centered
+    ``1.0`` label before SVG/PNG composition. Exercise the gallery's spanning
+    GridSpec shape and require every panel canvas to contain that terminal ink.
+    """
+    fig, axes = plt.subplots(3, 3, figsize=(6.4, 4.8), dpi=100)
+    gridspec = axes[1, 2].get_gridspec()
+    for ax in axes[1:, -1]:
+        ax.remove()
+    fig.add_subplot(gridspec[1:, -1])
+    fig.tight_layout()
+
+    svg_output = io.BytesIO()
+    fig.savefig(svg_output, format="svg")
+    root = ET.fromstring(svg_output.getvalue())
+    panels = [node for node in root if node.tag.endswith("svg")]
+    assert len(panels) == 8
+    for panel in panels:
+        terminal = next(
+            node
+            for node in panel.iter()
+            if node.tag.endswith("text")
+            and node.attrib.get("text-anchor") == "middle"
+            and "".join(node.itertext()) == "1.0"
+        )
+        font_size = float(terminal.attrib["font-size"])
+        ink_right = float(terminal.attrib["x"]) + (_textblock.measure("1.0", font_size).width / 2)
+        assert ink_right + _svg._AXIS_TEXT_EDGE_PAD <= float(panel.attrib["width"])
+
+    png_output = io.BytesIO()
+    fig.savefig(png_output, format="png", dpi=100)
+    assert png_output.getvalue()[:24] == (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x02\x80\x00\x00\x01\xe0"
+    )
 
 
 def test_get_position_reports_one_distinct_box_per_grid_panel():
