@@ -183,7 +183,7 @@ disagreeing with the rasterizer at no benefit.
 
 ### Marker shape
 
-`marker-shape` selects one of the 17 renderer-backed scatter symbols and is the
+`marker-shape` selects one of the 19 renderer-backed scatter symbols and is the
 CSS spelling of the existing `symbol=` argument — both resolve to the same
 `symbol` trace-style value, so the two spellings produce identical specs. It is
 an **XY vocabulary name, not a standard CSS property**: CSS has no shape keyword
@@ -207,6 +207,13 @@ axis component is created, before the chart or an export is rendered. Keys may
 use Python snake_case or CSS kebab-case; pixel geometry accepts a finite number
 or a CSS `px` value such as `"3px"`.
 
+`minor_style={...}` accepts the same vocabulary for the independent minor-tick
+and minor-grid tier. `minor_tick_values=[...]` supplies its positions without
+labels; major `tick_values`/`tick_labels` remain unchanged. On log axes,
+`nonpositive="clip"` maps non-positive mark coordinates below the visible
+range, while `"mask"` makes those endpoints non-renderable in the browser,
+SVG, and native raster paths.
+
 | Axis style key | Value |
 | --- | --- |
 | `grid_color`, `axis_color`, `tick_color`, `tick_label_color`, `label_color` | CSS color |
@@ -219,6 +226,16 @@ or a CSS `px` value such as `"3px"`.
 | `label_font_weight`, `label_font_family`, `label_font_style` | Axis-label font overrides, passed through to the browser, SVG, and native PNG paths. `label_font_weight` defaults to `400` — see [Chrome text weight](#chrome-text-weight). |
 | `tick_direction` | `"in"`, `"out"`, or `"inout"` |
 | `tick_label_anchor` | `"start"`, `"center"`, or `"end"` (mpl `ha` aliases `"left"`/`"right"`/`"middle"` normalize) — which label edge pins to the tick; rotated labels pivot about the pinned edge. Also a first-class `x_axis`/`y_axis` option. X defaults to `"center"`; y defaults to the tick-side edge (`"end"` left of the plot, `"start"` right of it). Honored by static SVG/PNG exports. |
+
+`tick_label_strategy="preserve"` is the explicit-locator policy: every tick
+label is drawn even when its box overlaps another. It is used by
+`xy.pyplot` for Matplotlib categorical conversion, `FixedLocator`, and
+`set_*ticks`; ordinary composition axes remain on `"auto"` and retain
+collision-aware rotate/stagger/thinning behavior.
+
+When `side` is omitted, the browser resolves primary x/y chrome to
+bottom/left and named extra y axes to the right. The same fallback applies to
+tick marks and tick labels, including a live spec update that clears `side`.
 
 ```python
 xy.x_axis(
@@ -264,6 +281,8 @@ leaves the other axis untouched. Enabling one axis's grid never turns the
 opposite axis's grid off; x and y are independent switches, and the matplotlib
 shim's `Axes.grid(axis="x")`/`Axes.grid(axis="y")` and `Axis.grid()` resolve
 onto the same rule.
+Major and minor grids apply this rule independently through `style` and
+`minor_style`; a transparent minor grid does not hide minor tick marks.
 
 #### Axis visibility switches
 
@@ -325,24 +344,55 @@ stay in step, because a caller that pins a plot rectangle (as `xy.pyplot` does
 to honor Matplotlib's `figure.subplot.*` frame) computes its padding by
 subtracting these reservations.
 
-#### Measured left gutter and the rotated y-axis title
+#### Measured multiline chrome and the rotated y-axis title
+
+Every newline-delimited title or tick/category label is measured as a block.
+Line splitting normalizes CRLF/CR to LF and preserves empty lines; width is the
+widest DejaVu advance and height is `line_count × 1.2 × font_size`. SVG keeps
+single-line strings as direct text nodes and emits one `<tspan>` per line only
+for multiline blocks; native PNG emits one glyph command per line, and the
+browser uses `white-space: pre-line` with the same line height. Rotated extents
+use the whole block:
+
+The pyplot shim retains authored font sizes in Matplotlib points and resolves
+them to output pixels at the owning figure's current DPI before any of those
+measurements or renderer handoffs. This includes figure suptitles and a
+temporary `savefig(dpi=...)` override; 14 pt is therefore 19.44 px at 100 dpi,
+not 14 CSS pixels.
+
+```text
+rotated width  = |cos θ| × block width + |sin θ| × block height
+rotated height = |sin θ| × block width + |cos θ| × block height
+```
+
+The ordinary one-line tick gutters remain unchanged. An outside x-axis title
+raises that floor only when its baseline, ascent/descent, and edge guard do not
+fit; each extra title/tick line then raises only the corresponding gutter by its
+line step. Tight/constrained pyplot layouts are marked dirty by later chrome
+mutations and resolve from these final per-panel measurements; a subplot
+boundary reserves the outward gutters of both neighbors rather than a single
+global title constant.
 
 The **left** gutter is additionally floored at what the left y axis's own text
 measures, rather than trusting the flat `46/62 px`:
 
 ```text
-left ≥ 10 px inset + half the title's line box
+left ≥ 10 px inset + the full multiline title box
      + 0.4 em title-to-tick gap
      + tick_padding (+ the outward part of tick_length)
      + the widest tick label's advance
 ```
 
 with the title terms dropped when the axis has no title (or places it
-`inside_*`), and the tick terms dropped when its tick labels are hidden. Widths
-come from the advance table in `python/xy/_fontmetrics.py`, generated by
+`inside_*`), and the tick terms dropped when its tick labels are hidden. The
+full title box includes its ascent, descent, and every additional line step.
+Widths come from the advance table in `python/xy/_fontmetrics.py`, generated by
 `scripts/gen_font.py` from the same DejaVu Sans face `src/font.rs` bakes for the
 Rust rasterizer — the reservation is measured in the metrics of the font that
-will draw the ink, which is also Matplotlib's default face. A rotated tick label
+will draw the ink, which is also Matplotlib's default face. Browser layout adds
+a 2 px Canvas-to-DOM measurement guard only for an outside y title; the guard
+prevents edge clamping from consuming the authored gap and does not apply to
+`inside_*` titles. A rotated tick label
 (`tick_label_angle`) contributes `advance·cos θ + line box·sin θ`.
 
 This is a floor, never an override: `padding` and the `46/62` default both stand
@@ -362,6 +412,19 @@ A title whose line box is taller than twice the inset is clamped to keep 1 px of
 leading ink on the canvas. Titles at an angle other than ±90° keep the raw inset.
 `label_offset` moves the title within the reserved gutter and is included in the
 reservation.
+
+The **top and bottom x-axis gutters** are likewise floored at the outside axis
+title's measured outer glyph edge and at the projected tick-label cross-axis
+extent when the caller explicitly authors an angle or rotate/stagger strategy.
+The title floor uses the same `font_size × 0.82` baseline conversion as the
+emitters and includes `label_offset`, ascent/descent, multiline steps, and the
+4 px edge guard. The SVG/native paths use the baked DejaVu advance table; the
+browser uses `measureText` with the active tick size. The tick reservation is
+evaluated after collision strategy, and `"preserve"` pays for every authored
+location. Core `"auto"` retains its long-standing fixed-band collision fallback.
+An outside title or explicitly rotated labels therefore cannot be clipped
+merely because a 32/42 px legacy band was chosen before their geometry was
+known.
 
 Two asymmetries are deliberate, not oversights:
 
@@ -1095,13 +1158,22 @@ mutated, so a rejected append cannot leave channel lengths out of sync.
 
 ### Scatter markers — `symbol`, `stroke`, `stroke_width`
 
-`scatter` markers take any of the 17 renderer-backed symbols listed in the
+`scatter` markers take any of the 19 renderer-backed symbols listed in the
 public [Mark styles](../../docs/styling/mark-styles.md#mark-specific-appearance) guide,
 plus a `stroke` color and `stroke_width` (px) for a border, e.g.
 `scatter(x, y, symbol="triangle", stroke="#fff", stroke_width=2)`. Each is an
 antialiased SDF in the point shader, so shapes stay crisp at any size and the
 border is a true ring (a stroke width with no color borders in the mark color).
 Symbols compose with the color/size channels.
+
+The Matplotlib shim additionally compiles its authored marker grammar into a
+private bounded style representation: regular polygon/star/asterisk tuples and
+finite custom vertex contours become normalized paths, while a mathtext form
+that resolves to one glyph in the embedded font becomes a glyph marker. This
+is a compatibility path, not an expansion of the public `symbol=` vocabulary;
+unsupported or oversized authored forms raise instead of falling back to a
+circle. Browser, SVG, native PNG, and legend renderers consume the same
+representation.
 
 Glyph geometry follows Matplotlib's marker paths, size convention included.
 `diamond` is the `square` glyph rotated 45°, so its half-diagonal is √2× the
@@ -1207,6 +1279,14 @@ Each renderer clamps `border_radius` to half the shorter box side, as CSS
 does, so an oversized radius degrades to a stadium rather than an inverted
 polygon. The exporters size the box from a dependency-free, glyph-shaped
 sans-serif width estimate, so a box tracks its text approximately, not exactly.
+
+Vertical alignment is measured from the text block, not the padded patch.
+Unspecified alignment and `vertical_align="baseline"` follow Matplotlib's
+default: the supplied coordinate is the **final line's baseline**, so a
+multiline label grows upward and the box padding extends around it. This is the
+placement used by low, axes-relative statistics boxes such as Anscombe's
+quartet. The browser compensates for computed padding and border widths; SVG
+and native PNG derive their box from the same final-line baseline.
 
 **Label color** resolves as `label_color` → `color` → the renderer's own
 default, and the three defaults are *not* the same value: the browser uses

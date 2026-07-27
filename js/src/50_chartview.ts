@@ -19,6 +19,36 @@ export interface ChartView {
 }
 
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
+// DejaVu Sans advances at 16 px, generated beside python/xy/_fontmetrics.py
+// and the native rasterizer. Layout must retain proportional glyph metrics:
+// character count makes "WWWW" and "iiii" reserve the same (wrong) width.
+const XY_FONT_BASE_PX = 16;
+const XY_ASCII_FIRST = 32;
+const XY_ASCII_LAST = 126;
+const XY_ASCII_ADVANCES = [
+  5, 6, 7, 13, 10, 15, 12, 4, 6, 6, 8, 13, 5, 6, 5, 5, 10, 10, 10, 10,
+  10, 10, 10, 10, 10, 10, 5, 5, 13, 13, 13, 8, 16, 11, 11, 11, 12, 10, 9, 12,
+  12, 5, 5, 10, 9, 14, 12, 13, 10, 13, 11, 10, 10, 12, 11, 16, 11, 10, 11, 6,
+  5, 6, 13, 8, 8, 10, 10, 9, 10, 10, 6, 10, 10, 4, 4, 9, 4, 16, 10, 10,
+  10, 10, 7, 8, 6, 10, 9, 13, 9, 9, 8, 10, 5, 10, 13,
+];
+const XY_MISSING_ADVANCE = 16;
+// Canvas measureText() returns advances while the DOM clamp below operates on
+// painted element rectangles. Keep a small guard for an outside y title so
+// font rasterization/rounding cannot consume its authored title-to-tick gap.
+const Y_TITLE_MEASURE_SAFETY_PX = 2;
+
+function xyTextAdvance(text, fontSize) {
+  let units = 0;
+  for (const char of String(text)) {
+    const code = char.codePointAt(0) ?? 0;
+    units += code >= XY_ASCII_FIRST && code <= XY_ASCII_LAST
+      ? XY_ASCII_ADVANCES[code - XY_ASCII_FIRST]
+      : XY_MISSING_ADVANCE;
+  }
+  return Number(fontSize) * units / XY_FONT_BASE_PX;
+}
+
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
 const COMPACT_COLORBAR_GAP = 8;
@@ -344,6 +374,9 @@ export class ChartView {
       throw new Error("protocol mismatch");
     }
     this.spec = spec;
+    // Title y/pad placement is a binary geometry column, so it must be
+    // available before the constructor's first layout pass.
+    this._payload = buffer;
     this.interaction = spec.interaction || {};
     this.markStyle = spec.mark_style || {};
     this.axes = this._normalizeAxes(spec);
@@ -410,7 +443,6 @@ export class ChartView {
     // Retained for GL context restore: the payload is screen-bounded (§29) so
     // keeping it is cheap, and every GPU object is rebuildable from
     // spec + payload by design (§18/§27).
-    this._payload = buffer;
     this._glLost = false;
     this._ctxReleasedExt = null;
     this._ctxReleases = 0;
@@ -520,22 +552,40 @@ export class ChartView {
     const baseRight = pad ? (responsivePad ? Math.min(pad[1], 8) : pad[1]) : compact ? 8 : MARGIN.r;
     const marginRight = baseRight + colorbarRightRoom;
     const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
-    const marginBottom = (pad ? pad[2] : compact ? 36 : MARGIN.b) + colorbarBottomRoom;
-    const hasBottomAxis = Object.values<any>(this.axes || {}).some((axis: any) =>
-      axis && String(axis.id || "").startsWith("x") && axis.side !== "top" &&
+    const baseBottom = pad ? pad[2] : compact ? 36 : MARGIN.b;
+    const bottomAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
+      axis && String(axis.id || "").startsWith("x") &&
+      (this._axisTickLabelSides(axis).includes("bottom") || axis.side !== "top") &&
       this._axisTickLabelStrategy(axis) !== "none");
-    this._bottomAxisRoom = hasBottomAxis ? (compact ? 36 : MARGIN.b) : 0;
+    const hasBottomAxis = bottomAxes.length > 0;
     // A named x axis can own the top edge even when the primary x axis stays
     // on the bottom. Reserve one shared gutter for every top-side x axis;
     // multiple axes on the same side intentionally overlay until axis offsets
     // become part of the public API (the same rule used by secondary y axes).
-    const topAxisRoom = Object.values<any>(this.axes || {}).some((axis: any) =>
-      axis && String(axis.id || "").startsWith("x") && axis.side === "top" &&
-      this._axisTickLabelStrategy(axis) !== "none")
-      ? (compact ? 26 : 32)
-      : 0;
-    const top = marginTop + (this.spec.title ? (compact ? 26 : 30) : 0) + topAxisRoom;
-    const plotHeight = Math.max(40, this.size.h - top - marginBottom);
+    const topAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
+      axis && String(axis.id || "").startsWith("x") &&
+      (this._axisTickLabelSides(axis).includes("top") || axis.side === "top") &&
+      this._axisTickLabelStrategy(axis) !== "none");
+    const hasTopAxis = topAxes.length > 0;
+    const titleRoom = this._titleEntries().reduce((room, entry) => {
+      const authoredSize = Number.parseFloat(entry.style?.["font-size"]);
+      const titleFontSize = Number.isFinite(authoredSize)
+        ? authoredSize
+        : this._slotFontSize("title", 14);
+      const measured = this._estimateTickLabel(entry.text, titleFontSize).h;
+      const pad = Number.isFinite(Number(entry.pad)) ? Number(entry.pad) : 8;
+      const candidate = entry.automatic_y !== false
+        ? Math.max(compact ? 26 : 30, measured + pad)
+        : (Number(entry.y ?? 1) >= 1 ? measured + pad : 0);
+      return Math.max(room, candidate);
+    }, 0);
+    this._titleRoom = titleRoom;
+    const provisionalTopAxisRoom = hasTopAxis ? (compact ? 26 : 32) : 0;
+    const provisionalBottomAxisRoom = hasBottomAxis ? (compact ? 36 : MARGIN.b) : 0;
+    const provisionalTop = marginTop + titleRoom + provisionalTopAxisRoom;
+    const provisionalBottom =
+      Math.max(baseBottom, provisionalBottomAxisRoom) + colorbarBottomRoom;
+    const plotHeight = Math.max(40, this.size.h - provisionalTop - provisionalBottom);
     const authoredLeft = pad
       ? (responsivePad ? Math.min(pad[3], 46) : pad[3])
       : (compact ? 46 : MARGIN.l);
@@ -545,7 +595,8 @@ export class ChartView {
     const measuredLeft = Math.max(authoredLeft, this._yAxisLeftRoom(plotHeight));
     const rightAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("y") &&
-      axis.side === "right" && this._axisTickLabelStrategy(axis) !== "none");
+      (this._axisTickLabelSides(axis).includes("right") || axis.side === "right") &&
+      this._axisTickLabelStrategy(axis) !== "none");
     // The vertical colorbar shifts right by this room (see _positionColorbar);
     // the Python SVG/raster exporters apply the identical 42/54 rule.
     this._rightAxisRoom = rightAxes.length ? (compact ? 42 : 54) : 0;
@@ -556,18 +607,73 @@ export class ChartView {
     // labels retain their full text in `title`/ARIA and ellipsize in bounds.
     const measuredLeftCap = Math.max(authoredLeft, this.size.w - right - 40);
     const marginLeft = Math.min(measuredLeft, measuredLeftCap);
+    const plotWidth = Math.max(40, this.size.w - marginLeft - right);
+    const measuredTopAxisRoom = this._xAxisRoom("top", plotWidth);
+    const measuredBottomAxisRoom = this._xAxisRoom("bottom", plotWidth);
+    const topAxisRoom = hasTopAxis
+      ? Math.max(provisionalTopAxisRoom, measuredTopAxisRoom)
+      : 0;
+    this._topAxisRoom = topAxisRoom;
+    const bottomAxisRoom = hasBottomAxis
+      ? Math.max(provisionalBottomAxisRoom, measuredBottomAxisRoom)
+      : 0;
+    this._bottomAxisRoom = bottomAxisRoom;
+    const top = marginTop + titleRoom + topAxisRoom;
+    const marginBottom =
+      (measuredBottomAxisRoom ? Math.max(baseBottom, measuredBottomAxisRoom) : baseBottom)
+      + colorbarBottomRoom;
     this.plot = {
       x: marginLeft,
       y: top,
-      w: Math.max(40, this.size.w - marginLeft - right),
+      w: plotWidth,
       h: Math.max(40, this.size.h - top - marginBottom),
     };
+  }
+
+  _titleEntries() {
+    if (Array.isArray(this.spec.title_options) && this.spec.title_options.length) {
+      return this.spec.title_options
+        .filter((entry) => entry && entry.text)
+        .map((entry) => {
+          if (!Number.isInteger(entry.geometry)) return entry;
+          const values = this._columnView(
+            this._payload,
+            this.spec.columns[entry.geometry],
+          );
+          return { ...entry, y: Number(values[0]), pad: Number(values[1]) };
+        });
+    }
+    return this.spec.title
+      ? [{ text: this.spec.title, loc: "center", y: 1, pad: 8, automatic_y: true, style: {} }]
+      : [];
+  }
+
+  _positionTitles() {
+    for (const { element: title, entry } of this._titleElements || []) {
+      const loc = ["left", "center", "right"].includes(entry.loc) ? entry.loc : "center";
+      const x = loc === "left"
+        ? this.plot.x
+        : loc === "right"
+          ? this.plot.x + this.plot.w
+          : this.plot.x + this.plot.w / 2;
+      const anchorY = entry.automatic_y !== false
+        ? this.plot.y - this._topAxisRoom
+        : this.plot.y + (1 - Number(entry.y ?? 1)) * this.plot.h;
+      const shiftX = loc === "left" ? "0%" : loc === "right" ? "-100%" : "-50%";
+      title.style.textAlign = loc;
+      title.style.left = `${x}px`;
+      title.style.top = `${anchorY}px`;
+      title.style.transform = `translate(${shiftX}, calc(-100% - ${Number(entry.pad ?? 8)}px))`;
+    }
   }
 
   _yAxisLeftRoom(plotHeight) {
     let room = 0;
     for (const axis of Object.values<any>(this.axes || {})) {
-      if (!axis || !String(axis.id || "").startsWith("y") || axis.side === "right") continue;
+      if (!axis || !String(axis.id || "").startsWith("y")) continue;
+      const labelsOnLeft = this._axisTickLabelSides(axis).includes("left");
+      const titleOnLeft = axis.side !== "right";
+      if (!labelsOnLeft && !titleOnLeft) continue;
       if (this._axisTickLabelStrategy(axis) === "none") continue;
       const size = Math.max(
         8,
@@ -578,10 +684,12 @@ export class ChartView {
         ),
       );
       const angle = Math.abs(Number(this._axisTickLabelAngle(axis) || 0)) * Math.PI / 180;
-      const ticks = this._axisTicks(
-        axis.id,
-        this._axisTickTarget(axis.id, Math.max(3, plotHeight / 45)),
-      );
+      const ticks = labelsOnLeft
+        ? this._axisTicks(
+          axis.id,
+          this._axisTickTarget(axis.id, Math.max(3, plotHeight / 45)),
+        )
+        : { ticks: [], labels: [] };
       let tickRoom = 0;
       for (const value of (ticks.labels || ticks.ticks)) {
         const text = this._axisTickText(axis, value, ticks.step);
@@ -594,19 +702,112 @@ export class ChartView {
       const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
       const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
       const outward = direction === "in" ? 0 : direction === "inout" ? length / 2 : length;
-      const tickOffset =
-        outward + Math.max(0, this._axisStyleNumber(axis, "tick_padding", 4));
-      let needed = 4 + tickOffset + tickRoom;
+      const tickOffset = labelsOnLeft
+        ? outward + Math.max(0, this._axisStyleNumber(axis, "tick_padding", 4))
+        : 0;
+      let needed = labelsOnLeft ? 4 + tickOffset + tickRoom : 0;
       const rawPosition = axis.label_position;
       const position = typeof rawPosition === "string" ? rawPosition.replace(/-/g, "_") : "";
-      if (axis.label && !position.startsWith("inside_")) {
+      if (titleOnLeft && axis.label && !position.startsWith("inside_")) {
         const labelSize = Math.max(8, this._axisStyleNumber(axis, "label_size", 12));
         const gap = Number.isFinite(Number(axis.label_offset))
           ? Number(axis.label_offset)
           : 0.4 * labelSize;
-        needed += gap + 1.2 * labelSize;
+        needed +=
+          Y_TITLE_MEASURE_SAFETY_PX
+          + gap
+          + this._estimateTickLabel(axis.label, labelSize).h;
       }
       room = Math.max(room, needed);
+    }
+    return room;
+  }
+
+  _slotFontSize(slot, fallback) {
+    const styles = this.spec.dom && this.spec.dom.styles;
+    const value = styles && styles[slot] && styles[slot]["font-size"];
+    const parsed = parseFloat(String(value ?? ""));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  _xAxisRoom(side, plotWidth) {
+    let room = 0;
+    for (const axis of Object.values<any>(this.axes || {})) {
+      if (!axis || !String(axis.id || "").startsWith("x")) continue;
+      const titleSide = axis.side === "top" ? "top" : "bottom";
+      const labelsOnSide = this._axisTickLabelSides(axis).includes(side);
+      if (!labelsOnSide && titleSide !== side) continue;
+      const strategy = this._axisTickLabelStrategy(axis);
+      if (["none", "off"].includes(strategy)) continue;
+      const sideAxis = { ...axis, side };
+      const size = Math.max(
+        8,
+        this._axisStyleNumber(
+          axis,
+          "tick_label_size",
+          this._axisStyleNumber(axis, "tick_size", 11),
+        ),
+      );
+      const ticks = this._axisTicks(
+        axis.id,
+        this._axisTickTarget(axis.id, Math.max(3, plotWidth / (axis.kind === "time" ? 90 : 80))),
+      );
+      const [lo, hi] = this._axisRange(axis.id);
+      const c0 = this._axisCoord(axis, lo);
+      const c1 = this._axisCoord(axis, hi);
+      const candidates = (labelsOnSide ? (ticks.labels || ticks.ticks) : []).map((value) => ({
+        pos: c1 === c0 ? plotWidth / 2 : ((this._axisCoord(axis, value) - c0) / (c1 - c0)) * plotWidth,
+        text: this._axisTickText(axis, value, ticks.step),
+      }));
+      const items = this._layoutTickLabels(sideAxis, "x", candidates);
+      const hasAdaptiveLayout = items.some(
+        (item) => Number(item.angle || 0) || Number(item.row || 0),
+      );
+      const hasMultilineTicks = items.some(
+        (item) => this._estimateTickLabel(item.text, size).lines.length > 1,
+      );
+      const position = typeof axis.label_position === "string"
+        ? axis.label_position.replace(/-/g, "_") : "center";
+      const labelSize = Math.max(8, this._axisStyleNumber(axis, "label_size", 12));
+      const labelBlock = titleSide === side && axis.label && !position.startsWith("inside_")
+        ? this._estimateTickLabel(axis.label, labelSize) : null;
+      const labelExtra = labelBlock
+        ? Math.max(0, labelBlock.h - labelSize * 1.2) : 0;
+      if (
+        !hasAdaptiveLayout
+        && !hasMultilineTicks
+        && !labelExtra
+        && strategy === "auto"
+        && this._axisTickLabelAngle(axis) === null
+      ) {
+        continue;
+      }
+      let extent = 0;
+      let rows = 0;
+      for (const item of items) {
+        const measured = this._estimateTickLabel(item.text, size);
+        const angle = Math.abs(Number(item.angle || 0)) * Math.PI / 180;
+        extent = Math.max(
+          extent,
+          Math.abs(Math.sin(angle)) * measured.w + Math.abs(Math.cos(angle)) * measured.h,
+        );
+        rows = Math.max(rows, Number(item.row || 0));
+      }
+      const rawPadding = this._axisStyleValue(axis, "tick_padding");
+      const rawLength = this._axisStyleValue(axis, "tick_length");
+      const rawWidth = this._axisStyleValue(axis, "tick_width");
+      const hiddenSentinel = Number(rawLength) === 0 && Number(rawWidth) === 0;
+      const authored = rawPadding !== undefined
+        || (rawLength !== undefined && !hiddenSentinel);
+      let offset = side === "top" ? 7 : 16;
+      if (authored) {
+        const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
+        const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+        const outward = direction === "in" ? 0 : direction === "inout" ? length / 2 : length;
+        offset = outward + this._axisStyleNumber(axis, "tick_padding", 4)
+          + (side === "top" ? size * 0.2 : size * 0.8);
+      }
+      room = Math.max(room, 4 + offset + rows * (size + 4) + extent + labelExtra);
     }
     return room;
   }
@@ -631,8 +832,10 @@ export class ChartView {
   }
 
   _axisMode(axisId) {
-    const scale = this._axis(axisId).scale;
-    return scale === "log" ? 1 : scale === "symlog" ? 2 : 0;
+    const axis = this._axis(axisId);
+    const scale = axis.scale;
+    return scale === "log" ? (axis.nonpositive === "mask" ? 3 : 1)
+      : scale === "symlog" ? 2 : 0;
   }
 
   _axisConstant(axisId) {
@@ -730,7 +933,10 @@ export class ChartView {
   _axisCoord(axis, value) {
     const v = Number(value);
     if (!Number.isFinite(v)) return NaN;
-    if (axis && axis.scale === "log") return v > 0 ? Math.log10(v) : NaN;
+    if (axis && axis.scale === "log") {
+      if (v > 0) return Math.log10(v);
+      return axis.nonpositive === "mask" ? NaN : -300;
+    }
     if (axis && axis.scale === "symlog") {
       const c = Number(axis.constant) || 1;
       return Math.sign(v) * Math.log1p(Math.abs(v) / c);
@@ -1589,6 +1795,7 @@ export class ChartView {
       const anchor = lg.dataset.xyLegendAnchor ? JSON.parse(lg.dataset.xyLegendAnchor) : null;
       this._positionLegend(lg, lg.dataset.xyLegendLoc || "upper right", anchor);
     }
+    this._positionTitles();
     this._positionReductionBadges();
     this._positionColorbar();
     this._fitModebar();
@@ -1635,7 +1842,8 @@ export class ChartView {
       document.getElementById(`${a11yId}-summary`) || document.getElementById(`${a11yId}-live`)
     );
     root.setAttribute("role", "region");
-    root.setAttribute("aria-label", s.title ? `Chart: ${s.title}` : "Interactive chart");
+    const titleText = this._titleEntries().map((entry) => String(entry.text)).join(". ");
+    root.setAttribute("aria-label", titleText ? `Chart: ${titleText}` : "Interactive chart");
     this.a11ySummary = document.createElement("div");
     this.a11ySummary.id = `${a11yId}-summary`;
     this.a11ySummary.style.cssText = XY_SR_ONLY_STYLE;
@@ -1649,13 +1857,22 @@ export class ChartView {
     this.a11yLive.style.cssText = XY_SR_ONLY_STYLE;
     root.appendChild(this.a11yLive);
 
-    if (s.title) {
+    this._titleElements = [];
+    for (const entry of this._titleEntries()) {
       const t = document.createElement("div");
-      t.textContent = s.title;
-      t.style.cssText = "position:absolute;top:6px;left:0;right:0;";
+      t.textContent = entry.text;
+      t.style.cssText =
+        "position:absolute;white-space:pre-line;line-height:1.2;";
       this._applySlot(t, "title");
+      for (const [property, value] of Object.entries(entry.style || {})) {
+        if (["color", "font-family", "font-size", "font-style", "font-weight"].includes(property)) {
+          t.style.setProperty(property, String(value));
+        }
+      }
       root.appendChild(t);
+      this._titleElements.push({ element: t, entry });
     }
+    this._positionTitles();
 
     this.chrome = document.createElement("canvas");
     this.chrome.style.cssText = "position:absolute;inset:0;pointer-events:none;";
@@ -1719,7 +1936,8 @@ export class ChartView {
 
   _a11ySummaryText() {
     const traces = Array.isArray(this.spec.traces) ? this.spec.traces : [];
-    const parts = [this.spec.title ? `${this.spec.title}.` : "Interactive chart."];
+    const titles = this._titleEntries().map((entry) => String(entry.text));
+    const parts = [titles.length ? `${titles.join(". ")}.` : "Interactive chart."];
     parts.push(`${traces.length} data series.`);
     const names = traces.map((trace) => trace && trace.name).filter(Boolean).slice(0, 6);
     if (names.length) parts.push(`Series: ${names.join(", ")}.`);
@@ -1835,38 +2053,45 @@ export class ChartView {
         // traces join the first row's hover-target list instead.
         const continuousRows = new Map();
         s.traces.forEach((t, ti) => {
-        // A density-tier surface encodes count as alpha and wears the mean
-        // point color (LOD doc §2), so it gets no colormap gradient swatch —
-        // a gradient would claim color == density. A named density trace
-        // falls through to the plain marker swatch below, matching the
-        // static SVG/raster exporters.
-        const line = ["line", "segments", "step", "stairs", "errorbar"].includes(t.kind);
-        if (t.color && t.color.mode === "categorical") {
-          t.color.categories.forEach((cat, i) =>
-            items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {}, traces: [ti], cat: i }));
-        } else if (t.color && t.color.mode === "continuous") {
-          // Label precedence: explicit series name, then the encoding's own
-          // declarative label (the color="column" idiom). No generic fallback:
-          // an unnamed encoding has nothing truthful to say, so it gets no
-          // row — matching the static exporters, which draw name-bearing
-          // entries only.
-          const name = t.name || t.color.label;
-          if (!name) return;
-          const key = name + "\u0000" + colormapKey(t.color.colormap);
-          const existing = continuousRows.get(key);
-          if (existing) {
-            existing.traces.push(ti);
-            return;
+          const style = { ...(t.style || {}) };
+          const useTraceSize = style._legend_trace_size === true;
+          delete style._legend_trace_size;
+          if (t.kind === "scatter" && useTraceSize &&
+              t.size?.mode === "constant" && Number.isFinite(Number(t.size.size))) {
+            style.size = Number(t.size.size);
           }
-          const item = { swatch: "gradient", cmap: t.color.colormap, name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {}, traces: [ti] };
-          continuousRows.set(key, item);
-          items.push(item);
-        } else if (t.name) {
-          const c = (t.color && t.color.color) || (t.style && t.style.color);
-          // Line-family kinds get a short line sample (honoring the dash), the
-          // same handle the raster/SVG exporters draw — not a filled swatch.
-          items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {}, traces: [ti] });
-        }
+          // A density-tier surface encodes count as alpha and wears the mean
+          // point color (LOD doc §2), so it gets no colormap gradient swatch —
+          // a gradient would claim color == density. A named density trace
+          // falls through to the plain marker swatch below, matching the
+          // static SVG/raster exporters.
+          const line = ["line", "segments", "step", "stairs", "errorbar"].includes(t.kind);
+          if (t.color && t.color.mode === "categorical") {
+            t.color.categories.forEach((cat, i) =>
+              items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, style, traces: [ti], cat: i }));
+          } else if (t.color && t.color.mode === "continuous") {
+            // Label precedence: explicit series name, then the encoding's own
+            // declarative label (the color="column" idiom). No generic fallback:
+            // an unnamed encoding has nothing truthful to say, so it gets no
+            // row — matching the static exporters, which draw name-bearing
+            // entries only.
+            const name = t.name || t.color.label;
+            if (!name) return;
+            const key = name + "\u0000" + colormapKey(t.color.colormap);
+            const existing = continuousRows.get(key);
+            if (existing) {
+              existing.traces.push(ti);
+              return;
+            }
+            const item = { swatch: "gradient", cmap: t.color.colormap, name, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, line, style, traces: [ti] };
+            continuousRows.set(key, item);
+            items.push(item);
+          } else if (t.name) {
+            const c = (t.color && t.color.color) || (t.style && t.style.color);
+            // Line-family kinds get a short line sample (honoring the dash), the
+            // same handle the raster/SVG exporters draw — not a filled swatch.
+            items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, line, style, traces: [ti] });
+          }
         });
       }
       for (const it of items) {
@@ -1956,34 +2181,11 @@ export class ChartView {
         svg.setAttribute("viewBox", "0 0 18 14");
         svg.setAttribute("width", "100%");
         svg.setAttribute("height", "14");
-        const path = document.createElementNS(ns, "path");
-        const paths = {
-          square: "M4.5 2.5h9v9h-9z", diamond: "M9 2l5 5-5 5-5-5z",
-          thin_diamond: "M9 2l3 5-3 5-3-5z",
-          triangle: "M9 2l-5 10h10z", triangle_down: "M9 12L4 2h10z",
-          triangle_left: "M4 7L14 2v10z", triangle_right: "M14 7L4 2v10z",
-          plus_line: "M9 2v10M4 7h10", x_line: "M5 3l8 8M13 3l-8 8",
-          cross: "M7.5 2h3v3.5H14v3h-3.5V12h-3V8.5H4v-3h3.5z",
-          x: "M5.5 2L9 5.5 12.5 2 14 3.5 10.5 7 14 10.5 12.5 12 9 8.5 5.5 12 4 10.5 7.5 7 4 3.5z",
-          pentagon: "M9 2.5L13.28 5.61 11.65 10.64H6.35L4.72 5.61z",
-          hexagon: "M9 2L13.3 4.5v5L9 12l-4.3-2.5v-5z",
-          star: "M9 2l1.5 3.1 3.5.5-2.5 2.5.6 3.5L9 10l-3.1 1.6.6-3.5L4 5.6l3.5-.5z"
-        };
+        svg.style.overflow = "visible";
         const color = gradientPaint ? gradientPaint(svg) : safeCssPaint(this.root, bg);
-        if (it.symbol === "circle" || it.symbol === "point" || it.symbol === "pixel") {
-          if (it.symbol === "pixel") path.setAttribute("d", "M8.5 6.5h1v1h-1z");
-          else path.setAttribute("d", `M9 ${it.symbol === "point" ? 4.75 : 2.5}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 ${it.symbol === "point" ? 4.5 : 9}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 -${it.symbol === "point" ? 4.5 : 9}`);
-        } else path.setAttribute("d", paths[it.symbol] || paths.square);
-        sw.style.setProperty(
-          "--xy-legend-swatch-fill",
-          it.symbol.endsWith("_line") ? "none" : color,
+        this._appendLegendMarker(
+          svg, sw, { ...(it.style || {}), symbol: it.symbol }, color, 9, 7, true,
         );
-        sw.style.setProperty("--xy-legend-swatch-stroke", color);
-        sw.style.setProperty(
-          "--xy-legend-swatch-stroke-width",
-          String(it.style?.stroke_width || 1),
-        );
-        svg.appendChild(path);
         sw.appendChild(svg);
         sw.style.setProperty("--xy-legend-swatch-height", "14px");
       } else if (it.line) {
@@ -1997,10 +2199,27 @@ export class ChartView {
         ln.setAttribute("y1", "6");
         ln.setAttribute("x2", "21");
         ln.setAttribute("y2", "6");
+        const lineColor = gradientPaint
+          ? gradientPaint(svg)
+          : safeCssPaint(this.root, bg);
+        if (it.style?.legend_gap_color && it.style?.dash?.length) {
+          const gaps = document.createElementNS(ns, "line");
+          gaps.setAttribute("x1", "1");
+          gaps.setAttribute("y1", "6");
+          gaps.setAttribute("x2", "21");
+          gaps.setAttribute("y2", "6");
+          gaps.setAttribute(
+            "stroke",
+            safeCssPaint(this.root, it.style.legend_gap_color),
+          );
+          gaps.setAttribute("stroke-width", String(it.style?.width ?? 1.5));
+          gaps.setAttribute("stroke-dasharray", "none");
+          svg.appendChild(gaps);
+        }
         sw.style.setProperty("--xy-legend-swatch-fill", "none");
         sw.style.setProperty(
           "--xy-legend-swatch-stroke",
-          gradientPaint ? gradientPaint(svg) : safeCssPaint(this.root, bg),
+          lineColor,
         );
         // ?? not ||: an explicit lw=0 keeps 0 and draws nothing, like the
         // exporters' dict-default and Matplotlib itself.
@@ -2012,6 +2231,11 @@ export class ChartView {
           sw.style.setProperty("--xy-legend-swatch-dasharray", it.style.dash.join(" "));
         }
         svg.appendChild(ln);
+        if (it.style?.legend_marker) {
+          this._appendLegendMarker(
+            svg, sw, it.style.legend_marker, lineColor, 11, 6, false,
+          );
+        }
         sw.appendChild(svg);
         sw.style.setProperty("--xy-legend-swatch-height", "12px");
       } else if (it.swatch !== "gradient") {
@@ -2077,6 +2301,101 @@ export class ChartView {
     root.appendChild(lg);
     this._legends.push(lg); // _resize refreshes each box's responsive anchor
     return lg;
+  }
+
+  _appendLegendMarker(svg, sw, marker, defaultColor, cx, cy, wrapperPaint) {
+    const ns = "http://www.w3.org/2000/svg";
+    const requestedMarkerSize = Number(marker?.size);
+    const hasMarkerSize = Number.isFinite(requestedMarkerSize) && requestedMarkerSize >= 0;
+    const markerSize = hasMarkerSize ? requestedMarkerSize : 9;
+    const symbol = String(marker?.symbol || "circle");
+    // The generated default can be an internal SVG url(...); sanitize only
+    // user-authored paints so the gradient reference remains intact.
+    const fillColor = marker?.color != null
+      ? safeCssPaint(this.root, marker.color)
+      : defaultColor;
+    const hasStroke = marker?.stroke != null || marker?.stroke_width != null;
+    const strokeColor = hasStroke
+      ? (marker?.stroke != null
+          ? safeCssPaint(this.root, marker.stroke)
+          : fillColor)
+      : (wrapperPaint ? fillColor : "none");
+    const paths = {
+      square: "M4.5 2.5h9v9h-9z", diamond: "M9 2l5 5-5 5-5-5z",
+      thin_diamond: "M9 2l3 5-3 5-3-5z",
+      triangle: "M9 2l-5 10h10z", triangle_down: "M9 12L4 2h10z",
+      triangle_left: "M4 7L14 2v10z", triangle_right: "M14 7L4 2v10z",
+      plus_line: "M9 2v10M4 7h10", x_line: "M5 3l8 8M13 3l-8 8",
+      horizontal_line: "M4 7h10", vertical_line: "M9 2v10",
+      cross: "M7.5 2h3v3.5H14v3h-3.5V12h-3V8.5H4v-3h3.5z",
+      x: "M5.5 2L9 5.5 12.5 2 14 3.5 10.5 7 14 10.5 12.5 12 9 8.5 5.5 12 4 10.5 7.5 7 4 3.5z",
+      pentagon: "M9 2.5L13.28 5.61 11.65 10.64H6.35L4.72 5.61z",
+      hexagon: "M9 2L13.3 4.5v5L9 12l-4.3-2.5v-5z",
+      star: "M9 2l1.5 3.1 3.5.5-2.5 2.5.6 3.5L9 10l-3.1 1.6.6-3.5L4 5.6l3.5-.5z"
+    };
+    if (marker?.marker_glyph) {
+      const text = document.createElementNS(ns, "text");
+      text.setAttribute("x", String(cx));
+      text.setAttribute("y", String(cy));
+      text.setAttribute("font-family", "DejaVu Sans");
+      text.setAttribute("font-size", String(markerSize));
+      text.setAttribute("text-anchor", "middle");
+      text.setAttribute("dominant-baseline", "central");
+      if (wrapperPaint) {
+        sw.style.setProperty("--xy-legend-swatch-fill", fillColor);
+        sw.style.setProperty("--xy-legend-swatch-stroke", "none");
+        sw.style.setProperty("--xy-legend-swatch-stroke-width", "0");
+      } else {
+        text.setAttribute("fill", fillColor);
+      }
+      text.textContent = String(marker.marker_glyph);
+      svg.appendChild(text);
+      return;
+    }
+    const path = document.createElementNS(ns, "path");
+    if (marker?.marker_path) {
+      const commands = [];
+      for (const contour of marker.marker_path.contours || []) {
+        for (let offset = 0; offset + 1 < contour.length; offset += 2) {
+          const x = cx + markerSize * Number(contour[offset]);
+          const y = cy - markerSize * Number(contour[offset + 1]);
+          commands.push(`${offset === 0 ? "M" : "L"}${x} ${y}`);
+        }
+        if (marker.marker_path.filled) commands.push("Z");
+      }
+      path.setAttribute("d", commands.join(" "));
+    } else if (symbol === "circle" || symbol === "point" || symbol === "pixel") {
+      const radius = markerSize / 2;
+      if (symbol === "pixel")
+        path.setAttribute("d", `M${cx - radius} ${cy - radius}h${markerSize}v${markerSize}h-${markerSize}z`);
+      else
+        path.setAttribute("d", `M${cx} ${cy - radius}a${radius} ${radius} 0 1 0 0 ${markerSize}a${radius} ${radius} 0 1 0 0 -${markerSize}`);
+    } else {
+      path.setAttribute("d", paths[symbol] || paths.square);
+      const scale = hasMarkerSize ? markerSize / 9 : 1;
+      path.setAttribute(
+        "transform",
+        `translate(${cx} ${cy}) scale(${scale}) translate(-9 -7)`,
+      );
+    }
+    const lineMarker = symbol.endsWith("_line") ||
+      (marker?.marker_path && !marker.marker_path.filled);
+    const fill = lineMarker ? "none" : fillColor;
+    const requestedStrokeWidth = Number(marker?.stroke_width);
+    const strokeWidth = Number.isFinite(requestedStrokeWidth)
+      ? requestedStrokeWidth
+      : (wrapperPaint ? 1 : 0);
+    if (wrapperPaint) {
+      sw.style.setProperty("--xy-legend-swatch-fill", fill);
+      sw.style.setProperty("--xy-legend-swatch-stroke", strokeColor);
+      sw.style.setProperty("--xy-legend-swatch-stroke-width", String(strokeWidth));
+    } else {
+      path.setAttribute("fill", fill);
+      path.setAttribute("stroke", strokeColor);
+      path.setAttribute("stroke-width", String(strokeWidth));
+      path.setAttribute("stroke-dasharray", "none");
+    }
+    svg.appendChild(path);
   }
 
   // Paint an SVG swatch with the item's colormap ramp: registers a
@@ -2978,6 +3297,10 @@ export class ChartView {
       copy("artist_alpha", 1);
       copy(widthName, 2, this.dpr);
       copy("symbol", 3);
+      // Canvas-authored markers consume the same canonical style rows as the
+      // point shader.  Keep them CPU-readable instead of treating styleBuf as
+      // the only copy; filtering may still gather/reupload from this array.
+      g._cpuStyle = values;
       g.styleBuf = this._upload(values);
       // Width rows are baked at the dpr in force right now. Record it so the
       // streaming-append fast path can tell whether a later tail upload would
@@ -2996,7 +3319,8 @@ export class ChartView {
       g.radiusBuf = this._upload(values);
     }
     if (t.stroke && t.stroke.mode === "direct_rgba") {
-      g.strokeBuf = this._upload(this._columnView(buffer, this.spec.columns[t.stroke.buf]));
+      g._cpuStroke = this._columnView(buffer, this.spec.columns[t.stroke.buf]);
+      g.strokeBuf = this._upload(g._cpuStroke);
     }
   }
 
@@ -3036,7 +3360,8 @@ export class ChartView {
   // use each point's resolved LUT/palette color, never a generic trace color.
   _pointMarkStyle(g, t) {
     const s = t.style || {};
-    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 }[s.symbol] || 0;
+    g.authoredMarker = s.marker_path || s.marker_glyph || null;
+    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16, horizontal_line: 17, vertical_line: 18 }[s.symbol] || 0;
     g.pointStrokeWidth = Number(s.stroke_width) || 0;
     g.pointStrokeFace = !s.stroke && (!t.stroke || t.stroke.mode === "match_fill");
     g.pointStroke = s.stroke
@@ -3158,16 +3483,21 @@ export class ChartView {
       size: (sample.size && sample.size.size) || 4.0,
       sizeRange: [2, 18],
     };
+    const xValues = this._asF32(buffers[sample.x.buf]);
+    const yValues = this._asF32(buffers[sample.y.buf]);
+    s._cpu = { x: xValues, y: yValues, xMeta: s.xMeta, yMeta: s.yMeta };
     gl.bindBuffer(gl.ARRAY_BUFFER, s.xBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.x.buf]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, xValues, gl.STATIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, s.yBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.y.buf]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, yValues, gl.STATIC_DRAW);
     if (sample.color && sample.color.buf !== undefined) {
       s.colorMode = sample.color.mode === "continuous" ? 1 :
         (sample.color.mode === "categorical" ? 2 : 3);
       const colorValues = sample.color.dtype === "u8"
         ? this._asU8(buffers[sample.color.buf])
         : this._asF32(buffers[sample.color.buf]);
+      if (s.colorMode === 3) s._cpu.rgba = colorValues;
+      else s._cpu.color = colorValues;
       const colorBufferName = s.colorMode === 3 ? "rgbaBuf" : "cBuf";
       s[colorBufferName] = gl.createBuffer();
       this._tagChannelBuf(s[colorBufferName], colorValues, s.colorMode === 1);
@@ -3184,6 +3514,7 @@ export class ChartView {
       const sizeValues = sample.size.dtype === "u8"
         ? this._asU8(buffers[sample.size.buf])
         : this._asF32(buffers[sample.size.buf]);
+      s._cpu.size = sizeValues;
       s.sBuf = gl.createBuffer();
       this._tagChannelBuf(s.sBuf, sizeValues, true);
       gl.bindBuffer(gl.ARRAY_BUFFER, s.sBuf);
@@ -3214,10 +3545,12 @@ export class ChartView {
       copy("artist_alpha", 1);
       copy("stroke_width", 2, this.dpr);
       copy("symbol", 3);
+      s._cpuStyle = values;
       s.styleBuf = this._upload(values);
     }
     if (sample.stroke && sample.stroke.mode === "direct_rgba") {
-      s.strokeBuf = this._upload(this._asU8(buffers[sample.stroke.buf]));
+      s._cpuStroke = this._asU8(buffers[sample.stroke.buf]);
+      s.strokeBuf = this._upload(s._cpuStroke);
     }
     this._pointMarkStyle(s, trace);
     if (g.density) {
@@ -3901,6 +4234,11 @@ export class ChartView {
   _drawNow() {
     if (this._destroyed || !this.gl || this._glLost) return;
     this._healStaleTheme();
+    // `_drawPoints` records authored-marker draws here so the Canvas overlay
+    // paints the exact direct/sample/drill entries and LOD alpha chosen by
+    // this frame.  Reconstructing them from gpuTraces would lose density
+    // window selection and transition fades.
+    this._authoredScatterDraws = [];
     const gl = this.gl;
     const { x0, x1, y0, y1 } = this.view;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -3999,6 +4337,14 @@ export class ChartView {
 
   _drawPoints(g, xm, ym, opacityScale = 1) {
     opacityScale *= (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
+    // Pyplot-authored contours and glyphs keep these resident point buffers
+    // for picking/transitions but paint on the Canvas2D overlay below. Queue
+    // the actual draw invocation (including density-sample/drill fades)
+    // instead of rediscovering only top-level direct traces in `_drawChrome`.
+    if (g.authoredMarker) {
+      (this._authoredScatterDraws ||= []).push({ g, opacityScale });
+      return;
+    }
     const animationScale = g._transitionScale ?? 1;
     if (this._canDrawSimplePoints(g)) {
       this._drawSimplePoints(g, xm, ym, opacityScale);
@@ -4813,7 +5159,32 @@ export class ChartView {
 
   _axisTickLabelStrategy(axis) {
     const value = String((axis && axis.tick_label_strategy) || "auto").replace(/-/g, "_");
-    return ["auto", "hide", "rotate", "stagger", "none", "off"].includes(value) ? value : "auto";
+    return ["auto", "hide", "rotate", "stagger", "preserve", "none", "off"].includes(value)
+      ? value : "auto";
+  }
+
+  _axisDefaultSide(axis) {
+    const id = String(axis && axis.id || "x");
+    if (id.startsWith("x")) return "bottom";
+    return id === "y" ? "left" : "right";
+  }
+
+  _axisTickSides(axis) {
+    const isX = String(axis && axis.id || "x").startsWith("x");
+    const allowed = isX ? ["bottom", "top"] : ["left", "right"];
+    if (!Array.isArray(axis && axis.tick_sides)) {
+      return [axis && axis.side || this._axisDefaultSide(axis)];
+    }
+    return allowed.filter((side) => axis.tick_sides.includes(side));
+  }
+
+  _axisTickLabelSides(axis) {
+    const isX = String(axis && axis.id || "x").startsWith("x");
+    const allowed = isX ? ["bottom", "top"] : ["left", "right"];
+    if (!Array.isArray(axis && axis.tick_label_sides)) {
+      return [axis && axis.side || this._axisDefaultSide(axis)];
+    }
+    return allowed.filter((side) => axis.tick_label_sides.includes(side));
   }
 
   _axisTickLabelAnchor(axis) {
@@ -4839,8 +5210,26 @@ export class ChartView {
   }
 
   _estimateTickLabel(text, fontSize) {
-    const s = String(text || "");
-    return { w: Math.max(fontSize * 0.7, s.length * fontSize * 0.62), h: fontSize * 1.2 };
+    const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
+    const context = typeof document !== "undefined"
+      ? (
+        this._tickMeasureCanvas
+        || (this._tickMeasureCanvas = document.createElement("canvas"))
+      ).getContext("2d")
+      : null;
+    // Match the root's default font shorthand in 20_theme.ts. Measuring with
+    // the browser's generic sans-serif while the DOM paints system-ui can
+    // under-reserve long y labels enough to consume the title's 0.4 em gap.
+    if (context) context.font = `${fontSize}px system-ui, sans-serif`;
+    return {
+      lines,
+      w: Math.max(
+        fontSize * 0.7,
+        ...lines.map((line) => context?.measureText(line).width || xyTextAdvance(line, fontSize)),
+      ),
+      h: Math.max(fontSize * 1.2, lines.length * fontSize * 1.2),
+      lineStep: fontSize * 1.2,
+    };
   }
 
   _tickLabelExtent(label, dim, fontSize) {
@@ -4919,6 +5308,7 @@ export class ChartView {
     const explicitAngle = this._axisTickLabelAngle(axis);
     const baseAngle = explicitAngle === null ? 0 : explicitAngle;
     const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
+    if (strategyValue === "preserve") return withBase;
     let strategy = strategyValue;
     if (strategy === "auto") {
       if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap, anchor)) return withBase;
@@ -4980,7 +5370,7 @@ export class ChartView {
     const hasAngle = axis && Number.isFinite(Number(axis.label_angle));
     if (!hasPosition && !hasOffset && !hasAngle) return { css: fallbackCss, style: null };
     if (rawPosition && typeof rawPosition === "object" && !Array.isArray(rawPosition)) {
-      return { css: "white-space:nowrap;", style: rawPosition };
+      return { css: "white-space:pre-line;text-align:center;", style: rawPosition };
     }
 
     const p = this.plot;
@@ -5003,7 +5393,7 @@ export class ChartView {
         css:
           `left:${x}px;top:${y}px;` +
           `transform:translateX(${translateX}%) rotate(${angle}deg);` +
-          "transform-origin:center;white-space:nowrap;",
+          "transform-origin:center;white-space:pre-line;text-align:center;",
         style: null,
       };
     }
@@ -5018,7 +5408,7 @@ export class ChartView {
       css:
         `left:${x}px;top:${y}px;` +
         `transform:translate(-50%,-50%) rotate(${angle}deg);` +
-        "transform-origin:center;white-space:nowrap;",
+        "transform-origin:center;white-space:pre-line;text-align:center;",
       style: null,
     };
   }
@@ -5067,8 +5457,48 @@ export class ChartView {
       this._axisTickTarget("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80))),
     );
     const yt = this._axisTicks("y", this._axisTickTarget("y", Math.max(3, p.h / 45)));
+    const minorTicks = (axis, axisId) => {
+      if (!Array.isArray(axis.minor_tick_values)) return [];
+      const [lo, hi] = this._axisRange(axisId);
+      const a = Math.min(lo, hi), b = Math.max(lo, hi);
+      return axis.minor_tick_values.map(Number)
+        .filter((v) => Number.isFinite(v) && v >= a && v <= b);
+    };
+    const xmt = minorTicks(xAxis, "x");
+    const ymt = minorTicks(yAxis, "y");
+    const minorAxis = (axis) => ({ ...axis, style: axis.minor_style || {} });
+    const xmAxis = minorAxis(xAxis);
+    const ymAxis = minorAxis(yAxis);
     const xEdge = (px) => Math.min(p.x + p.w - 0.5, Math.max(p.x + 0.5, Math.round(px) + 0.5));
     const yEdge = (py) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(py) + 0.5));
+
+    ctx.strokeStyle = this._axisStylePaint(xmAxis, "grid_color", "transparent");
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xmAxis, "grid_width", 1));
+    ctx.globalAlpha = this._axisStyleNumber(xmAxis, "grid_opacity", 1);
+    ctx.setLineDash(this._axisGridDash(xmAxis));
+    ctx.beginPath();
+    for (const v of (hideX ? [] : xmt)) {
+      const px = this._dataPx("x", v);
+      if (!Number.isFinite(px)) continue;
+      const x = xEdge(px);
+      ctx.moveTo(x, p.y);
+      ctx.lineTo(x, p.y + p.h);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = this._axisStylePaint(ymAxis, "grid_color", "transparent");
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(ymAxis, "grid_width", 1));
+    ctx.globalAlpha = this._axisStyleNumber(ymAxis, "grid_opacity", 1);
+    ctx.setLineDash(this._axisGridDash(ymAxis));
+    ctx.beginPath();
+    for (const v of (hideY ? [] : ymt)) {
+      const py = this._dataPx("y", v);
+      if (!Number.isFinite(py)) continue;
+      const y = yEdge(py);
+      ctx.moveTo(p.x, y);
+      ctx.lineTo(p.x + p.w, y);
+    }
+    ctx.stroke();
 
     ctx.strokeStyle = this._axisStylePaint(xAxis, "grid_color", this.theme.grid);
     ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xAxis, "grid_width", 1));
@@ -5156,25 +5586,67 @@ export class ChartView {
       }
 
       if (!hideX) {
-        const tick = tickParts(xAxis);
-        const side = xAxis.side || "bottom";
-        const edge = side === "top" ? p.y : p.y + p.h;
-        for (const value of xt.ticks) {
+        const minorTick = tickParts(xmAxis);
+        const minorSide = xAxis.side || "bottom";
+        const minorEdge = minorSide === "top" ? p.y : p.y + p.h;
+        for (const value of xmt) {
           const x = this._dataPx("x", value);
           if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
-          const top = side === "top" ? edge - tick.outward : edge - tick.inward;
-          rule(xAxis, x - tick.width / 2, top, tick.width, tick.inward + tick.outward, "tick_color");
+          const top = minorSide === "top"
+            ? minorEdge - minorTick.outward : minorEdge - minorTick.inward;
+          rule(
+            xmAxis, x - minorTick.width / 2, top, minorTick.width,
+            minorTick.inward + minorTick.outward, "tick_color",
+          );
+        }
+        const tick = tickParts(xAxis);
+        for (const side of this._axisTickSides(xAxis)) {
+          const edge = side === "top" ? p.y : p.y + p.h;
+          for (const value of xt.ticks) {
+            const x = this._dataPx("x", value);
+            if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
+            const top = side === "top" ? edge - tick.outward : edge - tick.inward;
+            rule(
+              xAxis,
+              x - tick.width / 2,
+              top,
+              tick.width,
+              tick.inward + tick.outward,
+              "tick_color",
+            );
+          }
         }
       }
       if (!hideY) {
-        const tick = tickParts(yAxis);
-        const side = yAxis.side || "left";
-        const edge = side === "right" ? p.x + p.w : p.x;
-        for (const value of yt.ticks) {
+        const minorTick = tickParts(ymAxis);
+        const minorSide = yAxis.side || "left";
+        const minorEdge = minorSide === "right" ? p.x + p.w : p.x;
+        for (const value of ymt) {
           const y = this._dataPx("y", value);
           if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
-          const left = side === "right" ? edge - tick.inward : edge - tick.outward;
-          rule(yAxis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width, "tick_color");
+          const left = minorSide === "right"
+            ? minorEdge - minorTick.inward : minorEdge - minorTick.outward;
+          rule(
+            ymAxis, left, y - minorTick.width / 2,
+            minorTick.inward + minorTick.outward, minorTick.width, "tick_color",
+          );
+        }
+        const tick = tickParts(yAxis);
+        for (const side of this._axisTickSides(yAxis)) {
+          const edge = side === "right" ? p.x + p.w : p.x;
+          for (const value of yt.ticks) {
+            const y = this._dataPx("y", value);
+            if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
+            const left = side === "right" ? edge - tick.inward : edge - tick.outward;
+            rule(
+              yAxis,
+              left,
+              y - tick.width / 2,
+              tick.inward + tick.outward,
+              tick.width,
+              "tick_color",
+            );
+          }
         }
       }
       for (const axis of extraXAxes) {
@@ -5184,13 +5656,21 @@ export class ChartView {
           this._axisTickTarget(axis.id, Math.max(3, p.w / (axis.kind === "time" ? 90 : 80))),
         );
         const tick = tickParts(axis);
-        const side = axis.side || "bottom";
-        const edge = side === "top" ? p.y : p.y + p.h;
-        for (const value of ticks.ticks) {
-          const x = this._dataPx(axis.id, value);
-          if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
-          const top = side === "top" ? edge - tick.outward : edge - tick.inward;
-          rule(axis, x - tick.width / 2, top, tick.width, tick.inward + tick.outward, "tick_color");
+        for (const side of this._axisTickSides(axis)) {
+          const edge = side === "top" ? p.y : p.y + p.h;
+          for (const value of ticks.ticks) {
+            const x = this._dataPx(axis.id, value);
+            if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
+            const top = side === "top" ? edge - tick.outward : edge - tick.inward;
+            rule(
+              axis,
+              x - tick.width / 2,
+              top,
+              tick.width,
+              tick.inward + tick.outward,
+              "tick_color",
+            );
+          }
         }
       }
       for (const axis of extraYAxes) {
@@ -5200,13 +5680,21 @@ export class ChartView {
           this._axisTickTarget(axis.id, Math.max(3, p.h / 45)),
         );
         const tick = tickParts(axis);
-        const side = axis.side || "right";
-        const edge = side === "right" ? p.x + p.w : p.x;
-        for (const value of ticks.ticks) {
-          const y = this._dataPx(axis.id, value);
-          if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
-          const left = side === "right" ? edge - tick.inward : edge - tick.outward;
-          rule(axis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width, "tick_color");
+        for (const side of this._axisTickSides(axis)) {
+          const edge = side === "right" ? p.x + p.w : p.x;
+          for (const value of ticks.ticks) {
+            const y = this._dataPx(axis.id, value);
+            if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
+            const left = side === "right" ? edge - tick.inward : edge - tick.outward;
+            rule(
+              axis,
+              left,
+              y - tick.width / 2,
+              tick.inward + tick.outward,
+              tick.width,
+              "tick_color",
+            );
+          }
         }
       }
     }
@@ -5237,7 +5725,9 @@ export class ChartView {
       if (this._axisStyleValue(axis, sizeKey) !== undefined) {
         size = `font-size:${Math.max(8, this._axisStyleNumber(axis, sizeKey, 11))}px;`;
       }
-      d.style.cssText = `position:absolute;line-height:1.2;white-space:nowrap;${color}${size}${css}`;
+      d.style.cssText =
+        `position:absolute;line-height:1.2;white-space:pre-line;text-align:center;` +
+        `${color}${size}${css}`;
       // Categorical y labels can exceed the space between their pinned anchor
       // and the chart edge. Placement owns side/anchor/angle; consume that
       // metadata here instead of re-deriving it and drifting from rendering.
@@ -5327,18 +5817,21 @@ export class ChartView {
       const pad = outward + this._axisStyleNumber(axis, "tick_padding", 4);
       return pad + fontRoomPx;
     };
-    for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
-      const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
-      const top = xAxis.side === "top"
-        ? p.y - tickLabelOffset(xAxis, 18, Math.max(8, tickLabelSize) * 1.2) - rowOffset
-        : p.y + p.h + tickLabelOffset(xAxis, 6) + rowOffset;
-      const placement = this._xTickLabelTransform(xAxis, item.angle);
-      label(
-        item.text,
-        `left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
-          `transform-origin:${placement.origin};`,
-        xAxis,
-      );
+    for (const side of this._axisTickLabelSides(xAxis)) {
+      const sideAxis = { ...xAxis, side };
+      for (const item of this._layoutTickLabels(sideAxis, "x", xLabelCandidates)) {
+        const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
+        const top = side === "top"
+          ? p.y - tickLabelOffset(xAxis, 18, Math.max(8, tickLabelSize) * 1.2) - rowOffset
+          : p.y + p.h + tickLabelOffset(xAxis, 6) + rowOffset;
+        const placement = this._xTickLabelTransform(sideAxis, item.angle);
+        label(
+          item.text,
+          `left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
+            `transform-origin:${placement.origin};`,
+          sideAxis,
+        );
+      }
     }
     for (const axis of extraXAxes) {
       const ticks = this._axisTicks(
@@ -5351,23 +5844,26 @@ export class ChartView {
         if (px < p.x - 1 || px > p.x + p.w + 1) continue;
         labelCandidates.push({ pos: px, text: this._axisTickText(axis, value, ticks.step) });
       }
-      for (const item of this._layoutTickLabels(axis, "x", labelCandidates)) {
-        const tickLabelSize = this._axisStyleNumber(
-          axis,
-          "tick_label_size",
-          this._axisStyleNumber(axis, "tick_size", 11),
-        );
-        const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
-        const top = axis.side === "top"
-          ? p.y - tickLabelOffset(axis, 18, Math.max(8, tickLabelSize) * 1.2) - rowOffset
-          : p.y + p.h + tickLabelOffset(axis, 6) + rowOffset;
-        const placement = this._xTickLabelTransform(axis, item.angle);
-        label(
-          item.text,
-          `left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
-            `transform-origin:${placement.origin};`,
-          axis,
-        );
+      for (const side of this._axisTickLabelSides(axis)) {
+        const sideAxis = { ...axis, side };
+        for (const item of this._layoutTickLabels(sideAxis, "x", labelCandidates)) {
+          const tickLabelSize = this._axisStyleNumber(
+            axis,
+            "tick_label_size",
+            this._axisStyleNumber(axis, "tick_size", 11),
+          );
+          const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
+          const top = side === "top"
+            ? p.y - tickLabelOffset(axis, 18, Math.max(8, tickLabelSize) * 1.2) - rowOffset
+            : p.y + p.h + tickLabelOffset(axis, 6) + rowOffset;
+          const placement = this._xTickLabelTransform(sideAxis, item.angle);
+          label(
+            item.text,
+            `left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
+              `transform-origin:${placement.origin};`,
+            sideAxis,
+          );
+        }
       }
       if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
         const top = axis.side === "top" ? p.y - 34 : p.y + p.h + 24;
@@ -5404,9 +5900,12 @@ export class ChartView {
         angle,
       };
     };
-    for (const item of this._layoutTickLabels(yAxis, "y", yLabelCandidates)) {
-      const placement = yLabelPlacement(yAxis, yAxis.side === "right", item);
-      label(item.text, placement.css, yAxis, "tick", null, placement);
+    for (const side of this._axisTickLabelSides(yAxis)) {
+      const sideAxis = { ...yAxis, side };
+      for (const item of this._layoutTickLabels(sideAxis, "y", yLabelCandidates)) {
+        const placement = yLabelPlacement(sideAxis, side === "right", item);
+        label(item.text, placement.css, sideAxis, "tick", null, placement);
+      }
     }
     for (const axis of extraYAxes) {
       const ticks = this._axisTicks(axis.id, this._axisTickTarget(axis.id, Math.max(3, p.h / 45)));
@@ -5417,9 +5916,12 @@ export class ChartView {
         const text = this._axisTickText(axis, v, ticks.step);
         labelCandidates.push({ pos: py, text });
       }
-      for (const item of this._layoutTickLabels(axis, "y", labelCandidates)) {
-        const placement = yLabelPlacement(axis, axis.side !== "left", item);
-        label(item.text, placement.css, axis, "tick", null, placement);
+      for (const side of this._axisTickLabelSides(axis)) {
+        const sideAxis = { ...axis, side };
+        for (const item of this._layoutTickLabels(sideAxis, "y", labelCandidates)) {
+          const placement = yLabelPlacement(sideAxis, side === "right", item);
+          label(item.text, placement.css, sideAxis, "tick", null, placement);
+        }
       }
       if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
         const fallbackCss = axis.side === "left"
@@ -5436,6 +5938,7 @@ export class ChartView {
       const tickLabels = [...this.labels.children].filter((element) =>
         element.dataset.xyLabelKind === "tick"
         && element.dataset.xyAxis === String(axis.id ?? "")
+        && element.dataset.xyAxisSide === (onRight ? "right" : "left")
       );
       if (!tickLabels.length) return;
       const root = this.root.getBoundingClientRect();
@@ -5482,6 +5985,7 @@ export class ChartView {
     this._drawAnnotationLabels(updateLabels);
     // Label layout resolves responsive callout offsets before the pointer is
     // painted, keeping its start attached when an edge clamp moves the text.
+    this._drawAuthoredScatterMarkers(octx);
     this._drawAnnotationShapes(octx);
   }
 

@@ -92,17 +92,17 @@ def test_fill_between_interpolate_extends_to_curve_crossing() -> None:
     np.testing.assert_allclose(collection._entry["x"], [0.5, 1.0, 2.0, 2.5])
 
 
-def test_log_wrappers_accept_only_the_native_log_contract() -> None:
+def test_log_wrappers_accept_base_subs_and_nonpositive_contract() -> None:
     _fig, ax = plt.subplots()
     ax.loglog([1, 10], [1, 100], base=10, nonpositive="clip")
     assert ax._axis["x"]["type_"] == "log"
     assert ax._axis["y"]["type_"] == "log"
-    with pytest.raises(NotImplementedError, match="base=2"):
-        ax.semilogx([1, 2], [1, 2], base=2)
-    with pytest.raises(NotImplementedError, match="subs"):
-        ax.semilogy([1, 2], [1, 2], subs=[1, 2])
-    with pytest.raises(NotImplementedError, match="nonpositive"):
-        ax.set_xscale("log", nonpositive="mask")
+    ax.semilogx([1, 2], [1, 2], base=2)
+    assert ax._scale_specs["x"]["base"] == 2
+    ax.semilogy([1, 2], [1, 2], subs=[1, 2])
+    assert ax._scale_specs["y"]["subs"] == (1.0, 2.0)
+    ax.set_xscale("log", nonpositive="mask")
+    assert ax._axis["x"]["nonpositive"] == "mask"
     for scale in ("symlog", "logit", "asinh"):
         ax.set_xscale(scale)
         assert ax._scale_specs["x"]["name"] == scale
@@ -167,11 +167,8 @@ _Z = np.arange(16.0).reshape(4, 4)
 @pytest.mark.parametrize(
     ("call", "match"),
     [
-        (lambda ax: ax.pie([1, 2], shadow=True), "shadow"),
         (lambda ax: ax.pie([1, 2], frame=True), "frame"),
         (lambda ax: ax.pie([1, 2], rotatelabels=True), "rotatelabels"),
-        (lambda ax: ax.pie([1, 2], hatch="//"), "hatch"),
-        (lambda ax: ax.pie([1, 2], wedgeprops={"hatch": "x"}), "hatch"),
         (lambda ax: ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], headwidth=6), "headwidth"),
         (lambda ax: ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], headlength=2), "headlength"),
         (lambda ax: ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], headaxislength=2), "headaxislength"),
@@ -188,9 +185,6 @@ _Z = np.arange(16.0).reshape(4, 4)
         (lambda ax: ax.streamplot(*_stream_args(), arrowstyle="->"), "arrowstyle"),
         (lambda ax: ax.pcolormesh(_Z, antialiased=False), "antialiased"),
         (lambda ax: ax.pcolor(_Z, antialiased=False), "antialiased"),
-        (lambda ax: ax.table(cellText=[["a"]], cellLoc="center"), "cellLoc"),
-        (lambda ax: ax.table(cellText=[["a"]], rowLoc="center"), "rowLoc"),
-        (lambda ax: ax.table(cellText=[["a"]], colLoc="left"), "colLoc"),
         (lambda ax: ax.table(cellText=[["a"]], loc="top"), "loc"),
         (
             lambda ax: ax.quiverkey(_quiver(ax), 0.5, 0.5, 1, "k", fontproperties={"size": 9}),
@@ -275,8 +269,26 @@ def test_matplotlib_default_option_values_pass_through() -> None:
 
 def test_quiver_units_control_width_without_changing_vector_length() -> None:
     _fig, ax = plt.subplots()
-    width_units = ax.quiver([0, 10], [0, 10], [1, 0], [0, 1], units="width", width=0.02, scale=1)
-    x_units = ax.quiver([0, 10], [0, 10], [1, 0], [0, 1], units="x", width=0.02, scale=1)
+    width_units = ax.quiver(
+        [0, 10],
+        [0, 10],
+        [1, 0],
+        [0, 1],
+        units="width",
+        scale_units="width",
+        width=0.02,
+        scale=1,
+    )
+    x_units = ax.quiver(
+        [0, 10],
+        [0, 10],
+        [1, 0],
+        [0, 1],
+        units="x",
+        scale_units="width",
+        width=0.02,
+        scale=1,
+    )
     np.testing.assert_allclose(width_units._entry["args"][0], x_units._entry["args"][0])
     np.testing.assert_allclose(width_units._entry["args"][2], x_units._entry["args"][2])
     assert width_units._entry["kwargs"]["width"] > x_units._entry["kwargs"]["width"]
@@ -749,10 +761,10 @@ def test_streamplot_array_linewidth_and_color_are_sampled_per_segment() -> None:
     _fig, ax = plt.subplots()
     ax.streamplot(x, y, -yy, xx, color=xx, linewidth=1.0 + np.abs(yy), norm=Normalize(-2.0, 2.0))
     segments = [entry for entry in ax._entries if entry.get("factory") == "segments"]
-    assert len(segments) > 1  # varying widths split into width bins
-    assert len({entry["kwargs"]["width"] for entry in segments}) > 1
-    assert all(entry["kwargs"]["domain"] == (-2.0, 2.0) for entry in segments)
-    assert any(np.ptp(np.asarray(entry["kwargs"]["color"])) > 0 for entry in segments)
+    assert len(segments) == 1
+    assert np.ptp(np.asarray(segments[0]["kwargs"]["width"])) > 0
+    assert segments[0]["kwargs"]["domain"] == (-2.0, 2.0)
+    assert np.ptp(np.asarray(segments[0]["kwargs"]["color"])) > 0
     with pytest.raises(NotImplementedError, match=r"streamplot\(norm=LogNorm\)"):
         ax.streamplot(x, y, -yy, xx, color=xx, norm=LogNorm())
 
@@ -819,6 +831,6 @@ def test_pie_pie_label_and_table_text_options_reach_text_style() -> None:
 
     _fig, ax = plt.subplots()
     ax.table(cellText=[["a", "b"]], fontsize=10)
-    cell_texts = [entry for entry in ax._entries if entry["kind"] == "@text"]
+    cell_texts = [entry for entry in ax._entries if entry["kind"] == "@table_cell"]
     assert len(cell_texts) == 2
     assert all(entry["kwargs"]["style"]["font_size"] == 10.0 for entry in cell_texts)

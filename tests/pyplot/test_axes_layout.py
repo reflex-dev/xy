@@ -144,10 +144,25 @@ def test_axis_boolean_case_insensitive_and_keyword_forms() -> None:
     _fig, ax = plt.subplots()
     ax.plot([0.0, 2.0], [0.0, 1.0])
 
+    ax.xaxis.set_visible(False)
     ax.axis(False)
+    assert ax.axison is False
+    # Matplotlib's axison flag overrides individual component visibility only
+    # while it is off; it does not overwrite that state.
     assert ax._axis_props("x")["tick_label_strategy"] == "none"
+    assert ax._axis_props("y").get("tick_label_strategy") is None
+    off_spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert off_spec["frame_sides"] == []
+    assert off_spec["x_axis"]["tick_label_strategy"] == "none"
+    assert off_spec["y_axis"]["tick_label_strategy"] == "none"
     ax.axis("ON")
-    assert ax._axis_props("x")["tick_label_strategy"] is None
+    assert ax.axison is True
+    assert ax._axis_props("x")["tick_label_strategy"] == "none"
+    assert ax._axis_props("y").get("tick_label_strategy") is None
+    on_spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert on_spec["frame_sides"] == ["left", "bottom", "top", "right"]
+    assert on_spec["x_axis"]["tick_label_strategy"] == "none"
+    assert on_spec["y_axis"].get("tick_label_strategy") is None
     assert ax.axis(xmin=-3.0, ymax=4.0) == pytest.approx((-3.0, 2.1, -0.05, 4.0))
 
     with pytest.raises(TypeError, match="unexpected keyword"):
@@ -198,6 +213,8 @@ def test_tick_params_records_supported_style_and_rejects_unknown() -> None:
     assert x_axis.tick_label_strategy == "off"  # labels hidden, ticks/baselines kept
     assert x_axis.style == {
         "axis_width": pytest.approx(0.8 * 100.0 / 72.0),
+        "grid_width": pytest.approx(0.8 * 100.0 / 72.0),
+        "grid_opacity": 1.0,
         "tick_color": "#d62728",
         "tick_label_color": "#d62728",
         "tick_length": pytest.approx(7.0 * 100.0 / 72.0),
@@ -210,8 +227,9 @@ def test_tick_params_records_supported_style_and_rejects_unknown() -> None:
         "label_size": pytest.approx(10.0 * 100.0 / 72.0),
     }
 
-    with pytest.raises(TypeError, match="unsupported keyword"):
-        ax.tick_params(which="minor")
+    ax.tick_params(which="minor", length=2)
+    assert _axis_child(ax, "x").minor_style["tick_length"] == pytest.approx(2 * 100 / 72)
+    assert _axis_child(ax, "y").minor_style["tick_length"] == pytest.approx(2 * 100 / 72)
 
 
 def test_rc_tick_padding_places_labels_by_the_matplotlib_rule() -> None:

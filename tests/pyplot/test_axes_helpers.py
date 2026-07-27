@@ -4,6 +4,7 @@ import pytest
 import xy.pyplot as plt
 from xy.pyplot._artists import Legend
 from xy.pyplot._rc import rcParams
+from xy.pyplot._ticker import AutoMinorLocator, NullLocator
 
 
 def teardown_function():
@@ -45,7 +46,7 @@ def test_ticklabel_minor_label_axis_and_legend_helpers():
     assert ax.get_xaxis() is ax.xaxis
     assert ax.get_yaxis() is ax.yaxis
     assert ax._axis_props("x")["tick_label_format"]["style"] == "sci"
-    assert ax._axis_props("x")["minor_ticks"] is True
+    assert isinstance(ax.xaxis.get_minor_locator(), AutoMinorLocator)
     assert isinstance(legend, Legend)
     assert ax.get_legend() is legend
     handles, labels = ax.get_legend_handles_labels()
@@ -54,7 +55,7 @@ def test_ticklabel_minor_label_axis_and_legend_helpers():
     assert line.get_label() == "series"
 
     ax.minorticks_off()
-    assert ax._axis_props("x")["minor_ticks"] is False
+    assert isinstance(ax.xaxis.get_minor_locator(), NullLocator)
 
 
 def test_prop_cycle_setp_getp_rc_context_and_colormap_helpers():

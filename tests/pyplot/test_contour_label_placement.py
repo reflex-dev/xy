@@ -314,6 +314,10 @@ def test_tight_layout_does_not_steal_pre_reserved_colorbar_room_twice() -> None:
     # solved plot rectangle ends early enough for its default right gutter plus
     # the automatic colorbar chrome to remain within the figure.
     fig.subplots_adjust(right=1.0 - (14.0 + colorbar_right) / canvas_width)
+    # This test installs the private engine flag directly instead of calling
+    # tight_layout(). Mark the hand-authored rectangle as the completed solve
+    # so `_effective_rects()` measures it rather than running a fresh solve.
+    fig._layout_dirty = False
     rects = fig._effective_rects()
     assert rects is not None
     allocated_width = round(canvas_width * rects[0][2])

@@ -31,6 +31,14 @@ def test_figure_by_number_activates() -> None:
     assert plt.gcf() is f1
 
 
+def test_existing_figure_ignores_factory_layout_on_reactivation() -> None:
+    fig = plt.figure(1)
+    assert fig._layout_options.get("engine") is None
+
+    assert plt.figure(1, layout="tight") is fig
+    assert fig._layout_options.get("engine") is None
+
+
 def test_close_all_resets() -> None:
     plt.plot([0, 1], [1, 2])
     plt.close("all")

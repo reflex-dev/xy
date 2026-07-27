@@ -106,9 +106,9 @@ def _record_text(monkeypatch) -> list[tuple[float, float, int, float, str]]:
     recorded: list[tuple[float, float, int, float, str]] = []
     original_text = _raster._Cmd.text
 
-    def record_text(self, x, y, anchor, size, color, value):
+    def record_text(self, x, y, anchor, size, color, value, **kwargs):
         recorded.append((float(x), float(y), int(anchor), float(size), str(value)))
-        return original_text(self, x, y, anchor, size, color, value)
+        return original_text(self, x, y, anchor, size, color, value, **kwargs)
 
     monkeypatch.setattr(_raster._Cmd, "text", record_text)
     return recorded
@@ -232,6 +232,44 @@ def test_raster_honors_tick_label_anchor() -> None:
     # Anchoring shifts every x tick label left of its tick; the images must
     # differ only because the anchor reached the rasterizer.
     assert not np.array_equal(render(), render(tick_label_anchor="end"))
+
+
+@pytest.mark.parametrize(
+    ("side", "angle", "expected_anchor"),
+    [
+        ("bottom", -35, 2),
+        ("bottom", 35, 0),
+        ("top", 35, 2),
+        ("top", -35, 0),
+    ],
+)
+def test_raster_rotated_x_ticks_match_svg_default_anchor(
+    monkeypatch,
+    side: str,
+    angle: int,
+    expected_anchor: int,
+) -> None:
+    axis_id = "x" if side == "bottom" else "x2"
+    chart = xy.chart(
+        xy.line([0.0, 1.0], [0.0, 1.0], x_axis=axis_id),
+        xy.x_axis(
+            id=axis_id,
+            side=side,
+            tick_values=(0.0, 1.0),
+            tick_labels=("Long category alpha", "Long category beta"),
+            tick_label_strategy="preserve",
+            tick_label_angle=angle,
+        ),
+        width=480,
+        height=280,
+    )
+    spec, blob = chart.figure().build_payload()
+    recorded = _record_text(monkeypatch)
+
+    _raster.render_raster(spec, blob, scale=1)
+
+    anchors = {entry[2] & 0x03 for entry in recorded if entry[4].startswith("Long category")}
+    assert anchors == {expected_anchor}
 
 
 def test_raster_legend_text_honors_theme_text_color() -> None:
@@ -630,9 +668,8 @@ def test_native_horizontal_colorbar_label_stays_upright_below_the_bar(monkeypatc
 
 
 def test_native_diagonal_tick_angle_keeps_all_labels_when_they_fit(monkeypatch) -> None:
-    # The native glyph protocol only rotates in quarter-turns, so a diagonal
-    # tick_label_angle falls back to horizontal strategy="hide" — which must
-    # only downsample on a real collision, not unconditionally.
+    # Arbitrary tick angles use the native styled-text command and keep the
+    # same collision-selected label set as SVG/browser.
     tick_values = [0.0, 25.0, 50.0, 75.0, 100.0]
     tick_labels = ["t0", "t25", "t50", "t75", "t100"]
     chart = xy.chart(
@@ -647,11 +684,18 @@ def test_native_diagonal_tick_angle_keeps_all_labels_when_they_fit(monkeypatch) 
         height=300,
     )
     spec, blob = chart.figure().build_payload()
-    recorded = _record_text(monkeypatch)
+    angles: dict[str, float] = {}
+    original_text = _raster._Cmd.text
+
+    def record_text(self, x, y, anchor, size, color, value, **kwargs):
+        angles[str(value)] = float(kwargs.get("angle", 0.0))
+        return original_text(self, x, y, anchor, size, color, value, **kwargs)
+
+    monkeypatch.setattr(_raster._Cmd, "text", record_text)
     _raster.render_raster(spec, blob, scale=1)
 
-    rendered = {entry[4] for entry in recorded}
-    assert set(tick_labels) <= rendered
+    assert set(tick_labels) <= angles.keys()
+    assert {angles[label] for label in tick_labels} == {45.0}
 
 
 def test_native_smooth_stroke_matches_reference_polyline() -> None:

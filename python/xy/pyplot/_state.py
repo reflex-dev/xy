@@ -36,6 +36,7 @@ def figure(
     """
     global _current
     toolbar = kwargs.pop("toolbar", None)
+    layout = kwargs.pop("layout", None)
     if num is None:
         num = max(_figures) + 1 if _figures else 1
     key = num if isinstance(num, int) else hash(num)
@@ -48,6 +49,7 @@ def figure(
             toolbar=toolbar,
         )
         _figures[key]._label = "" if isinstance(num, int) else str(num)
+        _apply_factory_layout(_figures[key], layout)
     elif figsize is not None or dpi is not None or toolbar is not None:
         fig = _figures[key]
         fig._figsize = figsize or fig._figsize
@@ -55,7 +57,24 @@ def figure(
         fig._toolbar = toolbar if toolbar is not None else fig._toolbar
         fig._invalidate()
     _current = key
-    return _figures[key]
+    fig = _figures[key]
+    return fig
+
+
+def _apply_factory_layout(fig: Figure, layout: Any) -> None:
+    """Apply a pyplot factory's deferred layout request to ``fig``.
+
+    ``figure(layout=...)`` runs before callers add axes, while ``subplots`` and
+    ``subplot_mosaic`` receive the same option alongside their axes factory.
+    ``tight_layout`` intentionally remains dirty after later axes/content
+    mutations, so one shared path handles all three entry points.
+    """
+    if layout is None or layout == "none":
+        return
+    if layout in {"tight", "constrained", "compressed"}:
+        fig.tight_layout()
+        return
+    raise ValueError(f"Invalid value for 'layout': {layout!r}")
 
 
 def gcf() -> Figure:

@@ -231,6 +231,11 @@ class Axis(Component):
     style: dict[str, StyleValue] = field(default_factory=dict)
     # New fields append after the v0.0.3 positional surface.
     margin: Optional[float] = None
+    tick_sides: Optional[list[str]] = None
+    tick_label_sides: Optional[list[str]] = None
+    minor_tick_values: Optional[list[float]] = None
+    minor_style: dict[str, StyleValue] = field(default_factory=dict)
+    nonpositive: Optional[Literal["clip", "mask"]] = None
 
 
 @dataclass
@@ -589,6 +594,9 @@ def scatter(
     stroke: Any = None,
     stroke_width: Any = 0.0,
     _artist_alpha: Any = None,
+    _marker_path: Optional[dict[str, Any]] = None,
+    _marker_glyph: Optional[str] = None,
+    _legend_trace_size: bool = False,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     key: Any = None,
@@ -619,6 +627,9 @@ def scatter(
         stroke: Optional marker outline color.
         stroke_width: Marker outline width in pixels.
         _artist_alpha: Internal Matplotlib alpha override, scalar or per marker.
+        _marker_path: Internal authored marker-path payload for Matplotlib adapters.
+        _marker_glyph: Internal single-glyph marker payload for Matplotlib adapters.
+        _legend_trace_size: Whether a Matplotlib legend derives marker size from this trace.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         key: Stable row identities, or a column name resolved from ``data``.
@@ -651,6 +662,9 @@ def scatter(
             "stroke": stroke,
             "stroke_width": stroke_width,
             "_artist_alpha": _artist_alpha,
+            "_marker_path": _marker_path,
+            "_marker_glyph": _marker_glyph,
+            "_legend_trace_size": _legend_trace_size,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -2375,18 +2389,23 @@ def x_axis(
     format: Optional[str] = None,
     tick_count: Optional[int] = None,
     tick_values: Union[Sequence[float], np.ndarray, None] = None,
+    minor_tick_values: Union[Sequence[float], np.ndarray, None] = None,
     tick_labels: Optional[Sequence[str]] = None,
     tick_label_angle: Optional[float] = None,
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None,
     tick_label_anchor: Optional[str] = None,
     tick_label_min_gap: Optional[float] = None,
     side: Optional[str] = None,
+    tick_sides: Optional[Sequence[str]] = None,
+    tick_label_sides: Optional[Sequence[str]] = None,
     show: Optional[bool] = None,
     line: Optional[bool] = None,
     ticks: Optional[bool] = None,
     grid: Optional[bool] = None,
     text: Optional[bool] = None,
     style: Optional[dict[str, StyleValue]] = None,
+    minor_style: Optional[dict[str, StyleValue]] = None,
+    nonpositive: Optional[Literal["clip", "mask"]] = None,
 ) -> Axis:
     """Configure an x axis.
 
@@ -2407,6 +2426,7 @@ def x_axis(
         format: Tick-label format string.
         tick_count: Requested number of ticks.
         tick_values: Explicit tick positions.
+        minor_tick_values: Explicit unlabeled minor tick positions.
         tick_labels: Labels corresponding to explicit tick positions.
         tick_label_angle: Tick-label rotation in degrees.
         tick_label_strategy: Collision-handling strategy for tick labels.
@@ -2418,6 +2438,11 @@ def x_axis(
             bottom axis instead of seesawing around its midpoint.
         tick_label_min_gap: Minimum gap between tick labels in pixels.
         side: Side of the plot where the axis is drawn.
+        tick_sides: Plot sides where tick marks are drawn. Defaults to
+            ``side``; supplying both draws mirrored ticks without moving the
+            axis labels.
+        tick_label_sides: Plot sides where tick labels are drawn. Defaults to
+            ``side`` and remains independent of ``tick_sides``.
         show: Draw this axis at all. ``False`` hides its baseline, tick marks,
             tick labels, title, and grid lines in one switch; the four
             narrower switches below override it either way, so
@@ -2430,9 +2455,15 @@ def x_axis(
             ``tick_labels``, which supplies the label *strings*.)
         style: Axis style overrides. An explicit property here always wins
             over the switches above.
+        minor_style: Independent minor tick/grid style overrides.
+        nonpositive: Log-axis handling for non-positive mark coordinates:
+            ``"clip"`` or ``"mask"``.
     """
     _validate_axis_type(type_)
     values = None if tick_values is None else [float(v) for v in tick_values]
+    minor_values = None if minor_tick_values is None else [float(v) for v in minor_tick_values]
+    if nonpositive is not None and (type_ != "log" or nonpositive not in {"clip", "mask"}):
+        raise ValueError("x_axis nonpositive must be 'clip' or 'mask' on a log axis")
     labels = None if tick_labels is None else [str(v) for v in tick_labels]
     if labels is not None and (values is None or len(labels) != len(values)):
         raise ValueError("x_axis tick_labels must match tick_values")
@@ -2452,6 +2483,7 @@ def x_axis(
         format=_optional_string(format, "x_axis format"),
         tick_count=_optional_positive_int(tick_count, "x_axis tick_count"),
         tick_values=values,
+        minor_tick_values=minor_values,
         tick_labels=labels,
         tick_label_angle=_optional_finite_number(tick_label_angle, "x_axis tick_label_angle"),
         tick_label_strategy=_axis_tick_label_strategy(
@@ -2463,6 +2495,10 @@ def x_axis(
         ),
         side=_axis_side(side, "x"),
         style=_axis_visibility_style(show, line, ticks, grid, text, style, "x_axis"),
+        tick_sides=_axis_tick_sides(tick_sides, "x"),
+        tick_label_sides=_axis_tick_label_sides(tick_label_sides, "x"),
+        minor_style=styles.compile_axis_style(minor_style, "x_axis minor style"),
+        nonpositive=nonpositive,
     )
 
 
@@ -2482,18 +2518,23 @@ def y_axis(
     format: Optional[str] = None,
     tick_count: Optional[int] = None,
     tick_values: Union[Sequence[float], np.ndarray, None] = None,
+    minor_tick_values: Union[Sequence[float], np.ndarray, None] = None,
     tick_labels: Optional[Sequence[str]] = None,
     tick_label_angle: Optional[float] = None,
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None,
     tick_label_anchor: Optional[str] = None,
     tick_label_min_gap: Optional[float] = None,
     side: Optional[str] = None,
+    tick_sides: Optional[Sequence[str]] = None,
+    tick_label_sides: Optional[Sequence[str]] = None,
     show: Optional[bool] = None,
     line: Optional[bool] = None,
     ticks: Optional[bool] = None,
     grid: Optional[bool] = None,
     text: Optional[bool] = None,
     style: Optional[dict[str, StyleValue]] = None,
+    minor_style: Optional[dict[str, StyleValue]] = None,
+    nonpositive: Optional[Literal["clip", "mask"]] = None,
 ) -> Axis:
     """Configure a y axis.
 
@@ -2514,6 +2555,7 @@ def y_axis(
         format: Tick-label format string.
         tick_count: Requested number of ticks.
         tick_values: Explicit tick positions.
+        minor_tick_values: Explicit unlabeled minor tick positions.
         tick_labels: Labels corresponding to explicit tick positions.
         tick_label_angle: Tick-label rotation in degrees.
         tick_label_strategy: Collision-handling strategy for tick labels.
@@ -2525,6 +2567,11 @@ def y_axis(
             the label rotates about the pinned edge.
         tick_label_min_gap: Minimum gap between tick labels in pixels.
         side: Side of the plot where the axis is drawn.
+        tick_sides: Plot sides where tick marks are drawn. Defaults to
+            ``side``; supplying both draws mirrored ticks without moving the
+            axis labels.
+        tick_label_sides: Plot sides where tick labels are drawn. Defaults to
+            ``side`` and remains independent of ``tick_sides``.
         show: Draw this axis at all. ``False`` hides its baseline, tick marks,
             tick labels, title, and grid lines in one switch; the four
             narrower switches below override it either way, so
@@ -2537,9 +2584,15 @@ def y_axis(
             ``tick_labels``, which supplies the label *strings*.)
         style: Axis style overrides. An explicit property here always wins
             over the switches above.
+        minor_style: Independent minor tick/grid style overrides.
+        nonpositive: Log-axis handling for non-positive mark coordinates:
+            ``"clip"`` or ``"mask"``.
     """
     _validate_axis_type(type_)
     values = None if tick_values is None else [float(v) for v in tick_values]
+    minor_values = None if minor_tick_values is None else [float(v) for v in minor_tick_values]
+    if nonpositive is not None and (type_ != "log" or nonpositive not in {"clip", "mask"}):
+        raise ValueError("y_axis nonpositive must be 'clip' or 'mask' on a log axis")
     labels = None if tick_labels is None else [str(v) for v in tick_labels]
     if labels is not None and (values is None or len(labels) != len(values)):
         raise ValueError("y_axis tick_labels must match tick_values")
@@ -2559,6 +2612,7 @@ def y_axis(
         format=_optional_string(format, "y_axis format"),
         tick_count=_optional_positive_int(tick_count, "y_axis tick_count"),
         tick_values=values,
+        minor_tick_values=minor_values,
         tick_labels=labels,
         tick_label_angle=_optional_finite_number(tick_label_angle, "y_axis tick_label_angle"),
         tick_label_strategy=_axis_tick_label_strategy(
@@ -2570,6 +2624,10 @@ def y_axis(
         ),
         side=_axis_side(side, "y"),
         style=_axis_visibility_style(show, line, ticks, grid, text, style, "y_axis"),
+        tick_sides=_axis_tick_sides(tick_sides, "y"),
+        tick_label_sides=_axis_tick_label_sides(tick_label_sides, "y"),
+        minor_style=styles.compile_axis_style(minor_style, "y_axis minor style"),
+        nonpositive=nonpositive,
     )
 
 
@@ -3280,13 +3338,18 @@ class Chart(Component):
                 format=axis.format,
                 tick_count=axis.tick_count,
                 tick_values=axis.tick_values,
+                minor_tick_values=axis.minor_tick_values,
                 tick_labels=axis.tick_labels,
                 tick_label_angle=axis.tick_label_angle,
                 tick_label_strategy=axis.tick_label_strategy,
                 tick_label_anchor=axis.tick_label_anchor,
                 tick_label_min_gap=axis.tick_label_min_gap,
                 side=axis.side,
+                tick_sides=axis.tick_sides,
+                tick_label_sides=axis.tick_label_sides,
                 style=axis.style,
+                minor_style=axis.minor_style,
+                nonpositive=axis.nonpositive,
             )
         # Facet builds pre-seed the union category order (set as a private
         # attribute by FacetChart) so shared categorical domains align the
@@ -5146,6 +5209,26 @@ def _axis_side(value: Any, which: str) -> Optional[str]:
     return value
 
 
+def _axis_tick_sides(value: Any, which: str) -> Optional[list[str]]:
+    return _axis_sides(value, which, "tick_sides")
+
+
+def _axis_tick_label_sides(value: Any, which: str) -> Optional[list[str]]:
+    return _axis_sides(value, which, "tick_label_sides")
+
+
+def _axis_sides(value: Any, which: str, field: str) -> Optional[list[str]]:
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValueError(f"{which}_axis {field} must be a sequence")
+    allowed = ("bottom", "top") if which == "x" else ("left", "right")
+    sides = list(value)
+    if any(side not in allowed for side in sides):
+        raise ValueError(f"{which}_axis {field} must contain only {list(allowed)}")
+    return [side for side in allowed if side in sides]
+
+
 def _annotation_axis_name(value: Any, label: str) -> str:
     if value not in {"x", "y"}:
         raise ValueError(f"{label} must be 'x' or 'y'")
@@ -5197,6 +5280,9 @@ def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
             stroke=m.props["stroke"],
             stroke_width=m.props["stroke_width"],
             _artist_alpha=m.props.get("_artist_alpha"),
+            _marker_path=m.props.get("_marker_path"),
+            _marker_glyph=m.props.get("_marker_glyph"),
+            _legend_trace_size=bool(m.props.get("_legend_trace_size")),
             style=m.style,
         )
     except Exception:

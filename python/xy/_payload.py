@@ -287,6 +287,19 @@ class PayloadMixin(_Host):
                 "ranges": {axis_id: list(axis["range"]) for axis_id, axis in axis_specs.items()}
             },
         }
+        if self.title_options:
+            spec["title_options"] = [
+                {
+                    **{key: value for key, value in entry.items() if key not in {"y", "pad"}},
+                    "geometry": pw.ship_scalar(
+                        np.asarray(
+                            (entry.get("y", 1.0), entry.get("pad", 8.0)),
+                            dtype=np.float64,
+                        )
+                    ),
+                }
+                for entry in self.title_options
+            ]
         if self.palette is not None:
             # Chart-level categorical cycle (`xy.theme(palette=...)`). Every
             # trace already bakes its own color and every categorical channel
@@ -1184,6 +1197,11 @@ class PayloadMixin(_Host):
             sample = self._density_sample_spec(t, sel, visible, xr, yr, pw, sample_sel=sample_sel)
             if sample is not None:
                 density["sample"] = sample
+        elif "overlay_omitted" not in density:
+            # §28: no representation is dropped silently. `oversized` above may
+            # have already recorded the more fundamental u32 reason; that one
+            # wins, so only claim the field when nothing else has.
+            density["overlay_omitted"] = "static_raster"
         entry = {
             "id": t.id,
             "kind": "scatter",

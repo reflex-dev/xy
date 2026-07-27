@@ -29,9 +29,14 @@
 // stop array, misses, and paints viridis without erroring.
 // v8: legend/colorbar geometry, extra colormap names, and match-fill strokes
 // add wire values an older v7 client would accept but silently misrender.
-// v9: scalar-normalization scale, colorbar padding/explicit-axes placement,
-// and contour-line overlays. A v8 client silently misrenders these values.
-export const PROTOCOL = 9;
+// v9: explicit minor axis ticks/styles, log nonpositive behavior,
+// `axis.tick_sides`/`axis.tick_label_sides`, scalar-normalization scale,
+// colorbar padding/explicit-axes placement, and contour-line overlays add wire
+// values a cached v8 client would accept but silently misrender.
+// v10: `title_options` carries independent left/center/right title artists,
+// including axes-fraction y and pixel padding. A v9 client would silently omit
+// non-center slots and their placement, so v10 rejects it before rendering.
+export const PROTOCOL = 10;
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
 // python/xy/_framing.py). The chart spec's PROTOCOL

@@ -11,12 +11,14 @@ rather than a snapshot churn.
 from __future__ import annotations
 
 import io
+import re
+import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
 
 import xy.pyplot as plt
-from xy import _svg
+from xy import _svg, _textblock
 
 
 def teardown_function():
@@ -84,6 +86,48 @@ def test_axes_title_does_not_move_the_rendered_frame():
     assert titled == pytest.approx(plain, abs=0.5)
 
 
+def test_cached_axes_aligns_with_same_position_overlay_in_static_exports():
+    """A cached one-panel chart must be rebuilt for absolute composition.
+
+    Matplotlib draws a later same-position Axes above the first one. Its opaque
+    patch covers the older plot, while matching ticks and labels share exactly
+    one axes rectangle instead of appearing as offset duplicate chrome.
+    """
+    fig, first = plt.subplots(figsize=(6.4, 4.8), dpi=100)
+    first.plot([0, 1], [0, 1])
+    first.set(xlabel="x", ylabel="first y", title="first title")
+
+    # Prime the single-panel cache before plt.axes() changes the figure to the
+    # absolute multi-axes composition path.
+    fig.savefig(io.BytesIO(), format="png")
+
+    second = plt.axes()
+    second.plot([0, 1], [1, 0])
+    second.set(xlabel="x", ylabel="second y", title="second title")
+
+    png = io.BytesIO()
+    svg = io.BytesIO()
+    fig.savefig(png, format="png")
+    fig.savefig(svg, format="svg")
+
+    first_rect, second_rect = _plot_rects(fig)
+    assert first_rect == pytest.approx(second_rect, abs=0.5)
+    assert png.getvalue().startswith(b"\x89PNG\r\n\x1a\n")
+
+    nested_sizes = re.findall(
+        rb'<svg x="[^"]+" y="[^"]+" width="([^"]+)" height="([^"]+)" '
+        rb'viewBox="0 0 ([^ ]+) ([^"]+)">',
+        svg.getvalue(),
+    )
+    assert len(nested_sizes) == 2
+    assert nested_sizes[0] == nested_sizes[1]
+
+    fig.delaxes(second)
+    fig.savefig(io.BytesIO(), format="png")
+    assert first._plot_box_px is None
+    assert _plot_rects(fig)[0] == pytest.approx(_reported_rects(fig)[0], abs=0.5)
+
+
 @pytest.mark.parametrize(
     "figsize",
     [(6.4, 4.8), (3.2, 2.4), (12.0, 3.0), (5.0, 5.0)],
@@ -140,6 +184,95 @@ def test_grid_panel_reservations_keep_the_plot_rect_on_its_cell():
             assert got[3] == pytest.approx(want[3], abs=1.0)
         else:
             assert got == pytest.approx(want, abs=1.0)
+
+
+def test_tight_gridspec_panels_contain_terminal_x_tick_labels_in_static_exports():
+    """Matplotlib tight-layout unions visible tick-label bboxes with each Axes.
+
+    The compact panel's historical 8 px right gutter clipped the centered
+    ``1.0`` label before SVG/PNG composition. Exercise the gallery's spanning
+    GridSpec shape and require every panel canvas to contain that terminal ink.
+    """
+    fig, axes = plt.subplots(3, 3, figsize=(6.4, 4.8), dpi=100)
+    gridspec = axes[1, 2].get_gridspec()
+    for ax in axes[1:, -1]:
+        ax.remove()
+    fig.add_subplot(gridspec[1:, -1])
+    fig.tight_layout()
+
+    svg_output = io.BytesIO()
+    fig.savefig(svg_output, format="svg")
+    root = ET.fromstring(svg_output.getvalue())
+    panels = [node for node in root if node.tag.endswith("svg")]
+    assert len(panels) == 8
+    for panel in panels:
+        terminal = next(
+            node
+            for node in panel.iter()
+            if node.tag.endswith("text")
+            and node.attrib.get("text-anchor") == "middle"
+            and "".join(node.itertext()) == "1.0"
+        )
+        font_size = float(terminal.attrib["font-size"])
+        ink_right = float(terminal.attrib["x"]) + (_textblock.measure("1.0", font_size).width / 2)
+        assert ink_right + _svg._AXIS_TEXT_EDGE_PAD <= float(panel.attrib["width"])
+
+    png_output = io.BytesIO()
+    fig.savefig(png_output, format="png", dpi=100)
+    assert png_output.getvalue()[:24] == (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x02\x80\x00\x00\x01\xe0"
+    )
+
+
+def test_constrained_colorbar_grid_keeps_balanced_cells_across_static_exports():
+    """The contourf gallery's PNG→SVG capture must not compound colorbar room."""
+    x = np.linspace(-3.0, 3.0, 17)
+    xx, yy = np.meshgrid(x, x)
+    z = np.exp(-(xx**2) - yy**2) - np.exp(-((xx - 1) ** 2) - (yy - 1) ** 2)
+    levels = [-1.0, -0.5, 0.0, 0.5, 1.0]
+    extends = ("neither", "both", "min", "max")
+
+    fig, axes = plt.subplots(2, 2, figsize=(6.4, 4.8), dpi=100, layout="constrained")
+    for ax, extend in zip(np.asarray(axes).flat, extends, strict=True):
+        contours = ax.contourf(xx, yy, z, levels, extend=extend)
+        fig.colorbar(contours, ax=ax, shrink=0.9)
+        ax.set_title(f"extend = {extend}")
+        ax.locator_params(nbins=4)
+
+    expected = _reported_rects(fig)
+    rendered = _plot_rects(fig)
+    for want, got in zip(expected, rendered, strict=True):
+        assert got == pytest.approx(want, abs=1.0)
+    assert all(width >= 0.9 * height for _x, _y, width, height in expected)
+
+    png = io.BytesIO()
+    fig.savefig(png, format="png", dpi=100)
+    assert png.getvalue().startswith(b"\x89PNG")
+
+    svg = io.BytesIO()
+    fig.savefig(svg, format="svg", dpi=100)
+    root = ET.fromstring(svg.getvalue())
+    panels = [node for node in root if node.tag.endswith("svg")]
+    assert [(float(node.attrib["width"]), float(node.attrib["height"])) for node in panels] == [
+        (320.0, 240.0)
+    ] * 4
+    plot_boxes = [
+        next(
+            node
+            for node in panel.iter()
+            if node.tag.endswith("rect") and node.attrib.get("fill") == "white"
+        )
+        for panel in panels
+    ]
+    assert all(
+        float(box.attrib["width"]) >= 0.9 * float(box.attrib["height"]) for box in plot_boxes
+    )
+
+    # savefig restores transient state and dirties the requested layout. Its
+    # next final-content solve must be idempotent rather than reserving each
+    # axes' colorbar a second time.
+    for want, got in zip(expected, _reported_rects(fig), strict=True):
+        assert got == pytest.approx(want, abs=1.0)
 
 
 def test_get_position_reports_one_distinct_box_per_grid_panel():

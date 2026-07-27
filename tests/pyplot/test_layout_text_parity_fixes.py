@@ -65,7 +65,7 @@ def test_free_form_axes_render_at_their_rects_in_html() -> None:
     assert [(int(x), int(y)) for x, y in placements] == [(18, 48), (370, 66)]
     # a fixed-size canvas replaces the side-by-side CSS grid
     assert "position: relative; width: 640px; height: 480px" in html
-    assert "display: grid" not in html
+    assert ".xy-grid { display: grid" not in html
 
 
 def test_add_axes_rects_stack_vertically_in_html() -> None:
@@ -192,15 +192,29 @@ def test_log_axes_label_decades_and_grid_majors_only() -> None:
     assert "10⁰" in x_opts["tick_labels"] or "10¹" in x_opts["tick_labels"]
 
 
-def test_mathtext_subset_converts_and_unknown_tex_passes_through() -> None:
+def test_mathtext_subset_converts_and_unknown_tex_degrades_locally() -> None:
     assert mathtext_to_unicode(r"$\pi/2$") == "π/2"
     assert mathtext_to_unicode(r"$3\pi/2$") == "3π/2"
     assert mathtext_to_unicode("km$^2$") == "km²"
     assert mathtext_to_unicode("log$_{10}$(population)") == "log₁₀(population)"
     assert mathtext_to_unicode(r"$\mathdefault{10^{3}}$") == "10³"
     assert mathtext_to_unicode(r"$\frac{1}{2}\pi$") == "1/2π"
-    assert mathtext_to_unicode(r"$\unknowncmd{x}$") == r"$\unknowncmd{x}$"
-    assert mathtext_to_unicode(r"$x^q$") == r"$x^q$"  # no unicode superscript q
+    assert mathtext_to_unicode(r"$\unknowncmd{x}$") == "unknowncmdx"
+    assert mathtext_to_unicode(r"$x^q$") == "x^q"  # no unicode superscript q
+
+
+def test_mathtext_fraction_parser_balances_nested_script_braces() -> None:
+    assert (
+        mathtext_to_unicode(r"$\sigma(t) = \frac{1}{1 + e^{-t}}$") == "σ(t)=1/(1+e^(−t))"  # noqa: RUF001 - intentional math glyphs
+    )
+    assert mathtext_to_unicode(r"$\frac{\frac{1}{2}}{x_{10}}$") == "(1/2)/x₁₀"
+
+
+def test_mathtext_preserves_uppercase_subscript_and_local_fallbacks() -> None:
+    converted = mathtext_to_unicode(r"$N\,f_X(x)\,\delta x_0+\unknown{q}$")
+
+    assert converted == "N f_X(x) δx₀+unknownq"
+    assert "\\" not in converted
 
 
 def test_mathtext_reaches_labels_ticks_and_legend() -> None:
@@ -214,6 +228,22 @@ def test_mathtext_reaches_labels_ticks_and_legend() -> None:
     assert "km²" in svg
     assert ">π<" in svg and ">2π<" in svg
     assert "σ²" in svg
+
+
+def test_legend_mathtext_never_exposes_raw_backslash_commands() -> None:
+    fig, ax = plt.subplots()
+    ax.plot(
+        [0, 1],
+        [0, 1],
+        label=r"$N\,f_X(x)+\frac{1}{1 + e^{-t}}+\unsupported{q}$",
+    )
+    ax.legend()
+
+    svg = _svg(fig)
+
+    assert "N f_X(x)+1/(1+e^(−t))+unsupportedq" in svg  # noqa: RUF001
+    assert "\\unsupported" not in svg
+    assert "\\frac" not in svg
 
 
 def test_funcformatter_mathtext_tick_labels_render_unicode() -> None:

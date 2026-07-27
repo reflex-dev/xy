@@ -20,9 +20,15 @@ import warnings
 # same silent-misrender case v6 itself was cut for.
 # v8: legend/colorbar geometry, extra colormap names, and match-fill strokes
 # add wire values an older v7 client would accept but silently misrender.
-# v9: scalar-normalization scale, colorbar padding/explicit-axes placement,
-# and contour-line overlays.
-PROTOCOL_VERSION = 9
+# v9: explicit minor axis ticks/styles, log nonpositive behavior, independent
+# `tick_sides`/`tick_label_sides`, scalar-normalization scale, colorbar
+# padding/explicit-axes placement, and contour-line overlays add fields a
+# cached v8 client would accept but silently misrender.
+# v10: `title_options` carries independent left/center/right title artists,
+# including axes-fraction y and pixel padding. A v9 client would ignore that
+# field and silently omit non-center slots and their placement, so it must
+# reject the payload.
+PROTOCOL_VERSION = 10
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the

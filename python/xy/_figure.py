@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 import warnings
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from os import PathLike
 from typing import Any, Optional, TypeAlias, Union
 
@@ -112,6 +112,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # padding + hidden axes gives an edge-to-edge sparkline for dashboards.
         self.padding = self._padding(padding, "padding")
         self.title = self._optional_text(title, "title")
+        # Optional renderer-owned title slots. Declarative charts keep using
+        # ``title``; the pyplot shim fills this with Matplotlib's independent
+        # left/center/right title artists.
+        self.title_options: list[dict[str, Any]] = []
         self.x_label = self._optional_text(x_label, "x_label")
         self.y_label = self._optional_text(y_label, "y_label")
         self.axis_options: dict[str, dict[str, Any]] = {
@@ -247,13 +251,18 @@ class Figure(AnnotationsMixin, PayloadMixin):
         format: Optional[str] = None,
         tick_count: Optional[int] = None,
         tick_values: Optional[Any] = None,
+        minor_tick_values: Optional[Any] = None,
         tick_labels: Optional[Any] = None,
         tick_label_angle: Optional[float] = None,
         tick_label_strategy: Optional[str] = None,
         tick_label_anchor: Optional[str] = None,
         tick_label_min_gap: Optional[float] = None,
         side: Optional[str] = None,
+        tick_sides: Optional[Any] = None,
+        tick_label_sides: Optional[Any] = None,
         style: Optional[dict[str, Any]] = None,
+        minor_style: Optional[dict[str, Any]] = None,
+        nonpositive: Optional[str] = None,
     ) -> "Figure":
         axis_id = self._axis_id(axis_id, "axis id")
         axis_dim = self._axis_dim(axis_id)
@@ -284,11 +293,43 @@ class Figure(AnnotationsMixin, PayloadMixin):
             raise ValueError("x axis side must be 'top' or 'bottom'")
         elif axis_dim == "y" and side not in {"left", "right"}:
             raise ValueError("y axis side must be 'left' or 'right'")
+        if tick_sides is not None:
+            if isinstance(tick_sides, (str, bytes)) or not isinstance(tick_sides, Sequence):
+                raise ValueError(f"{axis_id} axis tick_sides must be a sequence")
+            allowed_tick_sides = ("bottom", "top") if axis_dim == "x" else ("left", "right")
+            tick_sides = list(tick_sides)
+            if any(value not in allowed_tick_sides for value in tick_sides):
+                raise ValueError(
+                    f"{axis_id} axis tick_sides must contain only {list(allowed_tick_sides)}"
+                )
+            tick_sides = [value for value in allowed_tick_sides if value in tick_sides]
+        if tick_label_sides is not None:
+            if isinstance(tick_label_sides, (str, bytes)) or not isinstance(
+                tick_label_sides, Sequence
+            ):
+                raise ValueError(f"{axis_id} axis tick_label_sides must be a sequence")
+            allowed_label_sides = ("bottom", "top") if axis_dim == "x" else ("left", "right")
+            tick_label_sides = list(tick_label_sides)
+            if any(value not in allowed_label_sides for value in tick_label_sides):
+                raise ValueError(
+                    f"{axis_id} axis tick_label_sides must contain only {list(allowed_label_sides)}"
+                )
+            tick_label_sides = [value for value in allowed_label_sides if value in tick_label_sides]
         values = (
             None
             if tick_values is None
             else [self._finite_scalar(value, f"{axis_id} tick value") for value in tick_values]
         )
+        minor_values = (
+            None
+            if minor_tick_values is None
+            else [
+                self._finite_scalar(value, f"{axis_id} minor tick value")
+                for value in minor_tick_values
+            ]
+        )
+        if nonpositive is not None and (type_ != "log" or nonpositive not in {"clip", "mask"}):
+            raise ValueError(f"{axis_id} axis nonpositive must be 'clip' or 'mask' on a log axis")
         labels = None if tick_labels is None else [str(value) for value in tick_labels]
         if labels is not None and (values is None or len(labels) != len(values)):
             raise ValueError(f"{axis_id} tick_labels must match tick_values")
@@ -310,6 +351,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             "format": self._optional_text(format, f"{axis_id} axis format"),
             "tick_count": self._optional_positive_int(tick_count, f"{axis_id} axis tick_count"),
             "tick_values": values,
+            "minor_tick_values": minor_values,
             "tick_labels": labels,
             "tick_label_angle": self._optional_finite_scalar(
                 tick_label_angle, f"{axis_id} axis tick_label_angle"
@@ -324,7 +366,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
             if tick_label_min_gap is None
             else self._nonnegative_scalar(tick_label_min_gap, f"{axis_id} axis tick_label_min_gap"),
             "side": side,
+            "tick_sides": tick_sides,
+            "tick_label_sides": tick_label_sides,
             "style": styles.compile_axis_style(style, f"{axis_id} axis style"),
+            "minor_style": styles.compile_axis_style(minor_style, f"{axis_id} minor axis style"),
+            "nonpositive": nonpositive,
         }
         if axis_id == "x":
             self.x_label = self.axis_options[axis_id]["label"]
@@ -1257,6 +1303,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
             "range": list(range_),
             "side": opts.get("side", "bottom" if axis == "x" else "left"),
         }
+        if opts.get("tick_sides") is not None:
+            spec["tick_sides"] = list(opts["tick_sides"])
+        if opts.get("tick_label_sides") is not None:
+            spec["tick_label_sides"] = list(opts["tick_label_sides"])
         if label_position is not None:
             spec["label_position"] = label_position
         if label_offset is not None:
@@ -1267,6 +1317,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             spec["tick_count"] = tick_count
         if opts.get("tick_values") is not None:
             spec["tick_values"] = list(opts["tick_values"])
+        if opts.get("minor_tick_values") is not None:
+            spec["minor_tick_values"] = list(opts["minor_tick_values"])
         if opts.get("tick_labels") is not None:
             spec["tick_labels"] = list(opts["tick_labels"])
         if tick_label_angle is not None:
@@ -1282,6 +1334,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             spec["scale"] = scale
         if scale == "symlog":
             spec["constant"] = opts.get("constant") or 1.0
+        if scale == "log" and opts.get("nonpositive") is not None:
+            spec["nonpositive"] = opts["nonpositive"]
         if opts.get("reverse"):
             spec["reverse"] = True
         if opts.get("domain") is not None:
@@ -1293,6 +1347,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             bounds = self._range(axis_id, use_domain=False)
         if bounds is not None:
             spec["bounds"] = sorted(bounds)
+        if opts.get("minor_style"):
+            spec["minor_style"] = dict(opts["minor_style"])
         if opts.get("format") is not None:
             spec["format"] = opts["format"]
         style = styles.compile_axis_style(opts.get("style"), f"{axis_id} axis style")

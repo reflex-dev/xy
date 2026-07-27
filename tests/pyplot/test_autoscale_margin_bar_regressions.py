@@ -213,3 +213,64 @@ def test_centered_bar_labels_do_not_expand_autoscale_margin() -> None:
     ax.bar_label(bars, label_type="center")
 
     assert ax.get_ylim() == pytest.approx((0.0, 2.1))
+
+
+def test_vertical_edge_bar_labels_follow_asymmetric_error_endpoints_and_sign() -> None:
+    _fig, ax = plt.subplots()
+    bars = ax.bar(
+        [0.0, 1.0],
+        [3.0, -4.0],
+        bottom=[1.0, 2.0],
+        yerr=[[0.5, 1.5], [2.0, 0.25]],
+    )
+
+    labels = ax.bar_label(bars, padding=3)
+
+    assert bars.errorbar is not None
+    assert bars.errorbar.has_yerr
+    assert [label._entry["args"][1] for label in labels] == pytest.approx([6.0, -3.5])
+    assert [label._entry["kwargs"]["dy"] for label in labels] == pytest.approx(
+        [-3.0 * 100.0 / 72.0, 3.0 * 100.0 / 72.0]
+    )
+    assert [label._entry["kwargs"]["style"]["vertical_align"] for label in labels] == [
+        "bottom",
+        "top",
+    ]
+
+
+def test_inverted_vertical_bar_axis_flips_edge_label_padding_and_alignment() -> None:
+    _fig, ax = plt.subplots()
+    bars = ax.bar([0.0, 1.0], [3.0, -4.0], yerr=[[0.5, 1.5], [2.0, 0.25]])
+    ax.invert_yaxis()
+
+    labels = ax.bar_label(bars, padding=3)
+
+    assert [label._entry["args"][1] for label in labels] == pytest.approx([5.0, -5.5])
+    assert [label._entry["kwargs"]["dy"] for label in labels] == pytest.approx(
+        [3.0 * 100.0 / 72.0, -3.0 * 100.0 / 72.0]
+    )
+    assert [label._entry["kwargs"]["style"]["vertical_align"] for label in labels] == [
+        "top",
+        "bottom",
+    ]
+
+
+def test_horizontal_edge_bar_labels_follow_errors_and_inverted_axis() -> None:
+    _fig, ax = plt.subplots()
+    bars = ax.barh(
+        [0.0, 1.0],
+        [3.0, -4.0],
+        left=[1.0, 2.0],
+        xerr=[[0.5, 1.5], [2.0, 0.25]],
+    )
+    ax.invert_xaxis()
+
+    labels = ax.bar_label(bars, padding=4)
+
+    assert bars.errorbar is not None
+    assert bars.errorbar.has_xerr
+    assert [label._entry["args"][0] for label in labels] == pytest.approx([6.0, -3.5])
+    assert [label._entry["kwargs"]["dx"] for label in labels] == pytest.approx(
+        [-4.0 * 100.0 / 72.0, 4.0 * 100.0 / 72.0]
+    )
+    assert [label._entry["kwargs"]["anchor"] for label in labels] == ["end", "start"]

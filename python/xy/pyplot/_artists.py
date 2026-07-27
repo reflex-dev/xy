@@ -9,7 +9,7 @@ dominant mutation idioms without reproducing matplotlib's artist graph.
 from __future__ import annotations
 
 import warnings
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from operator import index as operator_index
 from typing import Any, Optional
 
@@ -18,6 +18,21 @@ import numpy as np
 from ._colors import resolve_color, resolve_rgba_array, scalar_float
 from ._rc import rcParams
 from ._transforms import Bbox, IdentityTransform
+
+
+class _PatchFacade:
+    """Stable facecolor facade for the figure and axes background patches."""
+
+    def __init__(self, owner: Any) -> None:
+        self._owner = owner
+
+    def set_facecolor(self, color: Any) -> None:
+        self._owner.set_facecolor(color)
+
+    set_fc = set_facecolor
+
+    def get_facecolor(self) -> Any:
+        return self._owner.get_facecolor()
 
 
 def unit_converted_values(values: Any) -> Any:
@@ -618,12 +633,18 @@ class AxesImage(Artist):
         import numpy as np
 
         if len(args) == 1:
-            self._entry["z"] = np.asarray(args[0])
+            self._axes._set_axes_image_data(self, args[0])
         elif len(args) == 3:
             x, y, z = args
-            self._entry["z"] = np.asarray(z)
-            self._entry["kwargs"]["x"] = np.asarray(x)
-            self._entry["kwargs"]["y"] = np.asarray(y)
+            self._axes._set_axes_image_data(self, z)
+            self._entry["kwargs"]["x"] = np.asarray(x).copy()
+            self._entry["kwargs"]["y"] = np.asarray(y).copy()
+            # `_set_axes_image_data` copied the replacement artist's extent,
+            # which was prepared from the old imshow state.  The 3-argument
+            # form supplies new coordinate centers, so invalidate that cached
+            # box and materialize the bounds derived from the new x/y arrays.
+            self._entry.pop("extent", None)
+            self._entry["extent"] = self.get_extent()
         else:
             raise TypeError("set_data expects image data or x, y, image data")
         self._touch()
@@ -953,11 +974,17 @@ class StemContainer:
 class ErrorbarContainer:
     """Tuple-compatible errorbar handle without reproducing mpl's artist graph."""
 
-    def __init__(self, artist: Artist, data_line: Optional[Line2D] = None) -> None:
-        self.lines = (data_line, (), (artist,))
+    def __init__(
+        self,
+        artist: Artist,
+        data_line: Optional[Line2D] = None,
+        cap_artists: Sequence[Artist] = (),
+    ) -> None:
+        self.lines = (data_line, tuple(cap_artists), (artist,))
         self.has_xerr = artist._entry["kwargs"].get("xerr") is not None
         self.has_yerr = artist._entry["kwargs"].get("yerr") is not None
         self._artist = artist
+        self._cap_artists = tuple(cap_artists)
         artist._axes._register_container(self)
 
     def __iter__(self) -> Iterator[Any]:
@@ -971,8 +998,12 @@ class ErrorbarContainer:
         self._artist._touch()
 
     def remove(self) -> None:
-        self._artist.remove()
-        self._artist._axes._unregister_container(self)
+        axes = self._artist._axes
+        for child in (*self._cap_artists, self._artist):
+            child.remove()
+        if self.lines[0] is not None:
+            self.lines[0].remove()
+        axes._unregister_container(self)
 
 
 class ContourSet(Artist):
@@ -1174,6 +1205,41 @@ class _LegendProxy:
         self._entry = entry
 
 
+class _LegendFrame:
+    """Mutable facade over the frame options owned by one shim legend."""
+
+    def __init__(self, legend: "Legend") -> None:
+        self._legend = legend
+
+    def set_facecolor(self, color: Any) -> None:
+        self._legend._set_frame_option("facecolor", color)
+
+    set_fc = set_facecolor
+
+    def get_facecolor(self) -> Any:
+        return self._legend._frame_style().get("background")
+
+    def set_edgecolor(self, color: Any) -> None:
+        self._legend._set_frame_option("edgecolor", color)
+
+    set_ec = set_edgecolor
+
+    def get_edgecolor(self) -> Any:
+        return self._legend._frame_style().get("borderColor")
+
+    def set_alpha(self, alpha: float | None) -> None:
+        self._legend._set_frame_option("framealpha", alpha)
+
+    def get_alpha(self) -> Any:
+        return self._legend._frame_style().get("--xy-legend-frame-alpha")
+
+    def set_visible(self, visible: bool) -> None:
+        self._legend._set_frame_option("frameon", bool(visible))
+
+    def get_visible(self) -> bool:
+        return bool(self._legend._kwargs.get("frameon", rcParams["legend.frameon"]))
+
+
 def _contour_legend_colors(entry: dict[str, Any], count: int) -> list[str]:
     """Resolve a contour's scalar/listed color channel to CSS proxy colors."""
     if count <= 0:
@@ -1275,6 +1341,41 @@ class PolyCollection(Artist):
 class Wedge(PolyCollection):
     """Pie wedge backed by a grouped subset of one native sector mesh."""
 
+    def __init__(
+        self,
+        axes: Any,
+        entry: dict[str, Any],
+        outline_entry: dict[str, Any] | None = None,
+        *,
+        hatch_entry: dict[str, Any] | None = None,
+        shadow_entries: list[dict[str, Any]] | None = None,
+    ) -> None:
+        super().__init__(axes, entry)
+        self._outline_entry = outline_entry
+        self._hatch_entry = hatch_entry
+        self._shadow_entries = list(shadow_entries or [])
+
+    def remove(self) -> None:
+        for entry in self._shadow_entries:
+            self._axes._remove_entry(entry)
+        self._shadow_entries.clear()
+        if self._hatch_entry is not None:
+            self._axes._remove_entry(self._hatch_entry)
+            self._hatch_entry = None
+        if self._outline_entry is not None:
+            self._axes._remove_entry(self._outline_entry)
+            self._outline_entry = None
+        super().remove()
+
+    def set_zorder(self, level: float) -> None:
+        for entry in self._shadow_entries:
+            entry["_zorder"] = float(np.nextafter(float(level), -np.inf))
+        if self._hatch_entry is not None:
+            self._hatch_entry["_zorder"] = float(level)
+        if self._outline_entry is not None:
+            self._outline_entry["_zorder"] = float(level)
+        super().set_zorder(level)
+
     @property
     def theta1(self) -> float:
         """Starting angle in degrees, matching Matplotlib's public geometry."""
@@ -1372,6 +1473,17 @@ class Table:
         for artist in self._artists:
             artist.remove()
         if hasattr(self, "_axes"):
+            self._axes._table_bottom_points = max(
+                (
+                    (float(entry["table_geometry"]["row_from_top"]) + 1.0)
+                    * float(entry["table_geometry"]["row_height_points"])
+                    + 1.0
+                    for entry in self._axes._entries
+                    if entry.get("kind") == "@table_cell"
+                    and entry.get("table_geometry", {}).get("row_height_points") is not None
+                ),
+                default=0.0,
+            )
             self._axes._unregister_artist(self)
 
 
@@ -1402,7 +1514,10 @@ class StreamplotSet:
 
 
 def _legend_item_from_entry(
-    entry: dict[str, Any], label: Any, point_scale: float
+    entry: dict[str, Any],
+    label: Any,
+    point_scale: float,
+    marker_entry: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Freeze a plotted entry into a standalone legend swatch descriptor.
 
@@ -1413,7 +1528,7 @@ def _legend_item_from_entry(
     renderer already draws for a named trace, so line dashes and marker glyphs
     render identically.
     """
-    kind = str(entry.get("kind", "line"))
+    kind = str(entry.get("_legend_kind", entry.get("kind", "line")))
     if kind.startswith("@"):  # generic marks (errorbar, vlines, …) → a line sample
         kind = "line"
     kw = entry.get("kwargs", {})
@@ -1435,10 +1550,16 @@ def _legend_item_from_entry(
     opacity = kw.get("opacity")
     if opacity is not None:
         style["opacity"] = float(opacity)
-    hatch = kw.get("hatch")
+    stroke = kw.get("stroke")
+    if isinstance(stroke, str):
+        style["stroke"] = stroke
+    stroke_width = kw.get("stroke_width")
+    if stroke_width is not None and np.isscalar(stroke_width):
+        style["stroke_width"] = float(stroke_width)
+    hatch = kw.get("hatch", entry.get("pie_hatch"))
     if hatch:
         style["hatch"] = str(hatch)
-        style["hatch_color"] = str(kw.get("hatch_color", "#222222"))
+        style["hatch_color"] = str(kw.get("hatch_color", entry.get("pie_hatch_color", "#222222")))
     # Rule annotations keep renderer-specific geometry inside ``style`` while
     # ordinary line/step entries keep it at the top level. Accept both shapes
     # so explicit Legend handles preserve the plotted dash.
@@ -1459,6 +1580,11 @@ def _legend_item_from_entry(
             style["dash"] = resolved
     elif isinstance(dash, (list, tuple)):
         style["dash"] = [float(v) for v in dash]
+    gap_color = kw.get("_gapcolor")
+    if isinstance(gap_color, str):
+        style["legend_gap_color"] = gap_color
+    if marker_entry is not None:
+        style["legend_marker"] = _legend_marker_style(marker_entry)
     if kind == "scatter":
         symbol = kw.get("symbol")
         if symbol:
@@ -1471,6 +1597,26 @@ def _legend_item_from_entry(
             if kw.get(key) is not None:
                 style[key] = kw[key]
     return {"name": str(label), "kind": kind, "style": style}
+
+
+def _legend_marker_style(entry: dict[str, Any]) -> dict[str, Any]:
+    """Freeze a pyplot marker overlay into a renderer-neutral legend marker."""
+    kw = entry.get("kwargs") or {}
+    marker: dict[str, Any] = {"symbol": str(kw.get("symbol", "circle"))}
+    for source, target in (
+        ("color", "color"),
+        ("stroke", "stroke"),
+        ("_marker_path", "marker_path"),
+        ("_marker_glyph", "marker_glyph"),
+    ):
+        value = kw.get(source)
+        if value is not None:
+            marker[target] = value
+    for key in ("size", "stroke_width"):
+        value = kw.get(key)
+        if value is not None and np.isscalar(value):
+            marker[key] = float(value)
+    return marker
 
 
 class Legend:
@@ -1491,7 +1637,7 @@ class Legend:
                 f"labels ({len(labels)}); the extras are ignored",
                 stacklevel=2,
             )
-        self._pairs: list[tuple[dict[str, Any], Any]] = []
+        self._pairs: list[tuple[dict[str, Any], Any, Optional[dict[str, Any]]]] = []
         for handle, label in zip(handles, labels, strict=False):
             entry = getattr(handle, "_entry", None)
             if entry is None:
@@ -1505,10 +1651,16 @@ class Legend:
                     stacklevel=2,
                 )
                 continue
-            self._pairs.append((entry, label))
+            marker_entry = None
+            if isinstance(handle, Line2D):
+                marker_entries = handle._marker_entries()
+                if marker_entries and marker_entries[0] is not entry:
+                    marker_entry = marker_entries[0]
+            self._pairs.append((entry, label, marker_entry))
         self._kwargs = dict(kwargs)
         if loc is not None:
             self._kwargs.setdefault("loc", loc)
+        self._frame = _LegendFrame(self)
         self._attach(parent)
 
     def _attach(self, parent: Any) -> None:
@@ -1521,7 +1673,26 @@ class Legend:
         self._parent = parent
         self._options = parent._compose_legend_options(dict(self._kwargs))
         scale = parent._point_scale()
-        self._items = [_legend_item_from_entry(entry, label, scale) for entry, label in self._pairs]
+        self._items = [
+            _legend_item_from_entry(entry, label, scale, marker_entry)
+            for entry, label, marker_entry in self._pairs
+        ]
+
+    def _frame_style(self) -> dict[str, Any]:
+        return self._options.get("style", {})
+
+    def _set_frame_option(self, name: str, value: Any) -> None:
+        self._kwargs[name] = value
+        self._attach(self._parent)
+        host = self._parent._y2_of or self._parent
+        if host._legend_handle is self:
+            host._legend_options = dict(self._options)
+            if host._legend_items is not None:
+                host._legend_items = list(self._items)
+        host._invalidate()
+
+    def get_frame(self) -> _LegendFrame:
+        return self._frame
 
     def spec(self) -> dict[str, Any]:
         """The option dict plus explicit items, ready for the render payload."""

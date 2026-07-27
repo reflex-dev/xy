@@ -52,6 +52,56 @@ _POSTLUDE = """
 """
 
 
+def test_browser_log_minor_grid_and_nonpositive_mode_reach_live_renderer(
+    tmp_path: Path,
+) -> None:
+    chart = xy.line_chart(
+        xy.line(x=[1.0, 10.0], y=[1.0, 2.0]),
+        xy.x_axis(
+            type_="log",
+            domain=(1.0, 10.0),
+            tick_values=[1.0, 10.0],
+            minor_tick_values=[2.0, 3.0, 4.0, 5.0],
+            nonpositive="mask",
+            style={"grid_color": "red", "grid_width": 2},
+            minor_style={"grid_color": "#e6e6e6", "grid_width": 1},
+        ),
+        width=480,
+        height=320,
+    )
+    script = (
+        _PRELUDE
+        + """
+    const ctx = view.chrome.getContext("2d");
+    const colors = [];
+    const realStroke = ctx.stroke.bind(ctx);
+    ctx.stroke = (...args) => {
+      colors.push(String(ctx.strokeStyle));
+      return realStroke(...args);
+    };
+    view._drawChrome();
+    const maskMode = view._axisMode("x");
+    view.axes.x.nonpositive = "clip";
+    const clipMode = view._axisMode("x");
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      maskMode,
+      clipMode,
+      hasMinorGrid: colors.includes("#e6e6e6") || colors.includes("rgb(230, 230, 230)"),
+      hasMajorGrid: colors.includes("red") || colors.includes("#ff0000"),
+    }));
+"""
+        + _POSTLUDE
+    )
+
+    result = _probe(chart, script, tmp_path, "log minor grid and nonpositive mode")
+    assert result == {
+        "maskMode": 3,
+        "clipMode": 1,
+        "hasMinorGrid": True,
+        "hasMajorGrid": True,
+    }
+
+
 def test_tooltip_labels_and_semantic_slots_are_independently_styleable(tmp_path: Path) -> None:
     data = {
         "quarter": [1, 2, 3, 4],
@@ -631,6 +681,64 @@ def test_long_y_categories_expand_the_browser_gutter(tmp_path: Path) -> None:
     assert sorted(result["tickTexts"]) == categories, result
 
 
+def test_rotated_x_labels_expand_top_and_bottom_browser_gutters(tmp_path: Path) -> None:
+    labels = [
+        "Democratic Republic of the Congo",
+        "United States of America",
+        "Papua New Guinea",
+    ]
+    chart = xy.chart(
+        xy.line(labels, [1.0, 2.0, 3.0]),
+        xy.line([0.0, 1.0, 2.0], [3.0, 2.0, 1.0], x_axis="x2"),
+        xy.x_axis(
+            tick_values=[0.0, 1.0, 2.0],
+            tick_labels=labels,
+            tick_label_angle=45,
+            tick_label_anchor="end",
+            tick_label_strategy="preserve",
+        ),
+        xy.x_axis(
+            id="x2",
+            side="top",
+            tick_values=[0.0, 1.0, 2.0],
+            tick_labels=labels,
+            tick_label_angle=-45,
+            tick_label_anchor="end",
+            tick_label_strategy="preserve",
+        ),
+        width=640,
+        height=420,
+    )
+    script = (
+        _PRELUDE
+        + """
+    const root = view.root.getBoundingClientRect();
+    const labels = [...view.root.querySelectorAll('[data-xy-label-kind="tick"]')]
+      .filter((node) => node.dataset.xyAxis === "x" || node.dataset.xyAxis === "x2")
+      .map((node) => ({
+        axis: node.dataset.xyAxis,
+        top: node.getBoundingClientRect().top,
+        bottom: node.getBoundingClientRect().bottom,
+      }));
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      topRoom: view.plot.y,
+      bottomRoom: view.size.h - view.plot.y - view.plot.h,
+      topInside: labels.filter((item) => item.axis === "x2")
+        .every((item) => item.top >= root.top - 1),
+      bottomInside: labels.filter((item) => item.axis === "x")
+        .every((item) => item.bottom <= root.bottom + 1),
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "rotated x tick gutters")
+
+    assert result["topRoom"] > 100, result
+    assert result["bottomRoom"] > 100, result
+    assert result["topInside"] is True, result
+    assert result["bottomInside"] is True, result
+
+
 def test_categorical_tick_bounds_follow_anchor_rotation_and_extra_axis_side(
     tmp_path: Path,
 ) -> None:
@@ -658,7 +766,7 @@ def test_categorical_tick_bounds_follow_anchor_rotation_and_extra_axis_side(
         + """
     // Python normalizes an omitted extra-y side to "right". Remove it here to
     // exercise the client/update-spec state that previously disagreed: chrome
-    // still defaults this axis to right via `side !== "left"`.
+    // must still resolve and record the rendered tick-label side as right.
     view.axes.y2.side = undefined;
     view._drawNow();
     view._raf = null;
@@ -688,5 +796,5 @@ def test_categorical_tick_bounds_follow_anchor_rotation_and_extra_axis_side(
     assert all(row["inside"] for row in result["rows"]), result
     extra = [row for row in result["rows"] if row["axis"] == "y2"]
     assert extra, result
-    assert all(row["side"] == "" for row in extra), result
+    assert all(row["side"] == "right" for row in extra), result
     assert all(row["pinnedRight"] for row in extra), result

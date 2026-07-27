@@ -304,6 +304,95 @@ def test_errorbar_uses_matplotlib_default_caps_width_and_limit_marker_size() -> 
     )
 
 
+def test_errorbar_caps_are_linked_fixed_point_line_markers() -> None:
+    fig, ax = plt.subplots()
+    container = ax.errorbar(
+        [1.0, 2.0],
+        [3.0, 4.0],
+        xerr=[0.2, 0.4],
+        yerr=[0.5, 0.6],
+        fmt="none",
+        ecolor="red",
+        capsize=5.0,
+    )
+
+    body, horizontal, vertical = ax._entries
+    assert body["factory"] == "errorbar"
+    assert body["kwargs"]["cap_size"] == 0.0
+    assert horizontal["kwargs"]["symbol"] == "horizontal_line"
+    assert vertical["kwargs"]["symbol"] == "vertical_line"
+    np.testing.assert_allclose(horizontal["x"], [1.0, 2.0, 1.0, 2.0])
+    np.testing.assert_allclose(horizontal["y"], [2.5, 3.4, 3.5, 4.6])
+    np.testing.assert_allclose(vertical["x"], [0.8, 1.6, 1.2, 2.4])
+    np.testing.assert_allclose(vertical["y"], [3.0, 4.0, 3.0, 4.0])
+    for cap in (horizontal, vertical):
+        assert cap["_mpl_line_marker_path_points"] == 10.0
+        assert cap["_mpl_line_marker_stroke_points"] == plt.rcParams["lines.markeredgewidth"]
+        assert cap["kwargs"]["color"] == cap["kwargs"].get("stroke", "red") == "red"
+
+    point_scale = fig.get_dpi() / 72.0
+    payload, _blob = ax._build_chart(640, 480).figure().build_payload()
+    cap_traces = [trace for trace in payload["traces"] if trace["kind"] == "scatter"]
+    assert [trace["style"]["symbol"] for trace in cap_traces] == [
+        "horizontal_line",
+        "vertical_line",
+    ]
+    for trace in cap_traces:
+        assert trace["size"]["size"] == pytest.approx(
+            (10.0 + plt.rcParams["lines.markeredgewidth"]) * point_scale
+        )
+        assert trace["style"]["stroke_width"] == pytest.approx(
+            plt.rcParams["lines.markeredgewidth"] * point_scale
+        )
+
+    assert len(container.lines[1]) == 2
+    container.remove()
+    assert ax._entries == []
+    assert container not in ax.containers
+
+
+def test_errorbar_cap_markers_resolve_points_again_after_dpi_change() -> None:
+    fig, ax = plt.subplots()
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.errorbar([1.0, 100.0], [10.0, 1000.0], xerr=0.2, yerr=1.0, fmt="none", capsize=4)
+
+    fig.set_dpi(144)
+    ax.set_xlim(0.5, 200.0)
+    ax.set_ylim(5.0, 2000.0)
+    payload, _blob = ax._build_chart(800, 400).figure().build_payload()
+    caps = [trace for trace in payload["traces"] if trace["kind"] == "scatter"]
+
+    assert {trace["style"]["symbol"] for trace in caps} == {
+        "horizontal_line",
+        "vertical_line",
+    }
+    for trace in caps:
+        assert trace["size"]["size"] == pytest.approx(
+            (8.0 + plt.rcParams["lines.markeredgewidth"]) * 2.0
+        )
+
+
+def test_errorbar_capsize_zero_emits_only_the_capless_body() -> None:
+    _fig, ax = plt.subplots()
+    container = ax.errorbar([1.0], [2.0], xerr=0.2, yerr=0.3, fmt="none", capsize=0)
+
+    assert len(ax._entries) == 1
+    assert ax._entries[0]["kwargs"]["cap_size"] == 0.0
+    assert container.lines[1] == ()
+
+
+def test_errorbar_limit_caret_keeps_original_point_capsize() -> None:
+    _fig, ax = plt.subplots()
+    ax.errorbar([1.0], [3.0], yerr=[0.5], lolims=True, fmt="none", capsize=10)
+
+    body, cap, caret = ax._entries
+    assert body["kwargs"]["cap_size"] == 0.0
+    assert cap["kwargs"]["symbol"] == "horizontal_line"
+    np.testing.assert_allclose((cap["x"], cap["y"]), ([1.0], [3.0]))
+    assert caret["source_sizes"].tolist() == [400.0]
+
+
 def test_errorbar_limit_flags_render_directional_endpoint_markers() -> None:
     _fig, ax = plt.subplots()
     ax.errorbar(

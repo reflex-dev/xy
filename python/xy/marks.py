@@ -52,6 +52,8 @@ _SYMBOL_CODES = {
             "thin_diamond",
             "plus_line",
             "x_line",
+            "horizontal_line",
+            "vertical_line",
         )
     )
 }
@@ -92,6 +94,31 @@ def _direct_symbols(value: Any, n: int, style_channels: dict[str, channels.Style
         codes[index] = _SYMBOL_CODES[symbol]
     style_channels["symbol"] = channels.StyleChannel(codes, dtype="u8")
     return "circle"
+
+
+def _validated_marker_path(value: Any) -> dict[str, Any]:
+    """Validate the private, bounded pyplot authored-marker contract."""
+    if not isinstance(value, dict):
+        raise ValueError("scatter authored marker path must be a mapping")
+    contours = value.get("contours")
+    if not isinstance(contours, (list, tuple)) or not 1 <= len(contours) <= 32:
+        raise ValueError("scatter authored marker path must have 1-32 contours")
+    result: list[list[float]] = []
+    total_vertices = 0
+    for index, contour in enumerate(contours):
+        try:
+            values = np.asarray(contour, dtype=np.float64).reshape(-1)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"scatter authored marker contour {index} must be numeric") from exc
+        if len(values) < 4 or len(values) % 2:
+            raise ValueError(f"scatter authored marker contour {index} needs x/y vertex pairs")
+        if not np.all(np.isfinite(values)) or np.any(np.abs(values) > 0.500001):
+            raise ValueError("scatter authored marker vertices must be finite and normalized")
+        total_vertices += len(values) // 2
+        result.append([float(item) for item in values])
+    if total_vertices > 96:
+        raise ValueError("scatter authored marker paths support at most 96 total vertices")
+    return {"contours": result, "filled": bool(value.get("filled", True))}
 
 
 def _stroke_geometry(css: Mapping[str, Any]) -> dict[str, str]:
@@ -1450,6 +1477,9 @@ def scatter(
     stroke: Any = None,
     stroke_width: Any = 0.0,
     _artist_alpha: Any = None,
+    _marker_path: Optional[dict[str, Any]] = None,
+    _marker_glyph: Optional[str] = None,
+    _legend_trace_size: bool = False,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add a scatter trace.
@@ -1457,7 +1487,7 @@ def scatter(
     `color` may be a CSS color (constant), a numeric array (continuous →
     colormap), or a categorical array (factorized → palette). `size` may be
     a scalar or a numeric array (mapped to `size_range` px). `symbol` picks
-    one of the 17 renderer-backed marker shapes; `stroke` / `stroke_width`
+    one of the 19 renderer-backed marker shapes; `stroke` / `stroke_width`
     draw a point border. Large scatters automatically switch to an aggregated
     density surface; pass `density=True/False` to force or disable it.
 
@@ -1540,6 +1570,20 @@ def scatter(
         size_ch = channels.resolve_size(size, n, range_px=size_range)
 
         point_style: dict[str, Any] = {"opacity": opacity_value}
+        if _marker_path is not None and _marker_glyph is not None:
+            raise ValueError("scatter accepts only one authored marker representation")
+        if _marker_path is not None:
+            point_style["marker_path"] = _validated_marker_path(_marker_path)
+        if _marker_glyph is not None:
+            if not isinstance(_marker_glyph, str) or len(_marker_glyph) != 1:
+                raise ValueError("scatter authored marker glyph must be one character")
+            point_style["marker_glyph"] = _marker_glyph
+        if _legend_trace_size:
+            # Pyplot's scalar ``s=`` is an authored marker area, and its
+            # automatic legend must keep the resulting diameter. Native xy
+            # legends retain their fixed swatch semantics unless this private
+            # shim flag opts the trace into size derivation.
+            point_style["_legend_trace_size"] = True
         if artist_alpha_value is not None:
             point_style["artist_alpha"] = artist_alpha_value
         if zoom_size_factor != 1.0:

@@ -360,7 +360,10 @@ def test_build_styled_panel_pyplot(benchmark, panel_data):
     """
     x, actual, target, sample = panel_data
     payload_bytes = benchmark(_pyplot_styled_panel_payload, x, actual, target, sample)
-    assert payload_bytes == _raw_styled_panel_payload(x, actual, target, sample)
+    raw_payload_bytes = _raw_styled_panel_payload(x, actual, target, sample)
+    # Pyplot preserves Matplotlib's axes-title y/pad geometry as two float32
+    # values. The raw title= API intentionally uses its fixed legacy fallback.
+    assert payload_bytes == raw_payload_bytes + 2 * np.dtype(np.float32).itemsize
 
 
 # -- export pair ----------------------------------------------------------------

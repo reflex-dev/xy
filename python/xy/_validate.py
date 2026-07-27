@@ -21,7 +21,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-_TICK_LABEL_STRATEGIES = frozenset({"auto", "hide", "rotate", "stagger", "none", "off"})
+_TICK_LABEL_STRATEGIES = frozenset({"auto", "hide", "rotate", "stagger", "preserve", "none", "off"})
 # Canonical anchors plus the matplotlib `ha` vocabulary the pyplot shim emits.
 _TICK_LABEL_ANCHORS = {
     "start": "start",
@@ -405,6 +405,8 @@ _POINT_SYMBOLS = frozenset(
         "thin_diamond",
         "plus_line",
         "x_line",
+        "horizontal_line",
+        "vertical_line",
     }
 )
 
