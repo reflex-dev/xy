@@ -41,6 +41,14 @@ def test_fmt_string_color_dash_marker() -> None:
     assert traces[1].kind == "scatter"  # marker overlay
 
 
+def test_plot_accepts_a_complete_xkcd_color_as_the_fmt_string() -> None:
+    _fig, ax = plt.subplots()
+    line = ax.plot([0, 1], [1, 2], "xkcd:crimson")[0]
+
+    assert line._entry["kwargs"]["color"] == "#8c000f"
+    assert "dash" not in line._entry["kwargs"]
+
+
 def test_markers_only_fmt_is_scatter() -> None:
     _fig, ax = plt.subplots()
     ax.plot([0, 1], [1, 2], "go")
@@ -241,6 +249,21 @@ def test_stackplot_uses_native_stacked_bounds(baseline) -> None:
     traces = _traces(ax)
     assert [trace.kind for trace in traces] == ["area", "area"]
     assert [trace.name for trace in traces] == ["a", "b"]
+
+
+def test_automatic_stackplot_legend_reverse_freezes_reversed_items() -> None:
+    _fig, ax = plt.subplots()
+    ax.stackplot(
+        [0, 1, 2],
+        [1, 2, 3],
+        [3, 2, 1],
+        labels=["lower", "upper"],
+    )
+
+    ax.legend(reverse=True)
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+
+    assert [item["name"] for item in spec["legend"]["items"]] == ["upper", "lower"]
 
 
 def test_pcolormesh_accepts_rectilinear_edges() -> None:

@@ -86,6 +86,17 @@ def test_hist_labels_are_padded_or_truncated_like_matplotlib(
     assert [container.get_label() for container in containers] == expected
 
 
+def test_errorbar_container_set_label_coerces_to_text() -> None:
+    _fig, ax = plt.subplots()
+    container = ax.errorbar([0, 1], [1, 2], yerr=0.1)
+
+    container.set_label(42)
+
+    assert container.get_label() == "42"
+    _handles, labels = ax.get_legend_handles_labels()
+    assert labels == ["42"]
+
+
 def test_stacked_step_histogram_legend_follows_top_to_bottom_draw_order() -> None:
     _fig, ax = plt.subplots()
     labels = ["green", "red", "blue"]

@@ -967,7 +967,7 @@ class ErrorbarContainer:
         return self._artist._entry["kwargs"].get("name")
 
     def set_label(self, value: Any) -> None:
-        self._artist._entry["kwargs"]["name"] = value
+        self._artist._entry["kwargs"]["name"] = str(value)
         self._artist._touch()
 
     def remove(self) -> None:

@@ -5307,12 +5307,17 @@ class Axes(PlotTypeMixin):
         ``prop={"size": ...}``), ``labelcolor``, ``frameon``, ``facecolor``,
         ``edgecolor``, ``framealpha``, ``fancybox``, ``shadow``,
         ``borderpad``, and ``labelspacing``; unsupported layout keywords
-        raise loudly. ``loc="best"`` picks the least occupied corner.
+        raise loudly. ``reverse=True`` reverses the resolved handle/label
+        order. ``loc="best"`` picks the least occupied corner.
         """
         host = self._y2_of or self
+        reverse = bool(kwargs.pop("reverse", False))
         if len(args) >= 2:
             handles = list(args[0])
             labels = [_plain_text(label) for label in args[1]]
+            if reverse:
+                handles.reverse()
+                labels.reverse()
             legend_artist = Legend(host, handles, labels, **kwargs)
             host._legend_handle = legend_artist
             # An explicit handles/labels call defines the primary legend even
@@ -5340,14 +5345,27 @@ class Axes(PlotTypeMixin):
             host._legend_artist = None
             host._legend_items = None
             handles, labels = host.get_legend_handles_labels()
+            if reverse:
+                handles.reverse()
+                labels.reverse()
             host._legend_handle = Legend(host, handles, labels, **kwargs)
             host._legend_options = dict(host._legend_handle._options)
+            if reverse:
+                # Automatic legends ordinarily let the renderer derive items
+                # from trace order. Freeze the reversed result so this call's
+                # explicit ordering survives materialization.
+                host._legend_items = list(host._legend_handle.spec()["items"])
         else:
             host._legend_artist = None
             host._legend_items = None
             handles, labels = host.get_legend_handles_labels()
+            if reverse:
+                handles.reverse()
+                labels.reverse()
             host._legend_handle = Legend(host, handles, labels, **kwargs)
             host._legend_options = dict(host._legend_handle._options)
+            if reverse:
+                host._legend_items = list(host._legend_handle.spec()["items"])
         host._legend = True
         host._invalidate()
         return host._legend_handle

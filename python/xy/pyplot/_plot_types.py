@@ -1976,14 +1976,17 @@ class PlotTypeMixin:
             right_values = np.asarray(right_edges, dtype=np.float64)
         if not (len(values) == len(bases) == len(left_edges) == len(right_values)):
             raise ValueError("hatch geometry must have one rectangle per value")
-        x_extent = np.concatenate((left_edges, right_values))
-        y_extent = np.concatenate(
+        edge_extent = np.concatenate((left_edges, right_values))
+        value_extent = np.concatenate(
             (np.asarray(values, dtype=np.float64), np.asarray(bases, dtype=np.float64))
         )
-        finite_x_extent = x_extent[np.isfinite(x_extent)]
-        finite_y_extent = y_extent[np.isfinite(y_extent)]
-        x_span = float(np.ptp(finite_x_extent)) if finite_x_extent.size else 0.0
-        y_span = float(np.ptp(finite_y_extent)) if finite_y_extent.size else 0.0
+        finite_edge_extent = edge_extent[np.isfinite(edge_extent)]
+        finite_value_extent = value_extent[np.isfinite(value_extent)]
+        edge_span = float(np.ptp(finite_edge_extent)) if finite_edge_extent.size else 0.0
+        value_span = float(np.ptp(finite_value_extent)) if finite_value_extent.size else 0.0
+        x_span, y_span = (
+            (edge_span, value_span) if orientation == "vertical" else (value_span, edge_span)
+        )
         pattern = set(hatch)
         density = max(1, min(3, max((hatch.count(char) for char in pattern), default=1)))
         line_count = 4 + density * 3

@@ -22,6 +22,11 @@ from xy.pyplot._fmt import parse_fmt
         ("", (None, None, None)),
         ("D-", (None, "-", "D")),
         ("x:", (None, ":", "x")),
+        ("2", (None, None, "2")),
+        ("0.5", ("0.5", None, None)),
+        ("orchid", ("orchid", None, None)),
+        ("tab:purple", ("tab:purple", None, None)),
+        ("xkcd:crimson", ("xkcd:crimson", None, None)),
     ],
 )
 def test_parse(fmt: str, expected: tuple) -> None:
