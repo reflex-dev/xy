@@ -592,6 +592,9 @@ def scatter(
     stroke: Any = None,
     stroke_width: Any = 0.0,
     _artist_alpha: Any = None,
+    _marker_path: Optional[dict[str, Any]] = None,
+    _marker_glyph: Optional[str] = None,
+    _legend_trace_size: bool = False,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     key: Any = None,
@@ -622,6 +625,9 @@ def scatter(
         stroke: Optional marker outline color.
         stroke_width: Marker outline width in pixels.
         _artist_alpha: Internal Matplotlib alpha override, scalar or per marker.
+        _marker_path: Internal authored marker-path payload for Matplotlib adapters.
+        _marker_glyph: Internal single-glyph marker payload for Matplotlib adapters.
+        _legend_trace_size: Whether a Matplotlib legend derives marker size from this trace.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         key: Stable row identities, or a column name resolved from ``data``.
@@ -654,6 +660,9 @@ def scatter(
             "stroke": stroke,
             "stroke_width": stroke_width,
             "_artist_alpha": _artist_alpha,
+            "_marker_path": _marker_path,
+            "_marker_glyph": _marker_glyph,
+            "_legend_trace_size": _legend_trace_size,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -4362,7 +4371,7 @@ def _continuous_color_label(mark: Mark) -> Optional[str]:
         if isinstance(values, str):
             return values
         if values is None:
-            return "log(count + 1)" if mark.props.get("bins") == "log" else "count"
+            return "count"
     return None
 
 
@@ -4388,7 +4397,7 @@ def _colorbar_source_title(mark: Mark) -> Optional[str]:
         if isinstance(values, str):
             return values
         if values is None:
-            return "log(count + 1)" if mark.props.get("bins") == "log" else "count"
+            return "count"
     return mark.name
 
 
@@ -4415,7 +4424,7 @@ def _declarative_colorbar_options(mark: Mark, traces: list[Any]) -> Optional[dic
             # cell shows the mean of its points' colormapped values (LOD doc
             # §2) — so the channel's domain⇄colormap colorbar is truthful in
             # both representations and renders as for a direct scatter.
-            domain = channel.domain
+            domain = trace.colorbar_domain or channel.domain
             colormap = channel.colormap
         if domain is None or colormap is None:
             continue
@@ -4427,6 +4436,8 @@ def _declarative_colorbar_options(mark: Mark, traces: list[Any]) -> Optional[dic
             # silently falls back to viridis.
             "colormap": colormap if isinstance(colormap, str) else [list(s) for s in colormap],
         }
+        if trace.colorbar_scale != "linear":
+            options["scale"] = trace.colorbar_scale
 
     if options is None:
         return None
@@ -5227,6 +5238,9 @@ def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
             stroke=m.props["stroke"],
             stroke_width=m.props["stroke_width"],
             _artist_alpha=m.props.get("_artist_alpha"),
+            _marker_path=m.props.get("_marker_path"),
+            _marker_glyph=m.props.get("_marker_glyph"),
+            _legend_trace_size=bool(m.props.get("_legend_trace_size")),
             style=m.style,
         )
     except Exception:

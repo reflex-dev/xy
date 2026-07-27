@@ -20,6 +20,21 @@ from ._rc import rcParams
 from ._transforms import Bbox, IdentityTransform
 
 
+class _PatchFacade:
+    """Stable facecolor facade for the figure and axes background patches."""
+
+    def __init__(self, owner: Any) -> None:
+        self._owner = owner
+
+    def set_facecolor(self, color: Any) -> None:
+        self._owner.set_facecolor(color)
+
+    set_fc = set_facecolor
+
+    def get_facecolor(self) -> Any:
+        return self._owner.get_facecolor()
+
+
 def unit_converted_values(values: Any) -> Any:
     """Datetime-like values in the engine's converted unit — f64 ms since
     epoch (columns.py); every other dtype is already its own converted form."""
@@ -618,12 +633,18 @@ class AxesImage(Artist):
         import numpy as np
 
         if len(args) == 1:
-            self._entry["z"] = np.asarray(args[0])
+            self._axes._set_axes_image_data(self, args[0])
         elif len(args) == 3:
             x, y, z = args
-            self._entry["z"] = np.asarray(z)
-            self._entry["kwargs"]["x"] = np.asarray(x)
-            self._entry["kwargs"]["y"] = np.asarray(y)
+            self._axes._set_axes_image_data(self, z)
+            self._entry["kwargs"]["x"] = np.asarray(x).copy()
+            self._entry["kwargs"]["y"] = np.asarray(y).copy()
+            # `_set_axes_image_data` copied the replacement artist's extent,
+            # which was prepared from the old imshow state.  The 3-argument
+            # form supplies new coordinate centers, so invalidate that cached
+            # box and materialize the bounds derived from the new x/y arrays.
+            self._entry.pop("extent", None)
+            self._entry["extent"] = self.get_extent()
         else:
             raise TypeError("set_data expects image data or x, y, image data")
         self._touch()
@@ -1184,6 +1205,41 @@ class _LegendProxy:
         self._entry = entry
 
 
+class _LegendFrame:
+    """Mutable facade over the frame options owned by one shim legend."""
+
+    def __init__(self, legend: "Legend") -> None:
+        self._legend = legend
+
+    def set_facecolor(self, color: Any) -> None:
+        self._legend._set_frame_option("facecolor", color)
+
+    set_fc = set_facecolor
+
+    def get_facecolor(self) -> Any:
+        return self._legend._frame_style().get("background")
+
+    def set_edgecolor(self, color: Any) -> None:
+        self._legend._set_frame_option("edgecolor", color)
+
+    set_ec = set_edgecolor
+
+    def get_edgecolor(self) -> Any:
+        return self._legend._frame_style().get("borderColor")
+
+    def set_alpha(self, alpha: float | None) -> None:
+        self._legend._set_frame_option("framealpha", alpha)
+
+    def get_alpha(self) -> Any:
+        return self._legend._frame_style().get("--xy-legend-frame-alpha")
+
+    def set_visible(self, visible: bool) -> None:
+        self._legend._set_frame_option("frameon", bool(visible))
+
+    def get_visible(self) -> bool:
+        return bool(self._legend._kwargs.get("frameon", rcParams["legend.frameon"]))
+
+
 def _contour_legend_colors(entry: dict[str, Any], count: int) -> list[str]:
     """Resolve a contour's scalar/listed color channel to CSS proxy colors."""
     if count <= 0:
@@ -1216,6 +1272,16 @@ class PolyCollection(Artist):
 
     def set_clim(self, vmin: Any = None, vmax: Any = None) -> None:
         _set_entry_clim(self, vmin, vmax)
+
+    def set_rasterized(self, rasterized: bool) -> None:
+        if self._entry.get("factory") == "heatmap" or self._entry.get("kind") == "heatmap":
+            # Regular pcolormesh is already an image-backed mark in SVG/PDF
+            # and a raster texture in HTML/PNG, so Matplotlib's selective
+            # rasterization request is naturally satisfied.
+            self._rasterized = bool(rasterized)
+            self._touch()
+            return
+        super().set_rasterized(rasterized)
 
     def get_facecolors(self) -> np.ndarray:
         """Return the collection's constant face paint as one RGBA row."""
@@ -1437,7 +1503,10 @@ class StreamplotSet:
 
 
 def _legend_item_from_entry(
-    entry: dict[str, Any], label: Any, point_scale: float
+    entry: dict[str, Any],
+    label: Any,
+    point_scale: float,
+    marker_entry: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Freeze a plotted entry into a standalone legend swatch descriptor.
 
@@ -1470,6 +1539,12 @@ def _legend_item_from_entry(
     opacity = kw.get("opacity")
     if opacity is not None:
         style["opacity"] = float(opacity)
+    stroke = kw.get("stroke")
+    if isinstance(stroke, str):
+        style["stroke"] = stroke
+    stroke_width = kw.get("stroke_width")
+    if stroke_width is not None and np.isscalar(stroke_width):
+        style["stroke_width"] = float(stroke_width)
     hatch = kw.get("hatch", entry.get("pie_hatch"))
     if hatch:
         style["hatch"] = str(hatch)
@@ -1494,6 +1569,11 @@ def _legend_item_from_entry(
             style["dash"] = resolved
     elif isinstance(dash, (list, tuple)):
         style["dash"] = [float(v) for v in dash]
+    gap_color = kw.get("_gapcolor")
+    if isinstance(gap_color, str):
+        style["legend_gap_color"] = gap_color
+    if marker_entry is not None:
+        style["legend_marker"] = _legend_marker_style(marker_entry)
     if kind == "scatter":
         symbol = kw.get("symbol")
         if symbol:
@@ -1506,6 +1586,26 @@ def _legend_item_from_entry(
             if kw.get(key) is not None:
                 style[key] = kw[key]
     return {"name": str(label), "kind": kind, "style": style}
+
+
+def _legend_marker_style(entry: dict[str, Any]) -> dict[str, Any]:
+    """Freeze a pyplot marker overlay into a renderer-neutral legend marker."""
+    kw = entry.get("kwargs") or {}
+    marker: dict[str, Any] = {"symbol": str(kw.get("symbol", "circle"))}
+    for source, target in (
+        ("color", "color"),
+        ("stroke", "stroke"),
+        ("_marker_path", "marker_path"),
+        ("_marker_glyph", "marker_glyph"),
+    ):
+        value = kw.get(source)
+        if value is not None:
+            marker[target] = value
+    for key in ("size", "stroke_width"):
+        value = kw.get(key)
+        if value is not None and np.isscalar(value):
+            marker[key] = float(value)
+    return marker
 
 
 class Legend:
@@ -1526,7 +1626,7 @@ class Legend:
                 f"labels ({len(labels)}); the extras are ignored",
                 stacklevel=2,
             )
-        self._pairs: list[tuple[dict[str, Any], Any]] = []
+        self._pairs: list[tuple[dict[str, Any], Any, Optional[dict[str, Any]]]] = []
         for handle, label in zip(handles, labels, strict=False):
             entry = getattr(handle, "_entry", None)
             if entry is None:
@@ -1540,10 +1640,16 @@ class Legend:
                     stacklevel=2,
                 )
                 continue
-            self._pairs.append((entry, label))
+            marker_entry = None
+            if isinstance(handle, Line2D):
+                marker_entries = handle._marker_entries()
+                if marker_entries and marker_entries[0] is not entry:
+                    marker_entry = marker_entries[0]
+            self._pairs.append((entry, label, marker_entry))
         self._kwargs = dict(kwargs)
         if loc is not None:
             self._kwargs.setdefault("loc", loc)
+        self._frame = _LegendFrame(self)
         self._attach(parent)
 
     def _attach(self, parent: Any) -> None:
@@ -1556,7 +1662,26 @@ class Legend:
         self._parent = parent
         self._options = parent._compose_legend_options(dict(self._kwargs))
         scale = parent._point_scale()
-        self._items = [_legend_item_from_entry(entry, label, scale) for entry, label in self._pairs]
+        self._items = [
+            _legend_item_from_entry(entry, label, scale, marker_entry)
+            for entry, label, marker_entry in self._pairs
+        ]
+
+    def _frame_style(self) -> dict[str, Any]:
+        return self._options.get("style", {})
+
+    def _set_frame_option(self, name: str, value: Any) -> None:
+        self._kwargs[name] = value
+        self._attach(self._parent)
+        host = self._parent._y2_of or self._parent
+        if host._legend_handle is self:
+            host._legend_options = dict(self._options)
+            if host._legend_items is not None:
+                host._legend_items = list(self._items)
+        host._invalidate()
+
+    def get_frame(self) -> _LegendFrame:
+        return self._frame
 
     def spec(self) -> dict[str, Any]:
         """The option dict plus explicit items, ready for the render payload."""

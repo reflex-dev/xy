@@ -11,7 +11,7 @@ from __future__ import annotations
 import numbers
 import re
 from collections.abc import Iterable, Sequence
-from typing import Any, Optional, TypeGuard, cast
+from typing import Any, NamedTuple, Optional, TypeGuard, cast
 
 import numpy as np
 
@@ -104,6 +104,10 @@ CMAPS = {
     "bone": "bone",
     "winter": "winter",
     "bupu": "bupu",
+    "rdylbu": "rdylbu",
+    "ylgn": "ylgn",
+    "wistia": "wistia",
+    "puor": "puor",
 }
 
 
@@ -294,6 +298,31 @@ def _rgba_floats(value: object) -> tuple[float, float, float, float]:
     return result
 
 
+def cmap_extreme(
+    cmap: object,
+    name: str,
+    default: object = None,
+) -> np.ndarray | None:
+    """Resolve one shim or Matplotlib colormap extreme to straight RGBA.
+
+    XY's lightweight colormaps store ``_bad``/``_under``/``_over`` while
+    Matplotlib's own colormaps use ``_rgba_bad``/``_rgba_under``/
+    ``_rgba_over``.  Keeping both spellings behind one resolver prevents
+    images, contours, and their colorbars from disagreeing about configured
+    cap and invalid-sample colors.
+    """
+    value = getattr(cmap, f"_{name}", None)
+    if value is None:
+        value = getattr(cmap, f"_rgba_{name}", None)
+    if value is None:
+        value = default
+    if value is None:
+        return None
+    if isinstance(value, tuple) and len(value) == 2 and value[1] is None:
+        value = value[0]
+    return np.asarray(_rgba_floats(value), dtype=np.float64)
+
+
 def _is_color_alpha_pair(value: object) -> TypeGuard[Sequence[Any]]:
     """(color, alpha) where color is a str or RGB(A) sequence — never a bare 2-tuple."""
     if not (isinstance(value, (tuple, list)) and len(value) == 2):
@@ -431,3 +460,189 @@ def resolve_cmap(name: object) -> str:
     if key.endswith("_r") and key[:-2] in CMAPS:
         return f"{CMAPS[key[:-2]]}_r"
     raise ValueError(f"unsupported colormap: {text!r}")
+
+
+class BoundaryNormGrid(NamedTuple):
+    """Renderer-ready samples and discrete metadata for a BoundaryNorm."""
+
+    rgba: np.ndarray
+    domain: tuple[float, float]
+    boundaries: np.ndarray
+    band_colors: np.ndarray
+
+
+def prepare_boundary_norm(
+    values: object,
+    norm: object,
+    cmap: object,
+    vmin: object = None,
+    vmax: object = None,
+) -> BoundaryNormGrid | None:
+    """Bake a Matplotlib-like ``BoundaryNorm`` through its callable colormap.
+
+    BoundaryNorm returns integer LUT indices, not normalized floats. Keeping
+    that conversion here prevents ``imshow`` and ``pcolormesh`` from inventing
+    different normalization rules, while the returned boundaries and exact
+    per-band colors let every colorbar renderer reproduce the same discrete
+    mapping.
+    """
+
+    if type(norm).__name__ != "BoundaryNorm":
+        return None
+    if not callable(norm):
+        raise TypeError("BoundaryNorm must be callable")
+    if vmin is not None or vmax is not None:
+        raise ValueError(
+            "Passing a Normalize instance simultaneously with vmin/vmax is not supported; "
+            "set the bounds on the norm instance instead"
+        )
+    boundaries = np.asarray(getattr(norm, "boundaries", None), dtype=np.float64).reshape(-1)
+    if (
+        len(boundaries) < 2
+        or not np.isfinite(boundaries).all()
+        or np.any(np.diff(boundaries) <= 0.0)
+    ):
+        raise ValueError("BoundaryNorm boundaries must be finite and strictly increasing")
+
+    source = np.ma.asarray(values, dtype=np.float64)
+    raw = np.asarray(source.filled(np.nan), dtype=np.float64)
+    mapped = np.ma.asarray(norm(source))
+    cmap_callable = cmap if callable(cmap) else Cmap(resolve_cmap(cmap))
+    rgba = np.asarray(cmap_callable(mapped.filled(0)), dtype=np.float64)
+    expected = raw.shape + (3,)
+    if rgba.shape not in {expected, raw.shape + (4,)}:
+        raise ValueError("BoundaryNorm colormap must return RGB or RGBA samples")
+    if rgba.shape[-1] == 3:
+        rgba = np.concatenate(
+            (rgba, np.ones(raw.shape + (1,), dtype=np.float64)),
+            axis=-1,
+        )
+    invalid = np.ma.getmaskarray(source) | np.ma.getmaskarray(mapped) | ~np.isfinite(raw)
+    bad = cmap_extreme(cmap_callable, "bad", (0.0, 0.0, 0.0, 0.0))
+    assert bad is not None
+    rgba[invalid] = bad
+
+    midpoints = (boundaries[:-1] + boundaries[1:]) * 0.5
+    band_rgba = np.asarray(
+        cmap_callable(np.ma.asarray(norm(midpoints)).filled(0)), dtype=np.float64
+    )
+    if (
+        band_rgba.ndim != 2
+        or band_rgba.shape[0] != len(midpoints)
+        or band_rgba.shape[1] not in (3, 4)
+    ):
+        raise ValueError("BoundaryNorm colormap must return one RGB(A) row per interval")
+    band_colors = np.rint(np.clip(band_rgba[:, :3], 0.0, 1.0) * 255.0).astype(np.uint8)
+    return BoundaryNormGrid(
+        np.ascontiguousarray(rgba),
+        (float(boundaries[0]), float(boundaries[-1])),
+        boundaries,
+        band_colors,
+    )
+
+
+def normalize_scalar_grid(
+    values: object,
+    norm: object,
+    vmin: object = None,
+    vmax: object = None,
+) -> tuple[np.ndarray, tuple[float, float] | None, str]:
+    """Resolve the bounded scalar-normalization contract shared by images.
+
+    The core heatmap renderer owns linear normalization.  Non-linear pyplot
+    norms are therefore reduced to normalized scalar samples here while the
+    original value-domain and scale name remain available to the mappable and
+    its colorbar.  This deliberately supports the two scale names Matplotlib
+    uses throughout the in-scope gallery: ``"linear"`` and ``"log"``.
+
+    Returns ``(render_values, original_domain, scale)``.  Invalid or masked
+    log samples are NaN so the colormap's bad color can be applied uniformly
+    by :func:`scalar_grid_rgba`.
+    """
+
+    source = np.ma.asarray(values, dtype=np.float64)
+    raw = np.asarray(source.filled(np.nan), dtype=np.float64)
+    norm_name = norm.lower() if isinstance(norm, str) else type(norm).__name__
+    if norm is None or norm_name == "Normalize":
+        norm_name = "linear"
+    elif norm_name == "LogNorm":
+        norm_name = "log"
+    if norm_name not in {"linear", "log"}:
+        if isinstance(norm, str):
+            raise ValueError(f"{norm!r} is not a valid value for norm")
+        raise NotImplementedError(
+            f"xy.pyplot does not implement norm={type(norm).__name__}; "
+            "use norm='linear', norm='log', or vmin=/vmax="
+        )
+    if norm is not None and not isinstance(norm, str) and (vmin is not None or vmax is not None):
+        raise ValueError(
+            "Passing a Normalize instance simultaneously with vmin/vmax is not supported; "
+            "set the bounds on the norm instance instead"
+        )
+
+    norm_vmin = getattr(norm, "vmin", None)
+    norm_vmax = getattr(norm, "vmax", None)
+    lo_arg = norm_vmin if vmin is None else vmin
+    hi_arg = norm_vmax if vmax is None else vmax
+    finite = raw[np.isfinite(raw)]
+    if norm_name == "linear":
+        if lo_arg is None and hi_arg is None:
+            return raw, None, "linear"
+        lo = float(lo_arg) if lo_arg is not None else (float(finite.min()) if finite.size else 0.0)
+        hi = float(hi_arg) if hi_arg is not None else (float(finite.max()) if finite.size else 1.0)
+        if not np.isfinite([lo, hi]).all():
+            raise ValueError("vmin and vmax must be finite")
+        if hi < lo:
+            raise ValueError("vmin must be less than or equal to vmax")
+        return raw, (lo, hi), "linear"
+
+    positive = finite[finite > 0.0]
+    if not positive.size and (lo_arg is None or hi_arg is None):
+        raise ValueError("log normalization requires at least one positive finite value")
+    lo = float(lo_arg) if lo_arg is not None else float(positive.min())
+    hi = float(hi_arg) if hi_arg is not None else float(positive.max())
+    if not np.isfinite([lo, hi]).all() or lo <= 0.0 or hi <= 0.0:
+        raise ValueError("Invalid vmin or vmax")
+    if hi < lo:
+        raise ValueError("vmin must be less than or equal to vmax")
+    invalid = np.ma.getmaskarray(source) | ~np.isfinite(raw) | (raw <= 0.0)
+    if hi == lo:
+        normalized = np.zeros(raw.shape, dtype=np.float64)
+    else:
+        normalized = (np.log(raw, where=~invalid, out=np.zeros_like(raw)) - np.log(lo)) / (
+            np.log(hi) - np.log(lo)
+        )
+    normalized[invalid] = np.nan
+    return normalized, (lo, hi), "log"
+
+
+def scalar_grid_rgba(values: object, cmap: object) -> np.ndarray:
+    """Paint normalized scalar samples, including bad/under/over colors.
+
+    ``values`` may contain samples outside ``[0, 1]``; those retain Matplotlib
+    colormap under/over semantics.  NaN is the bad-color channel.  The result
+    is truecolor RGBA so every renderer sees the same non-linear mapping.
+    """
+
+    from xy._svg import _lut
+
+    normalized = np.asarray(values, dtype=np.float64)
+    cmap_name = resolve_cmap(cmap)
+    safe = np.clip(np.nan_to_num(normalized, nan=0.0), 0.0, 1.0)
+    rgb = _lut(cmap_name, safe.reshape(-1)).reshape(normalized.shape + (3,))
+    rgba = np.concatenate(
+        (rgb / 255.0, np.ones(normalized.shape + (1,), dtype=np.float64)),
+        axis=-1,
+    )
+    endpoints = _lut(cmap_name, np.asarray([0.0, 1.0], dtype=np.float64)) / 255.0
+    under_default = (*endpoints[0], 1.0)
+    over_default = (*endpoints[1], 1.0)
+
+    under = cmap_extreme(cmap, "under", under_default)
+    over = cmap_extreme(cmap, "over", over_default)
+    bad = cmap_extreme(cmap, "bad", (0.0, 0.0, 0.0, 0.0))
+    assert under is not None and over is not None and bad is not None
+    rgba[normalized < 0.0] = under
+    rgba[normalized > 1.0] = over
+    rgba[~np.isfinite(normalized)] = bad
+    return rgba

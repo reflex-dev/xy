@@ -76,7 +76,10 @@ trace ships its grid without the retained real-point sample
 (`DENSITY_SAMPLE_TARGET`). This is not a rendering choice — `_raster._emit_grid`
 draws density traces from the grid alone and never reads `density["sample"]`, so
 the overlay was an O(N) sampling pass and two gathers whose result no pixel
-consumed. Raster output is byte-identical with and without it. The public
+consumed. Raster output is byte-identical with and without it. The omission is
+recorded as `density["overlay_omitted"] = "static_raster"` so a raster payload
+still explains itself (§28); the `rows_exceed_u32` reason takes precedence when
+both apply. The public
 `build_payload`/`build_payload_split` still ship the overlay: the browser client
 (`js/src/50_chartview.ts`) and the SVG renderer's payload path both go through
 them, and the client *does* draw it (T9).
