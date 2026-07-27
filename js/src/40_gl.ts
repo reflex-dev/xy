@@ -235,13 +235,19 @@ void main() {
   vec2 d = gl_PointCoord - 0.5;
   float sd;
   int symbol = v_style.w >= 0.0 ? int(v_style.w + 0.5) : u_symbol;
-  bool lineMarker = symbol == 15 || symbol == 16;
+  bool lineMarker = symbol == 15 || symbol == 16 || symbol == 17 || symbol == 18;
   if (lineMarker) {
-    vec2 q = symbol == 16 ? vec2(d.x + d.y, d.y - d.x) * 0.707106781 : d;
     float itemStrokeWidth = v_style.z >= 0.0 ? v_style.z : u_ptStrokeWidth;
     float halfWidth = max(itemStrokeWidth, 1.0) / (2.0 * max(v_ptSize, 1.0));
-    vec2 a = abs(q);
-    sd = min(max(a.x - 0.5, a.y - halfWidth), max(a.y - 0.5, a.x - halfWidth));
+    if (symbol == 17) {
+      sd = max(abs(d.x) - 0.5, abs(d.y) - halfWidth);
+    } else if (symbol == 18) {
+      sd = max(abs(d.y) - 0.5, abs(d.x) - halfWidth);
+    } else {
+      vec2 q = symbol == 16 ? vec2(d.x + d.y, d.y - d.x) * 0.707106781 : d;
+      vec2 a = abs(q);
+      sd = min(max(a.x - 0.5, a.y - halfWidth), max(a.y - 0.5, a.x - halfWidth));
+    }
   } else {
     // Scalar-only equivalent: xyMarkerSdf(d, u_symbol). The resolved symbol
     // also permits a per-item glyph override from v_style.w.

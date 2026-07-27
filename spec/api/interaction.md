@@ -53,13 +53,13 @@ the switch is never set. The non-boolean viewport keys — `default_drag_action`
 | `select` | on | Suppresses the `xy:select` event and the `select_clear` message, removes the modebar Selection menu, and (with `brush`) disables shift-drag. |
 | `brush` | on | Same conjunction: `canBrush = brush && select` (`53_interaction.ts:115`) gates every selection drag and the modebar Selection menu. |
 | `crosshair` | off | The two guide elements are created only when the flag is true, at init (`53_interaction.ts:80`). Not togglable after mount. |
-| `navigation` | on | Master gate on pointer-drag pan, wheel zoom, box-zoom drags, pan-mode dblclick reset, and every modebar viewport control. Selection-mode double-click clear is a selection action and is unaffected. |
+| `navigation` | on | Master gate on pointer-drag pan, wheel zoom, box-zoom drags, dblclick reset, and every modebar viewport control. Selection-mode double-click clear is a selection action and is unaffected. |
 | `pan` | on | Plain-drag pan is ignored, the modebar Pan button is not built, and every zoom-enabled axis is contained (§2.2). Requires `navigation`. Pans `pan_axes` (§2.1). |
 | `zoom` | on | Master zoom gate: wheel zoom, box zoom, and the zoom actions inside the modebar menu are all ignored. The same dropdown can remain for view history when `history` is on. Requires `navigation`. Zooms `zoom_axes` (§2.1). |
 | `wheel_zoom` | on | Cursor-anchored wheel/trackpad zoom is ignored and the page keeps scrolling; box and button zoom are unaffected. Requires `navigation` and `zoom` (`53_interaction.ts:271-273`). |
 | `box_zoom` | on | Box-zoom drags and the modebar Box Zoom button are removed, and `default_drag_action="zoom"` has no usable drag tool. Requires `navigation` and `zoom` (`53_interaction.ts:112-113`, `50_chartview.ts:419`). |
 | `zoom_buttons` | on | The modebar Zoom In (×0.5) / Zoom Out (×2) commands are removed; wheel and box zoom keep working. Requires `navigation` and `zoom` (`53_interaction.ts:883`). |
-| `double_click_reset` | on | Pan-mode double-click no longer resets the view. The modebar Reset View button and selection-mode double-click clear are unaffected. Requires `navigation` only — reset is independent of `zoom` (`53_interaction.ts`). |
+| `double_click_reset` | on | Double-click (in `pan` or `zoom` mode) no longer resets the view. The modebar Reset View button and selection-mode double-click clear are unaffected. Requires `navigation` only — reset is independent of `zoom` (`53_interaction.ts`). |
 | `history` | on | Removes Back/Next from the modebar zoom menu and stops durable-state snapshotting entirely (`57_viewstate.ts`). The full history contract is [`../design/view-state.md`](../design/view-state.md) §4: a client-local 64-entry stack of durable-state snapshots, coalesced per gesture by `interaction_id`; linked and history-sourced writes never push; reset pushes (Back undoes a double-click). |
 | `link_group` | unset | See §4. |
 | `link_axes` | all declared axes | See §4. |
@@ -108,7 +108,7 @@ including per-source semantics and the shared clamp pipeline, is
 
 | Key | Type | Default | Role |
 | --- | --- | --- | --- |
-| `default_drag_action` | `"auto" \| "none" \| "pan" \| "zoom" \| "select" \| "select-x" \| "select-y" \| "select-lasso"` | `"auto"` | Initial tool for an unmodified primary-button drag. `"auto"` resolves pan → box zoom → rectangular select → none. `"zoom"` means **box zoom for drag only**; it does not touch wheel or button zoom. The modebar can change the live tool without mutating this configured default. |
+| `default_drag_action` | `"auto" \| "none" \| "pan" \| "zoom" \| "select" \| "select-x" \| "select-y" \| "select-lasso"` | `"auto"` | Initial tool for an unmodified primary-button drag. `"auto"` resolves pan → box zoom → rectangular select → none. `"zoom"` means **box zoom for drag only**; it does not touch wheel, button zoom, or double-click reset. `"none"` additionally releases the wheel to the page (embedded charts must not trap page scroll) and disables double-click reset. The modebar can change the live tool without mutating this configured default. |
 | `pan_axes` | axis-ID tuple | all declared axes | Concrete axis IDs a pan gesture may translate freely. An axis excluded here while zoom can navigate it is **contained** (§2.2). |
 | `zoom_axes` | axis-ID tuple | all declared axes | Concrete axis IDs wheel, box, and button zoom may scale. Selecting `"y"` never implies `"y2"`. |
 | `reset_axes` | axis-ID tuple | enabled `pan_axes` ∪ enabled `zoom_axes` | Axis IDs restored by reset. Resolved client-side; the modebar Reset button hides when it resolves empty. |
@@ -278,8 +278,8 @@ renderer reads anywhere in `js/src/`.
 | **Shift**-drag | Box select, overriding the current drag mode (`53_interaction.ts:117`) | `brush`, `select`, `_pickable` |
 | Drag in `select` / `select-lasso` / `select-x` / `select-y` mode | That selection shape | `brush`, `select`, `_pickable` |
 | Drag in `zoom` mode | Box zoom, fitting `zoom_axes` on release | `navigation`, `zoom`, and `box_zoom` |
-| Wheel | Cursor-anchored zoom of `zoom_axes`, factor `1.0015 ** deltaY`; `preventDefault` | `navigation`, `zoom`, and `wheel_zoom` |
-| Double click in `pan` mode | Reset `reset_axes` to home (animated); does **not** clear selection | `navigation` and `double_click_reset` |
+| Wheel | Cursor-anchored zoom of `zoom_axes`, factor `1.0015 ** deltaY`; `preventDefault`. The active drag tool never disables it — box-zoom and select tools are drag-only — except `none`, which releases the wheel to the page | `navigation`, `zoom`, and `wheel_zoom` |
+| Double click in `pan` or `zoom` mode | Reset `reset_axes` to home (animated); does **not** clear selection | `navigation` and `double_click_reset` |
 | Double click in `select` / `select-lasso` / `select-x` / `select-y` mode | Clear the active selection and, for lasso, its editable polygon; no-op when no selection exists | active selection |
 | Click without drag | Pick; a drag past threshold sets `_ignoreNextClick` and swallows the click | `click` |
 | Pointer down on a lasso vertex handle | Drag that vertex; re-runs the selection on release | an existing lasso |

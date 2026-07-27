@@ -369,7 +369,10 @@ Object.assign(ChartView.prototype, {
     this._listen(c, "click", (e) => this._click(e));
 
     this._listen(c, "wheel", (e) => {
-      if (this.dragMode !== "pan") return;
+      // The drag tool never disables the wheel (box-zoom/select drags are
+      // drag-only tools) — except `none`, the modebar's escape hatch that
+      // releases page scroll for embedded charts.
+      if (this.dragMode === "none") return;
       if (!this._interactionFlag("navigation", true)) return;
       if (!this._interactionFlag("zoom", true)) return;
       if (!this._interactionFlag("wheel_zoom", true)) return;
@@ -386,7 +389,7 @@ Object.assign(ChartView.prototype, {
         clearSelectionOnDoubleClick();
         return;
       }
-      if (this.dragMode !== "pan") return;
+      if (this.dragMode === "none") return;
       if (!this._interactionFlag("navigation", true)) return;
       if (!this._interactionFlag("double_click_reset", true)) return;
       this._resetView(true, "reset");
