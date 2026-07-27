@@ -2568,6 +2568,33 @@ def annotation_label_placement(
     return float(sx(x)), float(sy(y)), anchor, vertical_align
 
 
+def _annotation_first_baseline(
+    anchor_y: float,
+    line_count: int,
+    line_height: float,
+    font_size: float,
+    vertical_align: Any,
+) -> float:
+    """Approximate Matplotlib's multiline vertical-alignment box.
+
+    Matplotlib aligns ``top`` and ``bottom`` against the full multiline text
+    extent, not against a block that has first been centered on the anchor.
+    With screen-space y increasing downwards, the first baseline therefore
+    sits one ascent below a top anchor, or all later baselines plus one descent
+    above a bottom anchor.  Center/default retain the established exporter
+    approximation.
+    """
+    line_span = max(0, int(line_count) - 1) * line_height
+    if vertical_align == "top":
+        return anchor_y + font_size * 0.8
+    if vertical_align == "bottom":
+        return anchor_y - line_span - font_size * 0.2
+    first_baseline = anchor_y - line_span / 2
+    if vertical_align in ("center", "middle"):
+        first_baseline += font_size * 0.35
+    return first_baseline
+
+
 def _annotation_svg(
     annotations: Sequence[dict[str, Any]],
     sx: Callable[[float], float],
@@ -2716,14 +2743,14 @@ def _annotation_svg(
                     line_offset += len(line) + 1
                 continue
             x_text = tx + float(ann.get("dx", 0))
-            y_text = ty + float(ann.get("dy", 0)) - (len(lines) - 1) * line_height / 2
             vertical_align = style.get("vertical_align")
-            if vertical_align in ("center", "middle"):
-                y_text += font_size * 0.35
-            elif vertical_align == "top":
-                y_text += font_size * 0.8
-            elif vertical_align == "bottom":
-                y_text -= font_size * 0.2
+            y_text = _annotation_first_baseline(
+                ty + float(ann.get("dy", 0)),
+                len(lines),
+                line_height,
+                font_size,
+                vertical_align,
+            )
             line_offset = 0
             tspan_parts = []
             for index, line in enumerate(lines):

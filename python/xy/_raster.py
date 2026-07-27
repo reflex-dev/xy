@@ -29,6 +29,7 @@ from ._svg import (
     _STATIC_COLOR_FALLBACK,
     _TEXT,
     DEFAULT_PALETTE,
+    _annotation_first_baseline,
     _axis_label_geometry,
     _axis_scales,
     _axis_tick_font_size,
@@ -1433,16 +1434,15 @@ def _emit_annotations(
                     )
                     line_offset += len(line) + 1
                 continue
-            first_y = y - (len(lines) - 1) * line_height / 2
             vertical_align = style.get("vertical_align")
-            if vertical_align in ("center", "middle"):
-                first_y += font_size * 0.35
-            elif vertical_align == "top":
-                first_y += font_size * 0.8
-            elif vertical_align == "bottom":
-                first_y -= font_size * 0.2
             text_x = x + float(ann.get("dx", 0.0))
-            text_y = first_y + float(ann.get("dy", 0.0))
+            text_y = _annotation_first_baseline(
+                y + float(ann.get("dy", 0.0)),
+                len(lines),
+                line_height,
+                font_size,
+                vertical_align,
+            )
             _emit_text_box(cmd, style, lines, text_x, text_y, line_height, font_size, anchor)
             for index, line in enumerate(lines):
                 line_ranges = [
