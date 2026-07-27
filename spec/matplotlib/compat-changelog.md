@@ -4,6 +4,16 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Histogram and spectral numeric semantics — 2026-07-26 (Matplotlib 3.11.1 reference)
+
+- `hist(density=True, stacked=True)` now bins raw per-dataset mass, stacks it,
+  and normalizes the combined top envelope once. Unequal bin widths, weights,
+  and both cumulative directions match Matplotlib 3.11.1 numeric outputs.
+- The native Welch paths behind `psd`, `csd`, `cohere`, and `specgram` no
+  longer subtract each segment mean by default. Their omitted/`None`
+  `detrend` behavior is Matplotlib's `detrend_none`; unsupported explicit
+  detrending modes continue to fail loudly at the pyplot boundary.
+
 ## Vector-field gallery corrections — 2026-07-24
 
 - `quiver(units=...)` now converts Matplotlib's width-unit vocabulary without

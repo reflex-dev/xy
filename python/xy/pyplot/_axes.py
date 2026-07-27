@@ -2037,21 +2037,59 @@ class Axes(PlotTypeMixin):
             weight_sets = [np.asarray(weights, dtype=np.float64)]
         else:
             weight_sets = [np.asarray(value, dtype=np.float64) for value in weights]
-        counts = [
-            np.histogram(values, bins=edges, weights=w, density=density)[0].astype(np.float64)
-            for values, w in zip(datasets, weight_sets, strict=True)
-        ]
+        stacked = stacked or histtype == "barstacked"
+        # Matplotlib bins stacked inputs as raw (possibly weighted) mass,
+        # cumulatively stacks the datasets, and only then normalizes the top
+        # envelope.  Normalizing each input independently would give every
+        # dataset unit area and is especially wrong for unequal bin widths.
+        counts_array = np.vstack(
+            [
+                np.histogram(
+                    values,
+                    bins=edges,
+                    weights=w,
+                    density=density and not stacked,
+                )[0].astype(np.float64)
+                for values, w in zip(datasets, weight_sets, strict=True)
+            ]
+        )
+        if stacked:
+            tops = np.cumsum(counts_array, axis=0)
+            if density:
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    tops = (tops / np.diff(edges)) / tops[-1].sum()
+            counts_array = np.diff(
+                np.vstack((np.zeros((1, counts_array.shape[1]), dtype=np.float64), tops)),
+                axis=0,
+            )
+        counts = list(counts_array)
         if cumulative:
             reverse = isinstance(cumulative, (int, float, np.number)) and cumulative < 0
-            counts = [
-                (
-                    np.cumsum((values * np.diff(edges) if density else values)[::-1])[::-1]
-                    if reverse
-                    else np.cumsum(values * np.diff(edges) if density else values)
+            cumulative_tops = np.cumsum(counts_array, axis=0) if stacked else counts_array
+            cumulative_tops = np.asarray(
+                [
+                    (
+                        np.cumsum((values * np.diff(edges) if density else values)[::-1])[::-1]
+                        if reverse
+                        else np.cumsum(values * np.diff(edges) if density else values)
+                    )
+                    for values in cumulative_tops
+                ]
+            )
+            counts_array = (
+                np.diff(
+                    np.vstack(
+                        (
+                            np.zeros((1, cumulative_tops.shape[1]), dtype=np.float64),
+                            cumulative_tops,
+                        )
+                    ),
+                    axis=0,
                 )
-                for values in counts
-            ]
-        stacked = stacked or histtype == "barstacked"
+                if stacked
+                else cumulative_tops
+            )
+            counts = list(counts_array)
 
         def dataset_values(value: Any, name: str, *, color_value: bool = False) -> list[Any]:
             if value is None:
@@ -2097,6 +2135,14 @@ class Axes(PlotTypeMixin):
             else (1.0 if (stacked or len(datasets) == 1) else 0.8)
         )
         width = binwidths * rel_width / (1 if stacked else len(datasets))
+        # Keep the common uniform-bin entry scalar. Besides avoiding a
+        # redundant per-bin column, explicit legends expect one swatch width;
+        # genuinely unequal bins retain their exact width array.
+        entry_width: float | np.ndarray = (
+            float(width[0])
+            if len(width) and np.allclose(width, width[0], rtol=1e-12, atol=0.0)
+            else width
+        )
         for index, values in enumerate(counts):
             positions = centers if stacked else centers + (index - (len(datasets) - 1) / 2) * width
             current_base = base.copy() if stacked else np.zeros_like(values)
@@ -2139,7 +2185,7 @@ class Axes(PlotTypeMixin):
                         "y": values,
                         "kwargs": {
                             "base": current_base,
-                            "width": width,
+                            "width": entry_width,
                             "orientation": "horizontal",
                             "color": resolved_color,
                             "opacity": 1.0 if alpha is None else float(alpha),
@@ -2218,7 +2264,7 @@ class Axes(PlotTypeMixin):
                         "y": values,
                         "kwargs": {
                             "base": current_base,
-                            "width": width,
+                            "width": entry_width,
                             "orientation": orientation,
                             "color": "transparent" if fill is False else resolved_color,
                             "opacity": 1.0 if alpha is None else float(alpha),
