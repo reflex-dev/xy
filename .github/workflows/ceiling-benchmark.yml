@@ -1,0 +1,167 @@
+name: Interactive ceiling benchmark
+
+# How many rows each library still lets a user interact with, and the peak
+# resident memory that costs. Manual only: a full ladder spawns a fresh
+# interpreter and a fresh browser per cell and runs for hours.
+#
+# Runner: macOS larger runner (12 cores, 30 GB RAM, 14 GB SSD, x64 Intel).
+# 30 GB is what makes the full 100M ladder reachable — the reference run peaks
+# at 15.5 GiB for exact markers at 100M, which does not fit a 16 GB runner.
+#
+# Two things this lane is NOT:
+#   * NOT free. macOS larger runners bill at a high multiplier and a full
+#     ladder is multi-hour. Narrow `sizes` or `arms` for routine checks.
+#   * NOT directly comparable to the published Apple-silicon reference run.
+#     This is x64 Intel, and the browser rasterizes through SwiftShader by
+#     default. Frame-time numbers from here must never be merged into a
+#     hardware-GPU table (benchmarks/README.md: artifacts are
+#     environment-scoped). Publish from the reference run; use this lane to
+#     re-measure on demand and to catch regressions.
+on:
+  workflow_dispatch:
+    inputs:
+      sizes:
+        description: Row counts to sweep.
+        type: string
+        default: "10,10000,100000,500000,1000000,2500000,5000000,10000000,25000000,50000000,100000000"
+      arms:
+        description: Which libraries to run.
+        type: string
+        default: "xy,xy-exact,plotly,matplotlib,datashader,plotly-resampler"
+      repetitions:
+        description: Fresh-process attempts per cell; the best successful run is kept.
+        type: string
+        default: "3"
+      timeout:
+        description: Per-phase wall-clock limit in seconds.
+        type: string
+        default: "300"
+      memory_gib:
+        description: Per-process-tree RSS guard. Must stay under the runner's 30 GB.
+        type: string
+        default: "24"
+      interactive_budget_ms:
+        description: Gesture p95 above this counts as rendering, not interacting.
+        type: string
+        default: "100"
+      hardware_gl:
+        description: Ask the browser for hardware GL instead of SwiftShader. The renderer actually obtained is recorded per row either way.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  ceiling:
+    name: Ceiling sweep (macOS large, 30 GB)
+    runs-on: macos-15-large
+    timeout-minutes: 720
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The distribution version is derived from the latest `v*` tag.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Record runner capacity
+        # The ladder is only meaningful against the machine it ran on: a cell
+        # that fails for want of memory or disk must be attributable, and the
+        # 14 GB SSD is the tighter of the two limits here.
+        run: |
+          {
+            echo "### Runner capacity"
+            echo '```'
+            sysctl -n machdep.cpu.brand_string
+            echo "cores: $(sysctl -n hw.ncpu)"
+            echo "RAM: $(( $(sysctl -n hw.memsize) / 1024 / 1024 / 1024 )) GiB"
+            df -h /
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build native core
+        run: cargo build --release
+
+      - name: Install package + comparison deps
+        # tornado is required for Matplotlib's WebAgg backend; without it the
+        # matplotlib arm fails at backend switch rather than at a real ceiling.
+        run: |
+          uv venv
+          uv pip install --constraint benchmarks/requirements-ci.lock -e ".[dev]"
+          uv pip install --constraint benchmarks/requirements-ci.lock \
+            matplotlib plotly kaleido datashader plotly-resampler \
+            psutil websocket-client pillow pandas tornado
+
+      - name: Verify native backend is active
+        run: uv run python -c "import xy.kernels as k; assert k.BACKEND == 'native', k.BACKEND; print('native')"
+
+      - name: Build render client
+        # to_html embeds these bundles; a source checkout has no static/ dir.
+        run: |
+          npm ci
+          node js/build.mjs
+
+      - name: Install Chromium (Playwright)
+        run: npx playwright install --with-deps chromium
+
+      - name: Free disk before the sweep
+        # A 100M exact-marker page is ~1.07 GB on its own. The harness now
+        # releases each page after its probe, but the toolchain above already
+        # occupies several GB of the 14 GB SSD.
+        run: df -h /
+
+      - name: Run ceiling sweep
+        run: |
+          CHROME="$(node -e "console.log(require('playwright').chromium.executablePath())")"
+          export CHROME
+          SOFTWARE="--software"
+          if [ "${{ inputs.hardware_gl }}" = "true" ]; then SOFTWARE=""; fi
+          uv run python benchmarks/bench_ceiling.py \
+            --sizes "${{ inputs.sizes }}" \
+            --arms "${{ inputs.arms }}" \
+            --repetitions "${{ inputs.repetitions }}" \
+            --timeout "${{ inputs.timeout }}" \
+            --memory-gib "${{ inputs.memory_gib }}" \
+            $SOFTWARE --chrome "$CHROME" \
+            --out ceiling-results.json
+
+      - name: Summarize
+        # The report only exists if the sweep got far enough to write it; skip
+        # rather than fail here so the sweep's own error stays the visible one.
+        if: always() && hashFiles('ceiling-results.json') != ''
+        run: |
+          uv run python benchmarks/summarize_ceiling.py ceiling-results.json \
+            --interactive-budget-ms "${{ inputs.interactive_budget_ms }}" \
+            | tee ceiling-summary.md
+          {
+            echo "### Ceiling results"
+            echo "Runner: macos-15-large (x64 Intel). Not comparable to the"
+            echo "Apple-silicon reference run; check \`Browser renderer\` below."
+            cat ceiling-summary.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Plot
+        if: always() && hashFiles('ceiling-results.json') != ''
+        run: |
+          uv run python benchmarks/plot_ceiling.py ceiling-results.json --out-dir charts
+          # The exact-marker cut: every arm draws one marker per row, so the
+          # comparison is like-for-like and xy gets no aggregation credit.
+          uv run python benchmarks/plot_ceiling.py ceiling-results.json \
+            --arms xy-exact,matplotlib,plotly --suffix=-exact --out-dir charts
+
+      - name: Upload ceiling report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ceiling-benchmark
+          if-no-files-found: warn
+          path: |
+            ceiling-results.json
+            ceiling-summary.md
+            charts/

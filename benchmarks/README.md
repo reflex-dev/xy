@@ -78,6 +78,150 @@ download, which inflate every library's first row by an amount that is not part
 of any output contract. Run the suite once and discard it; publish the run after
 it.
 
+## Interactive Ceiling and Peak Memory
+
+`bench_ceiling.py` answers a different question from the launch suite: not how
+fast a fixed size renders, but **how many rows each library still lets a user
+interact with, and what peak resident memory that costs**. It sweeps 10 through
+100M rows and stops each arm where it actually breaks.
+
+```bash
+export CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+python benchmarks/bench_ceiling.py \
+  --repetitions 3 --timeout 300 --memory-gib 36 \
+  --chrome "$CHROME" --out ceiling-results.json
+python benchmarks/summarize_ceiling.py ceiling-results.json
+```
+
+`summarize_ceiling.py` re-derives every published table and chart value from
+the raw JSON; do not hand-type a number into the docs.
+
+Six arms, and the differences between them are the point:
+
+| Arm | Contract | What reaches the renderer |
+| --- | --- | --- |
+| `xy` | interactive-webgl | density grid above 200k rows, plus an 8,192-row retained sample |
+| `xy-exact` | interactive-webgl | `density=False`; one marker per row |
+| `plotly` | interactive-webgl | `px.scatter` default; `scattergl` above ~1k rows, one marker per row |
+| `matplotlib` | interactive-server | WebAgg; server-side Agg raster, one marker per row |
+| `datashader` | static-image | `Canvas.points` aggregation; **no** client-side interaction without a live holoviews/bokeh server |
+| `plotly-resampler` | interactive-server | not applicable to unordered scatter — see below |
+
+Rules this suite holds itself to:
+
+- **No arm receives pre-thinned input.** Every arm is handed all N rows. What
+  each library then does with them is recorded in `mode` and `points_rendered`,
+  never assumed.
+- **Aggregation is proven, not claimed.** Density arms carry a count oracle:
+  datashader must sum to exactly N, and xy must report all N rows visible with
+  its quantized grid preserving occupancy and maximum. The oracle used is in
+  every row's `oracle` field.
+- **The clock stops when every point is on screen.** `ttfr_ms` is Python build
+  plus `visible_complete_ms`: the last canvas change before the full drawing
+  buffer goes pixel-stable for 10 consecutive frames. Progressive renderers
+  (Plotly's scattergl draws large scatters in chunks across frames) therefore
+  get charged until their final chunk lands, not until their first paint —
+  `first_frame_ms` records the first paint separately. A canvas still mutating
+  after 30 s is `render_unstable`, a failure. The WebAgg arm pushes one
+  complete server-rendered raster, so its first nonblank frame is already
+  all-points-visible by construction.
+- **Interactive has teeth.** A cell counts only if it reaches visible-complete,
+  completes all 24 scripted zoom/pan steps, and is still nonblank at the
+  restored home view. Intermediate gesture frames may legitimately be empty —
+  a deep zoom can land on blank space, and at n=10 it usually does.
+- **The two memory pools stay separate.** Plotly dies in the browser and
+  Matplotlib/WebAgg dies in Python; one summed number would hide which.
+- **Read browser memory against the n=10 row.** A headless Chrome with an empty
+  profile already resides ~1 GiB before drawing anything. That is why the ladder
+  starts at 10: it measures the floor so the chart-attributable part can be
+  separated from it.
+- **Sizes above a failure are `not_attempted`, not silently absent.** The row
+  states which smaller size failed and how.
+
+Two coverage limits are recorded rather than papered over. The WebAgg arm's
+interaction is a server round trip this harness does not drive, so its ceiling
+reflects first render alone (`gesture_measured: false`). And `plotly-resampler`
+cannot express this workload at all: `FigureResampler` asserts monotonically
+increasing x for every aggregator it ships, so an unordered scatter is rejected
+before any downsampling happens. It is kept as an explicit `not_applicable` row
+so the omission is visible; it belongs in a sorted time-series ladder instead.
+
+## Interactive UX Benchmark
+
+`bench_ux.py` measures what a user actually experiences on a **live
+interactive chart**: how long until every point is on screen, how the chart
+behaves during a zoom, and how long after the gesture until the picture is
+final. Five arms, every one a real interactive deployment driven through its
+own input path — no synthetic API calls:
+
+| Arm | What runs | Zoom input |
+| --- | --- | --- |
+| `xy` | production `ChartView` over a WebSocket bridging `channel.handle_message` (deep zoom drills to exact rows) | real `WheelEvent` |
+| `xy-exact` | same host, `density=False` | real `WheelEvent` |
+| `plotly` | `px.scatter` HTML, `scrollZoom` enabled | real `WheelEvent` |
+| `matplotlib` | WebAgg server + `mpl.js` | Zoom-tool rubber-band drags |
+| `datashader` | hvPlot/HoloViews on a Bokeh server, `datashade=True` + `resample_when` | real `WheelEvent` |
+
+```bash
+export CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+python benchmarks/bench_ux.py \
+  --sizes 100000 --arms xy,xy-exact,plotly,matplotlib,datashader \
+  --chrome "$CHROME" --out ux-100k.json
+```
+
+Screenshots land in `<out-stem>-shots/`: the frame the clock stopped on, at
+both `visible-complete` and `settle-complete`, for every arm.
+
+### The measurement contract
+
+- **The clock stops only on a frame that is correct AND stable.** Correct =
+  the scripted target domain plus **sentinel points** — rows planted at known
+  coordinates during data generation — verified lit at their projected screen
+  positions. Stable = the full readback surface byte-identical for 10
+  consecutive frames. Stability alone would pass a stale raster while a
+  server is still computing; correctness alone would pass a frame still being
+  painted. Failures separate the two: `render_incorrect` / `render_unstable`.
+- **Inputs replay on a fixed wall-clock schedule** (42 inputs at 33 ms), never
+  paced by the library's frame rate, so a slow arm falls behind honestly. 42
+  is a multiple of 6 so drag-based arms end on a completed box.
+- **Load and interaction are separate clocks.** `visible_complete_ms` (load),
+  then during-gesture statistics (frame p50/p95/max, dropped-frame %, achieved
+  fps), then `settle_ms` — last input to correct-and-stable again.
+  `zoom_to_final_ms` is the single end-to-end span, measured directly rather
+  than summed: a p95 is one frame, not a duration, and adding it to settle
+  would double-count the last gesture frame.
+- **Both memory pools, both peaks.** Each host's process tree is polled every
+  50 ms from spawn (`TreePeakPoller`), so build transients count; the browser
+  tree is polled across the whole probe. Plotly's `to_html` build runs in its
+  own child so its peak is attributable rather than charged to the harness.
+- **`first_frame_ms` is published beside `visible_complete_ms`.** For
+  single-pass renderers they agree to ~1 frame; for progressive renderers the
+  gap measures how much a naive first-paint benchmark would have flattered
+  them.
+
+### Upstream behaviors worth knowing
+
+Each cost a debugging cycle and is load-bearing for the numbers:
+
+- **WebAgg**: `mpl.js` assigns to the read-only `button.classList` (silent
+  no-op), so toolbar buttons have no classes — find the Zoom tool by its icon
+  `img.alt`. A drag with any corner outside the axes bbox is **silently
+  discarded**, so boxes are clamped inside `ax.bbox`. The client knows no axis
+  limits, so the host serves server-side truth (`/state`: limits, projected
+  sentinels, axes bbox). At large N a new drag waits for the previous redraw —
+  a human cannot draw a box on a frame they have not seen.
+- **Bokeh/datashader**: the websocket origin allowlist rejects `127.0.0.1`
+  when it expects `localhost` (403, blank page, no server-side error). Bokeh 3
+  renders into shadow DOM, so `document.querySelectorAll("canvas")` finds
+  nothing — reach the raster through the plot view's `canvas_view.primary.el`
+  and dispatch input at `events_el`. With `resample_when`, holoviews 1.23
+  renders nothing until a **client** range event arrives; the adapter nudges
+  once with a self-inverse wheel pair, which is what a human does to a blank
+  plot.
+- **Plotly**: `px.scatter` does not wheel-zoom without
+  `config={"scrollZoom": True}`; at ≤1k rows it emits SVG (no canvas), so the
+  probe counts `.scatterlayer .point` nodes instead.
+
 ## CI Software GL
 
 These commands match the non-blocking GitHub Actions measurement lane:
