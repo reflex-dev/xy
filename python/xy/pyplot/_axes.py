@@ -3333,6 +3333,21 @@ class Axes(PlotTypeMixin):
         for entry in host._entries:
             if axis == "y" and entry.get("y_axis", "y") != y_axis:
                 continue
+            if entry.get("_quiver_key_recipe") is not None:
+                # QuiverKey is an Artist offset in axes/figure/data display
+                # coordinates; Matplotlib never lets it change dataLim.
+                continue
+            quiver_recipe = entry.get("_quiver_recipe")
+            if quiver_recipe is not None:
+                # Quiver.get_datalim contributes only its offset locations,
+                # not the display-sized arrow polygons. Keep that invariant
+                # after materialization expands the entry into shaft/head
+                # segments outside the data-position extent.
+                key = "x" if axis == "x" else "y"
+                scale_key = "y2" if axis == "y" and self._y2_of is not None else axis
+                values = _scale_values(quiver_recipe[key], host._scale_specs[scale_key])
+                yield np.asarray(values, dtype=np.float64).reshape(-1), True
+                continue
             if entry.get("kind") == "@axline":
                 # Matplotlib includes only untransformed defining points in
                 # data limits (one anchor for slope form, both for two-point
@@ -6315,6 +6330,7 @@ class Axes(PlotTypeMixin):
         if self._chart is not None:
             return self._chart
         self._materialize_insets()
+        self._materialize_quiver_geometry(width, height)
         children = self._chart_children()
         if self._twin is not None:
             children.extend(self._twin._chart_children())

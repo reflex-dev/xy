@@ -4,6 +4,18 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Quiver display-space invariants — 2026-07-26
+
+- `angles="uv"` now stays screen-relative while `angles="xy"` follows the
+  live data-to-display transform, including unequal spans and inverted axes.
+- `units`, `scale_units`, explicit/automatic scale, and shaft width use the
+  real axes dimensions, view limits, and DPI. Automatic scaling cancels the
+  `scale_units` constant exactly as Matplotlib does, and quiver offsets—not
+  display-sized arrow tips—own autoscaling.
+- Quiver keys now transform axes, figure, data, and inch coordinates through
+  the actual subplot geometry. Their label separation is authored in physical
+  inches and converted through the figure DPI.
+
 ## Vector-field gallery corrections — 2026-07-24
 
 - `quiver(units=...)` now converts Matplotlib's width-unit vocabulary without
