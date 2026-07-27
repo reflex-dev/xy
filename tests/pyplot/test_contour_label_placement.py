@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import re
 
 import numpy as np
@@ -179,3 +180,74 @@ def test_constrained_layout_reserves_contour_colorbar_inside_canvas() -> None:
     # in the payload but only red line slivers survived the export crop.
     assert panel_x + panel.width <= canvas_width
     assert panel_y + panel.height <= canvas_height
+
+
+def test_second_automatic_colorbar_uses_explicit_axes_without_overwriting_first() -> None:
+    fig, ax = plt.subplots()
+    values = np.linspace(-1.0, 1.0, 64).reshape(8, 8)
+    image = ax.imshow(values, cmap="gray")
+    contour = ax.contour(values, levels=[-0.5, 0.0, 0.5], cmap="flag", extend="both")
+
+    first = fig.colorbar(contour, shrink=0.8)
+    second = fig.colorbar(image, orientation="horizontal", shrink=0.8)
+
+    assert ax._colorbar is first._options
+    assert ax._colorbar["orientation"] == "vertical"
+    assert second.ax is fig.axes[-1]
+    assert second.ax is not ax
+    assert second.ax._colorbar["orientation"] == "horizontal"
+    assert second.ax._colorbar["placement"] == "axes"
+
+    output = io.BytesIO()
+    fig.savefig(output, format="svg")
+    svg = output.getvalue().decode()
+    assert svg.count("<linearGradient") >= 2
+
+
+def test_listed_contour_colorbar_keeps_exact_bands_and_extension_colors() -> None:
+    fig, ax = plt.subplots()
+    values = np.linspace(-2.0, 2.0, 100).reshape(10, 10)
+    contour = ax.contourf(
+        values,
+        levels=[-1.5, -1.0, -0.5, 0.0, 0.5, 1.0],
+        colors=("red", "green", "blue"),
+        extend="both",
+    )
+    contour.cmap.set_under("yellow")
+    contour.cmap.set_over("cyan")
+
+    fig.colorbar(contour)
+
+    assert ax._colorbar["band_colors"] == [
+        [255, 0, 0],
+        [0, 128, 0],
+        [0, 0, 255],
+        [255, 0, 0],
+        [0, 128, 0],
+    ]
+    assert ax._colorbar["under_color"] == [255, 255, 0]
+    assert ax._colorbar["over_color"] == [0, 255, 255]
+
+    svg = fig._single().to_svg()
+    assert svg.count('fill="rgb(255,0,0)"') >= 2
+    assert 'fill="rgb(0,128,0)"' in svg
+    assert 'fill="rgb(0,0,255)"' in svg
+    assert 'fill="rgb(255,255,0)"' in svg
+    assert 'fill="rgb(0,255,255)"' in svg
+
+
+def test_named_contour_colormap_keeps_explicit_extension_colors() -> None:
+    fig, ax = plt.subplots()
+    values = np.linspace(-2.0, 2.0, 100).reshape(10, 10)
+    cmap = plt.colormaps["winter"].with_extremes(under="magenta", over="yellow")
+    contour = ax.contourf(
+        values,
+        levels=[-1.0, -0.5, 0.0, 0.5, 1.0],
+        cmap=cmap,
+        extend="both",
+    )
+
+    fig.colorbar(contour)
+
+    assert ax._colorbar["under_color"] == [255, 0, 255]
+    assert ax._colorbar["over_color"] == [255, 255, 0]

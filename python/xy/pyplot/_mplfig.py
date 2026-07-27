@@ -16,7 +16,7 @@ import numpy as np
 
 from ._artists import Text
 from ._axes import _DEFAULT_AXES_RECT, Axes, _plain_text
-from ._colors import resolve_color
+from ._colors import resolve_color, resolve_rgba
 from ._rc import rc_figsize_px, rcParams
 from ._transforms import Bbox, CoordinateTransform
 from ._translate import check_unsupported, not_implemented
@@ -731,7 +731,68 @@ class Figure:
                 raise ValueError("colorbar() extend must be 'neither', 'min', 'max', or 'both'")
             if extend != "neither":
                 options["extend"] = str(extend)
+
+        def rgb255(value: Any) -> list[int]:
+            rgba = np.asarray(resolve_rgba(value), dtype=np.float64)
+            return [int(round(255.0 * channel)) for channel in rgba[:3]]
+
+        # Listed contour fills already carry their exact per-band RGBA table.
+        # Keep that table on the colorbar instead of replacing it with samples
+        # from the nominal fallback colormap. Extended rows own the cap colors.
+        color_table = props.get("color")
+        if levels is not None and color_table is not None and not isinstance(color_table, str):
+            table = np.asarray(color_table, dtype=np.float64)
+            if table.ndim == 2 and table.shape[1] in (3, 4) and len(table):
+                rgb_table = np.rint(np.clip(table[:, :3], 0.0, 1.0) * 255.0).astype(int)
+                extend_min = extend in ("min", "both")
+                extend_max = extend in ("max", "both")
+                band_count = int(levels)
+                start = int(extend_min and len(rgb_table) >= band_count + 1 + int(extend_max))
+                band_rows = rgb_table[start : start + band_count]
+                if len(band_rows) == band_count:
+                    options["band_colors"] = band_rows.tolist()
+                if extend_min:
+                    options["under_color"] = rgb_table[0].tolist()
+                if extend_max:
+                    options["over_color"] = rgb_table[-1].tolist()
+        if extend in ("min", "both") and entry.get("cmap_under") is not None:
+            options["under_color"] = rgb255(entry["cmap_under"])
+        if extend in ("max", "both") and entry.get("cmap_over") is not None:
+            options["over_color"] = rgb255(entry["cmap_over"])
+
         check_unsupported(kwargs, "colorbar()")
+        if (
+            cax is None
+            and not isinstance(axes_arg, (list, tuple, np.ndarray))
+            and source_axes._colorbar is not None
+        ):
+            # The wire format intentionally keeps one colorbar per chart. A
+            # second Matplotlib colorbar therefore becomes an ordinary
+            # explicit colorbar axes, a path every renderer already supports.
+            # This preserves both bars without widening the core chart schema.
+            left, bottom, parent_width, parent_height = source_axes.get_position().bounds
+            canvas_width, canvas_height = rc_figsize_px(self._figsize, self._dpi)
+            anchor_x, anchor_y = map(float, anchor_values)
+            if orientation == "horizontal":
+                bar_width = parent_width * shrink
+                bar_left = left + (parent_width - bar_width) * anchor_x
+                bar_height = max(18.0 / canvas_height, 0.025)
+                bar_bottom = max(0.01, bottom - bar_height)
+                rect = (bar_left, bar_bottom, bar_width, bar_height)
+            else:
+                bar_height = parent_height * shrink
+                bar_bottom = bottom + (parent_height - bar_height) * anchor_y
+                bar_width = max(18.0 / canvas_width, 0.025)
+                rect = (
+                    min(0.99 - bar_width, left + parent_width + 24.0 / canvas_width),
+                    bar_bottom,
+                    bar_width,
+                    bar_height,
+                )
+            cax = self.add_axes(rect)
+            self._current_ax = source_axes
+            axes = cax
+            options["placement"] = "axes"
         if cax is not None:
             axes.set_axis_off()
             axes.spines[:].set_visible(False)
@@ -809,7 +870,11 @@ class Figure:
             def __init__(self, ax: Any, colorbar_options: dict[str, Any]) -> None:
                 self._options = colorbar_options
                 self._host = ax
-                self.ax = _ColorbarAxes(ax, colorbar_options)
+                self.ax = (
+                    ax
+                    if colorbar_options.get("placement") == "axes"
+                    else _ColorbarAxes(ax, colorbar_options)
+                )
 
             def add_lines(self, contour: Any, *, erase: bool = True) -> None:
                 from ._artists import ContourSet, _contour_legend_colors

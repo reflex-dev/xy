@@ -4031,7 +4031,7 @@ def _colorbar(
     extend = options.get("extend")
     extend_nodes = ""
     if extend in ("max", "both"):
-        r, g, b = stops[-1]
+        r, g, b = options.get("over_color", stops[-1])
         points = (
             f"{_num(x)},{_num(y)} {_num(x + width)},{_num(y)} {_num(x + width / 2)},{_num(y - 9)}"
             if orientation != "horizontal"
@@ -4040,7 +4040,7 @@ def _colorbar(
         )
         extend_nodes += f'<polygon points="{points}" fill="rgb({r},{g},{b})"/>'
     if extend in ("min", "both"):
-        r, g, b = stops[0]
+        r, g, b = options.get("under_color", stops[0])
         points = (
             f"{_num(x)},{_num(y + height)} {_num(x + width)},{_num(y + height)} "
             f"{_num(x + width / 2)},{_num(y + height + 9)}"
@@ -4054,7 +4054,7 @@ def _colorbar(
         value = float(line.get("value", np.nan))
         if not np.isfinite(value) or value < min(lo, hi) or value > max(lo, hi):
             continue
-        fraction = (value - lo) / span
+        line_fraction = fraction(value)
         color = escape(_css(line.get("color"), text_color))
         line_width = _num(max(0.5, float(line.get("width", 1.0))))
         dash = (
@@ -4064,14 +4064,14 @@ def _colorbar(
             else ""
         )
         if orientation == "horizontal":
-            position = x + width * fraction
+            position = x + width * line_fraction
             line_nodes += (
                 f'<line data-xy-colorbar-line="true" x1="{_num(position)}" '
                 f'x2="{_num(position)}" y1="{_num(y)}" y2="{_num(y + height)}" '
                 f'stroke="{color}" stroke-width="{line_width}"{dash}/>'
             )
         else:
-            position = y + height * (1.0 - fraction)
+            position = y + height * (1.0 - line_fraction)
             line_nodes += (
                 f'<line data-xy-colorbar-line="true" x1="{_num(x)}" '
                 f'x2="{_num(x + width)}" y1="{_num(position)}" y2="{_num(position)}" '
@@ -4108,9 +4108,13 @@ def _colorbar_body(
             f'height="{_num(height)}" fill="url(#{gradient_id})"/>'
         )
     n = int(levels)
-    cmap = options.get("colormap", "viridis")
-    positions = (np.arange(n, dtype=np.float64) + 0.5) / n
-    colors = _lut(cmap, positions)
+    exact_colors = options.get("band_colors")
+    if isinstance(exact_colors, list) and len(exact_colors) == n:
+        colors = np.asarray(exact_colors, dtype=np.uint8)
+    else:
+        cmap = options.get("colormap", "viridis")
+        positions = (np.arange(n, dtype=np.float64) + 0.5) / n
+        colors = _lut(cmap, positions)
     rects = []
     for index, (r, g, b) in enumerate(colors):
         if orientation == "horizontal":

@@ -3147,6 +3147,8 @@ class PlotTypeMixin:
         # unextended contour. Keep that observable value on the ContourSet
         # while passing the renderer its normalized four-value contract.
         extend = public_extend if public_extend in ("neither", "min", "max", "both") else "neither"
+        cmap_under = getattr(cmap, "_under", None)
+        cmap_over = getattr(cmap, "_over", None)
         hatches = kwargs.pop("hatches", None)
         locator = kwargs.pop("locator", None)
         za = np.asarray(z, dtype=np.float64)
@@ -3303,6 +3305,16 @@ class PlotTypeMixin:
                 "hatches": list(hatches) if hatches is not None else None,
                 "extend": public_extend,
                 "levels": public_levels,
+                "cmap_under": (
+                    np.asarray(resolve_rgba(cmap_under), dtype=np.float64)
+                    if cmap_under is not None
+                    else None
+                ),
+                "cmap_over": (
+                    np.asarray(resolve_rgba(cmap_over), dtype=np.float64)
+                    if cmap_over is not None
+                    else None
+                ),
             },
         )
         if filled:

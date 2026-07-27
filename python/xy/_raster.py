@@ -2410,9 +2410,14 @@ def _emit_colorbar(
     levels = options.get("levels")
     if levels and int(levels) >= 1:
         n_seg = int(levels)
-        colors = _lut(
-            options.get("colormap", "viridis"),
-            (np.arange(n_seg, dtype=np.float64) + 0.5) / n_seg,
+        exact_colors = options.get("band_colors")
+        colors = (
+            np.asarray(exact_colors, dtype=np.uint8)
+            if isinstance(exact_colors, list) and len(exact_colors) == n_seg
+            else _lut(
+                options.get("colormap", "viridis"),
+                (np.arange(n_seg, dtype=np.float64) + 0.5) / n_seg,
+            )
         )
     else:
         n_seg = 64
@@ -2444,14 +2449,14 @@ def _emit_colorbar(
     ticks = options.get("ticks")
     extend = options.get("extend")
     if extend in ("max", "both"):
-        color = (*map(int, colors[-1]), 255)
+        color = (*map(int, options.get("over_color", colors[-1])), 255)
         if orientation == "horizontal":
             pts = [(x + width, y), (x + width, y + height), (x + width + 9, y + height / 2)]
         else:
             pts = [(x, y), (x + width, y), (x + width / 2, y - 9)]
         cmd.fill(pts, color)
     if extend in ("min", "both"):
-        color = (*map(int, colors[0]), 255)
+        color = (*map(int, options.get("under_color", colors[0])), 255)
         if orientation == "horizontal":
             pts = [(x, y), (x, y + height), (x - 9, y + height / 2)]
         else:
@@ -2461,15 +2466,15 @@ def _emit_colorbar(
         value = float(line.get("value", np.nan))
         if not np.isfinite(value) or value < min(lo, hi) or value > max(lo, hi):
             continue
-        fraction = (value - lo) / span
+        line_fraction = fraction(value)
         color = _parse_color(str(line.get("color") or text_color))
         line_width = max(0.5, float(line.get("width", 1.0)))
         dash = [3.7 * line_width, 1.6 * line_width] if line.get("dash") == "dashed" else None
         if orientation == "horizontal":
-            position = x + width * fraction
+            position = x + width * line_fraction
             cmd.stroke([(position, y), (position, y + height)], line_width, color, dash=dash)
         else:
-            position = y + height * (1.0 - fraction)
+            position = y + height * (1.0 - line_fraction)
             cmd.stroke([(x, position), (x + width, position)], line_width, color, dash=dash)
     if orientation == "horizontal":
         h_positions = (

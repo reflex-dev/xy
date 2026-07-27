@@ -2474,10 +2474,16 @@ export class ChartView {
     let gradient;
     if (levels > 0) {
       const lut = buildLutData(cb.colormap || "viridis");
+      const exactColors = Array.isArray(cb.band_colors) && cb.band_colors.length === levels
+        ? cb.band_colors
+        : null;
       const bands = [];
       for (let index = 0; index < levels; index++) {
         const sample = Math.min(255, Math.round(255 * (index + 0.5) / levels));
-        const color = `rgb(${lut[sample * 4]},${lut[sample * 4 + 1]},${lut[sample * 4 + 2]})`;
+        const row = exactColors && exactColors[index];
+        const color = row
+          ? `rgb(${Number(row[0])},${Number(row[1])},${Number(row[2])})`
+          : `rgb(${lut[sample * 4]},${lut[sample * 4 + 1]},${lut[sample * 4 + 2]})`;
         bands.push(`${color} ${100 * index / levels}% ${100 * (index + 1) / levels}%`);
       }
       gradient = `linear-gradient(to ${horizontal ? "right" : "top"},${bands.join(",")})`;
@@ -2499,10 +2505,14 @@ export class ChartView {
     const domain = cb.domain || [0, 1];
     const lo = Number(domain[0]), hi = Number(domain[1]);
     const span = hi - lo || 1;
+    const logScale = cb.scale === "log";
+    const colorbarFraction = (value) => logScale
+      ? (hi === lo ? 0 : Math.log(value / lo) / Math.log(hi / lo))
+      : (value - lo) / span;
     for (const line of Array.isArray(cb.lines) ? cb.lines : []) {
       const value = Number(line && line.value);
       if (!Number.isFinite(value) || value < Math.min(lo, hi) || value > Math.max(lo, hi)) continue;
-      const fraction = (value - lo) / span;
+      const fraction = colorbarFraction(value);
       const marker = document.createElement("i");
       marker.dataset.xyColorbarLine = "true";
       const color = safeCssPaint(this.root, line.color || "currentColor");
@@ -2516,7 +2526,6 @@ export class ChartView {
     const shrink = Math.max(0.01, Math.min(1, Number(cb.shrink) || 1));
     const barLength = (horizontal ? this.plot.w : this.plot.h) * shrink;
     const tickTarget = Math.max(2, Math.min(8, Math.floor(Math.max(0, barLength) / 48) + 1));
-    const logScale = cb.scale === "log";
     const tickResult = logScale ? logTicks(lo, hi, tickTarget) : linearTicks(lo, hi, tickTarget);
     const hasExplicitTicks = Array.isArray(cb.ticks);
     const tickValues = hasExplicitTicks
