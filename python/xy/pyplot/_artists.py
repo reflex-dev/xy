@@ -618,12 +618,12 @@ class AxesImage(Artist):
         import numpy as np
 
         if len(args) == 1:
-            self._entry["z"] = np.asarray(args[0])
+            self._axes._set_axes_image_data(self, args[0])
         elif len(args) == 3:
             x, y, z = args
-            self._entry["z"] = np.asarray(z)
-            self._entry["kwargs"]["x"] = np.asarray(x)
-            self._entry["kwargs"]["y"] = np.asarray(y)
+            self._axes._set_axes_image_data(self, z)
+            self._entry["kwargs"]["x"] = np.asarray(x).copy()
+            self._entry["kwargs"]["y"] = np.asarray(y).copy()
         else:
             raise TypeError("set_data expects image data or x, y, image data")
         self._touch()

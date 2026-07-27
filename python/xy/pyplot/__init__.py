@@ -339,7 +339,7 @@ def subplot(*args: Any, **kwargs: Any) -> Axes:
     packed ``subplot(211)`` shorthand. Returns the (new or existing)
     `Axes` and makes it current.
     """
-    return gcf().add_subplot(*args, **kwargs)
+    return gcf().activate_subplot(*args, **kwargs)
 
 
 def subplot_mosaic(mosaic: str | list[Any], **kwargs: Any) -> tuple[Figure, dict[Any, Axes]]:

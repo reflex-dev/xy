@@ -4,6 +4,17 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## PDSH state and image ownership — 2026-07-26
+
+- Split subplot creation from activation: repeated same-spec
+  `Figure.add_subplot()` calls now create overlay axes, while `plt.subplot()`
+  reuses the first matching axes and no-argument `plt.axes()` creates a fresh
+  axes. This restores the state boundaries used by PDSH 04.01 and 04.10.
+- `imshow()` now copies both its logical source and prepared render arrays.
+  `AxesImage.set_data()` updates `get_array()` and rebuilds render data through
+  the initial normalization/origin/resampling path, so later mutation of either
+  caller array cannot rewrite an existing image.
+
 ## Vector-field gallery corrections — 2026-07-24
 
 - `quiver(units=...)` now converts Matplotlib's width-unit vocabulary without

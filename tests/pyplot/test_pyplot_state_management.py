@@ -48,6 +48,21 @@ def test_pyplot_axes_delaxes_figtext_and_figlegend():
     assert ax2 not in fig.axes
 
 
+def test_subplot_reuses_match_but_no_arg_axes_is_fresh():
+    fig = plt.figure()
+
+    subplot = plt.subplot(111)
+    assert plt.subplot(111) is subplot
+    first_axes = plt.axes()
+    second_axes = plt.axes()
+
+    assert first_axes is not subplot
+    assert second_axes is not first_axes
+    assert plt.subplot(111) is subplot
+    assert fig.axes == [subplot, first_axes, second_axes]
+    assert plt.gca() is subplot
+
+
 def test_pyplot_twiny_creates_current_axes_on_same_figure():
     fig, ax = plt.subplots()
     twin = plt.twiny()

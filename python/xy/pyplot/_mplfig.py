@@ -146,11 +146,14 @@ class Figure:
         return _FigureCanvas(self)
 
     def add_subplot(self, *args: Any, **kwargs: Any) -> Axes:
+        if not args:
+            args = (111,)
         if len(args) == 1 and isinstance(args[0], _SubplotSpec):
             spec = args[0]
+            subplot_key = ("grid", spec.nrows, spec.ncols, spec.index)
             if spec.is_single and not spec.gridspec.has_custom_geometry:
                 self._ensure_grid(spec.nrows, spec.ncols)
-                ax = self._axes_at(spec.index)
+                ax = self._claim_or_create_subplot(subplot_key, spec.index)
             else:
                 # Spans and custom spacing become explicit figure rectangles.
                 # The spec is kept so subplots_adjust() can re-resolve them.
@@ -160,27 +163,31 @@ class Figure:
                 # retain that geometry for tight_layout/subplots_adjust.
                 self._nrows, self._ncols = spec.nrows, spec.ncols
                 ax._subplot_spec = spec
-        elif args and args != (1, 1, 1) and args != (111,):
+                ax._subplot_key = (
+                    "gridspec",
+                    id(spec.gridspec),
+                    spec.rows,
+                    spec.cols,
+                )
+                ax._subplot_claimed = True
+        else:
             nrows, ncols, index = _parse_subplot_args(args)
+            subplot_key = ("grid", nrows, ncols, index - 1)
             if any(a._figure_rect is not None for a in self._axes):
                 # matplotlib mixes numbered subplots into figures that already
                 # hold free-form axes; keep the figure free-form via the cell
-                # rectangle (and return the existing axes for a repeat spec).
+                # rectangle. Figure.add_subplot() deliberately does not reuse
+                # an existing match; pyplot.subplot() owns activation/reuse.
                 row, col = divmod(index - 1, ncols)
                 grid = _GridSpec(self, nrows, ncols)
                 rect = grid.cell_rect((row, row + 1), (col, col + 1))
-                existing = next((a for a in self._axes if a._figure_rect == rect), None)
-                if existing is not None:
-                    ax = existing
-                else:
-                    ax = self.add_axes(rect)
-                    ax._subplot_spec = _SubplotSpec(grid, (row, row + 1), (col, col + 1))
+                ax = self.add_axes(rect)
+                ax._subplot_spec = _SubplotSpec(grid, (row, row + 1), (col, col + 1))
+                ax._subplot_key = subplot_key
+                ax._subplot_claimed = True
             else:
                 self._ensure_grid(nrows, ncols)
-                ax = self._axes_at(index - 1)
-        else:
-            self._ensure_grid(1, 1)
-            ax = self._axes_at(0)
+                ax = self._claim_or_create_subplot(subplot_key, index - 1)
         self._current_ax = ax  # matplotlib: add_subplot activates the axes
         sharex = kwargs.pop("sharex", None)
         sharey = kwargs.pop("sharey", None)
@@ -191,6 +198,43 @@ class Figure:
         if kwargs:
             ax.set(**kwargs)
         return ax
+
+    def _claim_or_create_subplot(self, key: tuple[Any, ...], index: int) -> Axes:
+        """Claim a grid placeholder or append a same-spec overlay axes."""
+        for candidate in self._axes:
+            if candidate._subplot_key == key and not candidate._subplot_claimed:
+                candidate._subplot_claimed = True
+                return candidate
+        ax = Axes(self)
+        ax._subplot_index = index
+        ax._subplot_key = key
+        ax._subplot_claimed = True
+        self._axes.append(ax)
+        return ax
+
+    def activate_subplot(self, *args: Any, **kwargs: Any) -> Axes:
+        """Activate a matching subplot, creating it only when absent."""
+        if not args:
+            args = (111,)
+        if len(args) == 1 and isinstance(args[0], _SubplotSpec):
+            spec = args[0]
+            if spec.is_single and not spec.gridspec.has_custom_geometry:
+                key: tuple[Any, ...] = ("grid", spec.nrows, spec.ncols, spec.index)
+            else:
+                key = ("gridspec", id(spec.gridspec), spec.rows, spec.cols)
+        else:
+            nrows, ncols, index = _parse_subplot_args(args)
+            key = ("grid", nrows, ncols, index - 1)
+        existing = next(
+            (ax for ax in self._axes if ax._subplot_claimed and ax._subplot_key == key),
+            None,
+        )
+        if existing is None:
+            return self.add_subplot(*args, **kwargs)
+        self._current_ax = existing
+        if kwargs:
+            existing.set(**kwargs)
+        return existing
 
     def add_axes(self, rect: Any, **kwargs: Any) -> Axes:
         parsed = tuple(float(value) for value in rect)
@@ -310,16 +354,23 @@ class Figure:
             for index, ax in enumerate(self._axes):
                 if ax._figure_rect is None:
                     ax._subplot_index = index
-        while len(self._axes) < nrows * ncols:
+                    ax._subplot_key = ("grid", nrows, ncols, index)
+        for index in range(nrows * ncols):
+            key = ("grid", nrows, ncols, index)
+            if any(ax._subplot_key == key for ax in self._axes):
+                continue
             ax = Axes(self)
-            ax._subplot_index = len(self._axes)
+            ax._subplot_index = index
+            ax._subplot_key = key
             self._axes.append(ax)
 
     def _axes_at(self, index: int) -> Axes:
         self._ensure_grid(self._nrows, self._ncols)
-        if not self._axes:
-            self._axes.append(Axes(self))
-        return self._axes[index]
+        key = ("grid", self._nrows, self._ncols, index)
+        for ax in self._axes:
+            if ax._subplot_key == key:
+                return ax
+        raise IndexError(index)
 
     @property
     def axes(self) -> list[Axes]:
@@ -1430,11 +1481,13 @@ def make_axes_grid(fig: Figure, nrows: int, ncols: int, squeeze: bool = True) ->
         # Avoid allocating and populating an object ndarray for the dominant
         # plt.subplots() case whose public return value is a bare Axes.
         fig._current_ax = fig._axes[0]
+        fig._axes[0]._subplot_claimed = True
         return fig._axes[0]
     axes = np.empty((nrows, ncols), dtype=object)
     for r in range(nrows):
         for c in range(ncols):
             axes[r, c] = fig._axes_at(r * ncols + c)
+            axes[r, c]._subplot_claimed = True
     # Matplotlib's subplots() constructs axes in row-major order and leaves
     # the final one active for subsequent stateful ``plt.*`` calls.
     fig._current_ax = axes[-1, -1]

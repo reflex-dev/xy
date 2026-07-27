@@ -858,6 +858,12 @@ class Axes(PlotTypeMixin):
         # is a draw-order list, so removing an earlier axes must not slide
         # every later subplot into the preceding cell.
         self._subplot_index: Optional[int] = None
+        # Figure.add_subplot() always creates a new axes, while pyplot.subplot()
+        # activates an existing axes with the same subplot arguments.  Keep the
+        # normalized spec separate from draw order so those two APIs can share
+        # the grid implementation without sharing creation semantics.
+        self._subplot_key: Optional[tuple[Any, ...]] = None
+        self._subplot_claimed = False
         self._absolute_plot_ratio: Optional[float] = None
         # The plot rectangle the exporter demands, in chart pixels
         # (left, top, width, height).  Set by the grid compositor for a panel,
@@ -2510,7 +2516,11 @@ class Axes(PlotTypeMixin):
             cmap = getattr(colorizer, "cmap", cmap)
         self._aspect_equal = aspect != "auto"
         check_unsupported(kwargs, "imshow()")
-        masked_grid = np.ma.asarray(z, dtype=np.float64)
+        # Matplotlib images own their array.  Keep the logical source separate
+        # from the normalized/resampled render buffer so later caller mutation
+        # cannot rewrite either side of the artist behind its back.
+        source_grid = np.ma.asarray(z).copy()
+        masked_grid = np.ma.asarray(source_grid, dtype=np.float64)
         grid = masked_grid.filled(np.nan)
         truecolor = grid.ndim == 3 and grid.shape[-1] in (3, 4)
         if not truecolor and grid.ndim != 2:
@@ -2721,11 +2731,26 @@ class Axes(PlotTypeMixin):
         entry = self._add(
             "heatmap",
             {
-                "z": grid,
-                "source_z": np.asanyarray(z),
+                "z": np.asanyarray(grid).copy(),
+                "source_z": source_grid,
                 "kwargs": entry_kwargs,
                 "clip_path": clip_path,
                 "extent": bounds,
+                "_imshow_state": {
+                    "cmap": cmap,
+                    "kwargs": {
+                        "vmin": vmin,
+                        "vmax": vmax,
+                        "alpha": alpha,
+                        "origin": origin,
+                        "aspect": aspect,
+                        "extent": extent,
+                        "interpolation": interpolation,
+                        "interpolation_stage": interpolation_stage,
+                        "norm": norm,
+                        "clip_path": clip_path,
+                    },
+                },
             },
         )
         if imshow_levels is not None:
@@ -2734,6 +2759,39 @@ class Axes(PlotTypeMixin):
         if clip_path is not None:
             image.set_clip_path(clip_path)
         return image
+
+    def _set_axes_image_data(self, image: AxesImage, z: Any) -> None:
+        """Re-run an AxesImage through imshow's canonical preparation path.
+
+        A temporary artist is used only as the normalized result carrier; it is
+        removed before returning, leaving the original artist and entry identity
+        stable for colorbars, ownership lists, and external handles.
+        """
+        entry = image._entry
+        state = entry.get("_imshow_state")
+        if state is None:
+            entry["source_z"] = np.ma.asarray(z).copy()
+            entry["z"] = np.asanyarray(z).copy()
+            self._invalidate()
+            return
+        replacement = self.imshow(z, state["cmap"], **state["kwargs"])
+        prepared = replacement._entry
+        self._remove_entry(prepared)
+        self._unregister_artist(replacement)
+
+        entry["source_z"] = np.ma.asarray(prepared["source_z"]).copy()
+        entry["z"] = np.asanyarray(prepared["z"]).copy()
+        entry["extent"] = prepared["extent"]
+        for coordinate in ("x", "y"):
+            if coordinate in prepared["kwargs"]:
+                entry["kwargs"][coordinate] = np.asanyarray(prepared["kwargs"][coordinate]).copy()
+            else:
+                entry["kwargs"].pop(coordinate, None)
+        if "discrete_levels" in prepared:
+            entry["discrete_levels"] = prepared["discrete_levels"]
+        else:
+            entry.pop("discrete_levels", None)
+        self._invalidate()
 
     def step(self, x: ArrayLike, y: ArrayLike, *args: Any, **kwargs: Any) -> list[Line2D]:
         """A step plot of ``y`` versus ``x``.
@@ -3832,7 +3890,14 @@ class Axes(PlotTypeMixin):
             return None
         nrows, ncols = figure._nrows, figure._ncols
         cell_count = nrows * ncols
-        if cell_count <= 0 or len(figure._axes) < cell_count:
+        uniform_axes = [
+            axes
+            for axes in figure._axes
+            if axes._figure_rect is None
+            and axes._subplot_index is not None
+            and 0 <= axes._subplot_index < cell_count
+        ]
+        if cell_count <= 0 or len({axes._subplot_index for axes in uniform_axes}) < cell_count:
             return None
         from ._mplfig import _GridSpec, _SubplotSpec
 
@@ -3843,7 +3908,9 @@ class Axes(PlotTypeMixin):
             width_ratios=figure._width_ratios,
             height_ratios=figure._height_ratios,
         )
-        for index, axes in enumerate(figure._axes[:cell_count]):
+        for axes in uniform_axes:
+            index = axes._subplot_index
+            assert index is not None
             row, col = divmod(index, ncols)
             spec = _SubplotSpec(
                 grid,

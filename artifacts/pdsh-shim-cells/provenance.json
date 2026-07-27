@@ -1,0 +1,87 @@
+{
+  "base_commit": "a2ac10e",
+  "capture_scope": "Exact affected xy cell after executing its preceding xy notebook variables. 04_01 and 04_10 close earlier figures before the target, matching inline cell lifecycle; 04_07 additionally preserves its mutation-affected source figure for before/after ownership evidence.",
+  "targets": [
+    {
+      "notebook": "pdsh_04_01_simple_line_plots.ipynb",
+      "raw_cell_index": 36,
+      "execution_ordinal": 14,
+      "source_id": "cb1e1581032b452c9409d6c6813c49d1",
+      "source": "# xy.pyplot\nxy_ax = xy_plt.axes()\nxy_ax.plot(x, np.sin(x))\nxy_ax.set(xlim=(0, 10), ylim=(-2, 2), xlabel=\"x\", ylabel=\"sin(x)\", title=\"A Simple Plot\");",
+      "outputs": [
+        {
+          "file": "04_01-ordinal-14-raw-36-current-figure.png",
+          "bytes": 44028,
+          "sha256": "ae13aedce1630671b83ab4514cd30557117b78d29c749996c7746865215990a7",
+          "figure_number": 1,
+          "axes_count": 1
+        }
+      ],
+      "assertions": {
+        "fresh_axes_count": 1,
+        "new_axes_is_current": true,
+        "new_axes_title": "A Simple Plot"
+      }
+    },
+    {
+      "notebook": "pdsh_04_07_customizing_colorbars.ipynb",
+      "raw_cell_index": 23,
+      "execution_ordinal": 8,
+      "source_id": "59bbdb311c014d738909a11f9e486628",
+      "source": "# xy.pyplot\n# make noise in 1% of the image pixels\nspeckles = np.random.random(I.shape) < 0.01\nI[speckles] = np.random.normal(0, 3, np.count_nonzero(speckles))\n\nxy_plt.figure(figsize=(10, 3.5))\n\nxy_plt.subplot(1, 2, 1)\nxy_plt.imshow(I, cmap=\"RdBu\")\nxy_plt.colorbar()\n\nxy_plt.subplot(1, 2, 2)\nxy_plt.imshow(I, cmap=\"RdBu\")\nxy_plt.colorbar(extend=\"both\")\nxy_plt.clim(-1, 1)",
+      "outputs": [
+        {
+          "file": "04_07-ordinal-08-raw-23-source-figure-before.png",
+          "bytes": 213626,
+          "sha256": "6397a70be7f3856930805a80efc2eb5c4ea2bdead624a351961632bd1c585c91",
+          "figure_number": 1,
+          "axes_count": 1
+        },
+        {
+          "file": "04_07-ordinal-08-raw-23-source-figure-after.png",
+          "bytes": 213626,
+          "sha256": "6397a70be7f3856930805a80efc2eb5c4ea2bdead624a351961632bd1c585c91",
+          "figure_number": 1,
+          "axes_count": 1
+        },
+        {
+          "file": "04_07-ordinal-08-raw-23-target-figure.png",
+          "bytes": 161786,
+          "sha256": "3bf1b0638842ee0b1242ed106ecb5dac72804ada969d1275156173ea74d4a3ca",
+          "figure_number": 5,
+          "axes_count": 2
+        }
+      ],
+      "assertions": {
+        "preexisting_image_arrays_owned": [
+          true,
+          true
+        ],
+        "preexisting_figure_unchanged_by_I_mutation": true,
+        "target_axes_count": 2
+      }
+    },
+    {
+      "notebook": "pdsh_04_10_customizing_ticks.ipynb",
+      "raw_cell_index": 14,
+      "execution_ordinal": 4,
+      "source_id": "7623eae2785240b9bd12b16a66d81610",
+      "source": "# xy.pyplot\nxy_ax = xy_plt.axes()\nrng = np.random.default_rng(1701)\nxy_ax.plot(rng.random(50))\nxy_ax.grid()\n\nxy_ax.yaxis.set_major_locator(xy_plt.NullLocator())\nxy_ax.xaxis.set_major_formatter(xy_plt.NullFormatter())",
+      "outputs": [
+        {
+          "file": "04_10-ordinal-04-raw-14-current-figure.png",
+          "bytes": 65675,
+          "sha256": "f042aed84b6ac92c579872a18f36317755b80b97b5ad66b5932c2246b888c72e",
+          "figure_number": 1,
+          "axes_count": 1
+        }
+      ],
+      "assertions": {
+        "fresh_axes_count": 1,
+        "new_axes_is_current": true,
+        "target_xscale": "linear",
+        "new_y_major_locator": "NullLocator"
+      }
+    }
+  ]
+}
