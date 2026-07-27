@@ -287,6 +287,8 @@ class PayloadMixin(_Host):
                 "ranges": {axis_id: list(axis["range"]) for axis_id, axis in axis_specs.items()}
             },
         }
+        if self.title_options:
+            spec["title_options"] = self.title_options
         if self.palette is not None:
             # Chart-level categorical cycle (`xy.theme(palette=...)`). Every
             # trace already bakes its own color and every categorical channel

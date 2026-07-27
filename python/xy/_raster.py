@@ -57,6 +57,8 @@ from ._svg import (
     _solid_paint,
     _step_arrays,
     _tick_label_anchor,
+    _title_entries,
+    _title_metrics,
     annotation_label_placement,
     apply_export_background,
     axis_ticks,
@@ -1164,8 +1166,8 @@ def render_raster(
     for axis_id, axis, axis_scale in extra_y_axes:
         _ticks, tick_labels, step = extra_y_ticks[axis_id]
         emit_tick_labels(axis, tick_labels, step, axis_scale, is_x=False)
-    if spec.get("title"):
-        title_style = ((spec.get("dom") or {}).get("styles") or {}).get("title") or {}
+    for title_entry in _title_entries(spec):
+        title_style, title_size, title_block = _title_metrics(spec, title_entry)
         title_italic, title_bold = _native_font_emphasis(
             {
                 "font_style": title_style.get("font-style"),
@@ -1175,16 +1177,25 @@ def render_raster(
                 "font_weight": title_style.get("font-weight", 400),
             }
         )
-        title_size = _px_size(title_style.get("font-size"), 14.0)
-        title_block = _textblock.measure(spec["title"], title_size)
+        trailing = (title_block.line_count - 1) * title_block.line_step
+        if title_entry.get("automatic_y", True):
+            title_anchor_y = plot["y"] - plot["top_axis_room"]
+        else:
+            title_anchor_y = plot["y"] + (1.0 - float(title_entry.get("y", 1.0))) * plot["h"]
+        loc = str(title_entry.get("loc", "center"))
+        title_x = {
+            "left": plot["x"],
+            "center": plot["x"] + plot["w"] / 2.0,
+            "right": plot["x"] + plot["w"],
+        }.get(loc, plot["x"] + plot["w"] / 2.0)
         _emit_text_block(
             cmd,
-            width / 2,
-            plot["y"] - plot["top_axis_room"] - plot["title_room"] + 4.0 + title_block.ascent,
-            1,
+            title_x,
+            title_anchor_y - float(title_entry.get("pad", 8.0)) - title_block.descent - trailing,
+            {"left": 0, "center": 1, "right": 2}.get(loc, 1),
             title_size,
             _parse_color(_css(title_style.get("color"), default_text)),
-            str(spec["title"]),
+            str(title_entry["text"]),
             italic=title_italic,
             bold=title_bold,
         )

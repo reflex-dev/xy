@@ -56,7 +56,7 @@ def test_figure_text_legend_and_super_labels_use_figure_transform() -> None:
     text = fig.text(0.25, 0.75, "figure note", color="red")
     xlabel = fig.supxlabel("shared x")
     ylabel = fig.supylabel("shared y")
-    fig.legend()
+    legend = fig.legend()
 
     assert text._entry["args"] == (0.25, 0.75, "figure note")
     assert text._entry["kwargs"]["style"]["coordinate_space"] == "figure_fraction"
@@ -64,7 +64,11 @@ def test_figure_text_legend_and_super_labels_use_figure_transform() -> None:
     assert ylabel._entry["kwargs"]["style"]["coordinate_space"] == "figure_fraction"
     assert fig._supxlabel == "shared x"
     assert fig._supylabel == "shared y"
-    assert ax._legend is True
+    assert all(entry is not xlabel._entry for entry in ax._entries)
+    assert all(entry is not ylabel._entry for entry in ax._entries)
+    assert legend is fig._figure_legend_handle
+    assert [item["name"] for item in fig._figure_legend["items"]] == ["line label"]
+    assert ax._legend is False
     assert "figure note" in fig._repr_html_()
 
 

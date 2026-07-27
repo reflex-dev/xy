@@ -16,7 +16,7 @@ from typing import Any, Literal, Optional, overload
 import numpy as np
 
 from .. import _textblock
-from ._artists import Text
+from ._artists import Legend, Text
 from ._axes import _DEFAULT_AXES_RECT, Axes, _font_size_points, _plain_text, _scale_values
 from ._colors import resolve_color
 from ._rc import rc_figsize_px, rcParams
@@ -25,6 +25,28 @@ from ._translate import check_unsupported, not_implemented
 
 _Chrome = tuple[float, float, float, float]
 _ChromeCache = dict[tuple[int, int, int], _Chrome]
+
+
+class _FigureText(Text):
+    """Mutable Text handle whose backing entry is owned by a Figure."""
+
+    def __init__(self, figure: "Figure", role: str, axes: Axes, entry: dict[str, Any]) -> None:
+        self._figure = figure
+        self._role = role
+        super().__init__(axes, entry)
+
+    def _touch(self) -> None:
+        self._figure._invalidate()
+
+    def set_text(self, text: str) -> None:
+        super().set_text(text)
+        setattr(self._figure, f"_sup{self._role}label", str(text))
+
+    def remove(self) -> None:
+        setattr(self._figure, f"_sup{self._role}label", None)
+        setattr(self._figure, f"_sup{self._role}label_entry", None)
+        self._axes._unregister_artist(self)
+        self._figure._invalidate()
 
 
 def _panel_chrome(
@@ -236,6 +258,10 @@ class Figure:
         self._suptitle_style: dict[str, Any] = {}
         self._supxlabel: Optional[str] = None
         self._supylabel: Optional[str] = None
+        self._supxlabel_entry: Optional[dict[str, Any]] = None
+        self._supylabel_entry: Optional[dict[str, Any]] = None
+        self._figure_legend: Optional[dict[str, Any]] = None
+        self._figure_legend_handle: Optional[Legend] = None
         self._nrows = 1
         self._ncols = 1
         self._axes: list[Axes] = []
@@ -507,6 +533,10 @@ class Figure:
         self._suptitle = None
         self._supxlabel = None
         self._supylabel = None
+        self._supxlabel_entry = None
+        self._supylabel_entry = None
+        self._figure_legend = None
+        self._figure_legend_handle = None
         self._shared_colorbar = None
         self._gci = None
         self._width_ratios = None
@@ -573,19 +603,108 @@ class Figure:
         return style
 
     def supxlabel(self, label: str, **kwargs: Any) -> Text:
+        x = float(kwargs.pop("x", 0.5))
+        y = float(kwargs.pop("y", 0.01))
+        entry = self._figure_label_entry(
+            x,
+            y,
+            label,
+            ha=kwargs.pop("ha", kwargs.pop("horizontalalignment", "center")),
+            va=kwargs.pop("va", kwargs.pop("verticalalignment", "bottom")),
+            rotation=kwargs.pop("rotation", 0.0),
+            kwargs=kwargs,
+        )
         self._supxlabel = str(label)
-        return self.text(0.5, 0.01, label, ha=kwargs.pop("ha", "center"), **kwargs)
+        self._supxlabel_entry = entry
+        self._invalidate()
+        return _FigureText(self, "x", self.gca(), entry)
 
     def supylabel(self, label: str, **kwargs: Any) -> Text:
-        self._supylabel = str(label)
-        return self.text(
-            0.01,
-            0.5,
+        x = float(kwargs.pop("x", 0.02))
+        y = float(kwargs.pop("y", 0.5))
+        entry = self._figure_label_entry(
+            x,
+            y,
             label,
-            va=kwargs.pop("va", "center"),
-            rotation=kwargs.pop("rotation", "vertical"),
-            **kwargs,
+            ha=kwargs.pop("ha", kwargs.pop("horizontalalignment", "left")),
+            va=kwargs.pop("va", kwargs.pop("verticalalignment", "bottom")),
+            rotation=kwargs.pop("rotation", 90.0),
+            kwargs=kwargs,
         )
+        self._supylabel = str(label)
+        self._supylabel_entry = entry
+        self._invalidate()
+        return _FigureText(self, "y", self.gca(), entry)
+
+    def _figure_label_entry(
+        self,
+        x: float,
+        y: float,
+        label: str,
+        *,
+        ha: Any,
+        va: Any,
+        rotation: Any,
+        kwargs: dict[str, Any],
+    ) -> dict[str, Any]:
+        size = kwargs.pop("fontsize", kwargs.pop("size", rcParams["figure.labelsize"]))
+        weight = kwargs.pop("fontweight", kwargs.pop("weight", rcParams["figure.labelweight"]))
+        family = kwargs.pop("fontfamily", kwargs.pop("family", "system-ui, sans-serif"))
+        color = kwargs.pop("color", rcParams["text.color"])
+        fontstyle = kwargs.pop("fontstyle", kwargs.pop("style", "normal"))
+        if kwargs:
+            raise TypeError(f"figure label got unsupported keyword argument {next(iter(kwargs))!r}")
+        angle = 90.0 if rotation == "vertical" else float(rotation)
+        return {
+            "kind": "@text",
+            "args": (x, y, _plain_text(label)),
+            "kwargs": {
+                "anchor": {"left": "start", "center": "middle", "right": "end"}.get(
+                    str(ha), "middle"
+                ),
+                "color": resolve_color(color) or "black",
+                "style": {
+                    "coordinate_space": "figure_fraction",
+                    "vertical_align": str(va),
+                    "font_size": _font_size_points(size, rcParams["font.size"]),
+                    "font_weight": str(weight),
+                    "font_family": str(family),
+                    "font_style": str(fontstyle),
+                    "rotation": angle,
+                },
+            },
+        }
+
+    def _resolved_figure_labels(self) -> list[dict[str, Any]]:
+        labels = []
+        point_scale = self.get_dpi() / 72.0
+        for role, entry in (
+            ("x", self._supxlabel_entry),
+            ("y", self._supylabel_entry),
+        ):
+            if entry is None:
+                continue
+            x, y, text = entry["args"]
+            kwargs = entry["kwargs"]
+            style = kwargs.get("style") or {}
+            labels.append(
+                {
+                    "role": role,
+                    "text": str(text),
+                    "x": float(x),
+                    "y": float(y),
+                    "anchor": kwargs.get("anchor", "middle"),
+                    "vertical_align": style.get("vertical_align", "center"),
+                    "rotation": float(style.get("rotation", 0.0)),
+                    "size": float(style.get("font_size", rcParams["font.size"])) * point_scale,
+                    "weight": str(style.get("font_weight", "normal")),
+                    "family": str(style.get("font_family", "system-ui, sans-serif")),
+                    "font_style": str(style.get("font_style", "normal")),
+                    "color": str(kwargs.get("color", "black")),
+                    "opacity": float(kwargs.get("opacity", 1.0)),
+                }
+            )
+        return labels
 
     def text(
         self,
@@ -597,18 +716,41 @@ class Figure:
     ) -> Text:
         return self.gca().text(x, y, s, fontdict=fontdict, transform=self.transFigure, **kwargs)
 
-    def legend(self, *args: Any, **kwargs: Any) -> None:
+    def legend(self, *args: Any, **kwargs: Any) -> Legend:
+        """Create one figure-level legend aggregated across all axes."""
+        if len(args) > 2:
+            raise TypeError("Figure.legend() accepts at most handles and labels")
         axes = self.axes or [self.gca()]
-        labels = args[1] if len(args) >= 2 else kwargs.get("labels")
-        if labels is not None:
-            axes[0].legend(args[0] if args else [], labels, **kwargs)
-            return None
+        detected_handles: list[Any] = []
+        detected_labels: list[str] = []
         for ax in axes:
-            if any(entry.get("kwargs", {}).get("name") for entry in ax._entries):
-                ax.legend(*args, **kwargs)
-        if not any(ax._legend for ax in axes):
-            axes[0].legend(*args, **kwargs)
-        return None
+            handles, labels = ax.get_legend_handles_labels()
+            detected_handles.extend(handles)
+            detected_labels.extend(labels)
+        if len(args) >= 2:
+            handles, labels = list(args[0]), list(args[1])
+        elif len(args) == 1:
+            handles, labels = detected_handles, list(args[0])
+        else:
+            handles = list(kwargs.pop("handles", detected_handles))
+            labels = list(kwargs.pop("labels", detected_labels))
+        loc = kwargs.pop("loc", "upper right")
+        figure_loc = str(loc)
+        if figure_loc.startswith("outside "):
+            if figure_loc != "outside right upper":
+                raise not_implemented(
+                    f"Figure.legend(loc={figure_loc!r})",
+                    "loc='outside right upper'",
+                )
+            loc = "upper left"
+        legend = Legend(axes[0], handles, labels, loc=loc, **kwargs)
+        self._figure_legend_handle = legend
+        self._figure_legend = {
+            **legend.spec(),
+            "figure_loc": figure_loc,
+        }
+        self._invalidate()
+        return legend
 
     def tight_layout(self, **kwargs: Any) -> None:
         pad = kwargs.pop("pad", None)
@@ -712,6 +854,24 @@ class Figure:
                 y = float(style.get("y", 0.98))
                 suptitle_bottom = max(0.0, (1.0 - y) * canvas_h) + block.height
                 top_px += suptitle_bottom + 6.0
+            for label in self._resolved_figure_labels():
+                if label["role"] == "x":
+                    bottom_px += float(label["size"]) + 8.0
+                else:
+                    left_px += float(label["size"]) + 8.0
+            if (
+                self._figure_legend
+                and self._figure_legend.get("items")
+                and self._figure_legend.get("figure_loc") == "outside right upper"
+            ):
+                from .._svg import _legend_layout
+
+                measured = _legend_layout(
+                    list(self._figure_legend.get("items") or []),
+                    {"x": 0.0, "y": 0.0, "w": float(canvas_w), "h": float(canvas_h)},
+                    {**self._figure_legend, "loc": "upper left"},
+                )
+                right_px += float(measured["box_w"]) + 12.0
             # Explicit *_pad values are font-size multiples in Matplotlib.
             point_px = float(rcParams["font.size"]) * float(self._dpi or 100.0) / 72.0
             base_pad = 1.08 if pad is None else float(pad)
@@ -1175,6 +1335,9 @@ class Figure:
             all(ax._figure_rect is None for ax in self._axes)
             and not self._subplot_adjust
             and len(self._axes) <= 1
+            and self._supxlabel_entry is None
+            and self._supylabel_entry is None
+            and self._figure_legend is None
         ):
             return None
         return [self._axes_rect(ax) or _DEFAULT_AXES_RECT for ax in self._axes]
@@ -1343,6 +1506,9 @@ class Figure:
             and len(charts) == 1
             and self._axes[0]._figure_rect is None
             and not self._subplot_adjust
+            and self._supxlabel_entry is None
+            and self._supylabel_entry is None
+            and self._figure_legend is None
         ):
             return charts[0]
         return None
@@ -1449,6 +1615,8 @@ class Figure:
                         self._ncols,
                         self._suptitle,
                         self._resolved_suptitle_style(),
+                        figure_labels=self._resolved_figure_labels(),
+                        figure_legend=self._figure_legend,
                         positions=(
                             None
                             if rects is None
@@ -1510,6 +1678,8 @@ class Figure:
             self._suptitle,
             self._shared_colorbar,
             suptitle_style=self._resolved_suptitle_style(),
+            figure_labels=self._resolved_figure_labels(),
+            figure_legend=self._figure_legend,
             positions=positions,
             canvas_size=canvas_size if positions is not None else None,
             facecolor=self._facecolor,
@@ -1535,6 +1705,8 @@ class Figure:
                     self._ncols,
                     self._suptitle,
                     self._resolved_suptitle_style(),
+                    figure_labels=self._resolved_figure_labels(),
+                    figure_legend=self._figure_legend,
                     positions=(
                         None
                         if rects is None

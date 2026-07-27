@@ -41,8 +41,10 @@ def test_pyplot_axes_delaxes_figtext_and_figlegend():
     assert text._entry["kwargs"]["style"]["coordinate_space"] == "figure_fraction"
 
     ax1.plot([0, 1], [0, 1], label="line")
-    plt.figlegend()
-    assert ax1._legend
+    legend = plt.figlegend()
+    assert legend is fig._figure_legend_handle
+    assert [item["name"] for item in fig._figure_legend["items"]] == ["line"]
+    assert not ax1._legend
 
     plt.delaxes(ax2)
     assert ax2 not in fig.axes

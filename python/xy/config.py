@@ -22,7 +22,11 @@ import warnings
 # v9: explicit minor axis ticks/styles, log nonpositive behavior, and
 # independent `tick_sides`/`tick_label_sides` add fields a cached v8 client
 # would accept but silently misrender.
-PROTOCOL_VERSION = 9
+# v10: `title_options` carries independent left/center/right title artists,
+# including axes-fraction y and pixel padding. A v9 client would ignore that
+# field and silently omit non-center slots and their placement, so it must
+# reject the payload.
+PROTOCOL_VERSION = 10
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the

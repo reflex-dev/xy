@@ -249,14 +249,14 @@ appear frequently in ordinary scripts and notebooks.
 - [x] `plt.cla()` and `Axes.clear()`/`Axes.cla()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_cla_and_clf_clear_current_scope` clears only the current axes entries.
 - [x] `plt.axes()` and `plt.delaxes()`/`Figure.delaxes()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_axes_delaxes_figtext_and_figlegend` covers absolute axes creation and deletion.
 - [x] `plt.fignum_exists()`, `get_fignums()`, and `get_figlabels()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_figure_registry_and_labels` covers numeric and labeled figures.
-- [x] `plt.figtext()`/`Figure.text()` and `plt.figlegend()`/`Figure.legend()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_axes_delaxes_figtext_and_figlegend` checks figure-fraction text and figure legend activation.
+- [x] `plt.figtext()`/`Figure.text()` and `plt.figlegend()`/`Figure.legend()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_axes_delaxes_figtext_and_figlegend` checks figure-fraction text plus a compositor-owned, returned figure legend.
 - [x] `plt.twiny()` and `Axes.twiny()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_twiny_creates_current_axes_on_same_figure` verifies current-axes and figure membership.
 - [x] `Figure.sca()` and consistent current-Axes behavior after deletion. Evidence:
       `tests/pyplot/test_figure_state.py::test_figure_sca_and_delaxes_keep_current_axes_consistent`.
 - [x] Figure getters/setters for DPI, face/edge color and size. Evidence:
       `tests/pyplot/test_figure_state.py::test_figure_size_dpi_and_color_getters_setters`.
 - [x] `Figure.supxlabel()` and `Figure.supylabel()`. Evidence:
-      `tests/pyplot/test_figure_state.py::test_figure_text_legend_and_super_labels_use_figure_transform`.
+      `tests/pyplot/test_figure_decoration_compat.py::test_figure_super_labels_are_compositor_owned_and_mutable`.
 - [x] `Figure.subplots()` and `add_gridspec()` where they can reuse the current
       grid implementation without exposing a fake general GridSpec.
       Evidence: `tests/pyplot/test_figure_state.py::test_figure_subplots_sharing_ratios_and_squeeze`

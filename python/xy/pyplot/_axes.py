@@ -1095,6 +1095,7 @@ class Axes(PlotTypeMixin):
         self._axis: dict[str, dict[str, Any]] = {"x": {}, "y": {}, "y2": {}}
         self._title: Optional[str] = None
         self._title_style: dict[str, Any] = {}
+        self._titles: dict[str, dict[str, Any]] = {}
         self._legend = False
         self._legend_options: dict[str, Any] = {}
         self._legend_items: Optional[list[dict[str, Any]]] = None
@@ -1451,6 +1452,7 @@ class Axes(PlotTypeMixin):
         self._hidden_spines = set()
         self._title = None
         self._title_style = {}
+        self._titles = {}
         self._legend = False
         self._legend_options = {}
         self._legend_items = None
@@ -3357,11 +3359,39 @@ class Axes(PlotTypeMixin):
         Basic mathtext (``$...$``) is rendered.
         """
         host = self._y2_of or self
-        host._title_style = _title_css_style(
+        loc = str(kwargs.pop("loc", rcParams["axes.titlelocation"])).lower()
+        if loc not in {"left", "center", "right"}:
+            raise ValueError("set_title() loc must be 'left', 'center', or 'right'")
+        authored_y = kwargs.pop("y", None)
+        rc_y = rcParams["axes.titley"]
+        automatic_y = authored_y is None and rc_y is None
+        y = 1.0 if automatic_y else float(rc_y if authored_y is None else authored_y)
+        if not np.isfinite(y):
+            raise ValueError("set_title() y must be finite")
+        pad = float(kwargs.pop("pad", rcParams["axes.titlepad"]))
+        if not np.isfinite(pad):
+            raise ValueError("set_title() pad must be finite")
+        style = _title_css_style(
             _pop_text_style_kwargs(kwargs, "set_title()"),
             point_scale=self._point_scale(),
         )
-        host._title = _plain_text(title)
+        text = _plain_text(title)
+        if text:
+            host._titles[loc] = {
+                "text": text,
+                "loc": loc,
+                "y": y,
+                "pad": pad * self._point_scale(),
+                "automatic_y": automatic_y,
+                "style": style,
+            }
+        else:
+            host._titles.pop(loc, None)
+        # Keep the historical center aliases for get_title() and downstream
+        # code that inspects the ordinary single-title state.
+        if loc == "center":
+            host._title = text or None
+            host._title_style = style
         host._invalidate()
 
     def set(self, **kwargs: Any) -> "Axes":
@@ -4419,9 +4449,13 @@ class Axes(PlotTypeMixin):
         """The y-axis label text (empty string when unset)."""
         return str(self._axis_props("y").get("label", ""))
 
-    def get_title(self) -> str:
-        """The axes title text (empty string when unset)."""
-        return "" if self._title is None else str(self._title)
+    def get_title(self, loc: str = "center") -> str:
+        """The axes title text for ``loc`` (empty string when unset)."""
+        resolved = str(loc).lower()
+        if resolved not in {"left", "center", "right"}:
+            raise ValueError("get_title() loc must be 'left', 'center', or 'right'")
+        title = (self._y2_of or self)._titles.get(resolved)
+        return "" if title is None else str(title["text"])
 
     def get_xaxis(self) -> _AxisProxy:
         """The x-axis proxy (the same object as ``ax.xaxis``)."""
@@ -6536,20 +6570,7 @@ class Axes(PlotTypeMixin):
             )
         else:
             top, right, bottom, left = map(float, padding)
-        if self._title:
-            title_style = {
-                **self._chrome_styles.get("title", {}),
-                **self._title_style,
-            }
-            raw_size = title_style.get("font-size", 14.0)
-            try:
-                title_size = float(str(raw_size).removesuffix("px"))
-            except ValueError:
-                title_size = 14.0
-            top += max(
-                26.0 if compact else 30.0,
-                _textblock.measure(self._title, title_size).height + 8.0,
-            )
+        top += self._title_room(compact)
         if x_side == "top":
             top += 26.0 if compact else 32.0
         return (
@@ -6606,6 +6627,7 @@ class Axes(PlotTypeMixin):
             "width": figure.width,
             "height": figure.height,
             "title": figure.title,
+            "title_options": figure.title_options,
             "x_axis": axis_specs["x"],
             "y_axis": axis_specs["y"],
             "axes": axis_specs,
@@ -6940,21 +6962,7 @@ class Axes(PlotTypeMixin):
         the panel it allocates so that subtraction always fits, and the
         equal-aspect solve measures the real plot rect with it.
         """
-        top = 0.0
-        if self._title:
-            title_style = {
-                **self._chrome_styles.get("title", {}),
-                **self._title_style,
-            }
-            raw_size = title_style.get("font-size", 14.0)
-            try:
-                title_size = float(str(raw_size).removesuffix("px"))
-            except ValueError:
-                title_size = 14.0
-            top += max(
-                26.0 if compact else 30.0,
-                _textblock.measure(self._title, title_size).height + 8.0,
-            )
+        top = self._title_room(compact)
         if self._axis["x"].get("side") == "top":
             top += (26.0 if compact else 32.0) + self._x_multiline_extra()
         right = 0.0
@@ -6970,6 +6978,32 @@ class Axes(PlotTypeMixin):
         ):
             right += 42.0 if compact else 54.0
         return top, right, bottom
+
+    def _title_room(self, compact: bool) -> float:
+        """Maximum top gutter required by the three independent title slots."""
+        room = 0.0
+        base_style = self._chrome_styles.get("title", {})
+        for title in self._titles.values():
+            style = {**base_style, **(title.get("style") or {})}
+            raw_size = style.get("font-size", 14.0)
+            try:
+                size = float(str(raw_size).removesuffix("px"))
+            except (TypeError, ValueError):
+                size = 14.0
+            measured = _textblock.measure(title["text"], size).height
+            if title.get("automatic_y", True):
+                candidate = max(26.0 if compact else 30.0, measured + float(title["pad"]))
+            else:
+                # Explicit y is an axes-fraction placement. Only reserve the
+                # ordinary title block when its anchor is at/above the top.
+                # The renderers use the final plot height for the exact
+                # fractional offset.
+                candidate = max(
+                    0.0,
+                    measured + float(title["pad"]) if float(title["y"]) >= 1.0 else 0.0,
+                )
+            room = max(room, candidate)
+        return room
 
     def _x_multiline_extra(self) -> float:
         """Extra cross-axis room beyond the single-line matplotlib gutter."""
@@ -7340,21 +7374,23 @@ class Axes(PlotTypeMixin):
                 tokens = dict(theme_tokens)
                 tokens["grid_color"] = self._grid_color if self._grid else "transparent"
                 children.append(xy.theme(style=self._theme_style, **tokens))
-        chrome_styles = self._chrome_styles
-        if self._title_style:
-            chrome_styles = {
-                **chrome_styles,
-                "title": {**chrome_styles.get("title", {}), **self._title_style},
-            }
         self._chart = xy.chart(
             *children,
             title=self._title,
             width=width,
             height=height,
             padding=chart_padding,
-            styles=chrome_styles,
+            styles=self._chrome_styles,
         )
         core_figure = self._chart.figure()
+        core_figure.title_options = [
+            {
+                **title,
+                "style": dict(title.get("style") or {}),
+            }
+            for loc in ("left", "center", "right")
+            if (title := self._titles.get(loc)) is not None
+        ]
         # Matplotlib's categorical converter installs one fixed location per
         # first-seen category, and FixedLocator/set_*ticks draw every authored
         # location even when labels collide. The core chart API deliberately

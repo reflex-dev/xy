@@ -112,6 +112,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # padding + hidden axes gives an edge-to-edge sparkline for dashboards.
         self.padding = self._padding(padding, "padding")
         self.title = self._optional_text(title, "title")
+        # Optional renderer-owned title slots. Declarative charts keep using
+        # ``title``; the pyplot shim fills this with Matplotlib's independent
+        # left/center/right title artists.
+        self.title_options: list[dict[str, Any]] = []
         self.x_label = self._optional_text(x_label, "x_label")
         self.y_label = self._optional_text(y_label, "y_label")
         self.axis_options: dict[str, dict[str, Any]] = {
