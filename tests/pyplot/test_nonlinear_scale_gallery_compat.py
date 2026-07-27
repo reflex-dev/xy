@@ -98,8 +98,9 @@ def test_logit_demo_options_drive_default_ticks_and_survival_labels() -> None:
     assert formatter(0.5) == "1/2"
     assert "\N{COMBINING OVERLINE}" in formatter(0.99)
     y_axis = _axis_payload(ax)["y"]
-    assert 0.0 not in y_axis["tick_values"]
-    assert 1.0 not in y_axis["tick_values"]
+    tick_data = ax.yaxis.get_transform().inverted().transform(y_axis["tick_values"])
+    assert np.all((tick_data > 0.0) & (tick_data < 1.0))
+    assert 0.5 in tick_data
     assert "1/2" in y_axis["tick_labels"]
 
 
@@ -148,9 +149,11 @@ def test_symlog_demo_has_mutable_minor_locator_and_transform_metadata() -> None:
 
     labels = _axis_payload(ax)["x"]["tick_labels"]
     assert labels == [
+        "−10²",  # noqa: RUF001 - intentional Matplotlib math minus
         "−10¹",  # noqa: RUF001 - intentional Matplotlib math minus
         "−10⁰",  # noqa: RUF001 - intentional Matplotlib math minus
         "0",
         "10⁰",
         "10¹",
+        "10²",
     ]
