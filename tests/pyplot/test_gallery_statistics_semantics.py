@@ -72,6 +72,28 @@ def test_hist_per_dataset_linestyles_emit_distinct_outlines() -> None:
     assert outlined[0]["kwargs"]["color"] == "red"
 
 
+def test_horizontal_stepfilled_hist_dashes_use_segment_perimeters() -> None:
+    _fig, ax = plt.subplots()
+
+    ax.hist(
+        [0.1, 0.2, 0.8, 1.3, 1.7],
+        bins=[0.0, 0.5, 1.0, 2.0],
+        histtype="stepfilled",
+        orientation="horizontal",
+        edgecolor="red",
+        linestyle="--",
+    )
+
+    bars, outline = ax._entries
+    assert bars["kind"] == "bar"
+    assert "stroke" not in bars["kwargs"]
+    assert "stroke_width" not in bars["kwargs"]
+    assert outline["factory"] == "segments"
+    assert outline["kwargs"]["color"] == "red"
+    assert outline["kwargs"]["dash"]
+    assert len(outline["args"][0]) == 12  # four perimeter segments per bin
+
+
 def test_hist_negative_cumulative_runs_from_right_to_left() -> None:
     _fig, ax = plt.subplots()
 
