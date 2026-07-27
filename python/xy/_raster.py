@@ -2379,20 +2379,29 @@ def _emit_colorbar(
     right_axis_room: float = 0.0,
     text_color: str = _TEXT,
 ) -> None:
-    from ._svg import _colorbar_tick_target, _linear_ticks, _lut
+    from ._svg import _colorbar_tick_target, _fmt_log, _linear_ticks, _log_ticks, _lut
 
     orientation = options.get("orientation", "vertical")
     shrink = float(options.get("shrink", 1.0))
     anchor = options.get("anchor") or [0.5, 0.5]
-    if orientation == "horizontal":
+    placement = options.get("placement")
+    if placement == "axes":
+        x, y, width, height = plot["x"], plot["y"], plot["w"], plot["h"]
+    elif orientation == "horizontal":
         width = plot["w"] * shrink
         x = plot["x"] + (plot["w"] - width) * float(anchor[0])
-        y = plot["y"] + plot["h"] + (plot["bottom_axis_room"] or 10)
+        gap = (
+            float(options["pad"]) * plot["h"]
+            if options.get("pad") is not None
+            else (plot["bottom_axis_room"] or 10)
+        )
+        y = plot["y"] + plot["h"] + gap
         height = 18
     else:
         # right_axis_room shifts the whole colorbar clear of right-side named
         # y-axis chrome (layout() reserves room for both additively).
-        x = plot["x"] + plot["w"] + right_axis_room + 24
+        gap = float(options["pad"]) * plot["w"] if options.get("pad") is not None else 24.0
+        x = plot["x"] + plot["w"] + right_axis_room + gap
         height = plot["h"] * shrink
         y = plot["y"] + (plot["h"] - height) * (1.0 - float(anchor[1]))
         width = 18
@@ -2418,7 +2427,20 @@ def _emit_colorbar(
             cmd.fill(_rect_pts(x, y0, x + width, y1 + 0.5), (*map(int, color), 255))
     domain = options.get("domain", [0.0, 1.0])
     lo, hi = float(domain[0]), float(domain[1])
-    span = (hi - lo) or 1.0
+    log_scale = options.get("scale") == "log"
+
+    def fraction(value: float) -> float:
+        if log_scale:
+            return np.log(value / lo) / np.log(hi / lo) if hi != lo else 0.0
+        return (value - lo) / ((hi - lo) or 1.0)
+
+    def automatic_ticks(length: float) -> list[float]:
+        target = _colorbar_tick_target(length)
+        return (
+            _log_ticks(lo, hi, target)[1] if log_scale else _linear_ticks(lo, hi, target)[0]
+        ) or [lo, hi]
+
+    format_tick = _fmt_log if log_scale else lambda value: f"{value:g}"
     ticks = options.get("ticks")
     extend = options.get("extend")
     if extend in ("max", "both"):
@@ -2453,14 +2475,18 @@ def _emit_colorbar(
         h_positions = (
             [float(value) for value in ticks if lo <= float(value) <= hi]
             if ticks is not None
-            else (_linear_ticks(lo, hi, _colorbar_tick_target(width))[0] or [lo, hi])
+            else automatic_ticks(width)
         )
         if options.get("minor_ticks") and len(h_positions) >= 2:
             ordered = sorted(set(h_positions))
             for left, right in pairwise(ordered):
                 for step in range(1, 5):
-                    value = left + (right - left) * step / 5.0
-                    tx = x + width * (value - lo) / span
+                    value = (
+                        10 ** (np.log10(left) + (np.log10(right) - np.log10(left)) * step / 5.0)
+                        if log_scale
+                        else left + (right - left) * step / 5.0
+                    )
+                    tx = x + width * fraction(value)
                     cmd.stroke(
                         [(tx, y + height), (tx, y + height + 3)],
                         1,
@@ -2468,12 +2494,12 @@ def _emit_colorbar(
                     )
         for value in h_positions:
             cmd.text(
-                x + width * (value - lo) / span,
+                x + width * fraction(value),
                 y + height + 13,
                 1,
                 10,
                 _parse_color(text_color),
-                f"{value:g}",
+                format_tick(value),
             )
         if options.get("label"):
             cmd.text(
@@ -2488,14 +2514,18 @@ def _emit_colorbar(
         tick_positions = (
             [float(value) for value in ticks if lo <= float(value) <= hi]
             if ticks is not None
-            else (_linear_ticks(lo, hi, _colorbar_tick_target(height))[0] or [lo, hi])
+            else automatic_ticks(height)
         )
         if options.get("minor_ticks") and len(tick_positions) >= 2:
             ordered = sorted(set(tick_positions))
             for lower, upper in pairwise(ordered):
                 for step in range(1, 5):
-                    value = lower + (upper - lower) * step / 5.0
-                    ty = y + height * (1 - (value - lo) / span)
+                    value = (
+                        10 ** (np.log10(lower) + (np.log10(upper) - np.log10(lower)) * step / 5.0)
+                        if log_scale
+                        else lower + (upper - lower) * step / 5.0
+                    )
+                    ty = y + height * (1 - fraction(value))
                     cmd.stroke(
                         [(x + width, ty), (x + width + 3, ty)],
                         1,
@@ -2504,11 +2534,11 @@ def _emit_colorbar(
         for value in tick_positions:
             cmd.text(
                 x + width + 4,
-                y + height * (1 - (value - lo) / span) + 4,
+                y + height * (1 - fraction(value)) + 4,
                 0,
                 10,
                 _parse_color(text_color),
-                f"{value:g}",
+                format_tick(value),
             )
         # Matplotlib rotates a vertical colorbar's label 90° CCW and centers it
         # alongside the bar, outboard of the tick labels. The native glyph

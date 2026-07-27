@@ -598,8 +598,10 @@ def test_pcolormesh_plain_normalize_maps_to_domain() -> None:
     _fig, ax = plt.subplots()
     ax.pcolormesh(_Z, norm=Normalize(1.0, 4.0))
     assert ax._entries[0]["kwargs"]["domain"] == (1.0, 4.0)
-    with pytest.raises(NotImplementedError, match=r"pcolormesh\(norm=LogNorm\)"):
-        ax.pcolormesh(_Z, norm=LogNorm())
+    log_mesh = ax.pcolormesh(_Z, norm=LogNorm())
+    assert log_mesh._entry["_mpl_domain"] == (1.0, 15.0)
+    assert log_mesh._entry["_mpl_norm_scale"] == "log"
+    assert log_mesh._entry["args"][0].shape == _Z.shape + (4,)
 
 
 def test_bar_label_fontsize_reaches_text_style() -> None:

@@ -439,8 +439,10 @@ Two independent version constants:
   table with the stop array, misses, and silently paints viridis. v8 adds
   legend/colorbar geometry, named colormaps, and match-fill strokes that an
   older v7 client would accept but silently render with its old defaults. v9
-  adds `colorbar.lines` isoline overlays; a v8 client would accept the
-  colorbar but silently omit the contour levels drawn across its ramp.
+  adds scalar-normalization scale, colorbar padding and explicit-axes
+  placement, plus `colorbar.lines` isoline overlays; a v8 client would place
+  log ticks linearly, draw an explicit colorbar outside its supplied axes, and
+  silently omit contour levels drawn across the ramp.
 - **Transport frame.** `FRAME_MAGIC` `"XYBF"` with `FRAME_VERSION = 1`
   versions the binary envelope separately, so the transport and the renderer
   can evolve without coupling.

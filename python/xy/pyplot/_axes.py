@@ -38,11 +38,13 @@ from ._artists import (
 )
 from ._colors import (
     PROP_CYCLE,
+    normalize_scalar_grid,
     resolve_cmap,
     resolve_color,
     resolve_rgba,
     resolve_rgba_array,
     scalar_float,
+    scalar_grid_rgba,
 )
 from ._fmt import parse_fmt
 from ._mathtext import mathtext_italic_ranges, mathtext_to_unicode
@@ -2515,12 +2517,26 @@ class Axes(PlotTypeMixin):
         truecolor = grid.ndim == 3 and grid.shape[-1] in (3, 4)
         if not truecolor and grid.ndim != 2:
             raise ValueError(f"imshow image data must be 2-D or RGB(A), got shape {grid.shape}")
-        if norm is not None:
+        if clim is not None:
+            vmin, vmax = clim
+        norm_scale = "linear"
+        resolved_norm_domain: tuple[float, float] | None = None
+        bounded_norm = isinstance(norm, str) or type(norm).__name__ in {"Normalize", "LogNorm"}
+        if not truecolor and bounded_norm:
+            mapped_grid, resolved_norm_domain, norm_scale = normalize_scalar_grid(
+                masked_grid, norm, vmin, vmax
+            )
+            if resolved_norm_domain is not None:
+                vmin, vmax = resolved_norm_domain
+            if norm_scale == "log":
+                grid = scalar_grid_rgba(
+                    mapped_grid, cmap if cmap is not None else rcParams["image.cmap"]
+                )
+                truecolor = True
+        elif norm is not None:
             norm_vmin, norm_vmax = getattr(norm, "vmin", None), getattr(norm, "vmax", None)
             if norm_vmin is not None and norm_vmax is not None:
                 vmin, vmax = norm_vmin, norm_vmax
-        if clim is not None:
-            vmin, vmax = clim
         has_extremes = any(hasattr(cmap, f"_{key}") for key in ("bad", "under", "over"))
         # A resampled colormap (plt.get_cmap(name, N)) with no *customized*
         # extremes must render N flat bands through the ordinary heatmap path so
@@ -2728,6 +2744,10 @@ class Axes(PlotTypeMixin):
                 "extent": bounds,
             },
         )
+        if norm_scale != "linear":
+            entry["_mpl_norm_scale"] = norm_scale
+        if resolved_norm_domain is not None:
+            entry["_mpl_domain"] = resolved_norm_domain
         if imshow_levels is not None:
             entry["discrete_levels"] = imshow_levels
         image = AxesImage(self, entry)
@@ -6253,16 +6273,29 @@ class Axes(PlotTypeMixin):
         right = 0.0
         bottom = 0.0
         if self._colorbar is not None:
-            if self._colorbar.get("orientation") == "horizontal":
-                bottom += 38.0 + (16.0 if self._colorbar.get("label") else 0.0)
-            else:
-                right += 86.0 + (18.0 if self._colorbar.get("label") else 0.0)
+            colorbar_right, colorbar_bottom = self._colorbar_outside_room(compact)
+            right += colorbar_right
+            bottom += colorbar_bottom
         if self._twin is not None or any(
             secondary._axis == "y" and secondary._side == "right"
             for secondary in self._secondary_axes
         ):
             right += 42.0 if compact else 54.0
         return top, right, bottom
+
+    def _colorbar_outside_room(self, compact: bool) -> tuple[float, float]:
+        """Renderer room consumed by this axes' colorbar, in CSS pixels."""
+        del compact  # colorbars keep their physical chrome on fixed pyplot canvases
+        options = self._colorbar
+        if options is None:
+            return 0.0, 0.0
+        label = bool(options.get("label"))
+        explicit_axes = options.get("placement") == "axes"
+        if options.get("orientation") == "horizontal":
+            room = 24.0 if explicit_axes else (18.0 if options.get("pad") == 0 else 38.0)
+            return 0.0, room + (16.0 if label else 0.0)
+        room = 44.0 if explicit_axes else (62.0 if options.get("pad") == 0 else 86.0)
+        return room + (18.0 if label else 0.0), 0.0
 
     def _aspect_anchor(self) -> tuple[float, float]:
         """Normalized anchor of an aspect-shrunk box within its allocation."""
@@ -6282,7 +6315,7 @@ class Axes(PlotTypeMixin):
         instead of 0.1208.  Returns None when the wanted rectangle cannot be
         expressed as non-negative padding, leaving the defaults in charge.
         """
-        if self._colorbar is not None:
+        if self._colorbar is not None and self._plot_box_px is None:
             # Matplotlib's colorbar() steals its strip from the parent axes
             # rectangle, while the renderers reserve it outside the padding.
             # Reconciling the two is colorbar-placement work, not framing work.
@@ -7367,18 +7400,12 @@ def _resample_grid(grid: np.ndarray, width: int, height: int, method: str) -> np
 
 def _scalar_grid_rgba(grid: np.ndarray, cmap: Any, vmin: Any, vmax: Any) -> np.ndarray:
     """Map scalar samples before RGBA-stage interpolation."""
-    from xy._svg import _lut
-
     values = np.asarray(grid, dtype=np.float64)
     finite = values[np.isfinite(values)]
     lo = float(vmin) if vmin is not None else (float(finite.min()) if finite.size else 0.0)
     hi = float(vmax) if vmax is not None else (float(finite.max()) if finite.size else 1.0)
-    normalized = np.clip((values - lo) / ((hi - lo) or 1.0), 0.0, 1.0)
-    rgb = _lut(resolve_cmap(cmap), np.nan_to_num(normalized, nan=0.0).reshape(-1)).reshape(
-        values.shape + (3,)
-    )
-    alpha = np.where(np.isfinite(values), 1.0, 0.0)
-    return np.dstack((rgb / 255.0, alpha))
+    normalized = (values - lo) / ((hi - lo) or 1.0)
+    return scalar_grid_rgba(normalized, cmap)
 
 
 def _marked_values(x: Any, y: Any, markevery: Any) -> tuple[Any, Any]:

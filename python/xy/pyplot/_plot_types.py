@@ -37,7 +37,14 @@ from ._artists import (
     Wedge,
     _contour_legend_colors,
 )
-from ._colors import PROP_CYCLE, resolve_cmap, resolve_color, resolve_rgba
+from ._colors import (
+    PROP_CYCLE,
+    normalize_scalar_grid,
+    resolve_cmap,
+    resolve_color,
+    resolve_rgba,
+    scalar_grid_rgba,
+)
 from ._fmt import parse_fmt
 from ._mathtext import mathtext_to_unicode
 from ._rc import rc_figsize_px, rcParams
@@ -811,6 +818,11 @@ def _gouraud_rect_axes(
 
 def _bilinear_grid(grid: np.ndarray, width: int, height: int) -> np.ndarray:
     """Small NumPy-only bilinear expansion used by regular Gouraud meshes."""
+    if grid.ndim == 3:
+        return np.stack(
+            [_bilinear_grid(grid[..., channel], width, height) for channel in range(grid.shape[2])],
+            axis=-1,
+        )
     source_y = np.linspace(0.0, 1.0, grid.shape[0])
     source_x = np.linspace(0.0, 1.0, grid.shape[1])
     target_y = np.linspace(0.0, 1.0, height)
@@ -4408,7 +4420,9 @@ class PlotTypeMixin:
         keywords: ``cmap``, ``vmin``/``vmax``, ``alpha``, ``shading``
         (``"flat"``/``"nearest"``/``"auto"``/``"gouraud"``),
         ``edgecolors``/``edgecolor``, ``linewidth``/``linewidths``, ``norm``
-        (linear ``Normalize`` only), and ``antialiased`` (default only).
+        (``"linear"``/``"log"`` or their Normalize classes),
+        ``rasterized`` for the regular heatmap path, and ``antialiased``
+        (default only).
         Unknown keywords raise loudly.
         """
         if len(args) == 1:
@@ -4430,23 +4444,28 @@ class PlotTypeMixin:
         edgecolors = kwargs.pop("edgecolors", kwargs.pop("edgecolor", None))
         linewidth = kwargs.pop("linewidth", kwargs.pop("linewidths", None))
         norm = kwargs.pop("norm", None)
-        if norm is not None and type(norm).__name__ != "Normalize":
-            # Only the linear Normalize maps onto the engine's domain contract.
-            raise not_implemented(
-                f"pcolormesh(norm={type(norm).__name__})", alternative="vmin=/vmax="
-            )
+        rasterized = kwargs.pop("rasterized", False)
+        if not isinstance(rasterized, (bool, np.bool_)):
+            raise TypeError("pcolormesh rasterized must be a boolean")
         if shading not in (None, "auto", "flat", "nearest", "gouraud"):
             raise ValueError(f"invalid pcolormesh shading {shading!r}")
         check_unsupported(kwargs, "pcolormesh()")
-        colormap = resolve_cmap(cmap) if cmap is not None else "viridis"
+        cmap_value = cmap if cmap is not None else "viridis"
+        colormap = resolve_cmap(cmap_value)
         opacity = 1.0 if alpha is None else float(alpha)
-        norm_vmin, norm_vmax = getattr(norm, "vmin", None), getattr(norm, "vmax", None)
-        if vmin is None and norm_vmin is not None:
-            vmin = norm_vmin
-        if vmax is None and norm_vmax is not None:
-            vmax = norm_vmax
-        domain = (float(vmin), float(vmax)) if vmin is not None and vmax is not None else None
+        render_z, domain, norm_scale = normalize_scalar_grid(z, norm, vmin, vmax)
+        truecolor_z = scalar_grid_rgba(render_z, cmap_value) if norm_scale == "log" else None
         regular = None if x is None else _uniform_mesh_axes(x, y, z.shape)
+
+        def finish(entry: dict[str, Any]) -> PolyCollection:
+            if domain is not None:
+                entry["_mpl_domain"] = domain
+            if norm_scale != "linear":
+                entry["_mpl_norm_scale"] = norm_scale
+            handle = PolyCollection(self, entry)
+            handle._rasterized = bool(rasterized)
+            return handle
+
         if shading == "gouraud":
             gouraud_axes = (
                 (np.arange(z.shape[1], dtype=float), np.arange(z.shape[0], dtype=float))
@@ -4459,7 +4478,9 @@ class PlotTypeMixin:
             if gouraud_axes is not None and no_edges:
                 width = max(2, min(512, max(256, z.shape[1] * 32)))
                 height = max(2, min(512, max(256, z.shape[0] * 32)))
-                smooth = _bilinear_grid(z, width, height)
+                smooth = _bilinear_grid(
+                    truecolor_z if truecolor_z is not None else z, width, height
+                )
                 gx, gy = gouraud_axes
                 mark_kwargs: dict[str, Any] = {
                     "x": np.linspace(float(gx[0]), float(gx[-1]), width),
@@ -4467,7 +4488,7 @@ class PlotTypeMixin:
                     "colormap": colormap,
                     "opacity": opacity,
                 }
-                if domain is not None:
+                if domain is not None and norm_scale == "linear":
                     mark_kwargs["domain"] = domain
                 entry = self._add(
                     "@mark",
@@ -4478,7 +4499,7 @@ class PlotTypeMixin:
                         "source_z": z,
                     },
                 )
-                return PolyCollection(self, entry)
+                return finish(entry)
         if x is None or (regular is not None and shading != "gouraud"):
             if regular is not None:
                 x, y = regular
@@ -4494,21 +4515,26 @@ class PlotTypeMixin:
                 "colormap": colormap,
                 "opacity": opacity,
             }
-            if domain is not None:
+            if domain is not None and norm_scale == "linear":
                 mark_kwargs["domain"] = domain
             entry = self._add(
                 "@mark",
                 {
                     "factory": "heatmap",
-                    "args": (z,),
+                    "args": (truecolor_z if truecolor_z is not None else z,),
                     "kwargs": mark_kwargs,
                     "source_z": z,
                 },
             )
-            return PolyCollection(self, entry)
+            return finish(entry)
 
         from xy import kernels
 
+        if rasterized:
+            raise not_implemented(
+                "pcolormesh(rasterized=True) on a non-uniform mesh",
+                "rasterized=True on a regular rectilinear mesh",
+            )
         if y is None:
             raise ValueError("pcolormesh requires Y when X is provided")
         x0, y0, x1, y1, x2, y2, scalar = kernels.quad_mesh_triangles(x, y, z)
@@ -4535,12 +4561,22 @@ class PlotTypeMixin:
             x0, y0, x1, y1, x2, y2, scalar = (
                 values[finite_triangles] for values in (x0, y0, x1, y1, x2, y2, scalar)
             )
+        if norm_scale == "log":
+            normalized_scalar, _resolved_domain, _scale = normalize_scalar_grid(
+                scalar,
+                norm_scale,
+                domain[0] if domain is not None else vmin,
+                domain[1] if domain is not None else vmax,
+            )
+            painted_scalar: Any = scalar_grid_rgba(normalized_scalar, cmap_value)
+        else:
+            painted_scalar = scalar
         mark_kwargs = {
-            "color": scalar,
+            "color": painted_scalar,
             "colormap": colormap,
             "opacity": opacity,
         }
-        if domain is not None:
+        if domain is not None and norm_scale == "linear":
             mark_kwargs["domain"] = domain
         no_edges = edgecolors is None or (
             isinstance(edgecolors, str) and edgecolors.lower() == "none"
@@ -4560,7 +4596,7 @@ class PlotTypeMixin:
                 "_mpl_sticky_edges": mesh_extent,
             },
         )
-        return PolyCollection(self, entry)
+        return finish(entry)
 
     def pcolor(self, *args: Any, **kwargs: Any) -> PolyCollection:
         """A pseudocolor plot of a 2-D array (see ``pcolormesh``).

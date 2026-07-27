@@ -1290,7 +1290,8 @@ def imshow(
         Resampling hint; nearest-equivalent modes are honored.
 
     The image becomes the figure's current mappable, so a bare
-    `colorbar()` attaches to it. ``norm`` is not supported and raises.
+    `colorbar()` attaches to it. ``norm="linear"`` and ``norm="log"``
+    (or their Matplotlib Normalize instances) are supported.
 
     Returns
     -------
@@ -1329,7 +1330,8 @@ def pcolormesh(*args: ArrayLike, **kwargs: Any) -> PolyCollection:
     Call as ``pcolormesh(C)`` or ``pcolormesh(X, Y, C)``. Supported
     keywords: ``cmap``, ``vmin``/``vmax``, ``alpha``, ``shading``
     (``"flat"``/``"nearest"``/``"auto"``/``"gouraud"``),
-    ``edgecolors``/``edgecolor``, ``linewidth``/``linewidths``, and
+    ``edgecolors``/``edgecolor``, ``linewidth``/``linewidths``,
+    ``norm="linear"``/``"log"``, ``rasterized`` on regular meshes, and
     ``antialiased``. The mesh becomes the figure's current mappable.
     """
     return _record_mappable(gca().pcolormesh(*args, **kwargs))

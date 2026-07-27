@@ -43,23 +43,6 @@ def _panel_chrome(ax: Axes, plot_w: int) -> tuple[float, float, float, float]:
     return left, top + extra_top, right + extra_right, bottom + extra_bottom
 
 
-def _colorbar_plot_reservation(ax: Axes) -> tuple[float, float]:
-    """Plot width/height a colorbar steals inside a fixed figure canvas.
-
-    A free-form axes rectangle normally describes the plot box, with titles
-    and tick-label chrome allowed to extend outside it.  A colorbar is the one
-    important exception: Matplotlib shrinks the parent axes to reserve a strip
-    *inside* the figure.  Without the same reservation here, constrained/tight
-    layout builds a panel wider than the fixed canvas and clips the colorbar.
-    """
-    colorbar = ax._colorbar
-    if colorbar is None:
-        return 0.0, 0.0
-    if colorbar.get("orientation") == "horizontal":
-        return 0.0, 38.0 + (16.0 if colorbar.get("label") else 0.0)
-    return 86.0 + (18.0 if colorbar.get("label") else 0.0), 0.0
-
-
 def _measured_left_gutter(ax: Axes, width: int, height: int) -> float:
     """The left gutter `_svg.layout()` will reserve for `ax`'s y-axis text.
 
@@ -637,12 +620,13 @@ class Figure:
         return self._edgecolor
 
     def colorbar(self, mappable: Any = None, cax: Any = None, ax: Any = None, **kwargs: Any) -> Any:
-        if cax is not None:
-            raise not_implemented("colorbar(cax=...)", "the automatic colorbar placement")
         if mappable is None:
             mappable = self._gci
         axes_arg = ax
-        axes = getattr(mappable, "_axes", None) or self.gca()
+        source_axes = getattr(mappable, "_axes", None) or self.gca()
+        axes = cax if cax is not None else source_axes
+        if cax is not None and cax not in self._axes:
+            raise ValueError("colorbar cax must belong to this figure")
         entry = getattr(mappable, "_entry", {})
         props = entry.get("kwargs", {})
         mapped_values = entry.get("source_z", props.get("color", entry.get("z")))
@@ -658,7 +642,8 @@ class Figure:
             finite = finite[np.isfinite(finite)]
         except (TypeError, ValueError):
             finite = np.asarray([], dtype=np.float64)
-        explicit_domain = entry.get("domain", props.get("domain"))
+        explicit_domain = entry.get("_mpl_domain", entry.get("domain", props.get("domain")))
+        norm_scale = str(entry.get("_mpl_norm_scale", props.get("_mpl_norm_scale", "linear")))
         orientation_arg = kwargs.pop("orientation", None)
         location = kwargs.pop("location", None)
         if location is not None:
@@ -692,6 +677,16 @@ class Figure:
             "label": _plain_text(kwargs.pop("label", "")),
             "orientation": orientation,
         }
+        if norm_scale != "linear":
+            options["scale"] = norm_scale
+        pad = kwargs.pop("pad", None)
+        if pad is not None:
+            pad_value = float(pad)
+            if not np.isfinite(pad_value) or pad_value < 0.0:
+                raise ValueError("colorbar() pad must be a finite nonnegative number")
+            options["pad"] = pad_value
+        if cax is not None:
+            options["placement"] = "axes"
         if shrink != 1.0:
             options["shrink"] = shrink
         if not np.array_equal(anchor_values, [0.5, 0.5]):
@@ -737,7 +732,13 @@ class Figure:
             if extend != "neither":
                 options["extend"] = str(extend)
         check_unsupported(kwargs, "colorbar()")
-        if isinstance(axes_arg, (list, tuple, np.ndarray)):
+        if cax is not None:
+            axes.set_axis_off()
+            axes.spines[:].set_visible(False)
+            axes._colorbar = options
+            axes._colorbar_source = entry if entry else None
+            axes._invalidate()
+        elif isinstance(axes_arg, (list, tuple, np.ndarray)):
             self._shared_colorbar = options
             self._invalidate()
         else:
@@ -1000,21 +1001,35 @@ class Figure:
         if rects is not None:
             charts = []
             for ax, rect in zip(self._axes, rects, strict=True):
-                plot_w = max(1, round(total_w * rect[2]))
-                plot_h = max(1, round(total_h * rect[3]))
+                allocated_plot_w = max(1, round(total_w * rect[2]))
+                allocated_plot_h = max(1, round(total_h * rect[3]))
+                compact = allocated_plot_w + 54 < 520
+                colorbar_right, colorbar_bottom = ax._colorbar_outside_room(compact)
+                automatic_colorbar = (
+                    ax._colorbar is not None and ax._colorbar.get("placement") != "axes"
+                )
+                # Matplotlib steals an automatic colorbar from the source
+                # subplot's allocation. Keep the whole panel inside that
+                # allocation by shrinking the data box before the renderer
+                # adds the colorbar strip back around it.
+                plot_w = max(
+                    40,
+                    round(allocated_plot_w - colorbar_right)
+                    if automatic_colorbar
+                    else allocated_plot_w,
+                )
+                plot_h = max(
+                    40,
+                    round(allocated_plot_h - colorbar_bottom)
+                    if automatic_colorbar
+                    else allocated_plot_h,
+                )
                 # Absolute axes rectangles describe the plot box.  Export
                 # chrome lives outside that rectangle in the surrounding
                 # figure buffer, matching Matplotlib add_axes semantics —
                 # including the axes title, which matplotlib draws above the
                 # axes without moving its position.
                 left, top, right, bottom = _panel_chrome(ax, plot_w)
-                colorbar_w, colorbar_h = _colorbar_plot_reservation(ax)
-                # `tight_layout()` fixes the figure canvas before artists such
-                # as colorbars are commonly added.  Keep its panel footprint
-                # fixed by taking the colorbar strip from the plot, rather than
-                # appending that strip beyond the right/bottom canvas edge.
-                plot_w = max(40, round(plot_w - colorbar_w))
-                plot_h = max(40, round(plot_h - colorbar_h))
                 ax._absolute_plot_ratio = plot_w / plot_h
                 # Pin the plot rect inside the panel: the exporters place the
                 # panel assuming its plot box sits at exactly this inset, so

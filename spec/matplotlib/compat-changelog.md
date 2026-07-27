@@ -329,5 +329,32 @@ colorbar domains) fully cleared.
   Matplotlib's 1-based ordinals, and `manage_ticks=True` reserves a half unit
   around the outer positions regardless of the drawn box width.
 
+### Log-normalized meshes and colorbar placement — 2026-07-26 (Matplotlib 3.11.1 reference)
+
+- `imshow` and regular `pcolormesh` now accept `norm="log"` and LogNorm
+  instances. The shim previously rejected the gallery call before rendering;
+  it now resolves the positive source domain, paints logarithmically normalized
+  RGBA samples (including bad/under/over colors), and retains the original
+  scalar domain plus scale for the colorbar. `pcolormesh(rasterized=True)`
+  round-trips on the already image-backed regular path and still fails loudly
+  for nonuniform triangle meshes.
+- Automatic colorbars in fixed multipanel figures now consume room from their
+  source subplot allocation before the panel is composed. `pad=0` removes the
+  gap in browser, SVG, and native PNG layout instead of retaining the old
+  24-pixel default gap or overflowing the figure. Logarithmic colorbar ticks
+  use logarithmic positions and labels in every renderer.
+- `Figure.colorbar(cax=...)` now paints the gradient into the explicit axes
+  rectangle, keeps the source subplot unchanged, and returns a handle whose
+  `ax` is that explicit axes. This clears the `subplots_adjust.py` blocker,
+  whose `0.85, 0.1, 0.075, 0.8` cax previously raised before export.
+- A colorbar also inherits a contour mappable's normalized `extend` setting
+  when the call does not override it, so its endpoint triangles match the
+  already-compiled contour bands.
+- Focused regression evidence lives in
+  `tests/pyplot/test_gallery_log_colorbar_blockers.py`: it reproduces the exact
+  option combinations from `time_series_histogram.py` and
+  `subplots_adjust.py`, asserts the normalization and allocation contracts, and
+  verifies 600x800 and 640x480 PNG plus composed SVG output.
+
 Future entries must identify the Matplotlib release/revision, inventory
 additions or removals, and any compatibility-level changes.

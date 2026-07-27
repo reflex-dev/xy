@@ -1565,10 +1565,15 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         top_axis_room = 26 if compact else 32
         top += top_axis_room
     colorbar = spec.get("colorbar") or {}
-    if colorbar.get("orientation") == "horizontal":
-        bottom += 38 + (16 if colorbar.get("label") else 0)
+    if colorbar.get("placement") == "axes":
+        if colorbar.get("orientation") == "horizontal":
+            bottom += 24 + (16 if colorbar.get("label") else 0)
+        else:
+            right += 44 + (18 if colorbar.get("label") else 0)
+    elif colorbar.get("orientation") == "horizontal":
+        bottom += (18 if colorbar.get("pad") == 0 else 38) + (16 if colorbar.get("label") else 0)
     elif colorbar:
-        right += 86 + (18 if colorbar.get("label") else 0)
+        right += (62 if colorbar.get("pad") == 0 else 86) + (18 if colorbar.get("label") else 0)
     if any(
         axis_id.startswith("y")
         and axis.get("side", "right") == "right"
@@ -3903,16 +3908,30 @@ def _colorbar(
     shrink = float(options.get("shrink", 1.0))
     anchor = options.get("anchor") or [0.5, 0.5]
     domain = options.get("domain", [0.0, 1.0])
-    if orientation == "horizontal":
+    placement = options.get("placement")
+    if placement == "axes":
+        x, y, width, height = plot["x"], plot["y"], plot["w"], plot["h"]
+        gradient_attrs = (
+            'x1="0" y1="0" x2="100%" y2="0"'
+            if orientation == "horizontal"
+            else 'x1="0" y1="100%" x2="0" y2="0"'
+        )
+    elif orientation == "horizontal":
         width = plot["w"] * shrink
         x = plot["x"] + (plot["w"] - width) * float(anchor[0])
-        y = plot["y"] + plot["h"] + (plot["bottom_axis_room"] or 10)
+        gap = (
+            float(options["pad"]) * plot["h"]
+            if options.get("pad") is not None
+            else (plot["bottom_axis_room"] or 10)
+        )
+        y = plot["y"] + plot["h"] + gap
         height = 18
         gradient_attrs = 'x1="0" y1="0" x2="100%" y2="0"'
     else:
         # right_axis_room shifts the whole colorbar clear of right-side named
         # y-axis chrome (layout() reserves room for both additively).
-        x = plot["x"] + plot["w"] + right_axis_room + 24
+        gap = float(options["pad"]) * plot["w"] if options.get("pad") is not None else 24.0
+        x = plot["x"] + plot["w"] + right_axis_room + gap
         height = plot["h"] * shrink
         y = plot["y"] + (plot["h"] - height) * (1.0 - float(anchor[1]))
         width = 18
@@ -3931,57 +3950,80 @@ def _colorbar(
         )
     )
     lo, hi = float(domain[0]), float(domain[1])
-    span = (hi - lo) or 1.0
+    log_scale = options.get("scale") == "log"
+
+    def fraction(value: float) -> float:
+        if log_scale:
+            return np.log(value / lo) / np.log(hi / lo) if hi != lo else 0.0
+        return (value - lo) / ((hi - lo) or 1.0)
+
     ticks = options.get("ticks")
     tick_positions = (
         [float(value) for value in ticks if lo <= float(value) <= hi]
         if ticks is not None
         else (
-            _linear_ticks(
-                lo,
-                hi,
-                _colorbar_tick_target(width if orientation == "horizontal" else height),
-            )[0]
+            (
+                _log_ticks(
+                    lo,
+                    hi,
+                    _colorbar_tick_target(width if orientation == "horizontal" else height),
+                )[1]
+                if log_scale
+                else _linear_ticks(
+                    lo,
+                    hi,
+                    _colorbar_tick_target(width if orientation == "horizontal" else height),
+                )[0]
+            )
             or [lo, hi]
         )
     )
+    format_tick = _fmt_log if log_scale else lambda value: f"{value:g}"
     tick_nodes = (
         "".join(
             f'<text x="{_num(x + width + 4)}" '
-            f'y="{_num(y + height * (1 - (value - lo) / span) + 4)}" '
-            f'fill="{escape(text_color)}">{value:g}</text>'
+            f'y="{_num(y + height * (1 - fraction(value)) + 4)}" '
+            f'fill="{escape(text_color)}">{format_tick(value)}</text>'
             for value in tick_positions
         )
         if orientation != "horizontal"
         else "".join(
-            f'<text x="{_num(x + width * (value - lo) / span)}" '
+            f'<text x="{_num(x + width * fraction(value))}" '
             f'y="{_num(y + height + 12)}" text-anchor="middle" '
-            f'fill="{escape(text_color)}">{value:g}</text>'
+            f'fill="{escape(text_color)}">{format_tick(value)}</text>'
             for value in tick_positions
         )
     )
     minor_nodes = ""
     if options.get("minor_ticks") and len(tick_positions) >= 2:
         ordered = sorted(set(tick_positions))
-        minor_positions = [
-            left + (right - left) * step / 5.0
-            for left, right in pairwise(ordered)
-            for step in range(1, 5)
-        ]
+        minor_positions = (
+            [
+                10 ** (np.log10(left) + (np.log10(right) - np.log10(left)) * step / 5.0)
+                for left, right in pairwise(ordered)
+                for step in range(1, 5)
+            ]
+            if log_scale
+            else [
+                left + (right - left) * step / 5.0
+                for left, right in pairwise(ordered)
+                for step in range(1, 5)
+            ]
+        )
         if orientation != "horizontal":
             minor_nodes = "".join(
                 f'<line data-xy-colorbar-minor="true" x1="{_num(x + width)}" '
                 f'x2="{_num(x + width + 3)}" '
-                f'y1="{_num(y + height * (1 - (value - lo) / span))}" '
-                f'y2="{_num(y + height * (1 - (value - lo) / span))}" '
+                f'y1="{_num(y + height * (1 - fraction(value)))}" '
+                f'y2="{_num(y + height * (1 - fraction(value)))}" '
                 f'stroke="{escape(text_color)}"/>'
                 for value in minor_positions
             )
         else:
             minor_nodes = "".join(
                 f'<line data-xy-colorbar-minor="true" '
-                f'x1="{_num(x + width * (value - lo) / span)}" '
-                f'x2="{_num(x + width * (value - lo) / span)}" '
+                f'x1="{_num(x + width * fraction(value))}" '
+                f'x2="{_num(x + width * fraction(value))}" '
                 f'y1="{_num(y + height)}" y2="{_num(y + height + 3)}" '
                 f'stroke="{escape(text_color)}"/>'
                 for value in minor_positions
