@@ -9,10 +9,8 @@
   <a href="https://reflex.dev/docs/xy/" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/docs-reflex.dev-blue" alt="Docs" /></a>
 </p>
 
-<p align="center">
-  <strong>XY is a fast, interactive, customizable Python charting library for
-  the web, notebooks, and static exports.</strong>
-</p>
+XY is a fast, interactive, customizable Python charting library for the web,
+notebooks, and static exports.
 
 Charts are composed declaratively, or through the familiar matplotlib shim. You
 can completely customize them with Python, CSS, or Tailwind.
