@@ -1,11 +1,13 @@
 # Chart Type Roadmap
 
-This is the single chart-type roadmap for xy. It is intentionally
-**2D-first**: the library should become broad enough for Plotly-class analytics,
-finance, science, operations, and dashboard use cases before spending product
-energy on 3D/volume rendering. Nothing in this section implies immediate
-implementation; it is the coverage backlog we will pull from as the primitives
-land.
+This is the single chart-type roadmap for xy. The destination is every chart
+family: analytical and statistical charts, finance, science, operations,
+dashboards, geographic views, 3D, and volume rendering. Delivery is staged:
+the current implementation builds broad 2D coverage first because those shared
+primitives unlock the most use cases, then carries the same performance and
+customization goals into additional coordinate systems. Nothing in this
+section implies immediate implementation; it is the coverage backlog we will
+pull from as the primitives land.
 
 The roadmap prioritizes chart types by two signals:
 
@@ -14,10 +16,10 @@ The roadmap prioritizes chart types by two signals:
 2. **xy fit:** chart types where the engine can win on large data,
    binary transport, WebGL rendering, and screen-bounded aggregation.
 
-The near-term wedge is large data, but the long-term product goal is broader:
-xy should become a **Plotly-class general-purpose charting library** for
-analytics, science, finance, operations, and dashboards. Performance is the
-entry point, not the boundary of the product.
+The near-term wedge is large data, but the product goal is broader: xy should
+outperform every competing charting library across chart breadth, data scale,
+performance, and customization. Performance is the entry point, not the
+boundary of the product.
 
 The current implemented surface is **line**, **scatter**, **area**,
 **histogram**, **bar/column**, **heatmap**, **error bars/bands**,
@@ -83,7 +85,7 @@ These sources are used as popularity proxies, not as exact usage telemetry:
 | [Bokeh gallery](https://docs.bokeh.org/en/latest/docs/gallery.html) | line, scatter, bar, patches, image, heatmap, contour, candlestick, maps, network, linked brushing, streaming |
 | Internal design dossier, section 28 and 24 | bar/histogram, heatmap, box/violin, candlestick/OHLC as important compatibility targets |
 
-## 2D-First Priority Roadmap
+## Staged Chart Coverage Roadmap
 
 ### P0 - Already in place
 
@@ -209,18 +211,19 @@ depth: strip/swarm/boxen/rug distributions, regression diagnostics, richer
 | 32 | Packed bubble / Venn / Euler | Compatibility and presentation charts. | Layout algorithms and label placement dominate. |
 | 33 | Pictorial bar / item chart / image markers / text marks | ECharts/Highcharts compatibility polish. | Symbol systems and asset handling. |
 
-### P6 - 2D domains to defer until core breadth is strong
+### P6 - Additional domains after core breadth is strong
 
 | Chart family | Reason to defer |
 |---|---|
 | Maps / choropleth / geo scatter / routes / density maps | 2D, but requires projection, tile, geography data, and viewport semantics; valuable as a later domain package. |
-| 3D scatter / surface / volume | Explicitly outside the 2D-first roadmap; different rendering and interaction model. |
+| 3D scatter / surface / mesh / volume | Requires dedicated camera, projection, lighting, depth, picking, and interaction primitives; part of the product destination after the shared 2D foundations are broad. |
 
 ### P7 - Long-term breadth target
 
 The long-term target is not only "fast large scatter." It is an expansive
-library with enough chart breadth to be used across industries the way Plotly is
-used today, while keeping xy' transport and rendering model underneath.
+library that leads across industries and chart families, including geographic,
+3D, and volume visualization, while keeping xy's transport and rendering model
+underneath.
 
 | Industry / use case | Chart coverage needed |
 |---|---|

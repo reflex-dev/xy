@@ -1158,24 +1158,38 @@ def test_selection_prunes_non_overlapping_zone_chunks(monkeypatch):
     y = np.concatenate([np.zeros(ZONE_CHUNK), np.full(ZONE_CHUNK, 100.0)])
     fig = Figure().scatter(x, y)
     seen = []
+    scanned_columns = []
     expanded = []
-    original = interaction.kernels.range_indices
+    original = interaction.kernels.range_indices_rows
+    original_full = interaction.kernels.range_indices
     original_expand = interaction._expand_zone_chunks
 
-    def wrapped(xv, yv, *args):
-        seen.append(len(xv))
-        return original(xv, yv, *args)
+    def wrapped(xv, yv, rows, *args):
+        # The candidate count is what pruning controls; the column length the
+        # kernel reads is the *whole* column, because the pruned branch scans
+        # rows in place rather than gathering them into a fresh pair of f64
+        # columns first.
+        seen.append(len(rows))
+        scanned_columns.append(len(xv))
+        return original(xv, yv, rows, *args)
+
+    def wrapped_full(xv, yv, *args):
+        scanned_columns.append(("full", len(xv)))
+        return original_full(xv, yv, *args)
 
     def wrapped_expand(col, chunks):
         expanded.append(len(chunks))
         return original_expand(col, chunks)
 
-    monkeypatch.setattr(interaction.kernels, "range_indices", wrapped)
+    monkeypatch.setattr(interaction.kernels, "range_indices_rows", wrapped)
+    monkeypatch.setattr(interaction.kernels, "range_indices", wrapped_full)
     monkeypatch.setattr(interaction, "_expand_zone_chunks", wrapped_expand)
     selected = fig.select_range(-1.0, 1.0, -1.0, 1.0)[0]
     np.testing.assert_array_equal(selected, np.arange(ZONE_CHUNK, dtype=np.uint32))
     assert seen == [ZONE_CHUNK]
     assert expanded == [1]
+    # Exactly one scan, of the candidate rows, with no gathered copy.
+    assert scanned_columns == [2 * ZONE_CHUNK]
 
 
 def test_to_shipped_indices_translates_nan_drop_before_payload_build():

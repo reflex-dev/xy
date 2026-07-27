@@ -54,10 +54,12 @@ from ._svg import (
     _solid_paint,
     _step_arrays,
     _tick_label_anchor,
+    annotation_label_placement,
     apply_export_background,
     axis_ticks,
     hexbin_ring,
     layout,
+    legend_items,
     warp_grid_rgba,
 )
 
@@ -1119,7 +1121,7 @@ def render_raster(
     for _axis_id, axis, _axis_scale in extra_y_axes:
         emit_axis_title(axis, is_x=False)
 
-    named = [t for t in spec["traces"] if t.get("name")]
+    named = legend_items(spec["traces"], spec_palette)
     main_legend = spec.get("legend") or {}
     main_items = main_legend.get("items") or named
     show_main_legend = spec.get("show_legend", True) and bool(main_items)
@@ -1254,16 +1256,18 @@ def _emit_annotations(
     phase: str = "marks",
 ) -> None:
     px0, py0 = plot["x"], plot["y"]
+    text_phase = phase == "text"
     for ann in annotations:
-        # Geometry (rules/bands/arrows) draws in the clipped marks pass; text
-        # draws in the unclipped chrome pass, matching matplotlib's Text.
-        if (ann.get("kind") == "text") != (phase == "text"):
-            continue
+        # Geometry (rules/bands/arrows/markers) draws in the clipped marks
+        # pass; every label draws in the unclipped chrome pass, matching
+        # matplotlib's Text and the client's DOM labels.
         style = ann.get("style") or {}
         color = _rgba(style.get("color"), "#667085", float(style.get("opacity", 1.0)))
         start = max(0.0, min(1.0, float(style.get("span_start", 0.0))))
         end = max(start, min(1.0, float(style.get("span_end", 1.0))))
-        if ann.get("kind") == "rule":
+        if text_phase:
+            pass
+        elif ann.get("kind") == "rule":
             if ann.get("axis") == "x":
                 pos = float(sx(float(ann["value"])))
                 points = [(pos, py0 + (1 - end) * plot["h"]), (pos, py0 + (1 - start) * plot["h"])]
@@ -1322,9 +1326,33 @@ def _emit_annotations(
                         cmd.fill(decoration["points"], color)
                     else:
                         cmd.stroke(decoration["points"], stroke_width, color)
-        if ann.get("kind") in ("text", "callout") and ann.get("text"):
-            x, y = _annotation_point(ann, style, sx, sy, plot, width, height)
-            anchor = {"start": 0, "middle": 1, "end": 2}.get(ann.get("anchor"), 0)
+        elif ann.get("kind") == "marker":
+            mx, my = float(sx(float(ann["x"]))), float(sy(float(ann["y"])))
+            if np.isfinite(mx) and np.isfinite(my):
+                alpha = float(style.get("opacity", 1.0))
+                stroke_w = float(style.get("stroke_width", 0.0))
+                cmd.point(
+                    mx,
+                    my,
+                    max(0.5, float(ann.get("size", 8.0)) / 2.0),
+                    _SYMBOLS.get(str(ann.get("symbol", "circle")), 0),
+                    _rgba(style.get("color"), "#2563eb", alpha),
+                    stroke_w,
+                    (
+                        _rgba(style.get("stroke_color"), "#ffffff", alpha)
+                        if stroke_w > 0
+                        else (0, 0, 0, 0)
+                    ),
+                )
+        if text_phase and ann.get("text"):
+            x, y, label_anchor, vertical_align = annotation_label_placement(
+                ann, style, sx, sy, plot, width, height
+            )
+            if not (np.isfinite(x) and np.isfinite(y)):
+                continue
+            if vertical_align:
+                style = {**style, "vertical_align": vertical_align}
+            anchor = {"start": 0, "middle": 1, "end": 2}.get(label_anchor, 0)
             font_size = _px_size(style.get("font_size"), 11.0)
             lines = str(ann["text"]).splitlines() or [""]
             line_height = font_size * 1.2

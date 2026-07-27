@@ -564,3 +564,114 @@ def test_browser_legend_click_toggles_series() -> None:
         ("legend_toggle", 0, None, True),
         ("legend_toggle", 0, None, False),
     ], payload["sent"]
+
+
+# --- the visible-row cache is bounded, and it is reported (§27) --------------
+
+
+def test_legend_vis_cache_is_dropped_when_nothing_is_hidden() -> None:
+    """Un-hiding everything releases the index, instead of pinning 8 B/row.
+
+    The cache exists so a pan/zoom sequence does not repeat the O(N) code scan
+    while the predicate holds. Once no category is hidden there is no consumer
+    for it at all, so keeping it is pure retention — and it was never dropped,
+    never invalidated and never reported.
+    """
+    from xy import interaction
+
+    fig, _ = _density_fig(200_000)
+    trace = fig.traces[0]
+    assert trace._legend_vis_cache is None
+
+    channel.handle_message(
+        fig, {"type": "legend_toggle", "trace": 0, "category": 1, "hidden": True}
+    )
+    interaction.density_view(fig, trace.id, -4.0, 4.0, -4.0, 4.0, 256, 192)
+    cached = trace._legend_vis_cache
+    assert cached is not None and cached[1].size > 0
+    # ...and it shows up in the report while it is held.
+    assert fig.memory_report()["legend_vis_cache_bytes"] == cached[1].nbytes
+
+    # The un-hide itself releases it. Waiting for the next `density_view` to
+    # notice would pin the index whenever that view never comes — and a legend
+    # click restoring every series is a perfectly ordinary last interaction.
+    channel.handle_message(
+        fig, {"type": "legend_toggle", "trace": 0, "category": 1, "hidden": False}
+    )
+    assert trace._legend_vis_cache is None
+    assert fig.memory_report()["legend_vis_cache_bytes"] == 0
+
+    # ...and a view afterwards neither resurrects nor re-pins it.
+    interaction.density_view(fig, trace.id, -4.0, 4.0, -4.0, 4.0, 256, 192)
+    assert trace._legend_vis_cache is None
+    assert fig.memory_report()["legend_vis_cache_bytes"] == 0
+
+
+def test_legend_vis_cache_survives_a_partial_unhide() -> None:
+    """Only an empty hidden set releases it; with one category still hidden the
+    cache is still live and must be re-keyed, not dropped."""
+    from xy import interaction
+
+    fig, _ = _density_fig(200_000)
+    trace = fig.traces[0]
+    for code in (0, 1):
+        channel.handle_message(
+            fig, {"type": "legend_toggle", "trace": 0, "category": code, "hidden": True}
+        )
+    interaction.density_view(fig, trace.id, -4.0, 4.0, -4.0, 4.0, 256, 192)
+    two_hidden = trace._legend_vis_cache
+    assert two_hidden is not None
+
+    channel.handle_message(
+        fig, {"type": "legend_toggle", "trace": 0, "category": 0, "hidden": False}
+    )
+    assert trace._legend_vis_cache is not None  # still one category hidden
+    interaction.density_view(fig, trace.id, -4.0, 4.0, -4.0, 4.0, 256, 192)
+    one_hidden = trace._legend_vis_cache
+    assert one_hidden is not None
+    assert one_hidden[0] != two_hidden[0]  # re-keyed on the new hidden set
+    assert one_hidden[1].size > two_hidden[1].size  # and more rows are visible
+
+    channel.handle_message(
+        fig, {"type": "legend_toggle", "trace": 0, "category": 1, "hidden": False}
+    )
+    assert trace._legend_vis_cache is None
+    assert fig.memory_report()["legend_vis_cache_bytes"] == 0
+
+
+def test_whole_trace_hide_leaves_the_category_cache_alone() -> None:
+    """`hidden=True` with no category is the trace-level switch; it shares
+    nothing with the per-category predicate and must not drop its cache."""
+    from xy import interaction
+
+    fig, _ = _density_fig(200_000)
+    trace = fig.traces[0]
+    channel.handle_message(
+        fig, {"type": "legend_toggle", "trace": 0, "category": 1, "hidden": True}
+    )
+    interaction.density_view(fig, trace.id, -4.0, 4.0, -4.0, 4.0, 256, 192)
+    assert trace._legend_vis_cache is not None
+
+    channel.handle_message(fig, {"type": "legend_toggle", "trace": 0, "hidden": False})
+    assert trace.hidden_categories == {1}
+    assert trace._legend_vis_cache is not None
+
+
+def test_legend_vis_cache_bytes_is_counted_in_resident_total() -> None:
+    """§27: if a number isn't in the report, it isn't real."""
+    from xy import interaction
+
+    fig, _ = _density_fig(200_000)
+    channel.handle_message(
+        fig, {"type": "legend_toggle", "trace": 0, "category": 1, "hidden": True}
+    )
+    interaction.density_view(fig, fig.traces[0].id, -4.0, 4.0, -4.0, 4.0, 256, 192)
+    report = fig.memory_report()
+    assert report["legend_vis_cache_bytes"] > 0
+    assert report["resident_array_bytes"] >= (
+        report["canonical_capacity_bytes"]
+        + report["channel_bytes"]
+        + report["pyramid_bytes"]
+        + report["bin_color_bytes"]
+        + report["legend_vis_cache_bytes"]
+    )

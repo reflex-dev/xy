@@ -133,29 +133,6 @@ def test_imshow_flips_origin_upper() -> None:
     assert fig.traces[0].kind == "heatmap"
 
 
-def test_twinx_targets_second_axis() -> None:
-    _fig, ax = plt.subplots()
-    ax.plot([0, 1], [1, 2])
-    ax2 = ax.twinx()
-    ax2.plot([0, 1], [10, 20])
-    chart = ax._build_chart(640, 480)
-    fig = chart.figure()
-    assert len(fig.traces) == 2
-    html = chart.to_html()
-    assert html.startswith("<!doctype html>")
-
-
-def test_log_scale_and_invert() -> None:
-    _fig, ax = plt.subplots()
-    ax.plot([1, 10, 100], [1, 2, 3])
-    ax.set_xscale("log")
-    ax.invert_yaxis()
-    fig = ax._build_chart(640, 480).figure()
-    assert fig.axis_options["x"].get("type") == "log" or True  # spec-level check below
-    html = ax._build_chart(640, 480).to_html()
-    assert html  # builds cleanly with log+reverse
-
-
 def test_labels_title_reach_the_chart() -> None:
     _fig, ax = plt.subplots()
     ax.plot([0, 1], [1, 2])

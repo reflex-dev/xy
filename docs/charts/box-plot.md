@@ -57,6 +57,37 @@ their marker with `outlier_size`. Switch `orientation` to `"horizontal"` when
 group labels are long or when you want to read distributions left to right, and
 use `width` to control how wide each box sits within its slot.
 
+### Style the Box, Whiskers, Median, and Outliers
+
+Use `style` for the box body and the three part-specific mappings for the
+remaining geometry. Every mapping uses the same validated CSS vocabulary as
+ordinary XY marks and survives interactive and static renderers.
+
+~~~python
+custom_box = xy.box(
+    service_latency,
+    x=["checkout", "search", "payments"],
+    style={
+        "fill": "#bae6fd",
+        "fill-opacity": 0.35,
+        "stroke": "#0284c7",
+        "stroke-width": 2,
+    },
+    whisker_style={
+        "stroke": "#64748b",
+        "stroke-width": 1.5,
+        "stroke-opacity": 0.75,
+    },
+    median_style={"stroke": "#0f172a", "stroke-width": 3},
+    outlier_style={
+        "fill": "#ffffff",
+        "stroke": "#e11d48",
+        "stroke-width": 2,
+        "marker-shape": "diamond",
+    },
+)
+~~~
+
 ### Horizontal Boxes with Outlier Markers
 
 Flip the chart with `orientation="horizontal"`, slim each box with `width`, and
@@ -153,6 +184,10 @@ def grouped_box_demo():
 | `width` | Width of each box within its slot. |
 | `color` | Box color (any CSS color). |
 | `opacity` | Box opacity from 0 to 1. |
+| `style` | Box-body fill, border, and overall opacity. |
+| `whisker_style` | Whisker stroke, width, and opacity. |
+| `median_style` | Median-line stroke, width, and opacity. |
+| `outlier_style` | Outlier fill, border, shape, and opacity. |
 
 Pass column names with `data=` instead of arrays when your data is a table.
 

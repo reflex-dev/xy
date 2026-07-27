@@ -308,10 +308,11 @@ class ExportConfig(Component):
 @dataclass
 class Theme(Component):
     """Chart-wide style tokens (plot background, grid/axis/text colors) and
-    the categorical color cycle."""
+    the categorical color cycle — a positional list, or a `{category: color}`
+    map that pins colors to labels."""
 
     style: dict[str, StyleValue] = field(default_factory=dict)
-    palette: Optional[list[str]] = None
+    palette: Union[list[str], dict[str, str], None] = None
 
 
 @dataclass
@@ -1222,6 +1223,9 @@ def box(
     show_outliers: bool = True,
     outlier_size: float = 4.0,
     style: Optional[dict[str, StyleValue]] = None,
+    whisker_style: Optional[dict[str, StyleValue]] = None,
+    median_style: Optional[dict[str, StyleValue]] = None,
+    outlier_style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -1240,7 +1244,10 @@ def box(
         orientation: ``vertical`` or ``horizontal`` orientation.
         show_outliers: Whether to render outlier points.
         outlier_size: Outlier marker size in pixels.
-        style: Mark style overrides.
+        style: Box-body fill, border, and overall opacity overrides.
+        whisker_style: Whisker stroke overrides.
+        median_style: Median-line stroke overrides.
+        outlier_style: Outlier marker fill, border, shape, and opacity overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
@@ -1261,6 +1268,9 @@ def box(
             "orientation": orientation,
             "show_outliers": show_outliers,
             "outlier_size": outlier_size,
+            "whisker_style": _mark_style_dict(whisker_style, "box whisker_style"),
+            "median_style": _mark_style_dict(median_style, "box median_style"),
+            "outlier_style": _mark_style_dict(outlier_style, "box outlier_style"),
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -2786,7 +2796,7 @@ def theme(
     crosshair_color: Optional[StyleValue] = None,
     selection_color: Optional[StyleValue] = None,
     selection_fill: Optional[StyleValue] = None,
-    palette: Optional[Sequence[str]] = None,
+    palette: Union[Sequence[str], Mapping[str, str], None] = None,
     **tokens: StyleValue,
 ) -> Theme:
     """Configure chart theme tokens.
@@ -2809,6 +2819,14 @@ def theme(
             series take in order, and the colors a categorical ``color=``
             channel assigns to its categories. Defaults to XY's CVD-safe
             eight-slot palette; a shorter list repeats (with a warning).
+
+            A ``{category: color}`` mapping pins colors to category *labels*
+            instead of positions, so a category keeps its color across marks
+            and across facet panels — including panels where some categories
+            are absent, which a positional cycle silently recolors. Categories
+            the map does not name take the next unused default color (with a
+            warning), and unnamed series cycle the map's values in order.
+
             Entries must be colors XY can resolve without a browser (hex,
             ``rgb()``, ``hsl()``, named), like colormap stops: a palette is
             indexed, and browser-only entries would collapse several categories
@@ -3883,13 +3901,136 @@ def _transition_key_token(value: Any, index: int) -> bytes:
     )
 
 
+_TRANSITION_KEY_SEQUENCE_MAX_FIXED_BYTES = 256 * 1024 * 1024
+_TRANSITION_KEY_SEQUENCE_MAX_PADDING_RATIO = 8
+
+
+_TRANSITION_KEY_SEQUENCE_KINDS = {
+    str: {"U"},
+    bytes: {"S"},
+    bool: {"b"},
+    int: {"i", "u"},
+    float: {"f"},
+}
+
+
+def _column_ndarray(value: Any) -> np.ndarray | None:
+    """Unwrap a dtype-carrying column (pandas/polars Series) as plain NumPy.
+
+    `data=df, key="id"` resolves to a Series, not an ndarray, so without this
+    the whole native path would be unreachable from the documented idiom.
+    """
+    if isinstance(value, (str, bytes)) or not hasattr(value, "to_numpy"):
+        return None
+    try:
+        arr = value.to_numpy()
+    except (TypeError, ValueError):
+        # Extension arrays may refuse a zero-copy conversion; the reference
+        # encoder reads the same values through the object protocol anyway.
+        return None
+    return arr if type(arr) is np.ndarray else None
+
+
+def _fixed_sequence_array(sequence: Any) -> np.ndarray | None:
+    """Convert a homogeneous scalar sequence to fixed-width NumPy storage.
+
+    Returns None whenever the conversion would change an identity or cost
+    disproportionate memory, leaving the row to the Python reference encoder.
+    """
+    items = sequence.tolist() if isinstance(sequence, np.ndarray) else sequence
+    if not items:
+        return None
+    first = items[0]
+    if isinstance(first, np.generic):
+        first = first.item()
+    item_type = type(first)
+    if item_type not in _TRANSITION_KEY_SEQUENCE_KINDS:
+        return None
+    if set(map(type, items)) != {item_type}:
+        # Either genuinely mixed, or NumPy scalars needing ``.item()``. Retry
+        # through the scalar protocol, then insist on one exact builtin type:
+        # never coerce mixed bool/int or int/float keys, whose scalar tokens
+        # are deliberately type-sensitive.
+        items = [raw.item() if isinstance(raw, np.generic) else raw for raw in items]
+        if set(map(type, items)) != {item_type}:
+            return None
+    if item_type in (str, bytes):
+        lengths = list(map(len, items))
+        unit_bytes = 4 if item_type is str else 1
+        # NumPy's fixed-width conversion costs N × longest key. Keep a single
+        # long outlier from turning a compact sequence into a huge temporary
+        # before Rust can scan it. The ratio compares padding to payload in
+        # those same fixed-width units — it is not a bound on the growth over
+        # the source objects' own footprint; the absolute cap is.
+        padded_bytes = len(items) * max(max(lengths), 1) * unit_bytes
+        source_bytes = max(sum(lengths) * unit_bytes, 1)
+        if (
+            padded_bytes > _TRANSITION_KEY_SEQUENCE_MAX_FIXED_BYTES
+            or padded_bytes > source_bytes * _TRANSITION_KEY_SEQUENCE_MAX_PADDING_RATIO
+        ):
+            return None
+        # A key that *ends* in NUL is indistinguishable from padding once
+        # stored fixed-width, which would silently retokenize it. Interior
+        # NULs survive the round trip and stay on the native path.
+        nul = "\x00" if item_type is str else b"\x00"
+        if any(item.endswith(nul) for item in items):
+            return None
+    try:
+        arr = np.asarray(items)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if arr.dtype.kind not in _TRANSITION_KEY_SEQUENCE_KINDS[item_type]:
+        # NumPy may coerce an integer list outside its fixed-width range to
+        # f64. That would change the type-sensitive ``i:`` token into an
+        # ``f:`` token, so leave arbitrary-width integers to Python.
+        return None
+    return arr
+
+
+def _fixed_transition_key_values(value: Any) -> np.ndarray | None:
+    """Return a conservative homogeneous array for the native key encoder."""
+    arr = value if type(value) is np.ndarray else _column_ndarray(value)
+    if arr is None:
+        if not isinstance(value, (list, tuple)):
+            return None
+        arr = _fixed_sequence_array(value)
+    elif arr.dtype.hasobject:
+        # Object storage — a pandas string column, or an explicitly
+        # object-dtype array — still reaches the encoder when every row
+        # carries the same builtin scalar type.
+        arr = _fixed_sequence_array(arr) if arr.ndim == 1 else None
+    if arr is None or arr.ndim != 1:
+        return None
+    if arr.dtype.kind == "U" and arr.dtype.itemsize > 0 and arr.dtype.itemsize % 4 == 0:
+        return arr
+    if arr.dtype.kind == "S" and arr.dtype.itemsize > 0:
+        return arr
+    if arr.dtype.kind == "b" and arr.dtype.itemsize == 1:
+        return arr
+    if arr.dtype.kind in {"i", "u"} and arr.dtype.itemsize in (1, 2, 4, 8):
+        return arr
+    if arr.dtype.kind == "f" and arr.dtype.itemsize in (2, 4, 8):
+        return arr
+    return None
+
+
 def _encode_transition_keys(value: Any, expected: int, label: str) -> np.ndarray:
+    fixed = _fixed_transition_key_values(value)
+    if fixed is not None:
+        if len(fixed) != expected:
+            raise ValueError(f"{label} must have length {expected}, got {len(fixed)}")
+        from . import kernels
+
+        encoded = kernels.transition_keys_fixed(fixed, label)
+        if encoded is not None:
+            return encoded
+
     arr = np.asarray(value, dtype=object)
     if arr.ndim != 1:
         raise ValueError(f"{label} must be one-dimensional")
     if len(arr) != expected:
         raise ValueError(f"{label} must have length {expected}, got {len(arr)}")
-    result = np.empty((expected, 2), dtype=np.uint32)
+    result = np.empty((expected, 2), dtype=np.uint32, order="F")
     seen: dict[bytes, int] = {}
     digests: dict[bytes, bytes] = {}
     for index, raw in enumerate(arr):
@@ -3961,6 +4102,12 @@ def _apply_mark_transition_metadata(
     ):
         raise ValueError(f"{mark.kind} animation match='key' requires key=")
     keys: np.ndarray | None = None
+    # `match` defaults to "index", so a bare `xy.animation(...)` — or no
+    # animation at all — never key-matches. Encoding still runs for its
+    # uniqueness and typing contract, but the identity planes are dead weight
+    # nothing reads: 8 B/row retained for the widget lifetime and 8 B/row on
+    # the wire. Only carry them when the client can actually match on them.
+    key_matching = effective.get("enabled") is not False and effective.get("match") == "key"
     if mark.key is not None:
         raw = (
             _resolve(data, mark.key, context=f"{mark.kind}.key")
@@ -3973,19 +4120,22 @@ def _apply_mark_transition_metadata(
             )
         expected = int(traces[0].n_points)
         keys = _encode_transition_keys(raw, expected, f"{mark.kind} key")
-        if mark.kind in {"line", "area", "error_band"}:
+        if key_matching and mark.kind in {"line", "area", "error_band"}:
             positions = _original_mark_positions(fig, mark, data, expected)
             if positions is not None:
                 keys = keys[np.argsort(positions, kind="stable")]
     for trace in traces:
         trace.animation = None if mark_spec is None else dict(mark_spec)
         if keys is not None:
+            # The per-trace row check is contract too, so it runs whether or
+            # not the planes are kept.
             if trace.n_points != len(keys):
                 raise ValueError(
                     f"{mark.kind} key has {len(keys)} rows but emitted trace {trace.id} "
                     f"has {trace.n_points} logical rows"
                 )
-            trace.transition_keys = keys
+            if key_matching:
+                trace.transition_keys = keys
 
 
 def _continuous_color_label(mark: Mark) -> Optional[str]:
@@ -4137,8 +4287,11 @@ def _slot_styles_dict(value: Any, label: str) -> dict[str, dict[str, StyleValue]
     }
 
 
-def _palette_list(value: Any, label: str) -> Optional[list[str]]:
+def _palette_list(value: Any, label: str) -> Union[list[str], dict[str, str], None]:
     """A categorical color cycle: one or more CSS colors XY can resolve itself.
+
+    A `{category: color}` mapping pins colors to category *labels* instead;
+    both forms come back normalized to hex.
 
     Same rule as colormap stops, for the same reason. A palette is *indexed* —
     XY has to hand a concrete color to four consumers that have no DOM between
@@ -4159,8 +4312,21 @@ def _palette_list(value: Any, label: str) -> Optional[list[str]]:
     palette LUT. Resolved here once, every renderer reads the same bytes."""
     if value is None:
         return None
+    if isinstance(value, Mapping):
+        # `{category: color}` pins the mapping by *label*, so a category keeps
+        # its color no matter which panel it lands in or what else shares the
+        # chart. A sequence can only ever pin it by position.
+        mapping = {
+            str(category): _validate.resolved_hex_paint(
+                color, f"{label}[{category!r}]", "palette entries"
+            )
+            for category, color in value.items()
+        }
+        if not mapping:
+            raise ValueError(f"{label} must have at least one color")
+        return mapping
     if isinstance(value, str) or not hasattr(value, "__iter__"):
-        raise ValueError(f"{label} must be a sequence of CSS colors")
+        raise ValueError(f"{label} must be a sequence of CSS colors, or a {{category: color}} map")
     colors = [
         _validate.resolved_hex_paint(color, f"{label}[{index}]", "palette entries")
         for index, color in enumerate(value)
@@ -4985,6 +5151,9 @@ def _apply_box(fig: Figure, m: Mark, data: Any) -> None:
         show_outliers=m.props["show_outliers"],
         outlier_size=m.props["outlier_size"],
         style=m.style,
+        whisker_style=m.props["whisker_style"],
+        median_style=m.props["median_style"],
+        outlier_style=m.props["outlier_style"],
     )
 
 

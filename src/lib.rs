@@ -26,6 +26,7 @@ pub mod raster;
 mod simd;
 pub mod svg;
 pub mod tiles;
+mod transition;
 
 use kernels::ZoneMap;
 
@@ -82,12 +83,86 @@ unsafe fn borrowed_byte_spans<'a>(
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 43;
+pub const ABI_VERSION: u32 = 46;
 const FACTORIZE_CAPACITY_EXCEEDED: usize = usize::MAX - 1;
 
 #[no_mangle]
 pub extern "C" fn xy_abi_version() -> u32 {
     ABI_VERSION
+}
+
+/// Encode homogeneous fixed-width NumPy records as stable animation identity
+/// keys. `kind` is 0 for UTF-32 Unicode, 1 for fixed bytes, 2 for bool, 3 for
+/// signed integers, 4 for unsigned integers, and 5 for f64. Integer widths are
+/// 1/2/4/8 bytes; Unicode width is a positive multiple of four. `swap_endian`
+/// must be zero or one.
+///
+/// Returns 0 on success, 1 for scalar data this kernel declines to tokenize
+/// (the caller falls back to its reference encoder), 2 for a duplicate token,
+/// 3 for a digest collision, and 4 for invalid arguments. Statuses 1, 2, and 3
+/// write `out_error_first`/`out_error_index`: the offending row for 1, and the
+/// prior/current pair for 2 and 3. Status 4 writes neither, and is a caller
+/// bug rather than a data property — keeping it distinct from 1 stops a
+/// layout-contract drift from degrading silently into the slow path.
+///
+/// # Safety
+/// For non-empty input, `data` addresses `len * width` readable bytes and each
+/// key output addresses `len` writable u32s. Error outputs address one writable
+/// usize each. Input and output spans must not overlap.
+#[no_mangle]
+pub unsafe extern "C" fn xy_transition_keys_fixed(
+    data: *const u8,
+    len: usize,
+    width: usize,
+    kind: u32,
+    swap_endian: i32,
+    out_lo: *mut u32,
+    out_hi: *mut u32,
+    out_error_first: *mut usize,
+    out_error_index: *mut usize,
+) -> i32 {
+    if !matches!(swap_endian, 0 | 1) {
+        return 4;
+    }
+    if len == 0 {
+        return 0;
+    }
+    if out_error_first.is_null() || out_error_index.is_null() {
+        return 4;
+    }
+    let byte_len = match len.checked_mul(width) {
+        Some(value) if width > 0 => value,
+        _ => return 4,
+    };
+    if data.is_null() || out_lo.is_null() || out_hi.is_null() {
+        return 4;
+    }
+    let data = std::slice::from_raw_parts(data, byte_len);
+    let low = std::slice::from_raw_parts_mut(out_lo, len);
+    let high = std::slice::from_raw_parts_mut(out_hi, len);
+    ffi_guard(4, || {
+        match transition::encode_fixed_into(data, width, kind, swap_endian != 0, low, high) {
+            Ok(()) => 0,
+            Err(transition::TransitionKeyError::Invalid { index }) => match index {
+                Some(index) => {
+                    *out_error_first = index;
+                    *out_error_index = index;
+                    1
+                }
+                None => 4,
+            },
+            Err(transition::TransitionKeyError::Duplicate { first, index }) => {
+                *out_error_first = first;
+                *out_error_index = index;
+                2
+            }
+            Err(transition::TransitionKeyError::Collision { first, index }) => {
+                *out_error_first = first;
+                *out_error_index = index;
+                3
+            }
+        }
+    })
 }
 
 /// Serialize parallel f64 screen coordinates into SVG polyline path data.
@@ -2809,9 +2884,57 @@ pub unsafe extern "C" fn xy_range_indices(
     })
 }
 
+/// Canonical row ids from `rows` that fall inside the rectangular window —
+/// the row-restricted twin of `xy_range_indices`, shaped like
+/// `xy_polygon_select`. Returns the count written; `out` must hold `n_rows`
+/// u32s. Row ids must be < `len`; an out-of-range id returns the error
+/// sentinel on every target, including panic-abort ones where the kernel's own
+/// indexing panic could not (see `kernels::range_scan_rows`).
+///
+/// # Safety
+/// `x`/`y` must point to `len` readable f64s, `rows` to `n_rows` readable
+/// u32s, and `out` to `n_rows` writable u32s.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn xy_range_indices_rows(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    rows: *const u32,
+    n_rows: usize,
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    out: *mut u32,
+) -> usize {
+    if !finite_ordered(lo_x, hi_x) || !finite_ordered(lo_y, hi_y) {
+        return usize::MAX;
+    }
+    // u32 index ceiling — see xy_m4_indices.
+    if len > u32::MAX as usize {
+        return usize::MAX;
+    }
+    if n_rows == 0 {
+        return 0;
+    }
+    if x.is_null() || y.is_null() || rows.is_null() || out.is_null() {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    let rows = std::slice::from_raw_parts(rows, n_rows);
+    let out = std::slice::from_raw_parts_mut(out, n_rows);
+    ffi_guard(usize::MAX, || {
+        kernels::range_indices_rows(x, y, rows, lo_x, hi_x, lo_y, hi_y, out).unwrap_or(usize::MAX)
+    })
+}
+
 /// Canonical row ids from `rows` that fall inside the lasso polygon, by
 /// even-odd ray casting. Returns the count written; `out` must hold
-/// `n_rows` u32s. A polygon of fewer than 3 vertices selects nothing.
+/// `n_rows` u32s. A polygon of fewer than 3 vertices selects nothing. Row ids
+/// must be < `len`; an out-of-range id returns the error sentinel on every
+/// target (see `kernels::range_scan_rows`).
 ///
 /// # Safety
 /// `x`/`y` must point to `len` readable f64s, `rows` to `n_rows` readable
@@ -2856,10 +2979,8 @@ pub unsafe extern "C" fn xy_polygon_select(
     let poly_x = std::slice::from_raw_parts(poly_x, n_poly);
     let poly_y = std::slice::from_raw_parts(poly_y, n_poly);
     let out = std::slice::from_raw_parts_mut(out, n_rows);
-    // An out-of-range row id panics the bounds check inside; ffi_guard turns
-    // that into the error sentinel rather than unwinding across the ABI.
     ffi_guard(usize::MAX, || {
-        kernels::polygon_select(x, y, rows, poly_x, poly_y, out)
+        kernels::polygon_select(x, y, rows, poly_x, poly_y, out).unwrap_or(usize::MAX)
     })
 }
 
@@ -3141,6 +3262,123 @@ mod tests {
         std::panic::set_hook(hook);
         assert_eq!(got, usize::MAX);
         assert_eq!(ffi_guard(0i32, || 1i32), 1);
+    }
+
+    #[test]
+    fn transition_key_ffi_reports_duplicate_rows_and_invalid_data() {
+        let values = [7i16, -2, 7];
+        let mut low = [0u32; 3];
+        let mut high = [0u32; 3];
+        let mut first = usize::MAX;
+        let mut index = usize::MAX;
+        unsafe {
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    values.as_ptr().cast(),
+                    values.len(),
+                    std::mem::size_of::<i16>(),
+                    transition::KIND_SIGNED,
+                    0,
+                    low.as_mut_ptr(),
+                    high.as_mut_ptr(),
+                    &mut first,
+                    &mut index,
+                ),
+                2
+            );
+        }
+        assert_eq!((first, index), (0, 2));
+
+        let nonfinite = f64::INFINITY;
+        first = usize::MAX;
+        index = usize::MAX;
+        unsafe {
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    (&nonfinite as *const f64).cast(),
+                    1,
+                    std::mem::size_of::<f64>(),
+                    transition::KIND_FLOAT64,
+                    0,
+                    low.as_mut_ptr(),
+                    high.as_mut_ptr(),
+                    &mut first,
+                    &mut index,
+                ),
+                1
+            );
+        }
+        assert_eq!((first, index), (0, 0));
+    }
+
+    #[test]
+    fn transition_key_ffi_accepts_empty_null_spans_and_rejects_bad_pointers() {
+        unsafe {
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    std::ptr::null(),
+                    0,
+                    0,
+                    transition::KIND_BYTES,
+                    0,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                ),
+                0
+            );
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    std::ptr::null(),
+                    1,
+                    1,
+                    transition::KIND_BYTES,
+                    0,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                ),
+                4
+            );
+            // A layout the caller should never send is status 4, not the
+            // status-1 "declined this data" that means "use the oracle".
+            let row = [0u8; 3];
+            let mut low = [0u32];
+            let mut high = [0u32];
+            let mut first = usize::MAX;
+            let mut index = usize::MAX;
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    row.as_ptr(),
+                    1,
+                    3,
+                    transition::KIND_UNICODE,
+                    0,
+                    low.as_mut_ptr(),
+                    high.as_mut_ptr(),
+                    &mut first,
+                    &mut index,
+                ),
+                4
+            );
+            assert_eq!((first, index), (usize::MAX, usize::MAX));
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    row.as_ptr(),
+                    1,
+                    1,
+                    transition::KIND_BYTES,
+                    7,
+                    low.as_mut_ptr(),
+                    high.as_mut_ptr(),
+                    &mut first,
+                    &mut index,
+                ),
+                4
+            );
+        }
     }
 
     #[test]

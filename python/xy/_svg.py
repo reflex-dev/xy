@@ -538,6 +538,20 @@ def _calendar_ticks(lo: float, hi: float, rough: float) -> tuple[list[float], fl
 
 
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+_MONTHS_LONG = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
 
 
 def _fmt_time(ms: float, step: float) -> str:
@@ -568,6 +582,95 @@ def _fmt_linear(v: float, step: float) -> str:
     return f"{v:.{min(dec, 8)}f}"
 
 
+# `<prefix>(,).N[f|%]<suffix>` — the numeric format grammar of
+# spec/api/styling.md. Deliberately the same regex as `fmtNumberSpec` in
+# js/src/30_ticks.ts: an axis must not read "$1,000,000" in the browser and
+# "1.0e6" in the PNG someone pastes into a report.
+_NUMBER_SPEC = re.compile(r"^([^,.%]*)(,)?\.([0-9]+)(f?)(%?)([^,.%]*)$")
+
+# The client's strftime subset (`fmtTimeSpec`). Kept narrow on purpose: a token
+# Python's strftime knows and the browser's formatter does not would render one
+# way live and another way exported.
+_TIME_SPEC = re.compile(r"%[YmdHMSbB]")
+
+
+def _fmt_number_spec(v: float, spec: Any) -> Optional[str]:
+    """Apply a numeric format string, or None when it does not apply."""
+    if not isinstance(spec, str) or not np.isfinite(v):
+        return None
+    match = _NUMBER_SPEC.match(spec)
+    if match is None:
+        return None
+    prefix, group, digits_text, f, pct, suffix = match.groups()
+    # The bare `.N` core takes no affixes, so the historical grammar parses
+    # identically to how it always did.
+    if not f and not pct and (prefix or suffix):
+        return None
+    digits = int(digits_text)
+    value = v * 100.0 if pct else v
+    text = f"{value:,.{digits}f}" if group else f"{value:.{digits}f}"
+    return f"{prefix}{text}{'%' if pct else ''}{suffix}"
+
+
+def _fmt_time_spec(ms: float, spec: Any) -> Optional[str]:
+    """Apply a strftime-subset format string, or None when it does not apply."""
+    if not isinstance(spec, str) or not np.isfinite(ms):
+        return None
+    try:
+        d = datetime.fromtimestamp(ms / 1e3, tz=UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+    tokens = {
+        "%Y": str(d.year),
+        "%m": f"{d.month:02d}",
+        "%d": f"{d.day:02d}",
+        "%H": f"{d.hour:02d}",
+        "%M": f"{d.minute:02d}",
+        "%S": f"{d.second:02d}",
+        "%b": _MONTHS[d.month - 1],
+        "%B": _MONTHS_LONG[d.month - 1],
+    }
+    return _TIME_SPEC.sub(lambda m: tokens[m.group(0)], spec)
+
+
+def _fmt_log(v: float) -> str:
+    """Label a log-scale tick from its own magnitude.
+
+    Decade ticks are multiplicative, so the linear formatter's
+    step-derived precision rounds every decade under 1.0 to a bare "0" —
+    0.001 and 0.01 became two identical, wrong labels."""
+    av = abs(v)
+    if av >= 1e6 or (av != 0 and av < 1e-4):
+        return f"{v:.1e}".replace("e+0", "e").replace("e-0", "e-").replace("e+", "e")
+    dec = max(0, int(np.ceil(-np.log10(av)))) if av and av < 1 else 0
+    return f"{v:.{min(dec, 8)}f}"
+
+
+# Everything a formatted number can carry that is not part of its value:
+# the affixes the spec grammar allows ("$", "K", "%") and the group separators.
+_NON_NUMERIC = re.compile(r"[^0-9eE+.\-]")
+
+
+def _collapsed_to_zero(formatted: Optional[str]) -> bool:
+    """Whether a formatted label has lost the value it was meant to show.
+
+    Tests the numeric CORE, not the whole label: the grammar allows prefixes
+    and suffixes, so a `"$,.0f"` axis produces `"$0"` for a sub-unit decade.
+    Comparing the affixed string against zero read `float("$0")`, which raises
+    and took the entire render down with it — and `Number("$0")` on the client
+    is `NaN`, so that side shipped the collapsed label instead. Two different
+    wrong answers from the layer that exists to keep them identical."""
+    if formatted is None:
+        return True
+    core = _NON_NUMERIC.sub("", formatted)
+    if not core:
+        return True
+    try:
+        return float(core) == 0.0
+    except ValueError:
+        return False
+
+
 def _fmt_axis(axis: dict[str, Any], v: float, step: float) -> str:
     kind = axis.get("kind")
     if kind == "category":
@@ -575,8 +678,14 @@ def _fmt_axis(axis: dict[str, Any], v: float, step: float) -> str:
         i = round(v)
         return str(cats[i]) if 0 <= i < len(cats) else ""
     if kind == "time":
-        return _fmt_time(v, step)
-    return _fmt_linear(v, step)
+        return _fmt_time_spec(v, axis.get("format")) or _fmt_time(v, step)
+    formatted = _fmt_number_spec(v, axis.get("format"))
+    # A fixed-decimal spec collapses sub-unit decades ("0.001" at `.0f`), and so
+    # does the linear fallback; the magnitude-derived label is the useful one
+    # either way. Mirrors `fmtAxis`.
+    if axis.get("scale") == "log" and 0 < v < 1 and _collapsed_to_zero(formatted):
+        return _fmt_log(v)
+    return formatted if formatted is not None else _fmt_linear(v, step)
 
 
 def _tick_text(axis: dict[str, Any], value: float, step: float) -> str:
@@ -2049,7 +2158,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         append_axis_title(axis, is_x=True)
     for _axis_id, axis, _axis_scale in extra_y_axes:
         append_axis_title(axis, is_x=False)
-    named = [t for t in spec["traces"] if t.get("name")]
+    named = legend_items(spec["traces"], spec_palette)
     main_legend = spec.get("legend") or {}
     main_items = main_legend.get("items") or named
     if spec.get("show_legend", True) and main_items:
@@ -2250,6 +2359,62 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     )
 
 
+def annotation_label_placement(
+    ann: dict[str, Any],
+    style: dict[str, Any],
+    sx: Callable[[float], float],
+    sy: Callable[[float], float],
+    plot: dict[str, float],
+    width: float,
+    height: float,
+) -> tuple[float, float, Optional[str], Optional[str]]:
+    """Where an annotation's `text=` hangs, as `(x, y, anchor, vertical_align)`.
+
+    Ported from `_drawAnnotationLabels` (js/src/51_annotations.ts) and shared by
+    both static exporters, which previously drew labels for `text`/`callout`
+    only — a `hline(text="target")` was silently label-less in every SVG, PNG
+    and PDF while the browser drew it.
+
+    Rules and bands carry no anchor of their own, so the returned defaults are
+    the ones that keep the badge inside the plot rect."""
+    px0, py0 = plot["x"], plot["y"]
+    kind = ann.get("kind")
+    anchor = ann.get("anchor")
+    vertical_align = style.get("vertical_align")
+    if kind in ("rule", "band"):
+        if ann.get("axis") == "x":
+            if kind == "rule":
+                x = float(sx(float(ann["value"])))
+            else:
+                x = (float(sx(float(ann["start"]))) + float(sx(float(ann["end"])))) / 2
+                anchor = anchor or "middle"
+            return x, py0 + 6.0, anchor, vertical_align or "top"
+        x = px0 + plot["w"] - 6.0
+        if kind == "rule":
+            y = float(sy(float(ann["value"])))
+        else:
+            y = (float(sy(float(ann["start"]))) + float(sy(float(ann["end"])))) / 2
+            vertical_align = vertical_align or "middle"
+        return x, y, anchor or "end", vertical_align
+    if kind == "arrow":
+        x = (float(sx(float(ann["x0"]))) + float(sx(float(ann["x1"])))) / 2
+        y = (float(sy(float(ann["y0"]))) + float(sy(float(ann["y1"])))) / 2
+        return x, y, anchor or "middle", vertical_align or "middle"
+    if kind == "marker":
+        return float(sx(float(ann["x"]))), float(sy(float(ann["y"]))), anchor, vertical_align
+    x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
+    space = style.get("coordinate_space")
+    if space == "axes_fraction":
+        return px0 + x * plot["w"], py0 + (1.0 - y) * plot["h"], anchor, vertical_align
+    if space == "figure_fraction":
+        return x * width, (1.0 - y) * height, anchor, vertical_align
+    if space == "yaxis_transform":
+        return px0 + x * plot["w"], float(sy(y)), anchor, vertical_align
+    if space == "xaxis_transform":
+        return float(sx(x)), py0 + (1.0 - y) * plot["h"], anchor, vertical_align
+    return float(sx(x)), float(sy(y)), anchor, vertical_align
+
+
 def _annotation_svg(
     annotations: Sequence[dict[str, Any]],
     sx: Callable[[float], float],
@@ -2329,22 +2494,33 @@ def _annotation_svg(
                             f'<polyline points="{points}" fill="none" stroke="{color}" '
                             f'stroke-width="{stroke_width}" stroke-opacity="{_num(opacity)}"/>'
                         )
-        if kind in ("text", "callout") and ann.get("text"):
-            x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
-            space = style.get("coordinate_space")
-            if space == "axes_fraction":
-                tx, ty = px0 + x * plot["w"], py0 + (1 - y) * plot["h"]
-            elif space == "figure_fraction":
-                tx, ty = x * width, (1 - y) * height
-            elif space == "yaxis_transform":
-                tx, ty = px0 + x * plot["w"], float(sy(y))
-            elif space == "xaxis_transform":
-                tx, ty = float(sx(x)), py0 + (1 - y) * plot["h"]
-            else:
-                tx, ty = float(sx(x)), float(sy(y))
-            anchor = {"start": "start", "middle": "middle", "end": "end"}.get(
-                ann.get("anchor"), "start"
+        elif kind == "marker":
+            mx, my = float(sx(float(ann["x"]))), float(sy(float(ann["y"])))
+            if all(np.isfinite(v) for v in (mx, my)):
+                radius = max(0.5, float(ann.get("size", 8.0)) / 2.0)
+                builder = _SYMBOL_BUILDERS.get(str(ann.get("symbol", "circle")))
+                stroke_w = float(style.get("stroke_width", 0.0))
+                stroke_attr = (
+                    f' stroke="{escape(_css(style.get("stroke_color"), color))}"'
+                    f' stroke-width="{_num(stroke_w)}"'
+                    if stroke_w
+                    else ""
+                )
+                fill = escape(_css(style.get("color"), "#2563eb"))
+                shape = (
+                    f'<circle cx="{_num(mx)}" cy="{_num(my)}" r="{_num(radius)}"'
+                    if builder is None
+                    else builder(mx, my, radius)
+                )
+                marks.append(f'{shape} fill="{fill}" fill-opacity="{_num(opacity)}"{stroke_attr}/>')
+        if ann.get("text"):
+            tx, ty, label_anchor, vertical_align = annotation_label_placement(
+                ann, style, sx, sy, plot, width, height
             )
+            if not (np.isfinite(tx) and np.isfinite(ty)):
+                continue
+            style = {**style, "vertical_align": vertical_align} if vertical_align else style
+            anchor = {"start": "start", "middle": "middle", "end": "end"}.get(label_anchor, "start")
             font_size = _px_size(style.get("font_size"), 11.0)
             lines = str(ann["text"]).splitlines() or [""]
             line_height = font_size * 1.2
@@ -2560,16 +2736,21 @@ def _fontmetrics_text_width(
             or ord(char) in _fontmetrics.EXTRA_ADVANCES
         )
     )
-    return _fontmetrics.advance(text, font_size) + missing * missing_advance
+    embedded_fallback = font_size * _fontmetrics.EXTRA_ADVANCES[0xFFFD] / _fontmetrics.BASE_PX
+    # The generated metrics now include the visible U+FFFD replacement advance
+    # for every unknown codepoint. Only add room when a caller deliberately
+    # requests a wider fallback; adding the full fallback again would double
+    # count every unsupported glyph.
+    extra = max(0.0, float(missing_advance) - embedded_fallback)
+    return _fontmetrics.advance(text, font_size) + missing * extra
 
 
 def _estimated_text_width(lines: list[str], font_size: float) -> float:
     """Measured label-box width using the embedded DejaVu face.
 
     The native rasterizer blits the same generated face metrics, and DejaVu is
-    also the default SVG/Matplotlib face. SVG viewers may still resolve an
-    unbaked Unicode glyph through another font, so reserve one em for each
-    unknown codepoint instead of inheriting the native atlas's zero advance.
+    also the default SVG/Matplotlib face. The generated metrics reserve the
+    visible U+FFFD replacement advance for each unsupported codepoint.
     """
     return max(
         (_fontmetrics_text_width(line, font_size, missing_advance=font_size) for line in lines),
@@ -3344,6 +3525,29 @@ def _legend_text(value: Any, max_width: float, char_width: float = _LEGEND_CHAR_
         if _legend_text_width("." * count, char_width) <= max_width + _LEGEND_FIT_EPS:
             return "." * count
     return ""
+
+
+def legend_items(traces: list[dict], palette: Sequence[str] = DEFAULT_PALETTE) -> list[dict]:
+    """Legend rows for a trace list — shared by the SVG and raster exporters.
+
+    A categorical `color=` channel is ONE trace carrying N categories, so the
+    old `[t for t in traces if t.get("name")]` drew a single row bearing the
+    trace's name and the trace's constant color: a legend that actively
+    misdescribed the picture beside it. Expand those into one row per category,
+    exactly as `ChartView._legend` does for the live client."""
+    items: list[dict] = []
+    for trace in traces:
+        color = trace.get("color") or {}
+        if color.get("mode") == "categorical":
+            categories = color.get("categories") or []
+            entry_palette = list(color.get("palette") or palette) or list(palette)
+            for index, category in enumerate(categories):
+                style = dict(trace.get("style") or {})
+                style["color"] = entry_palette[index % len(entry_palette)]
+                items.append({"name": str(category), "kind": trace.get("kind"), "style": style})
+        elif trace.get("name"):
+            items.append(trace)
+    return items
 
 
 def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, Any]:

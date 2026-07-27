@@ -3,35 +3,42 @@
 </p>
 
 <p align="center">
-  <b><a href="https://reflex.dev/docs/xy/" target="_blank" rel="noopener noreferrer">Try it live: a million points in your browser &rarr;</a></b>
-</p>
-
-<p align="center">
   <a href="https://github.com/reflex-dev/xy/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/reflex-dev/xy/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://app.codspeed.io/reflex-dev/xy?utm_source=badge"><img alt="CodSpeed" src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json"></a>
   <a href="pyproject.toml"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab?logo=python&logoColor=white"></a>
   <a href="https://reflex.dev/docs/xy/" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/docs-reflex.dev-blue" alt="Docs" /></a>
 </p>
 
-XY is an actively evolving, early-alpha Python charting library for large,
-interactive datasets. Its Rust core and WebGL2 renderer keep work bounded by
-what the screen can show; find guides, API reference, and examples in the
-[documentation](https://reflex.dev/docs/xy/).
+<p align="center">
+  <strong>Small data should be effortless. Large data should stay interactive.<br>
+  Neither should limit the design.</strong>
+</p>
+
+XY is an actively evolving, early-alpha project with one ambition: become the
+fastest and most customizable charting library for Python — across every chart
+type and every scale, from a handful of values to billions of rows.
+
+Small datasets render directly and exactly. As data grows, XY's Rust core,
+binary transport, and WebGL2 renderer reduce work to what the screen can show,
+then bring detail back as you zoom. The same composable API controls marks,
+axes, annotations, legends, tooltips, interactions, themes, responsive layout,
+and HTML, raster, and vector exports.
 
 ## Highlights
 
-- **Built for large data.** Reduces long lines and dense scatters to what the screen can show, and brings detail back as you zoom.
+- **Designed for every scale.** Ordinary datasets take the direct path; large datasets automatically use decimated or density representations.
+- **Customize every layer.** Control marks and composition in Python, then style chart chrome through stable CSS and Tailwind hooks.
 - **Declarative interface.** Compose marks and guides, or use the familiar `xy.pyplot`.
 - **Interactive by default.** Pan, zoom, hover, select, and inspect exact source rows.
 - **One chart, many outputs.** Use notebooks or export HTML, raster, and vector formats.
-- **Built for apps.** Embed responsive charts and style them with CSS or Tailwind.
+- **Built for apps.** Embed responsive charts and style them with Python, CSS, or Tailwind.
 
 ## Is XY for me?
 
-XY is a great fit for teams that want to explore large 2D datasets in Python,
-share interactive notebook results, or ship self-contained charts on the web.
-Build charts once, then display them in notebooks and apps or export them as
-HTML, images, and vector graphics.
+XY is for Python users who want one charting system for everyday plots, deeply
+custom application visuals, and data too large for conventional browser chart
+stacks. Build charts once, then display them in notebooks and apps or export
+them as self-contained HTML, images, and vector graphics.
 
 ## Installation
 
@@ -42,7 +49,7 @@ pip install xy
 uv add xy
 ```
 
-## Getting started
+## Getting started: one API, every scale
 
 A chart is a container plus the marks inside it. Any sequence works — plain
 Python lists need no NumPy:
@@ -57,7 +64,8 @@ chart = xy.line_chart(xy.line([1, 2, 3, 4, 5], [120, 180, 165, 240, 310]))
 chart  # notebooks render it
 ```
 
-The same API scales. Chart a hundred million points as a density surface:
+The data size changes; the chart model does not. The same API scales to a
+hundred million points as a density surface:
 
 <p align="center">
   <picture>
@@ -117,25 +125,20 @@ plt.show()
 The shim intentionally covers common plotting workflows rather than every
 matplotlib feature. See the [compatibility guide](spec/matplotlib/compat.md).
 
-## Benchmarks
+## Customize every layer
 
-<p align="center">
-  <img src="spec/assets/launch-benchmark-comparison.svg" alt="Cold-render time for a 10-million-point chart in XY, Matplotlib, and Plotly. Lower is better." width="1200">
-</p>
+Performance is not a preset. Use Python to control data marks and chart
+composition, then style browser chrome through stable CSS and Tailwind hooks.
 
-In the recorded 10-million-point baseline, XY produced a static PNG in 0.023 s
-versus 2.8 s for Matplotlib and 9.6 s for Plotly, and reached first interactive
-render 16–20× sooner.
+- **Marks:** data-driven color and size, custom colormaps, opacity, symbols,
+  gradients, strokes, and curves.
+- **Guides:** axes, ticks, grids, annotations, legends, colorbars, and tooltips.
+- **Interaction:** pan, zoom, hover, selection, crosshairs, callbacks, and
+  linked charts.
+- **Layout and output:** layering, facets, responsive dimensions, themes, and
+  HTML, raster, or vector export.
 
-The committed launch baseline uses identical seeded data, a 900×420 output,
-and three isolated cold runs. See the
-[launch report](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md)
-and [benchmark runbook](benchmarks/README.md) for the environment,
-methodology, and raw results.
-
-## Styling
-
-Customize marks and chart chrome with Python, CSS, or Tailwind. See the [styling guide](docs/styling/index.md).
+See the [styling guide](docs/styling/index.md) for patterns and examples.
 
 What each mechanism reaches — per property, per chrome slot, per renderer, and
 where it stops — is the [capability matrix](spec/api/capability-matrix.md),
@@ -149,6 +152,30 @@ chart = xy.line_chart(
     class_names={"tooltip": "rounded-lg bg-zinc-900 text-white"},
 )
 ```
+
+## Benchmarks
+
+<p align="center">
+  <img src="spec/assets/launch-benchmark-comparison.svg" alt="Cold-render time for a 10-million-point chart in XY, Matplotlib, and Plotly. Lower is better." width="1200">
+</p>
+
+In the recorded 10-million-point baseline, XY produced a static PNG in 0.023 s
+versus 2.8 s for Matplotlib and 9.6 s for Plotly, and reached first interactive
+render 16–20× sooner.
+
+That baseline is one proof point, not the finish line. XY is being built to
+outperform every competing charting library across small-data startup,
+massive-data rendering, interaction, memory, payload and export size,
+multi-chart applications, chart breadth, and customization. The committed
+benchmark program, raw results, capability matrix, and visual examples are how
+the project measures and proves that goal.
+
+The committed launch baseline uses identical seeded data, a 900×420 output,
+and three isolated cold runs. See the
+[launch report](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md),
+[benchmark runbook](benchmarks/README.md), and
+[competitive benchmark specification](spec/benchmarks/results.md) for the
+environment, methodology, raw results, and full evidence program.
 
 ## Embed XY in a Reflex app
 
@@ -266,8 +293,10 @@ the chart gallery, guides, and API reference. The repository also includes
 
 ## Roadmap
 
-XY is 2D-first: broad chart coverage on top of the binary transport and
-screen-bounded rendering, before any 3D work. Queued next, no dates implied:
+XY is headed toward every chart family. The current implementation sequence
+builds broad 2D coverage on top of the binary transport and screen-bounded
+renderer, then extends the same performance and customization goals to
+geographic, 3D, and volume visualization. Queued next, no dates implied:
 
 - **Categorical distributions** &mdash; strip, swarm, beeswarm, boxen, rug
 - **Regression diagnostics** &mdash; trendline, residual, QQ, PP
@@ -278,6 +307,7 @@ screen-bounded rendering, before any 3D work. Queued next, no dates implied:
 - **Treemap, sunburst, and icicle**
 - **Radar / polar and gauge** &mdash; needs polar axes first
 - **Slope, bump, and dumbbell**
+- **3D and volume** &mdash; scatter, surfaces, meshes, isosurfaces, and volumetric views
 
 The full ranked backlog is in the [chart roadmap](spec/api/chart-roadmap.md).
 Want a chart or feature that isn't listed?

@@ -142,5 +142,9 @@ def test_polygon_vertex_and_row_validation():
     with pytest.raises(ValueError):
         kernels.polygon_select(x, y, rows, square_x, square_y[:3])
     # A row id past the end of the column is a caller bug, not a silent drop.
+    # The entry point checks the ids itself (`rows_in_bounds`) rather than
+    # leaving it to the kernel's indexing panic, so this holds on panic-abort
+    # targets too — under the PyEmscripten wheel's `-C panic=abort` the panic
+    # aborted the interpreter instead of raising.
     with pytest.raises(ValueError):
         kernels.polygon_select(x, y, np.array([99], dtype=np.uint32), square_x, square_y)

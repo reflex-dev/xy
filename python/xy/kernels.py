@@ -43,6 +43,7 @@ factorize_fixed = _impl.factorize_fixed
 factorize_fixed_u8 = _impl.factorize_fixed_u8
 factorize_fixed_u8_counts = _impl.factorize_fixed_u8_counts
 factorize_unicode1_u8_counts = _impl.factorize_unicode1_u8_counts
+transition_keys_fixed = _impl.transition_keys_fixed
 m4_indices = _impl.m4_indices
 marching_squares = _impl.marching_squares
 marching_triangles = _impl.marching_triangles
@@ -62,6 +63,7 @@ normalize_f32 = _impl.normalize_f32
 valid_indices_f64 = _impl.valid_indices_f64
 remap_u8 = _impl.remap_u8
 range_indices = _impl.range_indices
+range_indices_rows = _impl.range_indices_rows
 polygon_select = _impl.polygon_select
 sample_mask = _impl.sample_mask
 sample_range_indices = _impl.sample_range_indices
@@ -133,6 +135,7 @@ __all__ = [
     "pyramid_free",
     "quad_mesh_triangles",
     "range_indices",
+    "range_indices_rows",
     "rasterize",
     "rasterize_png",
     "remap_u8",
@@ -145,6 +148,7 @@ __all__ = [
     "stratified_sample_mask",
     "stratified_sample_range_u8",
     "streamlines",
+    "transition_keys_fixed",
     "triangle_edges",
     "valid_indices_f64",
     "vector_segments",

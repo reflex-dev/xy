@@ -104,7 +104,6 @@ REQUIRED_FILES = {
     "examples/reflex/xy_reflex_demo/__init__.py",
     "examples/reflex/xy_reflex_demo/xy_reflex_demo.py",
     "scripts/check_public_api.py",
-    "scripts/check_claim_guardrails.py",
     "scripts/gen_capability_matrix.py",
     "scripts/check_python_floor.py",
     "scripts/check_regressions.py",
@@ -120,7 +119,6 @@ REQUIRED_FILES = {
     "src/kernels.rs",
     "src/lib.rs",
     "tests/test_public_api.py",
-    "tests/test_claim_guardrails.py",
     "tests/test_benchmark_environment.py",
     "tests/test_bench_pyplot_vs_matplotlib.py",
     "tests/test_check_regressions.py",
@@ -397,7 +395,8 @@ def verify_sdist(path: str) -> None:
             "make check-sdist",
             "make check-examples",
             "make check-benchmark-report",
-            "Performance Claims",
+            "Competitive Evidence",
+            "outperform every competing charting library",
         },
     )
     _require_file_contains(

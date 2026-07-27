@@ -60,13 +60,47 @@ points are dropped. Layouts that cannot share positional buffers record a
 errorbar marks. It may be an array or a column name resolved through `data=`.
 `match="key"` requires a key on every effectively keyed mark.
 
-Keys are canonicalized type-sensitively and hashed once in Python to a stable
-64-bit identity, shipped as two binary `u32` columns. Strings, finite numbers,
-booleans, bytes, dates, datetimes, and NumPy equivalents are supported.
-Missing, unsupported, wrong-length, or duplicate values fail during figure
-construction. Line-like keys follow the same stable geometry sort as their
-coordinates. Errorbar point keys are role-qualified after expansion so the
-main segment and caps remain unique and stable.
+Keys are canonicalized type-sensitively to a stable 64-bit identity, shipped as
+two binary `u32` columns. Homogeneous fixed-width strings, bytes, booleans,
+signed or unsigned integers, and finite floating arrays take one bulk native
+path, including non-native endian NumPy arrays; f16/f32 values widen exactly to
+the f64 token contract. Its identities and first-duplicate row diagnostics are
+byte-for-byte compatible with the original Python encoder.
+Routing is over values, not containers: lists, tuples, NumPy arrays, and
+`to_numpy`-carrying columns (the pandas Series a `data=df, key="id"` lookup
+actually returns) all reach it, and object storage qualifies whenever every row
+holds the same builtin scalar type — otherwise the documented DataFrame idiom
+would be the one shape that never took the fast path.
+Python remains the conservative reference path for mixed objects, dates,
+datetimes, and arbitrary-width integers, and supplies the exact row error for
+non-finite and missing values. Sequences whose fixed-width conversion would
+exceed the byte budget or 8× padding ratio also stay on that path, bounding
+temporary memory under skewed key lengths.
+Fixed-width `U`/`S` records keep their exact trailing-padding and embedded-NUL
+semantics in the native path; a Python key that *ends* in NUL would be
+indistinguishable from that padding, so only those stay on the reference path —
+interior NULs survive the round trip. This keeps the complete public
+grammar—strings, finite numbers, booleans, bytes, dates, datetimes, and NumPy
+equivalents—without pushing Python object policy through the C ABI. Missing,
+unsupported, wrong-length, or duplicate values fail during figure construction.
+The kernel separates "declined this data, use the oracle" from "this layout is
+not in the ABI": only the first falls back, so a contract drift between the
+ctypes gate and the Rust layout check raises instead of silently costing the
+whole speedup.
+Encoding runs whenever `key=` is given, because uniqueness and typing are
+construction contract rather than animation policy. The resulting identity
+planes are only retained and shipped when the *resolved* spec can key-match —
+`match` defaults to `"index"`, so a bare `xy.animation(...)`, an
+`enabled=False` chart, or a `key=` with no animation at all would otherwise
+carry two u32 columns nothing reads, both in the widget's retained payload and
+on the wire. Duplicate and row-count errors are unaffected by that skip.
+Line-like keys follow the same stable geometry sort as their coordinates; the
+encoder hands back Fortran-order planes that ship without a per-column copy,
+but that sort and any finite-row selection reorder through NumPy advanced
+indexing, which returns C-order and restores the copy at ship time. The sort is
+skipped along with the planes when nothing will match on them.
+Errorbar point keys are role-qualified after expansion so the main segment and
+caps remain unique and stable.
 
 The browser builds a bounded key→old-index map. `append` instead matches the
 old/new x identity and `index` pairs equal positions. Above
@@ -151,14 +185,16 @@ an exact deterministic progress without starting a frame loop.
 
 ## 7. Verification and performance gates
 
-- `tests/test_animation.py` owns validation, serialization, identity, wire,
-  sorting, errorbar expansion, and deterministic-export contracts.
+- `tests/test_animation.py` owns validation, serialization, native/reference
+  identity parity and routing, wire, sorting, errorbar expansion, and
+  deterministic-export contracts.
 - `scripts/animation_smoke.py` exercises pixel-checked, ghost-free keyed interpolation,
   explicit partial-match fallback, GPU scratch buffers, rapid replacement,
   bounded lifetime, lifecycle balance (including destroy), and reduced motion
   in headless Chrome.
-- `benchmarks/test_codspeed_animation.py` attributes key encoding and animated
-  payload build overhead separately from the plain payload path.
+- `benchmarks/test_codspeed_animation.py` attributes the end-to-end native
+  stable-key encoding row and animated payload build overhead separately from
+  the plain payload path.
 - Browser frame/allocation measurements belong to the real-Chrome benchmark
   lane, not CodSpeed simulation; the animation smoke asserts the hard
   previous+next allocation bound.

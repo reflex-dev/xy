@@ -426,9 +426,29 @@ chart = xy.scatter_chart(
 )
 ~~~
 
-Series take the palette in order; an explicit `color=` on a mark still wins.
+Series take the palette in order — one slot per series, whatever its trace
+count, so a box plot (four traces) or a stem (two) advances the cycle by one
+like everything else. An explicit `color=` on a mark still wins, and takes no
+slot, so the next series that needs a color still gets the palette's first.
 A palette shorter than the number of series or categories repeats, and says so
 with a warning rather than quietly reusing a color.
+
+To pin specific categories to specific colors, pass a mapping instead of a
+list:
+
+~~~python
+chart = xy.scatter_chart(
+    xy.scatter(x, y, color=species),
+    xy.theme(palette={"setosa": "#4c72b0", "versicolor": "#dd8452"}),
+)
+~~~
+
+A list can only say "the first category is blue", so the same category changes
+color whenever the set of categories does — most visibly across facet panels,
+where a panel that happens to be missing one category silently recolors the
+rest. A mapping keys on the label, so a category keeps its color everywhere.
+Categories the mapping does not name take the next default color it has not
+already used, and say so with a warning.
 
 Palette entries follow the same rule as colormap stops: literal colors only —
 hex, `rgb()`, `hsl()`, or a named color. `var(--brand-500)` is fine on an
