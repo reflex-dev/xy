@@ -340,14 +340,22 @@ absorbs newer publishes and always ships the latest payload.
   `registry.publish` bumps the version and pushes one full `payload` to the
   room. Stable token: no component re-render, one screen-bounded reship. The
   in-place swap re-homes the viewport to the incoming spec's axis ranges — a
-  full payload carries no follow policy of its own. A chart the viewer has
+  full payload carries no follow policy of its own. If an incoming
+  constructor-owned chrome input differs — `dom`, title, legend, colorbar,
+  badge presence, modebar/interaction topology, padding, or axis-band layout —
+  the adapter performs a full view rebuild instead: persistent nodes otherwise
+  retain the old structure, classes, and inline styles. It snapshots the
+  public durable-state document first, restores every named-axis range and
+  box/range/lasso geometry without broadcasting or replaying semantic
+  callbacks, then issues one selection-mask refresh. A chart the viewer has
   navigated is re-pinned to its prior window afterward (the restore contract
-  below); a dependent chart sitting at its home simply follows the new data. In
-  both cases the home *must* be the new spec's own extents, not the previous
-  payload's: it is what lets an `on_view_change`-computed detail chart track its
-  source both ways — when the linked overview zooms *out*, the recomputed
-  detail's count axis grows and the view expands with it instead of clamping to
-  the previous, smaller home (`ChartView.updatePayload`, `js/src/56_animation.ts`).
+  below); a dependent chart sitting at its home simply follows the new data.
+  In both cases the home *must* be the new spec's own extents, not the previous
+  payload's: it is what lets an
+  `on_view_change`-computed detail chart track its source both ways — when the
+  linked overview zooms *out*, the recomputed detail's count axis grows and the
+  view expands with it instead of clamping to the previous, smaller home
+  (`ChartView.updatePayload`, `js/src/56_animation.ts`).
 - **Streaming**: `reflex_xy.append(token, x=..., y=...)` from any handler,
   background task, or thread → `Figure.append` under the figure lock (worker
   thread) → the same `append` message the kernel builds for the notebook
@@ -384,11 +392,19 @@ Static Chart/Figure sources mirror every class string from
 `Figure.dom_class_strings()` into the scan-only `tailwindClassTokens` JSX prop,
 because their XYBF payload is opaque to Tailwind. Token/Var sources have no
 compile-time figure, so `tailwind_classes=` supplies their possible complete
-utility names explicitly. The adapter accepts one string or an iterable of
-strings, validates concrete strings, de-duplicates tokens in order, merges an
-explicit inventory with static discovery, and applies the explicit inventory
-to every panel of a facet grid. `XYChart.jsx` destructures and discards the
-scan prop before `divProps` reaches the DOM.
+utility names explicitly. The adapter accepts one string or an ordered iterable
+of strings, rejects mappings and unordered sets, validates concrete strings,
+de-duplicates tokens in order, merges an explicit inventory with static
+discovery, and applies the explicit inventory to every panel of a facet grid.
+Only real DOM emitters enter automatic discovery: chart/slot and annotation
+label classes, never adapter-only mark metadata.
+
+Tailwind scans generated source as text rather than evaluating JavaScript.
+Serializing the inventory as an ordinary JSON string would therefore change
+candidate names containing quotes, backslashes, or non-ASCII characters. The
+adapter emits each normalized manifest verbatim inside a JavaScript line
+comment whose expression evaluates to an empty string. `XYChart.jsx`
+destructures and discards that scan prop before `divProps` reaches the DOM.
 
 Sizing is the mount's, not the payload's. `chart()` defaults the outer
 element to `width: 100%` / `height: 420px` (override with any style prop),

@@ -146,7 +146,13 @@ Object.assign(ChartView.prototype, {
     }
     if (patch.selection !== undefined) {
       const sel = patch.selection;
-      const selOpts = { history: opts.history, interactionId, source };
+      const selOpts = {
+        history: opts.history,
+        interactionId,
+        source,
+        dispatch: opts.dispatch,
+        broadcast: opts.broadcast,
+      };
       if (sel === null) {
         this._clearSelection(selOpts);
       } else if (sel.range) {
@@ -563,20 +569,14 @@ Object.assign(ChartView.prototype, {
     if (!el) {
       this._customTooltip = null;
       delete this.tooltip.dataset.xyCustomTooltip;
-      this.tooltip.style.background = "";
-      this.tooltip.style.border = "";
-      this.tooltip.style.padding = "";
       this.tooltip.replaceChildren();
       this.tooltip.style.display = "none";
       return;
     }
     this._customTooltip = el;
     this.tooltip.dataset.xyCustomTooltip = "";
-    // Inline wins over the :where() slot defaults: the custom component owns
-    // its own chrome, the container becomes a pure positioning shell.
-    this.tooltip.style.background = "transparent";
-    this.tooltip.style.border = "none";
-    this.tooltip.style.padding = "0";
+    // The base-layer state rule turns the container into a positioning shell.
+    // Author utilities and explicit slot styles remain later cascade inputs.
     el.style.display = "";
     this.tooltip.replaceChildren(el);
   },

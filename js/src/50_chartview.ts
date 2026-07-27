@@ -1544,7 +1544,7 @@ export class ChartView {
       `--xy-legend-max-width:${Math.max(40, this.plot.w - 12)}px;` +
       `--xy-legend-max-height:${Math.max(40, this.plot.h - 12)}px;` +
       (this.fluidH ? "min-height:120px;" : "") + // parent without a height -> visible floor
-      "font:12px system-ui,sans-serif;user-select:none;";
+      "user-select:none;";
     this._applySlot(root, "root");
     // A chart that brings its own backdrop (theme(background=) → inline root
     // background) marks itself so host-page overrides — VS Code's white
@@ -1832,10 +1832,10 @@ export class ChartView {
       const row = document.createElement("div");
       this._applySlot(row, "legend_item");
       const sw = document.createElement("span");
-      // Swatch geometry is a stylesheet default; only the paint (dynamic per
-      // series) stays inline, and it now has its own slot so it's classable.
-      sw.style.display = "inline-block";
-      sw.style.verticalAlign = "-1px";
+      // Renderer-owned paint/geometry feed private variables consumed by the
+      // base-layer slot rule. SVG paint lives on the wrapper and inherits into
+      // its path/line, so Tailwind fill-*/stroke-* utilities on this public slot
+      // can override it without copying layout classes onto SVG paint nodes.
       let bg = it.swatch;
       // A continuous encoding paints the swatch with the colormap ramp, but
       // the swatch keeps the mark's identity: a gradient-filled symbol for
@@ -1847,7 +1847,7 @@ export class ChartView {
       } else if (it.swatch === "gradient") {
         const stops = colormapStops(it.cmap);
         bg = `linear-gradient(90deg,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
-        sw.style.background = bg;
+        sw.style.setProperty("--xy-legend-swatch-paint", bg);
       }
       if (it.symbol) {
         const ns = "http://www.w3.org/2000/svg";
@@ -1873,13 +1873,19 @@ export class ChartView {
           if (it.symbol === "pixel") path.setAttribute("d", "M8.5 6.5h1v1h-1z");
           else path.setAttribute("d", `M9 ${it.symbol === "point" ? 4.75 : 2.5}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 ${it.symbol === "point" ? 4.5 : 9}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 -${it.symbol === "point" ? 4.5 : 9}`);
         } else path.setAttribute("d", paths[it.symbol] || paths.square);
-        path.setAttribute("fill", it.symbol.endsWith("_line") ? "none" : color);
-        path.setAttribute("stroke", color);
-        path.setAttribute("stroke-width", String(it.style?.stroke_width || 1));
+        sw.style.setProperty(
+          "--xy-legend-swatch-fill",
+          it.symbol.endsWith("_line") ? "none" : color,
+        );
+        sw.style.setProperty("--xy-legend-swatch-stroke", color);
+        sw.style.setProperty(
+          "--xy-legend-swatch-stroke-width",
+          String(it.style?.stroke_width || 1),
+        );
         svg.appendChild(path);
         sw.appendChild(svg);
-        sw.style.width = "18px";
-        sw.style.height = "14px";
+        sw.style.setProperty("--xy-legend-swatch-width", "18px");
+        sw.style.setProperty("--xy-legend-swatch-height", "14px");
       } else if (it.line) {
         const ns = "http://www.w3.org/2000/svg";
         const svg = document.createElementNS(ns, "svg");
@@ -1891,17 +1897,29 @@ export class ChartView {
         ln.setAttribute("y1", "6");
         ln.setAttribute("x2", "21");
         ln.setAttribute("y2", "6");
-        ln.setAttribute("stroke", gradientPaint ? gradientPaint(svg) : safeCssPaint(this.root, bg));
+        sw.style.setProperty("--xy-legend-swatch-fill", "none");
+        sw.style.setProperty(
+          "--xy-legend-swatch-stroke",
+          gradientPaint ? gradientPaint(svg) : safeCssPaint(this.root, bg),
+        );
         // ?? not ||: an explicit lw=0 keeps 0 and draws nothing, like the
         // exporters' dict-default and Matplotlib itself.
-        ln.setAttribute("stroke-width", String(it.style?.width ?? 1.5));
-        if (it.style?.dash && it.style.dash.length) ln.setAttribute("stroke-dasharray", it.style.dash.join(" "));
+        sw.style.setProperty(
+          "--xy-legend-swatch-stroke-width",
+          String(it.style?.width ?? 1.5),
+        );
+        if (it.style?.dash && it.style.dash.length) {
+          sw.style.setProperty("--xy-legend-swatch-dasharray", it.style.dash.join(" "));
+        }
         svg.appendChild(ln);
         sw.appendChild(svg);
-        sw.style.width = "22px";
-        sw.style.height = "12px";
+        sw.style.setProperty("--xy-legend-swatch-width", "22px");
+        sw.style.setProperty("--xy-legend-swatch-height", "12px");
       } else if (it.swatch !== "gradient") {
-        sw.style.background = safeCssPaint(this.root, bg);
+        sw.style.setProperty(
+          "--xy-legend-swatch-paint",
+          safeCssPaint(this.root, bg),
+        );
       }
       this._applySlot(sw, "legend_swatch");
       row.appendChild(sw);
@@ -2116,8 +2134,10 @@ export class ChartView {
     return classes;
   }
 
-  // Toggled-off rows stay visible but read as inactive; the state is also
-  // exposed as a data attribute so author styles can restyle it per slot.
+  // Toggled-off rows stay visible but read as inactive. Opacity/filter are
+  // deliberate renderer-owned interaction state, so they remain inline and
+  // outrank ordinary utilities while active; the data attribute lets authors
+  // target that boundary explicitly (including with an important utility).
   _syncLegendRow(row, it) {
     const off = !!it.off;
     row.style.opacity = off ? String(LEGEND_OFF_ROW) : "";
@@ -4677,7 +4697,7 @@ export class ChartView {
     const hasAngle = axis && Number.isFinite(Number(axis.label_angle));
     if (!hasPosition && !hasOffset && !hasAngle) return { css: fallbackCss, style: null };
     if (rawPosition && typeof rawPosition === "object" && !Array.isArray(rawPosition)) {
-      return { css: "font-weight:500;white-space:nowrap;", style: rawPosition };
+      return { css: "white-space:nowrap;", style: rawPosition };
     }
 
     const p = this.plot;
@@ -4700,7 +4720,7 @@ export class ChartView {
         css:
           `left:${x}px;top:${y}px;` +
           `transform:translateX(${translateX}%) rotate(${angle}deg);` +
-          "transform-origin:center;font-weight:500;white-space:nowrap;",
+          "transform-origin:center;white-space:nowrap;",
         style: null,
       };
     }
@@ -4715,7 +4735,7 @@ export class ChartView {
       css:
         `left:${x}px;top:${y}px;` +
         `transform:translate(-50%,-50%) rotate(${angle}deg);` +
-        "transform-origin:center;font-weight:500;white-space:nowrap;",
+        "transform-origin:center;white-space:nowrap;",
       style: null,
     };
   }
@@ -5025,7 +5045,7 @@ export class ChartView {
       if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
         const top = axis.side === "top" ? p.y - 34 : p.y + p.h + 24;
         const fallbackCss =
-          `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`;
+          `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);`;
         const placement = this._axisLabelCss(axis, "x", fallbackCss);
         label(axis.label, placement.css, axis, "label", placement.style);
       }
@@ -5075,22 +5095,22 @@ export class ChartView {
       }
       if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
         const fallbackCss = axis.side === "left"
-          ? `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`
-          : `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`;
+          ? `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;`
+          : `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;`;
         const placement = this._axisLabelCss(axis, "y", fallbackCss);
         label(axis.label, placement.css, axis, "label", placement.style);
       }
     }
     if (s.x_axis.label && !hideX) {
       const top = xAxis.side === "top" ? p.y - 34 : p.y + p.h + 24;
-      const fallbackCss = `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`;
+      const fallbackCss = `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);`;
       const placement = this._axisLabelCss(xAxis, "x", fallbackCss);
       label(s.x_axis.label, placement.css, xAxis, "label", placement.style);
     }
     if (s.y_axis.label && !hideY) {
       const fallbackCss = yAxis.side === "right"
-        ? `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`
-        : `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`;
+        ? `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;`
+        : `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;`;
       const placement = this._axisLabelCss(yAxis, "y", fallbackCss);
       label(s.y_axis.label, placement.css, yAxis, "label", placement.style);
     }

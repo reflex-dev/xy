@@ -1,8 +1,11 @@
 # Styling XY
 
-Every rendered chrome element is a stable, CSS-addressable surface. You can
-restyle the whole chart with plain CSS, attribute selectors, Tailwind, or
-per-slot inline styles — and your styles always win, without `!important`.
+Each public chrome slot names a stable, CSS-addressable DOM surface. You can
+restyle those surfaces with plain CSS, attribute selectors, Tailwind, or
+per-slot inline styles. Built-in visual defaults stay in a low-priority layer,
+so normal utilities override those defaults without `!important`; canvas
+pixels, structural geometry, live state, and explicit inline `styles` have
+separate ownership described below.
 
 This engineering guide explains the implementation contract. The public,
 task-oriented references are [Styling](../../docs/styling/index.md),
@@ -44,14 +47,25 @@ style APIs: a bare number on a length property becomes `px` (`{"font_size": 18}`
 → `font-size:18px`), custom properties (`--x`) and unitless properties pass
 through untouched.
 
-In Reflex, Tailwind utilities require `rx.plugins.TailwindV4Plugin()`. Complete
-literal classes emitted into Reflex's generated JSX work with the plugin's
-normal scan paths; the original Python or Markdown path does not need to be
-added. Fixed Chart/Figure sources expose their class inventory automatically;
-token/Var sources pass their complete build-time inventory through
-`reflex_xy.chart(..., tailwind_classes=...)`. See the public
+In Reflex, Tailwind utilities require `rx.plugins.TailwindV4Plugin()`. Configure
+that plugin with `{"darkMode": "selector"}` when `dark:` utilities should track
+Reflex's `.dark` color-mode switch; the plugin default instead follows the OS
+media query. Complete literal classes emitted into Reflex's generated JSX work
+with the plugin's normal scan paths; the original Python or Markdown path does
+not need to be added. Fixed Chart/Figure sources expose their class inventory
+automatically; token/Var sources pass their complete build-time inventory
+through `reflex_xy.chart(..., tailwind_classes=...)`. See the public
 [Chrome Slots](../../docs/styling/chrome-slots.md) guide for the
 standalone-export and dynamic-class boundaries.
+
+The inventory preserves advanced Tailwind candidates verbatim, including
+quoted arbitrary values, escaped underscores, and Unicode content. It is an
+ordered string inventory: mappings and unordered sets raise. A live figure
+must inventory every complete class it can emit. A payload whose
+constructor-owned chrome changes (including `dom`, title, legend, colorbar,
+badge, modebar, or axis-band topology) rebuilds that chrome so old runtime
+classes or nodes do not linger; every named-axis range and durable geometric
+selection is restored silently.
 
 Before the live-chart inventory existed, the class names reached the DOM but
 their utilities were absent from the compiled stylesheet:
@@ -382,7 +396,7 @@ raises before it reaches the client.
 | --- | --- |
 | `root` | Outer chart container |
 | `title` | Chart title |
-| `chrome` | Non-plot chrome layer (legend/modebar/badges host) |
+| `chrome` | Canvas-painted plot chrome |
 | `canvas` | WebGL2 plot canvas |
 | `labels` | Axis/annotation label layer |
 | `legend` | Legend container |
@@ -401,7 +415,7 @@ raises before it reaches the client.
 | `tooltip_value` | One formatted tooltip value |
 | `modebar` | Mode/tool bar container |
 | `modebar_button` | One mode/tool button (`.xy-active` when engaged) |
-| `selection` | Active box-select or box-zoom rectangle |
+| `selection` | Active box/range rectangle plus lasso path and editable handles |
 | `crosshair_x` | Vertical crosshair line |
 | `crosshair_y` | Horizontal crosshair line |
 | `badge` | Reduction/density badge container |
@@ -409,6 +423,55 @@ raises before it reaches the client.
 | `tick_label` | Axis tick label |
 | `axis_title` | Axis title label |
 | `annotation_label` | Text/label/callout annotation (DOM overlay) |
+
+### Tailwind capability taxonomy
+
+The slot contract has five surface classes:
+
+| Surface | Included hooks | Ownership and cascade |
+| --- | --- | --- |
+| Visually overridable DOM | Root/title; legend, colorbar, tooltip, badge, and label slots; the visual face of selection, crosshair, and modebar slots | Background, color, border, font, padding, shadow, and cursor defaults are layered and yield to normal utilities. `styles[slot]` is explicit inline author intent and wins over a normal utility. |
+| Structural-owned DOM | Layer geometry; legend/colorbar/modebar anchoring; tooltip, selection, crosshair, and popover placement | Position, dimensions, display, z-index, pointer events, and transforms required for layout/interaction are written inline. Utilities are not guaranteed to beat them and should not do so accidentally. |
+| Whole bitmap | `canvas` (WebGL marks) and `chrome` (canvas-painted plot chrome) | CSS affects the canvas element as one bitmap. It cannot select individual marks, grid lines, axes, or canvas annotation shapes; those use the typed renderer vocabulary and `--chart-*` paint tokens. |
+| Repeated or ephemeral DOM | Legend rows/swatches/labels, colorbar ticks, tooltip rows/fields, modebar buttons, badge items, tick labels, annotation labels, selection/crosshair overlays | `class_names[slot]` and `styles[slot]` apply to every node created for that slot. Node count, presence, and identity may change after a payload, hover, interaction, or responsive relayout. |
+| State-owned / conditional inline | Legend hover/toggle, tooltip/selection/crosshair visibility and geometry, modebar active/open/fit state | The controller writes the live property or exposes a state class/attribute. Replacing an inline state property requires `!important` and transfers responsibility for that behavior to the author. |
+
+The modebar exposes two public levels: `modebar` for the toolbar and
+`modebar_button` for both top-level controls and menu-item buttons. Its tool
+groups, menu wrappers, separators, indicators, and drag handle expose
+`data-xy-modebar-*` implementation attributes rather than additional slots.
+Theme them through `--chart-modebar-*` or explicit descendant selectors, while
+leaving toolbar/menu placement, fit visibility, opacity, and pointer events to
+the interaction controller.
+
+Conditional inline state is also deliberate. Legend hover/toggle writes row
+`opacity` and `filter` while exposing `data-xy-legend-off`; tooltip,
+selection, and crosshair visibility/geometry are live; modebar state exposes
+`.xy-active`, `aria-pressed`, and `aria-expanded`. Normal utilities continue to
+style durable appearance, but replacing a state-owned inline property requires
+`!important` and transfers responsibility for that behavior to the author.
+
+The selection slot spans two element types: box/range selections are HTML
+rectangles, while a completed lasso is an SVG path plus editable circle
+handles. Background/border utilities style the former; SVG fill/stroke
+utilities style the latter. The client pins the lasso path to
+`pointer-events:none` and its handles to `pointer-events:all`, so sharing an
+existing box-oriented `pointer-events-none` class cannot disable handle edits.
+
+The `legend_swatch` slot is the chip wrapper for every legend handle. Bar/solid
+chips use its background and box dimensions; scatter and line SVG descendants
+inherit fill, stroke, stroke-width, and dash paint from that wrapper. The
+renderer supplies those values through private base-layer variables rather
+than presentation attributes, so normal Tailwind SVG paint utilities on the
+slot override them.
+
+Responsive CSS on DOM chrome reevaluates normally. Canvas paint is different:
+the renderer samples `--chart-bg`, `--chart-grid`, `--chart-axis`, and the
+canvas use of `--chart-text`. It refreshes those samples on OS scheme changes
+and ancestor `class`, `data-theme`, or `style` mutations, but a breakpoint-only
+media-query change is not itself a refresh signal. Responsive canvas-token
+changes therefore need a corresponding watched mutation or figure rebuild;
+CSS-only tokens consumed by DOM chrome do not.
 
 ```css
 /* plain CSS — no build step, no classes on the Python side */
@@ -422,7 +485,7 @@ raises before it reaches the client.
 <div class="[&_[data-xy-slot=legend]]:bg-transparent"> … </div>
 ```
 
-## Why your styles always win
+## Cascade: visual defaults yield; structure and state do not
 
 The client injects one stylesheet of *visual* defaults (background, color,
 padding, border, font, box-shadow, cursor). It lives in the low-priority `base`
@@ -431,11 +494,12 @@ cascade layer, and every selector uses
 **zero specificity**. Tailwind's later utility layer, unlayered author CSS, and
 inline `styles[slot]` therefore beat the defaults without `!important`.
 
-The rendered elements carry only **structural** inline styles — position, size,
-z-index, and interaction state (`data-xy-dragmode`, the `.xy-active` class).
-Nothing themeable is pinned inline, so nothing themeable can shadow your class.
-This is what "ultra customizable" means here: defaults are suggestions, your CSS
-is authority.
+That statement is scoped to visual defaults. Rendered elements also carry
+structural and conditional inline styles for position, size, visibility,
+z-index, pointer routing, and live interaction state. Those declarations are
+the renderer's layout/state authority; a normal utility does not override
+them. Themeable appearance remains open unless the author explicitly pins the
+same property through `styles[slot]`.
 
 > Annotation label color and the plot cursor follow the same rule: the default
 > is a `:where()` stylesheet entry keyed on a slot/attribute, so `cursor-cell` or

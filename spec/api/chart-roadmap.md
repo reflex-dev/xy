@@ -348,7 +348,11 @@ For a fixed chart, the Reflex adapter also mirrors embedded class strings into
 generated JSX for Tailwind's compile-time scan. Runtime token/Var charts pass
 their complete names through
 `reflex_xy.chart(..., tailwind_classes="...")`; that scan-only manifest is
-discarded by the wrapper and never reaches the DOM. For the standalone
+emitted verbatim (including quotes, backslashes, and Unicode), discarded by the
+wrapper, and never reaches the DOM. State-driven constructor-chrome changes
+(including `dom`, title, legend, colorbar, badge, modebar, and axis-band
+topology) rebuild the view so runtime classes and nodes do not remain stale;
+durable selection and every named-axis range are restored silently. For the standalone
 `to_html(...)` export — which has no host page to inherit Tailwind from — pass
 `custom_css="…"` to inject the stylesheet defining those utility classes.
 

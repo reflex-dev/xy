@@ -877,7 +877,7 @@ Object.assign(ChartView.prototype, {
       this._applySelectionBuffers(msg, buffers);
       this._selectionCount = msg.total || 0;
       this.draw();
-      if (this._interactionFlag("select", true)) {
+      if (msg.suppress_event !== true && this._interactionFlag("select", true)) {
         this._dispatchChartEvent("select", {
           total: this._selectionCount,
           view: this._eventView("select"),
