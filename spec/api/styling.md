@@ -680,11 +680,12 @@ utilities style the latter. The client pins the lasso path to
 existing box-oriented `pointer-events-none` class cannot disable handle edits.
 
 The `legend_swatch` slot is the chip wrapper for every legend handle. Bar/solid
-chips use its background and box dimensions; scatter and line SVG descendants
-inherit fill, stroke, stroke-width, and dash paint from that wrapper. The
-renderer supplies those values through private base-layer variables rather
-than presentation attributes, so normal Tailwind SVG paint utilities on the
-slot override them.
+chips use its background and box dimensions, and retain the source mark's
+stroke paint/width so an unfilled bar still has a visible outlined handle.
+Scatter and line SVG descendants inherit fill, stroke, stroke-width, and dash
+paint from that wrapper. The renderer supplies those values through private
+base-layer variables rather than presentation attributes, so normal Tailwind
+SVG paint utilities on the slot override them.
 
 Responsive CSS on DOM chrome reevaluates normally. Canvas paint is different:
 the renderer samples `--chart-bg`, `--chart-grid`, `--chart-axis`, and the
@@ -1223,6 +1224,92 @@ default, and the three defaults are *not* the same value: the browser uses
 `rgb(65,65,65)` on white). A caller that needs one colour across all three must
 say so; `xy.pyplot` does, pinning `label_color` from
 `rcParams["text.color"]` on every text/annotate label.
+
+### Per-slot styles in a file
+
+`styles={slot: {...}}` is a browser surface first — the browser has a cascade
+and a file does not — but the slots that name chrome a static file *contains*
+carry a defined subset of their declarations into SVG, PNG and PDF:
+
+| | |
+| --- | --- |
+| Slots | `title`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`, `colorbar_title`, `colorbar_tick` (`_svg.STATIC_STYLED_SLOTS`) |
+| Vector — SVG, PDF | `font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`, `opacity`, and the text paint — `fill`, or `color` (`_svg.SLOT_TEXT_PROPS`) |
+| Raster — PNG, JPEG, WebP | `font-size` and the text paint only (`_svg.SLOT_RASTER_PROPS`) |
+
+The raster writer's glyph primitive takes a size and one RGBA paint and nothing
+else, so `font-weight`, `font-style`, `font-family`, `letter-spacing` and
+`opacity` are **vector-only**. They are not approximated: the atlas is a single
+baked face, and a silently substituted weight would be exactly the kind of
+invisible decision §28 forbids.
+
+```python
+xy.chart(
+    xy.line(x=months, y=revenue),
+    title="Quarterly performance",
+    styles={
+        "title": {"font_size": 22, "fill": "#7c3aed", "font_weight": 800},
+        "tick_label": {"font_size": 13, "fill": "#0891b2"},
+        "legend": {"background": "#fef3c7", "border_radius": "10px"},
+    },
+)
+```
+
+![Before and after, six scenes: per-slot title/axis/tick/legend styling, colorbar
+chrome, `loc="best"`, an unrecognized `loc`, the `legend_bg` theme token, and a
+`theme()` typo. Before, every one of them was silently ignored or silently wrong.](../assets/chrome-styling-before-after.png)
+
+Everything else stays browser-only: the remaining slots are live chrome
+(`tooltip*`, `modebar*`, `crosshair_*`, `selection`, `badge*`) with nothing in a
+file to paint, and `class_names` cannot apply anywhere without a stylesheet to
+select from. Where two surfaces name the same chrome the narrower selector
+wins — an axis's own `label_color` over `styles={"axis_title": ...}`.
+
+The legend's three spellings — `styles={"legend": ...}`,
+`xy.legend(style=...)`, and the `--chart-legend-bg` theme token — merge into one
+declaration block before either native writer reads it, so what agrees in the
+browser agrees in a PNG. An explicit `background` paints opaque;
+`--xy-legend-frame-alpha` stays the knob for the default grey frame.
+
+Full contract and enforcement: [export.md](export.md) § 9 and
+`tests/test_export_style_survival.py`.
+
+### Legend placement
+
+`xy.legend(loc=...)` takes Matplotlib's vocabulary — `"upper right"`,
+`"lower left"`, `"center"`, `"upper center"`, and so on — plus `"best"`.
+Spellings that are unambiguous are normalized rather than refused: case and
+whitespace are free, `-`/`_` work as separators, either word order is accepted,
+`"right"`/`"left"` alone mean the centered edges, and **`top`/`bottom` are
+accepted for `upper`/`lower`** — the CSS and Plotly spelling, and the one XY's
+own docs use.
+
+Everything else is **refused**. The writers resolve a location by substring, so
+an unrecognized string never failed; it landed somewhere. `"northeast"` and
+`"best"` came out dead center, on top of the data, and `"top left"` came out
+*center*-left — which is what the facets-and-layers docs page was rendering.
+
+`"best"` scores each candidate box by the fraction of sampled marks inside it
+and keeps the least occupied, preferring the earlier candidate on a near-tie —
+Matplotlib's rule. It resolves **once, at payload-build time**
+(`xy._legendfit`), so the client and the two static writers all receive a
+settled location and cannot disagree about it (§28).
+
+The sampling is normative, because a different stride would place the legend
+somewhere else (§28):
+
+| | |
+| --- | --- |
+| Series stride | a series longer than **4096** points is strided to 4096 *before* the finite scan, so the common path costs O(1) in the series length. That is a fast path, not a bound: if the 4096-point sample holds no finite pair, the full array is scanned instead, so a mostly-NaN series is still scored rather than silently dropped from placement. Worst case is therefore O(n), once, at build time. |
+| Finite cap | at most **512** finite points per series, evenly strided. |
+| Coordinate space | **display** space: the axis's `log`/`symlog` transform is applied first, so occupancy is measured where the marks are drawn. |
+| Off-plot marks | **dropped, not clamped.** Every renderer clips them, so folding them onto an edge would guard a corner the viewer sees as empty. |
+| Candidate order | the nine Matplotlib candidates, corners first, then mid-edges, then center. |
+| Near-tie band | boxes within **0.02** mean occupancy count as tied, and the earliest candidate wins — Matplotlib's integer badness ties on near-equal boxes, and a continuous metric would otherwise let sub-percent sampling noise override that order. |
+
+Density and heatmap tiers are not sampled: a trace with no `x`/`y` column pair
+contributes no occupancy, and a chart with no scorable series falls back to
+`"upper right"`.
 
 ## Static export
 

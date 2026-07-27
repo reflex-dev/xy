@@ -1827,45 +1827,45 @@ export class ChartView {
         // traces join the first row's hover-target list instead.
         const continuousRows = new Map();
         s.traces.forEach((t, ti) => {
-        const style = { ...(t.style || {}) };
-        const useTraceSize = style._legend_trace_size === true;
-        delete style._legend_trace_size;
-        if (t.kind === "scatter" && useTraceSize &&
-            t.size?.mode === "constant" && Number.isFinite(Number(t.size.size))) {
-          style.size = Number(t.size.size);
-        }
-        // A density-tier surface encodes count as alpha and wears the mean
-        // point color (LOD doc §2), so it gets no colormap gradient swatch —
-        // a gradient would claim color == density. A named density trace
-        // falls through to the plain marker swatch below, matching the
-        // static SVG/raster exporters.
-        const line = ["line", "segments", "step", "stairs", "errorbar"].includes(t.kind);
-        if (t.color && t.color.mode === "categorical") {
-          t.color.categories.forEach((cat, i) =>
-            items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, style, traces: [ti], cat: i }));
-        } else if (t.color && t.color.mode === "continuous") {
-          // Label precedence: explicit series name, then the encoding's own
-          // declarative label (the color="column" idiom). No generic fallback:
-          // an unnamed encoding has nothing truthful to say, so it gets no
-          // row — matching the static exporters, which draw name-bearing
-          // entries only.
-          const name = t.name || t.color.label;
-          if (!name) return;
-          const key = name + "\u0000" + colormapKey(t.color.colormap);
-          const existing = continuousRows.get(key);
-          if (existing) {
-            existing.traces.push(ti);
-            return;
+          const style = { ...(t.style || {}) };
+          const useTraceSize = style._legend_trace_size === true;
+          delete style._legend_trace_size;
+          if (t.kind === "scatter" && useTraceSize &&
+              t.size?.mode === "constant" && Number.isFinite(Number(t.size.size))) {
+            style.size = Number(t.size.size);
           }
-          const item = { swatch: "gradient", cmap: t.color.colormap, name, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, line, style, traces: [ti] };
-          continuousRows.set(key, item);
-          items.push(item);
-        } else if (t.name) {
-          const c = (t.color && t.color.color) || (t.style && t.style.color);
-          // Line-family kinds get a short line sample (honoring the dash), the
-          // same handle the raster/SVG exporters draw — not a filled swatch.
-          items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, line, style, traces: [ti] });
-        }
+          // A density-tier surface encodes count as alpha and wears the mean
+          // point color (LOD doc §2), so it gets no colormap gradient swatch —
+          // a gradient would claim color == density. A named density trace
+          // falls through to the plain marker swatch below, matching the
+          // static SVG/raster exporters.
+          const line = ["line", "segments", "step", "stairs", "errorbar"].includes(t.kind);
+          if (t.color && t.color.mode === "categorical") {
+            t.color.categories.forEach((cat, i) =>
+              items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, style, traces: [ti], cat: i }));
+          } else if (t.color && t.color.mode === "continuous") {
+            // Label precedence: explicit series name, then the encoding's own
+            // declarative label (the color="column" idiom). No generic fallback:
+            // an unnamed encoding has nothing truthful to say, so it gets no
+            // row — matching the static exporters, which draw name-bearing
+            // entries only.
+            const name = t.name || t.color.label;
+            if (!name) return;
+            const key = name + "\u0000" + colormapKey(t.color.colormap);
+            const existing = continuousRows.get(key);
+            if (existing) {
+              existing.traces.push(ti);
+              return;
+            }
+            const item = { swatch: "gradient", cmap: t.color.colormap, name, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, line, style, traces: [ti] };
+            continuousRows.set(key, item);
+            items.push(item);
+          } else if (t.name) {
+            const c = (t.color && t.color.color) || (t.style && t.style.color);
+            // Line-family kinds get a short line sample (honoring the dash), the
+            // same handle the raster/SVG exporters draw — not a filled swatch.
+            items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, line, style, traces: [ti] });
+          }
         });
       }
       for (const it of items) {
@@ -1898,6 +1898,12 @@ export class ChartView {
     const handleHeight = options.handleheight == null
       ? null
       : Math.max(8, 11 * Number(options.handleheight));
+    const handleLength = Number.isFinite(Number(options.handlelength))
+      ? Math.max(0, Number(options.handlelength))
+      : 2;
+    const handleTextPad = Number.isFinite(Number(options.handletextpad))
+      ? Math.max(0, Number(options.handletextpad))
+      : 0.8;
     lg.style.cssText = "position:absolute;" +
       `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
       "column-gap:2em;row-gap:.5em;overflow:auto;";
@@ -1928,6 +1934,8 @@ export class ChartView {
       // base-layer slot rule. SVG paint lives on the wrapper and inherits into
       // its path/line, so Tailwind fill-*/stroke-* utilities on this public slot
       // can override it without copying layout classes onto SVG paint nodes.
+      sw.style.setProperty("--xy-legend-swatch-width", `${handleLength}em`);
+      sw.style.setProperty("--xy-legend-swatch-margin-right", `${handleTextPad}em`);
       let bg = it.swatch;
       // A continuous encoding paints the swatch with the colormap ramp, but
       // the swatch keeps the mark's identity: a gradient-filled symbol for
@@ -1945,7 +1953,7 @@ export class ChartView {
         const ns = "http://www.w3.org/2000/svg";
         const svg = document.createElementNS(ns, "svg");
         svg.setAttribute("viewBox", "0 0 18 14");
-        svg.setAttribute("width", "18");
+        svg.setAttribute("width", "100%");
         svg.setAttribute("height", "14");
         svg.style.overflow = "visible";
         const color = gradientPaint ? gradientPaint(svg) : safeCssPaint(this.root, bg);
@@ -1953,13 +1961,12 @@ export class ChartView {
           svg, sw, { ...(it.style || {}), symbol: it.symbol }, color, 9, 7, true,
         );
         sw.appendChild(svg);
-        sw.style.setProperty("--xy-legend-swatch-width", "18px");
         sw.style.setProperty("--xy-legend-swatch-height", "14px");
       } else if (it.line) {
         const ns = "http://www.w3.org/2000/svg";
         const svg = document.createElementNS(ns, "svg");
         svg.setAttribute("viewBox", "0 0 22 12");
-        svg.setAttribute("width", "22");
+        svg.setAttribute("width", "100%");
         svg.setAttribute("height", "12");
         const ln = document.createElementNS(ns, "line");
         ln.setAttribute("x1", "1");
@@ -2004,7 +2011,6 @@ export class ChartView {
           );
         }
         sw.appendChild(svg);
-        sw.style.setProperty("--xy-legend-swatch-width", "22px");
         sw.style.setProperty("--xy-legend-swatch-height", "12px");
       } else if (it.swatch !== "gradient") {
         // Keep the dynamic base paint on the security-audited safe sink, but
@@ -2014,26 +2020,12 @@ export class ChartView {
           "--xy-legend-swatch-paint",
           safeCssPaint(this.root, bg),
         );
-        const patchStrokeWidth = Number(it.style?.stroke_width);
-        if (Number.isFinite(patchStrokeWidth) && patchStrokeWidth > 0) {
-          const ns = "http://www.w3.org/2000/svg";
-          const svg = document.createElementNS(ns, "svg");
-          svg.setAttribute("viewBox", "0 0 12 10");
-          const rect = document.createElementNS(ns, "rect");
-          const inset = Math.min(2, patchStrokeWidth / 2);
-          rect.setAttribute("x", String(inset));
-          rect.setAttribute("y", String(inset));
-          rect.setAttribute("width", String(12 - 2 * inset));
-          rect.setAttribute("height", String(10 - 2 * inset));
-          rect.setAttribute("rx", "2");
-          rect.setAttribute("fill", "none");
-          rect.setAttribute(
-            "stroke",
-            safeCssPaint(this.root, it.style?.stroke || bg),
-          );
-          rect.setAttribute("stroke-width", String(patchStrokeWidth));
-          svg.appendChild(rect);
-          sw.appendChild(svg);
+        const strokeWidth = Number(it.style?.stroke_width) || 0;
+        if (it.style?.stroke && strokeWidth > 0) {
+          sw.style.boxSizing = "border-box";
+          sw.style.borderStyle = "solid";
+          sw.style.borderWidth = `${strokeWidth}px`;
+          sw.style.borderColor = safeCssPaint(this.root, it.style.stroke);
         }
         // Hatch layers are explicit mark semantics and sit over that sanitized
         // base paint without forcing the base color into an inline background.
