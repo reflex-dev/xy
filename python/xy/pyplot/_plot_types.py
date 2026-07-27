@@ -382,6 +382,233 @@ def _dashed_segments(
     )
 
 
+def _triangle_mesh_exterior(
+    vertices: tuple[
+        tuple[np.ndarray, np.ndarray],
+        tuple[np.ndarray, np.ndarray],
+        tuple[np.ndarray, np.ndarray],
+    ],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return the boundary edges of a triangle mesh without its fan seams."""
+    coordinate_values = np.concatenate([axis for vertex in vertices for axis in vertex])
+    tolerance = max(float(np.ptp(coordinate_values)) * 1e-12, 1e-14)
+
+    def point_key(point: tuple[float, float]) -> tuple[int, int]:
+        return round(point[0] / tolerance), round(point[1] / tolerance)
+
+    edges: dict[
+        tuple[tuple[int, int], tuple[int, int]],
+        tuple[int, tuple[float, float], tuple[float, float]],
+    ] = {}
+    for first, second in ((0, 1), (1, 2), (2, 0)):
+        for start_x, start_y, end_x, end_y in zip(
+            vertices[first][0],
+            vertices[first][1],
+            vertices[second][0],
+            vertices[second][1],
+            strict=True,
+        ):
+            start = float(start_x), float(start_y)
+            end = float(end_x), float(end_y)
+            start_key, end_key = point_key(start), point_key(end)
+            key = (start_key, end_key) if start_key <= end_key else (end_key, start_key)
+            count, saved_start, saved_end = edges.get(key, (0, start, end))
+            edges[key] = count + 1, saved_start, saved_end
+    exterior = [(start, end) for count, start, end in edges.values() if count == 1]
+    return (
+        np.asarray([start[0] for start, _end in exterior]),
+        np.asarray([start[1] for start, _end in exterior]),
+        np.asarray([end[0] for _start, end in exterior]),
+        np.asarray([end[1] for _start, end in exterior]),
+    )
+
+
+def _clip_segment_to_triangle(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    triangle: np.ndarray,
+) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    """Clip a segment to one triangle with a convex half-plane solve."""
+    area = float(
+        (triangle[1, 0] - triangle[0, 0]) * (triangle[2, 1] - triangle[0, 1])
+        - (triangle[1, 1] - triangle[0, 1]) * (triangle[2, 0] - triangle[0, 0])
+    )
+    if abs(area) <= np.finfo(float).eps:
+        return None
+    direction = np.asarray(end, dtype=np.float64) - np.asarray(start, dtype=np.float64)
+    origin = np.asarray(start, dtype=np.float64)
+    orientation = 1.0 if area > 0 else -1.0
+    lower, upper = 0.0, 1.0
+    for index in range(3):
+        edge_start = triangle[index]
+        edge = triangle[(index + 1) % 3] - edge_start
+        at_start = float(
+            orientation
+            * (edge[0] * (origin[1] - edge_start[1]) - edge[1] * (origin[0] - edge_start[0]))
+        )
+        at_end = float(
+            orientation
+            * (
+                edge[0] * (origin[1] + direction[1] - edge_start[1])
+                - edge[1] * (origin[0] + direction[0] - edge_start[0])
+            )
+        )
+        slope = at_end - at_start
+        if abs(slope) <= np.finfo(float).eps:
+            if at_start < -1e-12:
+                return None
+            continue
+        crossing = -at_start / slope
+        if slope > 0:
+            lower = max(lower, crossing)
+        else:
+            upper = min(upper, crossing)
+        if lower > upper:
+            return None
+    clipped_start = origin + min(1.0, max(0.0, lower)) * direction
+    clipped_end = origin + min(1.0, max(0.0, upper)) * direction
+    if np.linalg.norm(clipped_end - clipped_start) <= 1e-12:
+        return None
+    return (
+        (float(clipped_start[0]), float(clipped_start[1])),
+        (float(clipped_end[0]), float(clipped_end[1])),
+    )
+
+
+def _pie_hatch_geometry(
+    vertices: tuple[
+        tuple[np.ndarray, np.ndarray],
+        tuple[np.ndarray, np.ndarray],
+        tuple[np.ndarray, np.ndarray],
+    ],
+    hatch: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Build hatch strokes clipped to a sector for every xy renderer."""
+    triangles = np.stack(
+        [
+            np.column_stack(vertices[0]),
+            np.column_stack(vertices[1]),
+            np.column_stack(vertices[2]),
+        ],
+        axis=1,
+    )
+    all_x = np.concatenate([vertex[0] for vertex in vertices])
+    all_y = np.concatenate([vertex[1] for vertex in vertices])
+    xmin, xmax = float(all_x.min()), float(all_x.max())
+    ymin, ymax = float(all_y.min()), float(all_y.max())
+    diameter = max(xmax - xmin, ymax - ymin)
+    if diameter <= 0 or not hatch:
+        empty = np.empty(0, dtype=np.float64)
+        return empty, empty.copy(), empty.copy(), empty.copy()
+
+    candidates: list[tuple[tuple[float, float], tuple[float, float]]] = []
+
+    def count(*characters: str) -> int:
+        return max((hatch.count(character) for character in characters), default=0)
+
+    def spacing(density: int) -> float:
+        return diameter / (5.0 + 2.0 * max(1, density))
+
+    def linear_family(kind: str, density: int) -> None:
+        gap = spacing(density)
+        margin = diameter + gap
+        if kind == "vertical":
+            for position in np.arange(xmin - gap, xmax + gap, gap):
+                candidates.append(
+                    ((float(position), ymin - margin), (float(position), ymax + margin))
+                )
+        elif kind == "horizontal":
+            for position in np.arange(ymin - gap, ymax + gap, gap):
+                candidates.append(
+                    ((xmin - margin, float(position)), (xmax + margin, float(position)))
+                )
+        else:
+            low = ymin - xmax - margin
+            high = ymax - xmin + margin
+            for intercept in np.arange(low, high, gap):
+                if kind == "slash":
+                    candidates.append(
+                        (
+                            (xmin - margin, xmin - margin + intercept),
+                            (xmax + margin, xmax + margin + intercept),
+                        )
+                    )
+                else:
+                    candidates.append(
+                        (
+                            (xmin - margin, -xmin + margin + intercept),
+                            (xmax + margin, -xmax - margin + intercept),
+                        )
+                    )
+
+    slash_density = count("/", "x", "X")
+    backslash_density = count("\\", "x", "X")
+    vertical_density = count("|", "+")
+    horizontal_density = count("-", "+")
+    if slash_density:
+        linear_family("slash", slash_density)
+    if backslash_density:
+        linear_family("backslash", backslash_density)
+    if vertical_density:
+        linear_family("vertical", vertical_density)
+    if horizontal_density:
+        linear_family("horizontal", horizontal_density)
+
+    def polygon_family(character: str, points: int, radius_factor: float) -> None:
+        density = hatch.count(character)
+        if not density:
+            return
+        gap = spacing(density)
+        radius = gap * radius_factor
+        xs = np.arange(xmin + gap * 0.5, xmax + gap * 0.5, gap)
+        ys = np.arange(ymin + gap * 0.5, ymax + gap * 0.5, gap)
+        for cx in xs:
+            for cy in ys:
+                if character == "*":
+                    angles = -np.pi / 2 + np.arange(points * 2) * np.pi / points
+                    radii = np.where(
+                        np.arange(points * 2) % 2 == 0,
+                        radius,
+                        radius * 0.42,
+                    )
+                else:
+                    angles = np.arange(points) * 2.0 * np.pi / points
+                    radii = np.full(points, radius)
+                polygon = np.column_stack(
+                    (cx + radii * np.cos(angles), cy + radii * np.sin(angles))
+                )
+                closed = np.vstack((polygon, polygon[0]))
+                candidates.extend(
+                    (
+                        (float(closed[index, 0]), float(closed[index, 1])),
+                        (float(closed[index + 1, 0]), float(closed[index + 1, 1])),
+                    )
+                    for index in range(len(closed) - 1)
+                )
+
+    polygon_family(".", 4, 0.08)
+    polygon_family("o", 8, 0.18)
+    polygon_family("O", 10, 0.30)
+    polygon_family("*", 5, 0.34)
+
+    x0: list[float] = []
+    y0: list[float] = []
+    x1: list[float] = []
+    y1: list[float] = []
+    for start, end in candidates:
+        for triangle in triangles:
+            clipped = _clip_segment_to_triangle(start, end, triangle)
+            if clipped is None:
+                continue
+            clipped_start, clipped_end = clipped
+            x0.append(clipped_start[0])
+            y0.append(clipped_start[1])
+            x1.append(clipped_end[0])
+            y1.append(clipped_end[1])
+    arrays = tuple(np.asarray(values, dtype=np.float64) for values in (x0, y0, x1, y1))
+    return arrays  # type: ignore[return-value]
+
+
 def _limit_error(error: Any, lower_limits: Any, upper_limits: Any, size: int) -> Any:
     """Convert limit flags into Matplotlib's two-sided error-array geometry."""
     if error is None or (not np.any(lower_limits) and not np.any(upper_limits)):
@@ -4171,7 +4398,7 @@ class PlotTypeMixin:
         colors: Any = None,
         autopct: Any = None,
         pctdistance: float = 0.6,
-        shadow: bool = False,
+        shadow: bool | Mapping[str, Any] = False,
         labeldistance: float | None = 1.1,
         startangle: float = 0,
         radius: float = 1,
@@ -4191,15 +4418,13 @@ class PlotTypeMixin:
         ``explode`` offsets slices, ``autopct`` labels them with their share
         (%-format or callable), ``startangle``/``counterclock`` control
         orientation, and ``wedgeprops``/``textprops`` style slices and
-        labels. ``shadow``, ``frame``, ``rotatelabels``, and ``hatch`` raise
-        loudly. Returns ``(wedges, texts)`` or ``(wedges, texts, autotexts)``
-        as matplotlib does.
+        labels. Per-wedge hatches and Matplotlib ``Shadow`` dictionaries are
+        retained as bounded geometry in every renderer. ``frame`` and
+        ``rotatelabels`` still raise loudly. Returns ``(wedges, texts)`` or
+        ``(wedges, texts, autotexts)`` as matplotlib does.
         """
-        _reject_non_default("pie", "shadow", shadow, False)
         _reject_non_default("pie", "frame", frame, False)
         _reject_non_default("pie", "rotatelabels", rotatelabels, False)
-        if hatch is not None:
-            raise not_implemented("pie(hatch=...)")
         source_values = np.asarray(_from_data(x, data))
         values = np.asarray(source_values, dtype=np.float64)
         if values.ndim != 1 or len(values) == 0:
@@ -4227,10 +4452,87 @@ class PlotTypeMixin:
         linewidth = wedge_style.pop("linewidth", wedge_style.pop("lw", None))
         alpha = wedge_style.pop("alpha", None)
         zorder = float(wedge_style.pop("zorder", 1.0))
-        if wedge_style.pop("hatch", None) is not None:
-            raise not_implemented("pie(wedgeprops={'hatch': ...})")
+        wedge_hatch = wedge_style.pop("hatch", None)
+        hatch_color = wedge_style.pop(
+            "hatchcolor",
+            wedge_style.pop("hatch_color", "#000000"),
+        )
         if wedge_style:
             check_unsupported(wedge_style, "pie(wedgeprops=)")
+        if wedge_hatch is not None:
+            hatch_values = [str(wedge_hatch)] * len(values)
+        elif hatch is None:
+            hatch_values = [None] * len(values)
+        else:
+            provided_hatches = [hatch] if isinstance(hatch, str) else list(hatch)
+            if not provided_hatches:
+                raise ValueError("pie hatch must not be empty")
+            hatch_values = [
+                None
+                if provided_hatches[index % len(provided_hatches)] is None
+                else str(provided_hatches[index % len(provided_hatches)])
+                for index in range(len(values))
+            ]
+        shadow_options: dict[str, Any] | None = None
+        if shadow:
+            if not isinstance(shadow, (bool, Mapping)):
+                raise TypeError("pie shadow must be a bool or mapping")
+            shadow_options = {
+                "ox": -0.02,
+                "oy": -0.02,
+                "shade": 0.7,
+                "alpha": 0.5,
+                "label": "_nolegend_",
+            }
+            if isinstance(shadow, Mapping):
+                shadow_options.update(shadow)
+            shade = float(shadow_options.pop("shade"))
+            if not 0.0 <= shade <= 1.0:
+                raise ValueError("pie shadow shade must be between 0 and 1")
+            shadow_options["shade"] = shade
+            shadow_options["ox"] = float(shadow_options["ox"])
+            shadow_options["oy"] = float(shadow_options["oy"])
+            shadow_options["zorder"] = float(
+                shadow_options.get("zorder", np.nextafter(zorder, -np.inf))
+            )
+            shadow_options["linewidth"] = float(
+                shadow_options.pop(
+                    "lw",
+                    shadow_options.get("linewidth", rcParams["patch.linewidth"]),
+                )
+            )
+            shadow_options["facecolor"] = shadow_options.pop("fc", shadow_options.get("facecolor"))
+            shadow_options["edgecolor"] = shadow_options.pop("ec", shadow_options.get("edgecolor"))
+            shadow_color = shadow_options.pop("color", None)
+            if shadow_color is not None:
+                shadow_options["facecolor"] = shadow_color
+                shadow_options["edgecolor"] = shadow_color
+            visible = shadow_options.pop("visible", True)
+            if not bool(visible):
+                shadow_options = None
+            if shadow_options is not None:
+                supported_shadow = {
+                    "ox",
+                    "oy",
+                    "shade",
+                    "alpha",
+                    "label",
+                    "zorder",
+                    "linewidth",
+                    "facecolor",
+                    "edgecolor",
+                }
+                check_unsupported(
+                    {
+                        key: value
+                        for key, value in shadow_options.items()
+                        if key not in supported_shadow
+                    },
+                    "pie(shadow=)",
+                )
+                shadow_options = {
+                    key: value for key, value in shadow_options.items() if key in supported_shadow
+                }
         inner_radius = 0.0 if width is None else max(0.0, float(radius) - float(width))
         from xy import kernels
 
@@ -4250,7 +4552,24 @@ class PlotTypeMixin:
             ([0.0], np.cumsum(values) / total)
         )
         mids = (boundaries[:-1] + boundaries[1:]) * 0.5
-        wedge_entries: list[dict[str, Any]] = []
+        extent = float(radius) * (1.25 + float(np.max(offsets)))
+        data_units_per_point = 0.0
+        if shadow_options is not None and self.figure is not None:
+            figure_width, figure_height = self.figure.get_size_inches()
+            _left, _bottom, axes_width, axes_height = self.get_position(original=True).bounds
+            active_points = min(axes_width * figure_width, axes_height * figure_height) * 72.0
+            data_units_per_point = 2.0 * extent / max(active_points, np.finfo(float).eps)
+
+        wedge_geometry: list[
+            tuple[
+                tuple[
+                    tuple[np.ndarray, np.ndarray],
+                    tuple[np.ndarray, np.ndarray],
+                    tuple[np.ndarray, np.ndarray],
+                ],
+                str | None,
+            ]
+        ] = []
         outline_args: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None] = []
         for index in range(len(values)):
             selected = sectors == float(index)
@@ -4259,7 +4578,85 @@ class PlotTypeMixin:
                 (x1[selected], y1[selected]),
                 (x2[selected], y2[selected]),
             )
-            face = resolve_color(color_values[index])
+            wedge_geometry.append((vertices, resolve_color(color_values[index])))
+            outline_args.append(
+                _triangle_mesh_exterior(vertices) if edgecolor is not None else None
+            )
+
+        shadow_entries: list[list[dict[str, Any]]] = [[] for _ in values]
+        if shadow_options is not None:
+            shift_x = float(shadow_options["ox"]) * data_units_per_point
+            shift_y = float(shadow_options["oy"]) * data_units_per_point
+            shade = float(shadow_options["shade"])
+            shadow_alpha = shadow_options.get("alpha", 0.5)
+            shadow_zorder = float(shadow_options["zorder"])
+            for index, (vertices, face) in enumerate(wedge_geometry):
+                face_rgba = resolve_rgba(face)
+                darkened = tuple((1.0 - shade) * channel for channel in face_rgba[:3])
+                explicit_face = shadow_options.get("facecolor")
+                shadow_face = (
+                    resolve_color(explicit_face)
+                    if explicit_face is not None
+                    else resolve_color(darkened)
+                )
+                opacity = face_rgba[3] if shadow_alpha is None else float(shadow_alpha)
+                shifted = tuple(
+                    (
+                        vertex[0] + shift_x,
+                        vertex[1] + shift_y,
+                    )
+                    for vertex in vertices
+                )
+                shadow_entry = self._add(
+                    "@mark",
+                    {
+                        "factory": "triangle_mesh",
+                        "args": (
+                            shifted[0][0],
+                            shifted[0][1],
+                            shifted[1][0],
+                            shifted[1][1],
+                            shifted[2][0],
+                            shifted[2][1],
+                        ),
+                        "kwargs": {
+                            "color": shadow_face,
+                            "name": None,
+                            "opacity": opacity,
+                            "_joined_fill": True,
+                        },
+                    },
+                )
+                shadow_entry["_zorder"] = shadow_zorder
+                shadow_entry["_legend_skip"] = True
+                shadow_entry["_pie_shadow_offset_points"] = (
+                    float(shadow_options["ox"]),
+                    float(shadow_options["oy"]),
+                )
+                shadow_entries[index].append(shadow_entry)
+                shadow_edge = shadow_options.get("edgecolor")
+                if shadow_edge is None:
+                    shadow_edge = shadow_face
+                resolved_shadow_edge = resolve_color(shadow_edge)
+                if resolved_shadow_edge != "transparent":
+                    shadow_outline = self._add(
+                        "@mark",
+                        {
+                            "factory": "segments",
+                            "args": _triangle_mesh_exterior(shifted),
+                            "kwargs": {
+                                "color": resolved_shadow_edge,
+                                "width": float(shadow_options["linewidth"]) * self._point_scale(),
+                                "opacity": opacity,
+                            },
+                        },
+                    )
+                    shadow_outline["_zorder"] = shadow_zorder
+                    shadow_outline["_legend_skip"] = True
+                    shadow_entries[index].append(shadow_outline)
+
+        wedge_entries: list[dict[str, Any]] = []
+        for index, (vertices, face) in enumerate(wedge_geometry):
             mark_kwargs: dict[str, Any] = {
                 "color": face,
                 "name": None if label_values[index] is None else str(label_values[index]),
@@ -4290,55 +4687,36 @@ class PlotTypeMixin:
             theta_start, theta_end = np.rad2deg(boundaries[index : index + 2])
             entry["pie_theta1"] = float(min(theta_start, theta_end))
             entry["pie_theta2"] = float(max(theta_start, theta_end))
+            entry["pie_hatch"] = hatch_values[index]
+            entry["pie_hatch_color"] = resolve_color(hatch_color)
             wedge_entries.append(entry)
-            if edgecolor is not None:
-                # These are the canonical pre-transport kernel vertices.
-                # Tolerance-snapped endpoint counting recovers every exterior
-                # edge, including both rings of a one-slice donut; the snap
-                # also joins its numerically near-equal 0°/360° seam.
-                # Interior fan edges occur twice and are deliberately omitted.
-                coordinate_values = np.concatenate([axis for vertex in vertices for axis in vertex])
-                tolerance = max(float(np.ptp(coordinate_values)) * 1e-12, 1e-14)
 
-                def point_key(
-                    point: tuple[float, float], scale: float = tolerance
-                ) -> tuple[int, int]:
-                    return round(point[0] / scale), round(point[1] / scale)
-
-                edges: dict[
-                    tuple[tuple[int, int], tuple[int, int]],
-                    tuple[int, tuple[float, float], tuple[float, float]],
-                ] = {}
-                for first, second in ((0, 1), (1, 2), (2, 0)):
-                    for start_x, start_y, end_x, end_y in zip(
-                        vertices[first][0],
-                        vertices[first][1],
-                        vertices[second][0],
-                        vertices[second][1],
-                        strict=True,
-                    ):
-                        start = float(start_x), float(start_y)
-                        end = float(end_x), float(end_y)
-                        start_key, end_key = point_key(start), point_key(end)
-                        key = (start_key, end_key) if start_key <= end_key else (end_key, start_key)
-                        count, saved_start, saved_end = edges.get(key, (0, start, end))
-                        edges[key] = count + 1, saved_start, saved_end
-                exterior = [(start, end) for count, start, end in edges.values() if count == 1]
-                outline_args.append(
-                    (
-                        np.asarray([start[0] for start, _end in exterior]),
-                        np.asarray([start[1] for start, _end in exterior]),
-                        np.asarray([end[0] for _start, end in exterior]),
-                        np.asarray([end[1] for _start, end in exterior]),
-                    )
-                )
-            else:
-                outline_args.append(None)
-
-        # Draw every explicit outline after every fill. A later neighboring
-        # wedge must not overpaint half of an earlier wedge's shared border.
+        # Draw clipped hatches and every explicit outline after every fill. A
+        # later neighboring wedge must not overpaint either decoration.
         wedges: list[Wedge] = []
-        for entry, segment_args in zip(wedge_entries, outline_args, strict=True):
+        for index, (entry, segment_args) in enumerate(
+            zip(wedge_entries, outline_args, strict=True)
+        ):
+            hatch_entry = None
+            pattern = hatch_values[index]
+            if pattern:
+                hatch_args = _pie_hatch_geometry(wedge_geometry[index][0], pattern)
+                if len(hatch_args[0]):
+                    hatch_entry = self._add(
+                        "@mark",
+                        {
+                            "factory": "segments",
+                            "args": hatch_args,
+                            "kwargs": {
+                                "color": resolve_color(hatch_color),
+                                "width": 0.8 * self._point_scale(),
+                                "opacity": 1.0 if alpha is None else float(alpha),
+                            },
+                        },
+                    )
+                    hatch_entry["_zorder"] = zorder
+                    hatch_entry["_legend_skip"] = True
+                    hatch_entry["_pie_hatch"] = pattern
             outline_entry = None
             if segment_args is not None:
                 outline_entry = self._add(
@@ -4355,7 +4733,15 @@ class PlotTypeMixin:
                 )
                 outline_entry["_zorder"] = zorder
                 outline_entry["_legend_skip"] = True
-            wedges.append(Wedge(self, entry, outline_entry))
+            wedges.append(
+                Wedge(
+                    self,
+                    entry,
+                    outline_entry,
+                    hatch_entry=hatch_entry,
+                    shadow_entries=shadow_entries[index],
+                )
+            )
 
         angle = np.deg2rad(float(startangle))
         text_kwargs = _textprops_kwargs(textprops, "pie(textprops=)")
@@ -4397,7 +4783,6 @@ class PlotTypeMixin:
                     add_text(float(pctdistance), mid, str(label), float(offsets[index]))
                 )
             angle += sweep
-        extent = float(radius) * (1.25 + float(np.max(offsets)))
         self.set_xlim(float(center[0]) - extent, float(center[0]) + extent)
         self.set_ylim(float(center[1]) - extent, float(center[1]) + extent)
         self.set_aspect("equal", adjustable="box")
