@@ -3065,13 +3065,22 @@ def _hexbin_marks(
     xs = np.asarray(sx(cx[:n, None] + ring_x[None, :]), dtype=np.float64)
     ys = np.asarray(sy(cy[:n, None] + ring_y[None, :]), dtype=np.float64)
     fill_op = _fill_opacity(style)
-    group_attr = f' fill-opacity="{_num(fill_op)}"' if fill_op < 1 else ""
+    group_attr = (
+        f' fill-opacity="{_num(fill_op)}" stroke-opacity="{_num(fill_op)}"' if fill_op < 1 else ""
+    )
     out = [f"<g{group_attr}>"]
     for i in range(n):
         points = " ".join(
             f"{_num(float(x))},{_num(float(y))}" for x, y in zip(xs[i], ys[i], strict=True)
         )
-        out.append(f'<polygon points="{points}" fill="{escape(fills[i])}"/>')
+        paint = escape(fills[i])
+        # Matplotlib's default ``edgecolors="face"`` covers antialiasing
+        # cracks where adjacent hexagons meet. A same-color hairline preserves
+        # the face color while preventing white striping in vector viewers.
+        out.append(
+            f'<polygon points="{points}" fill="{paint}" stroke="{paint}" '
+            'stroke-width="0.5" stroke-linejoin="round"/>'
+        )
     out.append("</g>")
     return "".join(out)
 

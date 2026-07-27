@@ -4330,7 +4330,7 @@ def _continuous_color_label(mark: Mark) -> Optional[str]:
         if isinstance(values, str):
             return values
         if values is None:
-            return "log(count + 1)" if mark.props.get("bins") == "log" else "count"
+            return "count"
     return None
 
 
@@ -4356,7 +4356,7 @@ def _colorbar_source_title(mark: Mark) -> Optional[str]:
         if isinstance(values, str):
             return values
         if values is None:
-            return "log(count + 1)" if mark.props.get("bins") == "log" else "count"
+            return "count"
     return mark.name
 
 
@@ -4383,7 +4383,7 @@ def _declarative_colorbar_options(mark: Mark, traces: list[Any]) -> Optional[dic
             # cell shows the mean of its points' colormapped values (LOD doc
             # §2) — so the channel's domain⇄colormap colorbar is truthful in
             # both representations and renders as for a direct scatter.
-            domain = channel.domain
+            domain = trace.colorbar_domain or channel.domain
             colormap = channel.colormap
         if domain is None or colormap is None:
             continue
@@ -4395,6 +4395,8 @@ def _declarative_colorbar_options(mark: Mark, traces: list[Any]) -> Optional[dic
             # silently falls back to viridis.
             "colormap": colormap if isinstance(colormap, str) else [list(s) for s in colormap],
         }
+        if trace.colorbar_scale != "linear":
+            options["scale"] = trace.colorbar_scale
 
     if options is None:
         return None

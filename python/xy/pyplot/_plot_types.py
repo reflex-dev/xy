@@ -3084,6 +3084,11 @@ class PlotTypeMixin:
                 },
             },
         )
+        if bins == "log":
+            # The core pre-transforms the compact per-cell paint channel, but
+            # Matplotlib exposes a LogNorm over the original counts. Preserve
+            # that normalization contract for the associated colorbar.
+            entry["_mpl_norm_scale"] = "log"
         return PathCollection(self, entry)
 
     def _contour(self, filled: bool, args: tuple[Any, ...], kwargs: dict[str, Any]) -> ContourSet:

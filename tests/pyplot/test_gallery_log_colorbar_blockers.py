@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 from io import BytesIO
+from xml.etree import ElementTree
 
 import numpy as np
 import pytest
@@ -105,6 +106,43 @@ def test_time_series_histogram_log_mesh_and_pad_zero_render_statically() -> None
     fig.savefig(png_target, format="png")
     pixels = np.asarray(plt.imread(BytesIO(png_target.getvalue())))
     assert pixels.shape == (800, 600, 4)
+
+
+def test_hexbin_demo_log_colorbar_keeps_counts_and_covers_svg_cell_seams() -> None:
+    """Exact data and log-mappable calls from statistics/hexbin_demo.py."""
+    np.random.seed(19680801)
+    n = 100_000
+    x = np.random.standard_normal(n)
+    y = 2.0 + 3.0 * x + 4.0 * np.random.standard_normal(n)
+    fig, ax = plt.subplots(figsize=(4.5, 4))
+
+    hexagons = ax.hexbin(x, y, gridsize=50, bins="log", cmap="inferno")
+    fig.colorbar(hexagons, ax=ax, label="counts")
+
+    core = fig._charts()[0].figure()
+    trace = core.traces[0]
+    assert trace.colorbar_domain == (1.0, 575.0)
+    assert trace.colorbar_scale == "log"
+    assert trace.color_ch.domain == pytest.approx((0.0, np.log(575.0)))
+    assert core.colorbar_options == {
+        "colormap": "inferno",
+        "domain": [1.0, 575.0],
+        "label": "counts",
+        "orientation": "vertical",
+        "scale": "log",
+    }
+
+    target = BytesIO()
+    fig.savefig(target, format="svg")
+    svg = target.getvalue().decode()
+    colorbar = svg[svg.rfind('<defs><linearGradient id="xy-colorbar-inferno"') :]
+    assert re.findall(r">([^<>]+)</text>", colorbar) == ["1", "10", "100", "counts"]
+
+    root = ElementTree.fromstring(svg)
+    cells = [node for node in root.iter() if node.tag.endswith("polygon")]
+    assert len(cells) > 1_000
+    assert all(node.get("fill") == node.get("stroke") for node in cells)
+    assert all(node.get("stroke-width") == "0.5" for node in cells)
 
 
 def test_subplots_adjust_explicit_cax_fills_requested_axes_in_static_exports() -> None:

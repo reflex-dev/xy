@@ -2160,7 +2160,7 @@ def hexbin(
     centers_x = np.concatenate((xr[0] + (keep1 % (w + 1)) * dx, xr[0] + (keep2 % w + 0.5) * dx))
     centers_y = np.concatenate((yr[0] + (keep1 // (w + 1)) * dy, yr[0] + (keep2 // w + 0.5) * dy))
     if cv is None:
-        metric = np.log1p(counts) if bins == "log" else counts
+        metric = counts
     else:
         reduced: list[float] = []
         memberships = [cv[valid_first & (flat1 == flat)] for flat in keep1] + [
@@ -2172,6 +2172,25 @@ def hexbin(
                 raise ValueError("hexbin reduce_C_function must return one finite scalar per bin")
             reduced.append(float(made))
         metric = np.asarray(reduced, dtype=np.float64)
+    if bins == "log":
+        # Matplotlib's ``bins="log"`` is LogNorm over the original cell
+        # values. Non-positive cells use the bad color (transparent by
+        # default), so omitting them is the same static result while keeping
+        # the continuous channel finite. The paint channel can remain the
+        # engine's linear normalized scalar after applying log here; the
+        # original domain is retained separately for count-space colorbars.
+        positive = metric > 0.0
+        centers_x, centers_y, metric = (
+            centers_x[positive],
+            centers_y[positive],
+            metric[positive],
+        )
+        if not len(metric):
+            raise ValueError("hexbin logarithmic colors require at least one positive cell value")
+        colorbar_domain = (float(metric.min()), float(metric.max()))
+        metric = np.log(metric)
+    else:
+        colorbar_domain = None
     color_ch = channels.resolve_color(
         metric, len(metric), colormap=colormap, default_constant=DEFAULT_PALETTE[0]
     )
@@ -2192,6 +2211,8 @@ def hexbin(
                     **styles._opacity_channels(css),
                 },
                 color_ch=color_ch,
+                colorbar_domain=colorbar_domain,
+                colorbar_scale="log" if bins == "log" else "linear",
                 size_ch=channels.SizeChannel(mode="constant", constant=8.0),
                 count=int(n_points),
             )

@@ -6745,6 +6745,9 @@ def _colorbar_figure_domain(figure: Any) -> Optional[tuple[float, float]]:
     (e.g. hexbin counts), where it is not knowable when ``colorbar()`` runs.
     """
     for trace in reversed(getattr(figure, "traces", []) or []):
+        if getattr(trace, "colorbar_domain", None) is not None:
+            lo, hi = trace.colorbar_domain
+            return (float(lo), float(hi))
         style = getattr(trace, "style", None) or {}
         if style.get("role") == "heatmap" and style.get("domain") is not None:
             lo, hi = style["domain"]
