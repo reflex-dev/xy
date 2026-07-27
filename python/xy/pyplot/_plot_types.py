@@ -4353,7 +4353,6 @@ class PlotTypeMixin:
         self.set_aspect("equal", adjustable="box")
         if not frame:
             self.set_axis_off()
-            self._hidden_spines.update(("left", "bottom", "top", "right"))
         return PieContainer(wedges, source_values, bool(normalize), texts, autotexts)
 
     def pie_label(

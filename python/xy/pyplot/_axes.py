@@ -906,6 +906,10 @@ class Axes(PlotTypeMixin):
             "y": {"labelleft": y2_of is None, "labelright": y2_of is not None},
         }
         self._tick_lengths: dict[str, float] = {}
+        # Matplotlib's `axison` is an axes-wide draw-time gate. It does not
+        # mutate the individual Axis or Spine visibility settings, so turning
+        # it back on restores whatever those settings were before.
+        self.axison = True
         self._hidden_spines: set[str] = set()
         self._grid = bool(rcParams["axes.grid"])
         self._grid_axes = {"x": self._grid, "y": self._grid}
@@ -1201,6 +1205,7 @@ class Axes(PlotTypeMixin):
             "y": {"labelleft": self._y2_of is None, "labelright": self._y2_of is not None},
         }
         self._tick_lengths = {}
+        self.axison = True
         self._hidden_spines = set()
         self._title = None
         self._title_style = {}
@@ -3838,8 +3843,7 @@ class Axes(PlotTypeMixin):
             self.set_axis_off()
         elif arg == "on":
             self._materialize_axis_view_domains()
-            self.xaxis.set_visible(True)
-            self.yaxis.set_visible(True)
+            self.set_axis_on()
         elif arg in {"auto", "equal", "scaled", "image", "square"}:
             # All five Matplotlib modes begin with autoscale_view(tight=False),
             # whose limits include the configured x/y margins.
@@ -4419,9 +4423,14 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def set_axis_off(self) -> None:
-        """Hide both axes, like matplotlib's ``axis("off")``."""
-        self.xaxis.set_visible(False)
-        self.yaxis.set_visible(False)
+        """Suppress every x/y-axis decoration without changing its settings."""
+        self.axison = False
+        self._invalidate()
+
+    def set_axis_on(self) -> None:
+        """Draw x/y-axis decorations using their existing visibility settings."""
+        self.axison = True
+        self._invalidate()
 
     def inset_axes(
         self, bounds: tuple[float, float, float, float] | Sequence[float], **kwargs: Any
@@ -6680,6 +6689,12 @@ class Axes(PlotTypeMixin):
         empty_view = {axis for axis, dataless in axis_dataless.items() if dataless}
         x_props = {k: v for k, v in self._axis["x"].items() if v is not None}
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
+        if not self.axison:
+            # `set_axis_off()` is a draw-time override in Matplotlib: suppress
+            # labels, ticks, grid lines and axis titles while leaving the
+            # authored Axis state intact for a later `set_axis_on()`.
+            x_props["tick_label_strategy"] = "none"
+            y_props["tick_label_strategy"] = "none"
         for axis, props in (("x", x_props), ("y", y_props)):
             if adjusted_aspect or axis in self._explicit_domains:
                 continue
@@ -6832,9 +6847,15 @@ class Axes(PlotTypeMixin):
             )
         if "handleheight" in self._legend_options:
             core_figure.legend_options["handleheight"] = self._legend_options["handleheight"]
-        core_figure.frame_sides = [
-            side for side in ("left", "bottom", "top", "right") if side not in self._hidden_spines
-        ]
+        core_figure.frame_sides = (
+            []
+            if not self.axison
+            else [
+                side
+                for side in ("left", "bottom", "top", "right")
+                if side not in self._hidden_spines
+            ]
+        )
         if self._colorbar is not None:
             figure = core_figure
             options = dict(self._colorbar)
