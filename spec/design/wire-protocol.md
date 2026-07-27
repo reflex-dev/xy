@@ -439,9 +439,10 @@ Two independent version constants:
   table with the stop array, misses, and silently paints viridis. v8 adds
   legend/colorbar geometry, named colormaps, and match-fill strokes that an
   older v7 client would accept but silently render with its old defaults. v9
-  adds `axis.tick_sides`, separating tick-mark edges from the label-bearing
-  `axis.side`; a cached v8 client ignores the new field and silently draws
-  tick marks on only the label-bearing side.
+  adds `axis.tick_sides` and `axis.tick_label_sides`, separating tick-mark and
+  label edges from `axis.side`. Without the bump, a cached v8 client would
+  ignore both fields and silently draw tick marks and labels only on
+  `axis.side`; the v9 mismatch rejects that stale client before rendering.
 - **Transport frame.** `FRAME_MAGIC` `"XYBF"` with `FRAME_VERSION = 1`
   versions the binary envelope separately, so the transport and the renderer
   can evolve without coupling.

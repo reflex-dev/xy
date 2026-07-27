@@ -29,8 +29,9 @@
 // stop array, misses, and paints viridis without erroring.
 // v8: legend/colorbar geometry, extra colormap names, and match-fill strokes
 // add wire values an older v7 client would accept but silently misrender.
-// v9: `axis.tick_sides` separates tick-mark edges from the label-bearing
-// `axis.side`. A cached v8 client ignores it and silently draws only one edge.
+// v9: `axis.tick_sides` and `axis.tick_label_sides` separate tick-mark and
+// label edges from `axis.side`. Without this bump, a cached v8 client would
+// ignore both and silently draw only one edge; v9 rejects it before rendering.
 export const PROTOCOL = 9;
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
