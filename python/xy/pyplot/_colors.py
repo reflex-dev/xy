@@ -382,7 +382,7 @@ def is_color_like(value: object) -> bool:
             return bool(np.isfinite(gray) and 0.0 <= gray <= 1.0)
     try:
         resolve_rgba(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
     return True
 

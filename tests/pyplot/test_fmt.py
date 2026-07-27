@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from xy.pyplot._colors import is_color_like
 from xy.pyplot._fmt import parse_fmt
 
 
@@ -36,6 +37,18 @@ def test_parse(fmt: str, expected: tuple) -> None:
 def test_marker_one_is_not_a_linestyle_dash() -> None:
     # '1' is the tri_down marker, never part of a linestyle.
     assert parse_fmt("1") == (None, None, "1")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        (float("inf"), 0.0, 0.0),
+        (-float("inf"), 0.0, 0.0, 1.0),
+        (0.0, float("nan"), 0.0),
+    ],
+)
+def test_nonfinite_rgba_is_not_color_like(value: tuple[float, ...]) -> None:
+    assert is_color_like(value) is False
 
 
 @pytest.mark.parametrize("bad", ["z", "r--q", "??"])
