@@ -485,7 +485,7 @@ class _AxisProxy:
         axes = self.axes
         host = axes._y2_of or axes
         key = "y2" if (self.axis == "y" and axes._y2_of is not None) else self.axis
-        return host, key
+        return host._shared_ticker_source(key), key
 
     def set_inverted(self, inverted: bool) -> None:
         props = self.axes._axis_props(self.axis)
@@ -520,11 +520,11 @@ class _AxisProxy:
         host, key = self._ticker_slot()
         host._tickers[(key, "major_locator")] = locator
         # A locator displaces explicit ticks, and vice versa: last call wins.
-        props = self.axes._axis_props(self.axis)
+        props = host._axis[key]
         for stale in ("tick_values", "tick_labels", "tick_count"):
             props.pop(stale, None)
         host._auto_scale_axis_ticks.discard(key)
-        self.axes._invalidate()
+        host._invalidate_shared_ticker_axis(key)
 
     def get_major_locator(self) -> Any:
         host, key = self._ticker_slot()
@@ -535,7 +535,7 @@ class _AxisProxy:
             return
         host, key = self._ticker_slot()
         host._tickers[(key, "major_formatter")] = as_formatter(formatter, "set_major_formatter()")
-        self.axes._invalidate()
+        host._invalidate_shared_ticker_axis(key)
 
     def get_major_formatter(self) -> Any:
         host, key = self._ticker_slot()
@@ -546,6 +546,7 @@ class _AxisProxy:
         # contract. The locator is retained so get_minor_locator round-trips.
         host, key = self._ticker_slot()
         host._tickers[(key, "minor_locator")] = locator
+        host._invalidate_shared_ticker_axis(key)
 
     def get_minor_locator(self) -> Any:
         host, key = self._ticker_slot()
@@ -555,6 +556,7 @@ class _AxisProxy:
         # compat-noop for rendering, mirroring set_minor_locator.
         host, key = self._ticker_slot()
         host._tickers[(key, "minor_formatter")] = as_formatter(formatter, "set_minor_formatter()")
+        host._invalidate_shared_ticker_axis(key)
 
     def set_tick_params(
         self,
@@ -758,18 +760,28 @@ class _SharedAxesGroup:
         return list(fig._axes) if fig is not None else [ax]
 
     def get_siblings(self, ax: Axes) -> list[Any]:
+        source = ax._shared_ticker_source(self._axis)
         props = ax._axis_props(self._axis)
-        return [a for a in self._pool(ax) if a._axis_props(self._axis) is props] or [ax]
+        return [
+            other
+            for other in self._pool(ax)
+            if other._shared_ticker_source(self._axis) is source
+            or other._axis_props(self._axis) is props
+        ] or [ax]
 
     def joined(self, a: Axes, b: Axes) -> bool:
-        return a._axis_props(self._axis) is b._axis_props(self._axis)
+        return a._shared_ticker_source(self._axis) is b._shared_ticker_source(
+            self._axis
+        ) or a._axis_props(self._axis) is b._axis_props(self._axis)
 
     def join(self, *axes_list: Any) -> None:
         first = axes_list[0]
+        source = first._shared_ticker_source(self._axis)
         shared = first._axis_props(self._axis)
         for other in axes_list[1:]:
             key = "y2" if (self._axis == "y" and other._y2_of is not None) else self._axis
             (other._y2_of or other)._axis[key] = shared
+            other._shared_axis_sources[self._axis] = source
             other._invalidate()
 
 
@@ -915,6 +927,11 @@ class Axes(PlotTypeMixin):
         }
         self._auto_scale_axis_ticks: set[str] = set()
         self._tickers: dict[tuple[str, str], Any] = {}
+        # Matplotlib shares the Axis ticker containers (locator/formatter)
+        # while keeping per-Axes Tick artists and their visibility separate.
+        # Figure.apply_sharing records the first panel in each shared group,
+        # matching GridSpec.subplots' share source.
+        self._shared_axis_sources: dict[str, Axes] = {}
         self._tick_rotation_modes: dict[str, str | None] = {"x": None, "y": None}
         self._tick_sides: dict[str, dict[str, bool]] = {
             "x": {"bottom": True, "top": False},
@@ -3189,28 +3206,28 @@ class Axes(PlotTypeMixin):
         """
         if isinstance(left, (tuple, list)):
             left, right = left
-        current = self._axis_props("x").get("domain")
+        host = (self._y2_of or self)._shared_ticker_source("x")
+        current = host._axis["x"].get("domain")
         lo, hi = current if current is not None else self._entry_extent("x")
-        spec = (self._y2_of or self)._scale_specs["x"]
+        spec = host._scale_specs["x"]
         current_original = _scale_values(np.asarray((lo, hi)), spec, inverse=True)
         start = float(current_original[0] if left is None else left)
         end = float(current_original[1] if right is None else right)
         transformed = _scale_values(np.asarray((start, end)), spec)
-        self._axis_props("x")["domain"] = tuple(sorted(map(float, transformed)))
-        self._axis_props("x")["reverse"] = start > end
-        self._explicit_domains.add("x")
-        self._invalidate()
+        host._axis["x"]["domain"] = tuple(sorted(map(float, transformed)))
+        host._axis["x"]["reverse"] = start > end
+        host._explicit_domains.add("x")
+        host._invalidate_shared_ticker_axis("x")
 
     def get_xlim(self) -> tuple[float, float]:
         """The current x view limits, in data space and display order."""
-        lo, hi = self._axis_props("x").get("domain", self._auto_domain("x"))
+        host = (self._y2_of or self)._shared_ticker_source("x")
+        lo, hi = host._axis["x"].get("domain", self._auto_domain("x"))
         lo, hi = map(
             float,
-            _scale_values(
-                np.asarray((lo, hi)), (self._y2_of or self)._scale_specs["x"], inverse=True
-            ),
+            _scale_values(np.asarray((lo, hi)), host._scale_specs["x"], inverse=True),
         )
-        return (hi, lo) if self._axis_props("x").get("reverse") else (lo, hi)
+        return (hi, lo) if host._axis["x"].get("reverse") else (lo, hi)
 
     def set_ylim(self, bottom: float | LimitsLike | None = None, top: float | None = None) -> None:
         """Set the y view limits (forms as in `set_xlim`).
@@ -3220,30 +3237,32 @@ class Axes(PlotTypeMixin):
         """
         if isinstance(bottom, (tuple, list)):
             bottom, top = bottom
-        current = self._axis_props("y").get("domain")
-        lo, hi = current if current is not None else self._entry_extent("y")
+        base = self._y2_of or self
         key = "y2" if self._y2_of is not None else "y"
-        spec = (self._y2_of or self)._scale_specs[key]
+        host = base._shared_ticker_source(key)
+        current = host._axis[key].get("domain")
+        lo, hi = current if current is not None else self._entry_extent("y")
+        spec = host._scale_specs[key]
         current_original = _scale_values(np.asarray((lo, hi)), spec, inverse=True)
         start = float(current_original[0] if bottom is None else bottom)
         end = float(current_original[1] if top is None else top)
         transformed = _scale_values(np.asarray((start, end)), spec)
-        self._axis_props("y")["domain"] = tuple(sorted(map(float, transformed)))
-        self._axis_props("y")["reverse"] = start > end
-        self._explicit_domains.add("y")
-        self._invalidate()
+        host._axis[key]["domain"] = tuple(sorted(map(float, transformed)))
+        host._axis[key]["reverse"] = start > end
+        host._explicit_domains.add(key)
+        host._invalidate_shared_ticker_axis(key)
 
     def get_ylim(self) -> tuple[float, float]:
         """The current y view limits, in data space and display order."""
-        lo, hi = self._axis_props("y").get("domain", self._auto_domain("y"))
+        base = self._y2_of or self
         key = "y2" if self._y2_of is not None else "y"
+        host = base._shared_ticker_source(key)
+        lo, hi = host._axis[key].get("domain", self._auto_domain("y"))
         lo, hi = map(
             float,
-            _scale_values(
-                np.asarray((lo, hi)), (self._y2_of or self)._scale_specs[key], inverse=True
-            ),
+            _scale_values(np.asarray((lo, hi)), host._scale_specs[key], inverse=True),
         )
-        return (hi, lo) if self._axis_props("y").get("reverse") else (lo, hi)
+        return (hi, lo) if host._axis[key].get("reverse") else (lo, hi)
 
     def get_position(self, original: bool = False) -> Bbox:
         """The axes rectangle in figure fractions, as a `Bbox`.
@@ -4997,11 +5016,12 @@ class Axes(PlotTypeMixin):
         """
         if kwargs.pop("minor", False):
             return
-        props = self._axis_props("x")
+        host = (self._y2_of or self)._shared_ticker_source("x")
+        props = host._axis["x"]
         if ticks is not None:
-            spec = (self._y2_of or self)._scale_specs["x"]
-            (self._y2_of or self)._auto_scale_axis_ticks.discard("x")
-            (self._y2_of or self)._tickers.pop(("x", "major_locator"), None)
+            spec = host._scale_specs["x"]
+            host._auto_scale_axis_ticks.discard("x")
+            host._tickers.pop(("x", "major_locator"), None)
             props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
             props["tick_count"] = max(1, len(props["tick_values"]))
             if labels is None:
@@ -5018,10 +5038,10 @@ class Axes(PlotTypeMixin):
                 raise ValueError("labels must have the same length as ticks")
             # matplotlib: explicit labels install a FixedFormatter, displacing
             # any user formatter.
-            (self._y2_of or self)._tickers.pop(("x", "major_formatter"), None)
+            host._tickers.pop(("x", "major_formatter"), None)
         if rotation is not None:
-            props["tick_label_angle"] = float(rotation)
-        self._invalidate()
+            self._axis_props("x")["tick_label_angle"] = float(rotation)
+        host._invalidate_shared_ticker_axis("x")
 
     def set_yticks(
         self,
@@ -5034,12 +5054,14 @@ class Axes(PlotTypeMixin):
         """Place the y ticks at the given positions (see `set_xticks`)."""
         if kwargs.pop("minor", False):
             return
-        props = self._axis_props("y")
+        base = self._y2_of or self
+        key = "y2" if self._y2_of is not None else "y"
+        host = base._shared_ticker_source(key)
+        props = host._axis[key]
         if ticks is not None:
-            key = "y2" if self._y2_of is not None else "y"
-            spec = (self._y2_of or self)._scale_specs[key]
-            (self._y2_of or self)._auto_scale_axis_ticks.discard(key)
-            (self._y2_of or self)._tickers.pop((key, "major_locator"), None)
+            spec = host._scale_specs[key]
+            host._auto_scale_axis_ticks.discard(key)
+            host._tickers.pop((key, "major_locator"), None)
             props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
             props["tick_count"] = max(1, len(props["tick_values"]))
             if labels is None:
@@ -5054,11 +5076,10 @@ class Axes(PlotTypeMixin):
             props["tick_labels"] = [_plain_text(value) for value in labels]
             if len(props["tick_labels"]) != len(props.get("tick_values", [])):
                 raise ValueError("labels must have the same length as ticks")
-            key = "y2" if self._y2_of is not None else "y"
-            (self._y2_of or self)._tickers.pop((key, "major_formatter"), None)
+            host._tickers.pop((key, "major_formatter"), None)
         if rotation is not None:
-            props["tick_label_angle"] = float(rotation)
-        self._invalidate()
+            self._axis_props("y")["tick_label_angle"] = float(rotation)
+        host._invalidate_shared_ticker_axis(key)
 
     def _set_ticklabels(
         self,
@@ -5172,15 +5193,15 @@ class Axes(PlotTypeMixin):
         return self._computed_ticks("y", minor)
 
     def _computed_ticks(self, axis: str, minor: bool) -> np.ndarray:
-        props = self._axis_props(axis)
+        base = self._y2_of or self
+        key = "y2" if axis == "y" and self._y2_of is not None else axis
+        host = base._shared_ticker_source(key)
+        props = host._axis[key]
         if minor:
             return np.asarray(props.get("minor_tick_values", []), dtype=float)
         if "tick_values" in props:
-            key = "y2" if axis == "y" and self._y2_of is not None else axis
             return np.asarray(
-                _scale_values(
-                    props["tick_values"], (self._y2_of or self)._scale_specs[key], inverse=True
-                ),
+                _scale_values(props["tick_values"], host._scale_specs[key], inverse=True),
                 dtype=float,
             )
         # Auto-ticked axes report the same nice locations the exporters draw.
@@ -5189,8 +5210,6 @@ class Axes(PlotTypeMixin):
         lo, hi = sorted(self.get_xlim() if axis == "x" else self.get_ylim())
         if not (np.isfinite(lo) and np.isfinite(hi)) or lo == hi:
             return np.asarray([], dtype=float)
-        host = self._y2_of or self
-        key = "y2" if (axis == "y" and self._y2_of is not None) else axis
         locator = host._tickers.get((key, "major_locator"))
         if locator is not None:
             ticks = np.asarray(locator.tick_values(lo, hi), dtype=float).reshape(-1)
@@ -5521,6 +5540,37 @@ class Axes(PlotTypeMixin):
         key = "y2" if (axis == "y" and self._y2_of is not None) else axis
         return host._axis[key]
 
+    def _shared_ticker_source(self, key: str) -> "Axes":
+        """Axis whose locator/formatter and authored ticks this panel uses."""
+        if key == "y2":
+            return self
+        return self._shared_axis_sources.get(key, self)
+
+    def _invalidate_shared_ticker_axis(self, key: str) -> None:
+        """Drop every chart cache that consumes one shared ticker container."""
+        source = self._shared_ticker_source(key)
+        figure = source.figure
+        if figure is None:
+            source._chart = None
+            return
+        for ax in figure._axes:
+            if ax._shared_ticker_source(key) is source:
+                ax._chart = None
+        figure._invalidate()
+
+    def _inherit_shared_axis_state(self, axis: str, props: dict[str, Any]) -> None:
+        """Overlay the shared Axis state while retaining local tick visibility."""
+        source = self._shared_ticker_source(axis)
+        if source is self:
+            return
+        source_props = source._axis[axis]
+        for name in ("domain", "reverse", "tick_values", "tick_labels", "tick_count"):
+            if name in source_props:
+                props[name] = source_props[name]
+
+    def _has_explicit_shared_domain(self, axis: str) -> bool:
+        return axis in self._shared_ticker_source(axis)._explicit_domains
+
     def _ticker_view(self, key: str, props: dict[str, Any]) -> tuple[float, float]:
         """The axis view interval in *data* space, for locator math."""
         axis = "y" if key == "y2" else key
@@ -5540,10 +5590,11 @@ class Axes(PlotTypeMixin):
         """Resolve a user locator/formatter into concrete tick props (in place)."""
         from ._ticker import NullFormatter
 
-        locator = self._tickers.get((key, "major_locator"))
-        formatter = self._tickers.get((key, "major_formatter"))
-        minor_locator = self._tickers.get((key, "minor_locator"))
-        minor_formatter = self._tickers.get((key, "minor_formatter"))
+        ticker_source = self._shared_ticker_source(key)
+        locator = ticker_source._tickers.get((key, "major_locator"))
+        formatter = ticker_source._tickers.get((key, "major_formatter"))
+        minor_locator = ticker_source._tickers.get((key, "minor_locator"))
+        minor_formatter = ticker_source._tickers.get((key, "minor_formatter"))
         # The engine draws a single tick set. When a script blanks the major
         # labels and puts the text on located minors (matplotlib's centered
         # date-label idiom: major NullFormatter + labeled minor locator), the
@@ -6638,14 +6689,16 @@ class Axes(PlotTypeMixin):
             axis: self._axis_is_dataless(axis)
             for axis in ("x", "y")
             if not adjusted_aspect
-            and axis not in self._explicit_domains
+            and not self._has_explicit_shared_domain(axis)
             and self._axis[axis].get("domain") is None
         }
         empty_view = {axis for axis, dataless in axis_dataless.items() if dataless}
         x_props = {k: v for k, v in self._axis["x"].items() if v is not None}
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
+        self._inherit_shared_axis_state("x", x_props)
+        self._inherit_shared_axis_state("y", y_props)
         for axis, props in (("x", x_props), ("y", y_props)):
-            if adjusted_aspect or axis in self._explicit_domains:
+            if adjusted_aspect or self._has_explicit_shared_domain(axis):
                 continue
             # Mesh and image spans are sticky on both ends: materialize the
             # domain so the renderer's generic margin padding cannot widen an
@@ -6775,12 +6828,15 @@ class Axes(PlotTypeMixin):
         for axis_id in ("x", "y"):
             options = core_figure.axis_options.get(axis_id, {})
             categories = core_figure._axis_categories.get(axis_id)
-            locator = self._tickers.get((axis_id, "major_locator"))
-            explicit_ticks = "tick_values" in self._axis[axis_id]
+            ticker_source = self._shared_ticker_source(axis_id)
+            locator = ticker_source._tickers.get((axis_id, "major_locator"))
+            explicit_ticks = "tick_values" in ticker_source._axis[axis_id]
             if categories and options.get("tick_values") is None:
                 options["tick_values"] = [float(index) for index in range(len(categories))]
                 options["tick_count"] = max(1, len(categories))
-            if categories or isinstance(locator, FixedLocator) or explicit_ticks:
+            if (categories or isinstance(locator, FixedLocator) or explicit_ticks) and options.get(
+                "tick_label_strategy"
+            ) not in {"off", "none"}:
                 options["tick_label_strategy"] = "preserve"
         if self._legend and self._legend_artist is None and "border_pad" in self._legend_options:
             core_figure.legend_options["border_pad"] = self._legend_options["border_pad"]
@@ -6868,7 +6924,7 @@ class Axes(PlotTypeMixin):
         one.
         """
         for axis, props in (("x", x_props), ("y", y_props)):
-            if axis in self._explicit_domains or self._axis_is_dataless(axis):
+            if self._has_explicit_shared_domain(axis) or self._axis_is_dataless(axis):
                 continue
             spec = self._scale_specs.get(axis) or {"name": "linear"}
             if spec.get("name") != "linear":
@@ -6880,7 +6936,8 @@ class Axes(PlotTypeMixin):
                 margin = self._rc_margins[axis]
                 pad = (hi - lo) * margin
                 domain = (lo - pad, hi + pad)
-            locator = self._tickers.get((axis, "major_locator")) or AutoLocator()
+            ticker_source = self._shared_ticker_source(axis)
+            locator = ticker_source._tickers.get((axis, "major_locator")) or AutoLocator()
             if not hasattr(locator, "view_limits"):
                 continue
             if isinstance(locator, Locator):
@@ -6899,7 +6956,7 @@ class Axes(PlotTypeMixin):
             if (
                 "tick_count" not in props
                 and "tick_values" not in props
-                and (axis, "major_locator") not in self._tickers
+                and (axis, "major_locator") not in self._shared_ticker_source(axis)._tickers
             ):
                 props["tick_count"] = counts[axis]
 

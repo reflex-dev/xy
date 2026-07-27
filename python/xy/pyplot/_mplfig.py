@@ -388,12 +388,26 @@ class Figure:
         Figure creation and pyplot registration belong to the state module.
         """
         del kwargs
-        gridspec_kw = gridspec_kw or {}
-        width_ratios = gridspec_kw.get("width_ratios", width_ratios)
-        height_ratios = gridspec_kw.get("height_ratios", height_ratios)
+        grid_options = dict(gridspec_kw or {})
+        width_ratios = grid_options.pop("width_ratios", width_ratios)
+        height_ratios = grid_options.pop("height_ratios", height_ratios)
+        grid = _GridSpec(
+            self,
+            int(nrows),
+            int(ncols),
+            width_ratios=width_ratios,
+            height_ratios=height_ratios,
+            **grid_options,
+        )
         axes = make_axes_grid(self, int(nrows), int(ncols), squeeze=squeeze)
-        self._width_ratios = None if width_ratios is None else tuple(map(float, width_ratios))
-        self._height_ratios = None if height_ratios is None else tuple(map(float, height_ratios))
+        self._width_ratios = grid._width_ratios
+        self._height_ratios = grid._height_ratios
+        if grid.has_custom_geometry:
+            for index, ax in enumerate(self._axes):
+                row, col = divmod(index, int(ncols))
+                spec = _SubplotSpec(grid, (row, row + 1), (col, col + 1))
+                ax._subplot_spec = spec
+                ax._figure_rect = grid.cell_rect(spec.rows, spec.cols)
         apply_sharing(self, _share_mode(sharex, "sharex"), _share_mode(sharey, "sharey"))
         self._hide_inner_tick_labels(int(nrows), int(ncols))
         self._invalidate()
@@ -1233,17 +1247,22 @@ class Figure:
                 linked.append(dim)
                 for group in self._share_groups(shared, len(figures)):
                     members = [figures[i] for i in group]
-                    # matplotlib shared limits autoscale over the group's data;
-                    # dataless panels follow the group instead of contributing
-                    # their (0, 1) default view to the union.
-                    sources = [figure for figure in members if figure.traces] or members
-                    ranges = [
-                        figure.x_range() if dim == "x" else figure.y_range() for figure in sources
-                    ]
-                    domain = (
-                        min(min(pair) for pair in ranges),
-                        max(max(pair) for pair in ranges),
-                    )
+                    source_ax = self._axes[group[0]]
+                    if dim in source_ax._explicit_domains:
+                        domain = tuple(map(float, source_ax._axis[dim]["domain"]))
+                    else:
+                        # Matplotlib shared limits autoscale over the group's
+                        # data; dataless panels follow the group instead of
+                        # contributing their (0, 1) default view to the union.
+                        sources = [figure for figure in members if figure.traces] or members
+                        ranges = [
+                            figure.x_range() if dim == "x" else figure.y_range()
+                            for figure in sources
+                        ]
+                        domain = (
+                            min(min(pair) for pair in ranges),
+                            max(max(pair) for pair in ranges),
+                        )
                     for index in group:
                         shared_domains[index][dim] = domain
 
@@ -1810,6 +1829,17 @@ def _share_mode(value: Any, label: str) -> Any:
 
 
 def apply_sharing(fig: Figure, sharex: Any, sharey: Any) -> None:
-    """Share static domains and live pan/zoom ranges across subplot panels."""
+    """Share domains, authored ticker state, and live ranges across panels."""
     fig._sharex = _share_mode(sharex, "sharex")
     fig._sharey = _share_mode(sharey, "sharey")
+    for axis, mode in (("x", fig._sharex), ("y", fig._sharey)):
+        for ax in fig._axes:
+            ax._shared_axis_sources.pop(axis, None)
+        if not mode:
+            continue
+        for group in fig._share_groups(mode, len(fig._axes)):
+            if not group:
+                continue
+            source = fig._axes[group[0]]
+            for index in group:
+                fig._axes[index]._shared_axis_sources[axis] = source
