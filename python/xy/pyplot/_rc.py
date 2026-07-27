@@ -42,6 +42,7 @@ _DEFAULTS: dict[str, Any] = {
     "scatter.edgecolors": "face",
     "font.size": 10.0,
     "font.family": ["sans-serif"],
+    "text.color": "black",
     "axes.grid": False,
     "grid.color": "#b0b0b0",
     "axes.facecolor": "white",
