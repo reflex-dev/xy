@@ -3117,8 +3117,4 @@ def cycler(*args: Any, **kwargs: Any) -> Any:
     return _PropCycle(list(values))
 
 
-def np_asarray_passthrough(x: Any) -> Any:  # pragma: no cover - numpy re-export shim
-    return np.asarray(x)
-
-
 _install_ipython_display_hook()

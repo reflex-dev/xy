@@ -1235,28 +1235,6 @@ def _emit_line(
         cmd.stroke(pts, width, c, dash=style.get("dash"), cap=cap)
 
 
-def _annotation_point(
-    ann: dict[str, Any],
-    style: dict[str, Any],
-    sx: _Scale,
-    sy: _Scale,
-    plot: dict[str, float],
-    width: float,
-    height: float,
-) -> tuple[float, float]:
-    space = style.get("coordinate_space")
-    x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
-    if space == "axes_fraction":
-        return plot["x"] + x * plot["w"], plot["y"] + (1.0 - y) * plot["h"]
-    if space == "figure_fraction":
-        return x * width, (1.0 - y) * height
-    if space == "yaxis_transform":
-        return plot["x"] + x * plot["w"], float(sy(y))
-    if space == "xaxis_transform":
-        return float(sx(x)), plot["y"] + (1.0 - y) * plot["h"]
-    return float(sx(x)), float(sy(y))
-
-
 def _native_font_emphasis(style: dict[str, Any]) -> tuple[bool, bool]:
     """Return baked-font italic/bold approximations for an annotation."""
     italic = str(style.get("font_style", "")).lower() in {"italic", "oblique"}
