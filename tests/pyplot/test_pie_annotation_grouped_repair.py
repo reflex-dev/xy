@@ -156,7 +156,13 @@ def test_pie_shadow_dict_darkens_offsets_and_applies_alpha() -> None:
         assert shadow["kwargs"]["opacity"] == 0.25
         assert shadow["_pie_shadow_offset_points"] == (-2.0, 3.0)
         assert shadow["_zorder"] < wedge.get_zorder()
-        assert ax._entries.index(shadow) < ax._entries.index(wedge._entry)
+        shadow_index = next(
+            index for index, entry in enumerate(ax._entries) if entry is shadow
+        )
+        wedge_index = next(
+            index for index, entry in enumerate(ax._entries) if entry is wedge._entry
+        )
+        assert shadow_index < wedge_index
         dx = np.asarray(shadow["args"][0]) - np.asarray(wedge._entry["args"][0])
         dy = np.asarray(shadow["args"][1]) - np.asarray(wedge._entry["args"][1])
         assert np.all(dx < 0)
