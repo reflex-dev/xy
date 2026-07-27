@@ -117,3 +117,71 @@ def test_polygon_clear_and_legacy_selection_reply_shapes():
     assert legacy_reply is not None
     legacy, _ = legacy_reply
     assert set(legacy) == {"type", "traces", "total"}
+
+
+def test_capped_ids_are_the_smallest_and_sorted():
+    """The cap is applied before boxing, and picks the same ids as before.
+
+    The reply keeps at most `SELECTION_EVENT_ID_LIMIT` canonical ids, and they
+    are the numerically smallest ones in ascending order — the shape a
+    `sorted(...)[:limit]` over the whole selection produced. That form
+    materialized a Python int per *selected* row (~40 bytes each) just to throw
+    almost all of them away, so the cap now runs on the array first; this pins
+    that the answer did not move.
+    """
+    n = 5 * SELECTION_EVENT_ID_LIMIT
+    values = np.arange(n, dtype=np.float64)
+    fig = Figure().scatter(values, values)
+
+    reply = handle_message(
+        fig,
+        {"type": "select", "x0": -1, "x1": n, "y0": -1, "y1": n, "include_rows": True},
+    )
+    assert reply is not None
+    message, _ = reply
+    (group,) = message["canonical_row_ids"]
+    ids = group["ids"]
+    assert ids == list(range(SELECTION_EVENT_ID_LIMIT))
+    assert all(isinstance(v, int) for v in ids)
+    assert message["truncated"] is True
+    json.dumps(message, allow_nan=False)
+
+
+def test_id_budget_is_shared_across_traces_in_trace_order():
+    """A trace that exhausts the budget leaves later traces with none."""
+    half = SELECTION_EVENT_ID_LIMIT
+    a = np.arange(half, dtype=np.float64)
+    fig = Figure()
+    fig.scatter(a, a)
+    fig.scatter(a, a)
+
+    reply = handle_message(
+        fig,
+        {
+            "type": "select",
+            "x0": -1,
+            "x1": half,
+            "y0": -1,
+            "y1": half,
+            "include_rows": True,
+        },
+    )
+    assert reply is not None
+    message, _ = reply
+    counts = [len(group["ids"]) for group in message["canonical_row_ids"]]
+    assert sum(counts) == SELECTION_EVENT_ID_LIMIT
+    assert counts[0] == SELECTION_EVENT_ID_LIMIT
+    assert message["truncated"] is True
+
+
+def test_uncapped_selection_reports_every_id_untruncated():
+    values = np.arange(8, dtype=np.float64)
+    fig = Figure().scatter(values, values)
+    reply = handle_message(
+        fig, {"type": "select", "x0": -1, "x1": 9, "y0": -1, "y1": 9, "include_rows": True}
+    )
+    assert reply is not None
+    message, _ = reply
+    (group,) = message["canonical_row_ids"]
+    assert group["ids"] == list(range(8))
+    assert message["truncated"] is False

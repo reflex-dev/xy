@@ -92,10 +92,13 @@ reported).
   spec (documented CPU/GPU/driver/browser build), labeled as such. Never mix
   tiers in one table. HN's first attack is "benchmarked on a potato/cherry
   machine" — pre-empt by publishing both. `benchmarks/README.md` is the shipped
-  runbook for both tiers: exact dependency pins against
-  `benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro` (`pyproject.toml`,
-  `uv.lock`, `environment.json`), copy-paste repro commands, and the prescribed
-  `reference hardware` vs `CI (software GL)` table labels.
+  runbook for both tiers: exact dependency pins against the launch baseline
+  directories under `benchmarks/launch_baselines/` (`pyproject.toml`, `uv.lock`,
+  `environment.json` — `xy-0.1.0/macos-arm64-m5-pro` for the original launch
+  record, `xy-main-2026-07-26/macos-arm64-m5-pro` for the rerun the published
+  docs quote, both carrying identical competitor pins), copy-paste repro
+  commands, and the prescribed `reference hardware` vs `CI (software GL)` table
+  labels.
 - Every table header carries: timestamp, python version/implementation,
   platform system/machine, and harness commit + dirty state
   (`bench_vs.to_markdown`). Library versions, executables, CPU count, xy

@@ -107,6 +107,11 @@ def _legend_visible_rows(t: "Trace") -> Optional[np.ndarray]:
     """
     pred = _hidden_predicate(t)
     if pred is None:
+        # Unmasked: nothing can consume the cache, and an 8-byte-per-visible-row
+        # index array is far too large to keep on the chance the user hides a
+        # category again (350 MB for a 50M-row trace). Un-hiding everything is
+        # the one state where dropping it is provably free.
+        t._legend_vis_cache = None
         return None
     hidden, codes = pred
     key = (frozenset(t.hidden_categories), len(codes))
@@ -156,6 +161,15 @@ def legend_toggle(
         t.hidden_categories.add(code)
     else:
         t.hidden_categories.discard(code)
+        if not t.hidden_categories:
+            # Release here, not on the next `_legend_visible_rows`. That is the
+            # cache's only reader, and un-hiding the last category is exactly
+            # the state where nothing needs to read it again — a toggle that is
+            # the last thing to happen to this trace would otherwise pin
+            # 8 bytes per visible row for the figure's lifetime. The reader
+            # still drops it too, for the paths that reach unmasked without a
+            # toggle (a color encoding replaced under a stale mask).
+            t._legend_vis_cache = None
 
 
 def pick(
@@ -299,11 +313,16 @@ def select_range(
         elif len(candidate_chunks) == 0:
             out[t.id] = np.empty(0, dtype=np.uint32)
         else:
+            # Scan the candidates in place. Gathering `x[candidates]` and
+            # `y[candidates]` first cost two fresh f64 columns — 16 bytes per
+            # candidate — so a partial selection could cost several times a
+            # whole-domain one: half of a 10M-row trace peaked at 134.6 MB
+            # where selecting every row peaked at 38.1 MB. The kernel returns
+            # canonical row ids directly, so the re-index is gone too.
             candidates = _expand_zone_chunks(t.x, candidate_chunks)
-            out[t.id] = kernels.range_indices(
-                t.x.values[candidates], t.y.values[candidates], lo_x, hi_x, lo_y, hi_y
+            out[t.id] = kernels.range_indices_rows(
+                t.x.values, t.y.values, candidates, lo_x, hi_x, lo_y, hi_y
             )
-            out[t.id] = candidates[out[t.id]]
         out[t.id] = _drop_hidden_rows(t, out[t.id])
     return out
 
@@ -549,6 +568,25 @@ def bin_color_cache_bytes(fig: Any) -> int:
             if any(np.shares_memory(v, arr) for arr in owned):
                 continue
             total += int(v.nbytes)
+    return total
+
+
+def legend_vis_cache_bytes(fig: Any) -> int:
+    """Memory-report line (design dossier §27): bytes held by cached
+    legend-visible row indices.
+
+    One `np.intp` per visible row per masked trace. It survives every pan and
+    zoom by design — that is the point of the cache — so §27's rule applies:
+    if a number isn't in the report, it isn't real.
+    """
+    total = 0
+    for t in fig.traces:
+        cached = getattr(t, "_legend_vis_cache", None)
+        if cached is None:
+            continue
+        rows = cached[1]
+        if isinstance(rows, np.ndarray):
+            total += int(rows.nbytes)
     return total
 
 

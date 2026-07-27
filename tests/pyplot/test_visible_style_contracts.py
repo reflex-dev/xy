@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import pytest
 
 import xy.pyplot as plt
@@ -7,16 +9,40 @@ def teardown_function():
     plt.close("all")
 
 
-def test_line_cap_and_gapcolor_mutations_fail_loudly():
+def test_line_cap_mutations_fail_loudly_and_gapcolor_round_trips():
     _, ax = plt.subplots()
-    line = ax.plot([0, 1], [0, 1])[0]
+    line = ax.plot([0, 1], [0, 1], dashes=[4, 4])[0]
 
     with pytest.raises(NotImplementedError):
-        line.set_dash_capstyle("round")
+        line.set_dash_capstyle("butt")
     with pytest.raises(NotImplementedError):
         line.set_solid_capstyle("round")
-    with pytest.raises(NotImplementedError):
-        line.set_gapcolor("red")
+    line.set_gapcolor("red")
+    assert line.get_gapcolor() == "red"
+    line.set_gapcolor(None)
+    assert line.get_gapcolor() is None
+
+
+def test_dashed_gapcolor_materializes_behind_one_named_foreground_trace() -> None:
+    _, ax = plt.subplots()
+    line = ax.plot(
+        [0, 1, 2],
+        [0, 1, 0],
+        dashes=[4, 4],
+        gapcolor="tab:pink",
+        color="tab:blue",
+        label="alternating",
+    )[0]
+
+    assert line.get_gapcolor() == "#e377c2"
+    spec, _blob = ax._build_chart(640, 480).figure().build_payload()
+    assert [
+        (trace["name"], trace["style"]["color"], trace["style"].get("dash"))
+        for trace in spec["traces"]
+    ] == [
+        (None, "#e377c2", None),
+        ("alternating", "#1f77b4", [8.3333, 8.3333]),
+    ]
 
 
 def test_text_preserves_visible_font_alignment_and_rotation_style():

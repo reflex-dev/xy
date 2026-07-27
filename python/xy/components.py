@@ -38,6 +38,7 @@ import uuid
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import lru_cache
 from os import PathLike
 from typing import Any, Literal, Optional, TypeAlias, Union
 
@@ -228,6 +229,8 @@ class Axis(Component):
     tick_label_min_gap: Optional[float] = None
     side: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
+    # New fields append after the v0.0.3 positional surface.
+    margin: Optional[float] = None
 
 
 @dataclass
@@ -245,6 +248,7 @@ class Legend(Component):
     # construction over the released field order must keep binding.
     highlight: bool = True
     toggle: bool = True
+    anchor: Optional[tuple[float, ...]] = None
 
 
 @dataclass
@@ -356,9 +360,23 @@ class Spring:
         }
 
 
+_UNSET: Any = object()
+
+
 @dataclass
 class Animation(Component):
-    """Declarative browser transition policy built by :func:`animation`."""
+    """Declarative browser transition policy built by :func:`animation`.
+
+    A mark-level instance cascades over the chart-level one field by field.
+    ``to_spec`` is the complete policy; ``to_override_spec`` is only what this
+    instance actually sets, which is what makes the cascade work.
+    """
+
+    # Set by :func:`animation` to the exact argument names the caller passed.
+    # ``None`` means "not recorded" — direct construction falls back to
+    # comparing against the defaults, which is right except for the odd case
+    # of explicitly passing a default value.
+    _explicit_fields = None
 
     enabled: bool | Literal["auto"] = "auto"
     delay: float = 0.0
@@ -427,6 +445,26 @@ class Animation(Component):
             "interpolate": list(policies),
         }
 
+    def to_override_spec(self) -> dict[str, Any]:
+        """Only the fields this instance sets, for cascading over a base spec.
+
+        `to_spec` is complete, so spreading it over a chart-level spec resets
+        every field the caller did not mention — silently turning off a
+        chart-level ``match="key"``, among others.
+        """
+        spec = self.to_spec()
+        explicit = self._explicit_fields
+        if explicit is None:
+            defaults = _animation_defaults()
+            explicit = {name for name, value in spec.items() if value != defaults[name]}
+        return {name: value for name, value in spec.items() if name in explicit}
+
+
+@lru_cache(maxsize=1)
+def _animation_defaults() -> dict[str, Any]:
+    """The complete default policy, and the base every cascade starts from."""
+    return Animation().to_spec()
+
 
 def _positive_animation_number(value: Any, label: str) -> float:
     number = _finite_number(value, label)
@@ -463,43 +501,65 @@ def spring(*, stiffness: float = 170.0, damping: float = 26.0, mass: float = 1.0
 
 def animation(
     *,
-    enabled: bool | Literal["auto"] = "auto",
-    delay: float = 0,
-    duration: float = 400,
-    easing: str | tuple[float, float, float, float] | Spring = "ease-out",
-    match: Literal["index", "append", "key"] = "index",
-    enter: str = "auto",
-    update: str = "interpolate",
-    interpolate: Sequence[str] = ("position", "size", "color", "domain"),
+    enabled: bool | Literal["auto"] = _UNSET,
+    delay: float = _UNSET,
+    duration: float = _UNSET,
+    easing: str | tuple[float, float, float, float] | Spring = _UNSET,
+    match: Literal["index", "append", "key"] = _UNSET,
+    enter: str = _UNSET,
+    update: str = _UNSET,
+    interpolate: Sequence[str] = _UNSET,
     on_start: Optional[Callable[[dict], None]] = None,
     on_end: Optional[Callable[[dict], None]] = None,
 ) -> Animation:
     """Configure entrance and data-update motion without per-frame callbacks.
 
+    A mark-level `animation=` cascades over the chart-level one: only the
+    arguments passed here override it, so `xy.animation(duration=90)` on a mark
+    keeps the chart's `match`, `easing`, and the rest.
+
     Args:
-        enabled: ``"auto"`` honors reduced motion; a boolean explicitly enables or disables.
-        delay: Non-negative delay before motion begins, in milliseconds.
-        duration: Non-negative animation duration, in milliseconds.
+        enabled: ``"auto"`` (default) honors reduced motion; a boolean explicitly
+            enables or disables.
+        delay: Non-negative delay before motion begins, in milliseconds. Default ``0``.
+        duration: Non-negative animation duration, in milliseconds. Default ``400``.
         easing: Named easing, four-number cubic Bézier tuple, or ``spring()`` policy.
-        match: Row identity strategy: ``"index"``, ``"append"``, or ``"key"``.
-        enter: Entrance effect, such as ``"auto"``, ``"scale"``, or ``"reveal"``.
-        update: Update effect; use ``"interpolate"`` or ``"none"``.
-        interpolate: Unique channels to interpolate during updates.
+            Default ``"ease-out"``.
+        match: Row identity strategy: ``"index"`` (default), ``"append"``, or ``"key"``.
+        enter: Entrance effect, such as ``"auto"`` (default), ``"scale"``, or ``"reveal"``.
+        update: Update effect; use ``"interpolate"`` (default) or ``"none"``.
+        interpolate: Unique channels to interpolate during updates. Default
+            ``("position", "size", "color", "domain")``.
         on_start: Optional live-host callback receiving the animation-start event.
         on_end: Optional live-host callback receiving the animation-end event.
     """
-    value = Animation(
-        enabled=enabled,
-        delay=delay,
-        duration=duration,
-        easing=easing,
-        match=match,
-        enter=enter,
-        update=update,
-        interpolate=tuple(interpolate),
-        on_start=on_start,
-        on_end=on_end,
-    )
+    if interpolate is not _UNSET:
+        try:
+            interpolate = tuple(interpolate)
+        except TypeError as exc:
+            raise ValueError("animation interpolate must be a sequence of named policies") from exc
+    passed = {
+        name: value
+        for name, value in (
+            ("enabled", enabled),
+            ("delay", delay),
+            ("duration", duration),
+            ("easing", easing),
+            ("match", match),
+            ("enter", enter),
+            ("update", update),
+            ("interpolate", interpolate),
+        )
+        if value is not _UNSET
+    }
+    # Start from the dataclass defaults and apply only what was passed, so the
+    # default values live in exactly one place.
+    value = Animation(on_start=on_start, on_end=on_end)
+    for name, setting in passed.items():
+        setattr(value, name, setting)
+    # Record the caller's exact argument names so the cascade can tell "set to
+    # the default" apart from "not set". Callbacks are host-side, not spec.
+    value._explicit_fields = frozenset(passed)
     value.to_spec()
     return value
 
@@ -867,6 +927,7 @@ def segments(
     domain: Optional[tuple[float, float]] = None,
     width: Any = 1.2,
     opacity: Any = 1.0,
+    dash: Union[str, Sequence[float], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -888,6 +949,7 @@ def segments(
         domain: Explicit minimum and maximum for continuous colors.
         width: Segment width in pixels.
         opacity: Segment opacity from zero to one.
+        dash: Optional line dash pattern.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
@@ -909,6 +971,7 @@ def segments(
             "domain": domain,
             "width": width,
             "opacity": opacity,
+            "dash": dash,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -931,6 +994,7 @@ def triangle_mesh(
     opacity: Any = 1.0,
     stroke: Any = None,
     stroke_width: Any = 0.0,
+    _joined_fill: bool = False,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -955,6 +1019,7 @@ def triangle_mesh(
         opacity: Triangle opacity from zero to one.
         stroke: Optional triangle outline color.
         stroke_width: Triangle outline width in pixels.
+        _joined_fill: Internal pyplot hint for suppressing shared triangle edges.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
@@ -979,6 +1044,7 @@ def triangle_mesh(
             "opacity": opacity,
             "stroke": stroke,
             "stroke_width": stroke_width,
+            "_joined_fill": _joined_fill,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -1396,10 +1462,12 @@ def contour(
     filled: bool = False,
     name: Optional[str] = None,
     colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
-    color: Optional[str] = None,
-    width: float = 1.1,
+    color: Any = None,
+    width: Any = 1.1,
     opacity: float = 0.9,
     dash_negative: bool = False,
+    extend: str = "neither",
+    corner_mask: bool = False,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -1416,10 +1484,12 @@ def contour(
         filled: Whether to fill intervals between contours.
         name: Series label used by legends and tooltips.
         colormap: Colormap used for contour values.
-        color: Constant isoline color.
-        width: Isoline width in pixels.
+        color: Constant isoline color or direct RGBA colors cycled by level.
+        width: Isoline width in pixels, scalar or cycled by contour level.
         opacity: Contour opacity from zero to one.
         dash_negative: Whether negative isolines use a dashed stroke.
+        extend: Whether filled contours paint values below or above the levels.
+        corner_mask: Preserve the valid triangle of a quad with one missing corner.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
@@ -1442,6 +1512,8 @@ def contour(
             "width": width,
             "opacity": opacity,
             "dash_negative": dash_negative,
+            "extend": extend,
+            "corner_mask": corner_mask,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -1568,7 +1640,7 @@ def bar(
     name: Optional[str] = None,
     color: Any = None,
     colors: Optional[list[str]] = None,
-    width: float = 0.8,
+    width: Union[Scalar, ArrayLike] = 0.8,
     base: Union[str, Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
@@ -1595,7 +1667,7 @@ def bar(
         name: Series label used by legends and tooltips.
         color: Constant color, values, or a column name.
         colors: Colors assigned to multiple series.
-        width: Bar width in category units.
+        width: Scalar or per-bar widths in category units.
         base: Baseline value, values, or a column name.
         mode: ``grouped``, ``stacked``, or ``normalized`` layout.
         orientation: ``vertical`` or ``horizontal`` orientation.
@@ -1651,7 +1723,7 @@ def column(
     name: Optional[str] = None,
     color: Union[str, Sequence[str], None] = None,
     colors: Optional[list[str]] = None,
-    width: float = 0.8,
+    width: Union[Scalar, ArrayLike] = 0.8,
     base: Union[str, Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
@@ -1677,7 +1749,7 @@ def column(
         name: Series label used by legends and tooltips.
         color: Constant color, values, or a column name.
         colors: Colors assigned to multiple series.
-        width: Column width in category units.
+        width: Scalar or per-column widths in category units.
         base: Baseline value, values, or a column name.
         mode: ``grouped``, ``stacked``, or ``normalized`` layout.
         orientation: Orientation forwarded to the bar renderer.
@@ -2297,6 +2369,7 @@ def x_axis(
     type_: Optional[str] = None,
     constant: Optional[float] = None,
     domain: Optional[tuple[float, float]] = None,
+    margin: Optional[float] = None,
     bounds: Union[tuple[float, float], Literal["data"], None] = None,
     reverse: bool = False,
     format: Optional[str] = None,
@@ -2326,6 +2399,7 @@ def x_axis(
         type_: Scale type, such as ``linear``, ``time``, ``log``, or ``symlog``.
         constant: Width of the linear region around zero for ``symlog``.
         domain: Explicit minimum and maximum scale values.
+        margin: Fractional padding around an automatic domain.
         bounds: Hard navigation limits, or ``"data"`` to use the data range.
             Pan and zoom are clamped within these limits; ``None`` leaves
             navigation unrestricted.
@@ -2372,6 +2446,7 @@ def x_axis(
         type_=type_,
         constant=_axis_constant(constant, type_, "x_axis constant"),
         domain=_axis_domain(domain, "x_axis domain"),
+        margin=_optional_nonnegative_number(margin, "x_axis margin"),
         bounds=_axis_bounds(bounds, "x_axis bounds"),
         reverse=_strict_bool(reverse, "x_axis reverse"),
         format=_optional_string(format, "x_axis format"),
@@ -2401,6 +2476,7 @@ def y_axis(
     type_: Optional[str] = None,
     constant: Optional[float] = None,
     domain: Optional[tuple[float, float]] = None,
+    margin: Optional[float] = None,
     bounds: Union[tuple[float, float], Literal["data"], None] = None,
     reverse: bool = False,
     format: Optional[str] = None,
@@ -2430,6 +2506,7 @@ def y_axis(
         type_: Scale type, such as ``linear``, ``time``, ``log``, or ``symlog``.
         constant: Width of the linear region around zero for ``symlog``.
         domain: Explicit minimum and maximum scale values.
+        margin: Fractional padding around an automatic domain.
         bounds: Hard navigation limits, or ``"data"`` to use the data range.
             Pan and zoom are clamped within these limits; ``None`` leaves
             navigation unrestricted.
@@ -2476,6 +2553,7 @@ def y_axis(
         type_=type_,
         constant=_axis_constant(constant, type_, "y_axis constant"),
         domain=_axis_domain(domain, "y_axis domain"),
+        margin=_optional_nonnegative_number(margin, "y_axis margin"),
         bounds=_axis_bounds(bounds, "y_axis bounds"),
         reverse=_strict_bool(reverse, "y_axis reverse"),
         format=_optional_string(format, "y_axis format"),
@@ -2499,6 +2577,7 @@ def legend(
     *children: Any,
     show: bool = True,
     loc: Optional[str] = None,
+    anchor: Optional[tuple[float, ...]] = None,
     ncols: int = 1,
     title: Optional[str] = None,
     highlight: bool = True,
@@ -2513,6 +2592,7 @@ def legend(
         *children: Optional opaque replacement content.
         show: Whether to display the legend.
         loc: Legend placement within or around the plot.
+        anchor: Two- or four-value normalized plot-coordinate anchor.
         ncols: Number of legend columns.
         title: Optional legend title.
         highlight: Whether hovering a legend entry emphasizes its series by
@@ -2524,9 +2604,16 @@ def legend(
         style: Legend style overrides.
     """
     show, render = _chrome_render_args(children, show, render, "legend")
+    if anchor is not None:
+        if isinstance(anchor, (str, bytes)) or len(anchor) not in (2, 4):
+            raise ValueError("legend anchor must contain 2 or 4 finite numbers")
+        anchor = tuple(float(value) for value in anchor)
+        if not all(math.isfinite(value) for value in anchor):
+            raise ValueError("legend anchor must contain 2 or 4 finite numbers")
     return Legend(
         show=_strict_bool(show, "legend show"),
         loc=_optional_string(loc, "legend loc"),
+        anchor=anchor,
         ncols=_optional_positive_int(ncols, "legend ncols") or 1,
         title=_optional_string(title, "legend title"),
         highlight=_strict_bool(highlight, "legend highlight"),
@@ -3187,6 +3274,7 @@ class Chart(Component):
                 type_=axis.type_,
                 constant=axis.constant,
                 domain=axis.domain,
+                margin=axis.margin,
                 bounds=axis.bounds,
                 reverse=axis.reverse,
                 format=axis.format,
@@ -3352,6 +3440,8 @@ class Chart(Component):
             node = legends[-1]
             _apply_chrome_node(fig, "legend", node.class_name, node.style)
             fig.legend_options = {"loc": node.loc, "ncols": node.ncols}
+            if node.anchor is not None:
+                fig.legend_options["anchor"] = list(node.anchor)
             if node.title is not None:
                 fig.legend_options["title"] = node.title
             if not _strict_bool(node.highlight, "legend highlight"):
@@ -3854,6 +3944,20 @@ def _resolve_color(data: Any, color: Any, *, context: Optional[str] = None) -> A
         raise
 
 
+# First prefix at which `_encode_transition_keys` tests digest uniqueness, then
+# doubling. Small enough that the common duplicate — an id column that is not
+# actually unique — is caught in about a millisecond, large enough that the
+# vectorized test is never run on a handful of rows where the per-row
+# dictionaries it replaced would have been cheaper anyway.
+_TRANSITION_KEY_CHECK_STRIDE = 4096
+# Growth factor between those prefixes. The intermediate tests are pure
+# insurance, so they are kept far below the final full test's cost: at x8 they
+# sum to about an eighth of it, where x2 would have tripled the total uniqueness
+# work and cost the success path ~8%. The price is that a duplicate is seen
+# within 8x rather than 2x the rows needed to reach it.
+_TRANSITION_KEY_CHECK_GROWTH = 8
+
+
 def _transition_key_token(value: Any, index: int) -> bytes:
     """Canonical, type-sensitive bytes for one supported stable key."""
     if isinstance(value, np.generic):
@@ -3884,62 +3988,101 @@ _TRANSITION_KEY_SEQUENCE_MAX_FIXED_BYTES = 256 * 1024 * 1024
 _TRANSITION_KEY_SEQUENCE_MAX_PADDING_RATIO = 8
 
 
+_TRANSITION_KEY_SEQUENCE_KINDS = {
+    str: {"U"},
+    bytes: {"S"},
+    bool: {"b"},
+    int: {"i", "u"},
+    float: {"f"},
+}
+
+
+def _column_ndarray(value: Any) -> np.ndarray | None:
+    """Unwrap a dtype-carrying column (pandas/polars Series) as plain NumPy.
+
+    `data=df, key="id"` resolves to a Series, not an ndarray, so without this
+    the whole native path would be unreachable from the documented idiom.
+    """
+    if isinstance(value, (str, bytes)) or not hasattr(value, "to_numpy"):
+        return None
+    try:
+        arr = value.to_numpy()
+    except (TypeError, ValueError):
+        # Extension arrays may refuse a zero-copy conversion; the reference
+        # encoder reads the same values through the object protocol anyway.
+        return None
+    return arr if type(arr) is np.ndarray else None
+
+
+def _fixed_sequence_array(sequence: Any) -> np.ndarray | None:
+    """Convert a homogeneous scalar sequence to fixed-width NumPy storage.
+
+    Returns None whenever the conversion would change an identity or cost
+    disproportionate memory, leaving the row to the Python reference encoder.
+    """
+    items = sequence.tolist() if isinstance(sequence, np.ndarray) else sequence
+    if not items:
+        return None
+    first = items[0]
+    if isinstance(first, np.generic):
+        first = first.item()
+    item_type = type(first)
+    if item_type not in _TRANSITION_KEY_SEQUENCE_KINDS:
+        return None
+    if set(map(type, items)) != {item_type}:
+        # Either genuinely mixed, or NumPy scalars needing ``.item()``. Retry
+        # through the scalar protocol, then insist on one exact builtin type:
+        # never coerce mixed bool/int or int/float keys, whose scalar tokens
+        # are deliberately type-sensitive.
+        items = [raw.item() if isinstance(raw, np.generic) else raw for raw in items]
+        if set(map(type, items)) != {item_type}:
+            return None
+    if item_type in (str, bytes):
+        lengths = list(map(len, items))
+        unit_bytes = 4 if item_type is str else 1
+        # NumPy's fixed-width conversion costs N × longest key. Keep a single
+        # long outlier from turning a compact sequence into a huge temporary
+        # before Rust can scan it. The ratio compares padding to payload in
+        # those same fixed-width units — it is not a bound on the growth over
+        # the source objects' own footprint; the absolute cap is.
+        padded_bytes = len(items) * max(max(lengths), 1) * unit_bytes
+        source_bytes = max(sum(lengths) * unit_bytes, 1)
+        if (
+            padded_bytes > _TRANSITION_KEY_SEQUENCE_MAX_FIXED_BYTES
+            or padded_bytes > source_bytes * _TRANSITION_KEY_SEQUENCE_MAX_PADDING_RATIO
+        ):
+            return None
+        # A key that *ends* in NUL is indistinguishable from padding once
+        # stored fixed-width, which would silently retokenize it. Interior
+        # NULs survive the round trip and stay on the native path.
+        nul = "\x00" if item_type is str else b"\x00"
+        if any(item.endswith(nul) for item in items):
+            return None
+    try:
+        arr = np.asarray(items)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if arr.dtype.kind not in _TRANSITION_KEY_SEQUENCE_KINDS[item_type]:
+        # NumPy may coerce an integer list outside its fixed-width range to
+        # f64. That would change the type-sensitive ``i:`` token into an
+        # ``f:`` token, so leave arbitrary-width integers to Python.
+        return None
+    return arr
+
+
 def _fixed_transition_key_values(value: Any) -> np.ndarray | None:
     """Return a conservative homogeneous array for the native key encoder."""
-    if type(value) is np.ndarray:
-        arr = value
-    elif isinstance(value, (list, tuple)) and value:
-        first = value[0].item() if isinstance(value[0], np.generic) else value[0]
-        item_type = type(first)
-        if item_type not in (str, bytes, bool, int, float):
+    arr = value if type(value) is np.ndarray else _column_ndarray(value)
+    if arr is None:
+        if not isinstance(value, (list, tuple)):
             return None
-        total_units = 0
-        max_units = 0
-        for raw in value:
-            item = raw.item() if isinstance(raw, np.generic) else raw
-            if type(item) is not item_type:
-                # In particular, never coerce mixed bool/int or int/float
-                # keys: their scalar tokens are deliberately type-sensitive.
-                return None
-            if (item_type is str and "\x00" in item) or (item_type is bytes and b"\x00" in item):
-                # Fixed-width storage cannot distinguish padding from an
-                # explicitly trailing NUL supplied in a Python scalar.
-                return None
-            if item_type in (str, bytes):
-                units = len(item)
-                total_units += units
-                max_units = max(max_units, units)
-        if item_type in (str, bytes):
-            unit_bytes = 4 if item_type is str else 1
-            # NumPy's fixed-width sequence conversion costs N × max width.
-            # Keep a single long outlier from turning a compact Python list
-            # into a huge temporary before Rust can scan it.
-            padded_bytes = len(value) * max(max_units, 1) * unit_bytes
-            source_bytes = max(total_units * unit_bytes, 1)
-            if (
-                padded_bytes > _TRANSITION_KEY_SEQUENCE_MAX_FIXED_BYTES
-                or padded_bytes > source_bytes * _TRANSITION_KEY_SEQUENCE_MAX_PADDING_RATIO
-            ):
-                return None
-        try:
-            arr = np.asarray(value)
-        except (OverflowError, TypeError, ValueError):
-            return None
-        expected_kinds = {
-            str: {"U"},
-            bytes: {"S"},
-            bool: {"b"},
-            int: {"i", "u"},
-            float: {"f"},
-        }
-        if arr.dtype.kind not in expected_kinds[item_type]:
-            # NumPy may coerce an integer list outside its fixed-width range
-            # to f64. That would change the type-sensitive ``i:`` token into
-            # an ``f:`` token, so leave arbitrary-width integers to Python.
-            return None
-    else:
-        return None
-    if arr.ndim != 1:
+        arr = _fixed_sequence_array(value)
+    elif arr.dtype.hasobject:
+        # Object storage — a pandas string column, or an explicitly
+        # object-dtype array — still reaches the encoder when every row
+        # carries the same builtin scalar type.
+        arr = _fixed_sequence_array(arr) if arr.ndim == 1 else None
+    if arr is None or arr.ndim != 1:
         return None
     if arr.dtype.kind == "U" and arr.dtype.itemsize > 0 and arr.dtype.itemsize % 4 == 0:
         return arr
@@ -3952,6 +4095,27 @@ def _fixed_transition_key_values(value: Any) -> np.ndarray | None:
     if arr.dtype.kind == "f" and arr.dtype.itemsize in (2, 4, 8):
         return arr
     return None
+
+
+def _transition_key_digests(result: np.ndarray, stop: int) -> np.ndarray:
+    """The first `stop` rows' identity digests, one uint64 per row.
+
+    `result` is Fortran-order — the native encoder's layout, so the payload ships
+    `values[:, 0]` copy-free — which makes `reshape(-1).view(np.uint64)` wrong
+    twice over. For a one-row prefix numpy can satisfy the reshape with a strided
+    *view* rather than a copy, and re-viewing that as a wider dtype raises "the
+    last axis must be contiguous"; for longer prefixes it silently copies. Both
+    columns are contiguous in this order, so combining them is correct whatever
+    the layout and costs the same 8 bytes a row the reshape copy did.
+
+    The two words are packed hi-word-first here rather than in the wire's
+    little-endian order. Only injectivity matters: equal packed values iff equal
+    (lo, hi) pairs, which is what the uniqueness test is asking.
+    """
+    packed = result[:stop, 0].astype(np.uint64)
+    packed <<= np.uint64(32)
+    packed |= result[:stop, 1]
+    return packed
 
 
 def _encode_transition_keys(value: Any, expected: int, label: str) -> np.ndarray:
@@ -3971,22 +4135,85 @@ def _encode_transition_keys(value: Any, expected: int, label: str) -> np.ndarray
     if len(arr) != expected:
         raise ValueError(f"{label} must have length {expected}, got {len(arr)}")
     result = np.empty((expected, 2), dtype=np.uint32, order="F")
+    # Equal tokens hash equally, so distinct digests prove distinct keys *and*
+    # no collision: a vectorized uniqueness test stands in for the two per-row
+    # dictionaries this carried, which held a token and a digest bytes object for
+    # every row — hundreds of bytes of peak per 8-byte result row. A conflict is
+    # re-walked by `_raise_transition_key_conflict` so the message, and the rows
+    # it names, are exactly what the per-row bookkeeping produced.
+    #
+    # The test runs on growing prefixes rather than once at the end. Testing only
+    # at the end would make a duplicate cost the entire walk plus a full re-walk:
+    # a non-unique id column, which is the ordinary form of this mistake, went
+    # from 16 ms and 32 MB peak on the dictionaries to 7.1 s and 65 MB — so the
+    # rewrite raised peak on a reachable path, the one thing it exists to lower.
+    # Prefixes bound both the wasted walk and the `np.unique` transient to the
+    # rows actually needed to see the duplicate.
+    #
+    # Blocked rather than checked per row on purpose: `arr[start:stop]` is a view
+    # of an object array, so the inner loop is exactly the loop it was, while one
+    # extra compare per row cost 8% of the success path in a 2M-row walk.
+    #
+    # Each test packs the prefix it checks into one uint64 a row
+    # (`_transition_key_digests`) — 8 bytes per row against the dictionaries'
+    # hundreds, and the x8 growth keeps those temporaries to about an eighth of
+    # the final one on top of it.
+    start = 0
+    block = _TRANSITION_KEY_CHECK_STRIDE
+    while start < expected:
+        stop = min(start + block, expected)
+        for index, raw in enumerate(arr[start:stop], start):
+            try:
+                token = _transition_key_token(raw, index)
+            except Exception:
+                # A later bad row must not mask an earlier duplicate: for
+                # `["a", "a", None]` the dictionaries reported the row-0/1
+                # duplicate, and that is still the first thing wrong. Rows
+                # already walked tokenized cleanly, so their digests are
+                # complete and any conflict among them precedes this row.
+                #
+                # `except Exception`, not ValueError: which row was first does
+                # not depend on what the token raised, and a key type whose
+                # __format__/isoformat/encode raises something else would
+                # otherwise still slip past the earlier duplicate.
+                if np.unique(_transition_key_digests(result, index)).size != index:
+                    _raise_transition_key_conflict(arr[:index], label)
+                raise
+            digest = hashlib.blake2s(token, digest_size=8, person=b"xykeyv1").digest()
+            result[index, 0] = int.from_bytes(digest[:4], "little")
+            result[index, 1] = int.from_bytes(digest[4:], "little")
+        if np.unique(_transition_key_digests(result, stop)).size != stop:
+            _raise_transition_key_conflict(arr[:stop], label)
+        start = stop
+        block *= _TRANSITION_KEY_CHECK_GROWTH
+    return result
+
+
+def _raise_transition_key_conflict(arr: np.ndarray, label: str) -> None:
+    """Name the conflict the vectorized digest check found (error path only).
+
+    Every raise here is `from None`. One caller is the prefix re-check inside an
+    `except`, where the token error it is deliberately superseding would
+    otherwise be chained in front of this one — so the first thing printed would
+    be the very error this function exists to *not* report. The other caller is
+    outside any handler, where `from None` costs nothing.
+    """
     seen: dict[bytes, int] = {}
     digests: dict[bytes, bytes] = {}
     for index, raw in enumerate(arr):
         token = _transition_key_token(raw, index)
         previous = seen.get(token)
         if previous is not None:
-            raise ValueError(f"{label} contains duplicate value at rows {previous} and {index}")
+            raise ValueError(
+                f"{label} contains duplicate value at rows {previous} and {index}"
+            ) from None
         seen[token] = index
         digest = hashlib.blake2s(token, digest_size=8, person=b"xykeyv1").digest()
         collision = digests.get(digest)
         if collision is not None and collision != token:
-            raise ValueError(f"{label} produced an identity digest collision")
+            raise ValueError(f"{label} produced an identity digest collision") from None
         digests[digest] = token
-        result[index, 0] = int.from_bytes(digest[:4], "little")
-        result[index, 1] = int.from_bytes(digest[4:], "little")
-    return result
+    raise AssertionError(f"{label} digest conflict did not reproduce")
 
 
 def _original_mark_positions(
@@ -4027,14 +4254,19 @@ def _apply_mark_transition_metadata(
 ) -> None:
     override = mark.animation
     if override is None:
-        mark_spec = None
+        mark_override = None
     elif isinstance(override, bool):
-        mark_spec = {"enabled": override}
+        mark_override = {"enabled": override}
     elif isinstance(override, Animation):
-        mark_spec = override.to_spec()
+        mark_override = override.to_override_spec()
     else:
         raise ValueError(f"{mark.kind} animation must be xy.animation(...), bool, or None")
-    effective = {**(chart_spec or {}), **(mark_spec or {})}
+    # Cascade, do not replace. The mark contributes only the fields it set;
+    # defaults sit underneath so a mark-level spec with no chart-level one is
+    # still complete. Resolving here once is also what lets the client keep a
+    # plain spread — an incomplete `trace.animation` would leave it reading
+    # `undefined` for duration and easing.
+    effective = {**_animation_defaults(), **(chart_spec or {}), **(mark_override or {})}
     if (
         effective.get("enabled") is not False
         and effective.get("match") == "key"
@@ -4042,6 +4274,12 @@ def _apply_mark_transition_metadata(
     ):
         raise ValueError(f"{mark.kind} animation match='key' requires key=")
     keys: np.ndarray | None = None
+    # `match` defaults to "index", so a bare `xy.animation(...)` — or no
+    # animation at all — never key-matches. Encoding still runs for its
+    # uniqueness and typing contract, but the identity planes are dead weight
+    # nothing reads: 8 B/row retained for the widget lifetime and 8 B/row on
+    # the wire. Only carry them when the client can actually match on them.
+    key_matching = effective.get("enabled") is not False and effective.get("match") == "key"
     if mark.key is not None:
         raw = (
             _resolve(data, mark.key, context=f"{mark.kind}.key")
@@ -4054,19 +4292,25 @@ def _apply_mark_transition_metadata(
             )
         expected = int(traces[0].n_points)
         keys = _encode_transition_keys(raw, expected, f"{mark.kind} key")
-        if mark.kind in {"line", "area", "error_band"}:
+        if key_matching and mark.kind in {"line", "area", "error_band"}:
             positions = _original_mark_positions(fig, mark, data, expected)
             if positions is not None:
                 keys = keys[np.argsort(positions, kind="stable")]
     for trace in traces:
-        trace.animation = None if mark_spec is None else dict(mark_spec)
+        # Ship the resolved policy, not the raw override: the client spreads
+        # this over the chart-level spec, and a sparse dict there would silently
+        # fall back to chart values the mark meant to change.
+        trace.animation = None if mark_override is None else dict(effective)
         if keys is not None:
+            # The per-trace row check is contract too, so it runs whether or
+            # not the planes are kept.
             if trace.n_points != len(keys):
                 raise ValueError(
                     f"{mark.kind} key has {len(keys)} rows but emitted trace {trace.id} "
                     f"has {trace.n_points} logical rows"
                 )
-            trace.transition_keys = keys
+            if key_matching:
+                trace.transition_keys = keys
 
 
 def _continuous_color_label(mark: Mark) -> Optional[str]:
@@ -4982,6 +5226,7 @@ def _apply_segments(fig: Figure, m: Mark, data: Any) -> None:
         domain=m.props["domain"],
         width=m.props["width"],
         opacity=m.props["opacity"],
+        dash=m.props["dash"],
         style=m.style,
     )
 
@@ -5002,6 +5247,7 @@ def _apply_triangle_mesh(fig: Figure, m: Mark, data: Any) -> None:
         opacity=m.props["opacity"],
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
+        _joined_fill=m.props["_joined_fill"],
         style=m.style,
     )
 
@@ -5135,6 +5381,8 @@ def _apply_contour(fig: Figure, m: Mark, data: Any) -> None:
         width=m.props["width"],
         opacity=m.props["opacity"],
         dash_negative=m.props.get("dash_negative", False),
+        extend=m.props.get("extend", "neither"),
+        corner_mask=m.props.get("corner_mask", False),
         style=m.style,
     )
 

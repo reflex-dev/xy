@@ -63,6 +63,7 @@ normalize_f32 = _impl.normalize_f32
 valid_indices_f64 = _impl.valid_indices_f64
 remap_u8 = _impl.remap_u8
 range_indices = _impl.range_indices
+range_indices_rows = _impl.range_indices_rows
 polygon_select = _impl.polygon_select
 sample_mask = _impl.sample_mask
 sample_range_indices = _impl.sample_range_indices
@@ -134,6 +135,7 @@ __all__ = [
     "pyramid_free",
     "quad_mesh_triangles",
     "range_indices",
+    "range_indices_rows",
     "rasterize",
     "rasterize_png",
     "remap_u8",

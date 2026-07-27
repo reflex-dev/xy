@@ -7,8 +7,20 @@ motion-free by definition.
 ## 1. Public grammar
 
 Animation is a normal chart child. The last chart-level `Animation` child is
-the default policy; a mark-level `animation=` value overrides it. `False`
-disables that mark without disabling its siblings.
+the default policy; a mark-level `animation=` value cascades over it **field by
+field**, contributing only the arguments that were actually passed. So
+`xy.animation(duration=90)` on a mark keeps the chart's `match`, `easing`, and
+the rest — a whole-spec replacement would silently disable a chart-level
+`match="key"`. Passing a field explicitly counts as setting it even when the
+value equals the default. `False` disables that mark without disabling its
+siblings.
+
+The resolution happens once, in Python: a trace that carries an override ships
+the *complete* resolved policy, so the client's spread over the chart-level
+spec is a no-op rather than a second merge that would need its own copy of the
+defaults. A trace with no override ships no animation dict at all, and a chart
+with neither ships none either — which is what keeps a chart without
+`xy.animation()` static.
 
 ```python
 xy.chart(
@@ -66,17 +78,39 @@ signed or unsigned integers, and finite floating arrays take one bulk native
 path, including non-native endian NumPy arrays; f16/f32 values widen exactly to
 the f64 token contract. Its identities and first-duplicate row diagnostics are
 byte-for-byte compatible with the original Python encoder.
-Python remains the conservative reference path for mixed objects,
-NUL-containing Python string/bytes sequences, dates, and datetimes, and
-supplies the exact row error for non-finite numbers. Python sequences whose
-fixed-width conversion would exceed the byte budget or 8× padding ratio also
-stay on that path, bounding temporary memory under skewed key lengths.
-Fixed-width NumPy `U`/`S` records keep their exact trailing-padding and
-embedded-NUL semantics in the native path. This keeps the complete public
+Routing is over values, not containers: lists, tuples, NumPy arrays, and
+`to_numpy`-carrying columns (the pandas Series a `data=df, key="id"` lookup
+actually returns) all reach it, and object storage qualifies whenever every row
+holds the same builtin scalar type — otherwise the documented DataFrame idiom
+would be the one shape that never took the fast path.
+Python remains the conservative reference path for mixed objects, dates,
+datetimes, and arbitrary-width integers, and supplies the exact row error for
+non-finite and missing values. Sequences whose fixed-width conversion would
+exceed the byte budget or 8× padding ratio also stay on that path, bounding
+temporary memory under skewed key lengths.
+Fixed-width `U`/`S` records keep their exact trailing-padding and embedded-NUL
+semantics in the native path; a Python key that *ends* in NUL would be
+indistinguishable from that padding, so only those stay on the reference path —
+interior NULs survive the round trip. This keeps the complete public
 grammar—strings, finite numbers, booleans, bytes, dates, datetimes, and NumPy
 equivalents—without pushing Python object policy through the C ABI. Missing,
 unsupported, wrong-length, or duplicate values fail during figure construction.
-Line-like keys follow the same stable geometry sort as their coordinates.
+The kernel separates "declined this data, use the oracle" from "this layout is
+not in the ABI": only the first falls back, so a contract drift between the
+ctypes gate and the Rust layout check raises instead of silently costing the
+whole speedup.
+Encoding runs whenever `key=` is given, because uniqueness and typing are
+construction contract rather than animation policy. The resulting identity
+planes are only retained and shipped when the *resolved* spec can key-match —
+`match` defaults to `"index"`, so a bare `xy.animation(...)`, an
+`enabled=False` chart, or a `key=` with no animation at all would otherwise
+carry two u32 columns nothing reads, both in the widget's retained payload and
+on the wire. Duplicate and row-count errors are unaffected by that skip.
+Line-like keys follow the same stable geometry sort as their coordinates; the
+encoder hands back Fortran-order planes that ship without a per-column copy,
+but that sort and any finite-row selection reorder through NumPy advanced
+indexing, which returns C-order and restores the copy at ship time. The sort is
+skipped along with the planes when nothing will match on them.
 Errorbar point keys are role-qualified after expansion so the main segment and
 caps remain unique and stable.
 

@@ -49,12 +49,17 @@ def test_legend_maps_supported_style_and_rejects_unknown_options():
     assert ax._legend_options["loc"] == "upper right"
     assert ax._legend_options["ncols"] == 2
     assert ax._legend_options["title"] == "Legend"
+    assert ax._legend_options["border_pad"] == pytest.approx(0.5 * 13 * 100 / 72)
     assert ax._legend_options["style"] == {
         "fontSize": "18.0556px",
         "color": "green",
         "background": "white",
         "borderColor": "black",
         "borderStyle": "solid",
+        "borderWidth": "1px",
+        "--xy-legend-frame-alpha": 0.8,
+        "padding": "0.4em",
+        "rowGap": "0.5em",
     }
 
     ax.legend(shadow=True, fancybox=True, framealpha=0.8, borderpad=1, labelspacing=0.7)
@@ -63,6 +68,11 @@ def test_legend_maps_supported_style_and_rejects_unknown_options():
     assert style["borderRadius"] == "4px"
     assert style["padding"] == "1em"
     assert style["rowGap"] == "0.7em"
+
+    ax.legend(fontsize=13, borderaxespad=0.75)
+    assert ax._legend_options["border_pad"] == pytest.approx(0.75 * 13 * 100 / 72)
+    with pytest.raises(ValueError, match="borderaxespad"):
+        ax.legend(borderaxespad=-0.1)
 
 
 def test_legend_frameoff_maps_to_transparent_style():
@@ -95,6 +105,7 @@ def test_second_legend_via_add_artist_renders_own_box_with_dash_handles():
 
     spec, _ = ax._build_chart(573, 400).figure().build_payload()
     assert spec["legend"]["loc"] == "upper right"
+    assert [item["name"] for item in spec["legend"]["items"]] == ["line A", "line B"]
     extras = spec.get("extra_legends")
     assert extras and len(extras) == 1
     assert extras[0]["loc"] == "lower right"
@@ -104,9 +115,9 @@ def test_second_legend_via_add_artist_renders_own_box_with_dash_handles():
     dashes = [it["style"].get("dash") for it in extras[0]["items"]]
     assert dashes[0] and len(dashes[0]) == 4  # "-." → [on, off, on, off]
     assert dashes[1] and len(dashes[1]) == 2  # ":" → [on, off]
-    # The primary legend must not have acquired the second legend's labels.
+    # Neither explicit legend mutates trace names.
     named_traces = [t.get("name") for t in spec["traces"] if t.get("name")]
-    assert "line C" not in named_traces and "line D" not in named_traces
+    assert not named_traces
 
 
 def test_standalone_extra_legend_survives_primary_legend_suppression():
@@ -133,7 +144,11 @@ def test_standalone_legend_unwraps_errorbar_container():
         {
             "name": "uncertainty",
             "kind": "line",
-            "style": {"color": "red", "width": pytest.approx(1.6666666667), "opacity": 1.0},
+            "style": {
+                "color": "red",
+                "width": pytest.approx(plt.rcParams["lines.linewidth"] * 100.0 / 72.0),
+                "opacity": 1.0,
+            },
         }
     ]
 
@@ -150,14 +165,19 @@ def test_standalone_legend_preserves_rule_annotation_dash():
     assert item["style"]["dash"] == [10.2778, 4.4444]
 
 
-def test_center_right_legend_loc_reaches_spec():
+def test_center_band_legend_loc_reaches_spec():
     import numpy as np
 
     _, ax = plt.subplots()
     x = np.linspace(0, 10, 500)
     # A full-amplitude oscillation leaves every corner busy; matplotlib's "best"
-    # parks the legend on the sparse vertical-center band.
+    # parks the legend on the sparse vertical-center band. Matplotlib 3.11.1
+    # scores this exact figure center left 20 against center right 36 — a
+    # decisive win for the left band, not a tie. This asserted "center right"
+    # while the shim compared *mean fractional* occupancy under a 0.02 tie band,
+    # which flattened the 20-vs-36 gap into a tie and handed it to the
+    # earlier-ordered candidate.
     ax.plot(x, np.sin(x[:, None] + np.pi * np.arange(0, 2, 0.5)))
     ax.legend(["a", "b"])
     spec, _ = ax._build_chart(573, 400).figure().build_payload()
-    assert spec["legend"]["loc"] == "center right"
+    assert spec["legend"]["loc"] == "center left"

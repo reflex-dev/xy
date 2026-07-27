@@ -521,3 +521,56 @@ def test_memory_report_itemizes_bin_color_cache_bytes():
     )
     plain = Figure().scatter(np.arange(1000.0), np.arange(1000.0))
     assert plain.memory_report()["bin_color_bytes"] == 0
+
+
+def test_truecolor_heatmap_shares_its_red_plane_with_the_grid() -> None:
+    """`grid` and `rgba_grid[0]` are the same column, not two copies of it.
+
+    A truecolor heatmap's scalar grid *is* the red plane. Ingesting
+    `rgba[..., 0].reshape(-1)` a second time built a second contiguous copy
+    (the source is a strided view, so every reshape materializes one) and the
+    store kept it for the figure's lifetime — 8 bytes per pixel of duplicate.
+    """
+    import numpy as np
+
+    from xy._figure import Figure
+
+    rng = np.random.default_rng(2)
+    rgb = rng.random((40, 60, 3))
+    fig = Figure()
+    fig.heatmap(rgb)
+    trace = fig.traces[0]
+    assert trace.rgba_grid is not None
+    assert trace.rgba_grid[0] is trace.grid
+    assert np.shares_memory(trace.rgba_grid[0].values, trace.grid.values)
+    # The other three planes stay distinct columns.
+    ids = {c.id for c in trace.rgba_grid}
+    assert len(ids) == 4 and trace.grid.id in ids
+    np.testing.assert_array_equal(trace.grid.values, rgb[..., 0].reshape(-1))
+
+
+def test_truecolor_heatmap_payload_is_unchanged_by_the_sharing() -> None:
+    """Sharing the column must not change what the wire carries."""
+    import numpy as np
+
+    from xy._figure import Figure
+
+    rng = np.random.default_rng(3)
+    rgba = rng.random((24, 32, 4))
+    fig = Figure()
+    fig.heatmap(rgba)
+    spec, blob = fig.build_payload()
+    planes = [
+        np.frombuffer(blob, dtype=np.float32, count=c["len"], offset=c["byte_offset"])
+        for c in spec["columns"]
+        if c["len"] == rgba.shape[0] * rgba.shape[1]
+    ]
+    # Exactly four, each matched to its own channel in serialized order. The
+    # duplicate this change removes was never shipped — it sat in the
+    # ColumnStore — so the wire is four planes before and after; what matters
+    # here is that sharing the column did not permute or corrupt them. An
+    # unordered `any(...)` match would have passed with two channels swapped.
+    assert len(planes) == 4
+    for channel, plane in enumerate(planes):
+        want = rgba[..., channel].reshape(-1).astype(np.float32)
+        np.testing.assert_allclose(plane, want, atol=1e-6)

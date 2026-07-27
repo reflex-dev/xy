@@ -223,6 +223,25 @@ def test_rdgy_and_jet_resolve_and_render():
     _png()
 
 
+@pytest.mark.parametrize(
+    ("name", "canonical"),
+    [
+        ("Reds_r", "reds_r"),
+        ("bone", "bone"),
+        ("autumn", "autumn"),
+        ("winter", "winter"),
+        ("BuPu", "bupu"),
+    ],
+)
+def test_matplotlib_gallery_colormaps_resolve_and_render(name, canonical):
+    assert plt.get_cmap(name).name == canonical
+    assert plt.colormaps[name].name == canonical
+    assert getattr(plt.cm, name) == name
+    fig, ax = plt.subplots()
+    ax.imshow(np.arange(16.0).reshape(4, 4), cmap=name)
+    _png(fig)
+
+
 def test_linear_segmented_colormap_from_list_matches_anchors():
     table = np.array([[0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0]])
     cmap = plt.LinearSegmentedColormap.from_list("g", table, 8)
@@ -288,6 +307,39 @@ def test_colorbar_returns_handle_and_set_label_lands():
     handle = plt.colorbar()
     handle.set_label("counts in bin")
     assert ax._colorbar["label"] == "counts in bin"
+
+
+def test_colorbar_set_label_renders_rotated_beside_the_bar_in_both_exports(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """PDSH ch. 4.05 (`hist2d`/`hexbin`/`imshow` + `set_label`) expects
+    Matplotlib's rotated label alongside a vertical colorbar. It used to render
+    horizontally above the bar, clipped off the top of the native PNG canvas."""
+    from xy import _raster
+
+    plt.subplots()
+    plt.hist2d(*np.random.default_rng(0).normal(size=(2, 200)), bins=10)
+    plt.colorbar().set_label("counts in bin")
+
+    svg = _svg()
+    label = re.search(r'<text x="([\d.]+)" y="([\d.]+)"[^>]*rotate\(-90 [^>]*>counts in bin<', svg)
+    assert label is not None, "vertical colorbar label must be rotated -90 in SVG"
+
+    recorded: list[tuple[float, float, int, str]] = []
+    original_text = _raster._Cmd.text
+
+    def record_text(self, x, y, anchor, size, color, value, *args, **kwargs):
+        recorded.append((float(x), float(y), int(anchor), str(value)))
+        return original_text(self, x, y, anchor, size, color, value, *args, **kwargs)
+
+    monkeypatch.setattr(_raster._Cmd, "text", record_text)
+    _png()
+
+    native_x, native_y, anchor, _text = next(
+        entry for entry in recorded if entry[3] == "counts in bin"
+    )
+    assert anchor == 1 | _raster._TEXT_ROT_CCW
+    assert (native_x, native_y) == (float(label.group(1)), float(label.group(2)))
 
 
 def test_colorbar_ticks_and_extend_reach_both_exports():

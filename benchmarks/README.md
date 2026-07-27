@@ -35,10 +35,12 @@ interactive CPU fallback through SwiftShader. Each successful cell is the mean
 of three complete cold-process runs; interactive samples also use a fresh
 browser. Terminal 1B failures are attempted once and are not averaged.
 
-Reproduce the 0.1.0 launch environment with its exact dependency versions:
+Reproduce the launch environment with its exact dependency versions. Both
+baseline directories carry the same competitor pins, so either one reproduces
+the comparison environment; use the newest for a fresh run:
 
 ```bash
-BASELINE=benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro
+BASELINE=benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro
 uv sync --project "$BASELINE" --frozen --python 3.14.5
 ```
 
@@ -63,9 +65,18 @@ uv run --project "$BASELINE" --frozen python benchmarks/bench_launch_scatter.py 
 ```
 
 The immutable 0.1.0 launch baseline, report, and raw results live under
-`benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/`. Add a new
-version/environment directory for later launches; never overwrite an earlier
-launch baseline or mix hardware and SwiftShader rows.
+`benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/`. The 2026-07-26 rerun
+that the README and public benchmarks page quote lives under
+`benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro/`; it repeats
+the same contracts against the same pinned competitor versions on the same
+machine. Add a new version/environment directory for later launches; never
+overwrite an earlier launch baseline or mix hardware and SwiftShader rows.
+
+Warm the checkout before a measured run. A first invocation in a fresh worktree
+pays for cold bytecode caches, Matplotlib's font cache, and Kaleido's browser
+download, which inflate every library's first row by an amount that is not part
+of any output contract. Run the suite once and discard it; publish the run after
+it.
 
 ## CI Software GL
 

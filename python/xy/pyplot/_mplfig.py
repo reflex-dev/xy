@@ -15,11 +15,47 @@ from typing import Any, Literal, Optional, overload
 import numpy as np
 
 from ._artists import Text
-from ._axes import Axes, _plain_text
+from ._axes import _DEFAULT_AXES_RECT, Axes, _plain_text
 from ._colors import resolve_color
 from ._rc import rc_figsize_px, rcParams
 from ._transforms import CoordinateTransform
 from ._translate import check_unsupported, not_implemented
+
+
+def _panel_chrome(ax: Axes, plot_w: int) -> tuple[float, float, float, float]:
+    """``(left, top, right, bottom)`` px of chrome around a free-form panel.
+
+    One definition for the whole absolute-placement path: `_charts` sizes the
+    panel with it, `_panel_positions` places the panel with it, and
+    `Axes._frame_padding` pins the plot rect inside the panel with it. When
+    those three disagree the plot box drifts off its gridspec cell.
+
+    The chrome includes the gutters the renderers reserve outside the padding —
+    the axes title, a top-side x axis (`matshow`), the secondary-y band — so the
+    panel is always large enough to hold them without moving the plot rect. The
+    title is the case matplotlib makes obvious: it draws above the axes without
+    changing its position.
+    """
+    compact = plot_w + 54 < 520
+    left, top = (46.0, 6.0) if compact else (62.0, 10.0)
+    right, bottom = (8.0, 36.0) if compact else (14.0, 42.0)
+    extra_top, extra_right, extra_bottom = ax._outside_padding(compact)
+    return left, top + extra_top, right + extra_right, bottom + extra_bottom
+
+
+def _measured_left_gutter(ax: Axes, width: int, height: int) -> float:
+    """The left gutter `_svg.layout()` will reserve for `ax`'s y-axis text.
+
+    Probes the real spec because the reservation is measured from the tick
+    labels the resolved range produces, which only exist after the payload is
+    built. The probe costs one extra payload build on the notebook display path;
+    the browser needs the number *before* the chart it renders is built, and a
+    second implementation of the measurement is the thing this must not become.
+    """
+    from .. import _svg
+
+    spec, _buffers = ax._build_chart(width, height).figure().build_payload_split()
+    return float(_svg.layout(spec)[3]["x"])
 
 
 def _png_with_metadata(data: bytes, metadata: dict[Any, Any]) -> bytes:
@@ -119,6 +155,10 @@ class Figure:
                 # Spans and custom spacing become explicit figure rectangles.
                 # The spec is kept so subplots_adjust() can re-resolve them.
                 ax = self.add_axes(spec.gridspec.cell_rect(spec.rows, spec.cols))
+                # add_axes() models unrelated free-form panels as a 1×N row.
+                # A GridSpec-backed span still belongs to its original grid;
+                # retain that geometry for tight_layout/subplots_adjust.
+                self._nrows, self._ncols = spec.nrows, spec.ncols
                 ax._subplot_spec = spec
         elif args and args != (1, 1, 1) and args != (111,):
             nrows, ncols, index = _parse_subplot_args(args)
@@ -159,7 +199,6 @@ class Figure:
         ax = Axes(self)
         self._axes.append(ax)
         ax._figure_rect = parsed
-        self._nrows, self._ncols = 1, len(self._axes)
         self._current_ax = ax
         if kwargs:
             ax.set(**kwargs)
@@ -263,15 +302,18 @@ class Figure:
         )
 
     def _ensure_grid(self, nrows: int, ncols: int) -> None:
-        if (
-            (nrows, ncols) != (self._nrows, self._ncols)
-            and self._axes
-            and any(ax._entries for ax in self._axes)
-        ):
+        reshaping = (nrows, ncols) != (self._nrows, self._ncols)
+        if reshaping and self._axes and any(ax._entries for ax in self._axes):
             raise ValueError("cannot reshape a figure that already has plotted axes")
         self._nrows, self._ncols = nrows, ncols
+        if reshaping:
+            for index, ax in enumerate(self._axes):
+                if ax._figure_rect is None:
+                    ax._subplot_index = index
         while len(self._axes) < nrows * ncols:
-            self._axes.append(Axes(self))
+            ax = Axes(self)
+            ax._subplot_index = len(self._axes)
+            self._axes.append(ax)
 
     def _axes_at(self, index: int) -> Axes:
         self._ensure_grid(self._nrows, self._ncols)
@@ -409,6 +451,65 @@ class Figure:
             "w_pad": w_pad,
             "rect": rect,
         }
+        # The native panels carry their own tick/title chrome, while the
+        # GridSpec rectangles describe plot boxes only.  Reserve enough
+        # figure-edge and inter-panel room for that chrome so adjacent panels
+        # do not overlap.  This is the same job Matplotlib's tight-layout
+        # engine performs from artist extents; the shim uses its deterministic
+        # renderer margins instead of a second text-layout engine.
+        if self._axes and not any(
+            ax._figure_rect is not None and ax._subplot_spec is None and ax._subplot_index is None
+            for ax in self._axes
+        ):
+            canvas_w, canvas_h = rc_figsize_px(self._figsize, self._dpi)
+            compact = canvas_w / max(1, self._ncols) < 520
+            left_px, right_px = (46.0, 20.0) if compact else (62.0, 26.0)
+            bottom_px = 36.0 if compact else 42.0
+            title_px = 26.0 if compact else 30.0
+            top_px = max(20.0, (6.0 if compact else 10.0) + title_px)
+            has_title = any(ax._title for ax in self._axes)
+            horizontal_gap = 58.0 if compact else 76.0
+            vertical_gap = (68.0 if compact else 82.0) if has_title else (44.0 if compact else 56.0)
+            # Explicit *_pad values are font-size multiples in Matplotlib.
+            point_px = float(rcParams["font.size"]) * float(self._dpi or 100.0) / 72.0
+            base_pad = 1.08 if pad is None else float(pad)
+            if w_pad is not None:
+                horizontal_gap += (float(w_pad) - base_pad) * point_px
+            if h_pad is not None:
+                vertical_gap += (float(h_pad) - base_pad) * point_px
+            if pad is not None:
+                extra = (float(pad) - 1.08) * point_px
+                left_px += extra
+                right_px += extra
+                bottom_px += extra
+                top_px += extra
+
+            frame = (0.0, 0.0, 1.0, 1.0) if rect is None else tuple(map(float, rect))
+            if len(frame) != 4:
+                raise ValueError("tight_layout(rect=...) must be [left, bottom, right, top]")
+            frame_left, frame_bottom, frame_right, frame_top = frame
+            left = frame_left + max(0.0, left_px) / canvas_w
+            right = frame_right - max(0.0, right_px) / canvas_w
+            bottom = frame_bottom + max(0.0, bottom_px) / canvas_h
+            top = frame_top - max(0.0, top_px) / canvas_h
+            inner_w = max(1.0, (right - left) * canvas_w)
+            inner_h = max(1.0, (top - bottom) * canvas_h)
+            cell_w = max(
+                1.0,
+                (inner_w - horizontal_gap * max(0, self._ncols - 1)) / max(1, self._ncols),
+            )
+            cell_h = max(
+                1.0,
+                (inner_h - vertical_gap * max(0, self._nrows - 1)) / max(1, self._nrows),
+            )
+            self.subplots_adjust(
+                left=left,
+                right=right,
+                bottom=bottom,
+                top=top,
+                wspace=horizontal_gap / cell_w,
+                hspace=vertical_gap / cell_h,
+            )
         self._invalidate()
 
     def subplots_adjust(
@@ -442,12 +543,24 @@ class Figure:
         if merged["bottom"] >= merged["top"]:
             raise ValueError("bottom cannot be >= top")
         self._subplot_adjust.update(material)
+        grid = _GridSpec(
+            self,
+            self._nrows,
+            self._ncols,
+            width_ratios=self._width_ratios,
+            height_ratios=self._height_ratios,
+        )
         for ax in self._axes:
             if ax._subplot_spec is not None:
                 # Gridspec-derived rectangles track the moved SubplotParams
                 # frame (matplotlib re-resolves subplot positions on draw).
                 spec = ax._subplot_spec
                 ax._figure_rect = spec.gridspec.cell_rect(spec.rows, spec.cols)
+            elif ax._subplot_index is not None:
+                # Matplotlib's subplots_adjust() restores a subplot whose
+                # position was set explicitly to its SubplotSpec cell.
+                row, col = divmod(ax._subplot_index, self._ncols)
+                ax._figure_rect = grid.cell_rect((row, row + 1), (col, col + 1))
             ax._invalidate()
         self._invalidate()
 
@@ -523,11 +636,35 @@ class Figure:
             cmap_obj = mappable.get_cmap()
             colormap = getattr(cmap_obj, "name", cmap_obj)
         try:
-            numeric = np.asarray(mapped_values, dtype=np.float64)
-            finite = numeric[np.isfinite(numeric)]
+            numeric = np.ma.asarray(mapped_values, dtype=np.float64)
+            finite = np.asarray(numeric.compressed(), dtype=np.float64)
+            finite = finite[np.isfinite(finite)]
         except (TypeError, ValueError):
             finite = np.asarray([], dtype=np.float64)
         explicit_domain = entry.get("domain", props.get("domain"))
+        orientation_arg = kwargs.pop("orientation", None)
+        location = kwargs.pop("location", None)
+        if location is not None:
+            location = str(location).lower()
+            if location not in {"right", "bottom"}:
+                raise not_implemented(
+                    f"colorbar(location={location!r})",
+                    "right or bottom colorbar placement",
+                )
+            located_orientation = "vertical" if location == "right" else "horizontal"
+            if orientation_arg is not None and str(orientation_arg) != located_orientation:
+                raise ValueError("location and orientation select incompatible colorbar sides")
+            orientation_arg = located_orientation
+        orientation = str(orientation_arg or "vertical")
+        if orientation not in {"vertical", "horizontal"}:
+            raise ValueError("colorbar() orientation must be 'vertical' or 'horizontal'")
+        shrink = float(kwargs.pop("shrink", 1.0))
+        if not np.isfinite(shrink) or not 0.0 < shrink <= 1.0:
+            raise ValueError("colorbar() shrink must be finite and in (0, 1]")
+        anchor_arg = kwargs.pop("anchor", (0.5, 0.5))
+        anchor_values = np.asarray(anchor_arg, dtype=np.float64).reshape(-1)
+        if len(anchor_values) != 2 or not np.all(np.isfinite(anchor_values)):
+            raise ValueError("colorbar() anchor must be a finite (x, y) pair")
         options = {
             "colormap": colormap or "viridis",
             "domain": (
@@ -536,8 +673,12 @@ class Figure:
                 else ([float(finite.min()), float(finite.max())] if finite.size else [0.0, 1.0])
             ),
             "label": _plain_text(kwargs.pop("label", "")),
-            "orientation": str(kwargs.pop("orientation", "vertical")),
+            "orientation": orientation,
         }
+        if shrink != 1.0:
+            options["shrink"] = shrink
+        if not np.array_equal(anchor_values, [0.5, 0.5]):
+            options["anchor"] = [float(anchor_values[0]), float(anchor_values[1])]
         # When the mappable's value domain is not knowable at colorbar() time
         # (e.g. hexbin counts are binned inside the mark), defer to the compiled
         # figure's color domain at render time instead of the 0..1 placeholder.
@@ -602,6 +743,14 @@ class Figure:
                     )
                 check_unsupported(kwargs, "Colorbar.set_ticks()")
                 self._options["ticks"] = [float(value) for value in np.asarray(ticks).reshape(-1)]
+                self.ax._invalidate()
+
+            def minorticks_on(self) -> None:
+                self._options["minor_ticks"] = True
+                self.ax._invalidate()
+
+            def minorticks_off(self) -> None:
+                self._options["minor_ticks"] = False
                 self.ax._invalidate()
 
         return _Colorbar(axes, options)
@@ -673,18 +822,43 @@ class Figure:
         """
         if not self._axes:
             return None
-        rects = [ax._figure_rect for ax in self._axes]
-        if any(rect is not None for rect in rects):
-            default = (
-                _GridSpec(self, 1, 1, **self._subplot_adjust).cell_rect((0, 1), (0, 1))
-                if self._subplot_adjust
-                else (0.125, 0.11, 0.775, 0.77)
-            )
-            return [rect if rect is not None else default for rect in rects]
-        if not self._subplot_adjust and len(self._axes) <= 1:
+        if (
+            all(ax._figure_rect is None for ax in self._axes)
+            and not self._subplot_adjust
+            and len(self._axes) <= 1
+        ):
             return None
-        # A uniform grid (adjusted or default SubplotParams): every panel
+        return [self._axes_rect(ax) or _DEFAULT_AXES_RECT for ax in self._axes]
+
+    def _axes_rect(self, ax: Axes) -> Optional[tuple[float, float, float, float]]:
+        """One axes' matplotlib rectangle (figure fractions), or None if foreign.
+
+        The single resolver behind both `_effective_rects` (what the exporters
+        place) and `Axes.get_position` (what scripts read), so the reported box
+        and the rendered box cannot drift apart.
+        """
+        if ax._figure_rect is not None:
+            return ax._figure_rect
+        if ax not in self._axes:
+            return None
+        if any(other._figure_rect is not None for other in self._axes):
+            # Free-form figure (add_axes/insets): matplotlib leaves a rect-less
+            # axes at the SubplotParams frame instead of dragging it onto the
+            # panel grid, which `add_axes` has already redefined as 1 x n.
+            if not self._subplot_adjust:
+                return _DEFAULT_AXES_RECT
+            return _GridSpec(self, 1, 1, **self._subplot_adjust).cell_rect((0, 1), (0, 1))
+        if len(self._axes) == 1 and self._nrows == self._ncols == 1 and not self._subplot_adjust:
+            # The overwhelmingly common single-subplot case is exactly the
+            # Matplotlib default frame. Avoid rebuilding a one-cell GridSpec
+            # every time layout asks for the axes rectangle.
+            return _DEFAULT_AXES_RECT
+        # A uniform grid (adjusted or default SubplotParams): the panel
         # resolves to its gridspec cell rectangle under the frame and spacing.
+        index = ax._subplot_index
+        if index is None:
+            index = self._axes.index(ax)
+        row, col = divmod(index, self._ncols)
         grid = _GridSpec(
             self,
             self._nrows,
@@ -693,13 +867,7 @@ class Figure:
             height_ratios=self._height_ratios,
             **self._subplot_adjust,
         )
-        return [
-            grid.cell_rect(
-                (index // self._ncols, index // self._ncols + 1),
-                (index % self._ncols, index % self._ncols + 1),
-            )
-            for index in range(len(self._axes))
-        ]
+        return grid.cell_rect((row, row + 1), (col, col + 1))
 
     def _grid_cell_sizes(self) -> tuple[list[int], list[int]]:
         """Per-column widths and per-row heights of the CSS-grid panel layout.
@@ -730,12 +898,15 @@ class Figure:
                 # figure buffer, matching Matplotlib add_axes semantics —
                 # including the axes title, which matplotlib draws above the
                 # axes without moving its position.
-                compact = plot_w + 54 < 520
-                margin_w, margin_h = (54, 42) if compact else (76, 52)
-                if ax._title:
-                    margin_h += 26 if compact else 30
+                left, top, right, bottom = _panel_chrome(ax, plot_w)
                 ax._absolute_plot_ratio = plot_w / plot_h
-                charts.append(ax._build_chart(plot_w + margin_w, plot_h + margin_h))
+                # Pin the plot rect inside the panel: the exporters place the
+                # panel assuming its plot box sits at exactly this inset, so
+                # the renderers must not pick their own label-aware margins.
+                ax._plot_box_px = (left, top, plot_w, plot_h)
+                charts.append(
+                    ax._build_chart(round(plot_w + left + right), round(plot_h + top + bottom))
+                )
         else:
             widths, heights = self._grid_cell_sizes()
             charts = [
@@ -806,19 +977,16 @@ class Figure:
         """
         positions = []
         for ax, rect in zip(self._axes, rects, strict=True):
-            compact = round(canvas_size[0] * rect[2]) + 54 < 520
-            left, bottom = (46, 36) if compact else (62, 42)
-            width, height = (54, 42) if compact else (76, 52)
-            if ax._title:
-                # The panel was built taller for its title (`_charts`); grow
-                # the placement upward so the plot box stays on the rect.
-                height += 26 if compact else 30
+            # The same chrome `_charts` built the panel with — including the
+            # axes title, which grows the panel upward so the plot box stays
+            # on the rect.
+            left, top, right, bottom = _panel_chrome(ax, max(1, round(canvas_size[0] * rect[2])))
             positions.append(
                 (
                     rect[0] - left / canvas_size[0],
                     rect[1] - bottom / canvas_size[1],
-                    rect[2] + width / canvas_size[0],
-                    rect[3] + height / canvas_size[1],
+                    rect[2] + (left + right) / canvas_size[0],
+                    rect[3] + (top + bottom) / canvas_size[1],
                 )
             )
         return positions
@@ -950,7 +1118,7 @@ class Figure:
             canvas_size=canvas_size if positions is not None else None,
             facecolor=self._facecolor,
             bbox_tight=bbox_tight,
-            pad_pixels=max(0, round(pad_inches * float(self._dpi or 100.0) * 2.0)),
+            pad_pixels=max(0, round(pad_inches * float(self._dpi or 100.0))),
         )
 
     def _to_html(self) -> str:
@@ -1023,6 +1191,23 @@ class Figure:
                     )
                     tight_width = max(120, min(tight_width, round(aspect_width)))
                 ax._padding = notebook_padding
+                # Matplotlib's inline bbox is derived from the ink, so the y
+                # title can never land on the tick labels there — but pinning a
+                # padding also pins the browser's gutter, and 41 px does not
+                # hold this shim's 13.89 px tick labels under a rotated title.
+                # Ask the shared static-layout path what the axis text measures
+                # (`_svg.layout` is the single authority for that reservation,
+                # so browser, SVG, and PNG stay on one number) and, when the pin
+                # is short, widen the *canvas* by the shortfall so the plot box
+                # keeps Matplotlib's 0.775 fraction instead of losing width.
+                measured_left = _measured_left_gutter(ax, tight_width, tight_height)
+                if measured_left > notebook_padding[3]:
+                    tight_width = max(
+                        120, tight_width + int(round(measured_left - notebook_padding[3]))
+                    )
+                    notebook_padding[3] = measured_left
+                    ax._chart = None
+                    ax._padding = notebook_padding
                 doc = ax._build_chart(tight_width, tight_height).to_html()
             finally:
                 ax._chart = old_chart
@@ -1241,6 +1426,11 @@ def _parse_subplot_args(args: tuple) -> tuple[int, int, int]:
 def make_axes_grid(fig: Figure, nrows: int, ncols: int, squeeze: bool = True) -> Any:
     """The plt.subplots() return contract: Axes, 1-D, or 2-D ndarray."""
     fig._ensure_grid(nrows, ncols)
+    if squeeze and nrows == ncols == 1:
+        # Avoid allocating and populating an object ndarray for the dominant
+        # plt.subplots() case whose public return value is a bare Axes.
+        fig._current_ax = fig._axes[0]
+        return fig._axes[0]
     axes = np.empty((nrows, ncols), dtype=object)
     for r in range(nrows):
         for c in range(ncols):
@@ -1248,11 +1438,8 @@ def make_axes_grid(fig: Figure, nrows: int, ncols: int, squeeze: bool = True) ->
     # Matplotlib's subplots() constructs axes in row-major order and leaves
     # the final one active for subsequent stateful ``plt.*`` calls.
     fig._current_ax = axes[-1, -1]
-    if squeeze:
-        if nrows == ncols == 1:
-            return axes[0, 0]
-        if nrows == 1 or ncols == 1:
-            return axes.ravel()
+    if squeeze and (nrows == 1 or ncols == 1):
+        return axes.ravel()
     return axes
 
 

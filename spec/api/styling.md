@@ -214,7 +214,9 @@ or a CSS `px` value such as `"3px"`.
 | `grid_dash` | `"solid"`, `"dashed"`, `"dotted"`, or `"dashdot"` |
 | `grid_opacity` | Number from `0` to `1` |
 | `tick_length` | Non-negative pixel length |
+| `tick_padding` | Signed pixel length (negative allowed) — extra distance between an axis tick and its tick label, on top of the tick's outward length. Defaults to `0`. Honored by static SVG/PNG exports. |
 | `tick_size` / `tick_label_size`, `label_size` | Positive pixel font size |
+| `label_font_weight`, `label_font_family`, `label_font_style` | Axis-label font overrides, passed through to the browser, SVG, and native PNG paths. `label_font_weight` defaults to `400` — see [Chrome text weight](#chrome-text-weight). |
 | `tick_direction` | `"in"`, `"out"`, or `"inout"` |
 | `tick_label_anchor` | `"start"`, `"center"`, or `"end"` (mpl `ha` aliases `"left"`/`"right"`/`"middle"` normalize) — which label edge pins to the tick; rotated labels pivot about the pinned edge. Also a first-class `x_axis`/`y_axis` option. X defaults to `"center"`; y defaults to the tick-side edge (`"end"` left of the plot, `"start"` right of it). Honored by static SVG/PNG exports. |
 
@@ -235,6 +237,33 @@ xy.x_axis(
     },
 )
 ```
+
+Tick-label placement has two regimes, and which one applies is decided by
+whether the axis authored any tick geometry — `tick_length` or
+`tick_padding`:
+
+- **Authored.** The label's anchor sits `tick_padding` past the outward end of
+  the tick mark, plus the room the glyph box itself needs on that side. This is
+  matplotlib's rule, and it is how the pyplot shim reproduces mpl spacing: it
+  always supplies `{x,y}tick.major.size` and `{x,y}tick.major.pad` from
+  `rcParams` (`_rc_axis_style`), so pyplot charts are always in this regime.
+- **Unauthored.** The chart keeps a fixed per-side gap. Core's default
+  `tick_length` is `0` and there is no default `tick_padding`, so deriving the
+  gap from tick geometry would silently pull the labels of every chart that
+  styles no ticks toward the spine. The per-side gaps are a layout contract:
+  charts that author no tick styling render identically before and after
+  `tick_padding` existed, in the browser client, SVG export, and native
+  raster alike. `_axis_tick_label_offset` in `python/xy/_svg.py` (shared with
+  `_raster.py`) and `tickLabelOffset` in `js/src/50_chartview.ts` are the two
+  implementations, and each renderer passes its own historical per-side value.
+
+Grid visibility is **per axis**. Every renderer — WebGL canvas, SVG, and native
+PNG — paints an axis's grid lines from that axis's own `grid_color` and
+`grid_width`, so `grid_color: "transparent"` hides exactly that axis's grid and
+leaves the other axis untouched. Enabling one axis's grid never turns the
+opposite axis's grid off; x and y are independent switches, and the matplotlib
+shim's `Axes.grid(axis="x")`/`Axes.grid(axis="y")` and `Axis.grid()` resolve
+onto the same rule.
 
 #### Axis visibility switches
 
@@ -269,6 +298,87 @@ xy.x_axis(line=False, ticks=False, style={"grid_color": "#1e293b"})
 The switches control what is *painted*, not the layout: the plot rect is
 unchanged, because the gutters are reserved by `padding`. An edge-to-edge
 sparkline is `show=False` **plus** `padding=0`.
+
+### Plot rectangle and chrome reservations
+
+`xy.chart(..., padding=[top, right, bottom, left])` sets the gutters around the
+plot rectangle in pixels. When omitted, the renderers pick label-aware defaults
+that leave room for ordinary tick and axis labels; those defaults are
+implementation-owned and may evolve with the text measurement and layout
+engines. `padding=[0, 0, 0, 0]` plus hidden axes gives an edge-to-edge
+sparkline.
+
+Some chrome is reserved **outside** `padding` rather than inside it, so
+supplying padding does not have to anticipate it:
+
+| Reservation | Where it is allocated |
+| --- | --- |
+| Chart title band | above the plot |
+| A top-side x axis | above the plot |
+| Right-side y axis gutter (secondary/named `y`) | to the right of the plot |
+| Vertical colorbar and its label | to the right of the plot |
+| Horizontal colorbar and its label | below the plot |
+
+`xy._svg.layout()` is the single resolver for this in the Python exporters, and
+the browser client's `ChartView._layout()` mirrors it exactly — the two must
+stay in step, because a caller that pins a plot rectangle (as `xy.pyplot` does
+to honor Matplotlib's `figure.subplot.*` frame) computes its padding by
+subtracting these reservations.
+
+#### Measured left gutter and the rotated y-axis title
+
+The **left** gutter is additionally floored at what the left y axis's own text
+measures, rather than trusting the flat `46/62 px`:
+
+```text
+left ≥ 10 px inset + half the title's line box
+     + 0.4 em title-to-tick gap
+     + tick_padding (+ the outward part of tick_length)
+     + the widest tick label's advance
+```
+
+with the title terms dropped when the axis has no title (or places it
+`inside_*`), and the tick terms dropped when its tick labels are hidden. Widths
+come from the advance table in `python/xy/_fontmetrics.py`, generated by
+`scripts/gen_font.py` from the same DejaVu Sans face `src/font.rs` bakes for the
+Rust rasterizer — the reservation is measured in the metrics of the font that
+will draw the ink, which is also Matplotlib's default face. A rotated tick label
+(`tick_label_angle`) contributes `advance·cos θ + line box·sin θ`.
+
+This is a floor, never an override: `padding` and the `46/62` default both stand
+whenever they already fit, so a chart whose text fits the default is laid out
+byte-identically. It rises above them only when the alternative is ink drawn off
+the canvas or on top of the tick labels, which a static export cannot recover
+from the way the DOM can (the browser ellipsizes an overlong categorical tick
+label; an SVG has no such fallback).
+
+The **outside** y-axis title is a quarter-turned line box centered on a fixed
+inset — `10 px` from the canvas edge on the left, `plot-right + 40 px` on the
+right — matching ChartView's `left:` values. Static exporters emit a *baseline*
+rather than a CSS box, so they shift it by half the ascent/descent asymmetry
+(`(ascent − descent) / 2`, away from the plot) to land the same ink; this is the
+y-axis counterpart of the `font_size × 0.82` correction the x-axis title makes.
+A title whose line box is taller than twice the inset is clamped to keep 1 px of
+leading ink on the canvas. Titles at an angle other than ±90° keep the raw inset.
+`label_offset` moves the title within the reserved gutter and is included in the
+reservation.
+
+Two asymmetries are deliberate, not oversights:
+
+- **Right-side y axes keep the flat `42/54 px`.** Their title is pinned
+  plot-relative (`plot-right + 40`) rather than to a canvas inset, so widening
+  only the static exporters' right gutter would move their title away from the
+  browser's. Unusually wide right-side tick labels can therefore still meet
+  their axis title, in every renderer alike.
+- **Only a spec-authored `padding` reaches the browser.** `layout()` is a Python
+  function; a chart rendered live with `padding=None` gets ChartView's own
+  `46/62` default, not the measured floor. The pyplot shim closes that gap on the
+  path where it matters — `_mplfig._to_notebook_html` pins a padding to match
+  Matplotlib's inline `bbox_inches="tight"` canvas, so it asks `layout()` for the
+  measured gutter first and ships that number, widening the canvas by the
+  shortfall so the plot box keeps Matplotlib's `0.775` width fraction. Browser,
+  SVG, and PNG then share one reservation by construction rather than by two
+  implementations agreeing.
 
 ### Series palette and custom colormaps
 
@@ -385,6 +495,117 @@ but they fail differently, and only the numeric grammar falls back.
   `format` is absent or not a string.
 - **Category axes** ignore `format=` and render the category label.
 
+### Colorbar placement and ticks
+
+The built-in colorbar's geometry rides the first-paint spec's `colorbar` object
+(`spec["colorbar"]`, written by `python/xy/_payload.py` from
+`Figure.colorbar_options`) and is honored identically by the browser client
+(`js/src/50_chartview.ts`), SVG (`python/xy/_svg.py`), and native PNG
+(`python/xy/_raster.py`).
+
+| Colorbar option | Value | Default |
+| --- | --- | --- |
+| `orientation` | `"vertical"` (right of the plot) or `"horizontal"` (below it) | `"vertical"` |
+| `shrink` | Fraction of the plot's length the bar spans along its long axis, in `(0, 1]` | `1` — full plot length |
+| `anchor` | `[x, y]` placement of a shrunken bar within the leftover room | `[0.5, 0.5]` — centered |
+| `minor_ticks` | Draw unlabeled minor ticks between the major ticks | absent — off |
+
+- **`shrink`** scales only the long axis: a horizontal bar's width becomes
+  `plot.w * shrink`, a vertical bar's height `plot.h * shrink`. Bar thickness
+  and the chrome room the layout reserves are unchanged, so shrinking a colorbar
+  never reflows the plot. The browser client additionally clamps the value into
+  `[0.01, 1]` (absent, zero, or non-finite reads as `1`) and floors a vertical
+  bar at 24 px; the static renderers use the authored value as given, because
+  the authoring surface below validates it.
+- **`anchor`** is a fraction of the *leftover* room, not of the plot, and only
+  the component along the bar's long axis is read: a vertical bar uses
+  `anchor[1]`, a horizontal bar `anchor[0]`. `anchor[0]` runs left → right
+  (`0` flush left, `1` flush right). `anchor[1]` runs **bottom → top** (`0`
+  flush with the plot's bottom edge, `1` with its top) — Matplotlib's bottom-up
+  axes-fraction convention, not the renderers' top-down pixel space. At
+  `shrink = 1` there is no leftover room, so `anchor` has no effect. The
+  cross-axis position stays layout-owned: a vertical bar always clears
+  right-side y-axis chrome, a horizontal one always sits below the bottom axis.
+- **`minor_ticks`** splits each interval between consecutive *rendered* major
+  ticks into fifths and draws four unlabeled 3 px ticks per interval on the
+  bar's tick side (right of a vertical bar, below a horizontal one). The
+  subdivision follows whichever major positions the colorbar actually drew —
+  explicit `ticks` included — and needs at least two of them, so a colorbar
+  showing a single major tick draws no minor ticks. Minor ticks carry
+  `data-xy-colorbar-minor="true"` in both the DOM and the SVG and deliberately
+  carry **no slot**: they are not `class_names`/`styles` targets and inherit the
+  surrounding text color (`currentColor` in the browser).
+
+`plt.colorbar()` / `fig.colorbar()` is the only authoring surface for `shrink`,
+`anchor`, and `minor_ticks` today; the declarative `xy.colorbar()` component
+still exposes `title`, `orientation`, and `ticks` only. The shim also accepts
+Matplotlib's `location=` as a synonym for the side — `"right"` selects
+`orientation: "vertical"`, `"bottom"` selects `"horizontal"` — and `location`
+never reaches the spec as a field of its own. Invalid values raise instead of
+being silently reinterpreted: `location="left"`/`"top"` is a
+`NotImplementedError` (unsupported placement), a `location`/`orientation` pair
+naming different sides is a `ValueError`, and so are a `shrink` outside
+`(0, 1]` and an `anchor` that is not a finite `(x, y)` pair.
+`Colorbar.minorticks_on()` / `minorticks_off()` toggle `minor_ticks` on the live
+handle. `shrink` and `anchor` are omitted from the spec entirely when they hold
+their defaults, so the wire shape of a default colorbar is unchanged.
+
+An **inferred** colorbar domain — the one the shim derives when no explicit
+`domain` was authored — is computed over **unmasked, finite** samples only:
+`np.ma`-masked entries are compressed out before the min/max, so a masked
+image's colorbar spans the values it actually paints rather than the fill values
+hidden underneath the mask. When masking (or non-finiteness) leaves no sample at
+all, the domain falls through to the existing autoscale path and resolves from
+the compiled figure's color domain at render time instead of a `0..1`
+placeholder.
+
+### Legend placement — `loc` and `anchor`
+
+`xy.legend(loc=...)` places the legend against the plot rectangle by name
+(`"upper right"`, `"lower left"`, `"center"`, …). The box is inset 6 px from the
+named edge and kept inside the plot rectangle — static export clamps it there
+explicitly — so `loc` alone can never paint a legend outside the axes.
+
+`xy.legend(anchor=...)` replaces that bounded, name-only placement with explicit
+geometry, mirroring Matplotlib's `bbox_to_anchor`; the `pyplot` shim maps
+`legend(bbox_to_anchor=...)` — a sequence, or any object exposing `.bounds` —
+onto this same option. It accepts a sequence of **2 or 4 finite numbers**.
+Anything else — a wrong length, a string, a non-finite value — raises
+`ValueError` when the component is created, before the chart or an export
+renders. The values reach the wire as `spec["legend"]["anchor"]`.
+
+Coordinates are **normalized plot-rectangle fractions with y pointing up**, the
+Matplotlib axes-fraction convention: `x = 0` is the plot's left edge and `x = 1`
+its right edge, `y = 0` the **bottom** edge and `y = 1` the **top**. Values
+outside `0…1` are legal and are the point of the option — they are how a legend
+is placed beside or above the axes.
+
+| Form | Meaning |
+| --- | --- |
+| `(x, y)` | A single anchor point. |
+| `(x, y, w, h)` | An anchor *box* whose lower-left corner is `(x, y)`, spanning `w` × `h`. |
+
+`loc` keeps a job under `anchor`: it selects **which point of the legend box** is
+pinned to the anchor, and for the 4-value form which point of the anchor box
+supplies it. Horizontally `"left"` → 0, `"right"` → 1, otherwise 0.5;
+vertically `"lower"` → 0, `"upper"` → 1, otherwise 0.5. So
+`legend(loc="lower left", anchor=(0, 1))` pins the legend's lower-left corner to
+the plot's upper-left corner, seating the legend entirely above the axes.
+
+An anchored legend is **not** clamped into the plot rectangle: the 6 px inset and
+the containment clamp are both skipped and the coordinates are honored literally.
+Reserving room for a legend placed outside the axes is therefore the caller's
+job. The composition API performs no automatic padding reservation — only the
+`pyplot` shim widens its own chart padding when `bbox_to_anchor` pushes the
+legend past an edge.
+
+In the browser the legend is a DOM overlay above the marks canvas, positioned
+through the private `--xy-legend-left` / `--xy-legend-top` custom properties and
+a matching `translate()`, with `--xy-legend-right` / `--xy-legend-bottom` set to
+`auto` under `anchor`. Static SVG and PNG export compute the same geometry; see
+*Static export* below for the clipping consequence, which is a contract change,
+not just a new placement.
+
 ## Slot reference
 
 Every element below is rendered with `data-xy-slot="<slot>"`, so
@@ -407,7 +628,7 @@ raises before it reaches the client.
 | `colorbar` | Colorbar container |
 | `colorbar_bar` | Colorbar gradient/bands |
 | `colorbar_tick` | Colorbar tick label |
-| `colorbar_title` | Colorbar title |
+| `colorbar_title` | Colorbar label (rotated beside a vertical bar) |
 | `tooltip` | Hover tooltip container |
 | `tooltip_title` | Formatted tooltip title |
 | `tooltip_row` | One tooltip field row |
@@ -484,6 +705,158 @@ CSS-only tokens consumed by DOM chrome do not.
 <!-- Tailwind arbitrary variant, targeting the same attribute -->
 <div class="[&_[data-xy-slot=legend]]:bg-transparent"> … </div>
 ```
+
+### Legend geometry
+
+Legend metrics are **font-relative**, never fixed pixels. Every length below is
+a multiple of the legend font size — 11 px unless a `font-size` in `px` is set
+on the `legend` slot (pyplot: `legend(fontsize=)`) — so a legend keeps its
+proportions instead of cramping as its type grows. The factors are Matplotlib's
+`legend` defaults, which is why a pyplot legend measures like a Matplotlib one
+without a shim-only code path.
+
+| Metric | Factor | At 11 px | Notes |
+| --- | --- | --- | --- |
+| Border pad, per side | `0.4` | 4.4 px | mpl `borderpad`; an `em` `padding` on the slot overrides it |
+| Handle length | `2` | 22 px | mpl `handlelength` — the line sample, marker cell, or patch width |
+| Handle-to-label pad | `0.8` | 8.8 px | mpl `handletextpad` |
+| Column spacing | `2` | 22 px | mpl `columnspacing`, between `ncols` columns |
+| Row spacing | `0.5` | 5.5 px | mpl `labelspacing`; an `em` `rowGap` on the slot overrides it |
+| Label row height | `1.03` | 11.33 px | one row advances `1.03 + labelspacing` = 16.83 px |
+| Glyph advance | `0.564` | 6.2 px | conservative width estimate for column sizing and ellipsis |
+
+This governs **every static legend**, not only pyplot's: the SVG exporter and
+the native rasterizer share one `_legend_layout` (`python/xy/_svg.py`), so a
+composed `scatter_chart`/`line_chart` legend and a pyplot one are laid out by
+the same code with the same defaults. The browser carries the three spacing
+factors as CSS (`padding` in `em`, `column-gap: 2em`, `row-gap: .5em`) and
+leaves handle and label metrics to the cascade, because a DOM legend measures
+itself and can scroll where a static file cannot.
+
+Columns size to their own labels rather than inheriting the widest label in the
+legend, and each retains at least a handle plus four glyphs; a plot too narrow
+for the requested `ncols` loses columns first and only then ellipsizes labels.
+A **legend title participates in both measurements**: it widens the box when
+its glyph advance plus both border pads exceeds the entry columns, and it is
+ellipsized against that same full inner width, so a title that fits is never
+shortened. It also consumes one extra `1.03 + labelspacing` row of height,
+which can push the last entry out of a short plot; a plot with room for no
+entry at all renders neither frame nor title.
+
+### Default colorbar label orientation
+
+The `colorbar_title` slot carries the colorbar's label (`title=` on the
+composition API, `Colorbar.set_label(...)` under `xy.pyplot`). By default its
+orientation follows the bar, matching Matplotlib:
+
+| Orientation | Placement | Rotation |
+| --- | --- | --- |
+| vertical | centered beside the bar, outboard of the tick labels | 90° counter-clockwise (reads bottom-to-top) |
+| horizontal | centered below the bar, under the tick labels | upright |
+
+All three renderers agree on this default vertical label: the browser client
+uses `writing-mode: vertical-rl` plus a half turn, the SVG exporter uses
+`rotate(-90 …)`, and the native PNG exporter uses the rasterizer's quarter-turn
+glyph path (`_TEXT_ROT_CCW`). The two static exporters use the same baseline
+(`bar_x + bar_width + 38`), and `layout()` reserves enough right-margin room
+for the label's cross-axis glyph extent.
+
+Quarter turns are exact in every renderer, including native PNG; only
+*arbitrary* text angles degrade there (glyphs stay upright). The pyplot shim
+does not yet model Matplotlib's `Colorbar.set_label(loc=..., labelpad=...,
+rotation=..., **text_properties)` customizations; those keyword arguments are
+currently accepted and ignored.
+
+### Chrome text weight
+
+**Every chrome text element defaults to `font-weight: 400`** — chart title, axis
+titles, tick labels, legend entries, legend titles, colorbar titles, and text/
+label/callout annotations alike. This is Matplotlib's default and it is
+deliberate: `axes.titleweight`, `axes.labelweight`, and `font.weight` are all
+`normal` in Matplotlib 3.11, and its legend titles and colorbar labels are
+normal too, so a chart exported from `xy.pyplot` carries the same text weight as
+the same script run under Matplotlib.
+
+The default is a **cross-renderer contract**, not a per-renderer choice. All
+three renderers must agree:
+
+| Renderer | Where the default lives |
+| --- | --- |
+| Browser render client | `font-weight:400` on the low-priority text slot rules in `js/src/20_theme.ts`; `js/src/50_chartview.ts` keeps constructor defaults out of inline styles so Tailwind and author CSS can override them, while an explicit axis/slot weight remains inline |
+| SVG export | `python/xy/_svg.py` — the `font-weight` attribute on the title, axis-title, and legend-title `<text>` elements |
+| Native PNG export | `python/xy/_raster.py` — `_native_font_emphasis` maps a weight `>= 600` onto the baked atlas's bold face, so 400 emits a plain, unemphasized text record |
+
+A renderer that drifts heavier is a bug; `tests/test_text_weight_defaults.py`
+asserts the emitted weight per element in the SVG output and in the native
+raster command stream, and holds source-level guards on the TypeScript base
+defaults and the absence of renderer-owned inline defaults (the client bundles
+are a generated, git-ignored artifact, so a bundle-reading test could not run
+from a fresh checkout).
+
+Heavier text is always opt-in, never a default:
+
+```python
+xy.chart(..., styles={"title": {"font_weight": 600}})        # per-slot
+xy.x_axis(label="time", style={"label_font_weight": "bold"})  # per-axis
+```
+
+Under the pyplot shim, Matplotlib's own knobs work too —
+`rcParams["axes.titleweight"]`, `rcParams["axes.labelweight"]`, and the explicit
+`ax.set_title(..., fontweight=)` / `ax.set_xlabel(..., fontweight=)` arguments.
+Because `normal` is already every renderer's default, the shim only puts a
+weight on the wire when it differs from `normal`.
+
+The native PNG exporter's font atlas is bounded and carries one regular and one
+bold face, so it approximates: any weight `>= 600` (or a name in
+`bold`/`semibold`/`demibold`/`heavy`/`black`) renders with the bold face, and
+everything lighter renders regular. Intermediate weights are therefore not
+distinguishable in native PNG output, while the browser and SVG paths pass the
+requested weight through verbatim.
+
+### Legend placement
+
+The pyplot shim accepts Matplotlib's ten anchored names — `upper right`,
+`upper left`, `lower left`, `lower right`, `right`, `center left`,
+`center right`, `lower center`, `upper center`, `center` — plus `"best"`.
+Validation stays in pyplot: core `xy.legend()` has its own existing vocabulary,
+including the documented `"top left"` spelling, and a Matplotlib compatibility
+change must not narrow that API.
+
+`"best"` is resolved to an anchored name during figure build, before the wire.
+The scorer follows Matplotlib's `Legend._find_best_position`:
+
+- candidates are scored in Matplotlib's location-code order (1..10, with code 5
+  `right` folded onto its identical code-7 anchor), the first empty one wins,
+  and ties go to the earlier candidate — this order *is* the tie-break contract;
+- each candidate is the **measured** legend box from `_legend_layout` above, as
+  a fraction of the plot box, not an estimate from row count and label length;
+- the box is anchored inside the plot box inset by `borderaxespad` on all four
+  sides, as Matplotlib's `offsetbox._get_anchored_bbox` pads its container;
+- badness is a raw count of line/path vertices strictly inside the box plus one
+  per intersecting path, collection offsets, and overlapping bar rectangles,
+  scored against the **displayed** view (an autoranged view is padded by the
+  engine, so the corner a mark reaches on screen is not the corner it reaches
+  in data space);
+- candidate fractions use the plot rectangle returned by the shared exporter
+  layout after the figure is built. They are not inferred from a second copy of
+  default margins.
+
+Known departures from Matplotlib's badness, in descending impact:
+
+- **Frame dependency.** A measured box can only match Matplotlib as a fraction
+  when the displayed axes frame also matches. The frame-geometry work tracked
+  separately from legend scoring is therefore a required compatibility
+  dependency, not a reason to score against an imaginary rectangle.
+- **Text extents.** Matplotlib 3.11 counts rendered `Text` bounding-box
+  overlaps. The shim does not yet include text boxes in badness.
+- **Non-bar patch detail.** Polygon vertices and crossings are included, and
+  bars use rectangle overlaps, but marker extents are omitted just as they are
+  in Matplotlib 3.11.
+- **Decimation** (§28). Occupancy is scored from at most 4096 strided vertices
+  per series, weighted back up to the true length so relative badness survives.
+  A lone excursion into an otherwise empty box can be missed on a series far
+  longer than that; Matplotlib counts every vertex and warns that `loc="best"`
+  is slow for exactly this reason.
 
 ## Cascade: visual defaults yield; structure and state do not
 
@@ -729,6 +1102,21 @@ antialiased SDF in the point shader, so shapes stay crisp at any size and the
 border is a true ring (a stroke width with no color borders in the mark color).
 Symbols compose with the color/size channels.
 
+Glyph geometry follows Matplotlib's marker paths, size convention included.
+`diamond` is the `square` glyph rotated 45°, so its half-diagonal is √2× the
+glyph radius — the rotated square keeps `square`'s side length at the same
+`size` rather than shrinking to fit the unrotated footprint, and `thin_diamond`
+is that same diamond squashed to 0.6 width. `triangle_left` and
+`triangle_right` rotate the shared triangle path so the apex points along the
+named direction and the wide base sits opposite it. Each backend reaches that
+geometry by its own route and lands on the same size convention: the WebGL
+client scales the point sprite by √2 and leaves the unit-space SDF untouched,
+the native rasterizer scales both the SDF threshold and the bounding-box extent
+it paints into, and SVG emits the widened outline directly — so one `size`
+value is one on-screen glyph across WebGL, PNG, and SVG. Charts that already
+used these four symbols render at a corrected size or orientation for an
+unchanged `size`; the set of available symbols does not change.
+
 Interaction state belongs to the host framework. In Reflex, use Reflex state,
 event handlers, conditions, and ordinary CSS classes/styles; XY only emits the
 events and renders the resulting props. The component API deliberately does not
@@ -798,6 +1186,34 @@ Annotation **shapes** (markers, arrows, filled zones) are canvas-painted; style
 them through the annotation's own `color` / `stroke_color` / `stroke_width` /
 `opacity` arguments. Only annotation **labels** are DOM (`annotation_label`)
 and thus fully CSS-styleable.
+
+### Annotation label boxes
+
+A text/label/callout annotation may carry a boxed background through four
+style keys. The render client applies them as ordinary CSS on the label
+element (`border_radius` → `border-radius`, numbers gaining `px`); the SVG and
+native-PNG exporters reimplement the same four keys so an export matches the
+live label.
+
+| Key | Browser | SVG export | Native PNG export |
+| --- | --- | --- | --- |
+| `background` | CSS `background` | `<rect fill>` | `FILL` polygon |
+| `border` | CSS `border` (`"1px solid <color>"`) | `<rect stroke>` + `stroke-width` | `STROKE` polyline |
+| `padding` | CSS `padding` | grows the rect | grows the polygon |
+| `border_radius` | CSS `border-radius` | `<rect rx>` | polygon corners arc-flattened, 4 segments per quarter turn |
+
+Each renderer clamps `border_radius` to half the shorter box side, as CSS
+does, so an oversized radius degrades to a stadium rather than an inverted
+polygon. The exporters size the box from a dependency-free, glyph-shaped
+sans-serif width estimate, so a box tracks its text approximately, not exactly.
+
+**Label color** resolves as `label_color` → `color` → the renderer's own
+default, and the three defaults are *not* the same value: the browser uses
+`--chart-annotation-text` (falling back to `--chart-text`), the SVG exporter
+`#667085`, and the native rasterizer `rgba(32,32,32,.85)` (which composites to
+`rgb(65,65,65)` on white). A caller that needs one colour across all three must
+say so; `xy.pyplot` does, pinning `label_color` from
+`rcParams["text.color"]` on every text/annotate label.
 
 ## Static export
 
@@ -883,3 +1299,50 @@ PNG. Complete paint references such as `var(--accent)` resolve against custom
 properties in the chart's own `style`, including nested token aliases and
 `var()` fallbacks. SVG renders smooth curves as exact cubic Béziers; the native
 raster flattens them to a fine polyline.
+
+**Legend clipping, and the `anchor` exemption.** The browser hands an oversized
+legend a scrollbar. A static file cannot scroll, so SVG and PNG export instead
+ellipsize the labels and clip the legend to the plot rectangle. A legend with
+`anchor` set (see *Legend placement* above) is **exempt** from that clip. This is
+a deliberate narrowing of an older guarantee: static export used to promise that
+a legend never painted outside the plot rectangle, and an anchored legend gives
+that promise up so it can sit beside or above the axes. Nothing else bounds it —
+an anchored legend that overruns the canvas is cut off by the image edge, so
+reserve padding for it.
+
+The exemption is scoped **per legend** in both static backends: each legend box
+keeps or drops the clip on its own `anchor`, so an anchored extra legend does not
+un-clip the main one (or a non-anchored sibling extra). SVG gives each legend
+group its own `clip-path`; the native rasterizer's clip is a stateful command, so
+it switches the clip rectangle around each legend and only emits a command on a
+transition — an all-anchored or all-bounded figure produces the same command
+stream it always did. The browser needs no equivalent rule: every legend box is
+its own scroll container sized by `--xy-legend-max-width`/`-height`, so the
+constraint is already per element there.
+
+**The frame is sized to measured glyph advances.** A static legend column is as
+wide as its widest label actually sets, not as wide as its character count
+suggests. The advances are the bundled DejaVu Sans ones the native rasterizer
+already blits, mirrored Python-side into `python/xy/_fontmetrics.py` and
+generated beside `src/font.rs` by `scripts/gen_font.py`, so the two cannot
+drift. A flat per-character average cannot bound a proportional face — `m` is
+over three times the width of `l`, so `"gamma"` sets 42.6 px at the 11 px legend
+font against a 31.0 px estimate — and sizing a frame from the estimate drew the
+border *inside* its own labels. Labels and the title are both ellipsized against
+the same measured budget, so whatever survives truncation also fits. This is
+what the browser does natively: each legend column is `max-content`. A codepoint
+the atlas lacks reserves the nominal average advance rather than the
+rasterizer's zero, because SVG resolves it against the viewer's fonts and does
+paint it; over-reserving only widens the frame, which can never spill a label.
+
+Border pad aside, the guarantee is one-directional: the frame contains its
+entries. It is a bound, not a matplotlib-identical measurement — the faces
+differ, so expect small numeric differences against matplotlib's own
+`borderpad` inset, not a different sign.
+
+**The frame is a closed rectangle.** All four sides paint, matching
+matplotlib's legend frame (a `FancyBboxPatch`). SVG emits a `<rect>` and the
+browser a CSS `border`, both inherently four-sided; the native rasterizer
+strokes the four corner points as a *closed* polyline, since stroking them open
+paints top/right/bottom and silently drops the left edge. Fill and stroke both
+carry `framealpha`, and `frameon=False` drops the box entirely.

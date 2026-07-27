@@ -113,10 +113,16 @@ def test_default_colorbar_ticks_are_dense_for_small_decimal_domains():
     plt.colorbar(image)
     svg = _svg()
     assert all(f">{value:.2f}<" in svg for value in (0.02, 0.04, 0.06, 0.08, 0.12, 0.14))
-    # The client-side colorbar mirrors the 8-tick target; the embedded bundle
-    # is minified, so assert against the client source instead of the HTML.
+    # A normal-height colorbar retains the dense eight-tick ceiling. Shorter
+    # bars reduce their budget so labels do not collide.
+    from xy._svg import _colorbar_tick_target
+
+    assert _colorbar_tick_target(360) == 8
+    assert _colorbar_tick_target(140) == 3
+    # The client-side colorbar uses the same 48 px spacing budget; the embedded
+    # bundle is minified, so assert against the client source instead of HTML.
     client = ROOT / "js" / "src" / "50_chartview.ts"
-    assert "linearTicks(lo, hi, 8)" in client.read_text(encoding="utf-8")
+    assert "barLength) / 48" in client.read_text(encoding="utf-8")
 
 
 def test_explicit_colorbar_ticks_still_honored():
@@ -221,9 +227,12 @@ def test_monochrome_contour_dashes_negative_levels():
     plt.contour(xx, yy, zz, colors="black")
     contours = [t for t in _compiled_traces() if t.kind == "contour"]
     assert len(contours) == 2
-    dashes = sorted(str(t.style.get("dash")) for t in contours)
-    assert dashes == ["None", "[7.4, 3.2]"]  # negatives dashed, non-negatives solid
-    assert all(t.style["width"] == pytest.approx(2.0) for t in contours)
+    expected_width = plt.rcParams["lines.linewidth"] * plt.rcParams["figure.dpi"] / 72.0
+    dashed = [trace for trace in contours if trace.style.get("dash") is not None]
+    solid = [trace for trace in contours if trace.style.get("dash") is None]
+    assert len(dashed) == len(solid) == 1
+    assert dashed[0].style["dash"] == pytest.approx([3.7 * expected_width, 1.6 * expected_width])
+    assert all(t.style["width"] == pytest.approx(expected_width) for t in contours)
     assert all(t.style["opacity"] == pytest.approx(1.0) for t in contours)
 
 
@@ -255,3 +264,15 @@ def test_contourf_fills_discrete_bands_not_a_smooth_gradient():
     expected_ticks[np.abs(expected_ticks) < 1e-12] = 0.0
     assert colorbar["ticks"] == pytest.approx(expected_ticks)
     assert 0.0 in colorbar["ticks"]
+
+
+def test_contourf_includes_samples_equal_to_the_final_level():
+    values = np.array([[0.0, 1.0], [1.0, 2.0]])
+    _fig, ax = plt.subplots()
+    ax.contourf(values, levels=[0.0, 1.0, 2.0])
+
+    heatmap = next(
+        trace for trace in ax._build_chart(640, 480).figure().traces if trace.kind == "heatmap"
+    )
+
+    assert heatmap.grid.values.reshape(heatmap.grid_shape)[-1, -1] == 1.5

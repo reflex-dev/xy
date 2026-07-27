@@ -103,7 +103,10 @@ def line_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
         out["dash"] = list(dashes)
     gapcolor = kwargs.pop("gapcolor", None)
     if gapcolor is not None:
-        raise not_implemented("Line2D gapcolor")
+        # Kept private to the pyplot entry.  Materialization draws a solid
+        # underlay before the dashed foreground, reproducing Matplotlib's
+        # alternating gap paint without expanding the public mark protocol.
+        out["_gapcolor"] = resolve_color(gapcolor)
     path_effects = kwargs.pop("path_effects", None)
     if path_effects:
         raise not_implemented("Line2D path_effects")

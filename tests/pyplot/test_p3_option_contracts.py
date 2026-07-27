@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Any
 
 import numpy as np
 import pytest
@@ -36,7 +37,6 @@ def test_plot_marker_styles_and_markevery_reach_marker_entry() -> None:
         (lambda ax: ax.fill_betweenx([0, 1], [0, 1], step="pre"), "step"),
         (lambda ax: ax.arrow(0, 0, 1, 1, shape="left"), "head shape"),
         (lambda ax: ax.errorbar([0], [1], yerr=0.2, barsabove=True), "barsabove"),
-        (lambda ax: ax.imshow([[1]], interpolation_stage="rgba"), "interpolation_stage"),
         (lambda ax: ax.psd([1, 2, 3], window=np.ones(3)), "window"),
     ],
 )
@@ -172,7 +172,6 @@ _Z = np.arange(16.0).reshape(4, 4)
         (lambda ax: ax.pie([1, 2], rotatelabels=True), "rotatelabels"),
         (lambda ax: ax.pie([1, 2], hatch="//"), "hatch"),
         (lambda ax: ax.pie([1, 2], wedgeprops={"hatch": "x"}), "hatch"),
-        (lambda ax: ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], units="xy"), "units"),
         (lambda ax: ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], headwidth=6), "headwidth"),
         (lambda ax: ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], headlength=2), "headlength"),
         (lambda ax: ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], headaxislength=2), "headaxislength"),
@@ -181,44 +180,18 @@ _Z = np.arange(16.0).reshape(4, 4)
         (lambda ax: ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], norm=Normalize(0, 1)), "norm"),
         (lambda ax: ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], clim=(0, 1)), "clim"),
         (lambda ax: ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], zorder=3), "zorder"),
-        (lambda ax: ax.barbs([0, 1], [0, 1], [1, 0], [0, 1], length=9), "length"),
-        (lambda ax: ax.barbs([0, 1], [0, 1], [1, 0], [0, 1], fill_empty=True), "fill_empty"),
-        (lambda ax: ax.barbs([0, 1], [0, 1], [1, 0], [0, 1], rounding=False), "rounding"),
-        (lambda ax: ax.barbs([0, 1], [0, 1], [1, 0], [0, 1], flip_barb=True), "flip_barb"),
-        (lambda ax: ax.barbs([0, 1], [0, 1], [1, 0], [0, 1], sizes={"spacing": 0.2}), "sizes"),
-        (lambda ax: ax.barbs([0, 1], [0, 1], [1, 0], [0, 1], barbcolor="red"), "barbcolor"),
-        (lambda ax: ax.barbs([0, 1], [0, 1], [1, 0], [0, 1], flagcolor="red"), "flagcolor"),
-        (
-            lambda ax: ax.barbs([0, 1], [0, 1], [1, 0], [0, 1], barb_increments={"half": 3}),
-            "barb_increments",
-        ),
-        (lambda ax: ax.contour(_Z, origin="lower"), "origin"),
         (lambda ax: ax.contour(_Z, linestyles="dashed"), "linestyles"),
-        (lambda ax: ax.contourf(_Z, corner_mask=False), "corner_mask"),
         (lambda ax: ax.contourf(_Z, corner_mask="legacy"), "corner_mask"),
         (lambda ax: ax.streamplot(*_stream_args(), transform="data"), "transform"),
         (lambda ax: ax.streamplot(*_stream_args(), zorder=2), "zorder"),
         (lambda ax: ax.streamplot(*_stream_args(), minlength=0.5), "minlength"),
-        (
-            lambda ax: ax.streamplot(*_stream_args(), broken_streamlines=False),
-            "broken_streamlines",
-        ),
         (lambda ax: ax.streamplot(*_stream_args(), arrowstyle="->"), "arrowstyle"),
-        (
-            lambda ax: ax.streamplot(*_stream_args(), integration_max_step_scale=2.0),
-            "integration_max_step_scale",
-        ),
-        (
-            lambda ax: ax.streamplot(*_stream_args(), integration_max_error_scale=0.5),
-            "integration_max_error_scale",
-        ),
         (lambda ax: ax.pcolormesh(_Z, antialiased=False), "antialiased"),
         (lambda ax: ax.pcolor(_Z, antialiased=False), "antialiased"),
         (lambda ax: ax.table(cellText=[["a"]], cellLoc="center"), "cellLoc"),
         (lambda ax: ax.table(cellText=[["a"]], rowLoc="center"), "rowLoc"),
         (lambda ax: ax.table(cellText=[["a"]], colLoc="left"), "colLoc"),
         (lambda ax: ax.table(cellText=[["a"]], loc="top"), "loc"),
-        (lambda ax: ax.stem([0, 1], [1, 2], basefmt="k-"), "basefmt"),
         (
             lambda ax: ax.quiverkey(_quiver(ax), 0.5, 0.5, 1, "k", fontproperties={"size": 9}),
             "fontproperties",
@@ -258,10 +231,6 @@ _Z = np.arange(16.0).reshape(4, 4)
         (
             lambda ax: ax.tricontour([0, 1, 2], [0, 1, 0], [1.0, 2.0, 3.0], norm=LogNorm()),
             r"tricontour\(norm=LogNorm\)",
-        ),
-        (
-            lambda ax: ax.pie_label(ax.pie([1.0, 2.0]), "{frac:.0%}", rotate=True),
-            "rotate",
         ),
     ],
 )
@@ -304,12 +273,314 @@ def test_matplotlib_default_option_values_pass_through() -> None:
     assert ax._entries
 
 
+def test_quiver_units_control_width_without_changing_vector_length() -> None:
+    _fig, ax = plt.subplots()
+    width_units = ax.quiver([0, 10], [0, 10], [1, 0], [0, 1], units="width", width=0.02, scale=1)
+    x_units = ax.quiver([0, 10], [0, 10], [1, 0], [0, 1], units="x", width=0.02, scale=1)
+    np.testing.assert_allclose(width_units._entry["args"][0], x_units._entry["args"][0])
+    np.testing.assert_allclose(width_units._entry["args"][2], x_units._entry["args"][2])
+    assert width_units._entry["kwargs"]["width"] > x_units._entry["kwargs"]["width"]
+
+
+def test_barbs_use_fixed_staffs_and_matplotlib_tail_decomposition() -> None:
+    _fig, ax = plt.subplots()
+    ax.barbs(
+        np.arange(5.0),
+        np.zeros(5),
+        [0, 5, 10, 50, 65],
+        np.zeros(5),
+        length=8,
+        fill_empty=True,
+        rounding=False,
+    )
+    segments = ax._entries[0]
+    triangles = ax._entries[1]
+    assert segments["factory"] == "segments"
+    assert triangles["factory"] == "triangle_mesh"
+    # Empty circle (12), then half/full/flag/flag+full+half geometries.
+    assert len(segments["args"][0]) == 24
+    assert len(triangles["args"][0]) == 14  # 12 circle wedges + two flags
+    x0, y0, x1, y1 = map(np.asarray, segments["args"])
+    staff_indices = [12, 14, 16, 19]
+    staff_lengths = np.hypot(
+        x1[staff_indices] - x0[staff_indices], y1[staff_indices] - y0[staff_indices]
+    )
+    np.testing.assert_allclose(staff_lengths, staff_lengths[0])
+
+
+def test_barbs_support_increment_flip_size_and_color_controls() -> None:
+    _fig, ax = plt.subplots()
+    ax.barbs(
+        [0, 1],
+        [0, 0],
+        [120, 40],
+        [0, 0],
+        barb_increments={"half": 10, "full": 20, "flag": 100},
+        sizes={"spacing": 0.2, "height": 0.3, "emptybarb": 0.25},
+        flip_barb=True,
+        barbcolor=["b", "g"],
+        flagcolor="r",
+    )
+    segment_entries = [entry for entry in ax._entries if entry["factory"] == "segments"]
+    triangle_entries = [entry for entry in ax._entries if entry["factory"] == "triangle_mesh"]
+    assert {entry["kwargs"]["color"] for entry in segment_entries} == {"#0000ff", "#008000"}
+    assert triangle_entries[0]["kwargs"]["color"] == "#ff0000"
+
+
+def test_fully_masked_barbs_return_an_empty_collection() -> None:
+    _fig, ax = plt.subplots()
+    masked = np.ma.masked_all(3)
+
+    collection = ax.barbs([0, 1, 2], [0, 1, 2], masked, masked)
+
+    assert collection._entry["factory"] == "segments"
+    assert len(collection._entry["args"][0]) == 0
+
+
+def test_stem_dashed_basefmt_builds_a_flat_dash_pattern() -> None:
+    _fig, ax = plt.subplots()
+
+    container = ax.stem([0.0, 1.0], [1.0, 2.0], basefmt="k--")
+    ax._build_chart(640, 480)
+
+    dash = container.baseline._entry["kwargs"]["dash"]
+    assert dash
+    assert all(np.isscalar(value) for value in dash)
+
+
+def test_path_collection_get_sizes_tracks_set_sizes() -> None:
+    _fig, ax = plt.subplots()
+    collection = ax.scatter([0.0, 1.0], [0.0, 1.0], s=[4.0, 9.0])
+
+    collection.set_sizes([16.0, 25.0])
+
+    np.testing.assert_array_equal(collection.get_sizes(), [16.0, 25.0])
+
+
+def test_barb_staff_length_is_screen_stable_across_subplot_grids() -> None:
+    def staff_pixels(fig: Any, ax: Any) -> float:
+        ax.barbs([0.0, 4.0], [0.0, 3.0], [50.0, 50.0], [0.0, 0.0])
+        segments = next(entry for entry in ax._entries if entry["factory"] == "segments")
+        x0, y0, x1, y1 = (np.asarray(values) for values in segments["args"])
+        figure_width, figure_height = fig._panel_px()
+        rects = fig._effective_rects()
+        if rects is None:
+            plot_width, plot_height = figure_width * 0.775, figure_height * 0.77
+        else:
+            rect = rects[fig._axes.index(ax)]
+            total_width = figure_width * fig._ncols
+            total_height = figure_height * fig._nrows
+            plot_width, plot_height = total_width * rect[2], total_height * rect[3]
+        return float(
+            np.hypot(
+                (x1[0] - x0[0]) / 4.0 * plot_width,
+                (y1[0] - y0[0]) / 3.0 * plot_height,
+            )
+        )
+
+    single_fig, single_ax = plt.subplots()
+    grid_fig, grid_axes = plt.subplots(2, 2)
+    np.testing.assert_allclose(
+        staff_pixels(single_fig, single_ax),
+        staff_pixels(grid_fig, grid_axes[0, 0]),
+        rtol=1e-12,
+    )
+
+
+def test_streamplot_integration_controls_drive_adaptive_step_size() -> None:
+    x = np.linspace(-1.0, 1.0, 30)
+    y = np.linspace(-1.0, 1.0, 30)
+    xx, yy = np.meshgrid(x, y)
+
+    def segment_lengths(step_scale: float) -> np.ndarray:
+        _fig, ax = plt.subplots()
+        ax.streamplot(
+            x,
+            y,
+            -yy,
+            xx,
+            start_points=[[0.5, 0.0]],
+            broken_streamlines=False,
+            integration_max_step_scale=step_scale,
+            integration_max_error_scale=step_scale,
+        )
+        entry = next(entry for entry in ax._entries if entry.get("factory") == "segments")
+        x0, y0, x1, y1 = map(np.asarray, entry["args"])
+        return np.hypot(x1 - x0, y1 - y0)
+
+    fine = segment_lengths(0.2)
+    coarse = segment_lengths(2.0)
+    assert np.median(fine) < np.median(coarse)
+    assert len(fine) > len(coarse)
+
+
+def test_streamplot_accepts_gallery_autumn_colormap() -> None:
+    x = np.linspace(-1.0, 1.0, 8)
+    y = np.linspace(-1.0, 1.0, 8)
+    xx, yy = np.meshgrid(x, y)
+    _fig, ax = plt.subplots()
+    result = ax.streamplot(x, y, -yy, xx, color=xx, cmap="autumn")
+    assert result.lines._entry["kwargs"]["colormap"] == "autumn"
+
+
 def test_contour_extent_generates_coordinate_grids() -> None:
     _fig, ax = plt.subplots()
     ax.contour(np.arange(12.0).reshape(3, 4), extent=(0, 6, 10, 40))
     entry = ax._entries[0]
     np.testing.assert_allclose(entry["kwargs"]["x"], [0.0, 2.0, 4.0, 6.0])
     np.testing.assert_allclose(entry["kwargs"]["y"], [10.0, 25.0, 40.0])
+
+
+def test_contour_origin_matches_image_pixel_centers() -> None:
+    _fig, ax = plt.subplots()
+    lower = ax.contour(_Z, origin="lower")._entry
+    upper = ax.contour(_Z, origin="upper", extent=(10, 14, 20, 26))._entry
+
+    np.testing.assert_allclose(lower["kwargs"]["x"], [0.5, 1.5, 2.5, 3.5])
+    np.testing.assert_allclose(lower["kwargs"]["y"], [0.5, 1.5, 2.5, 3.5])
+    np.testing.assert_allclose(upper["kwargs"]["x"], [10.5, 11.5, 12.5, 13.5])
+    # The native kernel requires increasing coordinates, so origin='upper'
+    # reverses the source rows while preserving Matplotlib's top-first visual.
+    np.testing.assert_allclose(upper["kwargs"]["y"], [20.75, 22.25, 23.75, 25.25])
+    np.testing.assert_allclose(upper["source_z"], _Z[::-1])
+
+
+def test_contour_corner_mask_controls_missing_corner_geometry_and_is_inherited() -> None:
+    _fig, ax = plt.subplots()
+    z = np.array([[np.nan, 1.0], [0.0, 0.0]])
+    masked = ax.contour(z, levels=[0.5], corner_mask=True)
+    assert masked._entry["corner_mask"] is True
+
+    inherited = ax.contour(masked)
+    assert inherited._entry["corner_mask"] is True
+    explicit = ax.contour(z, levels=[0.5], corner_mask=False)
+    assert explicit._entry["corner_mask"] is False
+
+    _fig2, ax2 = plt.subplots()
+    ax2.contour(z, levels=[0.5], corner_mask=True)
+    chart = ax2._build_chart(640, 480).figure()
+    contour_traces = [trace for trace in chart.traces if trace.kind == "contour"]
+    assert len(contour_traces) == 1
+
+
+def test_contourf_legend_elements_keep_per_band_hatches_and_handleheight() -> None:
+    _fig, ax = plt.subplots()
+    contour = ax.contourf(
+        _Z,
+        levels=[0.0, 5.0, 10.0, 15.0],
+        colors="none",
+        hatches=[".", "/", "\\"],
+    )
+    handles, labels = contour.legend_elements(str_format="{:2.1f}".format)
+    assert len(handles) == len(labels) == 3
+    assert len({id(handle) for handle in handles}) == 3
+    assert [handle._entry["kwargs"]["hatch"] for handle in handles] == [".", "/", "\\"]
+
+    ax.legend(handles, labels, handleheight=2, framealpha=1)
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert spec["legend"]["handleheight"] == 2.0
+    assert [item["style"]["hatch"] for item in spec["legend"]["items"]] == [".", "/", "\\"]
+    assert all(item["kind"] == "bar" for item in spec["legend"]["items"])
+
+
+def test_contourf_preserves_unknown_public_extend_as_unextended_geometry() -> None:
+    _fig, ax = plt.subplots()
+    contour = ax.contourf(_Z, levels=4, extend="lower")
+
+    assert contour._entry["extend"] == "lower"
+    assert contour._entry["kwargs"]["extend"] == "neither"
+
+
+def test_violinplot_flat_quantiles_are_one_single_violin_group() -> None:
+    _fig, ax = plt.subplots()
+    result = ax.violinplot(
+        [1.0, 2.0, 3.0, 4.0],
+        quantiles=[0.25, 0.5, 0.75],
+        showextrema=False,
+    )
+
+    quantile_segments = result["cquantiles"]._entry["args"]
+    assert len(quantile_segments[0]) == 3
+    np.testing.assert_allclose(quantile_segments[1], [1.75, 2.5, 3.25])
+
+
+def test_plot_masked_integer_coordinates_use_nan_gaps() -> None:
+    _fig, ax = plt.subplots()
+    line = ax.plot(
+        np.ma.array([0, 1, 2], mask=[False, True, False]),
+        [3, 4, 5],
+        "ro",
+    )[0]
+    np.testing.assert_allclose(line.get_xdata()[[0, 2]], [0.0, 2.0])
+    assert np.isnan(line.get_xdata()[1])
+
+
+def test_contour_solid_style_and_negative_rc_setting() -> None:
+    _fig, ax = plt.subplots()
+    explicit = ax.contour(_Z - 7.5, colors="black", linestyles="-")
+    assert explicit._entry["kwargs"]["dash_negative"] is False
+
+    with plt.rc_context({"contour.negative_linestyle": "solid"}):
+        configured = ax.contour(_Z - 7.5, colors="black")
+    assert configured._entry["kwargs"]["dash_negative"] is False
+
+    default = ax.contour(_Z - 7.5, colors="black")
+    assert default._entry["kwargs"]["dash_negative"] is True
+
+    listed = ax.contourf(_Z, colors=("r", "g", "b"))
+    palette = np.asarray(
+        [
+            [1.0, 0.0, 0.0, 1.0],
+            [0.0, 128 / 255, 0.0, 1.0],
+            [0.0, 0.0, 1.0, 1.0],
+        ]
+    )
+    expected = palette[np.arange(len(listed.levels) - 1) % len(palette)]
+    np.testing.assert_allclose(listed._entry["kwargs"]["color"], expected)
+    assert listed._entry["kwargs"]["dash_negative"] is False
+
+
+def test_contour_linewidths_cycle_by_level_and_artist_updates_preserve_arrays() -> None:
+    _fig, ax = plt.subplots()
+    point_scale = ax._point_scale()
+    contour = ax.contour(
+        np.arange(25.0).reshape(5, 5),
+        levels=[4, 8, 12, 16, 20],
+        colors="black",
+        linewidths=[0.5, 2.0],
+    )
+    np.testing.assert_allclose(contour.get_linewidth(), [0.5, 2.0])
+    np.testing.assert_allclose(
+        contour._entry["kwargs"]["width"],
+        np.array([0.5, 2.0]) * point_scale,
+    )
+
+    contour.set_linewidth([1.0, 3.0, 2.0])
+    np.testing.assert_allclose(contour.get_linewidth(), [1.0, 3.0, 2.0])
+    np.testing.assert_allclose(
+        contour._entry["kwargs"]["width"],
+        np.array([1.0, 3.0, 2.0]) * point_scale,
+    )
+
+    contour.set(linewidth=[0.75, 1.5])
+    np.testing.assert_allclose(contour.get_linewidth(), [0.75, 1.5])
+    np.testing.assert_allclose(
+        contour._entry["kwargs"]["width"],
+        np.array([0.75, 1.5]) * point_scale,
+    )
+
+    traces = ax._build_chart(640, 480).figure().traces
+    widths = np.concatenate(
+        [
+            trace.style_channels["width"].values
+            for trace in traces
+            if trace.kind == "contour" and "width" in trace.style_channels
+        ]
+    )
+    np.testing.assert_allclose(
+        sorted(set(widths)),
+        np.array([0.75, 1.5]) * point_scale,
+    )
 
 
 def test_stem_dashed_linefmt_emits_dash_segments_and_markers() -> None:

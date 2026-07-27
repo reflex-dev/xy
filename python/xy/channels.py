@@ -32,6 +32,7 @@ COLORMAPS = (
     "plasma",
     "inferno",
     "cividis",
+    "autumn",
     "gray",
     "turbo",
     "coolwarm",
@@ -47,6 +48,11 @@ COLORMAPS = (
     "rdbu",
     "jet",
     "binary",
+    "flag",
+    "reds",
+    "bone",
+    "winter",
+    "bupu",
 )
 
 

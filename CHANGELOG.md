@@ -57,18 +57,44 @@ in the README).
   same validated style properties, so an explicit `style=` still wins and specs
   that don't use them are byte-identical.
 
+### Fixed
+- A mark-level `animation=xy.animation(...)` no longer resets the chart-level
+  policy fields it does not mention. It was a complete spec spread over the
+  chart's, so `xy.animation(duration=90)` on a mark silently reset `match`,
+  `easing`, `enter`, `update`, and `interpolate` to their defaults — turning
+  off a chart-level `match="key"` with no error and no fallback, and
+  suppressing the `match='key' requires key=` validation entirely. Mark
+  overrides now cascade field by field, and passing a field explicitly counts
+  as setting it even when the value equals the default. A trace that carries an
+  override ships the complete resolved policy, so the browser's merge is no
+  longer a second, defaults-clobbering one.
+
 ### Changed
+- Stable animation `key=` identity planes are now retained and shipped only
+  when the resolved animation spec can actually key-match. `match` defaults to
+  `"index"`, so `key=` combined with a bare `xy.animation(...)`, with
+  `enabled=False`, or with no animation at all previously put two dead `u32`
+  columns in the payload — 8 B/row held for the widget lifetime and 8 B/row on
+  the wire (400 KB at 50k rows) that no client code read. Encoding still runs
+  in every case: duplicate-key and row-count errors are construction contract,
+  not animation policy, and are unchanged. Payloads that do key-match are
+  byte-identical.
 - Stable animation `key=` identity encoding now uses one native Rust row scan
   for homogeneous fixed-width strings, bytes, booleans, and signed or unsigned
   integers, plus finite floating arrays, including non-native-endian NumPy
   arrays. Float16/32 values widen exactly to the f64 token contract. It
   preserves the existing 64-bit identities and duplicate-row errors; mixed
-  objects, NUL-containing Python sequences, dates, and non-finite row
-  diagnostics stay on the conservative Python reference path. Highly padded
-  Python string/bytes sequences also stay there to bound fixed-width temporary
-  memory. Fixed-width NumPy strings retain their exact embedded-NUL semantics
-  natively.
-  This adds the C ABI v43 transition-key kernel.
+  objects, dates, and non-finite row diagnostics stay on the conservative
+  Python reference path. Highly padded Python string/bytes sequences also stay
+  there to bound fixed-width temporary memory. Fixed-width NumPy strings retain
+  their exact embedded-NUL semantics natively.
+  Routing follows the values rather than the container, so a key column passed
+  as a pandas Series or as homogeneous object storage — what `data=df,
+  key="id"` actually resolves to — takes the same path as an ndarray instead of
+  falling back. Only keys that *end* in NUL stay on the reference encoder,
+  where fixed-width padding would otherwise absorb them; interior NULs are
+  encoded natively.
+  This adds the C ABI v44 transition-key kernel.
 - Host theme changes made through an ancestor `data-theme` attribute now
   refresh canvas/SVG paint just like `.dark` class and inline-style changes;
   DOM chrome continues to follow the cascade automatically.

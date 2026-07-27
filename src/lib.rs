@@ -83,7 +83,7 @@ unsafe fn borrowed_byte_spans<'a>(
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 43;
+pub const ABI_VERSION: u32 = 46;
 const FACTORIZE_CAPACITY_EXCEEDED: usize = usize::MAX - 1;
 
 #[no_mangle]
@@ -97,11 +97,13 @@ pub extern "C" fn xy_abi_version() -> u32 {
 /// 1/2/4/8 bytes; Unicode width is a positive multiple of four. `swap_endian`
 /// must be zero or one.
 ///
-/// Returns 0 on success, 1 for invalid arguments or scalar data, 2 for a
-/// duplicate token, and 3 for a digest collision. For status 2 or 3,
-/// `out_error_first` and `out_error_index` receive the prior/current row
-/// indices. Invalid scalar data also records its row in both outputs when they
-/// are non-null; invalid pointer/dimension calls do not write error outputs.
+/// Returns 0 on success, 1 for scalar data this kernel declines to tokenize
+/// (the caller falls back to its reference encoder), 2 for a duplicate token,
+/// 3 for a digest collision, and 4 for invalid arguments. Statuses 1, 2, and 3
+/// write `out_error_first`/`out_error_index`: the offending row for 1, and the
+/// prior/current pair for 2 and 3. Status 4 writes neither, and is a caller
+/// bug rather than a data property — keeping it distinct from 1 stops a
+/// layout-contract drift from degrading silently into the slow path.
 ///
 /// # Safety
 /// For non-empty input, `data` addresses `len * width` readable bytes and each
@@ -120,34 +122,35 @@ pub unsafe extern "C" fn xy_transition_keys_fixed(
     out_error_index: *mut usize,
 ) -> i32 {
     if !matches!(swap_endian, 0 | 1) {
-        return 1;
+        return 4;
     }
     if len == 0 {
         return 0;
     }
     if out_error_first.is_null() || out_error_index.is_null() {
-        return 1;
+        return 4;
     }
     let byte_len = match len.checked_mul(width) {
         Some(value) if width > 0 => value,
-        _ => return 1,
+        _ => return 4,
     };
     if data.is_null() || out_lo.is_null() || out_hi.is_null() {
-        return 1;
+        return 4;
     }
     let data = std::slice::from_raw_parts(data, byte_len);
     let low = std::slice::from_raw_parts_mut(out_lo, len);
     let high = std::slice::from_raw_parts_mut(out_hi, len);
-    ffi_guard(1, || {
+    ffi_guard(4, || {
         match transition::encode_fixed_into(data, width, kind, swap_endian != 0, low, high) {
             Ok(()) => 0,
-            Err(transition::TransitionKeyError::Invalid { index }) => {
-                if let Some(index) = index {
+            Err(transition::TransitionKeyError::Invalid { index }) => match index {
+                Some(index) => {
                     *out_error_first = index;
                     *out_error_index = index;
+                    1
                 }
-                1
-            }
+                None => 4,
+            },
             Err(transition::TransitionKeyError::Duplicate { first, index }) => {
                 *out_error_first = first;
                 *out_error_index = index;
@@ -1583,6 +1586,7 @@ pub unsafe extern "C" fn xy_marching_squares(
     y_coords: *const f64,
     levels: *const f64,
     n_levels: usize,
+    corner_mask: u8,
     out_x0: *mut f64,
     out_x1: *mut f64,
     out_y0: *mut f64,
@@ -1644,6 +1648,7 @@ pub unsafe extern "C" fn xy_marching_squares(
                 x_coords,
                 y_coords,
                 levels,
+                corner_mask != 0,
                 empty_x0,
                 empty_x1,
                 empty_y0,
@@ -1657,7 +1662,17 @@ pub unsafe extern "C" fn xy_marching_squares(
             let y1_out = std::slice::from_raw_parts_mut(out_y1, capacity);
             let level_out = std::slice::from_raw_parts_mut(out_levels, capacity);
             kernels::marching_squares_into(
-                z, rows, cols, x_coords, y_coords, levels, x0_out, x1_out, y0_out, y1_out,
+                z,
+                rows,
+                cols,
+                x_coords,
+                y_coords,
+                levels,
+                corner_mask != 0,
+                x0_out,
+                x1_out,
+                y0_out,
+                y1_out,
                 level_out,
             )
         }
@@ -2869,9 +2884,57 @@ pub unsafe extern "C" fn xy_range_indices(
     })
 }
 
+/// Canonical row ids from `rows` that fall inside the rectangular window —
+/// the row-restricted twin of `xy_range_indices`, shaped like
+/// `xy_polygon_select`. Returns the count written; `out` must hold `n_rows`
+/// u32s. Row ids must be < `len`; an out-of-range id returns the error
+/// sentinel on every target, including panic-abort ones where the kernel's own
+/// indexing panic could not (see `kernels::range_scan_rows`).
+///
+/// # Safety
+/// `x`/`y` must point to `len` readable f64s, `rows` to `n_rows` readable
+/// u32s, and `out` to `n_rows` writable u32s.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn xy_range_indices_rows(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    rows: *const u32,
+    n_rows: usize,
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    out: *mut u32,
+) -> usize {
+    if !finite_ordered(lo_x, hi_x) || !finite_ordered(lo_y, hi_y) {
+        return usize::MAX;
+    }
+    // u32 index ceiling — see xy_m4_indices.
+    if len > u32::MAX as usize {
+        return usize::MAX;
+    }
+    if n_rows == 0 {
+        return 0;
+    }
+    if x.is_null() || y.is_null() || rows.is_null() || out.is_null() {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    let rows = std::slice::from_raw_parts(rows, n_rows);
+    let out = std::slice::from_raw_parts_mut(out, n_rows);
+    ffi_guard(usize::MAX, || {
+        kernels::range_indices_rows(x, y, rows, lo_x, hi_x, lo_y, hi_y, out).unwrap_or(usize::MAX)
+    })
+}
+
 /// Canonical row ids from `rows` that fall inside the lasso polygon, by
 /// even-odd ray casting. Returns the count written; `out` must hold
-/// `n_rows` u32s. A polygon of fewer than 3 vertices selects nothing.
+/// `n_rows` u32s. A polygon of fewer than 3 vertices selects nothing. Row ids
+/// must be < `len`; an out-of-range id returns the error sentinel on every
+/// target (see `kernels::range_scan_rows`).
 ///
 /// # Safety
 /// `x`/`y` must point to `len` readable f64s, `rows` to `n_rows` readable
@@ -2916,10 +2979,8 @@ pub unsafe extern "C" fn xy_polygon_select(
     let poly_x = std::slice::from_raw_parts(poly_x, n_poly);
     let poly_y = std::slice::from_raw_parts(poly_y, n_poly);
     let out = std::slice::from_raw_parts_mut(out, n_rows);
-    // An out-of-range row id panics the bounds check inside; ffi_guard turns
-    // that into the error sentinel rather than unwinding across the ABI.
     ffi_guard(usize::MAX, || {
-        kernels::polygon_select(x, y, rows, poly_x, poly_y, out)
+        kernels::polygon_select(x, y, rows, poly_x, poly_y, out).unwrap_or(usize::MAX)
     })
 }
 
@@ -3279,7 +3340,43 @@ mod tests {
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),
                 ),
-                1
+                4
+            );
+            // A layout the caller should never send is status 4, not the
+            // status-1 "declined this data" that means "use the oracle".
+            let row = [0u8; 3];
+            let mut low = [0u32];
+            let mut high = [0u32];
+            let mut first = usize::MAX;
+            let mut index = usize::MAX;
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    row.as_ptr(),
+                    1,
+                    3,
+                    transition::KIND_UNICODE,
+                    0,
+                    low.as_mut_ptr(),
+                    high.as_mut_ptr(),
+                    &mut first,
+                    &mut index,
+                ),
+                4
+            );
+            assert_eq!((first, index), (usize::MAX, usize::MAX));
+            assert_eq!(
+                xy_transition_keys_fixed(
+                    row.as_ptr(),
+                    1,
+                    1,
+                    transition::KIND_BYTES,
+                    7,
+                    low.as_mut_ptr(),
+                    high.as_mut_ptr(),
+                    &mut first,
+                    &mut index,
+                ),
+                4
             );
         }
     }

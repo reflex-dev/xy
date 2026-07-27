@@ -10,8 +10,12 @@ snapshots and releases over-budget panels instead; pointer entry revives
 them.
 
 PNG: each panel renders through the engine's native rasterizer to an RGBA
-array; NumPy pastes them onto one canvas and the engine's PNG encoder writes
-the file. This module and `_mplfig.savefig` are the only places the shim
+array; NumPy composites them onto one canvas and the engine's PNG encoder
+writes the file. Absolutely placed panels are rendered on a transparent canvas
+and alpha-composited, because a panel is wider than its gridspec cell — its
+tick labels and title live outside the plot rect — and an opaque paste made
+each column erase the one to its left. This module and `_mplfig.savefig` are
+the only places the shim
 reaches past the public API (via `Chart.figure()` + the `_raster`/`_png`
 modules); everything else goes through `xy`' public surface.
 """
@@ -22,6 +26,72 @@ import html as _html
 from typing import Any, Optional
 
 import numpy as np
+
+
+def _composite_rgba(destination: np.ndarray, source: np.ndarray) -> None:
+    """Composite a straight-alpha RGBA tile over ``destination`` in place.
+
+    Matplotlib draws every axes onto one canvas, so a panel's chrome may hang
+    over a neighbour's without erasing it. Alpha compositing is the equivalent
+    for panel-per-render composition; an opaque paste is not.
+    """
+    source_alpha = source[:, :, 3]
+    opaque = source_alpha == 255
+    destination[opaque] = source[opaque]
+    partial = (source_alpha != 0) & ~opaque
+    if not np.any(partial):
+        return
+    src = source[partial].astype(np.float32)
+    dst = destination[partial].astype(np.float32)
+    src_alpha_f = src[:, 3:4] / 255.0
+    dst_alpha_f = dst[:, 3:4] / 255.0
+    out_alpha = src_alpha_f + dst_alpha_f * (1.0 - src_alpha_f)
+    out_rgb = np.divide(
+        src[:, :3] * src_alpha_f + dst[:, :3] * dst_alpha_f * (1.0 - src_alpha_f),
+        out_alpha,
+        out=np.zeros_like(src[:, :3]),
+        where=out_alpha != 0,
+    )
+    destination[partial, :3] = np.rint(out_rgb).astype(np.uint8)
+    destination[partial, 3] = np.rint(out_alpha[:, 0] * 255.0).astype(np.uint8)
+
+
+def _compose_canvas(
+    tiles: list[np.ndarray],
+    positions: list[tuple[float, float, float, float]],
+    canvas_size: tuple[int, int],
+    facecolor: str,
+    scale: float,
+) -> np.ndarray:
+    """Alpha-composite absolutely placed panel tiles onto one RGBA figure canvas.
+
+    `positions` are whole-panel [left, bottom, width, height] figure fractions,
+    bottom-origin like matplotlib; document order stacks later axes above
+    earlier ones, as matplotlib draws.
+    """
+    from xy import _raster
+
+    background = np.asarray(_raster._parse_color(facecolor), dtype=np.uint8)
+    canvas = np.empty(
+        (round(canvas_size[1] * scale), round(canvas_size[0] * scale), 4), dtype=np.uint8
+    )
+    canvas[...] = background
+    for tile, (left, bottom, _width, height) in zip(tiles, positions, strict=True):
+        x = round(left * canvas.shape[1])
+        y = round((1.0 - bottom - height) * canvas.shape[0])
+        dest_x0, dest_y0 = max(0, x), max(0, y)
+        src_x0, src_y0 = max(0, -x), max(0, -y)
+        dest_x1 = min(canvas.shape[1], x + tile.shape[1])
+        dest_y1 = min(canvas.shape[0], y + tile.shape[0])
+        if dest_x1 > dest_x0 and dest_y1 > dest_y0:
+            _composite_rgba(
+                canvas[dest_y0:dest_y1, dest_x0:dest_x1],
+                tile[
+                    src_y0 : src_y0 + dest_y1 - dest_y0,
+                    src_x0 : src_x0 + dest_x1 - dest_x0,
+                ],
+            )
+    return canvas
 
 
 def compose_html(
@@ -230,7 +300,13 @@ def stitch_png(
 ) -> bytes:
     from xy import _png, _raster  # sanctioned escape hatch (see module doc)
 
-    scale = 2.0
+    # pyplot charts are already built at ``figsize * dpi`` logical pixels.
+    # Rasterizing those pixels at the core exporter's 2x quality default made
+    # savefig silently double both output dimensions and every point-sized
+    # artist compared with Matplotlib.  The pyplot compatibility boundary is
+    # physical pixels, so keep its raster scale at one; callers that use the
+    # native Figure API directly retain that API's explicit 2x default.
+    scale = 1.0
     if (
         len(charts) == 1
         and positions is None
@@ -253,11 +329,16 @@ def stitch_png(
             return rendered
         return _png.encode(rendered)
 
+    absolute = positions is not None and canvas_size is not None
     tiles: list[np.ndarray] = []
     for chart in charts:
         fig = chart.figure()
         spec, blob, borrowed = fig._build_raster_payload(px_width=max(256, int(fig.width)))
-        spec["canvas_background"] = facecolor
+        # Absolute panels include their own surrounding chrome and therefore
+        # overlap in the gutters.  Keep only that outer canvas transparent so
+        # a later panel cannot erase an earlier panel's right/bottom spine or
+        # terminal tick label.  The axes patch (--chart-bg) remains opaque.
+        spec["canvas_background"] = "none" if absolute else facecolor
         img = _raster.render_raster(spec, blob, scale, borrowed=borrowed)
         if isinstance(img, bytes):
             raise RuntimeError("pyplot grid rasterizer unexpectedly returned encoded PNG bytes")
@@ -265,22 +346,17 @@ def stitch_png(
     if not tiles:
         raise ValueError("figure has no axes to save")
 
-    if positions is not None and canvas_size is not None:
-        background = np.asarray(_raster._parse_color(facecolor), dtype=np.uint8)
-        canvas = np.empty((canvas_size[1] * 2, canvas_size[0] * 2, 4), dtype=np.uint8)
-        canvas[...] = background
-        for tile, (left, bottom, _width, height) in zip(tiles, positions, strict=True):
-            x = round(left * canvas.shape[1])
-            y = round((1.0 - bottom - height) * canvas.shape[0])
-            dest_x0, dest_y0 = max(0, x), max(0, y)
-            src_x0, src_y0 = max(0, -x), max(0, -y)
-            dest_x1 = min(canvas.shape[1], x + tile.shape[1])
-            dest_y1 = min(canvas.shape[0], y + tile.shape[0])
-            if dest_x1 > dest_x0 and dest_y1 > dest_y0:
-                canvas[dest_y0:dest_y1, dest_x0:dest_x1] = tile[
-                    src_y0 : src_y0 + dest_y1 - dest_y0,
-                    src_x0 : src_x0 + dest_x1 - dest_x0,
-                ]
+    if absolute:
+        assert positions is not None and canvas_size is not None
+        canvas = _compose_canvas(tiles, positions, canvas_size, facecolor, scale)
+        if suptitle:
+            _blend_raster_suptitle(
+                canvas,
+                suptitle,
+                suptitle_style,
+                scale=scale,
+                title_h=min(48, canvas.shape[0]),
+            )
         return _png.encode(canvas)
 
     col_widths = [
@@ -305,23 +381,13 @@ def stitch_png(
         x = sum(col_widths[:c])
         canvas[y : y + tile.shape[0], x : x + tile.shape[1]] = tile
     if suptitle:
-        from xy import kernels
-
-        cmd = _raster._Cmd(scale)
-        style = suptitle_style or {}
-        cmd.text(
-            canvas.shape[1] * float(style.get("x", 0.5)) / scale,
-            17,
-            1,
-            float(style.get("size", 14)),
-            _raster._parse_color(str(style.get("color", "#262626"))),
+        _blend_raster_suptitle(
+            canvas,
             suptitle,
+            suptitle_style,
+            scale=scale,
+            title_h=title_h,
         )
-        overlay = kernels.rasterize(bytes(cmd.buf), canvas.shape[1], title_h)
-        alpha = overlay[:, :, 3:4].astype(np.float64) / 255.0
-        canvas[:title_h, :, :3] = np.round(
-            overlay[:, :, :3] * alpha + canvas[:title_h, :, :3] * (1.0 - alpha)
-        ).astype(np.uint8)
     if colorbar:
         from xy._svg import _lut
 
@@ -343,3 +409,30 @@ def stitch_png(
             y1 = min(canvas.shape[0], int(ys.max()) + pad_pixels + 1)
             canvas = canvas[y0:y1, x0:x1]
     return _png.encode(canvas)
+
+
+def _blend_raster_suptitle(
+    canvas: np.ndarray,
+    suptitle: str,
+    style: Optional[dict[str, Any]],
+    *,
+    scale: float,
+    title_h: int,
+) -> None:
+    """Draw a figure suptitle onto either grid or absolute-position PNGs."""
+    from xy import _raster, kernels
+
+    resolved = style or {}
+    cmd = _raster._Cmd(scale)
+    cmd.text(
+        canvas.shape[1] * float(resolved.get("x", 0.5)) / scale,
+        17,
+        1,
+        float(resolved.get("size", 14)),
+        _raster._parse_color(str(resolved.get("color", "#262626"))),
+        suptitle,
+        bold=str(resolved.get("weight", "normal")).lower()
+        in {"bold", "semibold", "demibold", "heavy", "black"},
+    )
+    overlay = kernels.rasterize(bytes(cmd.buf), canvas.shape[1], title_h)
+    _composite_rgba(canvas[:title_h], overlay)

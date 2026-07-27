@@ -11,8 +11,10 @@ browser did that resolution for the SVG/widget.
 
 from __future__ import annotations
 
+import math
 import struct
 from collections.abc import Callable, Sequence
+from itertools import pairwise
 from os import PathLike
 from typing import Any, Optional
 
@@ -30,14 +32,18 @@ from ._svg import (
     _axis_label_geometry,
     _axis_scales,
     _axis_tick_font_size,
+    _axis_tick_label_baseline_shift,
     _axis_tick_label_layout,
+    _axis_tick_label_offset,
     _axis_tick_label_strategy,
+    _box_corner_radius,
     _colorbar_right_axis_room,
     _colormap_stops,
     _column,
     _corner_radii,
     _css,
     _density_column,
+    _estimated_text_width,
     _heatmap_rgba_grid,
     _legend_layout,
     _lut,
@@ -76,12 +82,15 @@ from ._svg import (
     _AFFINE_POINTS,
     _AFFINE_CHANNEL_POINTS,
     _STROKED_TRIANGLES,
-) = range(17)
+    _STYLED_TEXT,
+) = range(18)
 # Anchor-byte rotation flags — must match TEXT_ROTATED/TEXT_ROTATED_CW in
 # src/raster.rs. CCW reads bottom-to-top (y-axis titles), CW top-to-bottom
 # (right-margin titles, matplotlib rotation=270).
 _TEXT_ROT_CCW = 0x80
 _TEXT_ROT_CW = 0x40
+_TEXT_ITALIC = 0x01
+_TEXT_BOLD = 0x02
 # stroke-linecap — must match CAP_* in src/raster.rs. XY's default is round,
 # which is the geometry the rasterizer's capsule distance field has always
 # drawn. Joins are always round and carry no wire field.
@@ -614,9 +623,36 @@ class _Cmd:
         self.buf += stops.tobytes()
 
     def text(
-        self, x: float, y: float, anchor: int, size: float, color: tuple[int, ...], s: str
+        self,
+        x: float,
+        y: float,
+        anchor: int,
+        size: float,
+        color: tuple[int, ...],
+        s: str,
+        *,
+        angle: float = 0.0,
+        italic: bool = False,
+        bold: bool = False,
+        italic_ranges: Sequence[tuple[int, int]] = (),
     ) -> None:
         data = str(s).encode("utf-8")
+        if angle or italic or bold or italic_ranges:
+            self.buf.append(_STYLED_TEXT)
+            self._f(x)
+            self._f(y)
+            self.buf.append(anchor & 0x03)
+            self._f(size)
+            self._raw_f(angle)
+            self.buf.append((_TEXT_ITALIC if italic else 0) | (_TEXT_BOLD if bold else 0))
+            self._u32(len(italic_ranges))
+            for start, end in italic_ranges:
+                self._u32(start)
+                self._u32(end)
+            self._rgba(color)
+            self._u32(len(data))
+            self.buf += data
+            return
         self.buf.append(_TEXT_OP)
         self._f(x)
         self._f(y)
@@ -629,6 +665,35 @@ class _Cmd:
 
 def _rect_pts(x0: float, y0: float, x1: float, y1: float) -> list[tuple[float, float]]:
     return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+
+
+def _round_rect_pts(
+    x0: float, y0: float, x1: float, y1: float, radius: float, *, steps: int = 4
+) -> list[tuple[float, float]]:
+    """A rounded rectangle as a closed polygon, corners arc-approximated.
+
+    The rasterizer draws polygons, not paths, so a `boxstyle="round"` bbox is
+    flattened here: `steps` segments per quarter turn is enough that a 5–8 px
+    corner reads as round at export scale. Degenerate radii fall back to the
+    square rect so callers never special-case it.
+    """
+    radius = max(0.0, min(radius, (x1 - x0) / 2.0, (y1 - y0) / 2.0))
+    if radius <= 0.0:
+        return _rect_pts(x0, y0, x1, y1)
+    pts: list[tuple[float, float]] = []
+    # (center, start angle) per corner, walking clockwise in screen space
+    # (y down) from the top-left so the winding matches _rect_pts.
+    corners = (
+        ((x0 + radius, y0 + radius), math.pi),
+        ((x1 - radius, y0 + radius), -math.pi / 2.0),
+        ((x1 - radius, y1 - radius), 0.0),
+        ((x0 + radius, y1 - radius), math.pi / 2.0),
+    )
+    for (cx, cy), start in corners:
+        for i in range(steps + 1):
+            angle = start + (math.pi / 2.0) * (i / steps)
+            pts.append((cx + radius * math.cos(angle), cy + radius * math.sin(angle)))
+    return pts
 
 
 def _grad_line(
@@ -790,9 +855,10 @@ def render_raster(
     # "none" silences the whole axis chrome (sparklines); "off" hides only the
     # label text and keeps baselines and the axis title (mpl shared axes).
     frame_sides = spec.get("frame_sides")
+    explicit_frame_sides = frame_sides is not None
     if frame_sides is None:
         frame_sides = [xa.get("side", "bottom"), ya.get("side", "left")]
-    if not hide_y:
+    if not hide_y or explicit_frame_sides:
         if "left" in frame_sides:
             cmd.stroke(
                 [(px0, py0), (px0, py1)],
@@ -805,7 +871,7 @@ def render_raster(
                 float(ystyle.get("axis_width", 1)),
                 _parse_color(_css(ystyle.get("axis_color"), default_axis)),
             )
-    if not hide_x:
+    if not hide_x or explicit_frame_sides:
         if "top" in frame_sides:
             cmd.stroke(
                 [(px0, py0), (px1, py0)],
@@ -919,8 +985,6 @@ def render_raster(
                 _parse_color(_css(axis_style.get("tick_color"), default_axis)),
             )
 
-    text_c = _parse_color(default_text)
-
     def rotation_flag(angle: float) -> int:
         normalized = angle % 360.0
         if abs(normalized - 90.0) < 1e-9:
@@ -957,6 +1021,18 @@ def render_raster(
         )
         font_size = _axis_tick_font_size(axis)
         side = axis.get("side", "bottom" if is_x else "left")
+        # Unstyled defaults reproduce the pre-`tick_label_pad` placement exactly.
+        # The bottom gap is 15 here against the SVG exporter's 16: that 1 px has
+        # always separated the two and is not this seam's to change.
+        if is_x:
+            label_offset = (
+                _axis_tick_label_offset(axis, 7.0, 0.2)
+                if side == "top"
+                else _axis_tick_label_offset(axis, 15.0, 0.8)
+            )
+        else:
+            label_offset = _axis_tick_label_offset(axis, 8.0)
+        baseline_shift = _axis_tick_label_baseline_shift(axis)
         # An explicit tick_label_anchor (axis spec or style) overrides the
         # side-derived default, matching the browser client and SVG export.
         explicit_anchor = _tick_label_anchor(axis, axis_style, "")
@@ -965,11 +1041,15 @@ def render_raster(
             if is_x:
                 row_offset = float(item["row"]) * (font_size + 4)
                 x = float(item["pos"])
-                y = py0 - 7 - row_offset if side == "top" else py1 + 15 + row_offset
+                y = (
+                    py0 - label_offset - row_offset
+                    if side == "top"
+                    else py1 + label_offset + row_offset
+                )
                 anchor = _TEXT_ANCHOR_CODES[explicit_anchor] if explicit_anchor else 1
             else:
-                x = px1 + 8 if side == "right" else px0 - 8
-                y = float(item["pos"]) + 4
+                x = px1 + label_offset if side == "right" else px0 - label_offset
+                y = float(item["pos"]) + baseline_shift
                 default_anchor = 0 if side == "right" else 2
                 anchor = _TEXT_ANCHOR_CODES[explicit_anchor] if explicit_anchor else default_anchor
             cmd.text(x, y, anchor | flag, font_size, tick_color, item["text"])
@@ -983,13 +1063,25 @@ def render_raster(
         _ticks, tick_labels, step = extra_y_ticks[axis_id]
         emit_tick_labels(axis, tick_labels, step, axis_scale, is_x=False)
     if spec.get("title"):
+        title_style = ((spec.get("dom") or {}).get("styles") or {}).get("title") or {}
+        title_italic, title_bold = _native_font_emphasis(
+            {
+                "font_style": title_style.get("font-style"),
+                # 400 = Matplotlib's `axes.titleweight: normal`; the baked
+                # atlas only has a bold face, so anything >= 600 rounds up to
+                # it. Mirrors the SVG/browser title default.
+                "font_weight": title_style.get("font-weight", 400),
+            }
+        )
         cmd.text(
             width / 2,
             plot["y"] - plot["top_axis_room"] - (10 if compact else 12),
             1,
-            14,
-            text_c,
+            _px_size(title_style.get("font-size"), 14.0),
+            _parse_color(_css(title_style.get("color"), default_text)),
             str(spec["title"]),
+            italic=title_italic,
+            bold=title_bold,
         )
 
     def emit_axis_title(axis: dict[str, Any], *, is_x: bool) -> None:
@@ -998,14 +1090,29 @@ def render_raster(
         axis_style = axis.get("style") or {}
         geometry = _axis_label_geometry(axis, plot, is_x=is_x)
         anchor = {"start": 0, "middle": 1, "end": 2}[geometry["anchor"]]
-        cmd.text(
+        italic, bold = _native_font_emphasis(
+            {
+                "font_style": axis_style.get("label_font_style"),
+                "font_weight": axis_style.get("label_font_weight", 400),
+            }
+        )
+        args = (
             geometry["x"],
             geometry["y"],
-            anchor | rotation_flag(float(geometry["angle"])),
+            anchor,
             geometry["font_size"],
             _parse_color(_css(axis_style.get("label_color"), default_text)),
             str(axis["label"]),
         )
+        if italic or bold:
+            cmd.text(*args, angle=float(geometry["angle"]), italic=italic, bold=bold)
+        else:
+            cmd.text(
+                args[0],
+                args[1],
+                anchor | rotation_flag(float(geometry["angle"])),
+                *args[3:],
+            )
 
     emit_axis_title(xa, is_x=True)
     emit_axis_title(ya, is_x=False)
@@ -1015,19 +1122,32 @@ def render_raster(
         emit_axis_title(axis, is_x=False)
 
     named = legend_items(spec["traces"], spec_palette)
-    show_main_legend = spec.get("show_legend", True) and bool(named)
+    main_legend = spec.get("legend") or {}
+    main_items = main_legend.get("items") or named
+    show_main_legend = spec.get("show_legend", True) and bool(main_items)
     extra_legends = [(extra, extra.get("items") or []) for extra in spec.get("extra_legends") or []]
-    legend_present = show_main_legend or any(items for _extra, items in extra_legends)
-    if legend_present:
-        # The browser scrolls an oversized legend. Static files cannot, so
-        # clip the bounded/truncated equivalent to the plot rectangle.
-        cmd.clip(px0, py0, plot["w"], plot["h"])
+    legends: list[tuple[list[dict[str, Any]], dict[str, Any]]] = []
     if show_main_legend:
-        _emit_legend(cmd, named, plot, spec.get("legend") or {}, default_text, spec_palette)
-    for extra, items in extra_legends:
-        if items:
-            _emit_legend(cmd, items, plot, extra, default_text, spec_palette)
-    if legend_present:
+        legends.append((main_items, main_legend))
+    legends.extend((items, extra) for extra, items in extra_legends if items)
+    # The browser scrolls an oversized legend. Static files cannot, so clip the
+    # bounded/truncated equivalent to the plot rectangle. The exemption for an
+    # anchored legend (which is placed relative to, and may sit outside, the
+    # axes) is scoped per legend exactly as in `_svg.py`: one anchored legend
+    # must not lift the clip off its non-anchored siblings. The clip is a
+    # stateful raster command, so only emit it on a transition — an
+    # all-anchored or all-unanchored figure yields the same stream as before.
+    clipped_to_plot = False
+    for items, options in legends:
+        want_clip = not options.get("anchor")
+        if want_clip != clipped_to_plot:
+            if want_clip:
+                cmd.clip(px0, py0, plot["w"], plot["h"])
+            else:
+                cmd.clip(0, 0, width, height)
+            clipped_to_plot = want_clip
+        _emit_legend(cmd, items, plot, options, default_text, spec_palette)
+    if clipped_to_plot:
         cmd.clip(0, 0, width, height)
     if spec.get("colorbar"):
         _emit_colorbar(
@@ -1077,6 +1197,51 @@ def _emit_line(
     else:
         pts = _scene.curve_points(xv, yv, sx, sy, False)
         cmd.stroke(pts, width, c, dash=style.get("dash"), cap=cap)
+
+
+def _annotation_point(
+    ann: dict[str, Any],
+    style: dict[str, Any],
+    sx: _Scale,
+    sy: _Scale,
+    plot: dict[str, float],
+    width: float,
+    height: float,
+) -> tuple[float, float]:
+    space = style.get("coordinate_space")
+    x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
+    if space == "axes_fraction":
+        return plot["x"] + x * plot["w"], plot["y"] + (1.0 - y) * plot["h"]
+    if space == "figure_fraction":
+        return x * width, (1.0 - y) * height
+    if space == "yaxis_transform":
+        return plot["x"] + x * plot["w"], float(sy(y))
+    if space == "xaxis_transform":
+        return float(sx(x)), plot["y"] + (1.0 - y) * plot["h"]
+    return float(sx(x)), float(sy(y))
+
+
+def _native_font_emphasis(style: dict[str, Any]) -> tuple[bool, bool]:
+    """Return baked-font italic/bold approximations for an annotation."""
+    italic = str(style.get("font_style", "")).lower() in {"italic", "oblique"}
+    weight = str(style.get("font_weight", "")).lower()
+    try:
+        bold = float(weight) >= 600
+    except ValueError:
+        bold = weight in {"bold", "semibold", "demibold", "heavy", "black"}
+    return italic, bold
+
+
+def _math_italic_ranges(style: dict[str, Any]) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    for item in str(style.get("math_italic_ranges", "")).split(","):
+        try:
+            start, end = (int(value) for value in item.split(":", 1))
+        except ValueError:
+            continue
+        if 0 <= start < end:
+            ranges.append((start, end))
+    return ranges
 
 
 def _emit_annotations(
@@ -1199,6 +1364,9 @@ def _emit_annotations(
             )
             color = _rgba(label_color, _TEXT, float(label_opacity))
             rotation = float(style.get("rotation", 0.0)) % 360.0
+            italic, bold = _native_font_emphasis(style)
+            math_ranges = _math_italic_ranges(style)
+            line_offset = 0
             if rotation in (90.0, 270.0):
                 # Vertical text via the rasterizer's rotated glyph paths.
                 # matplotlib aligns the post-rotation box: vertical_align picks
@@ -1216,14 +1384,24 @@ def _emit_annotations(
                     base = {0: ascent, 1: (ascent - descent) / 2, 2: -descent}[anchor]
                 stack = -line_height if cw else line_height  # later lines: glyph-down
                 for index, line in enumerate(lines):
+                    line_ranges = [
+                        (max(0, start - line_offset), min(len(line), end - line_offset))
+                        for start, end in math_ranges
+                        if start < line_offset + len(line) and end > line_offset
+                    ]
                     cmd.text(
                         x + base + index * stack,
                         y,
-                        along | (_TEXT_ROT_CW if cw else _TEXT_ROT_CCW),
+                        along,
                         font_size,
                         color,
                         line,
+                        angle=90.0 if cw else -90.0,
+                        italic=italic,
+                        bold=bold,
+                        italic_ranges=line_ranges,
                     )
+                    line_offset += len(line) + 1
                 continue
             first_y = y - (len(lines) - 1) * line_height / 2
             vertical_align = style.get("vertical_align")
@@ -1231,15 +1409,78 @@ def _emit_annotations(
                 first_y += font_size * 0.35
             elif vertical_align == "top":
                 first_y += font_size * 0.8
+            elif vertical_align == "bottom":
+                first_y -= font_size * 0.2
+            text_x = x + float(ann.get("dx", 0.0))
+            text_y = first_y + float(ann.get("dy", 0.0))
+            _emit_text_box(cmd, style, lines, text_x, text_y, line_height, font_size, anchor)
             for index, line in enumerate(lines):
+                line_ranges = [
+                    (max(0, start - line_offset), min(len(line), end - line_offset))
+                    for start, end in math_ranges
+                    if start < line_offset + len(line) and end > line_offset
+                ]
                 cmd.text(
-                    x + float(ann.get("dx", 0.0)),
-                    first_y + index * line_height + float(ann.get("dy", 0.0)),
+                    text_x,
+                    text_y + index * line_height,
                     anchor,
                     font_size,
                     color,
                     line,
+                    angle=-rotation,
+                    italic=italic,
+                    bold=bold,
+                    italic_ranges=line_ranges,
                 )
+                line_offset += len(line) + 1
+
+
+def _emit_text_box(
+    cmd: _Cmd,
+    style: dict[str, Any],
+    lines: list[str],
+    x: float,
+    first_y: float,
+    line_height: float,
+    font_size: float,
+    anchor: int,
+) -> None:
+    """Draw the bounded CSS approximation used by pyplot ``text(bbox=)``."""
+    background = style.get("background")
+    border = str(style.get("border", ""))
+    if background is None and not border:
+        return
+    pad_parts = str(style.get("padding", "0")).split()
+
+    def px(value: str) -> float:
+        try:
+            return max(0.0, float(value.removesuffix("px")))
+        except ValueError:
+            return 0.0
+
+    pad_y = px(pad_parts[0]) if pad_parts else 0.0
+    pad_x = px(pad_parts[1]) if len(pad_parts) > 1 else pad_y
+    text_width = _estimated_text_width(lines, font_size)
+    left = x - (text_width / 2 if anchor == 1 else text_width if anchor == 2 else 0.0) - pad_x
+    top = first_y - font_size * 0.8 - pad_y
+    right = left + text_width + pad_x * 2
+    bottom = top + font_size + (len(lines) - 1) * line_height + pad_y * 2
+    # `boxstyle="round"`/`round4` set border_radius, which the browser applies
+    # as CSS border-radius; round the same corners here or the exported box is
+    # square where the live one is not.
+    points = _round_rect_pts(
+        left, top, right, bottom, _box_corner_radius(style, right - left, bottom - top)
+    )
+    if background is not None:
+        cmd.fill(points, _parse_color(str(background)))
+    if border:
+        parts = border.split()
+        try:
+            width = max(0.0, float(parts[0].removesuffix("px")))
+        except (IndexError, ValueError):
+            width = 1.0
+        if width:
+            cmd.stroke(points + [points[0]], width, _parse_color(parts[-1]))
 
 
 def _emit_area(
@@ -1328,6 +1569,14 @@ def _emit_scatter(
 
     fill_op = _fill_opacity(style, 0.8)
     stroke_op = _stroke_opacity(style, 0.8)
+    artist_alpha = style.get("artist_alpha")
+    if artist_alpha is not None:
+        # Matplotlib artist alpha replaces the intrinsic paint alpha. Scalar
+        # alpha does not need a style channel, so retain it in both affine
+        # scatter fast paths instead of silently painting opaque points.
+        scalar_alpha = float(artist_alpha)
+        fill_op *= scalar_alpha
+        stroke_op *= scalar_alpha
     sw = float(style.get("stroke_width", 0.0))
     sym = _SYMBOLS.get(style.get("symbol", "circle"), 0)
     # Transparent is the private wire sentinel for edgecolors="face".  The
@@ -1348,8 +1597,8 @@ def _emit_scatter(
         and (t.get("stroke") is None or t["stroke"].get("mode") == "match_fill")
         and (color_mode in {"continuous", "categorical"} or size_mode == "continuous")
     ):
-        alpha = max(0, min(255, int(round(fill_op * 255))))
-        rgb = _parse_color(_css(ch.get("color"), color))[:3]
+        paint = _parse_color(_css(ch.get("color"), color))
+        alpha = max(0, min(255, int(round(fill_op * paint[3]))))
         cmd.affine_channel_points(
             cols[t["x"]],
             cols[t["y"]],
@@ -1357,7 +1606,7 @@ def _emit_scatter(
             sy,
             ch,
             size_ch,
-            (rgb[0], rgb[1], rgb[2], alpha),
+            (paint[0], paint[1], paint[2], alpha),
             sym,
             sw,
             stroke,
@@ -1377,9 +1626,9 @@ def _emit_scatter(
         and not t.get("channels")
         and (t.get("stroke") is None or t["stroke"].get("mode") == "match_fill")
     ):
-        alpha = max(0, min(255, int(round(fill_op * 255))))
-        rgb = _parse_color(_css(ch.get("color"), color))[:3]
-        fill = (rgb[0], rgb[1], rgb[2], alpha)
+        paint = _parse_color(_css(ch.get("color"), color))
+        alpha = max(0, min(255, int(round(fill_op * paint[3]))))
+        fill = (paint[0], paint[1], paint[2], alpha)
         radius = float(size_ch.get("size", 4.0)) / 2
         cmd.affine_points(cols[t["x"]], cols[t["y"]], sx, sy, radius, fill, sym, sw, stroke)
         return
@@ -1572,7 +1821,9 @@ def _emit_triangle_mesh(
 
     x0, y0, x1, y1, x2, y2 = vertices
     widths = _paint.style_values(t, "stroke_width", n, read, float(style.get("stroke_width", 0.0)))
-    if t.get("stroke") is not None:
+    if (t.get("stroke") or {}).get("mode") == "match_fill":
+        stroke_intrinsic = _trace_paint_rgba(t, "color", n, color, read)
+    elif t.get("stroke") is not None:
         stroke_intrinsic = _trace_paint_rgba(t, "stroke", n, color, read)
     elif style.get("stroke") is not None:
         stroke_intrinsic = np.tile(
@@ -1588,6 +1839,14 @@ def _emit_triangle_mesh(
     projected = (sx(x0[:n]), sy(y0[:n]), sx(x1[:n]), sy(y1[:n]), sx(x2[:n]), sy(y2[:n]))
     if n == 0:
         return
+    if style.get("joined_fill") and np.all(fills == fills[0]) and np.all(widths == 0.0):
+        boundary = _paint.triangle_mesh_boundary(x0, y0, x1, y1, x2, y2)
+        if boundary is not None:
+            cmd.fill(
+                list(zip(sx(boundary[:, 0]), sy(boundary[:, 1]), strict=True)),
+                tuple(int(value) for value in fills[0]),
+            )
+            return
     if np.all(widths == widths[0]) and np.all(strokes == strokes[0]):
         cmd.triangles(
             *projected,
@@ -1683,7 +1942,9 @@ def _rect_style_arrays(
         * 255.0
     ).astype(np.uint8)
     style = trace.get("style") or {}
-    if trace.get("stroke") is not None:
+    if (trace.get("stroke") or {}).get("mode") == "match_fill":
+        stroke_face = face
+    elif trace.get("stroke") is not None:
         stroke_face = _trace_paint_rgba(trace, "stroke", n, fallback, read)
     elif style.get("stroke") is not None:
         stroke_face = np.tile(
@@ -1986,14 +2247,19 @@ def _emit_legend(
     style_opts = legend["style"]
     pad, handle, gap = legend["pad"], legend["handle"], legend["gap"]
     line_h, ncols = legend["line_h"], legend["ncols"]
+    swatch_h = legend["swatch_h"]
     title, title_h = legend["title"], legend["title_h"]
-    cell_w = legend["cell_w"]
+    font_size, text_h = legend["font_size"], legend["text_h"]
+    column_offsets = legend["column_offsets"]
     box_w, box_h = legend["box_w"], legend["box_h"]
     x, y = legend["x"], legend["y"]
     # frameon=False (background transparent) drops the box entirely (§ mpl parity).
     if style_opts.get("background") != "transparent":
+        radius = 4.0 if style_opts.get("borderRadius") else 0.0
+        frame_points = _round_rect_pts(x, y, x + box_w, y + box_h, radius)
         if style_opts.get("boxShadow"):
-            cmd.fill(_rect_pts(x + 2, y + 2, x + box_w + 2, y + box_h + 2), (0, 0, 0, 55))
+            shadow_points = _round_rect_pts(x + 2, y + 2, x + box_w + 2, y + box_h + 2, radius)
+            cmd.fill(shadow_points, (0, 0, 0, 55))
         alpha = float(style_opts.get("--xy-legend-frame-alpha", 0.08))
         background = style_opts.get("background")
         frame = (
@@ -2001,9 +2267,20 @@ def _emit_legend(
             if background
             else (128, 128, 128, round(255 * alpha))
         )
-        cmd.fill(_rect_pts(x, y, x + box_w, y + box_h), frame)
+        cmd.fill(frame_points, frame)
+        border = _rgba(style_opts.get("borderColor"), "#cccccc", alpha)
+        # closed=True: the point list omits a repeated start point. Without it,
+        # the final edge is silently dropped for both square and rounded frames.
+        cmd.stroke(frame_points, 1.0, border, closed=True)
     if title:
-        cmd.text(x + pad, y + pad / 2 + 11, 0, 11, _parse_color(text_color), str(title))
+        cmd.text(
+            x + box_w / 2,
+            y + pad / 2 + font_size * 0.82,
+            1,
+            font_size,
+            _parse_color(text_color),
+            str(title),
+        )
     for i, t in enumerate(named[: legend["visible_count"]]):
         style = t.get("style") or {}
         color_str = _css(
@@ -2012,14 +2289,25 @@ def _emit_legend(
         )
         c = _parse_color(color_str)
         col, row = i % ncols, i // ncols
-        rx, ry = x + col * cell_w, y + pad / 2 + title_h + row * line_h
-        hx0, hx1, cy = rx + pad, rx + pad + handle, ry + 7
+        rx, ry = x + column_offsets[col], y + pad / 2 + title_h + row * line_h
+        hx0, hx1, cy = rx, rx + handle, ry + text_h / 2
         kind = t.get("kind")
         if kind == "scatter":
-            sym = _SYMBOLS.get(style.get("symbol", "circle"), 0)
+            symbol = style.get("symbol", "circle")
+            sym = _SYMBOLS.get(symbol, 0)
             sw = float(style.get("stroke_width", 0.0))
+            if symbol in {"plus_line", "x_line"} and sw <= 0:
+                sw = 1.0
             stroke = _rgba(style.get("stroke"), color_str) if sw > 0 else (0, 0, 0, 0)
-            cmd.point((hx0 + hx1) / 2, cy, 4.0, sym, c, sw, stroke)
+            cmd.point(
+                (hx0 + hx1) / 2,
+                cy,
+                max(0.5, float(style.get("size", 8.0)) / 2.0),
+                sym,
+                c,
+                sw,
+                stroke,
+            )
         elif kind in _LEGEND_LINE_KINDS:
             cmd.stroke(
                 [(hx0, cy), (hx1, cy)],
@@ -2028,8 +2316,60 @@ def _emit_legend(
                 dash=style.get("dash"),
             )
         else:
-            cmd.fill(_rect_pts(hx0, cy - 4, hx1, cy + 4), c)
-        cmd.text(hx1 + gap, ry + 11, 0, 11, _parse_color(text_color), legend["names"][i])
+            cmd.fill(_rect_pts(hx0, cy - swatch_h / 2, hx1, cy + swatch_h / 2), c)
+            hatch = style.get("hatch")
+            if hatch:
+                _emit_legend_hatch(
+                    cmd,
+                    hx0,
+                    hx1,
+                    cy - swatch_h / 2,
+                    cy + swatch_h / 2,
+                    str(hatch),
+                    _parse_color(_css(style.get("hatch_color"), "#222222")),
+                )
+        cmd.text(
+            hx1 + gap,
+            ry + font_size * 0.82,
+            0,
+            font_size,
+            _parse_color(text_color),
+            legend["names"][i],
+        )
+
+
+def _emit_legend_hatch(
+    cmd: _Cmd,
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    hatch: str,
+    color: tuple[int, int, int, int],
+) -> None:
+    mid_y = (y0 + y1) / 2
+    if "-" in hatch or "*" in hatch:
+        cmd.stroke([(x0, mid_y), (x1, mid_y)], 1.0, color)
+    for char, direction in (("/", 1), ("\\", -1)):
+        count = min(3, hatch.count(char))
+        for index in range(count):
+            center = x0 + (index + 1) * (x1 - x0) / (count + 1)
+            half = min((x1 - x0) / 4, (y1 - y0) / 2)
+            cmd.stroke(
+                [
+                    (center - half, mid_y + direction * half),
+                    (center + half, mid_y - direction * half),
+                ],
+                1.0,
+                color,
+            )
+    if "." in hatch:
+        for fraction in (0.3, 0.7):
+            x = x0 + fraction * (x1 - x0)
+            cmd.stroke([(x, mid_y), (x + 0.1, mid_y)], 1.0, color)
+    if "*" in hatch:
+        center = (x0 + x1) / 2
+        cmd.stroke([(center, y0), (center, y1)], 1.0, color)
 
 
 def _emit_colorbar(
@@ -2039,18 +2379,23 @@ def _emit_colorbar(
     right_axis_room: float = 0.0,
     text_color: str = _TEXT,
 ) -> None:
-    from ._svg import _linear_ticks, _lut
+    from ._svg import _colorbar_tick_target, _linear_ticks, _lut
 
     orientation = options.get("orientation", "vertical")
+    shrink = float(options.get("shrink", 1.0))
+    anchor = options.get("anchor") or [0.5, 0.5]
     if orientation == "horizontal":
-        x = plot["x"]
+        width = plot["w"] * shrink
+        x = plot["x"] + (plot["w"] - width) * float(anchor[0])
         y = plot["y"] + plot["h"] + (plot["bottom_axis_room"] or 10)
-        width, height = plot["w"], 18
+        height = 18
     else:
         # right_axis_room shifts the whole colorbar clear of right-side named
         # y-axis chrome (layout() reserves room for both additively).
         x = plot["x"] + plot["w"] + right_axis_room + 24
-        y, width, height = plot["y"], 18, plot["h"]
+        height = plot["h"] * shrink
+        y = plot["y"] + (plot["h"] - height) * (1.0 - float(anchor[1]))
+        width = 18
     # A discrete (resampled) colormap paints N solid bands; otherwise a smooth
     # 64-step gradient approximates the continuous ramp.
     levels = options.get("levels")
@@ -2094,8 +2439,19 @@ def _emit_colorbar(
         h_positions = (
             [float(value) for value in ticks if lo <= float(value) <= hi]
             if ticks is not None
-            else (_linear_ticks(lo, hi, 8)[0] or [lo, hi])
+            else (_linear_ticks(lo, hi, _colorbar_tick_target(width))[0] or [lo, hi])
         )
+        if options.get("minor_ticks") and len(h_positions) >= 2:
+            ordered = sorted(set(h_positions))
+            for left, right in pairwise(ordered):
+                for step in range(1, 5):
+                    value = left + (right - left) * step / 5.0
+                    tx = x + width * (value - lo) / span
+                    cmd.stroke(
+                        [(tx, y + height), (tx, y + height + 3)],
+                        1,
+                        _parse_color(text_color),
+                    )
         for value in h_positions:
             cmd.text(
                 x + width * (value - lo) / span,
@@ -2118,8 +2474,19 @@ def _emit_colorbar(
         tick_positions = (
             [float(value) for value in ticks if lo <= float(value) <= hi]
             if ticks is not None
-            else (_linear_ticks(lo, hi, 8)[0] or [lo, hi])
+            else (_linear_ticks(lo, hi, _colorbar_tick_target(height))[0] or [lo, hi])
         )
+        if options.get("minor_ticks") and len(tick_positions) >= 2:
+            ordered = sorted(set(tick_positions))
+            for lower, upper in pairwise(ordered):
+                for step in range(1, 5):
+                    value = lower + (upper - lower) * step / 5.0
+                    ty = y + height * (1 - (value - lo) / span)
+                    cmd.stroke(
+                        [(x + width, ty), (x + width + 3, ty)],
+                        1,
+                        _parse_color(text_color),
+                    )
         for value in tick_positions:
             cmd.text(
                 x + width + 4,
@@ -2129,13 +2496,19 @@ def _emit_colorbar(
                 _parse_color(text_color),
                 f"{value:g}",
             )
-        # The native text primitive does not rotate; a compact label above the
-        # bar remains legible and, crucially, stays inside the export canvas.
+        # Matplotlib rotates a vertical colorbar's label 90° CCW and centers it
+        # alongside the bar, outboard of the tick labels. The native glyph
+        # protocol rotates in quarter turns (_TEXT_ROT_CCW), so 90° is exact
+        # here; the upright-glyph limitation applies only to arbitrary angles.
+        # A horizontal label above the bar instead sat at `plot.y - 5`, where
+        # the glyph ascent overflowed the canvas top edge and was clipped. The
+        # baseline matches the SVG exporter's `x + width + 38` so both static
+        # paths agree, inside the room layout() already reserves for a label.
         if options.get("label"):
             cmd.text(
-                x,
-                y - 5,
-                0,
+                x + width + 38,
+                y + height / 2,
+                1 | _TEXT_ROT_CCW,
                 10,
                 _parse_color(text_color),
                 str(options["label"]),

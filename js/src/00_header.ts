@@ -27,7 +27,9 @@
 // v7: `colormap` may be explicit RGB stops rather than a built-in name, and the
 // spec may carry a chart `palette`. A v6 client indexes COLORMAP_STOPS with the
 // stop array, misses, and paints viridis without erroring.
-export const PROTOCOL = 7;
+// v8: legend/colorbar geometry, extra colormap names, and match-fill strokes
+// add wire values an older v7 client would accept but silently misrender.
+export const PROTOCOL = 8;
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
 // python/xy/_framing.py). The chart spec's PROTOCOL

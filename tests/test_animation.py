@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import re
 
 import numpy as np
 import pytest
@@ -278,6 +279,15 @@ def test_stable_keys_are_type_sensitive_and_deterministic() -> None:
             ),
             id="numpy-float64-swapped-subnormal",
         ),
+        # Object storage still routes when every row is one builtin type —
+        # this is the shape a pandas string column arrives in.
+        pytest.param(np.array(["a", "b"], dtype=object), id="object-array"),
+        pytest.param(np.array([1.25, 2.5], dtype=object), id="object-floats"),
+        pytest.param(np.array([3, -4], dtype=object), id="object-ints"),
+        # An interior NUL survives fixed-width storage intact; only a
+        # *trailing* one is ambiguous against padding.
+        pytest.param(["a\x00b", "plain"], id="list-unicode-interior-nul"),
+        pytest.param([b"a\x00b", b"plain"], id="list-bytes-interior-nul"),
     ],
 )
 def test_native_transition_key_fast_paths_match_python_reference(keys, monkeypatch) -> None:
@@ -304,10 +314,11 @@ def test_native_transition_key_fast_paths_match_python_reference(keys, monkeypat
     "keys",
     [
         pytest.param([1, "1", True, b"1"], id="mixed-builtins"),
-        pytest.param(np.array(["a", "b"], dtype=object), id="object-array"),
-        pytest.param(np.array([1.25, 2.5], dtype=object), id="object-floats"),
-        pytest.param(["a\x00b", "plain"], id="list-unicode-nul"),
-        pytest.param([b"a\x00b", b"plain"], id="list-bytes-nul"),
+        pytest.param(np.array([1, "1"], dtype=object), id="object-array-mixed"),
+        # A trailing NUL is indistinguishable from fixed-width padding, so
+        # these must keep their exact Python tokens.
+        pytest.param(["a\x00", "plain"], id="list-unicode-trailing-nul"),
+        pytest.param([b"a\x00", b"plain"], id="list-bytes-trailing-nul"),
         pytest.param(
             [dt.date(2024, 1, 1), dt.date(2024, 1, 2)],
             id="dates",
@@ -389,6 +400,201 @@ def test_transition_key_empty_shape_and_length_semantics() -> None:
         component_api._encode_transition_keys(["a", "b"], 3, "length key")
 
 
+@pytest.mark.parametrize(
+    "column",
+    [
+        pytest.param(["alpha", "beta", "gamma"], id="string-column"),
+        pytest.param([3, -4, 5], id="integer-column"),
+        pytest.param([1.5, -0.0, 2.25], id="float-column"),
+        pytest.param([True, False], id="bool-column"),
+    ],
+)
+def test_dataframe_key_columns_reach_the_native_encoder(column, monkeypatch) -> None:
+    """`data=df, key="id"` resolves to a Series, not an ndarray (§ routing)."""
+    pd = pytest.importorskip("pandas")
+    series = pd.Series(column)
+    calls: list[np.ndarray] = []
+    native = k.transition_keys_fixed
+
+    def tracked(values: np.ndarray, label: str):
+        calls.append(values)
+        return native(values, label)
+
+    monkeypatch.setattr(k, "transition_keys_fixed", tracked)
+    actual = component_api._encode_transition_keys(series, len(series), "frame key")
+
+    assert len(calls) == 1
+    np.testing.assert_array_equal(actual, _python_transition_key_reference(column))
+
+
+def test_dataframe_key_column_with_missing_values_keeps_its_python_error() -> None:
+    pd = pytest.importorskip("pandas")
+    series = pd.Series([1.0, None, 3.0], dtype="Float64")
+    with pytest.raises(ValueError, match="animation key is missing at row 1"):
+        component_api._encode_transition_keys(series, 3, "frame key")
+
+
+def test_native_transition_key_argument_errors_are_loud() -> None:
+    """A layout the kernel refuses is a bug, not a reason to degrade silently.
+
+    Status 1 means "declined this data, use the oracle"; status 4 means the
+    caller sent a layout the ABI does not define. Collapsing the two would let
+    a `_native.py`/`valid_layout` drift turn into a silent ~7x regression that
+    every existing assertion still passes.
+    """
+    with pytest.raises(ValueError, match="must be a non-object 1-D array"):
+        k.transition_keys_fixed(np.array(["a", "b"], dtype=object), "bad key")
+    with pytest.raises(ValueError, match="must use Unicode, bytes, bool, integer, or float"):
+        k.transition_keys_fixed(np.array(["2024-01-01"], dtype="datetime64[D]"), "bad key")
+
+    # The wrapper's own dtype gate and Rust's `valid_layout` agree today, so
+    # reaching status 4 needs the seam forced open. What matters is that it
+    # raises rather than returning the None that means "use the oracle".
+    from xy import _native
+
+    original = _native._lib.xy_transition_keys_fixed
+    try:
+        _native._lib.xy_transition_keys_fixed = lambda *_args: 4
+        with pytest.raises(RuntimeError, match=r"rejected the .* layout it was handed"):
+            _native.transition_keys_fixed(np.array([b"ab"], dtype="S2"), "bad key")
+    finally:
+        _native._lib.xy_transition_keys_fixed = original
+
+
+def _keyed_scatter(animation, n: int = 8):
+    x = [float(i) for i in range(n)]
+    marks = [xy.scatter(x=x, y=x, key=[f"k{i}" for i in range(n)])]
+    return xy.scatter_chart(*marks, *([animation] if animation is not None else [])).figure()
+
+
+@pytest.mark.parametrize(
+    ("animation", "ships"),
+    [
+        pytest.param(xy.animation(match="key"), True, id="match-key"),
+        pytest.param(xy.animation(match="index"), False, id="match-index"),
+        # `match` defaults to "index", so a bare animation() never key-matches.
+        pytest.param(xy.animation(duration=250), False, id="match-defaulted"),
+        pytest.param(xy.animation(match="key", enabled=False), False, id="disabled"),
+        pytest.param(None, False, id="no-animation-spec"),
+    ],
+)
+def test_identity_planes_ship_only_when_the_client_can_key_match(animation, ships) -> None:
+    """`key=` alone must not put two dead u32 columns on the wire."""
+    figure = _keyed_scatter(animation)
+    spec, _buffers = figure.build_payload_split()
+    trace = spec["traces"][0]
+
+    assert ("keys" in trace) is ships
+    assert (figure.traces[0].transition_keys is not None) is ships
+
+
+@pytest.mark.parametrize(
+    "animation",
+    [
+        pytest.param(xy.animation(match="index"), id="match-index"),
+        pytest.param(xy.animation(enabled=False), id="disabled"),
+        pytest.param(None, id="no-animation-spec"),
+    ],
+)
+def test_key_validation_still_runs_when_planes_are_skipped(animation) -> None:
+    """Uniqueness and typing are construction contract, not animation policy."""
+    marks = xy.scatter(x=[1.0, 2.0, 3.0], y=[1.0, 2.0, 3.0], key=["a", "b", "a"])
+    with pytest.raises(ValueError, match="duplicate value at rows 0 and 2"):
+        xy.scatter_chart(marks, *([animation] if animation is not None else [])).figure()
+
+    bad = xy.scatter(x=[1.0, 2.0], y=[1.0, 2.0], key=[object(), object()])
+    with pytest.raises(ValueError, match="animation key values must be"):
+        xy.scatter_chart(bad, *([animation] if animation is not None else [])).figure()
+
+
+def test_key_matching_payload_is_unchanged_by_the_skip() -> None:
+    """The path that does key-match must be byte-identical to before."""
+    spec, blob = _keyed_scatter(xy.animation(match="key"), n=32).build_payload()
+    trace = spec["traces"][0]
+    lo = _column(blob, spec, trace["keys"]["lo"])
+    hi = _column(blob, spec, trace["keys"]["hi"])
+    expected = _python_transition_key_reference([f"k{i}" for i in range(32)])
+    np.testing.assert_array_equal(lo, expected[:, 0])
+    np.testing.assert_array_equal(hi, expected[:, 1])
+
+
+def test_mark_animation_cascades_over_chart_level_fields() -> None:
+    """Regression for reflex-dev/xy#329.
+
+    A mark-level spec used to be a complete dict spread over the chart-level
+    one, so setting any field reset every other field to its default —
+    silently turning off a chart-level ``match="key"``.
+    """
+    figure = xy.scatter_chart(
+        xy.scatter(
+            x=[1.0, 2.0],
+            y=[1.0, 2.0],
+            key=["a", "b"],
+            animation=xy.animation(duration=90),
+        ),
+        xy.animation(match="key", easing="linear"),
+    ).figure()
+    spec, _ = figure.build_payload_split()
+    # Exactly the merge the client performs in `_resolvedAnimation`.
+    resolved = {**spec.get("animation", {}), **(spec["traces"][0].get("animation") or {})}
+
+    assert resolved["duration"] == 90.0  # the mark's one override
+    assert resolved["match"] == "key"  # kept from the chart
+    assert resolved["easing"] == "linear"  # kept from the chart
+    assert "keys" in spec["traces"][0]  # and key matching actually works
+
+
+def test_mark_animation_can_restate_a_default_to_override_the_chart() -> None:
+    """Passing a default explicitly is an override, not an absence."""
+    figure = xy.scatter_chart(
+        xy.scatter(
+            x=[1.0, 2.0],
+            y=[1.0, 2.0],
+            key=["a", "b"],
+            animation=xy.animation(match="index"),
+        ),
+        xy.animation(match="key"),
+    ).figure()
+    spec, _ = figure.build_payload_split()
+    resolved = {**spec.get("animation", {}), **(spec["traces"][0].get("animation") or {})}
+
+    assert resolved["match"] == "index"
+    assert "keys" not in spec["traces"][0]
+
+
+def test_mark_animation_cascade_restores_the_match_key_guard() -> None:
+    """The clobbering also suppressed this validation entirely."""
+    with pytest.raises(ValueError, match="animation match='key' requires key="):
+        xy.scatter_chart(
+            xy.scatter(x=[1.0, 2.0], y=[1.0, 2.0], animation=xy.animation(duration=90)),
+            xy.animation(match="key"),
+        ).figure()
+
+
+def test_mark_animation_alone_still_resolves_to_a_complete_policy() -> None:
+    """No chart-level spec means the cascade base is the defaults, not {}."""
+    figure = xy.scatter_chart(
+        xy.scatter(x=[1.0], y=[2.0], animation=xy.animation(duration=90)),
+    ).figure()
+    spec, _ = figure.build_payload_split()
+    resolved = {**spec.get("animation", {}), **(spec["traces"][0].get("animation") or {})}
+
+    assert resolved["duration"] == 90.0
+    assert set(resolved) == set(xy.animation().to_spec())
+    assert resolved["easing"] == "ease-out"
+    assert resolved["match"] == "index"
+
+
+def test_animation_override_spec_reports_only_what_was_set() -> None:
+    assert xy.animation(duration=90).to_override_spec() == {"duration": 90.0}
+    assert xy.animation(match="index").to_override_spec() == {"match": "index"}
+    assert xy.animation().to_override_spec() == {}
+    assert xy.animation().to_spec() == xy.Animation().to_spec()
+    # Direct construction is public too; it falls back to diffing the defaults.
+    assert xy.Animation(duration=90).to_override_spec() == {"duration": 90.0}
+    assert xy.Animation().to_override_spec() == {}
+
+
 def test_aggregate_tier_records_key_matching_fallback() -> None:
     chart = xy.scatter_chart(
         xy.scatter(
@@ -426,7 +632,10 @@ def test_mark_animation_overrides_chart_defaults() -> None:
     assert spec["animation"]["duration"] == 500.0
     assert spec["traces"][0]["animation"]["duration"] == 80.0
     assert spec["traces"][0]["animation"]["enter"] == "scale"
-    assert spec["traces"][1]["animation"] == {"enabled": False}
+    # A bool override resolves like any other: only `enabled` changes, and the
+    # trace carries the complete policy so the client needs no defaults.
+    assert spec["traces"][1]["animation"]["enabled"] is False
+    assert spec["traces"][1]["animation"]["duration"] == 500.0
 
 
 def test_disabled_mark_does_not_require_chart_level_key_matching_identity() -> None:
@@ -438,7 +647,7 @@ def test_disabled_mark_does_not_require_chart_level_key_matching_identity() -> N
 
     spec, _ = chart.figure().build_payload()
 
-    assert spec["traces"][1]["animation"] == {"enabled": False}
+    assert spec["traces"][1]["animation"]["enabled"] is False
     assert "keys" not in spec["traces"][1]
 
 
@@ -607,3 +816,212 @@ def test_animation_validation(kwargs: dict) -> None:
 def test_exit_is_not_a_supported_animation_option() -> None:
     with pytest.raises(TypeError, match="unexpected keyword argument 'exit'"):
         xy.animation(**{"exit": "fade"})
+
+
+# --- stable-key encoding: same answers, without the per-row dictionaries -----
+
+
+def test_transition_key_digests_are_stable_and_row_aligned() -> None:
+    """Encoding is a pure per-row hash: order-independent and reproducible."""
+    from xy.components import _encode_transition_keys
+
+    keys = ["a", "b", "c", "d"]
+    first = _encode_transition_keys(keys, 4, "keys")
+    assert first.dtype == np.uint32 and first.shape == (4, 2)
+    np.testing.assert_array_equal(first, _encode_transition_keys(keys, 4, "keys"))
+    # Row i's digest depends only on key i, so permuting the input permutes the
+    # output rows and nothing else.
+    shuffled = _encode_transition_keys(["c", "a", "d", "b"], 4, "keys")
+    np.testing.assert_array_equal(shuffled, first[[2, 0, 3, 1]])
+    # Distinct keys must give distinct digests, which is what the vectorized
+    # uniqueness check the encoder now relies on is asserting.
+    assert len({tuple(row) for row in first}) == 4
+
+
+@pytest.mark.parametrize(
+    "keys",
+    [
+        ["a", "b", "a"],
+        [1, 2, 1],
+        [1.5, 2.5, 1.5],
+        [True, False, True],
+        [b"x", b"y", b"x"],
+    ],
+    ids=["str", "int", "float", "bool", "bytes"],
+)
+def test_duplicate_transition_keys_name_both_rows(keys: list) -> None:
+    """The duplicate message still names the first and second offending rows.
+
+    The encoder no longer keeps a token dictionary while hashing; a conflict is
+    re-walked to produce this message, so it must be unchanged.
+    """
+    from xy.components import _encode_transition_keys
+
+    with pytest.raises(ValueError, match=r"keys contains duplicate value at rows 0 and 2"):
+        _encode_transition_keys(keys, 3, "keys")
+
+
+def test_transition_key_type_errors_still_report_their_row() -> None:
+    from xy.components import _encode_transition_keys
+
+    with pytest.raises(ValueError, match="animation key is missing at row 1"):
+        _encode_transition_keys(["a", None, "c"], 3, "keys")
+    with pytest.raises(ValueError, match="animation key must be finite at row 2"):
+        _encode_transition_keys([1.0, 2.0, float("nan")], 3, "keys")
+    with pytest.raises(ValueError, match="row 1 has list"):
+        _encode_transition_keys(["a", [], "c"], 3, "keys")
+
+
+@pytest.mark.parametrize("n_good", [1, 2, 3, 17])
+def test_a_short_fallback_prefix_is_packable(n_good: int) -> None:
+    """Date keys always take the Python fallback, so this reaches the prefix
+    digest test at tiny lengths — where the Fortran-order buffer bites.
+
+    `result[:1]` is a one-row slice of an F-order (N, 2) array, and numpy can
+    satisfy `reshape(-1)` on it with a strided *view*; re-viewing that as uint64
+    raises "the last axis must be contiguous", replacing the key error with a
+    numpy internal one. The digests are packed from the two columns instead.
+    """
+    from xy.components import _encode_transition_keys
+
+    keys: list = [dt.date(2024, 1, 1) + dt.timedelta(days=i) for i in range(n_good)]
+    encoded = _encode_transition_keys(keys, n_good, "keys")
+    assert encoded.shape == (n_good, 2)
+    assert encoded[:, 0].flags.c_contiguous and encoded[:, 1].flags.c_contiguous
+
+    # ...and the error path, which packs the completed prefix before re-raising.
+    with pytest.raises(ValueError, match=f"animation key is missing at row {n_good}"):
+        _encode_transition_keys([*keys, None], n_good + 1, "keys")
+    # ...and with a duplicate inside that prefix, which must win instead.
+    if n_good >= 2:
+        dup = [keys[0], *keys[:-1], None]
+        with pytest.raises(ValueError, match=r"keys contains duplicate value at rows 0 and 1"):
+            _encode_transition_keys(dup, len(dup), "keys")
+
+
+@pytest.mark.parametrize(
+    ("keys", "rows"),
+    [
+        pytest.param(["a", "a", None], (0, 1), id="missing"),
+        pytest.param([1.0, 1.0, float("nan")], (0, 1), id="non-finite"),
+        pytest.param(["a", "a", {}], (0, 1), id="wrong-type"),
+        pytest.param(["a", "b", "a", None], (0, 2), id="later-duplicate"),
+    ],
+)
+def test_a_duplicate_outranks_a_later_invalid_row(keys: list, rows: tuple[int, int]) -> None:
+    """First bad row wins, whichever kind of bad it is.
+
+    The uniqueness test runs after the walk, so a duplicate would otherwise be
+    reported only once every later row had tokenized — and any invalid row
+    behind it would mask the duplicate entirely. Both inputs are wrong twice
+    over; which error surfaces is the contract.
+    """
+    from xy.components import _encode_transition_keys
+
+    expected = f"keys contains duplicate value at rows {rows[0]} and {rows[1]}"
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        _encode_transition_keys(keys, len(keys), "keys")
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (0, 1),  # both in the first block
+        (0, 4095),  # first block, at its last row
+        (0, 4096),  # spans the first block boundary
+        (4095, 4096),  # straddles it
+        (4096, 4097),  # both in the second block
+        (0, 32768),  # spans the second boundary (stride x8)
+        (5000, 40000),  # neither in the first block, different blocks
+        (0, 49999),  # last row of all
+    ],
+)
+def test_a_duplicate_is_named_the_same_wherever_the_block_boundaries_fall(
+    first: int, second: int
+) -> None:
+    """Uniqueness is tested on growing prefixes, so a duplicate whose two rows
+    land in different blocks must still be reported — and reported with the same
+    two row numbers a single trailing test would have produced."""
+    from xy.components import _encode_transition_keys
+
+    n = 50_000
+    keys = [f"k-{i:09d}" for i in range(n)]
+    keys[second] = keys[first]
+    expected = f"keys contains duplicate value at rows {first} and {second}"
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        _encode_transition_keys(keys, n, "keys")
+
+
+def test_prefix_checks_do_not_change_the_encoding() -> None:
+    """The blocked walk must produce the same digests as one straight pass, at
+    sizes below, at, and above the first block boundary."""
+    from xy.components import _encode_transition_keys
+
+    for n in (1, 4095, 4096, 4097, 32769, 40000):
+        keys = [f"k-{i:09d}" for i in range(n)]
+        got = _encode_transition_keys(keys, n, "keys")
+        assert got.shape == (n, 2) and got.dtype == np.uint32
+        # Every row is an independent hash of its own key, so a one-row encode
+        # of key i must equal row i of the bulk encode.
+        for probe in {0, n // 2, n - 1}:
+            single = _encode_transition_keys([keys[probe]], 1, "keys")
+            np.testing.assert_array_equal(single[0], got[probe])
+
+
+def test_the_superseded_token_error_is_not_chained_onto_the_duplicate() -> None:
+    """The prefix re-check runs inside an `except`, so without suppression the
+    error it deliberately discards would print *first*, above a 'During handling
+    of the above exception' banner — the traceback would lead with the one
+    message this is not supposed to report."""
+    import traceback
+
+    from xy.components import _encode_transition_keys
+
+    try:
+        _encode_transition_keys(["a", "a", None], 3, "keys")
+    except ValueError as exc:
+        assert exc.__context__ is None or exc.__suppress_context__
+        rendered = "".join(traceback.format_exception(exc))
+        assert "During handling of the above exception" not in rendered
+        assert "is missing at row 2" not in rendered
+        assert "keys contains duplicate value at rows 0 and 1" in rendered
+    else:  # pragma: no cover
+        raise AssertionError("expected a duplicate-key error")
+
+
+def test_a_duplicate_outranks_a_non_valueerror_token_failure() -> None:
+    """Which row was first cannot depend on which exception the token raised.
+
+    A key type whose `encode` raises something other than ValueError must not
+    smuggle a later row's failure past an earlier duplicate.
+    """
+    from xy.components import _encode_transition_keys
+
+    class BadStr(str):
+        def encode(self, *args: object, **kwargs: object) -> bytes:
+            raise RuntimeError("boom-encode")
+
+    with pytest.raises(ValueError, match="keys contains duplicate value at rows 0 and 1"):
+        _encode_transition_keys(["a", "a", BadStr("z")], 3, "keys")
+    # With no earlier duplicate the original failure still propagates untouched.
+    with pytest.raises(RuntimeError, match="boom-encode"):
+        _encode_transition_keys(["a", "b", BadStr("z")], 3, "keys")
+
+
+def test_an_invalid_row_before_a_duplicate_still_wins() -> None:
+    """The converse: nothing about the prefix re-check promotes a later
+    duplicate over an earlier bad row."""
+    from xy.components import _encode_transition_keys
+
+    with pytest.raises(ValueError, match="animation key is missing at row 0"):
+        _encode_transition_keys([None, "a", "a"], 3, "keys")
+
+
+def test_transition_keys_length_and_shape_are_validated() -> None:
+    from xy.components import _encode_transition_keys
+
+    with pytest.raises(ValueError, match="must have length 4"):
+        _encode_transition_keys(["a", "b"], 4, "keys")
+    with pytest.raises(ValueError, match="must be one-dimensional"):
+        _encode_transition_keys([["a"], ["b"]], 2, "keys")
+    assert _encode_transition_keys([], 0, "keys").shape == (0, 2)

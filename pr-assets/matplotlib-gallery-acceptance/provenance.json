@@ -1,0 +1,54 @@
+{
+  "matplotlib_version": "3.11.0",
+  "base_code_commit": "10b22b97173e6e58c6aa3fcae58e7e8776903dcf",
+  "head_code_commit": "97bfeb6b5eb34acea66cc054c9dab6e4a2d31216",
+  "full_gallery_verified_code_commit": "97bfeb6b5eb34acea66cc054c9dab6e4a2d31216",
+  "full_gallery_execution": {
+    "in_scope_examples": 88,
+    "paired_examples": 81,
+    "failed_examples": 7,
+    "paired_figures": 143
+  },
+  "pdsh_source_commit": "9b080851617c7fe3547a77bbb0726f57c0ac8158",
+  "pdsh_verified_code_commit": "97bfeb6b5eb34acea66cc054c9dab6e4a2d31216",
+  "pdsh_execution": {
+    "included_notebooks": 13,
+    "excluded_notebooks": [
+      "pdsh_04_12_three_dimensional_plotting.ipynb"
+    ],
+    "applicable_cells": 154,
+    "passed_cells": 153,
+    "failed_cells": 1,
+    "figure_captures": 289,
+    "capture_errors": 0
+  },
+  "full_frame": true,
+  "source_tree_note": "The exact full-gallery and PDSH reruns executed at 97bfeb6 after Stack B was rebased onto Stack A c196c12. The results remained 81/88 paired gallery examples with 143 paired figures and 153/154 applicable PDSH cells with 289 captures and no capture errors. The comparison sheets were refreshed from those exact render-code boundaries.",
+  "comparisons": [
+    {
+      "source": "statistics/violinplot.py",
+      "figure": 0,
+      "file": "violinplot.png",
+      "rendered_code_commit": "97bfeb6b5eb34acea66cc054c9dab6e4a2d31216",
+      "dimensions": [
+        3024,
+        540
+      ],
+      "sha256": "26aef7df7896a403311a4af04a63f8ebc2f2fc48e7ce1212979b8a1e800e88ff"
+    },
+    {
+      "source": "examples/pdsh/pdsh_04_09_text_and_annotation.ipynb",
+      "physical_cell": 23,
+      "selected_xy_ordinal": 8,
+      "source_id": "59bbdb311c014d738909a11f9e486628",
+      "figure": 4,
+      "file": "pdsh-text-annotation.png",
+      "rendered_code_commit": "97bfeb6b5eb34acea66cc054c9dab6e4a2d31216",
+      "dimensions": [
+        2412,
+        530
+      ],
+      "sha256": "328b8e6587dbbde7d69bde294083e3f89a5a7659a4b86000d1277c68deb61056"
+    }
+  ]
+}
