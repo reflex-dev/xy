@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 import warnings
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from os import PathLike
 from typing import Any, Optional, TypeAlias, Union
 
@@ -253,6 +253,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         tick_label_anchor: Optional[str] = None,
         tick_label_min_gap: Optional[float] = None,
         side: Optional[str] = None,
+        tick_sides: Optional[Any] = None,
         style: Optional[dict[str, Any]] = None,
     ) -> "Figure":
         axis_id = self._axis_id(axis_id, "axis id")
@@ -284,6 +285,16 @@ class Figure(AnnotationsMixin, PayloadMixin):
             raise ValueError("x axis side must be 'top' or 'bottom'")
         elif axis_dim == "y" and side not in {"left", "right"}:
             raise ValueError("y axis side must be 'left' or 'right'")
+        if tick_sides is not None:
+            if isinstance(tick_sides, (str, bytes)) or not isinstance(tick_sides, Sequence):
+                raise ValueError(f"{axis_id} axis tick_sides must be a sequence")
+            allowed_tick_sides = ("bottom", "top") if axis_dim == "x" else ("left", "right")
+            tick_sides = list(tick_sides)
+            if any(value not in allowed_tick_sides for value in tick_sides):
+                raise ValueError(
+                    f"{axis_id} axis tick_sides must contain only {list(allowed_tick_sides)}"
+                )
+            tick_sides = [value for value in allowed_tick_sides if value in tick_sides]
         values = (
             None
             if tick_values is None
@@ -324,6 +335,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             if tick_label_min_gap is None
             else self._nonnegative_scalar(tick_label_min_gap, f"{axis_id} axis tick_label_min_gap"),
             "side": side,
+            "tick_sides": tick_sides,
             "style": styles.compile_axis_style(style, f"{axis_id} axis style"),
         }
         if axis_id == "x":
@@ -1257,6 +1269,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             "range": list(range_),
             "side": opts.get("side", "bottom" if axis == "x" else "left"),
         }
+        if opts.get("tick_sides") is not None:
+            spec["tick_sides"] = list(opts["tick_sides"])
         if label_position is not None:
             spec["label_position"] = label_position
         if label_offset is not None:

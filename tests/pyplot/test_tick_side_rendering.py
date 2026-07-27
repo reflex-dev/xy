@@ -1,0 +1,156 @@
+"""Matplotlib tick-mark sides stay independent from tick-label placement."""
+
+from __future__ import annotations
+
+import io
+import xml.etree.ElementTree as ET
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+
+import xy
+import xy.pyplot as plt
+from xy import _raster, _svg
+
+ROOT = Path(__file__).resolve().parents[2]
+TICK_COLOR = "#123456"
+TICK_RGBA = (18, 52, 86, 255)
+
+
+@pytest.fixture(autouse=True)
+def _clean() -> Iterator[None]:
+    plt.close("all")
+    yield
+    plt.close("all")
+
+
+def _anscombe_tick_figure():
+    fig, ax = plt.subplots(figsize=(3.2, 2.4), dpi=100)
+    ax.plot([0.0, 1.0], [0.0, 1.0])
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0.0, 1.0)
+    ax.set_xticks([0.0, 1.0])
+    ax.set_yticks([0.0, 1.0])
+    ax.tick_params(
+        direction="in",
+        top=True,
+        right=True,
+        length=8,
+        width=2,
+        color=TICK_COLOR,
+    )
+    return fig, ax
+
+
+def _rounded_segment(points) -> tuple[tuple[float, float], tuple[float, float]]:
+    return tuple((round(float(x), 2), round(float(y), 2)) for x, y in points)
+
+
+def _expected_tick_segments(
+    plot: dict[str, float], length: float
+) -> set[tuple[tuple[float, float], ...]]:
+    left = plot["x"]
+    right = left + plot["w"]
+    top = plot["y"]
+    bottom = top + plot["h"]
+    return {
+        ((left, top), (left, top + length)),
+        ((right, top), (right, top + length)),
+        ((left, bottom - length), (left, bottom)),
+        ((right, bottom - length), (right, bottom)),
+        ((left, top), (left + length, top)),
+        ((left, bottom), (left + length, bottom)),
+        ((right - length, top), (right, top)),
+        ((right - length, bottom), (right, bottom)),
+    }
+
+
+def test_tick_params_ships_both_tick_sides_without_moving_default_labels() -> None:
+    _fig, ax = _anscombe_tick_figure()
+
+    spec, _buffers = ax._build_chart(320, 240).figure().build_payload_split()
+    assert spec["x_axis"]["tick_sides"] == ["bottom", "top"]
+    assert spec["y_axis"]["tick_sides"] == ["left", "right"]
+    assert spec["x_axis"]["side"] == "bottom"
+    assert spec["y_axis"]["side"] == "left"
+    assert spec["x_axis"]["style"]["tick_direction"] == "in"
+    assert spec["y_axis"]["style"]["tick_direction"] == "in"
+
+    # Matplotlib's mark-side and label-side switches are independent: moving
+    # the marks to the top does not move an explicitly retained bottom label.
+    ax.tick_params(
+        axis="x",
+        bottom=False,
+        top=True,
+        labelbottom=True,
+        labeltop=False,
+    )
+    spec, _buffers = ax._build_chart(320, 240).figure().build_payload_split()
+    assert spec["x_axis"]["tick_sides"] == ["top"]
+    assert spec["x_axis"]["side"] == "bottom"
+
+
+def test_axis_component_validates_and_canonicalizes_tick_sides() -> None:
+    assert xy.x_axis(tick_sides=("top", "bottom", "top")).tick_sides == [
+        "bottom",
+        "top",
+    ]
+    assert xy.y_axis(tick_sides=()).tick_sides == []
+    with pytest.raises(ValueError, match="tick_sides"):
+        xy.x_axis(tick_sides=("left",))
+
+
+def test_svg_draws_inward_ticks_on_all_four_requested_sides() -> None:
+    fig, ax = _anscombe_tick_figure()
+    spec, _buffers = ax._build_chart(320, 240).figure().build_payload_split()
+    plot = _svg.layout(spec)[3]
+
+    output = io.BytesIO()
+    fig.savefig(output, format="svg", dpi=100)
+    root = ET.fromstring(output.getvalue())
+    actual = {
+        _rounded_segment(
+            (
+                (node.attrib["x1"], node.attrib["y1"]),
+                (node.attrib["x2"], node.attrib["y2"]),
+            )
+        )
+        for node in root.iter()
+        if node.tag.endswith("line") and node.attrib.get("stroke") == TICK_COLOR
+    }
+    length = float(spec["x_axis"]["style"]["tick_length"])
+    assert actual == {
+        _rounded_segment(segment) for segment in _expected_tick_segments(plot, length)
+    }
+
+
+def test_png_display_list_draws_inward_ticks_on_all_four_requested_sides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fig, ax = _anscombe_tick_figure()
+    spec, _buffers = ax._build_chart(320, 240).figure().build_payload_split()
+    plot = _raster.layout(spec)[3]
+    actual: set[tuple[tuple[float, float], ...]] = set()
+    original = _raster._Cmd.stroke
+
+    def record(self, points, width, color, closed=False, dash=None, cap="round"):
+        if color == TICK_RGBA and width == pytest.approx(2 * 100 / 72):
+            actual.add(_rounded_segment(points))
+        return original(self, points, width, color, closed, dash, cap)
+
+    monkeypatch.setattr(_raster._Cmd, "stroke", record)
+    output = io.BytesIO()
+    fig.savefig(output, format="png", dpi=100)
+    assert output.getvalue().startswith(b"\x89PNG")
+    length = float(spec["x_axis"]["style"]["tick_length"])
+    assert actual == {
+        _rounded_segment(segment) for segment in _expected_tick_segments(plot, length)
+    }
+
+
+def test_browser_source_consumes_tick_sides_for_every_axis_path() -> None:
+    source = (ROOT / "js" / "src" / "50_chartview.ts").read_text(encoding="utf-8")
+    assert "_axisTickSides(axis)" in source
+    assert "Array.isArray(axis && axis.tick_sides)" in source
+    assert source.count("for (const side of this._axisTickSides(") == 4

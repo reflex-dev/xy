@@ -4896,18 +4896,21 @@ class Axes(PlotTypeMixin):
             self._tick_lengths[axis] = float(length) * self._point_scale()
         if any(sides.values()):
             style["tick_length"] = self._tick_lengths[axis]
-            visible_sides = [side for side, shown in sides.items() if shown]
-            if len(visible_sides) == 1:
-                props["side"] = visible_sides[0]
+            props["tick_sides"] = [side for side, shown in sides.items() if shown]
         else:
             # The native axis has one tick side, so zero length is its exact
             # representation of Matplotlib's tick1On=False/tick2On=False.
             style["tick_length"] = 0.0
+            props["tick_sides"] = []
 
     def _apply_tick_label_side_visibility(self, axis: str, side_updates: dict[str, bool]) -> None:
         sides = self._tick_label_sides[axis]
         sides.update({key: value for key, value in side_updates.items() if key in sides})
-        self._axis_props(axis)["tick_label_strategy"] = None if any(sides.values()) else "off"
+        props = self._axis_props(axis)
+        props["tick_label_strategy"] = None if any(sides.values()) else "off"
+        visible_sides = [key.removeprefix("label") for key, shown in sides.items() if shown]
+        if len(visible_sides) == 1:
+            props["side"] = visible_sides[0]
 
     def tick_params(self, axis: str = "both", **kwargs: Any) -> None:
         """Change tick, tick-label, and axis-color appearance.
