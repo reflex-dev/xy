@@ -3546,7 +3546,14 @@ class Axes(PlotTypeMixin):
             with np.errstate(divide="ignore", invalid="ignore"):
                 transformed = np.log(values) / np.log(base)
         if not np.isfinite(transformed).all():
-            raise ValueError("log aspect limits must be positive and finite")
+            # A scale mutation can leave the aspect snapshot in the previous
+            # scale's coordinates. Re-resolve from the current positive data
+            # instead of making get_position()/export fail on stale bounds.
+            fallback = np.asarray(self._auto_domain(axis), dtype=np.float64)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                transformed = np.log(fallback) / np.log(base)
+            if not np.isfinite(transformed).all():
+                raise ValueError("log aspect limits must be positive and finite")
         return tuple(map(float, transformed))
 
     def get_position(self, original: bool = False) -> Bbox:
@@ -8327,8 +8334,11 @@ def _locator_tick_values(
     if not _is_foreign_matplotlib_date_object(locator):
         return np.asarray(locator.tick_values(lo, hi), dtype=float).reshape(-1)
     unit = 1.0 if not datetime_axis else _MILLISECONDS_PER_DAY
-    lo_datetime = _MATPLOTLIB_EPOCH + timedelta(days=float(lo) / unit)
-    hi_datetime = _MATPLOTLIB_EPOCH + timedelta(days=float(hi) / unit)
+    try:
+        lo_datetime = _MATPLOTLIB_EPOCH + timedelta(days=float(lo) / unit)
+        hi_datetime = _MATPLOTLIB_EPOCH + timedelta(days=float(hi) / unit)
+    except (OverflowError, OSError, ValueError):
+        return np.asarray([], dtype=float)
     values = np.asarray(locator.tick_values(lo_datetime, hi_datetime), dtype=float).reshape(-1)
     return values * unit
 

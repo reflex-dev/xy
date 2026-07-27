@@ -171,6 +171,17 @@ def test_errorbar_uses_matplotlib_default_caps_width_and_limit_marker_size() -> 
     )
 
 
+def test_xerror_only_caps_use_y_axis_height_and_resolved_limits() -> None:
+    fig, ax = plt.subplots(figsize=(4, 2), dpi=100)
+    ax.set_ylim(-10, 30)
+
+    ax.errorbar([2], [5], xerr=[0.5], fmt="none", capsize=6)
+
+    errorbar = ax._entries[0]
+    expected = 6 * 100 / 72 * 40 / (200 * ax.get_position(original=True).height)
+    assert errorbar["kwargs"]["cap_size"] == pytest.approx(expected)
+
+
 def test_errorbar_limit_flags_render_directional_endpoint_markers() -> None:
     _fig, ax = plt.subplots()
     ax.errorbar(

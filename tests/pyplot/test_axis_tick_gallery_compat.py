@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import xy.pyplot as plt
+from xy.pyplot._axes import _locator_tick_values
 
 
 def test_set_ticklabels_matches_fixed_locator_and_empty_label_semantics() -> None:
@@ -274,6 +275,17 @@ def test_foreign_matplotlib_date_tickers_bridge_days_and_engine_milliseconds() -
     assert ax.xaxis.get_major_formatter() is formatter
     assert all(abs(value) > 1_000_000_000_000 for value in spec["x_axis"]["tick_values"])
     assert spec["x_axis"]["tick_labels"][0].startswith("day ")
+
+
+def test_foreign_date_locator_ignores_unrepresentable_datetime_limits() -> None:
+    values = _locator_tick_values(
+        _ForeignDateLocator(),
+        -1e30,
+        1e30,
+        datetime_axis=True,
+    )
+
+    assert values.size == 0
 
 
 def test_named_annotation_accepts_relative_fontsize() -> None:

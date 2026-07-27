@@ -1781,6 +1781,24 @@ def _title_entries(spec: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def _decode_title_geometry(spec: dict[str, Any], blob: bytes) -> dict[str, Any]:
+    """Hydrate title placement from its raw-f32 wire column for static layout."""
+    authored = spec.get("title_options")
+    if not isinstance(authored, list) or not authored:
+        return spec
+    decoded = []
+    changed = False
+    for entry in authored:
+        if not isinstance(entry, dict) or "geometry" not in entry:
+            decoded.append(entry)
+            continue
+        values = _column(blob, spec["columns"][entry["geometry"]])
+        hydrated = {**entry, "y": float(values[0]), "pad": float(values[1])}
+        decoded.append(hydrated)
+        changed = True
+    return {**spec, "title_options": decoded} if changed else spec
+
+
 def _title_metrics(
     spec: dict[str, Any], entry: dict[str, Any]
 ) -> tuple[dict[str, Any], float, _textblock.TextBlock]:
@@ -2240,6 +2258,7 @@ def _axis_label_geometry(
 
 @_textblock.cached_measurements
 def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str:
+    spec = _decode_title_geometry(spec, blob)
     spec = _resolve_static_css_vars(spec)
     width, height, compact, plot = layout(spec)
     xa, ya = spec["x_axis"], spec["y_axis"]

@@ -443,10 +443,11 @@ Two independent version constants:
   `axis.tick_sides`/`axis.tick_label_sides`; a cached v8 client would omit or
   misplace those fields without reporting an error. v10
   adds top-level `title_options`, whose entries retain independent
-  left/center/right axes titles with their axes-fraction `y`, pixel `pad`, and
-  text style. A cached v9 client would ignore the field and silently omit
-  non-center slots and their placement, so the v10 mismatch rejects it before
-  rendering.
+  left/center/right axes titles and text style. Each entry's axes-fraction
+  `y` and pixel `pad` occupy a two-f32 raw geometry column referenced by
+  `geometry`, keeping numeric data out of JSON. A cached v9 client would
+  ignore the field and silently omit non-center slots and their placement,
+  so the v10 mismatch rejects it before rendering.
 - **Transport frame.** `FRAME_MAGIC` `"XYBF"` with `FRAME_VERSION = 1`
   versions the binary envelope separately, so the transport and the renderer
   can evolve without coupling.

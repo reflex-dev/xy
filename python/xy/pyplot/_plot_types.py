@@ -2652,26 +2652,44 @@ class PlotTypeMixin:
             if line_color is None:
                 line_color = self._next_color()
             color = line_color
-        resolved_capsize = float(rcParams["errorbar.capsize"] if capsize is None else capsize)
+        capsize_points = float(rcParams["errorbar.capsize"] if capsize is None else capsize)
+        resolved_capsize = capsize_points
         # Matplotlib capsize is a half-width in points; core XY's errorbar
         # accepts the perpendicular half-width in data units. Resolve that
-        # physical length against this axes' allocated pixel width so caps do
-        # not expand the data limits (or turn 5 pt into five whole x units).
-        if resolved_capsize > 0 and yerr is not None:
-            x_numeric = np.asarray(x_values, dtype=float)
-            finite_x = x_numeric[np.isfinite(x_numeric)]
-            x_span = float(np.ptp(finite_x)) if len(finite_x) > 1 else 1.0
-            axes_width_fraction = float(self.get_position(original=True).width)
-            figure_width_px = (
-                float(self.figure.get_size_inches()[0])
-                * float(self.figure.get_dpi())
-                * axes_width_fraction
-            )
+        # physical length against the active perpendicular axis. Y errors use
+        # x/width; an x-error-only plot uses y/height. Explicit view limits
+        # win, while a first artist derives the same margin-expanded span the
+        # eventual autoscale pass will use.
+        if resolved_capsize > 0 and (yerr is not None or xerr is not None):
+            cap_axis = "x" if yerr is not None else "y"
+            cap_values = x_values if cap_axis == "x" else y_values
+            axis_props = self._axis[cap_axis]
+            if axis_props.get("domain") is not None:
+                limits = self.get_xlim() if cap_axis == "x" else self.get_ylim()
+                axis_span = abs(float(limits[1]) - float(limits[0]))
+            else:
+                numeric = np.asarray(cap_values, dtype=float).reshape(-1)
+                existing = self._entry_values(cap_axis)
+                if existing.size:
+                    numeric = np.concatenate((existing, numeric))
+                finite = numeric[np.isfinite(numeric)]
+                if finite.size:
+                    lo, hi = float(finite.min()), float(finite.max())
+                    span = hi - lo
+                    margin = self._effective_margin(cap_axis)
+                    pad = span * margin if span > 0 else abs(lo) * margin or margin
+                    axis_span = span + 2.0 * pad
+                else:
+                    axis_span = 1.0
+            position = self.get_position(original=True)
+            axis_fraction = float(position.width if cap_axis == "x" else position.height)
+            figure_inches = self.figure.get_size_inches()[0 if cap_axis == "x" else 1]
+            axis_pixels = float(figure_inches) * float(self.figure.get_dpi()) * axis_fraction
             resolved_capsize = (
-                resolved_capsize
+                capsize_points
                 * self._point_scale()
-                * max(x_span, np.finfo(float).eps)
-                / max(figure_width_px, 1.0)
+                * max(axis_span, np.finfo(float).eps)
+                / max(axis_pixels, 1.0)
             )
         errorbar_width = float(
             elinewidth if elinewidth is not None else base.get("width", rcParams["lines.linewidth"])
@@ -2692,7 +2710,7 @@ class PlotTypeMixin:
                 },
             },
         )
-        marker_area = float(max(float(rcParams["lines.markersize"]), 2.0 * resolved_capsize) ** 2)
+        marker_area = float(max(float(rcParams["lines.markersize"]), 2.0 * capsize_points) ** 2)
         for marker_x, marker_y, marker_symbol in limit_markers:
             self.scatter(
                 marker_x,

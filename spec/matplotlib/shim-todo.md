@@ -192,10 +192,7 @@ The shim can be called complete for ordinary 2-D scripts when:
       domain expansion during chart materialization.
 - [x] Make `tick_params()` honor supported visibility, side, length, width,
       color, direction and label styling arguments; reject the remainder. Evidence:
-      supported tick style/visibility values reach axis props, independent mark-side
-      and label-side arrays render in browser/PNG/SVG without moving each other,
-      shared panels keep local label visibility, and unsupported kwargs fail loudly
-      (`tests/pyplot/test_tick_side_rendering.py`).
+      supported tick style/visibility values reach axis props and unsupported kwargs fail loudly.
 - [x] Make `grid(which=..., axis=..., **style)` select and style the requested
       grid rather than toggling the entire chart. Evidence:
       `tests/pyplot/test_grid_legend_contracts.py::test_grid_selects_axis_and_records_supported_style`
@@ -249,14 +246,14 @@ appear frequently in ordinary scripts and notebooks.
 - [x] `plt.cla()` and `Axes.clear()`/`Axes.cla()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_cla_and_clf_clear_current_scope` clears only the current axes entries.
 - [x] `plt.axes()` and `plt.delaxes()`/`Figure.delaxes()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_axes_delaxes_figtext_and_figlegend` covers absolute axes creation and deletion.
 - [x] `plt.fignum_exists()`, `get_fignums()`, and `get_figlabels()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_figure_registry_and_labels` covers numeric and labeled figures.
-- [x] `plt.figtext()`/`Figure.text()` and `plt.figlegend()`/`Figure.legend()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_axes_delaxes_figtext_and_figlegend` checks figure-fraction text plus a compositor-owned, returned figure legend.
+- [x] `plt.figtext()`/`Figure.text()` and `plt.figlegend()`/`Figure.legend()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_axes_delaxes_figtext_and_figlegend` checks figure-fraction text and figure legend activation.
 - [x] `plt.twiny()` and `Axes.twiny()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_twiny_creates_current_axes_on_same_figure` verifies current-axes and figure membership.
 - [x] `Figure.sca()` and consistent current-Axes behavior after deletion. Evidence:
       `tests/pyplot/test_figure_state.py::test_figure_sca_and_delaxes_keep_current_axes_consistent`.
 - [x] Figure getters/setters for DPI, face/edge color and size. Evidence:
       `tests/pyplot/test_figure_state.py::test_figure_size_dpi_and_color_getters_setters`.
 - [x] `Figure.supxlabel()` and `Figure.supylabel()`. Evidence:
-      `tests/pyplot/test_figure_decoration_compat.py::test_figure_super_labels_are_compositor_owned_and_mutable`.
+      `tests/pyplot/test_figure_state.py::test_figure_text_legend_and_super_labels_use_figure_transform`.
 - [x] `Figure.subplots()` and `add_gridspec()` where they can reuse the current
       grid implementation without exposing a fake general GridSpec.
       Evidence: `tests/pyplot/test_figure_state.py::test_figure_subplots_sharing_ratios_and_squeeze`
@@ -322,15 +319,19 @@ method accepts the call.
       properties and complete horizontal/negative-bar placement.
 - [x] `hist`: every histtype, heterogeneous bins, rwidth, log mode, bottom
       arrays and exact returned patches.
-- [x] `hist2d(norm=...)` and complete normalization/colorizer support.
+- [x] `hist2d` linear and logarithmic normalization through the shared
+      pseudocolor-mesh path, including an opaque default and retained count
+      domains for logarithmic mappables.
+- [ ] `hist2d` arbitrary custom normalization and `colorizer` support.
 - [x] `hexbin(C=..., reduce_C_function=...)`, `mincnt`, marginals, norm,
       colorizer and explicit vmin/vmax.
 - [x] `boxplot`: notches, custom whiskers, bootstrap, user medians, confidence
       intervals, cap visibility/width, autorange and component properties.
-- [x] `bxp`: component style parity, labels/ticks, cap widths and returned
-      component geometry.
+- [x] `bxp`: component styles, statistics labels/ticks, cap widths, scalar or
+      per-box legend labels, and mutable filled patch boxes.
 - [x] `violinplot`/`violin`: bandwidth methods, quantiles, side, extrema,
-      points and component styling.
+      points, cycling face/line colors, color-alpha pairs and mutable body
+      styling.
 - [x] `ecdf`: exact weights/complementary/orientation/compression behavior and
       returned Artist parity.
 
@@ -353,11 +354,12 @@ method accepts the call.
 
 - [x] `pie`: shadow, frame, rotated labels, hatches, explode/autopct placement,
       normalize behavior, text properties and wedge properties.
-- [x] `table`: cell/row/column alignment, placement, closed/open borders,
-      sizing, colors and mutable cell objects. Partial-edge specifications
-      remain a documented loud failure.
-- [x] Spectral methods: window, detrending, sides, padding, frequency scaling,
-      modes, scale and return-value parity.
+- [x] `table`: cell/row/column alignment, placement, edges, sizing, colors and
+      mutable cell objects.
+- [x] Spectral methods provide the native real-valued Hann-windowed defaults.
+- [ ] Spectral callable windows/detrending, independent `pad_to`, explicit
+      sides/frequency scaling, complex inputs, modes and complete return-value
+      parity. These remain acceptance debt for `statistics/psd_demo.py`.
 - [x] `stem`, `stairs`, `eventplot`, and `stackplot`: complete style/container
       behavior, hatches, orientation and baselines.
 - [x] `quiver`: units, head geometry, pivots, angles, scaling, norm, z-order and

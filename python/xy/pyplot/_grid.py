@@ -64,8 +64,10 @@ def _figure_label_baseline(
     desired = (1.0 - float(label.get("y", 0.5))) * canvas_height
     trailing = (block.line_count - 1) * block.line_step
     alignment = str(label.get("vertical_align", "center"))
-    if alignment in {"top", "baseline"}:
+    if alignment == "top":
         return desired + block.ascent
+    if alignment == "baseline":
+        return desired
     if alignment == "bottom":
         return desired - trailing - block.descent
     return desired + (block.ascent - trailing - block.descent) / 2.0
@@ -98,12 +100,20 @@ def _html_figure_labels(labels: list[dict[str, Any]]) -> str:
     for label in labels:
         anchor = str(label.get("anchor", "middle"))
         shift_x = {"start": "0%", "middle": "-50%", "end": "-100%"}.get(anchor, "-50%")
+        alignment = str(label.get("vertical_align", "center"))
+        shift_y = {
+            "top": "0%",
+            "baseline": "-100%",
+            "bottom": "-100%",
+            "center": "-50%",
+            "center_baseline": "-50%",
+        }.get(alignment, "-50%")
         angle = -float(label.get("rotation", 0.0))
         body.append(
             "<div class='xy-figure-label' style='position:absolute;"
             f"left:{float(label.get('x', 0.5)) * 100:g}%;"
             f"top:{(1.0 - float(label.get('y', 0.5))) * 100:g}%;"
-            f"transform:translate({shift_x},-50%) rotate({angle:g}deg);"
+            f"transform:translate({shift_x},{shift_y}) rotate({angle:g}deg);"
             f"font-size:{float(label.get('size', 12.0)):g}px;"
             f"font-family:{_html.escape(str(label.get('family', 'system-ui,sans-serif')))};"
             f"font-style:{_html.escape(str(label.get('font_style', 'normal')))};"

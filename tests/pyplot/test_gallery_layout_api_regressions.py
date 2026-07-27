@@ -24,6 +24,16 @@ def test_set_aspect_accepts_positional_adjustable() -> None:
     assert ax._aspect_adjustable == "box"
 
 
+def test_log_scale_after_equal_aspect_recomputes_stale_linear_bounds() -> None:
+    _fig, ax = plt.subplots()
+    ax.plot([1.0, 10.0], [1.0, 2.0])
+    ax.set_aspect("equal")
+
+    ax.set_xscale("log")
+
+    assert all(np.isfinite(ax.get_position().bounds))
+
+
 def test_uniform_subplot_axes_expose_one_shared_gridspec() -> None:
     fig, axes = plt.subplots(nrows=3, ncols=3)
 

@@ -45,6 +45,7 @@ from ._svg import (
     _column,
     _corner_radii,
     _css,
+    _decode_title_geometry,
     _density_column,
     _estimated_text_width,
     _heatmap_rgba_grid,
@@ -771,6 +772,7 @@ def render_raster(
     borrowed: tuple[np.ndarray, ...] = (),
 ) -> np.ndarray | bytes:
     """Paint `spec` into an ``(h, w, 4)`` RGBA8 image via the native rasterizer."""
+    spec = _decode_title_geometry(spec, blob)
     spec = _resolve_static_css_vars(spec)
     width, height, compact, plot = layout(spec)
     xa, ya = spec["x_axis"], spec["y_axis"]
