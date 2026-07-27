@@ -13,6 +13,7 @@ from __future__ import annotations
 # plotting methods must resolve these annotation names (all stdlib or xy-local).
 from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime
+from itertools import pairwise
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
@@ -1990,10 +1991,6 @@ class PlotTypeMixin:
         y0: list[float] = []
         x1: list[float] = []
         y1: list[float] = []
-        dot_x: list[float] = []
-        dot_y: list[float] = []
-        ring_x: list[float] = []
-        ring_y: list[float] = []
         left_edges = np.asarray(edges, dtype=np.float64)
         if right_edges is None:
             right_values = left_edges[1:]
@@ -2002,6 +1999,17 @@ class PlotTypeMixin:
             right_values = np.asarray(right_edges, dtype=np.float64)
         if not (len(values) == len(bases) == len(left_edges) == len(right_values)):
             raise ValueError("hatch geometry must have one rectangle per value")
+        edge_extent = np.concatenate((left_edges, right_values))
+        value_extent = np.concatenate(
+            (np.asarray(values, dtype=np.float64), np.asarray(bases, dtype=np.float64))
+        )
+        finite_edge_extent = edge_extent[np.isfinite(edge_extent)]
+        finite_value_extent = value_extent[np.isfinite(value_extent)]
+        edge_span = float(np.ptp(finite_edge_extent)) if finite_edge_extent.size else 0.0
+        value_span = float(np.ptp(finite_value_extent)) if finite_value_extent.size else 0.0
+        x_span, y_span = (
+            (edge_span, value_span) if orientation == "vertical" else (value_span, edge_span)
+        )
         pattern = set(hatch)
         density = max(1, min(3, max((hatch.count(char) for char in pattern), default=1)))
         line_count = 4 + density * 3
@@ -2050,18 +2058,62 @@ class PlotTypeMixin:
             if "-" in pattern or "+" in pattern or "*" in pattern:
                 for position in np.linspace(0.1, 0.9, line_count):
                     segment(0.0, float(position), 1.0, float(position))
+
+            rect_width = abs(float(rx1) - float(rx0))
+            rect_height = abs(float(ry1) - float(ry0))
+            rectangle = (rect_width, rect_height)
+
+            def ring(
+                u: float,
+                v: float,
+                *,
+                scale: float,
+                steps: int,
+                rectangle: tuple[float, float],
+            ) -> None:
+                rect_width, rect_height = rectangle
+                if rect_width <= 0.0 or rect_height <= 0.0:
+                    return
+                # Hatch circles are display-sized in Matplotlib and clipped by
+                # each Rectangle. The shim has no per-bin clip primitive, so
+                # materialize a small data-space polygon and clamp both radii
+                # inside this rectangle. That keeps even tail-bin glyphs local
+                # instead of letting fixed-size scatter markers leak across the
+                # histogram baseline.
+                ru = min(0.08 * scale, (x_span / 160.0) * scale / rect_width)
+                rv = min(0.08 * scale, (y_span / 120.0) * scale / rect_height)
+                if ru <= 0.0 or rv <= 0.0:
+                    return
+                angles = np.linspace(0.0, 2.0 * np.pi, steps + 1)
+                points = [
+                    (u + ru * float(np.cos(angle)), v + rv * float(np.sin(angle)))
+                    for angle in angles
+                ]
+                for start, end in pairwise(points):
+                    segment(*start, *end)
+
             if "." in pattern:
                 grid = np.linspace(0.12, 0.88, 3 + density)
                 for u in grid:
                     for v in grid:
-                        dot_x.append(float(rx0 + u * (rx1 - rx0)))
-                        dot_y.append(float(ry0 + v * (ry1 - ry0)))
+                        ring(
+                            float(u),
+                            float(v),
+                            scale=0.45,
+                            steps=6,
+                            rectangle=rectangle,
+                        )
             if "o" in pattern or "O" in pattern:
                 grid = np.linspace(0.14, 0.86, 3 + density)
                 for u in grid:
                     for v in grid:
-                        ring_x.append(float(rx0 + u * (rx1 - rx0)))
-                        ring_y.append(float(ry0 + v * (ry1 - ry0)))
+                        ring(
+                            float(u),
+                            float(v),
+                            scale=1.35 if "O" in pattern else 1.0,
+                            steps=10,
+                            rectangle=rectangle,
+                        )
 
         color = props.get("color")
         opacity = props.get("opacity", 1.0)
@@ -2076,36 +2128,6 @@ class PlotTypeMixin:
                         "width": 0.8,
                         "opacity": opacity,
                         "name": None,
-                    },
-                },
-            )
-        if dot_x:
-            self._add(
-                "scatter",
-                {
-                    "x": dot_x,
-                    "y": dot_y,
-                    "kwargs": {
-                        "color": color,
-                        "size": 2.0,
-                        "symbol": "circle",
-                        "opacity": opacity,
-                    },
-                },
-            )
-        if ring_x:
-            self._add(
-                "scatter",
-                {
-                    "x": ring_x,
-                    "y": ring_y,
-                    "kwargs": {
-                        "color": props.get("facecolor", "transparent"),
-                        "stroke": color,
-                        "stroke_width": 0.8,
-                        "size": 13.0 if "O" in pattern else 10.0,
-                        "symbol": "circle",
-                        "opacity": opacity,
                     },
                 },
             )
@@ -2646,8 +2668,6 @@ class PlotTypeMixin:
                 line_kwargs_for_plot["linewidth"] = base["width"]
             if "opacity" in base:
                 line_kwargs_for_plot["alpha"] = base["opacity"]
-            if "name" in base:
-                line_kwargs_for_plot["label"] = base["name"]
             if "linestyle" in base:
                 line_kwargs_for_plot["linestyle"] = base["linestyle"]
             if "dash" in base:

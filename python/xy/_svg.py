@@ -3859,8 +3859,8 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     # borderpad is applied on both sides, handlelength=2, handletextpad=.8,
     # columnspacing=2, and labelspacing=.5 by default.
     pad = 2.0 * borderpad * font_size
-    handle = 2.0 * font_size
-    gap = 0.8 * font_size
+    handle = max(0.0, float(options.get("handlelength", 2.0))) * font_size
+    gap = max(0.0, float(options.get("handletextpad", 0.8))) * font_size
     column_gap = 2.0 * font_size
     row_gap = labelspacing * font_size
     line_h = text_h + row_gap
@@ -4133,10 +4133,17 @@ def _legend(
                 f"{_dash_attr(style)}/>"
             )
         else:
+            stroke_width = max(0.0, float(style.get("stroke_width", 0.0)))
+            stroke = style.get("stroke")
+            stroke_attr = (
+                f' stroke="{escape(_css(stroke, color))}" stroke-width="{_num(stroke_width)}"'
+                if stroke is not None and stroke_width > 0.0
+                else ""
+            )
             rows.append(
                 f'<rect x="{_num(hx0)}" y="{_num(cy - swatch_h / 2)}" '
                 f'width="{handle}" height="{_num(swatch_h)}" '
-                f'rx="2" fill="{escape(color)}"/>'
+                f'rx="2" fill="{escape(color)}"{stroke_attr}/>'
             )
             if style.get("hatch"):
                 rows.append(
