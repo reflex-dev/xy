@@ -281,6 +281,31 @@ def test_sparse_imshow_resampling_matches_dense_lanczos_with_nan() -> None:
     )
 
 
+def test_sparse_imshow_kaiser_matches_matplotlib_agg_kernel() -> None:
+    values = np.arange(12.0).reshape(3, 4)
+
+    def dense_weights(source: int, target: int) -> np.ndarray:
+        positions = np.linspace(0.0, source - 1.0, target)[:, None]
+        distance = np.abs(positions - np.arange(source, dtype=np.float64)[None, :])
+        beta = 6.33
+        weights = np.where(
+            distance < 1.0,
+            np.i0(beta * np.sqrt(np.maximum(0.0, 1.0 - distance**2))) / np.i0(beta),
+            0.0,
+        )
+        return weights / weights.sum(axis=1, keepdims=True)
+
+    wy = dense_weights(values.shape[0], 7)
+    wx = dense_weights(values.shape[1], 9)
+    expected = wy @ values @ wx.T
+
+    np.testing.assert_allclose(
+        axes_module._resample_grid(values, 9, 7, "kaiser"),
+        expected,
+        atol=1e-12,
+    )
+
+
 def test_imshow_bounds_large_non_nearest_resampling(monkeypatch: pytest.MonkeyPatch) -> None:
     requested: list[tuple[int, int]] = []
 

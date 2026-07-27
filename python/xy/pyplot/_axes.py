@@ -7379,10 +7379,17 @@ def _interpolation_taps(source: int, target: int, method: str) -> tuple[np.ndarr
     elif method == "gaussian":
         weights = np.where(absolute < 2.0, np.exp(-2.0 * absolute**2), 0.0)
     elif method == "kaiser":
-        radius = 3.0
+        # Match AGG's image_filter_kaiser, which Matplotlib delegates to:
+        # a compact one-pixel support with beta=6.33.  Treating Kaiser like
+        # the wider sinc-family filters averages almost the entire 4x4
+        # interpolation-methods example at every output location, collapsing
+        # its localized 2-D structure into a near one-dimensional gradient.
+        radius = 1.0
+        beta = 6.33
         weights = np.where(
             absolute < radius,
-            np.i0(5.0 * np.sqrt(np.maximum(0.0, 1.0 - (absolute / radius) ** 2))) / np.i0(5.0),
+            np.i0(beta * np.sqrt(np.maximum(0.0, 1.0 - (absolute / radius) ** 2)))
+            / np.i0(beta),
             0.0,
         )
     elif method == "sinc":
