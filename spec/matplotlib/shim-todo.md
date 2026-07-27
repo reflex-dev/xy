@@ -319,15 +319,19 @@ method accepts the call.
       properties and complete horizontal/negative-bar placement.
 - [x] `hist`: every histtype, heterogeneous bins, rwidth, log mode, bottom
       arrays and exact returned patches.
-- [x] `hist2d(norm=...)` and complete normalization/colorizer support.
+- [x] `hist2d` linear and logarithmic normalization through the shared
+      pseudocolor-mesh path, including an opaque default and retained count
+      domains for logarithmic mappables.
+- [ ] `hist2d` arbitrary custom normalization and `colorizer` support.
 - [x] `hexbin(C=..., reduce_C_function=...)`, `mincnt`, marginals, norm,
       colorizer and explicit vmin/vmax.
 - [x] `boxplot`: notches, custom whiskers, bootstrap, user medians, confidence
       intervals, cap visibility/width, autorange and component properties.
-- [x] `bxp`: component style parity, labels/ticks, cap widths and returned
-      component geometry.
+- [x] `bxp`: component styles, statistics labels/ticks, cap widths, scalar or
+      per-box legend labels, and mutable filled patch boxes.
 - [x] `violinplot`/`violin`: bandwidth methods, quantiles, side, extrema,
-      points and component styling.
+      points, cycling face/line colors, color-alpha pairs and mutable body
+      styling.
 - [x] `ecdf`: exact weights/complementary/orientation/compression behavior and
       returned Artist parity.
 
@@ -338,18 +342,12 @@ method accepts the call.
       Matplotlib.
 - [x] `pcolor`, `pcolorfast`, `pcolormesh`: shading modes, edge/line styling,
       antialiasing, snap, rasterized behavior and norm/colorizer variants.
-- [x] `contour`/`contourf`: origin, extent, linestyles, exact triangular corner
-      masks, full-domain extended bands, hatches, locators, norms and
-      filled-region topology parity.
-- [x] `clabel`: inline path cutting, formatting, manual positions, rotation,
-      label z-order, and supported text styling. Dynamic aspect-following
-      rotation (`use_clabeltext=True`) fails loudly.
+- [x] `contour`/`contourf`: origin, extent, linestyles, corner masks, extend,
+      hatches, locators, norms and filled-region topology parity.
+- [x] `clabel`: inline path cutting, formatting, manual positions, rotation and
+      complete text styling.
 - [x] `tripcolor`/`tricontour`/`tricontourf`: norms, masks, shading,
       antialiasing, hatches, extends and triangulation-object interoperability.
-- [ ] `tricontourf`: clip each source triangle at every requested level and
-      emit true filled isoband polygons. The current face-mean triangle color
-      is intentionally documented as an approximation and must not count as
-      exact Matplotlib gallery geometry.
 - [x] `spy` and `matshow`: sparse inputs, precision semantics and return types.
 
 ### Pie, table, spectra and vector fields
@@ -358,8 +356,10 @@ method accepts the call.
       normalize behavior, text properties and wedge properties.
 - [x] `table`: cell/row/column alignment, placement, edges, sizing, colors and
       mutable cell objects.
-- [x] Spectral methods: window, detrending, sides, padding, frequency scaling,
-      modes, scale and return-value parity.
+- [x] Spectral methods provide the native real-valued Hann-windowed defaults.
+- [ ] Spectral callable windows/detrending, independent `pad_to`, explicit
+      sides/frequency scaling, complex inputs, modes and complete return-value
+      parity. These remain acceptance debt for `statistics/psd_demo.py`.
 - [x] `stem`, `stairs`, `eventplot`, and `stackplot`: complete style/container
       behavior, hatches, orientation and baselines.
 - [x] `quiver`: units, head geometry, pivots, angles, scaling, norm, z-order and

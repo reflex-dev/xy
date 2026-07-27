@@ -4,28 +4,31 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
-## Contour/colorbar contract corrections — 2026-07-27
+## Box and violin default geometry — 2026-07-26 (Matplotlib 3.11.1 reference)
 
-- Added Matplotlib 3.11 anchor tables for RdYlBu, YlGn, Wistia, and PuOr,
-  including generic reversed forms in every renderer.
-- `imshow` and `pcolormesh` now share callable `BoundaryNorm` preparation and
-  preserve discrete boundaries and band colors for colorbars.
-- Discrete colorbars honor uniform/proportional spacing and serialize
-  formatter-derived labels beside the exact tick values in browser, PNG, and
-  SVG output.
-- `tricontour` accepts Matplotlib's solid linestyle aliases. Filled triangular
-  contours remain explicitly documented as a per-face approximation until
-  true triangular isoband clipping is implemented.
-- `clabel(zorder=...)` now reaches every returned text artist, and the omitted
-  value follows Matplotlib's contour-label default. Dynamic
-  `use_clabeltext=True` rotation fails loudly instead of being accepted and
-  ignored.
-- The automatic colorbar-axes facade documents and tests that its active and
-  original position queries are identical because renderer chrome has no
-  independently aspect-adjusted axes box.
-- Static panel assembly consumes the automatic colorbar strip only for ordinary
-  GridSpec allocations. Tight/constrained rectangles already reserve that
-  chrome, so the data box is not reduced by the same strip twice.
+- `xy.pyplot.boxplot` no longer routes its default call through the native
+  opinionated box mark. It now draws Matplotlib's unfilled line geometry and
+  returns one box, median, and flier handle plus two whisker and cap handles per
+  group. Fliers stay centered on their group even when several groups are
+  present, and empty groups of fliers still have the expected handle.
+- `xy.pyplot.violinplot` now uses the same Gaussian-KDE path for its default
+  Scott bandwidth as it does for explicit Scott, Silverman, scalar, and
+  callable bandwidths. It returns one body per group, with triangle joins
+  marked as a single fill so browser, PNG, and SVG output suppress internal
+  seams.
+- The public composition API keeps its independent native `box` and `violin`
+  marks and their opinionated styling; this compatibility correction is
+  contained inside `xy.pyplot`.
+
+## Histogram and spectral numeric semantics — 2026-07-26 (Matplotlib 3.11.1 reference)
+
+- `hist(density=True, stacked=True)` now bins raw per-dataset mass, stacks it,
+  and normalizes the combined top envelope once. Unequal bin widths, weights,
+  and both cumulative directions match Matplotlib 3.11.1 numeric outputs.
+- The native Welch paths behind `psd`, `csd`, `cohere`, and `specgram` no
+  longer subtract each segment mean by default. Their omitted/`None`
+  `detrend` behavior is Matplotlib's `detrend_none`; unsupported explicit
+  detrending modes continue to fail loudly at the pyplot boundary.
 
 ## Vector-field gallery corrections — 2026-07-24
 
@@ -351,33 +354,6 @@ colorbar domains) fully cleared.
   points when `showfliers` is on. Its default category positions are
   Matplotlib's 1-based ordinals, and `manage_ticks=True` reserves a half unit
   around the outer positions regardless of the drawn box width.
-
-### Log-normalized meshes and colorbar placement — 2026-07-26 (Matplotlib 3.11.1 reference)
-
-- `imshow` and regular `pcolormesh` now accept `norm="log"` and LogNorm
-  instances. The shim previously rejected the gallery call before rendering;
-  it now resolves the positive source domain, paints logarithmically normalized
-  RGBA samples (including bad/under/over colors), and retains the original
-  scalar domain plus scale for the colorbar. `pcolormesh(rasterized=True)`
-  round-trips on the already image-backed regular path and still fails loudly
-  for nonuniform triangle meshes.
-- Automatic colorbars in fixed multipanel figures now consume room from their
-  source subplot allocation before the panel is composed. `pad=0` removes the
-  gap in browser, SVG, and native PNG layout instead of retaining the old
-  24-pixel default gap or overflowing the figure. Logarithmic colorbar ticks
-  use logarithmic positions and labels in every renderer.
-- `Figure.colorbar(cax=...)` now paints the gradient into the explicit axes
-  rectangle, keeps the source subplot unchanged, and returns a handle whose
-  `ax` is that explicit axes. This clears the `subplots_adjust.py` blocker,
-  whose `0.85, 0.1, 0.075, 0.8` cax previously raised before export.
-- A colorbar also inherits a contour mappable's normalized `extend` setting
-  when the call does not override it, so its endpoint triangles match the
-  already-compiled contour bands.
-- Focused regression evidence lives in
-  `tests/pyplot/test_gallery_log_colorbar_blockers.py`: it reproduces the exact
-  option combinations from `time_series_histogram.py` and
-  `subplots_adjust.py`, asserts the normalization and allocation contracts, and
-  verifies 600x800 and 640x480 PNG plus composed SVG output.
 
 Future entries must identify the Matplotlib release/revision, inventory
 additions or removals, and any compatibility-level changes.
