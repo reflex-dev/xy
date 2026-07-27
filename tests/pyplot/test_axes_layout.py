@@ -210,8 +210,9 @@ def test_tick_params_records_supported_style_and_rejects_unknown() -> None:
         "label_size": pytest.approx(10.0 * 100.0 / 72.0),
     }
 
-    with pytest.raises(TypeError, match="unsupported keyword"):
-        ax.tick_params(which="minor")
+    ax.tick_params(which="minor", length=2)
+    assert _axis_child(ax, "x").minor_style["tick_length"] == pytest.approx(2 * 100 / 72)
+    assert _axis_child(ax, "y").minor_style["tick_length"] == pytest.approx(2 * 100 / 72)
 
 
 def test_rc_tick_padding_places_labels_by_the_matplotlib_rule() -> None:

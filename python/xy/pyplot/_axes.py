@@ -50,7 +50,15 @@ from ._fmt import parse_fmt
 from ._mathtext import mathtext_italic_ranges, mathtext_to_unicode
 from ._plot_types import PlotTypeMixin
 from ._rc import RcParams, rcParams
-from ._ticker import AutoLocator, FixedLocator, Locator, NullLocator, ScalarFormatter, as_formatter
+from ._ticker import (
+    AutoLocator,
+    AutoMinorLocator,
+    FixedLocator,
+    Locator,
+    NullLocator,
+    ScalarFormatter,
+    as_formatter,
+)
 from ._transforms import Bbox, CoordinateTransform, IdentityTransform
 from ._translate import (
     LINESTYLE_TO_DASH,
@@ -548,6 +556,7 @@ class _AxisProxy:
         return host._tickers.get((key, "major_formatter")) or ScalarFormatter()
 
     def set_minor_locator(self, locator: Any) -> None:
+        """Set the locator used for the independent unlabeled minor tick set."""
         host, key = self._ticker_slot()
         host._tickers[(key, "minor_locator")] = locator
         host._invalidate_shared_ticker_axis(key)
@@ -557,6 +566,7 @@ class _AxisProxy:
         return host._tickers.get((key, "minor_locator")) or NullLocator()
 
     def set_minor_formatter(self, formatter: Any) -> None:
+        """Set a minor formatter, used when a labeled minor set is promoted."""
         host, key = self._ticker_slot()
         host._tickers[(key, "minor_formatter")] = as_formatter(formatter, "set_minor_formatter()")
         host._invalidate_shared_ticker_axis(key)
@@ -567,19 +577,104 @@ class _AxisProxy:
         reset: bool = False,
         **kwargs: Any,
     ) -> None:
-        """Forward major-tick styling to this proxy's axes dimension."""
+        """Forward tick styling to this proxy's axes dimension."""
         which = str(which).lower()
-        if which != "major":
-            raise not_implemented(
-                f"Axis.set_tick_params(which={which!r})",
-                alternative="which='major'",
-            )
+        if which not in {"major", "minor", "both"}:
+            raise ValueError("Axis.set_tick_params() which must be 'major', 'minor', or 'both'")
         if reset:
             raise not_implemented(
                 "Axis.set_tick_params(reset=True)",
                 alternative="reset=False",
             )
-        self.axes.tick_params(axis=self.axis, **kwargs)
+        self.axes.tick_params(axis=self.axis, which=which, **kwargs)
+
+    def set_ticks_position(self, position: str) -> None:
+        """Move tick marks (and, for an edge, their labels) like Matplotlib."""
+        position = str(position).lower()
+        allowed = (
+            {"top", "bottom", "both", "default", "none"}
+            if self.axis == "x"
+            else {"left", "right", "both", "default", "none"}
+        )
+        if position not in allowed:
+            raise ValueError(
+                f"{self.axis}axis.set_ticks_position() position must be one of {sorted(allowed)}"
+            )
+        if self.axis == "x":
+            if position == "top":
+                updates = {
+                    "top": True,
+                    "labeltop": True,
+                    "bottom": False,
+                    "labelbottom": False,
+                }
+            elif position == "bottom":
+                updates = {
+                    "top": False,
+                    "labeltop": False,
+                    "bottom": True,
+                    "labelbottom": True,
+                }
+            elif position == "both":
+                updates = {"top": True, "bottom": True}
+            elif position == "none":
+                updates = {"top": False, "bottom": False}
+            else:
+                updates = {
+                    "top": True,
+                    "labeltop": False,
+                    "bottom": True,
+                    "labelbottom": True,
+                }
+        elif position == "right":
+            updates = {
+                "right": True,
+                "labelright": True,
+                "left": False,
+                "labelleft": False,
+            }
+        elif position == "left":
+            updates = {
+                "right": False,
+                "labelright": False,
+                "left": True,
+                "labelleft": True,
+            }
+        elif position == "both":
+            updates = {"right": True, "left": True}
+        elif position == "none":
+            updates = {"right": False, "left": False}
+        else:
+            updates = {
+                "right": True,
+                "labelright": False,
+                "left": True,
+                "labelleft": True,
+            }
+        self.axes.tick_params(axis=self.axis, which="both", **updates)
+
+    def set_label_position(self, position: str) -> None:
+        """Move only the axis title, independently from ticks and labels."""
+        position = str(position).lower()
+        allowed = {"top", "bottom"} if self.axis == "x" else {"left", "right"}
+        if position not in allowed:
+            raise ValueError(
+                f"{self.axis}axis.set_label_position() position must be one of {sorted(allowed)}"
+            )
+        props = self.axes._axis_props(self.axis)
+        # Core's ``side`` owns the axis title and is also the fallback for tick
+        # sides. Materialize the current independent tick state first so moving
+        # a title never moves ticks that the caller did not request.
+        props["tick_sides"] = [
+            side for side, visible in self.axes._tick_sides[self.axis].items() if visible
+        ]
+        props["tick_label_sides"] = [
+            side.removeprefix("label")
+            for side, visible in self.axes._tick_label_sides[self.axis].items()
+            if visible
+        ]
+        props["side"] = position
+        self.axes._invalidate()
 
     def grid(self, visible: bool | None = None, which: str = "major", **kwargs: Any) -> None:
         """Configure grid lines for only this axis.
@@ -594,16 +689,22 @@ class _AxisProxy:
         self.axes.grid(visible, which=which, axis=self.axis, **kwargs)
 
     def tick_bottom(self) -> None:
-        pass  # exact no-op: the engine only draws bottom x ticks
+        if self.axis != "x":
+            raise AttributeError("tick_bottom() is only available on an x axis")
+        self.set_ticks_position("bottom")
 
     def tick_left(self) -> None:
-        pass  # exact no-op: the engine only draws left y ticks
+        if self.axis != "y":
+            raise AttributeError("tick_left() is only available on a y axis")
+        self.set_ticks_position("left")
 
     def get_majorticklabels(self) -> list["_TickLabel"]:
         return self.axes._tick_label_handles(self.axis)
 
     def get_minorticklabels(self) -> list["_TickLabel"]:
-        return []  # minor ticks are outside the native axis contract
+        # The wire's independent minor set is intentionally unlabeled. A
+        # labeled minor pair is promoted to the ordinary label set at build.
+        return []
 
     def get_minor_formatter(self) -> Any:
         from ._ticker import NullFormatter
@@ -724,6 +825,27 @@ class _TickLabel:
         style = self._axes._axis_props(self._axis).setdefault("style", {})
         style["tick_label_color"] = resolve_color(color)
         self._axes._invalidate()
+
+    def set_horizontalalignment(self, align: str) -> None:
+        align = str(align).lower()
+        anchors = {"left": "start", "center": "center", "right": "end"}
+        if align not in anchors:
+            raise ValueError("align must be 'left', 'center', or 'right'")
+        self._axes._axis_props(self._axis)["tick_label_anchor"] = anchors[align]
+        self._axes._invalidate()
+
+    set_ha = set_horizontalalignment
+
+    def get_horizontalalignment(self) -> str:
+        anchors = {"start": "left", "center": "center", "end": "right"}
+        props = self._axes._axis_props(self._axis)
+        anchor = props.get("tick_label_anchor")
+        if anchor is None:
+            if self._axis == "x":
+                return "center"
+            sides = props.get("tick_label_sides") or [props.get("side", "left")]
+            return "left" if sides[0] == "right" else "right"
+        return anchors.get(str(anchor), "center")
 
     def set_rotation(self, angle: float) -> None:
         angle = float(angle)
@@ -1295,6 +1417,9 @@ class Axes(PlotTypeMixin):
         ``markevery``, ``drawstyle``, and ``transform``; anything else raises
         loudly. Returns the list of `Line2D` handles, one per series.
         """
+        data = kwargs.pop("data", None)
+        if data is not None:
+            args = _replace_plot_data(args, data)
         scalex = kwargs.pop("scalex", True)
         scaley = kwargs.pop("scaley", True)
         if scalex is not True or scaley is not True:
@@ -3026,7 +3151,7 @@ class Axes(PlotTypeMixin):
         elif xycoords in {getattr(self.figure, "transFigure", None), "figure fraction"}:
             style["coordinate_space"] = "figure_fraction"
         if fontsize is not None:
-            style["font_size"] = float(fontsize)
+            style["font_size"] = _font_size_points(fontsize, rcParams["font.size"])
         if va is not None:
             style["vertical_align"] = str(va)
         if weight is not None:
@@ -4101,16 +4226,29 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def minorticks_on(self) -> None:
-        """Show minor ticks on both axes."""
-        self._axis_props("x")["minor_ticks"] = True
-        self._axis_props("y")["minor_ticks"] = True
-        self._invalidate()
+        """Show automatically subdivided minor ticks on both axes."""
+        for axis in ("x", "y"):
+            host, key = _AxisProxy(self, axis)._ticker_slot()
+            spec = host._scale_specs.get(key) or {"name": "linear"}
+            if spec.get("name") == "log":
+                from ._ticker import LogLocator
+
+                locator = LogLocator(
+                    base=float(spec.get("base", 10.0)),
+                    subs=spec.get("subs"),
+                )
+            else:
+                locator = AutoMinorLocator()
+            host._tickers[(key, "minor_locator")] = locator
+            host._invalidate_shared_ticker_axis(key)
 
     def minorticks_off(self) -> None:
         """Hide minor ticks on both axes."""
-        self._axis_props("x")["minor_ticks"] = False
-        self._axis_props("y")["minor_ticks"] = False
-        self._invalidate()
+        for axis in ("x", "y"):
+            host, key = _AxisProxy(self, axis)._ticker_slot()
+            host._tickers[(key, "minor_locator")] = NullLocator()
+            host._axis[key].pop("minor_tick_values", None)
+            host._invalidate_shared_ticker_axis(key)
 
     def get_xlabel(self) -> str:
         """The x-axis label text (empty string when unset)."""
@@ -4955,25 +5093,36 @@ class Axes(PlotTypeMixin):
         """Change tick, tick-label, and axis-color appearance.
 
         ``axis`` selects ``"x"``/``"y"``/``"both"``. Supported keywords:
-        ``labelrotation``/``rotation``, ``colors``, ``color``,
-        ``labelcolor``, ``length``, ``width``, ``pad``, ``direction``
+        ``which`` selects major/minor/both. ``labelrotation``/``rotation``,
+        ``colors``, ``color``, ``labelcolor``, ``length``/``size``, ``width``,
+        ``pad``, ``labelsize``, ``direction``
         (``"in"``/``"out"``/``"inout"``), and the ``labelbottom``/
         ``labeltop``/``labelleft``/``labelright`` and ``bottom``/``top``/
-        ``left``/``right`` visibility flags. ``rotation_mode`` and
+        ``left``/``right`` visibility flags. The legacy ``tick1On``/
+        ``tick2On`` names are accepted. ``rotation_mode`` and
         ``labelrotation_mode`` support Matplotlib 3.11's special tick-label
         anchors; anything else raises loudly.
         """
         if axis not in {"both", "x", "y"}:
             raise ValueError("tick_params() axis must be 'both', 'x', or 'y'")
+        which = str(kwargs.pop("which", "major")).lower()
+        if which not in {"major", "minor", "both"}:
+            raise ValueError("tick_params() which must be 'major', 'minor', or 'both'")
+        reset = bool(kwargs.pop("reset", False))
+        if reset:
+            raise not_implemented("tick_params(reset=True)", "reset=False")
         rotation = kwargs.pop("labelrotation", kwargs.pop("rotation", None))
         rotation_mode = kwargs.pop("labelrotation_mode", kwargs.pop("rotation_mode", None))
         colors = kwargs.pop("colors", None)
         color = kwargs.pop("color", colors)
         labelcolor = kwargs.pop("labelcolor", colors)
-        length = kwargs.pop("length", None)
+        length = kwargs.pop("length", kwargs.pop("size", None))
         pad = kwargs.pop("pad", None)
         width = kwargs.pop("width", None)
+        labelsize = kwargs.pop("labelsize", None)
         direction = kwargs.pop("direction", None)
+        tick1_on = kwargs.pop("tick1On", None)
+        tick2_on = kwargs.pop("tick2On", None)
         side_updates = {
             key: bool(kwargs.pop(key))
             for key in ("bottom", "top", "left", "right")
@@ -4990,28 +5139,60 @@ class Axes(PlotTypeMixin):
             )
         for ax in ("x", "y") if axis == "both" else (axis,):
             props = self._axis_props(ax)
-            if rotation is not None:
+            physical_sides = ("bottom", "top") if ax == "x" else ("left", "right")
+            legacy_sides = dict(side_updates)
+            if tick1_on is not None:
+                legacy_sides[physical_sides[0]] = bool(tick1_on)
+            if tick2_on is not None:
+                legacy_sides[physical_sides[1]] = bool(tick2_on)
+            if rotation is not None and which in {"major", "both"}:
                 props["tick_label_angle"] = float(rotation)
-            if rotation_mode is not None:
+            if rotation_mode is not None and which in {"major", "both"}:
                 self._set_tick_rotation_mode(ax, rotation_mode)
-            elif rotation is not None:
+            elif rotation is not None and which in {"major", "both"}:
                 self._apply_tick_rotation_mode(ax, float(rotation))
-            style = props.setdefault("style", {})
-            if color is not None:
-                style["tick_color"] = resolve_color(color)
-            if labelcolor is not None:
-                style["tick_label_color"] = resolve_color(labelcolor)
-            if length is not None or side_updates:
-                self._apply_tick_side_visibility(ax, side_updates, length)
-            if pad is not None:
-                style["tick_padding"] = float(pad) * self._point_scale()
-            if width is not None:
-                style["tick_width"] = float(width) * self._point_scale()
-            if direction is not None:
-                if direction not in {"in", "out", "inout"}:
-                    raise ValueError("tick_params() direction must be 'in', 'out', or 'inout'")
-                style["tick_direction"] = direction
-            if label_side_updates:
+            style_names = (
+                ("style", "minor_style")
+                if which == "both"
+                else ("style" if which == "major" else "minor_style",)
+            )
+            for style_name in style_names:
+                style = props.setdefault(style_name, {})
+                if color is not None:
+                    style["tick_color"] = resolve_color(color)
+                if labelcolor is not None:
+                    style["tick_label_color"] = resolve_color(labelcolor)
+                if length is not None:
+                    style["tick_length"] = float(length) * self._point_scale()
+                if pad is not None:
+                    style["tick_padding"] = float(pad) * self._point_scale()
+                if width is not None:
+                    style["tick_width"] = float(width) * self._point_scale()
+                if labelsize is not None:
+                    style["tick_label_size"] = (
+                        _font_size_points(labelsize, rcParams["font.size"]) * self._point_scale()
+                    )
+                if direction is not None:
+                    if direction not in {"in", "out", "inout"}:
+                        raise ValueError("tick_params() direction must be 'in', 'out', or 'inout'")
+                    style["tick_direction"] = direction
+            if legacy_sides and which in {"major", "both"}:
+                self._apply_tick_side_visibility(ax, legacy_sides, length)
+            if legacy_sides and which == "minor":
+                visible_minor_sides = [
+                    side
+                    for side in physical_sides
+                    if legacy_sides.get(side, self._tick_sides[ax][side])
+                ]
+                if not visible_minor_sides:
+                    props.setdefault("minor_style", {})["tick_length"] = 0.0
+                elif (
+                    length is None and props.setdefault("minor_style", {}).get("tick_length") == 0.0
+                ):
+                    props["minor_style"]["tick_length"] = _rc_minor_axis_style(
+                        ax, self.figure.get_dpi()
+                    )["tick_length"]
+            if label_side_updates and which in {"major", "both"}:
                 self._apply_tick_label_side_visibility(ax, label_side_updates)
         self._invalidate()
 
@@ -5596,7 +5777,14 @@ class Axes(PlotTypeMixin):
         if source is self:
             return
         source_props = source._axis[axis]
-        for name in ("domain", "reverse", "tick_values", "tick_labels", "tick_count"):
+        for name in (
+            "domain",
+            "reverse",
+            "tick_values",
+            "tick_labels",
+            "tick_count",
+            "minor_tick_values",
+        ):
             if name in source_props:
                 props[name] = source_props[name]
 
@@ -5620,29 +5808,28 @@ class Axes(PlotTypeMixin):
         self, key: str, props: dict[str, Any], nbins_hint: Optional[int] = None
     ) -> None:
         """Resolve a user locator/formatter into concrete tick props (in place)."""
-        from ._ticker import LogLocator, NullFormatter
+        from ._ticker import LogLocator
 
         ticker_source = self._shared_ticker_source(key)
         locator = ticker_source._tickers.get((key, "major_locator"))
         formatter = ticker_source._tickers.get((key, "major_formatter"))
         minor_locator = ticker_source._tickers.get((key, "minor_locator"))
         minor_formatter = ticker_source._tickers.get((key, "minor_formatter"))
-        # The engine draws a single tick set. When a script blanks the major
-        # labels and puts the text on located minors (matplotlib's centered
-        # date-label idiom: major NullFormatter + labeled minor locator), the
-        # minor pair is the one carrying information — promote it.
-        if (
-            isinstance(formatter, NullFormatter)
+        # Core's minor tier is deliberately unlabeled. When a script blanks
+        # the majors and labels located minors (Matplotlib's centered-date
+        # idiom), promote that pair to the labeled tier.
+        promoted_minor = (
+            _is_null_formatter(formatter)
             and minor_locator is not None
-            and hasattr(minor_locator, "tick_values")
             and minor_formatter is not None
-            and not isinstance(minor_formatter, NullFormatter)
-        ):
+            and not _is_null_formatter(minor_formatter)
+        )
+        if promoted_minor:
             locator, formatter = minor_locator, minor_formatter
         is_log = (
             props.get("type_") == "log" or (self._scale_specs.get(key) or {}).get("name") == "log"
         )
-        if locator is None and formatter is None and not is_log:
+        if locator is None and formatter is None and minor_locator is None and not is_log:
             return
         spec = self._scale_specs.get(key) or {"name": "linear"}
         authored_labels = list(props["tick_labels"]) if "tick_labels" in props else None
@@ -5653,7 +5840,12 @@ class Axes(PlotTypeMixin):
                 # Third-party locators only promise tick_values(); the density
                 # hint is an xy-locator protocol, never forced onto them.
                 locator._nbins_hint = nbins_hint
-            ticks = np.asarray(locator.tick_values(lo, hi), dtype=float).reshape(-1)
+            ticks = _locator_tick_values(
+                locator,
+                lo,
+                hi,
+                datetime_axis=self._axis_holds_datetimes("y" if key == "y2" else key),
+            )
             pad = (hi - lo) * 1e-9
             ticks = ticks[(ticks >= lo - pad) & (ticks <= hi + pad)]
         elif "tick_values" in props:
@@ -5670,10 +5862,11 @@ class Axes(PlotTypeMixin):
             auto_log = is_log
         props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
         if formatter is not None:
-            props["tick_labels"] = [
-                _plain_text(formatter(float(value), position))
-                for position, value in enumerate(ticks)
-            ]
+            props["tick_labels"] = _formatter_tick_labels(
+                formatter,
+                ticks,
+                datetime_axis=self._axis_holds_datetimes("y" if key == "y2" else key),
+            )
         elif auto_log:
             # matplotlib's LogFormatter look: decades label as 10^k.
             props["tick_labels"] = [
@@ -5689,22 +5882,36 @@ class Axes(PlotTypeMixin):
             props["tick_count"] = len(ticks)
         else:
             props.pop("tick_count", None)
-        # Minor positions are an independent wire tier. Log axes get
-        # Matplotlib's automatic subdivisions even without an explicit minor
-        # locator; linear axes only publish a user locator.
+        if promoted_minor:
+            props.pop("minor_tick_values", None)
+            props["style"] = {
+                **(props.get("style") or {}),
+                **(props.get("minor_style") or {}),
+            }
+            return
+
+        # PR #336 owns the independent minor wire tier and the automatic log
+        # subdivisions. This shim layer adds AutoMinorLocator and foreign-date
+        # adaptation on top of that core contract.
         if is_log and minor_locator is None:
             minor_locator = LogLocator(base=float(spec.get("base", 10.0)), subs=spec.get("subs"))
-        if minor_locator is not None and hasattr(minor_locator, "tick_values"):
-            minor = np.asarray(minor_locator.tick_values(lo, hi), dtype=float).reshape(-1)
-            pad = (hi - lo) * 1e-9
-            minor = minor[(minor >= lo - pad) & (minor <= hi + pad)]
-            if len(ticks):
-                minor = minor[
-                    ~np.isclose(minor[:, None], ticks[None, :], rtol=1e-12, atol=0).any(axis=1)
-                ]
-            props["minor_tick_values"] = list(map(float, _scale_values(minor, spec)))
-        else:
+        if minor_locator is None:
             props.pop("minor_tick_values", None)
+            return
+        minor = _minor_locator_tick_values(
+            minor_locator,
+            lo,
+            hi,
+            ticks,
+            datetime_axis=self._axis_holds_datetimes("y" if key == "y2" else key),
+        )
+        pad = (hi - lo) * 1e-9
+        minor = minor[(minor >= lo - pad) & (minor <= hi + pad)]
+        if len(ticks) and len(minor):
+            minor = minor[
+                ~np.isclose(minor[:, None], ticks[None, :], rtol=1e-12, atol=0.0).any(axis=1)
+            ]
+        props["minor_tick_values"] = list(map(float, _scale_values(minor, spec)))
 
     # -- materialization -----------------------------------------------------------
 
@@ -7377,6 +7584,7 @@ def _rc_axis_style(axis: str, dpi: float = 96.0) -> dict[str, Any]:
 
 
 def _rc_minor_axis_style(axis: str, dpi: float = 96.0) -> dict[str, Any]:
+    """Snapshot Matplotlib's independent minor-tick stroke geometry."""
     prefix = "xtick" if axis == "x" else "ytick"
     point_scale = float(dpi) / 72.0
     return {
@@ -7794,6 +8002,108 @@ def _plot_series_columns(x: Any, y: Any) -> list[tuple[Any, Any]]:
     if x.shape != y.shape:
         raise ValueError("2-D plot x and y must have matching shapes")
     return [(x[:, i], y[:, i]) for i in range(x.shape[1])]
+
+
+_MILLISECONDS_PER_DAY = 86_400_000.0
+_MATPLOTLIB_EPOCH = datetime(1970, 1, 1)
+
+
+def _is_foreign_matplotlib_date_object(value: Any) -> bool:
+    return (type(value).__module__ or "").startswith("matplotlib.dates")
+
+
+def _is_null_formatter(value: Any) -> bool:
+    return value is not None and type(value).__name__ == "NullFormatter"
+
+
+def _locator_tick_values(
+    locator: Any,
+    lo: float,
+    hi: float,
+    *,
+    datetime_axis: bool,
+) -> np.ndarray:
+    """Resolve ordinary and Matplotlib-date locators into engine units."""
+    if not _is_foreign_matplotlib_date_object(locator):
+        return np.asarray(locator.tick_values(lo, hi), dtype=float).reshape(-1)
+    unit = 1.0 if not datetime_axis else _MILLISECONDS_PER_DAY
+    lo_datetime = _MATPLOTLIB_EPOCH + timedelta(days=float(lo) / unit)
+    hi_datetime = _MATPLOTLIB_EPOCH + timedelta(days=float(hi) / unit)
+    values = np.asarray(locator.tick_values(lo_datetime, hi_datetime), dtype=float).reshape(-1)
+    return values * unit
+
+
+def _formatter_tick_labels(
+    formatter: Any,
+    ticks: np.ndarray,
+    *,
+    datetime_axis: bool,
+) -> list[str]:
+    """Format a complete tick set, retaining foreign formatter context."""
+    values = np.asarray(ticks, dtype=float)
+    if _is_foreign_matplotlib_date_object(formatter) and datetime_axis:
+        values = values / _MILLISECONDS_PER_DAY
+    format_ticks = getattr(formatter, "format_ticks", None)
+    if callable(format_ticks):
+        labels = format_ticks(values)
+    else:
+        set_locs = getattr(formatter, "set_locs", None)
+        if callable(set_locs):
+            set_locs(values)
+        labels = [formatter(float(value), position) for position, value in enumerate(values)]
+    return [_plain_text(label) for label in labels]
+
+
+def _auto_minor_tick_values(
+    locator: Any,
+    lo: float,
+    hi: float,
+    major: np.ndarray,
+) -> np.ndarray:
+    """Matplotlib AutoMinorLocator's subdivision over resolved major ticks."""
+    major = np.unique(np.asarray(major, dtype=float))
+    if len(major) < 2:
+        return np.asarray([], dtype=float)
+    major_step = float(major[1] - major[0])
+    ndivs = getattr(locator, "ndivs", None)
+    if ndivs in (None, "auto"):
+        mantissa = 10 ** (np.log10(abs(major_step)) % 1)
+        ndivs = 5 if np.isclose(mantissa, [1.0, 2.5, 5.0, 10.0]).any() else 4
+    ndivs = max(1, int(ndivs))
+    minor_step = major_step / ndivs
+    start = round((lo - major[0]) / minor_step)
+    stop = round((hi - major[0]) / minor_step) + 1
+    return np.arange(start, stop, dtype=float) * minor_step + major[0]
+
+
+def _minor_locator_tick_values(
+    locator: Any,
+    lo: float,
+    hi: float,
+    major: np.ndarray,
+    *,
+    datetime_axis: bool,
+) -> np.ndarray:
+    if isinstance(locator, AutoMinorLocator) or type(locator).__name__ == "AutoMinorLocator":
+        return _auto_minor_tick_values(locator, lo, hi, major)
+    return _locator_tick_values(locator, lo, hi, datetime_axis=datetime_axis)
+
+
+def _replace_plot_data(args: tuple[Any, ...], data: Any) -> tuple[Any, ...]:
+    """Resolve string positional arguments through Matplotlib's ``data=`` map."""
+    replaced: list[Any] = []
+    for value in args:
+        if not isinstance(value, str):
+            replaced.append(value)
+            continue
+        try:
+            candidate = data[value]
+        except (IndexError, KeyError, TypeError, ValueError):
+            # A non-key string is still meaningful as a plot format.
+            replaced.append(value)
+        else:
+            replaced.append(candidate)
+    return tuple(replaced)
 
 
 def _iter_plot_groups(args: tuple) -> list[tuple[Any, Any, Optional[str]]]:

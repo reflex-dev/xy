@@ -66,6 +66,7 @@ from ._state import (
 )
 from ._ticker import (
     AutoLocator,
+    AutoMinorLocator,
     FixedFormatter,
     FixedLocator,
     FormatStrFormatter,
@@ -83,6 +84,7 @@ from ._translate import not_implemented
 
 __all__ = [
     "AutoLocator",
+    "AutoMinorLocator",
     "Axes",
     "FacetGrid",
     "Figure",

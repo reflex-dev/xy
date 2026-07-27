@@ -1,5 +1,18 @@
 # Matplotlib compatibility changelog
 
+## Tick/date gallery compatibility
+
+- Tick-label handles now support horizontal alignment; axis proxies can move
+  tick positions and axis-title sides independently.
+- Major and minor tick styling is distinct, including AutoMinorLocator
+  subdivisions, `which=`, `size`/`labelsize`, and legacy both-off
+  `tick1On`/`tick2On` calls. Independent minor-tick rendering uses the core
+  axis tier introduced by PR #336, which is the required lower stack layer.
+- `plot(data=...)` resolves named columns, and foreign Matplotlib date
+  locators/formatters bridge epoch-day APIs to xy's millisecond date axes
+  without discarding batch formatter context.
+- Named annotations accept Matplotlib's relative font-size names.
+
 This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
