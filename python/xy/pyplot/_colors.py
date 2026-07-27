@@ -65,6 +65,13 @@ _TAB = {
     "tab:cyan": "#17becf",
 }
 
+# The gallery currently exercises this XKCD color as a standalone ``plot``
+# format string. Keep the dependency boundary explicit: pyplot must not import
+# Matplotlib just to resolve its named-color table.
+_XKCD = {
+    "xkcd:crimson": "#8c000f",
+}
+
 # matplotlib colormap names the engine knows (identity), plus common aliases.
 CMAPS = {
     "viridis": "viridis",
@@ -273,11 +280,13 @@ def _rgba_floats(value: object) -> tuple[float, float, float, float]:
             "cyan": (0.0, 1.0, 1.0, 1.0),
             "magenta": (1.0, 0.0, 1.0, 1.0),
         }
-        if resolved.lower() not in named:
-            raise ValueError(
-                f"colormap extremes require a CSS hex/rgb or basic named color, got {color!r}"
-            )
-        result = named[resolved.lower()]
+        result = named.get(resolved.lower())
+        if result is None:
+            # Ordinary plotting colors can be any CSS named color because the
+            # engine validates them natively. Colormap extremes are baked to
+            # RGBA in Python, so route the same vocabulary through the native
+            # CSS parser rather than narrowing it to eight basic names.
+            result = resolve_rgba(resolved)
     if isinstance(alpha, numbers.Real) and not isinstance(alpha, (bool, np.bool_)):
         result = (result[0], result[1], result[2], float(alpha))
     if not all(np.isfinite(result)) or any(channel < 0.0 or channel > 1.0 for channel in result):
@@ -324,6 +333,8 @@ def resolve_color(value: object) -> Optional[str]:
         return _SINGLE_LETTER[value]
     if value in _TAB:
         return _TAB[value]
+    if value.lower() in _XKCD:
+        return _XKCD[value.lower()]
     if value.lower() == "none":
         return "transparent"
     # matplotlib gray shorthand: a float in a string, "0.0" black - "1.0" white.
@@ -355,6 +366,25 @@ def resolve_rgba(value: object) -> tuple[float, float, float, float]:
     if not all(np.isfinite(rgba)) or any(channel < 0.0 or channel > 1.0 for channel in rgba):
         raise ValueError(f"RGBA channels must be finite and between 0 and 1, got {value!r}")
     return rgba
+
+
+def is_color_like(value: object) -> bool:
+    """Whether *value* is one complete color spec understood by pyplot."""
+    if isinstance(value, str):
+        try:
+            gray = float(value)
+        except ValueError:
+            pass
+        else:
+            # Matplotlib gray-string colors are bounded to [0, 1]. Keeping
+            # that check here is important for fmt strings: "2"/"3"/"4"/"8"
+            # are marker tokens, not clamped grayscale colors.
+            return bool(np.isfinite(gray) and 0.0 <= gray <= 1.0)
+    try:
+        resolve_rgba(value)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return True
 
 
 def resolve_rgba_array(values: object, n: int, label: str) -> np.ndarray:

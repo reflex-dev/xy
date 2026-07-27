@@ -49,6 +49,8 @@ def test_legend_maps_supported_style_and_rejects_unknown_options():
     assert ax._legend_options["loc"] == "upper right"
     assert ax._legend_options["ncols"] == 2
     assert ax._legend_options["title"] == "Legend"
+    assert ax._legend_options["handlelength"] == 2.0
+    assert ax._legend_options["handletextpad"] == 0.8
     assert ax._legend_options["border_pad"] == pytest.approx(0.5 * 13 * 100 / 72)
     assert ax._legend_options["style"] == {
         "fontSize": "18.0556px",
@@ -73,6 +75,17 @@ def test_legend_maps_supported_style_and_rejects_unknown_options():
     assert ax._legend_options["border_pad"] == pytest.approx(0.75 * 13 * 100 / 72)
     with pytest.raises(ValueError, match="borderaxespad"):
         ax.legend(borderaxespad=-0.1)
+
+    ax.legend(handlelength=4, handletextpad=1.25)
+    assert ax._legend_options["handlelength"] == 4.0
+    assert ax._legend_options["handletextpad"] == 1.25
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert spec["legend"]["handlelength"] == 4.0
+    assert spec["legend"]["handletextpad"] == 1.25
+    with pytest.raises(ValueError, match="handlelength"):
+        ax.legend(handlelength=-1)
+    with pytest.raises(ValueError, match="handletextpad"):
+        ax.legend(handletextpad=float("nan"))
 
 
 def test_legend_frameoff_maps_to_transparent_style():
@@ -181,3 +194,54 @@ def test_center_band_legend_loc_reaches_spec():
     ax.legend(["a", "b"])
     spec, _ = ax._build_chart(573, 400).figure().build_payload()
     assert spec["legend"]["loc"] == "center left"
+
+
+def test_best_legend_materializes_cumulative_histogram_and_ecdf_paths():
+    import numpy as np
+
+    np.random.seed(19680801)
+    mean = 200
+    sigma = 25
+    data = np.random.normal(mean, sigma, size=100)
+    fig = plt.figure(figsize=(9, 4), layout="constrained")
+    axes = fig.subplots(1, 2, sharex=True, sharey=True)
+
+    axes[0].ecdf(data, label="CDF")
+    _counts, bins, _patches = axes[0].hist(
+        data,
+        25,
+        density=True,
+        histtype="step",
+        cumulative=True,
+        label="Cumulative histogram",
+    )
+    x = np.linspace(data.min(), data.max())
+    y = (1 / (np.sqrt(2 * np.pi) * sigma)) * np.exp(-0.5 * (1 / sigma * (x - mean)) ** 2)
+    y = y.cumsum()
+    y /= y[-1]
+    axes[0].plot(x, y, "k--", linewidth=1.5, label="Theory")
+
+    axes[1].ecdf(data, complementary=True, label="CCDF")
+    axes[1].hist(
+        data,
+        bins=bins,
+        density=True,
+        histtype="step",
+        cumulative=-1,
+        label="Reversed cumulative histogram",
+    )
+    axes[1].plot(x, 1 - y, "k--", linewidth=1.5, label="Theory")
+
+    for ax in axes:
+        ax.legend()
+    # These are the gallery's Matplotlib axes dimensions. XY's current
+    # constrained-layout fallback produces a narrower panel; that independent
+    # layout discrepancy is deliberately not hidden by the scorer.
+    locations = [
+        ax._best_legend_loc(
+            legend_options=ax._legend_options,
+            plot_size=(348.75, 308.0),
+        )
+        for ax in axes
+    ]
+    assert locations == ["upper left", "lower left"]

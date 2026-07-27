@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 import xy.pyplot as plt
-from xy import _raster
+from xy import _raster, _svg
 from xy._svg import _LEGEND_CHAR_WIDTH, _legend_layout, _legend_text_width, layout
 from xy.pyplot import Legend
 
@@ -295,6 +295,24 @@ def test_round_dash_capstyle_mutation_matches_fixed_round_renderers():
 
     assert line.get_dash_capstyle() == "round"
     assert line._entry["kwargs"]["dash_capstyle"] == "round"
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert spec["traces"][0]["kind"] == "line"
+    assert "dash_capstyle" not in spec["traces"][0]["style"]
+
+
+def test_round_dash_capstyle_mutation_is_filtered_for_step_lines():
+    _, ax = plt.subplots()
+    line = ax.plot([0, 1, 2], [0, 1, 0], "--", drawstyle="steps-post")[0]
+
+    line.set_dash_capstyle("round")
+
+    assert line.get_dash_capstyle() == "round"
+    assert line._entry["kwargs"]["dash_capstyle"] == "round"
+    assert line._entry["kind"] == "@mark"
+    assert line._entry["factory"] == "step"
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert spec["traces"][0]["kind"] == "line"
+    assert "dash_capstyle" not in spec["traces"][0]["style"]
 
 
 def test_legend_frame_is_wide_enough_for_its_measured_labels():
@@ -348,6 +366,22 @@ def test_legend_column_width_measures_glyphs_not_character_count():
     # drawn at handle + gap with the border pad still to spare on the right.
     text_x = result["column_offsets"][0] + result["handle"] + result["gap"]
     assert text_x + _legend_text_width("gamma") <= result["box_w"]
+
+
+def test_legend_handle_geometry_uses_legend_font_units():
+    plot = {"x": 0.0, "y": 0.0, "w": 560.0, "h": 400.0}
+    default = _legend_layout([{"name": "line"}], plot, {"loc": "upper right"})
+    custom = _legend_layout(
+        [{"name": "line"}],
+        plot,
+        {"loc": "upper right", "handlelength": 4, "handletextpad": 1.25},
+    )
+
+    assert default["handle"] == pytest.approx(2 * default["font_size"])
+    assert default["gap"] == pytest.approx(0.8 * default["font_size"])
+    assert custom["handle"] == pytest.approx(4 * custom["font_size"])
+    assert custom["gap"] == pytest.approx(1.25 * custom["font_size"])
+    assert custom["box_w"] > default["box_w"]
 
 
 def test_ellipsized_legend_label_fits_the_column_it_was_sized_for():
@@ -531,4 +565,89 @@ def test_raster_line_only_legend_symbols_receive_visible_strokes():
     assert recorder.points == [
         (_raster._SYMBOLS["plus_line"], 1.0, (18, 52, 86, 255)),
         (_raster._SYMBOLS["x_line"], 2.5, (255, 0, 0, 255)),
+    ]
+
+
+def test_hollow_patch_legend_swatch_preserves_its_outline_in_every_renderer():
+    class Recorder:
+        def __init__(self):
+            self.fills = []
+            self.strokes = []
+
+        def fill(self, points, color):
+            self.fills.append((list(points), color))
+
+        def stroke(self, points, width, color, closed=False, dash=None, cap="round"):
+            self.strokes.append((list(points), width, color, closed))
+
+        def text(self, *_args, **_kwargs):
+            pass
+
+    named = [
+        {
+            "name": "hollow",
+            "kind": "bar",
+            "style": {
+                "color": "transparent",
+                "opacity": 1.0,
+                "stroke": "green",
+                "stroke_width": 2.0,
+            },
+        }
+    ]
+    plot = {"x": 0.0, "y": 0.0, "w": 240.0, "h": 160.0}
+
+    recorder = Recorder()
+    _raster._emit_legend(recorder, named, plot, {"style": {"background": "transparent"}})
+    assert recorder.strokes == [
+        (
+            recorder.fills[0][0],
+            2.0,
+            (0, 128, 0, 255),
+            True,
+        )
+    ]
+
+    svg = ElementTree.fromstring(
+        _svg._legend(
+            named,
+            plot,
+            {"style": {"background": "transparent"}},
+            "legend-clip",
+            "black",
+            ["#1f77b4"],
+        )
+    )
+    swatches = [
+        element
+        for element in svg.iter()
+        if element.tag.endswith("rect") and element.attrib.get("fill") == "transparent"
+    ]
+    assert [swatch.attrib.get("stroke") for swatch in swatches] == ["green"]
+    assert [swatch.attrib.get("stroke-width") for swatch in swatches] == ["2"]
+
+
+def test_explicit_hollow_bar_legend_item_keeps_patch_stroke():
+    _, ax = plt.subplots()
+    _counts, _edges, container = ax.hist(
+        [0.0, 1.0, 2.0],
+        bins=2,
+        fill=False,
+        edgecolor="green",
+        linewidth=2,
+        label="hollow",
+    )
+    legend = Legend(ax, [container], ["hollow"])
+
+    assert legend.spec()["items"] == [
+        {
+            "name": "hollow",
+            "kind": "bar",
+            "style": {
+                "color": "transparent",
+                "opacity": 1.0,
+                "stroke": "green",
+                "stroke_width": 2.0,
+            },
+        }
     ]

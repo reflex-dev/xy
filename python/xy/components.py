@@ -2612,7 +2612,7 @@ def legend(
             raise ValueError("legend anchor must contain 2 or 4 finite numbers")
     return Legend(
         show=_strict_bool(show, "legend show"),
-        loc=_optional_string(loc, "legend loc"),
+        loc=_validate.legend_loc(loc, "legend loc"),
         anchor=anchor,
         ncols=_optional_positive_int(ncols, "legend ncols") or 1,
         title=_optional_string(title, "legend title"),
@@ -4526,9 +4526,66 @@ _THEME_TOKEN_ALIASES = {
 }
 
 
+#: Every `--chart-*` custom property the renderers actually read. `theme()`'s
+#: `**tokens` reaches them by their snake_case name (`tooltip_bg` ->
+#: `--chart-tooltip-bg`); `--chart-series-N` is indexed and set through
+#: `palette=` instead. Keep in step with `js/src/20_theme.ts`.
+_THEME_TOKEN_NAMES: frozenset[str] = frozenset(
+    {
+        "accent",
+        "annotation_text",
+        "axis",
+        "badge_bg",
+        "badge_text",
+        "bg",
+        "colormap",
+        "counts",
+        "critical",
+        "crosshair",
+        "cursor",
+        "cursor_pan",
+        "focus",
+        "grid",
+        "legend_bg",
+        "modebar_active",
+        "modebar_bg",
+        "modebar_focus",
+        "selection",
+        "selection_fill",
+        "text",
+        "tick_label_max_width",
+        "tooltip_bg",
+        "tooltip_text",
+        "zoom_selection",
+        "zoom_selection_fill",
+    }
+)
+
+
+def _theme_token_property(key: str, label: str) -> str:
+    """The CSS property a `theme()` keyword sets, or a loud error.
+
+    `**tokens` used to pass any keyword straight through as a CSS property, so
+    `theme(grid_colour=...)` — or any typo — emitted a declaration no renderer
+    reads and changed nothing, silently. The vocabulary is closed instead, and
+    the real `--chart-*` tokens became reachable by name in the process.
+    """
+    if key in _THEME_TOKEN_ALIASES:
+        return _THEME_TOKEN_ALIASES[key]
+    if key == "background":
+        return "background"
+    if key in _THEME_TOKEN_NAMES:
+        return "--chart-" + key.replace("_", "-")
+    known = sorted(_THEME_TOKEN_NAMES | set(_THEME_TOKEN_ALIASES) | {"background"})
+    raise ValueError(
+        f"{label} has unknown token {key!r}; expected one of: {', '.join(known)}"
+        " (or a `--` custom property via style=)"
+    )
+
+
 def _theme_tokens(values: dict[str, Any], label: str) -> dict[str, StyleValue]:
     raw = {key: value for key, value in values.items() if value is not None}
-    mapped = {_THEME_TOKEN_ALIASES.get(key, key): value for key, value in raw.items()}
+    mapped = {_theme_token_property(key, label): value for key, value in raw.items()}
     return _style_dict(mapped, label)
 
 
