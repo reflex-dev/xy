@@ -198,9 +198,90 @@ def test_autoscale_transitions_update_and_preserve_tight_state() -> None:
         ax.autoscale(False, tight=True)
         assert ax._tight is False
         ax.autoscale(None, tight=True)
-        assert ax._tight is False
+        assert ax._tight is True
+        assert ax.margins() == (0.0, 0.0)
         ax.autoscale(True, tight=None)
-        assert ax._build_chart(640, 480).figure().x_range() == pytest.approx((0.2, 1.4))
+        assert ax._build_chart(640, 480).figure().x_range() == pytest.approx((0.3, 1.2))
+
+
+def test_autoscale_tight_zeroes_enabled_margins_without_freezing_limits() -> None:
+    _fig, ax = plt.subplots()
+    ax.plot([0.0, 10.0], [0.0, 20.0])
+    ax.margins(x=0.2, y=0.1)
+
+    ax.autoscale(tight=True)
+
+    assert ax.margins() == (0.0, 0.0)
+    assert ax._explicit_domains.isdisjoint({"x", "y"})
+    assert ax.get_xlim() == pytest.approx((0.0, 10.0))
+    assert ax.get_ylim() == pytest.approx((0.0, 20.0))
+
+    ax.plot([20.0], [40.0])
+    assert ax.get_xlim() == pytest.approx((0.0, 20.0))
+    assert ax.get_ylim() == pytest.approx((0.0, 40.0))
+
+
+def test_autoscale_view_tight_preserves_margins_and_disabled_axes() -> None:
+    _fig, ax = plt.subplots()
+    ax.plot([0.0, 10.0], [0.0, 20.0])
+    ax.margins(x=0.2, y=0.1)
+    ax.autoscale(False, axis="y")
+    frozen_y = ax.get_ylim()
+
+    ax.autoscale_view(tight=True)
+
+    assert ax.margins() == pytest.approx((0.2, 0.1))
+    assert "x" not in ax._explicit_domains
+    assert "y" in ax._explicit_domains
+    assert ax.get_xlim() == pytest.approx((-2.0, 12.0))
+    assert ax.get_ylim() == frozen_y
+
+    ax.plot([20.0], [40.0])
+    assert ax.get_xlim() == pytest.approx((-4.0, 24.0))
+    assert ax.get_ylim() == frozen_y
+
+
+def test_autoscale_none_forwards_tight_to_both_axes_without_reenabling() -> None:
+    _fig, ax = plt.subplots()
+    ax.plot([0.0, 10.0], [0.0, 20.0])
+    ax.margins(x=0.2, y=0.1, tight=False)
+    ax.autoscale(False, axis="x")
+    frozen_x = ax.get_xlim()
+
+    ax.autoscale(None, axis="x", tight=True)
+
+    assert ax._tight is True
+    assert ax.get_xmargin() == 0.0
+    assert ax.get_ymargin() == 0.0
+    assert "x" in ax._explicit_domains
+    assert "y" not in ax._explicit_domains
+    assert ax.get_xlim() == frozen_x
+    assert ax.get_ylim() == pytest.approx((0.0, 20.0))
+
+    ax.plot([20.0], [40.0])
+    assert ax.get_xlim() == frozen_x
+    assert ax.get_ylim() == pytest.approx((0.0, 40.0))
+
+
+def test_autoscale_none_tight_updates_both_disabled_axes_without_reenabling() -> None:
+    _fig, ax = plt.subplots()
+    ax.plot([0.0, 10.0], [0.0, 20.0])
+    ax.margins(x=0.2, y=0.1, tight=False)
+    ax.autoscale(False)
+    frozen_x = ax.get_xlim()
+    frozen_y = ax.get_ylim()
+
+    ax.autoscale(None, axis="x", tight=True)
+
+    assert ax._tight is True
+    assert ax.margins() == (0.0, 0.0)
+    assert {"x", "y"}.issubset(ax._explicit_domains)
+    assert ax.get_xlim() == frozen_x
+    assert ax.get_ylim() == frozen_y
+
+    ax.plot([20.0], [40.0])
+    assert ax.get_xlim() == frozen_x
+    assert ax.get_ylim() == frozen_y
 
 
 def test_axis_modes_share_matplotlib_tight_state_transitions() -> None:

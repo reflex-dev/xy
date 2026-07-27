@@ -4798,30 +4798,31 @@ class Axes(PlotTypeMixin):
         """Turn autoscaling on or off and re-fit the limits.
 
         ``axis`` restricts to ``"x"`` or ``"y"`` (default ``"both"``);
-        ``tight=True`` pins the limits to the raw data extent, and
+        ``tight=True`` removes margins from axes receiving the request, and
         ``enable=False`` freezes the current auto limits.
         """
         if axis not in {"both", "x", "y"}:
             raise ValueError("autoscale() axis must be 'both', 'x', or 'y'")
         axes = ("x", "y") if axis == "both" else (axis,)
-        enabled_axes = (
-            tuple(item for item in axes if item not in self._explicit_domains)
-            if enable is None
-            else axes
-            if enable
-            else ()
-        )
-        if enabled_axes and tight is not None:
+        # Matplotlib forwards ``tight`` to both axes when enable=None,
+        # regardless of ``axis``. Their enabled/disabled state itself remains
+        # unchanged.
+        forwarded_axes = ("x", "y") if enable is None else axes if enable else ()
+        if forwarded_axes and tight is not None:
             self._tight = bool(tight)
-        for item in axes:
-            if item in enabled_axes:
-                self._explicit_domains.discard(item)
-                if tight:
-                    self._axis_props(item)["domain"] = self._entry_extent(item)
-                    self._explicit_domains.add(item)
+        for item in forwarded_axes:
+            if tight:
+                if item == "x":
+                    self._xmargin = 0.0
                 else:
-                    self._axis_props(item).pop("domain", None)
-            elif enable is False:
+                    self._ymargin = 0.0
+                self._margin_overrides.add(item)
+            if enable is True:
+                self._explicit_domains.discard(item)
+            if item not in self._explicit_domains:
+                self._axis_props(item).pop("domain", None)
+        if enable is False:
+            for item in axes:
                 self._axis_props(item)["domain"] = self._auto_domain(item)
                 self._explicit_domains.add(item)
         self._invalidate()
@@ -4831,15 +4832,16 @@ class Axes(PlotTypeMixin):
     ) -> None:
         """Re-fit the axes limits to the data (see `autoscale`).
 
-        ``scalex``/``scaley`` select which axes to autoscale; ``tight``
-        drops the data margins.
+        ``scalex``/``scaley`` select which currently enabled axes to
+        recompute. ``tight`` controls locator rounding while preserving the
+        configured margins.
         """
         if tight is not None:
             self._tight = bool(tight)
-        if scalex:
-            self.autoscale(True, axis="x", tight=tight)
-        if scaley:
-            self.autoscale(True, axis="y", tight=tight)
+        for item, selected in (("x", scalex), ("y", scaley)):
+            if selected and item not in self._explicit_domains:
+                self._axis_props(item).pop("domain", None)
+        self._invalidate()
 
     def get_xbound(self) -> tuple[float, float]:
         """The x bounds as a ``(lower, upper)`` pair (see `get_xlim`)."""
