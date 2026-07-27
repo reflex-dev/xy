@@ -540,19 +540,18 @@ class _AxisProxy:
         return host._tickers.get((key, "major_formatter")) or ScalarFormatter()
 
     def set_minor_locator(self, locator: Any) -> None:
-        # compat-noop for rendering: minor ticks are outside the native axis
-        # contract. The locator is retained so get_minor_locator round-trips.
         host, key = self._ticker_slot()
         host._tickers[(key, "minor_locator")] = locator
+        self.axes._invalidate()
 
     def get_minor_locator(self) -> Any:
         host, key = self._ticker_slot()
         return host._tickers.get((key, "minor_locator")) or NullLocator()
 
     def set_minor_formatter(self, formatter: Any) -> None:
-        # compat-noop for rendering, mirroring set_minor_locator.
         host, key = self._ticker_slot()
         host._tickers[(key, "minor_formatter")] = as_formatter(formatter, "set_minor_formatter()")
+        self.axes._invalidate()
 
     def grid(self, visible: bool | None = None, which: str = "major", **kwargs: Any) -> None:
         """Configure grid lines for only this axis.
@@ -564,16 +563,6 @@ class _AxisProxy:
         which = str(which).lower()
         if which not in {"major", "minor", "both"}:
             raise ValueError("grid() which must be 'major', 'minor', or 'both'")
-        if which == "minor":
-            supported = {"color", "c", "linestyle", "ls", "linewidth", "lw", "alpha"}
-            unsupported = set(kwargs) - supported
-            if unsupported:
-                raise TypeError(
-                    f"grid() got unsupported keyword argument {sorted(unsupported)[0]!r}"
-                )
-            # Minor tick marks are outside the native axis contract.
-            self.axes._invalidate()
-            return
         self.axes.grid(visible, which=which, axis=self.axis, **kwargs)
 
     def tick_bottom(self) -> None:
@@ -903,6 +892,7 @@ class Axes(PlotTypeMixin):
         self._hidden_spines: set[str] = set()
         self._grid = bool(rcParams["axes.grid"])
         self._grid_axes = {"x": self._grid, "y": self._grid}
+        self._minor_grid_axes = {"x": False, "y": False}
         self._grid_color = _MPL_GRID_COLOR
         self._grid_axis = "both"
         self._grid_style: dict[str, Any] = {}
@@ -924,6 +914,7 @@ class Axes(PlotTypeMixin):
             if style:
                 self._axis[axis]["style"] = style
                 self._tick_lengths[axis] = float(style["tick_length"])
+            self._axis[axis]["minor_style"] = _rc_minor_axis_style(axis, dpi)
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -1216,6 +1207,7 @@ class Axes(PlotTypeMixin):
         self._explicit_domains = set()
         self._grid = bool(rcParams["axes.grid"])
         self._grid_axes = {"x": self._grid, "y": self._grid}
+        self._minor_grid_axes = {"x": False, "y": False}
         self._grid_color = _MPL_GRID_COLOR
         self._grid_axis = "both"
         self._grid_style = {}
@@ -1228,6 +1220,7 @@ class Axes(PlotTypeMixin):
         self.spines = _SpineProxy(self)
         dpi = float(self.figure._dpi if self.figure._dpi is not None else rcParams["figure.dpi"])
         for axis in ("x", "y"):
+            self._axis[axis]["minor_style"] = _rc_minor_axis_style(axis, dpi)
             style = _rc_axis_style(axis, dpi)
             if style:
                 self._axis[axis]["style"] = style
@@ -4710,9 +4703,9 @@ class Axes(PlotTypeMixin):
 
         ``scale`` is ``"linear"``, ``"log"``, ``"symlog"``, ``"logit"``, or
         ``"asinh"``. ``symlog`` accepts ``base``/``linthresh``/``linscale``
-        and ``asinh`` accepts ``linear_width``; log only supports base 10
-        with ``nonpositive="clip"``. Existing data, limits, and auto ticks
-        are re-expressed in the new scale; unsupported keywords raise
+        and ``asinh`` accepts ``linear_width``. Log accepts ``base``, ``subs``,
+        and ``nonpositive="clip"``/``"mask"``. Existing data, limits, and auto
+        ticks are re-expressed in the new scale; unsupported keywords raise
         loudly.
         """
         self._set_scale("x", scale, kwargs)
@@ -4731,16 +4724,18 @@ class Axes(PlotTypeMixin):
         if scale == "linear" and kwargs:
             check_unsupported(kwargs, f"set_{axis}scale('linear')")
         if scale == "log":
-            base = kwargs.pop("base", 10)
+            base = float(kwargs.pop("base", 10))
             subs = kwargs.pop("subs", None)
             nonpositive = kwargs.pop("nonpositive", "clip")
             check_unsupported(kwargs, f"set_{axis}scale('log')")
-            if float(base) != 10.0:
-                raise not_implemented(f"set_{axis}scale('log', base={base!r})")
+            if not np.isfinite(base) or base <= 0 or base == 1:
+                raise ValueError("log scale base must be positive and not equal to 1")
+            if nonpositive not in {"clip", "mask"}:
+                raise ValueError("nonpositive must be 'clip' or 'mask'")
             if subs is not None:
-                raise not_implemented(f"set_{axis}scale('log', subs=...)")
-            if nonpositive != "clip":
-                raise not_implemented(f"set_{axis}scale('log', nonpositive={nonpositive!r})")
+                subs = tuple(float(sub) for sub in subs)
+                if any(not np.isfinite(sub) or sub <= 0 for sub in subs):
+                    raise ValueError("log scale subs must contain positive finite values")
         new: dict[str, Any]
         if scale == "symlog":
             new = {
@@ -4751,6 +4746,13 @@ class Axes(PlotTypeMixin):
             }
         elif scale == "asinh":
             new = {"name": scale, "linear_width": float(kwargs.pop("linear_width", 1.0))}
+        elif scale == "log":
+            new = {
+                "name": "log",
+                "base": base,
+                "subs": subs,
+                "nonpositive": nonpositive,
+            }
         else:
             new = {"name": scale}
         check_unsupported(kwargs, f"set_{axis}scale({scale!r})")
@@ -4794,7 +4796,12 @@ class Axes(PlotTypeMixin):
             props["tick_count"] = max(1, len(ticks))
             host._auto_scale_axis_ticks.add(key)
         host._scale_specs[key] = new
-        self._axis_props(axis)["type_"] = "log" if scale == "log" else None
+        axis_props = self._axis_props(axis)
+        axis_props["type_"] = "log" if scale == "log" else None
+        if scale == "log":
+            axis_props["nonpositive"] = nonpositive
+        else:
+            axis_props.pop("nonpositive", None)
         self._invalidate()
 
     def invert_yaxis(self) -> None:
@@ -5432,8 +5439,8 @@ class Axes(PlotTypeMixin):
         host = self._y2_of or self
         which = str(kwargs.pop("which", "major")).lower()
         axis = kwargs.pop("axis", "both")
-        if which not in {"major", "both"}:
-            raise ValueError("grid() only supports major grid lines")
+        if which not in {"major", "minor", "both"}:
+            raise ValueError("grid() which must be 'major', 'minor', or 'both'")
         if axis not in {"both", "x", "y"}:
             raise ValueError("grid() axis must be 'both', 'x', or 'y'")
         color = kwargs.pop("color", kwargs.pop("c", None))
@@ -5446,14 +5453,24 @@ class Axes(PlotTypeMixin):
         if has_style and visible is None:
             visible = True
         selected = ("x", "y") if axis == "both" else (axis,)
-        for item in selected:
-            host._grid_axes[item] = not host._grid_axes[item] if visible is None else bool(visible)
+        tiers = []
+        if which in {"major", "both"}:
+            tiers.append((host._grid_axes, "style"))
+        if which in {"minor", "both"}:
+            tiers.append((host._minor_grid_axes, "minor_style"))
+        for states, _style_key in tiers:
+            for item in selected:
+                states[item] = not states[item] if visible is None else bool(visible)
         host._grid = any(host._grid_axes.values())
         visible_axes = [item for item, enabled in host._grid_axes.items() if enabled]
         host._grid_axis = "both" if len(visible_axes) != 1 else visible_axes[0]
-        style = host._grid_style = {}
+        style: dict[str, Any] = {}
+        if which in {"major", "both"}:
+            host._grid_style = style
         if color is not None and (resolved_grid := resolve_color(color)) is not None:
-            host._grid_color = resolved_grid
+            if which in {"major", "both"}:
+                host._grid_color = resolved_grid
+            style["grid_color"] = resolved_grid
         if linewidth is not None:
             style["grid_width"] = float(linewidth)
         if linestyle is not None:
@@ -5464,16 +5481,22 @@ class Axes(PlotTypeMixin):
             style["grid_opacity"] = float(alpha)
         for item in ("x", "y"):
             props = host._axis_props(item)
-            axis_style = props.setdefault("style", {})
-            if item in selected:
-                for stale in ("grid_width", "grid_dash", "grid_opacity"):
-                    axis_style.pop(stale, None)
-                axis_style["grid_color"] = (
-                    host._grid_color if host._grid_axes[item] else "transparent"
-                )
-                axis_style.update(style)
-            else:
-                axis_style.setdefault("grid_color", "transparent")
+            for states, style_key in tiers:
+                axis_style = props.setdefault(style_key, {})
+                if item in selected:
+                    for stale in ("grid_width", "grid_dash", "grid_opacity"):
+                        axis_style.pop(stale, None)
+                    fallback = (
+                        host._grid_color
+                        if style_key == "style"
+                        else resolve_color(rcParams["grid.color"])
+                    )
+                    axis_style.update(style)
+                    axis_style["grid_color"] = (
+                        axis_style.get("grid_color", fallback) if states[item] else "transparent"
+                    )
+                else:
+                    axis_style.setdefault("grid_color", "transparent")
         host._invalidate()
 
     def _axis_props(self, axis: str) -> dict[str, Any]:
@@ -5498,7 +5521,7 @@ class Axes(PlotTypeMixin):
         self, key: str, props: dict[str, Any], nbins_hint: Optional[int] = None
     ) -> None:
         """Resolve a user locator/formatter into concrete tick props (in place)."""
-        from ._ticker import NullFormatter
+        from ._ticker import LogLocator, NullFormatter
 
         locator = self._tickers.get((key, "major_locator"))
         formatter = self._tickers.get((key, "major_formatter"))
@@ -5522,6 +5545,7 @@ class Axes(PlotTypeMixin):
         if locator is None and formatter is None and not is_log:
             return
         spec = self._scale_specs.get(key) or {"name": "linear"}
+        authored_labels = list(props["tick_labels"]) if "tick_labels" in props else None
         lo, hi = self._ticker_view(key, props)
         auto_log = False
         if locator is not None:
@@ -5537,9 +5561,7 @@ class Axes(PlotTypeMixin):
                 _scale_values(props["tick_values"], spec, inverse=True), dtype=float
             ).reshape(-1)
         else:
-            from ._ticker import LogLocator
-
-            auto = LogLocator() if is_log else AutoLocator()
+            auto = LogLocator(base=float(spec.get("base", 10.0))) if is_log else AutoLocator()
             auto._nbins_hint = nbins_hint
             ticks = np.asarray(auto.tick_values(lo, hi), dtype=float).reshape(-1)
             if not is_log:
@@ -5554,7 +5576,11 @@ class Axes(PlotTypeMixin):
             ]
         elif auto_log:
             # matplotlib's LogFormatter look: decades label as 10^k.
-            props["tick_labels"] = [_pow10_label(value) for value in ticks]
+            props["tick_labels"] = [
+                _pow_label(value, float(spec.get("base", 10.0))) for value in ticks
+            ]
+        elif authored_labels is not None:
+            props["tick_labels"] = authored_labels
         elif spec.get("name") != "linear":
             props["tick_labels"] = [f"{value:g}" for value in ticks]
         else:
@@ -5563,6 +5589,22 @@ class Axes(PlotTypeMixin):
             props["tick_count"] = len(ticks)
         else:
             props.pop("tick_count", None)
+        # Minor positions are an independent wire tier. Log axes get
+        # Matplotlib's automatic subdivisions even without an explicit minor
+        # locator; linear axes only publish a user locator.
+        if is_log and minor_locator is None:
+            minor_locator = LogLocator(base=float(spec.get("base", 10.0)), subs=spec.get("subs"))
+        if minor_locator is not None and hasattr(minor_locator, "tick_values"):
+            minor = np.asarray(minor_locator.tick_values(lo, hi), dtype=float).reshape(-1)
+            pad = (hi - lo) * 1e-9
+            minor = minor[(minor >= lo - pad) & (minor <= hi + pad)]
+            if len(ticks):
+                minor = minor[
+                    ~np.isclose(minor[:, None], ticks[None, :], rtol=1e-12, atol=0).any(axis=1)
+                ]
+            props["minor_tick_values"] = list(map(float, _scale_values(minor, spec)))
+        else:
+            props.pop("minor_tick_values", None)
 
     # -- materialization -----------------------------------------------------------
 
@@ -7033,6 +7075,19 @@ def _rc_axis_style(axis: str, dpi: float = 96.0) -> dict[str, Any]:
     return result
 
 
+def _rc_minor_axis_style(axis: str, dpi: float = 96.0) -> dict[str, Any]:
+    prefix = "xtick" if axis == "x" else "ytick"
+    point_scale = float(dpi) / 72.0
+    return {
+        "tick_length": float(rcParams[f"{prefix}.minor.size"]) * point_scale,
+        "tick_width": float(rcParams[f"{prefix}.minor.width"]) * point_scale,
+        "tick_padding": float(rcParams[f"{prefix}.minor.pad"]) * point_scale,
+        "grid_color": "transparent",
+        "grid_width": float(rcParams["grid.linewidth"]) * point_scale,
+        "grid_opacity": float(rcParams["grid.alpha"]),
+    }
+
+
 def _parse_bounds(value: Any, context: str) -> tuple[float, float, float, float]:
     bounds = getattr(value, "bounds", value)
     parsed = tuple(float(part) for part in bounds)
@@ -7206,12 +7261,16 @@ def _marker_symbol(marker: Any) -> str:
 _SUPERSCRIPT_DIGITS = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
 
 
-def _pow10_label(value: float) -> str:
-    """Matplotlib's log-decade label: 10 with a unicode superscript exponent."""
-    exponent = np.log10(value) if value > 0 else np.nan
+def _pow_label(value: float, base: float = 10.0) -> str:
+    """Matplotlib's log-decade label with a unicode superscript exponent."""
+    exponent = np.log(value) / np.log(base) if value > 0 else np.nan
     if not np.isfinite(exponent) or abs(exponent - round(exponent)) > 1e-9:
         return f"{value:g}"
-    return "10" + str(round(float(exponent))).translate(_SUPERSCRIPT_DIGITS)
+    return f"{base:g}" + str(round(float(exponent))).translate(_SUPERSCRIPT_DIGITS)
+
+
+def _pow10_label(value: float) -> str:
+    return _pow_label(value, 10.0)
 
 
 def _plain_text(value: Any) -> str:
