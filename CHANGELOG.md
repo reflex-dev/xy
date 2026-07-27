@@ -57,6 +57,18 @@ in the README).
   same validated style properties, so an explicit `style=` still wins and specs
   that don't use them are byte-identical.
 
+### Fixed
+- A mark-level `animation=xy.animation(...)` no longer resets the chart-level
+  policy fields it does not mention. It was a complete spec spread over the
+  chart's, so `xy.animation(duration=90)` on a mark silently reset `match`,
+  `easing`, `enter`, `update`, and `interpolate` to their defaults — turning
+  off a chart-level `match="key"` with no error and no fallback, and
+  suppressing the `match='key' requires key=` validation entirely. Mark
+  overrides now cascade field by field, and passing a field explicitly counts
+  as setting it even when the value equals the default. A trace that carries an
+  override ships the complete resolved policy, so the browser's merge is no
+  longer a second, defaults-clobbering one.
+
 ### Changed
 - Stable animation `key=` identity planes are now retained and shipped only
   when the resolved animation spec can actually key-match. `match` defaults to

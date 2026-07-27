@@ -7,8 +7,20 @@ motion-free by definition.
 ## 1. Public grammar
 
 Animation is a normal chart child. The last chart-level `Animation` child is
-the default policy; a mark-level `animation=` value overrides it. `False`
-disables that mark without disabling its siblings.
+the default policy; a mark-level `animation=` value cascades over it **field by
+field**, contributing only the arguments that were actually passed. So
+`xy.animation(duration=90)` on a mark keeps the chart's `match`, `easing`, and
+the rest — a whole-spec replacement would silently disable a chart-level
+`match="key"`. Passing a field explicitly counts as setting it even when the
+value equals the default. `False` disables that mark without disabling its
+siblings.
+
+The resolution happens once, in Python: a trace that carries an override ships
+the *complete* resolved policy, so the client's spread over the chart-level
+spec is a no-op rather than a second merge that would need its own copy of the
+defaults. A trace with no override ships no animation dict at all, and a chart
+with neither ships none either — which is what keeps a chart without
+`xy.animation()` static.
 
 ```python
 xy.chart(

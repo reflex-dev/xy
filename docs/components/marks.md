@@ -125,8 +125,10 @@ def marks_layer_demo():
 - Children draw in declaration order, so broad fills normally come before
   lines and points.
 - `key=` supplies stable row identity for keyed browser data transitions, and
-  mark-level `animation=` overrides or disables the chart's `xy.animation()`
-  policy. See [Animations and data transitions](/docs/xy/styling/animations/).
+  mark-level `animation=` cascades over the chart's `xy.animation()` policy
+  field by field — `xy.animation(duration=90)` on a mark changes only the
+  duration — or disables that mark with `animation=False`. See
+  [Animations and data transitions](/docs/xy/styling/animations/).
 
 Canvas and WebGL marks are not DOM elements. CSS selectors and Tailwind classes
 cannot paint their geometry; use `style=` or the mark's paint props. In

@@ -38,6 +38,7 @@ import uuid
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import lru_cache
 from os import PathLike
 from typing import Any, Literal, Optional, TypeAlias, Union
 
@@ -356,9 +357,23 @@ class Spring:
         }
 
 
+_UNSET: Any = object()
+
+
 @dataclass
 class Animation(Component):
-    """Declarative browser transition policy built by :func:`animation`."""
+    """Declarative browser transition policy built by :func:`animation`.
+
+    A mark-level instance cascades over the chart-level one field by field.
+    ``to_spec`` is the complete policy; ``to_override_spec`` is only what this
+    instance actually sets, which is what makes the cascade work.
+    """
+
+    # Set by :func:`animation` to the exact argument names the caller passed.
+    # ``None`` means "not recorded" — direct construction falls back to
+    # comparing against the defaults, which is right except for the odd case
+    # of explicitly passing a default value.
+    _explicit_fields = None
 
     enabled: bool | Literal["auto"] = "auto"
     delay: float = 0.0
@@ -427,6 +442,26 @@ class Animation(Component):
             "interpolate": list(policies),
         }
 
+    def to_override_spec(self) -> dict[str, Any]:
+        """Only the fields this instance sets, for cascading over a base spec.
+
+        `to_spec` is complete, so spreading it over a chart-level spec resets
+        every field the caller did not mention — silently turning off a
+        chart-level ``match="key"``, among others.
+        """
+        spec = self.to_spec()
+        explicit = self._explicit_fields
+        if explicit is None:
+            defaults = _animation_defaults()
+            explicit = {name for name, value in spec.items() if value != defaults[name]}
+        return {name: value for name, value in spec.items() if name in explicit}
+
+
+@lru_cache(maxsize=1)
+def _animation_defaults() -> dict[str, Any]:
+    """The complete default policy, and the base every cascade starts from."""
+    return Animation().to_spec()
+
 
 def _positive_animation_number(value: Any, label: str) -> float:
     number = _finite_number(value, label)
@@ -463,43 +498,65 @@ def spring(*, stiffness: float = 170.0, damping: float = 26.0, mass: float = 1.0
 
 def animation(
     *,
-    enabled: bool | Literal["auto"] = "auto",
-    delay: float = 0,
-    duration: float = 400,
-    easing: str | tuple[float, float, float, float] | Spring = "ease-out",
-    match: Literal["index", "append", "key"] = "index",
-    enter: str = "auto",
-    update: str = "interpolate",
-    interpolate: Sequence[str] = ("position", "size", "color", "domain"),
+    enabled: bool | Literal["auto"] = _UNSET,
+    delay: float = _UNSET,
+    duration: float = _UNSET,
+    easing: str | tuple[float, float, float, float] | Spring = _UNSET,
+    match: Literal["index", "append", "key"] = _UNSET,
+    enter: str = _UNSET,
+    update: str = _UNSET,
+    interpolate: Sequence[str] = _UNSET,
     on_start: Optional[Callable[[dict], None]] = None,
     on_end: Optional[Callable[[dict], None]] = None,
 ) -> Animation:
     """Configure entrance and data-update motion without per-frame callbacks.
 
+    A mark-level `animation=` cascades over the chart-level one: only the
+    arguments passed here override it, so `xy.animation(duration=90)` on a mark
+    keeps the chart's `match`, `easing`, and the rest.
+
     Args:
-        enabled: ``"auto"`` honors reduced motion; a boolean explicitly enables or disables.
-        delay: Non-negative delay before motion begins, in milliseconds.
-        duration: Non-negative animation duration, in milliseconds.
+        enabled: ``"auto"`` (default) honors reduced motion; a boolean explicitly
+            enables or disables.
+        delay: Non-negative delay before motion begins, in milliseconds. Default ``0``.
+        duration: Non-negative animation duration, in milliseconds. Default ``400``.
         easing: Named easing, four-number cubic Bézier tuple, or ``spring()`` policy.
-        match: Row identity strategy: ``"index"``, ``"append"``, or ``"key"``.
-        enter: Entrance effect, such as ``"auto"``, ``"scale"``, or ``"reveal"``.
-        update: Update effect; use ``"interpolate"`` or ``"none"``.
-        interpolate: Unique channels to interpolate during updates.
+            Default ``"ease-out"``.
+        match: Row identity strategy: ``"index"`` (default), ``"append"``, or ``"key"``.
+        enter: Entrance effect, such as ``"auto"`` (default), ``"scale"``, or ``"reveal"``.
+        update: Update effect; use ``"interpolate"`` (default) or ``"none"``.
+        interpolate: Unique channels to interpolate during updates. Default
+            ``("position", "size", "color", "domain")``.
         on_start: Optional live-host callback receiving the animation-start event.
         on_end: Optional live-host callback receiving the animation-end event.
     """
-    value = Animation(
-        enabled=enabled,
-        delay=delay,
-        duration=duration,
-        easing=easing,
-        match=match,
-        enter=enter,
-        update=update,
-        interpolate=tuple(interpolate),
-        on_start=on_start,
-        on_end=on_end,
-    )
+    if interpolate is not _UNSET:
+        try:
+            interpolate = tuple(interpolate)
+        except TypeError as exc:
+            raise ValueError("animation interpolate must be a sequence of named policies") from exc
+    passed = {
+        name: value
+        for name, value in (
+            ("enabled", enabled),
+            ("delay", delay),
+            ("duration", duration),
+            ("easing", easing),
+            ("match", match),
+            ("enter", enter),
+            ("update", update),
+            ("interpolate", interpolate),
+        )
+        if value is not _UNSET
+    }
+    # Start from the dataclass defaults and apply only what was passed, so the
+    # default values live in exactly one place.
+    value = Animation(on_start=on_start, on_end=on_end)
+    for name, setting in passed.items():
+        setattr(value, name, setting)
+    # Record the caller's exact argument names so the cascade can tell "set to
+    # the default" apart from "not set". Callbacks are host-side, not spec.
+    value._explicit_fields = frozenset(passed)
     value.to_spec()
     return value
 
@@ -4054,14 +4111,19 @@ def _apply_mark_transition_metadata(
 ) -> None:
     override = mark.animation
     if override is None:
-        mark_spec = None
+        mark_override = None
     elif isinstance(override, bool):
-        mark_spec = {"enabled": override}
+        mark_override = {"enabled": override}
     elif isinstance(override, Animation):
-        mark_spec = override.to_spec()
+        mark_override = override.to_override_spec()
     else:
         raise ValueError(f"{mark.kind} animation must be xy.animation(...), bool, or None")
-    effective = {**(chart_spec or {}), **(mark_spec or {})}
+    # Cascade, do not replace. The mark contributes only the fields it set;
+    # defaults sit underneath so a mark-level spec with no chart-level one is
+    # still complete. Resolving here once is also what lets the client keep a
+    # plain spread — an incomplete `trace.animation` would leave it reading
+    # `undefined` for duration and easing.
+    effective = {**_animation_defaults(), **(chart_spec or {}), **(mark_override or {})}
     if (
         effective.get("enabled") is not False
         and effective.get("match") == "key"
@@ -4092,7 +4154,10 @@ def _apply_mark_transition_metadata(
             if positions is not None:
                 keys = keys[np.argsort(positions, kind="stable")]
     for trace in traces:
-        trace.animation = None if mark_spec is None else dict(mark_spec)
+        # Ship the resolved policy, not the raw override: the client spreads
+        # this over the chart-level spec, and a sparse dict there would silently
+        # fall back to chart values the mark meant to change.
+        trace.animation = None if mark_override is None else dict(effective)
         if keys is not None:
             # The per-trace row check is contract too, so it runs whether or
             # not the planes are kept.

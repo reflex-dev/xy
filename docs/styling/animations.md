@@ -373,7 +373,9 @@ before rendering. For a replacement without stable identity, choose
 | `append` | An ordered time series retains old x values and adds a tail |
 | `index` | Row order itself is the identity |
 
-Each mark may override the chart policy or opt out:
+Each mark may override the chart policy or opt out. The override cascades field
+by field, so a mark only changes what it names — `xy.animation(duration=90)` on
+a mark keeps the chart's `match`, `easing`, and everything else:
 
 ~~~python demo exec toggle preview-code id=animation-mark-override-demo
 rows = {

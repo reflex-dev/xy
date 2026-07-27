@@ -517,14 +517,12 @@ def test_key_matching_payload_is_unchanged_by_the_skip() -> None:
     np.testing.assert_array_equal(hi, expected[:, 1])
 
 
-def test_mark_animation_spec_clobbers_chart_level_fields() -> None:
-    """KNOWN BUG (reflex-dev/xy#329) — pinned so a fix is a deliberate change.
+def test_mark_animation_cascades_over_chart_level_fields() -> None:
+    """Regression for reflex-dev/xy#329.
 
-    `Animation.to_spec()` emits every field, and both the Python merge and the
-    client's `{...spec.animation, ...trace.animation}` are plain dict spreads.
-    So a mark-level `xy.animation(duration=90)` resets `match`, `easing`,
-    `enter`, `update`, and `interpolate` to their defaults, silently turning
-    off the chart-level `match="key"` the caller asked for.
+    A mark-level spec used to be a complete dict spread over the chart-level
+    one, so setting any field reset every other field to its default —
+    silently turning off a chart-level ``match="key"``.
     """
     figure = xy.scatter_chart(
         xy.scatter(
@@ -536,17 +534,64 @@ def test_mark_animation_spec_clobbers_chart_level_fields() -> None:
         xy.animation(match="key", easing="linear"),
     ).figure()
     spec, _ = figure.build_payload_split()
+    # Exactly the merge the client performs in `_resolvedAnimation`.
     resolved = {**spec.get("animation", {}), **(spec["traces"][0].get("animation") or {})}
 
-    assert resolved["match"] == "index"  # caller asked for "key"
-    assert resolved["easing"] == "ease-out"  # caller asked for "linear"
-    assert resolved["duration"] == 90.0  # the one field they meant to set
+    assert resolved["duration"] == 90.0  # the mark's one override
+    assert resolved["match"] == "key"  # kept from the chart
+    assert resolved["easing"] == "linear"  # kept from the chart
+    assert "keys" in spec["traces"][0]  # and key matching actually works
 
-    # The same clobbering suppresses the match='key' requires key= guard.
-    xy.scatter_chart(
-        xy.scatter(x=[1.0, 2.0], y=[1.0, 2.0], animation=xy.animation(duration=90)),
+
+def test_mark_animation_can_restate_a_default_to_override_the_chart() -> None:
+    """Passing a default explicitly is an override, not an absence."""
+    figure = xy.scatter_chart(
+        xy.scatter(
+            x=[1.0, 2.0],
+            y=[1.0, 2.0],
+            key=["a", "b"],
+            animation=xy.animation(match="index"),
+        ),
         xy.animation(match="key"),
     ).figure()
+    spec, _ = figure.build_payload_split()
+    resolved = {**spec.get("animation", {}), **(spec["traces"][0].get("animation") or {})}
+
+    assert resolved["match"] == "index"
+    assert "keys" not in spec["traces"][0]
+
+
+def test_mark_animation_cascade_restores_the_match_key_guard() -> None:
+    """The clobbering also suppressed this validation entirely."""
+    with pytest.raises(ValueError, match="animation match='key' requires key="):
+        xy.scatter_chart(
+            xy.scatter(x=[1.0, 2.0], y=[1.0, 2.0], animation=xy.animation(duration=90)),
+            xy.animation(match="key"),
+        ).figure()
+
+
+def test_mark_animation_alone_still_resolves_to_a_complete_policy() -> None:
+    """No chart-level spec means the cascade base is the defaults, not {}."""
+    figure = xy.scatter_chart(
+        xy.scatter(x=[1.0], y=[2.0], animation=xy.animation(duration=90)),
+    ).figure()
+    spec, _ = figure.build_payload_split()
+    resolved = {**spec.get("animation", {}), **(spec["traces"][0].get("animation") or {})}
+
+    assert resolved["duration"] == 90.0
+    assert set(resolved) == set(xy.animation().to_spec())
+    assert resolved["easing"] == "ease-out"
+    assert resolved["match"] == "index"
+
+
+def test_animation_override_spec_reports_only_what_was_set() -> None:
+    assert xy.animation(duration=90).to_override_spec() == {"duration": 90.0}
+    assert xy.animation(match="index").to_override_spec() == {"match": "index"}
+    assert xy.animation().to_override_spec() == {}
+    assert xy.animation().to_spec() == xy.Animation().to_spec()
+    # Direct construction is public too; it falls back to diffing the defaults.
+    assert xy.Animation(duration=90).to_override_spec() == {"duration": 90.0}
+    assert xy.Animation().to_override_spec() == {}
 
 
 def test_aggregate_tier_records_key_matching_fallback() -> None:
@@ -556,10 +601,7 @@ def test_aggregate_tier_records_key_matching_fallback() -> None:
             y=[3.0, 4.0, 5.0],
             key=["a", "b", "c"],
             density=True,
-            # `match="key"` has to be restated here: a mark-level animation
-            # spec is a full dict, so it resets every field the chart set.
-            # See test_mark_animation_spec_clobbers_chart_level_fields.
-            animation=xy.animation(duration=90, match="key"),
+            animation=xy.animation(duration=90),
         ),
         xy.animation(match="key"),
     )
@@ -589,7 +631,10 @@ def test_mark_animation_overrides_chart_defaults() -> None:
     assert spec["animation"]["duration"] == 500.0
     assert spec["traces"][0]["animation"]["duration"] == 80.0
     assert spec["traces"][0]["animation"]["enter"] == "scale"
-    assert spec["traces"][1]["animation"] == {"enabled": False}
+    # A bool override resolves like any other: only `enabled` changes, and the
+    # trace carries the complete policy so the client needs no defaults.
+    assert spec["traces"][1]["animation"]["enabled"] is False
+    assert spec["traces"][1]["animation"]["duration"] == 500.0
 
 
 def test_disabled_mark_does_not_require_chart_level_key_matching_identity() -> None:
@@ -601,7 +646,7 @@ def test_disabled_mark_does_not_require_chart_level_key_matching_identity() -> N
 
     spec, _ = chart.figure().build_payload()
 
-    assert spec["traces"][1]["animation"] == {"enabled": False}
+    assert spec["traces"][1]["animation"]["enabled"] is False
     assert "keys" not in spec["traces"][1]
 
 
