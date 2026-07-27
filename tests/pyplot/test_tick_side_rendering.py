@@ -292,3 +292,5 @@ def test_browser_source_consumes_tick_sides_for_every_axis_path() -> None:
     assert "_axisTickLabelSides(axis)" in source
     assert "Array.isArray(axis && axis.tick_label_sides)" in source
     assert source.count("for (const side of this._axisTickLabelSides(") == 4
+    assert "_axisDefaultSide(axis)" in source
+    assert 'return id === "y" ? "left" : "right";' in source

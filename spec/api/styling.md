@@ -226,6 +226,10 @@ label is drawn even when its box overlaps another. It is used by
 `set_*ticks`; ordinary composition axes remain on `"auto"` and retain
 collision-aware rotate/stagger/thinning behavior.
 
+When `side` is omitted, the browser resolves primary x/y chrome to
+bottom/left and named extra y axes to the right. The same fallback applies to
+tick marks and tick labels, including a live spec update that clears `side`.
+
 ```python
 xy.x_axis(
     label="time",
