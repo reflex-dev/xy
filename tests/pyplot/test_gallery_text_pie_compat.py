@@ -344,7 +344,7 @@ def test_pie_container_values_are_defensive_and_fracs_stay_numeric() -> None:
     np.testing.assert_allclose(pie.fracs, [0.2, 0.3, 0.5])
 
 
-def test_pie_uses_equal_aspect_hidden_axes_and_seam_covering_face_strokes() -> None:
+def test_pie_uses_equal_aspect_hidden_axes_and_joined_fills() -> None:
     _fig, ax = plt.subplots()
 
     pie = ax.pie([2, 3, 5], startangle=90)
@@ -354,8 +354,7 @@ def test_pie_uses_equal_aspect_hidden_axes_and_seam_covering_face_strokes() -> N
     assert spec["frame_sides"] == []
     assert spec["x_axis"]["tick_label_strategy"] == "none"
     assert spec["y_axis"]["tick_label_strategy"] == "none"
-    assert all(wedge._entry["kwargs"]["stroke_width"] == 0.75 for wedge in pie.wedges)
-    assert all(
-        wedge._entry["kwargs"]["stroke"] == wedge._entry["kwargs"]["color"] for wedge in pie.wedges
-    )
+    assert all(wedge._entry["kwargs"]["_joined_fill"] is True for wedge in pie.wedges)
+    assert all("stroke" not in wedge._entry["kwargs"] for wedge in pie.wedges)
+    assert all("stroke_width" not in wedge._entry["kwargs"] for wedge in pie.wedges)
     assert pie.wedges[0]._entry["pie_mid"] == pytest.approx(np.deg2rad(126))

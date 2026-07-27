@@ -1,7 +1,7 @@
 import { PROTOCOL, xyByteSpan } from "./00_header";
 import { buildLutData, colormapKey, colormapStops } from "./10_colormaps";
 import { chartBackdrop, cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
-import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
+import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtLog, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
 import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_CAP_MODES, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
 import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodDropDensityCache, lodDropPointCache, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
@@ -497,18 +497,26 @@ export class ChartView {
     const colorbar = this.spec.colorbar;
     const verticalColorbar = colorbar && colorbar.orientation !== "horizontal";
     const horizontalColorbar = colorbar && colorbar.orientation === "horizontal";
+    const axesColorbar = colorbar && colorbar.placement === "axes";
     // Fluid charts have to remain useful inside dashboard columns. On compact
     // widths, cap only oversized authored horizontal padding and collapse a
     // vertical colorbar to its gradient; the full tick/title chrome returns
     // automatically when the container widens again.
     const responsivePad = this.fluid && compact && pad;
-    this._compactVerticalColorbar = Boolean(this.fluid && compact && verticalColorbar);
+    this._compactVerticalColorbar = Boolean(
+      this.fluid && compact && verticalColorbar && !axesColorbar
+    );
+    const automaticColorbarGap = colorbar && colorbar.pad === 0 ? 0 : 24;
     const colorbarRightRoom = verticalColorbar
-      ? (this._compactVerticalColorbar
-        ? COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + 8
-        : 86 + (colorbar.label ? 18 : 0))
+      ? axesColorbar
+        ? 44 + (colorbar.label ? 18 : 0)
+        : (this._compactVerticalColorbar
+          ? COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + 8
+          : 62 + automaticColorbarGap + (colorbar.label ? 18 : 0))
       : 0;
-    const colorbarBottomRoom = horizontalColorbar ? 38 + (colorbar.label ? 16 : 0) : 0;
+    const colorbarBottomRoom = horizontalColorbar
+      ? (axesColorbar ? 24 : 38) + (colorbar.label ? 16 : 0)
+      : 0;
     const baseRight = pad ? (responsivePad ? Math.min(pad[1], 8) : pad[1]) : compact ? 8 : MARGIN.r;
     const marginRight = baseRight + colorbarRightRoom;
     const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
@@ -623,8 +631,10 @@ export class ChartView {
   }
 
   _axisMode(axisId) {
-    const scale = this._axis(axisId).scale;
-    return scale === "log" ? 1 : scale === "symlog" ? 2 : 0;
+    const axis = this._axis(axisId);
+    const scale = axis.scale;
+    return scale === "log" ? (axis.nonpositive === "mask" ? 3 : 1)
+      : scale === "symlog" ? 2 : 0;
   }
 
   _axisConstant(axisId) {
@@ -722,7 +732,10 @@ export class ChartView {
   _axisCoord(axis, value) {
     const v = Number(value);
     if (!Number.isFinite(v)) return NaN;
-    if (axis && axis.scale === "log") return v > 0 ? Math.log10(v) : NaN;
+    if (axis && axis.scale === "log") {
+      if (v > 0) return Math.log10(v);
+      return axis.nonpositive === "mask" ? NaN : -300;
+    }
     if (axis && axis.scale === "symlog") {
       const c = Number(axis.constant) || 1;
       return Math.sign(v) * Math.log1p(Math.abs(v) / c);
@@ -1827,38 +1840,45 @@ export class ChartView {
         // traces join the first row's hover-target list instead.
         const continuousRows = new Map();
         s.traces.forEach((t, ti) => {
-        // A density-tier surface encodes count as alpha and wears the mean
-        // point color (LOD doc §2), so it gets no colormap gradient swatch —
-        // a gradient would claim color == density. A named density trace
-        // falls through to the plain marker swatch below, matching the
-        // static SVG/raster exporters.
-        const line = ["line", "segments", "step", "stairs", "errorbar"].includes(t.kind);
-        if (t.color && t.color.mode === "categorical") {
-          t.color.categories.forEach((cat, i) =>
-            items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {}, traces: [ti], cat: i }));
-        } else if (t.color && t.color.mode === "continuous") {
-          // Label precedence: explicit series name, then the encoding's own
-          // declarative label (the color="column" idiom). No generic fallback:
-          // an unnamed encoding has nothing truthful to say, so it gets no
-          // row — matching the static exporters, which draw name-bearing
-          // entries only.
-          const name = t.name || t.color.label;
-          if (!name) return;
-          const key = name + "\u0000" + colormapKey(t.color.colormap);
-          const existing = continuousRows.get(key);
-          if (existing) {
-            existing.traces.push(ti);
-            return;
+          const style = { ...(t.style || {}) };
+          const useTraceSize = style._legend_trace_size === true;
+          delete style._legend_trace_size;
+          if (t.kind === "scatter" && useTraceSize &&
+              t.size?.mode === "constant" && Number.isFinite(Number(t.size.size))) {
+            style.size = Number(t.size.size);
           }
-          const item = { swatch: "gradient", cmap: t.color.colormap, name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {}, traces: [ti] };
-          continuousRows.set(key, item);
-          items.push(item);
-        } else if (t.name) {
-          const c = (t.color && t.color.color) || (t.style && t.style.color);
-          // Line-family kinds get a short line sample (honoring the dash), the
-          // same handle the raster/SVG exporters draw — not a filled swatch.
-          items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {}, traces: [ti] });
-        }
+          // A density-tier surface encodes count as alpha and wears the mean
+          // point color (LOD doc §2), so it gets no colormap gradient swatch —
+          // a gradient would claim color == density. A named density trace
+          // falls through to the plain marker swatch below, matching the
+          // static SVG/raster exporters.
+          const line = ["line", "segments", "step", "stairs", "errorbar"].includes(t.kind);
+          if (t.color && t.color.mode === "categorical") {
+            t.color.categories.forEach((cat, i) =>
+              items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, style, traces: [ti], cat: i }));
+          } else if (t.color && t.color.mode === "continuous") {
+            // Label precedence: explicit series name, then the encoding's own
+            // declarative label (the color="column" idiom). No generic fallback:
+            // an unnamed encoding has nothing truthful to say, so it gets no
+            // row — matching the static exporters, which draw name-bearing
+            // entries only.
+            const name = t.name || t.color.label;
+            if (!name) return;
+            const key = name + "\u0000" + colormapKey(t.color.colormap);
+            const existing = continuousRows.get(key);
+            if (existing) {
+              existing.traces.push(ti);
+              return;
+            }
+            const item = { swatch: "gradient", cmap: t.color.colormap, name, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, line, style, traces: [ti] };
+            continuousRows.set(key, item);
+            items.push(item);
+          } else if (t.name) {
+            const c = (t.color && t.color.color) || (t.style && t.style.color);
+            // Line-family kinds get a short line sample (honoring the dash), the
+            // same handle the raster/SVG exporters draw — not a filled swatch.
+            items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, line, style, traces: [ti] });
+          }
         });
       }
       for (const it of items) {
@@ -1948,34 +1968,11 @@ export class ChartView {
         svg.setAttribute("viewBox", "0 0 18 14");
         svg.setAttribute("width", "100%");
         svg.setAttribute("height", "14");
-        const path = document.createElementNS(ns, "path");
-        const paths = {
-          square: "M4.5 2.5h9v9h-9z", diamond: "M9 2l5 5-5 5-5-5z",
-          thin_diamond: "M9 2l3 5-3 5-3-5z",
-          triangle: "M9 2l-5 10h10z", triangle_down: "M9 12L4 2h10z",
-          triangle_left: "M4 7L14 2v10z", triangle_right: "M14 7L4 2v10z",
-          plus_line: "M9 2v10M4 7h10", x_line: "M5 3l8 8M13 3l-8 8",
-          cross: "M7.5 2h3v3.5H14v3h-3.5V12h-3V8.5H4v-3h3.5z",
-          x: "M5.5 2L9 5.5 12.5 2 14 3.5 10.5 7 14 10.5 12.5 12 9 8.5 5.5 12 4 10.5 7.5 7 4 3.5z",
-          pentagon: "M9 2.5L13.28 5.61 11.65 10.64H6.35L4.72 5.61z",
-          hexagon: "M9 2L13.3 4.5v5L9 12l-4.3-2.5v-5z",
-          star: "M9 2l1.5 3.1 3.5.5-2.5 2.5.6 3.5L9 10l-3.1 1.6.6-3.5L4 5.6l3.5-.5z"
-        };
+        svg.style.overflow = "visible";
         const color = gradientPaint ? gradientPaint(svg) : safeCssPaint(this.root, bg);
-        if (it.symbol === "circle" || it.symbol === "point" || it.symbol === "pixel") {
-          if (it.symbol === "pixel") path.setAttribute("d", "M8.5 6.5h1v1h-1z");
-          else path.setAttribute("d", `M9 ${it.symbol === "point" ? 4.75 : 2.5}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 ${it.symbol === "point" ? 4.5 : 9}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 -${it.symbol === "point" ? 4.5 : 9}`);
-        } else path.setAttribute("d", paths[it.symbol] || paths.square);
-        sw.style.setProperty(
-          "--xy-legend-swatch-fill",
-          it.symbol.endsWith("_line") ? "none" : color,
+        this._appendLegendMarker(
+          svg, sw, { ...(it.style || {}), symbol: it.symbol }, color, 9, 7, true,
         );
-        sw.style.setProperty("--xy-legend-swatch-stroke", color);
-        sw.style.setProperty(
-          "--xy-legend-swatch-stroke-width",
-          String(it.style?.stroke_width || 1),
-        );
-        svg.appendChild(path);
         sw.appendChild(svg);
         sw.style.setProperty("--xy-legend-swatch-height", "14px");
       } else if (it.line) {
@@ -1989,10 +1986,27 @@ export class ChartView {
         ln.setAttribute("y1", "6");
         ln.setAttribute("x2", "21");
         ln.setAttribute("y2", "6");
+        const lineColor = gradientPaint
+          ? gradientPaint(svg)
+          : safeCssPaint(this.root, bg);
+        if (it.style?.legend_gap_color && it.style?.dash?.length) {
+          const gaps = document.createElementNS(ns, "line");
+          gaps.setAttribute("x1", "1");
+          gaps.setAttribute("y1", "6");
+          gaps.setAttribute("x2", "21");
+          gaps.setAttribute("y2", "6");
+          gaps.setAttribute(
+            "stroke",
+            safeCssPaint(this.root, it.style.legend_gap_color),
+          );
+          gaps.setAttribute("stroke-width", String(it.style?.width ?? 1.5));
+          gaps.setAttribute("stroke-dasharray", "none");
+          svg.appendChild(gaps);
+        }
         sw.style.setProperty("--xy-legend-swatch-fill", "none");
         sw.style.setProperty(
           "--xy-legend-swatch-stroke",
-          gradientPaint ? gradientPaint(svg) : safeCssPaint(this.root, bg),
+          lineColor,
         );
         // ?? not ||: an explicit lw=0 keeps 0 and draws nothing, like the
         // exporters' dict-default and Matplotlib itself.
@@ -2004,6 +2018,11 @@ export class ChartView {
           sw.style.setProperty("--xy-legend-swatch-dasharray", it.style.dash.join(" "));
         }
         svg.appendChild(ln);
+        if (it.style?.legend_marker) {
+          this._appendLegendMarker(
+            svg, sw, it.style.legend_marker, lineColor, 11, 6, false,
+          );
+        }
         sw.appendChild(svg);
         sw.style.setProperty("--xy-legend-swatch-height", "12px");
       } else if (it.swatch !== "gradient") {
@@ -2069,6 +2088,101 @@ export class ChartView {
     root.appendChild(lg);
     this._legends.push(lg); // _resize refreshes each box's responsive anchor
     return lg;
+  }
+
+  _appendLegendMarker(svg, sw, marker, defaultColor, cx, cy, wrapperPaint) {
+    const ns = "http://www.w3.org/2000/svg";
+    const requestedMarkerSize = Number(marker?.size);
+    const hasMarkerSize = Number.isFinite(requestedMarkerSize) && requestedMarkerSize >= 0;
+    const markerSize = hasMarkerSize ? requestedMarkerSize : 9;
+    const symbol = String(marker?.symbol || "circle");
+    // The generated default can be an internal SVG url(...); sanitize only
+    // user-authored paints so the gradient reference remains intact.
+    const fillColor = marker?.color != null
+      ? safeCssPaint(this.root, marker.color)
+      : defaultColor;
+    const hasStroke = marker?.stroke != null || marker?.stroke_width != null;
+    const strokeColor = hasStroke
+      ? (marker?.stroke != null
+          ? safeCssPaint(this.root, marker.stroke)
+          : fillColor)
+      : (wrapperPaint ? fillColor : "none");
+    const paths = {
+      square: "M4.5 2.5h9v9h-9z", diamond: "M9 2l5 5-5 5-5-5z",
+      thin_diamond: "M9 2l3 5-3 5-3-5z",
+      triangle: "M9 2l-5 10h10z", triangle_down: "M9 12L4 2h10z",
+      triangle_left: "M4 7L14 2v10z", triangle_right: "M14 7L4 2v10z",
+      plus_line: "M9 2v10M4 7h10", x_line: "M5 3l8 8M13 3l-8 8",
+      horizontal_line: "M4 7h10", vertical_line: "M9 2v10",
+      cross: "M7.5 2h3v3.5H14v3h-3.5V12h-3V8.5H4v-3h3.5z",
+      x: "M5.5 2L9 5.5 12.5 2 14 3.5 10.5 7 14 10.5 12.5 12 9 8.5 5.5 12 4 10.5 7.5 7 4 3.5z",
+      pentagon: "M9 2.5L13.28 5.61 11.65 10.64H6.35L4.72 5.61z",
+      hexagon: "M9 2L13.3 4.5v5L9 12l-4.3-2.5v-5z",
+      star: "M9 2l1.5 3.1 3.5.5-2.5 2.5.6 3.5L9 10l-3.1 1.6.6-3.5L4 5.6l3.5-.5z"
+    };
+    if (marker?.marker_glyph) {
+      const text = document.createElementNS(ns, "text");
+      text.setAttribute("x", String(cx));
+      text.setAttribute("y", String(cy));
+      text.setAttribute("font-family", "DejaVu Sans");
+      text.setAttribute("font-size", String(markerSize));
+      text.setAttribute("text-anchor", "middle");
+      text.setAttribute("dominant-baseline", "central");
+      if (wrapperPaint) {
+        sw.style.setProperty("--xy-legend-swatch-fill", fillColor);
+        sw.style.setProperty("--xy-legend-swatch-stroke", "none");
+        sw.style.setProperty("--xy-legend-swatch-stroke-width", "0");
+      } else {
+        text.setAttribute("fill", fillColor);
+      }
+      text.textContent = String(marker.marker_glyph);
+      svg.appendChild(text);
+      return;
+    }
+    const path = document.createElementNS(ns, "path");
+    if (marker?.marker_path) {
+      const commands = [];
+      for (const contour of marker.marker_path.contours || []) {
+        for (let offset = 0; offset + 1 < contour.length; offset += 2) {
+          const x = cx + markerSize * Number(contour[offset]);
+          const y = cy - markerSize * Number(contour[offset + 1]);
+          commands.push(`${offset === 0 ? "M" : "L"}${x} ${y}`);
+        }
+        if (marker.marker_path.filled) commands.push("Z");
+      }
+      path.setAttribute("d", commands.join(" "));
+    } else if (symbol === "circle" || symbol === "point" || symbol === "pixel") {
+      const radius = markerSize / 2;
+      if (symbol === "pixel")
+        path.setAttribute("d", `M${cx - radius} ${cy - radius}h${markerSize}v${markerSize}h-${markerSize}z`);
+      else
+        path.setAttribute("d", `M${cx} ${cy - radius}a${radius} ${radius} 0 1 0 0 ${markerSize}a${radius} ${radius} 0 1 0 0 -${markerSize}`);
+    } else {
+      path.setAttribute("d", paths[symbol] || paths.square);
+      const scale = hasMarkerSize ? markerSize / 9 : 1;
+      path.setAttribute(
+        "transform",
+        `translate(${cx} ${cy}) scale(${scale}) translate(-9 -7)`,
+      );
+    }
+    const lineMarker = symbol.endsWith("_line") ||
+      (marker?.marker_path && !marker.marker_path.filled);
+    const fill = lineMarker ? "none" : fillColor;
+    const requestedStrokeWidth = Number(marker?.stroke_width);
+    const strokeWidth = Number.isFinite(requestedStrokeWidth)
+      ? requestedStrokeWidth
+      : (wrapperPaint ? 1 : 0);
+    if (wrapperPaint) {
+      sw.style.setProperty("--xy-legend-swatch-fill", fill);
+      sw.style.setProperty("--xy-legend-swatch-stroke", strokeColor);
+      sw.style.setProperty("--xy-legend-swatch-stroke-width", String(strokeWidth));
+    } else {
+      path.setAttribute("fill", fill);
+      path.setAttribute("stroke", strokeColor);
+      path.setAttribute("stroke-width", String(strokeWidth));
+      path.setAttribute("stroke-dasharray", "none");
+    }
+    svg.appendChild(path);
   }
 
   // Paint an SVG swatch with the item's colormap ramp: registers a
@@ -2470,19 +2584,44 @@ export class ChartView {
     if (!cb) return;
     const box = document.createElement("div");
     const horizontal = cb.orientation === "horizontal";
+    const axesPlacement = cb.placement === "axes";
     box.style.cssText = "position:absolute;pointer-events:none;z-index:4;";
     this._applySlot(box, "colorbar");
 
     const bar = document.createElement("div");
     const levels = Math.max(0, Number(cb.levels) || 0);
+    const lineOnly = Boolean(cb.line_only);
     let gradient;
-    if (levels > 0) {
+    if (lineOnly) {
+      gradient = "linear-gradient(white,white)";
+    } else if (levels > 0) {
       const lut = buildLutData(cb.colormap || "viridis");
+      const exactColors = Array.isArray(cb.band_colors) && cb.band_colors.length === levels
+        ? cb.band_colors
+        : null;
+      const boundaries = Array.isArray(cb.boundaries)
+        ? cb.boundaries.map(Number)
+        : [];
+      const proportional =
+        cb.spacing === "proportional" &&
+        boundaries.length === levels + 1 &&
+        boundaries.every(Number.isFinite) &&
+        boundaries.every((value, index) => index === 0 || value > boundaries[index - 1]);
+      const fractions = proportional
+        ? boundaries.map(
+          (value) =>
+            (value - boundaries[0]) /
+            (boundaries[boundaries.length - 1] - boundaries[0]),
+        )
+        : Array.from({ length: levels + 1 }, (_, index) => index / levels);
       const bands = [];
       for (let index = 0; index < levels; index++) {
         const sample = Math.min(255, Math.round(255 * (index + 0.5) / levels));
-        const color = `rgb(${lut[sample * 4]},${lut[sample * 4 + 1]},${lut[sample * 4 + 2]})`;
-        bands.push(`${color} ${100 * index / levels}% ${100 * (index + 1) / levels}%`);
+        const row = exactColors && exactColors[index];
+        const color = row
+          ? `rgb(${Number(row[0])},${Number(row[1])},${Number(row[2])})`
+          : `rgb(${lut[sample * 4]},${lut[sample * 4 + 1]},${lut[sample * 4 + 2]})`;
+        bands.push(`${color} ${100 * fractions[index]}% ${100 * fractions[index + 1]}%`);
       }
       gradient = `linear-gradient(to ${horizontal ? "right" : "top"},${bands.join(",")})`;
     } else {
@@ -2490,32 +2629,99 @@ export class ChartView {
       gradient = `linear-gradient(to ${horizontal ? "right" : "top"},${stops.map((c) =>
         `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
     }
+    const barThickness = axesPlacement
+      ? (horizontal ? this.plot.h : this.plot.w)
+      : COLORBAR_THICKNESS;
     bar.style.cssText = horizontal
-      ? `position:absolute;inset:0 0 auto 0;height:${COLORBAR_THICKNESS}px;`
-      : `position:absolute;inset:0 auto 0 0;width:${COLORBAR_THICKNESS}px;`;
+      ? `position:absolute;inset:0 0 auto 0;height:${barThickness}px;`
+      : `position:absolute;inset:0 auto 0 0;width:${barThickness}px;`;
     bar.style.setProperty("--xy-colorbar-gradient", gradient);
+    if (lineOnly) {
+      bar.style.border = "1px solid currentColor";
+      bar.style.boxSizing = "border-box";
+      bar.dataset.xyColorbarLineOnly = "true";
+    }
     this._applySlot(bar, "colorbar_bar");
     box.appendChild(bar);
+    if (lineOnly && ["min", "max", "both"].includes(String(cb.extend))) {
+      const extension = (side) => {
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+        const atMinimum = side === "min";
+        svg.dataset.xyColorbarExtend = side;
+        svg.setAttribute("width", String(horizontal ? 9 : barThickness));
+        svg.setAttribute("height", String(horizontal ? barThickness : 9));
+        svg.style.cssText = horizontal
+          ? `position:absolute;top:0;${atMinimum ? "right:100%" : "left:100%"};overflow:visible;`
+          : `position:absolute;left:0;${atMinimum ? "top:100%" : "bottom:100%"};overflow:visible;`;
+        polygon.setAttribute("points", horizontal
+          ? (atMinimum
+            ? `9,0 9,${barThickness} 0,${barThickness / 2}`
+            : `0,0 0,${barThickness} 9,${barThickness / 2}`)
+          : (atMinimum
+            ? `0,0 ${barThickness},0 ${barThickness / 2},9`
+            : `0,9 ${barThickness},9 ${barThickness / 2},0`));
+        polygon.setAttribute("fill", "white");
+        polygon.setAttribute("stroke", "currentColor");
+        svg.appendChild(polygon);
+        bar.appendChild(svg);
+      };
+      if (cb.extend === "min" || cb.extend === "both") extension("min");
+      if (cb.extend === "max" || cb.extend === "both") extension("max");
+    }
 
     const domain = cb.domain || [0, 1];
     const lo = Number(domain[0]), hi = Number(domain[1]);
     const span = hi - lo || 1;
+    const logScale = cb.scale === "log";
+    const colorbarFraction = (value) => logScale
+      ? (hi === lo ? 0 : Math.log(value / lo) / Math.log(hi / lo))
+      : (value - lo) / span;
+    for (const line of Array.isArray(cb.lines) ? cb.lines : []) {
+      const value = Number(line && line.value);
+      if (!Number.isFinite(value) || value < Math.min(lo, hi) || value > Math.max(lo, hi)) continue;
+      const fraction = colorbarFraction(value);
+      const marker = document.createElement("i");
+      marker.dataset.xyColorbarLine = "true";
+      const color = safeCssPaint(this.root, line.color || "currentColor");
+      const width = Math.max(0.5, Number(line.width) || 1);
+      const lineStyle = line.dash === "dashed" ? "dashed" : "solid";
+      marker.style.cssText = horizontal
+        ? `position:absolute;left:${100 * fraction}%;inset-block:0;border-left:${width}px ${lineStyle} ${color};`
+        : `position:absolute;top:${100 * (1 - fraction)}%;inset-inline:0;border-top:${width}px ${lineStyle} ${color};`;
+      bar.appendChild(marker);
+    }
     const shrink = Math.max(0.01, Math.min(1, Number(cb.shrink) || 1));
     const barLength = (horizontal ? this.plot.w : this.plot.h) * shrink;
     const tickTarget = Math.max(2, Math.min(8, Math.floor(Math.max(0, barLength) / 48) + 1));
-    const tickResult = linearTicks(lo, hi, tickTarget);
+    const tickResult = logScale ? logTicks(lo, hi, tickTarget) : linearTicks(lo, hi, tickTarget);
     const hasExplicitTicks = Array.isArray(cb.ticks);
-    const tickValues = hasExplicitTicks ? cb.ticks : tickResult.ticks;
+    const tickValues = hasExplicitTicks
+      ? cb.ticks
+      : (logScale ? (tickResult as any).labels : tickResult.ticks);
     const tickStep = tickResult.step;
-    for (const raw of tickValues) {
+    const fractionFor = (value) => logScale
+      ? (hi === lo ? 0 : Math.log(value / lo) / Math.log(hi / lo))
+      : (value - lo) / span;
+    for (let tickIndex = 0; tickIndex < tickValues.length; tickIndex++) {
+      const raw = tickValues[tickIndex];
       const value = Number(raw);
       if (!Number.isFinite(value) || value < Math.min(lo, hi) || value > Math.max(lo, hi)) continue;
       const tick = document.createElement("span");
-      tick.textContent = hasExplicitTicks ? fmtGeneral(value) : fmtLinear(value, tickStep);
-      const fraction = (value - lo) / span;
+      tick.textContent =
+        hasExplicitTicks &&
+          Array.isArray(cb.tick_labels) &&
+          cb.tick_labels.length === tickValues.length
+          ? String(cb.tick_labels[tickIndex])
+          : hasExplicitTicks
+            ? fmtGeneral(value)
+            : logScale
+              ? fmtLog(value)
+              : fmtLinear(value, tickStep);
+      const fraction = fractionFor(value);
       tick.style.cssText = horizontal
-        ? `position:absolute;left:${100 * fraction}%;top:${COLORBAR_THICKNESS + 2}px;transform:translateX(-50%);white-space:nowrap;`
-        : `position:absolute;left:${COLORBAR_THICKNESS + 5}px;top:${100 * (1 - fraction)}%;transform:translateY(-50%);white-space:nowrap;`;
+        ? `position:absolute;left:${100 * fraction}%;top:${barThickness + 2}px;transform:translateX(-50%);white-space:nowrap;`
+        : `position:absolute;left:${barThickness + 5}px;top:${100 * (1 - fraction)}%;transform:translateY(-50%);white-space:nowrap;`;
       this._applySlot(tick, "colorbar_tick");
       box.appendChild(tick);
     }
@@ -2527,13 +2733,15 @@ export class ChartView {
       for (let index = 0; index + 1 < orderedTicks.length; index++) {
         const left = orderedTicks[index], right = orderedTicks[index + 1];
         for (let step = 1; step < 5; step++) {
-          const value = left + (right - left) * step / 5;
-          const fraction = (value - lo) / span;
+          const value = logScale
+            ? Math.pow(10, Math.log10(left) + (Math.log10(right) - Math.log10(left)) * step / 5)
+            : left + (right - left) * step / 5;
+          const fraction = fractionFor(value);
           const tick = document.createElement("i");
           tick.dataset.xyColorbarMinor = "true";
           tick.style.cssText = horizontal
-            ? `position:absolute;left:${100 * fraction}%;top:${COLORBAR_THICKNESS}px;height:3px;border-left:1px solid currentColor;`
-            : `position:absolute;left:${COLORBAR_THICKNESS}px;top:${100 * (1 - fraction)}%;width:3px;border-top:1px solid currentColor;`;
+            ? `position:absolute;left:${100 * fraction}%;top:${barThickness}px;height:3px;border-left:1px solid currentColor;`
+            : `position:absolute;left:${barThickness}px;top:${100 * (1 - fraction)}%;width:3px;border-top:1px solid currentColor;`;
           box.appendChild(tick);
         }
       }
@@ -2542,8 +2750,8 @@ export class ChartView {
       const label = document.createElement("span");
       label.textContent = String(cb.label);
       label.style.cssText = horizontal
-        ? `position:absolute;left:50%;top:${COLORBAR_THICKNESS + 18}px;transform:translateX(-50%);white-space:nowrap;`
-        : `position:absolute;left:${COLORBAR_THICKNESS + 40}px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`;
+        ? `position:absolute;left:50%;top:${barThickness + 18}px;transform:translateX(-50%);white-space:nowrap;`
+        : `position:absolute;left:${barThickness + 40}px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`;
       this._applySlot(label, "colorbar_title");
       box.appendChild(label);
     }
@@ -2558,22 +2766,35 @@ export class ChartView {
     if (!this._colorbar) return;
     const cb = this.spec.colorbar || {};
     const horizontal = this._colorbarHorizontal;
+    const axesPlacement = cb.placement === "axes";
     const compactVertical = !horizontal && this._compactVerticalColorbar;
-    const gap = compactVertical ? COMPACT_COLORBAR_GAP : COLORBAR_GAP;
+    const gap = axesPlacement
+      ? 0
+      : (cb.pad == null
+        ? (compactVertical ? COMPACT_COLORBAR_GAP : COLORBAR_GAP)
+        : Number(cb.pad) * (horizontal ? this.plot.h : this.plot.w));
     const shrink = Math.max(0.01, Math.min(1, Number(cb.shrink) || 1));
     const anchor = Array.isArray(cb.anchor) ? cb.anchor : [0.5, 0.5];
     const barWidth = this.plot.w * shrink;
     const barHeight = this.plot.h * shrink;
     this._colorbar.style.left = (horizontal
-      ? this.plot.x + (this.plot.w - barWidth) * Number(anchor[0] ?? 0.5)
-      : this.plot.x + this.plot.w + this._rightAxisRoom + gap) + "px";
+      ? axesPlacement
+        ? this.plot.x
+        : this.plot.x + (this.plot.w - barWidth) * Number(anchor[0] ?? 0.5)
+      : axesPlacement
+        ? this.plot.x
+        : this.plot.x + this.plot.w + this._rightAxisRoom + gap) + "px";
     this._colorbar.style.top = (horizontal
-      ? this.plot.y + this.plot.h + (this._bottomAxisRoom || 8)
+      ? axesPlacement
+        ? this.plot.y
+        : this.plot.y + this.plot.h + gap
       : this.plot.y + (this.plot.h - barHeight) * (1 - Number(anchor[1] ?? 0.5))) + "px";
     this._colorbar.style.width = (horizontal
-      ? barWidth
-      : compactVertical ? COLORBAR_THICKNESS : 66) + "px";
-    this._colorbar.style.height = (horizontal ? 50 : Math.max(24, barHeight)) + "px";
+      ? axesPlacement ? this.plot.w : barWidth
+      : axesPlacement ? this.plot.w + 44 : compactVertical ? COLORBAR_THICKNESS : 66) + "px";
+    this._colorbar.style.height = (horizontal
+      ? axesPlacement ? this.plot.h + 24 : 50
+      : Math.max(24, barHeight)) + "px";
     this._colorbar.dataset.xyCompact = compactVertical ? "true" : "false";
     for (const node of this._colorbar.querySelectorAll(
       '[data-xy-slot="colorbar_tick"], [data-xy-slot="colorbar_title"]'
@@ -2863,6 +3084,10 @@ export class ChartView {
       copy("artist_alpha", 1);
       copy(widthName, 2, this.dpr);
       copy("symbol", 3);
+      // Canvas-authored markers consume the same canonical style rows as the
+      // point shader.  Keep them CPU-readable instead of treating styleBuf as
+      // the only copy; filtering may still gather/reupload from this array.
+      g._cpuStyle = values;
       g.styleBuf = this._upload(values);
       // Width rows are baked at the dpr in force right now. Record it so the
       // streaming-append fast path can tell whether a later tail upload would
@@ -2881,7 +3106,8 @@ export class ChartView {
       g.radiusBuf = this._upload(values);
     }
     if (t.stroke && t.stroke.mode === "direct_rgba") {
-      g.strokeBuf = this._upload(this._columnView(buffer, this.spec.columns[t.stroke.buf]));
+      g._cpuStroke = this._columnView(buffer, this.spec.columns[t.stroke.buf]);
+      g.strokeBuf = this._upload(g._cpuStroke);
     }
   }
 
@@ -2921,7 +3147,8 @@ export class ChartView {
   // use each point's resolved LUT/palette color, never a generic trace color.
   _pointMarkStyle(g, t) {
     const s = t.style || {};
-    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 }[s.symbol] || 0;
+    g.authoredMarker = s.marker_path || s.marker_glyph || null;
+    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16, horizontal_line: 17, vertical_line: 18 }[s.symbol] || 0;
     g.pointStrokeWidth = Number(s.stroke_width) || 0;
     g.pointStrokeFace = !s.stroke && (!t.stroke || t.stroke.mode === "match_fill");
     g.pointStroke = s.stroke
@@ -3043,16 +3270,21 @@ export class ChartView {
       size: (sample.size && sample.size.size) || 4.0,
       sizeRange: [2, 18],
     };
+    const xValues = this._asF32(buffers[sample.x.buf]);
+    const yValues = this._asF32(buffers[sample.y.buf]);
+    s._cpu = { x: xValues, y: yValues, xMeta: s.xMeta, yMeta: s.yMeta };
     gl.bindBuffer(gl.ARRAY_BUFFER, s.xBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.x.buf]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, xValues, gl.STATIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, s.yBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.y.buf]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, yValues, gl.STATIC_DRAW);
     if (sample.color && sample.color.buf !== undefined) {
       s.colorMode = sample.color.mode === "continuous" ? 1 :
         (sample.color.mode === "categorical" ? 2 : 3);
       const colorValues = sample.color.dtype === "u8"
         ? this._asU8(buffers[sample.color.buf])
         : this._asF32(buffers[sample.color.buf]);
+      if (s.colorMode === 3) s._cpu.rgba = colorValues;
+      else s._cpu.color = colorValues;
       const colorBufferName = s.colorMode === 3 ? "rgbaBuf" : "cBuf";
       s[colorBufferName] = gl.createBuffer();
       this._tagChannelBuf(s[colorBufferName], colorValues, s.colorMode === 1);
@@ -3069,6 +3301,7 @@ export class ChartView {
       const sizeValues = sample.size.dtype === "u8"
         ? this._asU8(buffers[sample.size.buf])
         : this._asF32(buffers[sample.size.buf]);
+      s._cpu.size = sizeValues;
       s.sBuf = gl.createBuffer();
       this._tagChannelBuf(s.sBuf, sizeValues, true);
       gl.bindBuffer(gl.ARRAY_BUFFER, s.sBuf);
@@ -3099,10 +3332,12 @@ export class ChartView {
       copy("artist_alpha", 1);
       copy("stroke_width", 2, this.dpr);
       copy("symbol", 3);
+      s._cpuStyle = values;
       s.styleBuf = this._upload(values);
     }
     if (sample.stroke && sample.stroke.mode === "direct_rgba") {
-      s.strokeBuf = this._upload(this._asU8(buffers[sample.stroke.buf]));
+      s._cpuStroke = this._asU8(buffers[sample.stroke.buf]);
+      s.strokeBuf = this._upload(s._cpuStroke);
     }
     this._pointMarkStyle(s, trace);
     if (g.density) {
@@ -3786,6 +4021,11 @@ export class ChartView {
   _drawNow() {
     if (this._destroyed || !this.gl || this._glLost) return;
     this._healStaleTheme();
+    // `_drawPoints` records authored-marker draws here so the Canvas overlay
+    // paints the exact direct/sample/drill entries and LOD alpha chosen by
+    // this frame.  Reconstructing them from gpuTraces would lose density
+    // window selection and transition fades.
+    this._authoredScatterDraws = [];
     const gl = this.gl;
     const { x0, x1, y0, y1 } = this.view;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -3884,6 +4124,14 @@ export class ChartView {
 
   _drawPoints(g, xm, ym, opacityScale = 1) {
     opacityScale *= (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
+    // Pyplot-authored contours and glyphs keep these resident point buffers
+    // for picking/transitions but paint on the Canvas2D overlay below. Queue
+    // the actual draw invocation (including density-sample/drill fades)
+    // instead of rediscovering only top-level direct traces in `_drawChrome`.
+    if (g.authoredMarker) {
+      (this._authoredScatterDraws ||= []).push({ g, opacityScale });
+      return;
+    }
     const animationScale = g._transitionScale ?? 1;
     if (this._canDrawSimplePoints(g)) {
       this._drawSimplePoints(g, xm, ym, opacityScale);
@@ -4952,8 +5200,48 @@ export class ChartView {
       this._axisTickTarget("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80))),
     );
     const yt = this._axisTicks("y", this._axisTickTarget("y", Math.max(3, p.h / 45)));
+    const minorTicks = (axis, axisId) => {
+      if (!Array.isArray(axis.minor_tick_values)) return [];
+      const [lo, hi] = this._axisRange(axisId);
+      const a = Math.min(lo, hi), b = Math.max(lo, hi);
+      return axis.minor_tick_values.map(Number)
+        .filter((v) => Number.isFinite(v) && v >= a && v <= b);
+    };
+    const xmt = minorTicks(xAxis, "x");
+    const ymt = minorTicks(yAxis, "y");
+    const minorAxis = (axis) => ({ ...axis, style: axis.minor_style || {} });
+    const xmAxis = minorAxis(xAxis);
+    const ymAxis = minorAxis(yAxis);
     const xEdge = (px) => Math.min(p.x + p.w - 0.5, Math.max(p.x + 0.5, Math.round(px) + 0.5));
     const yEdge = (py) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(py) + 0.5));
+
+    ctx.strokeStyle = this._axisStylePaint(xmAxis, "grid_color", "transparent");
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xmAxis, "grid_width", 1));
+    ctx.globalAlpha = this._axisStyleNumber(xmAxis, "grid_opacity", 1);
+    ctx.setLineDash(this._axisGridDash(xmAxis));
+    ctx.beginPath();
+    for (const v of (hideX ? [] : xmt)) {
+      const px = this._dataPx("x", v);
+      if (!Number.isFinite(px)) continue;
+      const x = xEdge(px);
+      ctx.moveTo(x, p.y);
+      ctx.lineTo(x, p.y + p.h);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = this._axisStylePaint(ymAxis, "grid_color", "transparent");
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(ymAxis, "grid_width", 1));
+    ctx.globalAlpha = this._axisStyleNumber(ymAxis, "grid_opacity", 1);
+    ctx.setLineDash(this._axisGridDash(ymAxis));
+    ctx.beginPath();
+    for (const v of (hideY ? [] : ymt)) {
+      const py = this._dataPx("y", v);
+      if (!Number.isFinite(py)) continue;
+      const y = yEdge(py);
+      ctx.moveTo(p.x, y);
+      ctx.lineTo(p.x + p.w, y);
+    }
+    ctx.stroke();
 
     ctx.strokeStyle = this._axisStylePaint(xAxis, "grid_color", this.theme.grid);
     ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xAxis, "grid_width", 1));
@@ -5041,6 +5329,19 @@ export class ChartView {
       }
 
       if (!hideX) {
+        const minorTick = tickParts(xmAxis);
+        const minorSide = xAxis.side || "bottom";
+        const minorEdge = minorSide === "top" ? p.y : p.y + p.h;
+        for (const value of xmt) {
+          const x = this._dataPx("x", value);
+          if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
+          const top = minorSide === "top"
+            ? minorEdge - minorTick.outward : minorEdge - minorTick.inward;
+          rule(
+            xmAxis, x - minorTick.width / 2, top, minorTick.width,
+            minorTick.inward + minorTick.outward, "tick_color",
+          );
+        }
         const tick = tickParts(xAxis);
         const side = xAxis.side || "bottom";
         const edge = side === "top" ? p.y : p.y + p.h;
@@ -5052,6 +5353,19 @@ export class ChartView {
         }
       }
       if (!hideY) {
+        const minorTick = tickParts(ymAxis);
+        const minorSide = yAxis.side || "left";
+        const minorEdge = minorSide === "right" ? p.x + p.w : p.x;
+        for (const value of ymt) {
+          const y = this._dataPx("y", value);
+          if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
+          const left = minorSide === "right"
+            ? minorEdge - minorTick.inward : minorEdge - minorTick.outward;
+          rule(
+            ymAxis, left, y - minorTick.width / 2,
+            minorTick.inward + minorTick.outward, minorTick.width, "tick_color",
+          );
+        }
         const tick = tickParts(yAxis);
         const side = yAxis.side || "left";
         const edge = side === "right" ? p.x + p.w : p.x;
@@ -5367,6 +5681,7 @@ export class ChartView {
     this._drawAnnotationLabels(updateLabels);
     // Label layout resolves responsive callout offsets before the pointer is
     // painted, keeping its start attached when an edge clamp moves the text.
+    this._drawAuthoredScatterMarkers(octx);
     this._drawAnnotationShapes(octx);
   }
 

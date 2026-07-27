@@ -53,6 +53,10 @@ COLORMAPS = (
     "bone",
     "winter",
     "bupu",
+    "rdylbu",
+    "ylgn",
+    "wistia",
+    "puor",
 )
 
 

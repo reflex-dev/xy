@@ -117,14 +117,29 @@ def test_add_gridspec_supports_single_cell_specs() -> None:
 
     gs = fig.add_gridspec(2, 2, width_ratios=[1, 2])
     ax = fig.add_subplot(gs[1, 0])
-    same = fig.add_subplot(gs[2])
+    overlay = fig.add_subplot(gs[2])
 
-    assert ax is same
+    assert ax is not overlay
+    assert ax._subplot_index == overlay._subplot_index == 2
     assert fig._width_ratios == (1.0, 2.0)
-    assert fig.gca() is ax
+    assert fig.gca() is overlay
 
     span = gs[0:2, 0]
     assert span.rows == (0, 2)
     assert span.cols == (0, 1)
     with pytest.raises(NotImplementedError):
         _ = gs[0:2:2, 0]  # step slicing stays out of the span contract
+
+
+def test_figure_add_subplot_creates_same_spec_overlay() -> None:
+    fig = Figure(1)
+
+    first = fig.add_subplot(111)
+    second = fig.add_subplot(111)
+
+    assert first is not second
+    assert fig.axes == [first, second]
+    assert first._subplot_index == second._subplot_index == 0
+    assert first.get_subplotspec() is not None
+    assert second.get_subplotspec() is not None
+    assert fig.gca() is second

@@ -30,6 +30,7 @@ from ._svg import (
     _TEXT,
     COLORBAR_FONT_SIZE,
     DEFAULT_PALETTE,
+    _annotation_connector_unclipped,
     _axis_label_geometry,
     _axis_scales,
     _axis_tick_font_size,
@@ -62,6 +63,7 @@ from ._svg import (
     layout,
     legend_items,
     legend_options_with_slot,
+    minor_axis_ticks,
     slot_font_size,
     slot_styles,
     slot_text_color,
@@ -118,6 +120,8 @@ _SYMBOLS = {
     "thin_diamond": 14,
     "plus_line": 15,
     "x_line": 16,
+    "horizontal_line": 17,
+    "vertical_line": 18,
 }
 
 
@@ -780,6 +784,7 @@ def render_raster(
 
     xt, xlab, xstep = axis_ticks(xa, plot["w"], True)
     yt, ylab, ystep = axis_ticks(ya, plot["h"], False)
+    xmt, ymt = minor_axis_ticks(xa), minor_axis_ticks(ya)
     extra_x_ticks = {
         axis_id: axis_ticks(axis, plot["w"], True) for axis_id, axis, _axis_scale in extra_x_axes
     }
@@ -787,6 +792,7 @@ def render_raster(
         axis_id: axis_ticks(axis, plot["h"], False) for axis_id, axis, _axis_scale in extra_y_axes
     }
     xstyle, ystyle = xa.get("style") or {}, ya.get("style") or {}
+    xmstyle, ymstyle = xa.get("minor_style") or {}, ya.get("minor_style") or {}
     default_grid = _css(dom_style.get("--chart-grid"), _GRID)
     default_axis = _css(dom_style.get("--chart-axis"), _AXIS)
     default_text = _css(dom_style.get("--chart-text"), _TEXT)
@@ -797,6 +803,28 @@ def render_raster(
     hide_y = ya.get("tick_label_strategy") == "none"
 
     cmd.clip(px0, py0, plot["w"], plot["h"])
+    for v in [] if hide_x else xmt:
+        gx = float(sx(v))
+        cmd.stroke(
+            [(gx, py0), (gx, py1)],
+            float(xmstyle.get("grid_width", 1)),
+            _parse_color(
+                _css(xmstyle.get("grid_color"), "transparent"),
+                float(xmstyle.get("grid_opacity", 1.0)),
+            ),
+            dash=_AXIS_GRID_DASHES.get(str(xmstyle.get("grid_dash", "solid"))),
+        )
+    for v in [] if hide_y else ymt:
+        gy = float(sy(v))
+        cmd.stroke(
+            [(px0, gy), (px1, gy)],
+            float(ymstyle.get("grid_width", 1)),
+            _parse_color(
+                _css(ymstyle.get("grid_color"), "transparent"),
+                float(ymstyle.get("grid_opacity", 1.0)),
+            ),
+            dash=_AXIS_GRID_DASHES.get(str(ymstyle.get("grid_dash", "solid"))),
+        )
     for v in [] if hide_x else xt:
         gx = float(sx(v))
         cmd.stroke(
@@ -920,6 +948,21 @@ def render_raster(
         return 0.0, length
 
     if not hide_x:
+        inward, outward = tick_span(xmstyle)
+        side = xa.get("side", "bottom")
+        edge = py0 if side == "top" else py1
+        for value in xmt:
+            x = float(sx(value))
+            y0, y1 = (
+                (edge - outward, edge + inward)
+                if side == "top"
+                else (edge - inward, edge + outward)
+            )
+            cmd.stroke(
+                [(x, y0), (x, y1)],
+                float(xmstyle.get("tick_width", 1)),
+                _parse_color(_css(xmstyle.get("tick_color"), default_axis)),
+            )
         inward, outward = tick_span(xstyle)
         side = xa.get("side", "bottom")
         edge = py0 if side == "top" else py1
@@ -936,6 +979,21 @@ def render_raster(
                 _parse_color(_css(xstyle.get("tick_color"), default_axis)),
             )
     if not hide_y:
+        inward, outward = tick_span(ymstyle)
+        side = ya.get("side", "left")
+        edge = px1 if side == "right" else px0
+        for value in ymt:
+            y = float(sy(value))
+            x0, x1 = (
+                (edge - inward, edge + outward)
+                if side == "right"
+                else (edge - outward, edge + inward)
+            )
+            cmd.stroke(
+                [(x0, y), (x1, y)],
+                float(ymstyle.get("tick_width", 1)),
+                _parse_color(_css(ymstyle.get("tick_color"), default_axis)),
+            )
         inward, outward = tick_span(ystyle)
         side = ya.get("side", "left")
         edge = px1 if side == "right" else px0
@@ -1235,28 +1293,6 @@ def _emit_line(
         cmd.stroke(pts, width, c, dash=style.get("dash"), cap=cap)
 
 
-def _annotation_point(
-    ann: dict[str, Any],
-    style: dict[str, Any],
-    sx: _Scale,
-    sy: _Scale,
-    plot: dict[str, float],
-    width: float,
-    height: float,
-) -> tuple[float, float]:
-    space = style.get("coordinate_space")
-    x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
-    if space == "axes_fraction":
-        return plot["x"] + x * plot["w"], plot["y"] + (1.0 - y) * plot["h"]
-    if space == "figure_fraction":
-        return x * width, (1.0 - y) * height
-    if space == "yaxis_transform":
-        return plot["x"] + x * plot["w"], float(sy(y))
-    if space == "xaxis_transform":
-        return float(sx(x)), plot["y"] + (1.0 - y) * plot["h"]
-    return float(sx(x)), float(sy(y))
-
-
 def _native_font_emphasis(style: dict[str, Any]) -> tuple[bool, bool]:
     """Return baked-font italic/bold approximations for an annotation."""
     italic = str(style.get("font_style", "")).lower() in {"italic", "oblique"}
@@ -1298,6 +1334,7 @@ def _emit_annotations(
         # pass; every label draws in the unclipped chrome pass, matching
         # matplotlib's Text and the client's DOM labels.
         style = ann.get("style") or {}
+        restore_plot_clip = False
         color = _rgba(style.get("color"), "#667085", float(style.get("opacity", 1.0)))
         start = max(0.0, min(1.0, float(style.get("span_start", 0.0))))
         end = max(start, min(1.0, float(style.get("span_end", 1.0))))
@@ -1333,6 +1370,9 @@ def _emit_annotations(
                 _rgba(style.get("color"), "#64748b", float(style.get("opacity", 0.14))),
             )
         elif ann.get("kind") in ("arrow", "callout"):
+            if _annotation_connector_unclipped(ann, sx, sy, plot):
+                cmd.clip(0, 0, width, height)
+                restore_plot_clip = True
             if ann.get("kind") == "arrow":
                 x0, y0 = float(sx(float(ann["x0"]))), float(sy(float(ann["y0"])))
                 x1, y1 = float(sx(float(ann["x1"]))), float(sy(float(ann["y1"])))
@@ -1380,6 +1420,8 @@ def _emit_annotations(
                         else (0, 0, 0, 0)
                     ),
                 )
+        if restore_plot_clip:
+            cmd.clip(plot["x"], plot["y"], plot["w"], plot["h"])
         if text_phase and ann.get("text"):
             x, y, label_anchor, vertical_align = annotation_label_placement(
                 ann, style, sx, sy, plot, width, height
@@ -1587,6 +1629,107 @@ def _trace_paint_rgba(
     return rgba
 
 
+def _emit_authored_scatter(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+) -> None:
+    """Paint bounded pyplot-authored paths/glyphs in display-list space."""
+    xv, yv = _column(blob, cols[t["x"]]), _column(blob, cols[t["y"]])
+    px, py = sx(xv), sy(yv)
+    n = len(xv)
+    if not n:
+        return
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    face = _trace_paint_rgba(t, "color", n, color, read)
+    fills = np.rint(
+        _paint.effective_rgba(face, t, read, component="fill", default_opacity=0.8) * 255.0
+    ).astype(np.uint8)
+    if (t.get("stroke") or {}).get("mode") == "match_fill":
+        stroke_intrinsic = face
+    elif t.get("stroke") is not None:
+        stroke_intrinsic = _trace_paint_rgba(t, "stroke", n, color, read)
+    elif style.get("stroke") is not None:
+        stroke_intrinsic = np.tile(
+            np.asarray(
+                _parse_color(_css(style.get("stroke"), color)),
+                dtype=np.float64,
+            )
+            / 255.0,
+            (n, 1),
+        )
+    else:
+        stroke_intrinsic = face
+    strokes = np.rint(
+        _paint.effective_rgba(
+            stroke_intrinsic,
+            t,
+            read,
+            component="stroke",
+            default_opacity=0.8,
+        )
+        * 255.0
+    ).astype(np.uint8)
+    size_ch = t.get("size") or {}
+    if size_ch.get("mode") == "continuous":
+        values = _column(blob, cols[size_ch["buf"]])
+        r0, r1 = size_ch.get("range_px", [2, 18])
+        radii = (r0 + (r1 - r0) * np.clip(values, 0, 1)) / 2
+    else:
+        radii = np.full(n, float(size_ch.get("size", 4.0)) / 2)
+    widths = _paint.style_values(t, "stroke_width", n, read, float(style.get("stroke_width", 0)))
+    marker_path = style.get("marker_path")
+    marker_glyph = style.get("marker_glyph")
+    filled = bool(marker_path and marker_path.get("filled", True))
+
+    for index in range(n):
+        fill = tuple(int(value) for value in fills[index])
+        stroke = tuple(int(value) for value in strokes[index])
+        diameter = max(0.0, 2 * (float(radii[index]) - float(widths[index]) / 2))
+        if marker_glyph:
+            cmd.text(
+                float(px[index]),
+                float(py[index]) + diameter * 0.34,
+                1,
+                diameter,
+                fill,
+                str(marker_glyph),
+            )
+            continue
+        if not marker_path:
+            continue
+        contours = []
+        for contour in marker_path.get("contours") or ():
+            values = np.asarray(contour, dtype=np.float64).reshape(-1, 2)
+            contours.append(
+                [
+                    (
+                        float(px[index]) + diameter * float(x),
+                        float(py[index]) - diameter * float(y),
+                    )
+                    for x, y in values
+                ]
+            )
+        if filled:
+            for points in contours:
+                cmd.fill(points, fill)
+            if float(widths[index]) > 0:
+                for points in contours:
+                    cmd.stroke(points, float(widths[index]), stroke, closed=True)
+        else:
+            width = max(1.0, float(widths[index]))
+            for points in contours:
+                cmd.stroke(points, width, fill)
+
+
 def _emit_scatter(
     cmd: _Cmd,
     t: dict[str, Any],
@@ -1599,6 +1742,9 @@ def _emit_scatter(
 ) -> None:
     ch = t.get("color") or {}
     size_ch = t.get("size") or {}
+    if style.get("marker_path") or style.get("marker_glyph"):
+        _emit_authored_scatter(cmd, t, blob, cols, sx, sy, style, color)
+        return
 
     def read(index: int) -> np.ndarray:
         return _column(blob, cols[index])
@@ -2339,28 +2485,25 @@ def _emit_legend(
         hx0, hx1, cy = rx, rx + handle, ry + text_h / 2
         kind = t.get("kind")
         if kind == "scatter":
-            symbol = style.get("symbol", "circle")
-            sym = _SYMBOLS.get(symbol, 0)
-            sw = float(style.get("stroke_width", 0.0))
-            if symbol in {"plus_line", "x_line"} and sw <= 0:
-                sw = 1.0
-            stroke = _rgba(style.get("stroke"), color_str) if sw > 0 else (0, 0, 0, 0)
-            cmd.point(
-                (hx0 + hx1) / 2,
-                cy,
-                max(0.5, float(style.get("size", 8.0)) / 2.0),
-                sym,
-                c,
-                sw,
-                stroke,
-            )
+            _emit_legend_marker(cmd, style, (hx0 + hx1) / 2, cy, color_str)
         elif kind in _LEGEND_LINE_KINDS:
+            width = float(style.get("width", 1.5))
+            gap_color = style.get("legend_gap_color")
+            if gap_color is not None and style.get("dash"):
+                cmd.stroke(
+                    [(hx0, cy), (hx1, cy)],
+                    width,
+                    _parse_color(_css(gap_color, color_str)),
+                )
             cmd.stroke(
                 [(hx0, cy), (hx1, cy)],
-                float(style.get("width", 1.5)),
+                width,
                 c,
                 dash=style.get("dash"),
             )
+            marker = style.get("legend_marker")
+            if isinstance(marker, dict):
+                _emit_legend_marker(cmd, marker, (hx0 + hx1) / 2, cy, color_str)
         else:
             swatch_points = _rect_pts(hx0, cy - swatch_h / 2, hx1, cy + swatch_h / 2)
             cmd.fill(swatch_points, c)
@@ -2393,6 +2536,44 @@ def _emit_legend(
         )
 
 
+def _emit_legend_marker(
+    cmd: _Cmd,
+    style: dict[str, Any],
+    x: float,
+    y: float,
+    default_color: str,
+) -> None:
+    """Render one Matplotlib marker centered on its legend line sample."""
+    symbol = str(style.get("symbol", "circle"))
+    sym = _SYMBOLS.get(symbol, 0)
+    marker_path = style.get("marker_path")
+    marker_glyph = style.get("marker_glyph")
+    color_str = _css(style.get("color"), default_color)
+    color = _parse_color(color_str)
+    sw = float(style.get("stroke_width", 0.0))
+    if (
+        symbol in {"plus_line", "x_line", "horizontal_line", "vertical_line"}
+        or (marker_path and not bool(marker_path.get("filled", True)))
+    ) and sw <= 0:
+        sw = 1.0
+    stroke = _rgba(style.get("stroke"), color_str) if sw > 0 else (0, 0, 0, 0)
+    radius = max(0.5, float(style.get("size", 8.0)) / 2.0)
+    if marker_glyph:
+        cmd.text(x, y + radius * 0.68, 1, 2 * radius, color, str(marker_glyph))
+    elif marker_path:
+        for contour in marker_path.get("contours") or ():
+            values = np.asarray(contour, dtype=np.float64).reshape(-1, 2)
+            points = [(x + 2 * radius * float(px), y - 2 * radius * float(py)) for px, py in values]
+            if bool(marker_path.get("filled", True)):
+                cmd.fill(points, color)
+                if sw > 0:
+                    cmd.stroke(points, sw, stroke if stroke[3] else color, closed=True)
+            else:
+                cmd.stroke(points, max(1.0, sw), color)
+    else:
+        cmd.point(x, y, radius, sym, color, sw, stroke)
+
+
 def _emit_legend_hatch(
     cmd: _Cmd,
     x0: float,
@@ -2403,7 +2584,7 @@ def _emit_legend_hatch(
     color: tuple[int, int, int, int],
 ) -> None:
     mid_y = (y0 + y1) / 2
-    if "-" in hatch or "*" in hatch:
+    if "-" in hatch:
         cmd.stroke([(x0, mid_y), (x1, mid_y)], 1.0, color)
     for char, direction in (("/", 1), ("\\", -1)):
         count = min(3, hatch.count(char))
@@ -2421,10 +2602,26 @@ def _emit_legend_hatch(
     if "." in hatch:
         for fraction in (0.3, 0.7):
             x = x0 + fraction * (x1 - x0)
-            cmd.stroke([(x, mid_y), (x + 0.1, mid_y)], 1.0, color)
+            cmd.point(
+                x,
+                mid_y,
+                min(1.1, (y1 - y0) * 0.09),
+                _SYMBOLS["circle"],
+                color,
+                0.0,
+                (0, 0, 0, 0),
+            )
     if "*" in hatch:
         center = (x0 + x1) / 2
-        cmd.stroke([(center, y0), (center, y1)], 1.0, color)
+        cmd.point(
+            center,
+            mid_y,
+            min(x1 - x0, y1 - y0) * 0.28,
+            _SYMBOLS["star"],
+            color,
+            0.0,
+            (0, 0, 0, 0),
+        )
 
 
 def _emit_colorbar(
@@ -2442,20 +2639,29 @@ def _emit_colorbar(
     title_paint = _parse_color(slot_text_color(title_slot, text_color))
     tick_size = slot_font_size(tick_slot, COLORBAR_FONT_SIZE)
     tick_paint = _parse_color(slot_text_color(tick_slot, text_color))
-    from ._svg import _colorbar_tick_target, _linear_ticks, _lut
+    from ._svg import _colorbar_tick_target, _fmt_log, _linear_ticks, _log_ticks, _lut
 
     orientation = options.get("orientation", "vertical")
     shrink = float(options.get("shrink", 1.0))
     anchor = options.get("anchor") or [0.5, 0.5]
-    if orientation == "horizontal":
+    placement = options.get("placement")
+    if placement == "axes":
+        x, y, width, height = plot["x"], plot["y"], plot["w"], plot["h"]
+    elif orientation == "horizontal":
         width = plot["w"] * shrink
         x = plot["x"] + (plot["w"] - width) * float(anchor[0])
-        y = plot["y"] + plot["h"] + (plot["bottom_axis_room"] or 10)
+        gap = (
+            float(options["pad"]) * plot["h"]
+            if options.get("pad") is not None
+            else (plot["bottom_axis_room"] or 10)
+        )
+        y = plot["y"] + plot["h"] + gap
         height = 18
     else:
         # right_axis_room shifts the whole colorbar clear of right-side named
         # y-axis chrome (layout() reserves room for both additively).
-        x = plot["x"] + plot["w"] + right_axis_room + 24
+        gap = float(options["pad"]) * plot["w"] if options.get("pad") is not None else 24.0
+        x = plot["x"] + plot["w"] + right_axis_room + gap
         height = plot["h"] * shrink
         y = plot["y"] + (plot["h"] - height) * (1.0 - float(anchor[1]))
         width = 18
@@ -2464,52 +2670,130 @@ def _emit_colorbar(
     levels = options.get("levels")
     if levels and int(levels) >= 1:
         n_seg = int(levels)
-        colors = _lut(
-            options.get("colormap", "viridis"),
-            (np.arange(n_seg, dtype=np.float64) + 0.5) / n_seg,
+        exact_colors = options.get("band_colors")
+        colors = (
+            np.asarray(exact_colors, dtype=np.uint8)
+            if isinstance(exact_colors, list) and len(exact_colors) == n_seg
+            else _lut(
+                options.get("colormap", "viridis"),
+                (np.arange(n_seg, dtype=np.float64) + 0.5) / n_seg,
+            )
         )
     else:
         n_seg = 64
         colors = _lut(options.get("colormap", "viridis"), np.linspace(0.0, 1.0, n_seg))
-    for index, color in enumerate(colors):
-        if orientation == "horizontal":
-            x0, x1 = x + width * index / n_seg, x + width * (index + 1) / n_seg
-            cmd.fill(_rect_pts(x0, y, x1 + 0.5, y + height), (*map(int, color), 255))
-        else:
-            y0 = y + height * (n_seg - 1 - index) / n_seg
-            y1 = y + height * (n_seg - index) / n_seg
-            cmd.fill(_rect_pts(x, y0, x + width, y1 + 0.5), (*map(int, color), 255))
+    fractions = np.linspace(0.0, 1.0, n_seg + 1)
+    boundaries = np.asarray(options.get("boundaries", []), dtype=np.float64).reshape(-1)
+    if (
+        levels
+        and options.get("spacing") == "proportional"
+        and len(boundaries) == n_seg + 1
+        and np.isfinite(boundaries).all()
+        and boundaries[-1] > boundaries[0]
+        and np.all(np.diff(boundaries) > 0.0)
+    ):
+        fractions = (boundaries - boundaries[0]) / (boundaries[-1] - boundaries[0])
+    line_only = bool(options.get("line_only"))
+    if line_only:
+        outline = _rect_pts(x, y, x + width, y + height)
+        cmd.fill(outline, (255, 255, 255, 255))
+        cmd.stroke([*outline, outline[0]], 1.0, _parse_color(text_color))
+    else:
+        for index, color in enumerate(colors):
+            lower, upper = float(fractions[index]), float(fractions[index + 1])
+            if orientation == "horizontal":
+                x0, x1 = x + width * lower, x + width * upper
+                cmd.fill(_rect_pts(x0, y, x1 + 0.5, y + height), (*map(int, color), 255))
+            else:
+                y0 = y + height * (1.0 - upper)
+                y1 = y + height * (1.0 - lower)
+                cmd.fill(_rect_pts(x, y0, x + width, y1 + 0.5), (*map(int, color), 255))
     domain = options.get("domain", [0.0, 1.0])
     lo, hi = float(domain[0]), float(domain[1])
-    span = (hi - lo) or 1.0
+    log_scale = options.get("scale") == "log"
+
+    def fraction(value: float) -> float:
+        if log_scale:
+            return np.log(value / lo) / np.log(hi / lo) if hi != lo else 0.0
+        return (value - lo) / ((hi - lo) or 1.0)
+
+    def automatic_ticks(length: float) -> list[float]:
+        target = _colorbar_tick_target(length)
+        return (
+            _log_ticks(lo, hi, target)[1] if log_scale else _linear_ticks(lo, hi, target)[0]
+        ) or [lo, hi]
+
+    format_tick = _fmt_log if log_scale else lambda value: f"{value:g}"
     ticks = options.get("ticks")
+    supplied_labels = options.get("tick_labels")
+    tick_label_map = (
+        {float(value): str(supplied_labels[index]) for index, value in enumerate(ticks)}
+        if isinstance(ticks, list)
+        and isinstance(supplied_labels, list)
+        and len(ticks) == len(supplied_labels)
+        else {}
+    )
+
+    def tick_text(value: float) -> str:
+        return tick_label_map.get(float(value), format_tick(value))
+
     extend = options.get("extend")
     if extend in ("max", "both"):
-        color = (*map(int, colors[-1]), 255)
+        color = (
+            (255, 255, 255, 255)
+            if line_only
+            else (*map(int, options.get("over_color", colors[-1])), 255)
+        )
         if orientation == "horizontal":
             pts = [(x + width, y), (x + width, y + height), (x + width + 9, y + height / 2)]
         else:
             pts = [(x, y), (x + width, y), (x + width / 2, y - 9)]
         cmd.fill(pts, color)
+        if line_only:
+            cmd.stroke([*pts, pts[0]], 1.0, _parse_color(text_color))
     if extend in ("min", "both"):
-        color = (*map(int, colors[0]), 255)
+        color = (
+            (255, 255, 255, 255)
+            if line_only
+            else (*map(int, options.get("under_color", colors[0])), 255)
+        )
         if orientation == "horizontal":
             pts = [(x, y), (x, y + height), (x - 9, y + height / 2)]
         else:
             pts = [(x, y + height), (x + width, y + height), (x + width / 2, y + height + 9)]
         cmd.fill(pts, color)
+        if line_only:
+            cmd.stroke([*pts, pts[0]], 1.0, _parse_color(text_color))
+    for line in options.get("lines") or []:
+        value = float(line.get("value", np.nan))
+        if not np.isfinite(value) or value < min(lo, hi) or value > max(lo, hi):
+            continue
+        line_fraction = fraction(value)
+        color = _parse_color(str(line.get("color") or text_color))
+        line_width = max(0.5, float(line.get("width", 1.0)))
+        dash = [3.7 * line_width, 1.6 * line_width] if line.get("dash") == "dashed" else None
+        if orientation == "horizontal":
+            position = x + width * line_fraction
+            cmd.stroke([(position, y), (position, y + height)], line_width, color, dash=dash)
+        else:
+            position = y + height * (1.0 - line_fraction)
+            cmd.stroke([(x, position), (x + width, position)], line_width, color, dash=dash)
     if orientation == "horizontal":
         h_positions = (
             [float(value) for value in ticks if lo <= float(value) <= hi]
             if ticks is not None
-            else (_linear_ticks(lo, hi, _colorbar_tick_target(width))[0] or [lo, hi])
+            else automatic_ticks(width)
         )
         if options.get("minor_ticks") and len(h_positions) >= 2:
             ordered = sorted(set(h_positions))
             for left, right in pairwise(ordered):
                 for step in range(1, 5):
-                    value = left + (right - left) * step / 5.0
-                    tx = x + width * (value - lo) / span
+                    value = (
+                        10 ** (np.log10(left) + (np.log10(right) - np.log10(left)) * step / 5.0)
+                        if log_scale
+                        else left + (right - left) * step / 5.0
+                    )
+                    tx = x + width * fraction(value)
                     cmd.stroke(
                         [(tx, y + height), (tx, y + height + 3)],
                         1,
@@ -2517,12 +2801,12 @@ def _emit_colorbar(
                     )
         for value in h_positions:
             cmd.text(
-                x + width * (value - lo) / span,
+                x + width * fraction(value),
                 y + height + 13,
                 1,
                 tick_size,
                 tick_paint,
-                f"{value:g}",
+                tick_text(value),
             )
         if options.get("label"):
             cmd.text(
@@ -2537,14 +2821,18 @@ def _emit_colorbar(
         tick_positions = (
             [float(value) for value in ticks if lo <= float(value) <= hi]
             if ticks is not None
-            else (_linear_ticks(lo, hi, _colorbar_tick_target(height))[0] or [lo, hi])
+            else automatic_ticks(height)
         )
         if options.get("minor_ticks") and len(tick_positions) >= 2:
             ordered = sorted(set(tick_positions))
             for lower, upper in pairwise(ordered):
                 for step in range(1, 5):
-                    value = lower + (upper - lower) * step / 5.0
-                    ty = y + height * (1 - (value - lo) / span)
+                    value = (
+                        10 ** (np.log10(lower) + (np.log10(upper) - np.log10(lower)) * step / 5.0)
+                        if log_scale
+                        else lower + (upper - lower) * step / 5.0
+                    )
+                    ty = y + height * (1 - fraction(value))
                     cmd.stroke(
                         [(x + width, ty), (x + width + 3, ty)],
                         1,
@@ -2553,11 +2841,11 @@ def _emit_colorbar(
         for value in tick_positions:
             cmd.text(
                 x + width + 4,
-                y + height * (1 - (value - lo) / span) + 4,
+                y + height * (1 - fraction(value)) + 4,
                 0,
                 tick_size,
                 tick_paint,
-                f"{value:g}",
+                tick_text(value),
             )
         # Matplotlib rotates a vertical colorbar's label 90° CCW and centers it
         # alongside the bar, outboard of the tick labels. The native glyph

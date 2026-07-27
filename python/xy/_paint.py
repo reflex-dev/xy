@@ -12,12 +12,18 @@ ColumnReader = Callable[[int], np.ndarray]
 
 
 def triangle_mesh_boundary(*vertices: np.ndarray) -> np.ndarray | None:
-    """Recover the single exterior ring of a tessellated simple polygon.
+    """Recover one exterior walk from a connected tessellated polygon.
 
     ``Axes.fill`` reaches the shared triangle renderer for WebGL, but static
     exporters should paint its triangulation as one polygon. Otherwise each
     independently antialiased triangle leaks a hairline of background (and
     applies translucent alpha more than once) along internal diagonals.
+
+    A filled strip can pinch where its two curves meet. Its boundary then has
+    degree-four vertices rather than being a simple ring, and degenerate
+    triangles at the pinch can repeat an edge twice. Retaining odd-count edges
+    and following an Eulerian boundary walk preserves those touching lobes as
+    one static fill without exposing the tessellation.
     """
     if len(vertices) != 6:
         raise ValueError("triangle mesh boundary requires six coordinate arrays")
@@ -72,29 +78,39 @@ def triangle_mesh_boundary(*vertices: np.ndarray) -> np.ndarray | None:
             start_key, end_key = vertex_key(start), vertex_key(end)
             edge = (start_key, end_key) if start_key <= end_key else (end_key, start_key)
             edge_counts[edge] = edge_counts.get(edge, 0) + 1
-    boundary = [edge for edge, count in edge_counts.items() if count == 1]
+    # Internal edges occur an even number of times. Degenerate triangles can
+    # contribute the same edge twice, so ``count == 1`` incorrectly removes a
+    # real boundary edge after a curve touches its baseline.
+    boundary = [edge for edge, count in edge_counts.items() if edge[0] != edge[1] and count % 2]
     if len(boundary) < 3:
         return None
-    adjacency: dict[int, list[int]] = {}
+    adjacency: dict[int, set[int]] = {}
     for start, end in boundary:
-        adjacency.setdefault(start, []).append(end)
-        adjacency.setdefault(end, []).append(start)
-    if any(len(neighbors) != 2 for neighbors in adjacency.values()):
+        adjacency.setdefault(start, set()).add(end)
+        adjacency.setdefault(end, set()).add(start)
+    if any(len(neighbors) % 2 for neighbors in adjacency.values()):
         return None
+
+    # Hierholzer's algorithm also handles pinch vertices where two or more
+    # boundary rings touch at one point. A disconnected boundary (for example,
+    # a polygon with a hole) deliberately falls back to triangle rendering:
+    # the current static fill command carries one walk and cannot preserve
+    # multiple-subpath winding semantics.
     first = boundary[0][0]
-    ring = [first]
-    previous: int | None = None
-    current = first
-    for _ in range(len(boundary)):
-        neighbors = adjacency[current]
-        following = neighbors[0] if neighbors[0] != previous else neighbors[1]
-        if following == first:
-            if len(ring) != len(boundary):
-                return None
-            return np.asarray([points_by_key[key] for key in ring], dtype=np.float64)
-        ring.append(following)
-        previous, current = current, following
-    return None
+    stack = [first]
+    walk: list[int] = []
+    while stack:
+        current = stack[-1]
+        if adjacency[current]:
+            following = adjacency[current].pop()
+            adjacency[following].remove(current)
+            stack.append(following)
+        else:
+            walk.append(stack.pop())
+    if len(walk) != len(boundary) + 1 or walk[0] != walk[-1]:
+        return None
+    walk.reverse()
+    return np.asarray([points_by_key[key] for key in walk[:-1]], dtype=np.float64)
 
 
 def direct_rgba(channel: dict[str, Any], n: int, read_column: ColumnReader) -> np.ndarray | None:

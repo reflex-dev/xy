@@ -420,9 +420,9 @@ The reassembled bytes are identical to the source blob, which is what keeps
 
 Two independent version constants:
 
-- **Renderer/spec protocol.** `PROTOCOL_VERSION = 8` (`python/xy/config.py`)
+- **Renderer/spec protocol.** `PROTOCOL_VERSION = 9` (`python/xy/config.py`)
   rides every first-paint spec as `spec["protocol"]`; the client's
-  `PROTOCOL = 8` (`js/src/00_header.ts`) is checked in the `ChartView`
+  `PROTOCOL = 9` (`js/src/00_header.ts`) is checked in the `ChartView`
   constructor. A mismatch replaces the chart element with "update the xy
   package and restart the kernel" and throws. Requests and replies carry no
   version of their own — the handshake happens once, at first paint, before
@@ -438,7 +438,16 @@ Two independent version constants:
   and added an optional top-level `palette`; a v6 client indexes its built-in
   table with the stop array, misses, and silently paints viridis. v8 adds
   legend/colorbar geometry, named colormaps, and match-fill strokes that an
-  older v7 client would accept but silently render with its old defaults.
+  older v7 client would accept but silently render with its old defaults. v9
+  adds explicit minor tick/style tiers, the log `nonpositive` policy,
+  scalar-normalization scale, colorbar padding and explicit-axes placement,
+  exact `band_colors`/extension colors, plus `colorbar.lines` isoline overlays
+  and the `line_only` body mode used by line-contour mappables; a v8 client
+  would silently omit minor styling, always mask log values in the browser,
+  place log ticks linearly, draw an explicit colorbar outside its supplied
+  axes, substitute a fallback ramp for listed colors, silently omit contour
+  levels drawn across the ramp, or incorrectly fill a line-contour colorbar
+  with that ramp.
 - **Transport frame.** `FRAME_MAGIC` `"XYBF"` with `FRAME_VERSION = 1`
   versions the binary envelope separately, so the transport and the renderer
   can evolve without coupling.
