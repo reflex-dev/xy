@@ -139,6 +139,7 @@ hardware, browser, raw samples, failure rows, and render oracles:
 - [Launch report](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro/report.md)
 - [Environment](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro/environment.json)
 - [Raw default-path results](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro/default-results.json)
+- [Raw CPU-fallback results](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro/cpu-fallback-results.json)
 - [Original 0.1.0 launch baseline](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md)
 - [Benchmark runbook](https://github.com/reflex-dev/xy/blob/main/benchmarks/README.md)
 

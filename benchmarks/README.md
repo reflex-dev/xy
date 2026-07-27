@@ -74,8 +74,9 @@ overwrite an earlier launch baseline or mix hardware and SwiftShader rows.
 
 Warm the checkout before a measured run. A first invocation in a fresh worktree
 pays for cold bytecode caches, Matplotlib's font cache, and Kaleido's browser
-download — measured at 13× the warm value for the `xy` 10k static row — so
-discard it rather than publishing it.
+download, which inflate every library's first row by an amount that is not part
+of any output contract. Run the suite once and discard it; publish the run after
+it.
 
 ## CI Software GL
 
