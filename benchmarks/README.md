@@ -169,8 +169,49 @@ python benchmarks/bench_ux.py \
   --chrome "$CHROME" --out ux-100k.json
 ```
 
-Screenshots land in `<out-stem>-shots/`: the frame the clock stopped on, at
-both `visible-complete` and `settle-complete`, for every arm.
+### Every run records video
+
+Recording is **on by default for every arm** — a benchmark that cannot be
+watched cannot be checked. Each run produces:
+
+| Artifact | What it is |
+| --- | --- |
+| `<out-stem>-video/<arm>-<n>/` | every frame the page presented, `NNNNNN_<offset_ms>.jpg`, offset measured from navigation |
+| `<out-stem>-grid-<n>.mp4` | all arms replayed against one shared clock, assembled automatically |
+| `<out-stem>-shots/` | the exact frames the clock stopped on (`visible-complete`, `settle-complete`) |
+
+**The video is the load race: recording starts at navigation and stops the
+moment that arm's chart is rendered** (`visible-complete`). So a panel ending
+*is* that library finishing, and the gesture and settle clocks never carry
+screencast cost at all.
+
+In the grid, video time T is T ms after page load **for every panel
+simultaneously** — each arm's frames carry offsets from its own navigation,
+so replaying them on one clock makes the panels directly comparable. Panels
+show black before their first frame and hold their last frame once done.
+Every panel is labeled with its arm and a live elapsed-time readout, so any
+moment can be checked against the JSON.
+
+Screencast cost is measured, not assumed: across three recorded and three
+unrecorded runs of all five arms at 100k, the difference in
+`visible_complete_ms` ranged **−5.9 ms to +5.7 ms** — smaller than each arm's
+own run-to-run spread. Recording is therefore always on; `--no-record`
+(and `--no-grid`) exist for debugging, not for measurement hygiene.
+
+Frames are JPEG at whatever rate Chrome chose to present, while the
+measurement clock reads the raw drawing buffer every animation frame. The
+video is for verification; the JSON remains the measurement. The two agree:
+on a recorded 100k run, four of five arms placed the probe's
+`visible_complete_ms` inside the bracket between the last blank captured
+frame and the first fully-drawn one — an independent check, since frame
+timestamps come from the driver's clock and the probe's from
+`performance.now()`.
+
+Assemble a grid by hand from any recording:
+
+```bash
+python benchmarks/make_ux_grid.py <out-stem>-video --out grid.mp4
+```
 
 ### The measurement contract
 

@@ -391,6 +391,7 @@ def drive_browser(
     memory_limit_bytes: int,
     software: bool,
     shots_prefix: Path | None = None,
+    record_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Navigate, inject the arm adapter + probe engine, await UX_BENCH title.
 
@@ -399,6 +400,12 @@ def drive_browser(
     When `shots_prefix` is set, each `UX_SHOT <name>` checkpoint from the
     probe is captured as `<shots_prefix>-<name>.png` — the frame the clock
     actually stopped on, for human verification.
+
+    When `record_dir` is set, a CDP screencast records every frame the page
+    presents from navigation until the chart is rendered (visible-complete),
+    each written as `NNNNNN_<offset_ms>.jpg` with the offset measured from
+    navigation.  Recording stops at visible-complete: the video is the load
+    race, and the gesture and settle clocks never carry screencast cost.
     """
     with tempfile.TemporaryDirectory() as td:
         profile = Path(td) / "profile"
@@ -452,6 +459,28 @@ def drive_browser(
             )
             call_id = 0
 
+            def on_event(msg: dict[str, Any]) -> None:
+                """Persist screencast frames; ack so Chrome keeps sending."""
+                nonlocal frame_count
+                if msg.get("method") != "Page.screencastFrame":
+                    return
+                params = msg.get("params", {})
+                offset_ms = int((time.monotonic() - nav_epoch) * 1000)
+                import base64
+
+                path = record_dir / f"{frame_count:06d}_{offset_ms}.jpg"
+                path.write_bytes(base64.b64decode(params["data"]))
+                frame_count += 1
+                ws.send(
+                    json.dumps(
+                        {
+                            "id": 10_000_000 + frame_count,
+                            "method": "Page.screencastFrameAck",
+                            "params": {"sessionId": params["sessionId"]},
+                        }
+                    )
+                )
+
             def evaluate(expr: str) -> Any:
                 nonlocal call_id
                 call_id += 1
@@ -466,6 +495,9 @@ def drive_browser(
                 )
                 while True:
                     msg = json.loads(ws.recv())
+                    if msg.get("method"):
+                        on_event(msg)
+                        continue
                     if msg.get("id") == call_id:
                         return msg.get("result", {}).get("result", {}).get("value")
 
@@ -475,6 +507,9 @@ def drive_browser(
                 ws.send(json.dumps({"id": call_id, "method": method, "params": params}))
                 while True:
                     msg = json.loads(ws.recv())
+                    if msg.get("method"):
+                        on_event(msg)
+                        continue
                     if msg.get("id") == call_id:
                         return msg.get("result", {})
 
@@ -497,6 +532,16 @@ def drive_browser(
             command("Page.enable", {})
             for script in inject_js:
                 command("Page.addScriptToEvaluateOnNewDocument", {"source": script})
+
+            frame_count = 0
+            nav_epoch = None
+            if record_dir is not None:
+                record_dir.mkdir(parents=True, exist_ok=True)
+                command(
+                    "Page.startScreencast",
+                    {"format": "jpeg", "quality": 80, "everyNthFrame": 1},
+                )
+            nav_epoch = time.monotonic()
             command("Page.navigate", {"url": url})
 
             last_stage = ""
@@ -513,6 +558,8 @@ def drive_browser(
                 if title.startswith("UX_BENCH "):
                     result = json.loads(title[len("UX_BENCH ") :])
                     result.update({"status": "ok", "browser_peak_rss_bytes": peak})
+                    if record_dir is not None:
+                        result["recorded_frames"] = frame_count
                     return result
                 if title.startswith("UX_ERROR "):
                     detail = title[len("UX_ERROR ") :]
@@ -526,7 +573,14 @@ def drive_browser(
                         "detail": parsed,
                     }
                 if title.startswith("UX_SHOT "):
-                    capture(title[len("UX_SHOT ") :].strip())
+                    name = title[len("UX_SHOT ") :].strip()
+                    capture(name)
+                    if name == "visible-complete" and record_dir is not None:
+                        # The video is the load race: it ends the moment this
+                        # arm's chart is rendered.  Stopping here also keeps
+                        # screencast cost out of the gesture and settle
+                        # clocks entirely -- only the load phase carries it.
+                        command("Page.stopScreencast", {})
                     evaluate("window.__shotDone = true")
                 elif title.startswith("UX_STAGE "):
                     last_stage = title[len("UX_STAGE ") :]
@@ -561,6 +615,7 @@ def run_xy_arm(
     limit: int,
     software: bool,
     shots_prefix: Path | None = None,
+    record_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Spawn the live host, probe it, tear it down. Host tree = python pool."""
     density = "off" if arm == "xy-exact" else "auto"
@@ -593,6 +648,7 @@ def run_xy_arm(
             memory_limit_bytes=limit,
             software=software,
             shots_prefix=shots_prefix,
+            record_dir=record_dir,
         )
         row["mode"] = meta["mode"]
         row["python_peak_rss_bytes"] = poller.stop()
@@ -611,6 +667,7 @@ def run_webagg_arm(
     limit: int,
     software: bool,
     shots_prefix: Path | None = None,
+    record_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Spawn the WebAgg host, probe its real page, tear it down."""
     host = subprocess.Popen(
@@ -645,6 +702,7 @@ def run_webagg_arm(
             memory_limit_bytes=limit,
             software=software,
             shots_prefix=shots_prefix,
+            record_dir=record_dir,
         )
         row["mode"] = meta["mode"]
         row["python_build_ms"] = meta["build_ms"]
@@ -664,6 +722,7 @@ def run_datashader_arm(
     limit: int,
     software: bool,
     shots_prefix: Path | None = None,
+    record_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Spawn the hvPlot/Bokeh host, probe its page, tear it down."""
     host = subprocess.Popen(
@@ -696,6 +755,7 @@ def run_datashader_arm(
             memory_limit_bytes=limit,
             software=software,
             shots_prefix=shots_prefix,
+            record_dir=record_dir,
         )
         row["mode"] = meta["mode"]
         row["python_build_ms"] = meta["build_ms"]
@@ -715,6 +775,7 @@ def run_plotly_arm(
     limit: int,
     software: bool,
     shots_prefix: Path | None = None,
+    record_dir: Path | None = None,
 ) -> dict[str, Any]:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     artifact = ARTIFACTS / f"plotly-{n}.html"
@@ -747,6 +808,7 @@ def run_plotly_arm(
         memory_limit_bytes=limit,
         software=software,
         shots_prefix=shots_prefix,
+        record_dir=record_dir,
     )
     row["mode"] = "scattergl" if n > 1000 else "scatter-svg"
     row["python_build_ms"] = build_s * 1e3
@@ -765,6 +827,16 @@ def main() -> None:
     parser.add_argument("--timeout", type=float, default=180)
     parser.add_argument("--memory-gib", type=float, default=36)
     parser.add_argument("--software", action="store_true")
+    parser.add_argument(
+        "--no-record",
+        action="store_true",
+        help="skip the per-arm screencast (recording is on by default)",
+    )
+    parser.add_argument(
+        "--no-grid",
+        action="store_true",
+        help="skip assembling the synced grid video after the sweep",
+    )
     parser.add_argument("--chrome", default=os.environ.get("CHROME", interactive.CHROME))
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
@@ -785,10 +857,12 @@ def main() -> None:
     limit = int(args.memory_gib * 2**30)
 
     shots_dir = args.out.parent / (args.out.stem + "-shots")
+    video_dir = args.out.parent / (args.out.stem + "-video")
     rows = []
     for n in sizes:
         for arm in arms:
             prefix = shots_dir / f"{arm}-{n}"
+            rec = None if args.no_record else (video_dir / f"{arm}-{n}")
             if arm in ("xy", "xy-exact"):
                 row = run_xy_arm(
                     arm,
@@ -798,6 +872,7 @@ def main() -> None:
                     limit=limit,
                     software=args.software,
                     shots_prefix=prefix,
+                    record_dir=rec,
                 )
             elif arm == "plotly":
                 row = run_plotly_arm(
@@ -807,6 +882,7 @@ def main() -> None:
                     limit=limit,
                     software=args.software,
                     shots_prefix=prefix,
+                    record_dir=rec,
                 )
             elif arm == "matplotlib":
                 row = run_webagg_arm(
@@ -816,6 +892,7 @@ def main() -> None:
                     limit=limit,
                     software=args.software,
                     shots_prefix=prefix,
+                    record_dir=rec,
                 )
             elif arm == "datashader":
                 row = run_datashader_arm(
@@ -825,6 +902,7 @@ def main() -> None:
                     limit=limit,
                     software=args.software,
                     shots_prefix=prefix,
+                    record_dir=rec,
                 )
             else:
                 row = {"status": "not_implemented"}
@@ -852,9 +930,40 @@ def main() -> None:
                 flush=True,
             )
 
+    if not args.no_record and not args.no_grid and video_dir.exists():
+        # One synced grid per size: every arm replayed against a shared clock,
+        # so a moment in the video is the same moment for all of them.
+        for n in sizes:
+            frames = sorted(video_dir.glob(f"*-{n}"))
+            if not frames:
+                continue
+            staged = video_dir / f"_grid-{n}"
+            staged.mkdir(exist_ok=True)
+            for src in frames:
+                link = staged / src.name
+                if not link.exists():
+                    link.symlink_to(src)
+            grid = args.out.parent / f"{args.out.stem}-grid-{n}.mp4"
+            try:
+                subprocess.run(
+                    [
+                        sys.executable,
+                        str(Path(__file__).resolve().parent / "make_ux_grid.py"),
+                        str(staged),
+                        "--out",
+                        str(grid),
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
+                print(f"grid video: {grid}", flush=True)
+            except subprocess.CalledProcessError as exc:
+                print(f"grid video failed for n={n}: {exc.stderr[-300:]}", flush=True)
+
     report = {
         "generated_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "contract": "correct(sentinels+domain) then pixel-stable; fixed-cadence inputs",
+        "screencast": "off" if args.no_record else "on (uniform across arms)",
         "sizes": sizes,
         "arms": arms,
         "environment": collect_environment_metadata(chromium=args.chrome),
