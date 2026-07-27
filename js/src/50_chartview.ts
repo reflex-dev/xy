@@ -5952,6 +5952,63 @@ export class ChartView {
         label(item.text, placement.css, sideAxis, "tick", null, placement);
       }
     }
+    const attachYTitleToTicks = (title, axis, onRight) => {
+      if (!title || !axis) return;
+      const position = String(axis.label_position || "center").replace(/-/g, "_");
+      if (position.startsWith("inside_")) return;
+      const tickLabels = [...this.labels.children].filter((element) =>
+        element.dataset.xyLabelKind === "tick"
+        && element.dataset.xyAxis === String(axis.id ?? "")
+        && element.dataset.xyAxisSide === (onRight ? "right" : "left")
+      );
+      const root = this.root.getBoundingClientRect();
+      const tickRects = tickLabels.map((element) => element.getBoundingClientRect());
+      const titleRect = title.getBoundingClientRect();
+      const fontSize = parseFloat(getComputedStyle(title).fontSize) || 12;
+      const rawOffset = axis.label_offset;
+      const gap = rawOffset !== undefined
+        && rawOffset !== null
+        && Number.isFinite(Number(rawOffset))
+        ? Number(rawOffset)
+        : 0.4 * fontSize;
+      // Matplotlib centers the title along the axis, then offsets it
+      // perpendicular to the union of the tick-label bounds and the
+      // corresponding spine. Including the spine keeps inward/negative-pad
+      // labels from pulling an outside title back into the plot.
+      const spineEdge = root.left + (onRight ? p.x + p.w : p.x);
+      const tickEdge = onRight
+        ? Math.max(spineEdge, ...tickRects.map((rect) => rect.right))
+        : Math.min(spineEdge, ...tickRects.map((rect) => rect.left));
+      const targetEdge = onRight ? tickEdge + gap : tickEdge - gap;
+      const currentEdge = onRight ? titleRect.left : titleRect.right;
+      const currentLeft = parseFloat(title.style.left) || 0;
+      const delta = targetEdge - currentEdge;
+      // Keep an unusually large title inside the chart canvas. Moving an
+      // absolutely positioned label by `delta` translates its measured box by
+      // the same amount, so derive the clamp from the captured geometry and
+      // avoid a write-then-layout-read on every chrome redraw.
+      const adjustedLeft = titleRect.left + delta;
+      const adjustedRight = titleRect.right + delta;
+      const correction = adjustedLeft < root.left
+        ? root.left - adjustedLeft + 1
+        : adjustedRight > root.right ? root.right - adjustedRight - 1 : 0;
+      title.style.left = `${currentLeft + delta + correction}px`;
+    };
+    const renderYTitle = (axis, text, onRight) => {
+      const angle = onRight ? 90 : -90;
+      const fallbackCss =
+        `left:${onRight ? p.x + p.w : p.x}px;top:${p.y + p.h / 2}px;` +
+        `transform:translate(-50%,-50%) rotate(${angle}deg);` +
+        "transform-origin:center;";
+      const placement = this._axisLabelCss(axis, "y", fallbackCss);
+      const title = label(text, placement.css, axis, "label", placement.style);
+      // A structured CSS label_position is the placement authority. It may
+      // deliberately omit `left` in favor of `right`, so tick attachment must
+      // not synthesize a competing left offset.
+      if (placement.style === null) {
+        attachYTitleToTicks(title, axis, onRight);
+      }
+    };
     for (const axis of extraYAxes) {
       const ticks = this._axisTicks(axis.id, this._axisTickTarget(axis.id, Math.max(3, p.h / 45)));
       const labelCandidates = [];
@@ -5969,45 +6026,9 @@ export class ChartView {
         }
       }
       if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
-        const fallbackCss = axis.side === "left"
-          ? `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;`
-          : `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;`;
-        const placement = this._axisLabelCss(axis, "y", fallbackCss);
-        label(axis.label, placement.css, axis, "label", placement.style);
+        renderYTitle(axis, axis.label, axis.side !== "left");
       }
     }
-    const attachYTitleToTicks = (title, axis, onRight) => {
-      if (!title || !axis) return;
-      const position = String(axis.label_position || "center").replace(/-/g, "_");
-      if (position.startsWith("inside_")) return;
-      const tickLabels = [...this.labels.children].filter((element) =>
-        element.dataset.xyLabelKind === "tick"
-        && element.dataset.xyAxis === String(axis.id ?? "")
-        && element.dataset.xyAxisSide === (onRight ? "right" : "left")
-      );
-      if (!tickLabels.length) return;
-      const root = this.root.getBoundingClientRect();
-      const tickRects = tickLabels.map((element) => element.getBoundingClientRect());
-      const titleRect = title.getBoundingClientRect();
-      const fontSize = parseFloat(getComputedStyle(title).fontSize) || 12;
-      const labelOffset = Number(axis.label_offset || 0);
-      const targetEdge = onRight
-        ? Math.max(...tickRects.map((rect) => rect.right)) + 0.4 * fontSize + labelOffset
-        : Math.min(...tickRects.map((rect) => rect.left)) - 0.4 * fontSize - labelOffset;
-      const currentEdge = onRight ? titleRect.left : titleRect.right;
-      const currentLeft = parseFloat(title.style.left) || 0;
-      const delta = targetEdge - currentEdge;
-      // Keep an unusually large title inside the chart canvas. Moving an
-      // absolutely positioned label by `delta` translates its measured box by
-      // the same amount, so derive the clamp from the captured geometry and
-      // avoid a write-then-layout-read on every chrome redraw.
-      const adjustedLeft = titleRect.left + delta;
-      const adjustedRight = titleRect.right + delta;
-      const correction = adjustedLeft < root.left
-        ? root.left - adjustedLeft + 1
-        : adjustedRight > root.right ? root.right - adjustedRight - 1 : 0;
-      title.style.left = `${currentLeft + delta + correction}px`;
-    };
     if (s.x_axis.label && !hideX) {
       const top = xAxis.side === "top" ? p.y - 34 : p.y + p.h + 24;
       const fallbackCss = `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);`;
@@ -6015,17 +6036,7 @@ export class ChartView {
       label(s.x_axis.label, placement.css, xAxis, "label", placement.style);
     }
     if (s.y_axis.label && !hideY) {
-      const fallbackCss = yAxis.side === "right"
-        ? `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;`
-        : `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;`;
-      const placement = this._axisLabelCss(yAxis, "y", fallbackCss);
-      const title = label(s.y_axis.label, placement.css, yAxis, "label", placement.style);
-      // A structured CSS label_position is the placement authority. It may
-      // deliberately omit `left` in favor of `right`, so tick attachment must
-      // not synthesize a competing left offset.
-      if (placement.style === null) {
-        attachYTitleToTicks(title, yAxis, yAxis.side === "right");
-      }
+      renderYTitle(yAxis, s.y_axis.label, yAxis.side === "right");
     }
     this._drawAnnotationLabels(updateLabels);
     // Label layout resolves responsive callout offsets before the pointer is
