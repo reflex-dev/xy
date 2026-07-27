@@ -9,18 +9,19 @@
   <a href="https://reflex.dev/docs/xy/" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/docs-reflex.dev-blue" alt="Docs" /></a>
 </p>
 
-XY is a fast, interactive, customizable Python charting library for the web,
-notebooks, and static exports.
+XY is an extremely fast, interactive, customizable Python charting library for
+the web, notebooks, and static exports.
 
-Charts are composed declaratively, or through the familiar matplotlib shim. You
-can completely customize them with Python, CSS, or Tailwind.
+Charts are composed declaratively or through matplotlib conventions. You can
+fully customize them with Python, CSS, or Tailwind.
 
-Small datasets render directly with full detail. For larger datasets, a
-high-performance Rust engine processes only what the screen needs, keeping
-charts fast and responsive. Zooming restores the full detail. Pan, zoom, hover,
-and selection are built in, and selections return the original rows.
+With small charts, every point is sent to the browser. For large charts, the
+Rust core computes only what the screen needs to display, based on its
+resolution. Pan, zoom, hover, and selection can show full details by running the
+same process for the new range, and a selection returns the original rows.
 
-XY is early alpha and moves quickly.
+XY is early alpha, and is receiving frequent enhancements. Any contributions are
+appreciated!
 
 ## Is XY right for me?
 
