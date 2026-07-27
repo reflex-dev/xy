@@ -939,6 +939,10 @@ class PlotTypeMixin:
             "color": resolve_color(color) if color is not None else self._next_patch_color(),
             "name": None if label is None else str(label),
             "opacity": 1.0 if alpha is None else float(alpha),
+            # Static exporters must paint each contiguous strip as one polygon.
+            # Independently antialiased triangles expose their shared edges as
+            # hairline seams, and translucent triangles can double-apply alpha.
+            "_joined_fill": True,
         }
         # Triangle meshes cannot stroke only the polygon perimeter; stroking
         # every tessellated triangle creates false internal striping. Keep the
