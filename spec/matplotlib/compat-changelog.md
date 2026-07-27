@@ -4,6 +4,12 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Style-sheet gallery source compatibility — 2026-07-27
+
+- The bounded `rcParams["axes.prop_cycle"]` proxy now reports the installed
+  color count through `len()`, allowing Matplotlib's exact `dark_background`
+  gallery source to derive its shifted-line count after applying the style.
+
 ## PDSH state and image ownership — 2026-07-26
 
 - Split subplot creation from activation: repeated same-spec

@@ -16,6 +16,9 @@ class _PropCycle:
     def __init__(self, colors: Any = None) -> None:
         self._colors = None if colors is None else tuple(str(color) for color in colors)
 
+    def __len__(self) -> int:
+        return len(self.by_key()["color"])
+
     def by_key(self) -> dict[str, list[str]]:
         from ._colors import PROP_CYCLE
 
