@@ -4,8 +4,8 @@ Matplotlib renders ``$...$`` spans with its own mathtext engine; xy's static
 exporters draw plain glyph runs. This module converts the small TeX subset
 that chart labels actually use (greek letters, super/subscripts, common
 operators, ``\\frac``) into unicode so ``km$^2$`` reads km² instead of raw
-TeX source. It is total: input that uses anything outside the subset is
-returned unchanged rather than half-converted.
+TeX source. It is total: unsupported tokens degrade locally to readable plain
+text so one unfamiliar command cannot expose TeX source across a whole label.
 """
 
 # ruff: noqa: RUF001 — the whole point of this module is unicode lookalikes.
@@ -143,7 +143,6 @@ _SUBSCRIPTS = dict(
 )
 
 _MATH_SPAN = re.compile(r"\$([^$]*)\$")
-_FRAC = re.compile(r"\\frac\{([^{}]*)\}\{([^{}]*)\}")
 _SCRIPT = re.compile(r"([\^_])(\{[^{}]*\}|[^\s{}])")
 _COMMAND = re.compile(r"\\([A-Za-z]+|[%,;! ])")
 _STYLE_ITALIC = "\x02"
@@ -151,33 +150,84 @@ _STYLE_UPRIGHT = "\x03"
 _STYLE_POP = "\x04"
 
 
-def _convert_script(kind: str, body: str) -> str | None:
-    """Unicode super/subscript for a ^/_ argument; None when a char has none."""
+def _convert_script(kind: str, body: str) -> str:
+    """Unicode a script when possible, otherwise retain a readable local form."""
     body = body[1:-1] if body.startswith("{") else body
     table = _SUPERSCRIPTS if kind == "^" else _SUBSCRIPTS
-    if not body or any(ch not in table for ch in body):
+    if body and all(ch in table for ch in body):
+        return "".join(table[ch] for ch in body)
+    # Unicode has no uppercase subscripts (the gallery commonly uses f_X).
+    # Preserve the case and relationship instead of rejecting the whole math
+    # span or silently changing the variable to lowercase.
+    return kind + (body if len(body) <= 1 else f"({body})")
+
+
+def _balanced_group(text: str, start: int) -> tuple[str, int] | None:
+    """Return one balanced ``{...}`` body and the first following index."""
+    if start >= len(text) or text[start] != "{":
         return None
-    return "".join(table[ch] for ch in body)
+    depth = 0
+    for index in range(start, len(text)):
+        character = text[index]
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start + 1 : index], index + 1
+    return None
+
+
+def _fraction_piece(body: str) -> str:
+    """Parenthesize fraction operands whose top-level operators need grouping."""
+    depth = 0
+    for character in body:
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth = max(0, depth - 1)
+        elif depth == 0 and character in "+-=/":
+            return f"({body})"
+    return body
+
+
+def _replace_fractions(text: str) -> str:
+    """Flatten ``\\frac`` with balanced, recursively parsed brace arguments."""
+    pieces: list[str] = []
+    cursor = 0
+    while True:
+        start = text.find(r"\frac", cursor)
+        if start < 0:
+            pieces.append(text[cursor:])
+            break
+        pieces.append(text[cursor:start])
+        numerator = _balanced_group(text, start + len(r"\frac"))
+        if numerator is None:
+            pieces.append("frac")
+            cursor = start + len(r"\frac")
+            continue
+        denominator = _balanced_group(text, numerator[1])
+        if denominator is None:
+            pieces.append("frac" + text[start + len(r"\frac") : numerator[1]])
+            cursor = numerator[1]
+            continue
+        numerator_text = _replace_fractions(numerator[0])
+        denominator_text = _replace_fractions(denominator[0])
+        pieces.append(f"{_fraction_piece(numerator_text)}/{_fraction_piece(denominator_text)}")
+        cursor = denominator[1]
+    return "".join(pieces)
 
 
 def _convert_math_styled(body: str) -> tuple[str, list[bool]] | None:
     """Convert one math span while retaining each glyph's source font style."""
-    out = body
-    for _ in range(4):  # nested \frac
-        replaced = _FRAC.sub(lambda m: f"{m.group(1)}/{m.group(2)}", out)
-        if replaced == out:
-            break
-        out = replaced
+    out = _replace_fractions(body)
 
     def script(match: re.Match[str]) -> str:
-        converted = _convert_script(match.group(1), match.group(2))
-        return "\x00" if converted is None else converted
+        return _convert_script(match.group(1), match.group(2))
 
     # Scripts first: converting ^{3} removes the inner braces, so wrappers
     # like \mathdefault{10^{3}} become flat and unwrap cleanly below.
     out = _SCRIPT.sub(script, out)
-    if "\x00" in out:
-        return None
     for name in _WRAPPERS:
         marker = _STYLE_UPRIGHT if name in _UPRIGHT_WRAPPERS else _STYLE_ITALIC
         out = re.sub(
@@ -191,14 +241,15 @@ def _convert_math_styled(body: str) -> tuple[str, list[bool]] | None:
         name = match.group(1)
         converted = _COMMANDS.get(name)
         if converted is None:
-            return "\x00"
+            # Keep the local token readable but never expose a raw backslash
+            # command in legend or chrome text.
+            return name
         if name in _UPRIGHT_COMMANDS:
             return _STYLE_UPRIGHT + converted + _STYLE_POP
         return converted
 
     out = _COMMAND.sub(command, out)
-    if "\x00" in out or "\\" in out:
-        return None
+    out = out.replace("\\", "")
 
     # Unescaped spaces are insignificant in math mode.  Explicit spacing
     # commands survive as ``\x01``.  A stack lets command-local upright spans
