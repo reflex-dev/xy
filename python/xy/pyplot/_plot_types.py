@@ -5946,6 +5946,14 @@ class PlotTypeMixin:
             and integration_max_error_scale == 1.0
             and density_xy[0] == density_xy[1]
         )
+
+        def automatic_seeds() -> np.ndarray:
+            seed_x, seed_y = np.meshgrid(
+                np.linspace(x_values[0], x_values[-1], max(2, int(18 * density_xy[0]))),
+                np.linspace(y_values[0], y_values[-1], max(2, int(18 * density_xy[1]))),
+            )
+            return np.column_stack((seed_x.reshape(-1), seed_y.reshape(-1)))
+
         if start_points is not None:
             seeds = np.asarray(start_points, dtype=np.float64)
             if seeds.ndim != 2 or seeds.shape[1] != 2:
@@ -5959,11 +5967,7 @@ class PlotTypeMixin:
             if not np.all(inside):
                 raise ValueError("streamplot start_points must lie inside the x/y grid")
         elif not native_fast_path:
-            seed_x, seed_y = np.meshgrid(
-                np.linspace(x_values[0], x_values[-1], max(2, int(18 * density_xy[0]))),
-                np.linspace(y_values[0], y_values[-1], max(2, int(18 * density_xy[1]))),
-            )
-            seeds = np.column_stack((seed_x.reshape(-1), seed_y.reshape(-1)))
+            seeds = automatic_seeds()
         if native_fast_path:
             from xy import kernels
 
@@ -5976,6 +5980,38 @@ class PlotTypeMixin:
                 max_steps=max_steps,
             )
             source_segments = _native_streamline_trajectories(kx0, kx1, ky0, ky1)
+            x_span = max(float(np.ptp(x_values)), np.finfo(float).eps)
+            y_span = max(float(np.ptp(y_values)), np.finfo(float).eps)
+            source_segments = [
+                streamline
+                for streamline in source_segments
+                if np.hypot(
+                    np.diff(streamline[:, 0]) / x_span,
+                    np.diff(streamline[:, 1]) / y_span,
+                ).sum()
+                >= float(minlength)
+            ]
+            if not source_segments:
+                # The current native kernel can return only cell-sized
+                # fragments on fine source grids. Matplotlib rejects those
+                # fragments by minlength and continues seeding; recover with
+                # the same bounded adaptive integrator used by non-default
+                # streamplot options instead of drawing an arrow per fragment.
+                source_segments = _integrate_streamlines(
+                    x_values,
+                    y_values,
+                    u_values,
+                    v_values,
+                    automatic_seeds(),
+                    integration_direction,
+                    max_steps,
+                    float(maxlength),
+                    float(minlength),
+                    broken_streamlines=broken_streamlines,
+                    density=(float(density_xy[0]), float(density_xy[1])),
+                    step_scale=integration_max_step_scale,
+                    error_scale=integration_max_error_scale,
+                )
         else:
             source_segments = _integrate_streamlines(
                 x_values,

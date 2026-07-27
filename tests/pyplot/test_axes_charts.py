@@ -507,6 +507,36 @@ def test_native_streamplot_preserves_mask_as_nan_topology(monkeypatch) -> None:
     assert np.isnan(seen_u[1, 1])
 
 
+def test_native_streamplot_rejects_cell_sized_fragments(monkeypatch) -> None:
+    from xy import kernels
+
+    def native_fragments(*_args, **_kwargs):
+        return (
+            np.array([0.0]),
+            np.array([1e-3]),
+            np.array([0.0]),
+            np.array([0.0]),
+        )
+
+    monkeypatch.setattr(kernels, "streamlines", native_fragments)
+    x = np.linspace(-1.0, 1.0, 20)
+    y = np.linspace(-1.0, 1.0, 20)
+    _fig, ax = plt.subplots()
+    ax.streamplot(
+        x,
+        y,
+        np.ones((20, 20)),
+        np.zeros((20, 20)),
+        num_arrows=2,
+    )
+
+    line_entry, arrow_entry = ax._entries
+    starts, ends = map(np.asarray, (line_entry["args"][0], line_entry["args"][2]))
+    assert min(starts.min(), ends.min()) < -0.9
+    assert max(starts.max(), ends.max()) > 0.9
+    assert len(arrow_entry["args"][0]) % 2 == 0
+
+
 def test_artist_set_ydata_rebuilds() -> None:
     _fig, ax = plt.subplots()
     (line,) = ax.plot([0, 1, 2], [1, 2, 3])

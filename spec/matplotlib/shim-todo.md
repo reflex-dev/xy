@@ -373,6 +373,9 @@ method accepts the call.
       Native backward/forward branches are reconstructed around their shared
       seed before rendering, preserving masked topology and allowing exactly
       `num_arrows` per trajectory at cumulative-distance-selected segments.
+      Native fragments below Matplotlib's `minlength` are rejected; if none
+      remain, automatic seeding continues through the bounded adaptive
+      integrator rather than treating fragments as complete trajectories.
       Array linewidths remain direct per-segment values and are sampled onto
       matching arrow outlines.
 

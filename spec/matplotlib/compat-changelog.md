@@ -31,6 +31,9 @@ which covers user-visible releases across the whole package.
   places exactly `num_arrows` per trajectory using Matplotlib 3.11's
   cumulative-distance selection, preserves masked/invalid topology breaks, and
   ships sampled array linewidths directly for segments and arrow outlines.
+  Cell-sized native fragments that fail Matplotlib's `minlength` are discarded;
+  when none survive, automatic seeding continues through the bounded adaptive
+  integrator so static output retains visible streamline bodies.
 
 ## Matplotlib 3.11 development snapshot — 2026-07-13
 
