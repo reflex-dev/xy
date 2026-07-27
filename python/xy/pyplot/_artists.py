@@ -1200,6 +1200,60 @@ class PolyCollection(Artist):
     def set_clim(self, vmin: Any = None, vmax: Any = None) -> None:
         _set_entry_clim(self, vmin, vmax)
 
+    def get_facecolors(self) -> np.ndarray:
+        """Return the collection's constant face paint as one RGBA row."""
+        return resolve_rgba_array(
+            self._entry.get("kwargs", {}).get("color", "transparent"),
+            1,
+            "collection facecolors",
+        )
+
+    get_facecolor = get_facecolors
+
+    def set_facecolors(self, colors: Any) -> None:
+        """Set a constant face paint for a filled polygon collection."""
+        rgba = resolve_rgba_array(colors, 1, "collection facecolors")[0]
+        self._entry.setdefault("kwargs", {})["color"] = _rgba_css(rgba)
+        self._touch()
+
+    set_facecolor = set_facecolors
+
+    def get_edgecolors(self) -> np.ndarray:
+        """Return the collection's constant boundary paint as one RGBA row."""
+        return resolve_rgba_array(
+            self._entry.get("kwargs", {}).get("stroke", "transparent"),
+            1,
+            "collection edgecolors",
+        )
+
+    get_edgecolor = get_edgecolors
+
+    def set_edgecolors(self, colors: Any) -> None:
+        """Set a constant boundary paint for a filled polygon collection."""
+        rgba = resolve_rgba_array(colors, 1, "collection edgecolors")[0]
+        self._entry.setdefault("kwargs", {})["stroke"] = _rgba_css(rgba)
+        self._touch()
+
+    set_edgecolor = set_edgecolors
+
+    def set_linewidths(self, widths: Any) -> None:
+        """Set the polygon boundary width in Matplotlib linewidth units."""
+        values = np.asarray(widths, dtype=np.float64).reshape(-1)
+        if values.size != 1 or not np.isfinite(values[0]) or values[0] < 0.0:
+            raise ValueError("collection linewidth must be one non-negative finite value")
+        self._entry.setdefault("kwargs", {})["stroke_width"] = float(values[0])
+        self._touch()
+
+    set_linewidth = set_linewidths
+
+    def get_linewidths(self) -> np.ndarray:
+        return np.asarray(
+            [self._entry.get("kwargs", {}).get("stroke_width", 0.0)],
+            dtype=np.float64,
+        )
+
+    get_linewidth = get_linewidths
+
 
 class Wedge(PolyCollection):
     """Pie wedge backed by a grouped subset of one native sector mesh."""
