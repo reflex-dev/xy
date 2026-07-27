@@ -278,6 +278,43 @@ def test_subplot_mosaic_list_form_matches_spectrum_gallery_geometry() -> None:
     assert signal[2] > 2 * magnitude[2]
 
 
+def test_figure_constrained_layout_reflows_a_later_spectrum_mosaic() -> None:
+    """The gallery builds the figure before calling ``fig.subplot_mosaic``."""
+    plt.close("all")
+    fig = plt.figure(figsize=(7, 7), dpi=100, layout="constrained")
+    axes = fig.subplot_mosaic(
+        [
+            ["signal", "signal"],
+            ["magnitude", "log_magnitude"],
+            ["phase", "angle"],
+        ]
+    )
+    axes["signal"].set(title="Signal", xlabel="Time (s)", ylabel="Amplitude")
+    axes["magnitude"].set_title("Magnitude Spectrum")
+    axes["log_magnitude"].set_title("Log. Magnitude Spectrum")
+    axes["phase"].set_title("Phase Spectrum")
+    axes["angle"].set_title("Angle Spectrum")
+    for ax in axes.values():
+        ax.plot([0, 1], [0, 1])
+
+    assert fig._layout_options["engine"] == "tight"
+    assert fig._layout_dirty is True
+    rects = fig._effective_rects()
+    assert rects is not None
+    assert fig._layout_dirty is False
+
+    signal, magnitude, _log_magnitude, phase, _angle = rects
+    signal_to_magnitude = (signal[1] - magnitude[1] - magnitude[3]) * 700
+    magnitude_to_phase = (magnitude[1] - phase[1] - phase[3]) * 700
+    assert signal_to_magnitude >= 64
+    assert magnitude_to_phase >= 64
+
+
+def test_figure_rejects_an_unknown_layout_engine() -> None:
+    with pytest.raises(ValueError, match="Invalid value for 'layout'"):
+        plt.figure(layout="overlap")
+
+
 def test_subplot_mosaic_rejects_non_rectangular_label_regions() -> None:
     plt.close("all")
     with pytest.raises(ValueError, match="non-rectangular or non-contiguous"):
