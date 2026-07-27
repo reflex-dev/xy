@@ -184,6 +184,41 @@ def test_hist_labels_are_padded_or_truncated_like_matplotlib(
     assert [container.get_label() for container in containers] == expected
 
 
+def test_errorbar_container_set_label_coerces_to_text() -> None:
+    _fig, ax = plt.subplots()
+    container = ax.errorbar([0, 1], [1, 2], yerr=0.1)
+
+    container.set_label(42)
+
+    assert container.get_label() == "42"
+    _handles, labels = ax.get_legend_handles_labels()
+    assert labels == ["42"]
+
+
+def test_stacked_step_histogram_legend_follows_top_to_bottom_draw_order() -> None:
+    _fig, ax = plt.subplots()
+    labels = ["green", "red", "blue"]
+    _counts, _edges, containers = ax.hist(
+        [[-1.0, 0.0, 1.0], [-0.5, 0.5, 1.5], [0.0, 1.0, 2.0]],
+        bins=3,
+        fill=False,
+        histtype="step",
+        stacked=True,
+        edgecolor=labels,
+        label=labels,
+    )
+
+    # Return values stay in dataset order, but Matplotlib inserts the stacked
+    # step artists (and therefore their automatic legend handles) top-first.
+    assert [container.get_label() for container in containers] == labels
+    _handles, legend_labels = ax.get_legend_handles_labels()
+    assert legend_labels == ["blue", "red", "green"]
+
+    ax.legend()
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert [trace.get("name") for trace in spec["traces"] if trace.get("name")] == legend_labels
+
+
 @pytest.mark.parametrize("histtype", ["step", "stepfilled"])
 def test_hist_step_geometry_contributes_to_autoscale(histtype: str) -> None:
     _fig, ax = plt.subplots()
@@ -390,3 +425,29 @@ def test_errorbar_limit_flags_render_directional_endpoint_markers() -> None:
     assert points["triangle_down"] == ([2], [3.4])
     assert points["triangle_right"] == ([2.4], [4])
     assert points["triangle_left"] == ([0.8], [3])
+
+
+def test_errorbar_legend_uses_one_container_handle_per_label() -> None:
+    _fig, ax = plt.subplots()
+    first = ax.errorbar(
+        [0.0, 0.5, 1.0],
+        [0.0, 0.25, 1.0],
+        yerr=0.1,
+        fmt="-",
+        label="xlolims=True",
+    )
+    second = ax.errorbar(
+        [0.5, 1.0, 1.5],
+        [0.0, 0.25, 1.0],
+        yerr=0.1,
+        fmt="-",
+        label="subsets of xuplims and xlolims",
+    )
+
+    handles, labels = ax.get_legend_handles_labels()
+    assert handles == [first, second]
+    assert labels == ["xlolims=True", "subsets of xuplims and xlolims"]
+
+    ax.legend()
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert [trace.get("name") for trace in spec["traces"] if trace.get("name")] == labels

@@ -969,6 +969,13 @@ class ErrorbarContainer:
     def __iter__(self) -> Iterator[Any]:
         return iter(self.lines)
 
+    def get_label(self) -> Any:
+        return self._artist._entry["kwargs"].get("name")
+
+    def set_label(self, value: Any) -> None:
+        self._artist._entry["kwargs"]["name"] = str(value)
+        self._artist._touch()
+
     def remove(self) -> None:
         axes = self._artist._axes
         for child in (*self._cap_artists, self._artist):
@@ -1415,8 +1422,16 @@ def _legend_item_from_entry(
     if isinstance(color, str):
         style["color"] = color
     width = kw.get("width")
-    if width is not None:
-        style["width"] = float(width) * point_scale
+    if width is not None and kind in {"line", "segments", "step", "stairs", "errorbar"}:
+        # Bar ``width`` is data-space rectangle geometry, not a stroke width.
+        # Histograms with non-uniform bins therefore carry one width per bar.
+        # Matplotlib's legend handler draws those as a filled patch and never
+        # interprets the bin widths as line styling. Generic line collections
+        # can also expose vector widths; their legend sample uses the first
+        # linewidth, matching Matplotlib's collection handlers.
+        widths = np.asarray(width, dtype=np.float64).reshape(-1)
+        if widths.size:
+            style["width"] = float(widths[0]) * point_scale
     opacity = kw.get("opacity")
     if opacity is not None:
         style["opacity"] = float(opacity)
@@ -1449,6 +1464,10 @@ def _legend_item_from_entry(
         if symbol:
             style["symbol"] = symbol
         for key in ("size", "stroke", "stroke_width"):
+            if kw.get(key) is not None:
+                style[key] = kw[key]
+    elif kind not in {"line", "segments", "step", "stairs", "errorbar"}:
+        for key in ("stroke", "stroke_width"):
             if kw.get(key) is not None:
                 style[key] = kw[key]
     return {"name": str(label), "kind": kind, "style": style}
