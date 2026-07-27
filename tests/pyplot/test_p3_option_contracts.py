@@ -463,6 +463,35 @@ def test_contour_corner_mask_controls_missing_corner_geometry_and_is_inherited()
     assert len(contour_traces) == 1
 
 
+def test_contourf_corner_mask_uses_exact_band_clipped_triangles() -> None:
+    _fig, ax = plt.subplots()
+    z = np.ma.array([[0.0, 1.0], [0.0, 0.0]], mask=[[True, False], [False, False]])
+    ax.contourf(
+        z,
+        levels=[-1.0, 0.5, 2.0],
+        colors=["red", "blue"],
+        corner_mask=True,
+    )
+
+    figure = ax._build_chart(300, 300).figure()
+    mesh = next(trace for trace in figure.traces if trace.kind == "triangle_mesh")
+    geometry = np.column_stack(
+        [getattr(mesh, name).values for name in ("x0", "y0", "x1", "y1", "x", "y")]
+    )
+    # ContourPy's retained triangle is split at z=.5 into a quad and triangle;
+    # triangulating the quad yields these three exact faces, all bounded by the
+    # true x+y=1 masked-corner diagonal rather than a sampled staircase.
+    np.testing.assert_allclose(
+        geometry,
+        [
+            [0.5, 0.5, 1.0, 0.5, 1.0, 1.0],
+            [0.5, 0.5, 1.0, 1.0, 0.0, 1.0],
+            [0.5, 0.5, 1.0, 0.0, 1.0, 0.5],
+        ],
+    )
+    assert figure.to_svg().count("<polygon points=") == 3
+
+
 def test_contourf_legend_elements_keep_per_band_hatches_and_handleheight() -> None:
     _fig, ax = plt.subplots()
     contour = ax.contourf(
@@ -481,6 +510,84 @@ def test_contourf_legend_elements_keep_per_band_hatches_and_handleheight() -> No
     assert spec["legend"]["handleheight"] == 2.0
     assert [item["style"]["hatch"] for item in spec["legend"]["items"]] == [".", "/", "\\"]
     assert all(item["kind"] == "bar" for item in spec["legend"]["items"])
+
+
+def test_contourf_dot_star_and_backslash_hatches_keep_their_geometry() -> None:
+    z = np.tile([0.2, 1.2, 2.2], (3, 1))
+    _fig, ax = plt.subplots()
+    ax.contourf(
+        z,
+        levels=[0.0, 1.0, 2.0, 3.0],
+        colors="none",
+        hatches=[".", "*", "\\"],
+    )
+
+    dots = next(
+        entry
+        for entry in ax._entries
+        if entry["kind"] == "scatter" and entry["kwargs"]["symbol"] == "circle"
+    )
+    stars = next(
+        entry
+        for entry in ax._entries
+        if entry["kind"] == "scatter" and entry["kwargs"]["symbol"] == "star"
+    )
+    hatch_lines = next(
+        entry
+        for entry in ax._entries
+        if entry["kind"] == "@mark" and entry.get("factory") == "segments"
+    )
+
+    assert set(dots["x"]) == {0.0}
+    assert set(stars["x"]) == {1.0}
+    assert dots["_legend_skip"] is stars["_legend_skip"] is True
+    x0, y0, x1, y1 = map(np.asarray, hatch_lines["args"])
+    assert np.all(x1 > x0)
+    assert np.all(y1 < y0)
+
+
+def test_static_legend_hatches_use_filled_dots_and_stars() -> None:
+    from xy._raster import _SYMBOLS, _emit_legend_hatch
+    from xy._svg import _legend_hatch_svg
+
+    dots = _legend_hatch_svg(0.0, 20.0, 0.0, 20.0, ".", "#123456")
+    star = _legend_hatch_svg(0.0, 20.0, 0.0, 20.0, "*", "#123456")
+    slash = _legend_hatch_svg(0.0, 20.0, 0.0, 20.0, "/", "#123456")
+    backslash = _legend_hatch_svg(0.0, 20.0, 0.0, 20.0, "\\", "#123456")
+
+    assert dots.count("<circle") == 2
+    assert "<path" not in dots
+    assert "<path" in star and 'fill="#123456"' in star and "stroke=" not in star
+    assert "M5,15 L15,5" in slash
+    assert "M5,5 L15,15" in backslash
+
+    class Recorder:
+        def __init__(self) -> None:
+            self.points: list[tuple[Any, ...]] = []
+            self.strokes: list[tuple[Any, ...]] = []
+
+        def point(self, *args: Any) -> None:
+            self.points.append(args)
+
+        def stroke(self, *args: Any, **_kwargs: Any) -> None:
+            self.strokes.append(args)
+
+    recorder = Recorder()
+    _emit_legend_hatch(
+        recorder,
+        0.0,
+        20.0,
+        0.0,
+        20.0,
+        ".*\\",
+        (18, 52, 86, 255),
+    )
+    assert [point[3] for point in recorder.points] == [
+        _SYMBOLS["circle"],
+        _SYMBOLS["circle"],
+        _SYMBOLS["star"],
+    ]
+    assert len(recorder.strokes) == 1
 
 
 def test_contourf_preserves_unknown_public_extend_as_unextended_geometry() -> None:
@@ -598,8 +705,10 @@ def test_pcolormesh_plain_normalize_maps_to_domain() -> None:
     _fig, ax = plt.subplots()
     ax.pcolormesh(_Z, norm=Normalize(1.0, 4.0))
     assert ax._entries[0]["kwargs"]["domain"] == (1.0, 4.0)
-    with pytest.raises(NotImplementedError, match=r"pcolormesh\(norm=LogNorm\)"):
-        ax.pcolormesh(_Z, norm=LogNorm())
+    log_mesh = ax.pcolormesh(_Z, norm=LogNorm())
+    assert log_mesh._entry["_mpl_domain"] == (1.0, 15.0)
+    assert log_mesh._entry["_mpl_norm_scale"] == "log"
+    assert log_mesh._entry["args"][0].shape == _Z.shape + (4,)
 
 
 def test_bar_label_fontsize_reaches_text_style() -> None:
@@ -675,6 +784,20 @@ def test_tri_plain_normalize_maps_to_domain() -> None:
     assert ax._entries[-1]["kwargs"]["domain"] == (-5.0, 5.0)
     ax.tricontourf([0, 1, 2], [0, 1, 0], [1.0, 2.0, 3.0], norm=Normalize(0.0, 4.0))
     assert ax._entries[-1]["kwargs"]["domain"] == (0.0, 4.0)
+
+
+@pytest.mark.parametrize("linestyle", ["-", "solid"])
+def test_tricontour_accepts_solid_linestyle_aliases(linestyle: str) -> None:
+    _fig, ax = plt.subplots()
+    contour = ax.tricontour(
+        [0.0, 1.0, 0.5],
+        [0.0, 0.0, 1.0],
+        [0.0, 1.0, 2.0],
+        levels=[0.5, 1.5],
+        triangles=[[0, 1, 2]],
+        linestyles=linestyle,
+    )
+    assert contour._entry["factory"] == "segments"
 
 
 def test_pie_pie_label_and_table_text_options_reach_text_style() -> None:

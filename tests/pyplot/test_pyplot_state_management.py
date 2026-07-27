@@ -48,6 +48,45 @@ def test_pyplot_axes_delaxes_figtext_and_figlegend():
     assert ax2 not in fig.axes
 
 
+def test_subplot_reuses_match_but_no_arg_axes_is_fresh():
+    fig = plt.figure()
+
+    subplot = plt.subplot(111)
+    assert plt.subplot(111) is subplot
+    first_axes = plt.axes()
+    second_axes = plt.axes()
+
+    assert first_axes is not subplot
+    assert second_axes is not first_axes
+    assert plt.subplot(111) is subplot
+    assert fig.axes == [subplot, first_axes, second_axes]
+    assert plt.gca() is subplot
+
+
+def test_reused_subplot_handles_axis_sharing_before_normal_properties():
+    fig = plt.figure()
+    subplot = fig.add_subplot(111)
+    shared = fig.add_axes([0.1, 0.1, 0.2, 0.2])
+
+    reused = plt.subplot(111, sharex=shared, sharey=shared, title="shared")
+
+    assert reused is subplot
+    assert reused.get_shared_x_axes().joined(reused, shared)
+    assert reused.get_shared_y_axes().joined(reused, shared)
+    assert reused.get_title() == "shared"
+
+
+def test_subplot_mosaic_claims_returned_axes_before_later_add_subplot():
+    fig, axes = plt.subplot_mosaic([["left", "right"]])
+
+    assert all(ax._subplot_claimed for ax in axes.values())
+    overlay = fig.add_subplot(1, 2, 1)
+
+    assert overlay is not axes["left"]
+    assert axes["left"] in fig.axes
+    assert overlay in fig.axes
+
+
 def test_pyplot_twiny_creates_current_axes_on_same_figure():
     fig, ax = plt.subplots()
     twin = plt.twiny()

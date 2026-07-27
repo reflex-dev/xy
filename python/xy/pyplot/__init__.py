@@ -339,7 +339,7 @@ def subplot(*args: Any, **kwargs: Any) -> Axes:
     packed ``subplot(211)`` shorthand. Returns the (new or existing)
     `Axes` and makes it current.
     """
-    return gcf().add_subplot(*args, **kwargs)
+    return gcf().activate_subplot(*args, **kwargs)
 
 
 def subplot_mosaic(mosaic: str | list[Any], **kwargs: Any) -> tuple[Figure, dict[Any, Axes]]:
@@ -866,9 +866,9 @@ def step(
 
 
 def bar(
-    x: ArrayLike,
+    x: float | ArrayLike,
     height: float | ArrayLike,
-    width: float = 0.8,
+    width: float | ArrayLike = 0.8,
     bottom: float | ArrayLike | None = None,
     *,
     color: ColorsLike | None = None,
@@ -917,9 +917,9 @@ def bar(
 
 
 def barh(
-    y: ArrayLike,
+    y: float | ArrayLike,
     width: float | ArrayLike,
-    height: float = 0.8,
+    height: float | ArrayLike = 0.8,
     left: float | ArrayLike | None = None,
     *,
     color: ColorsLike | None = None,
@@ -1290,7 +1290,8 @@ def imshow(
         Resampling hint; nearest-equivalent modes are honored.
 
     The image becomes the figure's current mappable, so a bare
-    `colorbar()` attaches to it. ``norm`` is not supported and raises.
+    `colorbar()` attaches to it. ``norm="linear"`` and ``norm="log"``
+    (or their Matplotlib Normalize instances) are supported.
 
     Returns
     -------
@@ -1329,7 +1330,8 @@ def pcolormesh(*args: ArrayLike, **kwargs: Any) -> PolyCollection:
     Call as ``pcolormesh(C)`` or ``pcolormesh(X, Y, C)``. Supported
     keywords: ``cmap``, ``vmin``/``vmax``, ``alpha``, ``shading``
     (``"flat"``/``"nearest"``/``"auto"``/``"gouraud"``),
-    ``edgecolors``/``edgecolor``, ``linewidth``/``linewidths``, and
+    ``edgecolors``/``edgecolor``, ``linewidth``/``linewidths``,
+    ``norm="linear"``/``"log"``, ``rasterized`` on regular meshes, and
     ``antialiased``. The mesh becomes the figure's current mappable.
     """
     return _record_mappable(gca().pcolormesh(*args, **kwargs))
@@ -3115,10 +3117,6 @@ def cycler(*args: Any, **kwargs: Any) -> Any:
     if key != "color":
         raise not_implemented(f"cycler({key!r})", "a 'color' cycle")
     return _PropCycle(list(values))
-
-
-def np_asarray_passthrough(x: Any) -> Any:  # pragma: no cover - numpy re-export shim
-    return np.asarray(x)
 
 
 _install_ipython_display_hook()

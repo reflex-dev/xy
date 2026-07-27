@@ -849,6 +849,7 @@ export function lodApplyDrill(view, g, upd, buffers) {
   // exactly as this fresh reply does below (§34 continuity across T13 swaps).
   d._cpuX = xs;
   d._cpuY = ys;
+  d._cpu = { x: xs, y: ys, xMeta: d.xMeta, yMeta: d.yMeta };
   // The kernel's exactness claim (§28 Invariant L2): reduction "none" means
   // the subset IS every point in the window — the fact that arms T12's
   // zoom-in request elision. Anything else (or a reply that doesn't say)
@@ -874,6 +875,8 @@ export function lodApplyDrill(view, g, upd, buffers) {
     const colorValues = upd.color.dtype === "u8"
       ? view._asU8(buffers[upd.color.buf])
       : view._asF32(buffers[upd.color.buf]);
+    if (d.colorMode === 3) d._cpu.rgba = colorValues;
+    else d._cpu.color = colorValues;
     const colorBufferName = d.colorMode === 3 ? "rgbaBuf" : "cBuf";
     if (!d[colorBufferName]) d[colorBufferName] = gl.createBuffer();
     view._tagChannelBuf(d[colorBufferName], colorValues, d.colorMode === 1);
@@ -893,6 +896,7 @@ export function lodApplyDrill(view, g, upd, buffers) {
     const sizeValues = upd.size.dtype === "u8"
       ? view._asU8(buffers[upd.size.buf])
       : view._asF32(buffers[upd.size.buf]);
+    d._cpu.size = sizeValues;
     if (!d.sBuf) d.sBuf = gl.createBuffer();
     view._tagChannelBuf(d.sBuf, sizeValues, true);
     gl.bindBuffer(gl.ARRAY_BUFFER, d.sBuf);
@@ -923,6 +927,7 @@ export function lodApplyDrill(view, g, upd, buffers) {
     copy("artist_alpha", 1);
     copy("stroke_width", 2, view.dpr);
     copy("symbol", 3);
+    d._cpuStyle = values;
     if (!d.styleBuf) d.styleBuf = gl.createBuffer();
     d.styleBuf._fcType = gl.FLOAT;
     gl.bindBuffer(gl.ARRAY_BUFFER, d.styleBuf);
@@ -930,6 +935,7 @@ export function lodApplyDrill(view, g, upd, buffers) {
   }
   if (upd.stroke && upd.stroke.mode === "direct_rgba") {
     const values = view._asU8(buffers[upd.stroke.buf]);
+    d._cpuStroke = values;
     if (!d.strokeBuf) d.strokeBuf = gl.createBuffer();
     d.strokeBuf._fcType = gl.UNSIGNED_BYTE;
     gl.bindBuffer(gl.ARRAY_BUFFER, d.strokeBuf);

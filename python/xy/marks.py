@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Callable, Mapping, Sequence
+from itertools import pairwise
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 import numpy as np
@@ -93,6 +94,31 @@ def _direct_symbols(value: Any, n: int, style_channels: dict[str, channels.Style
         codes[index] = _SYMBOL_CODES[symbol]
     style_channels["symbol"] = channels.StyleChannel(codes, dtype="u8")
     return "circle"
+
+
+def _validated_marker_path(value: Any) -> dict[str, Any]:
+    """Validate the private, bounded pyplot authored-marker contract."""
+    if not isinstance(value, dict):
+        raise ValueError("scatter authored marker path must be a mapping")
+    contours = value.get("contours")
+    if not isinstance(contours, (list, tuple)) or not 1 <= len(contours) <= 32:
+        raise ValueError("scatter authored marker path must have 1-32 contours")
+    result: list[list[float]] = []
+    total_vertices = 0
+    for index, contour in enumerate(contours):
+        try:
+            values = np.asarray(contour, dtype=np.float64).reshape(-1)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"scatter authored marker contour {index} must be numeric") from exc
+        if len(values) < 4 or len(values) % 2:
+            raise ValueError(f"scatter authored marker contour {index} needs x/y vertex pairs")
+        if not np.all(np.isfinite(values)) or np.any(np.abs(values) > 0.500001):
+            raise ValueError("scatter authored marker vertices must be finite and normalized")
+        total_vertices += len(values) // 2
+        result.append([float(item) for item in values])
+    if total_vertices > 96:
+        raise ValueError("scatter authored marker paths support at most 96 total vertices")
+    return {"contours": result, "filled": bool(value.get("filled", True))}
 
 
 def _stroke_geometry(css: Mapping[str, Any]) -> dict[str, str]:
@@ -1451,6 +1477,9 @@ def scatter(
     stroke: Any = None,
     stroke_width: Any = 0.0,
     _artist_alpha: Any = None,
+    _marker_path: Optional[dict[str, Any]] = None,
+    _marker_glyph: Optional[str] = None,
+    _legend_trace_size: bool = False,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add a scatter trace.
@@ -1541,6 +1570,20 @@ def scatter(
         size_ch = channels.resolve_size(size, n, range_px=size_range)
 
         point_style: dict[str, Any] = {"opacity": opacity_value}
+        if _marker_path is not None and _marker_glyph is not None:
+            raise ValueError("scatter accepts only one authored marker representation")
+        if _marker_path is not None:
+            point_style["marker_path"] = _validated_marker_path(_marker_path)
+        if _marker_glyph is not None:
+            if not isinstance(_marker_glyph, str) or len(_marker_glyph) != 1:
+                raise ValueError("scatter authored marker glyph must be one character")
+            point_style["marker_glyph"] = _marker_glyph
+        if _legend_trace_size:
+            # Pyplot's scalar ``s=`` is an authored marker area, and its
+            # automatic legend must keep the resulting diameter. Native xy
+            # legends retain their fixed swatch semantics unless this private
+            # shim flag opts the trace into size derivation.
+            point_style["_legend_trace_size"] = True
         if artist_alpha_value is not None:
             point_style["artist_alpha"] = artist_alpha_value
         if zoom_size_factor != 1.0:
@@ -2162,7 +2205,7 @@ def hexbin(
     centers_x = np.concatenate((xr[0] + (keep1 % (w + 1)) * dx, xr[0] + (keep2 % w + 0.5) * dx))
     centers_y = np.concatenate((yr[0] + (keep1 // (w + 1)) * dy, yr[0] + (keep2 // w + 0.5) * dy))
     if cv is None:
-        metric = np.log1p(counts) if bins == "log" else counts
+        metric = counts
     else:
         reduced: list[float] = []
         memberships = [cv[valid_first & (flat1 == flat)] for flat in keep1] + [
@@ -2174,6 +2217,25 @@ def hexbin(
                 raise ValueError("hexbin reduce_C_function must return one finite scalar per bin")
             reduced.append(float(made))
         metric = np.asarray(reduced, dtype=np.float64)
+    if bins == "log":
+        # Matplotlib's ``bins="log"`` is LogNorm over the original cell
+        # values. Non-positive cells use the bad color (transparent by
+        # default), so omitting them is the same static result while keeping
+        # the continuous channel finite. The paint channel can remain the
+        # engine's linear normalized scalar after applying log here; the
+        # original domain is retained separately for count-space colorbars.
+        positive = metric > 0.0
+        centers_x, centers_y, metric = (
+            centers_x[positive],
+            centers_y[positive],
+            metric[positive],
+        )
+        if not len(metric):
+            raise ValueError("hexbin logarithmic colors require at least one positive cell value")
+        colorbar_domain = (float(metric.min()), float(metric.max()))
+        metric = np.log(metric)
+    else:
+        colorbar_domain = None
     color_ch = channels.resolve_color(
         metric, len(metric), colormap=colormap, default_constant=DEFAULT_PALETTE[0]
     )
@@ -2194,6 +2256,8 @@ def hexbin(
                     **styles._opacity_channels(css),
                 },
                 color_ch=color_ch,
+                colorbar_domain=colorbar_domain,
+                colorbar_scale="log" if bins == "log" else "linear",
                 size_ch=channels.SizeChannel(mode="constant", constant=8.0),
                 count=int(n_points),
             )
@@ -2208,8 +2272,6 @@ def _interpolate_contourf_grid(
     arr: np.ndarray,
     xpos: np.ndarray,
     ypos: np.ndarray,
-    *,
-    corner_mask: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Bilinearly densify a contour field before assigning discrete bands."""
     rows, cols = arr.shape
@@ -2253,47 +2315,103 @@ def _interpolate_contourf_grid(
         + z11 * row_weight * col_weight
     )
     interpolated[~valid] = np.nan
-    if corner_mask:
-        # contourpy's corner_mask=True retains the triangle opposite a single
-        # masked vertex instead of discarding the whole quad.  Interpolate
-        # that valid triangle in barycentric coordinates; quads with two or
-        # more missing vertices remain wholly masked.
-        finite_count = (
-            finite00.astype(np.uint8)
-            + finite10.astype(np.uint8)
-            + finite01.astype(np.uint8)
-            + finite11.astype(np.uint8)
-        )
-        u = np.broadcast_to(col_weight, interpolated.shape)
-        v = np.broadcast_to(row_weight, interpolated.shape)
-        safe00 = np.nan_to_num(z00)
-        safe10 = np.nan_to_num(z10)
-        safe01 = np.nan_to_num(z01)
-        safe11 = np.nan_to_num(z11)
-        triangular = finite_count == 3
-        cases = (
-            (
-                triangular & ~finite00 & (u + v >= 1.0),
-                safe10 * (1.0 - v) + safe01 * (1.0 - u) + safe11 * (u + v - 1.0),
-            ),
-            (
-                triangular & ~finite10 & (v >= u),
-                safe00 * (1.0 - v) + safe01 * (v - u) + safe11 * u,
-            ),
-            (
-                triangular & ~finite01 & (u >= v),
-                safe00 * (1.0 - u) + safe10 * (u - v) + safe11 * v,
-            ),
-            (
-                triangular & ~finite11 & (u + v <= 1.0),
-                safe00 * (1.0 - u - v) + safe10 * u + safe01 * v,
-            ),
-        )
-        for keep, values in cases:
-            interpolated[keep] = values[keep]
     dense_x = np.interp(col_at, np.arange(cols), xpos)
     dense_y = np.interp(row_at, np.arange(rows), ypos)
     return interpolated, dense_x, dense_y
+
+
+def _contourf_corner_triangles(
+    arr: np.ndarray,
+    xpos: np.ndarray,
+    ypos: np.ndarray,
+    edges: np.ndarray,
+    *,
+    extend_min: bool,
+    extend_max: bool,
+) -> tuple[tuple[np.ndarray, ...], np.ndarray]:
+    """Clip one-masked-corner cells into exact ContourPy-style band triangles."""
+
+    def clip(
+        polygon: list[tuple[float, float, float]],
+        threshold: float,
+        *,
+        keep_above: bool,
+    ) -> list[tuple[float, float, float]]:
+        if not polygon:
+            return []
+        output: list[tuple[float, float, float]] = []
+        previous = polygon[-1]
+        previous_inside = previous[2] >= threshold if keep_above else previous[2] <= threshold
+        for current in polygon:
+            current_inside = current[2] >= threshold if keep_above else current[2] <= threshold
+            if current_inside != previous_inside:
+                fraction = (threshold - previous[2]) / (current[2] - previous[2])
+                output.append(
+                    (
+                        previous[0] + fraction * (current[0] - previous[0]),
+                        previous[1] + fraction * (current[1] - previous[1]),
+                        threshold,
+                    )
+                )
+            if current_inside:
+                output.append(current)
+            previous, previous_inside = current, current_inside
+        return output
+
+    bands: list[tuple[float, float, int]] = []
+    slot = 0
+    if extend_min:
+        bands.append((-np.inf, float(edges[0]), slot))
+        slot += 1
+    for index, (low, high) in enumerate(pairwise(edges)):
+        bands.append((float(low), float(high), slot + index))
+    slot += len(edges) - 1
+    if extend_max:
+        bands.append((float(edges[-1]), np.inf, slot))
+
+    coordinates = [[] for _ in range(6)]
+    slots: list[int] = []
+    rows, cols = arr.shape
+    for row in range(rows - 1):
+        for col in range(cols - 1):
+            corners = [
+                (float(xpos[col]), float(ypos[row]), float(arr[row, col])),
+                (float(xpos[col + 1]), float(ypos[row]), float(arr[row, col + 1])),
+                (
+                    float(xpos[col + 1]),
+                    float(ypos[row + 1]),
+                    float(arr[row + 1, col + 1]),
+                ),
+                (float(xpos[col]), float(ypos[row + 1]), float(arr[row + 1, col])),
+            ]
+            triangle = [corner for corner in corners if np.isfinite(corner[2])]
+            if len(triangle) != 3:
+                continue
+            for low, high, band_slot in bands:
+                polygon = triangle
+                if np.isfinite(low):
+                    polygon = clip(polygon, low, keep_above=True)
+                if np.isfinite(high):
+                    polygon = clip(polygon, high, keep_above=False)
+                for index in range(1, len(polygon) - 1):
+                    vertices = (polygon[0], polygon[index], polygon[index + 1])
+                    area = (vertices[1][0] - vertices[0][0]) * (vertices[2][1] - vertices[0][1]) - (
+                        vertices[1][1] - vertices[0][1]
+                    ) * (vertices[2][0] - vertices[0][0])
+                    if abs(area) <= np.finfo(np.float64).eps:
+                        continue
+                    for vertex, (x_column, y_column) in zip(
+                        vertices,
+                        ((0, 1), (2, 3), (4, 5)),
+                        strict=True,
+                    ):
+                        coordinates[x_column].append(vertex[0])
+                        coordinates[y_column].append(vertex[1])
+                    slots.append(band_slot)
+    return (
+        tuple(np.asarray(column, dtype=np.float64) for column in coordinates),
+        np.asarray(slots, dtype=np.intp),
+    )
 
 
 def contour(
@@ -2412,18 +2530,21 @@ def contour(
             # Values outside the level range stay unpainted (extend='neither').
             edges = np.asarray(level_values, dtype=np.float64)
             if len(edges) >= 2 and edges[0] < edges[-1]:
-                dense, dense_x, dense_y = _interpolate_contourf_grid(
-                    arr, xpos, ypos, corner_mask=bool(corner_mask)
-                )
+                dense, dense_x, dense_y = _interpolate_contourf_grid(arr, xpos, ypos)
                 band = np.searchsorted(edges, dense, side="right") - 1
                 # Matplotlib includes the final level in the final filled
                 # interval; only values strictly above it are outside.
                 band[np.isfinite(dense) & (dense == edges[-1])] = len(edges) - 2
                 mids = (edges[:-1] + edges[1:]) * 0.5
                 inside = np.isfinite(dense) & (band >= 0) & (band < len(edges) - 1)
+                finite_dense = np.isfinite(dense)
                 if color_table is None:
                     banded = np.full(dense.shape, np.nan, dtype=np.float64)
                     banded[inside] = mids[np.clip(band, 0, len(edges) - 2)][inside]
+                    if extend_min:
+                        banded[finite_dense & (dense < edges[0])] = edges[0]
+                    if extend_max:
+                        banded[finite_dense & (dense > edges[-1])] = edges[-1]
                     self.heatmap(
                         banded,
                         x=dense_x,
@@ -2441,7 +2562,6 @@ def contour(
                     rgba = np.zeros(dense.shape + (4,), dtype=np.float64)
                     offset = int(extend_min)
                     rgba[inside] = color_table[offset + band[inside]]
-                    finite_dense = np.isfinite(dense)
                     if extend_min:
                         rgba[finite_dense & (dense < edges[0])] = color_table[0]
                     if extend_max:
@@ -2453,6 +2573,37 @@ def contour(
                         name=name,
                         opacity=opacity,
                     )
+                if corner_mask:
+                    triangle_columns, triangle_slots = _contourf_corner_triangles(
+                        arr,
+                        xpos,
+                        ypos,
+                        edges,
+                        extend_min=extend_min,
+                        extend_max=extend_max,
+                    )
+                    if len(triangle_slots):
+                        if color_table is None:
+                            paints = np.concatenate(
+                                (
+                                    [edges[0]] if extend_min else [],
+                                    mids,
+                                    [edges[-1]] if extend_max else [],
+                                )
+                            )
+                            triangle_colors: Any = paints[triangle_slots]
+                            triangle_domain = (float(edges[0]), float(edges[-1]))
+                        else:
+                            triangle_colors = color_table[triangle_slots]
+                            triangle_domain = None
+                        self.triangle_mesh(
+                            *triangle_columns,
+                            color=triangle_colors,
+                            colormap=colormap,
+                            domain=triangle_domain,
+                            opacity=min(opacity, 0.9) if color_table is None else opacity,
+                            _joined_fill=True,
+                        )
             else:
                 self.heatmap(
                     arr,
@@ -2501,16 +2652,33 @@ def contour(
                 segment_widths = width_values[level_indices % len(width_values)]
             else:
                 segment_widths = width
-            if dash_negative and color is not None and np.any(lv < 0) and np.any(lv >= 0):
+            if dash_negative and color is not None and np.any(lv < 0):
                 # Matplotlib's dashed preset is scaled by the contour linewidth:
                 # 3.7 on / 1.6 off times the rendered width.
                 if width_values is None:
-                    groups = ((lv >= 0, None), (lv < 0, [3.7 * width, 1.6 * width]))
+                    groups = []
+                    if np.any(lv >= 0):
+                        groups.append((lv >= 0, None))
+                    groups.append((lv < 0, [3.7 * width, 1.6 * width]))
                 else:
-                    # Per-level widths cannot share one dash array. Splitting
-                    # by sign still retains the correct widths; the native
-                    # renderer uses its standard dashed contour preset.
-                    groups = ((lv >= 0, None), (lv < 0, [3.7, 1.6]))
+                    # Dash lengths are part of the trace style, so levels with
+                    # different authored widths need independent negative
+                    # groups. This also keeps tuple/list linewidths faithful
+                    # instead of shrinking every dash to 3.7/1.6 pixels.
+                    groups = []
+                    if np.any(lv >= 0):
+                        groups.append((lv >= 0, None))
+                    for level_index, level in enumerate(contour_levels):
+                        if level >= 0:
+                            continue
+                        level_mask = np.isclose(lv, level, rtol=0.0, atol=0.0)
+                        rendered_width = float(width_values[level_index % len(width_values)])
+                        groups.append(
+                            (
+                                level_mask,
+                                [3.7 * rendered_width, 1.6 * rendered_width],
+                            )
+                        )
             else:
                 groups = ((np.ones(len(lv), dtype=bool), None),)
             for mask, dash in groups:
