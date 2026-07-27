@@ -33,10 +33,12 @@ _DEFAULTS: dict[str, Any] = {
     "figure.figsize": (6.4, 4.8),  # inches, matplotlib default
     "figure.dpi": 100.0,
     "figure.facecolor": "white",
+    "lines.color": "C0",
     "lines.linewidth": 1.5,
     "lines.markersize": 6.0,
     "lines.markeredgewidth": 1.0,
     "errorbar.capsize": 0.0,
+    "patch.facecolor": "C0",
     "patch.linewidth": 1.0,
     "patch.edgecolor": "black",
     "patch.force_edgecolor": False,

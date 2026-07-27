@@ -914,6 +914,7 @@ class Axes(PlotTypeMixin):
         self._grid_style: dict[str, Any] = {}
         self._anchor: Optional[str] = None
         self._cycle = 0
+        self._patch_cycle = 0
         self._prop_cycle: Optional[list[str]] = None
         self._load_rc_chrome()
         self._chart: Any = None
@@ -1090,6 +1091,14 @@ class Axes(PlotTypeMixin):
         host._cycle += 1
         return color
 
+    def _next_patch_color(self) -> str:
+        """Advance Matplotlib's independent fill/patch property cycle."""
+        host = self._y2_of or self
+        cycle = getattr(host, "_prop_cycle", None) or PROP_CYCLE
+        color = cycle[host._patch_cycle % len(cycle)]
+        host._patch_cycle += 1
+        return color
+
     def _categorical_position(self, axis: str, label: Any) -> float:
         props = self._axis_props(axis)
         labels = props.setdefault("tick_labels", [])
@@ -1226,6 +1235,7 @@ class Axes(PlotTypeMixin):
         self._grid_axis = "both"
         self._grid_style = {}
         self._cycle = 0
+        self._patch_cycle = 0
         self._load_rc_chrome()
         self._chart = None
         self._twin = None
@@ -2339,7 +2349,7 @@ class Axes(PlotTypeMixin):
         )
         starts = np.flatnonzero(valid_intervals & np.r_[True, ~valid_intervals[:-1]])
         ends = np.flatnonzero(valid_intervals & np.r_[~valid_intervals[1:], True]) + 2
-        resolved_color = resolve_color(color) if color is not None else self._next_color()
+        resolved_color = resolve_color(color) if color is not None else self._next_patch_color()
         entries: list[dict[str, Any]] = []
         for start, end in zip(starts, ends, strict=True):
             sx, su, sl = xv[start:end], upper[start:end], lower[start:end]
@@ -4320,6 +4330,7 @@ class Axes(PlotTypeMixin):
                 resolved for color in colors if (resolved := resolve_color(color)) is not None
             ]
         self._cycle = 0
+        self._patch_cycle = 0
         self._invalidate()
 
     def secondary_xaxis(
