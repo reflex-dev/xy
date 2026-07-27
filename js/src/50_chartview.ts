@@ -19,6 +19,32 @@ export interface ChartView {
 }
 
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
+// DejaVu Sans advances at 16 px, generated beside python/xy/_fontmetrics.py
+// and the native rasterizer. Layout must retain proportional glyph metrics:
+// character count makes "WWWW" and "iiii" reserve the same (wrong) width.
+const XY_FONT_BASE_PX = 16;
+const XY_ASCII_FIRST = 32;
+const XY_ASCII_LAST = 126;
+const XY_ASCII_ADVANCES = [
+  5, 6, 7, 13, 10, 15, 12, 4, 6, 6, 8, 13, 5, 6, 5, 5, 10, 10, 10, 10,
+  10, 10, 10, 10, 10, 10, 5, 5, 13, 13, 13, 8, 16, 11, 11, 11, 12, 10, 9, 12,
+  12, 5, 5, 10, 9, 14, 12, 13, 10, 13, 11, 10, 10, 12, 11, 16, 11, 10, 11, 6,
+  5, 6, 13, 8, 8, 10, 10, 9, 10, 10, 6, 10, 10, 4, 4, 9, 4, 16, 10, 10,
+  10, 10, 7, 8, 6, 10, 9, 13, 9, 9, 8, 10, 5, 10, 13,
+];
+const XY_MISSING_ADVANCE = 16;
+
+function xyTextAdvance(text, fontSize) {
+  let units = 0;
+  for (const char of String(text)) {
+    const code = char.codePointAt(0) ?? 0;
+    units += code >= XY_ASCII_FIRST && code <= XY_ASCII_LAST
+      ? XY_ASCII_ADVANCES[code - XY_ASCII_FIRST]
+      : XY_MISSING_ADVANCE;
+  }
+  return Number(fontSize) * units / XY_FONT_BASE_PX;
+}
+
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
 const COMPACT_COLORBAR_GAP = 8;
@@ -512,21 +538,36 @@ export class ChartView {
     const baseRight = pad ? (responsivePad ? Math.min(pad[1], 8) : pad[1]) : compact ? 8 : MARGIN.r;
     const marginRight = baseRight + colorbarRightRoom;
     const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
-    const marginBottom = (pad ? pad[2] : compact ? 36 : MARGIN.b) + colorbarBottomRoom;
-    const hasBottomAxis = Object.values<any>(this.axes || {}).some((axis: any) =>
+    let marginBottom = (pad ? pad[2] : compact ? 36 : MARGIN.b) + colorbarBottomRoom;
+    const bottomAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("x") && axis.side !== "top" &&
       this._axisTickLabelStrategy(axis) !== "none");
-    this._bottomAxisRoom = hasBottomAxis ? (compact ? 36 : MARGIN.b) : 0;
+    const provisionalWidth = Math.max(40, this.size.w - baseRight - (compact ? 46 : MARGIN.l));
+    this._bottomAxisRoom = bottomAxes.length
+      ? (compact ? 36 : MARGIN.b) +
+        Math.max(...bottomAxes.map((axis: any) => this._xAxisMultilineExtra(axis, provisionalWidth)))
+      : 0;
+    if (bottomAxes.length) {
+      marginBottom += this._bottomAxisRoom - (compact ? 36 : MARGIN.b);
+    }
     // A named x axis can own the top edge even when the primary x axis stays
     // on the bottom. Reserve one shared gutter for every top-side x axis;
     // multiple axes on the same side intentionally overlay until axis offsets
     // become part of the public API (the same rule used by secondary y axes).
-    const topAxisRoom = Object.values<any>(this.axes || {}).some((axis: any) =>
+    const topAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("x") && axis.side === "top" &&
-      this._axisTickLabelStrategy(axis) !== "none")
-      ? (compact ? 26 : 32)
+      this._axisTickLabelStrategy(axis) !== "none");
+    const topAxisRoom = topAxes.length
+      ? Math.max(
+        0,
+        ...topAxes.map((axis: any) => this._xAxisMultilineExtra(axis, provisionalWidth)),
+      ) + (compact ? 26 : 32)
       : 0;
-    const top = marginTop + (this.spec.title ? (compact ? 26 : 30) : 0) + topAxisRoom;
+    const titleFontSize = this._slotFontSize("title", 14);
+    this._titleRoom = this.spec.title
+      ? Math.max(compact ? 26 : 30, this._estimateTickLabel(this.spec.title, titleFontSize).h + 8)
+      : 0;
+    const top = marginTop + this._titleRoom + topAxisRoom;
     const plotHeight = Math.max(40, this.size.h - top - marginBottom);
     const authoredLeft = pad
       ? (responsivePad ? Math.min(pad[3], 46) : pad[3])
@@ -596,11 +637,55 @@ export class ChartView {
         const gap = Number.isFinite(Number(axis.label_offset))
           ? Number(axis.label_offset)
           : 0.4 * labelSize;
-        needed += gap + 1.2 * labelSize;
+        needed += gap + this._estimateTickLabel(axis.label, labelSize).h;
       }
       room = Math.max(room, needed);
     }
     return room;
+  }
+
+  _slotFontSize(slot, fallback) {
+    const styles = this.spec.dom && this.spec.dom.styles;
+    const value = styles && styles[slot] && styles[slot]["font-size"];
+    const parsed = parseFloat(String(value ?? ""));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  _xAxisMultilineExtra(axis, plotWidth) {
+    if (this._axisTickLabelStrategy(axis) === "none") return 0;
+    let extra = 0;
+    if (this._axisTickLabelStrategy(axis) !== "off") {
+      const fontSize = Math.max(
+        8,
+        this._axisStyleNumber(
+          axis,
+          "tick_label_size",
+          this._axisStyleNumber(axis, "tick_size", 11),
+        ),
+      );
+      const ticks = this._axisTicks(
+        axis.id,
+        this._axisTickTarget(axis.id, Math.max(3, plotWidth / 80)),
+      );
+      const angle = Math.abs(Number(this._axisTickLabelAngle(axis) || 0)) * Math.PI / 180;
+      for (const value of (ticks.labels || ticks.ticks)) {
+        const block = this._estimateTickLabel(this._axisTickText(axis, value, ticks.step), fontSize);
+        const first = this._estimateTickLabel(block.lines[0], fontSize);
+        extra = Math.max(
+          extra,
+          Math.abs(Math.sin(angle)) * (block.w - first.w) +
+            Math.abs(Math.cos(angle)) * (block.h - first.h),
+        );
+      }
+    }
+    const position = typeof axis.label_position === "string"
+      ? axis.label_position.replace(/-/g, "_") : "center";
+    if (axis.label && !position.startsWith("inside_")) {
+      const labelSize = Math.max(8, this._axisStyleNumber(axis, "label_size", 12));
+      const block = this._estimateTickLabel(axis.label, labelSize);
+      extra = Math.max(extra, block.h - labelSize * 1.2);
+    }
+    return Math.max(0, extra);
   }
 
   _normalizeAxes(spec) {
@@ -1644,7 +1729,8 @@ export class ChartView {
     if (s.title) {
       const t = document.createElement("div");
       t.textContent = s.title;
-      t.style.cssText = "position:absolute;top:6px;left:0;right:0;";
+      t.style.cssText =
+        "position:absolute;top:6px;left:0;right:0;white-space:pre-line;line-height:1.2;";
       this._applySlot(t, "title");
       root.appendChild(t);
     }
@@ -4711,8 +4797,13 @@ export class ChartView {
   }
 
   _estimateTickLabel(text, fontSize) {
-    const s = String(text || "");
-    return { w: Math.max(fontSize * 0.7, s.length * fontSize * 0.62), h: fontSize * 1.2 };
+    const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
+    return {
+      lines,
+      w: Math.max(fontSize * 0.7, ...lines.map((line) => xyTextAdvance(line, fontSize))),
+      h: Math.max(fontSize * 1.2, lines.length * fontSize * 1.2),
+      lineStep: fontSize * 1.2,
+    };
   }
 
   _tickLabelExtent(label, dim, fontSize) {
@@ -4852,7 +4943,7 @@ export class ChartView {
     const hasAngle = axis && Number.isFinite(Number(axis.label_angle));
     if (!hasPosition && !hasOffset && !hasAngle) return { css: fallbackCss, style: null };
     if (rawPosition && typeof rawPosition === "object" && !Array.isArray(rawPosition)) {
-      return { css: "white-space:nowrap;", style: rawPosition };
+      return { css: "white-space:pre-line;text-align:center;", style: rawPosition };
     }
 
     const p = this.plot;
@@ -4875,7 +4966,7 @@ export class ChartView {
         css:
           `left:${x}px;top:${y}px;` +
           `transform:translateX(${translateX}%) rotate(${angle}deg);` +
-          "transform-origin:center;white-space:nowrap;",
+          "transform-origin:center;white-space:pre-line;text-align:center;",
         style: null,
       };
     }
@@ -4890,7 +4981,7 @@ export class ChartView {
       css:
         `left:${x}px;top:${y}px;` +
         `transform:translate(-50%,-50%) rotate(${angle}deg);` +
-        "transform-origin:center;white-space:nowrap;",
+        "transform-origin:center;white-space:pre-line;text-align:center;",
       style: null,
     };
   }
@@ -5109,7 +5200,9 @@ export class ChartView {
       if (this._axisStyleValue(axis, sizeKey) !== undefined) {
         size = `font-size:${Math.max(8, this._axisStyleNumber(axis, sizeKey, 11))}px;`;
       }
-      d.style.cssText = `position:absolute;line-height:1.2;white-space:nowrap;${color}${size}${css}`;
+      d.style.cssText =
+        `position:absolute;line-height:1.2;white-space:pre-line;text-align:center;` +
+        `${color}${size}${css}`;
       // Categorical y labels can exceed the space between their pinned anchor
       // and the chart edge. Placement owns side/anchor/angle; consume that
       // metadata here instead of re-deriving it and drifting from rendering.

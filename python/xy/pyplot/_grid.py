@@ -27,6 +27,16 @@ from typing import Any, Optional
 
 import numpy as np
 
+from .. import _textblock
+
+
+def _svg_text_lines(text: object, x: float, line_step: float) -> str:
+    lines = []
+    for index, line in enumerate(_textblock.split_lines(text)):
+        dy = f' dy="{line_step:g}"' if index else ""
+        lines.append(f'<tspan x="{x:g}"{dy}>{_html.escape(line)}</tspan>')
+    return "".join(lines)
+
 
 def _composite_rgba(destination: np.ndarray, source: np.ndarray) -> None:
     """Composite a straight-alpha RGBA tile over ``destination`` in place.
@@ -183,7 +193,7 @@ def compose_html(
 <meta http-equiv="Content-Security-Policy" content="{export._STANDALONE_CSP}">
 <style>
   body {{ margin: 0; font-family: system-ui, sans-serif; background: #ffffff; }}
-  .xy-suptitle {{ text-align: center; margin: 8px 0 0; font-size: 16px; color: #262626; }}
+  .xy-suptitle {{ text-align: center; margin: 8px 0 0; font-size: 16px; color: #262626; white-space: pre-line; line-height: 1.2; }}
   {grid_css}
   .xy-panel {{ position: relative; }}
 </style>
@@ -249,7 +259,9 @@ def compose_svg(
             )
             for row in range(nrows)
         ]
-        title_h = 28 if suptitle else 0
+        style = suptitle_style or {}
+        size = float(style.get("size", 16))
+        title_h = round(_textblock.measure(suptitle, size).height + 12) if suptitle else 0
         offsets = []
         for index in range(len(figures)):
             row, col = divmod(index, ncols)
@@ -270,11 +282,16 @@ def compose_svg(
     )
     width, height = total_size
     size = float(style.get("size", 16))
+    block = _textblock.measure(suptitle, size) if suptitle else None
     # y is a figure fraction measured from the bottom, like matplotlib.
-    baseline = min(height - 2.0, (1.0 - float(style.get("y", 0.98))) * height + 0.75 * size)
+    baseline = min(
+        height - 2.0,
+        (1.0 - float(style.get("y", 0.98))) * height + (block.ascent if block else 0.75 * size),
+    )
     title = (
         f'<text x="{width * float(style.get("x", 0.5)):g}" y="{baseline:g}" text-anchor="{anchor}" '
-        f'font-family="{_html.escape(str(style.get("family", "system-ui,sans-serif")))}" font-size="{size:g}" font-weight="{_html.escape(str(style.get("weight", "normal")))}" fill="{_html.escape(str(style.get("color", "#262626")))}">{_html.escape(suptitle)}</text>'
+        f'font-family="{_html.escape(str(style.get("family", "system-ui,sans-serif")))}" font-size="{size:g}" font-weight="{_html.escape(str(style.get("weight", "normal")))}" fill="{_html.escape(str(style.get("color", "#262626")))}">'
+        f"{_svg_text_lines(suptitle, width * float(style.get('x', 0.5)), block.line_step)}</text>"
         if suptitle
         else ""
     )
@@ -355,7 +372,8 @@ def stitch_png(
                 suptitle,
                 suptitle_style,
                 scale=scale,
-                title_h=min(48, canvas.shape[0]),
+                title_h=canvas.shape[0],
+                absolute=True,
             )
         return _png.encode(canvas)
 
@@ -370,7 +388,8 @@ def stitch_png(
         )
         for row in range(nrows)
     ]
-    title_h = 48 if suptitle else 0
+    suptitle_size = float((suptitle_style or {}).get("size", 14))
+    title_h = round(_textblock.measure(suptitle, suptitle_size).height + 16) if suptitle else 0
     colorbar_h = 52 if colorbar else 0
     background = np.asarray(_raster._parse_color(facecolor), dtype=np.uint8)
     canvas = np.empty((title_h + sum(row_heights) + colorbar_h, sum(col_widths), 4), dtype=np.uint8)
@@ -418,21 +437,30 @@ def _blend_raster_suptitle(
     *,
     scale: float,
     title_h: int,
+    absolute: bool = False,
 ) -> None:
     """Draw a figure suptitle onto either grid or absolute-position PNGs."""
     from xy import _raster, kernels
 
     resolved = style or {}
     cmd = _raster._Cmd(scale)
-    cmd.text(
-        canvas.shape[1] * float(resolved.get("x", 0.5)) / scale,
-        17,
-        1,
-        float(resolved.get("size", 14)),
-        _raster._parse_color(str(resolved.get("color", "#262626"))),
-        suptitle,
-        bold=str(resolved.get("weight", "normal")).lower()
-        in {"bold", "semibold", "demibold", "heavy", "black"},
+    size = float(resolved.get("size", 14))
+    block = _textblock.measure(suptitle, size)
+    x = canvas.shape[1] * float(resolved.get("x", 0.5)) / scale
+    baseline = (
+        (1.0 - float(resolved.get("y", 0.98))) * canvas.shape[0] / scale + block.ascent
+        if absolute
+        else 4.0 + block.ascent
     )
+    color = _raster._parse_color(str(resolved.get("color", "#262626")))
+    bold = str(resolved.get("weight", "normal")).lower() in {
+        "bold",
+        "semibold",
+        "demibold",
+        "heavy",
+        "black",
+    }
+    for index, line in enumerate(block.lines):
+        cmd.text(x, baseline + index * block.line_step, 1, size, color, line, bold=bold)
     overlay = kernels.rasterize(bytes(cmd.buf), canvas.shape[1], title_h)
     _composite_rgba(canvas[:title_h], overlay)

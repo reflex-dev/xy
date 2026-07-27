@@ -4,6 +4,18 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Multiline chrome and final layout resolution — 2026-07-26
+
+- Newline-delimited axes titles, axis labels, tick/category labels, and
+  suptitles now use one measured text-block contract across browser, SVG, and
+  native PNG output. Each line is emitted separately at a `1.2 × font-size`
+  step; gutters grow by the additional line boxes while historical one-line
+  placement remains unchanged.
+- Tight/constrained layout is dirty after later axes or suptitle mutations and
+  re-resolves from the final per-panel chrome. Inter-panel spacing is the union
+  of neighboring measured gutters, so multiline titles and category labels do
+  not collide across subplot boundaries.
+
 ## Vector-field gallery corrections — 2026-07-24
 
 - `quiver(units=...)` now converts Matplotlib's width-unit vocabulary without

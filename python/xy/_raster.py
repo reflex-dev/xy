@@ -20,7 +20,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from . import _paint, _png, _scene
+from . import _paint, _png, _scene, _textblock
 from ._arrowgeom import arrow_shapes as _arrow_shapes
 from ._svg import (
     _AXIS,
@@ -663,6 +663,43 @@ class _Cmd:
         self.buf += data
 
 
+def _emit_text_block(
+    cmd: _Cmd,
+    x: float,
+    first_baseline: float,
+    anchor: int,
+    size: float,
+    color: tuple[int, ...],
+    text: object,
+    *,
+    angle: float = 0.0,
+    italic: bool = False,
+    bold: bool = False,
+) -> None:
+    """Emit lines using the same block geometry SVG and layout measure."""
+    block = _textblock.measure(text, size)
+    radians = math.radians(float(angle))
+    for index, line in enumerate(block.lines):
+        local_y = index * block.line_step
+        line_x = x - local_y * math.sin(radians)
+        line_y = first_baseline + local_y * math.cos(radians)
+        args = (line_x, line_y, anchor, size, color, line)
+        normalized = float(angle) % 360.0
+        quarter_flag = (
+            _TEXT_ROT_CW
+            if abs(normalized - 90.0) < 1e-9
+            else _TEXT_ROT_CCW
+            if abs(normalized - 270.0) < 1e-9
+            else 0
+        )
+        if quarter_flag and not italic and not bold:
+            cmd.text(line_x, line_y, anchor | quarter_flag, size, color, line)
+        elif angle or italic or bold:
+            cmd.text(*args, angle=angle, italic=italic, bold=bold)
+        else:
+            cmd.text(*args)
+
+
 def _rect_pts(x0: float, y0: float, x1: float, y1: float) -> list[tuple[float, float]]:
     return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
 
@@ -1038,6 +1075,7 @@ def render_raster(
         explicit_anchor = _tick_label_anchor(axis, axis_style, "")
         for item in items:
             flag = rotation_flag(float(item["angle"]))
+            block = _textblock.measure(item["text"], font_size)
             if is_x:
                 row_offset = float(item["row"]) * (font_size + 4)
                 x = float(item["pos"])
@@ -1049,10 +1087,24 @@ def render_raster(
                 anchor = _TEXT_ANCHOR_CODES[explicit_anchor] if explicit_anchor else 1
             else:
                 x = px1 + label_offset if side == "right" else px0 - label_offset
-                y = float(item["pos"]) + baseline_shift
+                y = (
+                    float(item["pos"])
+                    + baseline_shift
+                    - (block.line_count - 1) * block.line_step / 2.0
+                )
                 default_anchor = 0 if side == "right" else 2
                 anchor = _TEXT_ANCHOR_CODES[explicit_anchor] if explicit_anchor else default_anchor
-            cmd.text(x, y, anchor | flag, font_size, tick_color, item["text"])
+            angle = float(item["angle"]) if flag else 0.0
+            _emit_text_block(
+                cmd,
+                x,
+                y,
+                anchor,
+                font_size,
+                tick_color,
+                item["text"],
+                angle=angle,
+            )
 
     emit_tick_labels(xa, xlab, xstep, sx, is_x=True)
     emit_tick_labels(ya, ylab, ystep, sy, is_x=False)
@@ -1073,11 +1125,14 @@ def render_raster(
                 "font_weight": title_style.get("font-weight", 400),
             }
         )
-        cmd.text(
+        title_size = _px_size(title_style.get("font-size"), 14.0)
+        title_block = _textblock.measure(spec["title"], title_size)
+        _emit_text_block(
+            cmd,
             width / 2,
-            plot["y"] - plot["top_axis_room"] - (10 if compact else 12),
+            plot["y"] - plot["top_axis_room"] - plot["title_room"] + 4.0 + title_block.ascent,
             1,
-            _px_size(title_style.get("font-size"), 14.0),
+            title_size,
             _parse_color(_css(title_style.get("color"), default_text)),
             str(spec["title"]),
             italic=title_italic,
@@ -1096,23 +1151,18 @@ def render_raster(
                 "font_weight": axis_style.get("label_font_weight", 400),
             }
         )
-        args = (
-            geometry["x"],
-            geometry["y"],
+        _emit_text_block(
+            cmd,
+            float(geometry["x"]),
+            float(geometry["y"]),
             anchor,
-            geometry["font_size"],
+            float(geometry["font_size"]),
             _parse_color(_css(axis_style.get("label_color"), default_text)),
-            str(axis["label"]),
+            axis["label"],
+            angle=float(geometry["angle"]),
+            italic=italic,
+            bold=bold,
         )
-        if italic or bold:
-            cmd.text(*args, angle=float(geometry["angle"]), italic=italic, bold=bold)
-        else:
-            cmd.text(
-                args[0],
-                args[1],
-                anchor | rotation_flag(float(geometry["angle"])),
-                *args[3:],
-            )
 
     emit_axis_title(xa, is_x=True)
     emit_axis_title(ya, is_x=False)
