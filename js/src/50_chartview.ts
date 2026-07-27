@@ -713,10 +713,18 @@ export class ChartView {
         const gap = Number.isFinite(Number(axis.label_offset))
           ? Number(axis.label_offset)
           : 0.4 * labelSize;
+        const labelBlock = this._estimateTickLabel(axis.label, labelSize);
+        const rawLabelAngle = Number(axis.label_angle);
+        // The default quarter-turn consumes the text block's height. An
+        // authored angle projects both dimensions into the left gutter.
+        const labelExtent = Number.isFinite(rawLabelAngle)
+          ? Math.abs(Math.cos(rawLabelAngle * Math.PI / 180)) * labelBlock.w
+            + Math.abs(Math.sin(rawLabelAngle * Math.PI / 180)) * labelBlock.h
+          : labelBlock.h;
         needed +=
           Y_TITLE_MEASURE_SAFETY_PX
           + gap
-          + this._estimateTickLabel(axis.label, labelSize).h;
+          + labelExtent;
       }
       room = Math.max(room, needed);
     }
