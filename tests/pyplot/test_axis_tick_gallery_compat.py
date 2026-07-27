@@ -116,6 +116,15 @@ def test_tick_params_side_flags_and_xtick_rotation_mode() -> None:
     assert ax._axis_props("x")["tick_label_angle"] == 45.0
     assert ax._axis_props("x")["tick_label_anchor"] == "end"
     assert ax.get_xticklabels()[0].get_rotation_mode() == "xtick"
+    assert ax.get_xticklabels()[0].get_rotation() == 45.0
+    spec, _blob = ax._build_chart(640, 480).figure().build_payload()
+    assert spec["x_axis"]["tick_label_angle"] == -45.0
+
+    ax.tick_params(axis="x", rotation=-45, rotation_mode="xtick")
+    assert ax._axis_props("x")["tick_label_anchor"] == "start"
+    assert ax.get_xticklabels()[0].get_rotation() == -45.0
+    spec, _blob = ax._build_chart(640, 480).figure().build_payload()
+    assert spec["x_axis"]["tick_label_angle"] == 45.0
 
     with pytest.raises(ValueError, match="rotation_mode"):
         ax.tick_params(axis="x", rotation_mode="sideways")

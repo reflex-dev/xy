@@ -6709,6 +6709,17 @@ class Axes(PlotTypeMixin):
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
         self._inherit_shared_axis_state("x", x_props)
         self._inherit_shared_axis_state("y", y_props)
+        rotation_source = self._shared_ticker_source("x")
+        if (
+            rotation_source._tick_rotation_modes.get("x") == "xtick"
+            and x_props.get("tick_label_angle") is not None
+        ):
+            # Matplotlib angles are counter-clockwise in display coordinates;
+            # SVG/CSS and the native y-down raster surface rotate positive
+            # angles clockwise. Keep the public Text angle unchanged, but
+            # convert the materialized special-mode geometry so the selected
+            # edge points toward the tick instead of pivoting into the plot.
+            x_props["tick_label_angle"] = -float(x_props["tick_label_angle"])
         for axis, props in (("x", x_props), ("y", y_props)):
             if adjusted_aspect or self._has_explicit_shared_domain(axis):
                 continue
