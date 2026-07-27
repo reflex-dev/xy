@@ -340,8 +340,9 @@ method accepts the call.
       antialiasing, snap, rasterized behavior and norm/colorizer variants.
 - [x] `contour`/`contourf`: origin, extent, linestyles, corner masks, extend,
       hatches, locators, norms and filled-region topology parity.
-- [x] `clabel`: inline path cutting, formatting, manual positions, rotation and
-      complete text styling.
+- [x] `clabel`: inline path cutting, formatting, manual positions, rotation,
+      label z-order, and supported text styling. Dynamic aspect-following
+      rotation (`use_clabeltext=True`) fails loudly.
 - [x] `tripcolor`/`tricontour`/`tricontourf`: norms, masks, shading,
       antialiasing, hatches, extends and triangulation-object interoperability.
 - [x] `spy` and `matshow`: sparse inputs, precision semantics and return types.

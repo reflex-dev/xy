@@ -4,6 +4,16 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Contour/colorbar contract corrections — 2026-07-27
+
+- `clabel(zorder=...)` now reaches every returned text artist, and the omitted
+  value follows Matplotlib's contour-label default. Dynamic
+  `use_clabeltext=True` rotation fails loudly instead of being accepted and
+  ignored.
+- The automatic colorbar-axes facade documents and tests that its active and
+  original position queries are identical because renderer chrome has no
+  independently aspect-adjusted axes box.
+
 ## Vector-field gallery corrections — 2026-07-24
 
 - `quiver(units=...)` now converts Matplotlib's width-unit vocabulary without

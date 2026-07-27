@@ -866,7 +866,10 @@ class Figure:
                 self.set_ylabel(label, **kwargs)
 
             def get_position(self, original: bool = False) -> Bbox:
-                del original
+                # compat-noop: virtual colorbar chrome has no independently
+                # aspect-adjusted axes box, so its active and original boxes
+                # are identical by construction.
+                del original  # compat-noop: active/original virtual chrome boxes are identical
                 left, bottom, width, height = self._host.get_position().bounds
                 shrink_value = float(self._options.get("shrink", 1.0))
                 anchor_value = self._options.get("anchor") or [0.5, 0.5]

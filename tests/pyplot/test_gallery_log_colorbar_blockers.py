@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from io import BytesIO
 
 import numpy as np
@@ -20,10 +21,21 @@ class LogNorm:
 
 
 @pytest.fixture(autouse=True)
-def _clean() -> None:
+def _clean() -> Iterator[None]:
     plt.close("all")
     yield
     plt.close("all")
+
+
+def test_virtual_colorbar_has_one_position_box_for_both_query_modes() -> None:
+    fig, ax = plt.subplots()
+    image = ax.imshow(np.arange(4.0).reshape(2, 2))
+
+    colorbar = fig.colorbar(image, shrink=0.7)
+
+    active = colorbar.ax.get_position(original=False)
+    original = colorbar.ax.get_position(original=True)
+    assert original.bounds == pytest.approx(active.bounds)
 
 
 def test_time_series_histogram_log_mesh_and_pad_zero_render_statically() -> None:

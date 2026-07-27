@@ -94,6 +94,33 @@ def test_clabel_validates_levels_and_noninteractive_manual_mode() -> None:
         ax.clabel(contour, inline_spacing=-1)
 
 
+def test_clabel_honors_explicit_and_matplotlib_default_zorder() -> None:
+    _fig, ax = plt.subplots()
+    contour = ax.contour(np.arange(16.0).reshape(4, 4), levels=[4.0, 8.0])
+
+    default_labels = ax.clabel(contour, inline=False)
+    assert default_labels
+    assert {label.get_zorder() for label in default_labels} == {4.0}
+
+    contour.set_zorder(7)
+    inherited_labels = ax.clabel(contour, inline=False)
+    assert inherited_labels
+    assert {label.get_zorder() for label in inherited_labels} == {9.0}
+
+    explicit_labels = ax.clabel(contour, inline=False, zorder=-3)
+    assert explicit_labels
+    assert {label.get_zorder() for label in explicit_labels} == {-3.0}
+    assert all(label._entry["_zorder"] == -3.0 for label in explicit_labels)
+
+
+def test_clabel_rejects_unimplemented_dynamic_aspect_rotation() -> None:
+    _fig, ax = plt.subplots()
+    contour = ax.contour(np.arange(16.0).reshape(4, 4), levels=[4.0, 8.0])
+
+    with pytest.raises(NotImplementedError, match="aspect changes"):
+        ax.clabel(contour, use_clabeltext=True)
+
+
 def test_joined_contour_paths_finds_true_open_endpoint_after_segment_shuffle() -> None:
     # Seed segment is in the middle; a joiner that only looks at the seed's
     # endpoints splits this one open contour into two paths.

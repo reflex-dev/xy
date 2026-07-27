@@ -3458,8 +3458,15 @@ class PlotTypeMixin:
         tangent, and place at most one label on each eligible connected
         component.  Iterable ``manual`` positions are snapped to the nearest
         requested contour instead of being assigned to levels round-robin.
+        ``zorder`` controls the returned text artists. Dynamic aspect-following
+        rotation from ``use_clabeltext=True`` is rejected until the shim can
+        recompute text transforms after an aspect change.
         """
-        del use_clabeltext, zorder  # text rotation is already live in all xy renderers
+        if use_clabeltext:
+            raise not_implemented(
+                "clabel(use_clabeltext=True)",
+                "fixed contour-label rotation or explicit relabeling after aspect changes",
+            )
         if not isinstance(CS, ContourSet) or CS._axes is not self:
             raise ValueError("clabel() requires a ContourSet from this Axes")
         inline_spacing = float(inline_spacing)
@@ -3691,6 +3698,14 @@ class PlotTypeMixin:
                 self._invalidate()
 
         result: list[Text] = []
+        contour_zorder = CS.get_zorder()
+        if "_zorder" not in source:
+            # Matplotlib's default collection zorders are 1 for filled
+            # contours and 2 for contour lines. The shim's contour payload
+            # predates public zorder state, so use those defaults only while
+            # the caller has not explicitly mutated the ContourSet.
+            contour_zorder = 1.0 if source["kwargs"].get("filled", False) else 2.0
+        label_zorder = 2.0 + contour_zorder if zorder is None else float(zorder)
         for spec in label_specs:
             public_index = int(spec["level_index"])
             if explicit_colors is None:
@@ -3719,7 +3734,9 @@ class PlotTypeMixin:
                     },
                 },
             )
-            result.append(Text(self, entry))
+            label = Text(self, entry)
+            label.set_zorder(label_zorder)
+            result.append(label)
         return result
 
     def bxp(
