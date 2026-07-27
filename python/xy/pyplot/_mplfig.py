@@ -723,8 +723,9 @@ class Figure:
             ),
             "label": _plain_text(kwargs.pop("label", "")),
             "orientation": orientation,
-            "spacing": spacing,
         }
+        if spacing != "uniform":
+            options["spacing"] = spacing
         line_contour = entry.get("factory") == "contour" and not props.get("filled", False)
         if line_contour:
             # Matplotlib's line-contour colorbar is an empty bar crossed by the
