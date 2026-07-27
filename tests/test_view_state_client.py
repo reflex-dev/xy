@@ -129,9 +129,11 @@ _LOST_POINTER_CAPTURE_PROBE = """
     view._drawNow();
     const ranges = () => Object.fromEntries(
       view._axisIds().map((id) => [id, [...view._axisRange(id)]]));
-    const rect = view.canvas.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
+    const center = (el) => {
+      const r = el.getBoundingClientRect();
+      return [r.left + r.width / 2, r.top + r.height / 2];
+    };
+    const [x, y] = center(view.canvas);
 
     const realRaf = window.requestAnimationFrame;
     let frames = [];
@@ -151,9 +153,9 @@ _LOST_POINTER_CAPTURE_PROBE = """
         endEvents.push(event.detail);
       }
     });
-    const pointer = (type, clientX, clientY, buttons) => {
-      view.canvas.dispatchEvent(new PointerEvent(type, {
-        pointerId: 71,
+    const pointer = (target, type, pointerId, clientX, clientY, buttons) => {
+      target.dispatchEvent(new PointerEvent(type, {
+        pointerId,
         pointerType: "mouse",
         button: 0,
         buttons,
@@ -165,23 +167,83 @@ _LOST_POINTER_CAPTURE_PROBE = """
       }));
     };
 
-    pointer("pointerdown", x, y, 1);
-    pointer("pointermove", x + 60, y + 10, 1);
+    pointer(view.canvas, "pointerdown", 71, x, y, 1);
+    pointer(view.canvas, "pointermove", 71, x + 60, y + 10, 1);
     const atBoundary = ranges();
 
     // Chrome's iframe sequence when the primary button is released in the
     // parent document: no pointerup in this document, then lost capture and
     // a buttonless pointermove when the cursor re-enters.
-    pointer("lostpointercapture", x + 60, y + 10, 0);
-    pointer("pointermove", x + 120, y + 20, 0);
+    pointer(view.canvas, "lostpointercapture", 71, x + 60, y + 10, 0);
+    pointer(view.canvas, "pointermove", 71, x + 120, y + 20, 0);
+    flush();
+    const canvasReentryDidNotPan =
+      JSON.stringify(ranges()) === JSON.stringify(atBoundary);
+
+    // Coordinate-dependent canvas gestures cannot invent an endpoint outside
+    // this document, so capture loss cancels their transient overlay/state.
+    view._setDragMode("select");
+    pointer(view.canvas, "pointerdown", 72, x, y, 1);
+    pointer(view.canvas, "pointermove", 72, x + 50, y + 40, 1);
+    const selectionWasActive = view.selRect.style.display === "block";
+    pointer(view.canvas, "lostpointercapture", 72, x + 50, y + 40, 0);
+    const selectionCancelled = view.root.xy.state().selection === null
+      && view.selRect.style.display === "none";
+
+    // Editable lasso handles restore the last committed vertex.
+    view._sendSelectPolygon([[0, 0], [4, 0], [4, 16], [0, 16]], { history: false });
+    const lassoBefore = JSON.stringify(view._lassoPolygon);
+    const handle = view.selLassoHandles.children[1];
+    const [hx, hy] = center(handle);
+    pointer(handle, "pointerdown", 73, hx, hy, 1);
+    pointer(view.selLasso, "pointermove", 73, hx + 30, hy + 20, 1);
+    const lassoMoved = JSON.stringify(view._lassoPolygon) !== lassoBefore;
+    pointer(view.selLasso, "lostpointercapture", 73, hx + 30, hy + 20, 0);
+    const lassoRestored = JSON.stringify(view._lassoPolygon) === lassoBefore
+      && !handle.hasAttribute("data-xy-active");
+
+    // Axis-band pan owns the same finish-at-last-valid-frame policy.
+    view._setDragMode("pan");
+    const axisBand = view.root.querySelector('[data-xy-axis-band="x"]');
+    const [ax, ay] = center(axisBand);
+    pointer(axisBand, "pointerdown", 74, ax, ay, 1);
+    pointer(axisBand, "pointermove", 74, ax + 45, ay, 1);
+    const axisAtBoundary = ranges();
+    pointer(axisBand, "lostpointercapture", 74, ax + 45, ay, 0);
+    pointer(axisBand, "pointermove", 74, ax + 90, ay, 0);
+    const axisReentryDidNotPan =
+      JSON.stringify(ranges()) === JSON.stringify(axisAtBoundary);
+
+    // Chrome owned by the modebar cannot remain in its dragging state either.
+    view.root.dispatchEvent(new PointerEvent("pointerenter", { bubbles: true }));
+    const modebar = view._modebar;
+    const [mx, my] = center(modebar);
+    pointer(modebar, "pointerdown", 75, mx, my, 1);
+    pointer(modebar, "pointermove", 75, mx + 40, my + 20, 1);
+    const modebarAtBoundary = [modebar.style.left, modebar.style.top];
+    pointer(modebar, "lostpointercapture", 75, mx + 40, my + 20, 0);
+    pointer(modebar, "pointermove", 75, mx + 80, my + 40, 0);
+    const modebarReleased = !view._modebarDragging
+      && !modebar.classList.contains("xy-dragging")
+      && JSON.stringify([modebar.style.left, modebar.style.top])
+        === JSON.stringify(modebarAtBoundary);
+
     flush();
     window.requestAnimationFrame = realRaf;
 
     document.body.setAttribute("data-xy-lost-capture-probe", JSON.stringify({
-      reentryDidNotPan: JSON.stringify(ranges()) === JSON.stringify(atBoundary),
-      finalEndEmittedOnce: endEvents.length === 1,
+      canvasReentryDidNotPan,
+      finalEndEmittedForBothPans: endEvents.length === 2,
       finalEndKeptInteraction: endEvents[0]?.interaction_id != null
-        && endEvents[0]?.axes?.length > 0,
+        && endEvents[0]?.axes?.length > 0
+        && endEvents[1]?.interaction_id != null
+        && endEvents[1]?.axes?.length > 0,
+      selectionWasActive,
+      selectionCancelled,
+      lassoMoved,
+      lassoRestored,
+      axisReentryDidNotPan,
+      modebarReleased,
     }));
   } catch (err) {
     document.body.setAttribute(
@@ -190,12 +252,12 @@ _LOST_POINTER_CAPTURE_PROBE = """
 """
 
 
-def test_lost_pointer_capture_finishes_pan_before_buttonless_reentry(tmp_path: Path) -> None:
+def test_capture_loss_policy_covers_every_capture_owning_gesture(tmp_path: Path) -> None:
     result = _run(
         tmp_path,
         _chart_html().replace(_RENDER_CALL, _LOST_POINTER_CAPTURE_PROBE),
         "data-xy-lost-capture-probe",
-        label="lost pointer-capture pan probe",
+        label="shared pointer-capture loss probe",
     )
     assert result == {key: True for key in result}
 

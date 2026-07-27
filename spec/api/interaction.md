@@ -299,14 +299,16 @@ An existing lasso remains rendered until a replacement selection gesture
 crosses that movement threshold; a plain click or sub-threshold pointer jitter
 does not temporarily hide or replace it.
 
-Pointer capture is scoped to one browsing context. When a canvas drag leaves
-an embedded iframe and the primary mouse button is released in the parent
-document, the iframe may receive no `pointerup`; Chrome reports the lost
-capture only when the pointer re-enters. The client finalizes a pan at its last
-in-frame view before processing that buttonless move, emits the gesture's one
-`end` event, and cancels an unfinished selection/box-zoom whose release
-coordinate is unavailable. A buttonless mouse move back over the canvas is the
-backstop when the browser omits the lost-capture notification as well.
+Pointer capture is scoped to one browsing context, so a gesture whose button is
+released outside an embedding iframe may never deliver `pointerup` to the
+chart. Every capture-owning gesture still terminates deterministically: a pan
+finalizes at its last in-frame view and emits its one `end` event, and a
+gesture that needs a release coordinate it never received rolls back to its
+last committed state — selection and box-zoom restore the previous selection,
+a lasso-handle edit restores the prior vertex, and modebar dragging ends at its
+last in-frame position. Re-entering the chart never resumes the gesture. The
+detection mechanism and its scope are in
+[`../design/pan-and-zoom-configuration.md`](../design/pan-and-zoom-configuration.md).
 
 Axis bands are geometric scopes, not new state: secondary axes get their band
 on their own side (`y` left, `y2` right, top-side x axes on top), so scoping
