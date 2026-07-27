@@ -766,10 +766,17 @@ Full contract and enforcement: [export.md](export.md) § 9 and
 ### Legend placement
 
 `xy.legend(loc=...)` takes Matplotlib's vocabulary — `"upper right"`,
-`"lower left"`, `"center"`, `"upper center"`, and so on — case- and
-space-insensitively, plus `"best"`. The vocabulary is **closed**: the writers
-resolve a location by substring, so an unrecognized string used to land the
-legend silently in the middle of the data rather than fail.
+`"lower left"`, `"center"`, `"upper center"`, and so on — plus `"best"`.
+Spellings that are unambiguous are normalized rather than refused: case and
+whitespace are free, `-`/`_` work as separators, either word order is accepted,
+`"right"`/`"left"` alone mean the centered edges, and **`top`/`bottom` are
+accepted for `upper`/`lower`** — the CSS and Plotly spelling, and the one XY's
+own docs use.
+
+Everything else is **refused**. The writers resolve a location by substring, so
+an unrecognized string never failed; it landed somewhere. `"northeast"` and
+`"best"` came out dead center, on top of the data, and `"top left"` came out
+*center*-left — which is what the facets-and-layers docs page was rendering.
 
 `"best"` scores each candidate box by the fraction of sampled marks inside it
 and keeps the least occupied, preferring the earlier candidate on a near-tie —

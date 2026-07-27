@@ -94,6 +94,21 @@ def test_the_two_spellings_of_a_legend_style_agree() -> None:
     assert through_component.to_svg() == through_slot.to_svg()
 
 
+def test_a_legend_style_may_be_written_in_kebab_case() -> None:
+    # The writers key on the browser's camelCase property names, but every doc
+    # example — and normal CSS — uses kebab-case. Both spellings are the same
+    # declaration, so both must reach the file; kebab used to lose the shadow
+    # and the corner radius outright.
+    def svg(style):
+        return xy.line_chart(
+            xy.line([0.0, 1.0], [0.0, 1.0], name="alpha"), xy.legend(style=style)
+        ).to_svg()
+
+    camel = svg({"background": "#ffeeaa", "borderRadius": "6px", "boxShadow": "2px 2px 4px #000"})
+    kebab = svg({"background": "#ffeeaa", "border-radius": "6px", "box-shadow": "2px 2px 4px #000"})
+    assert camel == kebab
+
+
 def test_the_narrower_selector_wins_over_the_chart_wide_slot() -> None:
     # An axis's own label_color is more specific than styles={"axis_title": ...}.
     chart = xy.line_chart(

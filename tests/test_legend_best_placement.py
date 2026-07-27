@@ -37,18 +37,42 @@ def _legend_label_xy(svg: str, name: str) -> tuple[float, float]:
         ("UPPER RIGHT", "upper right"),
         ("  lower   left ", "lower left"),
         ("right", "center right"),  # Matplotlib's code 5 aliases center right
+        ("left", "center left"),
+        ("right upper", "upper right"),  # Matplotlib takes either word order
+        # `top`/`bottom` name the same edge as `upper`/`lower`. CSS, Plotly and
+        # XY's own docs use them, and `top left` used to render CENTER-left.
+        ("top left", "upper left"),
+        ("top-left", "upper left"),
+        ("bottom_right", "lower right"),
+        ("TOP RIGHT", "upper right"),
     ],
 )
 def test_locations_normalize(spelling: str, expected: str) -> None:
     assert xy.legend(loc=spelling).loc == expected
 
 
-@pytest.mark.parametrize("spelling", ["top-left", "northeast", "outside right", "zzz", ""])
-def test_an_unknown_location_raises_instead_of_centering(spelling: str) -> None:
+@pytest.mark.parametrize(
+    "spelling", ["northeast", "outside right", "zzz", "", "middle left", "upper middle"]
+)
+def test_an_unknown_location_raises_instead_of_landing_somewhere(spelling: str) -> None:
     # The writers resolve a location by substring, so an unrecognized string
-    # does not fail — it lands somewhere. Close the vocabulary instead.
+    # does not fail — it lands somewhere. Spellings that are unambiguous are
+    # normalized above; anything left is refused rather than guessed at.
     with pytest.raises(ValueError, match="is not a legend location"):
         xy.legend(loc=spelling)
+
+
+def test_the_docs_spelling_lands_where_it_reads() -> None:
+    # docs/content/components/facets-and-layers.md uses loc="top left"; before
+    # the vocabulary closed, the substring match found "left" but neither
+    # "upper" nor "lower", so the page rendered a CENTER-left legend.
+    top_left = xy.line_chart(
+        xy.line([0.0, 1.0], [0.0, 1.0], name="a"), xy.legend(loc="top left")
+    ).to_svg()
+    upper_left = xy.line_chart(
+        xy.line([0.0, 1.0], [0.0, 1.0], name="a"), xy.legend(loc="upper left")
+    ).to_svg()
+    assert top_left == upper_left
 
 
 # --- best placement ----------------------------------------------------------

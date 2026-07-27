@@ -149,27 +149,39 @@ LEGEND_LOCATIONS: tuple[str, ...] = (
 )
 
 
+#: Unambiguous synonyms for the vertical band. Matplotlib says `upper`/`lower`;
+#: CSS, Plotly and XY's own docs say `top`/`bottom`. Both name the same edge, so
+#: both are accepted rather than made into a trap.
+_LEGEND_LOC_SYNONYMS: dict[str, str] = {"top": "upper", "bottom": "lower"}
+
+
 def legend_loc(value: Any, label: str) -> Optional[str]:
     """A legend placement, or None for the default.
 
     The writers resolve a location by substring (`"left" in loc`), so an
-    unrecognized string does not fail — it silently lands somewhere. `"best"`
-    (Matplotlib's default), `"top-left"` (the CSS/Plotly spelling) and
-    `"LOWER RIGHT"` all used to park the legend dead center, on top of the
-    data. Close the vocabulary instead: a chart that cannot honor the request
-    says so.
+    unrecognized string never failed — it silently landed somewhere. `"best"`
+    (Matplotlib's default) and `"northeast"` parked the legend dead center on
+    top of the data; `"top left"` — the spelling XY's own docs teach — came out
+    center-left. Close the vocabulary instead: normalize the spellings that are
+    unambiguous, and refuse the rest rather than guess.
     """
     if value is None:
         return None
     if not isinstance(value, str):
         raise ValueError(f"{label} must be a string or None")
-    normalized = " ".join(value.lower().split())
+    words = [
+        _LEGEND_LOC_SYNONYMS.get(word, word)
+        for word in value.lower().replace("-", " ").replace("_", " ").split()
+    ]
+    normalized = " ".join(words)
     if normalized in LEGEND_LOCATIONS:
         return normalized
-    # `right` is Matplotlib's code 5 and aliases `center right`; the writers
-    # already resolve it that way, so accept it as the alias it is.
-    if normalized == "right":
-        return "center right"
+    # Matplotlib accepts either order for the two-word forms, and `right`/`left`
+    # alone are its codes 5/6 — the centered edges.
+    if len(words) == 2 and " ".join(reversed(words)) in LEGEND_LOCATIONS:
+        return " ".join(reversed(words))
+    if normalized in ("right", "left"):
+        return f"center {normalized}"
     options = ", ".join(repr(name) for name in LEGEND_LOCATIONS)
     raise ValueError(f"{label} {value!r} is not a legend location; expected one of: {options}")
 
