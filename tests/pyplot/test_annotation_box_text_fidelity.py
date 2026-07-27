@@ -55,6 +55,16 @@ def _annotation_texts(fig, ax) -> dict[str, dict[str, str]]:
     return out
 
 
+def _svg_root(fig, ax) -> ElementTree.Element:
+    svg = ax._build_chart(*fig._panel_px()).figure().to_svg()
+    return ElementTree.fromstring(svg)
+
+
+def _clip_rect(root: ElementTree.Element) -> dict[str, str]:
+    clip = next(e for e in root.iter() if e.tag.endswith("clipPath"))
+    return next(e.attrib for e in clip if e.tag.endswith("rect"))
+
+
 def _first_fill(cmd: _raster._Cmd) -> tuple[int, list[tuple[float, float]], tuple[int, ...]]:
     """Decode the first FILL command out of a raw native display list.
 
@@ -252,6 +262,71 @@ def test_explicit_text_colour_still_wins_over_the_matplotlib_default() -> None:
 
 
 # --- D3: an exported boxstyle="round" box has rounded corners ----------------
+
+
+def test_axes_fraction_multiline_top_bbox_stays_inside_axes_in_svg() -> None:
+    """``va='top'`` aligns the full text block, as in placing_text_boxes.py."""
+    fig, ax = plt.subplots()
+    ax.plot([0.0, 1.0], [0.0, 1.0])
+    ax.text(
+        0.05,
+        0.95,
+        "first\nsecond\nthird",
+        transform=ax.transAxes,
+        fontsize=14,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+    )
+
+    root = _svg_root(fig, ax)
+    clip = _clip_rect(root)
+    (bbox,) = _annotation_rects(fig, ax)
+    axes_top = float(clip["y"])
+    axes_height = float(clip["height"])
+    point_scale = fig.dpi / 72.0
+    font_size = 14.0 * point_scale
+    pad = 0.3 * font_size
+    expected_top = axes_top + 0.05 * axes_height - pad
+
+    assert float(bbox["y"]) == pytest.approx(expected_top, abs=0.02)
+    assert float(bbox["y"]) > axes_top
+
+
+def test_axes_fraction_multiline_top_bbox_stays_inside_axes_in_raster_stream() -> None:
+    """The native display list uses the same full-block top anchor as SVG."""
+    plot = {"x": 80.0, "y": 57.6, "w": 496.0, "h": 369.6}
+    font_size = 14.0 * 100.0 / 72.0
+    pad = 0.3 * font_size
+    annotation = {
+        "kind": "text",
+        "x": 0.05,
+        "y": 0.95,
+        "text": "first\nsecond\nthird",
+        "style": {
+            "coordinate_space": "axes_fraction",
+            "vertical_align": "top",
+            "font_size": font_size,
+            "background": "rgba(245,222,179,0.5)",
+            "border": "1px solid rgba(0,0,0,0.5)",
+            "padding": f"{pad}px",
+        },
+    }
+    cmd = _raster._Cmd(1.0)
+    _raster._emit_annotations(
+        cmd,
+        [annotation],
+        lambda value: value,
+        lambda value: value,
+        plot,
+        640.0,
+        480.0,
+        phase="text",
+    )
+
+    _count, points, _rgba = _first_fill(cmd)
+    expected_top = plot["y"] + 0.05 * plot["h"] - pad
+    assert min(y for _, y in points) == pytest.approx(expected_top, abs=0.02)
+    assert min(y for _, y in points) > plot["y"]
 
 
 def test_round_boxstyle_exports_a_non_zero_corner_radius_in_svg() -> None:
