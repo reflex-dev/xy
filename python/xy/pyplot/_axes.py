@@ -31,7 +31,6 @@ from ._artists import (
     Artist,
     AxesImage,
     BarContainer,
-    ErrorbarContainer,
     Legend,
     Line2D,
     PathCollection,
@@ -81,6 +80,8 @@ from ._translate import (
     marker_size_to_scatter_size,
     not_implemented,
 )
+
+_UNSET = object()
 
 # matplotlib's default look: white panel, no grid until grid(True).
 _MPL_THEME_TOKENS = {
@@ -2170,9 +2171,21 @@ class Axes(PlotTypeMixin):
         linewidth = kwargs.pop("linewidth", None)
         xerr = kwargs.pop("xerr", None)
         yerr = kwargs.pop("yerr", None)
-        error_kw = kwargs.pop("error_kw", {}) or {}
-        capsize = kwargs.pop("capsize", error_kw.pop("capsize", None))
-        kwargs.pop("ecolor", error_kw.pop("ecolor", None))
+        raw_error_kw = kwargs.pop("error_kw", None)
+        if raw_error_kw is None:
+            error_kw: dict[str, Any] = {}
+        elif isinstance(raw_error_kw, Mapping):
+            # Matplotlib copies this caller-owned mapping before adding the
+            # independent bar defaults.  Its setdefault order deliberately
+            # gives nested error_kw values precedence over direct ecolor and
+            # capsize arguments.
+            error_kw = dict(raw_error_kw)
+        else:
+            raise TypeError("bar()/barh() error_kw must be a mapping or None")
+        direct_capsize = kwargs.pop("capsize", rcParams["errorbar.capsize"])
+        direct_ecolor = kwargs.pop("ecolor", "#000000")
+        error_kw.setdefault("capsize", direct_capsize)
+        error_kw.setdefault("ecolor", direct_ecolor)
         align = kwargs.pop("align", "center")
         if align not in {"center", "edge"}:
             raise ValueError("bar()/barh() align must be 'center' or 'edge'")
@@ -2261,7 +2274,7 @@ class Axes(PlotTypeMixin):
                 **({"patch_labels": patch_labels} if patch_labels is not None else {}),
             },
         )
-        container = BarContainer(self, entry)
+        errorbar = None
         if xerr is not None or yerr is not None:
             positions = np.asarray(cats)
             values = np.asarray(vals, dtype=np.float64)
@@ -2270,20 +2283,17 @@ class Axes(PlotTypeMixin):
                 ex, ey, exerr, eyerr = positions, bases + values, xerr, yerr
             else:
                 ex, ey, exerr, eyerr = bases + values, positions, xerr, yerr
-            err_kwargs = {
-                "xerr": exerr,
-                "yerr": eyerr,
-                "color": error_kw.pop("color", "#000000"),
-                "cap_size": capsize,
-            }
-            error_entry = self._add(
-                "@mark", {"factory": "errorbar", "args": (ex, ey), "kwargs": err_kwargs}
+            error_kw.setdefault("label", "_nolegend_")
+            errorbar = self.errorbar(
+                ex,
+                ey,
+                xerr=exerr,
+                yerr=eyerr,
+                fmt="none",
+                **error_kw,
             )
-            # Matplotlib exposes the bar's error geometry through
-            # ``BarContainer.errorbar``.  Keep the same relationship so
-            # ``bar_label`` can anchor edge labels at the outer error endpoint
-            # instead of at the rectangle edge.
-            container.errorbar = ErrorbarContainer(Artist(self, error_entry))
+        container = BarContainer(self, entry)
+        container.errorbar = errorbar
         return container
 
     def hist(
@@ -3512,7 +3522,10 @@ class Axes(PlotTypeMixin):
         rotation = kwargs.pop("rotation", None)
         bbox = kwargs.pop("bbox", None)
         check_unsupported(kwargs, "text()")
-        akw = {"color": resolve_color(color)} if color is not None else {}
+        # Matplotlib snapshots the active text default when the Text artist is
+        # created.  Preserve that value on the entry so a later style-context
+        # change cannot recolor an already-authored label at render time.
+        akw = {"color": resolve_color(rcParams["text.color"] if color is None else color)}
         if bbox is not None:
             if not isinstance(bbox, Mapping):
                 raise TypeError("text() bbox must be a mapping or None")
@@ -3576,9 +3589,12 @@ class Axes(PlotTypeMixin):
         bbox = kwargs.pop("bbox", None)
         zorder = kwargs.pop("zorder", None)
         check_unsupported(kwargs, "annotate()")
-        akw: dict[str, Any] = {}
-        if color is not None:
-            akw["color"] = resolve_color(color)
+        # Match Text creation semantics: the active rc default belongs to the
+        # annotation even if materialization happens after a style context
+        # exits.
+        akw: dict[str, Any] = {
+            "color": resolve_color(rcParams["text.color"] if color is None else color)
+        }
         if arrowprops is not None:
             akw["arrowprops"] = dict(arrowprops)
         if bbox is not None:
@@ -4988,19 +5004,17 @@ class Axes(PlotTypeMixin):
             for container in host._containers
             if isinstance(container, ErrorbarContainer)
         }
+        bar_containers = {
+            id(container._entry): container
+            for container in host._containers
+            if isinstance(container, BarContainer) and container._entry.get("kind") == "bar"
+        }
         handles: list[Any] = []
         labels: list[str] = []
         for entry in host._entries:
             patch_labels = entry.get("patch_labels")
             if patch_labels is not None:
-                container = next(
-                    (
-                        item
-                        for item in host._containers
-                        if isinstance(item, BarContainer) and item._entry is entry
-                    ),
-                    None,
-                )
+                container = bar_containers.get(id(entry))
                 for index, label in enumerate(patch_labels):
                     if label and not str(label).startswith("_"):
                         handles.append(
@@ -5008,10 +5022,28 @@ class Axes(PlotTypeMixin):
                         )
                         labels.append(str(label))
                 continue
+            # Matplotlib scans ordinary child artists first, then containers.
+            # Defer container-owned entries so an errorbar/bar pair follows
+            # the public Axes.containers registration order.
+            if id(entry) in errorbar_containers or id(entry) in bar_containers:
+                continue
             label = entry.get("kwargs", {}).get("name")
             if label and not str(label).startswith("_"):
-                handle = errorbar_containers.get(id(entry))
-                handles.append(handle if handle is not None else Artist(self, entry))
+                handles.append(Artist(self, entry))
+                labels.append(str(label))
+        for container in host._containers:
+            if not isinstance(container, (BarContainer, ErrorbarContainer)):
+                continue
+            if isinstance(container, BarContainer) and container._entry.get("kind") != "bar":
+                continue
+            if (
+                isinstance(container, BarContainer)
+                and container._entry.get("patch_labels") is not None
+            ):
+                continue
+            label = container.get_label()
+            if label and not str(label).startswith("_"):
+                handles.append(container)
                 labels.append(str(label))
         return handles, labels
 
@@ -8702,6 +8734,8 @@ def _apply_axis_label_kwargs(
             axis_style[target] = float(value) * point_scale if source == "font_size" else value
     if labelpad is not None:
         props["label_offset"] = float(labelpad)
+    if "rotation" in text_style:
+        props["label_angle"] = float(text_style["rotation"])
     if loc is not None:
         positions = {
             "left": "start",
@@ -8736,12 +8770,12 @@ def _pop_text_style_kwargs(kwargs: dict[str, Any], context: str) -> dict[str, An
     family = pop_alias("fontfamily", "family")
     font_style = pop_alias("fontstyle", "style")
     color = kwargs.pop("color", None)
+    rotation = kwargs.pop("rotation", _UNSET)
     for key in (
         "horizontalalignment",
         "ha",
         "verticalalignment",
         "va",
-        "rotation",
         "pad",
         "y",
         "x",
@@ -8765,6 +8799,16 @@ def _pop_text_style_kwargs(kwargs: dict[str, Any], context: str) -> dict[str, An
         style["font_style"] = font_style
     if color is not None:
         style["color"] = resolve_color(color)
+    if rotation is not _UNSET:
+        if rotation is None or rotation == "horizontal":
+            rotation = 0.0
+        elif rotation == "vertical":
+            rotation = 90.0
+        # Matplotlib angles use a y-up coordinate system, while SVG/CSS uses
+        # y-down coordinates.  Store the renderer-facing angle with the
+        # opposite sign so positive Matplotlib rotation stays counterclockwise.
+        rendered_rotation = -float(rotation)
+        style["rotation"] = 0.0 if rendered_rotation == 0.0 else rendered_rotation
     return style
 
 

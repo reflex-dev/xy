@@ -3303,6 +3303,7 @@ def _annotation_svg(
                 stroke_attr = (
                     f' stroke="{escape(_css(style.get("stroke_color"), color))}"'
                     f' stroke-width="{_num(stroke_w)}"'
+                    + (f' stroke-opacity="{_num(opacity)}"' if opacity < 1 else "")
                     if stroke_w
                     else ""
                 )
