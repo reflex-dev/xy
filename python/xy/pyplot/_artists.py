@@ -1204,6 +1204,26 @@ class PolyCollection(Artist):
 class Wedge(PolyCollection):
     """Pie wedge backed by a grouped subset of one native sector mesh."""
 
+    def __init__(
+        self,
+        axes: Any,
+        entry: dict[str, Any],
+        outline_entry: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(axes, entry)
+        self._outline_entry = outline_entry
+
+    def remove(self) -> None:
+        if self._outline_entry is not None:
+            self._axes._remove_entry(self._outline_entry)
+            self._outline_entry = None
+        super().remove()
+
+    def set_zorder(self, level: float) -> None:
+        if self._outline_entry is not None:
+            self._outline_entry["_zorder"] = float(level)
+        super().set_zorder(level)
+
     @property
     def theta1(self) -> float:
         """Starting angle in degrees, matching Matplotlib's public geometry."""
@@ -1342,7 +1362,7 @@ def _legend_item_from_entry(
     renderer already draws for a named trace, so line dashes and marker glyphs
     render identically.
     """
-    kind = str(entry.get("kind", "line"))
+    kind = str(entry.get("_legend_kind", entry.get("kind", "line")))
     if kind.startswith("@"):  # generic marks (errorbar, vlines, …) → a line sample
         kind = "line"
     kw = entry.get("kwargs", {})

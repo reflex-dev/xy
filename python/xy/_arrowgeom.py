@@ -4,7 +4,8 @@ Mirrors ``xyArrowGeometry`` in ``js/src/51_annotations.ts`` — keep the two in
 sync. Style keys: ``curve`` (matplotlib arc3 rad — quadratic bulge as a
 fraction of chord length), ``angle_a``/``angle_b`` (matplotlib angle3/angle
 departure/arrival angles, degrees, y-up screen space — the control point is
-the ray intersection), ``gap_start``/``gap_end`` (px trims along the path
+the ray intersection), ``elbow`` (use that intersection as the sharp corner
+for ``connectionstyle="angle"``), ``gap_start``/``gap_end`` (px trims along the path
 tangents for label/point clearance), ``start_offset`` (an "x,y" px shift of
 the start point — matplotlib's relpos: the arrow leaves the label's box
 CENTER, not its anchor), ``label_clear`` (a "left,right,up,down" px
@@ -85,7 +86,14 @@ def arrow_geometry(
     # Tangent INTO each endpoint (head/tail orientation).
     dir1 = toward(*control, *p1) if control else toward(*p0, *p1)
     dir0 = toward(*control, *p0) if control else toward(*p1, *p0)
-    return {"p0": p0, "p1": p1, "control": control, "dir0": dir0, "dir1": dir1}
+    return {
+        "p0": p0,
+        "p1": p1,
+        "control": control,
+        "elbow": bool(style.get("elbow")),
+        "dir0": dir0,
+        "dir1": dir1,
+    }
 
 
 def shaft_points(geom: dict[str, Any], samples: int = 24) -> list[tuple[float, float]]:
@@ -95,6 +103,8 @@ def shaft_points(geom: dict[str, Any], samples: int = 24) -> list[tuple[float, f
     if control is None:
         return [(x0, y0), (x1, y1)]
     cx, cy = control
+    if geom.get("elbow"):
+        return [(x0, y0), (cx, cy), (x1, y1)]
     points = []
     for index in range(samples + 1):
         t = index / samples

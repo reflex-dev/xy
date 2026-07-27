@@ -2940,6 +2940,7 @@ class Axes(PlotTypeMixin):
         weight = kwargs.pop("weight", kwargs.pop("fontweight", None))
         rotation = kwargs.pop("rotation", None)
         bbox = kwargs.pop("bbox", None)
+        zorder = kwargs.pop("zorder", None)
         check_unsupported(kwargs, "annotate()")
         akw: dict[str, Any] = {}
         if color is not None:
@@ -2986,6 +2987,7 @@ class Axes(PlotTypeMixin):
             style["rotation"] = 90.0 if rotation == "vertical" else float(rotation)
         if style:
             akw["style"] = style
+        annotation_entries: list[dict[str, Any]] = []
         if arrowprops is not None and text_xy != xy:
             if style.get("coordinate_space"):
                 raise not_implemented(
@@ -3029,23 +3031,29 @@ class Axes(PlotTypeMixin):
             )
             if attach is not None and not shrink:
                 arrow_style = {**arrow_style, **attach}
-            self._add(
-                "@arrow",
-                {
-                    "args": (sx0, sy0, ex0, ey0),
-                    "kwargs": {
-                        "color": arrow_color,
-                        "width": arrow_width,
-                        "style": arrow_style,
+            annotation_entries.append(
+                self._add(
+                    "@arrow",
+                    {
+                        "args": (sx0, sy0, ex0, ey0),
+                        "kwargs": {
+                            "color": arrow_color,
+                            "width": arrow_width,
+                            "style": arrow_style,
+                        },
                     },
-                },
+                )
             )
-        return Text(
-            self,
-            self._add(
-                "@text", {"args": (text_xy[0], text_xy[1], _plain_text(text)), "kwargs": akw}
-            ),
+        text_entry = self._add(
+            "@text", {"args": (text_xy[0], text_xy[1], _plain_text(text)), "kwargs": akw}
         )
+        annotation_entries.append(text_entry)
+        if zorder is not None:
+            for entry in annotation_entries:
+                entry["_zorder"] = float(zorder)
+            host = self._y2_of or self
+            host._entries.sort(key=lambda entry: float(entry.get("_zorder", 0.0)))
+        return Text(self, text_entry)
 
     # -- axis config -----------------------------------------------------------
 
@@ -6768,10 +6776,7 @@ def _parse_style_options(spec: str) -> dict[str, float]:
 
 
 def _connection_curve(connectionstyle: Any) -> dict[str, float]:
-    """matplotlib ``connectionstyle`` → quadratic-curve style keys (see
-    ``_arrowgeom.py``): arc3's rad becomes ``curve``; angle3/angle become the
-    ``angle_a``/``angle_b`` departure/arrival angles (corner rounding is
-    approximated by the quadratic)."""
+    """Matplotlib ``connectionstyle`` → shared arrow-geometry style keys."""
     if not isinstance(connectionstyle, str):
         return {}
     name = connectionstyle.split(",")[0].strip()
@@ -6780,7 +6785,15 @@ def _connection_curve(connectionstyle: Any) -> dict[str, float]:
         rad = options.get("rad", 0.0)
         return {"curve": rad} if rad else {}
     if name in ("angle3", "angle"):
-        return {"angle_a": options.get("angleA", 90.0), "angle_b": options.get("angleB", 0.0)}
+        result = {
+            "angle_a": options.get("angleA", 90.0),
+            "angle_b": options.get("angleB", 0.0),
+        }
+        if name == "angle":
+            # ``angle`` is a sharp two-segment elbow. ``angle3`` uses the
+            # same ray intersection as a quadratic Bézier control point.
+            result["elbow"] = 1.0
+        return result
     return {}
 
 
