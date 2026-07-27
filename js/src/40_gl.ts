@@ -84,6 +84,7 @@ float xyDecode(float encoded, vec2 meta) {
 float xyAxisCoord(float encoded, vec2 meta, int mode, float constant) {
   float value = xyDecode(encoded, meta);
   if (mode == 1) return value > 0.0 ? log(value) / log(10.0) : -1e30;
+  if (mode == 3) return value > 0.0 ? log(value) / log(10.0) : uintBitsToFloat(0x7fc00000u);
   if (mode == 2) return sign(value) * log(1.0 + abs(value) / constant);
   return value;
 }
@@ -92,11 +93,12 @@ float xyMap(float encoded, vec2 map, vec2 meta, int mode, float constant) {
 }
 float xyViewCoord(float value, int mode, float constant) {
   if (mode == 1) return value > 0.0 ? log(value) / log(10.0) : -1e30;
+  if (mode == 3) return value > 0.0 ? log(value) / log(10.0) : uintBitsToFloat(0x7fc00000u);
   if (mode == 2) return sign(value) * log(1.0 + abs(value) / constant);
   return value;
 }
 float xyViewValue(float coord, int mode, float constant) {
-  if (mode == 1) return pow(10.0, coord);
+  if (mode == 1 || mode == 3) return pow(10.0, coord);
   if (mode == 2) return sign(coord) * constant * (exp(abs(coord)) - 1.0);
   return coord;
 }
@@ -233,13 +235,19 @@ void main() {
   vec2 d = gl_PointCoord - 0.5;
   float sd;
   int symbol = v_style.w >= 0.0 ? int(v_style.w + 0.5) : u_symbol;
-  bool lineMarker = symbol == 15 || symbol == 16;
+  bool lineMarker = symbol == 15 || symbol == 16 || symbol == 17 || symbol == 18;
   if (lineMarker) {
-    vec2 q = symbol == 16 ? vec2(d.x + d.y, d.y - d.x) * 0.707106781 : d;
     float itemStrokeWidth = v_style.z >= 0.0 ? v_style.z : u_ptStrokeWidth;
     float halfWidth = max(itemStrokeWidth, 1.0) / (2.0 * max(v_ptSize, 1.0));
-    vec2 a = abs(q);
-    sd = min(max(a.x - 0.5, a.y - halfWidth), max(a.y - 0.5, a.x - halfWidth));
+    if (symbol == 17) {
+      sd = max(abs(d.x) - 0.5, abs(d.y) - halfWidth);
+    } else if (symbol == 18) {
+      sd = max(abs(d.y) - 0.5, abs(d.x) - halfWidth);
+    } else {
+      vec2 q = symbol == 16 ? vec2(d.x + d.y, d.y - d.x) * 0.707106781 : d;
+      vec2 a = abs(q);
+      sd = min(max(a.x - 0.5, a.y - halfWidth), max(a.y - 0.5, a.x - halfWidth));
+    }
   } else {
     // Scalar-only equivalent: xyMarkerSdf(d, u_symbol). The resolved symbol
     // also permits a per-item glyph override from v_style.w.

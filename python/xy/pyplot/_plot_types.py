@@ -2737,10 +2737,30 @@ class PlotTypeMixin:
         x_values = np.asarray(x)
         y_values = np.asarray(y)
         limit_markers: list[tuple[np.ndarray, np.ndarray, str]] = []
+        cap_markers: list[tuple[np.ndarray, np.ndarray, str]] = []
         if yerr is not None:
             lower, upper = _error_sides(yerr, len(y_values))
             lower_flags = np.broadcast_to(np.asarray(lolims, dtype=bool), y_values.shape)
             upper_flags = np.broadcast_to(np.asarray(uplims, dtype=bool), y_values.shape)
+            ordinary = ~(lower_flags | upper_flags)
+            if ordinary.any():
+                cap_markers.append(
+                    (
+                        np.concatenate((x_values[ordinary], x_values[ordinary])),
+                        np.concatenate(
+                            (
+                                y_values[ordinary] - lower[ordinary],
+                                y_values[ordinary] + upper[ordinary],
+                            )
+                        ),
+                        "_",
+                    )
+                )
+            limited = lower_flags | upper_flags
+            if limited.any():
+                # Matplotlib puts the caret at the finite error endpoint and
+                # the cap at the reported datum for a one-sided limit.
+                cap_markers.append((x_values[limited], y_values[limited], "_"))
             if lower_flags.any():
                 limit_markers.append(
                     (x_values[lower_flags], y_values[lower_flags] + upper[lower_flags], "^")
@@ -2753,6 +2773,23 @@ class PlotTypeMixin:
             lower, upper = _error_sides(xerr, len(x_values))
             lower_flags = np.broadcast_to(np.asarray(xlolims, dtype=bool), x_values.shape)
             upper_flags = np.broadcast_to(np.asarray(xuplims, dtype=bool), x_values.shape)
+            ordinary = ~(lower_flags | upper_flags)
+            if ordinary.any():
+                cap_markers.append(
+                    (
+                        np.concatenate(
+                            (
+                                x_values[ordinary] - lower[ordinary],
+                                x_values[ordinary] + upper[ordinary],
+                            )
+                        ),
+                        np.concatenate((y_values[ordinary], y_values[ordinary])),
+                        "|",
+                    )
+                )
+            limited = lower_flags | upper_flags
+            if limited.any():
+                cap_markers.append((x_values[limited], y_values[limited], "|"))
             if lower_flags.any():
                 limit_markers.append(
                     (x_values[lower_flags] + upper[lower_flags], y_values[lower_flags], ">")
@@ -2786,6 +2823,8 @@ class PlotTypeMixin:
                 line_color = self._next_color()
             color = line_color
         resolved_capsize = float(rcParams["errorbar.capsize"] if capsize is None else capsize)
+        if not np.isfinite(resolved_capsize) or resolved_capsize < 0.0:
+            raise ValueError("errorbar capsize must be finite and non-negative")
         errorbar_width = float(
             elinewidth if elinewidth is not None else base.get("width", rcParams["lines.linewidth"])
         )
@@ -2800,21 +2839,48 @@ class PlotTypeMixin:
                     "name": base.get("name"),
                     "color": color,
                     "width": errorbar_width,
-                    "cap_size": resolved_capsize,
+                    # Core XY caps are symmetric data-unit geometry. Matplotlib
+                    # caps are fixed-size ``_``/``|`` line markers in points,
+                    # so the pyplot overlays below own them instead.
+                    "cap_size": 0.0,
                     "opacity": base.get("opacity", 1.0),
                 },
             },
         )
+        cap_artists: list[Artist] = []
+        if resolved_capsize > 0.0:
+            for cap_x, cap_y, marker_symbol in cap_markers:
+                cap_entry = self._add(
+                    "scatter",
+                    {
+                        "x": cap_x,
+                        "y": cap_y,
+                        "kwargs": {
+                            "color": color,
+                            "opacity": base.get("opacity", 1.0),
+                            "symbol": MARKER_TO_SYMBOL[marker_symbol],
+                            "density": False,
+                        },
+                        # Preserve point units until chart materialization. A
+                        # resize keeps the marker size fixed, while a DPI change
+                        # re-resolves points to the new output pixels.
+                        "_mpl_line_marker_path_points": 2.0 * resolved_capsize,
+                        "_mpl_line_marker_stroke_points": float(rcParams["lines.markeredgewidth"]),
+                    },
+                )
+                cap_artists.append(Artist(self, cap_entry))
         marker_area = float(max(float(rcParams["lines.markersize"]), 2.0 * resolved_capsize) ** 2)
         for marker_x, marker_y, marker_symbol in limit_markers:
-            self.scatter(
-                marker_x,
-                marker_y,
-                s=marker_area,
-                c=color,
-                marker=marker_symbol,
-                edgecolors=color,
-                linewidths=0.0,
+            cap_artists.append(
+                self.scatter(
+                    marker_x,
+                    marker_y,
+                    s=marker_area,
+                    c=color,
+                    marker=marker_symbol,
+                    edgecolors=color,
+                    linewidths=0.0,
+                )
             )
         data_line: Optional[Line2D] = None
         if fmt.lower() != "none":
@@ -2838,7 +2904,7 @@ class PlotTypeMixin:
             if markersize is not None:
                 line_kwargs_for_plot["markersize"] = markersize
             data_line = self.plot(x, y, fmt, **line_kwargs_for_plot)[0]
-        return ErrorbarContainer(Artist(self, entry), data_line)
+        return ErrorbarContainer(Artist(self, entry), data_line, cap_artists)
 
     def hexbin(
         self,

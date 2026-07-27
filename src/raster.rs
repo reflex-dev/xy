@@ -1042,6 +1042,8 @@ fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
             let (ax, ay) = (qx.abs(), qy.abs());
             (ax - r).max(ay).min((ay - r).max(ax))
         }
+        17 => (px.abs() - r).max(py.abs()), // unfilled horizontal line
+        18 => px.abs().max(py.abs() - r),   // unfilled vertical line
         5 => {
             // regular hexagon, pointy top (IQ SDF, x/y swapped for a top vertex)
             let (k0, k1, k2) = (-0.866_025_4_f32, 0.5_f32, 0.577_350_3_f32);

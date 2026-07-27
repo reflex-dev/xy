@@ -749,6 +749,7 @@ class _Scale:
         # public axis option is serialized separately as ``scale``. Accept the
         # historical kind form too for old payloads.
         self.log = axis.get("scale") == "log" or self.kind == "log"
+        self.nonpositive = axis.get("nonpositive", "clip")
         self.symlog = axis.get("scale") == "symlog"
         self.constant = float(axis.get("constant", 1.0))
         if self.log:
@@ -760,7 +761,11 @@ class _Scale:
 
     def coord(self, v: Any) -> Any:
         if self.log:
-            return np.log10(np.maximum(v, 1e-300))
+            values = np.asarray(v)
+            if self.nonpositive == "mask":
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    return np.where(values > 0, np.log10(values), np.nan)
+            return np.log10(np.maximum(values, 1e-300))
         return self._symlog(v) if self.symlog else v
 
     def _symlog(self, v: Any) -> Any:
@@ -1414,6 +1419,12 @@ _SYMBOL_BUILDERS = {
         f'<path d="M {_num(cx - 0.707 * r)} {_num(cy - 0.707 * r)} L {_num(cx + 0.707 * r)} {_num(cy + 0.707 * r)} '
         f'M {_num(cx + 0.707 * r)} {_num(cy - 0.707 * r)} L {_num(cx - 0.707 * r)} {_num(cy + 0.707 * r)}" fill="none"'
     ),
+    "horizontal_line": lambda cx, cy, r: (
+        f'<path d="M {_num(cx - r)} {_num(cy)} H {_num(cx + r)}" fill="none"'
+    ),
+    "vertical_line": lambda cx, cy, r: (
+        f'<path d="M {_num(cx)} {_num(cy - r)} V {_num(cy + r)}" fill="none"'
+    ),
     "pentagon": lambda cx, cy, r: _regular_polygon_path(cx, cy, r, 5, -90.0),
     "hexagon": lambda cx, cy, r: _regular_polygon_path(cx, cy, r, 6, -90.0),
     "star": lambda cx, cy, r: _star_path(cx, cy, r, 5, 0.45, -90.0),
@@ -1805,6 +1816,19 @@ def axis_ticks(
     return t, t, step
 
 
+def minor_axis_ticks(axis: dict[str, Any]) -> list[float]:
+    values = axis.get("minor_tick_values")
+    if values is None:
+        return []
+    lo, hi = axis["range"]
+    low, high = min(lo, hi), max(lo, hi)
+    return [
+        float(value)
+        for value in values
+        if np.isfinite(float(value)) and low <= float(value) <= high
+    ]
+
+
 def _axis_tick_label_strategy(axis: dict[str, Any]) -> str:
     value = str(axis.get("tick_label_strategy") or "auto").replace("-", "_")
     return value if value in {"auto", "hide", "rotate", "stagger", "none", "off"} else "auto"
@@ -2073,8 +2097,10 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     # -- grid + tick labels + baselines ------------------------------------
     xt, xlab, xstep = ticks_for(xa, plot["w"])
     yt, ylab, ystep = ticks_for(ya, plot["h"])
+    xmt, ymt = minor_axis_ticks(xa), minor_axis_ticks(ya)
     dom_style = (spec.get("dom") or {}).get("style") or {}
     xstyle, ystyle = xa.get("style") or {}, ya.get("style") or {}
+    xmstyle, ymstyle = xa.get("minor_style") or {}, ya.get("minor_style") or {}
     default_grid = _css(dom_style.get("--chart-grid"), _GRID)
     default_axis = _css(dom_style.get("--chart-axis"), _AXIS)
     default_text = _css(dom_style.get("--chart-text"), _TEXT)
@@ -2085,6 +2111,28 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     # label text and keeps grid, baselines and the axis title (mpl shared axes).
     hide_x = xa.get("tick_label_strategy") == "none"
     hide_y = ya.get("tick_label_strategy") == "none"
+    for v in xmt:
+        if hide_x:
+            break
+        px = float(sx(v))
+        grid.append(
+            f'<line data-xy-grid="minor" x1="{_num(px)}" y1="{_num(plot["y"])}" '
+            f'x2="{_num(px)}" y2="{_num(plot["y"] + plot["h"])}" '
+            f'stroke="{escape(_css(xmstyle.get("grid_color"), "transparent"))}" '
+            f'stroke-width="{_num(float(xmstyle.get("grid_width", 1)))}"'
+            f"{_axis_grid_attrs(xmstyle)}/>"
+        )
+    for v in ymt:
+        if hide_y:
+            break
+        py = float(sy(v))
+        grid.append(
+            f'<line data-xy-grid="minor" x1="{_num(plot["x"])}" y1="{_num(py)}" '
+            f'x2="{_num(plot["x"] + plot["w"])}" y2="{_num(py)}" '
+            f'stroke="{escape(_css(ymstyle.get("grid_color"), "transparent"))}" '
+            f'stroke-width="{_num(float(ymstyle.get("grid_width", 1)))}"'
+            f"{_axis_grid_attrs(ymstyle)}/>"
+        )
     for v in xt:
         if hide_x:
             break
@@ -2444,6 +2492,22 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         return 0.0, length, float(style.get("tick_width", 1))
 
     if not hide_x:
+        inward, outward, tick_width = tick_span(xmstyle)
+        side = xa.get("side", "bottom")
+        edge = plot["y"] if side == "top" else plot["y"] + plot["h"]
+        for value in xmt:
+            x = float(sx(value))
+            y1, y2 = (
+                (edge - outward, edge + inward)
+                if side == "top"
+                else (edge - inward, edge + outward)
+            )
+            baselines += (
+                f'<line data-xy-tick="minor" x1="{_num(x)}" y1="{_num(y1)}" '
+                f'x2="{_num(x)}" y2="{_num(y2)}" '
+                f'stroke="{escape(_css(xmstyle.get("tick_color"), default_axis))}" '
+                f'stroke-width="{_num(tick_width)}"/>'
+            )
         inward, outward, tick_width = tick_span(xstyle)
         side = xa.get("side", "bottom")
         edge = plot["y"] if side == "top" else plot["y"] + plot["h"]
@@ -2460,6 +2524,22 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 f'stroke-width="{_num(tick_width)}"/>'
             )
     if not hide_y:
+        inward, outward, tick_width = tick_span(ymstyle)
+        side = ya.get("side", "left")
+        edge = plot["x"] + plot["w"] if side == "right" else plot["x"]
+        for value in ymt:
+            y = float(sy(value))
+            x1, x2 = (
+                (edge - inward, edge + outward)
+                if side == "right"
+                else (edge - outward, edge + inward)
+            )
+            baselines += (
+                f'<line data-xy-tick="minor" x1="{_num(x1)}" y1="{_num(y)}" '
+                f'x2="{_num(x2)}" y2="{_num(y)}" '
+                f'stroke="{escape(_css(ymstyle.get("tick_color"), default_axis))}" '
+                f'stroke-width="{_num(tick_width)}"/>'
+            )
         inward, outward, tick_width = tick_span(ystyle)
         side = ya.get("side", "left")
         edge = plot["x"] + plot["w"] if side == "right" else plot["x"]
@@ -3126,7 +3206,12 @@ def _scatter_marks(
         )
         symbol = symbols[i]
         builder = _SYMBOL_BUILDERS.get(symbol)
-        line_symbol = symbol in {"plus_line", "x_line"}
+        line_symbol = symbol in {
+            "plus_line",
+            "x_line",
+            "horizontal_line",
+            "vertical_line",
+        }
         stroke_w = float(stroke_widths[i])
         if line_symbol and stroke_w <= 0:
             stroke_w = 1.0
@@ -3185,6 +3270,8 @@ _SYMBOL_NAMES = (
     "thin_diamond",
     "plus_line",
     "x_line",
+    "horizontal_line",
+    "vertical_line",
 )
 
 
@@ -4052,7 +4139,12 @@ def _legend(
             builder = _SYMBOL_BUILDERS.get(symbol)
             radius = max(0.5, float(style.get("size", 8.0)) / 2.0)
             stroke_w = float(style.get("stroke_width", 0.0))
-            line_symbol = symbol in {"plus_line", "x_line"}
+            line_symbol = symbol in {
+                "plus_line",
+                "x_line",
+                "horizontal_line",
+                "vertical_line",
+            }
             if line_symbol and stroke_w <= 0:
                 stroke_w = 1.0
             stroke = _css(style.get("stroke"), color) if stroke_w or line_symbol else None

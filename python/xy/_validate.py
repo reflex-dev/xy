@@ -405,6 +405,8 @@ _POINT_SYMBOLS = frozenset(
         "thin_diamond",
         "plus_line",
         "x_line",
+        "horizontal_line",
+        "vertical_line",
     }
 )
 

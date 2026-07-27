@@ -395,6 +395,27 @@ class Figure:
             "ha": str(ha),
             "va": str(va),
         }
+        if self._layout_options.get("engine") == "tight":
+            # Constrained/tight figures compose the suptitle outside the
+            # per-panel chart chrome. Reserve a title row in the same pass
+            # that already reserves tick and Axes-title chrome; otherwise a
+            # one-row gallery places all three titles on the same baseline.
+            prior = self._layout_options
+            rect = prior.get("rect")
+            if rect is None:
+                rect = (0.0, 0.0, 1.0, 0.9)
+            self.tight_layout(
+                **{
+                    key: value
+                    for key, value in {
+                        "pad": prior.get("pad"),
+                        "h_pad": prior.get("h_pad"),
+                        "w_pad": prior.get("w_pad"),
+                        "rect": rect,
+                    }.items()
+                    if value is not None
+                }
+            )
         self._invalidate()
 
     def supxlabel(self, label: str, **kwargs: Any) -> Text:

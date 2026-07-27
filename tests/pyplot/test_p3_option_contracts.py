@@ -92,17 +92,17 @@ def test_fill_between_interpolate_extends_to_curve_crossing() -> None:
     np.testing.assert_allclose(collection._entry["x"], [0.5, 1.0, 2.0, 2.5])
 
 
-def test_log_wrappers_accept_only_the_native_log_contract() -> None:
+def test_log_wrappers_accept_base_subs_and_nonpositive_contract() -> None:
     _fig, ax = plt.subplots()
     ax.loglog([1, 10], [1, 100], base=10, nonpositive="clip")
     assert ax._axis["x"]["type_"] == "log"
     assert ax._axis["y"]["type_"] == "log"
-    with pytest.raises(NotImplementedError, match="base=2"):
-        ax.semilogx([1, 2], [1, 2], base=2)
-    with pytest.raises(NotImplementedError, match="subs"):
-        ax.semilogy([1, 2], [1, 2], subs=[1, 2])
-    with pytest.raises(NotImplementedError, match="nonpositive"):
-        ax.set_xscale("log", nonpositive="mask")
+    ax.semilogx([1, 2], [1, 2], base=2)
+    assert ax._scale_specs["x"]["base"] == 2
+    ax.semilogy([1, 2], [1, 2], subs=[1, 2])
+    assert ax._scale_specs["y"]["subs"] == (1.0, 2.0)
+    ax.set_xscale("log", nonpositive="mask")
+    assert ax._axis["x"]["nonpositive"] == "mask"
     for scale in ("symlog", "logit", "asinh"):
         ax.set_xscale(scale)
         assert ax._scale_specs["x"]["name"] == scale
