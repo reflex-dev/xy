@@ -357,8 +357,8 @@ method accepts the call.
 - [x] `stem`, `stairs`, `eventplot`, and `stackplot`: complete style/container
       behavior, hatches, orientation and baselines.
 - [x] `quiver`: live-display-transform `uv`/`xy` angles, axes/DPI-derived
-      units, scale units, auto-scaling, shaft width, pivots, head geometry,
-      norm, z-order and scalar-mappable behavior.
+      units, scale units, auto-scaling, shaft width, pivots, and approximated
+      head geometry; `norm`, `clim`, and `zorder` fail loudly.
 - [x] `barbs`: non-default increments, flags, rounding, empty-barb, flip,
       color, size, length, and pivot options render through fixed-staff
       WMO-style geometry.

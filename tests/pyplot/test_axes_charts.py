@@ -534,6 +534,7 @@ def test_native_streamplot_rejects_cell_sized_fragments(monkeypatch) -> None:
     starts, ends = map(np.asarray, (line_entry["args"][0], line_entry["args"][2]))
     assert min(starts.min(), ends.min()) < -0.9
     assert max(starts.max(), ends.max()) > 0.9
+    assert len(arrow_entry["args"][0]) > 0
     assert len(arrow_entry["args"][0]) % 2 == 0
 
 
