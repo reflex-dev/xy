@@ -557,10 +557,18 @@ export class ChartView {
       (this._axisTickLabelSides(axis).includes("top") || axis.side === "top") &&
       this._axisTickLabelStrategy(axis) !== "none");
     const hasTopAxis = topAxes.length > 0;
-    const titleFontSize = this._slotFontSize("title", 14);
-    const titleRoom = this.spec.title
-      ? Math.max(compact ? 26 : 30, this._estimateTickLabel(this.spec.title, titleFontSize).h + 8)
-      : 0;
+    const titleRoom = this._titleEntries().reduce((room, entry) => {
+      const authoredSize = Number.parseFloat(entry.style?.["font-size"]);
+      const titleFontSize = Number.isFinite(authoredSize)
+        ? authoredSize
+        : this._slotFontSize("title", 14);
+      const measured = this._estimateTickLabel(entry.text, titleFontSize).h;
+      const pad = Number.isFinite(Number(entry.pad)) ? Number(entry.pad) : 8;
+      const candidate = entry.automatic_y !== false
+        ? Math.max(compact ? 26 : 30, measured + pad)
+        : (Number(entry.y ?? 1) >= 1 ? measured + pad : 0);
+      return Math.max(room, candidate);
+    }, 0);
     this._titleRoom = titleRoom;
     const provisionalTopAxisRoom = hasTopAxis ? (compact ? 26 : 32) : 0;
     const provisionalBottomAxisRoom = hasBottomAxis ? (compact ? 36 : MARGIN.b) : 0;
@@ -595,6 +603,7 @@ export class ChartView {
     const topAxisRoom = hasTopAxis
       ? Math.max(provisionalTopAxisRoom, measuredTopAxisRoom)
       : 0;
+    this._topAxisRoom = topAxisRoom;
     const bottomAxisRoom = hasBottomAxis
       ? Math.max(provisionalBottomAxisRoom, measuredBottomAxisRoom)
       : 0;
@@ -609,6 +618,34 @@ export class ChartView {
       w: plotWidth,
       h: Math.max(40, this.size.h - top - marginBottom),
     };
+  }
+
+  _titleEntries() {
+    if (Array.isArray(this.spec.title_options) && this.spec.title_options.length) {
+      return this.spec.title_options.filter((entry) => entry && entry.text);
+    }
+    return this.spec.title
+      ? [{ text: this.spec.title, loc: "center", y: 1, pad: 8, automatic_y: true, style: {} }]
+      : [];
+  }
+
+  _positionTitles() {
+    for (const { element: title, entry } of this._titleElements || []) {
+      const loc = ["left", "center", "right"].includes(entry.loc) ? entry.loc : "center";
+      const x = loc === "left"
+        ? this.plot.x
+        : loc === "right"
+          ? this.plot.x + this.plot.w
+          : this.plot.x + this.plot.w / 2;
+      const anchorY = entry.automatic_y !== false
+        ? this.plot.y - this._topAxisRoom
+        : this.plot.y + (1 - Number(entry.y ?? 1)) * this.plot.h;
+      const shiftX = loc === "left" ? "0%" : loc === "right" ? "-100%" : "-50%";
+      title.style.textAlign = loc;
+      title.style.left = `${x}px`;
+      title.style.top = `${anchorY}px`;
+      title.style.transform = `translate(${shiftX}, calc(-100% - ${Number(entry.pad ?? 8)}px))`;
+    }
   }
 
   _yAxisLeftRoom(plotHeight) {
@@ -1739,6 +1776,7 @@ export class ChartView {
       const anchor = lg.dataset.xyLegendAnchor ? JSON.parse(lg.dataset.xyLegendAnchor) : null;
       this._positionLegend(lg, lg.dataset.xyLegendLoc || "upper right", anchor);
     }
+    this._positionTitles();
     this._positionReductionBadges();
     this._positionColorbar();
     this._fitModebar();
@@ -1785,7 +1823,8 @@ export class ChartView {
       document.getElementById(`${a11yId}-summary`) || document.getElementById(`${a11yId}-live`)
     );
     root.setAttribute("role", "region");
-    root.setAttribute("aria-label", s.title ? `Chart: ${s.title}` : "Interactive chart");
+    const titleText = this._titleEntries().map((entry) => String(entry.text)).join(". ");
+    root.setAttribute("aria-label", titleText ? `Chart: ${titleText}` : "Interactive chart");
     this.a11ySummary = document.createElement("div");
     this.a11ySummary.id = `${a11yId}-summary`;
     this.a11ySummary.style.cssText = XY_SR_ONLY_STYLE;
@@ -1799,14 +1838,22 @@ export class ChartView {
     this.a11yLive.style.cssText = XY_SR_ONLY_STYLE;
     root.appendChild(this.a11yLive);
 
-    if (s.title) {
+    this._titleElements = [];
+    for (const entry of this._titleEntries()) {
       const t = document.createElement("div");
-      t.textContent = s.title;
+      t.textContent = entry.text;
       t.style.cssText =
-        "position:absolute;top:6px;left:0;right:0;white-space:pre-line;line-height:1.2;";
+        "position:absolute;white-space:pre-line;line-height:1.2;";
       this._applySlot(t, "title");
+      for (const [property, value] of Object.entries(entry.style || {})) {
+        if (["color", "font-family", "font-size", "font-style", "font-weight"].includes(property)) {
+          t.style.setProperty(property, String(value));
+        }
+      }
       root.appendChild(t);
+      this._titleElements.push({ element: t, entry });
     }
+    this._positionTitles();
 
     this.chrome = document.createElement("canvas");
     this.chrome.style.cssText = "position:absolute;inset:0;pointer-events:none;";
@@ -1870,7 +1917,8 @@ export class ChartView {
 
   _a11ySummaryText() {
     const traces = Array.isArray(this.spec.traces) ? this.spec.traces : [];
-    const parts = [this.spec.title ? `${this.spec.title}.` : "Interactive chart."];
+    const titles = this._titleEntries().map((entry) => String(entry.text));
+    const parts = [titles.length ? `${titles.join(". ")}.` : "Interactive chart."];
     parts.push(`${traces.length} data series.`);
     const names = traces.map((trace) => trace && trace.name).filter(Boolean).slice(0, 6);
     if (names.length) parts.push(`Series: ${names.join(", ")}.`);

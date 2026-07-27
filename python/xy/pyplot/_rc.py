@@ -30,6 +30,8 @@ _DEFAULTS: dict[str, Any] = {
     "figure.figsize": (6.4, 4.8),  # inches, matplotlib default
     "figure.dpi": 100.0,
     "figure.facecolor": "white",
+    "figure.labelsize": "large",
+    "figure.labelweight": "normal",
     "lines.linewidth": 1.5,
     "lines.markersize": 6.0,
     "lines.markeredgewidth": 1.0,
@@ -49,6 +51,9 @@ _DEFAULTS: dict[str, Any] = {
     "axes.labelweight": "normal",
     "axes.titlesize": "large",
     "axes.titlecolor": "auto",
+    "axes.titlelocation": "center",
+    "axes.titlepad": 6.0,
+    "axes.titley": None,
     "axes.titleweight": "normal",
     "axes.linewidth": 0.8,
     "axes.autolimit_mode": "data",
@@ -151,6 +156,12 @@ class RcParams(dict):
                 raise ValueError("axes.prop_cycle must provide a non-empty color cycle")
         if key == "axes.autolimit_mode" and value not in {"data", "round_numbers"}:
             raise ValueError("axes.autolimit_mode must be 'data' or 'round_numbers'")
+        if key == "axes.titlelocation" and value not in {"left", "center", "right"}:
+            raise ValueError("axes.titlelocation must be 'left', 'center', or 'right'")
+        if key == "axes.titley" and value is not None:
+            value = float(value)
+            if not math.isfinite(value):
+                raise ValueError("axes.titley must be finite or None")
         if key == "contour.negative_linestyle" and value not in {"solid", "dashed"}:
             raise ValueError("contour.negative_linestyle must be 'solid' or 'dashed'")
         if key == "contour.corner_mask" and not isinstance(value, bool):
@@ -160,6 +171,7 @@ class RcParams(dict):
             if value <= 0:
                 raise ValueError(f"{key} must be positive")
         if key in {
+            "axes.titlepad",
             "xtick.major.pad",
             "ytick.major.pad",
             "xtick.minor.pad",

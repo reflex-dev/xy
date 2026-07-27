@@ -17,6 +17,18 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Figure decorations and independent axes titles — 2026-07-27
+
+- Axes retain Matplotlib's independent left, center, and right title artists,
+  including `loc`, `y`, `pad`, `axes.titlelocation`, `axes.titley`, and
+  `axes.titlepad`; browser, SVG, and native PNG share the same title-slot
+  payload and gutter calculation.
+- `Figure.supxlabel()` and `Figure.supylabel()` are figure-fraction compositor
+  decorations instead of annotations attached to whichever Axes was current.
+- `Figure.legend()` aggregates labeled artists across all Axes and returns a
+  real legend handle. `loc="outside right upper"` participates in
+  tight/constrained layout and renders once at figure level.
+
 ## Figure-title point sizing — 2026-07-27
 
 - Pyplot suptitle font sizes remain in Matplotlib points in figure state, then

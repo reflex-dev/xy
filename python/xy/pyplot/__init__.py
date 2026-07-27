@@ -420,7 +420,7 @@ def figtext(x: float, y: float, s: str, **kwargs: Any) -> Text:
     return gcf().text(x, y, s, **kwargs)
 
 
-def figlegend(*args: Any, **kwargs: Any) -> None:
+def figlegend(*args: Any, **kwargs: Any) -> Legend:
     """Add a figure-level legend (same call forms and keywords as `legend`)."""
     return gcf().legend(*args, **kwargs)
 

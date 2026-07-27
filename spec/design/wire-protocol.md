@@ -420,9 +420,9 @@ The reassembled bytes are identical to the source blob, which is what keeps
 
 Two independent version constants:
 
-- **Renderer/spec protocol.** `PROTOCOL_VERSION = 9` (`python/xy/config.py`)
+- **Renderer/spec protocol.** `PROTOCOL_VERSION = 10` (`python/xy/config.py`)
   rides every first-paint spec as `spec["protocol"]`; the client's
-  `PROTOCOL = 9` (`js/src/00_header.ts`) is checked in the `ChartView`
+  `PROTOCOL = 10` (`js/src/00_header.ts`) is checked in the `ChartView`
   constructor. A mismatch replaces the chart element with "update the xy
   package and restart the kernel" and throws. Requests and replies carry no
   version of their own — the handshake happens once, at first paint, before
@@ -441,7 +441,12 @@ Two independent version constants:
   older v7 client would accept but silently render with its old defaults. v9
   adds explicit minor tick/style tiers, the log `nonpositive` policy, and
   `axis.tick_sides`/`axis.tick_label_sides`; a cached v8 client would omit or
-  misplace those fields without reporting an error.
+  misplace those fields without reporting an error. v10
+  adds top-level `title_options`, whose entries retain independent
+  left/center/right axes titles with their axes-fraction `y`, pixel `pad`, and
+  text style. A cached v9 client would ignore the field and silently omit
+  non-center slots and their placement, so the v10 mismatch rejects it before
+  rendering.
 - **Transport frame.** `FRAME_MAGIC` `"XYBF"` with `FRAME_VERSION = 1`
   versions the binary envelope separately, so the transport and the renderer
   can evolve without coupling.

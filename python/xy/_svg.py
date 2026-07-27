@@ -1762,6 +1762,47 @@ def _x_axis_rooms(
     return top, bottom, measured_bottom
 
 
+def _title_entries(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalized independent axes-title slots, with legacy-title fallback."""
+    authored = spec.get("title_options")
+    if isinstance(authored, list) and authored:
+        return [entry for entry in authored if isinstance(entry, dict) and entry.get("text")]
+    if spec.get("title"):
+        return [
+            {
+                "text": spec["title"],
+                "loc": "center",
+                "y": 1.0,
+                "pad": 8.0,
+                "automatic_y": True,
+                "style": {},
+            }
+        ]
+    return []
+
+
+def _title_metrics(
+    spec: dict[str, Any], entry: dict[str, Any]
+) -> tuple[dict[str, Any], float, _textblock.TextBlock]:
+    base = ((spec.get("dom") or {}).get("styles") or {}).get("title") or {}
+    style = {**base, **(entry.get("style") or {})}
+    size = _px_size(style.get("font-size"), 14.0)
+    return style, size, _textblock.measure(entry["text"], size)
+
+
+def _title_room(spec: dict[str, Any], compact: bool) -> float:
+    room = 0.0
+    for entry in _title_entries(spec):
+        _style, _size, block = _title_metrics(spec, entry)
+        pad = float(entry.get("pad", 8.0))
+        if entry.get("automatic_y", True):
+            candidate = max(26.0 if compact else 30.0, block.height + pad)
+        else:
+            candidate = block.height + pad if float(entry.get("y", 1.0)) >= 1.0 else 0.0
+        room = max(room, max(0.0, candidate))
+    return room
+
+
 def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
     """Concrete pixel dimensions + plot rect from a spec — shared by the SVG and
     native-PNG exporters so their chrome/plot geometry stays identical."""
@@ -1781,13 +1822,7 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         top = 6 if compact else 10
         bottom = 36 if compact else 42
     axes = _axes_by_id(spec)
-    title_room = 0.0
-    if spec.get("title"):
-        title_style = ((spec.get("dom") or {}).get("styles") or {}).get("title") or {}
-        title_size = _px_size(title_style.get("font-size"), 14.0)
-        title_room = max(
-            26.0 if compact else 30.0, _textblock.measure(spec["title"], title_size).height + 8.0
-        )
+    title_room = _title_room(spec, compact)
     # The first pass uses the authored/default horizontal allocation. A second
     # pass after the measured left gutter catches an auto-collision decision
     # whose final plot width changes the chosen label set.
@@ -2465,9 +2500,8 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
 
     # -- chrome text ----------------------------------------------------------
     chrome: list[str] = []
-    if spec.get("title"):
-        title_style = ((spec.get("dom") or {}).get("styles") or {}).get("title") or {}
-        title_size = _px_size(title_style.get("font-size"), 14.0)
+    for title_entry in _title_entries(spec):
+        title_style, title_size, title_block = _title_metrics(spec, title_entry)
         # Matplotlib's `axes.titleweight`/`axes.labelweight` both default to
         # "normal", so chrome text stays at 400 unless a style or rcParam asks
         # for more. Keep this in step with the `title`/`axis_title` slot rules
@@ -2482,15 +2516,28 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             if title_font_style is not None
             else ""
         )
-        title_block = _textblock.measure(spec["title"], title_size)
-        title_y = plot["y"] - plot["top_axis_room"] - plot["title_room"] + 4.0 + title_block.ascent
+        trailing = (title_block.line_count - 1) * title_block.line_step
+        if title_entry.get("automatic_y", True):
+            title_anchor_y = plot["y"] - plot["top_axis_room"]
+        else:
+            title_anchor_y = plot["y"] + (1.0 - float(title_entry.get("y", 1.0))) * plot["h"]
+        title_y = (
+            title_anchor_y - float(title_entry.get("pad", 8.0)) - title_block.descent - trailing
+        )
+        loc = str(title_entry.get("loc", "center"))
+        title_x = {
+            "left": plot["x"],
+            "center": plot["x"] + plot["w"] / 2.0,
+            "right": plot["x"] + plot["w"],
+        }.get(loc, plot["x"] + plot["w"] / 2.0)
+        anchor = {"left": "start", "center": "middle", "right": "end"}.get(loc, "middle")
         chrome.append(
-            f'<text x="{_num(width / 2)}" '
+            f'<text x="{_num(title_x)}" '
             f'y="{_num(title_y)}" '
-            f'text-anchor="middle" font-size="{_num(title_size)}" '
+            f'text-anchor="{anchor}" font-size="{_num(title_size)}" '
             f'font-weight="{_escape_attr(title_weight)}"{title_font_attrs} '
             f'fill="{escape(_css(title_style.get("color"), default_text))}">'
-            f"{_text_block_content(spec['title'], width / 2, title_block.line_step)}</text>"
+            f"{_text_block_content(title_entry['text'], title_x, title_block.line_step)}</text>"
         )
 
     def append_axis_title(axis: dict[str, Any], *, is_x: bool) -> None:
