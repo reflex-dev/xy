@@ -99,6 +99,79 @@ def test_scatter_authored_markers_keep_distinct_renderer_specs_and_exports():
     assert png.startswith(b"\x89PNG\r\n\x1a\n")
 
 
+def test_raster_authored_marker_uses_explicit_edgecolor(monkeypatch):
+    fig, ax = plt.subplots()
+    ax.scatter(
+        [0],
+        [0],
+        marker=(5, 0),
+        s=200,
+        c="#ff0000",
+        edgecolors="#00ff00",
+        linewidths=4,
+    )
+
+    core = ax._build_chart(320, 240).figure()
+    spec, blob = core.build_payload()
+    strokes = []
+    original_stroke = _raster._Cmd.stroke
+
+    def record_stroke(self, points, width, color, closed=False, dash=None, cap="round"):
+        strokes.append((width, color, closed))
+        return original_stroke(
+            self,
+            points,
+            width,
+            color,
+            closed=closed,
+            dash=dash,
+            cap=cap,
+        )
+
+    monkeypatch.setattr(_raster._Cmd, "stroke", record_stroke)
+    _raster.render_raster(spec, blob, scale=1)
+
+    assert any(color == (0, 255, 0, 255) and closed for _width, color, closed in strokes)
+    svg = core.to_svg()
+    assert 'stroke="#00ff00"' in svg
+
+
+def test_raster_authored_marker_match_fill_keeps_per_point_colors(monkeypatch):
+    _, ax = plt.subplots()
+    ax.scatter(
+        [0, 1],
+        [0, 1],
+        marker=(5, 0),
+        s=200,
+        c=["#ff0000", "#0000ff"],
+        edgecolors="face",
+        linewidths=4,
+    )
+
+    spec, blob = ax._build_chart(320, 240).figure().build_payload()
+    strokes = []
+    original_stroke = _raster._Cmd.stroke
+
+    def record_stroke(self, points, width, color, closed=False, dash=None, cap="round"):
+        if closed:
+            strokes.append(color)
+        return original_stroke(
+            self,
+            points,
+            width,
+            color,
+            closed=closed,
+            dash=dash,
+            cap=cap,
+        )
+
+    monkeypatch.setattr(_raster._Cmd, "stroke", record_stroke)
+    _raster.render_raster(spec, blob, scale=1)
+
+    assert (255, 0, 0, 255) in strokes
+    assert (0, 0, 255, 255) in strokes
+
+
 def test_constant_scatter_sizes_survive_automatic_legend_derivation(monkeypatch):
     fig, ax = plt.subplots()
     areas = np.asarray([100.0, 300.0, 500.0])
@@ -182,3 +255,29 @@ def test_axis_lines_render_direct_endpoint_markers(method: str):
     assert scatter[0]["color"]["color"] == "red"
     assert scatter[0]["style"]["stroke"] == "black"
     assert scatter[0]["n_marks"] == 2
+
+
+@pytest.mark.parametrize(
+    ("method", "coordinate"),
+    (("axhline", "x"), ("axvline", "y")),
+)
+def test_axis_line_endpoint_markers_use_final_aspect_domain(
+    method: str,
+    coordinate: str,
+):
+    _, ax = plt.subplots(figsize=(8, 3))
+    ax.plot([0, 1], [0, 4])
+    ax.axis("equal")
+    if method == "axhline":
+        ax.axhline(2, xmin=0.25, xmax=0.75, marker=".")
+    else:
+        ax.axvline(0.5, ymin=0.25, ymax=0.75, marker=".")
+
+    figure = ax._build_chart(800, 300).figure()
+    payload, _blob = figure.build_payload()
+    domain = np.asarray(payload[f"{coordinate}_axis"]["domain"], dtype=float)
+    expected = domain[0] + np.asarray([0.25, 0.75]) * np.diff(domain)[0]
+    [marker_trace] = [trace for trace in figure.traces if trace.kind == "scatter"]
+    actual = np.asarray(getattr(marker_trace, coordinate).values, dtype=float)
+
+    np.testing.assert_allclose(actual, expected)

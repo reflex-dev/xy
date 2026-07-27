@@ -624,6 +624,12 @@ class AxesImage(Artist):
             self._axes._set_axes_image_data(self, z)
             self._entry["kwargs"]["x"] = np.asarray(x).copy()
             self._entry["kwargs"]["y"] = np.asarray(y).copy()
+            # `_set_axes_image_data` copied the replacement artist's extent,
+            # which was prepared from the old imshow state.  The 3-argument
+            # form supplies new coordinate centers, so invalidate that cached
+            # box and materialize the bounds derived from the new x/y arrays.
+            self._entry.pop("extent", None)
+            self._entry["extent"] = self.get_extent()
         else:
             raise TypeError("set_data expects image data or x, y, image data")
         self._touch()

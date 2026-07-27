@@ -5706,7 +5706,11 @@ class Axes(PlotTypeMixin):
             direction = (0.0, 1.0) if np.isinf(slope) else (1.0, slope)
         return _clip_infinite_line(xy1, direction, xlim, ylim)
 
-    def _chart_children(self) -> list[Any]:
+    def _chart_children(
+        self,
+        *,
+        resolved_domains: Optional[Mapping[str, tuple[float, float]]] = None,
+    ) -> list[Any]:
         children: list[Any] = []
         for e in self._entries:
             kind = e["kind"]
@@ -5834,7 +5838,11 @@ class Axes(PlotTypeMixin):
             elif kind == "@hline":
                 children.append(xy.hline(*e["args"], **kw))
                 if e.get("endpoint_marker"):
-                    x_domain = self._axis_props("x").get("domain") or self._auto_domain("x")
+                    x_domain = (
+                        (resolved_domains or {}).get("x")
+                        or self._axis_props("x").get("domain")
+                        or self._auto_domain("x")
+                    )
                     span = kw.get("style") or {}
                     start = float(span.get("span_start", 0.0))
                     end = float(span.get("span_end", 1.0))
@@ -5851,7 +5859,11 @@ class Axes(PlotTypeMixin):
             elif kind == "@vline":
                 children.append(xy.vline(*e["args"], **kw))
                 if e.get("endpoint_marker"):
-                    y_domain = self._axis_props("y").get("domain") or self._auto_domain("y")
+                    y_domain = (
+                        (resolved_domains or {}).get("y")
+                        or self._axis_props("y").get("domain")
+                        or self._auto_domain("y")
+                    )
                     span = kw.get("style") or {}
                     start = float(span.get("span_start", 0.0))
                     end = float(span.get("span_end", 1.0))
@@ -6464,9 +6476,6 @@ class Axes(PlotTypeMixin):
         if self._chart is not None:
             return self._chart
         self._materialize_insets()
-        children = self._chart_children()
-        if self._twin is not None:
-            children.extend(self._twin._chart_children())
         chart_padding = (
             self._frame_padding(width, height) if self._padding is None else list(self._padding)
         )
@@ -6639,6 +6648,18 @@ class Axes(PlotTypeMixin):
         self._apply_tickers("x", x_props, auto_tick_counts["x"])
         self._apply_tickers("y", y_props, auto_tick_counts["y"])
         self._apply_auto_tick_density(x_props, y_props, auto_tick_counts)
+        resolved_domains: dict[str, tuple[float, float]] = {}
+        if any(
+            entry.get("kind") == "@hline" and entry.get("endpoint_marker")
+            for entry in self._entries
+        ):
+            resolved_domains["x"] = tuple(x_props.get("domain") or self._auto_domain("x"))
+        if any(
+            entry.get("kind") == "@vline" and entry.get("endpoint_marker")
+            for entry in self._entries
+        ):
+            resolved_domains["y"] = tuple(y_props.get("domain") or self._auto_domain("y"))
+        children = self._chart_children(resolved_domains=resolved_domains)
         # The left gutter is no longer reserved here. `_svg.layout()` measures
         # it from the axis's own tick/title extents once the range is resolved,
         # which covers numeric ticks (this shim's 13.89 px rcParam fonts overrun
@@ -6660,6 +6681,18 @@ class Axes(PlotTypeMixin):
                     else:
                         y2_props["margin"] = margin
             self._apply_tickers("y2", y2_props, auto_tick_counts["y"])
+            twin_domains: dict[str, tuple[float, float]] = {}
+            if any(
+                entry.get("kind") == "@hline" and entry.get("endpoint_marker")
+                for entry in self._twin._entries
+            ):
+                twin_domains["x"] = tuple(x_props.get("domain") or self._auto_domain("x"))
+            if any(
+                entry.get("kind") == "@vline" and entry.get("endpoint_marker")
+                for entry in self._twin._entries
+            ):
+                twin_domains["y"] = tuple(y2_props.get("domain") or self._twin._auto_domain("y"))
+            children.extend(self._twin._chart_children(resolved_domains=twin_domains))
             children.append(xy.y_axis(id="y2", side="right", **y2_props))
         legend_needs_best = False
         if self._legend and self._legend_artist is not None:

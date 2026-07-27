@@ -126,3 +126,20 @@ def test_imshow_owns_source_and_render_arrays_and_set_data_reprepares_both() -> 
     np.testing.assert_array_equal(image.get_array(), expected_source)
     np.testing.assert_array_equal(image._entry["z"], expected_render)
     assert ax.images == [image]
+
+
+def test_axes_image_set_data_xyz_recomputes_cached_extent() -> None:
+    _fig, ax = plt.subplots()
+    image = ax.imshow(np.arange(6.0).reshape(2, 3))
+    x = np.asarray([10.0, 20.0, 40.0])
+    y = np.asarray([-2.0, 2.0])
+
+    image.set_data(x, y, np.arange(6.0).reshape(2, 3))
+
+    expected = (2.5, 47.5, -4.0, 4.0)
+    assert image.get_extent() == pytest.approx(expected)
+    assert image._entry["extent"] == pytest.approx(expected)
+    x[:] = -99
+    y[:] = -99
+    np.testing.assert_array_equal(image._entry["kwargs"]["x"], [10.0, 20.0, 40.0])
+    np.testing.assert_array_equal(image._entry["kwargs"]["y"], [-2.0, 2.0])

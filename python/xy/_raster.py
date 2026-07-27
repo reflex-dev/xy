@@ -1575,6 +1575,31 @@ def _emit_authored_scatter(
     fills = np.rint(
         _paint.effective_rgba(face, t, read, component="fill", default_opacity=0.8) * 255.0
     ).astype(np.uint8)
+    if (t.get("stroke") or {}).get("mode") == "match_fill":
+        stroke_intrinsic = face
+    elif t.get("stroke") is not None:
+        stroke_intrinsic = _trace_paint_rgba(t, "stroke", n, color, read)
+    elif style.get("stroke") is not None:
+        stroke_intrinsic = np.tile(
+            np.asarray(
+                _parse_color(_css(style.get("stroke"), color)),
+                dtype=np.float64,
+            )
+            / 255.0,
+            (n, 1),
+        )
+    else:
+        stroke_intrinsic = face
+    strokes = np.rint(
+        _paint.effective_rgba(
+            stroke_intrinsic,
+            t,
+            read,
+            component="stroke",
+            default_opacity=0.8,
+        )
+        * 255.0
+    ).astype(np.uint8)
     size_ch = t.get("size") or {}
     if size_ch.get("mode") == "continuous":
         values = _column(blob, cols[size_ch["buf"]])
@@ -1589,6 +1614,7 @@ def _emit_authored_scatter(
 
     for index in range(n):
         fill = tuple(int(value) for value in fills[index])
+        stroke = tuple(int(value) for value in strokes[index])
         diameter = max(0.0, 2 * (float(radii[index]) - float(widths[index]) / 2))
         if marker_glyph:
             cmd.text(
@@ -1619,7 +1645,7 @@ def _emit_authored_scatter(
                 cmd.fill(points, fill)
             if float(widths[index]) > 0:
                 for points in contours:
-                    cmd.stroke(points, float(widths[index]), fill, closed=True)
+                    cmd.stroke(points, float(widths[index]), stroke, closed=True)
         else:
             width = max(1.0, float(widths[index]))
             for points in contours:

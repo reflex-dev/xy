@@ -2896,6 +2896,10 @@ export class ChartView {
       copy("artist_alpha", 1);
       copy(widthName, 2, this.dpr);
       copy("symbol", 3);
+      // Canvas-authored markers consume the same canonical style rows as the
+      // point shader.  Keep them CPU-readable instead of treating styleBuf as
+      // the only copy; filtering may still gather/reupload from this array.
+      g._cpuStyle = values;
       g.styleBuf = this._upload(values);
       // Width rows are baked at the dpr in force right now. Record it so the
       // streaming-append fast path can tell whether a later tail upload would
@@ -2914,7 +2918,8 @@ export class ChartView {
       g.radiusBuf = this._upload(values);
     }
     if (t.stroke && t.stroke.mode === "direct_rgba") {
-      g.strokeBuf = this._upload(this._columnView(buffer, this.spec.columns[t.stroke.buf]));
+      g._cpuStroke = this._columnView(buffer, this.spec.columns[t.stroke.buf]);
+      g.strokeBuf = this._upload(g._cpuStroke);
     }
   }
 
@@ -3077,16 +3082,21 @@ export class ChartView {
       size: (sample.size && sample.size.size) || 4.0,
       sizeRange: [2, 18],
     };
+    const xValues = this._asF32(buffers[sample.x.buf]);
+    const yValues = this._asF32(buffers[sample.y.buf]);
+    s._cpu = { x: xValues, y: yValues, xMeta: s.xMeta, yMeta: s.yMeta };
     gl.bindBuffer(gl.ARRAY_BUFFER, s.xBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.x.buf]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, xValues, gl.STATIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, s.yBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.y.buf]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, yValues, gl.STATIC_DRAW);
     if (sample.color && sample.color.buf !== undefined) {
       s.colorMode = sample.color.mode === "continuous" ? 1 :
         (sample.color.mode === "categorical" ? 2 : 3);
       const colorValues = sample.color.dtype === "u8"
         ? this._asU8(buffers[sample.color.buf])
         : this._asF32(buffers[sample.color.buf]);
+      if (s.colorMode === 3) s._cpu.rgba = colorValues;
+      else s._cpu.color = colorValues;
       const colorBufferName = s.colorMode === 3 ? "rgbaBuf" : "cBuf";
       s[colorBufferName] = gl.createBuffer();
       this._tagChannelBuf(s[colorBufferName], colorValues, s.colorMode === 1);
@@ -3103,6 +3113,7 @@ export class ChartView {
       const sizeValues = sample.size.dtype === "u8"
         ? this._asU8(buffers[sample.size.buf])
         : this._asF32(buffers[sample.size.buf]);
+      s._cpu.size = sizeValues;
       s.sBuf = gl.createBuffer();
       this._tagChannelBuf(s.sBuf, sizeValues, true);
       gl.bindBuffer(gl.ARRAY_BUFFER, s.sBuf);
@@ -3133,10 +3144,12 @@ export class ChartView {
       copy("artist_alpha", 1);
       copy("stroke_width", 2, this.dpr);
       copy("symbol", 3);
+      s._cpuStyle = values;
       s.styleBuf = this._upload(values);
     }
     if (sample.stroke && sample.stroke.mode === "direct_rgba") {
-      s.strokeBuf = this._upload(this._asU8(buffers[sample.stroke.buf]));
+      s._cpuStroke = this._asU8(buffers[sample.stroke.buf]);
+      s.strokeBuf = this._upload(s._cpuStroke);
     }
     this._pointMarkStyle(s, trace);
     if (g.density) {
@@ -3820,6 +3833,11 @@ export class ChartView {
   _drawNow() {
     if (this._destroyed || !this.gl || this._glLost) return;
     this._healStaleTheme();
+    // `_drawPoints` records authored-marker draws here so the Canvas overlay
+    // paints the exact direct/sample/drill entries and LOD alpha chosen by
+    // this frame.  Reconstructing them from gpuTraces would lose density
+    // window selection and transition fades.
+    this._authoredScatterDraws = [];
     const gl = this.gl;
     const { x0, x1, y0, y1 } = this.view;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -3919,8 +3937,13 @@ export class ChartView {
   _drawPoints(g, xm, ym, opacityScale = 1) {
     opacityScale *= (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
     // Pyplot-authored contours and glyphs keep these resident point buffers
-    // for picking/transitions but paint on the Canvas2D overlay below.
-    if (g.authoredMarker) return;
+    // for picking/transitions but paint on the Canvas2D overlay below. Queue
+    // the actual draw invocation (including density-sample/drill fades)
+    // instead of rediscovering only top-level direct traces in `_drawChrome`.
+    if (g.authoredMarker) {
+      (this._authoredScatterDraws ||= []).push({ g, opacityScale });
+      return;
+    }
     const animationScale = g._transitionScale ?? 1;
     if (this._canDrawSimplePoints(g)) {
       this._drawSimplePoints(g, xm, ym, opacityScale);
