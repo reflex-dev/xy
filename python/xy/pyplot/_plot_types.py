@@ -676,8 +676,28 @@ def _pie_hatch_geometry(
     y0: list[float] = []
     x1: list[float] = []
     y1: list[float] = []
+    triangle_bounds = [
+        (
+            float(np.min(triangle[:, 0])),
+            float(np.max(triangle[:, 0])),
+            float(np.min(triangle[:, 1])),
+            float(np.max(triangle[:, 1])),
+        )
+        for triangle in triangles
+    ]
     for start, end in candidates:
-        for triangle in triangles:
+        segment_xmin, segment_xmax = min(start[0], end[0]), max(start[0], end[0])
+        segment_ymin, segment_ymax = min(start[1], end[1]), max(start[1], end[1])
+        for triangle, (triangle_xmin, triangle_xmax, triangle_ymin, triangle_ymax) in zip(
+            triangles, triangle_bounds, strict=True
+        ):
+            if (
+                segment_xmax < triangle_xmin
+                or segment_xmin > triangle_xmax
+                or segment_ymax < triangle_ymin
+                or segment_ymin > triangle_ymax
+            ):
+                continue
             clipped = _clip_segment_to_triangle(start, end, triangle)
             if clipped is None:
                 continue
