@@ -591,6 +591,7 @@ def scatter(
     _artist_alpha: Any = None,
     _marker_path: Optional[dict[str, Any]] = None,
     _marker_glyph: Optional[str] = None,
+    _legend_trace_size: bool = False,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     key: Any = None,
@@ -655,6 +656,7 @@ def scatter(
             "_artist_alpha": _artist_alpha,
             "_marker_path": _marker_path,
             "_marker_glyph": _marker_glyph,
+            "_legend_trace_size": _legend_trace_size,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -5144,6 +5146,7 @@ def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
             _artist_alpha=m.props.get("_artist_alpha"),
             _marker_path=m.props.get("_marker_path"),
             _marker_glyph=m.props.get("_marker_glyph"),
+            _legend_trace_size=bool(m.props.get("_legend_trace_size")),
             style=m.style,
         )
     except Exception:

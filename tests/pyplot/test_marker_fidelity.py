@@ -6,8 +6,9 @@ import re
 import numpy as np
 import pytest
 
+import xy
 import xy.pyplot as plt
-from xy import _svg
+from xy import _raster, _svg
 
 
 def teardown_function():
@@ -96,6 +97,50 @@ def test_scatter_authored_markers_keep_distinct_renderer_specs_and_exports():
     assert svg.count("<path d=") >= 8
     png = fig._to_png()
     assert png.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_constant_scatter_sizes_survive_automatic_legend_derivation(monkeypatch):
+    fig, ax = plt.subplots()
+    areas = np.asarray([100.0, 300.0, 500.0])
+    for area in areas:
+        ax.scatter([], [], s=area, c="black", linewidth=0, label=f"{area:g} km²")
+    ax.legend(frameon=False, labelspacing=1, title="City Area")
+
+    core = ax._build_chart(640, 480).figure()
+    spec, blob = core.build_payload()
+    expected_sizes = np.sqrt(areas) * (100 / 72)
+    items = _svg.legend_items(spec["traces"])
+    np.testing.assert_allclose(
+        [item["style"]["size"] for item in items],
+        expected_sizes,
+    )
+
+    svg = core.to_svg()
+    radii = [float(value) for value in re.findall(r"<circle[^>]+r=\"([^\"]+)\"", svg)]
+    np.testing.assert_allclose(radii, expected_sizes / 2, atol=0.01)
+
+    raster_radii = []
+    original_point = _raster._Cmd.point
+
+    def record_point(self, x, y, radius, symbol, fill, stroke_width, stroke):
+        raster_radii.append(radius)
+        return original_point(self, x, y, radius, symbol, fill, stroke_width, stroke)
+
+    monkeypatch.setattr(_raster._Cmd, "point", record_point)
+    _raster.render_raster(spec, blob, scale=1)
+    np.testing.assert_allclose(raster_radii, expected_sizes / 2)
+
+
+def test_native_core_scatter_keeps_fixed_legend_swatch_semantics():
+    chart = xy.scatter_chart(
+        xy.scatter([], [], size=32, name="native"),
+        xy.legend(),
+    )
+    spec, _ = chart.figure().build_payload()
+    [item] = _svg.legend_items(spec["traces"])
+
+    assert "_legend_trace_size" not in spec["traces"][0]["style"]
+    assert "size" not in item["style"]
 
 
 def test_authored_marker_grammar_fails_loudly_outside_bounded_contract():

@@ -3586,16 +3586,25 @@ def legend_items(traces: list[dict], palette: Sequence[str] = DEFAULT_PALETTE) -
     exactly as `ChartView._legend` does for the live client."""
     items: list[dict] = []
     for trace in traces:
+        style = dict(trace.get("style") or {})
+        use_trace_size = bool(style.pop("_legend_trace_size", False))
+        size = trace.get("size") or {}
+        if trace.get("kind") == "scatter" and use_trace_size and size.get("mode") == "constant":
+            style["size"] = float(size.get("size", 8.0))
         color = trace.get("color") or {}
         if color.get("mode") == "categorical":
             categories = color.get("categories") or []
             entry_palette = list(color.get("palette") or palette) or list(palette)
             for index, category in enumerate(categories):
-                style = dict(trace.get("style") or {})
-                style["color"] = entry_palette[index % len(entry_palette)]
-                items.append({"name": str(category), "kind": trace.get("kind"), "style": style})
+                item_style = dict(style)
+                item_style["color"] = entry_palette[index % len(entry_palette)]
+                items.append(
+                    {"name": str(category), "kind": trace.get("kind"), "style": item_style}
+                )
         elif trace.get("name"):
-            items.append(trace)
+            item = dict(trace)
+            item["style"] = style
+            items.append(item)
     return items
 
 

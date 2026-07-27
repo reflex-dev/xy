@@ -1827,6 +1827,13 @@ export class ChartView {
         // traces join the first row's hover-target list instead.
         const continuousRows = new Map();
         s.traces.forEach((t, ti) => {
+        const style = { ...(t.style || {}) };
+        const useTraceSize = style._legend_trace_size === true;
+        delete style._legend_trace_size;
+        if (t.kind === "scatter" && useTraceSize &&
+            t.size?.mode === "constant" && Number.isFinite(Number(t.size.size))) {
+          style.size = Number(t.size.size);
+        }
         // A density-tier surface encodes count as alpha and wears the mean
         // point color (LOD doc §2), so it gets no colormap gradient swatch —
         // a gradient would claim color == density. A named density trace
@@ -1835,7 +1842,7 @@ export class ChartView {
         const line = ["line", "segments", "step", "stairs", "errorbar"].includes(t.kind);
         if (t.color && t.color.mode === "categorical") {
           t.color.categories.forEach((cat, i) =>
-            items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {}, traces: [ti], cat: i }));
+            items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, style, traces: [ti], cat: i }));
         } else if (t.color && t.color.mode === "continuous") {
           // Label precedence: explicit series name, then the encoding's own
           // declarative label (the color="column" idiom). No generic fallback:
@@ -1850,14 +1857,14 @@ export class ChartView {
             existing.traces.push(ti);
             return;
           }
-          const item = { swatch: "gradient", cmap: t.color.colormap, name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {}, traces: [ti] };
+          const item = { swatch: "gradient", cmap: t.color.colormap, name, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, line, style, traces: [ti] };
           continuousRows.set(key, item);
           items.push(item);
         } else if (t.name) {
           const c = (t.color && t.color.color) || (t.style && t.style.color);
           // Line-family kinds get a short line sample (honoring the dash), the
           // same handle the raster/SVG exporters draw — not a filled swatch.
-          items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {}, traces: [ti] });
+          items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (style.symbol || "circle") : null, line, style, traces: [ti] });
         }
         });
       }
@@ -1940,6 +1947,10 @@ export class ChartView {
         svg.setAttribute("viewBox", "0 0 18 14");
         svg.setAttribute("width", "18");
         svg.setAttribute("height", "14");
+        svg.style.overflow = "visible";
+        const requestedMarkerSize = Number(it.style?.size);
+        const hasMarkerSize = Number.isFinite(requestedMarkerSize) && requestedMarkerSize >= 0;
+        const markerSize = hasMarkerSize ? requestedMarkerSize : 9;
         const paths = {
           square: "M4.5 2.5h9v9h-9z", diamond: "M9 2l5 5-5 5-5-5z",
           thin_diamond: "M9 2l3 5-3 5-3-5z",
@@ -1958,7 +1969,7 @@ export class ChartView {
           text.setAttribute("x", "9");
           text.setAttribute("y", "7");
           text.setAttribute("font-family", "DejaVu Sans");
-          text.setAttribute("font-size", "10");
+          text.setAttribute("font-size", String(markerSize));
           text.setAttribute("text-anchor", "middle");
           text.setAttribute("dominant-baseline", "central");
           text.textContent = String(it.style.marker_glyph);
@@ -1972,17 +1983,24 @@ export class ChartView {
             const commands = [];
             for (const contour of it.style.marker_path.contours || []) {
               for (let offset = 0; offset + 1 < contour.length; offset += 2) {
-                const x = 9 + 9 * Number(contour[offset]);
-                const y = 7 - 9 * Number(contour[offset + 1]);
+                const x = 9 + markerSize * Number(contour[offset]);
+                const y = 7 - markerSize * Number(contour[offset + 1]);
                 commands.push(`${offset === 0 ? "M" : "L"}${x} ${y}`);
               }
               if (it.style.marker_path.filled) commands.push("Z");
             }
             path.setAttribute("d", commands.join(" "));
           } else if (it.symbol === "circle" || it.symbol === "point" || it.symbol === "pixel") {
-            if (it.symbol === "pixel") path.setAttribute("d", "M8.5 6.5h1v1h-1z");
-            else path.setAttribute("d", `M9 ${it.symbol === "point" ? 4.75 : 2.5}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 ${it.symbol === "point" ? 4.5 : 9}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 -${it.symbol === "point" ? 4.5 : 9}`);
-          } else path.setAttribute("d", paths[it.symbol] || paths.square);
+            const radius = markerSize / 2;
+            if (it.symbol === "pixel") path.setAttribute("d", `M${9 - radius} ${7 - radius}h${markerSize}v${markerSize}h-${markerSize}z`);
+            else path.setAttribute("d", `M9 ${7 - radius}a${radius} ${radius} 0 1 0 0 ${markerSize}a${radius} ${radius} 0 1 0 0 -${markerSize}`);
+          } else {
+            path.setAttribute("d", paths[it.symbol] || paths.square);
+            if (hasMarkerSize) {
+              const scale = markerSize / 9;
+              path.setAttribute("transform", `translate(9 7) scale(${scale}) translate(-9 -7)`);
+            }
+          }
           const lineMarker = it.symbol.endsWith("_line") ||
             (it.style?.marker_path && !it.style.marker_path.filled);
           sw.style.setProperty(

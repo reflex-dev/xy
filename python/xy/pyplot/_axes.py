@@ -5754,6 +5754,11 @@ class Axes(PlotTypeMixin):
                 children.append(xy.line(x=x, y=y, **kw, **axis_kw))
             elif kind == "scatter":
                 kw = dict(kw)
+                if np.isscalar(kw.get("size")):
+                    # The core keeps scatter size as a channel rather than a
+                    # mark style. Opt this pyplot trace into carrying that
+                    # constant through automatic legend-item derivation.
+                    kw["_legend_trace_size"] = True
                 if "_artist_alpha" in kw:
                     # pyplot alpha overrides intrinsic RGBA. Core opacity is
                     # an independent multiplier, so do not apply it twice.

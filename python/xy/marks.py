@@ -1476,6 +1476,7 @@ def scatter(
     _artist_alpha: Any = None,
     _marker_path: Optional[dict[str, Any]] = None,
     _marker_glyph: Optional[str] = None,
+    _legend_trace_size: bool = False,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add a scatter trace.
@@ -1574,6 +1575,12 @@ def scatter(
             if not isinstance(_marker_glyph, str) or len(_marker_glyph) != 1:
                 raise ValueError("scatter authored marker glyph must be one character")
             point_style["marker_glyph"] = _marker_glyph
+        if _legend_trace_size:
+            # Pyplot's scalar ``s=`` is an authored marker area, and its
+            # automatic legend must keep the resulting diameter. Native xy
+            # legends retain their fixed swatch semantics unless this private
+            # shim flag opts the trace into size derivation.
+            point_style["_legend_trace_size"] = True
         if artist_alpha_value is not None:
             point_style["artist_alpha"] = artist_alpha_value
         if zoom_size_factor != 1.0:
