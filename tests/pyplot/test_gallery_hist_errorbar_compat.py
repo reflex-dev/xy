@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import re
+from io import BytesIO
+
 import numpy as np
 import pytest
 
@@ -40,6 +43,39 @@ def test_hist_fill_false_is_unfilled_and_scalar_input_is_one_dataset() -> None:
     assert entry["kwargs"]["color"] == "transparent"
     assert entry["kwargs"]["stroke"] == "blue"
     assert entry["kwargs"]["stroke_width"] == 3.0
+
+
+def test_hist_default_patch_edge_is_transparent_like_matplotlib() -> None:
+    _fig, ax = plt.subplots()
+
+    ax.hist([0.0, 1.0, 2.0], bins=2)
+
+    kwargs = ax._entries[-1]["kwargs"]
+    assert "stroke" not in kwargs
+    assert "stroke_width" not in kwargs
+
+
+def test_dense_histogram_remains_visible_on_dark_absolute_inset() -> None:
+    rng = np.random.default_rng(19680801)
+    fig, main_ax = plt.subplots(figsize=(6.4, 4.8), dpi=100)
+    main_ax.plot([0.0, 1.0], [0.0, 1.0])
+    inset = fig.add_axes((0.65, 0.6, 0.2, 0.2), facecolor="black")
+    inset.hist(rng.normal(size=10_000), 400, density=True)
+    inset.set(xticks=[], yticks=[])
+
+    pixels = np.asarray(plt.imread(BytesIO(fig._to_png())))
+    crop = pixels[96:192, 416:544, :3]
+    blue = (crop[:, :, 2] > crop[:, :, 0] + 0.2) & (crop[:, :, 2] > crop[:, :, 1] + 0.1)
+    assert np.count_nonzero(blue) > 100
+
+    output = BytesIO()
+    fig.savefig(output, format="svg")
+    histogram_rects = re.findall(
+        r'<rect[^>]+fill="rgb\(31,119,180\)"[^>]*/>',
+        output.getvalue().decode(),
+    )
+    assert len(histogram_rects) == 400
+    assert all("stroke=" not in rect for rect in histogram_rects)
 
 
 def test_hist_step_fill_and_linewidth_override_histtype_defaults() -> None:

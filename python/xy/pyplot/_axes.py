@@ -2164,7 +2164,9 @@ class Axes(PlotTypeMixin):
             if linestyle_value not in LINESTYLE_TO_DASH:
                 raise ValueError(f"unsupported histogram linestyle: {linestyle_value!r}")
             dash = self._mpl_dash(LINESTYLE_TO_DASH[linestyle_value], resolved_width)
-            filled = histtype == "stepfilled" if fill is None else bool(fill)
+            # Matplotlib's Patch._set_edgecolor(None) makes a filled patch's
+            # edge transparent unless patch.force_edgecolor is enabled.
+            filled = histtype in {"bar", "barstacked", "stepfilled"} if fill is None else bool(fill)
             if not filled and resolved_edge is None:
                 resolved_edge = (
                     series_color
@@ -2190,8 +2192,11 @@ class Axes(PlotTypeMixin):
                             "color": resolved_color,
                             "opacity": 1.0 if alpha is None else float(alpha),
                             "name": None if labels[index] is None else str(labels[index]),
-                            "stroke": resolved_edge,
-                            "stroke_width": resolved_width,
+                            **(
+                                {"stroke": resolved_edge, "stroke_width": resolved_width}
+                                if resolved_edge is not None
+                                else {}
+                            ),
                         },
                     },
                 )
@@ -2269,8 +2274,11 @@ class Axes(PlotTypeMixin):
                             "color": "transparent" if fill is False else resolved_color,
                             "opacity": 1.0 if alpha is None else float(alpha),
                             "name": None if labels[index] is None else str(labels[index]),
-                            "stroke": resolved_edge if dash is None else None,
-                            "stroke_width": resolved_width,
+                            **(
+                                {"stroke": resolved_edge, "stroke_width": resolved_width}
+                                if resolved_edge is not None and dash is None
+                                else {}
+                            ),
                         },
                     },
                 )
