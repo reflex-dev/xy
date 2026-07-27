@@ -2143,6 +2143,46 @@ class Axes(PlotTypeMixin):
             if len(width) and np.allclose(width, width[0], rtol=1e-12, atol=0.0)
             else width
         )
+
+        def add_dashed_bar_perimeters(
+            positions: np.ndarray,
+            values: np.ndarray,
+            current_base: np.ndarray,
+            resolved_edge: Optional[str],
+            resolved_width: float,
+            dash: Any,
+        ) -> None:
+            if dash in (None, "none") or resolved_edge is None:
+                return
+            half_width = width / 2.0
+            low = positions - half_width
+            high = positions + half_width
+            top = current_base + values
+            if orientation == "vertical":
+                x0 = np.concatenate((low, high, high, low))
+                y0 = np.concatenate((current_base, current_base, top, top))
+                x1 = np.concatenate((high, high, low, low))
+                y1 = np.concatenate((current_base, top, top, current_base))
+            else:
+                x0 = np.concatenate((current_base, current_base, top, top))
+                y0 = np.concatenate((low, high, high, low))
+                x1 = np.concatenate((current_base, top, top, current_base))
+                y1 = np.concatenate((high, high, low, low))
+            self._add(
+                "@mark",
+                {
+                    "factory": "segments",
+                    "args": (x0, y0, x1, y1),
+                    "kwargs": {
+                        "color": resolved_edge,
+                        "width": resolved_width,
+                        "dash": dash,
+                        "opacity": 1.0 if alpha is None else float(alpha),
+                        "name": None,
+                    },
+                },
+            )
+
         for index, values in enumerate(counts):
             positions = centers if stacked else centers + (index - (len(datasets) - 1) / 2) * width
             current_base = base.copy() if stacked else np.zeros_like(values)
@@ -2175,6 +2215,7 @@ class Axes(PlotTypeMixin):
                 )
             elif filled and histtype == "step" and resolved_edge is None:
                 resolved_edge = series_color
+
             if orientation == "horizontal" and histtype.startswith("step") and filled:
                 # The core area primitive fills along y. Horizontal filled
                 # steps are equivalently represented by touching horizontal
@@ -2194,11 +2235,14 @@ class Axes(PlotTypeMixin):
                             "name": None if labels[index] is None else str(labels[index]),
                             **(
                                 {"stroke": resolved_edge, "stroke_width": resolved_width}
-                                if resolved_edge is not None
+                                if resolved_edge is not None and dash is None
                                 else {}
                             ),
                         },
                     },
+                )
+                add_dashed_bar_perimeters(
+                    positions, values, current_base, resolved_edge, resolved_width, dash
                 )
             elif orientation == "horizontal" and histtype.startswith("step"):
                 step_values = values + current_base
@@ -2282,35 +2326,9 @@ class Axes(PlotTypeMixin):
                         },
                     },
                 )
-                if dash not in (None, "none") and resolved_edge is not None:
-                    half_width = width / 2.0
-                    low = positions - half_width
-                    high = positions + half_width
-                    top = current_base + values
-                    if orientation == "vertical":
-                        x0 = np.concatenate((low, high, high, low))
-                        y0 = np.concatenate((current_base, current_base, top, top))
-                        x1 = np.concatenate((high, high, low, low))
-                        y1 = np.concatenate((current_base, top, top, current_base))
-                    else:
-                        x0 = np.concatenate((current_base, current_base, top, top))
-                        y0 = np.concatenate((low, high, high, low))
-                        x1 = np.concatenate((current_base, top, top, current_base))
-                        y1 = np.concatenate((high, high, low, low))
-                    self._add(
-                        "@mark",
-                        {
-                            "factory": "segments",
-                            "args": (x0, y0, x1, y1),
-                            "kwargs": {
-                                "color": resolved_edge,
-                                "width": resolved_width,
-                                "dash": dash,
-                                "opacity": 1.0 if alpha is None else float(alpha),
-                                "name": None,
-                            },
-                        },
-                    )
+                add_dashed_bar_perimeters(
+                    positions, values, current_base, resolved_edge, resolved_width, dash
+                )
                 if hatches[index]:
                     self._stairs_hatch(
                         values + current_base,
