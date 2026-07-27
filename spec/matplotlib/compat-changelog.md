@@ -10,6 +10,10 @@ which covers user-visible releases across the whole package.
   `Figure.add_subplot()` calls now create overlay axes, while `plt.subplot()`
   reuses the first matching axes and no-argument `plt.axes()` creates a fresh
   axes. This restores the state boundaries used by PDSH 04.01 and 04.10.
+- Static PNG/SVG composition rebuilds cached panels when a fresh axes changes
+  the figure to or from overlapping absolute placement. Same-position axes
+  therefore share one frame: the later opaque axes patch covers the older
+  plot, while their ticks and labels no longer drift into duplicated chrome.
 - `imshow()` now copies both its logical source and prepared render arrays.
   `AxesImage.set_data()` updates `get_array()` and rebuilds render data through
   the initial normalization/origin/resampling path, so later mutation of either

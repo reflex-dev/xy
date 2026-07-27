@@ -950,20 +950,39 @@ class Figure:
                 # including the axes title, which matplotlib draws above the
                 # axes without moving its position.
                 left, top, right, bottom = _panel_chrome(ax, plot_w)
-                ax._absolute_plot_ratio = plot_w / plot_h
+                plot_ratio = plot_w / plot_h
+                plot_box = (left, top, plot_w, plot_h)
                 # Pin the plot rect inside the panel: the exporters place the
                 # panel assuming its plot box sits at exactly this inset, so
                 # the renderers must not pick their own label-aware margins.
-                ax._plot_box_px = (left, top, plot_w, plot_h)
+                #
+                # A chart may already be cached from when this was the figure's
+                # only axes. Adding an overlapping axes switches the figure to
+                # absolute composition, where the same Matplotlib axes rectangle
+                # needs a smaller chrome-inclusive panel. Reusing the old chart
+                # offsets its ticks and labels even though the plot boxes overlap.
+                if ax._plot_box_px != plot_box or ax._absolute_plot_ratio != plot_ratio:
+                    ax._plot_box_px = plot_box
+                    ax._absolute_plot_ratio = plot_ratio
+                    ax._chart = None
                 charts.append(
                     ax._build_chart(round(plot_w + left + right), round(plot_h + top + bottom))
                 )
         else:
             widths, heights = self._grid_cell_sizes()
-            charts = [
-                ax._build_chart(widths[index % self._ncols], heights[index // self._ncols])
-                for index, ax in enumerate(self._axes)
-            ]
+            charts = []
+            for index, ax in enumerate(self._axes):
+                # Removing an overlay can return a one-axes figure to ordinary
+                # (non-absolute) composition. Drop the absolute geometry and
+                # its cached chart together so the remaining axes expands back
+                # to the figure canvas.
+                if ax._plot_box_px is not None or ax._absolute_plot_ratio is not None:
+                    ax._plot_box_px = None
+                    ax._absolute_plot_ratio = None
+                    ax._chart = None
+                charts.append(
+                    ax._build_chart(widths[index % self._ncols], heights[index // self._ncols])
+                )
         if charts and (self._sharex or self._sharey):
             figures = [chart.figure() for chart in charts]
             linked: list[str] = []
