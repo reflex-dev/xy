@@ -1565,7 +1565,7 @@ def welch_spectra(
     npt.NDArray[np.float64],
     npt.NDArray[np.float64],
 ]:
-    """Native Welch auto and optional complex cross spectra."""
+    """Native non-detrended Welch auto and optional complex cross spectra."""
     x_values = _as_f64(x, "x")
     y_values = None if y is None else _as_f64(y, "y")
     if y_values is not None and len(y_values) != len(x_values):
@@ -1597,7 +1597,7 @@ def spectrogram(
     noverlap: int = 128,
     sample_rate: float = 2.0,
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-    """Native time-major Welch spectrogram."""
+    """Native non-detrended time-major Welch spectrogram."""
     values = _as_f64(data, "data")
     nfft = _bounded_positive_int(nfft, "nfft", max_value=65_536)
     noverlap = operator.index(noverlap)

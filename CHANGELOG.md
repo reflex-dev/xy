@@ -70,6 +70,10 @@ in the README).
   longer a second, defaults-clobbering one.
 
 ### Changed
+- The Rust core's release profile now uses fat LTO and strips symbol tables,
+  shrinking the shipped cdylib ~15% (1.51 → 1.29 MB) with no measured runtime
+  change on the native scatter bench (`spec/design/rust-engine.md` §2 records
+  the profile and why `panic` stays unwinding).
 - Stable animation `key=` identity planes are now retained and shipped only
   when the resolved animation spec can actually key-match. `match` defaults to
   `"index"`, so `key=` combined with a bare `xy.animation(...)`, with

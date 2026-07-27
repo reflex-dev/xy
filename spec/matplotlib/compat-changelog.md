@@ -4,16 +4,31 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
-## Pie gallery corrections — 2026-07-27
+## Box and violin default geometry — 2026-07-26 (Matplotlib 3.11.1 reference)
 
-- `pie(hatch=...)` now cycles patterns per wedge and emits sector-clipped
-  line/dot/ring/star strokes through the shared segment mark, so browser, SVG,
-  and raster output use the same bounded geometry. A hatch supplied through
-  `wedgeprops` retains Matplotlib's override precedence.
-- `pie(shadow=True)` and shadow dictionaries now retain Matplotlib's
-  point-space offset, shade darkening, alpha, face/edge paint, linewidth, and
-  z-order semantics. Shadow outlines use the exterior sector boundary rather
-  than exposing the native wedge's triangle fan.
+- `xy.pyplot.boxplot` no longer routes its default call through the native
+  opinionated box mark. It now draws Matplotlib's unfilled line geometry and
+  returns one box, median, and flier handle plus two whisker and cap handles per
+  group. Fliers stay centered on their group even when several groups are
+  present, and empty groups of fliers still have the expected handle.
+- `xy.pyplot.violinplot` now uses the same Gaussian-KDE path for its default
+  Scott bandwidth as it does for explicit Scott, Silverman, scalar, and
+  callable bandwidths. It returns one body per group, with triangle joins
+  marked as a single fill so browser, PNG, and SVG output suppress internal
+  seams.
+- The public composition API keeps its independent native `box` and `violin`
+  marks and their opinionated styling; this compatibility correction is
+  contained inside `xy.pyplot`.
+
+## Histogram and spectral numeric semantics — 2026-07-26 (Matplotlib 3.11.1 reference)
+
+- `hist(density=True, stacked=True)` now bins raw per-dataset mass, stacks it,
+  and normalizes the combined top envelope once. Unequal bin widths, weights,
+  and both cumulative directions match Matplotlib 3.11.1 numeric outputs.
+- The native Welch paths behind `psd`, `csd`, `cohere`, and `specgram` no
+  longer subtract each segment mean by default. Their omitted/`None`
+  `detrend` behavior is Matplotlib's `detrend_none`; unsupported explicit
+  detrending modes continue to fail loudly at the pyplot boundary.
 
 ## Vector-field gallery corrections — 2026-07-24
 

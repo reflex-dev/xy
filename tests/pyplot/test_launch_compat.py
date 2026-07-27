@@ -86,6 +86,23 @@ def test_filled_stairs_use_seamless_bins_and_hatches_are_not_dropped() -> None:
     assert len({len(values) for values in hatch["args"]}) == 1
 
 
+def test_horizontal_stairs_ring_hatch_uses_oriented_data_spans() -> None:
+    _fig, ax = plt.subplots()
+    ax.stairs([100.0], [0.0, 1.0], orientation="horizontal", hatch="o")
+
+    hatch = [entry for entry in ax._entries if entry.get("factory") == "segments"][-1]
+    x0, y0, x1, y1 = (np.asarray(values[:10]) for values in hatch["args"])
+    ring_x = np.concatenate((x0, x1))
+    ring_y = np.concatenate((y0, y1))
+
+    # The first ten segments are one ring. Its x radius scales from the
+    # 100-unit value span while its y radius scales from the one-unit edge
+    # span; using the vertical spans here makes it nearly flat in x and far
+    # too tall in y.
+    assert np.ptp(ring_x) == pytest.approx(1.25)
+    assert np.ptp(ring_y) == pytest.approx(2.0 / 120.0 * np.sin(2.0 * np.pi / 5.0))
+
+
 def test_adding_external_step_patch_does_not_advance_color_cycle() -> None:
     pytest.importorskip("matplotlib")
     from matplotlib.patches import StepPatch as MatplotlibStepPatch
