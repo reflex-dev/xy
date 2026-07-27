@@ -154,6 +154,17 @@ def test_bar_error_kw_keeps_an_explicit_public_container_label() -> None:
     assert labels == ["uncertainty", "bars"]
 
 
+def test_errorbar_container_set_label_none_clears_the_public_label() -> None:
+    _fig, ax = plt.subplots()
+    container = ax.errorbar([0, 1], [1, 2], yerr=0.1, label="uncertainty")
+
+    container.set_label(None)
+
+    assert container.get_label() is None
+    _handles, labels = ax.get_legend_handles_labels()
+    assert labels == []
+
+
 def test_numeric_axis_label_rotation_reaches_both_rendered_axes() -> None:
     _fig, ax = plt.subplots()
     ax.plot([0, 1], [0, 1])
