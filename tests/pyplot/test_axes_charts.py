@@ -311,8 +311,12 @@ def test_pie_and_donut_use_native_sector_mesh_and_return_text_handles() -> None:
     assert [text.get_text() for text in texts] == ["a", "b", "c"]
     assert [text.get_text() for text in autotexts] == ["20%", "30%", "50%"]
     traces = _traces(ax)
-    assert [trace.kind for trace in traces[:3]] == ["triangle_mesh"] * 3
-    assert all(trace.style["stroke_width"] == 0.5 for trace in traces[:3])
+    fills = [trace for trace in traces if trace.kind == "triangle_mesh"]
+    outlines = [trace for trace in traces if trace.kind == "segments"]
+    assert len(fills) == len(outlines) == 3
+    assert all(trace.style["joined_fill"] is True for trace in fills)
+    assert all("stroke_width" not in trace.style for trace in fills)
+    assert all(trace.style["width"] == 0.5 for trace in outlines)
 
 
 def test_additional_basic_and_array_families_map_to_existing_generic_marks() -> None:

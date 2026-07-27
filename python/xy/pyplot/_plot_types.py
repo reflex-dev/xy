@@ -4226,6 +4226,7 @@ class PlotTypeMixin:
         edgecolor = wedge_style.pop("edgecolor", wedge_style.pop("ec", None))
         linewidth = wedge_style.pop("linewidth", wedge_style.pop("lw", None))
         alpha = wedge_style.pop("alpha", None)
+        zorder = float(wedge_style.pop("zorder", 1.0))
         if wedge_style.pop("hatch", None) is not None:
             raise not_implemented("pie(wedgeprops={'hatch': ...})")
         if wedge_style:
@@ -4249,39 +4250,39 @@ class PlotTypeMixin:
             ([0.0], np.cumsum(values) / total)
         )
         mids = (boundaries[:-1] + boundaries[1:]) * 0.5
-        wedges: list[Wedge] = []
+        wedge_entries: list[dict[str, Any]] = []
+        outline_args: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None] = []
         for index in range(len(values)):
             selected = sectors == float(index)
+            vertices = (
+                (x0[selected], y0[selected]),
+                (x1[selected], y1[selected]),
+                (x2[selected], y2[selected]),
+            )
             face = resolve_color(color_values[index])
             mark_kwargs: dict[str, Any] = {
                 "color": face,
                 "name": None if label_values[index] is None else str(label_values[index]),
                 "opacity": 1.0 if alpha is None else float(alpha),
+                "_joined_fill": True,
             }
-            if edgecolor is not None:
-                mark_kwargs["stroke"] = resolve_color(edgecolor)
-                mark_kwargs["stroke_width"] = 1.0 if linewidth is None else float(linewidth)
-            else:
-                # A sector is a fan of adjacent triangles. Stroke each fan
-                # triangle with its own face color so anti-aliasing cannot
-                # expose the figure background as radial hairline spokes.
-                mark_kwargs["stroke"] = face
-                mark_kwargs["stroke_width"] = 0.75
             entry = self._add(
                 "@mark",
                 {
                     "factory": "triangle_mesh",
                     "args": (
-                        x0[selected],
-                        y0[selected],
-                        x1[selected],
-                        y1[selected],
-                        x2[selected],
-                        y2[selected],
+                        vertices[0][0],
+                        vertices[0][1],
+                        vertices[1][0],
+                        vertices[1][1],
+                        vertices[2][0],
+                        vertices[2][1],
                     ),
                     "kwargs": mark_kwargs,
                 },
             )
+            entry["_zorder"] = zorder
+            entry["_legend_kind"] = "patch"
             entry["pie_center"] = (float(center[0]), float(center[1]))
             entry["pie_mid"] = float(mids[index])
             entry["pie_radius"] = float(radius)
@@ -4289,7 +4290,72 @@ class PlotTypeMixin:
             theta_start, theta_end = np.rad2deg(boundaries[index : index + 2])
             entry["pie_theta1"] = float(min(theta_start, theta_end))
             entry["pie_theta2"] = float(max(theta_start, theta_end))
-            wedges.append(Wedge(self, entry))
+            wedge_entries.append(entry)
+            if edgecolor is not None:
+                # These are the canonical pre-transport kernel vertices.
+                # Tolerance-snapped endpoint counting recovers every exterior
+                # edge, including both rings of a one-slice donut; the snap
+                # also joins its numerically near-equal 0°/360° seam.
+                # Interior fan edges occur twice and are deliberately omitted.
+                coordinate_values = np.concatenate([axis for vertex in vertices for axis in vertex])
+                tolerance = max(float(np.ptp(coordinate_values)) * 1e-12, 1e-14)
+
+                def point_key(
+                    point: tuple[float, float], scale: float = tolerance
+                ) -> tuple[int, int]:
+                    return round(point[0] / scale), round(point[1] / scale)
+
+                edges: dict[
+                    tuple[tuple[int, int], tuple[int, int]],
+                    tuple[int, tuple[float, float], tuple[float, float]],
+                ] = {}
+                for first, second in ((0, 1), (1, 2), (2, 0)):
+                    for start_x, start_y, end_x, end_y in zip(
+                        vertices[first][0],
+                        vertices[first][1],
+                        vertices[second][0],
+                        vertices[second][1],
+                        strict=True,
+                    ):
+                        start = float(start_x), float(start_y)
+                        end = float(end_x), float(end_y)
+                        start_key, end_key = point_key(start), point_key(end)
+                        key = (start_key, end_key) if start_key <= end_key else (end_key, start_key)
+                        count, saved_start, saved_end = edges.get(key, (0, start, end))
+                        edges[key] = count + 1, saved_start, saved_end
+                exterior = [(start, end) for count, start, end in edges.values() if count == 1]
+                outline_args.append(
+                    (
+                        np.asarray([start[0] for start, _end in exterior]),
+                        np.asarray([start[1] for start, _end in exterior]),
+                        np.asarray([end[0] for _start, end in exterior]),
+                        np.asarray([end[1] for _start, end in exterior]),
+                    )
+                )
+            else:
+                outline_args.append(None)
+
+        # Draw every explicit outline after every fill. A later neighboring
+        # wedge must not overpaint half of an earlier wedge's shared border.
+        wedges: list[Wedge] = []
+        for entry, segment_args in zip(wedge_entries, outline_args, strict=True):
+            outline_entry = None
+            if segment_args is not None:
+                outline_entry = self._add(
+                    "@mark",
+                    {
+                        "factory": "segments",
+                        "args": segment_args,
+                        "kwargs": {
+                            "color": resolve_color(edgecolor),
+                            "width": 1.0 if linewidth is None else float(linewidth),
+                            "opacity": 1.0 if alpha is None else float(alpha),
+                        },
+                    },
+                )
+                outline_entry["_zorder"] = zorder
+                outline_entry["_legend_skip"] = True
+            wedges.append(Wedge(self, entry, outline_entry))
 
         angle = np.deg2rad(float(startangle))
         text_kwargs = _textprops_kwargs(textprops, "pie(textprops=)")

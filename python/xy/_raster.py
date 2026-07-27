@@ -29,6 +29,7 @@ from ._svg import (
     _STATIC_COLOR_FALLBACK,
     _TEXT,
     DEFAULT_PALETTE,
+    _annotation_connector_unclipped,
     _axis_label_geometry,
     _axis_scales,
     _axis_tick_font_size,
@@ -1262,6 +1263,7 @@ def _emit_annotations(
         # pass; every label draws in the unclipped chrome pass, matching
         # matplotlib's Text and the client's DOM labels.
         style = ann.get("style") or {}
+        restore_plot_clip = False
         color = _rgba(style.get("color"), "#667085", float(style.get("opacity", 1.0)))
         start = max(0.0, min(1.0, float(style.get("span_start", 0.0))))
         end = max(start, min(1.0, float(style.get("span_end", 1.0))))
@@ -1297,6 +1299,9 @@ def _emit_annotations(
                 _rgba(style.get("color"), "#64748b", float(style.get("opacity", 0.14))),
             )
         elif ann.get("kind") in ("arrow", "callout"):
+            if _annotation_connector_unclipped(ann, sx, sy, plot):
+                cmd.clip(0, 0, width, height)
+                restore_plot_clip = True
             if ann.get("kind") == "arrow":
                 x0, y0 = float(sx(float(ann["x0"]))), float(sy(float(ann["y0"])))
                 x1, y1 = float(sx(float(ann["x1"]))), float(sy(float(ann["y1"])))
@@ -1344,6 +1349,8 @@ def _emit_annotations(
                         else (0, 0, 0, 0)
                     ),
                 )
+        if restore_plot_clip:
+            cmd.clip(plot["x"], plot["y"], plot["w"], plot["h"])
         if text_phase and ann.get("text"):
             x, y, label_anchor, vertical_align = annotation_label_placement(
                 ann, style, sx, sy, plot, width, height
